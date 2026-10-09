@@ -12,12 +12,24 @@ export LC_ALL=C.UTF-8
 say() { printf '\n-- %s\n' "$*"; }
 as_hatbot() { runuser -u hatbot -- env HOME=$ROOT PATH=/usr/local/bin:/usr/bin:/bin "$@"; }
 
+# deploy.sh on the host and the Update button (hatbot-update) both end up here; one at a time.
+exec 9>/run/lock/hatbot-deploy.lock
+flock -n 9 || {
+  echo "another deploy is running" >&2
+  exit 1
+}
+
 say "Unpack"
-sha=$(git get-tar-commit-id <"$ARCHIVE" 2>/dev/null | cut -c1-7 || true)
+full_sha=$(git get-tar-commit-id <"$ARCHIVE" 2>/dev/null || true)
+sha=${full_sha:0:7}
 rel=$ROOT/releases/$(date +%Y%m%d-%H%M%S)${sha:+-$sha}
 install -d -o hatbot -g hatbot -m 750 "$ROOT/releases"
 install -d -m 750 "$rel"
 tar -C "$rel" -xf "$ARCHIVE"
+# What's live, for Settings and the updater. RELEASE_SUBJECT is the commit's subject line.
+jq -n --arg sha "$full_sha" --arg subject "${RELEASE_SUBJECT:-}" --arg at "$(date -Is)" \
+  '{sha: $sha, subject: $subject, deployedAt: $at} | with_entries(select(.value != ""))' \
+  >"$rel/release.json"
 chown -R hatbot:hatbot "$rel"
 rm -f "$ARCHIVE"
 echo "$rel"
@@ -94,6 +106,49 @@ echo "live: $rel"
 find "$ROOT/releases" -mindepth 1 -maxdepth 1 -type d | sort | head -n -"$KEEP" | while read -r d; do
   [[ $d == "$rel" || $d == "$previous" ]] || rm -rf "$d"
 done
+
+say "Updater"
+# Older commits have no updater; deploying one leaves the installed updater alone.
+if [[ -f $rel/infra/hatbot-update.sh ]]; then
+  # The Update button in Settings: the brain writes update-request, and root runs hatbot-update.
+  # Replaced with a rename, so a running hatbot-update (which runs this script) keeps its own copy.
+  install -m 755 "$rel/infra/hatbot-update.sh" /usr/local/sbin/hatbot-update.new
+  mv -f /usr/local/sbin/hatbot-update.new /usr/local/sbin/hatbot-update
+  cat >/etc/systemd/system/hatbot-update.path <<'EOF'
+[Unit]
+Description=Hatbot: update from git when the brain asks
+
+[Path]
+PathExists=/var/lib/hatbot/update-request
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  cat >/etc/systemd/system/hatbot-update.service <<'EOF'
+[Unit]
+Description=Hatbot: update desktop-agent and the brain from git
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hatbot-update
+EOF
+  systemctl daemon-reload
+  systemctl enable -q --now hatbot-update.path
+  install -d -m 755 /var/lib/hatbot-update
+  # Where updates come from, for Settings (the token stays in update.env, which only root reads).
+  if [[ -r /etc/hatbot/update.env ]]; then
+    (
+      # shellcheck source=/dev/null
+      source /etc/hatbot/update.env
+      jq -n --arg url "${HATBOT_GIT_URL:-}" --arg branch "${HATBOT_GIT_BRANCH:-main}" \
+        '{url: $url, branch: $branch} | with_entries(select(.value != ""))'
+    ) >/var/lib/hatbot-update/source.json
+  else
+    rm -f /var/lib/hatbot-update/source.json
+  fi
+  chmod -f 644 /var/lib/hatbot-update/source.json || true
+  echo "hatbot-update.path is watching"
+fi
 
 code=$(journalctl -u hatbot-brain --since "$started" --no-pager -o cat | grep -o 'setup code [0-9A-Za-z-]*' | tail -1 || true)
 if [[ -n $code ]]; then

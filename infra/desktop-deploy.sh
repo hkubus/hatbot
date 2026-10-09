@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Hatbot: install desktop-agent inside hatbot-desktop (PLAN.md §4.2). deploy.sh pushes and runs it.
+# Hatbot: install desktop-agent inside hatbot-desktop (PLAN.md §4.2). deploy.sh pushes and runs it,
+# and it installs itself as /usr/local/sbin/hatbot-desktop-agent-deploy for updates from the brain:
+# desktop-agent drops an archive in its state directory, and hatbot-desktop-agent-update.path runs this.
 #   $1          archive of apps/desktop-agent
 #   DESKTOP_IP  this container's IP; desktop-agent listens only there
 # desktop-agent has no dependencies, so nothing is installed from npm here.
@@ -8,9 +10,22 @@ set -euo pipefail
 ARCHIVE=${1:?usage: desktop-deploy.sh ARCHIVE}
 DESKTOP_IP=${DESKTOP_IP:?set DESKTOP_IP}
 DIR=/opt/hatbot-desktop-agent
+STATE=/var/lib/hatbot-desktop-agent
+SELF=/usr/local/sbin/hatbot-desktop-agent-deploy
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
 
 say() { printf '\n-- %s\n' "$*"; }
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+if [[ $ARCHIVE == "$STATE"/* ]]; then
+  # desktop-agent (user desk) wrote it: read it as desk, so a planted link can't point root anywhere.
+  runuser -u desk -- cat "$ARCHIVE" >"$tmp/agent.tar"
+  runuser -u desk -- rm -f "$ARCHIVE"
+else
+  cp "$ARCHIVE" "$tmp/agent.tar"
+  rm -f "$ARCHIVE"
+fi
 
 say "Packages"
 missing=()
@@ -24,8 +39,8 @@ echo "ffmpeg, xdotool"
 say "desktop-agent"
 rm -rf "$DIR.new"
 install -d -m 755 "$DIR.new"
-tar -C "$DIR.new" -xf "$ARCHIVE"
-rm -f "$ARCHIVE"
+tar -C "$DIR.new" --no-same-owner --no-same-permissions -xf "$tmp/agent.tar"
+chmod -R a+rX,go-w "$DIR.new"
 rm -rf "$DIR.old"
 [[ -d $DIR ]] && mv "$DIR" "$DIR.old"
 mv "$DIR.new" "$DIR"
@@ -40,6 +55,8 @@ After=hatbot-session.service
 User=desk
 Environment=DISPLAY=:1 HATBOT_AGENT_LISTEN=$DESKTOP_IP:7070
 EnvironmentFile=/etc/hatbot-desktop/secrets.env
+StateDirectory=hatbot-desktop-agent
+StateDirectoryMode=0700
 WorkingDirectory=$DIR
 ExecStart=/usr/local/bin/bun src/main.ts
 Restart=always
@@ -51,8 +68,35 @@ ProtectHome=yes
 [Install]
 WantedBy=multi-user.target
 EOF
+
+# Updates from the brain. Only deploy.sh runs install the installer, so an update can't change it.
+if [[ $(realpath "$0") != "$SELF" ]]; then
+  install -m 755 "$0" "$SELF.new"
+  mv -f "$SELF.new" "$SELF"
+fi
+cat >/etc/systemd/system/hatbot-desktop-agent-update.path <<EOF
+[Unit]
+Description=Hatbot: install a desktop-agent update from the brain
+
+[Path]
+PathExists=$STATE/update.tar
+
+[Install]
+WantedBy=multi-user.target
+EOF
+cat >/etc/systemd/system/hatbot-desktop-agent-update.service <<EOF
+[Unit]
+Description=Hatbot: install a desktop-agent update from the brain
+
+[Service]
+Type=oneshot
+Environment=DESKTOP_IP=$DESKTOP_IP
+ExecStart=$SELF $STATE/update.tar
+EOF
+
 systemctl daemon-reload
 systemctl enable -q hatbot-desktop-agent
+systemctl enable -q --now hatbot-desktop-agent-update.path
 systemctl restart hatbot-desktop-agent
 
 # shellcheck source=/dev/null

@@ -328,7 +328,7 @@ REST + JSON under `/api/v1`. One WebSocket at `/api/v1/stream` for events. A gen
 | Memory | `GET /memory/tree` · `GET/PUT /memory/file?path=` · `GET /memory/log` · `GET /memory/diff/:sha` · `POST /memory/revert/:sha` |
 | Spend | `GET /spend/summary` · `GET /spend/daily?days=30` |
 | Teach | `POST /teach/start` · `POST /teach/stop` → draft skill · `POST /teach/:id/save` |
-| Admin | `POST /pause-all` · `POST /resume` · `GET/PUT /settings` · CRUD `/mcp-servers` |
+| Admin | `POST /pause-all` · `POST /resume` · `GET/PUT /settings` · `GET/POST /update` · CRUD `/mcp-servers` |
 
 **WS events**: `message.created`, `message.delta`, `message.progress`, `message.done`, `task.updated`, `task.step`, `task.progress`, `approval.created`, `approval.resolved`, `desktop.state`, `spend.updated`, `memory.committed`, `paused`.
 
@@ -356,7 +356,7 @@ How to run it: `infra/README.md`. Start with `--dry-run`. Settings are saved to 
 8. **Backups**: check which PBS/vzdump jobs cover both guests; offer to add them to a job that lists VMIDs, or print what to change.
 9. **Finish**: print a summary and the reverse-proxy targets. Then run `infra/verify.sh`.
 
-The app itself is installed by `infra/deploy.sh`, run on the host for every update. It sends a `git archive` of a commit to the brain, which installs it as a new release under `/var/lib/hatbot/releases`, builds the web app, writes and restarts `hatbot-brain.service`, and goes back to the previous release if the health check fails. The first run asks for the public URL, the reverse proxy's IP and the Anthropic API key.
+The app itself is installed by `infra/deploy.sh`, run on the host for the first install. It sends a `git archive` of a commit to the brain, which installs it as a new release under `/var/lib/hatbot/releases`, builds the web app, writes and restarts `hatbot-brain.service`, and goes back to the previous release if the health check fails. The first run asks for the public URL, the reverse proxy's IP, the Anthropic API key, ntfy and the git repository to update from. After that, **Settings → Update** does the same from git: the brain writes a request file, `hatbot-update` (root, on the brain) fetches with a token the brain service can't read, sends desktop-agent its new code, and runs the new commit's `brain-deploy.sh`. Host-side scripts still change only through `deploy.sh`.
 
 ### 9.3 Proxmox roles
 - **`HatbotOps` on `/`**: `VM.Audit`, `VM.PowerMgmt`, `Sys.Audit`, `Datastore.Audit`. Hatbot can see and start/stop/restart every guest.
@@ -449,6 +449,7 @@ Each milestone ends with a working, demo-able system.
 - [x] Web PWA built from the prototype: shell, chat, Memory, Spend, Settings
 - [x] Pause all
 - [x] `infra/deploy.sh`: releases, health check, rollback
+- [x] Update from git with a button in Settings (`infra/hatbot-update.sh`)
 - [ ] Deployed and tried from a phone and a laptop
 - **Done when**: you can chat with Hatbot from a phone and laptop, it remembers things in markdown, and spending is enforced.
 

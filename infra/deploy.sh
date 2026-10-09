@@ -4,7 +4,8 @@
 # its health check is rolled back.
 #   ./deploy.sh 124:/root/hatbot   deploy HEAD of a git checkout inside another container
 #   ./deploy.sh hatbot.tar         deploy an archive made with `git archive HEAD`
-# The first run asks for the public URL, your reverse proxy's IP, the Anthropic API key and your ntfy server.
+# The first run asks for the public URL, your reverse proxy's IP, the Anthropic API key, your ntfy server
+# and the git repository the Update button in Settings pulls from.
 
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -22,11 +23,17 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 step "1/3 Source"
+src_sha='' src_subject='' src_remote=''
 if [[ $SOURCE =~ ^([0-9]+):(/.+)$ ]]; then
   src_ct=${BASH_REMATCH[1]} src_dir=${BASH_REMATCH[2]}
   pct exec "$src_ct" -- git -C "$src_dir" archive --format=tar HEAD >"$tmp/app.tar" ||
     die "could not archive $src_dir in CT $src_ct"
-  info "$(pct exec "$src_ct" -- git -C "$src_dir" log -1 --format='%h %s')"
+  src_sha=$(pct exec "$src_ct" -- git -C "$src_dir" rev-parse HEAD)
+  src_subject=$(pct exec "$src_ct" -- git -C "$src_dir" log -1 --format=%s)
+  # Without any user:password@ part.
+  src_remote=$(pct exec "$src_ct" -- git -C "$src_dir" remote get-url origin 2>/dev/null |
+    sed -E 's#^(https?://)[^/@]*@#\1#' || true)
+  info "${src_sha:0:7} $src_subject"
   if [[ -n $(pct exec "$src_ct" -- git -C "$src_dir" status --porcelain --untracked-files=no) ]]; then
     warn "$src_dir has uncommitted changes; only the last commit is deployed"
   fi
@@ -113,10 +120,51 @@ EOF
   fi
 fi
 
+# The Update button in Settings: hatbot-update on the brain fetches from here (as root; the brain
+# service never sees the token).
+if [[ -z ${HATBOT_GIT_URL:-} ]] && ct_has_file "$BRAIN_ID" /etc/hatbot/update.env; then
+  ok "keeping /etc/hatbot/update.env (set HATBOT_GIT_URL to change it)"
+else
+  def_git=${HATBOT_GIT_URL:-$src_remote}
+  git_url='' git_branch='' git_user='' git_token=''
+  read -r -p "   Git repository the Update button pulls from, https (empty to skip) [$def_git]: " git_url || true
+  git_url=${git_url:-$def_git}
+  if [[ $git_url == https://* ]]; then
+    read -r -p "   Branch [main]: " git_branch || true
+    git_branch=${git_branch:-main}
+    def_user=$(sed -E 's#^https://[^/]+/([^/]+)/.*#\1#' <<<"$git_url")
+    read -r -p "   Forgejo user for the token [$def_user]: " git_user || true
+    git_user=${git_user:-$def_user}
+    read -r -s -p "   Access token that can read the repository (empty for a public one): " git_token || true
+    echo
+    # Checked from the brain, which is what has to reach it. The token goes over stdin.
+    # shellcheck disable=SC2016
+    check='IFS= read -r t
+      if [ -n "$t" ]; then
+        b=$(printf "%s:%s" "$2" "$t" | base64 -w0)
+        export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader GIT_CONFIG_VALUE_0="Authorization: Basic $b"
+      fi
+      GIT_TERMINAL_PROMPT=0 git ls-remote --exit-code "$1" "refs/heads/$3" >/dev/null'
+    if printf '%s\n' "$git_token" | pct exec "$BRAIN_ID" -- sh -c "$check" sh "$git_url" "$git_user" "$git_branch"; then
+      ok "the brain can read $git_branch from $git_url"
+    else
+      warn "the brain can't read $git_branch from $git_url; saving it anyway"
+    fi
+    printf 'HATBOT_GIT_URL=%q\nHATBOT_GIT_BRANCH=%q\nHATBOT_GIT_USER=%q\nHATBOT_GIT_TOKEN=%q\n' \
+      "$git_url" "$git_branch" "$git_user" "$git_token" | push_secret "$BRAIN_ID" /etc/hatbot/update.env
+    unset git_token
+  elif [[ -n $git_url ]]; then
+    warn "only https repositories are supported; skipping updates"
+  else
+    warn "no repository; the Update button stays off until you run deploy.sh again"
+  fi
+fi
+
 step "3/3 Release"
 : "${DESKTOP_ID:?}" "${DESKTOP_IP:?}"
 mkdir "$tmp/agent"
 tar -C "$tmp/agent" -xf "$tmp/app.tar" --strip-components=2 apps/desktop-agent
+[[ -z $src_sha ]] || echo "$src_sha" >"$tmp/agent/VERSION"
 tar -C "$tmp/agent" -cf "$tmp/agent.tar" .
 pct push "$DESKTOP_ID" "$tmp/agent.tar" /root/hatbot-desktop-agent.tar --perms 600
 pct push "$DESKTOP_ID" "$HERE/desktop-deploy.sh" /root/desktop-deploy.sh --perms 700
@@ -126,4 +174,4 @@ fi
 
 pct push "$BRAIN_ID" "$tmp/app.tar" /root/hatbot-app.tar --perms 600
 pct push "$BRAIN_ID" "$HERE/brain-deploy.sh" /root/brain-deploy.sh --perms 700
-pct exec "$BRAIN_ID" -- bash /root/brain-deploy.sh /root/hatbot-app.tar
+pct exec "$BRAIN_ID" -- env RELEASE_SUBJECT="$src_subject" bash /root/brain-deploy.sh /root/hatbot-app.tar

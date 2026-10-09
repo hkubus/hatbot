@@ -29,7 +29,14 @@ export type AgentAction = {
 };
 export type AgentActionResult = { text?: string; x?: number; y?: number };
 
-export type AgentStatus = { ok: true; width: number; height: number; locked: boolean };
+export type AgentStatus = {
+  ok: true;
+  width: number;
+  height: number;
+  locked: boolean;
+  /** The commit desktop-agent was built from, when deployed. */
+  version?: string;
+};
 
 /** GET /context: the visible Chromium tab. `text` only with ?text=1. */
 export type AgentContext = { url: string | null; title: string | null; text?: string };

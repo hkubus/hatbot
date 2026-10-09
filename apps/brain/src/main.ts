@@ -16,6 +16,7 @@ import { Proxmox } from "./proxmox";
 import { SettingsStore } from "./settings";
 import { Spend } from "./spend";
 import { Tasks } from "./tasks/service";
+import { Updates } from "./updates";
 import { webHandler } from "./web";
 
 const config = loadConfig();
@@ -70,6 +71,7 @@ const app = createApp({
   desktop,
   archive,
   proxmox: new Proxmox(),
+  updates: new Updates(config),
 });
 const web = webHandler(config.webDir);
 const server = Bun.serve({

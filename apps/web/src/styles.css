@@ -1974,3 +1974,10 @@ html[data-theme="dark"] .seg button.active {
     display: grid;
   }
 }
+.row .val.version {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}

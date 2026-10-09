@@ -17,6 +17,7 @@ import { Proxmox } from "../src/proxmox";
 import { SettingsStore } from "../src/settings";
 import { Spend } from "../src/spend";
 import { Tasks } from "../src/tasks/service";
+import { Updates } from "../src/updates";
 import { FakeDesktop } from "./fake-desktop";
 import { FakeModel } from "./fake-model";
 
@@ -81,6 +82,15 @@ export async function testApp(
     clock,
   });
   thread.attachTasks(tasks);
+  const updateDir = tempDir("hatbot-test-update-");
+  const updates = new Updates(
+    {
+      updateDir,
+      updateRequest: join(updateDir, "request"),
+      releaseFile: join(updateDir, "release.json"),
+    },
+    clock,
+  );
   const proxmox = new Proxmox(proxmoxEnv);
   proxmox.pollMs = 5;
   const app = createApp({
@@ -98,6 +108,7 @@ export async function testApp(
     desktop,
     archive,
     proxmox,
+    updates,
   });
 
   const call = (
@@ -128,6 +139,7 @@ export async function testApp(
     notifier,
     spend,
     thread,
+    updateDir,
     events: seen,
     call,
     advance: (ms: number) => {

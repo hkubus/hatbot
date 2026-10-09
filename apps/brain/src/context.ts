@@ -11,6 +11,7 @@ import type { Proxmox } from "./proxmox";
 import type { SettingsStore } from "./settings";
 import type { Spend } from "./spend";
 import type { Tasks } from "./tasks/service";
+import type { Updates } from "./updates";
 
 export type Deps = {
   config: Config;
@@ -28,6 +29,7 @@ export type Deps = {
   desktop: Desktop;
   archive: Archive;
   proxmox: Proxmox;
+  updates: Updates;
 };
 
 export type AppEnv = {

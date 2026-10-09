@@ -1,5 +1,11 @@
-import type { ApiToken, AppSettings, CreateTokenResponse, Limits } from "@hatbot/shared";
-import { useEffect, useState } from "react";
+import type {
+  ApiToken,
+  AppSettings,
+  CreateTokenResponse,
+  Limits,
+  UpdateInfo,
+} from "@hatbot/shared";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api";
 import { Icon } from "../icons";
 import { navigate } from "../router";
@@ -228,6 +234,8 @@ export function Settings({
             <RollbackRow toast={toast} />
           </div>
         </section>
+
+        <UpdateGroup toast={toast} />
       </div>
     </section>
   );
@@ -307,5 +315,110 @@ function RollbackRow({ toast }: { toast: (t: string) => void }) {
         !error && <span className="val">No snapshots yet</span>
       )}
     </div>
+  );
+}
+
+const short = (sha?: string) => sha?.slice(0, 7) ?? "";
+
+/** Pulls from git and redeploys the desktop and the brain (infra/hatbot-update.sh). */
+function UpdateGroup({ toast }: { toast: (t: string) => void }) {
+  const [info, setInfo] = useState<UpdateInfo | null>(null);
+  const [error, setError] = useState("");
+  // The update being watched: the status that was there before it started.
+  const watching = useRef<{ before?: string; sha?: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const pollSoon = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
+    const schedule = (ms: number) => {
+      clearTimeout(timer);
+      if (!stopped) timer = setTimeout(poll, ms);
+    };
+    pollSoon.current = () => schedule(1000);
+    const poll = async () => {
+      try {
+        const next = await api<UpdateInfo>("/update");
+        if (stopped) return;
+        setInfo(next);
+        const w = watching.current;
+        const s = next.status;
+        const running = next.requested || s?.state === "running";
+        if (!w && running) {
+          watching.current = { before: undefined, sha: next.current?.sha };
+          setBusy(true);
+        } else if (w && !running && s && s.startedAt !== w.before) {
+          watching.current = null;
+          setBusy(false);
+          if (s.state === "failed") setError(s.error ?? "The update failed.");
+          else if (s.state === "current") toast("Already up to date");
+          else if (next.current?.sha !== w.sha) {
+            // The brain restarted on new code; load the new web app too.
+            toast(`Updated to ${short(next.current?.sha)}`);
+            setTimeout(() => location.reload(), 1200);
+          }
+        }
+      } catch {
+        // The brain restarts at the end of an update; keep asking.
+      }
+      schedule(watching.current ? 2000 : 30_000);
+    };
+    void poll();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [toast]);
+
+  if (!info) return null;
+  const update = async () => {
+    setError("");
+    watching.current = { before: info.status?.startedAt, sha: info.current?.sha };
+    setBusy(true);
+    try {
+      setInfo(await api<UpdateInfo>("/update", { body: {} }));
+      pollSoon.current();
+    } catch (err) {
+      watching.current = null;
+      setBusy(false);
+      setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot");
+    }
+  };
+  const step = info.status?.state === "running" ? info.status.step : "Starting";
+  const notes = !busy && info.status?.state === "done" ? info.status.notes : [];
+
+  return (
+    <section className="group">
+      <h2>Updates</h2>
+      <div className="group-box">
+        <div className="row">
+          <div className="txt">
+            <b>Version</b>
+          </div>
+          <span className="val version">
+            {info.current?.sha
+              ? `${short(info.current.sha)}${info.current.subject ? ` ${info.current.subject}` : ""}`
+              : "Unknown"}
+          </span>
+        </div>
+        <div className="row">
+          <div className="txt">
+            <b>Update from git</b>
+            {error && <span className="form-error">{error}</span>}
+            {notes.map((n) => (
+              <span key={n}>{n}</span>
+            ))}
+          </div>
+          {info.source ? (
+            <button type="button" className="btn sm" disabled={busy} onClick={update}>
+              {busy ? `${step}…` : "Update"}
+            </button>
+          ) : (
+            <span className="val">Not set up</span>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }

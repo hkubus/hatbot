@@ -1,5 +1,7 @@
 // desktop-agent: runs on the desktop, takes orders only from the brain (PLAN.md §4.2).
 import { timingSafeEqual } from "node:crypto";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { AgentAction, AgentStatus, LiveInput } from "@hatbot/shared/desktop";
 import { context, inspect } from "./cdp";
 import { browserKey } from "./keys";
@@ -8,6 +10,18 @@ import { ActionError, act, LiveCapture, screenSize, screenshot, xdotool, zoom } 
 const token = process.env.DESKTOP_AGENT_TOKEN ?? "";
 if (token.length < 32) throw new Error("DESKTOP_AGENT_TOKEN is missing or too short");
 const [host, port] = (process.env.HATBOT_AGENT_LISTEN ?? "127.0.0.1:7070").split(":");
+
+/** The commit this copy was built from; the brain's updater writes it into the archive. */
+const version = (() => {
+  try {
+    return readFileSync(join(import.meta.dir, "../VERSION"), "utf8").trim();
+  } catch {
+    return undefined;
+  }
+})();
+/** Set by systemd's StateDirectory=; an archive dropped here is installed by a root service. */
+const stateDir = process.env.STATE_DIRECTORY;
+const MAX_UPDATE_BYTES = 10 * 1024 * 1024;
 
 const size = await screenSize();
 const live = new LiveCapture(size);
@@ -78,7 +92,19 @@ const server = Bun.serve<{ off?: () => void }>({
     try {
       switch (route) {
         case "GET /health":
-          return json({ ok: true, ...size, locked } satisfies AgentStatus);
+          return json({ ok: true, ...size, locked, version } satisfies AgentStatus);
+        case "POST /update": {
+          // A new copy of this app from the brain's updater (the Update button in Settings).
+          // hatbot-desktop-agent-update.path picks it up and installs it as root, then restarts us.
+          if (!stateDir) return json({ error: "updates aren't enabled; run deploy.sh once" }, 501);
+          const bytes = new Uint8Array(await req.arrayBuffer());
+          if (!bytes.length || bytes.length > MAX_UPDATE_BYTES)
+            return json({ error: "expected a tar archive under 10 MB" }, 400);
+          const tmp = join(stateDir, "update.tar.part");
+          writeFileSync(tmp, bytes, { mode: 0o600 });
+          renameSync(tmp, join(stateDir, "update.tar"));
+          return json({ ok: true }, 202);
+        }
         case "POST /screenshot":
           return image(await serial(() => screenshot(size)));
         case "POST /zoom": {
@@ -98,10 +124,10 @@ const server = Bun.serve<{ off?: () => void }>({
         }
         case "POST /lock":
           locked = true;
-          return json({ ok: true, ...size, locked } satisfies AgentStatus);
+          return json({ ok: true, ...size, locked, version } satisfies AgentStatus);
         case "POST /unlock":
           locked = false;
-          return json({ ok: true, ...size, locked } satisfies AgentStatus);
+          return json({ ok: true, ...size, locked, version } satisfies AgentStatus);
         case "GET /live":
           if (srv.upgrade(req, { data: {} })) return undefined;
           return json({ error: "expected a WebSocket" }, 400);

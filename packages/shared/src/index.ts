@@ -162,6 +162,30 @@ export type HatbotEvent =
   | { type: "approval.resolved"; approval: Approval }
   | { type: "desktop.state"; state: DesktopState };
 
+/** The Update button in Settings (infra/hatbot-update.sh). */
+export type UpdateStatus = {
+  state: "running" | "done" | "failed" | "current";
+  step: string;
+  error?: string;
+  startedAt: string;
+  finishedAt?: string;
+  from?: string;
+  to?: string;
+  subject?: string;
+  /** Things to do by hand, e.g. host scripts that changed. */
+  notes: string[];
+};
+export type UpdateInfo = {
+  /** Where updates come from; null until deploy.sh sets it up. */
+  source: { url: string; branch: string } | null;
+  /** The running release. */
+  current: { sha?: string; subject?: string; deployedAt?: string } | null;
+  /** The last or current update. */
+  status: UpdateStatus | null;
+  /** Requested, and hatbot-update hasn't picked it up yet. */
+  requested: boolean;
+};
+
 export type MemoryFile = { path: string; size: number };
 export type Commit = {
   sha: string;

@@ -13,6 +13,12 @@ export type Config = {
   publicUrl: string;
   /** Peers whose X-Forwarded-For is trusted (your reverse proxy). */
   trustedProxies: string[];
+  /** hatbot-update's status, written by root (infra/hatbot-update.sh). */
+  updateDir: string;
+  /** The Update button writes this; hatbot-update.path picks it up. */
+  updateRequest: string;
+  /** Which commit this copy of the brain is, written by brain-deploy.sh. */
+  releaseFile: string;
 };
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -30,5 +36,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
+    updateDir: env.HATBOT_UPDATE_DIR ?? "/var/lib/hatbot-update",
+    updateRequest: env.HATBOT_UPDATE_REQUEST ?? join(dataDir, "update-request"),
+    releaseFile: env.HATBOT_RELEASE_FILE ?? join(import.meta.dir, "../../../release.json"),
   };
 }

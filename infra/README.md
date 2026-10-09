@@ -7,6 +7,7 @@ Scripts that set up Hatbot on the Proxmox host (PLAN.md §9).
 | `host-setup.sh` | on the host, as root | both containers on the LAN, the desktop's firewall, Proxmox user/roles/token, snapshots, backups; then runs the two provision scripts |
 | `brain-provision.sh` | inside `hatbot-brain` | Bun, memory repo, SSH key, firewall |
 | `deploy.sh` | on the host, as root | installs the app: `desktop-deploy.sh` puts desktop-agent on the desktop, `brain-deploy.sh` a new release on the brain |
+| `hatbot-update.sh` | inside `hatbot-brain`, as root | the Update button in Settings: pulls from git, updates desktop-agent, then runs `brain-deploy.sh` |
 | `desktop-provision.sh` | inside `hatbot-desktop` | `desk` user, Xvnc + XFCE, Chromium, Bun, firewall |
 | `verify.sh` | on the host, as root | checks isolation, token permissions, snapshots and backups; changes nothing |
 | `test-firewall.sh` | anywhere, as root | tests the desktop firewall in throwaway network namespaces |
@@ -42,15 +43,31 @@ Re-running `host-setup.sh` is safe. It finds the containers by name and skips wh
 
 ## Deploy the app
 
-Run this on the host for the first install and for every update. It deploys the last commit of the checkout in CT 124:
+Run this on the host for the first install, and whenever the host-side scripts change. It deploys the last commit of the checkout in CT 124:
 
 ```sh
 ./deploy.sh 124:/root/hatbot
 ```
 
-The first run asks for the web app's public URL, your reverse proxy's IP, the Anthropic API key, and your ntfy server's URL, topic and access token (the token's user needs write access to the topic). Then it prints a setup code. Open `https://<your hatbot host>/setup` and enter the code to set your password and TOTP. The code changes whenever the brain restarts before setup is done. To read the current one, run `pct exec <brain> -- journalctl -u hatbot-brain | grep 'setup code'`.
+The first run asks for:
+- the web app's public URL and your reverse proxy's IP,
+- the Anthropic API key,
+- your ntfy server's URL, topic and access token (the token's user needs write access to the topic),
+- the git repository the Update button pulls from: an https URL, a branch, and an access token that can read it (on Forgejo: a token with `read:repository`).
 
-Each deploy is a new release in `/var/lib/hatbot/releases` inside the brain, and `/var/lib/hatbot/app` links to the live one. If the new release fails its health check, the previous one goes back live. The last 3 are kept. To change the URL or proxy later, run with `HATBOT_PUBLIC_URL=… HATBOT_TRUSTED_PROXIES=… ./deploy.sh …`; for ntfy, set `NTFY_URL=…`.
+ Then it prints a setup code. Open `https://<your hatbot host>/setup` and enter the code to set your password and TOTP. The code changes whenever the brain restarts before setup is done. To read the current one, run `pct exec <brain> -- journalctl -u hatbot-brain | grep 'setup code'`.
+
+Each deploy is a new release in `/var/lib/hatbot/releases` inside the brain, and `/var/lib/hatbot/app` links to the live one. If the new release fails its health check, the previous one goes back live. The last 3 are kept. To change the URL or proxy later, run with `HATBOT_PUBLIC_URL=… HATBOT_TRUSTED_PROXIES=… ./deploy.sh …`; for ntfy, set `NTFY_URL=…`; for updates, `HATBOT_GIT_URL=…`.
+
+## Update from Settings
+
+After that, **Settings → Updates → Update** pulls the branch and deploys it: desktop-agent first, then the brain, each with the same health check and rollback as `deploy.sh`. The page reloads on the new version.
+
+- The brain only writes `/var/lib/hatbot/update-request`. `hatbot-update.path` runs `hatbot-update` as root, which reads the git token from `/etc/hatbot/update.env` (root only), so the brain service never holds it.
+- desktop-agent receives its new code over its own API; a root service on the desktop (`hatbot-desktop-agent-update.path`) installs it. The first `deploy.sh` run after this feature sets that up.
+- It refuses while a task is running, because the brain restarts.
+- It doesn't touch the host. If a commit changes host-side scripts (`host-setup.sh`, `deploy.sh`, `desktop-deploy.sh` and so on), Settings says so; run `deploy.sh` on the host for those.
+- Logs: `/var/lib/hatbot-update/last.log` on the brain, and `journalctl -u hatbot-desktop-agent-update` on the desktop.
 
 ## Settings
 
