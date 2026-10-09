@@ -2,6 +2,7 @@
 // in the background lane, reporting back through finish_task.
 import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
+import { modelErrorText } from "../agent/model";
 import { AGENT_PROMPT } from "../agent/prompt";
 import { localStamp } from "../agent/thread";
 import { DesktopTaskInput, runTool, TOOL_PARAMS } from "../agent/tools";
@@ -281,7 +282,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       tasks.finish(id, "cancelled", paused ? "Stopped by Pause all." : "Cancelled.");
     } else {
       console.error(`task ${id} failed`, err);
-      tasks.finish(id, "failed", "Something went wrong talking to the model.");
+      tasks.finish(
+        id,
+        "failed",
+        `Something went wrong talking to the model (${modelErrorText(err)}).`,
+      );
     }
   } finally {
     if (slot) tasks.pool.release();

@@ -99,6 +99,23 @@ test("within 30 minutes the episode continues; after, a new one starts with a su
   expect(opening).toContain("Owner: second");
 });
 
+test("an update that changes the prompt or tools starts a new episode", async () => {
+  const model = new FakeModel([{ content: [text("one")] }, { content: [text("two")] }], ["s"]);
+  const t = await testApp(model);
+  await t.thread.post("first").done;
+  // As if the episode had started on an older release.
+  t.db.query("UPDATE episodes SET prefix = 'older'").run();
+  t.advance(60_000);
+  await t.thread.post("second").done;
+  expect(model.requests[1]?.messages.length).toBe(1);
+  expect(lastUserText(model.requests[1] as never)).toContain("Owner: first");
+  // Thinking that fails the check anyway is dropped instead of failing the reply.
+  expect(model.requests[1]?.thinking).toMatchObject({
+    block_binding: { prefix_mismatch_behavior: "drop_block" },
+  });
+  expect(model.requests[1]?.betas).toContain("thinking-binding-controls-2026-08-01");
+});
+
 test("system prompt and tools are identical across requests (cache-stable)", async () => {
   const model = new FakeModel([{ content: [text("a")] }, { content: [text("b")] }]);
   const t = await testApp(model);

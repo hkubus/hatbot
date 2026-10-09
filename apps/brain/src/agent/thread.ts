@@ -1,4 +1,5 @@
 // The single chat thread, run as episodes (PLAN.md §5.2, §5.3).
+import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import { describeCron, type Schedule, type ThreadMessage } from "@hatbot/shared";
 import type { Db } from "../db";
@@ -9,7 +10,7 @@ import type { SettingsStore } from "../settings";
 import { BudgetError, priceOf, type Spend } from "../spend";
 import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
-import type { ModelClient } from "./model";
+import { type ModelClient, modelErrorText } from "./model";
 import { SUMMARY_PROMPT, SYSTEM_PROMPT } from "./prompt";
 import { runTool, TOOL_PARAMS } from "./tools";
 
@@ -24,7 +25,16 @@ const MESSAGE_COLUMNS =
 const BETAS: Anthropic.Beta.AnthropicBeta[] = [
   "server-side-fallback-2026-07-01",
   "thinking-display-updates-2026-08-18",
+  "thinking-binding-controls-2026-08-01",
 ];
+/**
+ * What an episode's thinking blocks are bound to: the system prompt, the tools and the model. The API
+ * rejects replayed thinking when these change, so an update that changes them starts a new episode.
+ */
+const PREFIX = createHash("sha256")
+  .update(JSON.stringify([CHAT_MODEL, SYSTEM_PROMPT, TOOL_PARAMS]))
+  .digest("hex")
+  .slice(0, 16);
 
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 type Turn = Anthropic.Beta.BetaMessageParam;
@@ -151,15 +161,20 @@ export class Thread {
       .map((r) => ({ role: r.role, content: JSON.parse(r.content) }));
   }
 
-  /** Continues the current episode, or starts a new one after 30 minutes idle. */
+  /**
+   * Continues the current episode, or starts a new one after 30 minutes idle, or when an update changed
+   * the system prompt, tools or model.
+   */
   private async episodeFor(): Promise<{ id: number; isNew: boolean }> {
     const last = this.d.db
-      .query<{ id: number; last_activity_at: string; summarized: number }, []>(
-        "SELECT id, last_activity_at, summarized FROM episodes ORDER BY id DESC LIMIT 1",
-      )
+      .query<
+        { id: number; last_activity_at: string; summarized: number; prefix: string | null },
+        []
+      >("SELECT id, last_activity_at, summarized, prefix FROM episodes ORDER BY id DESC LIMIT 1")
       .get();
     if (last && this.clock() - Date.parse(last.last_activity_at) < EPISODE_IDLE_MS) {
-      return { id: last.id, isNew: false };
+      if (last.prefix === PREFIX) return { id: last.id, isNew: false };
+      console.log(`episode ${last.id}: the prompt or tools changed; starting a new episode`);
     }
     if (last && !last.summarized) {
       try {
@@ -169,10 +184,10 @@ export class Thread {
       }
     }
     const row = this.d.db
-      .query<{ id: number }, [string, string]>(
-        "INSERT INTO episodes (started_at, last_activity_at) VALUES (?, ?) RETURNING id",
+      .query<{ id: number }, [string, string, string]>(
+        "INSERT INTO episodes (started_at, last_activity_at, prefix) VALUES (?, ?, ?) RETURNING id",
       )
-      .get(this.now(), this.now());
+      .get(this.now(), this.now(), PREFIX);
     if (!row) throw new Error("episode insert failed");
     return { id: row.id, isNew: true };
   }
@@ -331,7 +346,13 @@ export class Thread {
             ],
             cache_control: { type: "ephemeral", ttl: "1h" },
             tools: TOOL_PARAMS,
-            thinking: { type: "adaptive", display: "updates" },
+            // If a replayed thinking block fails the conversation check anyway, lose that reasoning
+            // rather than the reply.
+            thinking: {
+              type: "adaptive",
+              display: "updates",
+              block_binding: { prefix_mismatch_behavior: "drop_block" },
+            },
             output_config: { effort: s.chatEffort },
             messages,
           },
@@ -343,6 +364,11 @@ export class Thread {
           },
         );
         separate = true;
+        if (res.input_transformations?.length)
+          console.warn(
+            `episode ${episode.id}: the API changed the input`,
+            JSON.stringify(res.input_transformations).slice(0, 1000),
+          );
         spend.recordResponse({
           model: CHAT_MODEL,
           purpose: "thread",
@@ -404,7 +430,10 @@ export class Thread {
     } catch (err) {
       if (abort.signal.aborted) return finish("error", "_Paused. Resume to continue._");
       console.error("chat turn failed", err);
-      return finish("error", "_Something went wrong talking to the model. Try again in a moment._");
+      return finish(
+        "error",
+        `_Something went wrong talking to the model (${modelErrorText(err)})._`,
+      );
     } finally {
       this.current = null;
     }

@@ -1,5 +1,14 @@
 import Anthropic from "@anthropic-ai/sdk";
 
+/** A model failure in a line, for the owner: the API's own message when there is one. */
+export function modelErrorText(err: unknown): string {
+  if (err instanceof Anthropic.APIError) {
+    const detail = (err.error as { error?: { message?: string } } | undefined)?.error?.message;
+    return `the API said ${err.status ?? "nothing"}${detail ? `: ${detail.slice(0, 300)}` : ""}`;
+  }
+  return err instanceof Error ? err.message.slice(0, 300) : "unknown error";
+}
+
 export type StreamParams = Anthropic.Beta.Messages.MessageCreateParamsStreaming;
 export type CreateParams = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
 export type StreamHandlers = {

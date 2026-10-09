@@ -208,4 +208,7 @@ export const migrations: string[] = [
     INSERT INTO messages_fts (rowid, text) VALUES (new.id, new.text);
   END;
   `,
+  /* 6: an episode is bound to the system prompt, tools and model it started with */ `
+  ALTER TABLE episodes ADD COLUMN prefix TEXT;
+  `,
 ];

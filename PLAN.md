@@ -178,6 +178,7 @@ build context (system + memory index + task)  →  call model (stream)
 
 ### 5.3 Episodic chat thread
 - **During an active conversation** (last message under 30 minutes ago), keep appending to the same cached context.
+- **An update that changes the system prompt, the tools or the chat model** also starts a new episode: Opus 5.5 checks each replayed thinking block against the prompt, tools and messages it was made with, and rejects the request on a mismatch. As a backstop the chat sends `block_binding.prefix_mismatch_behavior: "drop_block"`, so a block that still fails is dropped (and logged) instead of failing the reply.
 - **After 30 minutes idle**, the next message starts a new episode containing:
   - the system prompt
   - the memory index

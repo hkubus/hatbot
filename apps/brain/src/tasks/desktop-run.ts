@@ -4,6 +4,7 @@ import { BetaAbstractComputerToolset20260801 } from "@anthropic-ai/sdk/helpers/b
 import type { ApprovalKind } from "@hatbot/shared";
 import type { ComputerMember } from "@hatbot/shared/desktop";
 import { z } from "zod";
+import { modelErrorText } from "../agent/model";
 import { DESKTOP_PROMPT } from "../agent/prompt";
 import { screenPage } from "../agent/screening";
 import { localStamp } from "../agent/thread";
@@ -595,7 +596,11 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       );
     } else {
       console.error(`task ${id} failed`, err);
-      tasks.finish(id, "failed", "Something went wrong talking to the model.");
+      tasks.finish(
+        id,
+        "failed",
+        `Something went wrong talking to the model (${modelErrorText(err)}).`,
+      );
     }
   } finally {
     release();
