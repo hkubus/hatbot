@@ -3,11 +3,25 @@ import type { Db } from "./db";
 import type { EventBus } from "./events";
 import type { SettingsStore } from "./settings";
 
-/** USD per million tokens. Cache writes are priced from input: 1.25x for 5 minutes, 2x for 1 hour. */
-export const PRICES: Record<string, { input: number; output: number; cacheRead: number }> = {
+type Price = { input: number; output: number; cacheRead: number };
+
+/**
+ * USD per million tokens. Cache writes are priced from input: 1.25x for 5 minutes, 2x for 1 hour.
+ * `longPrompt`: above that many prompt tokens (input + cache reads and writes), the whole request
+ * is billed at the higher price.
+ */
+export const PRICES: Record<string, Price & { longPrompt?: { above: number } & Price }> = {
   "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2 },
   "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.2 },
   "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2 },
+  // Haiku 5.5's long-prompt cache-read price isn't published separately; assumed 5x like the rest.
+  "claude-haiku-5-5": {
+    input: 0.1,
+    output: 0.5,
+    cacheRead: 0.01,
+    longPrompt: { above: 100_000, input: 0.5, output: 2.5, cacheRead: 0.05 },
+  },
+  // Older rows in the ledger.
   "claude-haiku-4-5": { input: 1, output: 5, cacheRead: 0.1 },
 };
 
@@ -50,7 +64,9 @@ export function priceOf(model: string) {
 }
 
 export function costOf(model: string, t: Tokens): number {
-  const p = priceOf(model);
+  const base = priceOf(model);
+  const prompt = t.input + t.cacheWrite5m + t.cacheWrite1h + t.cacheRead;
+  const p = base.longPrompt && prompt > base.longPrompt.above ? base.longPrompt : base;
   return (
     (t.input * p.input +
       t.cacheWrite5m * p.input * 1.25 +

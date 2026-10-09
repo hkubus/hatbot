@@ -4,7 +4,7 @@ import type { Spend } from "../spend";
 import type { ModelClient } from "./model";
 import { SCREENING_PROMPT } from "./prompt";
 
-export const SCREENING_MODEL = "claude-haiku-4-5";
+export const SCREENING_MODEL = "claude-haiku-5-5";
 
 export type Screening = { suspected: boolean; excerpt: string };
 
@@ -17,7 +17,10 @@ export async function screenPage(
   if (!page.text.trim()) return { suspected: false, excerpt: "" };
   const res = await model.create({
     model: SCREENING_MODEL,
-    max_tokens: 400,
+    // Haiku 5.5 thinks by default; low effort, with room so thinking can't crowd out the verdict.
+    max_tokens: 2000,
+    thinking: { type: "adaptive" },
+    output_config: { effort: "low" },
     system: SCREENING_PROMPT,
     // JSON-encoded and labelled with its source, so the page can't pose as the prompt.
     messages: [

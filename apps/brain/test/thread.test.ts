@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { CHAT_MODEL } from "../src/agent/thread";
+import { costOf } from "../src/spend";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, testApp } from "./helpers";
 
@@ -158,4 +159,23 @@ test("search_history finds older messages", async () => {
   await t.thread.post("what was that port?").done;
   const result = JSON.stringify(model.requests[2]?.messages.at(-1)?.content);
   expect(result).toContain("51820");
+});
+
+test("Haiku 5.5 bills the whole request at the long-prompt price past 100k prompt tokens", () => {
+  const short = costOf("claude-haiku-5-5", {
+    input: 100_000,
+    cacheWrite5m: 0,
+    cacheWrite1h: 0,
+    cacheRead: 0,
+    output: 1_000,
+  });
+  const long = costOf("claude-haiku-5-5", {
+    input: 90_000,
+    cacheWrite5m: 0,
+    cacheWrite1h: 0,
+    cacheRead: 10_001,
+    output: 1_000,
+  });
+  expect(short).toBeCloseTo((100_000 * 0.1 + 1_000 * 0.5) / 1e6, 9);
+  expect(long).toBeCloseTo((90_000 * 0.5 + 10_001 * 0.05 + 1_000 * 2.5) / 1e6, 9);
 });

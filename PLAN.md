@@ -193,7 +193,7 @@ build context (system + memory index + task)  →  call model (stream)
 |---|---|---|
 | Chat, planning, non-screen tools | `claude-sonnet-5-5` | Default brain |
 | Desktop driving (`run_desktop_task`) | `claude-opus-5-5`, effort `medium` | Native `computer_toolset_20260801`. Best screenshot reading |
-| Injection screening, thread summaries, alert triage | `claude-haiku-4-5` | Fractions of a cent per call. There is no Haiku 5.5 |
+| Injection screening, thread summaries, alert triage | `claude-haiku-5-5`, effort `low` | $0.10/$0.50 per 1M tokens up to 100k-token prompts, 5x above (whole request). Thinks by default |
 | Teach-by-showing skill writing | `claude-opus-5-5` | Infrequent |
 
 Chat requests opt into server-side fallback (`fallbacks: "default"`): if the model refuses, the API retries on a fallback model, and the spend ledger bills each model that ran at its own rates.

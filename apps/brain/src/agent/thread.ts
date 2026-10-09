@@ -12,7 +12,7 @@ import { SUMMARY_PROMPT, SYSTEM_PROMPT } from "./prompt";
 import { runTool, TOOL_PARAMS } from "./tools";
 
 export const CHAT_MODEL = "claude-sonnet-5-5";
-export const SUMMARY_MODEL = "claude-haiku-4-5";
+export const SUMMARY_MODEL = "claude-haiku-5-5";
 const EPISODE_IDLE_MS = 30 * 60_000;
 const RECENT_MESSAGES = 10;
 const MAX_STEPS = 25;
@@ -185,7 +185,9 @@ export class Thread {
     if (transcript) {
       const res = await this.d.model.create({
         model: SUMMARY_MODEL,
-        max_tokens: 2000,
+        max_tokens: 4000,
+        thinking: { type: "adaptive" },
+        output_config: { effort: "low" },
         system: SUMMARY_PROMPT,
         messages: [
           {
