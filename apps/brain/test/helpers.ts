@@ -13,6 +13,7 @@ import { Desktop } from "../src/desktop/service";
 import { EventBus, type HatbotEvent } from "../src/events";
 import { MemoryStore } from "../src/memory/store";
 import type { Notification, Notifier } from "../src/notify";
+import { Proxmox } from "../src/proxmox";
 import { SettingsStore } from "../src/settings";
 import { Spend } from "../src/spend";
 import { Tasks } from "../src/tasks/service";
@@ -28,8 +29,20 @@ class FakeNotifier implements Notifier {
 
 export const ORIGIN = "https://hatbot.test";
 
+/** Removed after the run by test/cleanup.ts. */
+export const tempDirs: string[] = [];
+const tempDir = (prefix: string) => {
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(d);
+  return d;
+};
+
 /** `model` answers the chat thread; `taskModel` answers desktop tasks and screening. */
-export async function testApp(model = new FakeModel(), taskModel = new FakeModel()) {
+export async function testApp(
+  model = new FakeModel(),
+  taskModel = new FakeModel(),
+  proxmoxEnv: Record<string, string> = {},
+) {
   let nowMs = Date.parse("2026-10-09T12:00:00Z");
   const clock = () => nowMs;
   const config = loadConfig({ HATBOT_PUBLIC_URL: ORIGIN, HATBOT_DATA_DIR: "/nonexistent" });
@@ -44,12 +57,12 @@ export async function testApp(model = new FakeModel(), taskModel = new FakeModel
   events.on((e) => seen.push(e));
   const settings = new SettingsStore(db);
   const spend = new Spend(db, settings, events, clock);
-  const memory = new MemoryStore(mkdtempSync(join(tmpdir(), "hatbot-test-mem-")));
+  const memory = new MemoryStore(tempDir("hatbot-test-mem-"));
   await memory.init();
   const thread = new Thread({ db, memory, events, spend, settings, model, clock });
   taskModel.onCreate ??= () => '{"suspected": false, "excerpt": ""}';
   const notifier = new FakeNotifier();
-  const archive = new Archive(mkdtempSync(join(tmpdir(), "hatbot-test-archive-")), clock);
+  const archive = new Archive(tempDir("hatbot-test-archive-"), clock);
   const agent = new FakeDesktop();
   const desktop = new Desktop(agent, events);
   const approvals = new Approvals(db, events, notifier, ORIGIN, clock);
@@ -68,6 +81,8 @@ export async function testApp(model = new FakeModel(), taskModel = new FakeModel
     clock,
   });
   thread.attachTasks(tasks);
+  const proxmox = new Proxmox(proxmoxEnv);
+  proxmox.pollMs = 5;
   const app = createApp({
     config,
     db,
@@ -82,6 +97,7 @@ export async function testApp(model = new FakeModel(), taskModel = new FakeModel
     approvals,
     desktop,
     archive,
+    proxmox,
   });
 
   const call = (

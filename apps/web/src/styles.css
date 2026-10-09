@@ -769,7 +769,7 @@ html[data-theme="dark"] .seg button.active {
   background: var(--danger-soft);
   color: var(--danger-text);
 }
-.task-card .thumb-wrap {
+.card .thumb-wrap {
   display: grid;
   grid-template-columns: 1fr 168px;
   gap: 12px;
@@ -1642,4 +1642,335 @@ html[data-theme="dark"] .seg button.active {
 }
 .row .field {
   flex: none;
+}
+
+/* ---------- Tasks, approvals and the live view ---------- */
+.app.insp {
+  grid-template-columns: var(--sb-w) minmax(0, 1fr) 420px;
+}
+.inspector {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 0.5px solid var(--line-strong);
+  background: var(--bg);
+}
+.insp-head {
+  height: 52px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 16px;
+  border-bottom: 0.5px solid var(--line-strong);
+  background: var(--toolbar);
+}
+.insp-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+}
+.insp-head .spacer {
+  flex: 1;
+}
+.insp-body {
+  flex: 1;
+  overflow: auto;
+  padding: 14px;
+}
+.live {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+.page .live {
+  gap: 14px;
+}
+.screen {
+  position: relative;
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #2b2d31;
+  border: 0.5px solid var(--line-strong);
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  transition: outline-color 0.2s;
+}
+.screen.empty {
+  aspect-ratio: 16 / 10;
+}
+.screen.control {
+  outline-color: var(--attention);
+}
+.screen canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  outline: none;
+}
+.screen.control canvas {
+  touch-action: none;
+  cursor: default;
+}
+.screen-note {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #d0d0d4;
+  font-size: 12.5px;
+}
+.live-keys {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  font-size: 16px;
+}
+.live-controls {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.control-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.control-banner > svg.i {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+.control-banner.attn {
+  background: var(--attention-soft);
+  color: var(--attention);
+}
+.control-banner.ask {
+  background: var(--attention-soft);
+  color: var(--text);
+}
+.control-banner.ask > svg.i {
+  color: var(--attention);
+}
+.control-banner .spacer {
+  flex: 1;
+}
+.panel {
+  background: var(--surface);
+  border-radius: 12px;
+  border: 0.5px solid var(--line-strong);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.panel .label {
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0;
+}
+.live-task {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 0;
+  text-align: left;
+  color: var(--text);
+  font-size: 13px;
+}
+.live-task b {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.live-task svg.i {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--soft);
+}
+.log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+.log li,
+.tl-step {
+  display: grid;
+  grid-template-columns: 42px 16px minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+  padding: 6px 0;
+  border-bottom: 0.5px solid var(--line);
+  font-size: 12px;
+}
+.log li:last-child,
+.tl-step:last-child {
+  border-bottom: 0;
+}
+.log .t,
+.tl-step .t {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.log svg.i,
+.tl-step > svg.i {
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+  color: var(--muted);
+}
+.log li > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.log li.attn,
+.log li.attn svg.i,
+.tl-step.tl-approval,
+.tl-step.tl-approval > svg.i,
+.tl-step.tl-takeover,
+.tl-step.tl-takeover > svg.i {
+  color: var(--attention);
+}
+.tl-step.tl-error,
+.tl-step.tl-error > svg.i {
+  color: var(--danger-text);
+}
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+.tl-step {
+  font-size: 12.5px;
+  padding: 7px 0;
+}
+.tl-text {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tl-text .shot {
+  width: 180px;
+  max-width: 100%;
+}
+.shot {
+  display: block;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 0.5px solid var(--line-strong);
+  background: var(--surface-2);
+  line-height: 0;
+}
+.shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.task-line {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  font-size: 12.5px;
+}
+.approval-text {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+}
+.approval-text p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.page.narrow {
+  max-width: 760px;
+  gap: 14px;
+}
+.btn.back svg.i {
+  transform: rotate(180deg);
+}
+.task-head {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.task-head h2 {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+.task-summary {
+  margin: 0;
+  font-family: var(--font-text);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.show-phone {
+  display: none;
+}
+/* The on-screen keyboard button is for touch screens. */
+@media (pointer: fine) {
+  .keys-btn {
+    display: none;
+  }
+}
+.row.link {
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: inherit;
+}
+.row.link:hover {
+  background: rgba(127, 127, 127, 0.06);
+}
+@media (max-width: 899px) {
+  .app.insp {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .inspector {
+    display: none;
+  }
+  .tabbar {
+    grid-template-columns: repeat(5, 1fr);
+  }
+  .card .thumb-wrap {
+    grid-template-columns: 1fr;
+  }
+  .card .thumb-wrap .shot {
+    max-width: 280px;
+  }
+  .show-phone {
+    display: grid;
+  }
 }

@@ -1,6 +1,8 @@
 import type { ApiToken, AppSettings, CreateTokenResponse, Limits } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
+import { Icon } from "../icons";
+import { navigate } from "../router";
 import { setPaused, useStore } from "../store";
 import { getTheme, setTheme, type Theme } from "../theme";
 
@@ -84,6 +86,17 @@ export function Settings({
                 ))}
               </div>
             </div>
+          </div>
+        </section>
+
+        <section className="group show-phone">
+          <div className="group-box">
+            <button type="button" className="row link" onClick={() => navigate("/spend")}>
+              <div className="txt">
+                <b>Spend</b>
+              </div>
+              <Icon name="chevron" className="chev" />
+            </button>
           </div>
         </section>
 
@@ -212,9 +225,87 @@ export function Settings({
                 {paused ? "Resume" : "Pause all"}
               </button>
             </div>
+            <RollbackRow toast={toast} />
           </div>
         </section>
       </div>
     </section>
+  );
+}
+
+type Snapshot = { name: string; description: string; createdAt: string | null };
+
+const snapLabel = (s: Snapshot) =>
+  s.createdAt
+    ? new Date(s.createdAt).toLocaleString("en-GB", {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : s.name;
+
+/** Rolls the desktop back to a nightly snapshot through the Proxmox API (PLAN.md §8). */
+function RollbackRow({ toast }: { toast: (t: string) => void }) {
+  const [snaps, setSnaps] = useState<Snapshot[] | null>(null);
+  const [error, setError] = useState("");
+  const [picked, setPicked] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api<{ configured: boolean; snapshots: Snapshot[] }>("/desktop/snapshots").then(
+      (r) => {
+        if (!r.configured) return;
+        setSnaps(r.snapshots);
+        setPicked(r.snapshots[0]?.name ?? "");
+      },
+      (err) => {
+        setSnaps([]);
+        setError(err instanceof ApiError ? err.message : "Couldn't reach Proxmox");
+      },
+    );
+  }, []);
+
+  if (!snaps) return null;
+  const rollback = async () => {
+    const snap = snaps.find((s) => s.name === picked);
+    if (!snap) return;
+    if (!confirm(`Roll the desktop back to ${snapLabel(snap)}? Everything since then is lost.`))
+      return;
+    setBusy(true);
+    try {
+      await api("/desktop/rollback", { body: { name: snap.name } });
+      toast("Desktop rolled back");
+    } catch (err) {
+      toast(err instanceof ApiError ? err.message : "Couldn't roll back");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="row">
+      <div className="txt">
+        <b>Roll back desktop</b>
+        {error && <span className="form-error">{error}</span>}
+      </div>
+      {snaps.length > 0 ? (
+        <>
+          <select value={picked} onChange={(e) => setPicked(e.target.value)} disabled={busy}>
+            {snaps.map((s) => (
+              <option key={s.name} value={s.name}>
+                {snapLabel(s)}
+              </option>
+            ))}
+          </select>
+          <button type="button" className="btn sm danger-text" disabled={busy} onClick={rollback}>
+            {busy ? "Rolling back…" : "Roll back"}
+          </button>
+        </>
+      ) : (
+        !error && <span className="val">No snapshots yet</span>
+      )}
+    </div>
   );
 }

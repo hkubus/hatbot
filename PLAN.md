@@ -64,7 +64,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 | Teach-by-showing | Record your takeover session, then Opus writes a markdown skill you review |
 | Logs | Full task timelines, **kept forever** (screenshots as WebP on the HDD pool) |
 | Backups | **Proxmox Backup Server** backs up both guests, including the archive mount |
-| Stack | Bun + Hono + SQLite · React + Vite PWA · noVNC · Radix primitives + CSS variables · Biome · `bun test` |
+| Stack | Bun + Hono + SQLite · React + Vite PWA · MJPEG live view (ffmpeg → WS → canvas) · Radix primitives + CSS variables · Biome · `bun test` |
 | Repo | Bun-workspaces monorepo `kubus/hatbot`, private, on Forgejo `git.gaycats.ovh` |
 | Exposure | `hatbot.gaycats.ovh`. You handle the tunnel, TLS and reverse proxy; Hatbot serves plain HTTP on the LAN |
 | Auth | Single user, password + TOTP; API tokens for the future iOS app |
@@ -118,22 +118,24 @@ Everything valuable lives in the brain, and the brain only ever sees *pixels and
 ## 4. Components
 
 ### 4.1 `apps/brain` — Bun + Hono
-- **HTTP API + WebSocket**: REST for resources, plus one WS per client for live events (task updates, chat streaming, approvals, live-view frames proxied from VNC). See §8.
+- **HTTP API + WebSocket**: REST for resources, plus one WS per client for live events (task updates, chat streaming, approvals). The live view has its own WS. See §8.
 - **Agent runtime**: the custom loop (§5).
 - **Scheduler**: cron expressions and one-shot timers, stored in SQLite and run in-process with catch-up on restart.
 - **Trigger ingress**: `POST /hooks/:id`, checked by HMAC signature, plus an Uptime Kuma adapter.
 - **Tool host**: the built-in tools (§5.5) and an MCP client (stdio + streamable HTTP).
 - **Policy engine**: trust tracking, approval gates, spend enforcement (§6).
-- **Live-view proxy**: a WS↔TCP bridge to the desktop's VNC, for noVNC. It also parses the client's VNC input messages (pointer and key events) to record teach-by-showing sessions.
+- **Live-view relay**: JPEG frames from desktop-agent out to the browser, and your pointer and key events in while you have control. M5 records these input events for teach-by-showing. (noVNC was the first plan; it's MPL-2.0, so the view is our own MJPEG stream.)
 - **Notifier**: publishes to ntfy, including action buttons.
 - **Storage**: SQLite (WAL) on SSD; `memory/` git repo on SSD; `/archive` (screenshots, raw transcripts) on the HDD mount.
 
 ### 4.2 `apps/desktop-agent` — tiny Bun daemon inside the desktop LXC
-- `POST /screenshot`: captures the X display, scales it to 1280×800 and returns PNG.
+- `POST /screenshot`: captures the X display (1280×800) and returns lossless WebP.
 - `POST /action`: runs the computer-use actions (click, drag, type, key, scroll, hold_key, mouse down/up, cursor_position, wait) through `xdotool`.
 - `POST /zoom`: crops a region at full resolution.
 - `GET /context`: the current Chromium URL and title, read through CDP on localhost. Used for logging and the trust tracking in §6.1.
+- `POST /inspect`: the element under a point (or the focused one), for the consequential-click check in §6.1.
 - `POST /lock` / `/unlock`: input lock used during takeover.
+- `WS /live`: an MJPEG stream (ffmpeg x11grab, 5 fps) while someone watches, and your input while you have control.
 - Auth: a shared bearer secret. The desktop's firewall only accepts the brain, and the host's bridge filter drops the desktop's replies to anyone else.
 - Services: `Xvnc :1` (TigerVNC, 1280×800), XFCE (lightweight), Chromium with a persistent profile, `desktop-agent`. All managed by systemd.
 
@@ -318,9 +320,9 @@ REST + JSON under `/api/v1`. One WebSocket at `/api/v1/stream` for events. A gen
 |---|---|
 | Auth | `POST /auth/login` (password + TOTP) → session cookie (web) or bearer token (apps) · `POST /auth/logout` · `GET/POST/DELETE /tokens` |
 | Thread | `GET /thread/messages?before=` · `POST /thread/messages` (streams the reply over WS) |
-| Tasks | `GET /tasks?status=` · `GET /tasks/:id` (+ steps) · `POST /tasks/:id/cancel` · `POST /tasks/:id/budget` |
+| Tasks | `GET /tasks?status=` · `GET /tasks/:id` (+ steps) · `POST /tasks/:id/cancel` · `GET /tasks/:id/screens/:stepId` (a raised budget is an approval) |
 | Approvals | `GET /approvals?pending` · `POST /approvals/:id` `{decision}` · `POST /approvals/:id/token-decision` (ntfy) |
-| Desktop | `GET /desktop/status` · `POST /desktop/takeover` · `POST /desktop/handback` · `WS /desktop/vnc` (noVNC) · `POST /desktop/snapshot` |
+| Desktop | `GET /desktop/status` · `POST /desktop/takeover` · `POST /desktop/handback` · `WS /desktop/live` (frames + input) · `GET /desktop/snapshots` · `POST /desktop/rollback` |
 | Schedules/triggers | CRUD at `/schedules`, `/triggers` |
 | Hooks | `POST /hooks/:id` (HMAC) · `POST /hooks/kuma/:id` |
 | Memory | `GET /memory/tree` · `GET/PUT /memory/file?path=` · `GET /memory/log` · `GET /memory/diff/:sha` · `POST /memory/revert/:sha` |
@@ -328,7 +330,7 @@ REST + JSON under `/api/v1`. One WebSocket at `/api/v1/stream` for events. A gen
 | Teach | `POST /teach/start` · `POST /teach/stop` → draft skill · `POST /teach/:id/save` |
 | Admin | `POST /pause-all` · `POST /resume` · `GET/PUT /settings` · CRUD `/mcp-servers` |
 
-**WS events**: `message.delta`, `message.done`, `task.updated`, `task.step`, `approval.created`, `approval.resolved`, `desktop.state`, `spend.updated`, `memory.committed`.
+**WS events**: `message.created`, `message.delta`, `message.progress`, `message.done`, `task.updated`, `task.step`, `task.progress`, `approval.created`, `approval.resolved`, `desktop.state`, `spend.updated`, `memory.committed`, `paused`.
 
 ---
 
@@ -362,7 +364,7 @@ The app itself is installed by `infra/deploy.sh`, run on the host for every upda
 - **Never**: config change, allocate, console, migrate, or destroy rights. `infra/verify.sh` checks this.
 
 ### 9.4 Exposure (you own this part)
-- **Your reverse proxy** → `http://<brain-LAN-IP>:8080` for `hatbot.gaycats.ovh`. It must pass WebSockets (`/api/v1/stream`, `/api/v1/desktop/vnc`). Hatbot trusts `X-Forwarded-*` from your proxy's IP only (`HATBOT_TRUSTED_PROXIES`, asked by `deploy.sh`).
+- **Your reverse proxy** → `http://<brain-LAN-IP>:8080` for `hatbot.gaycats.ovh`. It must pass WebSockets (`/api/v1/stream`, `/api/v1/desktop/live`). Hatbot trusts `X-Forwarded-*` from your proxy's IP only (`HATBOT_TRUSTED_PROXIES`, asked by `deploy.sh`).
 - **ntfy** runs on your own server, separate from Hatbot. The brain publishes to it with a token whose user may write to Hatbot's topic (`deploy.sh` asks for the URL, topic and token). Set `upstream-base-url: https://ntfy.sh` on that server so iPhone notifications arrive instantly; only a "wake up and fetch" ping passes through ntfy.sh, never the message content.
 - **Public paths needed**: the UI, the API, and `/api/v1/hooks/*` for webhooks.
 
@@ -401,12 +403,12 @@ The visual reference is the clickable prototype in [`prototype/`](prototype/). O
 
 ### 10.3 Layout
 - **Desktop (≥ 900px)**:
-  - **Sidebar** (240px): Chat, Tasks, Schedules & Triggers, Memory, Spend, Settings. Status at the bottom: desktop online, spend today.
+  - **Sidebar** (240px): Chat, Tasks (with a count of what needs you), Live, Schedules & Triggers, Memory, Spend, Settings.
   - **Centre**: a toolbar with the title, status and *Pause all*, then the content.
-  - **Side panel** (420px, collapsible): **Live** (the desktop view) and **Details** (the selected task or approval).
+  - **Side panel** (420px, toggled from the toolbar): **Live**. Task details are their own page (`/tasks/:id`).
 - **Phone (< 900px)**:
-  - A single column with an iOS-style **bottom tab bar** (Chat, Tasks, Live, Memory, More).
-  - The side panel and live view open as **full-screen sheets**.
+  - A single column with an iOS-style **bottom tab bar** (Chat, Tasks, Live, Memory, Settings). Spend opens from Settings.
+  - Live is a full page; a Keyboard button opens the phone's keyboard during takeover.
 
 ### 10.4 Chat cards
 - **Task**: title, origin, lane, model, steps, cost, status, live thumbnail while running.
@@ -451,13 +453,14 @@ Each milestone ends with a working, demo-able system.
 - **Done when**: you can chat with Hatbot from a phone and laptop, it remembers things in markdown, and spending is enforced.
 
 ### M2 — Desktop + safety
-- [ ] desktop-agent daemon; `run_desktop_task` subloop on Opus with `computer_toolset_20260801`
-- [ ] Tasks: chat cards, Tasks view, task timelines + archive writer (from M1; tasks first exist here)
-- [ ] Screen-lane queue, release on wait, re-check screen on resume
-- [ ] noVNC live view through the brain proxy; Take over / Hand back; `request_takeover`
-- [ ] Trust tracking, approval gates, `confirm_intent`, Haiku injection screening
-- [ ] ntfy notifier (publishing to your ntfy server) + signed action buttons
-- [ ] Nightly desktop snapshots + "Roll back desktop" in Settings
+- [x] desktop-agent daemon; `run_desktop_task` subloop on Opus with `computer_toolset_20260801`
+- [x] Tasks: chat cards, Tasks view, task timelines + archive writer (from M1; tasks first exist here)
+- [x] Screen-lane queue, release on wait, re-check screen on resume
+- [x] Live view (MJPEG, relayed by the brain); Take over / Hand back; `request_takeover`
+- [x] Trust tracking, approval gates, `confirm_intent`, Haiku injection screening
+- [x] ntfy notifier (publishing to your ntfy server) + signed action buttons
+- [x] Nightly desktop snapshots + "Roll back desktop" in Settings (Proxmox API, pinned TLS fingerprint)
+- [ ] Tried live: "book a table at X" with an approval from the lock screen
 - **Done when**: "book a table at X" works end to end, with an approval from your lock screen.
 
 ### M3 — Triggers
@@ -475,7 +478,7 @@ Each milestone ends with a working, demo-able system.
 - **Done when**: a Kuma "down" alert at 3am is fixed or diagnosed before you wake up.
 
 ### M5 — Teach-by-showing
-- [ ] Record mode in takeover (VNC input events + screenshots + CDP URL/title)
+- [ ] Record mode in takeover (live-view input events + screenshots + CDP URL/title)
 - [ ] Opus turns a recording into a draft `skills/<name>.md` with placeholders → you review and save
 - [ ] Skills index in the memory INDEX; Hatbot picks a skill up when a task matches
 - **Done when**: you demo a chore once and Hatbot repeats it on a schedule.

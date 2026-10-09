@@ -1,5 +1,13 @@
-// Live client state: the thread, pause state and spend, fed by the WebSocket.
-import { API_PREFIX, type HatbotEvent, type ThreadMessage } from "@hatbot/shared";
+// Live client state: the thread, tasks, approvals, the desktop, pause state and spend, fed by the WebSocket.
+import {
+  API_PREFIX,
+  type Approval,
+  type DesktopState,
+  type HatbotEvent,
+  type Task,
+  type TaskStep,
+  type ThreadMessage,
+} from "@hatbot/shared";
 import { useSyncExternalStore } from "react";
 import { api } from "./api";
 
@@ -13,6 +21,13 @@ type State = {
   monthUsd: number | null;
   memoryVersion: number;
   connected: boolean;
+  tasks: Record<number, Task>;
+  /** Steps of the tasks that have been opened or shown as a card. */
+  steps: Record<number, TaskStep[]>;
+  /** Latest progress note per running task. */
+  taskProgress: Record<number, string>;
+  approvals: Record<number, Approval>;
+  desktop: DesktopState | null;
 };
 
 let state: State = {
@@ -24,6 +39,11 @@ let state: State = {
   monthUsd: null,
   memoryVersion: 0,
   connected: false,
+  tasks: {},
+  steps: {},
+  taskProgress: {},
+  approvals: {},
+  desktop: null,
 };
 const listeners = new Set<() => void>();
 const set = (patch: Partial<State>) => {
@@ -72,6 +92,74 @@ export function bumpMemory() {
   set({ memoryVersion: state.memoryVersion + 1 });
 }
 
+export async function loadTask(id: number) {
+  const { task, steps } = await api<{ task: Task; steps: TaskStep[] }>(`/tasks/${id}`);
+  set({ tasks: { ...state.tasks, [id]: task }, steps: { ...state.steps, [id]: steps } });
+}
+
+const requested = new Set<string>();
+/** Loads a task or approval the first time something shows it. */
+export function ensureTask(id: number) {
+  if (state.tasks[id] && state.steps[id]) return;
+  if (requested.has(`t${id}`)) return;
+  requested.add(`t${id}`);
+  loadTask(id).catch(() => requested.delete(`t${id}`));
+}
+export function ensureApproval(id: number) {
+  if (state.approvals[id] || requested.has(`a${id}`)) return;
+  requested.add(`a${id}`);
+  api<Approval>(`/approvals/${id}`).then(
+    (a) => set({ approvals: { ...state.approvals, [a.id]: a } }),
+    () => requested.delete(`a${id}`),
+  );
+}
+
+export async function loadTasks(status?: "active" | "done") {
+  const list = await api<Task[]>(`/tasks${status ? `?status=${status}` : ""}`);
+  const tasks = { ...state.tasks };
+  for (const t of list) tasks[t.id] = t;
+  set({ tasks });
+  return list.map((t) => t.id);
+}
+
+async function loadLive() {
+  const [pending, desktop] = await Promise.all([
+    api<Approval[]>("/approvals?pending=1"),
+    api<DesktopState>("/desktop/status").catch(() => null),
+  ]);
+  const approvals = { ...state.approvals };
+  // Anything we thought pending but the server doesn't list was decided while we were away.
+  for (const a of Object.values(approvals))
+    if (a.status === "pending") requested.delete(`a${a.id}`);
+  for (const a of Object.values(approvals))
+    if (a.status === "pending" && !pending.some((p) => p.id === a.id)) delete approvals[a.id];
+  for (const a of pending) approvals[a.id] = a;
+  set({ approvals, desktop });
+  for (const t of Object.values(state.tasks))
+    if (state.steps[t.id] && t.finishedAt === null) void loadTask(t.id).catch(() => {});
+}
+
+export async function decideApproval(id: number, decision: "approve" | "deny") {
+  const a = await api<Approval>(`/approvals/${id}`, { body: { decision } });
+  set({ approvals: { ...state.approvals, [a.id]: a } });
+}
+
+export async function cancelTask(id: number) {
+  await api(`/tasks/${id}/cancel`, { body: {} });
+}
+
+export async function takeover() {
+  set({ desktop: await api<DesktopState>("/desktop/takeover", { body: {} }) });
+}
+export async function handback() {
+  set({ desktop: await api<DesktopState>("/desktop/handback", { body: {} }) });
+}
+
+/** Approvals waiting for you, plus a takeover request. */
+export const needsYou = (s: State) =>
+  Object.values(s.approvals).filter((a) => a.status === "pending").length +
+  (s.desktop?.request ? 1 : 0);
+
 type Toast = (text: string) => void;
 let toast: Toast = () => {};
 export const onToast = (fn: Toast) => {
@@ -106,6 +194,30 @@ function apply(e: HatbotEvent) {
       return set({ memoryVersion: state.memoryVersion + 1 });
     case "paused":
       return set({ paused: e.paused });
+    case "task.updated": {
+      const { [e.task.id]: _, ...taskProgress } = state.taskProgress;
+      return set({
+        tasks: { ...state.tasks, [e.task.id]: e.task },
+        taskProgress: e.task.status === "running" ? state.taskProgress : taskProgress,
+      });
+    }
+    case "task.step": {
+      const list = state.steps[e.step.taskId];
+      if (!list) return;
+      const steps = list.some((x) => x.id === e.step.id)
+        ? list.map((x) => (x.id === e.step.id ? e.step : x))
+        : [...list, e.step];
+      return set({ steps: { ...state.steps, [e.step.taskId]: steps } });
+    }
+    case "task.progress": {
+      const text = ((state.taskProgress[e.taskId] ?? "") + e.text).slice(-400);
+      return set({ taskProgress: { ...state.taskProgress, [e.taskId]: text } });
+    }
+    case "approval.created":
+    case "approval.resolved":
+      return set({ approvals: { ...state.approvals, [e.approval.id]: e.approval } });
+    case "desktop.state":
+      return set({ desktop: e.state });
   }
 }
 
@@ -120,6 +232,7 @@ export function connect() {
   socket = new WebSocket(url);
   socket.onopen = () => {
     if (retry > 0) void loadThread();
+    void loadLive().catch(() => {});
     retry = 0;
     set({ connected: true });
   };

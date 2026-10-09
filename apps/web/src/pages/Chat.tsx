@@ -4,6 +4,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Icon } from "../icons";
 import { getState, loadEarlier, loadThread, sendMessage, setPaused, useStore } from "../store";
+import { ApprovalCard, TaskCard } from "../tasks";
 
 const time = (iso: string) =>
   new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
@@ -57,6 +58,26 @@ function Message({
       </div>
     );
   }
+  if (m.kind === "task" && m.taskId) {
+    return (
+      <div className={`msg ${animate ? "new" : ""}`}>
+        <div className="body">
+          <TaskCard taskId={m.taskId} />
+        </div>
+        <span className="time">{time(m.createdAt)}</span>
+      </div>
+    );
+  }
+  if (m.kind === "approval" && m.approvalId) {
+    return (
+      <div className={`msg ${animate ? "new" : ""}`}>
+        <div className="body">
+          <ApprovalCard approvalId={m.approvalId} />
+        </div>
+        <span className="time">{time(m.createdAt)}</span>
+      </div>
+    );
+  }
   const streaming = m.status === "streaming";
   const note = progress?.trim().split("\n").filter(Boolean).at(-1);
   return (
@@ -87,6 +108,7 @@ export function Chat() {
   const [error, setError] = useState("");
   const scroller = useRef<HTMLElement>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const thread = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   // Only messages that arrive after the first paint animate in.
   const animateFrom = useRef<number>(Number.POSITIVE_INFINITY);
@@ -102,6 +124,17 @@ export function Chat() {
     const el = scroller.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   });
+  // Cards and screenshots load after the messages and grow the thread; keep following.
+  useEffect(() => {
+    const el = scroller.current;
+    const content = thread.current;
+    if (!el || !content) return;
+    const ro = new ResizeObserver(() => {
+      if (stick.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, []);
 
   const onScroll = () => {
     const el = scroller.current;
@@ -157,7 +190,7 @@ export function Chat() {
               </button>
             </div>
           )}
-          <div className="thread">
+          <div className="thread" ref={thread}>
             {hasEarlier && (
               <button type="button" className="btn sm ghost load-earlier" onClick={earlier}>
                 Earlier messages

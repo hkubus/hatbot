@@ -7,6 +7,7 @@ import type { Db } from "./db";
 import type { Desktop } from "./desktop/service";
 import type { EventBus } from "./events";
 import type { MemoryStore } from "./memory/store";
+import type { Proxmox } from "./proxmox";
 import type { SettingsStore } from "./settings";
 import type { Spend } from "./spend";
 import type { Tasks } from "./tasks/service";
@@ -26,6 +27,7 @@ export type Deps = {
   approvals: Approvals;
   desktop: Desktop;
   archive: Archive;
+  proxmox: Proxmox;
 };
 
 export type AppEnv = {

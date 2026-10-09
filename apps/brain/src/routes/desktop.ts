@@ -1,8 +1,14 @@
 import type { LiveInput } from "@hatbot/shared/desktop";
 import { type Context, Hono } from "hono";
 import { upgradeWebSocket } from "hono/bun";
+import { z } from "zod";
 import { principalOf, requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
+import { ProxmoxError } from "../proxmox";
+import { json } from "./util";
+
+/** Holds the screen lane while the desktop rolls back, so no task starts on it. */
+const ROLLBACK = -1;
 
 const LIVE_INPUT = new Set(["move", "button", "wheel", "key"]);
 
@@ -76,4 +82,37 @@ export const desktopRoutes = new Hono<AppEnv>()
       return c.json({ error: "The desktop isn't answering." }, 503);
     }
     return c.json(c.var.desktop.get());
+  })
+  .get("/desktop/snapshots", async (c) => {
+    const { proxmox } = c.var;
+    if (!proxmox.configured) return c.json({ configured: false, snapshots: [] });
+    try {
+      return c.json({ configured: true, snapshots: await proxmox.desktopSnapshots() });
+    } catch (err) {
+      return c.json({ error: err instanceof ProxmoxError ? err.message : "Proxmox failed" }, 502);
+    }
+  })
+  // "Roll back desktop" in Settings (PLAN.md §8): back to a nightly snapshot, then started again.
+  .post("/desktop/rollback", json(z.object({ name: z.string().min(1).max(40) })), async (c) => {
+    const { proxmox, tasks, desktop } = c.var;
+    if (!proxmox.configured) return c.json({ error: "Proxmox isn't set up." }, 503);
+    if (tasks.lane.holderId === ROLLBACK) return c.json({ error: "Already rolling back." }, 409);
+    if (tasks.list({ status: "active" }).some((t) => t.lane === "screen"))
+      return c.json({ error: "A task is using the desktop. Cancel it first." }, 409);
+    if (desktop.get().control === "owner")
+      return c.json({ error: "Hand the desktop back first." }, 409);
+    await tasks.lane.acquire(ROLLBACK, new AbortController().signal);
+    try {
+      await proxmox.rollbackDesktop(c.req.valid("json").name);
+    } catch (err) {
+      const status = err instanceof ProxmoxError && err.status === 400 ? 400 : 502;
+      return c.json(
+        { error: err instanceof ProxmoxError ? err.message : "Rollback failed" },
+        status,
+      );
+    } finally {
+      tasks.lane.release(ROLLBACK);
+    }
+    await desktop.refresh();
+    return c.json(desktop.get());
   });

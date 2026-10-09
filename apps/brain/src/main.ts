@@ -12,6 +12,7 @@ import { Desktop } from "./desktop/service";
 import { EventBus } from "./events";
 import { MemoryStore } from "./memory/store";
 import { NtfyNotifier } from "./notify";
+import { Proxmox } from "./proxmox";
 import { SettingsStore } from "./settings";
 import { Spend } from "./spend";
 import { Tasks } from "./tasks/service";
@@ -68,6 +69,7 @@ const app = createApp({
   approvals,
   desktop,
   archive,
+  proxmox: new Proxmox(),
 });
 const web = webHandler(config.webDir);
 const server = Bun.serve({

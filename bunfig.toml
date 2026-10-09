@@ -1,0 +1,2 @@
+[test]
+preload = ["./apps/brain/test/cleanup.ts"]
