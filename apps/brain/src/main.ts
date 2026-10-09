@@ -1,7 +1,19 @@
 import { createApp } from "./app";
+import { AuthService, FailureLimiter } from "./auth/service";
+import { loadConfig } from "./config";
+import { openDb } from "./db";
 
-const port = Number(process.env.PORT ?? 8080);
-const hostname = process.env.HOST ?? "127.0.0.1";
+const config = loadConfig();
+const db = openDb(config.dbPath);
+const auth = new AuthService(db);
+const loginLimits = {
+  perIp: new FailureLimiter(10, 15 * 60_000),
+  global: new FailureLimiter(50, 15 * 60_000),
+};
 
-const server = Bun.serve({ port, hostname, fetch: createApp().fetch });
+const app = createApp({ config, db, auth, loginLimits });
+const server = Bun.serve({ hostname: config.host, port: config.port, fetch: app.fetch });
 console.log(`hatbot brain listening on http://${server.hostname}:${server.port}`);
+if (!auth.isSetUp()) {
+  console.log(`First run: open ${config.publicUrl}/setup and enter setup code ${auth.setupCode}`);
+}
