@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Hatbot: provision the brain container (PLAN.md §4.1, §7, §9).
 # Runs inside hatbot-brain as root. host-setup.sh pushes and starts it; safe to re-run.
+# The app and its service unit come later, from deploy.sh.
 #   NTFY_BASE_URL  public URL of ntfy (e.g. https://ntfy.gaycats.ovh)
 #   DESKTOP_IP     the desktop's IP; it may not open connections to the brain
 
@@ -130,33 +131,5 @@ table inet filter {
 EOF
 systemctl enable -q nftables
 systemctl restart nftables
-
-say "Service unit (enabled in M1, once the app is deployed)"
-cat >/etc/systemd/system/hatbot-brain.service <<'EOF'
-[Unit]
-Description=Hatbot brain
-After=network-online.target ntfy.service
-Wants=network-online.target
-
-[Service]
-User=hatbot
-Group=hatbot
-WorkingDirectory=/var/lib/hatbot/app/apps/brain
-EnvironmentFile=-/etc/hatbot/secrets.env
-EnvironmentFile=-/etc/hatbot/proxmox.env
-EnvironmentFile=-/etc/hatbot/desktop.env
-EnvironmentFile=-/etc/hatbot/ntfy.env
-ExecStart=/usr/local/bin/bun src/main.ts
-Restart=on-failure
-NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectSystem=strict
-ProtectHome=yes
-ReadWritePaths=/var/lib/hatbot /archive
-
-[Install]
-WantedBy=multi-user.target
-EOF
-systemctl daemon-reload
 
 say "Brain provisioned"

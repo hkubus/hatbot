@@ -107,25 +107,6 @@ write_file() {
   ok "wrote $path"
 }
 
-# push_secret CTID PATH, content on stdin. Written mode 600; the secret never lands on the host's disk outside a mktemp file.
-push_secret() {
-  local id=$1 path=$2 tmp
-  if ((DRY_RUN)); then
-    cat >/dev/null
-    printf '   %s+ write secret %s in CT %s (mode 600)%s\n' "$dim" "$path" "$id" "$rst"
-    return
-  fi
-  tmp=$(mktemp)
-  cat >"$tmp"
-  pct exec "$id" -- install -d -m 750 "$(dirname "$path")"
-  pct push "$id" "$tmp" "$path" --perms 600
-  rm -f "$tmp"
-  ok "wrote $path in CT $id"
-}
-
-ct_running() { pct status "$1" 2>/dev/null | grep -q 'status: running'; }
-ct_has_file() { ((!DRY_RUN)) && pct exec "$1" -- test -s "$2" 2>/dev/null; }
-
 wait_ct() {
   local id=$1 _
   for _ in $(seq 1 45); do

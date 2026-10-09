@@ -1,4 +1,4 @@
-# Shared helpers for host-setup.sh and verify.sh. Sourced, not executed.
+# Shared helpers for host-setup.sh, verify.sh and deploy.sh. Sourced, not executed.
 # Only uses tools that ship with Proxmox VE (bash, perl with JSON::PP, iproute2).
 # shellcheck shell=bash
 
@@ -17,6 +17,25 @@ die() {
   printf '%serror:%s %s\n' "$red" "$rst" "$*" >&2
   exit 1
 }
+
+# push_secret CTID PATH, content on stdin. Written mode 600; the secret never lands on the host's disk outside a mktemp file.
+push_secret() {
+  local id=$1 path=$2 tmp
+  if ((${DRY_RUN:-0})); then
+    cat >/dev/null
+    printf '   %s+ write secret %s in CT %s (mode 600)%s\n' "$dim" "$path" "$id" "$rst"
+    return
+  fi
+  tmp=$(mktemp)
+  cat >"$tmp"
+  pct exec "$id" -- install -d -m 750 "$(dirname "$path")"
+  pct push "$id" "$tmp" "$path" --perms 600
+  rm -f "$tmp"
+  ok "wrote $path in CT $id"
+}
+
+ct_running() { pct status "$1" 2>/dev/null | grep -q 'status: running'; }
+ct_has_file() { ((!${DRY_RUN:-0})) && pct exec "$1" -- test -s "$2" 2>/dev/null; }
 
 # Prints the values of KEY from a JSON array of objects (or a single object) on stdin.
 json_values() {

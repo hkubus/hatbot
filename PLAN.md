@@ -192,8 +192,10 @@ build context (system + memory index + task)  →  call model (stream)
 |---|---|---|
 | Chat, planning, non-screen tools | `claude-sonnet-5-5` | Default brain |
 | Desktop driving (`run_desktop_task`) | `claude-opus-5-5`, effort `medium` | Native `computer_toolset_20260801`. Best screenshot reading |
-| Injection screening, thread summaries, alert triage | `claude-haiku-5-5` | Fractions of a cent per call |
+| Injection screening, thread summaries, alert triage | `claude-haiku-4-5` | Fractions of a cent per call. There is no Haiku 5.5 |
 | Teach-by-showing skill writing | `claude-opus-5-5` | Infrequent |
+
+Chat requests opt into server-side fallback (`fallbacks: "default"`): if the model refuses, the API retries on a fallback model, and the spend ledger bills each model that ran at its own rates.
 
 Later, run a small test on real tasks to see whether Sonnet 5.5 can drive the desktop well enough to save money. Check tool versions and model IDs against the live docs at implementation time.
 
@@ -353,13 +355,15 @@ How to run it: `infra/README.md`. Start with `--dry-run`. Settings are saved to 
 8. **Backups**: check which PBS/vzdump jobs cover both guests; offer to add them to a job that lists VMIDs, or print what to change.
 9. **Finish**: print a summary and the reverse-proxy targets. Then run `infra/verify.sh`.
 
+The app itself is installed by `infra/deploy.sh`, run on the host for every update. It sends a `git archive` of a commit to the brain, which installs it as a new release under `/var/lib/hatbot/releases`, builds the web app, writes and restarts `hatbot-brain.service`, and goes back to the previous release if the health check fails. The first run asks for the public URL, the reverse proxy's IP and the Anthropic API key.
+
 ### 9.3 Proxmox roles
 - **`HatbotOps` on `/`**: `VM.Audit`, `VM.PowerMgmt`, `Sys.Audit`, `Datastore.Audit`. Hatbot can see and start/stop/restart every guest.
 - **`HatbotSnapshots` on `/pool/hatbot`**: `VM.Audit`, `VM.Snapshot`, `VM.Snapshot.Rollback`. Only Hatbot's own guests.
 - **Never**: config change, allocate, console, migrate, or destroy rights. `infra/verify.sh` checks this.
 
 ### 9.4 Exposure (you own this part)
-- **Your reverse proxy** → `http://<brain-LAN-IP>:8080` for `hatbot.gaycats.ovh`. It must pass WebSockets (`/api/v1/stream`, `/api/v1/desktop/vnc`). Hatbot trusts `X-Forwarded-*` from your proxy's IP only.
+- **Your reverse proxy** → `http://<brain-LAN-IP>:8080` for `hatbot.gaycats.ovh`. It must pass WebSockets (`/api/v1/stream`, `/api/v1/desktop/vnc`). Hatbot trusts `X-Forwarded-*` from your proxy's IP only (`HATBOT_TRUSTED_PROXIES`, asked by `deploy.sh`).
 - **ntfy** → `http://<brain-LAN-IP>:8081` on its own hostname (e.g. `ntfy.gaycats.ovh`). Set `upstream-base-url: https://ntfy.sh` in ntfy's config so iPhone notifications arrive instantly; only a "wake up and fetch" ping passes through ntfy.sh, never the message content.
 - **Public paths needed**: the UI, the API, and `/api/v1/hooks/*` for webhooks.
 
@@ -430,23 +434,26 @@ Each milestone ends with a working, demo-able system.
 - [x] `git init`, monorepo skeleton (Bun workspaces, Biome, tsconfig, `bun test`), private repo `kubus/hatbot` on Forgejo
 - [ ] CI via Forgejo Actions, if a runner exists
 - [x] `infra/host-setup.sh` written
-- [ ] … reviewed with you, then run on the host
-- [x] `infra/brain-provision.sh` (Bun, git, ntfy, memory repo, systemd unit) and `infra/desktop-provision.sh` (Xvnc, XFCE, Chromium; desktop-agent itself comes in M2)
+- [x] … reviewed with you, then run on the host
+- [x] `infra/brain-provision.sh` (Bun, git, ntfy, memory repo, firewall) and `infra/desktop-provision.sh` (Xvnc, XFCE, Chromium; desktop-agent itself comes in M2)
 - [x] `infra/verify.sh`: brain reaches the desktop; desktop can't reach the LAN or the host; token permissions are correct; snapshots and backups are set up
 - [ ] `verify.sh` passes on the host
 - **Done when**: both guests are up, isolated, and backed up by PBS.
 
 ### M1 — Brain core + UI shell
-- [ ] Hono API, SQLite schema + migrations, password + TOTP auth, API tokens
-- [ ] Custom agent loop (Sonnet), streaming, caching, spend ledger + limits
-- [ ] Episodic thread (§5.3), `search_history`, thread summaries (Haiku)
-- [ ] Memory repo + tools + UI (tree, editor, history, diff, revert)
-- [ ] Web PWA built from the prototype: shell, chat with cards, Tasks, Memory, Spend, Settings
-- [ ] Task timelines + archive writer; Pause all
+- [x] Hono API, SQLite schema + migrations, password + TOTP auth, API tokens
+- [x] Custom agent loop (Sonnet), streaming, caching, spend ledger + limits
+- [x] Episodic thread (§5.3), `search_history`, thread summaries (Haiku)
+- [x] Memory repo + tools + UI (tree, editor, history, diff, revert)
+- [x] Web PWA built from the prototype: shell, chat, Memory, Spend, Settings
+- [x] Pause all
+- [x] `infra/deploy.sh`: releases, health check, rollback
+- [ ] Deployed and tried from a phone and a laptop
 - **Done when**: you can chat with Hatbot from a phone and laptop, it remembers things in markdown, and spending is enforced.
 
 ### M2 — Desktop + safety
 - [ ] desktop-agent daemon; `run_desktop_task` subloop on Opus with `computer_toolset_20260801`
+- [ ] Tasks: chat cards, Tasks view, task timelines + archive writer (from M1; tasks first exist here)
 - [ ] Screen-lane queue, release on wait, re-check screen on resume
 - [ ] noVNC live view through the brain proxy; Take over / Hand back; `request_takeover`
 - [ ] Trust tracking, approval gates, `confirm_intent`, Haiku injection screening
