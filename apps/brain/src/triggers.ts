@@ -3,6 +3,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { API_PREFIX, type Task, type Trigger, type TriggerWithSecret } from "@hatbot/shared";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
+import type { Notifier } from "./notify";
 import type { SettingsStore } from "./settings";
 import type { Tasks } from "./tasks/service";
 
@@ -50,6 +51,7 @@ export class Triggers {
     private events: EventBus,
     private settings: SettingsStore,
     private tasks: Tasks,
+    private notifier: Notifier,
     private publicUrl: string,
     clock?: () => number,
   ) {
@@ -201,7 +203,16 @@ export class Triggers {
     this.fired(id);
     const hb = body.heartbeat;
     const monitor = body.monitor;
-    if (!hb || !monitor) return { status: "test" };
+    if (!hb || !monitor) {
+      // Kuma's Test button: say it arrived, so setting it up has an answer.
+      void this.notifier.send({
+        title: `Uptime Kuma reached Hatbot`,
+        message: `"${t.name}" got Kuma's test message. Down alerts will start a task.`,
+        priority: 2,
+        click: `${this.publicUrl}/triggers/${t.id}`,
+      });
+      return { status: "test" };
+    }
     const name = monitor.name ?? `Monitor ${monitor.id ?? "?"}`;
     const runKey = `kuma:${t.id}:${monitor.id ?? name}`;
     const active = this.tasks.activeFor(runKey);

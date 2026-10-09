@@ -85,7 +85,7 @@ export async function testApp(
     clock,
   });
   const schedules = new Schedules(db, events, settings, tasks, clock);
-  const triggers = new Triggers(db, events, settings, tasks, ORIGIN, clock);
+  const triggers = new Triggers(db, events, settings, tasks, notifier, ORIGIN, clock);
   thread.attach({ tasks, schedules, triggers });
   const updateDir = tempDir("hatbot-test-update-");
   const updates = new Updates(

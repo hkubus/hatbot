@@ -244,6 +244,7 @@ test("Uptime Kuma: down starts a trusted alert task per monitor; later events go
     200,
   );
   expect(t.triggers.get(kuma.id)?.lastFiredAt).not.toBeNull();
+  expect(t.notifier.sent.at(-1)?.title).toBe("Uptime Kuma reached Hatbot");
 
   // Hold the run in the queue so the follow-up events find it unfinished.
   const slots = new AbortController();
@@ -340,4 +341,49 @@ test("cancelling a background task cancels the desktop task it's waiting for", a
   expect(t.tasks.get(task.id)?.status).toBe("cancelled");
   expect(t.tasks.get(child.id)?.status).toBe("cancelled");
   t.tasks.lane.release(-5);
+});
+
+test("Uptime Kuma's other formats: the secret in the URL, form data, GET, and a test that's noticed", async () => {
+  const work = new FakeModel([finish("Checked.", true)]);
+  const t = await testApp(new FakeModel(), work);
+  const call = await owner(t);
+  const kuma = (await (
+    await call("POST", "/triggers", { name: "Kuma", kind: "kuma", prompt: "Look into it." })
+  ).json()) as TriggerWithSecret;
+  const url = `/api/v1/hooks/kuma/${kuma.id}?token=${kuma.secret}`;
+
+  // The Test button, as JSON with the secret in the URL.
+  const test = await t.app.request(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ heartbeat: null, monitor: null, msg: "Uptime Kuma Testing" }),
+  });
+  expect(test.status).toBe(200);
+  expect(t.notifier.sent.at(-1)?.title).toBe("Uptime Kuma reached Hatbot");
+  expect(
+    (await t.app.request(`/api/v1/hooks/kuma/${kuma.id}?token=nope`, { method: "POST" })).status,
+  ).toBe(401);
+
+  // Form data, with the event as JSON in "data".
+  const form = new FormData();
+  form.append(
+    "data",
+    JSON.stringify({
+      heartbeat: { status: 0, msg: "down" },
+      monitor: { id: 3, name: "Jellyfin" },
+      msg: "[Jellyfin] down",
+    }),
+  );
+  const down = await t.app.request(url, { method: "POST", body: form });
+  expect(down.status).toBe(202);
+  await t.tasks.idle();
+  expect(t.tasks.list()[0]?.title).toBe("Jellyfin is down");
+
+  // GET with query parameters: a test message.
+  const get = await t.app.request(`${url}&msg=${encodeURIComponent("Uptime Kuma Testing")}`);
+  expect(get.status).toBe(200);
+
+  // Something else entirely.
+  const junk = await t.app.request(url, { method: "POST", body: "hello" });
+  expect(junk.status).toBe(400);
 });

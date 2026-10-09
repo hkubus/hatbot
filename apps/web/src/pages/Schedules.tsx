@@ -436,11 +436,11 @@ function Setup({ t }: { t: TriggerWithSecret }) {
       {t.kind === "kuma" ? (
         <>
           <p className="muted">
-            In Uptime Kuma, add a Webhook notification with Request Body "application/json", and
-            turn it on for the monitors Hatbot should look after. The secret isn't shown again.
+            In Uptime Kuma, add a Webhook notification with this Post URL, turn it on for the
+            monitors Hatbot should look after, and press Test: Hatbot sends you a notification when
+            it arrives. The URL holds the secret and isn't shown again.
           </p>
-          {field("Post URL", t.url)}
-          {field("Additional Headers", JSON.stringify({ Authorization: `Bearer ${t.secret}` }))}
+          {field("Post URL", `${t.url}?token=${t.secret}`)}
         </>
       ) : (
         <>

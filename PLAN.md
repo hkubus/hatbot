@@ -121,7 +121,7 @@ Everything valuable lives in the brain, and the brain only ever sees *pixels and
 - **HTTP API + WebSocket**: REST for resources, plus one WS per client for live events (task updates, chat streaming, approvals). The live view has its own WS. See §8.
 - **Agent runtime**: the custom loop (§5).
 - **Scheduler**: cron expressions (via `croner`, MIT) and one-shot times in the brain's time zone, stored in SQLite and checked every 10 s in-process. A run missed while the brain was down or paused happens once when it's back; runs at most every 5 minutes.
-- **Trigger ingress**: `POST /hooks/:id`, checked by HMAC signature (`X-Hatbot-Signature: t=…,v1=…` over `t.body`, or the `X-Hub-Signature-256` / `X-Forgejo-Signature` that GitHub and Forgejo send), with replays dropped. Uptime Kuma can't sign, so `POST /hooks/kuma/:id` takes the trigger's secret as a bearer token from Kuma's Additional Headers.
+- **Trigger ingress**: `POST /hooks/:id`, checked by HMAC signature (`X-Hatbot-Signature: t=…,v1=…` over `t.body`, or the `X-Hub-Signature-256` / `X-Forgejo-Signature` that GitHub and Forgejo send), with replays dropped. Uptime Kuma can't sign, so `/hooks/kuma/:id` takes the trigger's secret in the URL (`?token=`, what the setup panel shows) or as a bearer token, and accepts every way Kuma sends: JSON, form data, or GET. Kuma's Test message sends you a notification. Every hook logs what it did with the request.
 - **Tool host**: the built-in tools (§5.5) and an MCP client (stdio + streamable HTTP).
 - **Policy engine**: trust tracking, approval gates, spend enforcement (§6).
 - **Live-view relay**: JPEG frames from desktop-agent out to the browser, and your pointer and key events in while you have control. M5 records these input events for teach-by-showing. (noVNC was the first plan; it's MPL-2.0, so the view is our own MJPEG stream.)
@@ -330,7 +330,7 @@ REST + JSON under `/api/v1`. One WebSocket at `/api/v1/stream` for events. A gen
 | Approvals | `GET /approvals?pending` · `POST /approvals/:id` `{decision}` · `POST /approvals/:id/token-decision` (ntfy) |
 | Desktop | `GET /desktop/status` · `POST /desktop/takeover` · `POST /desktop/handback` · `WS /desktop/live` (frames + input) · `GET /desktop/snapshots` · `POST /desktop/rollback` |
 | Schedules/triggers | CRUD at `/schedules`, `/triggers` · `POST /schedules/:id/run` · `POST /triggers/:id/secret` (a new secret, shown once) · `GET /tasks?scheduleId=&triggerId=` |
-| Hooks | `POST /hooks/:id` (HMAC) · `POST /hooks/kuma/:id` (bearer secret) |
+| Hooks | `POST /hooks/:id` (HMAC) · `POST/GET /hooks/kuma/:id?token=` |
 | Memory | `GET /memory/tree` · `GET/PUT /memory/file?path=` · `GET /memory/log` · `GET /memory/diff/:sha` · `POST /memory/revert/:sha` |
 | Spend | `GET /spend/summary` · `GET /spend/daily?days=30` |
 | Teach | `POST /teach/start` · `POST /teach/stop` → draft skill · `POST /teach/:id/save` |

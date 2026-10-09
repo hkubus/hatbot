@@ -50,7 +50,7 @@ const tasks = new Tasks({
   memory,
 });
 const schedules = new Schedules(db, events, settings, tasks);
-const triggers = new Triggers(db, events, settings, tasks, config.publicUrl);
+const triggers = new Triggers(db, events, settings, tasks, notifier, config.publicUrl);
 thread.attach({ tasks, schedules, triggers });
 await desktop.setPaused(settings.get().paused);
 await desktop.refresh();

@@ -1,5 +1,5 @@
 import { CreateSchedule, CreateTrigger, UpdateSchedule, UpdateTrigger } from "@hatbot/shared";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
 import { ScheduleError } from "../schedules";
@@ -9,7 +9,7 @@ import { json } from "./util";
 /** Webhook bodies bigger than this are refused. */
 const MAX_HOOK_BYTES = 256 * 1024;
 
-const id = (c: { req: { param: (k: string) => string } }) => Number(c.req.param("id"));
+const id = (c: { req: { param: (k: string) => string | undefined } }) => Number(c.req.param("id"));
 
 export const scheduleRoutes = new Hono<AppEnv>()
   .use("/schedules", requireAuth)
@@ -81,30 +81,88 @@ async function body(req: Request): Promise<Uint8Array | null> {
   return bytes.length > MAX_HOOK_BYTES ? null : bytes;
 }
 
+const json_ = (text: string | null | undefined): unknown => {
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * Uptime Kuma's event, whichever way its Webhook notification sends it: a JSON body (the default),
+ * form data with the JSON in a `data` field, or GET with `msg`, `heartbeat` and `monitor` parameters.
+ */
+async function kumaEvent(c: Context<AppEnv>): Promise<object | "too large" | null> {
+  const q = (k: string) => c.req.query(k);
+  if (c.req.method === "GET") {
+    if (!q("msg") && !q("heartbeat")) return null;
+    return { msg: q("msg"), heartbeat: json_(q("heartbeat")), monitor: json_(q("monitor")) };
+  }
+  const bytes = await body(c.req.raw);
+  if (!bytes) return "too large";
+  const text = new TextDecoder().decode(bytes);
+  const type = c.req.header("content-type") ?? "";
+  let parsed: unknown;
+  if (type.startsWith("multipart/form-data")) {
+    const form = await new Response(bytes, { headers: { "content-type": type } })
+      .formData()
+      .catch(() => null);
+    const data = form?.get("data");
+    parsed = json_(typeof data === "string" ? data : null);
+  } else {
+    parsed = json_(text);
+  }
+  return parsed && typeof parsed === "object" ? parsed : null;
+}
+
+const kumaHook = async (c: Context<AppEnv>) => {
+  const { triggers } = c.var;
+  const hook = `hook kuma/${c.req.param("id")}`;
+  // The secret as a bearer token (Additional Headers), or in the URL, which is easier to set up.
+  const token =
+    c.req.header("authorization") ??
+    (c.req.query("token") ? `Bearer ${c.req.query("token")}` : undefined);
+  if (!triggers.verifyKuma(id(c), token)) {
+    console.log(
+      `${hook}: refused, ${token ? "wrong secret" : "no secret"} or no such Kuma trigger`,
+    );
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  const event = await kumaEvent(c);
+  if (event === "too large") return c.json({ error: "too large" }, 413);
+  if (!event) {
+    console.log(
+      `${hook}: refused, not an Uptime Kuma event (${c.req.header("content-type") ?? "no content type"})`,
+    );
+    return c.json({ error: "expected Uptime Kuma's JSON" }, 400);
+  }
+  const r = triggers.receiveKuma(id(c), event);
+  console.log(
+    `${hook}: ${r.status === "skipped" ? `skipped (${r.reason})` : r.status === "started" ? `started task #${r.task.id}` : "test message"}`,
+  );
+  const a = answer(r);
+  return c.json(a.body, a.status);
+};
+
 // No session: the signature or the trigger's secret is the authority (PLAN.md §8).
 export const hookRoutes = new Hono<AppEnv>()
-  .post("/hooks/kuma/:id", async (c) => {
-    const { triggers } = c.var;
-    if (!triggers.verifyKuma(id(c), c.req.header("authorization")))
-      return c.json({ error: "unauthorized" }, 401);
-    const bytes = await body(c.req.raw);
-    if (!bytes) return c.json({ error: "too large" }, 413);
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(new TextDecoder().decode(bytes));
-    } catch {
-      return c.json({ error: "expected JSON" }, 400);
-    }
-    if (!parsed || typeof parsed !== "object") return c.json({ error: "expected JSON" }, 400);
-    const r = answer(triggers.receiveKuma(id(c), parsed));
-    return c.json(r.body, r.status);
-  })
+  .post("/hooks/kuma/:id", kumaHook)
+  .get("/hooks/kuma/:id", kumaHook)
   .post("/hooks/:id", async (c) => {
     const { triggers } = c.var;
+    const hook = `hook ${c.req.param("id")}`;
     const bytes = await body(c.req.raw);
     if (!bytes) return c.json({ error: "too large" }, 413);
     const check = triggers.verifyWebhook(id(c), (h) => c.req.header(h), bytes);
-    if (!check.ok) return c.json({ error: "unauthorized" }, 401);
-    const r = answer(triggers.receiveWebhook(id(c), new TextDecoder().decode(bytes), check.replay));
-    return c.json(r.body, r.status);
+    if (!check.ok) {
+      console.log(`${hook}: refused, missing or wrong signature, or no such webhook trigger`);
+      return c.json({ error: "unauthorized" }, 401);
+    }
+    const r = triggers.receiveWebhook(id(c), new TextDecoder().decode(bytes), check.replay);
+    console.log(
+      `${hook}: ${r.status === "started" ? `started task #${r.task.id}` : `skipped (${r.status === "skipped" ? r.reason : r.status})`}`,
+    );
+    const a = answer(r);
+    return c.json(a.body, a.status);
   });
