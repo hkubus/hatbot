@@ -5,3 +5,4 @@ dist/
 *.sqlite
 *.sqlite-*
 .DS_Store
+*.tsbuildinfo
