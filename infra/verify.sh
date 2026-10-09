@@ -95,6 +95,13 @@ if pct exec "$BRAIN_ID" -- grep -qs '^NTFY_URL=http' /etc/hatbot/ntfy.env; then
 else
   printf '   %sskip%s  ntfy (not configured yet; deploy.sh asks for it)\n' "$yel" "$rst"
 fi
+if pct exec "$DESKTOP_ID" -- test -e /etc/systemd/system/hatbot-desktop-agent.service; then
+  # shellcheck disable=SC2016 # expands inside the brain
+  expect "desktop-agent answers the brain" pct exec "$BRAIN_ID" -- sh -c \
+    '. /etc/hatbot/desktop.env && printf "Authorization: Bearer %s\n" "$DESKTOP_AGENT_TOKEN" | curl -fsS -m 5 -o /dev/null -H @- "$DESKTOP_AGENT_URL/health"'
+else
+  printf '   %sskip%s  desktop-agent (not installed yet; deploy.sh installs it)\n' "$yel" "$rst"
+fi
 expect "the brain holds the Proxmox token" pct exec "$BRAIN_ID" -- test -s /etc/hatbot/proxmox.env
 expect "the brain holds the desktop secrets" pct exec "$BRAIN_ID" -- test -s /etc/hatbot/desktop.env
 expect "the memory repo exists" pct exec "$BRAIN_ID" -- test -d /var/lib/hatbot/memory/.git

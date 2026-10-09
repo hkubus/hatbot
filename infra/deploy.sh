@@ -114,6 +114,16 @@ EOF
 fi
 
 step "3/3 Release"
+: "${DESKTOP_ID:?}" "${DESKTOP_IP:?}"
+mkdir "$tmp/agent"
+tar -C "$tmp/agent" -xf "$tmp/app.tar" --strip-components=2 apps/desktop-agent
+tar -C "$tmp/agent" -cf "$tmp/agent.tar" .
+pct push "$DESKTOP_ID" "$tmp/agent.tar" /root/hatbot-desktop-agent.tar --perms 600
+pct push "$DESKTOP_ID" "$HERE/desktop-deploy.sh" /root/desktop-deploy.sh --perms 700
+if ! pct exec "$DESKTOP_ID" -- env DESKTOP_IP="$DESKTOP_IP" bash /root/desktop-deploy.sh /root/hatbot-desktop-agent.tar; then
+  warn "desktop-agent failed to install; the brain is deployed anyway, but desktop tasks won't run"
+fi
+
 pct push "$BRAIN_ID" "$tmp/app.tar" /root/hatbot-app.tar --perms 600
 pct push "$BRAIN_ID" "$HERE/brain-deploy.sh" /root/brain-deploy.sh --perms 700
 pct exec "$BRAIN_ID" -- bash /root/brain-deploy.sh /root/hatbot-app.tar

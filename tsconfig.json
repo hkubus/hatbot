@@ -8,6 +8,9 @@
       "path": "apps/brain"
     },
     {
+      "path": "apps/desktop-agent"
+    },
+    {
       "path": "apps/web"
     }
   ]

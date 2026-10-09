@@ -6,7 +6,7 @@ Scripts that set up Hatbot on the Proxmox host (PLAN.md §9).
 |---|---|---|
 | `host-setup.sh` | on the host, as root | both containers on the LAN, the desktop's firewall, Proxmox user/roles/token, snapshots, backups; then runs the two provision scripts |
 | `brain-provision.sh` | inside `hatbot-brain` | Bun, memory repo, SSH key, firewall |
-| `deploy.sh` | on the host, as root | installs the app on the brain as a new release; runs `brain-deploy.sh` inside it |
+| `deploy.sh` | on the host, as root | installs the app: `desktop-deploy.sh` puts desktop-agent on the desktop, `brain-deploy.sh` a new release on the brain |
 | `desktop-provision.sh` | inside `hatbot-desktop` | `desk` user, Xvnc + XFCE, Chromium, Bun, firewall |
 | `verify.sh` | on the host, as root | checks isolation, token permissions, snapshots and backups; changes nothing |
 | `test-firewall.sh` | anywhere, as root | tests the desktop firewall in throwaway network namespaces |
