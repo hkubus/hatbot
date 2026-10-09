@@ -436,7 +436,7 @@ Each milestone ends with a working, demo-able system.
 - [x] … reviewed with you, then run on the host
 - [x] `infra/brain-provision.sh` (Bun, git, memory repo, firewall) and `infra/desktop-provision.sh` (Xvnc, XFCE, Chromium; desktop-agent itself comes in M2)
 - [x] `infra/verify.sh`: brain reaches the desktop; desktop can't reach the LAN or the host; token permissions are correct; snapshots and backups are set up
-- [ ] `verify.sh` passes on the host
+- [x] `verify.sh` passes on the host
 - **Done when**: both guests are up, isolated, and backed up by PBS.
 
 ### M1 — Brain core + UI shell
