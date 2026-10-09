@@ -33,3 +33,9 @@ export type CreateTokenResponse = ApiToken & { token: string };
 export type Me = { setupDone: boolean; authenticated: boolean };
 
 export type ApiError = { error: string };
+
+export const PostMessage = z.object({ text: z.string().trim().min(1).max(100_000) });
+export const PutMemoryFile = z.object({
+  content: z.string().max(1_000_000),
+  message: z.string().max(200).optional(),
+});

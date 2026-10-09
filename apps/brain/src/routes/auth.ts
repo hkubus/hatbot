@@ -1,14 +1,10 @@
 import { CreateToken, Login, type Me, SetupFinish, SetupStart } from "@hatbot/shared";
-import { zValidator } from "@hono/zod-validator";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { principalOf, requireAuth, SESSION_COOKIE } from "../auth/middleware";
 import type { AppEnv } from "../context";
-
-const badRequest = (c: Context) => c.json({ error: "invalid request" }, 400);
-const json = <S extends Parameters<typeof zValidator>[1]>(schema: S) =>
-  zValidator("json", schema, (r, c) => (r.success ? undefined : badRequest(c)));
+import { json } from "./util";
 
 function setSessionCookie(c: Context<AppEnv>, token: string) {
   setCookie(c, SESSION_COOKIE, token, {

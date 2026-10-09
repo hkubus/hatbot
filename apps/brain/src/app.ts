@@ -2,9 +2,13 @@ import { API_PREFIX, type Health } from "@hatbot/shared";
 import { Hono } from "hono";
 import { getConnInfo } from "hono/bun";
 import type { AppEnv, Deps } from "./context";
+import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
+import { memoryRoutes } from "./routes/memory";
+import { streamRoutes } from "./routes/stream";
+import { threadRoutes } from "./routes/thread";
 
-export const VERSION = "0.0.0";
+export const VERSION = "0.1.0";
 
 export function createApp(deps: Deps) {
   const app = new Hono<AppEnv>().basePath(API_PREFIX);
@@ -17,6 +21,10 @@ export function createApp(deps: Deps) {
 
   app.get("/health", (c) => c.json<Health>({ ok: true, version: VERSION }));
   app.route("/", authRoutes);
+  app.route("/", threadRoutes);
+  app.route("/", memoryRoutes);
+  app.route("/", adminRoutes);
+  app.route("/", streamRoutes);
 
   app.notFound((c) => c.json({ error: "not found" }, 404));
   app.onError((err, c) => {

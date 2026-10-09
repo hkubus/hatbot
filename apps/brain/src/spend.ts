@@ -1,0 +1,202 @@
+// Spend ledger and limits (PLAN.md §6.3).
+import type { Db } from "./db";
+import type { EventBus } from "./events";
+import type { SettingsStore } from "./settings";
+
+/** USD per million tokens. Cache writes are priced from input: 1.25x for 5 minutes, 2x for 1 hour. */
+export const PRICES: Record<string, { input: number; output: number; cacheRead: number }> = {
+  "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2 },
+  "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.2 },
+  "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2 },
+  "claude-haiku-4-5": { input: 1, output: 5, cacheRead: 0.1 },
+};
+
+export type UsageLike = {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
+  cache_creation?: {
+    ephemeral_5m_input_tokens?: number;
+    ephemeral_1h_input_tokens?: number;
+  } | null;
+};
+
+export type Tokens = {
+  input: number;
+  cacheWrite5m: number;
+  cacheWrite1h: number;
+  cacheRead: number;
+  output: number;
+};
+
+export function tokensOf(u: UsageLike): Tokens {
+  const write1h = u.cache_creation?.ephemeral_1h_input_tokens ?? 0;
+  const write5m =
+    u.cache_creation?.ephemeral_5m_input_tokens ?? (u.cache_creation_input_tokens ?? 0) - write1h;
+  return {
+    input: u.input_tokens,
+    cacheWrite5m: Math.max(0, write5m),
+    cacheWrite1h: write1h,
+    cacheRead: u.cache_read_input_tokens ?? 0,
+    output: u.output_tokens,
+  };
+}
+
+export function priceOf(model: string) {
+  const p = PRICES[model];
+  if (!p) throw new Error(`no price for model ${model}`);
+  return p;
+}
+
+export function costOf(model: string, t: Tokens): number {
+  const p = priceOf(model);
+  return (
+    (t.input * p.input +
+      t.cacheWrite5m * p.input * 1.25 +
+      t.cacheWrite1h * p.input * 2 +
+      t.cacheRead * p.cacheRead +
+      t.output * p.output) /
+    1_000_000
+  );
+}
+
+export class BudgetError extends Error {
+  constructor(
+    readonly limit: "task" | "daily" | "monthly",
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+const startOfLocalDay = (ms: number) => {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+const startOfLocalMonth = (ms: number) => {
+  const d = startOfLocalDay(ms);
+  d.setDate(1);
+  return d;
+};
+const localDate = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+export class Spend {
+  constructor(
+    private db: Db,
+    private settings: SettingsStore,
+    private events: EventBus,
+    private clock: () => number = Date.now,
+  ) {}
+
+  record(entry: {
+    model: string;
+    purpose: string;
+    usage: UsageLike;
+    episodeId?: number;
+    taskId?: number;
+  }): number {
+    const t = tokensOf(entry.usage);
+    const cost = costOf(entry.model, t);
+    this.db
+      .query(
+        `INSERT INTO spend_ledger (created_at, model, purpose, episode_id, task_id, input_tokens, cache_write_5m_tokens,
+           cache_write_1h_tokens, cache_read_tokens, output_tokens, cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        new Date(this.clock()).toISOString(),
+        entry.model,
+        entry.purpose,
+        entry.episodeId ?? null,
+        entry.taskId ?? null,
+        t.input,
+        t.cacheWrite5m,
+        t.cacheWrite1h,
+        t.cacheRead,
+        t.output,
+        cost,
+      );
+    const s = this.summary();
+    this.events.emit({ type: "spend.updated", todayUsd: s.todayUsd, monthUsd: s.monthUsd });
+    return cost;
+  }
+
+  /**
+   * Records one API response. With server-side fallback, usage.iterations lists each model that ran,
+   * and each is billed at its own rates.
+   */
+  recordResponse(entry: {
+    model: string;
+    purpose: string;
+    usage: UsageLike & { iterations?: ({ model?: string | null } & UsageLike)[] | null };
+    episodeId?: number;
+    taskId?: number;
+  }): number {
+    const parts = entry.usage.iterations?.length ? entry.usage.iterations : [entry.usage];
+    let total = 0;
+    for (const part of parts) {
+      const model = "model" in part && part.model ? part.model : entry.model;
+      total += this.record({ ...entry, model, usage: part });
+    }
+    return total;
+  }
+
+  private sumSince(since: Date, where = "", ...args: (string | number)[]): number {
+    const row = this.db
+      .query<{ total: number | null }, (string | number)[]>(
+        `SELECT sum(cost_usd) AS total FROM spend_ledger WHERE created_at >= ? ${where}`,
+      )
+      .get(since.toISOString(), ...args);
+    return row?.total ?? 0;
+  }
+
+  summary() {
+    const now = this.clock();
+    return {
+      todayUsd: this.sumSince(startOfLocalDay(now)),
+      monthUsd: this.sumSince(startOfLocalMonth(now)),
+      limits: this.settings.get().limits,
+    };
+  }
+
+  taskSpend(taskId: number): number {
+    return this.sumSince(new Date(0), "AND task_id = ?", taskId);
+  }
+
+  /** Throws BudgetError if a request estimated at `estimateUsd` would cross a limit. */
+  check(estimateUsd: number, taskId?: number) {
+    const { todayUsd, monthUsd, limits } = this.summary();
+    if (taskId !== undefined && this.taskSpend(taskId) + estimateUsd > limits.taskUsd) {
+      throw new BudgetError("task", `This task would go over its $${limits.taskUsd} limit.`);
+    }
+    if (todayUsd + estimateUsd > limits.dailyUsd) {
+      throw new BudgetError("daily", `Today's $${limits.dailyUsd} limit would be exceeded.`);
+    }
+    if (monthUsd + estimateUsd > limits.monthlyUsd) {
+      throw new BudgetError(
+        "monthly",
+        `This month's $${limits.monthlyUsd} limit would be exceeded.`,
+      );
+    }
+  }
+
+  daily(days: number): { date: string; usd: number }[] {
+    const now = this.clock();
+    const from = startOfLocalDay(now - (days - 1) * 86400_000);
+    const rows = this.db
+      .query<{ created_at: string; cost_usd: number }, [string]>(
+        "SELECT created_at, cost_usd FROM spend_ledger WHERE created_at >= ?",
+      )
+      .all(from.toISOString());
+    const byDay = new Map<string, number>();
+    for (const d = new Date(from); byDay.size < days; d.setDate(d.getDate() + 1))
+      byDay.set(localDate(d), 0);
+    for (const r of rows) {
+      const key = localDate(new Date(r.created_at));
+      byDay.set(key, (byDay.get(key) ?? 0) + r.cost_usd);
+    }
+    return [...byDay].map(([date, usd]) => ({ date, usd }));
+  }
+}

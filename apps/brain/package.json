@@ -7,6 +7,7 @@
     "start": "bun src/main.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0",
     "@hatbot/shared": "workspace:*",
     "@hono/zod-validator": "^0.9.1",
     "hono": "^4.13.13",

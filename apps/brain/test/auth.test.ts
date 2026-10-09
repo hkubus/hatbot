@@ -3,7 +3,7 @@ import { setUpOwner, testApp } from "./helpers";
 
 describe("setup", () => {
   test("needs the setup code and a valid first TOTP code", async () => {
-    const t = testApp();
+    const t = await testApp();
     expect(await (await t.call("GET", "/auth/me")).json()).toEqual({
       setupDone: false,
       authenticated: false,
@@ -34,7 +34,7 @@ describe("setup", () => {
   });
 
   test("rejects short passwords", async () => {
-    const t = testApp();
+    const t = await testApp();
     await t.call("POST", "/auth/setup/start", { code: t.auth.setupCode });
     const res = await t.call("POST", "/auth/setup", {
       code: t.auth.setupCode,
@@ -47,7 +47,7 @@ describe("setup", () => {
 
 describe("login", () => {
   test("web login sets a session cookie that authenticates", async () => {
-    const t = testApp();
+    const t = await testApp();
     const { secret, password } = await setUpOwner(t);
     const res = await t.call("POST", "/auth/login", { password, totp: t.code(secret) });
     expect(res.status).toBe(200);
@@ -59,7 +59,7 @@ describe("login", () => {
   });
 
   test("a TOTP code works only once", async () => {
-    const t = testApp();
+    const t = await testApp();
     const { secret, password } = await setUpOwner(t);
     const totp = t.code(secret);
     expect((await t.call("POST", "/auth/login", { password, totp })).status).toBe(200);
@@ -67,7 +67,7 @@ describe("login", () => {
   });
 
   test("wrong password fails", async () => {
-    const t = testApp();
+    const t = await testApp();
     const { secret } = await setUpOwner(t);
     expect(
       (await t.call("POST", "/auth/login", { password: "nope", totp: t.code(secret) })).status,
@@ -75,7 +75,7 @@ describe("login", () => {
   });
 
   test("locks out after 10 failures", async () => {
-    const t = testApp();
+    const t = await testApp();
     const { secret, password } = await setUpOwner(t);
     for (let i = 0; i < 10; i++)
       await t.call("POST", "/auth/login", { password: "nope", totp: "000000" });
@@ -89,7 +89,7 @@ describe("login", () => {
   });
 
   test("app login returns a bearer token", async () => {
-    const t = testApp();
+    const t = await testApp();
     const { secret, password } = await setUpOwner(t);
     const res = await t.call("POST", "/auth/login", {
       password,
@@ -104,14 +104,14 @@ describe("login", () => {
   });
 
   test("logout ends the session", async () => {
-    const t = testApp();
+    const t = await testApp();
     const { cookie } = await setUpOwner(t);
     expect((await t.call("POST", "/auth/logout", {}, { cookie })).status).toBe(200);
     expect((await t.call("GET", "/tokens", undefined, { cookie })).status).toBe(401);
   });
 
   test("sessions expire after 30 days without use", async () => {
-    const t = testApp();
+    const t = await testApp();
     const { cookie } = await setUpOwner(t);
     t.advance(31 * 86400_000);
     expect((await t.call("GET", "/tokens", undefined, { cookie })).status).toBe(401);
@@ -120,7 +120,7 @@ describe("login", () => {
 
 describe("tokens", () => {
   test("create, use, revoke", async () => {
-    const t = testApp();
+    const t = await testApp();
     const { cookie } = await setUpOwner(t);
     const created = (await (
       await t.call("POST", "/tokens", { name: "cli" }, { cookie })
@@ -137,7 +137,7 @@ describe("tokens", () => {
   });
 
   test("cookie writes from another origin are refused", async () => {
-    const t = testApp();
+    const t = await testApp();
     const { cookie } = await setUpOwner(t);
     const res = await t.call(
       "POST",
@@ -149,7 +149,7 @@ describe("tokens", () => {
   });
 
   test("needs auth", async () => {
-    const t = testApp();
+    const t = await testApp();
     expect((await t.call("GET", "/tokens")).status).toBe(401);
   });
 });

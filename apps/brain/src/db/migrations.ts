@@ -27,4 +27,56 @@ export const migrations: string[] = [
     value TEXT NOT NULL
   );
   `,
+  /* 2: chat thread, spend */ `
+  CREATE TABLE episodes (
+    id INTEGER PRIMARY KEY,
+    started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ')),
+    last_activity_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ')),
+    summarized INTEGER NOT NULL DEFAULT 0
+  );
+  -- The episode's API conversation, exactly as sent and received. Append-only (PLAN.md §5.3).
+  CREATE TABLE episode_turns (
+    id INTEGER PRIMARY KEY,
+    episode_id INTEGER NOT NULL REFERENCES episodes(id),
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ'))
+  );
+  CREATE INDEX episode_turns_episode ON episode_turns (episode_id, id);
+  -- What the thread shows.
+  CREATE TABLE messages (
+    id INTEGER PRIMARY KEY,
+    episode_id INTEGER REFERENCES episodes(id),
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    text TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'done' CHECK (status IN ('streaming', 'done', 'error')),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ'))
+  );
+  CREATE VIRTUAL TABLE messages_fts USING fts5(text, content='messages', content_rowid='id');
+  CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
+    INSERT INTO messages_fts (rowid, text) VALUES (new.id, new.text);
+  END;
+  CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
+    INSERT INTO messages_fts (messages_fts, rowid, text) VALUES ('delete', old.id, old.text);
+  END;
+  CREATE TRIGGER messages_au AFTER UPDATE OF text ON messages BEGIN
+    INSERT INTO messages_fts (messages_fts, rowid, text) VALUES ('delete', old.id, old.text);
+    INSERT INTO messages_fts (rowid, text) VALUES (new.id, new.text);
+  END;
+  CREATE TABLE spend_ledger (
+    id INTEGER PRIMARY KEY,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ')),
+    model TEXT NOT NULL,
+    purpose TEXT NOT NULL,
+    episode_id INTEGER,
+    task_id INTEGER,
+    input_tokens INTEGER NOT NULL,
+    cache_write_5m_tokens INTEGER NOT NULL,
+    cache_write_1h_tokens INTEGER NOT NULL,
+    cache_read_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    cost_usd REAL NOT NULL
+  );
+  CREATE INDEX spend_ledger_created ON spend_ledger (created_at);
+  `,
 ];
