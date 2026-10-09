@@ -68,7 +68,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 | Repo | Bun-workspaces monorepo `kubus/hatbot`, private, on Forgejo `git.gaycats.ovh` |
 | Exposure | `hatbot.gaycats.ovh`. You handle the tunnel, TLS and reverse proxy; Hatbot serves plain HTTP on the LAN |
 | Auth | Single user, password + TOTP; API tokens for the future iOS app |
-| Notifications | Self-hosted **ntfy**. No APNs or Web Push, because the iOS app will be a free SideStore sideload |
+| Notifications | Your self-hosted **ntfy**, on its own server; the brain publishes to it. No APNs or Web Push, because the iOS app will be a free SideStore sideload |
 | Name/persona | Hatbot; concise, first person, no animated avatar |
 | Web design | Apple-native (macOS-style), desktop-first, three panes, amber brand accent (§10) |
 
@@ -80,7 +80,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
                          internet
                             │
             your tunnel / VPS → your reverse proxy (TLS)
-                            │  hatbot.gaycats.ovh   ntfy.<domain>
+                            │  hatbot.gaycats.ovh
 ────────────────────────────┼──────────────────────────────── LAN 192.168.55.0/24 (vmbr0)
                             │
               ┌─────────────┴──────────────┐        ┌──────────────────────┐
@@ -91,7 +91,6 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
               │  Agent runtime (loops)     │  SSH   ┌──────────────────────┐
               │  Scheduler / triggers      │───────▶│ approved hosts       │
               │  Tool host + MCP client    │        └──────────────────────┘
-              │  ntfy server    :8081      │
               │  SQLite · memory/ (git)    │──▶ Claude API (api.anthropic.com)
               │  /archive (HDD mount)      │──▶ Forgejo / GitHub (bot accounts)
               └────────────────────────────┘
@@ -146,7 +145,7 @@ Shared API types and zod schemas for the brain, web and the future iOS app, whic
 
 ### 4.5 `infra/`
 - `host-setup.sh`: the one-time Proxmox setup script (§9).
-- systemd units, the ntfy config, and the desktop provisioning script (run inside the desktop LXC).
+- the provisioning scripts for both guests, `verify.sh`, and `deploy.sh`, which installs the app and its systemd unit.
 
 ---
 
@@ -364,7 +363,7 @@ The app itself is installed by `infra/deploy.sh`, run on the host for every upda
 
 ### 9.4 Exposure (you own this part)
 - **Your reverse proxy** → `http://<brain-LAN-IP>:8080` for `hatbot.gaycats.ovh`. It must pass WebSockets (`/api/v1/stream`, `/api/v1/desktop/vnc`). Hatbot trusts `X-Forwarded-*` from your proxy's IP only (`HATBOT_TRUSTED_PROXIES`, asked by `deploy.sh`).
-- **ntfy** → `http://<brain-LAN-IP>:8081` on its own hostname (e.g. `ntfy.gaycats.ovh`). Set `upstream-base-url: https://ntfy.sh` in ntfy's config so iPhone notifications arrive instantly; only a "wake up and fetch" ping passes through ntfy.sh, never the message content.
+- **ntfy** runs on your own server, separate from Hatbot. The brain publishes to it with a token whose user may write to Hatbot's topic (`deploy.sh` asks for the URL, topic and token). Set `upstream-base-url: https://ntfy.sh` on that server so iPhone notifications arrive instantly; only a "wake up and fetch" ping passes through ntfy.sh, never the message content.
 - **Public paths needed**: the UI, the API, and `/api/v1/hooks/*` for webhooks.
 
 ### 9.5 Prerequisites (you)
@@ -435,7 +434,7 @@ Each milestone ends with a working, demo-able system.
 - [ ] CI via Forgejo Actions, if a runner exists
 - [x] `infra/host-setup.sh` written
 - [x] … reviewed with you, then run on the host
-- [x] `infra/brain-provision.sh` (Bun, git, ntfy, memory repo, firewall) and `infra/desktop-provision.sh` (Xvnc, XFCE, Chromium; desktop-agent itself comes in M2)
+- [x] `infra/brain-provision.sh` (Bun, git, memory repo, firewall) and `infra/desktop-provision.sh` (Xvnc, XFCE, Chromium; desktop-agent itself comes in M2)
 - [x] `infra/verify.sh`: brain reaches the desktop; desktop can't reach the LAN or the host; token permissions are correct; snapshots and backups are set up
 - [ ] `verify.sh` passes on the host
 - **Done when**: both guests are up, isolated, and backed up by PBS.
@@ -457,7 +456,7 @@ Each milestone ends with a working, demo-able system.
 - [ ] Screen-lane queue, release on wait, re-check screen on resume
 - [ ] noVNC live view through the brain proxy; Take over / Hand back; `request_takeover`
 - [ ] Trust tracking, approval gates, `confirm_intent`, Haiku injection screening
-- [ ] ntfy server + notifier + signed action buttons
+- [ ] ntfy notifier (publishing to your ntfy server) + signed action buttons
 - [ ] Nightly desktop snapshots + "Roll back desktop" in Settings
 - **Done when**: "book a table at X" works end to end, with an approval from your lock screen.
 
@@ -502,7 +501,7 @@ Native iOS app (SwiftUI, SideStore, ntfy) · email via Proton Bridge · more tha
 
 ## 13. Assumptions to confirm during M0
 1. The thread uses the 1-hour prompt cache, so the 30-minute idle window stays cheap.
-2. ntfy gets its own public hostname (e.g. `ntfy.gaycats.ovh`); webhooks use `hatbot.gaycats.ovh/api/v1/hooks/*`.
+2. ntfy runs on your own server with its own public hostname, and the brain reaches it; webhooks use `hatbot.gaycats.ovh/api/v1/hooks/*`.
 3. The desktop LXC uses `nesting=1` for Chromium's sandbox.
 4. Guest sizes: brain 2 GiB, desktop 1.5 GiB / 2 vCPU. The preflight checks real free RAM first.
 5. Skills live in the memory repo under `skills/`.

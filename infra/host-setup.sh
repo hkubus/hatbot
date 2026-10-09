@@ -31,7 +31,6 @@ HDD_STORE=${HDD_STORE:-}                    # /archive on the brain
 ARCHIVE_SIZE=${ARCHIVE_SIZE:-200}           # GiB, can be grown later
 LAN_BRIDGE=${LAN_BRIDGE:-}                  # bridge both guests join (default: the uplink)
 DNS=${DNS:-9.9.9.9 1.1.1.1}                 # the desktop's resolvers (it can't reach LAN DNS)
-NTFY_BASE_URL=${NTFY_BASE_URL:-https://ntfy.gaycats.ovh}
 FORCE=${FORCE:-0}                           # 1 = continue despite the RAM check
 
 POOL=hatbot
@@ -122,7 +121,7 @@ save_state() {
   {
     echo "# Written by hatbot infra/host-setup.sh; edit and re-run to change."
     local v
-    for v in BRAIN_ID DESKTOP_ID BRAIN_IP DESKTOP_IP SSD_STORE HDD_STORE ARCHIVE_SIZE LAN_BRIDGE DNS NTFY_BASE_URL; do
+    for v in BRAIN_ID DESKTOP_ID BRAIN_IP DESKTOP_IP SSD_STORE HDD_STORE ARCHIVE_SIZE LAN_BRIDGE DNS; do
       printf '%s=%q\n' "$v" "${!v}"
     done
   } >"$STATE"
@@ -256,7 +255,6 @@ if ((need > 0)); then
   fi
 fi
 
-ask NTFY_BASE_URL "Public URL for ntfy" "$NTFY_BASE_URL"
 
 cat <<EOF
 
@@ -501,7 +499,7 @@ provision() { # provision CTID SCRIPT ENV...
     info "skipped; later: pct push $id $HERE/$script /root/$script && pct exec $id -- env $* bash /root/$script"
   fi
 }
-provision "$BRAIN_ID" brain-provision.sh "NTFY_BASE_URL=$NTFY_BASE_URL" "DESKTOP_IP=$DESKTOP_IP"
+provision "$BRAIN_ID" brain-provision.sh "DESKTOP_IP=$DESKTOP_IP"
 provision "$DESKTOP_ID" desktop-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BRAIN_IP=$BRAIN_IP"
 
 # ---------- 7. Nightly desktop snapshots ----------
@@ -574,16 +572,13 @@ fi
 
 # ---------- Done ----------
 step "Done"
-ntfy_host=${NTFY_BASE_URL#*://}
 cat <<EOF
    Brain     CT $BRAIN_ID   $BRAIN_IP
    Desktop   CT $DESKTOP_ID   $DESKTOP_IP (internet only)
 
    Next:
    1. Check isolation and permissions:   $HERE/verify.sh
-   2. Reverse proxy:  hatbot.gaycats.ovh → http://$BRAIN_IP:8080 (with WebSockets)
-                      ${ntfy_host%%/*} → http://$BRAIN_IP:8081
-   3. ntfy iOS app: subscribe to topic "hatbot" on $NTFY_BASE_URL as user "phone"
-      (the password is in /root/ntfy-phone-password.txt inside the brain).
+   2. Install the app:   $HERE/deploy.sh <CTID>:<path to the hatbot checkout>   (see README.md)
+   3. Reverse proxy:  hatbot.gaycats.ovh → http://$BRAIN_IP:8080 (with WebSockets)
    4. Before M4: add the brain's SSH key (/var/lib/hatbot/.ssh/id_ed25519.pub) to a "hatbot" user on hosts it may manage.
 EOF

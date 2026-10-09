@@ -31,7 +31,7 @@ say "Service unit"
 cat >/etc/systemd/system/hatbot-brain.service <<'EOF'
 [Unit]
 Description=Hatbot brain
-After=network-online.target ntfy.service
+After=network-online.target
 Wants=network-online.target
 
 [Service]

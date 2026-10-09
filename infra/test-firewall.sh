@@ -51,7 +51,7 @@ while True:
 listen gw 9.9.9.9 443
 listen gw 192.168.55.1 443
 listen hh 192.168.55.113 8006
-listen brain 192.168.55.224 8081
+listen brain 192.168.55.224 8080
 listen desk 192.168.55.225 5901
 sleep 0.5
 
@@ -73,8 +73,8 @@ expect_closed() { if conn "$@"; then report FAIL "$1 → $2:$3 should be blocked
 expect_open desk 9.9.9.9 443
 expect_closed desk 192.168.55.1 443
 expect_closed desk 192.168.55.113 8006
-expect_closed desk 192.168.55.224 8081
-expect_closed desk 192.168.55.224 8081 '' 5901
+expect_closed desk 192.168.55.224 8080
+expect_closed desk 192.168.55.224 8080 '' 5901
 expect_open brain 192.168.55.225 5901
 expect_open hh 192.168.55.113 8006
 expect_open brain 192.168.55.1 443

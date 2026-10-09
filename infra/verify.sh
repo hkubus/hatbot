@@ -76,7 +76,7 @@ expect "desktop reaches the internet (https://deb.debian.org)" \
   pct exec "$DESKTOP_ID" -- curl -fsS -m 10 -o /dev/null https://deb.debian.org/
 blocked "desktop can't reach the Proxmox host" "$HOST_LAN_IP" 8006 22
 blocked "desktop can't reach the LAN gateway" "$LAN_GW" 443 80 53 22
-blocked "desktop can't open connections to the brain" "$BRAIN_IP" 8081 22
+blocked "desktop can't open connections to the brain" "$BRAIN_IP" 8080 22
 expect "desktop has no IPv6 route out" sh -c "! pct exec $DESKTOP_ID -- ip -6 route show default | grep -q ."
 
 step "Brain ↔ desktop"
@@ -88,7 +88,13 @@ expect "Chromium is running (sandbox works in the container)" \
   pct exec "$DESKTOP_ID" -- pgrep -u desk -f chrome-profile
 expect "Chromium's CDP answers on the desktop's localhost only" \
   pct exec "$DESKTOP_ID" -- curl -fsS -m 5 -o /dev/null http://127.0.0.1:9222/json/version
-expect "ntfy is running on the brain" pct exec "$BRAIN_ID" -- systemctl is-active --quiet ntfy
+if pct exec "$BRAIN_ID" -- grep -qs '^NTFY_URL=http' /etc/hatbot/ntfy.env; then
+  # shellcheck disable=SC2016 # expands inside the brain
+  expect "the brain reaches your ntfy server" pct exec "$BRAIN_ID" -- sh -c \
+    '. /etc/hatbot/ntfy.env && curl -fsS -m 5 -o /dev/null "$NTFY_URL/v1/health"'
+else
+  printf '   %sskip%s  ntfy (not configured yet; deploy.sh asks for it)\n' "$yel" "$rst"
+fi
 expect "the brain holds the Proxmox token" pct exec "$BRAIN_ID" -- test -s /etc/hatbot/proxmox.env
 expect "the brain holds the desktop secrets" pct exec "$BRAIN_ID" -- test -s /etc/hatbot/desktop.env
 expect "the memory repo exists" pct exec "$BRAIN_ID" -- test -d /var/lib/hatbot/memory/.git

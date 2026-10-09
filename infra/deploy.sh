@@ -4,7 +4,7 @@
 # its health check is rolled back.
 #   ./deploy.sh 124:/root/hatbot   deploy HEAD of a git checkout inside another container
 #   ./deploy.sh hatbot.tar         deploy an archive made with `git archive HEAD`
-# The first run asks for the public URL, your reverse proxy's IP and the Anthropic API key.
+# The first run asks for the public URL, your reverse proxy's IP, the Anthropic API key and your ntfy server.
 
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -73,6 +73,43 @@ else
     unset key
   else
     warn "no API key; run deploy.sh again to add it"
+  fi
+fi
+
+# Earlier versions of brain-provision.sh ran an ntfy server on the brain; that config doesn't count.
+if [[ -z ${NTFY_URL:-} ]] && pct exec "$BRAIN_ID" -- sh -c \
+  'grep -qs "^NTFY_URL=" /etc/hatbot/ntfy.env && ! grep -qs "^NTFY_URL=http://127.0.0.1:8081" /etc/hatbot/ntfy.env'; then
+  ok "keeping /etc/hatbot/ntfy.env (set NTFY_URL to change it)"
+else
+  ntfy_url='' topic='' token=''
+  read -r -p "   URL of your ntfy server (empty to skip) [${NTFY_URL:-}]: " ntfy_url || true
+  ntfy_url=${ntfy_url:-${NTFY_URL:-}}
+  ntfy_url=${ntfy_url%/}
+  if [[ -n $ntfy_url ]]; then
+    read -r -p "   ntfy topic [hatbot]: " topic || true
+    read -r -s -p "   ntfy access token of a user that may publish to it (empty for none): " token || true
+    echo
+    # Checked from the brain, which is what has to reach it. The token goes over stdin.
+    if [[ -n $token ]]; then
+      if printf 'Authorization: Bearer %s\n' "$token" |
+        pct exec "$BRAIN_ID" -- curl -fsS -m 10 -o /dev/null -H @- "$ntfy_url/v1/account"; then
+        ok "the brain reaches $ntfy_url and the token works"
+      else
+        warn "the brain can't reach $ntfy_url or the token was refused; saving it anyway"
+      fi
+    elif pct exec "$BRAIN_ID" -- curl -fsS -m 10 -o /dev/null "$ntfy_url/v1/health"; then
+      ok "the brain reaches $ntfy_url"
+    else
+      warn "the brain can't reach $ntfy_url; saving it anyway"
+    fi
+    push_secret "$BRAIN_ID" /etc/hatbot/ntfy.env <<EOF
+NTFY_URL=$ntfy_url
+NTFY_TOPIC=${topic:-hatbot}
+NTFY_TOKEN=$token
+EOF
+    unset token
+  else
+    warn "no ntfy; run deploy.sh again to add it (needed from M2 on, for approvals)"
   fi
 fi
 

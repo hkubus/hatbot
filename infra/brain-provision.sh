@@ -2,11 +2,9 @@
 # Hatbot: provision the brain container (PLAN.md §4.1, §7, §9).
 # Runs inside hatbot-brain as root. host-setup.sh pushes and starts it; safe to re-run.
 # The app and its service unit come later, from deploy.sh.
-#   NTFY_BASE_URL  public URL of ntfy (e.g. https://ntfy.gaycats.ovh)
 #   DESKTOP_IP     the desktop's IP; it may not open connections to the brain
 
 set -euo pipefail
-NTFY_BASE_URL=${NTFY_BASE_URL:?set NTFY_BASE_URL}
 DESKTOP_IP=${DESKTOP_IP:?set DESKTOP_IP}
 BUN_VERSION=${BUN_VERSION:-1.4.2}
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
@@ -68,53 +66,6 @@ if [[ ! -f /var/lib/hatbot/.ssh/id_ed25519 ]]; then
   as_hatbot ssh-keygen -q -t ed25519 -N '' -C hatbot@hatbot-brain -f /var/lib/hatbot/.ssh/id_ed25519
 fi
 cat /var/lib/hatbot/.ssh/id_ed25519.pub
-
-say "ntfy"
-if ! command -v ntfy >/dev/null; then
-  install -d -m 755 /etc/apt/keyrings
-  curl -fsSL -o /etc/apt/keyrings/ntfy.gpg https://archive.ntfy.sh/apt/keyring.gpg
-  echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/ntfy.gpg] https://archive.ntfy.sh/apt stable main" \
-    >/etc/apt/sources.list.d/ntfy.list
-  apt-get update -qq
-  apt-get install -y -qq ntfy >/dev/null
-fi
-install -d -o ntfy -g ntfy -m 750 /var/cache/ntfy /var/lib/ntfy
-cat >/etc/ntfy/server.yml <<EOF
-# Managed by hatbot infra/brain-provision.sh.
-base-url: "$NTFY_BASE_URL"
-listen-http: ":8081"
-behind-proxy: true
-cache-file: "/var/cache/ntfy/cache.db"
-auth-file: "/var/lib/ntfy/user.db"
-auth-default-access: "deny-all"
-enable-signup: false
-web-root: disable
-# iOS wake-ups go through ntfy.sh; only a "fetch now" ping with a hashed topic leaves this box.
-upstream-base-url: "https://ntfy.sh"
-EOF
-systemctl enable -q ntfy
-systemctl restart ntfy
-for _ in $(seq 1 20); do curl -fsS -o /dev/null http://127.0.0.1:8081/v1/health && break; sleep 0.5; done
-
-ntfy_has_user() { ntfy user list 2>/dev/null | grep -q "^user $1 "; }
-if ! ntfy_has_user hatbot; then
-  NTFY_PASSWORD=$(openssl rand -hex 24) ntfy user add --role=admin hatbot >/dev/null
-fi
-if ! grep -qs '^NTFY_TOKEN=' /etc/hatbot/ntfy.env; then
-  token=$(ntfy token add hatbot 2>&1 | grep -o 'tk_[A-Za-z0-9]*' | head -1)
-  [[ -n $token ]] || { echo "could not create an ntfy token" >&2; exit 1; }
-  umask 027
-  printf 'NTFY_URL=http://127.0.0.1:8081\nNTFY_TOPIC=hatbot\nNTFY_TOKEN=%s\n' "$token" >/etc/hatbot/ntfy.env
-  chown root:hatbot /etc/hatbot/ntfy.env
-  umask 022
-fi
-if ! ntfy_has_user phone; then
-  pw=$(openssl rand -base64 18 | tr -d '/+=')
-  NTFY_PASSWORD=$pw ntfy user add phone >/dev/null
-  ntfy access phone hatbot read-only >/dev/null
-  (umask 077 && printf '%s\n' "$pw" >/root/ntfy-phone-password.txt)
-  echo "ntfy user 'phone' created; password saved in /root/ntfy-phone-password.txt"
-fi
 
 say "Firewall: the desktop may only answer, never connect in"
 cat >/etc/nftables.conf <<EOF
