@@ -135,7 +135,7 @@ Everything valuable lives in the brain, and the brain only ever sees *pixels and
 - `GET /context`: the current Chromium URL and title, read through CDP on localhost. Used for logging and the trust tracking in §6.1.
 - `POST /inspect`: the element under a point (or the focused one), for the consequential-click check in §6.1.
 - `POST /lock` / `/unlock`: input lock used during takeover.
-- `WS /live`: an MJPEG stream (ffmpeg x11grab, 5 fps) while someone watches, and your input while you have control.
+- `WS /live`: an MJPEG stream (ffmpeg x11grab, 15 fps; a slow viewer skips frames) while someone watches, and your input while you have control.
 - Auth: a shared bearer secret. The desktop's firewall only accepts the brain, and the host's bridge filter drops the desktop's replies to anyone else.
 - Services: `Xvnc :1` (TigerVNC, 1280×800), XFCE (lightweight), Chromium with a persistent profile, `desktop-agent`. All managed by systemd.
 

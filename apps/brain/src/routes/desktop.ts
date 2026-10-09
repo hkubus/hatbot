@@ -9,6 +9,8 @@ import { json } from "./util";
 
 /** Holds the screen lane while the desktop rolls back, so no task starts on it. */
 const ROLLBACK = -1;
+/** A viewer that falls this far behind skips frames instead of seeing the desktop late. */
+const LIVE_BUFFER_BYTES = 512 * 1024;
 
 const LIVE_INPUT = new Set(["move", "button", "wheel", "key"]);
 
@@ -44,7 +46,12 @@ export const desktopRoutes = new Hono<AppEnv>()
           const { url, headers } = desktop.agent.liveSocket();
           upstream = new WebSocket(url, { headers } as unknown as string[]);
           upstream.binaryType = "arraybuffer";
-          upstream.onmessage = (e) => ws.send(e.data as ArrayBuffer);
+          upstream.onmessage = (e) => {
+            // On a slow connection, drop frames rather than fall behind the desktop.
+            const raw = ws.raw as { getBufferedAmount?: () => number } | undefined;
+            if ((raw?.getBufferedAmount?.() ?? 0) < LIVE_BUFFER_BYTES)
+              ws.send(e.data as ArrayBuffer);
+          };
           upstream.onclose = () => ws.close(1011, "desktop disconnected");
           upstream.onerror = () => ws.close(1011, "desktop unreachable");
         },

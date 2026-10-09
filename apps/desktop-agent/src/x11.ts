@@ -277,7 +277,7 @@ export class LiveCapture {
 
   constructor(
     private size: { width: number; height: number },
-    private fps = 5,
+    private fps = 15,
   ) {}
 
   subscribe(fn: (frame: Uint8Array) => void): () => void {

@@ -25,6 +25,8 @@ const MAX_UPDATE_BYTES = 10 * 1024 * 1024;
 
 const size = await screenSize();
 const live = new LiveCapture(size);
+/** A watcher that falls this far behind skips frames instead of seeing the desktop late. */
+const LIVE_BUFFER_BYTES = 256 * 1024;
 /** While locked (the owner has control, or Pause all), the brain's model can't act. Live input still works. */
 let locked = false;
 
@@ -143,7 +145,9 @@ const server = Bun.serve<{ off?: () => void }>({
   websocket: {
     // Frames out as binary JPEG; live input in as JSON text.
     open(ws) {
-      ws.data.off = live.subscribe((frame) => ws.sendBinary(frame));
+      ws.data.off = live.subscribe((frame) => {
+        if (ws.getBufferedAmount() < LIVE_BUFFER_BYTES) ws.sendBinary(frame);
+      });
     },
     message(_ws, msg) {
       if (typeof msg !== "string") return;
