@@ -446,7 +446,7 @@ Each milestone ends with a working, demo-able system.
 
 ### M1 — Brain core + UI shell
 - [x] Hono API, SQLite schema + migrations, password + TOTP auth, API tokens
-- [x] Custom agent loop (Opus 5.5 at low effort; Sonnet 5.5 until October 2026), streaming, caching, spend ledger + limits
+- [x] Custom agent loop (Opus 5.5 at low effort), streaming, caching, spend ledger + limits
 - [x] Episodic thread (§5.3), `search_history`, thread summaries (Haiku)
 - [x] Memory repo + tools + UI (tree, editor, history, diff, revert)
 - [x] Web PWA built from the prototype: shell, chat, Memory, Spend, Settings
