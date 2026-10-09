@@ -43,7 +43,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 | Network | Both guests on the LAN at `192.168.55.<VMID+100>`. The host filters the desktop's bridge port: internet only, LAN and host blocked, only the brain can reach it |
 | Provisioning | A setup script you review and run once on the host; Hatbot then uses a **scoped Proxmox API token** |
 | Model provider | Claude only |
-| Models | **Opus 5.5** drives the desktop · **Sonnet 5.5** is the brain (chat, planning, tools) · **Haiku 5.5** handles triage and injection screening |
+| Models | **Opus 5.5** at low effort is the brain (chat, planning, tools), at medium it drives the desktop and writes code · **Haiku 5.5** handles triage, summaries and injection screening · no Sonnet or Fable (§5.4) |
 | Agent loop | **Custom loop on the raw Messages API**, with no Agent SDK. Same model quality; we own context, caching and cost |
 | Tools | Built-in TypeScript tools, plus an **MCP client** for external servers |
 | Billing | API key funded by **Max 20x's included $200/mo API credits**; stop when they run out |
@@ -191,14 +191,17 @@ build context (system + memory index + task)  →  call model (stream)
 ### 5.4 Model routing
 | Job | Model | Notes |
 |---|---|---|
-| Chat, planning, non-screen tools | `claude-sonnet-5-5` | Default brain |
+| Chat, planning, non-screen tools | `claude-opus-5-5`, effort `low` (Settings: low or medium) | Fast replies with a big model's judgement. Changing effort mid-conversation drops the prompt cache, so heavier work runs as a task instead |
 | Desktop driving (`run_desktop_task`) | `claude-opus-5-5`, effort `medium` | Native `computer_toolset_20260801`. Best screenshot reading |
 | Injection screening, thread summaries, alert triage | `claude-haiku-5-5`, effort `low` | $0.10/$0.50 per 1M tokens up to 100k-token prompts, 5x above (whole request). Thinks by default |
+| Writing code (`forge_*`, `ssh_exec` work, M4) | `claude-opus-5-5`, effort `medium`; `high` when you ask or after a failed attempt | Runs as a task with its own card, spend limit and timeline, like desktop tasks |
 | Teach-by-showing skill writing | `claude-opus-5-5` | Infrequent |
 
 Chat requests opt into server-side fallback (`fallbacks: "default"`): if the model refuses, the API retries on a fallback model, and the spend ledger bills each model that ran at its own rates.
 
-Later, run a small test on real tasks to see whether Sonnet 5.5 can drive the desktop well enough to save money. Check tool versions and model IDs against the live docs at implementation time.
+Why these (Artificial Analysis Intelligence Index, score and cost per index task, October 2026): Haiku 5.5 medium–max 34–43 at $0.05–0.21; Opus 5.5 medium 51 at $1.34, high 54 at $1.82, xhigh 56 at $3.46, max 58 at $5.98; Sonnet 5.5 low/medium 36/41 at $0.41/0.48, high 47 at $0.88, max 56 at $5.5–7.7. Every Sonnet setting is beaten on score or price by Haiku 5.5 or Opus 5.5. Opus low (42 at $0.55) loses to Haiku max on the index, but chat turns are short and tool-driven: a big model with little thinking answers faster and judges better, and cache reads cost the same as Sonnet's. Fable 5.1 and Opus xhigh/max cost 2–4x for a few points; not used.
+
+Later, run a small test on real tasks to see whether Haiku 5.5 (72% on OSWorld) can drive the desktop well enough to save money. Check tool versions and model IDs against the live docs at implementation time.
 
 ### 5.5 Built-in tools (brain)
 | Tool | Lane | Default policy |
@@ -443,7 +446,7 @@ Each milestone ends with a working, demo-able system.
 
 ### M1 — Brain core + UI shell
 - [x] Hono API, SQLite schema + migrations, password + TOTP auth, API tokens
-- [x] Custom agent loop (Sonnet), streaming, caching, spend ledger + limits
+- [x] Custom agent loop (Opus 5.5 at low effort; Sonnet 5.5 until October 2026), streaming, caching, spend ledger + limits
 - [x] Episodic thread (§5.3), `search_history`, thread summaries (Haiku)
 - [x] Memory repo + tools + UI (tree, editor, history, diff, revert)
 - [x] Web PWA built from the prototype: shell, chat, Memory, Spend, Settings
@@ -474,6 +477,7 @@ Each milestone ends with a working, demo-able system.
 - [ ] `proxmox_*` tools using the scoped token
 - [ ] `ssh_exec` with allowlist + destructive-pattern gate
 - [ ] `forge_*` for Forgejo + GitHub bot accounts
+- [ ] Code tasks: chat starts them like desktop tasks; Opus 5.5 at medium, high on request or after a failed attempt (§5.4)
 - [ ] Uptime Kuma alert handling: investigate → safe restart → report
 - [ ] MCP client + per-tool allow/ask/block UI
 - **Done when**: a Kuma "down" alert at 3am is fixed or diagnosed before you wake up.
@@ -496,7 +500,7 @@ Native iOS app (SwiftUI, SideStore, ntfy) · email via Proton Bridge · more tha
 | Prompt injection while running autonomously with persistent sessions | Trust tracking + approvals, Haiku screening, Anthropic's checks, desktop isolation, takeover for logins only |
 | Unprivileged LXC shares the host kernel with a browser on untrusted sites | Chromium sandbox on (`nesting=1`), no LAN, no secrets on the desktop, nightly snapshots; can move to a KVM VM later if RAM allows |
 | RAM pressure on a 16 GiB host | Small guests, swap on the desktop, preflight check, one screen lane |
-| Cost overruns from screenshot-heavy tasks | Spending limits, 1280×800, caching, server-side context clearing, Sonnet test for desktop work |
+| Cost overruns from screenshot-heavy tasks | Spending limits, 1280×800, caching, server-side context clearing, Haiku 5.5 test for desktop work |
 | API and tool versions change (fast-moving platform) | Model IDs and tool versions live in config; check against live docs at each milestone |
 | Sites block automation / captchas | `request_takeover` flow |
 | "Keep forever" archive growth | WebP screenshots, HDD pool, PBS deduplication; monitor size in Spend/Settings |

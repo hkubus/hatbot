@@ -8,6 +8,7 @@ const MODEL_NAMES: Record<string, string> = {
   "claude-opus-5-5": "Opus 5.5",
   "claude-sonnet-5-5": "Sonnet 5.5",
   "claude-sonnet-5": "Sonnet 5",
+  "claude-haiku-5-5": "Haiku 5.5",
   "claude-haiku-4-5": "Haiku 4.5",
 };
 const parseDay = (d: string) => new Date(`${d}T12:00:00`);

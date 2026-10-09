@@ -141,4 +141,7 @@ export const migrations: string[] = [
   ALTER TABLE messages ADD COLUMN task_id INTEGER REFERENCES tasks(id);
   ALTER TABLE messages ADD COLUMN approval_id INTEGER REFERENCES approvals(id);
   `,
+  /* 4: chat moved from Sonnet 5.5 to Opus 5.5 at low effort */ `
+  UPDATE settings SET value = json_set(value, '$.chatEffort', 'low') WHERE key = 'app';
+  `,
 ];

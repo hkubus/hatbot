@@ -112,8 +112,8 @@ test("system prompt and tools are identical across requests (cache-stable)", asy
 test("spend is recorded, and the daily limit stops replies", async () => {
   const t = await testApp(new FakeModel([{ content: [text("ok")] }]));
   await t.thread.post("hi").done;
-  // 1000 input * $2/M + 200 output * $10/M
-  expect(t.spend.summary().todayUsd).toBeCloseTo(0.004, 6);
+  // Opus 5.5: 1000 input * $4/M + 200 output * $20/M
+  expect(t.spend.summary().todayUsd).toBeCloseTo(0.008, 6);
 
   t.settings.update({ limits: { taskUsd: 3, dailyUsd: 0.005, monthlyUsd: 200 } });
   await t.thread.post("again").done;

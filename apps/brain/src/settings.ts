@@ -7,8 +7,8 @@ export const Settings = z.object({
     dailyUsd: z.number().positive(),
     monthlyUsd: z.number().positive(),
   }),
-  /** Effort for the chat thread (Sonnet 5.5). */
-  chatEffort: z.enum(["low", "medium", "high"]),
+  /** Effort for the chat thread (Opus 5.5). Heavier work runs as tasks, at their own effort. */
+  chatEffort: z.enum(["low", "medium"]),
   /** Name and email on memory commits you make from the UI. */
   owner: z.object({ name: z.string().min(1), email: z.string().min(1) }),
   /** Pause all (PLAN.md §6.5). */
@@ -18,7 +18,7 @@ export type Settings = z.infer<typeof Settings>;
 
 export const DEFAULT_SETTINGS: Settings = {
   limits: { taskUsd: 3, dailyUsd: 10, monthlyUsd: 200 },
-  chatEffort: "medium",
+  chatEffort: "low",
   owner: { name: "You", email: "owner@local" },
   paused: false,
 };

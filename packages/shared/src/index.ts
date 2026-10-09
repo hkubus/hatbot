@@ -202,7 +202,7 @@ export type SpendByModel = { model: string; usd: number };
 
 export type AppSettings = {
   limits: Limits;
-  chatEffort: "low" | "medium" | "high";
+  chatEffort: "low" | "medium";
   owner: { name: string; email: string };
   paused: boolean;
 };

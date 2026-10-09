@@ -146,9 +146,8 @@ export function Settings({
                   update({ chatEffort: e.target.value as AppSettings["chatEffort"] })
                 }
               >
-                <option value="low">Low (fastest)</option>
+                <option value="low">Low</option>
                 <option value="medium">Medium</option>
-                <option value="high">High</option>
               </select>
             </div>
             <div className="row">
