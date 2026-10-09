@@ -39,3 +39,42 @@ export const PutMemoryFile = z.object({
   content: z.string().max(1_000_000),
   message: z.string().max(200).optional(),
 });
+
+export type ThreadMessage = {
+  id: number;
+  role: "user" | "assistant";
+  text: string;
+  status: "streaming" | "done" | "error";
+  createdAt: string;
+};
+
+/** Live events on /api/v1/stream. */
+export type HatbotEvent =
+  | { type: "message.created"; message: ThreadMessage }
+  | { type: "message.delta"; id: number; text: string }
+  | { type: "message.progress"; id: number; text: string }
+  | { type: "message.done"; id: number; text: string; status: "done" | "error" }
+  | { type: "spend.updated"; todayUsd: number; monthUsd: number }
+  | { type: "memory.committed"; sha: string; message: string; author: string }
+  | { type: "paused"; paused: boolean };
+
+export type MemoryFile = { path: string; size: number };
+export type Commit = {
+  sha: string;
+  author: string;
+  date: string;
+  message: string;
+  files: string[];
+};
+
+export type Limits = { taskUsd: number; dailyUsd: number; monthlyUsd: number };
+export type SpendSummary = { todayUsd: number; monthUsd: number; limits: Limits };
+export type SpendDay = { date: string; usd: number };
+export type SpendByModel = { model: string; usd: number };
+
+export type AppSettings = {
+  limits: Limits;
+  chatEffort: "low" | "medium" | "high";
+  owner: { name: string; email: string };
+  paused: boolean;
+};

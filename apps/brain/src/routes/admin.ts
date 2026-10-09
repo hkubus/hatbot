@@ -16,6 +16,11 @@ export const adminRoutes = new Hono<AppEnv>()
     query(z.object({ days: z.coerce.number().int().min(1).max(366).default(30) })),
     (c) => c.json(c.var.spend.daily(c.req.valid("query").days)),
   )
+  .get(
+    "/spend/by-model",
+    query(z.object({ days: z.coerce.number().int().min(1).max(366).default(30) })),
+    (c) => c.json(c.var.spend.byModel(c.req.valid("query").days)),
+  )
   .get("/settings", (c) => c.json(c.var.settings.get()))
   .put("/settings", json(Settings.omit({ paused: true }).partial()), (c) =>
     c.json(c.var.settings.update(c.req.valid("json"))),

@@ -9,6 +9,7 @@ import { EventBus } from "./events";
 import { MemoryStore } from "./memory/store";
 import { SettingsStore } from "./settings";
 import { Spend } from "./spend";
+import { webHandler } from "./web";
 
 const config = loadConfig();
 const db = openDb(config.dbPath);
@@ -32,7 +33,14 @@ const loginLimits = {
 };
 
 const app = createApp({ config, db, auth, loginLimits, events, settings, spend, memory, thread });
-const server = Bun.serve({ hostname: config.host, port: config.port, fetch: app.fetch, websocket });
+const web = webHandler(config.webDir);
+const server = Bun.serve({
+  hostname: config.host,
+  port: config.port,
+  fetch: (req, srv) =>
+    new URL(req.url).pathname.startsWith("/api/") ? app.fetch(req, srv) : web(req),
+  websocket,
+});
 console.log(`hatbot brain listening on http://${server.hostname}:${server.port}`);
 if (!auth.isSetUp()) {
   console.log(`First run: open ${config.publicUrl}/setup and enter setup code ${auth.setupCode}`);

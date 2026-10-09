@@ -1,5 +1,6 @@
 // The single chat thread, run as episodes (PLAN.md §5.2, §5.3).
 import type Anthropic from "@anthropic-ai/sdk";
+import type { ThreadMessage } from "@hatbot/shared";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
 import type { MemoryStore } from "../memory/store";
@@ -22,13 +23,6 @@ const BETAS: Anthropic.Beta.AnthropicBeta[] = [
 
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 type Turn = Anthropic.Beta.BetaMessageParam;
-export type ThreadMessage = {
-  id: number;
-  role: "user" | "assistant";
-  text: string;
-  status: string;
-  createdAt: string;
-};
 
 export type ThreadDeps = {
   db: Db;

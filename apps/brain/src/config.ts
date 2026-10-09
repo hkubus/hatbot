@@ -7,6 +7,8 @@ export type Config = {
   dbPath: string;
   memoryDir: string;
   archiveDir: string;
+  /** Built web app to serve on the same origin. */
+  webDir: string;
   /** Public origin, e.g. https://hatbot.gaycats.ovh. Cookie-authenticated writes must come from it. */
   publicUrl: string;
   /** Peers whose X-Forwarded-For is trusted (your reverse proxy). */
@@ -22,6 +24,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     dbPath: env.HATBOT_DB ?? join(dataDir, "hatbot.sqlite"),
     memoryDir: env.HATBOT_MEMORY_DIR ?? join(dataDir, "memory"),
     archiveDir: env.HATBOT_ARCHIVE_DIR ?? join(dataDir, "archive"),
+    webDir: env.HATBOT_WEB_DIR ?? join(import.meta.dir, "../../web/dist"),
     publicUrl: (env.HATBOT_PUBLIC_URL ?? "http://localhost:5173").replace(/\/$/, ""),
     trustedProxies: (env.HATBOT_TRUSTED_PROXIES ?? "")
       .split(",")

@@ -182,6 +182,15 @@ export class Spend {
     }
   }
 
+  byModel(days: number): { model: string; usd: number }[] {
+    const from = startOfLocalDay(this.clock() - (days - 1) * 86400_000);
+    return this.db
+      .query<{ model: string; usd: number }, [string]>(
+        "SELECT model, sum(cost_usd) AS usd FROM spend_ledger WHERE created_at >= ? GROUP BY model ORDER BY usd DESC",
+      )
+      .all(from.toISOString());
+  }
+
   daily(days: number): { date: string; usd: number }[] {
     const now = this.clock();
     const from = startOfLocalDay(now - (days - 1) * 86400_000);
