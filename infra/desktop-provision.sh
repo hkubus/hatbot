@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # Hatbot: provision the desktop container (PLAN.md §4.2).
 # Runs inside hatbot-desktop as root. host-setup.sh pushes and starts it; safe to re-run.
-#   DESKTOP_IP  this container's private IP; Xvnc listens only there
-#   BRAIN_IP    the brain's private IP; the only host allowed to connect in
+#   DESKTOP_IP  this container's IP; Xvnc listens only there
+#   BRAIN_IP    the brain's IP; the only host allowed to connect in
 # Reads VNC_PASSWORD from /etc/hatbot-desktop/secrets.env (written by host-setup.sh).
 
 set -euo pipefail
-DESKTOP_IP=${DESKTOP_IP:-10.77.0.20}
-BRAIN_IP=${BRAIN_IP:-10.77.0.10}
 BUN_VERSION=${BUN_VERSION:-1.4.2}
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
 
@@ -16,6 +14,7 @@ say() { printf '\n-- %s\n' "$*"; }
 # shellcheck source=/dev/null
 source /etc/hatbot-desktop/secrets.env
 : "${VNC_PASSWORD:?missing in /etc/hatbot-desktop/secrets.env}"
+: "${DESKTOP_IP:?set DESKTOP_IP}" "${BRAIN_IP:?set BRAIN_IP}"
 
 say "Packages (XFCE, TigerVNC, Chromium, xdotool)"
 apt-get update -qq

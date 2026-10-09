@@ -40,7 +40,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 | Isolation | **Brain** and **desktop** are separate guests |
 | Brain guest | New dedicated unprivileged LXC |
 | Desktop guest | Unprivileged LXC (`nesting=1`), about 1.5 GiB / 2 vCPU, 1280×800, persistent, nightly ZFS snapshots kept 7 days |
-| Network | Desktop on a private bridge with NAT to the internet only; LAN `192.168.55.0/24` blocked; only the brain can reach it |
+| Network | Both guests on the LAN at `192.168.55.<VMID+100>`. The host filters the desktop's bridge port: internet only, LAN and host blocked, only the brain can reach it |
 | Provisioning | A setup script you review and run once on the host; Hatbot then uses a **scoped Proxmox API token** |
 | Model provider | Claude only |
 | Models | **Opus 5.5** drives the desktop · **Sonnet 5.5** is the brain (chat, planning, tools) · **Haiku 5.5** handles triage and injection screening |
@@ -94,10 +94,11 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
               │  ntfy server    :8081      │
               │  SQLite · memory/ (git)    │──▶ Claude API (api.anthropic.com)
               │  /archive (HDD mount)      │──▶ Forgejo / GitHub (bot accounts)
-              └─────────────┬──────────────┘
-                            │ vmbr77 (private, 10.77.0.0/24)
-              ┌─────────────┴──────────────┐
-              │  hatbot-desktop (LXC)      │──NAT──▶ internet only (LAN dropped)
+              └────────────────────────────┘
+                 both guests on vmbr0 at 192.168.55.<VMID+100>
+              ┌────────────────────────────┐
+              │  hatbot-desktop (LXC)      │──▶ internet only (host filters its
+              │                            │    bridge port: no LAN, no host)
               │  Xvnc :1 (1280×800) + XFCE │
               │  Chromium (CDP :9222 local)│
               │  desktop-agent daemon :7070│  ◀── only reachable from the brain
@@ -134,7 +135,7 @@ Everything valuable lives in the brain, and the brain only ever sees *pixels and
 - `POST /zoom`: crops a region at full resolution.
 - `GET /context`: the current Chromium URL and title, read through CDP on localhost. Used for logging and the trust tracking in §6.1.
 - `POST /lock` / `/unlock`: input lock used during takeover.
-- Auth: a shared bearer secret, and the daemon only listens on the private bridge.
+- Auth: a shared bearer secret. The desktop's firewall only accepts the brain, and the host's bridge filter drops the desktop's replies to anyone else.
 - Services: `Xvnc :1` (TigerVNC, 1280×800), XFCE (lightweight), Chromium with a persistent profile, `desktop-agent`. All managed by systemd.
 
 ### 4.3 `apps/web` — React + Vite PWA
@@ -271,7 +272,7 @@ How it's enforced:
 - **Credits**: the Max 20x API credits are the only funding source, so the provider stops requests at $0 as a backstop.
 
 ### 6.4 Isolation
-- **Network**: the desktop LXC sits only on `vmbr77` and is NATed by the host. The host's nftables table `inet hatbot` drops desktop → private ranges (including `192.168.55.0/24`), → the host itself, and all desktop IPv6. Inside the brain, nftables drops new connections from the desktop, so the desktop can only answer the brain.
+- **Network**: both guests sit on the LAN bridge with static IPs. The host's nftables table `bridge hatbot` filters frames at the desktop's bridge port (`veth<ID>i0`), where the desktop can't touch it. It allows only the desktop's own MAC and IP (no spoofing, no ARP poisoning), drops IPv6 and non-IP traffic, drops everything to private ranges (including `192.168.55.0/24`) and to the host itself, and lets through only replies to the brain on 5901/7070. Inside the brain, nftables also drops new connections from the desktop. `infra/test-firewall.sh` tests the ruleset in network namespaces.
 - **Secrets**: the desktop holds no secrets except its browser profile.
 - **Brain secrets**: in `/etc/hatbot/secrets.env` (mode 600), loaded at start, never sent to the model.
 - **Proxmox token**: privilege-separated, with a custom role (§9.3).
@@ -335,16 +336,16 @@ REST + JSON under `/api/v1`. One WebSocket at `/api/v1/stream` for events. A gen
 ### 9.1 Guests
 | Guest | Type | vCPU | RAM | Disk | NICs |
 |---|---|---|---|---|---|
-| `hatbot-brain` | unprivileged LXC, Debian 13 | 2 | 2 GiB | 16 GB SSD + `/archive` mount on the HDD pool | `vmbr0` (LAN, DHCP) + `vmbr77` at `10.77.0.10` |
-| `hatbot-desktop` | unprivileged LXC, Debian 13, `nesting=1` | 2 | 1.5 GiB (+1 GiB swap) | 16 GB SSD | `vmbr77` only, at `10.77.0.20` |
+| `hatbot-brain` | unprivileged LXC, Debian 13 | 2 | 2 GiB | 16 GB SSD + `/archive` mount on the HDD pool | `vmbr0`, static `192.168.55.<VMID+100>` |
+| `hatbot-desktop` | unprivileged LXC, Debian 13, `nesting=1` | 2 | 1.5 GiB (+1 GiB swap) | 16 GB SSD | `vmbr0`, static `192.168.55.<VMID+100>`, MAC pinned in the host firewall |
 
 The setup script checks the host's free RAM before creating anything, and stops with a clear message if there isn't enough.
 
 ### 9.2 `infra/host-setup.sh` (you review it, then run it once on the host)
 How to run it: `infra/README.md`. Start with `--dry-run`. Settings are saved to `/etc/hatbot/host.env`, so re-runs reuse them.
-1. **Preflight**: Proxmox version, uplink and LAN, a free subnet, free RAM, storages (SSD and HDD, confirmed by you), the template, whether the VMIDs are free. Re-runs find existing guests by name.
-2. **Network**: create `vmbr77` (`10.77.0.1/24`, no physical ports) and turn on IP forwarding. The nftables table `inet hatbot` (`/etc/hatbot/host.nft`, loaded by `hatbot-firewall.service`) NATs `10.77.0.0/24` and applies the drops in §6.4. The script never starts or stops `nftables.service`, because its `flush ruleset` would wipe the Proxmox firewall.
-3. **Guests**: create both LXCs in pool `hatbot`, tagged `hatbot`; add the `/archive` mount point (on the HDD storage, `backup=1`).
+1. **Preflight**: Proxmox version, uplink and LAN, that both guest IPs are free, free RAM, storages (SSD and HDD, confirmed by you), the template, whether the VMIDs are free. Re-runs find existing guests by name.
+2. **Guests**: create both LXCs in pool `hatbot`, tagged `hatbot`, with static LAN IPs; add the `/archive` mount point (on the HDD storage, `backup=1`).
+3. **Desktop firewall**: write the `bridge hatbot` table (§6.4) to `/etc/hatbot/host.nft` and load it with `hatbot-firewall.service`, which runs before `pve-guests.service`. Only then start the guests. The Proxmox firewall is left alone, and the script never starts or stops `nftables.service`, because its `flush ruleset` would wipe the Proxmox firewall.
 4. **Proxmox access**: create the `hatbot@pve` user, the roles in §9.3 and the privilege-separated token `hatbot@pve!brain`. The token and the host's TLS fingerprint go to the brain's `/etc/hatbot/proxmox.env`.
 5. **Desktop secrets**: generate the VNC password and the desktop-agent token, and write them to both guests.
 6. **Provisioning**: push and run `infra/brain-provision.sh` and `infra/desktop-provision.sh` inside the guests.

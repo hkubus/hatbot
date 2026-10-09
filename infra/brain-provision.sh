@@ -2,11 +2,11 @@
 # Hatbot: provision the brain container (PLAN.md §4.1, §7, §9).
 # Runs inside hatbot-brain as root. host-setup.sh pushes and starts it; safe to re-run.
 #   NTFY_BASE_URL  public URL of ntfy (e.g. https://ntfy.gaycats.ovh)
-#   DESKTOP_IP     the desktop's private IP; it may not open connections to the brain
+#   DESKTOP_IP     the desktop's IP; it may not open connections to the brain
 
 set -euo pipefail
 NTFY_BASE_URL=${NTFY_BASE_URL:?set NTFY_BASE_URL}
-DESKTOP_IP=${DESKTOP_IP:-10.77.0.20}
+DESKTOP_IP=${DESKTOP_IP:?set DESKTOP_IP}
 BUN_VERSION=${BUN_VERSION:-1.4.2}
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
 
@@ -124,7 +124,7 @@ flush ruleset
 table inet filter {
   chain input {
     type filter hook input priority filter; policy accept;
-    iifname "eth1" ip saddr $DESKTOP_IP ct state new counter drop
+    ip saddr $DESKTOP_IP ct state new counter drop
   }
 }
 EOF

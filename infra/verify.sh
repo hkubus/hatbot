@@ -8,15 +8,12 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$HERE/lib.sh"
 # shellcheck source=/dev/null
 source /etc/hatbot/host.env 2>/dev/null || die "/etc/hatbot/host.env not found; run host-setup.sh first"
-: "${NET_PREFIX:?}" "${BRAIN_ID:?}" "${DESKTOP_ID:?}" "${SSD_STORE:?}"
+: "${BRAIN_ID:?}" "${DESKTOP_ID:?}" "${BRAIN_IP:?}" "${DESKTOP_IP:?}" "${SSD_STORE:?}"
 
-BRAIN_PRIV_IP=$NET_PREFIX.10
-DESKTOP_IP=$NET_PREFIX.20
-HOST_PRIV_IP=$NET_PREFIX.1
 UPLINK=$(ip -4 route show default | awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }')
 LAN_GW=$(ip -4 route show default | awk '{ print $3; exit }')
 HOST_LAN_IP=$(ip -4 -o addr show dev "$UPLINK" | awk '{ print $4; exit }' | cut -d/ -f1)
-BRAIN_LAN_IP=$(pct exec "$BRAIN_ID" -- ip -4 -o addr show dev eth0 2>/dev/null | awk '{ print $4; exit }' | cut -d/ -f1)
+DESKTOP_MAC=$(pct config "$DESKTOP_ID" | sed -n 's#^net0:.*hwaddr=\([0-9A-Fa-f:]*\).*#\1#p' | tr 'A-F' 'a-f')
 
 pass=0
 fail=0
@@ -71,15 +68,15 @@ expect "both are in pool hatbot" sh -c "pveum pool list --output-format json | g
   pvesh get /pools/hatbot --output-format json | grep -q '\"vmid\":$DESKTOP_ID'"
 
 step "Network isolation"
-expect "firewall table inet hatbot is loaded" nft list table inet hatbot
+expect "firewall table bridge hatbot is loaded" nft list table bridge hatbot
 expect "hatbot-firewall.service is enabled" systemctl is-enabled --quiet hatbot-firewall.service
+expect "the firewall matches the desktop's port (veth${DESKTOP_ID}i0) and MAC ($DESKTOP_MAC)" sh -c \
+  "nft list table bridge hatbot | grep -q '\"veth${DESKTOP_ID}i0\"' && nft list table bridge hatbot | grep -qi 'ether saddr != $DESKTOP_MAC'"
 expect "desktop reaches the internet (https://deb.debian.org)" \
   pct exec "$DESKTOP_ID" -- curl -fsS -m 10 -o /dev/null https://deb.debian.org/
-blocked "desktop can't reach the Proxmox host on the LAN" "$HOST_LAN_IP" 8006 22
-blocked "desktop can't reach the Proxmox host on the private bridge" "$HOST_PRIV_IP" 8006 22
+blocked "desktop can't reach the Proxmox host" "$HOST_LAN_IP" 8006 22
 blocked "desktop can't reach the LAN gateway" "$LAN_GW" 443 80 53 22
-[[ -n $BRAIN_LAN_IP ]] && blocked "desktop can't reach the brain's LAN address" "$BRAIN_LAN_IP" 8081 22
-blocked "desktop can't open connections to the brain's private address" "$BRAIN_PRIV_IP" 8081 22
+blocked "desktop can't open connections to the brain" "$BRAIN_IP" 8081 22
 expect "desktop has no IPv6 route out" sh -c "! pct exec $DESKTOP_ID -- ip -6 route show default | grep -q ."
 
 step "Brain ↔ desktop"

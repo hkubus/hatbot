@@ -22,15 +22,14 @@ STATE=/etc/hatbot/host.env
 [[ -r $STATE ]] && source "$STATE"
 
 # ---------- Settings ----------
-BRIDGE=${BRIDGE:-vmbr77}                    # private bridge for brain + desktop
-NET_PREFIX=${NET_PREFIX:-10.77.0}           # its /24
 BRAIN_ID=${BRAIN_ID:-}
 DESKTOP_ID=${DESKTOP_ID:-}
+BRAIN_IP=${BRAIN_IP:-}                      # default: <LAN prefix>.<VMID + 100>
+DESKTOP_IP=${DESKTOP_IP:-}                  # same rule
 SSD_STORE=${SSD_STORE:-}                    # root disks
 HDD_STORE=${HDD_STORE:-}                    # /archive on the brain
 ARCHIVE_SIZE=${ARCHIVE_SIZE:-200}           # GiB, can be grown later
-LAN_BRIDGE=${LAN_BRIDGE:-}                  # bridge for the brain's LAN NIC (default: the uplink)
-BRAIN_LAN=${BRAIN_LAN:-dhcp}                # or "192.168.55.40/24,gw=192.168.55.1"
+LAN_BRIDGE=${LAN_BRIDGE:-}                  # bridge both guests join (default: the uplink)
 DNS=${DNS:-9.9.9.9 1.1.1.1}                 # the desktop's resolvers (it can't reach LAN DNS)
 NTFY_BASE_URL=${NTFY_BASE_URL:-https://ntfy.gaycats.ovh}
 FORCE=${FORCE:-0}                           # 1 = continue despite the RAM check
@@ -45,9 +44,6 @@ BRAIN_MEM=2048
 BRAIN_SWAP=512
 DESKTOP_MEM=1536
 DESKTOP_SWAP=1024
-HOST_PRIV_IP=$NET_PREFIX.1
-BRAIN_PRIV_IP=$NET_PREFIX.10
-DESKTOP_IP=$NET_PREFIX.20
 
 DRY_RUN=0
 ASSUME_YES=0
@@ -145,7 +141,7 @@ save_state() {
   {
     echo "# Written by hatbot infra/host-setup.sh; edit and re-run to change."
     local v
-    for v in BRIDGE NET_PREFIX BRAIN_ID DESKTOP_ID SSD_STORE HDD_STORE ARCHIVE_SIZE LAN_BRIDGE BRAIN_LAN DNS NTFY_BASE_URL; do
+    for v in BRAIN_ID DESKTOP_ID BRAIN_IP DESKTOP_IP SSD_STORE HDD_STORE ARCHIVE_SIZE LAN_BRIDGE DNS NTFY_BASE_URL; do
       printf '%s=%q\n' "$v" "${!v}"
     done
   } >"$STATE"
@@ -172,15 +168,11 @@ LAN_GW=$(ip -4 route show default | awk '{ print $3; exit }')
 [[ -n $UPLINK ]] || die "no IPv4 default route"
 HOST_LAN_CIDR=$(ip -4 -o addr show dev "$UPLINK" | awk '{ print $4; exit }')
 HOST_LAN_IP=${HOST_LAN_CIDR%/*}
+LAN_LEN=${HOST_LAN_CIDR#*/}
 LAN_NET=$(cidr_net "$HOST_LAN_CIDR")
 LAN_BRIDGE=${LAN_BRIDGE:-$UPLINK}
-[[ -d /sys/class/net/$LAN_BRIDGE/bridge ]] || die "$LAN_BRIDGE is not a Linux bridge; set LAN_BRIDGE to the bridge the brain's LAN NIC should use"
+[[ -d /sys/class/net/$LAN_BRIDGE/bridge ]] || die "$LAN_BRIDGE is not a Linux bridge; set LAN_BRIDGE to the bridge the guests should join"
 ok "uplink $UPLINK, host $HOST_LAN_CIDR, LAN $LAN_NET, gateway $LAN_GW"
-
-if ip -4 -o addr show | awk -v b="$BRIDGE" -v p="$NET_PREFIX." '$2 != b && index($4, p) == 1 { f = 1 } END { exit !f }'; then
-  die "$NET_PREFIX.0/24 is already in use on this host; pick another with NET_PREFIX=10.x.y"
-fi
-[[ -e /etc/network/interfaces.new ]] && die "there are unapplied network changes (/etc/network/interfaces.new); apply or revert them in the GUI first"
 if systemctl is-enabled --quiet nftables 2>/dev/null; then
   warn "nftables.service is enabled; if /etc/nftables.conf starts with 'flush ruleset' it removes Hatbot's rules at boot"
 fi
@@ -207,6 +199,40 @@ fi
 [[ -z ${ex_brain_id:-} ]] && vmid_used "$BRAIN_ID" && die "VMID $BRAIN_ID is already used by another guest"
 [[ -z ${ex_desk_id:-} ]] && vmid_used "$DESKTOP_ID" && die "VMID $DESKTOP_ID is already used by another guest"
 [[ $BRAIN_ID != "$DESKTOP_ID" ]] || die "brain and desktop need different VMIDs"
+
+# LAN addresses: kept from existing guests, otherwise <LAN prefix>.<VMID + 100>.
+ct_ip() { pct config "$1" 2>/dev/null | sed -n 's#^net0:.*[,:]ip=\([0-9.]*\)/.*#\1#p'; }
+ct_mac() { pct config "$1" 2>/dev/null | sed -n 's#^net0:.*hwaddr=\([0-9A-Fa-f:]*\).*#\1#p' | tr 'A-F' 'a-f'; }
+pick_ip() { # pick_ip VAR VMID EXISTING
+  local __var=$1 id=$2 existing=$3 ip
+  if [[ -n $existing ]]; then
+    ip=$(ct_ip "$id")
+    [[ -n $ip ]] || die "CT $id has no static IPv4 address on net0; set one, or remove the CT and re-run"
+  else
+    ip=${!__var:-${HOST_LAN_IP%.*}.$((id + 100))}
+    [[ $(cidr_net "$ip/$LAN_LEN") == "$LAN_NET" && ${ip##*.} -ge 1 && ${ip##*.} -le 254 ]] ||
+      die "$ip is not a usable address in $LAN_NET; set BRAIN_IP / DESKTOP_IP"
+    if ping -c 1 -W 1 "$ip" >/dev/null 2>&1 || ip neigh show "$ip" | grep -qE 'REACHABLE|STALE|DELAY|PERMANENT'; then
+      die "$ip is already in use on the LAN; set BRAIN_IP / DESKTOP_IP"
+    fi
+  fi
+  printf -v "$__var" '%s' "$ip"
+}
+pick_ip BRAIN_IP "$BRAIN_ID" "${ex_brain_id:-}"
+pick_ip DESKTOP_IP "$DESKTOP_ID" "${ex_desk_id:-}"
+[[ $BRAIN_IP != "$DESKTOP_IP" ]] || die "brain and desktop need different IPs"
+[[ $BRAIN_IP != "$HOST_LAN_IP" && $DESKTOP_IP != "$HOST_LAN_IP" && $DESKTOP_IP != "$LAN_GW" && $BRAIN_IP != "$LAN_GW" ]] ||
+  die "a guest IP clashes with the host or the gateway; set BRAIN_IP / DESKTOP_IP"
+ok "brain $BRAIN_IP, desktop $DESKTOP_IP (/$LAN_LEN, gateway $LAN_GW)"
+
+# The host firewall matches the desktop by its bridge port and MAC, so the MAC is fixed up front.
+DESKTOP_VETH=veth${DESKTOP_ID}i0
+if [[ -n ${ex_desk_id:-} ]]; then
+  DESKTOP_MAC=$(ct_mac "$DESKTOP_ID")
+  [[ -n $DESKTOP_MAC ]] || die "can't read the MAC of CT $DESKTOP_ID"
+else
+  DESKTOP_MAC=bc:24:11:$(openssl rand -hex 3 | sed 's/../&:/g; s/:$//')
+fi
 
 info "Storages that can hold container disks:"
 pvesm status --content rootdir 2>/dev/null |
@@ -254,103 +280,18 @@ ask NTFY_BASE_URL "Public URL for ntfy" "$NTFY_BASE_URL"
 cat <<EOF
 
    Plan:
-     bridge   $BRIDGE  $HOST_PRIV_IP/24 (host), NAT to $UPLINK, LAN and host blocked for the desktop
      brain    CT $BRAIN_ID  $BRAIN_NAME    2 vCPU, $BRAIN_MEM MiB, 16 GiB on $SSD_STORE, /archive ${ARCHIVE_SIZE} GiB on $HDD_STORE
-              eth0 $LAN_BRIDGE ($BRAIN_LAN), eth1 $BRIDGE $BRAIN_PRIV_IP
+              $BRAIN_IP/$LAN_LEN on $LAN_BRIDGE
      desktop  CT $DESKTOP_ID  $DESKTOP_NAME  2 vCPU, $DESKTOP_MEM MiB + $DESKTOP_SWAP MiB swap, 16 GiB on $SSD_STORE
-              eth0 $BRIDGE $DESKTOP_IP only, DNS $DNS
+              $DESKTOP_IP/$LAN_LEN on $LAN_BRIDGE (MAC $DESKTOP_MAC), DNS $DNS
+     firewall the host filters the desktop's bridge port: internet only, no LAN, no host, no IPv6
      access   user $PVE_USER, roles HatbotOps + HatbotSnapshots, token $TOKEN_ID
 EOF
 confirm "Continue?" || die "stopped"
 save_state
 
-# ---------- 2. Private network ----------
-step "2/8 Private network $BRIDGE ($NET_PREFIX.0/24)"
-if ip link show "$BRIDGE" >/dev/null 2>&1; then
-  ok "$BRIDGE exists"
-elif confirm "Create bridge $BRIDGE ($HOST_PRIV_IP/24, no physical ports)?"; then
-  run pvesh create "/nodes/$NODE/network" --iface "$BRIDGE" --type bridge --cidr "$HOST_PRIV_IP/24" \
-    --autostart 1 --comments "Hatbot private network (brain + desktop)"
-  run pvesh set "/nodes/$NODE/network"
-else
-  die "the bridge is required"
-fi
-
-if [[ $(sysctl -n net.ipv4.ip_forward) == 1 ]]; then
-  ok "IPv4 forwarding is on"
-else
-  write_file /etc/sysctl.d/90-hatbot.conf 644 <<<"net.ipv4.ip_forward = 1"
-  run sysctl -q -p /etc/sysctl.d/90-hatbot.conf
-fi
-
-if ! command -v nft >/dev/null; then
-  confirm "Install the nftables package (only the nft command; nftables.service stays disabled)?" || die "nft is required"
-  run apt-get install -y --no-install-recommends nftables
-  # Never start or stop nftables.service here: its config begins with 'flush ruleset', which would also
-  # wipe the Proxmox firewall's rules. Hatbot loads its own table through hatbot-firewall.service.
-  run systemctl disable nftables.service
-fi
-
-write_file /etc/hatbot/host.nft 600 <<EOF
-#!/usr/sbin/nft -f
-# Managed by hatbot infra/host-setup.sh. Keeps $DESKTOP_NAME on the internet only.
-table inet hatbot
-delete table inet hatbot
-
-table inet hatbot {
-  # Everything the desktop must never reach: private and special ranges, plus this LAN.
-  set blocked {
-    type ipv4_addr
-    flags interval
-    auto-merge
-    elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12,
-                 192.168.0.0/16, 224.0.0.0/3, $LAN_NET }
-  }
-
-  chain forward {
-    type filter hook forward priority filter - 5; policy accept;
-    iifname "$BRIDGE" ip daddr $NET_PREFIX.0/24 accept
-    iifname "$BRIDGE" ip daddr @blocked counter drop
-    iifname "$BRIDGE" meta nfproto ipv6 counter drop
-  }
-
-  # The desktop can't open connections to the host itself, on any of its addresses.
-  chain input {
-    type filter hook input priority filter - 5; policy accept;
-    iifname "$BRIDGE" ct state established,related accept
-    iifname "$BRIDGE" ip saddr $DESKTOP_IP counter drop
-  }
-
-  chain postrouting {
-    type nat hook postrouting priority srcnat; policy accept;
-    ip saddr $NET_PREFIX.0/24 oifname "$UPLINK" masquerade
-  }
-}
-EOF
-
-write_file /etc/systemd/system/hatbot-firewall.service 644 <<'EOF'
-[Unit]
-Description=Hatbot firewall (desktop isolation and NAT)
-Documentation=file:///etc/hatbot/host.nft
-DefaultDependencies=no
-Before=network-pre.target
-Wants=network-pre.target
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/usr/sbin/nft -f /etc/hatbot/host.nft
-ExecStop=/usr/sbin/nft delete table inet hatbot
-
-[Install]
-WantedBy=multi-user.target
-EOF
-run systemctl daemon-reload
-run systemctl enable hatbot-firewall.service
-run systemctl restart hatbot-firewall.service
-
-# ---------- 3. Containers ----------
-step "3/8 Containers"
+# ---------- 2. Containers ----------
+step "2/8 Containers"
 if pveum pool list --output-format json | json_values poolid | grep -qx "$POOL"; then
   ok "pool $POOL exists"
 else
@@ -372,13 +313,11 @@ fi
 if [[ -n ${ex_brain_id:-} ]]; then
   ok "$BRAIN_NAME exists (CT $BRAIN_ID)"
 else
-  if [[ $BRAIN_LAN == dhcp ]]; then brain_ip=ip=dhcp; else brain_ip=ip=$BRAIN_LAN; fi
   run pct create "$BRAIN_ID" "$TMPL_VOL" --hostname "$BRAIN_NAME" \
     --description "Hatbot brain. Created by infra/host-setup.sh." \
     --unprivileged 1 --features nesting=1 --cores 2 --memory "$BRAIN_MEM" --swap "$BRAIN_SWAP" \
     --rootfs "$SSD_STORE:16" --mp0 "$HDD_STORE:$ARCHIVE_SIZE,mp=/archive,backup=1" \
-    --net0 "name=eth0,bridge=$LAN_BRIDGE,$brain_ip" \
-    --net1 "name=eth1,bridge=$BRIDGE,ip=$BRAIN_PRIV_IP/24" \
+    --net0 "name=eth0,bridge=$LAN_BRIDGE,ip=$BRAIN_IP/$LAN_LEN,gw=$LAN_GW" \
     --onboot 1 --startup order=10 --timezone host --pool "$POOL" --tags hatbot
 fi
 
@@ -386,11 +325,99 @@ if [[ -n ${ex_desk_id:-} ]]; then
   ok "$DESKTOP_NAME exists (CT $DESKTOP_ID)"
 else
   run pct create "$DESKTOP_ID" "$TMPL_VOL" --hostname "$DESKTOP_NAME" \
-    --description "Hatbot desktop. Browses untrusted sites: internet only, no LAN, no secrets. Created by infra/host-setup.sh." \
+    --description "Hatbot desktop. Browses untrusted sites: internet only, no LAN, no secrets. Its MAC is pinned in the host firewall (/etc/hatbot/host.nft); don't change it. Created by infra/host-setup.sh." \
     --unprivileged 1 --features nesting=1 --cores 2 --memory "$DESKTOP_MEM" --swap "$DESKTOP_SWAP" \
     --rootfs "$SSD_STORE:16" \
-    --net0 "name=eth0,bridge=$BRIDGE,ip=$DESKTOP_IP/24,gw=$HOST_PRIV_IP" --nameserver "$DNS" \
+    --net0 "name=eth0,bridge=$LAN_BRIDGE,hwaddr=$DESKTOP_MAC,ip=$DESKTOP_IP/$LAN_LEN,gw=$LAN_GW" --nameserver "$DNS" \
     --onboot 1 --startup order=20 --timezone host --pool "$POOL" --tags hatbot
+fi
+
+# ---------- 3. Desktop firewall ----------
+step "3/8 Desktop firewall"
+if ! command -v nft >/dev/null; then
+  confirm "Install the nftables package (only the nft command; nftables.service stays disabled)?" || die "nft is required"
+  run apt-get install -y --no-install-recommends nftables
+  # Never start or stop nftables.service here: its config begins with 'flush ruleset', which would also
+  # wipe the Proxmox firewall's rules. Hatbot loads its own table through hatbot-firewall.service.
+  run systemctl disable nftables.service
+fi
+
+# Filters frames at the desktop's port on the bridge, before they reach the LAN or the host.
+# Stateless on purpose: bridge conntrack (nf_conntrack_bridge) could interfere with the Proxmox firewall.
+# The interface name also matches when the NIC sits behind a Proxmox firewall bridge (fwbr), since that
+# bridge forwards from the same veth.
+write_file /etc/hatbot/host.nft 600 <<EOF
+#!/usr/sbin/nft -f
+# Managed by hatbot infra/host-setup.sh. Keeps $DESKTOP_NAME (CT $DESKTOP_ID) on the internet only.
+table bridge hatbot
+delete table bridge hatbot
+
+table bridge hatbot {
+  # Everything the desktop must never reach: private and special ranges, multicast, broadcast, this LAN.
+  set blocked {
+    type ipv4_addr
+    flags interval
+    auto-merge
+    elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12,
+                 192.168.0.0/16, 224.0.0.0/3, $LAN_NET }
+  }
+
+  chain forward {
+    type filter hook forward priority filter - 5; policy accept;
+    iifname "$DESKTOP_VETH" jump from_desktop
+  }
+
+  # Frames for the host itself: only ARP, so the desktop can't open anything on the host.
+  chain input {
+    type filter hook input priority filter - 5; policy accept;
+    iifname "$DESKTOP_VETH" ether type arp jump desktop_arp
+    iifname "$DESKTOP_VETH" counter drop
+  }
+
+  chain from_desktop {
+    ether saddr != $DESKTOP_MAC counter drop
+    ether type arp jump desktop_arp
+    ether type != ip counter drop
+    ip saddr != $DESKTOP_IP counter drop
+    # Replies to the brain (VNC, desktop-agent). A bare SYN would be the desktop opening a connection.
+    ip daddr $BRAIN_IP tcp sport { 5901, 7070 } tcp flags & (syn | ack) != syn accept
+    ip daddr @blocked counter drop
+    accept
+  }
+
+  # No ARP spoofing: the desktop may only announce its own address.
+  chain desktop_arp {
+    arp saddr ether != $DESKTOP_MAC counter drop
+    arp saddr ip != $DESKTOP_IP counter drop
+    accept
+  }
+}
+EOF
+
+# No ExecStop: stopping the unit must not open the desktop up. Remove with 'nft delete table bridge hatbot'.
+write_file /etc/systemd/system/hatbot-firewall.service 644 <<'EOF'
+[Unit]
+Description=Hatbot firewall (keeps hatbot-desktop off the LAN)
+Documentation=file:///etc/hatbot/host.nft
+DefaultDependencies=no
+Before=network-pre.target pve-guests.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/hatbot/host.nft
+ExecReload=/usr/sbin/nft -f /etc/hatbot/host.nft
+
+[Install]
+WantedBy=multi-user.target
+EOF
+run systemctl daemon-reload
+run systemctl enable hatbot-firewall.service
+run systemctl restart hatbot-firewall.service
+if ((!DRY_RUN)); then
+  nft list table bridge hatbot >/dev/null 2>&1 || die "the firewall didn't load; the desktop stays off"
+  [[ $(ct_mac "$DESKTOP_ID") == "$DESKTOP_MAC" ]] || die "CT $DESKTOP_ID's MAC isn't $DESKTOP_MAC; the firewall wouldn't match it"
 fi
 
 for id in "$BRAIN_ID" "$DESKTOP_ID"; do
@@ -476,7 +503,7 @@ EOF
   push_secret "$DESKTOP_ID" /etc/hatbot-desktop/secrets.env <<EOF
 DESKTOP_AGENT_TOKEN=$agent_token
 VNC_PASSWORD=$vnc_password
-BRAIN_IP=$BRAIN_PRIV_IP
+BRAIN_IP=$BRAIN_IP
 EOF
   unset agent_token vnc_password
 fi
@@ -494,7 +521,7 @@ provision() { # provision CTID SCRIPT ENV...
   fi
 }
 provision "$BRAIN_ID" brain-provision.sh "NTFY_BASE_URL=$NTFY_BASE_URL" "DESKTOP_IP=$DESKTOP_IP"
-provision "$DESKTOP_ID" desktop-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BRAIN_IP=$BRAIN_PRIV_IP"
+provision "$DESKTOP_ID" desktop-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BRAIN_IP=$BRAIN_IP"
 
 # ---------- 7. Nightly desktop snapshots ----------
 step "7/8 Nightly desktop snapshots"
@@ -566,20 +593,15 @@ fi
 
 # ---------- Done ----------
 step "Done"
-brain_lan_ip='<brain LAN IP>'
-((DRY_RUN)) || brain_lan_ip=$(pct exec "$BRAIN_ID" -- ip -4 -o addr show dev eth0 | awk '{ print $4; exit }' | cut -d/ -f1)
 ntfy_host=${NTFY_BASE_URL#*://}
 cat <<EOF
-   Brain     CT $BRAIN_ID   $brain_lan_ip (LAN), $BRAIN_PRIV_IP (private)
-   Desktop   CT $DESKTOP_ID   $DESKTOP_IP (private, internet only)
+   Brain     CT $BRAIN_ID   $BRAIN_IP
+   Desktop   CT $DESKTOP_ID   $DESKTOP_IP (internet only)
 
    Next:
    1. Check isolation and permissions:   $HERE/verify.sh
-   2. Reverse proxy:  hatbot.gaycats.ovh → http://$brain_lan_ip:8080 (with WebSockets)
-                      ${ntfy_host%%/*} → http://$brain_lan_ip:8081
-EOF
-[[ $BRAIN_LAN == dhcp ]] && info "   The brain uses DHCP: give it a reservation so the proxy target doesn't move."
-cat <<EOF
+   2. Reverse proxy:  hatbot.gaycats.ovh → http://$BRAIN_IP:8080 (with WebSockets)
+                      ${ntfy_host%%/*} → http://$BRAIN_IP:8081
    3. ntfy iOS app: subscribe to topic "hatbot" on $NTFY_BASE_URL as user "phone"
       (the password is in /root/ntfy-phone-password.txt inside the brain).
    4. Before M4: add the brain's SSH key (/var/lib/hatbot/.ssh/id_ed25519.pub) to a "hatbot" user on hosts it may manage.
