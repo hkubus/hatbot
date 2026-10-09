@@ -1,12 +1,14 @@
 // The single chat thread, run as episodes (PLAN.md §5.2, §5.3).
 import type Anthropic from "@anthropic-ai/sdk";
-import type { ThreadMessage } from "@hatbot/shared";
+import { describeCron, type Schedule, type ThreadMessage } from "@hatbot/shared";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
 import type { MemoryStore } from "../memory/store";
+import type { Schedules } from "../schedules";
 import type { SettingsStore } from "../settings";
 import { BudgetError, priceOf, type Spend } from "../spend";
 import type { Tasks } from "../tasks/service";
+import type { Triggers } from "../triggers";
 import type { ModelClient } from "./model";
 import { SUMMARY_PROMPT, SYSTEM_PROMPT } from "./prompt";
 import { runTool, TOOL_PARAMS } from "./tools";
@@ -18,7 +20,7 @@ const RECENT_MESSAGES = 10;
 const MAX_STEPS = 25;
 const MAX_TURN_MS = 10 * 60_000;
 const MESSAGE_COLUMNS =
-  "id, role, kind, text, status, created_at AS createdAt, task_id AS taskId, approval_id AS approvalId";
+  "id, role, kind, text, status, created_at AS createdAt, task_id AS taskId, approval_id AS approvalId, schedule_id AS scheduleId";
 const BETAS: Anthropic.Beta.AnthropicBeta[] = [
   "server-side-fallback-2026-07-01",
   "thinking-display-updates-2026-08-18",
@@ -28,8 +30,10 @@ type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 type Turn = Anthropic.Beta.BetaMessageParam;
 
 export type ThreadDeps = {
-  /** Set once the task runner exists; it needs the thread too. */
+  /** Set once these exist; they need the thread too. */
   tasks?: Tasks;
+  schedules?: Schedules;
+  triggers?: Triggers;
   db: Db;
   memory: MemoryStore;
   events: EventBus;
@@ -59,14 +63,25 @@ export class Thread {
       .reverse();
   }
 
-  /** A task or approval card in the thread. `text` is what search and summaries see. */
-  addCard(kind: "task" | "approval", text: string, ref: { taskId: number; approvalId?: number }) {
+  /** A task, approval or schedule card in the thread. `text` is what search and summaries see. */
+  addCard(
+    kind: "task" | "approval" | "schedule",
+    text: string,
+    ref: { taskId?: number; approvalId?: number; scheduleId?: number },
+  ) {
     const row = this.d.db
-      .query<ThreadMessage, [string, string, string, number, number | null]>(
-        `INSERT INTO messages (role, kind, text, status, created_at, task_id, approval_id)
-         VALUES ('assistant', ?, ?, 'done', ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
+      .query<ThreadMessage, [string, string, string, number | null, number | null, number | null]>(
+        `INSERT INTO messages (role, kind, text, status, created_at, task_id, approval_id, schedule_id)
+         VALUES ('assistant', ?, ?, 'done', ?, ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
       )
-      .get(kind, text, this.now(), ref.taskId, ref.approvalId ?? null);
+      .get(
+        kind,
+        text,
+        this.now(),
+        ref.taskId ?? null,
+        ref.approvalId ?? null,
+        ref.scheduleId ?? null,
+      );
     if (!row) throw new Error("card insert failed");
     this.d.events.emit({ type: "message.created", message: row });
     return row;
@@ -80,8 +95,8 @@ export class Thread {
     return { message, done };
   }
 
-  attachTasks(tasks: Tasks) {
-    this.d.tasks = tasks;
+  attach(parts: Pick<ThreadDeps, "tasks" | "schedules" | "triggers">) {
+    Object.assign(this.d, parts);
   }
 
   /** Pause all: stops the reply in progress. */
@@ -368,7 +383,15 @@ export class Thread {
             id: out.id,
             text: `\n${toolLabel(call.name)}\n`,
           });
-          const r = await runTool(call.name, call.input, this.d);
+          const r = await runTool(call.name, call.input, {
+            ...this.d,
+            scheduleCard: (sc: Schedule) =>
+              this.addCard(
+                "schedule",
+                `Schedule "${sc.name}": ${sc.cron ? describeCron(sc.cron) : `once at ${sc.runAt}`}. ${sc.prompt}`,
+                { scheduleId: sc.id },
+              ),
+          });
           results.push({
             type: "tool_result",
             tool_use_id: call.id,
@@ -398,6 +421,12 @@ function toolLabel(name: string): string {
     search_history: "Searching earlier messages",
     run_desktop_task: "Starting a desktop task",
     get_task: "Checking on a task",
+    schedule_create: "Creating a schedule",
+    schedule_list: "Looking at schedules",
+    schedule_update: "Changing a schedule",
+    schedule_delete: "Deleting a schedule",
+    trigger_list: "Looking at triggers",
+    trigger_update: "Changing a trigger",
   };
   return labels[name] ?? `Using ${name}`;
 }

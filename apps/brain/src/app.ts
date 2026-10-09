@@ -6,6 +6,7 @@ import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
 import { desktopRoutes } from "./routes/desktop";
 import { memoryRoutes } from "./routes/memory";
+import { hookRoutes, scheduleRoutes } from "./routes/schedules";
 import { streamRoutes } from "./routes/stream";
 import { approvalRoutes, taskRoutes } from "./routes/tasks";
 import { threadRoutes } from "./routes/thread";
@@ -30,6 +31,8 @@ export function createApp(deps: Deps) {
   app.route("/", taskRoutes);
   app.route("/", approvalRoutes);
   app.route("/", desktopRoutes);
+  app.route("/", scheduleRoutes);
+  app.route("/", hookRoutes);
 
   app.notFound((c) => c.json({ error: "not found" }, 404));
   app.onError((err, c) => {

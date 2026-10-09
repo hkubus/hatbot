@@ -203,9 +203,13 @@ const STEP_ICON: Record<TaskStep["kind"], Parameters<typeof Icon>[0]["name"]> = 
   approval: "shield",
   takeover: "hand",
   error: "alert",
+  task: "monitor",
 };
 
-export function StepIcon({ kind }: { kind: TaskStep["kind"] }) {
+export function StepIcon({ kind, name }: { kind: TaskStep["kind"]; name?: string }) {
+  // A background task's tool calls.
+  if (kind === "action" && name?.startsWith("memory_")) return <Icon name="book" />;
+  if (kind === "action" && name === "search_history") return <Icon name="chat" />;
   return <Icon name={STEP_ICON[kind]} />;
 }
 

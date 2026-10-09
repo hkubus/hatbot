@@ -4,12 +4,14 @@ import {
   type Approval,
   type DesktopState,
   type HatbotEvent,
+  type Schedule,
   type Task,
   type TaskStep,
   type ThreadMessage,
+  type Trigger,
 } from "@hatbot/shared";
 import { useSyncExternalStore } from "react";
-import { api } from "./api";
+import { ApiError, api } from "./api";
 
 type State = {
   messages: ThreadMessage[];
@@ -28,6 +30,9 @@ type State = {
   taskProgress: Record<number, string>;
   approvals: Record<number, Approval>;
   desktop: DesktopState | null;
+  /** null: deleted, or never existed. */
+  schedules: Record<number, Schedule | null>;
+  triggers: Record<number, Trigger | null>;
 };
 
 let state: State = {
@@ -44,6 +49,8 @@ let state: State = {
   taskProgress: {},
   approvals: {},
   desktop: null,
+  schedules: {},
+  triggers: {},
 };
 const listeners = new Set<() => void>();
 const set = (patch: Partial<State>) => {
@@ -114,12 +121,51 @@ export function ensureApproval(id: number) {
   );
 }
 
-export async function loadTasks(status?: "active" | "done") {
-  const list = await api<Task[]>(`/tasks${status ? `?status=${status}` : ""}`);
+export async function loadTasks(
+  filter: { status?: "active" | "done"; scheduleId?: number; triggerId?: number } = {},
+) {
+  const q = new URLSearchParams(
+    Object.entries(filter).flatMap(([k, v]) => (v === undefined ? [] : [[k, String(v)]])),
+  ).toString();
+  const list = await api<Task[]>(`/tasks${q ? `?${q}` : ""}`);
   const tasks = { ...state.tasks };
   for (const t of list) tasks[t.id] = t;
   set({ tasks });
   return list.map((t) => t.id);
+}
+
+export async function loadSchedules() {
+  const [schedules, triggers] = await Promise.all([
+    api<Schedule[]>("/schedules"),
+    api<Trigger[]>("/triggers"),
+  ]);
+  set({
+    schedules: { ...state.schedules, ...Object.fromEntries(schedules.map((s) => [s.id, s])) },
+    triggers: { ...state.triggers, ...Object.fromEntries(triggers.map((t) => [t.id, t])) },
+  });
+  return { schedules: schedules.map((s) => s.id), triggers: triggers.map((t) => t.id) };
+}
+
+export function ensureSchedule(id: number) {
+  if (id in state.schedules || requested.has(`s${id}`)) return;
+  requested.add(`s${id}`);
+  api<Schedule>(`/schedules/${id}`).then(
+    (s) => putSchedule(s),
+    (err) => {
+      if (err instanceof ApiError && err.status === 404)
+        set({ schedules: { ...state.schedules, [id]: null } });
+      else requested.delete(`s${id}`);
+    },
+  );
+}
+
+export const putSchedule = (s: Schedule) => set({ schedules: { ...state.schedules, [s.id]: s } });
+export const putTrigger = (t: Trigger) => set({ triggers: { ...state.triggers, [t.id]: t } });
+
+export async function saveSchedule(id: number, patch: Partial<Schedule> & { at?: string }) {
+  const s = await api<Schedule>(`/schedules/${id}`, { method: "PATCH", body: patch });
+  putSchedule(s);
+  return s;
 }
 
 async function loadLive() {
@@ -218,6 +264,14 @@ function apply(e: HatbotEvent) {
       return set({ approvals: { ...state.approvals, [e.approval.id]: e.approval } });
     case "desktop.state":
       return set({ desktop: e.state });
+    case "schedule.updated":
+      return putSchedule(e.schedule);
+    case "schedule.deleted":
+      return set({ schedules: { ...state.schedules, [e.id]: null } });
+    case "trigger.updated":
+      return putTrigger(e.trigger);
+    case "trigger.deleted":
+      return set({ triggers: { ...state.triggers, [e.id]: null } });
   }
 }
 

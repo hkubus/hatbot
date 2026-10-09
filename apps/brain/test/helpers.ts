@@ -14,9 +14,11 @@ import { EventBus, type HatbotEvent } from "../src/events";
 import { MemoryStore } from "../src/memory/store";
 import type { Notification, Notifier } from "../src/notify";
 import { Proxmox } from "../src/proxmox";
+import { Schedules } from "../src/schedules";
 import { SettingsStore } from "../src/settings";
 import { Spend } from "../src/spend";
 import { Tasks } from "../src/tasks/service";
+import { Triggers } from "../src/triggers";
 import { Updates } from "../src/updates";
 import { FakeDesktop } from "./fake-desktop";
 import { FakeModel } from "./fake-model";
@@ -79,9 +81,12 @@ export async function testApp(
     archive,
     thread,
     config,
+    memory,
     clock,
   });
-  thread.attachTasks(tasks);
+  const schedules = new Schedules(db, events, settings, tasks, clock);
+  const triggers = new Triggers(db, events, settings, tasks, ORIGIN, clock);
+  thread.attach({ tasks, schedules, triggers });
   const updateDir = tempDir("hatbot-test-update-");
   const updates = new Updates(
     {
@@ -109,6 +114,8 @@ export async function testApp(
     archive,
     proxmox,
     updates,
+    schedules,
+    triggers,
   });
 
   const call = (
@@ -139,6 +146,8 @@ export async function testApp(
     notifier,
     spend,
     thread,
+    schedules,
+    triggers,
     updateDir,
     events: seen,
     call,

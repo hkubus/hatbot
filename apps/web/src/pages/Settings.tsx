@@ -97,6 +97,12 @@ export function Settings({
 
         <section className="group show-phone">
           <div className="group-box">
+            <button type="button" className="row link" onClick={() => navigate("/schedules")}>
+              <div className="txt">
+                <b>Schedules & Triggers</b>
+              </div>
+              <Icon name="chevron" className="chev" />
+            </button>
             <button type="button" className="row link" onClick={() => navigate("/spend")}>
               <div className="txt">
                 <b>Spend</b>

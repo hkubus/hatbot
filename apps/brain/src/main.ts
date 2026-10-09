@@ -13,9 +13,11 @@ import { EventBus } from "./events";
 import { MemoryStore } from "./memory/store";
 import { NtfyNotifier } from "./notify";
 import { Proxmox } from "./proxmox";
+import { Schedules } from "./schedules";
 import { SettingsStore } from "./settings";
 import { Spend } from "./spend";
 import { Tasks } from "./tasks/service";
+import { Triggers } from "./triggers";
 import { Updates } from "./updates";
 import { webHandler } from "./web";
 
@@ -45,12 +47,17 @@ const tasks = new Tasks({
   archive,
   thread,
   config,
+  memory,
 });
-thread.attachTasks(tasks);
+const schedules = new Schedules(db, events, settings, tasks);
+const triggers = new Triggers(db, events, settings, tasks, config.publicUrl);
+thread.attach({ tasks, schedules, triggers });
 await desktop.setPaused(settings.get().paused);
 await desktop.refresh();
 setInterval(() => void desktop.refresh(), 30_000);
 setInterval(() => approvals.expireDue(), 60_000);
+schedules.tick();
+setInterval(() => schedules.tick(), 10_000);
 const loginLimits = {
   perIp: new FailureLimiter(10, 15 * 60_000),
   global: new FailureLimiter(50, 15 * 60_000),
@@ -72,6 +79,8 @@ const app = createApp({
   archive,
   proxmox: new Proxmox(),
   updates: new Updates(config),
+  schedules,
+  triggers,
 });
 const web = webHandler(config.webDir);
 const server = Bun.serve({

@@ -1,12 +1,52 @@
-// Built-in tools for the chat thread (PLAN.md §5.5): memory, history search, desktop tasks.
+// Built-in tools for the chat thread (PLAN.md §5.5): memory, history search, desktop tasks, schedules.
 import type Anthropic from "@anthropic-ai/sdk";
+import { describeCron, type Schedule } from "@hatbot/shared";
 import { z } from "zod";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
 import { HATBOT, MemoryError, type MemoryStore } from "../memory/store";
+import { ScheduleError, type Schedules } from "../schedules";
 import type { Tasks } from "../tasks/service";
+import type { Triggers } from "../triggers";
 
-export type ToolContext = { db: Db; memory: MemoryStore; events: EventBus; tasks?: Tasks };
+export type ToolContext = {
+  db: Db;
+  memory: MemoryStore;
+  events: EventBus;
+  tasks?: Tasks;
+  schedules?: Schedules;
+  triggers?: Triggers;
+  /** Adds a schedule's card to the thread. */
+  scheduleCard?: (s: Schedule) => void;
+};
+
+export const DesktopTaskInput = z.object({
+  title: z
+    .string()
+    .min(1)
+    .max(80)
+    .describe('Short title for the card, e.g. "Book a table at Luigi\'s"'),
+  goal: z
+    .string()
+    .min(1)
+    .max(4000)
+    .describe("What to do, with every detail from the conversation it needs"),
+  success_criteria: z.string().max(1000).describe("How to tell it's done"),
+});
+
+const local = (iso: string | null) =>
+  iso ? new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) : "–";
+const scheduleLine = (s: Schedule) =>
+  `#${s.id} "${s.name}": ${s.cron ? `${describeCron(s.cron)} (cron ${s.cron})` : `once, ${local(s.runAt)}`}; ${s.enabled ? `next run ${local(s.nextRunAt)}` : "off"}${s.lastRunAt ? `; last ran ${local(s.lastRunAt)}${s.lastTaskId ? ` (task #${s.lastTaskId})` : ""}` : ""}\n  Does: ${s.prompt}`;
+const scheduleWhen = {
+  cron: z
+    .string()
+    .optional()
+    .describe(
+      'Repeating: five-field cron (minute hour day-of-month month day-of-week) in the owner\'s local time, e.g. "0 8 * * *" for every day at 08:00, "30 7 * * 1-5" for weekdays at 07:30. At most every 5 minutes',
+    ),
+  at: z.string().optional().describe('Once: local date and time, e.g. "2026-10-11T08:00"'),
+};
 
 type ToolDef<S extends z.ZodType> = {
   name: string;
@@ -99,19 +139,7 @@ export const TOOLS = [
     name: "run_desktop_task",
     description:
       "Start a task on your Linux desktop (Chromium and a terminal), for anything that needs a browser: booking, buying, filling in forms, checking websites. It runs in the background on a separate model and posts a card in the thread; the owner can watch it live and approves consequential steps. You're told how it ended at the start of a later turn. Give it everything it needs to know: it can't see this conversation.",
-    schema: z.object({
-      title: z
-        .string()
-        .min(1)
-        .max(80)
-        .describe('Short title for the card, e.g. "Book a table at Luigi\'s"'),
-      goal: z
-        .string()
-        .min(1)
-        .max(4000)
-        .describe("What to do, with every detail from the conversation it needs"),
-      success_criteria: z.string().max(1000).describe("How to tell it's done"),
-    }),
+    schema: DesktopTaskInput,
     run: async ({ title, goal, success_criteria }, { tasks }) => {
       if (!tasks) return "Desktop tasks aren't available.";
       const task = tasks.createDesktopTask({
@@ -137,6 +165,89 @@ export const TOOLS = [
         .map((s) => `- ${s.name}${s.detail ? `: ${s.detail.slice(0, 200)}` : ""}`)
         .join("\n");
       return `Task #${task.id} "${task.title}": ${task.status}, $${task.costUsd.toFixed(2)} spent.${task.summary ? `\nSummary: ${task.summary}` : ""}${steps ? `\nLast steps:\n${steps}` : ""}`;
+    },
+  }),
+  def({
+    name: "schedule_create",
+    description:
+      "Schedule a background task that runs on its own, repeating (cron) or once (at). Each run gets your memory and tools, can use the desktop, and reports back in this thread, with a notification when there's something to tell. Write `prompt` as complete instructions for that future run: it can't see this conversation. If the owner's timing is vague, ask before creating it. The owner sees it in Schedules, where they can change or turn it off.",
+    schema: z.object({
+      name: z.string().min(1).max(80).describe('Short name, e.g. "Framework 16 stock check"'),
+      prompt: z
+        .string()
+        .min(1)
+        .max(4000)
+        .describe(
+          "What each run does and when it should tell the owner, with every detail it needs",
+        ),
+      ...scheduleWhen,
+    }),
+    run: async ({ name, prompt, cron, at }, { schedules, scheduleCard }) => {
+      if (!schedules) return "Schedules aren't available.";
+      if (Boolean(cron) === Boolean(at)) return "Give either cron or at.";
+      const s = schedules.create({ name, prompt, cron, at }, "chat");
+      scheduleCard?.(s);
+      return `Created schedule ${scheduleLine(s)}`;
+    },
+  }),
+  def({
+    name: "schedule_list",
+    description: "List every schedule with its timing, next run and what it does.",
+    schema: z.object({}),
+    run: async (_, { schedules }) =>
+      schedules?.list().map(scheduleLine).join("\n") || "No schedules.",
+  }),
+  def({
+    name: "schedule_update",
+    description:
+      "Change a schedule: its name, what it does, its timing, or turn it on or off. Only the fields you give change.",
+    schema: z.object({
+      id: z.number().int(),
+      name: z.string().min(1).max(80).optional(),
+      prompt: z.string().min(1).max(4000).optional(),
+      enabled: z.boolean().optional(),
+      ...scheduleWhen,
+    }),
+    run: async ({ id, ...patch }, { schedules }) => {
+      if (patch.cron && patch.at) return "Give either cron or at, not both.";
+      const s = schedules?.update(id, patch);
+      return s ? `Updated schedule ${scheduleLine(s)}` : `No schedule #${id}.`;
+    },
+  }),
+  def({
+    name: "schedule_delete",
+    description: "Delete a schedule. Its past runs stay in the Tasks list.",
+    schema: z.object({ id: z.number().int() }),
+    run: async ({ id }, { schedules }) =>
+      schedules?.delete(id) ? `Deleted schedule #${id}.` : `No schedule #${id}.`,
+  }),
+  def({
+    name: "trigger_list",
+    description:
+      "List the webhooks and Uptime Kuma alert hooks that start background tasks, with what each run does. The owner creates them in Schedules & Triggers.",
+    schema: z.object({}),
+    run: async (_, { triggers }) =>
+      triggers
+        ?.list()
+        .map(
+          (t) =>
+            `#${t.id} "${t.name}" (${t.kind === "kuma" ? "Uptime Kuma" : "webhook"}${t.trusted ? ", trusted" : ""}${t.enabled ? "" : ", off"})${t.lastFiredAt ? `; last event ${local(t.lastFiredAt)}` : ""}\n  Does: ${t.prompt}`,
+        )
+        .join("\n") || "No triggers.",
+  }),
+  def({
+    name: "trigger_update",
+    description:
+      "Change what a trigger's runs do, rename it, or turn it on or off. Only the fields you give change.",
+    schema: z.object({
+      id: z.number().int(),
+      name: z.string().min(1).max(80).optional(),
+      prompt: z.string().min(1).max(4000).optional(),
+      enabled: z.boolean().optional(),
+    }),
+    run: async ({ id, ...patch }, { triggers }) => {
+      const t = triggers?.update(id, patch);
+      return t ? `Updated trigger #${t.id} "${t.name}".` : `No trigger #${id}.`;
     },
   }),
 ];
@@ -170,7 +281,8 @@ export async function runTool(
     // biome-ignore lint/suspicious/noExplicitAny: each tool's run matches its own schema
     return { content: await tool.run(parsed.data as any, ctx), isError: false };
   } catch (err) {
-    if (err instanceof MemoryError) return { content: err.message, isError: true };
+    if (err instanceof MemoryError || err instanceof ScheduleError)
+      return { content: err.message, isError: true };
     console.error(`tool ${name} failed`, err);
     return { content: "The tool failed with an internal error.", isError: true };
   }

@@ -2,17 +2,20 @@
 import type { ACTIVE_TASK_STATUSES, Task, TaskStatus, TaskStep } from "@hatbot/shared";
 import type { ModelClient } from "../agent/model";
 import type { Thread } from "../agent/thread";
+import type { ToolContext } from "../agent/tools";
 import type { Approvals } from "../approvals";
 import type { Archive } from "../archive";
 import type { Config } from "../config";
 import type { Db } from "../db";
 import type { Desktop } from "../desktop/service";
 import type { EventBus } from "../events";
+import type { MemoryStore } from "../memory/store";
 import type { Notifier } from "../notify";
 import type { SettingsStore } from "../settings";
 import type { Spend } from "../spend";
+import { AGENT_MODEL, runAgentTask } from "./agent-run";
 import { DESKTOP_MODEL, runDesktopTask } from "./desktop-run";
-import { ScreenLane } from "./lane";
+import { Pool, ScreenLane } from "./lane";
 
 export type TasksDeps = {
   db: Db;
@@ -26,8 +29,12 @@ export type TasksDeps = {
   archive: Archive;
   thread: Thread;
   config: Config;
+  memory: MemoryStore;
   clock?: () => number;
 };
+
+/** Background tasks at once (PLAN.md §5.6). */
+const BACKGROUND_SLOTS = 3;
 
 type Row = {
   id: number;
@@ -36,6 +43,11 @@ type Row = {
   success_criteria: string;
   origin: Task["origin"];
   lane: Task["lane"];
+  source: string | null;
+  schedule_id: number | null;
+  trigger_id: number | null;
+  parent_id: number | null;
+  payload: string | null;
   model: string;
   status: TaskStatus;
   tainted: number;
@@ -61,6 +73,11 @@ const toTask = (r: Row): Task => ({
   successCriteria: r.success_criteria,
   origin: r.origin,
   lane: r.lane,
+  source: r.source,
+  scheduleId: r.schedule_id,
+  triggerId: r.trigger_id,
+  parentId: r.parent_id,
+  payload: r.payload,
   model: r.model,
   status: r.status,
   tainted: Boolean(r.tainted),
@@ -83,6 +100,7 @@ const FINAL: TaskStatus[] = ["done", "failed", "cancelled"];
 
 export class Tasks {
   readonly lane = new ScreenLane();
+  readonly pool = new Pool(BACKGROUND_SLOTS);
   private running = new Map<number, AbortController>();
   private runs = new Set<Promise<void>>();
   readonly clock: () => number;
@@ -114,16 +132,34 @@ export class Tasks {
     return r ? toTask(r) : null;
   }
 
-  list(opts: { status?: "active" | "done"; limit?: number } = {}): Task[] {
-    const where =
-      opts.status === "active"
-        ? `WHERE t.status IN (${ACTIVE.map((s) => `'${s}'`).join(", ")})`
-        : opts.status === "done"
-          ? `WHERE t.status IN (${FINAL.map((s) => `'${s}'`).join(", ")})`
-          : "";
+  list(
+    opts: {
+      status?: "active" | "done";
+      scheduleId?: number;
+      triggerId?: number;
+      limit?: number;
+    } = {},
+  ): Task[] {
+    const where: string[] = [];
+    const args: number[] = [];
+    if (opts.status === "active")
+      where.push(`t.status IN (${ACTIVE.map((s) => `'${s}'`).join(", ")})`);
+    if (opts.status === "done")
+      where.push(`t.status IN (${FINAL.map((s) => `'${s}'`).join(", ")})`);
+    // A schedule's or trigger's own runs, not the desktop tasks they started.
+    if (opts.scheduleId !== undefined) {
+      where.push("t.schedule_id = ? AND t.parent_id IS NULL");
+      args.push(opts.scheduleId);
+    }
+    if (opts.triggerId !== undefined) {
+      where.push("t.trigger_id = ? AND t.parent_id IS NULL");
+      args.push(opts.triggerId);
+    }
     return this.d.db
-      .query<Row, [number]>(`${SELECT} ${where} ORDER BY t.id DESC LIMIT ?`)
-      .all(opts.limit ?? 50)
+      .query<Row, number[]>(
+        `${SELECT} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY t.id DESC LIMIT ?`,
+      )
+      .all(...args, opts.limit ?? 50)
       .map(toTask);
   }
 
@@ -140,38 +176,138 @@ export class Tasks {
     return this.steps(taskId).find((s) => s.id === stepId) ?? null;
   }
 
-  /** Starts a desktop task: a card in the thread, then a run that waits for the screen lane. */
+  /**
+   * Starts a desktop task: a card in the thread, then a run that waits for the screen lane.
+   * One started by a background task (`parent`) has no card; its parent reports.
+   */
   createDesktopTask(input: {
     title: string;
     goal: string;
     successCriteria: string;
     origin: Task["origin"];
+    parent?: Task;
   }): Task {
-    const row = this.d.db
-      .query<{ id: number }, [string, string, string, string, string, number, string]>(
-        `INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at)
-         VALUES (?, ?, ?, ?, 'screen', ?, 'queued', ?, ?) RETURNING id`,
-      )
-      .get(
-        input.title,
-        input.goal,
-        input.successCriteria,
-        input.origin,
-        DESKTOP_MODEL,
-        this.d.settings.get().limits.taskUsd,
-        this.now(),
-      );
-    const id = row?.id ?? -1;
-    this.d.thread.addCard("task", `Task #${id}: ${input.title}`, { taskId: id });
+    const p = input.parent;
+    const id = this.insert({
+      title: input.title,
+      goal: input.goal,
+      success_criteria: input.successCriteria,
+      origin: input.origin,
+      lane: "screen",
+      model: DESKTOP_MODEL,
+      parent_id: p?.id ?? null,
+      source: p?.source ?? null,
+      schedule_id: p?.scheduleId ?? null,
+      trigger_id: p?.triggerId ?? null,
+    });
+    if (!p) this.d.thread.addCard("task", `Task #${id}: ${input.title}`, { taskId: id });
     this.emit(id);
     this.start(id);
     return this.get(id) as Task;
   }
 
+  /**
+   * Starts a background task for a schedule or trigger (PLAN.md §5.6). Its card goes in the thread when
+   * it ends, if there's something to tell. Null if the same `runKey` is still running: one run at a time.
+   */
+  createBackgroundTask(input: {
+    title: string;
+    goal: string;
+    origin: Exclude<Task["origin"], "chat">;
+    source: string;
+    scheduleId?: number;
+    triggerId?: number;
+    runKey: string;
+    /** The event that started it. Untrusted unless `trusted`: the task starts tainted. */
+    payload?: string;
+    trusted?: boolean;
+  }): Task | null {
+    if (this.activeFor(input.runKey)) return null;
+    const id = this.insert({
+      title: input.title,
+      goal: input.goal,
+      success_criteria: "",
+      origin: input.origin,
+      lane: "background",
+      model: AGENT_MODEL,
+      source: input.source,
+      schedule_id: input.scheduleId ?? null,
+      trigger_id: input.triggerId ?? null,
+      run_key: input.runKey,
+      payload: input.payload ?? null,
+      tainted: input.payload !== undefined && !input.trusted ? 1 : 0,
+    });
+    this.emit(id);
+    this.start(id);
+    return this.get(id) as Task;
+  }
+
+  private insert(row: Record<string, string | number | null>): number {
+    const cols = {
+      ...row,
+      status: "queued",
+      budget_usd: this.d.settings.get().limits.taskUsd,
+      created_at: this.now(),
+    };
+    const names = Object.keys(cols);
+    const id = this.d.db
+      .query<{ id: number }, (string | number | null)[]>(
+        `INSERT INTO tasks (${names.join(", ")}) VALUES (${names.map(() => "?").join(", ")}) RETURNING id`,
+      )
+      .get(...Object.values(cols))?.id;
+    if (!id) throw new Error("task insert failed");
+    return id;
+  }
+
+  /** The unfinished task for a schedule, trigger or monitor. */
+  activeFor(runKey: string): Task | null {
+    const r = this.d.db
+      .query<Row, [string]>(
+        `${SELECT} WHERE t.run_key = ? AND t.status IN (${ACTIVE.map((s) => `'${s}'`).join(", ")}) ORDER BY t.id DESC LIMIT 1`,
+      )
+      .get(runKey);
+    return r ? toTask(r) : null;
+  }
+
+  /** Resolves with the task once it has ended. */
+  waitFor(id: number, signal: AbortSignal): Promise<Task> {
+    return new Promise((resolve, reject) => {
+      const ended = () => {
+        const t = this.get(id);
+        return t && FINAL.includes(t.status) ? t : null;
+      };
+      const done = ended();
+      if (done) return resolve(done);
+      if (signal.aborted) return reject(signal.reason);
+      const off = this.d.events.on((e) => {
+        if (e.type !== "task.updated" || e.task.id !== id) return;
+        const t = ended();
+        if (!t) return;
+        stop();
+        resolve(t);
+      });
+      const abort = () => {
+        stop();
+        reject(signal.reason);
+      };
+      const stop = () => {
+        off();
+        signal.removeEventListener("abort", abort);
+      };
+      signal.addEventListener("abort", abort, { once: true });
+    });
+  }
+
+  /** What background tasks' tools need. */
+  toolContext(): ToolContext {
+    return { db: this.d.db, memory: this.d.memory, events: this.d.events, tasks: this };
+  }
+
   private start(id: number) {
     const abort = new AbortController();
     this.running.set(id, abort);
-    const run = runDesktopTask(this, id, abort.signal)
+    const runner = this.get(id)?.lane === "background" ? runAgentTask : runDesktopTask;
+    const run = runner(this, id, abort.signal)
       .catch((err) => console.error(`task ${id} crashed`, err))
       .finally(() => {
         this.running.delete(id);
@@ -255,18 +391,27 @@ export class Tasks {
       .run(taskId, role, JSON.stringify(content), this.now());
   }
 
-  /** Ends a task: status, summary, the card's text, and a notification. */
-  finish(id: number, status: "done" | "failed" | "cancelled", summary: string) {
+  /**
+   * Ends a task: status, summary, the card's text, and a notification. A background task's card is
+   * added now; with `notify` false (a routine result), a finished one gets neither card nor notification.
+   */
+  finish(id: number, status: "done" | "failed" | "cancelled", summary: string, notify = true) {
     this.d.db
       .query("UPDATE tasks SET status = ?, summary = ?, finished_at = ? WHERE id = ?")
       .run(status, summary, this.now(), id);
     const task = this.get(id);
     if (!task) return;
     const word = { done: "Done", failed: "Failed", cancelled: "Cancelled" }[status];
-    this.d.db
+    const text = `Task #${id}: ${task.title}. ${word}: ${summary}`;
+    // A desktop task run by a background task reports to it, not to you.
+    const tell = !task.parentId && (notify || status === "failed");
+    const card = this.d.db
       .query("UPDATE messages SET text = ? WHERE kind = 'task' AND task_id = ?")
-      .run(`Task #${id}: ${task.title}. ${word}: ${summary}`, id);
+      .run(text, id);
+    if (!card.changes && tell && task.lane === "background")
+      this.d.thread.addCard("task", text, { taskId: id });
     this.emit(id);
+    if (!tell) return;
     void this.d.notifier.send({
       title: `${word}: ${task.title}`.slice(0, 120),
       message: summary || word,
@@ -287,11 +432,12 @@ export class Tasks {
     for (const c of this.running.values()) c.abort(new Error("paused"));
   }
 
-  /** Tasks from chat that ended since the thread last heard; marks them reported. */
+  /** Tasks with a card in the thread that ended since the thread last heard; marks them reported. */
   takeUnreported(): Task[] {
     const rows = this.d.db
       .query<Row, []>(
-        `${SELECT} WHERE t.origin = 'chat' AND t.reported_at IS NULL AND t.status IN ('done', 'failed', 'cancelled') ORDER BY t.id`,
+        `${SELECT} WHERE t.reported_at IS NULL AND t.status IN ('done', 'failed', 'cancelled')
+         AND EXISTS (SELECT 1 FROM messages m WHERE m.kind = 'task' AND m.task_id = t.id) ORDER BY t.id`,
       )
       .all();
     if (rows.length)

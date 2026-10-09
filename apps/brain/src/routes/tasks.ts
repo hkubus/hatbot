@@ -8,8 +8,16 @@ import { json, query } from "./util";
 export const taskRoutes = new Hono<AppEnv>()
   .use("/tasks", requireAuth)
   .use("/tasks/*", requireAuth)
-  .get("/tasks", query(z.object({ status: z.enum(["active", "done"]).optional() })), (c) =>
-    c.json(c.var.tasks.list({ status: c.req.valid("query").status })),
+  .get(
+    "/tasks",
+    query(
+      z.object({
+        status: z.enum(["active", "done"]).optional(),
+        scheduleId: z.coerce.number().int().optional(),
+        triggerId: z.coerce.number().int().optional(),
+      }),
+    ),
+    (c) => c.json(c.var.tasks.list(c.req.valid("query"))),
   )
   .get("/tasks/:id", (c) => {
     const taskId = Number(c.req.param("id"));

@@ -144,4 +144,68 @@ export const migrations: string[] = [
   /* 4: chat moved from Sonnet 5.5 to Opus 5.5 at low effort */ `
   UPDATE settings SET value = json_set(value, '$.chatEffort', 'low') WHERE key = 'app';
   `,
+  /* 5: schedules and triggers (PLAN.md §5.6) */ `
+  CREATE TABLE schedules (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    cron TEXT,
+    run_at TEXT,
+    prompt TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_via TEXT NOT NULL CHECK (created_via IN ('chat', 'owner')),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ')),
+    next_run_at TEXT,
+    last_run_at TEXT,
+    CHECK ((cron IS NULL) != (run_at IS NULL))
+  );
+  CREATE TABLE triggers (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('webhook', 'kuma')),
+    -- Plain, because HMAC needs it. It never leaves the brain after it's first shown.
+    secret TEXT NOT NULL,
+    trusted INTEGER NOT NULL DEFAULT 0,
+    prompt TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ')),
+    last_fired_at TEXT
+  );
+  ALTER TABLE tasks ADD COLUMN schedule_id INTEGER REFERENCES schedules(id) ON DELETE SET NULL;
+  ALTER TABLE tasks ADD COLUMN trigger_id INTEGER REFERENCES triggers(id) ON DELETE SET NULL;
+  ALTER TABLE tasks ADD COLUMN parent_id INTEGER REFERENCES tasks(id);
+  -- The schedule's or trigger's name when it ran.
+  ALTER TABLE tasks ADD COLUMN source TEXT;
+  -- One run at a time per schedule, trigger, or Uptime Kuma monitor.
+  ALTER TABLE tasks ADD COLUMN run_key TEXT;
+  ALTER TABLE tasks ADD COLUMN payload TEXT;
+  CREATE INDEX tasks_run_key ON tasks (run_key, status);
+
+  -- messages again, for schedule cards: kind loses its CHECK so new card kinds don't need this.
+  CREATE TABLE messages_new (
+    id INTEGER PRIMARY KEY,
+    episode_id INTEGER REFERENCES episodes(id),
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    text TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'done' CHECK (status IN ('streaming', 'done', 'error')),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ')),
+    kind TEXT NOT NULL DEFAULT 'text',
+    task_id INTEGER REFERENCES tasks(id),
+    approval_id INTEGER REFERENCES approvals(id),
+    schedule_id INTEGER REFERENCES schedules(id) ON DELETE SET NULL
+  );
+  INSERT INTO messages_new (id, episode_id, role, text, status, created_at, kind, task_id, approval_id)
+    SELECT id, episode_id, role, text, status, created_at, kind, task_id, approval_id FROM messages;
+  DROP TABLE messages;
+  ALTER TABLE messages_new RENAME TO messages;
+  CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
+    INSERT INTO messages_fts (rowid, text) VALUES (new.id, new.text);
+  END;
+  CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
+    INSERT INTO messages_fts (messages_fts, rowid, text) VALUES ('delete', old.id, old.text);
+  END;
+  CREATE TRIGGER messages_au AFTER UPDATE OF text ON messages BEGIN
+    INSERT INTO messages_fts (messages_fts, rowid, text) VALUES ('delete', old.id, old.text);
+    INSERT INTO messages_fts (rowid, text) VALUES (new.id, new.text);
+  END;
+  `,
 ];

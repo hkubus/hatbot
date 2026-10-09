@@ -446,6 +446,10 @@ svg.i {
 .btn.ghost:hover {
   background: rgba(127, 127, 127, 0.12);
 }
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
 .btn.sm {
   height: 24px;
   padding: 0 9px;
@@ -1946,10 +1950,15 @@ html[data-theme="dark"] .seg button.active {
 }
 .row.link {
   width: 100%;
-  border: 0;
+  border-width: 0 0 0.5px;
+  border-style: solid;
+  border-color: var(--line);
   background: none;
   text-align: left;
   color: inherit;
+}
+.row.link:last-child {
+  border-bottom-width: 0;
 }
 .row.link:hover {
   background: rgba(127, 127, 127, 0.06);
@@ -1980,4 +1989,101 @@ html[data-theme="dark"] .seg button.active {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 60%;
+}
+
+/* ---------- Schedules & Triggers ---------- */
+.row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: none;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+}
+.row-main .val {
+  margin-left: auto;
+}
+button.text-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent-text);
+  font: inherit;
+  text-align: left;
+}
+button.text-link:hover {
+  text-decoration: underline;
+}
+.panel.form label,
+.setup-field {
+  display: grid;
+  gap: 5px;
+}
+.panel.form .field {
+  width: 100%;
+  height: 32px;
+  font-size: 13px;
+}
+.panel.form textarea.field {
+  height: auto;
+  padding: 7px 9px;
+  resize: vertical;
+  font-family: var(--font-text);
+  line-height: 1.45;
+}
+.panel.form .mono {
+  font-family: var(--mono);
+}
+.form-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.hint {
+  font-size: 12px;
+}
+.attn-panel {
+  border-color: color-mix(in srgb, var(--attention) 55%, transparent);
+}
+.attn-panel p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.copyable {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 4px 4px 4px 10px;
+}
+.copyable code {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  word-break: break-all;
+  user-select: all;
+}
+pre.payload {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }

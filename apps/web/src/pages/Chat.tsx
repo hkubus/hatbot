@@ -4,7 +4,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Icon } from "../icons";
 import { getState, loadEarlier, loadThread, sendMessage, setPaused, useStore } from "../store";
-import { ApprovalCard, TaskCard } from "../tasks";
+import { ApprovalCard, ScheduleCard, TaskCard } from "../tasks";
 
 const time = (iso: string) =>
   new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
@@ -73,6 +73,16 @@ function Message({
       <div className={`msg ${animate ? "new" : ""}`}>
         <div className="body">
           <ApprovalCard approvalId={m.approvalId} />
+        </div>
+        <span className="time">{time(m.createdAt)}</span>
+      </div>
+    );
+  }
+  if (m.kind === "schedule" && m.scheduleId) {
+    return (
+      <div className={`msg ${animate ? "new" : ""}`}>
+        <div className="body">
+          <ScheduleCard scheduleId={m.scheduleId} />
         </div>
         <span className="time">{time(m.createdAt)}</span>
       </div>

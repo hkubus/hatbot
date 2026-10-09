@@ -28,7 +28,7 @@ export function Tasks() {
 
   useEffect(() => {
     setIds(null);
-    loadTasks(filter).then(setIds, () => setIds([]));
+    loadTasks({ status: filter }).then(setIds, () => setIds([]));
   }, [filter]);
 
   // Tasks that start or finish while the list is open move between the two lists.
@@ -94,9 +94,28 @@ export function Tasks() {
   );
 }
 
+/** Where a task came from, linked. */
+function From({ task }: { task: Task }) {
+  const go = (to: string, label: string) => (
+    <button type="button" className="text-link" onClick={() => navigate(to)}>
+      {label}
+    </button>
+  );
+  if (task.parentId) return go(`/tasks/${task.parentId}`, `Task #${task.parentId}`);
+  if (task.origin === "chat") return <>Chat</>;
+  const name = task.source ?? "";
+  if (task.origin === "schedule")
+    return task.scheduleId ? go(`/schedules/${task.scheduleId}`, name) : name;
+  return task.triggerId ? go(`/triggers/${task.triggerId}`, name) : name;
+}
+
 function Details({ task }: { task: Task }) {
   return (
     <dl className="kv">
+      <dt>From</dt>
+      <dd>
+        <From task={task} />
+      </dd>
       <dt>Goal</dt>
       <dd>{task.goal}</dd>
       {task.successCriteria && (
@@ -117,13 +136,25 @@ function Details({ task }: { task: Task }) {
             Possible prompt injection
           </span>
         ) : task.tainted ? (
-          "Read web pages"
+          task.lane === "screen" ? (
+            "Read web pages"
+          ) : (
+            "Read untrusted content"
+          )
         ) : (
           "Trusted sources only"
         )}
       </dd>
       <dt>Cost</dt>
       <dd className="tnum">{money(task.costUsd)}</dd>
+      {task.payload && (
+        <>
+          <dt>Event</dt>
+          <dd>
+            <pre className="payload">{task.payload}</pre>
+          </dd>
+        </>
+      )}
     </dl>
   );
 }
@@ -148,7 +179,8 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   const active = isActive(task);
   const pending = Object.values(approvals).filter((a) => a.taskId === id && a.status === "pending");
   // Open the live view when Hatbot asks you to take over.
-  const showLive = active && (watch || request?.taskId === id);
+  const screen = task.lane === "screen";
+  const showLive = screen && active && (watch || request?.taskId === id);
 
   const cancel = async () => {
     if (!confirm(`Cancel "${task.title}"?`)) return;
@@ -168,7 +200,7 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
             Tasks
           </button>
           <span className="spacer" />
-          {active && !showLive && (
+          {screen && active && !showLive && (
             <button type="button" className="btn sm" onClick={() => setWatch(true)}>
               <Icon name="monitor" />
               Watch
@@ -199,15 +231,25 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
         <div className="panel">
           <h3 className="section-title">Timeline</h3>
           {!steps?.length ? (
-            <div className="muted">Hasn't started yet.</div>
+            <div className="muted">{active ? "Hasn't started yet." : "No steps."}</div>
           ) : (
             <ol className="timeline">
               {steps.map((s) => (
                 <li key={s.id} className={`tl-step tl-${s.kind}`}>
                   <span className="t">{time(s.createdAt)}</span>
-                  <StepIcon kind={s.kind} />
+                  <StepIcon kind={s.kind} name={s.name} />
                   <div className="tl-text">
-                    <div>{s.detail && s.kind !== "note" ? s.detail : s.name}</div>
+                    {s.kind === "task" && s.url ? (
+                      <button
+                        type="button"
+                        className="text-link"
+                        onClick={() => navigate(s.url as string)}
+                      >
+                        {s.name}
+                      </button>
+                    ) : (
+                      <div>{s.detail && s.kind !== "note" ? s.detail : s.name}</div>
+                    )}
                     {s.kind === "note" && s.detail && <div className="muted">{s.detail}</div>}
                     {s.screenshot && <Shot taskId={id} stepId={s.id} alt={s.name} />}
                   </div>

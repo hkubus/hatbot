@@ -1,10 +1,24 @@
-// Task and approval cards, shared by the chat and the Tasks page.
-import { API_PREFIX, type Approval, type Task, type TaskStatus } from "@hatbot/shared";
+// Task, approval and schedule cards, shared by the chat and the Tasks page.
+import {
+  API_PREFIX,
+  type Approval,
+  describeCron,
+  type Schedule,
+  type Task,
+  type TaskStatus,
+} from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { ApiError } from "./api";
-import { Icon } from "./icons";
+import { Icon, type IconName } from "./icons";
 import { navigate } from "./router";
-import { decideApproval, ensureApproval, ensureTask, useStore } from "./store";
+import {
+  decideApproval,
+  ensureApproval,
+  ensureSchedule,
+  ensureTask,
+  saveSchedule,
+  useStore,
+} from "./store";
 
 const STATUS: Record<TaskStatus, [string, string]> = {
   queued: ["", "Queued"],
@@ -43,7 +57,7 @@ export function taskLine(t: Task, progress?: string): string {
   if (t.summary && !isActive(t)) return t.summary;
   switch (t.status) {
     case "queued":
-      return "Waiting for the screen.";
+      return t.lane === "screen" ? "Waiting for the screen." : "Queued.";
     case "waiting_approval":
       return "Waiting for your approval.";
     case "waiting_takeover":
@@ -52,6 +66,16 @@ export function taskLine(t: Task, progress?: string): string {
       return lastLine(progress) ?? "Working…";
   }
 }
+
+/** What started a task, as an icon. */
+export const taskIcon = (t: Task): IconName =>
+  t.lane === "screen"
+    ? "monitor"
+    : t.origin === "schedule"
+      ? "clock"
+      : t.origin === "alert"
+        ? "bell"
+        : "zap";
 
 export function TaskCard({ taskId }: { taskId: number }) {
   const task = useStore((s) => s.tasks[taskId]);
@@ -71,8 +95,10 @@ export function TaskCard({ taskId }: { taskId: number }) {
   return (
     <div className="card task-card">
       <div className="card-head">
-        <div className="ico brand">
-          <Icon name="monitor" />
+        <div
+          className={`ico ${task.origin === "alert" && task.status !== "done" ? "bad" : "brand"}`}
+        >
+          <Icon name={taskIcon(task)} />
         </div>
         <div className="title">{task.title}</div>
         <div className="right">
@@ -193,6 +219,78 @@ export function ApprovalCard({
         >
           <Icon name="check" />
           Approve
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** "Every day at 08:00", or "Once, Sat 11 Oct, 08:00". */
+export function whenText(s: Pick<Schedule, "cron" | "runAt">): string {
+  if (s.cron) return describeCron(s.cron);
+  if (!s.runAt) return "";
+  return `Once, ${new Date(s.runAt).toLocaleString("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  })}`;
+}
+
+export function ScheduleCard({ scheduleId }: { scheduleId: number }) {
+  const s = useStore((st) => st.schedules[scheduleId]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => ensureSchedule(scheduleId), [scheduleId]);
+  if (s === undefined) return null;
+  if (s === null)
+    return (
+      <div className="resolved-line">
+        <span className="chip">Deleted</span>
+        <span className="muted">A schedule</span>
+      </div>
+    );
+
+  const toggle = async () => {
+    setBusy(true);
+    await saveSchedule(s.id, { enabled: !s.enabled }).catch(() => {});
+    setBusy(false);
+  };
+  return (
+    <div className="card">
+      <div className="card-head">
+        <div className="ico brand">
+          <Icon name="clock" />
+        </div>
+        <div className="title">{s.name}</div>
+        <div className="right">
+          <button
+            type="button"
+            className={`switch ${s.enabled ? "on" : ""}`}
+            aria-label={s.enabled ? "Turn off" : "Turn on"}
+            aria-pressed={s.enabled}
+            disabled={busy}
+            onClick={toggle}
+          />
+        </div>
+      </div>
+      <div className="card-body">
+        <dl className="kv">
+          <dt>When</dt>
+          <dd>{whenText(s)}</dd>
+          <dt>Does</dt>
+          <dd>{s.prompt}</dd>
+        </dl>
+      </div>
+      <div className="card-foot">
+        <span className="spacer" />
+        <button
+          type="button"
+          className="btn sm ghost"
+          onClick={() => navigate(`/schedules/${s.id}`)}
+        >
+          Details
+          <Icon name="chevron" />
         </button>
       </div>
     </div>

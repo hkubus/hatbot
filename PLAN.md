@@ -120,8 +120,8 @@ Everything valuable lives in the brain, and the brain only ever sees *pixels and
 ### 4.1 `apps/brain` — Bun + Hono
 - **HTTP API + WebSocket**: REST for resources, plus one WS per client for live events (task updates, chat streaming, approvals). The live view has its own WS. See §8.
 - **Agent runtime**: the custom loop (§5).
-- **Scheduler**: cron expressions and one-shot timers, stored in SQLite and run in-process with catch-up on restart.
-- **Trigger ingress**: `POST /hooks/:id`, checked by HMAC signature, plus an Uptime Kuma adapter.
+- **Scheduler**: cron expressions (via `croner`, MIT) and one-shot times in the brain's time zone, stored in SQLite and checked every 10 s in-process. A run missed while the brain was down or paused happens once when it's back; runs at most every 5 minutes.
+- **Trigger ingress**: `POST /hooks/:id`, checked by HMAC signature (`X-Hatbot-Signature: t=…,v1=…` over `t.body`, or the `X-Hub-Signature-256` / `X-Forgejo-Signature` that GitHub and Forgejo send), with replays dropped. Uptime Kuma can't sign, so `POST /hooks/kuma/:id` takes the trigger's secret as a bearer token from Kuma's Additional Headers.
 - **Tool host**: the built-in tools (§5.5) and an MCP client (stdio + streamable HTTP).
 - **Policy engine**: trust tracking, approval gates, spend enforcement (§6).
 - **Live-view relay**: JPEG frames from desktop-agent out to the browser, and your pointer and key events in while you have control. M5 records these input events for teach-by-showing. (noVNC was the first plan; it's MPL-2.0, so the view is our own MJPEG stream.)
@@ -193,6 +193,7 @@ build context (system + memory index + task)  →  call model (stream)
 |---|---|---|
 | Chat, planning, non-screen tools | `claude-opus-5-5`, effort `low` (Settings: low or medium) | Fast replies with a big model's judgement. Changing effort mid-conversation drops the prompt cache, so heavier work runs as a task instead |
 | Desktop driving (`run_desktop_task`) | `claude-opus-5-5`, effort `medium` | Native `computer_toolset_20260801`. Best screenshot reading |
+| Schedules and triggers (background tasks) | `claude-opus-5-5`, the chat's effort | Same kind of work as chat, without a screen (§5.6) |
 | Injection screening, thread summaries, alert triage | `claude-haiku-5-5`, effort `low` | $0.10/$0.50 per 1M tokens up to 100k-token prompts, 5x above (whole request). Thinks by default |
 | Writing code (`forge_*`, `ssh_exec` work, M4) | `claude-opus-5-5`, effort `medium`; `high` when you ask or after a failed attempt | Runs as a task with its own card, spend limit and timeline, like desktop tasks |
 | Teach-by-showing skill writing | `claude-opus-5-5` | Infrequent |
@@ -225,7 +226,8 @@ The `run_desktop_task` **subloop** uses Opus with the computer toolset against t
 ### 5.6 Scheduling and lanes
 - **Screen lane**: a single FIFO queue. While a screen task waits for approval or takeover, it **releases** the lane. When it resumes, it takes a fresh screenshot and re-checks the state before doing anything.
 - **Background lane**: a worker pool, with a concurrency of 3 by default.
-- **Scheduled and trigger tasks**: enter the same queues. If a schedule fires while its previous run is still going, the new run is skipped (one run at a time per schedule).
+- **Scheduled and trigger tasks**: background tasks on Opus 5.5 (the chat's effort setting) with memory, history search and `run_desktop_task`, which waits for the desktop task and returns its summary as untrusted data. They can't create schedules. They enter the same queues. If one fires while its previous run is still going, the new run is skipped: one run at a time per schedule, per webhook, and per Uptime Kuma monitor (later alerts and "back up" go on the running task's timeline).
+- **Reporting**: a run ends with `finish_task(summary, notify)`. With news (or a failure) it posts a card in the thread and sends a notification, and the chat hears about it in `<task_updates>`; a routine result only shows in Tasks and on its schedule's page.
 
 ---
 
@@ -326,14 +328,14 @@ REST + JSON under `/api/v1`. One WebSocket at `/api/v1/stream` for events. A gen
 | Tasks | `GET /tasks?status=` · `GET /tasks/:id` (+ steps) · `POST /tasks/:id/cancel` · `GET /tasks/:id/screens/:stepId` (a raised budget is an approval) |
 | Approvals | `GET /approvals?pending` · `POST /approvals/:id` `{decision}` · `POST /approvals/:id/token-decision` (ntfy) |
 | Desktop | `GET /desktop/status` · `POST /desktop/takeover` · `POST /desktop/handback` · `WS /desktop/live` (frames + input) · `GET /desktop/snapshots` · `POST /desktop/rollback` |
-| Schedules/triggers | CRUD at `/schedules`, `/triggers` |
-| Hooks | `POST /hooks/:id` (HMAC) · `POST /hooks/kuma/:id` |
+| Schedules/triggers | CRUD at `/schedules`, `/triggers` · `POST /schedules/:id/run` · `POST /triggers/:id/secret` (a new secret, shown once) · `GET /tasks?scheduleId=&triggerId=` |
+| Hooks | `POST /hooks/:id` (HMAC) · `POST /hooks/kuma/:id` (bearer secret) |
 | Memory | `GET /memory/tree` · `GET/PUT /memory/file?path=` · `GET /memory/log` · `GET /memory/diff/:sha` · `POST /memory/revert/:sha` |
 | Spend | `GET /spend/summary` · `GET /spend/daily?days=30` |
 | Teach | `POST /teach/start` · `POST /teach/stop` → draft skill · `POST /teach/:id/save` |
 | Admin | `POST /pause-all` · `POST /resume` · `GET/PUT /settings` · `GET/POST /update` · CRUD `/mcp-servers` |
 
-**WS events**: `message.created`, `message.delta`, `message.progress`, `message.done`, `task.updated`, `task.step`, `task.progress`, `approval.created`, `approval.resolved`, `desktop.state`, `spend.updated`, `memory.committed`, `paused`.
+**WS events**: `message.created`, `message.delta`, `message.progress`, `message.done`, `task.updated`, `task.step`, `task.progress`, `approval.created`, `approval.resolved`, `desktop.state`, `spend.updated`, `memory.committed`, `paused`, `schedule.updated`, `schedule.deleted`, `trigger.updated`, `trigger.deleted`.
 
 ---
 
@@ -453,7 +455,7 @@ Each milestone ends with a working, demo-able system.
 - [x] Pause all
 - [x] `infra/deploy.sh`: releases, health check, rollback
 - [x] Update from git with a button in Settings (`infra/hatbot-update.sh`)
-- [ ] Deployed and tried from a phone and a laptop
+- [x] Deployed and tried from a phone and a laptop
 - **Done when**: you can chat with Hatbot from a phone and laptop, it remembers things in markdown, and spending is enforced.
 
 ### M2 — Desktop + safety
@@ -464,13 +466,14 @@ Each milestone ends with a working, demo-able system.
 - [x] Trust tracking, approval gates, `confirm_intent`, Haiku injection screening
 - [x] ntfy notifier (publishing to your ntfy server) + signed action buttons
 - [x] Nightly desktop snapshots + "Roll back desktop" in Settings (Proxmox API, pinned TLS fingerprint)
-- [ ] Tried live: "book a table at X" with an approval from the lock screen
+- [ ] Tried live: "book a table at X" with an approval from the lock screen (browsing and takeover work; the lock-screen approval is still unchecked)
 - **Done when**: "book a table at X" works end to end, with an approval from your lock screen.
 
 ### M3 — Triggers
-- [ ] Scheduler (cron + one-shot), agent-created schedules from chat, Schedules & Triggers UI
-- [ ] Generic HMAC webhooks (per-trigger secret, trusted/untrusted flag)
-- [ ] Uptime Kuma adapter
+- [x] Scheduler (cron + one-shot), agent-created schedules from chat, Schedules & Triggers UI
+- [x] Generic HMAC webhooks (per-trigger secret, trusted/untrusted flag)
+- [x] Uptime Kuma adapter
+- [ ] Tried live: a morning schedule, a Forgejo webhook, a Kuma test alert
 - **Done when**: "every morning at 8, check X" runs unattended and reports back.
 
 ### M4 — Homelab tools + MCP

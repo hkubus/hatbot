@@ -82,11 +82,12 @@ const CUSTOM_TOOLS: Anthropic.Beta.BetaTool[] = [
   eager_input_streaming: true,
 }));
 
-/** Ends the run from inside a helper. */
-class Stop extends Error {
+/** Ends the run from inside a helper. `notify` false: a routine result nobody needs to hear about. */
+export class Stop extends Error {
   constructor(
     readonly status: "done" | "failed" | "cancelled",
     readonly summary: string,
+    readonly notify = true,
   ) {
     super(summary);
   }

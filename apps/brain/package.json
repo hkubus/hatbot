@@ -10,6 +10,7 @@
     "@anthropic-ai/sdk": "^0.133.0",
     "@hatbot/shared": "workspace:*",
     "@hono/zod-validator": "^0.9.1",
+    "croner": "^10.0.1",
     "hono": "^4.13.13",
     "zod": "^4.6.5"
   }

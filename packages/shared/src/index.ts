@@ -1,5 +1,8 @@
 // API types shared by the brain, the web app and the future iOS app (PLAN.md §4.4).
 import { z } from "zod";
+import type { Schedule, Trigger } from "./schedule";
+
+export * from "./schedule";
 
 export const API_PREFIX = "/api/v1";
 
@@ -43,13 +46,14 @@ export const PutMemoryFile = z.object({
 export type ThreadMessage = {
   id: number;
   role: "user" | "assistant";
-  /** "task" and "approval" messages are cards; their text is a plain-text fallback. */
-  kind: "text" | "task" | "approval";
+  /** "task", "approval" and "schedule" messages are cards; their text is a plain-text fallback. */
+  kind: "text" | "task" | "approval" | "schedule";
   text: string;
   status: "streaming" | "done" | "error";
   createdAt: string;
   taskId: number | null;
   approvalId: number | null;
+  scheduleId: number | null;
 };
 
 export type TaskStatus =
@@ -74,6 +78,14 @@ export type Task = {
   successCriteria: string;
   origin: "chat" | "schedule" | "webhook" | "alert";
   lane: "screen" | "background";
+  /** The schedule or trigger that started it, by name. */
+  source: string | null;
+  scheduleId: number | null;
+  triggerId: number | null;
+  /** The task that started this one (a desktop task run by a background task). */
+  parentId: number | null;
+  /** The event that started it, as received; untrusted unless its trigger is trusted. */
+  payload: string | null;
   model: string;
   status: TaskStatus;
   /** It has read untrusted content (PLAN.md §6.1). */
@@ -90,12 +102,13 @@ export type Task = {
 export type TaskStep = {
   id: number;
   taskId: number;
-  kind: "note" | "action" | "screenshot" | "page" | "approval" | "takeover" | "error";
+  kind: "note" | "action" | "screenshot" | "page" | "approval" | "takeover" | "error" | "task";
   /** Action name, or a short label. */
   name: string;
   detail: string;
   /** Archive path of a screenshot; fetch it from /tasks/:id/screens/:stepId. */
   screenshot: string | null;
+  /** A page's URL; for "task" steps, the task it started (/tasks/<id>). */
   url: string | null;
   createdAt: string;
 };
@@ -160,7 +173,11 @@ export type HatbotEvent =
   | { type: "task.progress"; taskId: number; text: string }
   | { type: "approval.created"; approval: Approval }
   | { type: "approval.resolved"; approval: Approval }
-  | { type: "desktop.state"; state: DesktopState };
+  | { type: "desktop.state"; state: DesktopState }
+  | { type: "schedule.updated"; schedule: Schedule }
+  | { type: "schedule.deleted"; id: number }
+  | { type: "trigger.updated"; trigger: Trigger }
+  | { type: "trigger.deleted"; id: number };
 
 /** The Update button in Settings (infra/hatbot-update.sh). */
 export type UpdateStatus = {

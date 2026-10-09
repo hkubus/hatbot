@@ -6,6 +6,7 @@ import { LiveView } from "./live";
 import { Chat } from "./pages/Chat";
 import { Login, Setup } from "./pages/Login";
 import { Memory } from "./pages/Memory";
+import { SchedulesView } from "./pages/Schedules";
 import { Settings } from "./pages/Settings";
 import { Spend } from "./pages/Spend";
 import { TaskDetail, Tasks } from "./pages/Tasks";
@@ -25,6 +26,7 @@ const VIEWS = [
   { path: "/", title: "Chat", icon: "chat", phone: true },
   { path: "/tasks", title: "Tasks", icon: "tasks", phone: true },
   { path: "/live", title: "Live", icon: "monitor", phone: true },
+  { path: "/schedules", title: "Schedules & Triggers", icon: "clock", phone: false },
   { path: "/memory", title: "Memory", icon: "book", phone: true },
   { path: "/spend", title: "Spend", icon: "gauge", phone: false },
   { path: "/settings", title: "Settings", icon: "sliders", phone: true },
@@ -32,7 +34,11 @@ const VIEWS = [
 
 const viewOf = (path: string) =>
   VIEWS.find((v) =>
-    v.path === "/" ? path === "/" : path === v.path || path.startsWith(`${v.path}/`),
+    path.startsWith("/triggers/")
+      ? v.path === "/schedules"
+      : v.path === "/"
+        ? path === "/"
+        : path === v.path || path.startsWith(`${v.path}/`),
   ) ?? VIEWS[0];
 
 function useTheme(): Theme {
@@ -177,6 +183,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               </div>
             </section>
           )}
+          {view.path === "/schedules" && <SchedulesView path={path} params={params} />}
           {view.path === "/memory" && <Memory toast={toast} />}
           {view.path === "/spend" && <Spend />}
           {view.path === "/settings" && <Settings toast={toast} onSignOut={onSignOut} />}
@@ -204,7 +211,10 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
             type="button"
             key={v.path}
             className={
-              v === view || (v.path === "/settings" && view.path === "/spend") ? "active" : ""
+              v === view ||
+              (v.path === "/settings" && (view.path === "/spend" || view.path === "/schedules"))
+                ? "active"
+                : ""
             }
             onClick={() => navigate(v.path)}
           >

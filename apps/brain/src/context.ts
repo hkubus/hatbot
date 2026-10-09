@@ -8,9 +8,11 @@ import type { Desktop } from "./desktop/service";
 import type { EventBus } from "./events";
 import type { MemoryStore } from "./memory/store";
 import type { Proxmox } from "./proxmox";
+import type { Schedules } from "./schedules";
 import type { SettingsStore } from "./settings";
 import type { Spend } from "./spend";
 import type { Tasks } from "./tasks/service";
+import type { Triggers } from "./triggers";
 import type { Updates } from "./updates";
 
 export type Deps = {
@@ -30,6 +32,8 @@ export type Deps = {
   archive: Archive;
   proxmox: Proxmox;
   updates: Updates;
+  schedules: Schedules;
+  triggers: Triggers;
 };
 
 export type AppEnv = {
