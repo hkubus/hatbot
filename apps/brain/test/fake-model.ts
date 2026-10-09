@@ -25,11 +25,16 @@ export const toolUse = (
   input: unknown,
   id = `toolu_${Math.random().toString(36).slice(2)}`,
 ): Block => ({ type: "tool_use", id, name, input }) as Block;
+/** A computer toolset member call. */
+export const computer = (name: string, input: unknown = {}): Block =>
+  ({ ...toolUse(name, input), toolset_name: "computer" }) as Block;
 
 /** Replays scripted responses in order and records every request. */
 export class FakeModel implements ModelClient {
   requests: Omit<StreamParams, "stream">[] = [];
   creates: CreateParams[] = [];
+  /** Replies to create() calls other than summaries, e.g. injection screening. */
+  onCreate: ((p: CreateParams) => string | undefined) | null = null;
   constructor(
     public script: Scripted[] = [],
     public summaries: string[] = [],
@@ -39,6 +44,7 @@ export class FakeModel implements ModelClient {
     this.requests.push(structuredClone(params));
     const next = this.script.shift();
     if (!next) throw new Error("FakeModel: no scripted response left");
+    if (h.signal?.aborted) throw h.signal.reason;
     for (const b of next.content) if (b.type === "text") h.onText?.(b.text);
     const stop =
       next.stop_reason ??
@@ -48,7 +54,8 @@ export class FakeModel implements ModelClient {
 
   async create(params: CreateParams) {
     this.creates.push(structuredClone(params));
-    return message(params.model, [text(this.summaries.shift() ?? "summary")], "end_turn");
+    const reply = this.onCreate?.(params) ?? this.summaries.shift() ?? "summary";
+    return message(params.model, [text(reply)], "end_turn");
   }
 }
 

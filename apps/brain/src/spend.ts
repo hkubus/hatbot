@@ -166,10 +166,10 @@ export class Spend {
   }
 
   /** Throws BudgetError if a request estimated at `estimateUsd` would cross a limit. */
-  check(estimateUsd: number, taskId?: number) {
+  check(estimateUsd: number, task?: { id: number; limitUsd: number }) {
     const { todayUsd, monthUsd, limits } = this.summary();
-    if (taskId !== undefined && this.taskSpend(taskId) + estimateUsd > limits.taskUsd) {
-      throw new BudgetError("task", `This task would go over its $${limits.taskUsd} limit.`);
+    if (task && this.taskSpend(task.id) + estimateUsd > task.limitUsd) {
+      throw new BudgetError("task", `This task would go over its $${task.limitUsd} limit.`);
     }
     if (todayUsd + estimateUsd > limits.dailyUsd) {
       throw new BudgetError("daily", `Today's $${limits.dailyUsd} limit would be exceeded.`);

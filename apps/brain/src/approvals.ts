@@ -1,0 +1,235 @@
+// Approvals (PLAN.md §6.2): a task asks, you decide in the web app or from an ntfy notification.
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import type { Approval, ApprovalKind } from "@hatbot/shared";
+import type { Db } from "./db";
+import type { EventBus } from "./events";
+import type { Notifier } from "./notify";
+
+const TTL_MS = 24 * 3600_000;
+/** Kinds whose notification only offers "Open in Hatbot" (PLAN.md §6.2). */
+const WEB_ONLY: ApprovalKind[] = ["payment", "account_security"];
+
+export type Outcome = "approved" | "denied" | "expired" | "cancelled";
+
+type Row = {
+  id: number;
+  task_id: number | null;
+  kind: ApprovalKind;
+  summary: string;
+  reason: string;
+  sources: string;
+  screenshot_step_id: number | null;
+  status: Approval["status"];
+  decided_via: Approval["decidedVia"];
+  created_at: string;
+  expires_at: string;
+  decided_at: string | null;
+  cost_usd: number | null;
+};
+
+const SELECT = `SELECT a.*, (SELECT sum(cost_usd) FROM spend_ledger s WHERE s.task_id = a.task_id) AS cost_usd
+  FROM approvals a`;
+
+const toApproval = (r: Row): Approval => ({
+  id: r.id,
+  taskId: r.task_id,
+  kind: r.kind,
+  summary: r.summary,
+  reason: r.reason,
+  sources: JSON.parse(r.sources),
+  screenshotStepId: r.screenshot_step_id,
+  status: r.status,
+  decidedVia: r.decided_via,
+  costUsd: r.cost_usd ?? 0,
+  createdAt: r.created_at,
+  expiresAt: r.expires_at,
+  decidedAt: r.decided_at,
+});
+
+export type NewApproval = {
+  taskId: number | null;
+  kind: ApprovalKind;
+  summary: string;
+  reason?: string;
+  sources?: string[];
+  screenshotStepId?: number | null;
+};
+
+export class Approvals {
+  private waiters = new Map<number, (o: Outcome) => void>();
+  private key: Buffer;
+  /** Adds the approval's card to the thread; set by the task runner. */
+  onCreated: (a: Approval) => void = () => {};
+
+  constructor(
+    private db: Db,
+    private events: EventBus,
+    private notifier: Notifier,
+    private publicUrl: string,
+    private clock: () => number = Date.now,
+  ) {
+    this.key = this.signingKey();
+    // Nothing waits on approvals from before a restart: their tasks were stopped.
+    db.query(
+      "UPDATE approvals SET status = 'cancelled', decided_at = ? WHERE status = 'pending'",
+    ).run(this.now());
+  }
+
+  private now() {
+    return new Date(this.clock()).toISOString();
+  }
+
+  private signingKey(): Buffer {
+    const row = this.db
+      .query<{ value: string }, []>("SELECT value FROM settings WHERE key = 'approval_key'")
+      .get();
+    if (row) return Buffer.from(row.value, "hex");
+    const key = randomBytes(32);
+    this.db
+      .query("INSERT INTO settings (key, value) VALUES ('approval_key', ?)")
+      .run(key.toString("hex"));
+    return key;
+  }
+
+  get(id: number): Approval | null {
+    const r = this.db.query<Row, [number]>(`${SELECT} WHERE a.id = ?`).get(id);
+    return r ? toApproval(r) : null;
+  }
+
+  list(pendingOnly: boolean): Approval[] {
+    return this.db
+      .query<Row, []>(
+        `${SELECT} ${pendingOnly ? "WHERE a.status = 'pending'" : ""} ORDER BY a.id DESC LIMIT 100`,
+      )
+      .all()
+      .map(toApproval);
+  }
+
+  create(input: NewApproval): Approval {
+    const row = this.db
+      .query<
+        { id: number },
+        [number | null, string, string, string, string, number | null, string, string]
+      >(
+        `INSERT INTO approvals (task_id, kind, summary, reason, sources, screenshot_step_id, created_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      )
+      .get(
+        input.taskId,
+        input.kind,
+        input.summary,
+        input.reason ?? "",
+        JSON.stringify(input.sources ?? []),
+        input.screenshotStepId ?? null,
+        this.now(),
+        new Date(this.clock() + TTL_MS).toISOString(),
+      );
+    const approval = this.get(row?.id ?? -1);
+    if (!approval) throw new Error("approval insert failed");
+    this.events.emit({ type: "approval.created", approval });
+    this.onCreated(approval);
+    void this.notify(approval);
+    return approval;
+  }
+
+  /** Resolves when the approval is decided, expires or is cancelled. */
+  wait(id: number, signal: AbortSignal): Promise<Outcome> {
+    const current = this.get(id);
+    if (current && current.status !== "pending") return Promise.resolve(current.status);
+    return new Promise((resolve, reject) => {
+      const abort = () => {
+        this.waiters.delete(id);
+        reject(signal.reason);
+      };
+      if (signal.aborted) return reject(signal.reason);
+      signal.addEventListener("abort", abort, { once: true });
+      this.waiters.set(id, (o) => {
+        signal.removeEventListener("abort", abort);
+        resolve(o);
+      });
+    });
+  }
+
+  private resolve(
+    id: number,
+    status: Outcome,
+    via: Approval["decidedVia"] = null,
+  ): Approval | null {
+    const changed = this.db
+      .query(
+        "UPDATE approvals SET status = ?, decided_via = ?, decided_at = ? WHERE id = ? AND status = 'pending'",
+      )
+      .run(status, via, this.now(), id);
+    if (!changed.changes) return null;
+    const approval = this.get(id);
+    if (approval) this.events.emit({ type: "approval.resolved", approval });
+    this.waiters.get(id)?.(status);
+    this.waiters.delete(id);
+    return approval;
+  }
+
+  /** Your decision. Null if the approval isn't pending any more. */
+  decide(id: number, decision: "approve" | "deny", via: "web" | "ntfy"): Approval | null {
+    return this.resolve(id, decision === "approve" ? "approved" : "denied", via);
+  }
+
+  cancel(id: number) {
+    this.resolve(id, "cancelled");
+  }
+
+  cancelForTask(taskId: number) {
+    const ids = this.db
+      .query<{ id: number }, [number]>(
+        "SELECT id FROM approvals WHERE task_id = ? AND status = 'pending'",
+      )
+      .all(taskId);
+    for (const { id } of ids) this.resolve(id, "cancelled");
+  }
+
+  /** Expires approvals nobody answered within 24 h; the brain calls it every minute. */
+  expireDue() {
+    const due = this.db
+      .query<{ id: number }, [string]>(
+        "SELECT id FROM approvals WHERE status = 'pending' AND expires_at <= ?",
+      )
+      .all(this.now());
+    for (const { id } of due) this.resolve(id, "expired");
+  }
+
+  sign(id: number, decision: "approve" | "deny", exp: number): string {
+    return createHmac("sha256", this.key).update(`${id}:${decision}:${exp}`).digest("base64url");
+  }
+
+  /** An ntfy button's token: right signature, not expired. Single use, because a decision only applies once. */
+  verify(id: number, decision: "approve" | "deny", exp: number, sig: string): boolean {
+    if (exp * 1000 < this.clock()) return false;
+    const want = Buffer.from(this.sign(id, decision, exp));
+    const got = Buffer.from(sig);
+    return got.length === want.length && timingSafeEqual(got, want);
+  }
+
+  private async notify(a: Approval) {
+    const open = `${this.publicUrl}/?approval=${a.id}`;
+    const exp = Math.floor(Date.parse(a.expiresAt) / 1000);
+    const button = (decision: "approve" | "deny") => ({
+      action: "http" as const,
+      label: decision === "approve" ? "Approve" : "Deny",
+      url: `${this.publicUrl}/api/v1/approvals/${a.id}/token-decision`,
+      method: "POST" as const,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ decision, exp, sig: this.sign(a.id, decision, exp) }),
+      clear: true,
+    });
+    await this.notifier.send({
+      title: `Approve: ${a.summary}`.slice(0, 120),
+      message: [a.reason, a.taskId ? `Task #${a.taskId}, $${a.costUsd.toFixed(2)} so far` : ""]
+        .filter(Boolean)
+        .join("\n"),
+      priority: 4,
+      click: open,
+      actions: WEB_ONLY.includes(a.kind)
+        ? [{ action: "view", label: "Open in Hatbot", url: open }]
+        : [button("approve"), button("deny")],
+    });
+  }
+}

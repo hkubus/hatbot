@@ -79,4 +79,66 @@ export const migrations: string[] = [
   );
   CREATE INDEX spend_ledger_created ON spend_ledger (created_at);
   `,
+  /* 3: tasks, approvals, cards in the thread */ `
+  CREATE TABLE tasks (
+    id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    goal TEXT NOT NULL,
+    success_criteria TEXT NOT NULL DEFAULT '',
+    origin TEXT NOT NULL CHECK (origin IN ('chat', 'schedule', 'webhook', 'alert')),
+    lane TEXT NOT NULL CHECK (lane IN ('screen', 'background')),
+    model TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'waiting_approval', 'waiting_takeover', 'done', 'failed', 'cancelled')),
+    tainted INTEGER NOT NULL DEFAULT 0,
+    injection_suspected INTEGER NOT NULL DEFAULT 0,
+    -- Raised from the task's card when it hits its limit (PLAN.md §6.3).
+    budget_usd REAL NOT NULL,
+    summary TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ')),
+    started_at TEXT,
+    finished_at TEXT,
+    -- When the chat thread was told how it ended.
+    reported_at TEXT
+  );
+  CREATE INDEX tasks_status ON tasks (status);
+  -- The task's API conversation. Append-only, like episode_turns.
+  CREATE TABLE task_turns (
+    id INTEGER PRIMARY KEY,
+    task_id INTEGER NOT NULL REFERENCES tasks(id),
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ'))
+  );
+  CREATE INDEX task_turns_task ON task_turns (task_id, id);
+  -- The timeline you see (PLAN.md §2, Logs).
+  CREATE TABLE task_steps (
+    id INTEGER PRIMARY KEY,
+    task_id INTEGER NOT NULL REFERENCES tasks(id),
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    screenshot TEXT,
+    url TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ'))
+  );
+  CREATE INDEX task_steps_task ON task_steps (task_id, id);
+  CREATE TABLE approvals (
+    id INTEGER PRIMARY KEY,
+    task_id INTEGER REFERENCES tasks(id),
+    kind TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    sources TEXT NOT NULL DEFAULT '[]',
+    screenshot_step_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'denied', 'expired', 'cancelled')),
+    decided_via TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ')),
+    expires_at TEXT NOT NULL,
+    decided_at TEXT
+  );
+  CREATE INDEX approvals_status ON approvals (status);
+  ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'text' CHECK (kind IN ('text', 'task', 'approval'));
+  ALTER TABLE messages ADD COLUMN task_id INTEGER REFERENCES tasks(id);
+  ALTER TABLE messages ADD COLUMN approval_id INTEGER REFERENCES approvals(id);
+  `,
 ];

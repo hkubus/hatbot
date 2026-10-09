@@ -29,11 +29,14 @@ export const adminRoutes = new Hono<AppEnv>()
   .post("/pause-all", (c) => {
     c.var.settings.update({ paused: true });
     c.var.thread.abortCurrent();
+    c.var.tasks.cancelAll();
+    void c.var.desktop.setPaused(true);
     c.var.events.emit({ type: "paused", paused: true });
     return c.json({ paused: true });
   })
   .post("/resume", (c) => {
     c.var.settings.update({ paused: false });
+    void c.var.desktop.setPaused(false);
     c.var.events.emit({ type: "paused", paused: false });
     return c.json({ paused: false });
   });

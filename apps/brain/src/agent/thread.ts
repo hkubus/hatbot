@@ -6,6 +6,7 @@ import type { EventBus } from "../events";
 import type { MemoryStore } from "../memory/store";
 import type { SettingsStore } from "../settings";
 import { BudgetError, priceOf, type Spend } from "../spend";
+import type { Tasks } from "../tasks/service";
 import type { ModelClient } from "./model";
 import { SUMMARY_PROMPT, SYSTEM_PROMPT } from "./prompt";
 import { runTool, TOOL_PARAMS } from "./tools";
@@ -16,6 +17,8 @@ const EPISODE_IDLE_MS = 30 * 60_000;
 const RECENT_MESSAGES = 10;
 const MAX_STEPS = 25;
 const MAX_TURN_MS = 10 * 60_000;
+const MESSAGE_COLUMNS =
+  "id, role, kind, text, status, created_at AS createdAt, task_id AS taskId, approval_id AS approvalId";
 const BETAS: Anthropic.Beta.AnthropicBeta[] = [
   "server-side-fallback-2026-07-01",
   "thinking-display-updates-2026-08-18",
@@ -25,6 +28,8 @@ type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 type Turn = Anthropic.Beta.BetaMessageParam;
 
 export type ThreadDeps = {
+  /** Set once the task runner exists; it needs the thread too. */
+  tasks?: Tasks;
   db: Db;
   memory: MemoryStore;
   events: EventBus;
@@ -48,10 +53,23 @@ export class Thread {
   list(before?: number, limit = 50): ThreadMessage[] {
     return this.d.db
       .query<ThreadMessage, [number, number]>(
-        `SELECT id, role, text, status, created_at AS createdAt FROM messages WHERE id < ? ORDER BY id DESC LIMIT ?`,
+        `SELECT ${MESSAGE_COLUMNS} FROM messages WHERE id < ? ORDER BY id DESC LIMIT ?`,
       )
       .all(before ?? Number.MAX_SAFE_INTEGER, limit)
       .reverse();
+  }
+
+  /** A task or approval card in the thread. `text` is what search and summaries see. */
+  addCard(kind: "task" | "approval", text: string, ref: { taskId: number; approvalId?: number }) {
+    const row = this.d.db
+      .query<ThreadMessage, [string, string, string, number, number | null]>(
+        `INSERT INTO messages (role, kind, text, status, created_at, task_id, approval_id)
+         VALUES ('assistant', ?, ?, 'done', ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
+      )
+      .get(kind, text, this.now(), ref.taskId, ref.approvalId ?? null);
+    if (!row) throw new Error("card insert failed");
+    this.d.events.emit({ type: "message.created", message: row });
+    return row;
   }
 
   /** Stores the owner's message and queues Hatbot's reply, which streams over the event bus. */
@@ -60,6 +78,10 @@ export class Thread {
     const done = this.chain.then(() => this.reply(message));
     this.chain = done.catch((err) => console.error("thread turn failed", err));
     return { message, done };
+  }
+
+  attachTasks(tasks: Tasks) {
+    this.d.tasks = tasks;
   }
 
   /** Pause all: stops the reply in progress. */
@@ -85,7 +107,7 @@ export class Thread {
     const row = this.d.db
       .query<ThreadMessage, [number | null, string, string, string, string]>(
         `INSERT INTO messages (episode_id, role, text, status, created_at) VALUES (?, ?, ?, ?, ?)
-         RETURNING id, role, text, status, created_at AS createdAt`,
+         RETURNING ${MESSAGE_COLUMNS}`,
       )
       .get(episodeId ?? null, role, text, status, this.now());
     if (!row) throw new Error("message insert failed");
@@ -222,6 +244,14 @@ export class Thread {
 
     const userBlocks: BlockParam[] = [];
     if (episode.isNew) userBlocks.push({ type: "text", text: await this.episodeContext(user.id) });
+    const ended = this.d.tasks?.takeUnreported() ?? [];
+    if (ended.length) {
+      const lines = ended.map((t) => `Task #${t.id} "${t.title}" ${t.status}: ${t.summary ?? ""}`);
+      userBlocks.push({
+        type: "text",
+        text: `<task_updates>\n${lines.join("\n")}\n</task_updates>`,
+      });
+    }
     userBlocks.push({
       type: "text",
       text: `[${localStamp(new Date(user.createdAt))}]\n${user.text}`,
@@ -364,6 +394,8 @@ function toolLabel(name: string): string {
     memory_delete: "Removing from memory",
     memory_search: "Searching memory",
     search_history: "Searching earlier messages",
+    run_desktop_task: "Starting a desktop task",
+    get_task: "Checking on a task",
   };
   return labels[name] ?? `Using ${name}`;
 }

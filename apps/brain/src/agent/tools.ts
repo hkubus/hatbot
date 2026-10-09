@@ -1,11 +1,12 @@
-// Built-in tools for the chat thread (PLAN.md §5.5). M1: memory and history search.
+// Built-in tools for the chat thread (PLAN.md §5.5): memory, history search, desktop tasks.
 import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
 import { HATBOT, MemoryError, type MemoryStore } from "../memory/store";
+import type { Tasks } from "../tasks/service";
 
-export type ToolContext = { db: Db; memory: MemoryStore; events: EventBus };
+export type ToolContext = { db: Db; memory: MemoryStore; events: EventBus; tasks?: Tasks };
 
 type ToolDef<S extends z.ZodType> = {
   name: string;
@@ -92,6 +93,50 @@ export const TOOLS = [
             `[${r.created_at.slice(0, 16).replace("T", " ")}] ${r.role}: ${r.text.slice(0, 1500)}`,
         )
         .join("\n\n");
+    },
+  }),
+  def({
+    name: "run_desktop_task",
+    description:
+      "Start a task on your Linux desktop (Chromium and a terminal), for anything that needs a browser: booking, buying, filling in forms, checking websites. It runs in the background on a separate model and posts a card in the thread; the owner can watch it live and approves consequential steps. You're told how it ended at the start of a later turn. Give it everything it needs to know: it can't see this conversation.",
+    schema: z.object({
+      title: z
+        .string()
+        .min(1)
+        .max(80)
+        .describe('Short title for the card, e.g. "Book a table at Luigi\'s"'),
+      goal: z
+        .string()
+        .min(1)
+        .max(4000)
+        .describe("What to do, with every detail from the conversation it needs"),
+      success_criteria: z.string().max(1000).describe("How to tell it's done"),
+    }),
+    run: async ({ title, goal, success_criteria }, { tasks }) => {
+      if (!tasks) return "Desktop tasks aren't available.";
+      const task = tasks.createDesktopTask({
+        title,
+        goal,
+        successCriteria: success_criteria,
+        origin: "chat",
+      });
+      return `Started task #${task.id}. It's running in the background; its card is in the thread. Don't wait for it.`;
+    },
+  }),
+  def({
+    name: "get_task",
+    description: "The status of a task, its summary if it ended, and its last few steps.",
+    schema: z.object({ id: z.number().int() }),
+    run: async ({ id }, { tasks }) => {
+      const task = tasks?.get(id);
+      if (!tasks || !task) return `No task #${id}.`;
+      const steps = tasks
+        .steps(id)
+        .filter((s) => s.kind !== "screenshot")
+        .slice(-8)
+        .map((s) => `- ${s.name}${s.detail ? `: ${s.detail.slice(0, 200)}` : ""}`)
+        .join("\n");
+      return `Task #${task.id} "${task.title}": ${task.status}, $${task.costUsd.toFixed(2)} spent.${task.summary ? `\nSummary: ${task.summary}` : ""}${steps ? `\nLast steps:\n${steps}` : ""}`;
     },
   }),
 ];

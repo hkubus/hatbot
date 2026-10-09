@@ -43,9 +43,107 @@ export const PutMemoryFile = z.object({
 export type ThreadMessage = {
   id: number;
   role: "user" | "assistant";
+  /** "task" and "approval" messages are cards; their text is a plain-text fallback. */
+  kind: "text" | "task" | "approval";
   text: string;
   status: "streaming" | "done" | "error";
   createdAt: string;
+  taskId: number | null;
+  approvalId: number | null;
+};
+
+export type TaskStatus =
+  | "queued"
+  | "running"
+  | "waiting_approval"
+  | "waiting_takeover"
+  | "done"
+  | "failed"
+  | "cancelled";
+export const ACTIVE_TASK_STATUSES: TaskStatus[] = [
+  "queued",
+  "running",
+  "waiting_approval",
+  "waiting_takeover",
+];
+
+export type Task = {
+  id: number;
+  title: string;
+  goal: string;
+  successCriteria: string;
+  origin: "chat" | "schedule" | "webhook" | "alert";
+  lane: "screen" | "background";
+  model: string;
+  status: TaskStatus;
+  /** It has read untrusted content (PLAN.md §6.1). */
+  tainted: boolean;
+  injectionSuspected: boolean;
+  summary: string | null;
+  costUsd: number;
+  steps: number;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+
+export type TaskStep = {
+  id: number;
+  taskId: number;
+  kind: "note" | "action" | "screenshot" | "page" | "approval" | "takeover" | "error";
+  /** Action name, or a short label. */
+  name: string;
+  detail: string;
+  /** Archive path of a screenshot; fetch it from /tasks/:id/screens/:stepId. */
+  screenshot: string | null;
+  url: string | null;
+  createdAt: string;
+};
+
+export type ApprovalKind =
+  | "send"
+  | "submit_personal_data"
+  | "purchase"
+  | "payment"
+  | "delete"
+  | "account_security"
+  | "injection_warning"
+  | "budget"
+  | "other";
+
+export type Approval = {
+  id: number;
+  taskId: number | null;
+  kind: ApprovalKind;
+  summary: string;
+  reason: string;
+  /** Untrusted sources the task had read (PLAN.md §6.2). */
+  sources: string[];
+  /** The step whose screenshot shows what's being approved. */
+  screenshotStepId: number | null;
+  status: "pending" | "approved" | "denied" | "expired" | "cancelled";
+  decidedVia: "web" | "ntfy" | null;
+  costUsd: number;
+  createdAt: string;
+  expiresAt: string;
+  decidedAt: string | null;
+};
+export const DecideApproval = z.object({ decision: z.enum(["approve", "deny"]) });
+export const TokenDecision = z.object({
+  decision: z.enum(["approve", "deny"]),
+  exp: z.number().int(),
+  sig: z.string().min(1).max(200),
+});
+
+export type DesktopState = {
+  /** desktop-agent answers. */
+  online: boolean;
+  /** "hatbot": Hatbot may act; "owner": you have control (takeover). */
+  control: "hatbot" | "owner";
+  /** A task waiting for you to take over, and why. */
+  request: { taskId: number; reason: string } | null;
+  /** The task using the screen. */
+  activeTaskId: number | null;
 };
 
 /** Live events on /api/v1/stream. */
@@ -56,7 +154,13 @@ export type HatbotEvent =
   | { type: "message.done"; id: number; text: string; status: "done" | "error" }
   | { type: "spend.updated"; todayUsd: number; monthUsd: number }
   | { type: "memory.committed"; sha: string; message: string; author: string }
-  | { type: "paused"; paused: boolean };
+  | { type: "paused"; paused: boolean }
+  | { type: "task.updated"; task: Task }
+  | { type: "task.step"; step: TaskStep }
+  | { type: "task.progress"; taskId: number; text: string }
+  | { type: "approval.created"; approval: Approval }
+  | { type: "approval.resolved"; approval: Approval }
+  | { type: "desktop.state"; state: DesktopState };
 
 export type MemoryFile = { path: string; size: number };
 export type Commit = {

@@ -3,19 +3,33 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Thread } from "../src/agent/thread";
 import { createApp } from "../src/app";
+import { Approvals } from "../src/approvals";
+import { Archive } from "../src/archive";
 import { AuthService, FailureLimiter } from "../src/auth/service";
 import { stepOf, totpAt } from "../src/auth/totp";
 import { loadConfig } from "../src/config";
 import { openDb } from "../src/db";
+import { Desktop } from "../src/desktop/service";
 import { EventBus, type HatbotEvent } from "../src/events";
 import { MemoryStore } from "../src/memory/store";
+import type { Notification, Notifier } from "../src/notify";
 import { SettingsStore } from "../src/settings";
 import { Spend } from "../src/spend";
+import { Tasks } from "../src/tasks/service";
+import { FakeDesktop } from "./fake-desktop";
 import { FakeModel } from "./fake-model";
+
+class FakeNotifier implements Notifier {
+  sent: Notification[] = [];
+  async send(n: Notification) {
+    this.sent.push(n);
+  }
+}
 
 export const ORIGIN = "https://hatbot.test";
 
-export async function testApp(model = new FakeModel()) {
+/** `model` answers the chat thread; `taskModel` answers desktop tasks and screening. */
+export async function testApp(model = new FakeModel(), taskModel = new FakeModel()) {
   let nowMs = Date.parse("2026-10-09T12:00:00Z");
   const clock = () => nowMs;
   const config = loadConfig({ HATBOT_PUBLIC_URL: ORIGIN, HATBOT_DATA_DIR: "/nonexistent" });
@@ -33,7 +47,42 @@ export async function testApp(model = new FakeModel()) {
   const memory = new MemoryStore(mkdtempSync(join(tmpdir(), "hatbot-test-mem-")));
   await memory.init();
   const thread = new Thread({ db, memory, events, spend, settings, model, clock });
-  const app = createApp({ config, db, auth, loginLimits, events, settings, spend, memory, thread });
+  taskModel.onCreate ??= () => '{"suspected": false, "excerpt": ""}';
+  const notifier = new FakeNotifier();
+  const archive = new Archive(mkdtempSync(join(tmpdir(), "hatbot-test-archive-")), clock);
+  const agent = new FakeDesktop();
+  const desktop = new Desktop(agent, events);
+  const approvals = new Approvals(db, events, notifier, ORIGIN, clock);
+  const tasks = new Tasks({
+    db,
+    events,
+    spend,
+    settings,
+    model: taskModel,
+    desktop,
+    approvals,
+    notifier,
+    archive,
+    thread,
+    config,
+    clock,
+  });
+  thread.attachTasks(tasks);
+  const app = createApp({
+    config,
+    db,
+    auth,
+    loginLimits,
+    events,
+    settings,
+    spend,
+    memory,
+    thread,
+    tasks,
+    approvals,
+    desktop,
+    archive,
+  });
 
   const call = (
     method: string,
@@ -53,7 +102,14 @@ export async function testApp(model = new FakeModel()) {
     auth,
     memory,
     model,
+    taskModel,
     settings,
+    tasks,
+    approvals,
+    desktop,
+    agent,
+    archive,
+    notifier,
     spend,
     thread,
     events: seen,
@@ -78,4 +134,15 @@ export async function setUpOwner(t: TestApp, password = "correct horse battery")
   const cookie = res.headers.get("set-cookie")?.split(";")[0] ?? "";
   t.advance(30_000); // the setup code's TOTP step is now used
   return { secret, password, cookie };
+}
+
+/** Polls until `fn` returns something truthy (async task runs). */
+export async function waitFor<T>(fn: () => T | undefined | null | false, ms = 2000): Promise<T> {
+  const end = Date.now() + ms;
+  for (;;) {
+    const v = fn();
+    if (v) return v;
+    if (Date.now() > end) throw new Error("waitFor timed out");
+    await Bun.sleep(5);
+  }
 }

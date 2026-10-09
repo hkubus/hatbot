@@ -2,13 +2,19 @@ import { websocket } from "hono/bun";
 import { AnthropicModelClient } from "./agent/model";
 import { Thread } from "./agent/thread";
 import { createApp } from "./app";
+import { Approvals } from "./approvals";
+import { Archive } from "./archive";
 import { AuthService, FailureLimiter } from "./auth/service";
 import { loadConfig } from "./config";
 import { openDb } from "./db";
+import { HttpDesktopAgent } from "./desktop/client";
+import { Desktop } from "./desktop/service";
 import { EventBus } from "./events";
 import { MemoryStore } from "./memory/store";
+import { NtfyNotifier } from "./notify";
 import { SettingsStore } from "./settings";
 import { Spend } from "./spend";
+import { Tasks } from "./tasks/service";
 import { webHandler } from "./web";
 
 const config = loadConfig();
@@ -19,20 +25,50 @@ const settings = new SettingsStore(db);
 const spend = new Spend(db, settings, events);
 const memory = new MemoryStore(config.memoryDir);
 await memory.init();
-const thread = new Thread({
+const model = new AnthropicModelClient();
+const thread = new Thread({ db, memory, events, spend, settings, model });
+const notifier = new NtfyNotifier();
+const archive = new Archive(config.archiveDir);
+const desktop = new Desktop(new HttpDesktopAgent(), events);
+const approvals = new Approvals(db, events, notifier, config.publicUrl);
+const tasks = new Tasks({
   db,
-  memory,
   events,
   spend,
   settings,
-  model: new AnthropicModelClient(),
+  model,
+  desktop,
+  approvals,
+  notifier,
+  archive,
+  thread,
+  config,
 });
+thread.attachTasks(tasks);
+await desktop.setPaused(settings.get().paused);
+await desktop.refresh();
+setInterval(() => void desktop.refresh(), 30_000);
+setInterval(() => approvals.expireDue(), 60_000);
 const loginLimits = {
   perIp: new FailureLimiter(10, 15 * 60_000),
   global: new FailureLimiter(50, 15 * 60_000),
 };
 
-const app = createApp({ config, db, auth, loginLimits, events, settings, spend, memory, thread });
+const app = createApp({
+  config,
+  db,
+  auth,
+  loginLimits,
+  events,
+  settings,
+  spend,
+  memory,
+  thread,
+  tasks,
+  approvals,
+  desktop,
+  archive,
+});
 const web = webHandler(config.webDir);
 const server = Bun.serve({
   hostname: config.host,

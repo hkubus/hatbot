@@ -4,8 +4,10 @@ import { getConnInfo } from "hono/bun";
 import type { AppEnv, Deps } from "./context";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
+import { desktopRoutes } from "./routes/desktop";
 import { memoryRoutes } from "./routes/memory";
 import { streamRoutes } from "./routes/stream";
+import { approvalRoutes, taskRoutes } from "./routes/tasks";
 import { threadRoutes } from "./routes/thread";
 
 export const VERSION = "0.1.0";
@@ -25,6 +27,9 @@ export function createApp(deps: Deps) {
   app.route("/", memoryRoutes);
   app.route("/", adminRoutes);
   app.route("/", streamRoutes);
+  app.route("/", taskRoutes);
+  app.route("/", approvalRoutes);
+  app.route("/", desktopRoutes);
 
   app.notFound((c) => c.json({ error: "not found" }, 404));
   app.onError((err, c) => {
