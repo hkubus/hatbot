@@ -53,7 +53,7 @@ The first run asks for:
 - the web app's public URL and your reverse proxy's IP,
 - the Anthropic API key,
 - your ntfy server's URL, topic and access token (the token's user needs write access to the topic),
-- the git repository the Update button pulls from: an https URL, a branch, and an access token that can read it (on Forgejo: a token with `read:repository`).
+- the git repository the Update button pulls from: an https URL and a branch (the repository is public, so leave the token empty; a private one needs a token with `read:repository`).
 
  Then it prints a setup code. Open `https://<your hatbot host>/setup` and enter the code to set your password and TOTP. The code changes whenever the brain restarts before setup is done. To read the current one, run `pct exec <brain> -- journalctl -u hatbot-brain | grep 'setup code'`.
 

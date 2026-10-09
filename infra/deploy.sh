@@ -132,11 +132,13 @@ else
   if [[ $git_url == https://* ]]; then
     read -r -p "   Branch [main]: " git_branch || true
     git_branch=${git_branch:-main}
-    def_user=$(sed -E 's#^https://[^/]+/([^/]+)/.*#\1#' <<<"$git_url")
-    read -r -p "   Forgejo user for the token [$def_user]: " git_user || true
-    git_user=${git_user:-$def_user}
     read -r -s -p "   Access token that can read the repository (empty for a public one): " git_token || true
     echo
+    if [[ -n $git_token ]]; then
+      def_user=$(sed -E 's#^https://[^/]+/([^/]+)/.*#\1#' <<<"$git_url")
+      read -r -p "   Forgejo user for the token [$def_user]: " git_user || true
+      git_user=${git_user:-$def_user}
+    fi
     # Checked from the brain, which is what has to reach it. The token goes over stdin.
     # shellcheck disable=SC2016
     check='IFS= read -r t
