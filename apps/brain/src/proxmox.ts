@@ -1,10 +1,13 @@
-// Proxmox VE API client, scoped to Hatbot's own guests (PLAN.md §7.2).
+// Proxmox VE API client with Hatbot's scoped token (PLAN.md §9.3): the desktop's snapshots for
+// Settings, and the Proxmox plugin's calls.
 // The host's certificate is self-signed, so the connection is pinned to its SHA-256 fingerprint.
 // Bun's fetch skips checkServerIdentity when rejectUnauthorized is off, so this speaks HTTP/1.1
 // over a node:tls socket it has checked itself.
 import { connect } from "node:tls";
+import { PluginError } from "./plugins/plugin";
 
-export class ProxmoxError extends Error {
+/** Its message is fine to show the owner and the model. */
+export class ProxmoxError extends PluginError {
   constructor(
     message: string,
     readonly status = 0,
@@ -32,14 +35,18 @@ function decodeChunked(body: Buffer): Buffer {
 }
 
 export class Proxmox {
+  /** The API's address, token and fingerprint are set. */
+  readonly hasApi: boolean;
+  /** …and the desktop's id, for its snapshots. */
   readonly configured: boolean;
   private host: string;
   private port: number;
-  private node: string;
+  readonly node: string;
   private auth: string;
   private fingerprint: string;
   readonly desktopId: string;
-  /** How often rollbackDesktop asks Proxmox whether it's done. */
+  readonly brainId: string;
+  /** The longest waitTask goes between asking Proxmox whether a task is done. */
   pollMs = 2000;
 
   constructor(env: Record<string, string | undefined> = process.env) {
@@ -50,19 +57,27 @@ export class Proxmox {
     this.auth = `PVEAPIToken=${env.PROXMOX_TOKEN_ID}=${env.PROXMOX_TOKEN_SECRET}`;
     this.fingerprint = normalizeFp(env.PROXMOX_TLS_FINGERPRINT ?? "");
     this.desktopId = env.HATBOT_DESKTOP_ID ?? "";
-    this.configured = Boolean(
+    this.brainId = env.HATBOT_BRAIN_ID ?? "";
+    this.hasApi = Boolean(
       this.host &&
         this.node &&
         env.PROXMOX_TOKEN_ID &&
         env.PROXMOX_TOKEN_SECRET &&
-        this.fingerprint &&
-        /^\d+$/.test(this.desktopId),
+        this.fingerprint,
     );
+    this.configured = this.hasApi && /^\d+$/.test(this.desktopId);
+  }
+
+  get(path: string): Promise<unknown> {
+    return this.request("GET", path);
+  }
+
+  post(path: string, form: Record<string, string> = {}): Promise<unknown> {
+    return this.request("POST", path, form);
   }
 
   private async request(method: "GET" | "POST", path: string, form?: Record<string, string>) {
-    if (!this.configured)
-      throw new ProxmoxError("Proxmox isn't set up (no /etc/hatbot/proxmox.env).");
+    if (!this.hasApi) throw new ProxmoxError("Proxmox isn't set up (no /etc/hatbot/proxmox.env).");
     const body = form ? new URLSearchParams(form).toString() : "";
     const socket = connect({ host: this.host, port: this.port, rejectUnauthorized: false });
     socket.setTimeout(30_000, () => socket.destroy(new Error("timed out")));
@@ -147,23 +162,31 @@ export class Proxmox {
   /** Rolls the desktop back to a snapshot and starts it again; resolves when Proxmox is done. */
   async rollbackDesktop(name: string, timeoutMs = 180_000) {
     if (!/^[A-Za-z][\w-]{0,39}$/.test(name)) throw new ProxmoxError("Not a snapshot name.", 400);
+    if (!this.configured) throw new ProxmoxError("The desktop's id isn't set.");
     const upid = (await this.request(
       "POST",
       `${this.lxc}/snapshot/${encodeURIComponent(name)}/rollback`,
       { start: "1" },
     )) as string;
+    const exit = await this.waitTask(upid, timeoutMs);
+    if (exit === null) throw new ProxmoxError("The rollback is taking too long; check Proxmox.");
+    if (exit !== "OK") throw new ProxmoxError(`Rollback failed: ${exit}`);
+  }
+
+  /** Waits for a Proxmox task to end: its exit status ("OK" when it worked), or null on timeout. */
+  async waitTask(upid: string, timeoutMs: number, signal?: AbortSignal): Promise<string | null> {
+    const node = upid.split(":")[1] || this.node;
     const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      await Bun.sleep(this.pollMs);
+    // Quick at first: starting or rebooting a container often takes a second or two.
+    for (let wait = 100; Date.now() < deadline; wait = Math.min(wait * 2, this.pollMs)) {
+      await Bun.sleep(Math.min(wait, this.pollMs));
+      signal?.throwIfAborted();
       const t = (await this.request(
         "GET",
-        `/nodes/${encodeURIComponent(this.node)}/tasks/${encodeURIComponent(upid)}/status`,
+        `/nodes/${encodeURIComponent(node)}/tasks/${encodeURIComponent(upid)}/status`,
       )) as { status: string; exitstatus?: string };
-      if (t.status === "stopped") {
-        if (t.exitstatus !== "OK") throw new ProxmoxError(`Rollback failed: ${t.exitstatus}`);
-        return;
-      }
+      if (t.status === "stopped") return t.exitstatus ?? "unknown";
     }
-    throw new ProxmoxError("The rollback is taking too long; check Proxmox.");
+    return null;
   }
 }

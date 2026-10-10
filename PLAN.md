@@ -501,7 +501,7 @@ Each milestone ends with a working, demo-able system.
 
 ### M4 — Homelab plugins + MCP
 - [x] Plugin core (§4.5): registry, Settings → Plugins, read tools in chat, write tools in tasks, policy + approvals, `run_task`
-- [ ] Proxmox plugin (`proxmox_*`) using the scoped token
+- [x] Proxmox plugin (`proxmox_*`) using the scoped token: guests, a guest, the host, recent tasks; start/reboot free, shutdown/stop and "careful" guests ask, the brain refused; snapshots of own guests
 - [ ] SSH plugin (`ssh_exec`): hosts in Settings, host keys pinned, destructive-pattern gate
 - [ ] Forgejo plugin (`forgejo_*`) with the bot account (GitHub later)
 - [ ] Code tasks: `run_task` with effort medium, high on request or after a failed attempt (§5.4)
