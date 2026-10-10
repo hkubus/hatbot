@@ -1,0 +1,128 @@
+// JSON requests to the brain with the app's bearer token (PLAN.md §8).
+import Foundation
+
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
+
+struct APIError: LocalizedError, Sendable {
+  let status: Int
+  let message: String
+  var errorDescription: String? { message }
+}
+
+/// An empty or ignored response body.
+struct Empty: Codable, Sendable {}
+
+final class API: Sendable {
+  static let prefix = "/api/v1"
+
+  /// The server's root, like https://hatbot.example.com.
+  let server: URL
+  let token: String?
+  private let session: URLSession
+  private let onUnauthorized: @Sendable () -> Void
+
+  init(
+    server: URL,
+    token: String?,
+    session: URLSession = .shared,
+    onUnauthorized: @escaping @Sendable () -> Void = {}
+  ) {
+    self.server = server
+    self.token = token
+    self.session = session
+    self.onUnauthorized = onUnauthorized
+  }
+
+  /// "https://host/" or "host" → https://host; a pasted ".../api/v1" is dropped. Plain http only when typed.
+  static func serverURL(from input: String) -> URL? {
+    var s = input.trimmingCharacters(in: .whitespacesAndNewlines)
+    if s.isEmpty { return nil }
+    if !s.contains("://") { s = "https://" + s }
+    while s.hasSuffix("/") { s.removeLast() }
+    if s.hasSuffix(prefix) { s.removeLast(prefix.count) }
+    guard let url = URL(string: s), let scheme = url.scheme, ["http", "https"].contains(scheme),
+      url.host != nil
+    else { return nil }
+    return url
+  }
+
+  func url(_ path: String) -> URL {
+    URL(string: server.absoluteString + Self.prefix + path)!
+  }
+
+  func get<T: Decodable>(_ path: String) async throws -> T {
+    try await call(path, method: "GET", body: nil as Empty?)
+  }
+
+  @discardableResult
+  func post<T: Decodable, B: Encodable>(_ path: String, body: B) async throws -> T {
+    try await call(path, method: "POST", body: body)
+  }
+
+  func post(_ path: String) async throws {
+    let _: Empty = try await call(path, method: "POST", body: Empty())
+  }
+
+  func put<T: Decodable, B: Encodable>(_ path: String, body: B) async throws -> T {
+    try await call(path, method: "PUT", body: body)
+  }
+
+  /// Raw bytes, for screenshots.
+  func data(_ path: String) async throws -> Data {
+    let (data, response) = try await session.data(for: request(path, method: "GET"))
+    try check(response, data: data, path: path)
+    return data
+  }
+
+  /// A WebSocket with the bearer token; the brain checks it before upgrading.
+  func webSocket(_ path: String) -> URLSessionWebSocketTask {
+    var req = request(path, method: "GET")
+    var parts = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)!
+    parts.scheme = parts.scheme == "https" ? "wss" : "ws"
+    req.url = parts.url
+    return session.webSocketTask(with: req)
+  }
+
+  private func request(_ path: String, method: String) -> URLRequest {
+    var req = URLRequest(url: url(path))
+    req.httpMethod = method
+    req.timeoutInterval = 30
+    if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+    return req
+  }
+
+  private func call<T: Decodable, B: Encodable>(_ path: String, method: String, body: B?) async throws -> T {
+    var req = request(path, method: method)
+    if let body {
+      req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+      req.httpBody = try JSONEncoder().encode(body)
+    }
+    let data: Data
+    let response: URLResponse
+    do {
+      (data, response) = try await session.data(for: req)
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch let error as URLError where error.code == .cancelled {
+      throw CancellationError()
+    } catch {
+      throw APIError(status: 0, message: "Couldn't reach Hatbot.")
+    }
+    try check(response, data: data, path: path)
+    do {
+      return try JSONDecoder().decode(T.self, from: data.isEmpty ? Data("{}".utf8) : data)
+    } catch {
+      throw APIError(status: 0, message: "Hatbot sent something this app doesn't understand.")
+    }
+  }
+
+  private func check(_ response: URLResponse, data: Data, path: String) throws {
+    guard let http = response as? HTTPURLResponse else { return }
+    guard !(200..<300).contains(http.statusCode) else { return }
+    if http.statusCode == 401 && !path.hasPrefix("/auth/") { onUnauthorized() }
+    let message = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
+    throw APIError(status: http.statusCode, message: message ?? "HTTP \(http.statusCode)")
+  }
+}

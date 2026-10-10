@@ -1,0 +1,81 @@
+// Settings: spend against the limits, chat effort, Pause all (PLAN.md §6.5), and signing out.
+import SwiftUI
+
+struct SettingsView: View {
+  @Environment(Session.self) private var session
+  @Environment(AppStore.self) private var store
+  @State private var settings: AppSettings?
+  @State private var spend: SpendSummary?
+  @State private var confirmPause = false
+  @State private var confirmSignOut = false
+  @State private var error: String?
+
+  var body: some View {
+    NavigationStack {
+      Form {
+        if let error {
+          Text(error).foregroundStyle(.red)
+        }
+        Section("Spend") {
+          LabeledContent("Today", value: spendText(store.todayUsd, limit: spend?.limits.dailyUsd))
+          LabeledContent("This month", value: spendText(store.monthUsd, limit: spend?.limits.monthlyUsd))
+        }
+        if let settings {
+          Section("Chat") {
+            Picker("Effort", selection: effort(settings)) {
+              Text("Low").tag(AppSettings.Effort.low)
+              Text("Medium").tag(AppSettings.Effort.medium)
+            }
+          }
+        }
+        Section("Safety") {
+          if store.paused {
+            Button("Resume") { Task { await act { try await store.setPaused(false) } } }
+          } else {
+            Button("Pause all", role: .destructive) { confirmPause = true }
+          }
+        }
+        Section {
+          LabeledContent("Server", value: store.api.server.host() ?? store.api.server.absoluteString)
+          Button("Sign out", role: .destructive) { confirmSignOut = true }
+        }
+      }
+      .navigationTitle("Settings")
+      .confirmationDialog("Pause all?", isPresented: $confirmPause, titleVisibility: .visible) {
+        Button("Pause all", role: .destructive) { Task { await act { try await store.setPaused(true) } } }
+      }
+      .confirmationDialog("Sign out of Hatbot?", isPresented: $confirmSignOut, titleVisibility: .visible) {
+        Button("Sign out", role: .destructive) { Task { await session.signOut() } }
+      }
+      .task { await load() }
+      .refreshable { await load() }
+    }
+  }
+
+  private func spendText(_ usd: Double?, limit: Double?) -> String {
+    guard let usd else { return "–" }
+    guard let limit else { return Format.money(usd) }
+    return "\(Format.money(usd)) of \(Format.money(limit))"
+  }
+
+  private func effort(_ current: AppSettings) -> Binding<AppSettings.Effort> {
+    Binding(
+      get: { current.chatEffort },
+      set: { value in
+        Task { await act { settings = try await store.setChatEffort(value) } }
+      })
+  }
+
+  private func load() async {
+    await act {
+      async let s = store.loadSettings()
+      async let sp = store.loadSpend()
+      (settings, spend) = try await (s, sp)
+    }
+  }
+
+  private func act(_ work: () async throws -> Void) async {
+    error = nil
+    do { try await work() } catch { self.error = message(for: error) }
+  }
+}

@@ -20,12 +20,12 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 - **Homelab ops**: Proxmox status, restarts, SSH to approved hosts, Forgejo/GitHub via bot accounts, plus any MCP server.
 - **Teach-by-showing**: you demo a task on the desktop, and Hatbot turns it into a reusable skill.
 - **Memory**: a git-tracked markdown folder that Hatbot edits and you can read, diff and revert.
+- A native **iOS app** (SwiftUI, sideloaded with SideStore) for chat, tasks, approvals and the live view (§4.6).
 
 ### v1 is not
 - Email or calendar. You use Proton Mail and no calendar; this can come later via Proton Bridge.
 - Open-ended goals ("grow my newsletter"), or a proactive heartbeat that wakes up and decides on its own what to do.
 - More than one agent, or teams of agents. The architecture leaves room for both.
-- The native iOS app. The API is designed for it; the app comes after v1.
 - Multiple users. It's single-operator by design.
 
 ---
@@ -67,8 +67,8 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 | Stack | Bun + Hono + SQLite · React + Vite PWA · MJPEG live view (ffmpeg → WS → canvas) · Radix primitives + CSS variables · Biome · `bun test` |
 | Repo | Bun-workspaces monorepo `kubus/hatbot`, private, on Forgejo `git.gaycats.ovh` |
 | Exposure | `hatbot.gaycats.ovh`. You handle the tunnel, TLS and reverse proxy; Hatbot serves plain HTTP on the LAN |
-| Auth | Single user, password + TOTP; API tokens for the future iOS app |
-| Notifications | Your self-hosted **ntfy**, on its own server; the brain publishes to it. No APNs or Web Push, because the iOS app will be a free SideStore sideload |
+| Auth | Single user, password + TOTP; API tokens for the iOS app |
+| Notifications | Your self-hosted **ntfy**, on its own server; the brain publishes to it. No APNs or Web Push, because the iOS app is a free SideStore sideload |
 | Name/persona | Hatbot; concise, first person, no animated avatar |
 | Web design | Apple-native (macOS-style), desktop-first, three panes, amber brand accent (§10) |
 
@@ -143,11 +143,20 @@ Everything valuable lives in the brain, and the brain only ever sees *pixels and
 Desktop-first, three panes. Design spec in §10; visual reference in `prototype/`.
 
 ### 4.4 `packages/shared`
-Shared API types and zod schemas for the brain, web and the future iOS app, which will consume an OpenAPI document generated from them.
+Shared API types and zod schemas for the brain and web. The iOS app mirrors the types it uses in `apps/ios/Hatbot/Core/Models.swift`; change both together.
 
 ### 4.5 `infra/`
 - `host-setup.sh`: the one-time Proxmox setup script (§9).
 - the provisioning scripts for both guests, `verify.sh`, and `deploy.sh`, which installs the app and its systemd unit.
+
+### 4.6 `apps/ios` — SwiftUI
+- **Native**: SwiftUI on iOS 18+, SF Symbols and the system font, the same amber, blue, red and green as the web. No dependencies.
+- **Tabs**: Chat, Tasks (with a badge for what needs you), Live, Settings, like the web on a phone.
+- **Auth**: password + TOTP once, then a bearer token named after the device, kept in the Keychain. Signing out deletes the token on the brain.
+- **Live events**: the same `/stream` WebSocket while the app is in front; it reconnects and reloads after a gap. iOS stops it in the background, so notifications stay with the ntfy app.
+- **Live view**: the `/desktop/live` frames. During takeover a tap clicks, a drag drags, a long press right-clicks, two fingers scroll, and a Keyboard button types.
+- **Build**: `project.yml` (XcodeGen) → `build-ipa.sh` on a Mac makes an unsigned IPA; SideStore signs it with your Apple ID. `Hatbot/Core` is also a Swift package, tested with `swift test` on Linux too.
+- **Links**: `hatbot://tasks/<id>` and `hatbot://approvals/<id>`.
 
 ---
 
@@ -319,12 +328,12 @@ journal/YYYY-MM.md  ← notable events, short
 
 ---
 
-## 8. API (for web and the future iOS app)
+## 8. API (for web and the iOS app)
 REST + JSON under `/api/v1`. One WebSocket at `/api/v1/stream` for events. A generated OpenAPI spec lives in `packages/shared`.
 
 | Area | Endpoints |
 |---|---|
-| Auth | `POST /auth/login` (password + TOTP) → session cookie (web) or bearer token (apps) · `POST /auth/logout` · `GET/POST/DELETE /tokens` |
+| Auth | `POST /auth/login` (password + TOTP) → session cookie (web) or bearer token (apps) · `POST /auth/logout` (ends the session, or the bearer token it's called with) · `GET/POST/DELETE /tokens` |
 | Thread | `GET /thread/messages?before=` · `POST /thread/messages` (streams the reply over WS) |
 | Tasks | `GET /tasks?status=` · `GET /tasks/:id` (+ steps) · `POST /tasks/:id/cancel` · `GET /tasks/:id/screens/:stepId` (a raised budget is an approval) |
 | Approvals | `GET /approvals?pending` · `POST /approvals/:id` `{decision}` · `POST /approvals/:id/token-decision` (ntfy) |
@@ -492,8 +501,19 @@ Each milestone ends with a working, demo-able system.
 - [ ] Skills index in the memory INDEX; Hatbot picks a skill up when a task matches
 - **Done when**: you demo a chore once and Hatbot repeats it on a schedule.
 
+### iOS app (alongside M3–M5)
+- [x] SwiftUI app in `apps/ios`: sign-in with TOTP, Keychain token, event stream
+- [x] Chat with streaming replies, tasks under the reply, approvals, schedules; Markdown
+- [x] Tasks list and task page (approvals, timeline, screenshots, cancel)
+- [x] Live view with takeover (touch, scroll, keyboard)
+- [x] Settings: spend, chat effort, Pause all / Resume, sign out
+- [ ] First build on a Mac, installed with SideStore and tried against the brain
+- [ ] Memory (tree, file, history) and Schedules & Triggers
+- [ ] ntfy notifications open the app (`hatbot://` click URLs)
+- **Done when**: you can chat, approve and take over from the app on your phone.
+
 ### After v1
-Native iOS app (SwiftUI, SideStore, ntfy) · email via Proton Bridge · more than one agent · a heartbeat that acts on its own · open-source release (choose a licence, docs, one-command installer).
+Email via Proton Bridge · more than one agent · a heartbeat that acts on its own · open-source release (choose a licence, docs, one-command installer).
 
 ---
 

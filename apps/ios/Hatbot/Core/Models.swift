@@ -1,0 +1,305 @@
+// API types, mirroring packages/shared/src/index.ts. Unknown enum values from a newer brain
+// decode to a fallback instead of failing the whole response.
+import Foundation
+
+protocol LenientEnum: RawRepresentable<String>, Codable, Sendable {
+  static var fallback: Self { get }
+}
+
+extension LenientEnum {
+  init(from decoder: Decoder) throws {
+    let raw = try decoder.singleValueContainer().decode(String.self)
+    self = Self(rawValue: raw) ?? .fallback
+  }
+}
+
+struct Me: Decodable, Sendable {
+  let setupDone: Bool
+  let authenticated: Bool
+}
+
+struct LoginResponse: Decodable, Sendable {
+  let token: String?
+}
+
+struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
+  enum Role: String, LenientEnum {
+    case user, assistant
+    static let fallback = Role.assistant
+  }
+
+  /// "task", "approval" and "schedule" messages show the thing they point at; `text` is a fallback.
+  enum Kind: String, LenientEnum {
+    case text, task, approval, schedule
+    static let fallback = Kind.text
+  }
+
+  enum Status: String, LenientEnum {
+    case streaming, done, error
+    static let fallback = Status.done
+  }
+
+  let id: Int
+  var role: Role
+  var kind: Kind
+  var text: String
+  var status: Status
+  var createdAt: String
+  var taskId: Int?
+  var approvalId: Int?
+  var scheduleId: Int?
+}
+
+enum TaskStatus: String, LenientEnum {
+  case queued, running
+  case waitingApproval = "waiting_approval"
+  case waitingTakeover = "waiting_takeover"
+  case done, failed, cancelled
+  static let fallback = TaskStatus.running
+}
+
+/// A task (PLAN.md §5.1). Not `Task`, which is Swift's.
+struct AgentTask: Codable, Identifiable, Equatable, Sendable {
+  enum Origin: String, LenientEnum {
+    case chat, schedule, webhook, alert
+    static let fallback = Origin.chat
+  }
+
+  enum Lane: String, LenientEnum {
+    case screen, background
+    static let fallback = Lane.background
+  }
+
+  let id: Int
+  var title: String
+  var goal: String
+  var successCriteria: String
+  var origin: Origin
+  var lane: Lane
+  var source: String?
+  var scheduleId: Int?
+  var triggerId: Int?
+  var parentId: Int?
+  var payload: String?
+  var model: String
+  var status: TaskStatus
+  var tainted: Bool
+  var injectionSuspected: Bool
+  var summary: String?
+  var costUsd: Double
+  var steps: Int
+  var createdAt: String
+  var startedAt: String?
+  var finishedAt: String?
+
+  var isActive: Bool { finishedAt == nil }
+}
+
+struct TaskStep: Codable, Identifiable, Equatable, Sendable {
+  enum Kind: String, LenientEnum {
+    case note, action, screenshot, page, approval, takeover, error, task
+    static let fallback = Kind.note
+  }
+
+  let id: Int
+  var taskId: Int
+  var kind: Kind
+  var name: String
+  var detail: String
+  var screenshot: String?
+  var url: String?
+  var createdAt: String
+}
+
+struct TaskWithSteps: Decodable, Sendable {
+  let task: AgentTask
+  let steps: [TaskStep]
+}
+
+struct Approval: Codable, Identifiable, Equatable, Sendable {
+  enum Status: String, LenientEnum {
+    case pending, approved, denied, expired, cancelled
+    static let fallback = Status.cancelled
+  }
+
+  let id: Int
+  var taskId: Int?
+  var kind: String
+  var summary: String
+  var reason: String
+  var sources: [String]
+  var screenshotStepId: Int?
+  var status: Status
+  var decidedVia: String?
+  var costUsd: Double
+  var createdAt: String
+  var expiresAt: String
+  var decidedAt: String?
+}
+
+enum Decision: String, Encodable, Sendable {
+  case approve, deny
+}
+
+struct DesktopState: Codable, Equatable, Sendable {
+  struct Request: Codable, Equatable, Sendable {
+    var taskId: Int
+    var reason: String
+  }
+
+  enum Control: String, LenientEnum {
+    case hatbot, owner
+    static let fallback = Control.hatbot
+  }
+
+  var online: Bool
+  var control: Control
+  var request: Request?
+  var activeTaskId: Int?
+}
+
+struct Schedule: Codable, Identifiable, Equatable, Sendable {
+  let id: Int
+  var name: String
+  var cron: String?
+  var runAt: String?
+  var prompt: String
+  var enabled: Bool
+  var createdVia: String
+  var createdAt: String
+  var nextRunAt: String?
+  var lastRunAt: String?
+  var lastTaskId: Int?
+}
+
+struct Limits: Codable, Equatable, Sendable {
+  var taskUsd: Double
+  var dailyUsd: Double
+  var monthlyUsd: Double
+}
+
+struct SpendSummary: Codable, Equatable, Sendable {
+  var todayUsd: Double
+  var monthUsd: Double
+  var limits: Limits
+}
+
+struct AppSettings: Codable, Equatable, Sendable {
+  struct Owner: Codable, Equatable, Sendable {
+    var name: String
+    var email: String
+  }
+
+  enum Effort: String, LenientEnum, CaseIterable {
+    case low, medium
+    static let fallback = Effort.low
+  }
+
+  var limits: Limits
+  var chatEffort: Effort
+  var owner: Owner
+  var paused: Bool
+}
+
+/// Live events on /api/v1/stream. Events this app doesn't know decode to `.unknown`.
+enum HatbotEvent: Decodable, Sendable {
+  case messageCreated(ThreadMessage)
+  case messageDelta(id: Int, text: String)
+  case messageProgress(id: Int, text: String)
+  case messageDone(id: Int, text: String, status: ThreadMessage.Status)
+  case messageTask(id: Int, taskId: Int)
+  case spendUpdated(todayUsd: Double, monthUsd: Double)
+  case memoryCommitted(sha: String, message: String, author: String)
+  case paused(Bool)
+  case taskUpdated(AgentTask)
+  case taskStep(TaskStep)
+  case taskProgress(taskId: Int, text: String)
+  case approvalCreated(Approval)
+  case approvalResolved(Approval)
+  case desktopState(DesktopState)
+  case scheduleUpdated(Schedule)
+  case scheduleDeleted(id: Int)
+  case unknown(String)
+
+  private enum Key: String, CodingKey {
+    case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused
+    case task, step, approval, state, schedule
+  }
+
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: Key.self)
+    let type = try c.decode(String.self, forKey: .type)
+    switch type {
+    case "message.created": self = .messageCreated(try c.decode(ThreadMessage.self, forKey: .message))
+    case "message.delta":
+      self = .messageDelta(id: try c.decode(Int.self, forKey: .id), text: try c.decode(String.self, forKey: .text))
+    case "message.progress":
+      self = .messageProgress(id: try c.decode(Int.self, forKey: .id), text: try c.decode(String.self, forKey: .text))
+    case "message.done":
+      self = .messageDone(
+        id: try c.decode(Int.self, forKey: .id),
+        text: try c.decode(String.self, forKey: .text),
+        status: try c.decode(ThreadMessage.Status.self, forKey: .status))
+    case "message.task":
+      self = .messageTask(id: try c.decode(Int.self, forKey: .id), taskId: try c.decode(Int.self, forKey: .taskId))
+    case "spend.updated":
+      self = .spendUpdated(
+        todayUsd: try c.decode(Double.self, forKey: .todayUsd),
+        monthUsd: try c.decode(Double.self, forKey: .monthUsd))
+    case "memory.committed":
+      self = .memoryCommitted(
+        sha: try c.decode(String.self, forKey: .sha),
+        message: try c.decode(String.self, forKey: .message),
+        author: try c.decode(String.self, forKey: .author))
+    case "paused": self = .paused(try c.decode(Bool.self, forKey: .paused))
+    case "task.updated": self = .taskUpdated(try c.decode(AgentTask.self, forKey: .task))
+    case "task.step": self = .taskStep(try c.decode(TaskStep.self, forKey: .step))
+    case "task.progress":
+      self = .taskProgress(taskId: try c.decode(Int.self, forKey: .taskId), text: try c.decode(String.self, forKey: .text))
+    case "approval.created": self = .approvalCreated(try c.decode(Approval.self, forKey: .approval))
+    case "approval.resolved": self = .approvalResolved(try c.decode(Approval.self, forKey: .approval))
+    case "desktop.state": self = .desktopState(try c.decode(DesktopState.self, forKey: .state))
+    case "schedule.updated": self = .scheduleUpdated(try c.decode(Schedule.self, forKey: .schedule))
+    case "schedule.deleted": self = .scheduleDeleted(id: try c.decode(Int.self, forKey: .id))
+    default: self = .unknown(type)
+    }
+  }
+}
+
+/// What you do on the desktop while you have control (LiveInput in packages/shared/src/desktop.ts).
+enum LiveInput: Encodable, Sendable {
+  case move(x: Double, y: Double)
+  case button(Int, down: Bool, x: Double, y: Double)
+  case wheel(dx: Double, dy: Double, x: Double, y: Double)
+  case key(String, down: Bool)
+
+  private enum Key: String, CodingKey {
+    case t, x, y, button, down, dx, dy, key
+  }
+
+  func encode(to encoder: Encoder) throws {
+    var c = encoder.container(keyedBy: Key.self)
+    switch self {
+    case let .move(x, y):
+      try c.encode("move", forKey: .t)
+      try c.encode(x, forKey: .x)
+      try c.encode(y, forKey: .y)
+    case let .button(button, down, x, y):
+      try c.encode("button", forKey: .t)
+      try c.encode(button, forKey: .button)
+      try c.encode(down, forKey: .down)
+      try c.encode(x, forKey: .x)
+      try c.encode(y, forKey: .y)
+    case let .wheel(dx, dy, x, y):
+      try c.encode("wheel", forKey: .t)
+      try c.encode(dx, forKey: .dx)
+      try c.encode(dy, forKey: .dy)
+      try c.encode(x, forKey: .x)
+      try c.encode(y, forKey: .y)
+    case let .key(key, down):
+      try c.encode("key", forKey: .t)
+      try c.encode(key, forKey: .key)
+      try c.encode(down, forKey: .down)
+    }
+  }
+}
