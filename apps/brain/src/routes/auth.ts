@@ -56,6 +56,9 @@ export const authRoutes = new Hono<AppEnv>()
   })
 
   .post("/auth/logout", requireAuth, (c) => {
+    // An app signs out with its bearer token, which ends that token.
+    const principal = c.var.principal;
+    if (principal.kind === "token") c.var.auth.deleteToken(principal.id);
     const cookie = getCookie(c, SESSION_COOKIE);
     if (cookie) c.var.auth.deleteSession(cookie);
     deleteCookie(c, SESSION_COOKIE, { path: "/" });

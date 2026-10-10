@@ -110,6 +110,21 @@ describe("login", () => {
     expect((await t.call("GET", "/tokens", undefined, { cookie })).status).toBe(401);
   });
 
+  test("logout with a bearer token ends the token", async () => {
+    const t = await testApp();
+    const { secret, password } = await setUpOwner(t);
+    const res = await t.call("POST", "/auth/login", {
+      password,
+      totp: t.code(secret),
+      client: "app",
+      device: "iPhone",
+    });
+    const { token } = (await res.json()) as { token: string };
+    const bearer = { authorization: `Bearer ${token}` };
+    expect((await t.call("POST", "/auth/logout", {}, bearer)).status).toBe(200);
+    expect((await t.call("GET", "/tokens", undefined, bearer)).status).toBe(401);
+  });
+
   test("sessions expire after 30 days without use", async () => {
     const t = await testApp();
     const { cookie } = await setUpOwner(t);
