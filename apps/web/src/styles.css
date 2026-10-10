@@ -1264,6 +1264,8 @@ html[data-theme="dark"] .seg button.active {
 }
 .chart .bar {
   fill: var(--chart);
+  /* The hit area behind it takes the pointer, so hovering the bar itself shows its tooltip. */
+  pointer-events: none;
 }
 .chart .hit {
   fill: transparent;

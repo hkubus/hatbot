@@ -22,6 +22,8 @@ type State = {
   episodes: Record<number, Episode>;
   /** Latest progress note per streaming message. */
   progress: Record<number, string>;
+  /** What each streaming reply has used so far. */
+  usage: Record<number, { tokens: number; costUsd: number }>;
   hasEarlier: boolean;
   paused: boolean;
   todayUsd: number | null;
@@ -47,6 +49,7 @@ let state: State = {
   messages: [],
   episodes: {},
   progress: {},
+  usage: {},
   hasEarlier: false,
   paused: false,
   todayUsd: null,
@@ -307,10 +310,14 @@ function apply(e: HatbotEvent) {
       return set({
         messages: state.messages.map((m) => (m.id === e.id ? { ...m, taskId: e.taskId } : m)),
       });
+    case "message.usage":
+      return set({ usage: { ...state.usage, [e.id]: { tokens: e.tokens, costUsd: e.costUsd } } });
     case "message.done": {
       const { [e.id]: _, ...progress } = state.progress;
+      const { [e.id]: __, ...usage } = state.usage;
       return set({
         progress,
+        usage,
         messages: state.messages.map((m) =>
           m.id === e.id ? { ...m, text: e.text, status: e.status } : m,
         ),

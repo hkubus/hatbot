@@ -310,6 +310,11 @@ private struct ReplyMessage: View {
     if m.status == .streaming, let note = Format.lastLine(store.progress[m.id]) {
       Text(note).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
     }
+    if m.status == .streaming, let used = store.usage[m.id] {
+      Text("\(Format.tokens(used.tokens)) tokens · \(String(format: "$%.3f", used.costUsd))")
+        .font(.footnote.monospacedDigit())
+        .foregroundStyle(.secondary)
+    }
     if let taskId = m.taskId { TaskResult(taskId: taskId) }
   }
 }

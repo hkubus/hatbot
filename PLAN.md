@@ -356,7 +356,7 @@ REST + JSON under `/api/v1`. One WebSocket at `/api/v1/stream` for events. A gen
 | Schedules/triggers | CRUD at `/schedules`, `/triggers` · `POST /schedules/:id/run` · `POST /triggers/:id/secret` (a new secret, shown once) · `GET /tasks?scheduleId=&triggerId=` |
 | Hooks | `POST /hooks/:id` (HMAC) · `POST/GET /hooks/kuma/:id?token=` |
 | Memory | `GET /memory/tree` · `GET/PUT /memory/file?path=` · `GET /memory/log` · `GET /memory/diff/:sha` · `POST /memory/revert/:sha` |
-| Spend | `GET /spend/summary` · `GET /spend/daily?days=30` |
+| Spend | `GET /spend/summary` (today, month, last hour and minute, with tokens) · `GET /spend/hourly?hours=24` · `GET /spend/daily?days=30` |
 | Teach | `GET /teach` (recording + drafts) · `POST /teach/start` · `POST /teach/stop` → draft skill · `GET /teach/:id` · `POST /teach/:id/draft` (again) · `POST /teach/:id/save` `{name, content, replace?}` · `DELETE /teach/:id` |
 | Admin | `POST /pause-all` · `POST /resume` · `GET/PUT /settings` · `GET/POST /update` |
 | Plugins | `GET /plugins` · `GET/PATCH /plugins/:id` `{enabled?, config?}` · `POST /plugins/:id/test` |
@@ -444,6 +444,7 @@ The visual reference is the clickable prototype in [`prototype/`](prototype/). O
 ### 10.4 Task, approval and schedule messages
 Plain messages, not cards; the details live on the task's or schedule's page.
 - **Task started from chat**: no message of its own. The reply that started it shows working dots and the latest step, then the task's result in the same bubble.
+- **While a reply is written**: under the dots, what Hatbot is doing ("Thinking…", "Reading memory: homelab.md", "Checking a host: nas, logs") and what the reply has used so far ("4.2k tokens · $0.021").
 - **Background task** (schedules, triggers): one message when it ends, the title in bold and its summary.
 - **Approval**: what Hatbot wants to do, why, which untrusted page it read, a screenshot, **Approve** (blue) and **Deny**. Once answered it shrinks to one line.
 - **Schedule created**: "Scheduled **name**: every day at 08:00."

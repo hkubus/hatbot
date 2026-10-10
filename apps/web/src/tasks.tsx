@@ -23,6 +23,14 @@ const STATUS: Record<TaskStatus, [string, string]> = {
   cancelled: ["", "Cancelled"],
 };
 
+/** 950, 12.4k, 3.1M. */
+export const tokenText = (n: number) =>
+  n < 1000
+    ? String(n)
+    : n < 1_000_000
+      ? `${(n / 1000).toFixed(1)}k`
+      : `${(n / 1_000_000).toFixed(1)}M`;
+
 export function StatusChip({ status }: { status: TaskStatus }) {
   const [cls, label] = STATUS[status];
   return <span className={`chip ${cls}`}>{label}</span>;

@@ -268,3 +268,15 @@ final class FoldTests: XCTestCase {
     XCTAssertEqual(e.recap, "R")
   }
 }
+
+final class UsageTests: XCTestCase {
+  func testDecodesReplyUsageAndFormatsTokens() throws {
+    let json = #"{"type":"message.usage","id":9,"tokens":4200,"costUsd":0.021}"#
+    guard case let .messageUsage(id, used) = try JSONDecoder().decode(HatbotEvent.self, from: Data(json.utf8)) else {
+      return XCTFail("not usage")
+    }
+    XCTAssertEqual(id, 9)
+    XCTAssertEqual(used, ReplyUsage(tokens: 4200, costUsd: 0.021))
+    XCTAssertEqual([950, 4200, 3_100_000].map(Format.tokens), ["950", "4.2k", "3.1M"])
+  }
+}

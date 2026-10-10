@@ -86,6 +86,13 @@ export class BudgetError extends Error {
   }
 }
 
+/** Every kind of token a request used. */
+const TOKENS =
+  "input_tokens + cache_write_5m_tokens + cache_write_1h_tokens + cache_read_tokens + output_tokens";
+
+export const tokenCount = (t: Tokens) =>
+  t.input + t.cacheWrite5m + t.cacheWrite1h + t.cacheRead + t.output;
+
 const startOfLocalDay = (ms: number) => {
   const d = new Date(ms);
   d.setHours(0, 0, 0, 0);
@@ -159,6 +166,39 @@ export class Spend {
     return total;
   }
 
+  private windowSince(since: Date): { usd: number; tokens: number } {
+    const row = this.db
+      .query<{ usd: number | null; tokens: number | null }, [string]>(
+        `SELECT sum(cost_usd) AS usd, sum(${TOKENS}) AS tokens FROM spend_ledger WHERE created_at >= ?`,
+      )
+      .get(since.toISOString());
+    return { usd: row?.usd ?? 0, tokens: row?.tokens ?? 0 };
+  }
+
+  /** The last `hours` hours, oldest first, including hours with nothing spent. */
+  hourly(hours: number): { hour: string; usd: number; tokens: number }[] {
+    const start = new Date(this.clock());
+    start.setMinutes(0, 0, 0);
+    start.setTime(start.getTime() - (hours - 1) * 3600_000);
+    const rows = this.db
+      .query<{ created_at: string; cost_usd: number; tokens: number }, [string]>(
+        `SELECT created_at, cost_usd, ${TOKENS} AS tokens FROM spend_ledger WHERE created_at >= ?`,
+      )
+      .all(start.toISOString());
+    const out = Array.from({ length: hours }, (_, i) => ({
+      hour: new Date(start.getTime() + i * 3600_000).toISOString(),
+      usd: 0,
+      tokens: 0,
+    }));
+    for (const r of rows) {
+      const slot = out[Math.floor((Date.parse(r.created_at) - start.getTime()) / 3600_000)];
+      if (!slot) continue;
+      slot.usd += r.cost_usd;
+      slot.tokens += r.tokens;
+    }
+    return out;
+  }
+
   private sumSince(since: Date, where = "", ...args: (string | number)[]): number {
     const row = this.db
       .query<{ total: number | null }, (string | number)[]>(
@@ -170,10 +210,14 @@ export class Spend {
 
   summary() {
     const now = this.clock();
+    const today = this.windowSince(startOfLocalDay(now));
     return {
-      todayUsd: this.sumSince(startOfLocalDay(now)),
+      todayUsd: today.usd,
       monthUsd: this.sumSince(startOfLocalMonth(now)),
       limits: this.settings.get().limits,
+      todayTokens: today.tokens,
+      lastHour: this.windowSince(new Date(now - 3600_000)),
+      lastMinute: this.windowSince(new Date(now - 60_000)),
     };
   }
 

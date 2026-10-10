@@ -1,9 +1,12 @@
-import type { SpendByModel, SpendDay, SpendSummary } from "@hatbot/shared";
+import type { SpendByModel, SpendDay, SpendHour, SpendSummary } from "@hatbot/shared";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
+import { tokenText } from "../tasks";
 
 const money = (v: number) => `$${v.toFixed(2)}`;
+/** Small amounts, like a minute's spend, need more than cents. */
+const fineMoney = (v: number) => (v > 0 && v < 0.1 ? `$${v.toFixed(3)}` : money(v));
 const MODEL_NAMES: Record<string, string> = {
   "claude-opus-5-5": "Opus 5.5",
   "claude-sonnet-5-5": "Sonnet 5.5",
@@ -16,6 +19,8 @@ const fmtDay = (d: string) =>
   parseDay(d).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 const fmtShort = (d: string) =>
   parseDay(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+const fmtHour = (iso: string) =>
+  new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
 /** A tick step from 1/2/5 × 10^n that gives about five gridlines. */
 function niceStep(max: number) {
@@ -24,59 +29,71 @@ function niceStep(max: number) {
   return ([1, 2, 5, 10].find((m) => m * pow >= raw) ?? 10) * pow;
 }
 
-function DailyChart({ days, limit }: { days: SpendDay[]; limit: number }) {
+/** One bar: its dollars, the label under it (if any), and what the tooltip and table say. */
+type Point = { key: string; usd: number; axis?: string; title: string; detail: string };
+
+function BarChart({ points, limit, label }: { points: Point[]; limit?: number; label: string }) {
   const box = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<{ i: number; x: number; y: number } | null>(null);
   const W = 720;
   const H = 230;
-  const L = 40;
+  const L = 44;
   const R = 8;
   const T = 14;
   const B = 26;
-  const step = niceStep(Math.max(limit, ...days.map((d) => d.usd)));
-  const max = Math.ceil(Math.max(limit, ...days.map((d) => d.usd)) / step) * step;
+  const top = Math.max(limit ?? 0, ...points.map((p) => p.usd), 0.01);
+  const step = niceStep(top);
+  const max = Math.ceil(top / step) * step;
   const ticks = Array.from({ length: Math.round(max / step) + 1 }, (_, i) => i * step);
   const pw = W - L - R;
   const ph = H - T - B;
-  const band = pw / days.length;
+  const band = pw / points.length;
   const bw = Math.min(16, band - 4);
   const y = (v: number) => T + ph - (v / max) * ph;
-  const peak = days.reduce((a, d, i) => (d.usd > (days[a]?.usd ?? 0) ? i : a), 0);
-  // Only the peak gets a label: today's figure is in the tile above, and a label on a short bar collides with its neighbours.
-  const labelled = (days[peak]?.usd ?? 0) > 0 ? [peak] : [];
-  const xLabels = days.map((_, i) => i).filter((i) => i % 7 === 0);
+  const peak = points.reduce((a, p, i) => (p.usd > (points[a]?.usd ?? 0) ? i : a), 0);
+  // Only the peak gets a label: the tiles above have the latest figures, and a label on a short bar collides with its neighbours.
+  const labelled = (points[peak]?.usd ?? 0) > 0 ? [peak] : [];
+  const tick = (t: number) => (t >= 1 ? `$${t % 1 ? t.toFixed(1) : t}` : `$${+t.toFixed(3)}`);
 
   const onMove = (e: React.MouseEvent<SVGRectElement>, i: number) => {
     const b = box.current?.getBoundingClientRect();
     const r = e.currentTarget.getBoundingClientRect();
     if (b)
-      setHover({ i, x: r.left - b.left + r.width / 2, y: (y(days[i]?.usd ?? 0) / H) * b.height });
+      setHover({
+        i,
+        x: r.left - b.left + r.width / 2,
+        y: (y(points[i]?.usd ?? 0) / H) * b.height,
+      });
   };
 
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: hover only shows a tooltip; the Table view has the same numbers
     <div className="chart" ref={box} onMouseLeave={() => setHover(null)}>
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Daily spend, last 30 days">
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={label}>
         {ticks.map((t) => (
           <g key={t}>
             <line className="gridline" x1={L} x2={W - R} y1={y(t)} y2={y(t)} />
             <text x={L - 8} y={y(t) + 4} textAnchor="end">
-              ${t % 1 ? t.toFixed(1) : t}
+              {tick(t)}
             </text>
           </g>
         ))}
-        <line className="refline" x1={L} x2={W - R} y1={y(limit)} y2={y(limit)} />
-        <text x={W - R} y={y(limit) - 5} textAnchor="end" style={{ fill: "var(--text-2)" }}>
-          Daily limit {money(limit)}
-        </text>
-        {days.map((d, i) => {
+        {limit !== undefined && (
+          <>
+            <line className="refline" x1={L} x2={W - R} y1={y(limit)} y2={y(limit)} />
+            <text x={W - R} y={y(limit) - 5} textAnchor="end" style={{ fill: "var(--text-2)" }}>
+              Daily limit {money(limit)}
+            </text>
+          </>
+        )}
+        {points.map((p, i) => {
           const x = L + i * band + (band - bw) / 2;
-          const top = y(d.usd);
+          const top = y(p.usd);
           const h = T + ph - top;
           const r = Math.min(4, h);
           const path = `M${x},${T + ph} V${top + r} Q${x},${top} ${x + r},${top} H${x + bw - r} Q${x + bw},${top} ${x + bw},${top + r} V${T + ph} Z`;
           return (
-            <g key={d.date}>
+            <g key={p.key}>
               {/* biome-ignore lint/a11y/noStaticElementInteractions: hover target for the tooltip */}
               <rect
                 className="hit"
@@ -94,23 +111,71 @@ function DailyChart({ days, limit }: { days: SpendDay[]; limit: number }) {
           <text
             key={i}
             x={L + i * band + band / 2}
-            y={y(days[i]?.usd ?? 0) - 6}
+            y={y(points[i]?.usd ?? 0) - 6}
             textAnchor="middle"
             style={{ fill: "var(--text-2)", fontWeight: 600 }}
           >
-            {money(days[i]?.usd ?? 0)}
+            {fineMoney(points[i]?.usd ?? 0)}
           </text>
         ))}
-        {xLabels.map((i) => (
-          <text key={i} x={L + i * band + band / 2} y={H - 6} textAnchor="middle">
-            {fmtShort(days[i]?.date ?? "")}
-          </text>
-        ))}
+        {points.map(
+          (p, i) =>
+            p.axis && (
+              <text key={p.key} x={L + i * band + band / 2} y={H - 6} textAnchor="middle">
+                {p.axis}
+              </text>
+            ),
+        )}
       </svg>
-      {hover && days[hover.i] && (
+      {hover && points[hover.i] && (
         <div className="tooltip show" style={{ left: hover.x, top: hover.y }}>
-          <b>{fmtDay(days[hover.i]?.date ?? "")}</b>
-          {money(days[hover.i]?.usd ?? 0)}
+          <b>{points[hover.i]?.title}</b>
+          {points[hover.i]?.detail}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A chart with a Table view of the same numbers. */
+function SpendCard({ title, points, limit }: { title: string; points: Point[]; limit?: number }) {
+  const [mode, setMode] = useState<"chart" | "table">("chart");
+  return (
+    <div className="chart-card">
+      <div className="chart-head">
+        <h3>{title}</h3>
+        <span className="spacer" />
+        <div className="seg">
+          <button
+            type="button"
+            className={mode === "chart" ? "active" : ""}
+            onClick={() => setMode("chart")}
+          >
+            Chart
+          </button>
+          <button
+            type="button"
+            className={mode === "table" ? "active" : ""}
+            onClick={() => setMode("table")}
+          >
+            Table
+          </button>
+        </div>
+      </div>
+      {mode === "chart" ? (
+        points.length > 0 && <BarChart points={points} limit={limit} label={title} />
+      ) : (
+        <div style={{ maxHeight: 260, overflow: "auto" }}>
+          <table className="table">
+            <tbody>
+              {[...points].reverse().map((p) => (
+                <tr key={p.key}>
+                  <td>{p.title}</td>
+                  <td className="num">{p.detail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
@@ -120,20 +185,42 @@ function DailyChart({ days, limit }: { days: SpendDay[]; limit: number }) {
 export function Spend() {
   const [summary, setSummary] = useState<SpendSummary | null>(null);
   const [days, setDays] = useState<SpendDay[]>([]);
+  const [hours, setHours] = useState<SpendHour[]>([]);
   const [models, setModels] = useState<SpendByModel[]>([]);
-  const [mode, setMode] = useState<"chart" | "table">("chart");
   const live = useStore((s) => s.todayUsd);
+  const [tick, setTick] = useState(0);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh when a new request is billed
+  // The last minute and hour move on even when nothing new is billed.
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh when a request is billed, and every 30 s
   useEffect(() => {
     api<SpendSummary>("/spend/summary").then(setSummary);
+    api<SpendHour[]>("/spend/hourly?hours=24").then(setHours);
     api<SpendDay[]>("/spend/daily?days=30").then(setDays);
     api<SpendByModel[]>("/spend/by-model?days=30").then(setModels);
-  }, [live]);
+  }, [live, tick]);
 
   if (!summary) return <section className="view" />;
   const { todayUsd, monthUsd, limits } = summary;
   const mMax = Math.max(0.0001, ...models.map((m) => m.usd));
+  const hourPoints: Point[] = hours.map((h, i) => ({
+    key: h.hour,
+    usd: h.usd,
+    axis: i % 6 === 0 ? fmtHour(h.hour) : undefined,
+    title: `${fmtHour(h.hour)}–${fmtHour(new Date(Date.parse(h.hour) + 3600_000).toISOString())}`,
+    detail: `${fineMoney(h.usd)} · ${tokenText(h.tokens)} tokens`,
+  }));
+  const dayPoints: Point[] = days.map((d, i) => ({
+    key: d.date,
+    usd: d.usd,
+    axis: i % 7 === 0 ? fmtShort(d.date) : undefined,
+    title: fmtDay(d.date),
+    detail: money(d.usd),
+  }));
 
   return (
     <section className="view">
@@ -147,6 +234,7 @@ export function Spend() {
             <div className={`meter ${todayUsd >= limits.dailyUsd ? "hot" : ""}`}>
               <span style={{ width: `${Math.min(100, (todayUsd / limits.dailyUsd) * 100)}%` }} />
             </div>
+            <div className="label tnum">{tokenText(summary.todayTokens)} tokens</div>
           </div>
           <div className="tile">
             <div className="label">This month</div>
@@ -157,52 +245,20 @@ export function Spend() {
               <span style={{ width: `${Math.min(100, (monthUsd / limits.monthlyUsd) * 100)}%` }} />
             </div>
           </div>
+          <div className="tile">
+            <div className="label">Last hour</div>
+            <div className="value tnum">{fineMoney(summary.lastHour.usd)}</div>
+            <div className="label tnum">{tokenText(summary.lastHour.tokens)} tokens</div>
+          </div>
+          <div className="tile">
+            <div className="label">Last minute</div>
+            <div className="value tnum">{fineMoney(summary.lastMinute.usd)}</div>
+            <div className="label tnum">{tokenText(summary.lastMinute.tokens)} tokens</div>
+          </div>
         </div>
 
-        <div className="chart-card">
-          <div className="chart-head">
-            <h3>Last 30 days</h3>
-            <span className="spacer" />
-            <div className="seg">
-              <button
-                type="button"
-                className={mode === "chart" ? "active" : ""}
-                onClick={() => setMode("chart")}
-              >
-                Chart
-              </button>
-              <button
-                type="button"
-                className={mode === "table" ? "active" : ""}
-                onClick={() => setMode("table")}
-              >
-                Table
-              </button>
-            </div>
-          </div>
-          {mode === "chart" ? (
-            days.length > 0 && <DailyChart days={days} limit={limits.dailyUsd} />
-          ) : (
-            <div style={{ maxHeight: 260, overflow: "auto" }}>
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Day</th>
-                    <th className="num">Spend</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...days].reverse().map((d) => (
-                    <tr key={d.date}>
-                      <td>{fmtDay(d.date)}</td>
-                      <td className="num">{money(d.usd)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+        <SpendCard title="Last 24 hours" points={hourPoints} />
+        <SpendCard title="Last 30 days" points={dayPoints} limit={limits.dailyUsd} />
 
         <div className="chart-card">
           <div className="chart-head">

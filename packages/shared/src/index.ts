@@ -185,6 +185,8 @@ export type HatbotEvent =
   | { type: "message.done"; id: number; text: string; status: "done" | "error" }
   /** A task now shows under this reply. */
   | { type: "message.task"; id: number; taskId: number }
+  /** What the reply being written has used so far, across its model calls. */
+  | { type: "message.usage"; id: number; tokens: number; costUsd: number }
   | { type: "spend.updated"; todayUsd: number; monthUsd: number }
   | { type: "memory.committed"; sha: string; message: string; author: string }
   | { type: "paused"; paused: boolean }
@@ -259,7 +261,18 @@ export type Commit = {
 };
 
 export type Limits = { taskUsd: number; dailyUsd: number; monthlyUsd: number };
-export type SpendSummary = { todayUsd: number; monthUsd: number; limits: Limits };
+/** Spend over a stretch of time: dollars, and tokens of every kind (input, cache, output). */
+export type SpendWindow = { usd: number; tokens: number };
+export type SpendSummary = {
+  todayUsd: number;
+  monthUsd: number;
+  limits: Limits;
+  todayTokens: number;
+  lastHour: SpendWindow;
+  lastMinute: SpendWindow;
+};
+/** One hour of the last day; `hour` is when it starts (ISO). */
+export type SpendHour = SpendWindow & { hour: string };
 export type SpendDay = { date: string; usd: number };
 export type SpendByModel = { model: string; usd: number };
 

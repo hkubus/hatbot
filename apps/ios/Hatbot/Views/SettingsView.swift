@@ -21,6 +21,16 @@ struct SettingsView: View {
         Section("Spend") {
           LabeledContent("Today", value: spendText(store.todayUsd, limit: spend?.limits.dailyUsd))
           LabeledContent("This month", value: spendText(store.monthUsd, limit: spend?.limits.monthlyUsd))
+          if let tokens = spend?.todayTokens {
+            LabeledContent("Tokens today", value: Format.tokens(tokens))
+          }
+          if let hour = spend?.lastHour {
+            LabeledContent("Last hour", value: "\(Format.money(hour.usd)) · \(Format.tokens(hour.tokens)) tokens")
+          }
+          if let minute = spend?.lastMinute {
+            LabeledContent(
+              "Last minute", value: "\(String(format: "$%.3f", minute.usd)) · \(Format.tokens(minute.tokens)) tokens")
+          }
         }
         Section {
           NavigationLink("Schedules & Triggers", value: Route.schedules)

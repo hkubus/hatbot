@@ -17,7 +17,7 @@ import {
   setPaused,
   useStore,
 } from "../store";
-import { isActive, Shot, taskLine, whenText } from "../tasks";
+import { isActive, Shot, taskLine, tokenText, whenText } from "../tasks";
 
 const time = (iso: string) =>
   new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
@@ -160,6 +160,7 @@ function TaskResult({ taskId }: { taskId: number }) {
 /** Hatbot's reply, with the task it started (if any) working and then reporting under it. */
 function ReplyMessage({ m, progress }: { m: ThreadMessage; progress?: string }) {
   const task = useStore((s) => (m.taskId ? s.tasks[m.taskId] : undefined));
+  const used = useStore((s) => s.usage[m.id]);
   const streaming = m.status === "streaming";
   const note = progress?.trim().split("\n").filter(Boolean).at(-1);
   const result = task && !isActive(task) ? task.summary : null;
@@ -175,6 +176,11 @@ function ReplyMessage({ m, progress }: { m: ThreadMessage; progress?: string }) 
           </div>
         )}
         {streaming && note && <div className="progress-note">{note}</div>}
+        {streaming && used && (
+          <div className="progress-note tnum">
+            {tokenText(used.tokens)} tokens · ${used.costUsd.toFixed(3)}
+          </div>
+        )}
         {m.taskId && <TaskResult taskId={m.taskId} />}
       </div>
       {!streaming && (

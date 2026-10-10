@@ -8,7 +8,7 @@ import type { MemoryStore } from "../memory/store";
 import type { Plugins } from "../plugins/registry";
 import type { Schedules } from "../schedules";
 import type { SettingsStore } from "../settings";
-import { BudgetError, priceOf, type Spend } from "../spend";
+import { BudgetError, priceOf, type Spend, tokenCount, tokensOf } from "../spend";
 import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
 import { type ModelClient, modelErrorText } from "./model";
@@ -407,6 +407,10 @@ export class Thread {
     const out = this.insertMessage("assistant", "", "streaming", episode.id);
     let text = "";
     let separate = false;
+    /** This reply's model calls so far, shown under the working dots. */
+    const used = { tokens: 0, costUsd: 0 };
+    const progress = (line: string) =>
+      events.emit({ type: "message.progress", id: out.id, text: `\n${line}\n` });
     const say = (delta: string) => {
       if (separate && text) {
         delta = `\n\n${delta}`;
@@ -444,6 +448,7 @@ export class Thread {
           throw err;
         }
 
+        progress("Thinking…");
         const res = await model.stream(
           {
             model: CHAT_MODEL,
@@ -483,12 +488,14 @@ export class Thread {
             `episode ${episode.id}: the API changed the input`,
             JSON.stringify(res.input_transformations).slice(0, 1000),
           );
-        spend.recordResponse({
+        used.costUsd += spend.recordResponse({
           model: CHAT_MODEL,
           purpose: "thread",
           usage: res.usage,
           episodeId: episode.id,
         });
+        used.tokens += tokenCount(tokensOf(res.usage));
+        events.emit({ type: "message.usage", id: out.id, ...used });
         this.appendTurn(episode.id, "assistant", res.content);
 
         const toolUses = res.content.filter(
@@ -518,11 +525,12 @@ export class Thread {
             });
             continue;
           }
-          events.emit({
-            type: "message.progress",
-            id: out.id,
-            text: `\n${pluginTools.find((t) => t.name === call.name)?.label ?? toolLabel(call.name, plugins)}\n`,
-          });
+          progress(
+            activity(
+              pluginTools.find((t) => t.name === call.name)?.label ?? toolLabel(call.name, plugins),
+              call.input,
+            ),
+          );
           const r = await runTool(
             call.name,
             call.input,
@@ -582,6 +590,32 @@ function toolLabel(name: string, plugins: Plugins): string {
   };
   const plugin = plugins.pluginOf(name);
   return labels[name] ?? `Using ${plugin?.name ?? name}`;
+}
+
+/** Inputs worth naming in a working line, in this order. */
+const SHOWN_INPUTS = [
+  "path",
+  "query",
+  "title",
+  "name",
+  "host",
+  "what",
+  "unit",
+  "repo",
+  "id",
+  "command",
+];
+
+/** "Reading memory: homelab.md", "Checking a host: nas, logs, nginx". */
+export function activity(label: string, input: unknown): string {
+  const o = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const parts = SHOWN_INPUTS.map((k) => o[k])
+    .filter((v): v is string | number => typeof v === "string" || typeof v === "number")
+    .map((v) => String(v).replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  const detail = parts.join(", ");
+  if (!detail) return label;
+  return `${label}: ${detail.length > 80 ? `${detail.slice(0, 79)}…` : detail}`;
 }
 
 /** Rough upper estimate before a request: cached prefix at read price, plus room for a reply. */

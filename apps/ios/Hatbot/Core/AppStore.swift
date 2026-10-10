@@ -13,6 +13,8 @@ final class AppStore {
   var episodes: [Int: Episode] = [:]
   /// Latest progress note per streaming reply.
   var progress: [Int: String] = [:]
+  /// What each streaming reply has used so far.
+  var usage: [Int: ReplyUsage] = [:]
   var hasEarlier = false
   var paused = false
   var todayUsd: Double?
@@ -95,8 +97,11 @@ final class AppStore {
       progress[id] = String(((progress[id] ?? "") + text).suffix(400))
     case let .messageTask(id, taskId):
       if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].taskId = taskId }
+    case let .messageUsage(id, used):
+      usage[id] = used
     case let .messageDone(id, text, status):
       progress[id] = nil
+      usage[id] = nil
       if let i = messages.firstIndex(where: { $0.id == id }) {
         messages[i].text = text
         messages[i].status = status

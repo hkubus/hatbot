@@ -245,10 +245,25 @@ struct Limits: Codable, Equatable, Sendable {
   var monthlyUsd: Double
 }
 
+struct SpendWindow: Codable, Equatable, Sendable {
+  var usd: Double
+  var tokens: Int
+}
+
 struct SpendSummary: Codable, Equatable, Sendable {
   var todayUsd: Double
   var monthUsd: Double
   var limits: Limits
+  /// Missing on brains from before token counts.
+  var todayTokens: Int?
+  var lastHour: SpendWindow?
+  var lastMinute: SpendWindow?
+}
+
+/// What a reply being written has used so far.
+struct ReplyUsage: Equatable, Sendable {
+  var tokens: Int
+  var costUsd: Double
 }
 
 struct AppSettings: Codable, Equatable, Sendable {
@@ -283,6 +298,7 @@ enum HatbotEvent: Decodable, Sendable {
   case messageProgress(id: Int, text: String)
   case messageDone(id: Int, text: String, status: ThreadMessage.Status)
   case messageTask(id: Int, taskId: Int)
+  case messageUsage(id: Int, ReplyUsage)
   case spendUpdated(todayUsd: Double, monthUsd: Double)
   case memoryCommitted(sha: String, message: String, author: String)
   case paused(Bool)
@@ -300,7 +316,7 @@ enum HatbotEvent: Decodable, Sendable {
   case unknown(String)
 
   private enum Key: String, CodingKey {
-    case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused
+    case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused, tokens, costUsd
     case task, step, approval, state, schedule, trigger, episode
   }
 
@@ -320,6 +336,10 @@ enum HatbotEvent: Decodable, Sendable {
         status: try c.decode(ThreadMessage.Status.self, forKey: .status))
     case "message.task":
       self = .messageTask(id: try c.decode(Int.self, forKey: .id), taskId: try c.decode(Int.self, forKey: .taskId))
+    case "message.usage":
+      self = .messageUsage(
+        id: try c.decode(Int.self, forKey: .id),
+        ReplyUsage(tokens: try c.decode(Int.self, forKey: .tokens), costUsd: try c.decode(Double.self, forKey: .costUsd)))
     case "spend.updated":
       self = .spendUpdated(
         todayUsd: try c.decode(Double.self, forKey: .todayUsd),

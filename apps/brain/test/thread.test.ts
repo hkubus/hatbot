@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { type ThreadMessage, threadGroups } from "@hatbot/shared";
-import { CHAT_MODEL, parseSummary } from "../src/agent/thread";
+import { activity, CHAT_MODEL, parseSummary } from "../src/agent/thread";
 import { costOf } from "../src/spend";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, testApp } from "./helpers";
@@ -257,4 +257,52 @@ test("the chat folds every finished conversation; cards join the one before", ()
     [2, [5], "message 5"],
     [3, [6, 7], null],
   ]);
+});
+
+test("while it works the reply says what it's doing and what it has used", async () => {
+  const model = new FakeModel([
+    { content: [toolUse("memory_read", { path: "homelab.md" })] },
+    { content: [text("Your NAS is fine.")] },
+  ]);
+  const t = await testApp(model);
+  await t.memory.write("homelab.md", "# Homelab\n", t.settings.get().owner, "x");
+  await t.thread.post("how is the nas?").done;
+  const lines = t.events
+    .filter((e) => e.type === "message.progress")
+    .map((e) => (e as { text: string }).text.trim());
+  expect(lines).toEqual(["Thinking…", "Reading memory: homelab.md", "Thinking…"]);
+  const usage = t.events.filter((e) => e.type === "message.usage") as {
+    tokens: number;
+    costUsd: number;
+  }[];
+  // Two model calls of 1,200 tokens each in the fake.
+  expect(usage.map((u) => u.tokens)).toEqual([1200, 2400]);
+  expect(usage.at(-1)?.costUsd).toBeCloseTo(t.spend.summary().todayUsd, 9);
+});
+
+test("working lines name the inputs that matter, briefly", () => {
+  expect(activity("Checking a host", { host: "nas", what: "logs", unit: "nginx" })).toBe(
+    "Checking a host: nas, logs, nginx",
+  );
+  expect(activity("Looking at schedules", {})).toBe("Looking at schedules");
+  expect(activity("Searching memory", { query: "x".repeat(100) })).toHaveLength(98);
+});
+
+test("spend over the last hour and minute, in dollars and tokens; hour by hour", async () => {
+  const t = await testApp();
+  const usage = { input_tokens: 1000, output_tokens: 200 };
+  t.spend.record({ model: "claude-haiku-5-5", purpose: "summary", usage });
+  t.advance(30 * 60_000);
+  t.spend.record({ model: "claude-haiku-5-5", purpose: "summary", usage });
+  const s = t.spend.summary();
+  expect(s.todayTokens).toBe(2400);
+  expect(s.lastHour.tokens).toBe(2400);
+  expect(s.lastMinute.tokens).toBe(1200);
+  expect(s.lastMinute.usd).toBeCloseTo((1000 * 0.1 + 200 * 0.5) / 1e6, 12);
+  const hours = t.spend.hourly(24);
+  expect(hours).toHaveLength(24);
+  expect(hours.reduce((n, h) => n + h.tokens, 0)).toBe(2400);
+  const { cookie } = await setUpOwner(t);
+  const res = await t.call("GET", "/spend/hourly?hours=6", undefined, { cookie });
+  expect(((await res.json()) as unknown[]).length).toBe(6);
 });
