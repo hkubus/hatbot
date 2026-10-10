@@ -299,7 +299,7 @@ private struct KeyCatcher: UIViewRepresentable {
     if active && !view.isFirstResponder {
       view.becomeFirstResponder()
     } else if !active && view.isFirstResponder {
-      view.resignFirstResponder()
+      _ = view.resignFirstResponder()
     }
   }
 

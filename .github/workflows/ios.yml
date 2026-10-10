@@ -26,7 +26,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: xcodebuild -version && xcrun --sdk iphoneos --show-sdk-version
       - name: Test the core
         working-directory: apps/ios
@@ -43,7 +43,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           BUILD: ${{ github.run_number }}
         run: apps/ios/build-ipa.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Hatbot-${{ steps.version.outputs.version }}
           path: apps/ios/build/Hatbot.ipa
@@ -60,10 +60,10 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}source.json
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/configure-pages@v5
+      - uses: actions/checkout@v7
+      - uses: actions/configure-pages@v6
         id: pages
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: Hatbot-${{ needs.build.outputs.version }}
           path: site
@@ -76,8 +76,8 @@ jobs:
           mv site/Hatbot.ipa "site/Hatbot-$VERSION.ipa"
           cp apps/ios/Hatbot/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png site/icon.png
           python3 apps/ios/sidestore-source.py "site/Hatbot-$VERSION.ipa" > site/source.json
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
-      - uses: actions/deploy-pages@v4
+      - uses: actions/deploy-pages@v5
         id: deploy
