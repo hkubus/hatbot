@@ -5,6 +5,10 @@ import type {
   AgentContext,
   AgentElement,
   AgentStatus,
+  BrowserCall,
+  BrowserInspect,
+  BrowserResult,
+  BrowserState,
   ShellResult,
 } from "@hatbot/shared/desktop";
 
@@ -29,6 +33,11 @@ export interface DesktopAgent {
   inspect(x?: number, y?: number): Promise<AgentElement | null>;
   /** A command in the desktop's shell, which can't see the browser profile or the screen. */
   exec(command: string, timeoutS: number): Promise<ShellResult>;
+  /** One browser toolset member, run on Chromium over CDP. */
+  browser(call: BrowserCall): Promise<BrowserResult>;
+  browserState(): Promise<BrowserState>;
+  /** The element a browser click or Enter would act on. */
+  browserInspect(at: BrowserInspect): Promise<AgentElement | null>;
   lock(): Promise<void>;
   unlock(): Promise<void>;
   /** WebSocket URL and headers for the live view. */
@@ -91,6 +100,16 @@ export class HttpDesktopAgent implements DesktopAgent {
     return (await (
       await this.req("POST", "/exec", { command, timeoutS }, (timeoutS + 15) * 1000)
     ).json()) as ShellResult;
+  }
+  async browser(call: BrowserCall) {
+    // `wait` and page loads may take up to 30 s.
+    return (await (await this.req("POST", "/browser", call, 45_000)).json()) as BrowserResult;
+  }
+  async browserState() {
+    return (await (await this.req("GET", "/browser/state")).json()) as BrowserState;
+  }
+  async browserInspect(at: BrowserInspect) {
+    return (await (await this.req("POST", "/browser/inspect", at)).json()) as AgentElement | null;
   }
   async lock() {
     await this.req("POST", "/lock");

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Approval } from "@hatbot/shared";
-import { computer, FakeModel, text, toolUse } from "./fake-model";
+import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
 
 const finish = (summary = "Booked it.") => ({
@@ -300,4 +300,65 @@ test("desktop tasks run on the model Settings choose; each keeps the one it star
     { model: "claude-haiku-5-5" },
     { model: "claude-opus-5-5" },
   ]);
+});
+
+test("browser calls run on the browser toolset, with the tabs in place of the first screenshot", async () => {
+  const work = new FakeModel([
+    {
+      content: [
+        browser("navigate", { url: "example.com" }),
+        browser("read_page", { filter: "interactive" }),
+      ],
+    },
+    finish("Read it."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = startTask(t, "Read example.com");
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)?.status).toBe("done");
+
+  const first = work.requests[0];
+  expect(first?.tools?.map((x) => (x as { type?: string }).type)).toContain(
+    "browser_toolset_20260801",
+  );
+  // The model gets the tabs as text; the timeline still gets a screenshot.
+  const start = JSON.stringify(first?.messages[0]?.content);
+  expect(start).toContain("tab-1");
+  expect(start).not.toContain('"image"');
+  expect(t.tasks.steps(task.id).filter((s) => s.screenshot).length).toBe(1);
+
+  expect(t.agent.browserCalls.map((c) => c.name)).toEqual(["navigate", "read_page"]);
+  const results = work.requests[1]?.messages.at(-1)?.content as {
+    toolset_name?: string;
+    content: unknown;
+  }[];
+  expect(results.map((r) => r.toolset_name)).toEqual(["browser", "browser"]);
+  expect(JSON.stringify(results[1]?.content)).toContain("ref_1");
+});
+
+test("a consequential browser click is checked by its element reference", async () => {
+  const work = new FakeModel([
+    {
+      content: [
+        browser("left_click", { target: { type: "ref", ref: "ref_7" } }),
+        browser("type", { text: "hello" }),
+      ],
+    },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.agent.element = { tag: "button", role: null, type: "submit", label: "Send", inForm: true };
+  startTask(t, "Send a message");
+  await t.tasks.idle();
+
+  expect(t.agent.inspected).toEqual([{ ref: "ref_7" }]);
+  expect(t.agent.browserCalls).toEqual([]);
+  const results = work.requests[1]?.messages.at(-1)?.content as {
+    is_error?: boolean;
+    content: unknown;
+  }[];
+  expect(JSON.stringify(results[0]?.content)).toContain("confirm_intent first");
+  // The batch stops at the held-back click: typing would land in the wrong place.
+  expect(results[1]?.is_error).toBe(true);
+  expect(results[1]?.content).toBe("Not executed: an earlier action in this turn failed.");
 });

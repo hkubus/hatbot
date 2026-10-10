@@ -1,8 +1,14 @@
-// run_desktop_task: the Opus computer-use subloop (PLAN.md §5.5, §5.6, §6.1).
+// run_desktop_task: the computer- and browser-use subloop (PLAN.md §5.5, §5.6, §6.1).
 import type Anthropic from "@anthropic-ai/sdk";
-import { BetaAbstractComputerToolset20260801 } from "@anthropic-ai/sdk/helpers/beta/toolsets";
+import {
+  BetaAbstractBrowserToolset20260801,
+  BetaAbstractComputerToolset20260801,
+  type BetaBrowserMemberResult,
+  type BetaBrowserState,
+} from "@anthropic-ai/sdk/helpers/beta/toolsets";
+import type { BetaBrowserMemberInput } from "@anthropic-ai/sdk/resources/beta";
 import type { ApprovalKind } from "@hatbot/shared";
-import type { ComputerMember } from "@hatbot/shared/desktop";
+import type { AgentElement, BrowserState, ComputerMember } from "@hatbot/shared/desktop";
 import { z } from "zod";
 import { modelErrorText } from "../agent/model";
 import { DESKTOP_PROMPT } from "../agent/prompt";
@@ -28,7 +34,6 @@ const BETAS: Anthropic.Beta.AnthropicBeta[] = [
 
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 type ToolResult = Anthropic.Beta.BetaToolResultBlockParam;
-type ImageBlock = Anthropic.Beta.BetaImageBlockParam;
 
 const ConfirmIntent = z.object({
   kind: z.enum([
@@ -142,9 +147,74 @@ class Computer extends BetaAbstractComputerToolset20260801 {
   }
 }
 
+/** The browser toolset on desktop-agent's CDP driver. Like Computer, the run checks policy before calling it. */
+class Browser extends BetaAbstractBrowserToolset20260801 {
+  constructor(
+    private agent: DesktopAgent,
+    private onImage: (bytes: Uint8Array) => Promise<void>,
+  ) {
+    super({ browserState: async () => (await agent.browserState()) as BetaBrowserState });
+  }
+
+  protected override async execute(
+    _ctx: unknown,
+    name: string,
+    input: BetaBrowserMemberInput,
+  ): Promise<BetaBrowserMemberResult> {
+    const r = await this.agent.browser({ name, input: input as Record<string, unknown> });
+    switch (r.kind) {
+      case "image":
+        await this.onImage(Buffer.from(r.data, "base64"));
+        return { data: r.data, mediaType: r.mediaType };
+      case "navigate":
+        return { url: r.url, ...(r.title ? { title: r.title } : {}) };
+      case "tab":
+        return r.tab;
+      case "tabs":
+        return r.tabs;
+      default:
+        return r.text;
+    }
+  }
+}
+
+/** The open tabs, for the model in place of a screenshot. */
+const tabsText = (state: BrowserState) =>
+  state.tabs.length
+    ? state.tabs
+        .map((t) => `- ${t.tab_id}: "${t.title}" (${t.url})${t.active ? " (current)" : ""}`)
+        .join("\n")
+    : "No tabs are open.";
+
+/** Halt text for the calls after a failed one in the same turn, per toolset. */
+const NOT_EXECUTED: Record<string, string> = {
+  computer: "Not executed: an earlier computer action in this turn failed.",
+  browser: "Not executed: an earlier action in this turn failed.",
+};
+
 const describe = (name: string, input: Record<string, unknown>): string => {
-  const at = Array.isArray(input.coordinate) ? ` at (${input.coordinate.join(", ")})` : "";
+  const target = input.target as
+    | { type?: string; ref?: string; x?: number; y?: number }
+    | undefined;
+  const at = Array.isArray(input.coordinate)
+    ? ` at (${input.coordinate.join(", ")})`
+    : target?.type === "ref"
+      ? ` on ${target.ref}`
+      : target?.type === "coordinate"
+        ? ` at (${target.x}, ${target.y})`
+        : "";
   switch (name) {
+    case "navigate":
+      return String(input.url);
+    case "find":
+      return String(input.query);
+    case "read_page":
+      return [input.filter, input.ref].filter(Boolean).join(" ");
+    case "form_input":
+      return `${at.trim()} = "${String(input.value).slice(0, 80)}"`;
+    case "switch_tab":
+    case "close_tab":
+      return String(input.tab_id);
     case "type":
       return `"${String(input.text).slice(0, 80)}${String(input.text).length > 80 ? "…" : ""}"`;
     case "key":
@@ -244,23 +314,27 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     }
     return path;
   };
-  const screen = async (label: string): Promise<ImageBlock> => {
-    const bytes = await agent.screenshot();
-    await capture(bytes, label);
-    return {
-      type: "image",
-      source: {
-        type: "base64",
-        media_type: "image/webp",
-        data: Buffer.from(bytes).toString("base64"),
-      },
-    };
-  };
 
   let pendingStepId: number | undefined;
-  const computer = new Computer(agent, async (bytes) => {
+  const onImage = async (bytes: Uint8Array) => {
     await capture(bytes, "Screenshot", "screenshot", pendingStepId);
-  });
+  };
+  const computer = new Computer(agent, onImage);
+  const browser = new Browser(agent, onImage);
+  /**
+   * What the model gets to see after a pause (start, approval, takeover): the open tabs, so it reads only
+   * what it needs. The timeline gets a screenshot.
+   */
+  const look = async (label: string, lead: string): Promise<BlockParam[]> => {
+    await capture(await agent.screenshot(), label);
+    const state = await agent.browserState().catch(() => null);
+    return [
+      {
+        type: "text",
+        text: `${lead} ${state ? `The browser's tabs:\n${tabsText(state)}` : "The browser isn't answering; take a screenshot."}`,
+      },
+    ];
+  };
 
   const record = (
     role: "user" | "assistant",
@@ -369,26 +443,42 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     ...(call.toolset_name ? { toolset_name: call.toolset_name } : {}),
   });
 
-  const computerCall = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> => {
+  /**
+   * Runs one toolset call (computer or browser): waits out a takeover, holds back a consequential click or
+   * Enter until confirm_intent approves it (PLAN.md §6.1), then logs and runs it.
+   */
+  const toolsetCall = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> => {
     const input = (call.input ?? {}) as Record<string, unknown>;
+    const isBrowser = call.toolset_name === "browser";
     if (d.desktop.get().control === "owner") {
       await waitForOwner();
-      return textResult(call, [
-        {
-          type: "text",
-          text: "Not run: the owner took control of the desktop and has now handed it back. The screen may have changed:",
-        },
-        await screen("After takeover"),
-      ]);
+      return textResult(
+        call,
+        await look(
+          "After takeover",
+          "Not run: the owner took control of the desktop and has now handed it back. It may have changed.",
+        ),
+      );
     }
     const check = checkFor(call.name, input);
     if (check) {
-      let point = input.coordinate as number[] | undefined;
-      if (check === "click" && !point) {
-        const r = await agent.action({ name: "cursor_position", input: {} });
-        point = [r.x ?? 0, r.y ?? 0];
+      let el: AgentElement | null;
+      if (isBrowser) {
+        const t = input.target as
+          | { type?: string; ref?: string; x?: number; y?: number }
+          | undefined;
+        const at =
+          check === "enter" ? {} : t?.type === "ref" ? { ref: t.ref } : { x: t?.x, y: t?.y };
+        const tab = typeof input.tab_id === "string" ? { tab_id: input.tab_id } : {};
+        el = await agent.browserInspect({ ...at, ...tab }).catch(() => null);
+      } else {
+        let point = input.coordinate as number[] | undefined;
+        if (check === "click" && !point) {
+          const r = await agent.action({ name: "cursor_position", input: {} });
+          point = [r.x ?? 0, r.y ?? 0];
+        }
+        el = await agent.inspect(point?.[0], point?.[1]).catch(() => null);
       }
-      const el = await agent.inspect(point?.[0], point?.[1]).catch(() => null);
       const label = consequential(check, el);
       if (label && !armed) {
         tasks.addStep(id, {
@@ -413,7 +503,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     });
     pendingStepId = step.id;
     try {
-      return await computer.toolResult(call);
+      return await (isBrowser ? browser : computer).toolResult(call);
     } finally {
       pendingStepId = undefined;
     }
@@ -438,13 +528,10 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       );
     }
     armed = true;
-    return textResult(call, [
-      {
-        type: "text",
-        text: "Approved by the owner. Go ahead with exactly this action. The screen now:",
-      },
-      await screen("After approval"),
-    ]);
+    return textResult(
+      call,
+      await look("After approval", "Approved by the owner. Go ahead with exactly this action."),
+    );
   };
 
   /** The desktop's shell. Destructive patterns ask, as on your hosts (PLAN.md §5.5). */
@@ -488,10 +575,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     await waitForOwner();
     d.desktop.clearRequest(id);
     tasks.addStep(id, { kind: "takeover", name: "You handed back", detail: "", url: lastUrl });
-    return textResult(call, [
-      { type: "text", text: "The owner handed the desktop back. The screen now:" },
-      await screen("After takeover"),
-    ]);
+    return textResult(call, await look("After takeover", "The owner handed the desktop back."));
   };
 
   try {
@@ -501,15 +585,12 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         ? `<skill name="${task.skill}">\n${(await d.memory.read(skillPath(task.skill))).trim()}\n</skill>\n\n`
         : "";
     await acquire();
-    const first = await screen("Start");
+    const first = await look(
+      "Start",
+      `${skill}<task>\n${task.goal}\nDone when: ${task.successCriteria || "the goal is met"}\n</task>\nStarted ${localStamp(new Date(tasks.clock()))}, the owner's local time.`,
+    );
     await observePage();
-    record("user", [
-      {
-        type: "text",
-        text: `${skill}<task>\n${task.goal}\nDone when: ${task.successCriteria || "the goal is met"}\n</task>\nStarted ${localStamp(new Date(tasks.clock()))}, the owner's local time. The screen now:`,
-      },
-      first,
-    ]);
+    record("user", first);
 
     for (let step = 0; ; step++) {
       if (signal.aborted) throw signal.reason;
@@ -541,7 +622,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           betas: BETAS,
           system: [{ type: "text", text: DESKTOP_PROMPT }],
           cache_control: { type: "ephemeral" },
-          tools: [computer.toJSON(), ...CUSTOM_TOOLS],
+          tools: [computer.toJSON(), browser.toJSON(), ...CUSTOM_TOOLS],
           thinking: UPDATES_MODELS.has(task.model)
             ? { type: "adaptive", display: "updates" }
             : { type: "adaptive" },
@@ -597,15 +678,22 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
 
       const results: BlockParam[] = [];
       let finished: z.infer<typeof FinishTask> | null = null;
+      /** Toolsets whose batch stopped at a failure this turn: their later calls don't run. */
+      const halted = new Set<string>();
       for (const call of calls) {
+        const toolset = call.toolset_name ?? "";
         if (res.stop_reason === "max_tokens") {
           results.push(
             textResult(call, "Input was cut off at max_tokens. Retry with a shorter input.", true),
           );
         } else if (finished) {
           results.push(textResult(call, "Not run: the task already finished.", true));
-        } else if (call.toolset_name === "computer") {
-          results.push(await computerCall(call));
+        } else if (halted.has(toolset)) {
+          results.push(textResult(call, NOT_EXECUTED[toolset] as string, true));
+        } else if (toolset === "computer" || toolset === "browser") {
+          const r = await toolsetCall(call);
+          if (r.is_error) halted.add(toolset);
+          results.push(r);
         } else if (call.name === "confirm_intent") {
           results.push(await confirmIntent(call));
         } else if (call.name === "request_takeover") {

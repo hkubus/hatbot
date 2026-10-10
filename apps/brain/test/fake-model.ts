@@ -29,6 +29,10 @@ export const toolUse = (
 export const computer = (name: string, input: unknown = {}): Block =>
   ({ ...toolUse(name, input), toolset_name: "computer" }) as Block;
 
+/** A browser toolset member call. */
+export const browser = (name: string, input: unknown = {}): Block =>
+  ({ ...toolUse(name, input), toolset_name: "browser" }) as Block;
+
 /** Replays scripted responses in order and records every request. */
 export class FakeModel implements ModelClient {
   requests: Omit<StreamParams, "stream">[] = [];

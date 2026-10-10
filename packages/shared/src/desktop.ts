@@ -63,3 +63,32 @@ export type LiveInput =
   | { t: "button"; button: 1 | 2 | 3; down: boolean; x: number; y: number }
   | { t: "wheel"; dy: number; dx: number; x: number; y: number }
   | { t: "key"; key: string; down: boolean };
+
+/** A tab as the browser toolset reports it (the API's browser_state tab entry). */
+export type BrowserTab = { tab_id: string; url: string; title: string; active?: boolean };
+
+/** Side effects of a browser call: the API's state changes, plus the SDK's dialog kind. */
+export type BrowserStateChange =
+  | { type: "tab_opened"; tab_id: string }
+  | { type: "download_started"; download_id: string; url: string }
+  | { type: "download_completed"; download_id: string; url: string; size_bytes?: number }
+  | { type: "download_failed"; download_id: string; url: string; error?: string }
+  | { type: "dialog_dismissed"; kind: string; message?: string };
+
+/** GET /browser/state: every open tab, one active, and what changed since the last report. */
+export type BrowserState = { tabs: BrowserTab[]; state_changes?: BrowserStateChange[] };
+
+/** POST /browser: one browser toolset (browser_toolset_20260801) member, run on Chromium over CDP. */
+export type BrowserCall = { name: string; input: Record<string, unknown> };
+
+/** What a browser member returned. The brain hands it to the SDK, which writes the tool result. */
+export type BrowserResult =
+  | { kind: "none"; text?: string }
+  | { kind: "text"; text: string }
+  | { kind: "image"; data: string; mediaType: "image/webp" }
+  | { kind: "navigate"; url: string; title?: string }
+  | { kind: "tab"; tab: BrowserTab }
+  | { kind: "tabs"; tabs: BrowserTab[] };
+
+/** POST /browser/inspect: by element reference, at a viewport point, or the focused element. */
+export type BrowserInspect = { tab_id?: string; ref?: string; x?: number; y?: number };
