@@ -65,9 +65,17 @@ rm -f "$tmp"
 ok "refuses CT $BRAIN_ID and CT $DESKTOP_ID"
 
 step "3/3 sudo rule"
+# Proxmox VE doesn't ship sudo.
+if ! command -v visudo >/dev/null; then
+  apt-get install -y -qq --no-install-recommends sudo >/dev/null || die "couldn't install sudo"
+  ok "installed sudo"
+fi
 printf 'hatbot ALL=(root) NOPASSWD: %s\n' "$WRAPPER" >"$SUDOERS.new"
 chmod 440 "$SUDOERS.new"
-visudo -cqf "$SUDOERS.new" || die "the sudo rule didn't parse"
+visudo -cf "$SUDOERS.new" >/dev/null || {
+  rm -f "$SUDOERS.new"
+  die "the sudo rule didn't parse"
+}
 mv "$SUDOERS.new" "$SUDOERS"
 ok "hatbot may run $WRAPPER as root, nothing else"
 
