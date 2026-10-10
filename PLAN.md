@@ -186,7 +186,7 @@ build context (system + memory index + task)  →  call model (stream)
   - the last ~10 messages
   - your new message
 - **`search_history(query, range?)`**: a full-text search over the thread in SQLite (FTS5). Hatbot pulls in older messages only when it needs them.
-- **Tasks started from chat** run in their own contexts and post **messages** back into the thread (§10.4). The thread never carries a 30-step browser transcript.
+- **Tasks started from chat** run in their own contexts; their progress and result show under the reply that started them (§10.4). The thread never carries a 30-step browser transcript.
 - **Durable facts** go to memory, not the thread.
 
 ### 5.4 Model routing
@@ -418,7 +418,8 @@ The visual reference is the clickable prototype in [`prototype/`](prototype/). O
 
 ### 10.4 Task, approval and schedule messages
 Plain messages, not cards; the details live on the task's or schedule's page.
-- **Task**: the title in bold, then what it's doing while it runs, or its summary once it ends.
+- **Task started from chat**: no message of its own. The reply that started it shows working dots and the latest step, then the task's result in the same bubble.
+- **Background task** (schedules, triggers): one message when it ends, the title in bold and its summary.
 - **Approval**: what Hatbot wants to do, why, which untrusted page it read, a screenshot, **Approve** (blue) and **Deny**. Once answered it shrinks to one line.
 - **Schedule created**: "Scheduled **name**: every day at 08:00."
 

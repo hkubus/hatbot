@@ -2121,6 +2121,17 @@ pre.payload {
   width: 13px;
   height: 13px;
 }
+.task-working {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.task-working .progress-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .msg-buttons {
   display: flex;
   gap: 8px;

@@ -224,6 +224,10 @@ function apply(e: HatbotEvent) {
       const text = ((state.progress[e.id] ?? "") + e.text).slice(-400);
       return set({ progress: { ...state.progress, [e.id]: text } });
     }
+    case "message.task":
+      return set({
+        messages: state.messages.map((m) => (m.id === e.id ? { ...m, taskId: e.taskId } : m)),
+      });
     case "message.done": {
       const { [e.id]: _, ...progress } = state.progress;
       return set({

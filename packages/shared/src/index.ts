@@ -165,6 +165,8 @@ export type HatbotEvent =
   | { type: "message.delta"; id: number; text: string }
   | { type: "message.progress"; id: number; text: string }
   | { type: "message.done"; id: number; text: string; status: "done" | "error" }
+  /** A task now shows under this reply. */
+  | { type: "message.task"; id: number; taskId: number }
   | { type: "spend.updated"; todayUsd: number; monthUsd: number }
   | { type: "memory.committed"; sha: string; message: string; author: string }
   | { type: "paused"; paused: boolean }

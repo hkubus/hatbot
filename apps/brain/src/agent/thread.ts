@@ -97,6 +97,15 @@ export class Thread {
     return row;
   }
 
+  /** Shows a task under the reply that started it, so its progress and result don't need a card. */
+  attachTask(messageId: number, taskId: number): boolean {
+    const done = this.d.db
+      .query("UPDATE messages SET task_id = ? WHERE id = ? AND task_id IS NULL AND kind = 'text'")
+      .run(taskId, messageId).changes;
+    if (done) this.d.events.emit({ type: "message.task", id: messageId, taskId });
+    return done > 0;
+  }
+
   /** Stores the owner's message and queues Hatbot's reply, which streams over the event bus. */
   post(text: string): { message: ThreadMessage; done: Promise<void> } {
     const message = this.insertMessage("user", text, "done");
@@ -411,6 +420,7 @@ export class Thread {
           });
           const r = await runTool(call.name, call.input, {
             ...this.d,
+            messageId: out.id,
             scheduleCard: (sc: Schedule) =>
               this.addCard(
                 "schedule",

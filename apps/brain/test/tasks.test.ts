@@ -35,11 +35,14 @@ test("chat starts a desktop task that runs, archives screenshots and reports bac
   const t = await testApp(chat, work);
   t.thread.post("check example.com");
   await t.thread.idle();
-  const card = t.thread.list().find((m) => m.kind === "task");
-  expect(card?.taskId).toBeNumber();
+  // The task shows under the reply that started it, not as a card of its own.
+  const reply = t.thread.list().find((m) => m.role === "assistant" && m.taskId);
+  expect(reply?.kind).toBe("text");
+  expect(reply?.text).toBe("Started it.");
+  expect(t.thread.list().some((m) => m.kind === "task")).toBe(false);
 
   await t.tasks.idle();
-  const task = t.tasks.get(card?.taskId as number);
+  const task = t.tasks.get(reply?.taskId as number);
   expect(task?.status).toBe("done");
   expect(task?.summary).toBe("Example.com is up.");
   expect(task?.tainted).toBe(true);
@@ -61,10 +64,7 @@ test("chat starts a desktop task that runs, archives screenshots and reports bac
   expect(shots.length).toBe(2);
   expect(await t.archive.file(shots[1]?.screenshot as string)?.exists()).toBe(true);
 
-  // The card says how it ended, and the next chat turn hears about it.
-  expect(t.thread.list().find((m) => m.kind === "task")?.text).toContain(
-    "Done: Example.com is up.",
-  );
+  // The next chat turn hears how it ended.
   t.thread.post("thanks");
   await t.thread.idle();
   expect(JSON.stringify(chat.requests.at(-1)?.messages.at(-1))).toContain("<task_updates>");

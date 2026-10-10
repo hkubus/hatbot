@@ -128,6 +128,66 @@ function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
   );
 }
 
+/** A task under the reply that started it: working dots, then how it ended. */
+function TaskResult({ taskId }: { taskId: number }) {
+  const task = useStore((s) => s.tasks[taskId]);
+  const progress = useStore((s) => s.taskProgress[taskId]);
+  const control = useStore((s) => s.desktop?.control);
+  useEffect(() => ensureTask(taskId), [taskId]);
+  if (!task) return null;
+  if (isActive(task)) {
+    const note =
+      control === "owner" && task.status === "running"
+        ? "Paused while you have control."
+        : taskLine(task, progress);
+    return (
+      <div className="task-working">
+        <div className="typing">
+          <span />
+          <span />
+          <span />
+        </div>
+        {note !== "Working…" && <div className="progress-note">{note}</div>}
+      </div>
+    );
+  }
+  if (task.status === "done") return <AssistantBody text={task.summary ?? "Done."} />;
+  if (task.status === "failed")
+    return <AssistantBody text={`**Didn't finish.** ${task.summary ?? ""}`} />;
+  return <div className="muted resolved">Cancelled.</div>;
+}
+
+/** Hatbot's reply, with the task it started (if any) working and then reporting under it. */
+function ReplyMessage({ m, progress }: { m: ThreadMessage; progress?: string }) {
+  const task = useStore((s) => (m.taskId ? s.tasks[m.taskId] : undefined));
+  const streaming = m.status === "streaming";
+  const note = progress?.trim().split("\n").filter(Boolean).at(-1);
+  const result = task && !isActive(task) ? task.summary : null;
+  return (
+    <>
+      <div className="body">
+        {m.text && <AssistantBody text={m.text} />}
+        {streaming && !m.text && !m.taskId && (
+          <div className="typing">
+            <span />
+            <span />
+            <span />
+          </div>
+        )}
+        {streaming && note && <div className="progress-note">{note}</div>}
+        {m.taskId && <TaskResult taskId={m.taskId} />}
+      </div>
+      {!streaming && (
+        <Meta
+          m={m}
+          copy={result ? `${m.text}\n\n${result}`.trim() : m.text}
+          open={m.taskId ? { to: `/tasks/${m.taskId}`, label: "Open task" } : undefined}
+        />
+      )}
+    </>
+  );
+}
+
 /** An approval, as a message with Approve and Deny under it. */
 function ApprovalMessage({ m, approvalId }: { m: ThreadMessage; approvalId: number }) {
   const a = useStore((s) => s.approvals[approvalId]);
@@ -247,24 +307,7 @@ function Message({
   } else if (m.kind === "schedule" && m.scheduleId) {
     inner = <ScheduleMessage m={m} scheduleId={m.scheduleId} />;
   } else {
-    const streaming = m.status === "streaming";
-    const note = progress?.trim().split("\n").filter(Boolean).at(-1);
-    inner = (
-      <>
-        <div className="body">
-          {m.text && <AssistantBody text={m.text} />}
-          {streaming && !m.text && (
-            <div className="typing">
-              <span />
-              <span />
-              <span />
-            </div>
-          )}
-          {streaming && note && <div className="progress-note">{note}</div>}
-        </div>
-        {!streaming && <Meta m={m} copy={m.text} />}
-      </>
-    );
+    inner = <ReplyMessage m={m} progress={progress} />;
   }
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: a tap only reveals the buttons, which are reachable by keyboard anyway

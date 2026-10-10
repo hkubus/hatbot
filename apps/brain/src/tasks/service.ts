@@ -177,8 +177,9 @@ export class Tasks {
   }
 
   /**
-   * Starts a desktop task: a card in the thread, then a run that waits for the screen lane.
-   * One started by a background task (`parent`) has no card; its parent reports.
+   * Starts a desktop task, then a run that waits for the screen lane. It shows under the chat reply that
+   * started it (`message`), or as its own card. One started by a background task (`parent`) shows
+   * nowhere in the thread; its parent reports.
    */
   createDesktopTask(input: {
     title: string;
@@ -186,6 +187,7 @@ export class Tasks {
     successCriteria: string;
     origin: Task["origin"];
     parent?: Task;
+    message?: number;
   }): Task {
     const p = input.parent;
     const id = this.insert({
@@ -200,7 +202,8 @@ export class Tasks {
       schedule_id: p?.scheduleId ?? null,
       trigger_id: p?.triggerId ?? null,
     });
-    if (!p) this.d.thread.addCard("task", `Task #${id}: ${input.title}`, { taskId: id });
+    if (!p && !(input.message && this.d.thread.attachTask(input.message, id)))
+      this.d.thread.addCard("task", `Task #${id}: ${input.title}`, { taskId: id });
     this.emit(id);
     this.start(id);
     return this.get(id) as Task;
@@ -432,12 +435,12 @@ export class Tasks {
     for (const c of this.running.values()) c.abort(new Error("paused"));
   }
 
-  /** Tasks with a card in the thread that ended since the thread last heard; marks them reported. */
+  /** Tasks shown in the thread (a card or under a reply) that ended since the thread last heard; marks them reported. */
   takeUnreported(): Task[] {
     const rows = this.d.db
       .query<Row, []>(
         `${SELECT} WHERE t.reported_at IS NULL AND t.status IN ('done', 'failed', 'cancelled')
-         AND EXISTS (SELECT 1 FROM messages m WHERE m.kind = 'task' AND m.task_id = t.id) ORDER BY t.id`,
+         AND EXISTS (SELECT 1 FROM messages m WHERE m.kind IN ('task', 'text') AND m.task_id = t.id) ORDER BY t.id`,
       )
       .all();
     if (rows.length)
