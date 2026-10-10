@@ -141,7 +141,7 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
             config={p.config}
             save={save}
             action={action}
-            ready={p.state === "ready"}
+            running={p.state === "ready" || p.state === "needs_setup"}
           />
         )}
 

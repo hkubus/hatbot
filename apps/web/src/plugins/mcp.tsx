@@ -78,18 +78,19 @@ const fromRow = ({ key: _, headersText, argsText, envText, ...s }: Row): Server 
         env: fromLines(envText),
       };
 
-export function McpSettings({ config, save, action }: PluginSettingsProps<Config>) {
+export function McpSettings({ config, save, action, running }: PluginSettingsProps<Config>) {
   const [servers, setServers] = useState<Row[]>(() => config.servers.map(toRow));
   const [status, setStatus] = useState<Record<string, Status>>({});
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    if (!running) return;
     action<Status[]>("status").then(
       (list) => setStatus(Object.fromEntries(list.map((s) => [s.name, s]))),
       () => {},
     );
-  }, [action]);
+  }, [action, running]);
 
   const set = (i: number, patch: Partial<Row>) =>
     setServers(servers.map((s, j) => (j === i ? { ...s, ...patch } : s)));

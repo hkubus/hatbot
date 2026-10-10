@@ -27,7 +27,7 @@ const blank = (): Host => ({
 const errorText = (err: unknown) =>
   err instanceof ApiError ? err.message : "Couldn't reach Hatbot.";
 
-export function SshSettings({ config, save, action }: PluginSettingsProps<Config>) {
+export function SshSettings({ config, save, action, running }: PluginSettingsProps<Config>) {
   const [hosts, setHosts] = useState<Host[]>(config.hosts);
   const [publicKey, setPublicKey] = useState("");
   const [keys, setKeys] = useState<Record<string, string | null>>({});
@@ -35,12 +35,13 @@ export function SshSettings({ config, save, action }: PluginSettingsProps<Config
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    if (!running) return;
     action<string>("publicKey").then(setPublicKey, (err) => setError(errorText(err)));
     action<{ name: string; key: string | null }[]>("keys").then(
       (list) => setKeys(Object.fromEntries(list.map((k) => [k.name, k.key]))),
       () => {},
     );
-  }, [action]);
+  }, [action, running]);
 
   const set = (i: number, patch: Partial<Host>) =>
     setHosts(hosts.map((h, j) => (j === i ? { ...h, ...patch } : h)));

@@ -11,8 +11,8 @@ export type PluginSettingsProps<C = unknown> = {
   save: (config: C) => Promise<void>;
   /** One of the plugin's actions. Rejects with the brain's message. */
   action: <T = unknown>(name: string, args?: unknown) => Promise<T>;
-  /** The plugin is running with its current settings. */
-  ready: boolean;
+  /** The plugin is running (on, or waiting for setup), so its actions answer. */
+  running: boolean;
 };
 
 export const PLUGIN_SETTINGS: Record<string, ComponentType<PluginSettingsProps>> = {
