@@ -343,6 +343,7 @@ final class AppStore {
     var prompt: String?
     var trusted: Bool?
     var enabled: Bool?
+    var confirmChecks: Int?
   }
 
   @discardableResult

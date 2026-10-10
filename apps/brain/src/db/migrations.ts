@@ -245,4 +245,15 @@ export const migrations: string[] = [
   /* 11: what the owner said when they started a task from the chat, for the approval check (PLAN.md §6.2) */ `
   ALTER TABLE tasks ADD COLUMN request TEXT;
   `,
+  /* 12: an Uptime Kuma trigger can wait out a monitor's next checks before acting on a down alert */ `
+  ALTER TABLE triggers ADD COLUMN confirm_checks INTEGER NOT NULL DEFAULT 0 CHECK (confirm_checks BETWEEN 0 AND 2);
+  -- Down alerts waiting for those checks; one whose monitor comes back up in time is dropped.
+  CREATE TABLE kuma_waiting (
+    run_key TEXT PRIMARY KEY,
+    trigger_id INTEGER NOT NULL REFERENCES triggers(id) ON DELETE CASCADE,
+    due_at TEXT NOT NULL,
+    name TEXT NOT NULL,
+    alert TEXT NOT NULL
+  );
+  `,
 ];

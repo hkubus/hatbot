@@ -50,6 +50,11 @@ export type Trigger = {
   /** What a run does with the event. */
   prompt: string;
   enabled: boolean;
+  /**
+   * Uptime Kuma: how many more of the monitor's checks a down alert waits for before it starts a task,
+   * 0 to 2. A monitor that comes back up in the meantime starts nothing.
+   */
+  confirmChecks: number;
   /** Where to send events. */
   url: string;
   createdAt: string;
@@ -64,9 +69,16 @@ export const CreateTrigger = z.object({
   kind: z.enum(["webhook", "kuma"]),
   prompt,
   trusted: z.boolean().default(false),
+  confirmChecks: z.number().int().min(0).max(2).default(0),
 });
 export const UpdateTrigger = z
-  .object({ name, prompt, trusted: z.boolean(), enabled: z.boolean() })
+  .object({
+    name,
+    prompt,
+    trusted: z.boolean(),
+    enabled: z.boolean(),
+    confirmChecks: z.number().int().min(0).max(2),
+  })
   .partial();
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];

@@ -302,19 +302,28 @@ export const TOOLS = [
         ?.list()
         .map(
           (t) =>
-            `#${t.id} "${t.name}" (${t.kind === "kuma" ? "Uptime Kuma" : "webhook"}${t.trusted ? ", trusted" : ""}${t.enabled ? "" : ", off"})${t.lastFiredAt ? `; last event ${local(t.lastFiredAt)}` : ""}\n  Does: ${t.prompt}`,
+            `#${t.id} "${t.name}" (${t.kind === "kuma" ? "Uptime Kuma" : "webhook"}${t.trusted ? ", trusted" : ""}${t.enabled ? "" : ", off"}${t.confirmChecks ? `, waits for ${t.confirmChecks} more failed check${t.confirmChecks > 1 ? "s" : ""}` : ""})${t.lastFiredAt ? `; last event ${local(t.lastFiredAt)}` : ""}\n  Does: ${t.prompt}`,
         )
         .join("\n") || "No triggers.",
   }),
   def({
     name: "trigger_update",
     description:
-      "Change what a trigger's runs do, rename it, or turn it on or off. Only the fields you give change.",
+      "Change what a trigger's runs do, rename it, turn it on or off, or how many more failed checks an Uptime Kuma alert waits for. Only the fields you give change.",
     schema: z.object({
       id: z.number().int(),
       name: z.string().min(1).max(80).optional(),
       prompt: z.string().min(1).max(4000).optional(),
       enabled: z.boolean().optional(),
+      confirmChecks: z
+        .number()
+        .int()
+        .min(0)
+        .max(2)
+        .optional()
+        .describe(
+          "Uptime Kuma only: wait for this many more of the monitor's checks before acting on a down alert, so a blip that recovers starts nothing. 0 acts at once.",
+        ),
     }),
     run: async ({ id, ...patch }, { triggers, tainted }) => {
       // A trigger's runs trust its instructions; untrusted content mustn't get to write them.

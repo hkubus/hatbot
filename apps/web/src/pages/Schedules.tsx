@@ -24,6 +24,8 @@ import { StatusChip, whenText } from "../tasks";
 const KIND = { webhook: "Webhook", kuma: "Uptime Kuma" } as const;
 const KUMA_PROMPT =
   "Find out why it's down. If a restart is likely to fix it, restart the service or guest once and check that it's back. Don't change configuration or delete anything. Tell me what was wrong, what you did, and whether it's working now.";
+/** Failed checks before a down alert starts a task; one back up before then starts nothing. */
+const CONFIRM = ["First failure", "2 failures", "3 failures"];
 /** A trigger just made, so its page can show the secret after the route changes to its id. */
 let fresh: TriggerWithSecret | null = null;
 
@@ -463,6 +465,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
     kind: Trigger["kind"];
     prompt: string;
     trusted: boolean;
+    confirmChecks: number;
   } | null>(
     id === null
       ? {
@@ -470,6 +473,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
           kind: newKind,
           prompt: newKind === "kuma" ? KUMA_PROMPT : "",
           trusted: false,
+          confirmChecks: 0,
         }
       : null,
   );
@@ -492,6 +496,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
         kind: stored.kind,
         prompt: stored.prompt,
         trusted: stored.trusted,
+        confirmChecks: stored.confirmChecks,
       });
   }, [stored, form]);
 
@@ -503,7 +508,8 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
     !stored ||
     form.name !== stored.name ||
     form.prompt !== stored.prompt ||
-    form.trusted !== stored.trusted;
+    form.trusted !== stored.trusted ||
+    form.confirmChecks !== stored.confirmChecks;
 
   const save = async () => {
     setBusy(true);
@@ -513,7 +519,12 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
         putTrigger(
           await api<Trigger>(`/triggers/${stored.id}`, {
             method: "PATCH",
-            body: { name: form.name, prompt: form.prompt, trusted: form.trusted },
+            body: {
+              name: form.name,
+              prompt: form.prompt,
+              trusted: form.trusted,
+              confirmChecks: form.confirmChecks,
+            },
           }),
         );
       } else {
@@ -619,6 +630,23 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
               onChange={(e) => set({ prompt: e.target.value })}
             />
           </label>
+          {form.kind === "kuma" && (
+            <div className="form-row">
+              <span className="label">Start a task after</span>
+              <div className="seg">
+                {CONFIRM.map((label, n) => (
+                  <button
+                    type="button"
+                    key={label}
+                    className={form.confirmChecks === n ? "active" : ""}
+                    onClick={() => set({ confirmChecks: n })}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {form.kind === "webhook" && (
             <div className="form-row">
               <span className="label">Trust its payloads</span>
