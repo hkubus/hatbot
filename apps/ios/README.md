@@ -9,15 +9,22 @@ API with a bearer token. Notifications still come from the ntfy app.
 - `Hatbot/Views`, `Hatbot/App`: SwiftUI and UIKit. Chat, Tasks, Live and Settings tabs.
 - `project.yml`: the Xcode project, generated with [XcodeGen](https://github.com/yonaskolb/XcodeGen).
 
-## Build an IPA (Mac)
+## Install with SideStore
+
+The iOS workflow on the GitHub mirror builds the app for every change. On `main` it publishes the
+IPA and a SideStore source to GitHub Pages. In SideStore, add the source
+`https://hkubus.github.io/hatbot/source.json` and install Hatbot from it; new builds show up there
+as updates. SideStore signs the app with your Apple ID. With a free Apple ID it refreshes the app
+every 7 days.
+
+Builds of other branches are artifacts on the workflow run.
+
+## Build an IPA on a Mac
 
 ```sh
 brew install xcodegen
 apps/ios/build-ipa.sh        # → apps/ios/build/Hatbot.ipa, unsigned
 ```
-
-Open the IPA in SideStore on the phone, which signs it with your Apple ID. With a free Apple ID,
-SideStore refreshes the app every 7 days.
 
 To work on it in Xcode: `cd apps/ios && xcodegen generate && open Hatbot.xcodeproj`.
 

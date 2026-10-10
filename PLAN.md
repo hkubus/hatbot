@@ -65,7 +65,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 | Logs | Full task timelines, **kept forever** (screenshots as WebP on the HDD pool) |
 | Backups | **Proxmox Backup Server** backs up both guests, including the archive mount |
 | Stack | Bun + Hono + SQLite · React + Vite PWA · MJPEG live view (ffmpeg → WS → canvas) · Radix primitives + CSS variables · Biome · `bun test` |
-| Repo | Bun-workspaces monorepo `kubus/hatbot`, private, on Forgejo `git.gaycats.ovh` |
+| Repo | Bun-workspaces monorepo `kubus/hatbot`, public, on Forgejo `git.gaycats.ovh`; Forgejo push-mirrors it to GitHub `hkubus/hatbot` (deploy key), where CI runs |
 | Exposure | `hatbot.gaycats.ovh`. You handle the tunnel, TLS and reverse proxy; Hatbot serves plain HTTP on the LAN |
 | Auth | Single user, password + TOTP; API tokens for the iOS app |
 | Notifications | Your self-hosted **ntfy**, on its own server; the brain publishes to it. No APNs or Web Push, because the iOS app is a free SideStore sideload |
@@ -155,7 +155,7 @@ Shared API types and zod schemas for the brain and web. The iOS app mirrors the 
 - **Auth**: password + TOTP once, then a bearer token named after the device, kept in the Keychain. Signing out deletes the token on the brain.
 - **Live events**: the same `/stream` WebSocket while the app is in front; it reconnects and reloads after a gap. iOS stops it in the background, so notifications stay with the ntfy app.
 - **Live view**: the `/desktop/live` frames. During takeover a tap clicks, a drag drags, a long press right-clicks, two fingers scroll, and a Keyboard button types.
-- **Build**: `project.yml` (XcodeGen) → `build-ipa.sh` on a Mac makes an unsigned IPA; SideStore signs it with your Apple ID. `Hatbot/Core` is also a Swift package, tested with `swift test` on Linux too.
+- **Build**: `project.yml` (XcodeGen) → `build-ipa.sh` makes an unsigned IPA; SideStore signs it with your Apple ID. The GitHub mirror's iOS workflow builds it on macOS for every change and, on `main`, publishes it with a SideStore source at `https://hkubus.github.io/hatbot/source.json`, so SideStore installs and updates it. `Hatbot/Core` is also a Swift package, tested with `swift test` (on Linux too).
 - **Links**: `hatbot://tasks/<id>` and `hatbot://approvals/<id>`.
 
 ---
@@ -448,7 +448,7 @@ Each milestone ends with a working, demo-able system.
 
 ### M0 — Setup
 - [x] `git init`, monorepo skeleton (Bun workspaces, Biome, tsconfig, `bun test`), private repo `kubus/hatbot` on Forgejo
-- [ ] CI via Forgejo Actions, if a runner exists
+- [x] CI on the GitHub mirror (Forgejo has no runner): lint, typecheck and tests; the iOS build
 - [x] `infra/host-setup.sh` written
 - [x] … reviewed with you, then run on the host
 - [x] `infra/brain-provision.sh` (Bun, git, memory repo, firewall) and `infra/desktop-provision.sh` (Xvnc, XFCE, Chromium; desktop-agent itself comes in M2)
@@ -507,7 +507,7 @@ Each milestone ends with a working, demo-able system.
 - [x] Tasks list and task page (approvals, timeline, screenshots, cancel)
 - [x] Live view with takeover (touch, scroll, keyboard)
 - [x] Settings: spend, chat effort, Pause all / Resume, sign out
-- [ ] First build on a Mac, installed with SideStore and tried against the brain
+- [ ] First build by the iOS workflow, installed from the SideStore source and tried against the brain
 - [ ] Memory (tree, file, history) and Schedules & Triggers
 - [ ] ntfy notifications open the app (`hatbot://` click URLs)
 - **Done when**: you can chat, approve and take over from the app on your phone.

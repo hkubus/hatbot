@@ -1,0 +1,79 @@
+# Builds the iOS app (apps/ios) into an unsigned IPA. On main it also publishes the IPA and a
+# SideStore source to GitHub Pages, so SideStore installs and updates the app from
+# <pages>/source.json.
+name: iOS
+
+on:
+  push:
+    paths:
+      - apps/ios/**
+      - .github/workflows/ios.yml
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Test the core
+        working-directory: apps/ios
+        run: swift test
+      - name: Version
+        id: version
+        # MARKETING_VERSION's major.minor, then the run number, so every build is an update.
+        run: |
+          base=$(sed -n 's/.*MARKETING_VERSION: "\([0-9]*\.[0-9]*\).*/\1/p' apps/ios/project.yml)
+          echo "version=$base.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+      - run: brew install xcodegen
+      - name: Build the IPA
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ github.run_number }}
+        run: apps/ios/build-ipa.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Hatbot-${{ steps.version.outputs.version }}
+          path: apps/ios/build/Hatbot.ipa
+          if-no-files-found: error
+
+  publish:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}source.json
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/configure-pages@v5
+        id: pages
+      - uses: actions/download-artifact@v5
+        with:
+          name: Hatbot-${{ needs.build.outputs.version }}
+          path: site
+      - name: SideStore source
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          BUILD: ${{ github.run_number }}
+          BASE_URL: ${{ steps.pages.outputs.base_url }}
+        run: |
+          mv site/Hatbot.ipa "site/Hatbot-$VERSION.ipa"
+          cp apps/ios/Hatbot/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png site/icon.png
+          python3 apps/ios/sidestore-source.py "site/Hatbot-$VERSION.ipa" > site/source.json
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+      - uses: actions/deploy-pages@v4
+        id: deploy

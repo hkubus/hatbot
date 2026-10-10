@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds an unsigned build/Hatbot.ipa for SideStore, which signs it with your Apple ID when it
-# installs. Runs on a Mac with Xcode and XcodeGen (brew install xcodegen).
+# installs. Runs on a Mac with Xcode and XcodeGen (brew install xcodegen). VERSION and BUILD
+# override the version in project.yml (the iOS workflow sets them per run).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -15,6 +16,8 @@ xcodebuild build \
   -destination 'generic/platform=iOS' \
   -derivedDataPath build/derived \
   CODE_SIGNING_ALLOWED=NO \
+  ${VERSION:+MARKETING_VERSION=$VERSION} \
+  ${BUILD:+CURRENT_PROJECT_VERSION=$BUILD} \
   | { command -v xcbeautify >/dev/null && xcbeautify || cat; }
 
 mkdir -p build/Payload
