@@ -281,3 +281,23 @@ test("desktop_shell runs commands as text; destructive ones ask first", async ()
   expect(denied).toContain("The owner denied this.");
   expect(t.tasks.steps(task.id).some((s) => s.name === "desktop_shell")).toBe(true);
 });
+
+test("desktop tasks run on the model Settings choose; each keeps the one it started with", async () => {
+  const work = new FakeModel([finish("On Opus."), finish("On Haiku.")]);
+  const t = await testApp(new FakeModel(), work);
+  const first = startTask(t, "One");
+  await t.tasks.idle();
+  t.settings.update({ desktopModel: "claude-haiku-5-5" });
+  const second = startTask(t, "Two");
+  await t.tasks.idle();
+  expect(t.tasks.get(first.id)?.model).toBe("claude-opus-5-5");
+  expect(t.tasks.get(second.id)?.model).toBe("claude-haiku-5-5");
+  expect(work.requests[0]?.model).toBe("claude-opus-5-5");
+  expect(work.requests[0]?.thinking).toMatchObject({ display: "updates" });
+  expect(work.requests[1]?.model).toBe("claude-haiku-5-5");
+  expect(work.requests[1]?.thinking).toEqual({ type: "adaptive" });
+  expect(t.db.query("SELECT DISTINCT model FROM spend_ledger ORDER BY model").all()).toEqual([
+    { model: "claude-haiku-5-5" },
+    { model: "claude-opus-5-5" },
+  ]);
+});

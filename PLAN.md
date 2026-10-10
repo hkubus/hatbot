@@ -214,7 +214,7 @@ build context (system + memory index + task)  →  call model (stream)
 | Job | Model | Notes |
 |---|---|---|
 | Chat, planning, non-screen tools | `claude-opus-5-5`, effort `low` (Settings: low or medium) | Fast replies with a big model's judgement. Changing effort mid-conversation drops the prompt cache, so heavier work runs as a task instead |
-| Desktop driving (`run_desktop_task`) | `claude-opus-5-5`, effort `medium` | Native `computer_toolset_20260801`. Best screenshot reading |
+| Desktop driving (`run_desktop_task`) | `claude-opus-5-5`, effort `medium`; Settings → Desktop can switch new tasks to `claude-haiku-5-5` | Native `computer_toolset_20260801`. Best screenshot reading. Haiku 5.5 supports the toolset too; its tasks run without `display: "updates"`, which isn't documented for it |
 | Schedules and triggers (background tasks) | `claude-opus-5-5`, the chat's effort | Same kind of work as chat, without a screen (§5.6) |
 | Injection screening, thread summaries, alert triage | `claude-haiku-5-5`, effort `low` | $0.10/$0.50 per 1M tokens up to 100k-token prompts, 5x above (whole request). Thinks by default |
 | Writing code (`forge_*`, `ssh_exec` work, M4) | `claude-opus-5-5`, effort `medium`; `high` when you ask or after a failed attempt | Runs as a task with its own card, spend limit and timeline, like desktop tasks |

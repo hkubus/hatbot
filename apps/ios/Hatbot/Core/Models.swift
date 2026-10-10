@@ -289,6 +289,14 @@ struct AppSettings: Codable, Equatable, Sendable {
   var paused: Bool
   /// Missing on brains from before the setting.
   var notificationsOpen: Opens?
+  /// The model that drives desktop tasks; missing on brains from before the setting.
+  var desktopModel: DesktopModel?
+
+  enum DesktopModel: String, LenientEnum, CaseIterable {
+    case opus = "claude-opus-5-5"
+    case haiku = "claude-haiku-5-5"
+    static let fallback = DesktopModel.opus
+  }
 }
 
 /// Live events on /api/v1/stream. Events this app doesn't know decode to `.unknown`.

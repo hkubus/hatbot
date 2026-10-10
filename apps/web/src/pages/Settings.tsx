@@ -183,6 +183,26 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
         </section>
 
         <section className="group">
+          <h2>Desktop</h2>
+          <div className="group-box">
+            <div className="row">
+              <div className="txt">
+                <b>Model for desktop tasks</b>
+              </div>
+              <select
+                value={settings.desktopModel}
+                onChange={(e) =>
+                  update({ desktopModel: e.target.value as AppSettings["desktopModel"] })
+                }
+              >
+                <option value="claude-opus-5-5">Opus 5.5</option>
+                <option value="claude-haiku-5-5">Haiku 5.5 (cheaper, less tested)</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <section className="group">
           <h2>Notifications</h2>
           <div className="group-box">
             <div className="row">

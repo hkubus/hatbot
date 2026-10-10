@@ -16,7 +16,8 @@ import { skillPath } from "../teach/skills";
 import { checkFor, consequential } from "./policy";
 import type { Tasks } from "./service";
 
-export const DESKTOP_MODEL = "claude-opus-5-5";
+/** Models whose between-tool progress notes (`display: "updates"`) are documented. */
+const UPDATES_MODELS = new Set(["claude-opus-5-5"]);
 const MAX_STEPS = 80;
 const MAX_ACTIVE_MS = 30 * 60_000;
 const TAKEOVER_TIMEOUT_MS = 24 * 3600_000;
@@ -163,7 +164,7 @@ const describe = (name: string, input: Record<string, unknown>): string => {
 };
 
 /** Rough upper estimate before a request: text by length, images at their typical size. */
-function estimateCost(messages: Anthropic.Beta.BetaMessageParam[]): number {
+function estimateCost(messages: Anthropic.Beta.BetaMessageParam[], model: string): number {
   let chars = 0;
   let images = 0;
   const walk = (v: unknown) => {
@@ -179,7 +180,7 @@ function estimateCost(messages: Anthropic.Beta.BetaMessageParam[]): number {
     }
   };
   walk(messages);
-  const p = priceOf(DESKTOP_MODEL);
+  const p = priceOf(model);
   const tokens = chars / 3.5 + images * 1600 + 3000;
   return (tokens * p.input * 0.3 + 1500 * p.output) / 1_000_000;
 }
@@ -518,7 +519,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         throw new Stop("failed", "Stopped: it ran for 30 minutes without finishing.");
       }
       try {
-        d.spend.check(estimateCost(messages), { id, limitUsd: tasks.budget(id) });
+        d.spend.check(estimateCost(messages, task.model), { id, limitUsd: tasks.budget(id) });
       } catch (err) {
         if (!(err instanceof BudgetError)) throw err;
         if (err.limit !== "task") throw new Stop("failed", `Stopped: ${err.message}`);
@@ -535,13 +536,15 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
 
       const res = await d.model.stream(
         {
-          model: DESKTOP_MODEL,
+          model: task.model,
           max_tokens: 16000,
           betas: BETAS,
           system: [{ type: "text", text: DESKTOP_PROMPT }],
           cache_control: { type: "ephemeral" },
           tools: [computer.toJSON(), ...CUSTOM_TOOLS],
-          thinking: { type: "adaptive", display: "updates" },
+          thinking: UPDATES_MODELS.has(task.model)
+            ? { type: "adaptive", display: "updates" }
+            : { type: "adaptive" },
           output_config: { effort: "medium" },
           // Old screenshots are cleared on the server; clearing them here would break cached reasoning.
           context_management: {
@@ -564,7 +567,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         },
       );
       d.spend.recordResponse({
-        model: DESKTOP_MODEL,
+        model: task.model,
         purpose: "task",
         usage: res.usage,
         taskId: id,

@@ -42,6 +42,14 @@ struct SettingsView: View {
               Text("Medium").tag(AppSettings.Effort.medium)
             }
           }
+          if let model = settings.desktopModel {
+            Section("Desktop") {
+              Picker("Model for desktop tasks", selection: desktopModel(model)) {
+                Text("Opus 5.5").tag(AppSettings.DesktopModel.opus)
+                Text("Haiku 5.5 (cheaper, less tested)").tag(AppSettings.DesktopModel.haiku)
+              }
+            }
+          }
           // Brains from before the setting don't have it.
           if let opens = settings.notificationsOpen {
             Section {
@@ -92,6 +100,14 @@ struct SettingsView: View {
       get: { current.chatEffort },
       set: { value in
         Task { await act { settings = try await store.setChatEffort(value) } }
+      })
+  }
+
+  private func desktopModel(_ current: AppSettings.DesktopModel) -> Binding<AppSettings.DesktopModel> {
+    Binding(
+      get: { current },
+      set: { value in
+        Task { await act { settings = try await store.setDesktopModel(value) } }
       })
   }
 

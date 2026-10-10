@@ -16,7 +16,7 @@ import type { SettingsStore } from "../settings";
 import type { Spend } from "../spend";
 import type { Skills } from "../teach/skills";
 import { AGENT_MODEL, runAgentTask } from "./agent-run";
-import { DESKTOP_MODEL, runDesktopTask } from "./desktop-run";
+import { runDesktopTask } from "./desktop-run";
 import { Pool, ScreenLane } from "./lane";
 
 export type TasksDeps = {
@@ -208,7 +208,8 @@ export class Tasks {
       success_criteria: input.successCriteria,
       origin: input.origin,
       lane: "screen",
-      model: DESKTOP_MODEL,
+      // Fixed for the task: a settings change applies to tasks started after it.
+      model: this.d.settings.get().desktopModel,
       skill: input.skill ?? null,
       parent_id: p?.id ?? null,
       source: p?.source ?? null,

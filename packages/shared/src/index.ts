@@ -283,4 +283,6 @@ export type AppSettings = {
   paused: boolean;
   /** What tapping a notification opens: the web app, or the iOS app (hatbot:// links). */
   notificationsOpen: "web" | "app";
+  /** The model that drives desktop tasks. */
+  desktopModel: "claude-opus-5-5" | "claude-haiku-5-5";
 };
