@@ -37,6 +37,12 @@ struct SettingsView: View {
         }
         if let settings {
           Section("Chat") {
+            if let model = settings.chatModel {
+              Picker("Model", selection: chatModel(model)) {
+                Text("Haiku 5.5, asks Opus for hard parts").tag(AppSettings.ChatModel.haiku)
+                Text("Opus 5.5").tag(AppSettings.ChatModel.opus)
+              }
+            }
             Picker("Effort", selection: effort(settings)) {
               Text("Low").tag(AppSettings.Effort.low)
               Text("Medium").tag(AppSettings.Effort.medium)
@@ -100,6 +106,14 @@ struct SettingsView: View {
       get: { current.chatEffort },
       set: { value in
         Task { await act { settings = try await store.setChatEffort(value) } }
+      })
+  }
+
+  private func chatModel(_ current: AppSettings.ChatModel) -> Binding<AppSettings.ChatModel> {
+    Binding(
+      get: { current },
+      set: { value in
+        Task { await act { settings = try await store.setChatModel(value) } }
       })
   }
 

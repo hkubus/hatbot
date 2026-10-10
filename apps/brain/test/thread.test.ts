@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { type ThreadMessage, threadGroups } from "@hatbot/shared";
-import { activity, CHAT_MODEL, parseSummary } from "../src/agent/thread";
+import { activity, parseSummary } from "../src/agent/thread";
 import { costOf } from "../src/spend";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, testApp } from "./helpers";
@@ -28,8 +28,14 @@ test("a message gets a streamed reply, stored and searchable", async () => {
   expect(t.events.at(-1)).toMatchObject({ type: "message.done", status: "done" });
 
   const req = t.model.requests[0];
-  expect(req?.model).toBe(CHAT_MODEL);
-  expect(req?.fallbacks).toBe("default");
+  // Haiku 5.5 by default: no server-side fallback, and no progress-note display.
+  expect(req?.model).toBe("claude-haiku-5-5");
+  expect(req?.fallbacks).toBeUndefined();
+  expect(req?.thinking).toEqual({
+    type: "adaptive",
+    block_binding: { prefix_mismatch_behavior: "drop_block" },
+  });
+  expect(req?.tools?.some((x) => "name" in x && x.name === "ask_opus")).toBe(true);
   expect(req?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
   // New episode: context block first, then the timestamped message.
   expect(lastUserText(req as never)).toContain("<memory_index>");
@@ -129,6 +135,7 @@ test("system prompt and tools are identical across requests (cache-stable)", asy
 
 test("spend is recorded, and the daily limit stops replies", async () => {
   const t = await testApp(new FakeModel([{ content: [text("ok")] }]));
+  t.settings.update({ chatModel: "claude-opus-5-5" });
   await t.thread.post("hi").done;
   // Opus 5.5: 1000 input * $4/M + 200 output * $20/M
   expect(t.spend.summary().todayUsd).toBeCloseTo(0.008, 6);
@@ -316,4 +323,63 @@ test("text after a tool call is set apart with a rule", async () => {
   await t.thread.post("what do you remember?").done;
   const reply = t.thread.list().at(-1);
   expect(reply?.text).toBe("Let me check.\n\n---\n\nNothing in memory yet.");
+});
+
+test("on Haiku the chat can ask Opus once per reply; the answer goes in as is", async () => {
+  const code = "```python\nprint(sum(range(10)))\n```";
+  const model = new FakeModel([
+    {
+      content: [
+        text("I'll get Opus to write that."),
+        toolUse("ask_opus", { question: "Sum 0..9 in Python", context: "Owner uses Python 3.12" }),
+      ],
+    },
+    // A second ask in the same reply is refused.
+    { content: [toolUse("ask_opus", { question: "Again", context: "" })] },
+    { content: [text("Run it with python3.")] },
+  ]);
+  // The expert's streamed answer comes from the same fake, scripted after the chat's turns.
+  model.script.splice(1, 0, { content: [text(code)] });
+  const t = await testApp(model);
+  await t.thread.post("write me a python one-liner to sum 0..9").done;
+
+  const expert = model.requests[1];
+  expect(expert?.model).toBe("claude-opus-5-5");
+  expect(expert?.output_config).toEqual({ effort: "high" });
+  expect(JSON.stringify(expert?.messages)).toContain("Owner uses Python 3.12");
+  expect(expert?.tools).toBeUndefined();
+
+  const reply = t.thread.list().at(-1);
+  expect(reply?.text).toBe(
+    `I'll get Opus to write that.\n\n---\n\n${code}\n\n---\n\nRun it with python3.`,
+  );
+  const results = JSON.stringify(model.requests[2]?.messages.at(-1)?.content);
+  expect(results).toContain("shown to the owner as is");
+  expect(JSON.stringify(model.requests[3]?.messages.at(-1)?.content)).toContain(
+    "already asked once",
+  );
+  expect(t.db.query("SELECT model, purpose FROM spend_ledger ORDER BY id").all()).toContainEqual({
+    model: "claude-opus-5-5",
+    purpose: "expert",
+  });
+  expect(
+    t.events.some((e) => e.type === "message.progress" && e.text.includes("Asking Opus")),
+  ).toBe(true);
+});
+
+test("on Opus the chat has no ask_opus, keeps its fallback, and a switch starts a new episode", async () => {
+  const model = new FakeModel([{ content: [text("one")] }, { content: [text("two")] }]);
+  const t = await testApp(model);
+  await t.thread.post("first").done;
+  t.settings.update({ chatModel: "claude-opus-5-5" });
+  t.advance(60_000);
+  await t.thread.post("second").done;
+  const opus = model.requests[1];
+  expect(opus?.model).toBe("claude-opus-5-5");
+  expect(opus?.fallbacks).toBe("default");
+  expect(opus?.thinking).toMatchObject({ display: "updates" });
+  expect(opus?.tools?.some((x) => "name" in x && x.name === "ask_opus")).toBe(false);
+  // A fresh episode: one message, opening with the context block.
+  expect(opus?.messages.length).toBe(1);
+  expect(lastUserText(opus as never)).toContain("Owner: first");
 });

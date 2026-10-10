@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import { describeCron, type Episode, type Schedule, type ThreadMessage } from "@hatbot/shared";
+import { z } from "zod";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
 import type { MemoryStore } from "../memory/store";
@@ -12,10 +13,11 @@ import { BudgetError, priceOf, type Spend, tokenCount, tokensOf } from "../spend
 import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
 import { type ModelClient, modelErrorText } from "./model";
-import { SUMMARY_PROMPT, SYSTEM_PROMPT } from "./prompt";
+import { EXPERT_PROMPT, SUMMARY_PROMPT, SYSTEM_PROMPT } from "./prompt";
 import { runTool, TOOL_PARAMS, toolParam } from "./tools";
 
-export const CHAT_MODEL = "claude-opus-5-5";
+/** What ask_opus consults when the chat runs on Haiku 5.5. */
+export const EXPERT_MODEL = "claude-opus-5-5";
 export const SUMMARY_MODEL = "claude-haiku-5-5";
 const EPISODE_IDLE_MS = 30 * 60_000;
 const RECENT_MESSAGES = 10;
@@ -34,11 +36,33 @@ const BETAS: Anthropic.Beta.AnthropicBeta[] = [
  * rejects replayed thinking when these change, so an update or a plugin switched on or off that changes
  * them starts a new episode.
  */
-const prefixOf = (system: string, tools: Anthropic.Beta.BetaTool[]) =>
+const prefixOf = (model: string, system: string, tools: Anthropic.Beta.BetaTool[]) =>
   createHash("sha256")
-    .update(JSON.stringify([CHAT_MODEL, system, tools]))
+    .update(JSON.stringify([model, system, tools]))
     .digest("hex")
     .slice(0, 16);
+
+const AskOpus = z.object({
+  question: z
+    .string()
+    .min(1)
+    .max(4000)
+    .describe("What to answer or write, exactly as the owner needs it"),
+  context: z
+    .string()
+    .max(60_000)
+    .describe(
+      "Everything Opus needs: the relevant messages, code, errors, file contents, versions. It can't see this conversation",
+    ),
+});
+
+/** Offered only when the chat runs on Haiku 5.5. */
+const ASK_OPUS = toolParam({
+  name: "ask_opus",
+  description:
+    "Hand one hard part of this reply to Claude Opus 5.5, a stronger and costlier model. Use it only for: writing or reviewing more than a few lines of code, debugging, a problem that needs several careful steps of reasoning, or when the owner asks for Opus. Not for looking things up, memory, schedules, chat, summaries, short answers or anything you can answer well yourself. At most once per reply. Opus can't see the conversation or use tools, so give it the question and all the context it needs. Its answer is shown to the owner as is; you don't repeat it.",
+  schema: AskOpus,
+});
 
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 type Turn = Anthropic.Beta.BetaMessageParam;
@@ -375,8 +399,11 @@ export class Thread {
     const guidance = plugins.guidance();
     const system = guidance ? `${SYSTEM_PROMPT}\n\nYour plugins\n\n${guidance}` : SYSTEM_PROMPT;
     const pluginTools = plugins.tools("chat");
-    const tools = [...TOOL_PARAMS, ...pluginTools.map(toolParam)];
-    const episode = await this.episodeFor(prefixOf(system, tools));
+    // Fixed for the reply; a change starts a new episode, since thinking blocks are bound to the model.
+    const chatModel = settings.get().chatModel;
+    const onHaiku = chatModel === "claude-haiku-5-5";
+    const tools = [...TOOL_PARAMS, ...(onHaiku ? [ASK_OPUS] : []), ...pluginTools.map(toolParam)];
+    const episode = await this.episodeFor(prefixOf(chatModel, system, tools));
     db.query("UPDATE messages SET episode_id = ? WHERE id = ?").run(episode.id, user.id);
     // Clients file your message under its conversation now that it has one.
     events.emit({ type: "message.created", message: { ...user, episodeId: episode.id } });
@@ -430,6 +457,54 @@ export class Thread {
       events.emit({ type: "message.done", id: out.id, text, status });
     };
 
+    let askedOpus = false;
+    /** ask_opus: one Opus 5.5 call, its answer streamed into this reply as is. */
+    const askOpus = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
+      const result = (content: string, isError = false): BlockParam => ({
+        type: "tool_result",
+        tool_use_id: call.id,
+        content,
+        ...(isError ? { is_error: true } : {}),
+      });
+      const p = AskOpus.safeParse(call.input);
+      if (!p.success) return result(`Invalid input: ${z.prettifyError(p.error)}`, true);
+      if (askedOpus)
+        return result("Opus was already asked once in this reply. Work with its answer.", true);
+      askedOpus = true;
+      const content = `<question>\n${p.data.question}\n</question>\n\n<context>\n${p.data.context || "(none)"}\n</context>`;
+      const price = priceOf(EXPERT_MODEL);
+      spend.check(((content.length / 3 + 2000) * price.input + 8000 * price.output) / 1_000_000);
+      separate = true;
+      const res = await model.stream(
+        {
+          model: EXPERT_MODEL,
+          max_tokens: 32000,
+          betas: ["server-side-fallback-2026-07-01"],
+          fallbacks: "default",
+          system: EXPERT_PROMPT,
+          thinking: { type: "adaptive" },
+          output_config: { effort: "high" },
+          messages: [{ role: "user", content }],
+        },
+        { onText: say, signal: abort.signal },
+      );
+      used.costUsd += spend.recordResponse({
+        model: EXPERT_MODEL,
+        purpose: "expert",
+        usage: res.usage,
+        episodeId: episode.id,
+      });
+      used.tokens += tokenCount(tokensOf(res.usage));
+      events.emit({ type: "message.usage", id: out.id, ...used });
+      separate = true;
+      if (res.stop_reason === "refusal") return result("Opus declined to answer this.", true);
+      return result(
+        res.stop_reason === "max_tokens"
+          ? "Opus's answer was cut off; it's in your reply as far as it got. Tell the owner, briefly."
+          : "Opus's answer is now in your reply, shown to the owner as is. Don't repeat, summarise or rewrite it. Add at most a line if something needs saying; otherwise end your reply.",
+      );
+    };
+
     const started = this.clock();
     const abort = new AbortController();
     this.current = abort;
@@ -443,7 +518,7 @@ export class Thread {
 
         const messages = this.loadTurns(episode.id);
         try {
-          spend.check(estimateCost(messages));
+          spend.check(estimateCost(messages, chatModel));
         } catch (err) {
           if (err instanceof BudgetError) return finish("error", `_Stopped: ${err.message}_`);
           throw err;
@@ -452,10 +527,11 @@ export class Thread {
         progress("Thinking…");
         const res = await model.stream(
           {
-            model: CHAT_MODEL,
+            model: chatModel,
             max_tokens: 32000,
             betas: BETAS,
-            fallbacks: "default",
+            // Haiku 5.5 has no server-side fallback; a refusal there ends the reply with a note.
+            ...(onHaiku ? {} : { fallbacks: "default" as const }),
             // Tools and system are stable; the 1-hour cache keeps a 30-minute episode cheap.
             system: [
               {
@@ -468,9 +544,10 @@ export class Thread {
             tools,
             // If a replayed thinking block fails the conversation check anyway, lose that reasoning
             // rather than the reply.
+            // Haiku 5.5 writes no progress notes between tools, so it gets the default display.
             thinking: {
               type: "adaptive",
-              display: "updates",
+              ...(onHaiku ? {} : { display: "updates" as const }),
               block_binding: { prefix_mismatch_behavior: "drop_block" },
             },
             output_config: { effort: s.chatEffort },
@@ -491,7 +568,7 @@ export class Thread {
             JSON.stringify(res.input_transformations).slice(0, 1000),
           );
         used.costUsd += spend.recordResponse({
-          model: CHAT_MODEL,
+          model: chatModel,
           purpose: "thread",
           usage: res.usage,
           episodeId: episode.id,
@@ -525,6 +602,11 @@ export class Thread {
               is_error: true,
               content: "Input was cut off at max_tokens. Retry with a shorter input.",
             });
+            continue;
+          }
+          if (call.name === "ask_opus" && onHaiku) {
+            progress("Asking Opus…");
+            results.push(await askOpus(call));
             continue;
           }
           progress(
@@ -589,6 +671,7 @@ function toolLabel(name: string, plugins: Plugins): string {
     trigger_list: "Looking at triggers",
     trigger_update: "Changing a trigger",
     run_task: "Starting a task",
+    ask_opus: "Asking Opus",
   };
   const plugin = plugins.pluginOf(name);
   return labels[name] ?? `Using ${plugin?.name ?? name}`;
@@ -621,8 +704,8 @@ export function activity(label: string, input: unknown): string {
 }
 
 /** Rough upper estimate before a request: cached prefix at read price, plus room for a reply. */
-function estimateCost(messages: Turn[]): number {
-  const p = priceOf(CHAT_MODEL);
+function estimateCost(messages: Turn[], model: string): number {
+  const p = priceOf(model);
   const tokens = JSON.stringify(messages).length / 3 + 4000;
   return (tokens * p.input * 0.25 + 2000 * p.output) / 1_000_000;
 }

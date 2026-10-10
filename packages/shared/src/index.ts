@@ -279,6 +279,8 @@ export type SpendByModel = { model: string; usd: number };
 export type AppSettings = {
   limits: Limits;
   chatEffort: "low" | "medium";
+  /** The chat's model; on Haiku 5.5 it can ask Opus 5.5 for hard parts. */
+  chatModel: "claude-haiku-5-5" | "claude-opus-5-5";
   owner: { name: string; email: string };
   paused: boolean;
   /** What tapping a notification opens: the web app, or the iOS app (hatbot:// links). */

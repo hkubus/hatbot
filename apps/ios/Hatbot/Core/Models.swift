@@ -291,6 +291,14 @@ struct AppSettings: Codable, Equatable, Sendable {
   var notificationsOpen: Opens?
   /// The model that drives desktop tasks; missing on brains from before the setting.
   var desktopModel: DesktopModel?
+  /// The chat's model; missing on brains from before the setting.
+  var chatModel: ChatModel?
+
+  enum ChatModel: String, LenientEnum, CaseIterable {
+    case haiku = "claude-haiku-5-5"
+    case opus = "claude-opus-5-5"
+    static let fallback = ChatModel.haiku
+  }
 
   enum DesktopModel: String, LenientEnum, CaseIterable {
     case opus = "claude-opus-5-5"

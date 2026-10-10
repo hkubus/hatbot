@@ -153,6 +153,18 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
           <div className="group-box">
             <div className="row">
               <div className="txt">
+                <b>Model</b>
+              </div>
+              <select
+                value={settings.chatModel}
+                onChange={(e) => update({ chatModel: e.target.value as AppSettings["chatModel"] })}
+              >
+                <option value="claude-haiku-5-5">Haiku 5.5, asks Opus for hard parts</option>
+                <option value="claude-opus-5-5">Opus 5.5</option>
+              </select>
+            </div>
+            <div className="row">
+              <div className="txt">
                 <b>Effort</b>
               </div>
               <select

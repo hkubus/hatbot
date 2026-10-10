@@ -433,6 +433,11 @@ final class AppStore {
     return try await api.put("/settings", body: Body(chatEffort: effort))
   }
 
+  func setChatModel(_ model: AppSettings.ChatModel) async throws -> AppSettings {
+    struct Body: Encodable { let chatModel: AppSettings.ChatModel }
+    return try await api.put("/settings", body: Body(chatModel: model))
+  }
+
   func setDesktopModel(_ model: AppSettings.DesktopModel) async throws -> AppSettings {
     struct Body: Encodable { let desktopModel: AppSettings.DesktopModel }
     return try await api.put("/settings", body: Body(desktopModel: model))
