@@ -355,7 +355,7 @@ REST + JSON under `/api/v1`. One WebSocket at `/api/v1/stream` for events. A gen
 | Hooks | `POST /hooks/:id` (HMAC) · `POST/GET /hooks/kuma/:id?token=` |
 | Memory | `GET /memory/tree` · `GET/PUT /memory/file?path=` · `GET /memory/log` · `GET /memory/diff/:sha` · `POST /memory/revert/:sha` |
 | Spend | `GET /spend/summary` · `GET /spend/daily?days=30` |
-| Teach | `POST /teach/start` · `POST /teach/stop` → draft skill · `POST /teach/:id/save` |
+| Teach | `GET /teach` (recording + drafts) · `POST /teach/start` · `POST /teach/stop` → draft skill · `GET /teach/:id` · `POST /teach/:id/draft` (again) · `POST /teach/:id/save` `{name, content, replace?}` · `DELETE /teach/:id` |
 | Admin | `POST /pause-all` · `POST /resume` · `GET/PUT /settings` · `GET/POST /update` |
 | Plugins | `GET /plugins` · `GET/PATCH /plugins/:id` `{enabled?, config?}` · `POST /plugins/:id/test` |
 
@@ -452,7 +452,7 @@ Markdown and code blocks render fully.
 - **Watch-only by default.**
 - **Take over**: a blue 2px border and a banner, *"You're in control — Hatbot is paused"*, with **Hand back**.
 - **When Hatbot asks**: the panel shows its reason ("Captcha on example.com") and you get an ntfy push.
-- **Teach mode**: a red recording dot and *"Recording — show Hatbot how"*, with **Stop & create skill**.
+- **Teach mode**: **Teach a skill** next to Take over. While recording, a plain banner (no dot): *"Recording. Show Hatbot how."*, with **Discard** and **Stop & create skill**. Stopping opens the draft at `/memory/teach/:id`: the name (`skills/<name>.md`) and the markdown to edit, **Save skill** or **Discard**. Drafts not yet saved are listed in Memory.
 
 ---
 
@@ -511,9 +511,10 @@ Each milestone ends with a working, demo-able system.
 - **Done when**: a Kuma "down" alert at 3am is fixed or diagnosed before you wake up.
 
 ### M5 — Teach-by-showing
-- [ ] Record mode in takeover (live-view input events + screenshots + CDP URL/title)
-- [ ] Opus turns a recording into a draft `skills/<name>.md` with placeholders → you review and save
-- [ ] Skills index in the memory INDEX; Hatbot picks a skill up when a task matches
+- [x] Record mode in takeover (live-view input events + screenshots + CDP URL/title); typing into password, code and card fields, frames, or fields that can't be checked isn't recorded
+- [x] Opus turns a recording into a draft `skills/<name>.md` with placeholders → you review and save
+- [x] Skills index in the memory INDEX (and `skills_index`); background tasks see the list, `run_desktop_task(skill)` hands the desktop model its steps
+- [ ] Tried live: record a chore, save the skill, a schedule repeats it
 - **Done when**: you demo a chore once and Hatbot repeats it on a schedule.
 
 ### iOS app (alongside M3–M5)
