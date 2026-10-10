@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { CHAT_MODEL } from "../src/agent/thread";
+import { type ThreadMessage, threadGroups } from "@hatbot/shared";
+import { CHAT_MODEL, parseSummary } from "../src/agent/thread";
 import { costOf } from "../src/spend";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, testApp } from "./helpers";
@@ -195,4 +196,65 @@ test("Haiku 5.5 bills the whole request at the long-prompt price past 100k promp
   });
   expect(short).toBeCloseTo((100_000 * 0.1 + 1_000 * 0.5) / 1e6, 9);
   expect(long).toBeCloseTo((90_000 * 0.5 + 10_001 * 0.05 + 1_000 * 2.5) / 1e6, 9);
+});
+
+test("a conversation idle for 30 minutes gets a recap; the running summary carries on", async () => {
+  const model = new FakeModel(
+    [{ content: [text("Disk sdb is failing.")] }, { content: [text("Sure.")] }],
+    [
+      "<recap>Asked about the NAS disks; sdb is failing.</recap>\n<summary>2026-10-09: sdb on the NAS is failing.</summary>",
+    ],
+  );
+  const t = await testApp(model);
+  await t.thread.post("how are the NAS disks?").done;
+  const [user, reply] = t.thread.list();
+  expect(user?.episodeId).toBe(reply?.episodeId as number);
+  expect(t.events.some((e) => e.type === "message.created" && e.message.episodeId)).toBe(true);
+
+  await t.thread.sweep();
+  expect(model.creates.length).toBe(0);
+  t.advance(31 * 60_000);
+  await Promise.all([t.thread.sweep(), t.thread.sweep()]);
+  expect(model.creates.length).toBe(1);
+  const [episode] = t.thread.episodes([reply?.episodeId as number]);
+  expect(episode?.recap).toBe("Asked about the NAS disks; sdb is failing.");
+  expect(t.events.some((e) => e.type === "episode.updated" && e.episode.recap)).toBe(true);
+
+  // The next message starts a new conversation without summarizing the last one again.
+  await t.thread.post("thanks").done;
+  expect(model.creates.length).toBe(1);
+  expect(lastUserText(model.requests[1] as never)).toContain(
+    "2026-10-09: sdb on the NAS is failing.",
+  );
+  const { cookie } = await setUpOwner(t);
+  const res = await t.call("GET", `/thread/episodes?ids=${reply?.episodeId}`, undefined, {
+    cookie,
+  });
+  expect(((await res.json()) as { recap: string }[])[0]?.recap).toContain("NAS disks");
+  expect((await t.call("GET", "/thread/episodes?ids=1;drop", undefined, { cookie })).status).toBe(
+    400,
+  );
+});
+
+test("an answer without the tags is all running summary", () => {
+  expect(parseSummary("Just a summary.")).toEqual({ recap: null, summary: "Just a summary." });
+  expect(parseSummary("<recap> R </recap><summary> S </summary>")).toEqual({
+    recap: "R",
+    summary: "S",
+  });
+});
+
+test("the chat folds every finished conversation; cards join the one before", () => {
+  const m = (id: number, episodeId: number | null, role: "user" | "assistant" = "assistant") =>
+    ({ id, role, kind: "text", text: `message ${id}`, episodeId }) as ThreadMessage;
+  const groups = threadGroups(
+    [m(1, null), m(2, 1, "user"), m(3, 1), m(4, null), m(5, 2, "user"), m(6, 3, "user"), m(7, 3)],
+    { 1: { id: 1, startedAt: "", lastActivityAt: "", recap: "Talked about one." } },
+  );
+  expect(groups.map((g) => [g.episodeId, g.messages.map((x) => x.id), g.fold])).toEqual([
+    [null, [1], null],
+    [1, [2, 3, 4], "Talked about one."],
+    [2, [5], "message 5"],
+    [3, [6, 7], null],
+  ]);
 });

@@ -3,6 +3,7 @@ import {
   API_PREFIX,
   type Approval,
   type DesktopState,
+  type Episode,
   type HatbotEvent,
   type PluginInfo,
   type Schedule,
@@ -17,6 +18,8 @@ import { ApiError, api } from "./api";
 
 type State = {
   messages: ThreadMessage[];
+  /** The conversations the loaded messages belong to, for their recaps. */
+  episodes: Record<number, Episode>;
   /** Latest progress note per streaming message. */
   progress: Record<number, string>;
   hasEarlier: boolean;
@@ -42,6 +45,7 @@ type State = {
 
 let state: State = {
   messages: [],
+  episodes: {},
   progress: {},
   hasEarlier: false,
   paused: false,
@@ -80,8 +84,19 @@ const upsert = (list: ThreadMessage[], m: ThreadMessage) =>
     ? list.map((x) => (x.id === m.id ? { ...x, ...m } : x))
     : [...list, m].sort((a, b) => a.id - b.id);
 
+/** Fetches the conversations of `messages` we don't have yet. */
+async function loadEpisodes(messages: ThreadMessage[]) {
+  const ids = [...new Set(messages.map((m) => m.episodeId))].filter(
+    (id): id is number => id !== null && !state.episodes[id],
+  );
+  if (!ids.length) return;
+  const list = await api<Episode[]>(`/thread/episodes?ids=${ids.join(",")}`);
+  set({ episodes: { ...state.episodes, ...Object.fromEntries(list.map((e) => [e.id, e])) } });
+}
+
 export async function loadThread() {
   const messages = await api<ThreadMessage[]>(`/thread/messages?limit=${PAGE}`);
+  await loadEpisodes(messages).catch(() => {});
   set({ messages, hasEarlier: messages.length === PAGE });
 }
 
@@ -89,6 +104,7 @@ export async function loadEarlier() {
   const first = state.messages[0];
   if (!first) return;
   const older = await api<ThreadMessage[]>(`/thread/messages?limit=${PAGE}&before=${first.id}`);
+  await loadEpisodes(older).catch(() => {});
   set({ messages: [...older, ...state.messages], hasEarlier: older.length === PAGE });
 }
 
@@ -343,6 +359,8 @@ function apply(e: HatbotEvent) {
       return set({ plugins: { ...state.plugins, [e.plugin.id]: e.plugin } });
     case "teach.updated":
       return putTeach(e.session);
+    case "episode.updated":
+      return set({ episodes: { ...state.episodes, [e.episode.id]: e.episode } });
   }
 }
 

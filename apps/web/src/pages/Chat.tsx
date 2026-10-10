@@ -1,4 +1,4 @@
-import type { ThreadMessage } from "@hatbot/shared";
+import { type ThreadMessage, threadGroups } from "@hatbot/shared";
 import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -317,8 +317,33 @@ function Message({
   );
 }
 
+/** A finished conversation, folded up under its recap. */
+function Fold({
+  messages,
+  text,
+  open,
+  onToggle,
+}: {
+  messages: ThreadMessage[];
+  text: string;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const first = messages[0] as ThreadMessage;
+  return (
+    <button type="button" className={`fold ${open ? "open" : ""}`} onClick={onToggle}>
+      <Icon name="chevron" />
+      <span className="fold-text">{text}</span>
+      <span className="t">{time(first.createdAt)}</span>
+    </button>
+  );
+}
+
 export function Chat() {
   const messages = useStore((s) => s.messages);
+  const episodes = useStore((s) => s.episodes);
+  const approvals = useStore((s) => s.approvals);
+  const [unfolded, setUnfolded] = useState<Set<number>>(() => new Set());
   const progress = useStore((s) => s.progress);
   const hasEarlier = useStore((s) => s.hasEarlier);
   const paused = useStore((s) => s.paused);
@@ -395,6 +420,25 @@ export function Chat() {
   };
 
   let lastDay = "";
+  const dayBefore = (m: ThreadMessage) => {
+    const day = dayLabel(m.createdAt);
+    const show = day !== lastDay;
+    lastDay = day;
+    return show ? <div className="day">{day}</div> : null;
+  };
+  const row = (m: ThreadMessage) => (
+    <Fragment key={m.id}>
+      {dayBefore(m)}
+      <Message m={m} progress={progress[m.id]} animate={m.id >= animateFrom.current} />
+    </Fragment>
+  );
+  const toggle = (id: number) =>
+    setUnfolded((s) => {
+      const next = new Set(s);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+
   return (
     <>
       <section className="view" ref={scroller} onScroll={onScroll}>
@@ -416,14 +460,24 @@ export function Chat() {
               </button>
             )}
             {!messages.length && <div className="empty">Say hello to Hatbot.</div>}
-            {messages.map((m) => {
-              const day = dayLabel(m.createdAt);
-              const showDay = day !== lastDay;
-              lastDay = day;
+            {threadGroups(messages, episodes).map((g) => {
+              if (g.fold === null || g.episodeId === null) return g.messages.map(row);
+              const id = g.episodeId;
+              const open = unfolded.has(id);
+              // An approval still waiting for you stays in view.
+              const waiting = g.messages.filter(
+                (m) => m.approvalId && approvals[m.approvalId]?.status === "pending",
+              );
               return (
-                <Fragment key={m.id}>
-                  {showDay && <div className="day">{day}</div>}
-                  <Message m={m} progress={progress[m.id]} animate={m.id >= animateFrom.current} />
+                <Fragment key={`fold-${id}`}>
+                  {dayBefore(g.messages[0] as ThreadMessage)}
+                  <Fold
+                    messages={g.messages}
+                    text={g.fold}
+                    open={open}
+                    onToggle={() => toggle(id)}
+                  />
+                  {open ? g.messages.map(row) : waiting.map(row)}
                 </Fragment>
               );
             })}

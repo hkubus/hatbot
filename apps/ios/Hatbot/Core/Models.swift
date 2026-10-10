@@ -48,6 +48,17 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   var taskId: Int?
   var approvalId: Int?
   var scheduleId: Int?
+  /// The conversation it belongs to; cards from background tasks have none.
+  var episodeId: Int?
+}
+
+/// A conversation in the thread. Finished ones fold up under their recap.
+struct Episode: Codable, Identifiable, Equatable, Sendable {
+  let id: Int
+  var startedAt: String
+  var lastActivityAt: String
+  /// Null until it has been idle for 30 minutes, and for conversations from before recaps.
+  var recap: String?
 }
 
 enum TaskStatus: String, LenientEnum {
@@ -285,11 +296,12 @@ enum HatbotEvent: Decodable, Sendable {
   case scheduleDeleted(id: Int)
   case triggerUpdated(Trigger)
   case triggerDeleted(id: Int)
+  case episodeUpdated(Episode)
   case unknown(String)
 
   private enum Key: String, CodingKey {
     case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused
-    case task, step, approval, state, schedule, trigger
+    case task, step, approval, state, schedule, trigger, episode
   }
 
   init(from decoder: Decoder) throws {
@@ -329,6 +341,7 @@ enum HatbotEvent: Decodable, Sendable {
     case "schedule.deleted": self = .scheduleDeleted(id: try c.decode(Int.self, forKey: .id))
     case "trigger.updated": self = .triggerUpdated(try c.decode(Trigger.self, forKey: .trigger))
     case "trigger.deleted": self = .triggerDeleted(id: try c.decode(Int.self, forKey: .id))
+    case "episode.updated": self = .episodeUpdated(try c.decode(Episode.self, forKey: .episode))
     default: self = .unknown(type)
     }
   }

@@ -203,7 +203,7 @@ build context (system + memory index + task)  →  call model (stream)
 - **After 30 minutes idle**, the next message starts a new episode containing:
   - the system prompt
   - the memory index
-  - a rolling **thread summary** (updated by Haiku at the end of each episode)
+  - a rolling **thread summary** (updated by Haiku once an episode has been idle for 30 minutes, which also writes the episode's one-line recap)
   - the last ~10 messages
   - your new message
 - **`search_history(query, range?)`**: a full-text search over the thread in SQLite (FTS5). Hatbot pulls in older messages only when it needs them.
@@ -348,7 +348,7 @@ REST + JSON under `/api/v1`. One WebSocket at `/api/v1/stream` for events. A gen
 | Area | Endpoints |
 |---|---|
 | Auth | `POST /auth/login` (password + TOTP) → session cookie (web) or bearer token (apps) · `POST /auth/logout` (ends the session, or the bearer token it's called with) · `GET/POST/DELETE /tokens` |
-| Thread | `GET /thread/messages?before=` · `POST /thread/messages` (streams the reply over WS) |
+| Thread | `GET /thread/messages?before=` · `POST /thread/messages` (streams the reply over WS) · `GET /thread/episodes?ids=` (recaps) |
 | Tasks | `GET /tasks?status=` · `GET /tasks/:id` (+ steps) · `POST /tasks/:id/cancel` · `GET /tasks/:id/screens/:stepId` (a raised budget is an approval) |
 | Approvals | `GET /approvals?pending` · `POST /approvals/:id` `{decision}` · `POST /approvals/:id/token-decision` (ntfy) |
 | Desktop | `GET /desktop/status` · `POST /desktop/takeover` · `POST /desktop/handback` · `WS /desktop/live` (frames + input) · `GET /desktop/snapshots` · `POST /desktop/rollback` |
@@ -448,6 +448,8 @@ Plain messages, not cards; the details live on the task's or schedule's page.
 - **Schedule created**: "Scheduled **name**: every day at 08:00."
 
 Markdown and code blocks render fully.
+
+**Folded conversations**: every episode but the latest folds into one line, its recap (or its first message, for episodes from before recaps), with the time. A tap opens it in place. Cards from background tasks fold with the conversation before them; an approval still waiting for you stays in view.
 
 ### 10.5 Live view
 - **Watch-only by default.**

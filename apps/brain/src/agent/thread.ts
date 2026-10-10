@@ -1,7 +1,7 @@
 // The single chat thread, run as episodes (PLAN.md §5.2, §5.3).
 import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
-import { describeCron, type Schedule, type ThreadMessage } from "@hatbot/shared";
+import { describeCron, type Episode, type Schedule, type ThreadMessage } from "@hatbot/shared";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
 import type { MemoryStore } from "../memory/store";
@@ -22,7 +22,8 @@ const RECENT_MESSAGES = 10;
 const MAX_STEPS = 25;
 const MAX_TURN_MS = 10 * 60_000;
 const MESSAGE_COLUMNS =
-  "id, role, kind, text, status, created_at AS createdAt, task_id AS taskId, approval_id AS approvalId, schedule_id AS scheduleId";
+  "id, role, kind, text, status, created_at AS createdAt, task_id AS taskId, approval_id AS approvalId, schedule_id AS scheduleId, episode_id AS episodeId";
+const EPISODE_COLUMNS = "id, started_at AS startedAt, last_activity_at AS lastActivityAt, recap";
 const BETAS: Anthropic.Beta.AnthropicBeta[] = [
   "server-side-fallback-2026-07-01",
   "thinking-display-updates-2026-08-18",
@@ -57,8 +58,19 @@ export type ThreadDeps = {
   clock?: () => number;
 };
 
+/** The two parts of Haiku's answer; an answer without the tags is all running summary. */
+export function parseSummary(out: string): { recap: string | null; summary: string } {
+  const tag = (name: string) =>
+    new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(out)?.[1]?.trim();
+  const summary = tag("summary");
+  if (summary === undefined) return { recap: null, summary: out.trim() };
+  return { recap: tag("recap")?.slice(0, 400) || null, summary };
+}
+
 export class Thread {
   private chain: Promise<void> = Promise.resolve();
+  /** Summaries being written, so the sweep and a new message don't write one twice. */
+  private summarizing = new Map<number, Promise<void>>();
   private current: AbortController | null = null;
   private clock: () => number;
 
@@ -244,8 +256,47 @@ export class Thread {
     );
   }
 
-  /** Folds a finished episode into the rolling thread summary with Haiku. */
-  async summarize(episodeId: number) {
+  episodes(ids: number[]): Episode[] {
+    if (!ids.length) return [];
+    return this.d.db
+      .query<Episode, number[]>(
+        `SELECT ${EPISODE_COLUMNS} FROM episodes WHERE id IN (${ids.map(() => "?").join(", ")}) ORDER BY id`,
+      )
+      .all(...ids);
+  }
+
+  /**
+   * Summarizes the last episode once it has been idle for 30 minutes, so it folds up in the chat
+   * without waiting for the next message. The brain calls it every minute.
+   */
+  async sweep() {
+    const last = this.d.db
+      .query<{ id: number; last_activity_at: string }, []>(
+        "SELECT id, last_activity_at FROM episodes WHERE summarized = 0 ORDER BY id DESC LIMIT 1",
+      )
+      .get();
+    if (!last || this.clock() - Date.parse(last.last_activity_at) < EPISODE_IDLE_MS) return;
+    try {
+      await this.summarize(last.id);
+    } catch (err) {
+      console.error("thread summary failed; trying again later", err);
+    }
+  }
+
+  /** Folds a finished episode into the rolling thread summary with Haiku, and writes its recap. */
+  summarize(episodeId: number): Promise<void> {
+    const running = this.summarizing.get(episodeId);
+    if (running) return running;
+    const run = this.writeSummary(episodeId).finally(() => this.summarizing.delete(episodeId));
+    this.summarizing.set(episodeId, run);
+    return run;
+  }
+
+  private async writeSummary(episodeId: number) {
+    const done = this.d.db
+      .query<{ summarized: number }, [number]>("SELECT summarized FROM episodes WHERE id = ?")
+      .get(episodeId)?.summarized;
+    if (done) return;
     const transcript = this.d.db
       .query<{ role: string; text: string; created_at: string }, [number]>(
         "SELECT role, text, created_at FROM messages WHERE episode_id = ? AND status != 'streaming' ORDER BY id",
@@ -276,20 +327,25 @@ export class Thread {
         usage: res.usage,
         episodeId,
       });
-      const summary = res.content
+      const out = res.content
         .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
         .map((b) => b.text)
         .join("\n")
         .trim();
+      const { recap, summary } = parseSummary(out);
       if (res.stop_reason === "end_turn" && summary) {
         this.d.db
           .query(
             "INSERT INTO settings (key, value) VALUES ('thread_summary', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
           )
           .run(summary);
+        if (recap)
+          this.d.db.query("UPDATE episodes SET recap = ? WHERE id = ?").run(recap, episodeId);
       }
     }
     this.d.db.query("UPDATE episodes SET summarized = 1 WHERE id = ?").run(episodeId);
+    const [episode] = this.episodes([episodeId]);
+    if (episode) this.d.events.emit({ type: "episode.updated", episode });
   }
 
   /** Opening context for a new episode: memory index, summary, the last few messages. */
@@ -322,6 +378,8 @@ export class Thread {
     const tools = [...TOOL_PARAMS, ...pluginTools.map(toolParam)];
     const episode = await this.episodeFor(prefixOf(system, tools));
     db.query("UPDATE messages SET episode_id = ? WHERE id = ?").run(episode.id, user.id);
+    // Clients file your message under its conversation now that it has one.
+    events.emit({ type: "message.created", message: { ...user, episodeId: episode.id } });
 
     const userBlocks: BlockParam[] = [];
     if (episode.isNew) {

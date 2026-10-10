@@ -9,6 +9,8 @@ final class AppStore {
   static let page = 50
 
   var messages: [ThreadMessage] = []
+  /// The conversations the loaded messages belong to, for their recaps.
+  var episodes: [Int: Episode] = [:]
   /// Latest progress note per streaming reply.
   var progress: [Int: String] = [:]
   var hasEarlier = false
@@ -132,6 +134,8 @@ final class AppStore {
     case let .triggerDeleted(id):
       triggers[id] = nil
       deletedTriggers.insert(id)
+    case let .episodeUpdated(e):
+      episodes[e.id] = e
     case .unknown:
       break
     }
@@ -150,6 +154,7 @@ final class AppStore {
 
   func loadThread() async throws {
     let list: [ThreadMessage] = try await api.get("/thread/messages?limit=\(Self.page)")
+    try? await loadEpisodes(list)
     messages = list
     hasEarlier = list.count == Self.page
   }
@@ -157,8 +162,17 @@ final class AppStore {
   func loadEarlier() async throws {
     guard let first = messages.first else { return }
     let older: [ThreadMessage] = try await api.get("/thread/messages?limit=\(Self.page)&before=\(first.id)")
+    try? await loadEpisodes(older)
     messages = older + messages
     hasEarlier = older.count == Self.page
+  }
+
+  /// Fetches the conversations of `list` we don't have yet. A brain from before folds answers 404.
+  private func loadEpisodes(_ list: [ThreadMessage]) async throws {
+    let ids = Set(list.compactMap(\.episodeId)).filter { episodes[$0] == nil }.sorted()
+    guard !ids.isEmpty else { return }
+    let found: [Episode] = try await api.get("/thread/episodes?ids=" + ids.map(String.init).joined(separator: ","))
+    for e in found { episodes[e.id] = e }
   }
 
   func send(_ text: String) async throws {

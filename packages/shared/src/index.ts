@@ -5,6 +5,7 @@ import type { Schedule, Trigger } from "./schedule";
 
 export * from "./plugin";
 export * from "./schedule";
+export * from "./thread";
 
 export const API_PREFIX = "/api/v1";
 
@@ -56,6 +57,17 @@ export type ThreadMessage = {
   taskId: number | null;
   approvalId: number | null;
   scheduleId: number | null;
+  /** The conversation it belongs to; cards from background tasks have none. */
+  episodeId: number | null;
+};
+
+/** A conversation in the thread (PLAN.md §5.3). Finished ones fold up under their recap. */
+export type Episode = {
+  id: number;
+  startedAt: string;
+  lastActivityAt: string;
+  /** One or two sentences on what it was about; null until it has been idle for 30 minutes. */
+  recap: string | null;
 };
 
 export type TaskStatus =
@@ -187,7 +199,8 @@ export type HatbotEvent =
   | { type: "trigger.updated"; trigger: Trigger }
   | { type: "trigger.deleted"; id: number }
   | { type: "plugin.updated"; plugin: PluginInfo }
-  | { type: "teach.updated"; session: TeachSession };
+  | { type: "teach.updated"; session: TeachSession }
+  | { type: "episode.updated"; episode: Episode };
 
 /** A skill's name: its file is skills/<name>.md. */
 export const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,59}$/;

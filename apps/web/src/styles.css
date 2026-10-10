@@ -577,6 +577,42 @@ html[data-theme="dark"] .seg button.active {
   color: var(--muted);
   padding: 6px 0 0;
 }
+/* A finished conversation, folded up under its recap. */
+.fold {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.fold:hover {
+  background: rgba(127, 127, 127, 0.08);
+}
+.fold svg.i {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  align-self: center;
+  transition: transform 0.2s var(--spring);
+}
+.fold.open svg.i {
+  transform: rotate(90deg);
+}
+.fold-text {
+  flex: 1;
+  min-width: 0;
+}
+.fold .t {
+  flex: none;
+  font-size: 11px;
+}
 .msg {
   display: grid;
   gap: 4px;

@@ -1,5 +1,6 @@
 // The thread (PLAN.md §10.2, §10.4): plain bubbles, a time under each, Copy and Open in a long-press
-// menu. A task shows under the reply that started it; approvals carry Approve and Deny.
+// menu. A task shows under the reply that started it; approvals carry Approve and Deny. Finished
+// conversations fold up under their recap.
 import SwiftUI
 import UIKit
 
@@ -11,6 +12,45 @@ struct ChatView: View {
   @State private var error: String?
   @State private var position = ScrollPosition(edge: .bottom)
   @State private var loaded = false
+  @State private var unfolded = Set<Int>()
+
+  /// What the list shows: day labels, folds, and the messages that aren't folded away.
+  private enum Row: Identifiable {
+    case day(String, before: Int)
+    case fold(ThreadGroup)
+    case message(ThreadMessage)
+
+    var id: String {
+      switch self {
+      case let .day(_, before): "d\(before)"
+      case let .fold(g): "f\(g.id)"
+      case let .message(m): "m\(m.id)"
+      }
+    }
+  }
+
+  private var rows: [Row] {
+    var rows: [Row] = []
+    var previous: ThreadMessage?
+    func add(_ m: ThreadMessage, as row: Row) {
+      if let day = dayChange(m, after: previous) { rows.append(.day(day, before: m.id)) }
+      previous = m
+      rows.append(row)
+    }
+    for g in ThreadFolds.groups(store.messages, episodes: store.episodes) {
+      guard g.fold != nil, let id = g.episodeId else {
+        for m in g.messages { add(m, as: .message(m)) }
+        continue
+      }
+      add(g.messages[0], as: .fold(g))
+      // An approval still waiting for you stays in view.
+      let shown = unfolded.contains(id)
+        ? g.messages
+        : g.messages.filter { m in m.approvalId.map { store.approvals[$0]?.status == .pending } ?? false }
+      for m in shown { add(m, as: .message(m)) }
+    }
+    return rows
+  }
 
   var body: some View {
     NavigationStack(path: $path) {
@@ -24,12 +64,20 @@ struct ChatView: View {
           if loaded && store.messages.isEmpty {
             Text("Say hello to Hatbot.").foregroundStyle(.secondary).padding(.top, 40)
           }
-          let messages = store.messages
-          ForEach(Array(messages.enumerated()), id: \.element.id) { i, m in
-            if let day = dayChange(m, after: i > 0 ? messages[i - 1] : nil) {
+          ForEach(rows) { row in
+            switch row {
+            case let .day(day, _):
               Text(day).font(.footnote.weight(.medium)).foregroundStyle(.secondary).padding(.top, 6)
+            case let .fold(g):
+              FoldRow(group: g, open: g.episodeId.map { unfolded.contains($0) } ?? false) {
+                guard let id = g.episodeId else { return }
+                withAnimation(.snappy) {
+                  if unfolded.remove(id) == nil { unfolded.insert(id) }
+                }
+              }
+            case let .message(m):
+              MessageRow(m: m, open: { path.append($0) })
             }
-            MessageRow(m: m, open: { path.append($0) })
           }
         }
         .padding(.horizontal, 14)
@@ -140,6 +188,33 @@ struct PausedBanner: View {
     .glassSurface(in: .capsule)
     .padding(.horizontal, 12)
     .padding(.vertical, 6)
+  }
+}
+
+/// A finished conversation, folded up under its recap; a tap opens it in place.
+private struct FoldRow: View {
+  let group: ThreadGroup
+  let open: Bool
+  let toggle: () -> Void
+
+  var body: some View {
+    Button(action: toggle) {
+      HStack(alignment: .firstTextBaseline, spacing: 8) {
+        Image(systemName: "chevron.right")
+          .font(.caption.weight(.semibold))
+          .rotationEffect(.degrees(open ? 90 : 0))
+        Text(group.fold ?? "")
+          .multilineTextAlignment(.leading)
+          .frame(maxWidth: .infinity, alignment: .leading)
+        Text(group.messages[0].createdAt.timeText).font(.caption2)
+      }
+      .font(.subheadline)
+      .foregroundStyle(.secondary)
+      .padding(.vertical, 6)
+      .contentShape(.rect)
+    }
+    .buttonStyle(.plain)
+    .accessibilityHint(open ? "Folds the conversation" : "Shows the conversation")
   }
 }
 

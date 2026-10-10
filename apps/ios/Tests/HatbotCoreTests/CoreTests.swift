@@ -244,3 +244,27 @@ final class ScheduleAndMemoryTests: XCTestCase {
     XCTAssertEqual(API.query("notes/a b&c+d.md"), "notes/a%20b%26c%2Bd.md")
   }
 }
+
+final class FoldTests: XCTestCase {
+  private func m(_ id: Int, _ episode: Int?, _ role: ThreadMessage.Role = .assistant) -> ThreadMessage {
+    ThreadMessage(
+      id: id, role: role, kind: .text, text: "message \(id)", status: .done, createdAt: "", episodeId: episode)
+  }
+
+  func testFoldsFinishedConversations() {
+    let groups = ThreadFolds.groups(
+      [m(1, nil), m(2, 1, .user), m(3, 1), m(4, nil), m(5, 2, .user), m(6, 3, .user), m(7, 3)],
+      episodes: [1: Episode(id: 1, startedAt: "", lastActivityAt: "", recap: "Talked about one.")])
+    XCTAssertEqual(groups.map(\.episodeId), [nil, 1, 2, 3])
+    XCTAssertEqual(groups.map { $0.messages.map(\.id) }, [[1], [2, 3, 4], [5], [6, 7]])
+    XCTAssertEqual(groups.map(\.fold), [nil, "Talked about one.", "message 5", nil])
+  }
+
+  func testDecodesEpisodeEvents() throws {
+    let json = #"{"type":"episode.updated","episode":{"id":4,"startedAt":"a","lastActivityAt":"b","recap":"R"}}"#
+    guard case let .episodeUpdated(e) = try JSONDecoder().decode(HatbotEvent.self, from: Data(json.utf8)) else {
+      return XCTFail("not an episode")
+    }
+    XCTAssertEqual(e.recap, "R")
+  }
+}

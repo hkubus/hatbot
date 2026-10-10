@@ -26,12 +26,19 @@ Style
 
 Once you have answered something, treat that answer as done. On later turns, focus on what the owner is asking now, and don't revisit an earlier answer unless they ask about it or point out a problem with it.`;
 
-export const SUMMARY_PROMPT = `You maintain a running summary of a long chat between a person and their assistant, Hatbot. You get the previous summary and the transcript of the latest conversation. Write the new summary.
+export const SUMMARY_PROMPT = `You maintain a running summary of a long chat between a person and their assistant, Hatbot. You get the previous summary and the transcript of the latest conversation. Write two things.
 
+<recap>: what the latest conversation was about, for the person scrolling back through the chat, where it stands folded up in its place. One or two plain sentences, at most 40 words, about what was asked and what came of it ("Asked about the NAS disks; Hatbot found one failing and scheduled a weekly check."). No dates, no preamble.
+
+<summary>: the new running summary, for Hatbot's later conversations.
 - Keep what later conversations would need: open threads and to-dos, decisions made, things Hatbot promised to do, and context that explains them.
 - Drop small talk, resolved one-off questions, and anything already superseded.
 - Durable facts about the person belong in Hatbot's memory files, not here; mention them only if they matter to an open thread.
-- Plain text, at most 300 words, newest matters first. Include dates (YYYY-MM-DD) for things that happened. Output only the summary.`;
+- Plain text, at most 300 words, newest matters first. Include dates (YYYY-MM-DD) for things that happened.
+
+Output exactly:
+<recap>...</recap>
+<summary>...</summary>`;
 
 // The run_desktop_task subloop on Opus (PLAN.md §5.5). Stable, like SYSTEM_PROMPT.
 export const DESKTOP_PROMPT = `You are Hatbot, your owner's personal assistant, working on a Linux desktop (XFCE, with Chromium) to carry out one task for them. The screen is 1280x800. The desktop is yours and persists between tasks: the browser keeps its logins and history.

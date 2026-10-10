@@ -239,4 +239,7 @@ export const migrations: string[] = [
   );
   ALTER TABLE tasks ADD COLUMN skill TEXT;
   `,
+  /* 10: a finished conversation's recap, shown where it's folded up in the chat */ `
+  ALTER TABLE episodes ADD COLUMN recap TEXT;
+  `,
 ];

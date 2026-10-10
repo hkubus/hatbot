@@ -20,6 +20,10 @@ export const threadRoutes = new Hono<AppEnv>()
       return c.json(c.var.thread.list(before, limit));
     },
   )
+  // The conversations messages belong to, for their recaps where they fold up.
+  .get("/thread/episodes", query(z.object({ ids: z.string().regex(/^\d+(,\d+){0,199}$/) })), (c) =>
+    c.json(c.var.thread.episodes(c.req.valid("query").ids.split(",").map(Number))),
+  )
   .post("/thread/messages", json(PostMessage), (c) => {
     const { message } = c.var.thread.post(c.req.valid("json").text);
     return c.json(message, 202);
