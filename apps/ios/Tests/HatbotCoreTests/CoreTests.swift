@@ -116,6 +116,37 @@ final class MarkdownTests: XCTestCase {
       ])
   }
 
+  func testChartBlocks() {
+    let json = #"{"type":"bar","unit":"$","x":["Mon",2],"series":[{"data":[1.5,null]},{"name":"tasks","data":[0.8,2]}]}"#
+    guard case let .chart(spec)? = Markdown.parse("```chart\n\(json)\n```").first else {
+      return XCTFail("not a chart")
+    }
+    XCTAssertEqual(spec.type, .bar)
+    XCTAssertEqual(spec.x, ["Mon", "2"])
+    XCTAssertEqual(spec.series[0].data, [1.5, nil])
+    XCTAssertEqual(spec.names, ["Series 1", "tasks"])
+    // Still streaming: a placeholder, not raw JSON.
+    XCTAssertEqual(Markdown.parse("```chart\n{\"type\":"), [.chartPending])
+    // Finished but malformed (a series that doesn't line up): plain code.
+    let bad = #"{"type":"line","x":["a","b"],"series":[{"data":[1]}]}"#
+    XCTAssertEqual(Markdown.parse("```chart\n\(bad)\n```"), [.code(language: "chart", code: bad)])
+  }
+
+  func testChartValues() {
+    func spec(_ unit: String?) -> ChartSpec {
+      ChartSpec.parse(#"{"type":"line","x":["a"],"series":[{"data":[1]}]}"#.replacingOccurrences(
+        of: "\"line\"", with: unit.map { "\"line\",\"unit\":\"\($0)\"" } ?? "\"line\""))!
+    }
+    XCTAssertEqual(spec(nil).format(1284), "1,284")
+    XCTAssertEqual(spec(nil).format(12900, compact: true), "12.9K")
+    XCTAssertEqual(spec(nil).format(0.4213), "0.42")
+    XCTAssertEqual(spec("%").format(42.25), "42.3%")
+    XCTAssertEqual(spec("GiB").format(3.1), "3.1 GiB")
+    XCTAssertEqual(spec("$").format(4_200_000, compact: true), "$4.2M")
+    XCTAssertEqual(spec("$").format(0.8), "$0.80")
+    XCTAssertEqual(spec("€").format(-12), "-€12")
+  }
+
   func testUnclosedFenceRunsToTheEnd() {
     XCTAssertEqual(
       Markdown.parse("Look:\n```\nstill typing"), [.paragraph("Look:"), .code(language: nil, code: "still typing")])

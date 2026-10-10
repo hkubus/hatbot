@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { PluginInfo } from "./plugin";
 import type { Schedule, Trigger } from "./schedule";
 
+export * from "./chart";
 export * from "./plugin";
 export * from "./schedule";
 export * from "./thread";

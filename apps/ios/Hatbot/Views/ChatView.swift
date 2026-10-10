@@ -246,7 +246,9 @@ private struct MessageRow: View {
           .background(Color.botBubble, in: UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 6, bottomTrailingRadius: 18, topTrailingRadius: 18))
           .contextMenu { menu }
         if m.status != .streaming {
-          Text(m.createdAt.timeText).font(.caption2).foregroundStyle(.secondary)
+          Text(m.createdAt.timeText + (updatedAt.map { " · Updated \($0.timeText)" } ?? ""))
+            .font(.caption2)
+            .foregroundStyle(.secondary)
         }
       }
       .padding(.trailing, 32)
@@ -261,6 +263,17 @@ private struct MessageRow: View {
     case .approval where m.approvalId != nil: ApprovalMessage(approvalId: m.approvalId!)
     case .schedule where m.scheduleId != nil: ScheduleMessage(scheduleId: m.scheduleId!)
     default: ReplyMessage(m: m)
+    }
+  }
+
+  /// When a task's result changed the message after it was sent: a reply's task once it ends, or a task
+  /// card that showed it running (one added when the task ended wasn't updated).
+  private var updatedAt: String? {
+    guard let task = m.taskId.flatMap({ store.tasks[$0] }), let done = task.finishedAt else { return nil }
+    switch m.kind {
+    case .text: return done
+    case .task: return done > m.createdAt ? done : nil
+    case .approval, .schedule: return nil
     }
   }
 
@@ -284,7 +297,7 @@ private struct MessageRow: View {
       if m.kind == .task {
         if let task { copyButton(result ?? task.title) }
       } else {
-        copyButton([m.text, result ?? ""].filter { !$0.isEmpty }.joined(separator: "\n\n"))
+        copyButton([m.text, result ?? ""].filter { !$0.isEmpty }.joined(separator: "\n\n---\n\n"))
       }
       if let taskId = m.taskId { openButton(taskId) }
     }
@@ -315,6 +328,8 @@ private struct ReplyMessage: View {
         .font(.footnote.monospacedDigit())
         .foregroundStyle(.secondary)
     }
+    // The result came later: a rule sets it apart from the reply, like text after a tool.
+    if !m.text.isEmpty, let task = m.taskId.flatMap({ store.tasks[$0] }), !task.isActive { Divider() }
     if let taskId = m.taskId { TaskResult(taskId: taskId) }
   }
 }

@@ -1,8 +1,18 @@
-import { type ThreadMessage, threadGroups } from "@hatbot/shared";
-import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
-import Markdown from "react-markdown";
+import { parseChart, type ThreadMessage, threadGroups } from "@hatbot/shared";
+import {
+  createContext,
+  Fragment,
+  memo,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ApiError } from "../api";
+import { Chart, ChartPending } from "../chart";
 import { Icon } from "../icons";
 import { navigate } from "../router";
 import {
@@ -37,19 +47,78 @@ function dayLabel(iso: string): string {
   });
 }
 
+/** Copies `text`; `copied` is true for a moment after. */
+function useCopy(): [boolean, (text: string) => void] {
+  const [copied, setCopied] = useState(false);
+  const copy = async (text: string) => {
+    await navigator.clipboard?.writeText(text).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return [copied, copy];
+}
+
+/** A code block, with Copy in its corner. */
+function CodeBlock({ code, children }: { code: string; children: React.ReactNode }) {
+  const [copied, copy] = useCopy();
+  return (
+    <div className="code-block">
+      <pre>{children}</pre>
+      <button
+        type="button"
+        className="msg-act code-copy"
+        title="Copy"
+        onClick={(e) => {
+          e.stopPropagation();
+          copy(code.replace(/\n$/, ""));
+        }}
+      >
+        <Icon name={copied ? "check" : "copy"} />
+      </button>
+    </div>
+  );
+}
+
+/** Whether the reply is still streaming: a chart block that doesn't parse yet is unfinished, not broken. */
+const Streaming = createContext(false);
+
+type Node = { type: string; value?: string; children?: Node[] };
+const textOf = (n: Node): string => n.value ?? (n.children ?? []).map(textOf).join("");
+
 // Links open in a new tab; raw HTML in replies is never rendered (react-markdown's default).
-const MD_COMPONENTS = {
-  a: (props: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
-    <a {...props} target="_blank" rel="noreferrer noopener" />
-  ),
+const MD_COMPONENTS: Components = {
+  a: ({ node: _, ...props }) => <a {...props} target="_blank" rel="noreferrer noopener" />,
+  pre: function Pre({ node, children }) {
+    const streaming = useContext(Streaming);
+    const code = node?.children.find((c) => c.type === "element" && c.tagName === "code");
+    const lang =
+      code?.type === "element" && Array.isArray(code.properties.className)
+        ? String(code.properties.className[0] ?? "").replace(/^language-/, "")
+        : "";
+    const text = code ? textOf(code as Node) : "";
+    if (lang === "chart") {
+      const spec = parseChart(text);
+      if (spec) return <Chart spec={spec} />;
+      if (streaming) return <ChartPending />;
+    }
+    return <CodeBlock code={text}>{children}</CodeBlock>;
+  },
 };
 
-export const AssistantBody = memo(function AssistantBody({ text }: { text: string }) {
+export const AssistantBody = memo(function AssistantBody({
+  text,
+  streaming = false,
+}: {
+  text: string;
+  streaming?: boolean;
+}) {
   return (
     <div className="md">
-      <Markdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
-        {text}
-      </Markdown>
+      <Streaming.Provider value={streaming}>
+        <Markdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
+          {text}
+        </Markdown>
+      </Streaming.Provider>
     </div>
   );
 });
@@ -59,24 +128,29 @@ function Meta({
   m,
   copy,
   open,
+  updated,
 }: {
   m: ThreadMessage;
   copy?: string;
   open?: { to: string; label: string };
+  /** When a task's result changed the message after it was sent. */
+  updated?: string | null;
 }) {
-  const [copied, setCopied] = useState(false);
-  const doCopy = async () => {
-    if (!copy) return;
-    await navigator.clipboard?.writeText(copy).catch(() => {});
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
+  const [copied, doCopy] = useCopy();
   return (
     <div className="meta">
-      <span className="time">{time(m.createdAt)}</span>
+      <span className="time">
+        {time(m.createdAt)}
+        {updated && ` · Updated ${time(updated)}`}
+      </span>
       <span className="msg-actions">
         {copy && (
-          <button type="button" className="msg-act" title="Copy" onClick={doCopy}>
+          <button
+            type="button"
+            className="msg-act"
+            title="Copy"
+            onClick={() => copy && doCopy(copy)}
+          >
             <Icon name={copied ? "check" : "copy"} />
           </button>
         )}
@@ -123,6 +197,8 @@ function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
         m={m}
         copy={active ? undefined : (task.summary ?? task.title)}
         open={{ to: `/tasks/${taskId}`, label: "Open task" }}
+        // A card added when the task ended wasn't updated; one that showed it running was.
+        updated={task.finishedAt && task.finishedAt > m.createdAt ? task.finishedAt : null}
       />
     </>
   );
@@ -163,11 +239,11 @@ function ReplyMessage({ m, progress }: { m: ThreadMessage; progress?: string }) 
   const used = useStore((s) => s.usage[m.id]);
   const streaming = m.status === "streaming";
   const note = progress?.trim().split("\n").filter(Boolean).at(-1);
-  const result = task && !isActive(task) ? task.summary : null;
+  const ended = task && !isActive(task) ? task : null;
   return (
     <>
       <div className="body">
-        {m.text && <AssistantBody text={m.text} />}
+        {m.text && <AssistantBody text={m.text} streaming={streaming} />}
         {streaming && !m.text && !m.taskId && (
           <div className="typing">
             <span />
@@ -181,13 +257,16 @@ function ReplyMessage({ m, progress }: { m: ThreadMessage; progress?: string }) 
             {tokenText(used.tokens)} tokens · ${used.costUsd.toFixed(3)}
           </div>
         )}
+        {/* The result came later: a rule sets it apart from the reply, like text after a tool. */}
+        {ended && m.text && <hr className="result-rule" />}
         {m.taskId && <TaskResult taskId={m.taskId} />}
       </div>
       {!streaming && (
         <Meta
           m={m}
-          copy={result ? `${m.text}\n\n${result}`.trim() : m.text}
+          copy={[m.text, ended?.summary].filter(Boolean).join("\n\n---\n\n")}
           open={m.taskId ? { to: `/tasks/${m.taskId}`, label: "Open task" } : undefined}
+          updated={ended?.finishedAt}
         />
       )}
     </>
