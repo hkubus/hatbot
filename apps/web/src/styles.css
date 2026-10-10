@@ -657,36 +657,6 @@ html[data-theme="dark"] .seg button.active {
   gap: 8px;
   padding: 10px 12px 0;
 }
-.card-head .ico {
-  width: 24px;
-  height: 24px;
-  border-radius: 7px;
-  display: grid;
-  place-items: center;
-  flex: none;
-  background: var(--surface-2);
-  color: var(--text-2);
-}
-.card-head .ico svg.i {
-  width: 14px;
-  height: 14px;
-}
-.card-head .ico.brand {
-  background: var(--accent-soft);
-  color: var(--accent-text);
-}
-.card-head .ico.attn {
-  background: var(--attention-soft);
-  color: var(--attention);
-}
-.card-head .ico.bad {
-  background: var(--danger-soft);
-  color: var(--danger-text);
-}
-.card-head .ico.ok {
-  background: var(--success-soft);
-  color: var(--success-text);
-}
 .card-head .title {
   font-weight: 600;
   font-size: 13px;
@@ -2086,4 +2056,60 @@ pre.payload {
   padding: 8px 10px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* Message actions: time, then Copy and Open on hover (a tap on touch screens). */
+.msg .meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+}
+.msg.user .meta {
+  flex-direction: row-reverse;
+}
+.msg-actions {
+  display: inline-flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.msg:hover .msg-actions,
+.msg:focus-within .msg-actions,
+.msg.tapped .msg-actions {
+  opacity: 1;
+}
+@media (hover: none) {
+  .msg:hover:not(.tapped) .msg-actions {
+    opacity: 0;
+  }
+}
+.msg-act {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  padding: 0;
+}
+.msg-act:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.msg-act svg.i {
+  width: 13px;
+  height: 13px;
+}
+.msg-buttons {
+  display: flex;
+  gap: 8px;
+}
+.msg .resolved {
+  font-size: 12.5px;
+}
+.msg .shot {
+  max-width: 280px;
 }

@@ -2,9 +2,22 @@ import type { ThreadMessage } from "@hatbot/shared";
 import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { ApiError } from "../api";
 import { Icon } from "../icons";
-import { getState, loadEarlier, loadThread, sendMessage, setPaused, useStore } from "../store";
-import { ApprovalCard, ScheduleCard, TaskCard } from "../tasks";
+import { navigate } from "../router";
+import {
+  decideApproval,
+  ensureApproval,
+  ensureSchedule,
+  ensureTask,
+  getState,
+  loadEarlier,
+  loadThread,
+  sendMessage,
+  setPaused,
+  useStore,
+} from "../store";
+import { isActive, Shot, taskLine, whenText } from "../tasks";
 
 const time = (iso: string) =>
   new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
@@ -41,6 +54,172 @@ const AssistantBody = memo(function AssistantBody({ text }: { text: string }) {
   );
 });
 
+/** Time, then actions that show on hover (or a tap on touch screens). */
+function Meta({
+  m,
+  copy,
+  open,
+}: {
+  m: ThreadMessage;
+  copy?: string;
+  open?: { to: string; label: string };
+}) {
+  const [copied, setCopied] = useState(false);
+  const doCopy = async () => {
+    if (!copy) return;
+    await navigator.clipboard?.writeText(copy).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <div className="meta">
+      <span className="time">{time(m.createdAt)}</span>
+      <span className="msg-actions">
+        {copy && (
+          <button type="button" className="msg-act" title="Copy" onClick={doCopy}>
+            <Icon name={copied ? "check" : "copy"} />
+          </button>
+        )}
+        {open && (
+          <button
+            type="button"
+            className="msg-act"
+            title={open.label}
+            onClick={() => navigate(open.to)}
+          >
+            <Icon name="chevron" />
+          </button>
+        )}
+      </span>
+    </div>
+  );
+}
+
+/** A task, as a message: what it's doing while it runs, then how it ended. */
+function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
+  const task = useStore((s) => s.tasks[taskId]);
+  const progress = useStore((s) => s.taskProgress[taskId]);
+  const control = useStore((s) => s.desktop?.control);
+  useEffect(() => ensureTask(taskId), [taskId]);
+  if (!task) return null;
+  const active = isActive(task);
+  let text: string;
+  if (active) text = `**${task.title}**`;
+  else if (task.status === "done") text = `**${task.title}**\n\n${task.summary ?? "Done."}`;
+  else if (task.status === "failed")
+    text = `**${task.title}** didn't finish.${task.summary ? `\n\n${task.summary}` : ""}`;
+  else text = `**${task.title}** was cancelled.`;
+  const note =
+    active && control === "owner" && task.status === "running"
+      ? "Paused while you have control."
+      : taskLine(task, progress);
+  return (
+    <>
+      <div className="body">
+        <AssistantBody text={text} />
+        {active && <div className="progress-note">{note}</div>}
+      </div>
+      <Meta
+        m={m}
+        copy={active ? undefined : (task.summary ?? task.title)}
+        open={{ to: `/tasks/${taskId}`, label: "Open task" }}
+      />
+    </>
+  );
+}
+
+/** An approval, as a message with Approve and Deny under it. */
+function ApprovalMessage({ m, approvalId }: { m: ThreadMessage; approvalId: number }) {
+  const a = useStore((s) => s.approvals[approvalId]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => ensureApproval(approvalId), [approvalId]);
+  if (!a) return null;
+  const open = a.taskId ? { to: `/tasks/${a.taskId}`, label: "Open task" } : undefined;
+  if (a.status !== "pending") {
+    const word = {
+      approved: "Approved",
+      denied: "Denied",
+      expired: "Expired",
+      cancelled: "Cancelled",
+    }[a.status];
+    return (
+      <>
+        <div className="body">
+          <div className="muted resolved">
+            {word}: {a.summary}
+          </div>
+        </div>
+        <Meta m={m} copy={a.summary} open={open} />
+      </>
+    );
+  }
+  const decide = async (decision: "approve" | "deny") => {
+    setBusy(true);
+    setError("");
+    try {
+      await decideApproval(a.id, decision);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
+      setBusy(false);
+    }
+  };
+  const text = [
+    `**Can I go ahead?** ${a.summary}`,
+    a.reason,
+    a.sources.length ? `_After reading ${a.sources.join(", ")}_` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  return (
+    <>
+      <div className="body">
+        <AssistantBody text={text} />
+        {a.taskId && a.screenshotStepId && (
+          <Shot taskId={a.taskId} stepId={a.screenshotStepId} alt="The screen before this step" />
+        )}
+        {error && <div className="form-error">{error}</div>}
+        <div className="msg-buttons">
+          <button type="button" className="btn sm" disabled={busy} onClick={() => decide("deny")}>
+            Deny
+          </button>
+          <button
+            type="button"
+            className="btn sm primary"
+            disabled={busy}
+            onClick={() => decide("approve")}
+          >
+            Approve
+          </button>
+        </div>
+      </div>
+      <Meta m={m} copy={a.summary} open={open} />
+    </>
+  );
+}
+
+/** A schedule Hatbot made, as one line. */
+function ScheduleMessage({ m, scheduleId }: { m: ThreadMessage; scheduleId: number }) {
+  const s = useStore((st) => st.schedules[scheduleId]);
+  useEffect(() => ensureSchedule(scheduleId), [scheduleId]);
+  if (s === undefined) return null;
+  const text = s
+    ? `Scheduled **${s.name}**: ${whenText(s).replace(/^\w/, (c) => c.toLowerCase())}.`
+    : "Made a schedule that's since been deleted.";
+  return (
+    <>
+      <div className="body">
+        <AssistantBody text={text} />
+      </div>
+      <Meta
+        m={m}
+        copy={s ? s.prompt : undefined}
+        open={s ? { to: `/schedules/${s.id}`, label: "Open schedule" } : undefined}
+      />
+    </>
+  );
+}
+
 function Message({
   m,
   progress,
@@ -50,60 +229,47 @@ function Message({
   progress?: string;
   animate: boolean;
 }) {
+  // Touch screens have no hover: a tap shows the message's actions.
+  const [tapped, setTapped] = useState(false);
+  const cls = `msg ${m.role === "user" ? "user" : ""} ${animate ? "new" : ""} ${tapped ? "tapped" : ""}`;
+  let inner: React.ReactNode;
   if (m.role === "user") {
-    return (
-      <div className={`msg user ${animate ? "new" : ""}`}>
+    inner = (
+      <>
         <div className="bubble">{m.text}</div>
-        <span className="time">{time(m.createdAt)}</span>
-      </div>
+        <Meta m={m} copy={m.text} />
+      </>
     );
-  }
-  if (m.kind === "task" && m.taskId) {
-    return (
-      <div className={`msg ${animate ? "new" : ""}`}>
+  } else if (m.kind === "task" && m.taskId) {
+    inner = <TaskMessage m={m} taskId={m.taskId} />;
+  } else if (m.kind === "approval" && m.approvalId) {
+    inner = <ApprovalMessage m={m} approvalId={m.approvalId} />;
+  } else if (m.kind === "schedule" && m.scheduleId) {
+    inner = <ScheduleMessage m={m} scheduleId={m.scheduleId} />;
+  } else {
+    const streaming = m.status === "streaming";
+    const note = progress?.trim().split("\n").filter(Boolean).at(-1);
+    inner = (
+      <>
         <div className="body">
-          <TaskCard taskId={m.taskId} />
+          {m.text && <AssistantBody text={m.text} />}
+          {streaming && !m.text && (
+            <div className="typing">
+              <span />
+              <span />
+              <span />
+            </div>
+          )}
+          {streaming && note && <div className="progress-note">{note}</div>}
         </div>
-        <span className="time">{time(m.createdAt)}</span>
-      </div>
+        {!streaming && <Meta m={m} copy={m.text} />}
+      </>
     );
   }
-  if (m.kind === "approval" && m.approvalId) {
-    return (
-      <div className={`msg ${animate ? "new" : ""}`}>
-        <div className="body">
-          <ApprovalCard approvalId={m.approvalId} />
-        </div>
-        <span className="time">{time(m.createdAt)}</span>
-      </div>
-    );
-  }
-  if (m.kind === "schedule" && m.scheduleId) {
-    return (
-      <div className={`msg ${animate ? "new" : ""}`}>
-        <div className="body">
-          <ScheduleCard scheduleId={m.scheduleId} />
-        </div>
-        <span className="time">{time(m.createdAt)}</span>
-      </div>
-    );
-  }
-  const streaming = m.status === "streaming";
-  const note = progress?.trim().split("\n").filter(Boolean).at(-1);
   return (
-    <div className={`msg ${animate ? "new" : ""}`}>
-      <div className="body">
-        {m.text && <AssistantBody text={m.text} />}
-        {streaming && !m.text && (
-          <div className="typing">
-            <span />
-            <span />
-            <span />
-          </div>
-        )}
-        {streaming && note && <div className="progress-note">{note}</div>}
-      </div>
-      {!streaming && <span className="time">{time(m.createdAt)}</span>}
+    // biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: a tap only reveals the buttons, which are reachable by keyboard anyway
+    <div className={cls} onClick={() => setTapped((v) => !v)}>
+      {inner}
     </div>
   );
 }

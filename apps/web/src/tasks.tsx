@@ -1,4 +1,4 @@
-// Task, approval and schedule cards, shared by the chat and the Tasks page.
+// Task status, screenshots and the approval card, shared by the chat and the Tasks page.
 import {
   API_PREFIX,
   type Approval,
@@ -9,16 +9,9 @@ import {
 } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { ApiError } from "./api";
-import { Icon, type IconName } from "./icons";
+import { Icon } from "./icons";
 import { navigate } from "./router";
-import {
-  decideApproval,
-  ensureApproval,
-  ensureSchedule,
-  ensureTask,
-  saveSchedule,
-  useStore,
-} from "./store";
+import { decideApproval, ensureApproval, useStore } from "./store";
 
 const STATUS: Record<TaskStatus, [string, string]> = {
   queued: ["", "Queued"],
@@ -65,66 +58,6 @@ export function taskLine(t: Task, progress?: string): string {
     default:
       return lastLine(progress) ?? "Working…";
   }
-}
-
-/** What started a task, as an icon. */
-export const taskIcon = (t: Task): IconName =>
-  t.lane === "screen"
-    ? "monitor"
-    : t.origin === "schedule"
-      ? "clock"
-      : t.origin === "alert"
-        ? "bell"
-        : "zap";
-
-export function TaskCard({ taskId }: { taskId: number }) {
-  const task = useStore((s) => s.tasks[taskId]);
-  const steps = useStore((s) => s.steps[taskId]);
-  const progress = useStore((s) => s.taskProgress[taskId]);
-  const control = useStore((s) => s.desktop?.control);
-  useEffect(() => ensureTask(taskId), [taskId]);
-  if (!task) return null;
-
-  const shot = steps?.findLast((s) => s.screenshot);
-  const active = isActive(task);
-  const line =
-    active && control === "owner" && task.status === "running"
-      ? "Paused while you have control."
-      : taskLine(task, progress);
-  const bar = !active ? "done" : task.status.startsWith("waiting") ? "wait" : "";
-  return (
-    <div className="card task-card">
-      <div className="card-head">
-        <div
-          className={`ico ${task.origin === "alert" && task.status !== "done" ? "bad" : "brand"}`}
-        >
-          <Icon name={taskIcon(task)} />
-        </div>
-        <div className="title">{task.title}</div>
-        <div className="right">
-          <StatusChip status={task.status} />
-        </div>
-      </div>
-      <div className="card-body">
-        <div className={shot ? "thumb-wrap" : ""}>
-          <div className="task-line">
-            <div>{line}</div>
-            {task.status !== "cancelled" && task.status !== "failed" && (
-              <div className={`progress ${bar}`} />
-            )}
-          </div>
-          {shot && <Shot taskId={taskId} stepId={shot.id} alt={shot.name} />}
-        </div>
-      </div>
-      <div className="card-foot">
-        <span className="spacer" />
-        <button type="button" className="btn sm ghost" onClick={() => navigate(`/tasks/${taskId}`)}>
-          Details
-          <Icon name="chevron" />
-        </button>
-      </div>
-    </div>
-  );
 }
 
 const RESOLVED: Record<Exclude<Approval["status"], "pending">, [string, string]> = {
@@ -175,9 +108,6 @@ export function ApprovalCard({
   return (
     <div className="card attn">
       <div className="card-head">
-        <div className="ico attn">
-          <Icon name="shield" />
-        </div>
         <div className="title">{a.summary}</div>
       </div>
       <div className="card-body">
@@ -236,63 +166,4 @@ export function whenText(s: Pick<Schedule, "cron" | "runAt">): string {
     hour: "2-digit",
     minute: "2-digit",
   })}`;
-}
-
-export function ScheduleCard({ scheduleId }: { scheduleId: number }) {
-  const s = useStore((st) => st.schedules[scheduleId]);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => ensureSchedule(scheduleId), [scheduleId]);
-  if (s === undefined) return null;
-  if (s === null)
-    return (
-      <div className="resolved-line">
-        <span className="chip">Deleted</span>
-        <span className="muted">A schedule</span>
-      </div>
-    );
-
-  const toggle = async () => {
-    setBusy(true);
-    await saveSchedule(s.id, { enabled: !s.enabled }).catch(() => {});
-    setBusy(false);
-  };
-  return (
-    <div className="card">
-      <div className="card-head">
-        <div className="ico brand">
-          <Icon name="clock" />
-        </div>
-        <div className="title">{s.name}</div>
-        <div className="right">
-          <button
-            type="button"
-            className={`switch ${s.enabled ? "on" : ""}`}
-            aria-label={s.enabled ? "Turn off" : "Turn on"}
-            aria-pressed={s.enabled}
-            disabled={busy}
-            onClick={toggle}
-          />
-        </div>
-      </div>
-      <div className="card-body">
-        <dl className="kv">
-          <dt>When</dt>
-          <dd>{whenText(s)}</dd>
-          <dt>Does</dt>
-          <dd>{s.prompt}</dd>
-        </dl>
-      </div>
-      <div className="card-foot">
-        <span className="spacer" />
-        <button
-          type="button"
-          className="btn sm ghost"
-          onClick={() => navigate(`/schedules/${s.id}`)}
-        >
-          Details
-          <Icon name="chevron" />
-        </button>
-      </div>
-    </div>
-  );
 }

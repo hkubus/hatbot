@@ -11,15 +11,7 @@ import { Settings } from "./pages/Settings";
 import { Spend } from "./pages/Spend";
 import { TaskDetail, Tasks } from "./pages/Tasks";
 import { navigate, useRoute } from "./router";
-import {
-  connect,
-  disconnect,
-  ensureApproval,
-  needsYou,
-  onToast,
-  setPaused,
-  useStore,
-} from "./store";
+import { connect, disconnect, ensureApproval, needsYou, onToast, useStore } from "./store";
 import { getTheme, setTheme, type Theme } from "./theme";
 
 const VIEWS = [
@@ -70,7 +62,6 @@ export function App() {
 function Shell({ onSignOut }: { onSignOut: () => void }) {
   const { path, params } = useRoute();
   const theme = useTheme();
-  const paused = useStore((s) => s.paused);
   const pending = useStore(needsYou);
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
   const [insp, setInsp] = useState(() => localStorage.getItem("hatbot:insp") === "1");
@@ -108,11 +99,6 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     localStorage.setItem("hatbot:insp", insp ? "0" : "1");
     setInsp(!insp);
   };
-  const togglePause = () =>
-    setPaused(!paused).then(
-      () => toast(paused ? "Resumed" : "All activity paused"),
-      () => toast("Couldn't reach Hatbot"),
-    );
 
   return (
     <>
@@ -158,15 +144,6 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
             )}
             <button type="button" className="tb-btn" onClick={cycleTheme} title={`Theme: ${theme}`}>
               <Icon name={theme === "light" ? "sun" : theme === "dark" ? "moon" : "auto"} />
-            </button>
-            <button
-              type="button"
-              className={`tb-btn ${paused ? "on" : ""}`}
-              onClick={togglePause}
-              title={paused ? "Resume" : "Pause all"}
-            >
-              <Icon name={paused ? "play" : "pause"} />
-              <span className="hide-phone">{paused ? "Resume" : "Pause all"}</span>
             </button>
           </header>
           {view.path === "/" && <Chat />}
