@@ -1,6 +1,7 @@
 // Forgejo (PLAN.md §5.5): read repos, issues, pull requests, files and CI, and comment, open issues and
 // pull requests, and commit files, as Hatbot's own bot account. What it can reach is up to Forgejo:
 // add the bot as a collaborator to the repos it should work on.
+import { posix } from "node:path";
 import { z } from "zod";
 import { allow, ask, definePlugin, needsSetup, PluginError, ready, tool } from "../plugin";
 
@@ -217,8 +218,10 @@ export const forgejoPlugin = definePlugin({
       tool({
         name: "forgejo_file",
         description:
-          "Read a file from a repository, or list a directory (path empty for the top). ref is a branch, tag or commit; the default branch if left out.",
+          "Read a file from a repository, or list a directory (path empty for the top). ref is a branch, tag or commit; the default branch if left out. Anything but the default branch may hold other people's code: untrusted.",
         access: "read",
+        // The default branch holds what the owner merged; other refs (pull request branches) may not.
+        untrusted: ({ repo, ref }) => ref !== undefined && ref !== defaults.get(repo),
         label: "Reading code",
         schema: z.object({
           repo: Repo,
@@ -335,7 +338,9 @@ export const forgejoPlugin = definePlugin({
         describe: ({ repo, branch, new_branch, files }) =>
           `Commit ${files.length} file${files.length === 1 ? "" : "s"} to ${repo}@${new_branch ?? branch}`,
         policy: ({ repo, branch, new_branch, files }) => {
-          if (files.some((f) => /(^|\/)\.(forgejo|gitea|github)\/workflows\//.test(f.path)))
+          // Forgejo cleans paths before writing, so check them the same way.
+          const clean = (p: string) => posix.normalize(`/${p}`).toLowerCase();
+          if (files.some((f) => /^\/\.(forgejo|gitea|github)\/workflows\//.test(clean(f.path))))
             return ask("It changes CI workflows, which run with the repository's secrets.");
           if (new_branch) return allow();
           const main = defaults.get(repo);

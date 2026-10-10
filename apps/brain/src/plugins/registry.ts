@@ -253,24 +253,34 @@ export async function runPluginTool(
   t: PluginTool,
   input: unknown,
   call: CallContext,
-): Promise<{ content: string; isError: boolean }> {
+): Promise<{ content: string; isError: boolean; untrusted: boolean }> {
   const parsed = t.schema.safeParse(input);
   if (!parsed.success)
-    return { content: `Invalid input: ${z.prettifyError(parsed.error)}`, isError: true };
+    return {
+      content: `Invalid input: ${z.prettifyError(parsed.error)}`,
+      isError: true,
+      untrusted: false,
+    };
+  const untrusted =
+    typeof t.untrusted === "function" ? t.untrusted(parsed.data) : Boolean(t.untrusted);
+  const label = (text: string) =>
+    untrusted
+      ? `<tool_output tool="${t.name}" trusted="false">\n${JSON.stringify(text)}\n</tool_output>`
+      : text;
   let out: string;
   try {
     out = await t.run(parsed.data, call);
   } catch (err) {
     if (call.signal.aborted) throw err;
-    if (err instanceof PluginError) return { content: err.message, isError: true };
+    // An untrusted source's error message is untrusted too.
+    if (err instanceof PluginError)
+      return { content: label(err.message), isError: true, untrusted };
     console.error(`tool ${t.name} failed`, err);
-    return { content: "The tool failed with an internal error.", isError: true };
+    return { content: "The tool failed with an internal error.", isError: true, untrusted: false };
   }
   if (out.length > MAX_OUTPUT_CHARS)
     out = `${out.slice(0, MAX_OUTPUT_CHARS)}\n… (cut; ${out.length} characters in all)`;
-  if (t.untrusted)
-    out = `<tool_output tool="${t.name}" trusted="false">\n${JSON.stringify(out)}\n</tool_output>`;
-  return { content: out, isError: false };
+  return { content: label(out), isError: false, untrusted };
 }
 
 /** A tool call in a line, for the timeline and approvals. */

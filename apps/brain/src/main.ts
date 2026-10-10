@@ -34,7 +34,10 @@ const memory = new MemoryStore(config.memoryDir);
 await memory.init();
 const model = new AnthropicModelClient();
 const plugins = new Plugins(PLUGINS, { db, events, reserved: CORE_TOOL_NAMES });
-await plugins.startAll();
+// In the background: an MCP server that is slow to answer mustn't hold up the health check.
+const pluginsStarted = plugins
+  .startAll()
+  .catch((err) => console.error("plugins failed to start", err));
 const thread = new Thread({ db, memory, events, spend, settings, model, plugins });
 const notifier = new NtfyNotifier();
 const archive = new Archive(config.archiveDir);
@@ -62,8 +65,11 @@ await desktop.setPaused(settings.get().paused);
 await desktop.refresh();
 setInterval(() => void desktop.refresh(), 30_000);
 setInterval(() => approvals.expireDue(), 60_000);
-schedules.tick();
-setInterval(() => schedules.tick(), 10_000);
+// Runs missed while the brain was down start once plugins are up, so they get their tools.
+void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {
+  schedules.tick();
+  setInterval(() => schedules.tick(), 10_000);
+});
 const loginLimits = {
   perIp: new FailureLimiter(10, 15 * 60_000),
   global: new FailureLimiter(50, 15 * 60_000),

@@ -122,6 +122,29 @@ export class Thread {
     Object.assign(this.d, parts);
   }
 
+  /** The episode has read untrusted content: tasks and schedules it makes from here on start tainted. */
+  private taint(episodeId: number) {
+    this.d.db.query("UPDATE episodes SET tainted = 1 WHERE id = ?").run(episodeId);
+  }
+
+  /**
+   * A new episode carries recent messages over. It starts tainted if any of them came from a tainted
+   * episode or a tainted task (PLAN.md §6.1).
+   */
+  private inheritTaint(episodeId: number, beforeMessageId: number) {
+    const recent = this.list(beforeMessageId, RECENT_MESSAGES).map((m) => m.id);
+    if (!recent.length) return;
+    const tainted = this.d.db
+      .query<{ n: number }, number[]>(
+        `SELECT count(*) AS n FROM messages m
+         LEFT JOIN episodes e ON e.id = m.episode_id
+         LEFT JOIN tasks t ON t.id = m.task_id
+         WHERE m.id IN (${recent.map(() => "?").join(", ")}) AND (e.tainted = 1 OR t.tainted = 1)`,
+      )
+      .get(...recent)?.n;
+    if (tainted) this.taint(episodeId);
+  }
+
   private tainted(episodeId: number): boolean {
     return Boolean(
       this.d.db
@@ -301,8 +324,15 @@ export class Thread {
     db.query("UPDATE messages SET episode_id = ? WHERE id = ?").run(episode.id, user.id);
 
     const userBlocks: BlockParam[] = [];
-    if (episode.isNew) userBlocks.push({ type: "text", text: await this.episodeContext(user.id) });
+    if (episode.isNew) {
+      userBlocks.push({ type: "text", text: await this.episodeContext(user.id) });
+      this.inheritTaint(episode.id, user.id);
+    }
+    // An untrusted MCP server's tool descriptions are in the prompt now.
+    if (pluginTools.some((t) => t.untrustedDefinition)) this.taint(episode.id);
     const ended = this.d.tasks?.takeUnreported() ?? [];
+    // What tainted tasks report carries what they read.
+    if (ended.some((t) => t.tainted)) this.taint(episode.id);
     if (ended.length) {
       const lines = ended.map((t) => `Task #${t.id} "${t.title}" ${t.status}: ${t.summary ?? ""}`);
       userBlocks.push({
@@ -442,6 +472,7 @@ export class Thread {
               ...this.d,
               messageId: out.id,
               tainted: () => this.tainted(episode.id),
+              taint: () => this.taint(episode.id),
               scheduleCard: (sc: Schedule) =>
                 this.addCard(
                   "schedule",
@@ -451,8 +482,6 @@ export class Thread {
             },
             abort.signal,
           );
-          // Untrusted content in the conversation: tasks it starts from here on begin tainted.
-          if (r.untrusted) db.query("UPDATE episodes SET tainted = 1 WHERE id = ?").run(episode.id);
           results.push({
             type: "tool_result",
             tool_use_id: call.id,

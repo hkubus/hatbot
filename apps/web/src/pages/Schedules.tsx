@@ -241,6 +241,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
   const when = form.repeat ? { cron: form.cron.trim() } : { at: form.at };
   const changed =
     !stored ||
+    stored.tainted ||
     form.name !== stored.name ||
     form.prompt !== stored.prompt ||
     (form.repeat
@@ -381,6 +382,12 @@ function ScheduleEdit({ id }: { id: number | null }) {
               onChange={(e) => set({ prompt: e.target.value })}
             />
           </label>
+          {stored?.tainted && (
+            <div className="hint">
+              Hatbot wrote this after reading untrusted content, so its runs ask before changing
+              anything. Check what it does and save to trust it.
+            </div>
+          )}
           {stored && (
             <dl className="kv">
               <dt>Next run</dt>

@@ -228,3 +228,40 @@ test("policy: new branches run, the default branch, workflows and merges ask", a
     ).action,
   ).toBe("ask");
 });
+
+test("files off the default branch are untrusted; workflow paths can't dodge the check", async () => {
+  const { fj } = await started();
+  const main = await runPluginTool(
+    fj("forgejo_file"),
+    { repo: "kubus/hatbot", path: "README.md" },
+    call,
+  );
+  expect(main.untrusted).toBe(false);
+  const pr = await runPluginTool(
+    fj("forgejo_file"),
+    { repo: "kubus/hatbot", path: "README.md", ref: "refs/pull/8/head" },
+    call,
+  );
+  expect(pr.untrusted).toBe(true);
+  expect(pr.content).toContain('trusted="false"');
+
+  for (const path of [
+    ".forgejo//workflows/x.yml",
+    "./.github/workflows/x.yml",
+    "a/../.Gitea/workflows/x.yml",
+  ])
+    expect(
+      verdictFor(
+        fj("forgejo_commit_files"),
+        {
+          repo: "kubus/hatbot",
+          branch: "main",
+          new_branch: "hatbot/x",
+          message: "m",
+          files: [{ path, content: "x" }],
+        },
+        call,
+      ).action,
+      path,
+    ).toBe("ask");
+});

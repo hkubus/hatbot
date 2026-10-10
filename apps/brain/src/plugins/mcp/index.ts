@@ -120,8 +120,21 @@ export const mcpPlugin = definePlugin({
     const conns: Conn[] = config.servers
       .filter((s) => s.enabled)
       .map((server) => ({ server, client: null, tools: [], error: null }));
+    /** Set by stop: a call still in flight mustn't reconnect and leave a process behind. */
+    let stopped = false;
+    const reconnecting = new Map<Conn, Promise<void>>();
+
+    /** Reconnects once for every call that failed at the same time. */
+    const reconnect = (c: Conn) => {
+      const pending = reconnecting.get(c);
+      if (pending) return pending;
+      const p = connect(c).finally(() => reconnecting.delete(c));
+      reconnecting.set(c, p);
+      return p;
+    };
 
     const connect = async (c: Conn) => {
+      if (stopped) throw new PluginError("MCP restarted; try again.");
       await c.client?.close().catch(() => {});
       c.client = null;
       c.error = null;
@@ -141,6 +154,10 @@ export const mcpPlugin = definePlugin({
               });
         await client.connect(transport, { timeout: CONNECT_TIMEOUT_MS });
         const listed = await client.listTools(undefined, { timeout: CONNECT_TIMEOUT_MS });
+        if (stopped) {
+          await client.close().catch(() => {});
+          return;
+        }
         c.tools = listed.tools as Listed[];
         c.client = client;
       } catch (err) {
@@ -161,6 +178,7 @@ export const mcpPlugin = definePlugin({
             description: `${(t.description ?? t.name).slice(0, 1000)} (from the MCP server "${c.server.name}")`,
             access: mode === "chat" ? "read" : "write",
             untrusted: !c.server.trusted,
+            untrustedDefinition: !c.server.trusted,
             label: `Using ${c.server.name}`,
             schema: z.record(z.string(), z.unknown()),
             jsonSchema: { type: "object", properties: {}, ...withoutMeta(t.inputSchema) },
@@ -189,7 +207,7 @@ export const mcpPlugin = definePlugin({
               } catch (err) {
                 if (signal.aborted || err instanceof PluginError) throw err;
                 // The server may have restarted or dropped the session: reconnect once.
-                await connect(c);
+                await reconnect(c);
                 try {
                   r = await call();
                 } catch (again) {
@@ -250,6 +268,8 @@ export const mcpPlugin = definePlugin({
           .join("\n") || "No servers.",
       actions: { status: async () => status() },
       stop: async () => {
+        stopped = true;
+        await Promise.all(reconnecting.values()).catch(() => {});
         await Promise.all(conns.map((c) => c.client?.close().catch(() => {})));
       },
     };

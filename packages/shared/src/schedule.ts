@@ -16,6 +16,11 @@ export type Schedule = {
   nextRunAt: string | null;
   lastRunAt: string | null;
   lastTaskId: number | null;
+  /**
+   * The chat made or changed it after reading untrusted content, so its runs start tainted (every
+   * change asks). Saving it yourself clears this.
+   */
+  tainted: boolean;
 };
 
 const name = z.string().trim().min(1).max(80);

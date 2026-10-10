@@ -205,7 +205,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     }
     tasks.addStep(id, { kind: "action", name: t.name, detail: what, url: null });
     const r = await runPluginTool(t, call.input, cc);
-    if (t.untrusted && !r.isError) taint(what);
+    if (r.untrusted) taint(what);
     return result(call, r.content, r.isError);
   };
 
@@ -213,6 +213,18 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     await tasks.pool.acquire(signal);
     slot = true;
     tasks.setStatus(id, "running");
+    // Why it may already be tainted, for its approvals (PLAN.md §6.2).
+    if (task.tainted)
+      sources.add(
+        task.origin === "chat"
+          ? "Untrusted content the chat had read before starting it"
+          : `The event that started it (${task.source ?? task.origin})`,
+      );
+    const foreign = [...pluginTools.values()].filter((t) => t.untrustedDefinition);
+    if (foreign.length)
+      taint(
+        `Tool descriptions from untrusted MCP servers (${[...new Set(foreign.map((t) => t.name.split("_")[1]))].join(", ")})`,
+      );
     const index = (await d.memory.exists("INDEX.md"))
       ? await d.memory.read("INDEX.md")
       : "(no INDEX.md yet)";

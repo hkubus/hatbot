@@ -57,8 +57,29 @@ const fromLines = (s: string) =>
       .map((l) => [l.slice(0, l.indexOf("=")).trim(), l.slice(l.indexOf("=") + 1).trim()]),
   );
 
+/** A server as edited: its list fields as text, and a key that stays with it when others are removed. */
+type Row = Server & { key: number; headersText: string; argsText: string; envText: string };
+let nextKey = 0;
+const toRow = (s: Server): Row => ({
+  ...s,
+  key: nextKey++,
+  headersText: toLines(s.headers),
+  argsText: s.args.join("\n"),
+  envText: toLines(s.env),
+});
+const fromRow = ({ key: _, headersText, argsText, envText, ...s }: Row): Server =>
+  s.transport === "http"
+    ? { ...s, headers: fromLines(headersText), command: undefined, args: [], env: {} }
+    : {
+        ...s,
+        url: undefined,
+        headers: {},
+        args: argsText.split("\n").filter((a) => a.trim()),
+        env: fromLines(envText),
+      };
+
 export function McpSettings({ config, save, action }: PluginSettingsProps<Config>) {
-  const [servers, setServers] = useState<Server[]>(config.servers);
+  const [servers, setServers] = useState<Row[]>(() => config.servers.map(toRow));
   const [status, setStatus] = useState<Record<string, Status>>({});
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -70,21 +91,17 @@ export function McpSettings({ config, save, action }: PluginSettingsProps<Config
     );
   }, [action]);
 
-  const set = (i: number, patch: Partial<Server>) =>
+  const set = (i: number, patch: Partial<Row>) =>
     setServers(servers.map((s, j) => (j === i ? { ...s, ...patch } : s)));
-  const changed = JSON.stringify(servers) !== JSON.stringify(config.servers);
+  const changed =
+    JSON.stringify(servers.map(fromRow)) !==
+    JSON.stringify(config.servers.map((s) => fromRow(toRow(s))));
 
   const submit = async () => {
     setBusy(true);
     setError("");
     try {
-      await save({
-        servers: servers.map((s) =>
-          s.transport === "http"
-            ? { ...s, command: undefined, args: [], env: {} }
-            : { ...s, url: undefined, headers: {} },
-        ),
-      });
+      await save({ servers: servers.map(fromRow) });
     } catch (err) {
       setError(errorText(err));
     }
@@ -96,8 +113,7 @@ export function McpSettings({ config, save, action }: PluginSettingsProps<Config
       {servers.map((s, i) => {
         const st = status[s.name];
         return (
-          // biome-ignore lint/suspicious/noArrayIndexKey: servers are edited in place
-          <div className="panel form" key={i}>
+          <div className="panel form" key={s.key}>
             <div className="form-row">
               <input
                 className="field"
@@ -137,8 +153,8 @@ export function McpSettings({ config, save, action }: PluginSettingsProps<Config
                   <textarea
                     className="field mono"
                     rows={2}
-                    defaultValue={toLines(s.headers)}
-                    onBlur={(e) => set(i, { headers: fromLines(e.target.value) })}
+                    value={s.headersText}
+                    onChange={(e) => set(i, { headersText: e.target.value })}
                   />
                 </label>
               </>
@@ -158,10 +174,8 @@ export function McpSettings({ config, save, action }: PluginSettingsProps<Config
                   <textarea
                     className="field mono"
                     rows={2}
-                    defaultValue={s.args.join("\n")}
-                    onBlur={(e) =>
-                      set(i, { args: e.target.value.split("\n").filter((a) => a.trim()) })
-                    }
+                    value={s.argsText}
+                    onChange={(e) => set(i, { argsText: e.target.value })}
                   />
                 </label>
                 <label>
@@ -171,14 +185,14 @@ export function McpSettings({ config, save, action }: PluginSettingsProps<Config
                   <textarea
                     className="field mono"
                     rows={2}
-                    defaultValue={toLines(s.env)}
-                    onBlur={(e) => set(i, { env: fromLines(e.target.value) })}
+                    value={s.envText}
+                    onChange={(e) => set(i, { envText: e.target.value })}
                   />
                 </label>
               </>
             )}
             <div className="form-row">
-              <span className="label">Trust its output</span>
+              <span className="label">Trust its output and tool descriptions</span>
               <Switch on={s.trusted} onChange={(trusted) => set(i, { trusted })} />
             </div>
             <div className="form-row">
@@ -222,7 +236,11 @@ export function McpSettings({ config, save, action }: PluginSettingsProps<Config
       })}
       {error && <div className="form-error">{error}</div>}
       <div className="form-row">
-        <button type="button" className="btn sm" onClick={() => setServers([...servers, blank()])}>
+        <button
+          type="button"
+          className="btn sm"
+          onClick={() => setServers([...servers, toRow(blank())])}
+        >
           Add server
         </button>
         <button type="button" className="btn accent" disabled={busy || !changed} onClick={submit}>

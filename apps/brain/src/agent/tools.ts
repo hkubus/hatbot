@@ -24,6 +24,8 @@ export type ToolContext = {
   plugins?: Plugins;
   /** The conversation has read untrusted content; tasks it starts begin tainted (PLAN.md §6.1). */
   tainted?: () => boolean;
+  /** Marks the conversation as having read untrusted content. */
+  taint?: () => void;
 };
 
 export const DesktopTaskInput = z.object({
@@ -202,9 +204,11 @@ export const TOOLS = [
     name: "get_task",
     description: "The status of a task, its summary if it ended, and its last few steps.",
     schema: z.object({ id: z.number().int() }),
-    run: async ({ id }, { tasks }) => {
+    run: async ({ id }, { tasks, taint }) => {
       const task = tasks?.get(id);
       if (!tasks || !task) return `No task #${id}.`;
+      // Its summary and steps carry what it read.
+      if (task.tainted) taint?.();
       const steps = tasks
         .steps(id)
         .filter((s) => s.kind !== "screenshot")
@@ -229,10 +233,10 @@ export const TOOLS = [
         ),
       ...scheduleWhen,
     }),
-    run: async ({ name, prompt, cron, at }, { schedules, scheduleCard }) => {
+    run: async ({ name, prompt, cron, at }, { schedules, scheduleCard, tainted }) => {
       if (!schedules) return "Schedules aren't available.";
       if (Boolean(cron) === Boolean(at)) return "Give either cron or at.";
-      const s = schedules.create({ name, prompt, cron, at }, "chat");
+      const s = schedules.create({ name, prompt, cron, at }, "chat", tainted?.() ?? false);
       scheduleCard?.(s);
       return `Created schedule ${scheduleLine(s)}`;
     },
@@ -255,9 +259,9 @@ export const TOOLS = [
       enabled: z.boolean().optional(),
       ...scheduleWhen,
     }),
-    run: async ({ id, ...patch }, { schedules }) => {
+    run: async ({ id, ...patch }, { schedules, tainted }) => {
       if (patch.cron && patch.at) return "Give either cron or at, not both.";
-      const s = schedules?.update(id, patch);
+      const s = schedules?.update(id, patch, { via: "chat", tainted: tainted?.() ?? false });
       return s ? `Updated schedule ${scheduleLine(s)}` : `No schedule #${id}.`;
     },
   }),
@@ -292,7 +296,10 @@ export const TOOLS = [
       prompt: z.string().min(1).max(4000).optional(),
       enabled: z.boolean().optional(),
     }),
-    run: async ({ id, ...patch }, { triggers }) => {
+    run: async ({ id, ...patch }, { triggers, tainted }) => {
+      // A trigger's runs trust its instructions; untrusted content mustn't get to write them.
+      if (patch.prompt !== undefined && tainted?.())
+        return "Not changed: this conversation has read untrusted content, so it can't rewrite what a trigger does. Ask the owner to change it in Schedules & Triggers.";
       const t = triggers?.update(id, patch);
       return t ? `Updated trigger #${t.id} "${t.name}".` : `No trigger #${id}.`;
     },
@@ -333,7 +340,8 @@ export async function runTool(
     const plugin = ctx.plugins?.tools("chat").find((t) => t.name === name);
     if (plugin) {
       const r = await runPluginTool(plugin, input, { task: null, signal });
-      return { ...r, untrusted: plugin.untrusted && !r.isError };
+      if (r.untrusted) ctx.taint?.();
+      return r;
     }
     const names = [...TOOLS, ...(ctx.plugins?.tools("chat") ?? [])].map((t) => t.name);
     return { content: `Unknown tool "${name}". Available: ${names.join(", ")}`, isError: true };

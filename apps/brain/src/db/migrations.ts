@@ -216,4 +216,7 @@ export const migrations: string[] = [
   -- The episode has read untrusted content; tasks it starts begin tainted.
   ALTER TABLE episodes ADD COLUMN tainted INTEGER NOT NULL DEFAULT 0;
   `,
+  /* 8: a schedule the chat made or changed after reading untrusted content runs tainted (PLAN.md §6.1) */ `
+  ALTER TABLE schedules ADD COLUMN tainted INTEGER NOT NULL DEFAULT 0;
+  `,
 ];

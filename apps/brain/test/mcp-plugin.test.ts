@@ -120,3 +120,20 @@ test("long tool names are cut to 64 characters, uniquely", () => {
   expect(a).not.toBe(b);
   expect(toolName("srv", "get.issue")).toBe("mcp_srv_get_issue");
 });
+
+test("an untrusted server's tool descriptions taint every task offered them", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "done", summary: "ok", notify: false })] },
+  ]);
+  const { t } = await started(fixture, work);
+  const task = t.tasks.createBackgroundTask({
+    title: "Routine",
+    goal: "Nothing",
+    origin: "schedule",
+    source: "s",
+    runKey: "s:2",
+  }) as Task;
+  await waitFor(() => t.tasks.get(task.id)?.finishedAt, 5000);
+  expect(t.tasks.get(task.id)?.tainted).toBe(true);
+  await t.plugins.stopAll();
+});

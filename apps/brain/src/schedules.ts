@@ -23,6 +23,7 @@ type Row = {
   next_run_at: string | null;
   last_run_at: string | null;
   last_task_id: number | null;
+  tainted: number;
 };
 
 const SELECT = `SELECT s.*, (SELECT max(id) FROM tasks t WHERE t.schedule_id = s.id) AS last_task_id
@@ -40,6 +41,7 @@ const toSchedule = (r: Row): Schedule => ({
   nextRunAt: r.next_run_at,
   lastRunAt: r.last_run_at,
   lastTaskId: r.last_task_id,
+  tainted: Boolean(r.tainted),
 });
 
 export type ScheduleInput = {
@@ -77,16 +79,30 @@ export class Schedules {
   }
 
   /** Throws ScheduleError with a message for the owner (or the model) when the time is wrong. */
-  create(input: ScheduleInput & { name: string; prompt: string }, via: "chat" | "owner"): Schedule {
+  create(
+    input: ScheduleInput & { name: string; prompt: string },
+    via: "chat" | "owner",
+    tainted = false,
+  ): Schedule {
     const when = this.when(input.cron, input.at);
     const enabled = input.enabled ?? true;
     const row = this.db
       .query<
         { id: number },
-        [string, string | null, string | null, string, number, string, string, string | null]
+        [
+          string,
+          string | null,
+          string | null,
+          string,
+          number,
+          string,
+          string,
+          string | null,
+          number,
+        ]
       >(
-        `INSERT INTO schedules (name, cron, run_at, prompt, enabled, created_via, created_at, next_run_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        `INSERT INTO schedules (name, cron, run_at, prompt, enabled, created_via, created_at, next_run_at, tainted)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       )
       .get(
         input.name,
@@ -97,11 +113,20 @@ export class Schedules {
         via,
         this.now(),
         enabled ? when.next : null,
+        via === "chat" && tainted ? 1 : 0,
       );
     return this.changed(row?.id ?? -1) as Schedule;
   }
 
-  update(id: number, patch: ScheduleInput): Schedule | null {
+  /**
+   * `by`: you, from the app (saving the instructions clears the tainted mark), or the chat
+   * (`tainted`: after reading untrusted content, which sets it).
+   */
+  update(
+    id: number,
+    patch: ScheduleInput,
+    by: { via: "owner" } | { via: "chat"; tainted: boolean } = { via: "owner" },
+  ): Schedule | null {
     const current = this.get(id);
     if (!current) return null;
     const timeChanged = patch.cron !== undefined || patch.at !== undefined;
@@ -115,9 +140,14 @@ export class Schedules {
       ({ cron, runAt } = when);
       nextRunAt = when.next;
     }
+    // Your saving its instructions clears the mark; switching it on or off doesn't.
+    const tainted =
+      by.via === "owner"
+        ? patch.prompt === undefined && current.tainted
+        : by.tainted || current.tainted;
     this.db
       .query(
-        "UPDATE schedules SET name = ?, prompt = ?, cron = ?, run_at = ?, enabled = ?, next_run_at = ? WHERE id = ?",
+        "UPDATE schedules SET name = ?, prompt = ?, cron = ?, run_at = ?, enabled = ?, next_run_at = ?, tainted = ? WHERE id = ?",
       )
       .run(
         patch.name ?? current.name,
@@ -126,6 +156,7 @@ export class Schedules {
         runAt,
         enabled ? 1 : 0,
         enabled ? nextRunAt : null,
+        tainted ? 1 : 0,
         id,
       );
     return this.changed(id);
@@ -177,6 +208,7 @@ export class Schedules {
       source: s.name,
       scheduleId: s.id,
       runKey: `schedule:${s.id}`,
+      tainted: s.tainted,
     });
     if (!task) return null;
     this.db.query("UPDATE schedules SET last_run_at = ? WHERE id = ?").run(this.now(), s.id);

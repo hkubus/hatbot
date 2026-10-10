@@ -34,7 +34,12 @@ export type PluginTool<I = unknown> = {
    */
   access: "read" | "write";
   /** Its output is untrusted content (PLAN.md §6.1), e.g. issue text written by strangers. */
-  untrusted?: boolean;
+  untrusted?: boolean | ((input: I) => boolean);
+  /**
+   * Its description and schema were written by someone else (an MCP server you haven't trusted):
+   * whatever is offered it starts tainted, because that text is in the prompt.
+   */
+  untrustedDefinition?: boolean;
   /** What the chat shows while it runs, e.g. "Checking guests". */
   label?: string;
   /** The call in a line, for the timeline and approvals: "Restart CT 105 (jellyfin)". */
