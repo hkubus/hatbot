@@ -7,7 +7,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 - **No vendor cloud.** It runs on your hardware.
 - **Predictable cost.** Spending limits are enforced.
 
-> Status: design agreed 2026-10-09. M0–M3 are built and deployed; M4 is in progress. The clickable UI prototype lives in [`prototype/`](prototype/).
+> Status: design agreed 2026-10-09. M0–M4 are built (M4 not yet deployed or tried live); the iOS app is built and awaiting its first install. M5 is next. The clickable UI prototype lives in [`prototype/`](prototype/).
 
 ---
 
@@ -20,7 +20,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 - **Homelab ops**: Proxmox status, restarts, SSH to approved hosts, Forgejo/GitHub via bot accounts, plus any MCP server.
 - **Teach-by-showing**: you demo a task on the desktop, and Hatbot turns it into a reusable skill.
 - **Memory**: a git-tracked markdown folder that Hatbot edits and you can read, diff and revert.
-- A native **iOS app** (SwiftUI, sideloaded with SideStore) for chat, tasks, approvals and the live view (§4.6).
+- A native **iOS app** (SwiftUI, sideloaded with SideStore) for chat, tasks, approvals and the live view (§4.7).
 
 ### v1 is not
 - Email or calendar. You use Proton Mail and no calendar; this can come later via Proton Bridge.
@@ -160,7 +160,7 @@ Integrations are plugins: Proxmox, SSH, Forgejo and MCP. The core keeps memory, 
 - `host-setup.sh`: the one-time Proxmox setup script (§9).
 - the provisioning scripts for both guests, `verify.sh`, and `deploy.sh`, which installs the app and its systemd unit.
 
-### 4.6 `apps/ios` — SwiftUI
+### 4.7 `apps/ios` — SwiftUI
 - **Native**: SwiftUI, built with the newest Xcode and iOS SDK (27), running on iOS 18+. SF Symbols and the system font, the same amber, blue, red and green as the web. No dependencies.
 - **Liquid Glass**: system bars, tab bar and lists get it from the SDK. The chat composer, the paused banner, the toast and the buttons use glass on iOS 26+ (a material before); messages and screenshots stay solid. The tab bar shrinks while you scroll.
 - **Tabs**: Chat, Tasks (with a badge for what needs you), Live, Settings, like the web on a phone.
