@@ -1,6 +1,6 @@
 // The thread (PLAN.md §10.2, §10.4): plain bubbles, a time under each, Copy and Open in a long-press
-// menu. A task shows under the reply that started it; approvals carry Approve and Deny. Finished
-// conversations fold up under their recap.
+// menu. A task shows under the reply that started it; approvals carry Approve and Deny, and fold into
+// the task's message once it ends. Finished conversations fold up under their recap.
 import SwiftUI
 import UIKit
 
@@ -18,13 +18,14 @@ struct ChatView: View {
   private enum Row: Identifiable {
     case day(String, before: Int)
     case fold(ThreadGroup)
-    case message(ThreadMessage)
+    /// `approvals`: an ended task's, shown in this message instead of their own.
+    case message(ThreadMessage, approvals: [Int])
 
     var id: String {
       switch self {
       case let .day(_, before): "d\(before)"
       case let .fold(g): "f\(g.id)"
-      case let .message(m): "m\(m.id)"
+      case let .message(m, _): "m\(m.id)"
       }
     }
   }
@@ -32,14 +33,23 @@ struct ChatView: View {
   private var rows: [Row] {
     var rows: [Row] = []
     var previous: ThreadMessage?
+    let merged = ThreadFolds.mergedApprovals(store.messages) { id in
+      store.tasks[id].map { !$0.isActive } ?? false
+    }
     func add(_ m: ThreadMessage, as row: Row) {
       if let day = dayChange(m, after: previous) { rows.append(.day(day, before: m.id)) }
       previous = m
       rows.append(row)
     }
+    func add(_ m: ThreadMessage) {
+      // An ended task's approval shows in the task's own message.
+      if m.kind == .approval, let task = m.taskId, merged[task] != nil { return }
+      let approvals = m.kind == .approval ? nil : m.taskId.flatMap { merged[$0] }
+      add(m, as: .message(m, approvals: approvals ?? []))
+    }
     for g in ThreadFolds.groups(store.messages, episodes: store.episodes) {
       guard g.fold != nil, let id = g.episodeId else {
-        for m in g.messages { add(m, as: .message(m)) }
+        for m in g.messages { add(m) }
         continue
       }
       add(g.messages[0], as: .fold(g))
@@ -47,7 +57,7 @@ struct ChatView: View {
       let shown = unfolded.contains(id)
         ? g.messages
         : g.messages.filter { m in m.approvalId.map { store.approvals[$0]?.status == .pending } ?? false }
-      for m in shown { add(m, as: .message(m)) }
+      for m in shown { add(m) }
     }
     return rows
   }
@@ -75,8 +85,8 @@ struct ChatView: View {
                   if unfolded.remove(id) == nil { unfolded.insert(id) }
                 }
               }
-            case let .message(m):
-              MessageRow(m: m, open: { path.append($0) })
+            case let .message(m, approvals):
+              MessageRow(m: m, approvals: approvals, open: { path.append($0) })
             }
           }
         }
@@ -222,6 +232,8 @@ private struct FoldRow: View {
 
 private struct MessageRow: View {
   let m: ThreadMessage
+  /// An ended task's approvals, shown here instead of their own messages.
+  let approvals: [Int]
   let open: (Route) -> Void
   @Environment(AppStore.self) private var store
 
@@ -259,10 +271,10 @@ private struct MessageRow: View {
   @ViewBuilder
   private var content: some View {
     switch m.kind {
-    case .task where m.taskId != nil: TaskMessage(taskId: m.taskId!)
+    case .task where m.taskId != nil: TaskMessage(taskId: m.taskId!, approvals: approvals)
     case .approval where m.approvalId != nil: ApprovalMessage(approvalId: m.approvalId!)
     case .schedule where m.scheduleId != nil: ScheduleMessage(scheduleId: m.scheduleId!)
-    default: ReplyMessage(m: m)
+    default: ReplyMessage(m: m, approvals: approvals)
     }
   }
 
@@ -315,6 +327,7 @@ private struct MessageRow: View {
 /// A reply, with the task it started (if any) working and then reporting under it.
 private struct ReplyMessage: View {
   let m: ThreadMessage
+  let approvals: [Int]
   @Environment(AppStore.self) private var store
 
   var body: some View {
@@ -330,7 +343,25 @@ private struct ReplyMessage: View {
     }
     // The result came later: a rule sets it apart from the reply, like text after a tool.
     if !m.text.isEmpty, let task = m.taskId.flatMap({ store.tasks[$0] }), !task.isActive { Divider() }
+    if !approvals.isEmpty { TaskApprovals(ids: approvals) }
     if let taskId = m.taskId { TaskResult(taskId: taskId) }
+  }
+}
+
+/// An ended task's approvals, one line each, in the message that shows the task.
+private struct TaskApprovals: View {
+  let ids: [Int]
+  @Environment(AppStore.self) private var store
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 2) {
+      ForEach(ids, id: \.self) { id in
+        if let a = store.approvals[id], a.status != .pending {
+          Text("\(a.status.word): \(a.summary)").font(.subheadline).foregroundStyle(.secondary)
+        }
+      }
+    }
+    .onAppear { for id in ids { store.ensureApproval(id) } }
   }
 }
 
@@ -370,12 +401,15 @@ private struct TaskResult: View {
 /// A background task (schedule, trigger), as a message: what it's doing, then how it ended.
 private struct TaskMessage: View {
   let taskId: Int
+  let approvals: [Int]
   @Environment(AppStore.self) private var store
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       if let task = store.tasks[taskId] {
         MarkdownText(text: text(task))
+        if !approvals.isEmpty { TaskApprovals(ids: approvals) }
+        if let result = result(task) { MarkdownText(text: result) }
         if task.isActive {
           Text(note(task)).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
         }
@@ -387,9 +421,19 @@ private struct TaskMessage: View {
   private func text(_ task: AgentTask) -> String {
     if task.isActive { return "**\(task.title)**" }
     switch task.status {
-    case .done: return "**\(task.title)**\n\n\(task.summary ?? "Done.")"
-    case .failed: return "**\(task.title)** didn't finish." + (task.summary.map { "\n\n\($0)" } ?? "")
+    case .done: return "**\(task.title)**"
+    case .failed: return "**\(task.title)** didn't finish."
     default: return "**\(task.title)** was cancelled."
+    }
+  }
+
+  /// How it ended, under its title and approvals.
+  private func result(_ task: AgentTask) -> String? {
+    if task.isActive { return nil }
+    switch task.status {
+    case .done: return task.summary ?? "Done."
+    case .failed: return task.summary
+    default: return nil
     }
   }
 

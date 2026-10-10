@@ -1,4 +1,4 @@
-import { parseChart, type ThreadMessage, threadGroups } from "@hatbot/shared";
+import { mergedApprovals, parseChart, type ThreadMessage, threadGroups } from "@hatbot/shared";
 import {
   createContext,
   Fragment,
@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -169,8 +170,42 @@ function Meta({
   );
 }
 
+const RESOLVED_WORD = {
+  approved: "Approved",
+  denied: "Denied",
+  expired: "Expired",
+  cancelled: "Cancelled",
+} as const;
+
+/** An ended task's approvals, one line each, in the message that shows the task. */
+function TaskApprovals({ ids }: { ids: number[] }) {
+  const approvals = useStore((s) => s.approvals);
+  useEffect(() => {
+    for (const id of ids) ensureApproval(id);
+  }, [ids]);
+  const lines = ids.map((id) => {
+    const a = approvals[id];
+    if (!a || a.status === "pending") return null;
+    return (
+      <div key={id} className="muted resolved">
+        {RESOLVED_WORD[a.status]}: {a.summary}
+      </div>
+    );
+  });
+  if (!lines.some(Boolean)) return null;
+  return <div className="task-approvals">{lines}</div>;
+}
+
 /** A task, as a message: what it's doing while it runs, then how it ended. */
-function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
+function TaskMessage({
+  m,
+  taskId,
+  approvals,
+}: {
+  m: ThreadMessage;
+  taskId: number;
+  approvals?: number[];
+}) {
   const task = useStore((s) => s.tasks[taskId]);
   const progress = useStore((s) => s.taskProgress[taskId]);
   const control = useStore((s) => s.desktop?.control);
@@ -178,11 +213,15 @@ function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
   if (!task) return null;
   const active = isActive(task);
   let text: string;
+  let result = "";
   if (active) text = `**${task.title}**`;
-  else if (task.status === "done") text = `**${task.title}**\n\n${task.summary ?? "Done."}`;
-  else if (task.status === "failed")
-    text = `**${task.title}** didn't finish.${task.summary ? `\n\n${task.summary}` : ""}`;
-  else text = `**${task.title}** was cancelled.`;
+  else if (task.status === "done") {
+    text = `**${task.title}**`;
+    result = task.summary ?? "Done.";
+  } else if (task.status === "failed") {
+    text = `**${task.title}** didn't finish.`;
+    result = task.summary ?? "";
+  } else text = `**${task.title}** was cancelled.`;
   const note =
     active && control === "owner" && task.status === "running"
       ? "Paused while you have control."
@@ -191,6 +230,8 @@ function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
     <>
       <div className="body">
         <AssistantBody text={text} />
+        {approvals && <TaskApprovals ids={approvals} />}
+        {result && <AssistantBody text={result} />}
         {active && <div className="progress-note">{note}</div>}
       </div>
       <Meta
@@ -234,7 +275,15 @@ function TaskResult({ taskId }: { taskId: number }) {
 }
 
 /** Hatbot's reply, with the task it started (if any) working and then reporting under it. */
-function ReplyMessage({ m, progress }: { m: ThreadMessage; progress?: string }) {
+function ReplyMessage({
+  m,
+  progress,
+  approvals,
+}: {
+  m: ThreadMessage;
+  progress?: string;
+  approvals?: number[];
+}) {
   const task = useStore((s) => (m.taskId ? s.tasks[m.taskId] : undefined));
   const used = useStore((s) => s.usage[m.id]);
   const streaming = m.status === "streaming";
@@ -259,6 +308,7 @@ function ReplyMessage({ m, progress }: { m: ThreadMessage; progress?: string }) 
         )}
         {/* The result came later: a rule sets it apart from the reply, like text after a tool. */}
         {ended && m.text && <hr className="result-rule" />}
+        {approvals && <TaskApprovals ids={approvals} />}
         {m.taskId && <TaskResult taskId={m.taskId} />}
       </div>
       {!streaming && (
@@ -282,12 +332,7 @@ function ApprovalMessage({ m, approvalId }: { m: ThreadMessage; approvalId: numb
   if (!a) return null;
   const open = a.taskId ? { to: `/tasks/${a.taskId}`, label: "Open task" } : undefined;
   if (a.status !== "pending") {
-    const word = {
-      approved: "Approved",
-      denied: "Denied",
-      expired: "Expired",
-      cancelled: "Cancelled",
-    }[a.status];
+    const word = RESOLVED_WORD[a.status];
     return (
       <>
         <div className="body">
@@ -368,10 +413,13 @@ function ScheduleMessage({ m, scheduleId }: { m: ThreadMessage; scheduleId: numb
 function Message({
   m,
   progress,
+  approvals,
   animate,
 }: {
   m: ThreadMessage;
   progress?: string;
+  /** An ended task's approvals, shown in this message instead of their own. */
+  approvals?: number[];
   animate: boolean;
 }) {
   // Touch screens have no hover: a tap shows the message's actions.
@@ -386,13 +434,13 @@ function Message({
       </>
     );
   } else if (m.kind === "task" && m.taskId) {
-    inner = <TaskMessage m={m} taskId={m.taskId} />;
+    inner = <TaskMessage m={m} taskId={m.taskId} approvals={approvals} />;
   } else if (m.kind === "approval" && m.approvalId) {
     inner = <ApprovalMessage m={m} approvalId={m.approvalId} />;
   } else if (m.kind === "schedule" && m.scheduleId) {
     inner = <ScheduleMessage m={m} scheduleId={m.scheduleId} />;
   } else {
-    inner = <ReplyMessage m={m} progress={progress} />;
+    inner = <ReplyMessage m={m} progress={progress} approvals={approvals} />;
   }
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: a tap only reveals the buttons, which are reachable by keyboard anyway
@@ -428,6 +476,15 @@ export function Chat() {
   const messages = useStore((s) => s.messages);
   const episodes = useStore((s) => s.episodes);
   const approvals = useStore((s) => s.approvals);
+  const tasks = useStore((s) => s.tasks);
+  const merged = useMemo(
+    () =>
+      mergedApprovals(messages, (id) => {
+        const t = tasks[id];
+        return t !== undefined && !isActive(t);
+      }),
+    [messages, tasks],
+  );
   const [unfolded, setUnfolded] = useState<Set<number>>(() => new Set());
   const progress = useStore((s) => s.progress);
   const hasEarlier = useStore((s) => s.hasEarlier);
@@ -511,12 +568,21 @@ export function Chat() {
     lastDay = day;
     return show ? <div className="day">{day}</div> : null;
   };
-  const row = (m: ThreadMessage) => (
-    <Fragment key={m.id}>
-      {dayBefore(m)}
-      <Message m={m} progress={progress[m.id]} animate={m.id >= animateFrom.current} />
-    </Fragment>
-  );
+  const row = (m: ThreadMessage) => {
+    // An ended task's approval shows in the task's own message.
+    if (m.kind === "approval" && m.taskId !== null && merged.has(m.taskId)) return null;
+    return (
+      <Fragment key={m.id}>
+        {dayBefore(m)}
+        <Message
+          m={m}
+          progress={progress[m.id]}
+          approvals={m.kind !== "approval" && m.taskId !== null ? merged.get(m.taskId) : undefined}
+          animate={m.id >= animateFrom.current}
+        />
+      </Fragment>
+    );
+  };
   const toggle = (id: number) =>
     setUnfolded((s) => {
       const next = new Set(s);

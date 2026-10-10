@@ -3267,6 +3267,10 @@ pre.payload {
   font-family: var(--font-text);
   font-size: 13px;
 }
+.task-approvals {
+  display: grid;
+  gap: 2px;
+}
 .msg .shot {
   max-width: 280px;
 }

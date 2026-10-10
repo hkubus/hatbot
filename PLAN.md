@@ -453,7 +453,7 @@ Plain messages, not cards; the details live on the task's or schedule's page.
 - **Task started from chat**: no message of its own. The reply that started it shows working dots and the latest step, then the task's result in the same bubble.
 - **While a reply is written**: under the dots, what Hatbot is doing ("Thinking…", "Reading memory: homelab.md", "Checking a host: nas, logs") and what the reply has used so far ("4.2k tokens · $0.021").
 - **Background task** (schedules, triggers): one message when it ends, the title in bold and its summary.
-- **Approval**: what Hatbot wants to do, why, which untrusted page it read, a screenshot, **Approve** (blue) and **Deny**. Once answered it shrinks to one line.
+- **Approval**: what Hatbot wants to do, why, which untrusted page it read, a screenshot, **Approve** (blue) and **Deny**. Once answered it shrinks to one line, and once its task ends that line moves into the task's own message (the reply that started it, or its card), above the result.
 - **Schedule created**: "Scheduled **name**: every day at 08:00."
 
 Markdown and code blocks render fully. Replies lead with the answer and use lists, **bold** key values, tables and code blocks where they help; text a reply adds after a tool call comes after a rule (`---`).
