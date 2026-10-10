@@ -8,8 +8,8 @@ export class Archive {
     private clock: () => number = Date.now,
   ) {}
 
-  /** Saves a task screenshot as `name`.webp and returns its path relative to the archive. */
-  async saveScreen(taskId: number, name: string, bytes: Uint8Array): Promise<string> {
+  /** Saves a screenshot as `name`.webp in the day's folder for `owner` (a task id, or e.g. "teach-3"). */
+  async saveScreen(owner: number | string, name: string, bytes: Uint8Array): Promise<string> {
     const d = new Date(this.clock());
     const pad = (n: number) => String(n).padStart(2, "0");
     const rel = join(
@@ -17,7 +17,7 @@ export class Archive {
       String(d.getFullYear()),
       pad(d.getMonth() + 1),
       pad(d.getDate()),
-      String(taskId),
+      String(owner),
       `${name}.webp`,
     );
     const abs = join(this.dir, rel);

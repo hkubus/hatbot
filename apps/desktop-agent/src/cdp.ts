@@ -83,14 +83,19 @@ const ELEMENT_JS = (x: number, y: number, focused: boolean) => `(() => {
   const top = window.screenY + window.outerHeight - window.innerHeight * dpr;
   let el = ${focused} ? document.activeElement
     : document.elementFromPoint((${x} - left) / dpr, (${y} - top) / dpr);
+  while (${focused} && el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
   if (!el || el === document.body) return null;
+  // Teach mode drops what's typed here. A frame's focus can't be seen from the page, so it counts too.
+  const hints = [el.getAttribute('autocomplete'), el.getAttribute('name'), el.id].join(' ');
+  const secret = el.tagName === 'IFRAME' || (el.tagName === 'INPUT' && (el.type === 'password'
+    || /password|one-time-code|cc-|pass|otp|pin\\b|cvc|cvv|card.?num|secret/i.test(hints)));
   const clickable = el.closest('button, a, input, select, textarea, label, summary, [role=button], [role=link], [role=menuitem], [onclick]');
   if (clickable) el = clickable;
   const text = (e) => (e.getAttribute('aria-label') || e.value || e.innerText || e.title || e.alt || '').trim().replace(/\\s+/g, ' ').slice(0, 200);
   const form = el.closest('form');
   const out = { tag: el.tagName.toLowerCase(), role: el.getAttribute('role'), type: el.getAttribute('type'),
     label: el.tagName === 'INPUT' && !['submit', 'button'].includes(el.type) ? (el.placeholder || el.name || '') : text(el),
-    inForm: !!form };
+    inForm: !!form, secret };
   if (${focused} && form) {
     const submit = form.querySelector('button[type=submit], input[type=submit], button:not([type])');
     if (submit) out.submitLabel = text(submit);

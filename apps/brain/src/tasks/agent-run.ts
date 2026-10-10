@@ -6,7 +6,7 @@ import { z } from "zod";
 import { modelErrorText } from "../agent/model";
 import { AGENT_PROMPT } from "../agent/prompt";
 import { localStamp } from "../agent/thread";
-import { DesktopTaskInput, runTool, TOOL_PARAMS, toolParam } from "../agent/tools";
+import { DesktopTaskInput, missingSkill, runTool, TOOL_PARAMS, toolParam } from "../agent/tools";
 import type { PluginTool } from "../plugins/plugin";
 import { describeCall, runPluginTool, verdictFor } from "../plugins/registry";
 import { BudgetError, priceOf } from "../spend";
@@ -117,10 +117,13 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const desktopTask = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
     const p = DesktopTaskInput.safeParse(call.input);
     if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+    const missing = await missingSkill(d.memory, p.data.skill);
+    if (missing) return result(call, missing, true);
     const child = tasks.createDesktopTask({
       title: p.data.title,
       goal: p.data.goal,
       successCriteria: p.data.success_criteria,
+      skill: p.data.skill,
       origin: task.origin,
       parent: task,
     });
@@ -228,6 +231,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const index = (await d.memory.exists("INDEX.md"))
       ? await d.memory.read("INDEX.md")
       : "(no INDEX.md yet)";
+    const skills = d.skills.prompt();
     const source = task.source ?? "";
     const payload = task.payload
       ? `\n<event trusted="${task.tainted ? "false" : "true"}">\n${JSON.stringify(task.payload)}\n</event>`
@@ -235,7 +239,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     record("user", [
       {
         type: "text",
-        text: `<memory_index>\n${index.trim()}\n</memory_index>\n\n<task>\n${task.goal}\n</task>${payload}\n\nStarted by ${STARTED_BY[task.origin](source)} at ${localStamp(new Date(tasks.clock()))}, the owner's local time.`,
+        text: `<memory_index>\n${index.trim()}\n</memory_index>\n\n${skills ? `${skills}\n\n` : ""}<task>\n${task.goal}\n</task>${payload}\n\nStarted by ${STARTED_BY[task.origin](source)} at ${localStamp(new Date(tasks.clock()))}, the owner's local time.`,
       },
     ]);
 

@@ -1,6 +1,6 @@
 // Built-in tools for the chat thread (PLAN.md §5.5): memory, history search, desktop tasks, schedules.
 import type Anthropic from "@anthropic-ai/sdk";
-import { describeCron, type Schedule } from "@hatbot/shared";
+import { describeCron, type Schedule, SKILL_NAME } from "@hatbot/shared";
 import { z } from "zod";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
@@ -8,6 +8,7 @@ import { HATBOT, MemoryError, type MemoryStore } from "../memory/store";
 import { type Plugins, runPluginTool } from "../plugins/registry";
 import { ScheduleError, type Schedules } from "../schedules";
 import type { Tasks } from "../tasks/service";
+import { skillPath } from "../teach/skills";
 import type { Triggers } from "../triggers";
 
 export type ToolContext = {
@@ -40,7 +41,20 @@ export const DesktopTaskInput = z.object({
     .max(4000)
     .describe("What to do, with every detail from the conversation it needs"),
   success_criteria: z.string().max(1000).describe("How to tell it's done"),
+  skill: z
+    .string()
+    .regex(SKILL_NAME)
+    .optional()
+    .describe(
+      "A skill to follow, when one fits: its name, from skills/<name>.md. The desktop model gets its steps; put the values for its {{placeholders}} in the goal",
+    ),
 });
+
+/** Why a desktop task can't use `skill`, or null if it can. */
+export async function missingSkill(memory: MemoryStore, skill?: string): Promise<string | null> {
+  if (!skill || (await memory.exists(skillPath(skill)))) return null;
+  return `There's no skill called "${skill}" (skills/${skill}.md). Check INDEX.md, or leave skill out.`;
+}
 
 export const RunTaskInput = z.object({
   title: z
@@ -169,12 +183,15 @@ export const TOOLS = [
     description:
       "Start a task on your Linux desktop (Chromium and a terminal), for anything that needs a browser: booking, buying, filling in forms, checking websites. It runs in the background on a separate model and its progress and result show under your reply; the owner can watch it live and approves consequential steps. You're told how it ended at the start of a later turn. Give it everything it needs to know: it can't see this conversation.",
     schema: DesktopTaskInput,
-    run: async ({ title, goal, success_criteria }, { tasks, messageId }) => {
+    run: async ({ title, goal, success_criteria, skill }, { tasks, messageId, memory }) => {
       if (!tasks) return "Desktop tasks aren't available.";
+      const missing = await missingSkill(memory, skill);
+      if (missing) return missing;
       const task = tasks.createDesktopTask({
         title,
         goal,
         successCriteria: success_criteria,
+        skill,
         origin: "chat",
         message: messageId,
       });

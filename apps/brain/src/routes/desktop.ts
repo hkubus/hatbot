@@ -39,7 +39,7 @@ export const desktopRoutes = new Hono<AppEnv>()
     },
     // The live view (PLAN.md §10.5): JPEG frames from desktop-agent out, your input in while you have control.
     upgradeWebSocket((c) => {
-      const { desktop } = (c as Context<AppEnv>).var;
+      const { desktop, teach } = (c as Context<AppEnv>).var;
       let upstream: WebSocket | null = null;
       return {
         onOpen(_, ws) {
@@ -63,8 +63,10 @@ export const desktopRoutes = new Hono<AppEnv>()
           } catch {
             return;
           }
-          if (validInput(m) && upstream?.readyState === WebSocket.OPEN)
+          if (validInput(m) && upstream?.readyState === WebSocket.OPEN) {
             upstream.send(JSON.stringify(m));
+            teach.input(m);
+          }
         },
         onClose() {
           upstream?.close();

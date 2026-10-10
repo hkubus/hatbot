@@ -11,6 +11,7 @@ import { localStamp } from "../agent/thread";
 import type { Outcome } from "../approvals";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import { BudgetError, priceOf } from "../spend";
+import { skillPath } from "../teach/skills";
 import { checkFor, consequential } from "./policy";
 import type { Tasks } from "./service";
 
@@ -454,13 +455,18 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   };
 
   try {
+    // The owner saved it (PLAN.md §5.4), so it's trusted like the task itself.
+    const skill =
+      task.skill && (await d.memory.exists(skillPath(task.skill)))
+        ? `<skill name="${task.skill}">\n${(await d.memory.read(skillPath(task.skill))).trim()}\n</skill>\n\n`
+        : "";
     await acquire();
     const first = await screen("Start");
     await observePage();
     record("user", [
       {
         type: "text",
-        text: `<task>\n${task.goal}\nDone when: ${task.successCriteria || "the goal is met"}\n</task>\nStarted ${localStamp(new Date(tasks.clock()))}, the owner's local time. The screen now:`,
+        text: `${skill}<task>\n${task.goal}\nDone when: ${task.successCriteria || "the goal is met"}\n</task>\nStarted ${localStamp(new Date(tasks.clock()))}, the owner's local time. The screen now:`,
       },
       first,
     ]);

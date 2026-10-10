@@ -50,6 +50,8 @@ export type AgentElement = {
   inForm: boolean;
   /** For Enter on a form field: the label of the form's submit button. */
   submitLabel?: string;
+  /** The focused element takes a password, a one-time code or card details, or can't be seen into (a frame). */
+  secret?: boolean;
 };
 
 /** Messages the brain sends on the /live socket while the owner has control (PLAN.md §10.5). */

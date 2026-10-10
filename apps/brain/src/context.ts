@@ -13,6 +13,7 @@ import type { Schedules } from "./schedules";
 import type { SettingsStore } from "./settings";
 import type { Spend } from "./spend";
 import type { Tasks } from "./tasks/service";
+import type { Teach } from "./teach/service";
 import type { Triggers } from "./triggers";
 import type { Updates } from "./updates";
 
@@ -36,6 +37,7 @@ export type Deps = {
   schedules: Schedules;
   triggers: Triggers;
   plugins: Plugins;
+  teach: Teach;
 };
 
 export type AppEnv = {

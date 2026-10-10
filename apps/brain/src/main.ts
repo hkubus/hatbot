@@ -20,6 +20,8 @@ import { Schedules } from "./schedules";
 import { SettingsStore } from "./settings";
 import { Spend } from "./spend";
 import { Tasks } from "./tasks/service";
+import { Teach } from "./teach/service";
+import { Skills } from "./teach/skills";
 import { Triggers } from "./triggers";
 import { Updates } from "./updates";
 import { webHandler } from "./web";
@@ -32,6 +34,9 @@ const settings = new SettingsStore(db);
 const spend = new Spend(db, settings, events);
 const memory = new MemoryStore(config.memoryDir);
 await memory.init();
+const skills = new Skills(db, memory);
+await skills.refresh();
+skills.watch(events);
 const model = new AnthropicModelClient();
 const plugins = new Plugins(PLUGINS, { db, events, reserved: CORE_TOOL_NAMES });
 // In the background: an MCP server that is slow to answer mustn't hold up the health check.
@@ -57,6 +62,18 @@ const tasks = new Tasks({
   config,
   memory,
   plugins,
+  skills,
+});
+const teach = new Teach({
+  db,
+  events,
+  desktop,
+  lane: tasks.lane,
+  archive,
+  model,
+  spend,
+  settings,
+  skills,
 });
 const schedules = new Schedules(db, events, settings, tasks);
 const triggers = new Triggers(db, events, settings, tasks, notifier, config.publicUrl);
@@ -94,6 +111,7 @@ const app = createApp({
   schedules,
   triggers,
   plugins,
+  teach,
 });
 const web = webHandler(config.webDir);
 const server = Bun.serve({

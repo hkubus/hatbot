@@ -89,6 +89,8 @@ export type Task = {
   /** The event that started it, as received; untrusted unless its trigger is trusted. */
   payload: string | null;
   model: string;
+  /** Desktop tasks: the skill (skills/<name>.md) it follows. */
+  skill: string | null;
   /** Background tasks: null runs at the chat's effort. */
   effort: "low" | "medium" | "high" | null;
   status: TaskStatus;
@@ -184,7 +186,31 @@ export type HatbotEvent =
   | { type: "schedule.deleted"; id: number }
   | { type: "trigger.updated"; trigger: Trigger }
   | { type: "trigger.deleted"; id: number }
-  | { type: "plugin.updated"; plugin: PluginInfo };
+  | { type: "plugin.updated"; plugin: PluginInfo }
+  | { type: "teach.updated"; session: TeachSession };
+
+/** A skill's name: its file is skills/<name>.md. */
+export const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,59}$/;
+
+/** Teach-by-showing (PLAN.md §1): a recording of you doing a chore, then the skill drafted from it. */
+export type TeachSession = {
+  id: number;
+  /** recording → drafting → draft → saved; failed can be drafted again. */
+  status: "recording" | "drafting" | "draft" | "failed" | "saved" | "discarded";
+  startedAt: string;
+  stoppedAt: string | null;
+  /** Steps recorded: clicks, keys, typing, pages. */
+  steps: number;
+  /** The suggested name, then the saved one. */
+  name: string | null;
+  /** The drafted skill, markdown. */
+  draft: string | null;
+  error: string | null;
+};
+export const SaveSkill = z.object({
+  name: z.string().regex(SKILL_NAME, "Use lowercase letters, digits and dashes."),
+  content: z.string().trim().min(1).max(100_000),
+});
 
 /** The Update button in Settings (infra/hatbot-update.sh). */
 export type UpdateStatus = {

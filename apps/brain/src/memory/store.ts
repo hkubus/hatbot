@@ -80,11 +80,22 @@ export class MemoryStore {
 
   /** Writes a file and commits it. Returns the commit, or null if the content didn't change. */
   write(path: string, content: string, author: Author, message: string): Promise<string | null> {
+    return this.writeAll([{ path, content }], author, message);
+  }
+
+  /** Writes several files in one commit. */
+  writeAll(
+    files: { path: string; content: string }[],
+    author: Author,
+    message: string,
+  ): Promise<string | null> {
     return this.serial(async () => {
-      const { rel, abs } = this.resolve(path, { markdown: true });
-      await mkdir(dirname(abs), { recursive: true });
-      await writeFile(abs, content.endsWith("\n") ? content : `${content}\n`);
-      await this.git(["add", "--", rel]);
+      const resolved = files.map((f) => ({ ...this.resolve(f.path, { markdown: true }), ...f }));
+      for (const { rel, abs, content } of resolved) {
+        await mkdir(dirname(abs), { recursive: true });
+        await writeFile(abs, content.endsWith("\n") ? content : `${content}\n`);
+        await this.git(["add", "--", rel]);
+      }
       return this.commitAs(author, message);
     });
   }

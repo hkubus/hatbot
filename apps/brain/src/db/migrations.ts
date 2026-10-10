@@ -219,4 +219,24 @@ export const migrations: string[] = [
   /* 8: a schedule the chat made or changed after reading untrusted content runs tainted (PLAN.md §6.1) */ `
   ALTER TABLE schedules ADD COLUMN tainted INTEGER NOT NULL DEFAULT 0;
   `,
+  /* 9: teach-by-showing (PLAN.md §1, §7.1): recordings, their drafts, and the skills they became */ `
+  CREATE TABLE teach_sessions (
+    id INTEGER PRIMARY KEY,
+    status TEXT NOT NULL CHECK (status IN ('recording', 'drafting', 'draft', 'failed', 'saved', 'discarded')),
+    started_at TEXT NOT NULL,
+    stopped_at TEXT,
+    -- The recorded steps as JSON, written when the recording stops.
+    events TEXT,
+    name TEXT,
+    draft TEXT,
+    error TEXT
+  );
+  -- Mirrors skills/*.md in the memory repo, which is the source of truth.
+  CREATE TABLE skills_index (
+    name TEXT PRIMARY KEY,
+    description TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  ALTER TABLE tasks ADD COLUMN skill TEXT;
+  `,
 ];

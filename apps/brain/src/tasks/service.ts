@@ -14,6 +14,7 @@ import type { Notifier } from "../notify";
 import type { Plugins } from "../plugins/registry";
 import type { SettingsStore } from "../settings";
 import type { Spend } from "../spend";
+import type { Skills } from "../teach/skills";
 import { AGENT_MODEL, runAgentTask } from "./agent-run";
 import { DESKTOP_MODEL, runDesktopTask } from "./desktop-run";
 import { Pool, ScreenLane } from "./lane";
@@ -32,6 +33,7 @@ export type TasksDeps = {
   config: Config;
   memory: MemoryStore;
   plugins: Plugins;
+  skills: Skills;
   clock?: () => number;
 };
 
@@ -51,6 +53,7 @@ type Row = {
   parent_id: number | null;
   payload: string | null;
   model: string;
+  skill: string | null;
   effort: Task["effort"];
   status: TaskStatus;
   tainted: number;
@@ -82,6 +85,7 @@ const toTask = (r: Row): Task => ({
   parentId: r.parent_id,
   payload: r.payload,
   model: r.model,
+  skill: r.skill,
   effort: r.effort,
   status: r.status,
   tainted: Boolean(r.tainted),
@@ -192,6 +196,8 @@ export class Tasks {
     goal: string;
     successCriteria: string;
     origin: Task["origin"];
+    /** A skill to follow, from skills/<name>.md. */
+    skill?: string;
     parent?: Task;
     message?: number;
   }): Task {
@@ -203,6 +209,7 @@ export class Tasks {
       origin: input.origin,
       lane: "screen",
       model: DESKTOP_MODEL,
+      skill: input.skill ?? null,
       parent_id: p?.id ?? null,
       source: p?.source ?? null,
       schedule_id: p?.scheduleId ?? null,

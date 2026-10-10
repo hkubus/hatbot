@@ -21,6 +21,8 @@ import { Schedules } from "../src/schedules";
 import { SettingsStore } from "../src/settings";
 import { Spend } from "../src/spend";
 import { Tasks } from "../src/tasks/service";
+import { Teach } from "../src/teach/service";
+import { Skills } from "../src/teach/skills";
 import { Triggers } from "../src/triggers";
 import { Updates } from "../src/updates";
 import { FakeDesktop } from "./fake-desktop";
@@ -37,6 +39,8 @@ export const ORIGIN = "https://hatbot.test";
 
 /** Removed after the run by test/cleanup.ts. */
 export const tempDirs: string[] = [];
+/** Their page polls are stopped after each test file by test/cleanup.ts. */
+export const tempTeach: Teach[] = [];
 const tempDir = (prefix: string) => {
   const d = mkdtempSync(join(tmpdir(), prefix));
   tempDirs.push(d);
@@ -67,6 +71,8 @@ export async function testApp(
   const spend = new Spend(db, settings, events, clock);
   const memory = new MemoryStore(tempDir("hatbot-test-mem-"));
   await memory.init();
+  const skills = new Skills(db, memory, clock);
+  skills.watch(events);
   const plugins = new Plugins(pluginList, {
     db,
     events,
@@ -95,8 +101,22 @@ export async function testApp(
     config,
     memory,
     plugins,
+    skills,
     clock,
   });
+  const teach = new Teach({
+    db,
+    events,
+    desktop,
+    lane: tasks.lane,
+    archive,
+    model: taskModel,
+    spend,
+    settings,
+    skills,
+    clock,
+  });
+  tempTeach.push(teach);
   const schedules = new Schedules(db, events, settings, tasks, clock);
   const triggers = new Triggers(db, events, settings, tasks, notifier, ORIGIN, clock);
   thread.attach({ tasks, schedules, triggers });
@@ -130,6 +150,7 @@ export async function testApp(
     schedules,
     triggers,
     plugins,
+    teach,
   });
 
   const call = (
@@ -163,6 +184,8 @@ export async function testApp(
     schedules,
     triggers,
     plugins,
+    skills,
+    teach,
     updateDir,
     events: seen,
     call,
