@@ -11,14 +11,23 @@ import { Icon } from "../icons";
 import { navigate } from "../router";
 import { setPaused, useStore } from "../store";
 import { getTheme, setTheme, type Theme } from "../theme";
+import { PluginPage, PluginsGroup } from "./Plugins";
 
 export function Settings({
+  path,
   toast,
   onSignOut,
 }: {
+  path: string;
   toast: (t: string) => void;
   onSignOut: () => void;
 }) {
+  const plugin = /^\/settings\/plugins\/([a-z0-9]+)$/.exec(path)?.[1];
+  if (plugin) return <PluginPage key={plugin} id={plugin} toast={toast} />;
+  return <SettingsHome toast={toast} onSignOut={onSignOut} />;
+}
+
+function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSignOut: () => void }) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [tokens, setTokens] = useState<ApiToken[]>([]);
   const [newToken, setNewToken] = useState<CreateTokenResponse | null>(null);
@@ -218,6 +227,8 @@ export function Settings({
             </div>
           </div>
         </section>
+
+        <PluginsGroup />
 
         <section className="group">
           <h2>Safety</h2>

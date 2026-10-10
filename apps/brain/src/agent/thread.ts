@@ -5,6 +5,7 @@ import { describeCron, type Schedule, type ThreadMessage } from "@hatbot/shared"
 import type { Db } from "../db";
 import type { EventBus } from "../events";
 import type { MemoryStore } from "../memory/store";
+import type { Plugins } from "../plugins/registry";
 import type { Schedules } from "../schedules";
 import type { SettingsStore } from "../settings";
 import { BudgetError, priceOf, type Spend } from "../spend";
@@ -12,7 +13,7 @@ import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
 import { type ModelClient, modelErrorText } from "./model";
 import { SUMMARY_PROMPT, SYSTEM_PROMPT } from "./prompt";
-import { runTool, TOOL_PARAMS } from "./tools";
+import { runTool, TOOL_PARAMS, toolParam } from "./tools";
 
 export const CHAT_MODEL = "claude-opus-5-5";
 export const SUMMARY_MODEL = "claude-haiku-5-5";
@@ -29,12 +30,14 @@ const BETAS: Anthropic.Beta.AnthropicBeta[] = [
 ];
 /**
  * What an episode's thinking blocks are bound to: the system prompt, the tools and the model. The API
- * rejects replayed thinking when these change, so an update that changes them starts a new episode.
+ * rejects replayed thinking when these change, so an update or a plugin switched on or off that changes
+ * them starts a new episode.
  */
-const PREFIX = createHash("sha256")
-  .update(JSON.stringify([CHAT_MODEL, SYSTEM_PROMPT, TOOL_PARAMS]))
-  .digest("hex")
-  .slice(0, 16);
+const prefixOf = (system: string, tools: Anthropic.Beta.BetaTool[]) =>
+  createHash("sha256")
+    .update(JSON.stringify([CHAT_MODEL, system, tools]))
+    .digest("hex")
+    .slice(0, 16);
 
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 type Turn = Anthropic.Beta.BetaMessageParam;
@@ -50,6 +53,7 @@ export type ThreadDeps = {
   spend: Spend;
   settings: SettingsStore;
   model: ModelClient;
+  plugins: Plugins;
   clock?: () => number;
 };
 
@@ -118,6 +122,14 @@ export class Thread {
     Object.assign(this.d, parts);
   }
 
+  private tainted(episodeId: number): boolean {
+    return Boolean(
+      this.d.db
+        .query<{ tainted: number }, [number]>("SELECT tainted FROM episodes WHERE id = ?")
+        .get(episodeId)?.tainted,
+    );
+  }
+
   /** Pause all: stops the reply in progress. */
   abortCurrent() {
     this.current?.abort();
@@ -174,7 +186,7 @@ export class Thread {
    * Continues the current episode, or starts a new one after 30 minutes idle, or when an update changed
    * the system prompt, tools or model.
    */
-  private async episodeFor(): Promise<{ id: number; isNew: boolean }> {
+  private async episodeFor(prefix: string): Promise<{ id: number; isNew: boolean }> {
     const last = this.d.db
       .query<
         { id: number; last_activity_at: string; summarized: number; prefix: string | null },
@@ -182,7 +194,7 @@ export class Thread {
       >("SELECT id, last_activity_at, summarized, prefix FROM episodes ORDER BY id DESC LIMIT 1")
       .get();
     if (last && this.clock() - Date.parse(last.last_activity_at) < EPISODE_IDLE_MS) {
-      if (last.prefix === PREFIX) return { id: last.id, isNew: false };
+      if (last.prefix === prefix) return { id: last.id, isNew: false };
       console.log(`episode ${last.id}: the prompt or tools changed; starting a new episode`);
     }
     if (last && !last.summarized) {
@@ -196,7 +208,7 @@ export class Thread {
       .query<{ id: number }, [string, string, string]>(
         "INSERT INTO episodes (started_at, last_activity_at, prefix) VALUES (?, ?, ?) RETURNING id",
       )
-      .get(this.now(), this.now(), PREFIX);
+      .get(this.now(), this.now(), prefix);
     if (!row) throw new Error("episode insert failed");
     return { id: row.id, isNew: true };
   }
@@ -279,8 +291,13 @@ export class Thread {
   }
 
   private async reply(user: ThreadMessage) {
-    const { db, events, spend, settings, model } = this.d;
-    const episode = await this.episodeFor();
+    const { db, events, spend, settings, model, plugins } = this.d;
+    // Fixed for the turn; a plugin switched on or off shows from the next one.
+    const guidance = plugins.guidance();
+    const system = guidance ? `${SYSTEM_PROMPT}\n\nYour plugins\n\n${guidance}` : SYSTEM_PROMPT;
+    const pluginTools = plugins.tools("chat");
+    const tools = [...TOOL_PARAMS, ...pluginTools.map(toolParam)];
+    const episode = await this.episodeFor(prefixOf(system, tools));
     db.query("UPDATE messages SET episode_id = ? WHERE id = ?").run(episode.id, user.id);
 
     const userBlocks: BlockParam[] = [];
@@ -349,12 +366,12 @@ export class Thread {
             system: [
               {
                 type: "text",
-                text: SYSTEM_PROMPT,
+                text: system,
                 cache_control: { type: "ephemeral", ttl: "1h" },
               },
             ],
             cache_control: { type: "ephemeral", ttl: "1h" },
-            tools: TOOL_PARAMS,
+            tools,
             // If a replayed thinking block fails the conversation check anyway, lose that reasoning
             // rather than the reply.
             thinking: {
@@ -416,18 +433,26 @@ export class Thread {
           events.emit({
             type: "message.progress",
             id: out.id,
-            text: `\n${toolLabel(call.name)}\n`,
+            text: `\n${pluginTools.find((t) => t.name === call.name)?.label ?? toolLabel(call.name, plugins)}\n`,
           });
-          const r = await runTool(call.name, call.input, {
-            ...this.d,
-            messageId: out.id,
-            scheduleCard: (sc: Schedule) =>
-              this.addCard(
-                "schedule",
-                `Schedule "${sc.name}": ${sc.cron ? describeCron(sc.cron) : `once at ${sc.runAt}`}. ${sc.prompt}`,
-                { scheduleId: sc.id },
-              ),
-          });
+          const r = await runTool(
+            call.name,
+            call.input,
+            {
+              ...this.d,
+              messageId: out.id,
+              tainted: () => this.tainted(episode.id),
+              scheduleCard: (sc: Schedule) =>
+                this.addCard(
+                  "schedule",
+                  `Schedule "${sc.name}": ${sc.cron ? describeCron(sc.cron) : `once at ${sc.runAt}`}. ${sc.prompt}`,
+                  { scheduleId: sc.id },
+                ),
+            },
+            abort.signal,
+          );
+          // Untrusted content in the conversation: tasks it starts from here on begin tainted.
+          if (r.untrusted) db.query("UPDATE episodes SET tainted = 1 WHERE id = ?").run(episode.id);
           results.push({
             type: "tool_result",
             tool_use_id: call.id,
@@ -450,7 +475,7 @@ export class Thread {
   }
 }
 
-function toolLabel(name: string): string {
+function toolLabel(name: string, plugins: Plugins): string {
   const labels: Record<string, string> = {
     memory_list: "Looking through memory",
     memory_read: "Reading memory",
@@ -466,8 +491,10 @@ function toolLabel(name: string): string {
     schedule_delete: "Deleting a schedule",
     trigger_list: "Looking at triggers",
     trigger_update: "Changing a trigger",
+    run_task: "Starting a task",
   };
-  return labels[name] ?? `Using ${name}`;
+  const plugin = plugins.pluginOf(name);
+  return labels[name] ?? `Using ${plugin?.name ?? name}`;
 }
 
 /** Rough upper estimate before a request: cached prefix at read price, plus room for a reply. */

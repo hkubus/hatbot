@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
 import { HATBOT, MemoryError, type MemoryStore } from "../memory/store";
+import { type Plugins, runPluginTool } from "../plugins/registry";
 import { ScheduleError, type Schedules } from "../schedules";
 import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
@@ -20,6 +21,9 @@ export type ToolContext = {
   messageId?: number;
   /** Adds a schedule's card to the thread. */
   scheduleCard?: (s: Schedule) => void;
+  plugins?: Plugins;
+  /** The conversation has read untrusted content; tasks it starts begin tainted (PLAN.md §6.1). */
+  tainted?: () => boolean;
 };
 
 export const DesktopTaskInput = z.object({
@@ -34,6 +38,27 @@ export const DesktopTaskInput = z.object({
     .max(4000)
     .describe("What to do, with every detail from the conversation it needs"),
   success_criteria: z.string().max(1000).describe("How to tell it's done"),
+});
+
+export const RunTaskInput = z.object({
+  title: z
+    .string()
+    .min(1)
+    .max(80)
+    .describe('Short title, e.g. "Restart Jellyfin" or "Fix the failing CI on hatbot"'),
+  goal: z
+    .string()
+    .min(1)
+    .max(4000)
+    .describe(
+      "What to do and what to report back, with every detail from the conversation it needs",
+    ),
+  effort: z
+    .enum(["medium", "high"])
+    .optional()
+    .describe(
+      'Leave out for routine work. "medium" for writing or changing code; "high" when the owner asks for it or an earlier attempt failed',
+    ),
 });
 
 const local = (iso: string | null) =>
@@ -155,6 +180,25 @@ export const TOOLS = [
     },
   }),
   def({
+    name: "run_task",
+    description:
+      "Start a background task for work that changes something: restarting or changing a guest, running commands on a host, commenting on or opening pull requests, writing code. It gets your memory, every tool your plugins offer (including the ones that change things, which you can't call here) and the desktop, and it asks the owner before risky steps. Its progress and result show under your reply; you're told how it ended at the start of a later turn. It can't see this conversation, so give it everything it needs.",
+    schema: RunTaskInput,
+    run: async ({ title, goal, effort }, { tasks, messageId, tainted }) => {
+      if (!tasks) return "Tasks aren't available.";
+      const task = tasks.createBackgroundTask({
+        title,
+        goal,
+        origin: "chat",
+        effort,
+        message: messageId,
+        tainted: tainted?.() ?? false,
+      });
+      if (!task) return "The task couldn't start.";
+      return `Started task #${task.id}. It's running in the background; the owner sees its progress and result under this reply. Don't wait for it.`;
+    },
+  }),
+  def({
     name: "get_task",
     description: "The status of a task, its summary if it ended, and its last few steps.",
     schema: z.object({ id: z.number().int() }),
@@ -255,28 +299,43 @@ export const TOOLS = [
   }),
 ];
 
-/** Tool definitions as sent to the API. Order and content must stay stable to keep the cache. */
-export const TOOL_PARAMS: Anthropic.Beta.BetaTool[] = TOOLS.map((t) => ({
+/** A tool definition as sent to the API. */
+export const toolParam = (t: {
+  name: string;
+  description: string;
+  schema: z.ZodType;
+}): Anthropic.Beta.BetaTool => ({
   name: t.name,
   description: t.description,
-  input_schema: z.toJSONSchema(t.schema) as Anthropic.Beta.BetaTool.InputSchema,
+  input_schema: z.toJSONSchema(t.schema, { io: "input" }) as Anthropic.Beta.BetaTool.InputSchema,
   eager_input_streaming: true,
-}));
+});
 
-/** Runs a tool call. Input is validated here: with eager input streaming the API doesn't. */
+/** The core's tool definitions. Order and content must stay stable to keep the cache. */
+export const TOOL_PARAMS: Anthropic.Beta.BetaTool[] = TOOLS.map(toolParam);
+
+/**
+ * Runs a chat tool call: a core tool, or a plugin's read tool. Input is validated here: with eager
+ * input streaming the API doesn't. `untrusted`: the output was untrusted content.
+ */
 export async function runTool(
   name: string,
   input: unknown,
   ctx: ToolContext,
-): Promise<{ content: string; isError: boolean }> {
+  signal: AbortSignal = new AbortController().signal,
+): Promise<{ content: string; isError: boolean; untrusted?: boolean }> {
   const tool =
     TOOLS.find((t) => t.name === name) ??
     TOOLS.find((t) => t.name.toLowerCase() === name.toLowerCase());
-  if (!tool)
-    return {
-      content: `Unknown tool "${name}". Available: ${TOOLS.map((t) => t.name).join(", ")}`,
-      isError: true,
-    };
+  if (!tool) {
+    const plugin = ctx.plugins?.tools("chat").find((t) => t.name === name);
+    if (plugin) {
+      const r = await runPluginTool(plugin, input, { task: null, signal });
+      return { ...r, untrusted: plugin.untrusted && !r.isError };
+    }
+    const names = [...TOOLS, ...(ctx.plugins?.tools("chat") ?? [])].map((t) => t.name);
+    return { content: `Unknown tool "${name}". Available: ${names.join(", ")}`, isError: true };
+  }
   const parsed = tool.schema.safeParse(input);
   if (!parsed.success)
     return { content: `Invalid input: ${z.prettifyError(parsed.error)}`, isError: true };
@@ -290,3 +349,11 @@ export async function runTool(
     return { content: "The tool failed with an internal error.", isError: true };
   }
 }
+
+/** The core's tool names, which plugin tools can't take. */
+export const CORE_TOOL_NAMES = [
+  ...TOOLS.map((t) => t.name),
+  "finish_task",
+  "confirm_intent",
+  "request_takeover",
+];

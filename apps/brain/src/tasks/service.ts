@@ -11,6 +11,7 @@ import type { Desktop } from "../desktop/service";
 import type { EventBus } from "../events";
 import type { MemoryStore } from "../memory/store";
 import type { Notifier } from "../notify";
+import type { Plugins } from "../plugins/registry";
 import type { SettingsStore } from "../settings";
 import type { Spend } from "../spend";
 import { AGENT_MODEL, runAgentTask } from "./agent-run";
@@ -30,6 +31,7 @@ export type TasksDeps = {
   thread: Thread;
   config: Config;
   memory: MemoryStore;
+  plugins: Plugins;
   clock?: () => number;
 };
 
@@ -49,6 +51,7 @@ type Row = {
   parent_id: number | null;
   payload: string | null;
   model: string;
+  effort: Task["effort"];
   status: TaskStatus;
   tainted: number;
   injection_suspected: number;
@@ -79,6 +82,7 @@ const toTask = (r: Row): Task => ({
   parentId: r.parent_id,
   payload: r.payload,
   model: r.model,
+  effort: r.effort,
   status: r.status,
   tainted: Boolean(r.tainted),
   injectionSuspected: Boolean(r.injection_suspected),
@@ -210,22 +214,29 @@ export class Tasks {
   }
 
   /**
-   * Starts a background task for a schedule or trigger (PLAN.md §5.6). Its card goes in the thread when
-   * it ends, if there's something to tell. Null if the same `runKey` is still running: one run at a time.
+   * Starts a background task (PLAN.md §5.6). One the chat starts (`run_task`) shows under the reply that
+   * started it (`message`). A schedule's or trigger's card goes in the thread when it ends, if there's
+   * something to tell. Null if the same `runKey` is still running: one run at a time.
    */
   createBackgroundTask(input: {
     title: string;
     goal: string;
-    origin: Exclude<Task["origin"], "chat">;
-    source: string;
+    origin: Task["origin"];
+    source?: string;
     scheduleId?: number;
     triggerId?: number;
-    runKey: string;
+    runKey?: string;
     /** The event that started it. Untrusted unless `trusted`: the task starts tainted. */
     payload?: string;
     trusted?: boolean;
+    /** It starts tainted: what started it had read untrusted content. */
+    tainted?: boolean;
+    /** Unset: the chat's effort. */
+    effort?: "medium" | "high";
+    message?: number;
   }): Task | null {
-    if (this.activeFor(input.runKey)) return null;
+    if (input.runKey && this.activeFor(input.runKey)) return null;
+    const tainted = input.tainted || (input.payload !== undefined && !input.trusted);
     const id = this.insert({
       title: input.title,
       goal: input.goal,
@@ -233,13 +244,16 @@ export class Tasks {
       origin: input.origin,
       lane: "background",
       model: AGENT_MODEL,
-      source: input.source,
+      effort: input.effort ?? null,
+      source: input.source ?? null,
       schedule_id: input.scheduleId ?? null,
       trigger_id: input.triggerId ?? null,
-      run_key: input.runKey,
+      run_key: input.runKey ?? null,
       payload: input.payload ?? null,
-      tainted: input.payload !== undefined && !input.trusted ? 1 : 0,
+      tainted: tainted ? 1 : 0,
     });
+    if (input.origin === "chat" && !(input.message && this.d.thread.attachTask(input.message, id)))
+      this.d.thread.addCard("task", `Task #${id}: ${input.title}`, { taskId: id });
     this.emit(id);
     this.start(id);
     return this.get(id) as Task;
@@ -303,7 +317,13 @@ export class Tasks {
 
   /** What background tasks' tools need. */
   toolContext(): ToolContext {
-    return { db: this.d.db, memory: this.d.memory, events: this.d.events, tasks: this };
+    return {
+      db: this.d.db,
+      memory: this.d.memory,
+      events: this.d.events,
+      tasks: this,
+      plugins: this.d.plugins,
+    };
   }
 
   private start(id: number) {
@@ -411,7 +431,11 @@ export class Tasks {
     const card = this.d.db
       .query("UPDATE messages SET text = ? WHERE kind = 'task' AND task_id = ?")
       .run(text, id);
-    if (!card.changes && tell && task.lane === "background")
+    // Shown under the reply that started it: its result shows there too.
+    const underReply = this.d.db
+      .query("SELECT 1 FROM messages WHERE kind = 'text' AND task_id = ?")
+      .get(id);
+    if (!card.changes && !underReply && tell && task.lane === "background")
       this.d.thread.addCard("task", text, { taskId: id });
     this.emit(id);
     if (!tell) return;

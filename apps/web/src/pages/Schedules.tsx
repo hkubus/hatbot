@@ -18,6 +18,7 @@ import {
   saveSchedule,
   useStore,
 } from "../store";
+import { Switch } from "../switch";
 import { StatusChip, whenText } from "../tasks";
 
 const KIND = { webhook: "Webhook", kuma: "Uptime Kuma" } as const;
@@ -45,18 +46,6 @@ export function SchedulesView({ path, params }: { path: string; params: URLSearc
     <ScheduleEdit key={path} id={id} />
   ) : (
     <TriggerEdit key={path} id={id} kind={params.get("kind") === "kuma" ? "kuma" : "webhook"} />
-  );
-}
-
-function Switch({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      className={`switch ${on ? "on" : ""}`}
-      aria-label={on ? "Turn off" : "Turn on"}
-      aria-pressed={on}
-      onClick={() => onChange(!on)}
-    />
   );
 }
 

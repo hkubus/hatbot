@@ -7,7 +7,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 - **No vendor cloud.** It runs on your hardware.
 - **Predictable cost.** Spending limits are enforced.
 
-> Status: design agreed 2026-10-09. Nothing is built yet. The clickable UI prototype lives in [`prototype/`](prototype/).
+> Status: design agreed 2026-10-09. M0–M3 are built and deployed; M4 is in progress. The clickable UI prototype lives in [`prototype/`](prototype/).
 
 ---
 
@@ -45,7 +45,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 | Model provider | Claude only |
 | Models | **Opus 5.5** at low effort is the brain (chat, planning, tools), at medium it drives the desktop and writes code · **Haiku 5.5** handles triage, summaries and injection screening · no Sonnet or Fable (§5.4) |
 | Agent loop | **Custom loop on the raw Messages API**, with no Agent SDK. Same model quality; we own context, caching and cost |
-| Tools | Built-in TypeScript tools, plus an **MCP client** for external servers |
+| Tools | Built-in TypeScript tools; integrations (Proxmox, SSH, Forgejo, MCP) are **plugins** that ship with Hatbot and are switched on in Settings (§4.5) |
 | Billing | API key funded by **Max 20x's included $200/mo API credits**; stop when they run out |
 | Spending limits | $10/day · $200/month · $3/task (raisable per task) |
 | Autonomy | Mostly autonomous. Payments and credential changes always need approval |
@@ -122,7 +122,7 @@ Everything valuable lives in the brain, and the brain only ever sees *pixels and
 - **Agent runtime**: the custom loop (§5).
 - **Scheduler**: cron expressions (via `croner`, MIT) and one-shot times in the brain's time zone, stored in SQLite and checked every 10 s in-process. A run missed while the brain was down or paused happens once when it's back; runs at most every 5 minutes.
 - **Trigger ingress**: `POST /hooks/:id`, checked by HMAC signature (`X-Hatbot-Signature: t=…,v1=…` over `t.body`, or the `X-Hub-Signature-256` / `X-Forgejo-Signature` that GitHub and Forgejo send), with replays dropped. Uptime Kuma can't sign, so `/hooks/kuma/:id` takes the trigger's secret in the URL (`?token=`, what the setup panel shows) or as a bearer token, and accepts every way Kuma sends: JSON, form data, or GET. Kuma's Test message sends you a notification. Every hook logs what it did with the request.
-- **Tool host**: the built-in tools (§5.5) and an MCP client (stdio + streamable HTTP).
+- **Tool host**: the built-in tools (§5.5) and the plugins' tools (§4.5).
 - **Policy engine**: trust tracking, approval gates, spend enforcement (§6).
 - **Live-view relay**: JPEG frames from desktop-agent out to the browser, and your pointer and key events in while you have control. M5 records these input events for teach-by-showing. (noVNC was the first plan; it's MPL-2.0, so the view is our own MJPEG stream.)
 - **Notifier**: publishes to ntfy, including action buttons.
@@ -145,7 +145,17 @@ Desktop-first, three panes. Design spec in §10; visual reference in `prototype/
 ### 4.4 `packages/shared`
 Shared API types and zod schemas for the brain and web. The iOS app mirrors the types it uses in `apps/ios/Hatbot/Core/Models.swift`; change both together.
 
-### 4.5 `infra/`
+### 4.5 Plugins (`apps/brain/src/plugins/`)
+Integrations are plugins: Proxmox, SSH, Forgejo and MCP. The core keeps memory, chat history, schedules, tasks and the desktop.
+- **Shape**: each plugin is a folder exporting one `definePlugin({...})`: an id, a name, its settings (a zod schema whose fields all have defaults), the environment variables it reads from `/etc/hatbot/*.env` (secrets never reach the model or the web app), and `start(ctx)`, which returns its status, tools, an optional paragraph for the system prompt and an optional Test.
+- **Built in, not installed at runtime**: plugins ship with Hatbot. Code loaded at runtime would run in the brain next to the API key, the Proxmox token and the SSH key. Third-party extensions come in through the MCP plugin, whose servers run as separate processes behind the same approval rules.
+- **On and off**: every plugin starts off. Settings → Plugins switches one on and edits its settings; it restarts with them. One that's on but missing its secrets or settings shows *Needs setup* and offers no tools.
+- **Tools**: named `<plugin id>_…`. A **read** tool looks without changing anything; the chat calls it directly. A **write** tool changes something; only tasks get it, so the chat hands changes to a task with `run_task` (§5.5). A tool can mark its output **untrusted** (issue text, MCP output): it's wrapped as labelled JSON, and a task or chat episode that reads it becomes tainted.
+- **Policy**: a write tool may have a `policy(input, task)` that allows, asks you first, or refuses. The core takes the stricter of that and the untrusted-content rule (§6.1), raises the approval, and logs the call on the task's timeline. Plugins never build approvals themselves.
+- **Prompt cache**: the chat's tools and system prompt include the plugins that are on, so switching one on or off starts a new episode (§5.3). A task fixes its tools when it starts.
+- **Web**: Settings lists the plugins; each has a page with its switch, which secrets are set, its settings form (`apps/web/src/plugins/<id>.tsx`), a Test button and its tools.
+
+### 4.6 `infra/`
 - `host-setup.sh`: the one-time Proxmox setup script (§9).
 - the provisioning scripts for both guests, `verify.sh`, and `deploy.sh`, which installs the app and its systemd unit.
 
@@ -219,16 +229,17 @@ Later, run a small test on real tasks to see whether Haiku 5.5 (72% on OSWorld) 
 | Tool | Lane | Default policy |
 |---|---|---|
 | `run_desktop_task(goal, success_criteria)` | screen | Starts the Opus computer-use subloop; queued per §5.6 |
+| `run_task(title, goal, effort?)` | bg | Chat only. Starts a background task with every plugin tool, for anything that changes something (§4.5); shows under the reply |
 | `request_takeover(reason)` | screen | Pauses and notifies you (logins, 2FA, captchas) |
 | `memory_*` (list/read/write/search) | bg | Free; every write is a git commit |
 | `search_history` | bg | Free |
 | `schedule_*` / `trigger_*` (create/list/update/delete) | bg | Free; everything visible in the UI |
 | `web_fetch` / `web_search` | bg | Free; output is **untrusted** |
-| `proxmox_*` (status, list, start/stop/restart, snapshot of own guests) | bg | Read and restart free; anything else needs approval |
-| `ssh_exec(host, cmd)` | bg | Allowlisted hosts, as the `hatbot` user; destructive patterns need approval |
-| `forge_*` (Forgejo/GitHub: read, comment, open PR) | bg | Merge, force-push and delete need approval |
+| `proxmox_*` plugin (status, list, start/stop/restart, snapshot of own guests) | bg | Read and restart free; anything else needs approval |
+| `ssh_exec(host, cmd)` plugin | bg | Hosts from Settings, as the `hatbot` user; destructive patterns need approval |
+| `forgejo_*` plugin (read, comment, open PR) | bg | Merge, force-push and delete need approval |
 | `notify(message, priority)` | bg | Free |
-| MCP tools | bg | Default **ask**; set allow/ask/block per tool |
+| `mcp_*` plugin (each server's tools) | bg | Default **ask**; set allow/ask/block per tool |
 
 The `run_desktop_task` **subloop** uses Opus with the computer toolset against the desktop-agent daemon:
 - Screenshots go to `/archive` as WebP and into the task timeline.
@@ -306,7 +317,7 @@ How it's enforced:
 ## 7. Data
 
 ### 7.1 SQLite (SSD, WAL)
-`messages` (thread; FTS5 index), `episodes`, `tasks`, `task_steps` (tool calls, results metadata, screenshot refs), `approvals`, `schedules`, `triggers`, `spend_ledger`, `sessions` (auth), `api_tokens`, `settings`, `mcp_servers`, `skills_index`.
+`messages` (thread; FTS5 index), `episodes`, `tasks`, `task_steps` (tool calls, results metadata, screenshot refs), `approvals`, `schedules`, `triggers`, `spend_ledger`, `sessions` (auth), `api_tokens`, `settings` (including each plugin's switch and settings), `skills_index`.
 
 ### 7.2 Memory repo (`/var/lib/hatbot/memory`, git, SSD)
 ```
@@ -344,9 +355,10 @@ REST + JSON under `/api/v1`. One WebSocket at `/api/v1/stream` for events. A gen
 | Memory | `GET /memory/tree` · `GET/PUT /memory/file?path=` · `GET /memory/log` · `GET /memory/diff/:sha` · `POST /memory/revert/:sha` |
 | Spend | `GET /spend/summary` · `GET /spend/daily?days=30` |
 | Teach | `POST /teach/start` · `POST /teach/stop` → draft skill · `POST /teach/:id/save` |
-| Admin | `POST /pause-all` · `POST /resume` · `GET/PUT /settings` · `GET/POST /update` · CRUD `/mcp-servers` |
+| Admin | `POST /pause-all` · `POST /resume` · `GET/PUT /settings` · `GET/POST /update` |
+| Plugins | `GET /plugins` · `GET/PATCH /plugins/:id` `{enabled?, config?}` · `POST /plugins/:id/test` |
 
-**WS events**: `message.created`, `message.delta`, `message.progress`, `message.done`, `task.updated`, `task.step`, `task.progress`, `approval.created`, `approval.resolved`, `desktop.state`, `spend.updated`, `memory.committed`, `paused`, `schedule.updated`, `schedule.deleted`, `trigger.updated`, `trigger.deleted`.
+**WS events**: `message.created`, `message.delta`, `message.progress`, `message.done`, `task.updated`, `task.step`, `task.progress`, `approval.created`, `approval.resolved`, `desktop.state`, `spend.updated`, `memory.committed`, `paused`, `schedule.updated`, `schedule.deleted`, `trigger.updated`, `trigger.deleted`, `plugin.updated`.
 
 ---
 
@@ -487,13 +499,14 @@ Each milestone ends with a working, demo-able system.
 - [ ] Tried live: a morning schedule, a Forgejo webhook, a Kuma test alert
 - **Done when**: "every morning at 8, check X" runs unattended and reports back.
 
-### M4 — Homelab tools + MCP
-- [ ] `proxmox_*` tools using the scoped token
-- [ ] `ssh_exec` with allowlist + destructive-pattern gate
-- [ ] `forge_*` for Forgejo + GitHub bot accounts
-- [ ] Code tasks: chat starts them like desktop tasks; Opus 5.5 at medium, high on request or after a failed attempt (§5.4)
+### M4 — Homelab plugins + MCP
+- [x] Plugin core (§4.5): registry, Settings → Plugins, read tools in chat, write tools in tasks, policy + approvals, `run_task`
+- [ ] Proxmox plugin (`proxmox_*`) using the scoped token
+- [ ] SSH plugin (`ssh_exec`): hosts in Settings, host keys pinned, destructive-pattern gate
+- [ ] Forgejo plugin (`forgejo_*`) with the bot account (GitHub later)
+- [ ] Code tasks: `run_task` with effort medium, high on request or after a failed attempt (§5.4)
 - [ ] Uptime Kuma alert handling: investigate → safe restart → report
-- [ ] MCP client + per-tool allow/ask/block UI
+- [ ] MCP plugin + per-tool allow/ask/block
 - **Done when**: a Kuma "down" alert at 3am is fixed or diagnosed before you wake up.
 
 ### M5 — Teach-by-showing

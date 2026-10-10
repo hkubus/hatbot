@@ -7,6 +7,7 @@ import type { Db } from "./db";
 import type { Desktop } from "./desktop/service";
 import type { EventBus } from "./events";
 import type { MemoryStore } from "./memory/store";
+import type { Plugins } from "./plugins/registry";
 import type { Proxmox } from "./proxmox";
 import type { Schedules } from "./schedules";
 import type { SettingsStore } from "./settings";
@@ -34,6 +35,7 @@ export type Deps = {
   updates: Updates;
   schedules: Schedules;
   triggers: Triggers;
+  plugins: Plugins;
 };
 
 export type AppEnv = {

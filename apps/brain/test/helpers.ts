@@ -2,6 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Thread } from "../src/agent/thread";
+import { CORE_TOOL_NAMES } from "../src/agent/tools";
 import { createApp } from "../src/app";
 import { Approvals } from "../src/approvals";
 import { Archive } from "../src/archive";
@@ -13,6 +14,8 @@ import { Desktop } from "../src/desktop/service";
 import { EventBus, type HatbotEvent } from "../src/events";
 import { MemoryStore } from "../src/memory/store";
 import type { Notification, Notifier } from "../src/notify";
+import type { Plugin } from "../src/plugins/plugin";
+import { Plugins } from "../src/plugins/registry";
 import { Proxmox } from "../src/proxmox";
 import { Schedules } from "../src/schedules";
 import { SettingsStore } from "../src/settings";
@@ -45,6 +48,8 @@ export async function testApp(
   model = new FakeModel(),
   taskModel = new FakeModel(),
   proxmoxEnv: Record<string, string> = {},
+  pluginList: Plugin[] = [],
+  pluginEnv: Record<string, string> = {},
 ) {
   let nowMs = Date.parse("2026-10-09T12:00:00Z");
   const clock = () => nowMs;
@@ -62,7 +67,14 @@ export async function testApp(
   const spend = new Spend(db, settings, events, clock);
   const memory = new MemoryStore(tempDir("hatbot-test-mem-"));
   await memory.init();
-  const thread = new Thread({ db, memory, events, spend, settings, model, clock });
+  const plugins = new Plugins(pluginList, {
+    db,
+    events,
+    env: pluginEnv,
+    reserved: CORE_TOOL_NAMES,
+  });
+  await plugins.startAll();
+  const thread = new Thread({ db, memory, events, spend, settings, model, plugins, clock });
   taskModel.onCreate ??= () => '{"suspected": false, "excerpt": ""}';
   const notifier = new FakeNotifier();
   const archive = new Archive(tempDir("hatbot-test-archive-"), clock);
@@ -82,6 +94,7 @@ export async function testApp(
     thread,
     config,
     memory,
+    plugins,
     clock,
   });
   const schedules = new Schedules(db, events, settings, tasks, clock);
@@ -116,6 +129,7 @@ export async function testApp(
     updates,
     schedules,
     triggers,
+    plugins,
   });
 
   const call = (
@@ -148,6 +162,7 @@ export async function testApp(
     thread,
     schedules,
     triggers,
+    plugins,
     updateDir,
     events: seen,
     call,

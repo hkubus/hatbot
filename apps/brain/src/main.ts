@@ -1,6 +1,7 @@
 import { websocket } from "hono/bun";
 import { AnthropicModelClient } from "./agent/model";
 import { Thread } from "./agent/thread";
+import { CORE_TOOL_NAMES } from "./agent/tools";
 import { createApp } from "./app";
 import { Approvals } from "./approvals";
 import { Archive } from "./archive";
@@ -12,6 +13,8 @@ import { Desktop } from "./desktop/service";
 import { EventBus } from "./events";
 import { MemoryStore } from "./memory/store";
 import { NtfyNotifier } from "./notify";
+import { PLUGINS } from "./plugins";
+import { Plugins } from "./plugins/registry";
 import { Proxmox } from "./proxmox";
 import { Schedules } from "./schedules";
 import { SettingsStore } from "./settings";
@@ -30,7 +33,9 @@ const spend = new Spend(db, settings, events);
 const memory = new MemoryStore(config.memoryDir);
 await memory.init();
 const model = new AnthropicModelClient();
-const thread = new Thread({ db, memory, events, spend, settings, model });
+const plugins = new Plugins(PLUGINS, { db, events, reserved: CORE_TOOL_NAMES });
+await plugins.startAll();
+const thread = new Thread({ db, memory, events, spend, settings, model, plugins });
 const notifier = new NtfyNotifier();
 const archive = new Archive(config.archiveDir);
 const desktop = new Desktop(new HttpDesktopAgent(), events);
@@ -48,6 +53,7 @@ const tasks = new Tasks({
   thread,
   config,
   memory,
+  plugins,
 });
 const schedules = new Schedules(db, events, settings, tasks);
 const triggers = new Triggers(db, events, settings, tasks, notifier, config.publicUrl);
@@ -81,6 +87,7 @@ const app = createApp({
   updates: new Updates(config),
   schedules,
   triggers,
+  plugins,
 });
 const web = webHandler(config.webDir);
 const server = Bun.serve({

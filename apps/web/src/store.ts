@@ -4,6 +4,7 @@ import {
   type Approval,
   type DesktopState,
   type HatbotEvent,
+  type PluginInfo,
   type Schedule,
   type Task,
   type TaskStep,
@@ -33,6 +34,7 @@ type State = {
   /** null: deleted, or never existed. */
   schedules: Record<number, Schedule | null>;
   triggers: Record<number, Trigger | null>;
+  plugins: Record<string, PluginInfo>;
 };
 
 let state: State = {
@@ -51,6 +53,7 @@ let state: State = {
   desktop: null,
   schedules: {},
   triggers: {},
+  plugins: {},
 };
 const listeners = new Set<() => void>();
 const set = (patch: Partial<State>) => {
@@ -157,6 +160,18 @@ export function ensureSchedule(id: number) {
       else requested.delete(`s${id}`);
     },
   );
+}
+
+export async function loadPlugins() {
+  const list = await api<PluginInfo[]>("/plugins");
+  set({ plugins: Object.fromEntries(list.map((p) => [p.id, p])) });
+  return list.map((p) => p.id);
+}
+
+export async function savePlugin(id: string, patch: { enabled?: boolean; config?: unknown }) {
+  const p = await api<PluginInfo>(`/plugins/${id}`, { method: "PATCH", body: patch });
+  set({ plugins: { ...state.plugins, [p.id]: p } });
+  return p;
 }
 
 export const putSchedule = (s: Schedule) => set({ schedules: { ...state.schedules, [s.id]: s } });
@@ -276,6 +291,8 @@ function apply(e: HatbotEvent) {
       return putTrigger(e.trigger);
     case "trigger.deleted":
       return set({ triggers: { ...state.triggers, [e.id]: null } });
+    case "plugin.updated":
+      return set({ plugins: { ...state.plugins, [e.plugin.id]: e.plugin } });
   }
 }
 

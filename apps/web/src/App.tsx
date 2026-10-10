@@ -163,7 +163,9 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           {view.path === "/schedules" && <SchedulesView path={path} params={params} />}
           {view.path === "/memory" && <Memory toast={toast} />}
           {view.path === "/spend" && <Spend />}
-          {view.path === "/settings" && <Settings toast={toast} onSignOut={onSignOut} />}
+          {view.path === "/settings" && (
+            <Settings path={path} toast={toast} onSignOut={onSignOut} />
+          )}
         </main>
 
         {insp && view.path !== "/live" && (

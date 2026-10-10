@@ -1,7 +1,9 @@
 // API types shared by the brain, the web app and the future iOS app (PLAN.md §4.4).
 import { z } from "zod";
+import type { PluginInfo } from "./plugin";
 import type { Schedule, Trigger } from "./schedule";
 
+export * from "./plugin";
 export * from "./schedule";
 
 export const API_PREFIX = "/api/v1";
@@ -87,6 +89,8 @@ export type Task = {
   /** The event that started it, as received; untrusted unless its trigger is trusted. */
   payload: string | null;
   model: string;
+  /** Background tasks: null runs at the chat's effort. */
+  effort: "low" | "medium" | "high" | null;
   status: TaskStatus;
   /** It has read untrusted content (PLAN.md §6.1). */
   tainted: boolean;
@@ -179,7 +183,8 @@ export type HatbotEvent =
   | { type: "schedule.updated"; schedule: Schedule }
   | { type: "schedule.deleted"; id: number }
   | { type: "trigger.updated"; trigger: Trigger }
-  | { type: "trigger.deleted"; id: number };
+  | { type: "trigger.deleted"; id: number }
+  | { type: "plugin.updated"; plugin: PluginInfo };
 
 /** The Update button in Settings (infra/hatbot-update.sh). */
 export type UpdateStatus = {

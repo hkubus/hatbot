@@ -211,4 +211,9 @@ export const migrations: string[] = [
   /* 6: an episode is bound to the system prompt, tools and model it started with */ `
   ALTER TABLE episodes ADD COLUMN prefix TEXT;
   `,
+  /* 7: plugins (PLAN.md §4.5): background tasks from the chat, and untrusted content in the chat */ `
+  ALTER TABLE tasks ADD COLUMN effort TEXT CHECK (effort IN ('low', 'medium', 'high'));
+  -- The episode has read untrusted content; tasks it starts begin tainted.
+  ALTER TABLE episodes ADD COLUMN tainted INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
