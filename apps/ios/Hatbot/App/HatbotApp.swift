@@ -1,5 +1,5 @@
 // The app: sign-in until there's a token, then tabs like the web app on a phone (PLAN.md §10.3).
-// Notifications come from the ntfy app; a hatbot://tasks/<id> link opens a task.
+// Notifications come from the ntfy app; hatbot:// links open tasks, approvals, schedules and triggers.
 import SwiftUI
 
 @main
@@ -22,7 +22,7 @@ struct HatbotApp: App {
 }
 
 enum AppTab: Hashable {
-  case chat, tasks, live, settings
+  case chat, tasks, live, memory, settings
 }
 
 struct MainView: View {
@@ -30,6 +30,7 @@ struct MainView: View {
   @Environment(\.scenePhase) private var phase
   @State private var tab = AppTab.chat
   @State private var tasksPath: [Route] = []
+  @State private var settingsPath: [Route] = []
 
   var body: some View {
     TabView(selection: $tab) {
@@ -50,8 +51,11 @@ struct MainView: View {
             .routes()
         }
       }
+      Tab("Memory", systemImage: "book", value: .memory) {
+        MemoryView()
+      }
       Tab("Settings", systemImage: "gearshape", value: .settings) {
-        SettingsView()
+        SettingsView(path: $settingsPath)
       }
     }
     .minimizingTabBar()
@@ -67,14 +71,14 @@ struct MainView: View {
     .overlay(alignment: .top) { Toast() }
   }
 
-  /// hatbot://tasks/12 opens a task; hatbot://approvals/5 opens the approval's task.
+  /// hatbot://tasks/12 opens a task, hatbot://approvals/5 the approval's task; schedules and triggers
+  /// open under Settings, like on the web app on a phone.
   private func open(_ url: URL) {
-    guard url.scheme == "hatbot", let id = Int(url.lastPathComponent) else { return }
-    switch url.host() {
-    case "tasks":
+    switch AppLink(url: url) {
+    case let .task(id):
       tab = .tasks
       tasksPath = [.task(id)]
-    case "approvals":
+    case let .approval(id):
       tab = .tasks
       tasksPath = []
       Task {
@@ -84,7 +88,13 @@ struct MainView: View {
           if let taskId = a.taskId { tasksPath = [.task(taskId)] }
         }
       }
-    default:
+    case let .schedule(id):
+      tab = .settings
+      settingsPath = [.schedules, .schedule(id)]
+    case let .trigger(id):
+      tab = .settings
+      settingsPath = [.schedules, .trigger(id)]
+    case nil:
       break
     }
   }

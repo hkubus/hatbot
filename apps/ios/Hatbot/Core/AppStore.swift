@@ -26,6 +26,8 @@ final class AppStore {
   var schedules: [Int: Schedule] = [:]
   /// Schedules a message points at that no longer exist.
   var deletedSchedules: Set<Int> = []
+  var triggers: [Int: Trigger] = [:]
+  var deletedTriggers: Set<Int> = []
   /// Bumped when memory changes, so open memory views reload.
   var memoryVersion = 0
   /// A short note to show briefly, like a memory commit.
@@ -124,6 +126,12 @@ final class AppStore {
     case let .scheduleDeleted(id):
       schedules[id] = nil
       deletedSchedules.insert(id)
+    case let .triggerUpdated(t):
+      triggers[t.id] = t
+      deletedTriggers.remove(t.id)
+    case let .triggerDeleted(id):
+      triggers[id] = nil
+      deletedTriggers.insert(id)
     case .unknown:
       break
     }
@@ -252,6 +260,137 @@ final class AppStore {
     return Socket(maxDelay: 15) { api.webSocket("/desktop/live") }
   }
 
+  // MARK: Schedules and triggers
+
+  /// Every schedule and trigger, for their list.
+  func loadSchedules() async throws {
+    async let s: [Schedule] = api.get("/schedules")
+    async let t: [Trigger] = api.get("/triggers")
+    let (list, hooks) = try await (s, t)
+    schedules = Dictionary(uniqueKeysWithValues: list.map { ($0.id, $0) })
+    triggers = Dictionary(uniqueKeysWithValues: hooks.map { ($0.id, $0) })
+  }
+
+  func loadSchedule(_ id: Int) async throws {
+    schedules[id] = try await api.get("/schedules/\(id)")
+  }
+
+  func loadTrigger(_ id: Int) async throws {
+    triggers[id] = try await api.get("/triggers/\(id)")
+  }
+
+  /// A change to a schedule; nil fields stay as they are. Give `cron` or `at`, not both.
+  struct ScheduleChange: Encodable, Sendable {
+    var name: String?
+    var prompt: String?
+    var enabled: Bool?
+    var cron: String?
+    /// ISO 8601 date and time, for a one-off run.
+    var at: String?
+  }
+
+  @discardableResult
+  func saveSchedule(_ id: Int, _ change: ScheduleChange) async throws -> Schedule {
+    let s: Schedule = try await api.patch("/schedules/\(id)", body: change)
+    schedules[s.id] = s
+    return s
+  }
+
+  func createSchedule(_ change: ScheduleChange) async throws -> Schedule {
+    let s: Schedule = try await api.post("/schedules", body: change)
+    schedules[s.id] = s
+    return s
+  }
+
+  /// Runs it now; returns the task.
+  func runSchedule(_ id: Int) async throws -> AgentTask {
+    let task: AgentTask = try await api.post("/schedules/\(id)/run", body: Empty())
+    tasks[task.id] = task
+    return task
+  }
+
+  func deleteSchedule(_ id: Int) async throws {
+    let _: Empty = try await api.delete("/schedules/\(id)")
+    schedules[id] = nil
+    deletedSchedules.insert(id)
+  }
+
+  struct TriggerChange: Encodable, Sendable {
+    var name: String?
+    var prompt: String?
+    var trusted: Bool?
+    var enabled: Bool?
+  }
+
+  @discardableResult
+  func saveTrigger(_ id: Int, _ change: TriggerChange) async throws -> Trigger {
+    let t: Trigger = try await api.patch("/triggers/\(id)", body: change)
+    triggers[t.id] = t
+    return t
+  }
+
+  /// A new secret; the old one stops working at once.
+  func newTriggerSecret(_ id: Int) async throws -> TriggerWithSecret {
+    let t: TriggerWithSecret = try await api.post("/triggers/\(id)/secret", body: Empty())
+    triggers[id] = t.trigger
+    return t
+  }
+
+  func deleteTrigger(_ id: Int) async throws {
+    let _: Empty = try await api.delete("/triggers/\(id)")
+    triggers[id] = nil
+    deletedTriggers.insert(id)
+  }
+
+  // MARK: Memory
+
+  func memoryTree() async throws -> [MemoryFile] {
+    try await api.get("/memory/tree")
+  }
+
+  func memoryFile(_ path: String) async throws -> String {
+    struct File: Decodable { let content: String }
+    let f: File = try await api.get("/memory/file?path=\(API.query(path))")
+    return f.content
+  }
+
+  /// Saves a file as you; returns the commit, or nil if nothing changed.
+  @discardableResult
+  func saveMemoryFile(_ path: String, content: String) async throws -> String? {
+    struct Body: Encodable {
+      let content: String
+      let message: String
+    }
+    struct Saved: Decodable { let sha: String? }
+    let r: Saved = try await api.put(
+      "/memory/file?path=\(API.query(path))", body: Body(content: content, message: "Edit \(path)"))
+    memoryVersion += 1
+    return r.sha
+  }
+
+  func deleteMemoryFile(_ path: String) async throws {
+    let _: Empty = try await api.delete("/memory/file?path=\(API.query(path))")
+    memoryVersion += 1
+  }
+
+  func memoryLog(path: String? = nil) async throws -> [MemoryCommit] {
+    try await api.get("/memory/log?limit=100" + (path.map { "&path=\(API.query($0))" } ?? ""))
+  }
+
+  func memoryDiff(_ sha: String) async throws -> String {
+    struct Diff: Decodable { let diff: String }
+    let d: Diff = try await api.get("/memory/diff/\(sha)")
+    return d.diff
+  }
+
+  /// Undoes a commit with a new one; returns it, or nil if there was nothing to undo.
+  func revert(_ sha: String) async throws -> String? {
+    struct Reverted: Decodable { let sha: String? }
+    let r: Reverted = try await api.post("/memory/revert/\(sha)", body: Empty())
+    memoryVersion += 1
+    return r.sha
+  }
+
   // MARK: Admin
 
   func setPaused(_ value: Bool) async throws {
@@ -273,5 +412,10 @@ final class AppStore {
   func setChatEffort(_ effort: AppSettings.Effort) async throws -> AppSettings {
     struct Body: Encodable { let chatEffort: AppSettings.Effort }
     return try await api.put("/settings", body: Body(chatEffort: effort))
+  }
+
+  func setNotificationsOpen(_ opens: AppSettings.Opens) async throws -> AppSettings {
+    struct Body: Encodable { let notificationsOpen: AppSettings.Opens }
+    return try await api.put("/settings", body: Body(notificationsOpen: opens))
   }
 }

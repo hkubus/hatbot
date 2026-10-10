@@ -1,7 +1,9 @@
-// Settings: spend against the limits, chat effort, Pause all (PLAN.md §6.5), and signing out.
+// Settings: spend against the limits, Schedules & Triggers, chat effort, what notifications open,
+// Pause all (PLAN.md §6.5), and signing out.
 import SwiftUI
 
 struct SettingsView: View {
+  @Binding var path: [Route]
   @Environment(Session.self) private var session
   @Environment(AppStore.self) private var store
   @State private var settings: AppSettings?
@@ -11,7 +13,7 @@ struct SettingsView: View {
   @State private var error: String?
 
   var body: some View {
-    NavigationStack {
+    NavigationStack(path: $path) {
       Form {
         if let error {
           Text(error).foregroundStyle(.red)
@@ -20,11 +22,27 @@ struct SettingsView: View {
           LabeledContent("Today", value: spendText(store.todayUsd, limit: spend?.limits.dailyUsd))
           LabeledContent("This month", value: spendText(store.monthUsd, limit: spend?.limits.monthlyUsd))
         }
+        Section {
+          NavigationLink("Schedules & Triggers", value: Route.schedules)
+        }
         if let settings {
           Section("Chat") {
             Picker("Effort", selection: effort(settings)) {
               Text("Low").tag(AppSettings.Effort.low)
               Text("Medium").tag(AppSettings.Effort.medium)
+            }
+          }
+          // Brains from before the setting don't have it.
+          if let opens = settings.notificationsOpen {
+            Section {
+              Picker("Tapping one opens", selection: notificationsOpen(opens)) {
+                Text("The web app").tag(AppSettings.Opens.web)
+                Text("This app").tag(AppSettings.Opens.app)
+              }
+            } header: {
+              Text("Notifications")
+            } footer: {
+              Text("Notifications come from the ntfy app.")
             }
           }
         }
@@ -49,6 +67,7 @@ struct SettingsView: View {
       }
       .task { await load() }
       .refreshable { await load() }
+      .routes()
     }
   }
 
@@ -63,6 +82,14 @@ struct SettingsView: View {
       get: { current.chatEffort },
       set: { value in
         Task { await act { settings = try await store.setChatEffort(value) } }
+      })
+  }
+
+  private func notificationsOpen(_ current: AppSettings.Opens) -> Binding<AppSettings.Opens> {
+    Binding(
+      get: { current },
+      set: { value in
+        Task { await act { settings = try await store.setNotificationsOpen(value) } }
       })
   }
 

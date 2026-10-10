@@ -6,7 +6,8 @@ API with a bearer token. Notifications still come from the ntfy app.
 - `Hatbot/Core`: Foundation only. API types, the API client, the reconnecting WebSocket, the live
   store, Markdown blocks, cron in words. `Package.swift` builds it on its own so it compiles and
   tests anywhere Swift runs.
-- `Hatbot/Views`, `Hatbot/App`: SwiftUI and UIKit. Chat, Tasks, Live and Settings tabs.
+- `Hatbot/Views`, `Hatbot/App`: SwiftUI and UIKit. Chat, Tasks, Live, Memory and Settings tabs;
+  Schedules & Triggers open from Settings.
 - `project.yml`: the Xcode project, generated with [XcodeGen](https://github.com/yonaskolb/XcodeGen).
 
 ## Install with SideStore
@@ -35,7 +36,14 @@ cd apps/ios && swift test
 ```
 
 On Linux, Swift 6.1's `libswiftObservation.so` doesn't link with GNU ld; use
-`swift test -Xswiftc -use-ld=lld`.
+`swift test -Xswiftc -use-ld=lld`. Without a toolchain, use Docker:
+
+```sh
+cd apps/ios && docker run --rm -v "$PWD":/src -w /src -e HOME=/tmp --user "$(id -u):$(id -g)" \
+  swift:6.1 swift test --scratch-path /tmp/build
+```
+
+SwiftUI isn't there on Linux: `swiftc -parse Hatbot/Views/*.swift` checks the views' syntax, and CI builds them.
 
 ## Sign in
 
@@ -45,5 +53,6 @@ Settings → API tokens on the web, and signing out of the app deletes it.
 
 ## Links
 
-`hatbot://tasks/<id>` opens a task, and `hatbot://approvals/<id>` opens the task an approval
-belongs to.
+`hatbot://tasks/<id>` opens a task, `hatbot://approvals/<id>` the task an approval belongs to, and
+`hatbot://schedules/<id>` and `hatbot://triggers/<id>` their pages. Notifications use them when
+Settings → Notifications says this app.

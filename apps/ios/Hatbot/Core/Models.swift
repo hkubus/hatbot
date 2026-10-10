@@ -82,6 +82,8 @@ struct AgentTask: Codable, Identifiable, Equatable, Sendable {
   var parentId: Int?
   var payload: String?
   var model: String
+  /// Desktop tasks: the skill (skills/<name>.md) it follows.
+  var skill: String?
   var status: TaskStatus
   var tainted: Bool
   var injectionSuspected: Bool
@@ -170,6 +172,60 @@ struct Schedule: Codable, Identifiable, Equatable, Sendable {
   var nextRunAt: String?
   var lastRunAt: String?
   var lastTaskId: Int?
+  /// The chat made or changed it after reading untrusted content; saving it yourself clears this.
+  var tainted: Bool?
+}
+
+/// A webhook or Uptime Kuma trigger (packages/shared/src/schedule.ts).
+struct Trigger: Codable, Identifiable, Equatable, Sendable {
+  enum Kind: String, LenientEnum {
+    case webhook, kuma
+    static let fallback = Kind.webhook
+  }
+
+  let id: Int
+  var name: String
+  var kind: Kind
+  /// Its payloads count as trusted content. Uptime Kuma alerts always do.
+  var trusted: Bool
+  var prompt: String
+  var enabled: Bool
+  /// Where to send events.
+  var url: String
+  var createdAt: String
+  var lastFiredAt: String?
+  var lastTaskId: Int?
+}
+
+/// A trigger with its secret: only right after it's made or the secret is replaced.
+struct TriggerWithSecret: Decodable, Sendable {
+  let trigger: Trigger
+  let secret: String
+
+  private enum Key: String, CodingKey { case secret }
+
+  init(from decoder: Decoder) throws {
+    trigger = try Trigger(from: decoder)
+    secret = try decoder.container(keyedBy: Key.self).decode(String.self, forKey: .secret)
+  }
+
+  /// What to paste into the sender: Uptime Kuma's Post URL carries the secret.
+  var postURL: String { trigger.kind == .kuma ? "\(trigger.url)?token=\(secret)" : trigger.url }
+}
+
+struct MemoryFile: Codable, Identifiable, Equatable, Sendable {
+  var path: String
+  var size: Int
+  var id: String { path }
+}
+
+struct MemoryCommit: Codable, Identifiable, Equatable, Hashable, Sendable {
+  var sha: String
+  var author: String
+  var date: String
+  var message: String
+  var files: [String]
+  var id: String { sha }
 }
 
 struct Limits: Codable, Equatable, Sendable {
@@ -195,10 +251,18 @@ struct AppSettings: Codable, Equatable, Sendable {
     static let fallback = Effort.low
   }
 
+  /// What tapping a notification opens.
+  enum Opens: String, LenientEnum, CaseIterable {
+    case web, app
+    static let fallback = Opens.web
+  }
+
   var limits: Limits
   var chatEffort: Effort
   var owner: Owner
   var paused: Bool
+  /// Missing on brains from before the setting.
+  var notificationsOpen: Opens?
 }
 
 /// Live events on /api/v1/stream. Events this app doesn't know decode to `.unknown`.
@@ -219,11 +283,13 @@ enum HatbotEvent: Decodable, Sendable {
   case desktopState(DesktopState)
   case scheduleUpdated(Schedule)
   case scheduleDeleted(id: Int)
+  case triggerUpdated(Trigger)
+  case triggerDeleted(id: Int)
   case unknown(String)
 
   private enum Key: String, CodingKey {
     case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused
-    case task, step, approval, state, schedule
+    case task, step, approval, state, schedule, trigger
   }
 
   init(from decoder: Decoder) throws {
@@ -261,6 +327,8 @@ enum HatbotEvent: Decodable, Sendable {
     case "desktop.state": self = .desktopState(try c.decode(DesktopState.self, forKey: .state))
     case "schedule.updated": self = .scheduleUpdated(try c.decode(Schedule.self, forKey: .schedule))
     case "schedule.deleted": self = .scheduleDeleted(id: try c.decode(Int.self, forKey: .id))
+    case "trigger.updated": self = .triggerUpdated(try c.decode(Trigger.self, forKey: .trigger))
+    case "trigger.deleted": self = .triggerDeleted(id: try c.decode(Int.self, forKey: .id))
     default: self = .unknown(type)
     }
   }

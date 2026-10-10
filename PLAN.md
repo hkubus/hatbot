@@ -525,8 +525,8 @@ Each milestone ends with a working, demo-able system.
 - [x] Live view with takeover (touch, scroll, keyboard)
 - [x] Settings: spend, chat effort, Pause all / Resume, sign out
 - [ ] First build by the iOS workflow, installed from the SideStore source and tried against the brain
-- [ ] Memory (tree, file, history) and Schedules & Triggers
-- [ ] ntfy notifications open the app (`hatbot://` click URLs)
+- [x] Memory (tree, file, history) and Schedules & Triggers (triggers are made on the web)
+- [x] ntfy notifications open the app (`hatbot://` click URLs), chosen in Settings → Notifications
 - **Done when**: you can chat, approve and take over from the app on your phone.
 
 ### After v1

@@ -29,6 +29,13 @@ extension UIColor {
 enum Route: Hashable {
   case task(Int)
   case live(taskId: Int?)
+  case memoryFile(String, isNew: Bool = false)
+  case memoryHistory(path: String?)
+  case commit(MemoryCommit)
+  case schedules
+  case schedule(Int)
+  case newSchedule
+  case trigger(Int)
 }
 
 extension View {
@@ -37,6 +44,13 @@ extension View {
       switch route {
       case let .task(id): TaskDetailView(taskId: id)
       case let .live(taskId): LiveView(taskId: taskId).navigationTitle("Live")
+      case let .memoryFile(path, isNew): MemoryFileView(path: path, isNew: isNew)
+      case let .memoryHistory(path): MemoryHistoryView(path: path)
+      case let .commit(c): CommitView(commit: c)
+      case .schedules: SchedulesView()
+      case let .schedule(id): ScheduleDetailView(id: id)
+      case .newSchedule: ScheduleDetailView(id: nil)
+      case let .trigger(id): TriggerDetailView(id: id)
       }
     }
   }

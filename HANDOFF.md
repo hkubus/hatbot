@@ -7,7 +7,7 @@ Delete it, or fold it into `PLAN.md`, once the work below is done.
 
 - **Built:** M0–M5 and the iOS app (see the checklists in `PLAN.md` §11). M4 and M5 are built and committed but not yet deployed or tried live.
 - **Not yet tried live** (the owner does these): the M2 lock-screen approval, the M3 morning schedule, Forgejo webhook and Kuma alert, all of M4 and M5, and the first iOS install from SideStore.
-- **Checks:** 123 tests pass, and Biome and `tsc -b` are clean.
+- **Checks:** 125 brain tests and 16 iOS core tests pass, and Biome and `tsc -b` are clean.
 
 ## How to work here
 
@@ -18,7 +18,7 @@ Delete it, or fold it into `PLAN.md`, once the work below is done.
 - **Code style:** match the surrounding code. Comments are sparse and explain *why*; user-facing text is plain, short English.
 - **UI style:** no decorative clutter, meaning no status dots, subtext, kickers or meta chips.
 - **Shared types:** they live in `packages/shared`. The iOS app mirrors the ones it uses in `apps/ios/Hatbot/Core/Models.swift`, so change both together. The iOS decoder tolerates unknown events and enum values.
-- **Swift on Linux:** `cd apps/ios && /opt/swift61/usr/bin/swift test -Xswiftc -use-ld=lld` tests `Hatbot/Core`. SwiftUI files can only be `swiftc -parse`d here; CI on the GitHub mirror builds the app.
+- **Swift on Linux:** this machine has no toolchain; use Docker's `swift:6.1` image (command in `apps/ios/README.md`) for `swift test` on `Hatbot/Core` and `swiftc -parse` on the views. CI on the GitHub mirror builds the app.
 - **Licences:** no copyleft dependencies (PLAN §2), not even MPL. That's why the live view is our own MJPEG stream and not noVNC (MPL).
 
 ## 1. Trust-tracking gaps (PLAN §6.1): decided 2026-10-10
@@ -38,9 +38,8 @@ These came out of the M4 security review.
 - **Not done:** the iOS app has no teach mode. Handing back from the app ends a recording without a skill.
 
 ## 3. iOS app — remaining items (PLAN §11, "iOS app")
-- **Memory** (tree, file, history) and **Schedules & Triggers** in the app. The brain endpoints already exist (PLAN §8).
-- **ntfy notifications open the app:** add `hatbot://tasks/<id>` / `hatbot://approvals/<id>` as click URLs. Today `click` is a web URL (`approvals.ts`, `triggers.ts`, `tasks/desktop-run.ts`). The owner may also use the web app, so make it a setting (open in web or app); don't just switch it.
-- **Optional:** Settings → Plugins (switch, Test, settings forms) isn't in the app. The plan doesn't ask for it.
+- **Built, not yet compiled by CI:** the Memory tab (files, read and edit, history, diff, revert), Schedules & Triggers under Settings (schedules made and edited here; triggers edited, switched, re-keyed and deleted, but made on the web), and Settings → Notifications (web or app). SwiftUI can't be type-checked on Linux, so the first CI run on the GitHub mirror is the real check.
+- **Optional:** Settings → Plugins and teach mode aren't in the app. The plan doesn't ask for them.
 
 ## 4. Later (not v1, don't start without the owner)
 - **GitHub plugin**, next to Forgejo. Same shape as `apps/brain/src/plugins/forgejo/`.

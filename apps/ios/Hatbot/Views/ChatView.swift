@@ -29,7 +29,7 @@ struct ChatView: View {
             if let day = dayChange(m, after: i > 0 ? messages[i - 1] : nil) {
               Text(day).font(.footnote.weight(.medium)).foregroundStyle(.secondary).padding(.top, 6)
             }
-            MessageRow(m: m, open: { path.append(.task($0)) })
+            MessageRow(m: m, open: { path.append($0) })
           }
         }
         .padding(.horizontal, 14)
@@ -147,7 +147,7 @@ struct PausedBanner: View {
 
 private struct MessageRow: View {
   let m: ThreadMessage
-  let open: (Int) -> Void
+  let open: (Route) -> Void
   @Environment(AppStore.self) private var store
 
   var body: some View {
@@ -189,7 +189,7 @@ private struct MessageRow: View {
     }
   }
 
-  /// What Copy copies, and the task Open opens.
+  /// What Copy copies, and what Open opens.
   @ViewBuilder
   private var menu: some View {
     switch m.kind {
@@ -199,7 +199,10 @@ private struct MessageRow: View {
         if let taskId = a.taskId { openButton(taskId) }
       }
     case .schedule:
-      if let id = m.scheduleId, let s = store.schedules[id] { copyButton(s.prompt) }
+      if let id = m.scheduleId, let s = store.schedules[id] {
+        copyButton(s.prompt)
+        Button("Open schedule", systemImage: "chevron.right") { open(.schedule(id)) }
+      }
     default:
       let task = m.taskId.flatMap { store.tasks[$0] }
       let result = task.flatMap { $0.isActive ? nil : $0.summary }
@@ -217,7 +220,7 @@ private struct MessageRow: View {
   }
 
   private func openButton(_ taskId: Int) -> some View {
-    Button("Open task", systemImage: "chevron.right") { open(taskId) }
+    Button("Open task", systemImage: "chevron.right") { open(.task(taskId)) }
   }
 }
 

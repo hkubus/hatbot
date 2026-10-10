@@ -69,6 +69,22 @@ final class API: Sendable {
     try await call(path, method: "PUT", body: body)
   }
 
+  func patch<T: Decodable, B: Encodable>(_ path: String, body: B) async throws -> T {
+    try await call(path, method: "PATCH", body: body)
+  }
+
+  @discardableResult
+  func delete<T: Decodable>(_ path: String) async throws -> T {
+    try await call(path, method: "DELETE", body: nil as Empty?)
+  }
+
+  /// A query value, escaped: memory paths can hold spaces, "&" or "+".
+  static func query(_ value: String) -> String {
+    var allowed = CharacterSet.urlQueryAllowed
+    allowed.remove(charactersIn: "&+=?#")
+    return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+  }
+
   /// Raw bytes, for screenshots.
   func data(_ path: String) async throws -> Data {
     let (data, response) = try await session.data(for: request(path, method: "GET"))

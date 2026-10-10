@@ -19,7 +19,7 @@ final class ModelTests: XCTestCase {
     }
     XCTAssertEqual(id, 4)
     XCTAssertEqual(text, "Hi")
-    guard case .unknown("trigger.updated") = try event(#"{"type":"trigger.updated","trigger":{}}"#) else {
+    guard case .unknown("teach.updated") = try event(#"{"type":"teach.updated","session":{}}"#) else {
       return XCTFail("not unknown")
     }
   }
@@ -164,5 +164,83 @@ final class StoreTests: XCTestCase {
     done.status = .approved
     store.apply(.approvalResolved(done))
     XCTAssertEqual(store.needsYou, 1)
+  }
+}
+
+final class ScheduleAndMemoryTests: XCTestCase {
+  func testDecodesTriggersAndTheirSecret() throws {
+    let json = #"""
+      {"type":"trigger.updated","trigger":{"id":3,"name":"Kuma","kind":"kuma","trusted":true,"prompt":"Fix it",
+       "enabled":true,"url":"https://h.example/api/v1/hooks/kuma/3","createdAt":"2026-10-10T08:00:00.000Z",
+       "lastFiredAt":null,"lastTaskId":null}}
+      """#
+    guard case let .triggerUpdated(t) = try JSONDecoder().decode(HatbotEvent.self, from: Data(json.utf8)) else {
+      return XCTFail("not a trigger")
+    }
+    XCTAssertEqual(t.kind, .kuma)
+    let withSecret = #"""
+      {"id":3,"name":"Kuma","kind":"kuma","trusted":true,"prompt":"Fix it","enabled":true,
+       "url":"https://h.example/api/v1/hooks/kuma/3","createdAt":"2026-10-10T08:00:00.000Z","lastFiredAt":null,
+       "lastTaskId":null,"secret":"s3cret"}
+      """#
+    let ws = try JSONDecoder().decode(TriggerWithSecret.self, from: Data(withSecret.utf8))
+    XCTAssertEqual(ws.postURL, "https://h.example/api/v1/hooks/kuma/3?token=s3cret")
+  }
+
+  func testOlderBrainsWithoutNewFieldsStillDecode() throws {
+    let settings = #"""
+      {"limits":{"taskUsd":3,"dailyUsd":10,"monthlyUsd":200},"chatEffort":"low",
+       "owner":{"name":"You","email":"o@l"},"paused":false}
+      """#
+    let s = try JSONDecoder().decode(AppSettings.self, from: Data(settings.utf8))
+    XCTAssertNil(s.notificationsOpen)
+    let schedule = #"""
+      {"id":1,"name":"News","cron":"0 8 * * *","runAt":null,"prompt":"x","enabled":true,"createdVia":"chat",
+       "createdAt":"2026-10-10T08:00:00.000Z","nextRunAt":null,"lastRunAt":null,"lastTaskId":null}
+      """#
+    XCTAssertNil(try JSONDecoder().decode(Schedule.self, from: Data(schedule.utf8)).tainted)
+  }
+
+  func testReadsAppLinks() {
+    let link = { (s: String) in AppLink(url: URL(string: s)!) }
+    XCTAssertEqual(link("hatbot://tasks/12"), .task(12))
+    XCTAssertEqual(link("hatbot://approvals/5"), .approval(5))
+    XCTAssertEqual(link("hatbot://schedules/2"), .schedule(2))
+    XCTAssertEqual(link("hatbot://triggers/3"), .trigger(3))
+    XCTAssertNil(link("hatbot://memory/1"))
+    XCTAssertNil(link("hatbot://tasks/1/2"))
+    XCTAssertNil(link("https://tasks/1"))
+  }
+
+  func testGroupsMemoryFilesByFolder() {
+    let files = ["skills/b.md", "INDEX.md", "projects/x.md", "about-you.md", "skills/a.md"]
+      .map { MemoryFile(path: $0, size: 1) }
+    let groups = MemoryTree.groups(files)
+    XCTAssertEqual(groups.map(\.folder), ["", "projects", "skills"])
+    XCTAssertEqual(groups[0].files.map(\.path), ["INDEX.md", "about-you.md"])
+    XCTAssertEqual(groups[2].files.map(\.path), ["skills/a.md", "skills/b.md"])
+    XCTAssertEqual(MemoryTree.name("skills/a.md"), "a.md")
+    XCTAssertEqual(MemoryTree.newPath(" /projects/garden "), "projects/garden.md")
+    XCTAssertNil(MemoryTree.newPath("../etc/passwd"))
+    XCTAssertNil(MemoryTree.newPath("  "))
+  }
+
+  func testParsesDiffs() {
+    let diff = """
+      diff --git a/INDEX.md b/INDEX.md
+      index 1..2 100644
+      --- a/INDEX.md
+      +++ b/INDEX.md
+      @@ -1,2 +1,2 @@
+       # Memory index
+      -old
+      +new
+      """
+    XCTAssertEqual(
+      DiffLine.parse(diff).map(\.kind), [.hunk, .context, .removed, .added])
+  }
+
+  func testEscapesQueryValues() {
+    XCTAssertEqual(API.query("notes/a b&c+d.md"), "notes/a%20b%26c%2Bd.md")
   }
 }
