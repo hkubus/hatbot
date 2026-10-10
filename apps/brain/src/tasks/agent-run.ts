@@ -181,11 +181,40 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     tasks.raiseBudget(id, extra);
   };
 
-  /** An alert task skips asking once at most: the instructions allow one fix, then it's the owner's turn. */
-  let alertSkipped = false;
   /**
-   * Whether you asked for this exact action in the chat that started the task, so it doesn't ask again.
-   * Never for money, accounts or suspected injection, and only for tasks you started from the chat.
+   * A schedule's, webhook's or alert's task skips asking once at most: its instructions allow one fix,
+   * then it's your turn.
+   */
+  let standingSkipped = false;
+  /**
+   * The instructions you wrote for what started this task, as the approval check reads them. A trusted
+   * event (an alert, a trusted webhook) comes with them; an untrusted one doesn't, so it can't pick the
+   * target. Null for a schedule the chat made after reading untrusted content.
+   */
+  const standingWords = (): string | null => {
+    if (task.origin === "schedule") {
+      const tainted = d.db
+        .query<{ tainted: number }, [number]>("SELECT tainted FROM schedules WHERE id = ?")
+        .get(task.scheduleId ?? -1)?.tainted;
+      if (tainted !== 0) return null;
+      return `Standing instructions for the schedule "${task.source ?? ""}":\n${task.goal}`;
+    }
+    const kind = task.origin === "alert" ? "Uptime Kuma alert" : "webhook";
+    const head = `Standing instructions for the ${kind} "${task.source ?? ""}":\n${task.goal}`;
+    const trustedEvent =
+      task.origin === "alert" ||
+      d.db
+        .query<{ trusted: number }, [number]>("SELECT trusted FROM triggers WHERE id = ?")
+        .get(task.triggerId ?? -1)?.trusted === 1;
+    return trustedEvent
+      ? `${head}\n\nThe event that started this task (trusted):\n${task.payload ?? ""}`
+      : `${head}\n\nThe event that started this task came from outside and isn't trusted, so it isn't shown: it can't choose what to act on.`;
+  };
+
+  /**
+   * Whether you already asked for this exact action, so the task doesn't ask again: in the chat that
+   * started it, or in the instructions you wrote for its schedule, webhook or alert. Never for money,
+   * accounts or suspected injection.
    */
   const alreadyAsked = async (
     t: PluginTool,
@@ -193,13 +222,10 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     what: string,
     verdict: { why: string; kind?: ApprovalKind },
   ): Promise<boolean> => {
-    // An alert task's own words are the instructions you wrote for its trigger, and the alert; one action at most.
-    const alert = task.origin === "alert";
-    const request = alert
-      ? `Standing instructions for the trigger "${task.source ?? ""}":\n${task.goal}\n\nThe alert that started this task (from Uptime Kuma):\n${task.payload ?? ""}`
-      : tasks.requestOf(id);
+    const standing = task.origin !== "chat";
+    const request = standing ? standingWords() : tasks.requestOf(id);
     if (!request || !d.settings.get().skipAskedApprovals) return false;
-    if (alert && alertSkipped) return false;
+    if (standing && standingSkipped) return false;
     if (!mayCheck(verdict.kind ?? "other") || tasks.get(id)?.injectionSuspected) return false;
     const check = await ownerAsked(d, id, request, {
       tool: t.name,
@@ -208,11 +234,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       why: verdict.why,
     });
     if (!check.asked) return false;
-    if (alert) alertSkipped = true;
+    if (standing) standingSkipped = true;
     tasks.addStep(id, {
       kind: "approval",
-      name: alert
-        ? "Not asking: your alert instructions allow this"
+      name: standing
+        ? "Not asking: your instructions allow this"
         : "Not asking: you asked for this",
       detail: check.why ? `${what}. ${check.why}` : what,
       url: null,
