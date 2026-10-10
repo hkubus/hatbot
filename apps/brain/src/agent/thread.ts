@@ -412,8 +412,9 @@ export class Thread {
     const progress = (line: string) =>
       events.emit({ type: "message.progress", id: out.id, text: `\n${line}\n` });
     const say = (delta: string) => {
+      // Text after a tool call gets a rule, so what came after the tool reads apart from what came before.
       if (separate && text) {
-        delta = `\n\n${delta}`;
+        delta = `\n\n---\n\n${delta}`;
       }
       separate = false;
       text += delta;
@@ -482,7 +483,8 @@ export class Thread {
             signal: abort.signal,
           },
         );
-        separate = true;
+        // A paused turn picks up mid-thought; only text after tools starts a new part.
+        separate = res.stop_reason !== "pause_turn";
         if (res.input_transformations?.length)
           console.warn(
             `episode ${episode.id}: the API changed the input`,

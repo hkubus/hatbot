@@ -449,7 +449,7 @@ Plain messages, not cards; the details live on the task's or schedule's page.
 - **Approval**: what Hatbot wants to do, why, which untrusted page it read, a screenshot, **Approve** (blue) and **Deny**. Once answered it shrinks to one line.
 - **Schedule created**: "Scheduled **name**: every day at 08:00."
 
-Markdown and code blocks render fully.
+Markdown and code blocks render fully. Replies lead with the answer and use lists, **bold** key values, tables and code blocks where they help; text a reply adds after a tool call comes after a rule (`---`).
 
 **Folded conversations**: every episode but the latest folds into one line, its recap (or its first message, for episodes from before recaps), with the time. A tap opens it in place. Cards from background tasks fold with the conversation before them; an approval still waiting for you stays in view.
 

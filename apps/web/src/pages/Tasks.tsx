@@ -6,6 +6,7 @@ import { LiveView, StepIcon } from "../live";
 import { navigate } from "../router";
 import { cancelTask, loadTask, loadTasks, useStore } from "../store";
 import { ApprovalCard, isActive, Shot, StatusChip, taskLine } from "../tasks";
+import { AssistantBody } from "./Chat";
 
 const money = (usd: number) => `$${usd.toFixed(2)}`;
 const time = (iso: string) =>
@@ -224,7 +225,13 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
             <h2>{task.title}</h2>
             <StatusChip status={task.status} />
           </div>
-          <p className="task-summary">{taskLine(task, progress)}</p>
+          {!active && task.summary ? (
+            <div className="task-summary">
+              <AssistantBody text={task.summary} />
+            </div>
+          ) : (
+            <p className="task-summary">{taskLine(task, progress)}</p>
+          )}
           <Details task={task} />
         </div>
 

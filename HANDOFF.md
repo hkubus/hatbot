@@ -7,7 +7,7 @@ Delete it, or fold it into `PLAN.md`, once the work below is done.
 
 - **Built:** M0–M5 and the iOS app (see the checklists in `PLAN.md` §11). M4 and M5 are built and committed but not yet deployed or tried live.
 - **Not yet tried live** (the owner does these): the M2 lock-screen approval, the M3 morning schedule, Forgejo webhook and Kuma alert, all of M4 and M5, and the first iOS install from SideStore.
-- **Checks:** 136 tests (brain and desktop-agent) and 19 iOS core tests pass, and Biome and `tsc -b` are clean.
+- **Checks:** 137 tests (brain and desktop-agent) and 19 iOS core tests pass, and Biome and `tsc -b` are clean.
 
 ## How to work here
 

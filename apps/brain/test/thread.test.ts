@@ -306,3 +306,14 @@ test("spend over the last hour and minute, in dollars and tokens; hour by hour",
   const res = await t.call("GET", "/spend/hourly?hours=6", undefined, { cookie });
   expect(((await res.json()) as unknown[]).length).toBe(6);
 });
+
+test("text after a tool call is set apart with a rule", async () => {
+  const model = new FakeModel([
+    { content: [text("Let me check."), toolUse("memory_list", {})] },
+    { content: [text("Nothing in memory yet.")] },
+  ]);
+  const t = await testApp(model);
+  await t.thread.post("what do you remember?").done;
+  const reply = t.thread.list().at(-1);
+  expect(reply?.text).toBe("Let me check.\n\n---\n\nNothing in memory yet.");
+});

@@ -44,7 +44,7 @@ const MD_COMPONENTS = {
   ),
 };
 
-const AssistantBody = memo(function AssistantBody({ text }: { text: string }) {
+export const AssistantBody = memo(function AssistantBody({ text }: { text: string }) {
   return (
     <div className="md">
       <Markdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
