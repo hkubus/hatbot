@@ -132,6 +132,8 @@ Everything valuable lives in the brain, and the brain only ever sees *pixels and
 - `POST /screenshot`: captures the X display (1280×800) and returns lossless WebP.
 - `POST /action`: runs the computer-use actions (click, drag, type, key, scroll, hold_key, mouse down/up, cursor_position, wait) through `xdotool`.
 - `POST /zoom`: crops a region at full resolution.
+- `POST /browser`: runs a browser toolset member (`browser_toolset_20260801`: navigate, read_page, find, get_page_text, clicks and typing by element reference or viewport point, form_input, screenshot, zoom, tabs) on the running Chromium over CDP. Element references live in an isolated world the page can't touch. Dialogs are dismissed and reported; `javascript_exec`, `file_upload`, console and network reads stay off.
+- `GET /browser/state`: the open tabs and what changed since the last report (tabs opened, downloads, dismissed dialogs), for the toolset's `browser_state` block. `POST /browser/inspect`: the element a browser click or Enter would hit, for §6.1.
 - `GET /context`: the current Chromium URL and title, read through CDP on localhost. Used for logging and the trust tracking in §6.1.
 - `POST /inspect`: the element under a point (or the focused one), for the consequential-click check in §6.1.
 - `POST /lock` / `/unlock`: input lock used during takeover.
@@ -214,7 +216,7 @@ build context (system + memory index + task)  →  call model (stream)
 | Job | Model | Notes |
 |---|---|---|
 | Chat, planning, non-screen tools | `claude-haiku-5-5` by default, or `claude-opus-5-5` (Settings → Chat); effort `low` (Settings: low or medium) | On Haiku the chat has `ask_opus`: one Opus 5.5 call (effort `high`, no tools) per reply at most, for code, debugging and multi-step reasoning, its answer streamed into the reply as is. Haiku has no server-side fallback, so a refusal ends the reply with a note. Changing the model or effort starts a new episode or drops the cache, so heavier work runs as a task instead |
-| Desktop driving (`run_desktop_task`) | `claude-opus-5-5`, effort `medium`; Settings → Desktop can switch new tasks to `claude-haiku-5-5` | Native `computer_toolset_20260801`. Best screenshot reading. Haiku 5.5 supports the toolset too; its tasks run without `display: "updates"`, which isn't documented for it |
+| Desktop driving (`run_desktop_task`) | `claude-opus-5-5`, effort `medium`; Settings → Desktop can switch new tasks to `claude-haiku-5-5` | Native `computer_toolset_20260801` plus `browser_toolset_20260801` for web pages. Best screenshot reading. Haiku 5.5 supports the toolset too; its tasks run without `display: "updates"`, which isn't documented for it |
 | Schedules and triggers (background tasks) | `claude-opus-5-5`, the chat's effort | Same kind of work as chat, without a screen (§5.6) |
 | Injection screening, thread summaries, alert triage | `claude-haiku-5-5`, effort `low` | $0.10/$0.50 per 1M tokens up to 100k-token prompts, 5x above (whole request). Thinks by default |
 | Writing code (`forge_*`, `ssh_exec` work, M4) | `claude-opus-5-5`, effort `medium`; `high` when you ask or after a failed attempt | Runs as a task with its own card, spend limit and timeline, like desktop tasks |
@@ -244,7 +246,9 @@ Later, run a small test on real tasks to see whether Haiku 5.5 (72% on OSWorld) 
 | `notify(message, priority)` | bg | Free |
 | `mcp_*` plugin (each server's tools) | bg | Default **ask**; set allow/ask/block per tool |
 
-The `run_desktop_task` **subloop** uses Opus with the computer toolset against the desktop-agent daemon:
+The `run_desktop_task` **subloop** uses the computer toolset against the desktop-agent daemon, plus the browser toolset for web pages:
+- The model reads pages as text and acts on elements by reference, and takes a screenshot only when it needs to see the page. It starts from the list of open tabs instead of a screenshot; the timeline still gets one.
+- A batch of toolset calls stops at the first failure (or held-back click); the rest get the API's "Not executed" text.
 - Screenshots go to `/archive` as WebP and into the task timeline.
 - The subloop returns a structured summary to the parent.
 
@@ -286,12 +290,12 @@ Once a task has read **any untrusted content**, it is *tainted*. In a tainted ta
 Untainted tasks stay fully autonomous. **Always approval, tainted or not:** payments, credential and account-security changes, and anything matching a destructive pattern.
 
 How it's enforced:
-- **Screen actions**: Opus requests consequential steps through a small `confirm_intent(kind, summary)` tool before submitting. The policy engine also flags clicks on buttons such as *submit, pay, buy, delete, send, confirm*, using the screen text and CDP.
+- **Screen actions**: Opus requests consequential steps through a small `confirm_intent(kind, summary)` tool before submitting. The policy engine also flags clicks on buttons such as *submit, pay, buy, delete, send, confirm*, using the screen text and CDP. Browser toolset clicks are checked the same way, by element reference or viewport point.
 - **Defence in depth**:
   - Untrusted text only ever enters through tool results, labelled with its source and JSON-encoded.
   - The system prompt states the untrusted-content policy.
   - Haiku 5.5 screens untrusted text and flags `injection_suspected`; a flag adds an extra approval and a warning badge.
-  - Anthropic's built-in computer-use injection checks stay on.
+  - Anthropic's built-in computer-use and browser-use injection checks stay on.
 
 ### 6.2 Approvals
 - **An approval contains**: the action, its arguments or a preview, *why* Hatbot wants to do it, the untrusted sources that tainted the task, a screenshot if relevant, and the cost so far.

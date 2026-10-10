@@ -2,7 +2,14 @@
 import { timingSafeEqual } from "node:crypto";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentAction, AgentStatus, LiveInput } from "@hatbot/shared/desktop";
+import type {
+  AgentAction,
+  AgentStatus,
+  BrowserCall,
+  BrowserInspect,
+  LiveInput,
+} from "@hatbot/shared/desktop";
+import { Browser, BrowserError } from "./browser";
 import { context, inspect } from "./cdp";
 import { browserKey } from "./keys";
 import { SHELL_SOCKET } from "./shell";
@@ -26,6 +33,7 @@ const MAX_UPDATE_BYTES = 10 * 1024 * 1024;
 
 const size = await screenSize();
 const live = new LiveCapture(size);
+const browser = new Browser();
 /** A watcher that falls this far behind skips frames instead of seeing the desktop late. */
 const LIVE_BUFFER_BYTES = 256 * 1024;
 /** While locked (the owner has control, or Pause all), the brain's model can't act. Live input still works. */
@@ -142,6 +150,17 @@ const server = Bun.serve<{ off?: () => void }>({
             headers: { "content-type": "application/json" },
           });
         }
+        case "POST /browser": {
+          if (locked) return json({ error: "The owner has control of the desktop." }, 423);
+          const { name, input } = (await req.json()) as BrowserCall;
+          return json(await serial(() => browser.call(name, input ?? {})));
+        }
+        case "GET /browser/state":
+          return json(await serial(() => browser.state()));
+        case "POST /browser/inspect": {
+          const at = (await req.json()) as BrowserInspect;
+          return json(await serial(() => browser.inspect(at)));
+        }
         case "GET /context":
           return json(await context(url.searchParams.get("text") === "1"));
         case "POST /inspect": {
@@ -161,7 +180,8 @@ const server = Bun.serve<{ off?: () => void }>({
           return json({ error: "not found" }, 404);
       }
     } catch (err) {
-      if (err instanceof ActionError) return json({ error: err.message }, 400);
+      if (err instanceof ActionError || err instanceof BrowserError)
+        return json({ error: err.message }, 400);
       console.error(route, err);
       return json({ error: err instanceof Error ? err.message : "failed" }, 500);
     }

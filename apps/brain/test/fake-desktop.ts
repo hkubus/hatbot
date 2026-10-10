@@ -3,6 +3,10 @@ import type {
   AgentContext,
   AgentElement,
   AgentStatus,
+  BrowserCall,
+  BrowserInspect,
+  BrowserResult,
+  BrowserState,
   ShellResult,
 } from "@hatbot/shared/desktop";
 import { type DesktopAgent, DesktopError } from "../src/desktop/client";
@@ -11,6 +15,8 @@ import { type DesktopAgent, DesktopError } from "../src/desktop/client";
 export class FakeDesktop implements DesktopAgent {
   readonly configured = true;
   actions: AgentAction[] = [];
+  browserCalls: BrowserCall[] = [];
+  inspected: BrowserInspect[] = [];
   screenshots = 0;
   locked = false;
   page: AgentContext = { url: "https://example.com/", title: "Example", text: "Hello" };
@@ -47,6 +53,29 @@ export class FakeDesktop implements DesktopAgent {
     if (this.locked) throw new DesktopError("The owner has control of the desktop.", 423);
     this.commands.push(command);
     return this.shell(command);
+  }
+  async browser(call: BrowserCall): Promise<BrowserResult> {
+    if (this.locked) throw new DesktopError("The owner has control of the desktop.", 423);
+    this.browserCalls.push(call);
+    if (call.name === "screenshot") {
+      this.screenshots++;
+      return { kind: "image", data: "UklGRg==", mediaType: "image/webp" };
+    }
+    if (call.name === "navigate")
+      return { kind: "navigate", url: this.page.url ?? "", title: this.page.title ?? "" };
+    if (call.name === "read_page") return { kind: "text", text: '- button "Send" [ref_1]' };
+    return { kind: "none" };
+  }
+  async browserState(): Promise<BrowserState> {
+    return {
+      tabs: [
+        { tab_id: "tab-1", url: this.page.url ?? "", title: this.page.title ?? "", active: true },
+      ],
+    };
+  }
+  async browserInspect(at: BrowserInspect) {
+    this.inspected.push(at);
+    return this.element;
   }
   async lock() {
     this.locked = true;
