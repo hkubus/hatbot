@@ -78,11 +78,11 @@ struct LiveView: View {
     VStack(alignment: .leading, spacing: 12) {
       if control {
         banner(icon: "hand.raised.fill", text: "You're in control. Hatbot is paused.") {
-          Button("Hand back") { run { try await store.handback() } }.buttonStyle(.borderedProminent)
+          Button("Hand back") { run { try await store.handback() } }.glassButton(prominent: true)
         }
       } else if let request = desktop?.request {
         banner(icon: "hand.raised.fill", text: "**Hatbot needs you:** \(request.reason)") {
-          Button("Take over") { run { try await store.takeover() } }.buttonStyle(.borderedProminent)
+          Button("Take over") { run { try await store.takeover() } }.glassButton(prominent: true)
         }
       }
 
@@ -91,10 +91,10 @@ struct LiveView: View {
       HStack {
         if control {
           Button("Keyboard", systemImage: "keyboard") { typing.toggle() }
-            .buttonStyle(.bordered)
+            .glassButton(prominent: typing)
         } else if desktop?.request == nil && desktop?.online == true {
           Button("Take over", systemImage: "hand.raised") { run { try await store.takeover() } }
-            .buttonStyle(.bordered)
+            .glassButton()
             .tint(.attention)
         }
         Spacer()

@@ -54,6 +54,7 @@ struct MainView: View {
         SettingsView()
       }
     }
+    .minimizingTabBar()
     // The event stream runs while the app is in front; iOS would cut it in the background anyway.
     .onChange(of: phase, initial: true) { _, phase in
       if phase == .active {
@@ -100,8 +101,7 @@ private struct Toast: View {
         .lineLimit(2)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(.regularMaterial, in: .capsule)
-        .overlay(Capsule().strokeBorder(.separator, lineWidth: 0.5))
+        .glassSurface(in: .capsule)
         .padding(.top, 4)
         .transition(.move(edge: .top).combined(with: .opacity))
         .task(id: text) {

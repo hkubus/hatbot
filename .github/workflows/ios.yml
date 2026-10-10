@@ -19,11 +19,15 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-15
+    # The newest stable Xcode and iOS SDK, so the app gets the current system look (Liquid Glass).
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v5
+      - run: xcodebuild -version && xcrun --sdk iphoneos --show-sdk-version
       - name: Test the core
         working-directory: apps/ios
         run: swift test

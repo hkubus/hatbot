@@ -188,7 +188,6 @@ struct ImageViewer: View {
             ShareLink(item: Image(uiImage: image), preview: SharePreview("Screenshot", image: Image(uiImage: image)))
           }
         }
-        .toolbarBackground(.visible, for: .navigationBar)
     }
   }
 }

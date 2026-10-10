@@ -39,10 +39,10 @@ struct ChatView: View {
       .defaultScrollAnchor(.bottom)
       .defaultScrollAnchor(.bottom, for: .sizeChanges)
       .scrollDismissesKeyboard(.interactively)
-      .safeAreaInset(edge: .top, spacing: 0) {
+      .edgeBar(.top) {
         if store.paused { PausedBanner() }
       }
-      .safeAreaInset(edge: .bottom, spacing: 0) { composer }
+      .edgeBar(.bottom) { composer }
       .navigationTitle("Hatbot")
       .navigationBarTitleDisplayMode(.inline)
       .routes()
@@ -85,24 +85,24 @@ struct ChatView: View {
       HStack(alignment: .bottom, spacing: 8) {
         TextField("Message Hatbot…", text: $draft, axis: .vertical)
           .lineLimit(1...6)
-          .padding(.horizontal, 14)
-          .padding(.vertical, 8)
-          .background(.background, in: .rect(cornerRadius: 19))
-          .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(.separator, lineWidth: 0.5))
+          .padding(.horizontal, 16)
+          .padding(.vertical, 11)
+          .glassSurface(in: .rect(cornerRadius: 22), interactive: true)
         Button(action: send) {
           Image(systemName: "arrow.up")
             .font(.body.weight(.semibold))
-            .foregroundStyle(.white)
-            .frame(width: 36, height: 36)
-            .background(canSend ? Color.brand : Color.secondary.opacity(0.4), in: .circle)
+            .frame(width: 26, height: 30)
         }
+        .glassButton(prominent: true)
+        .buttonBorderShape(.circle)
+        .tint(.brand)
         .disabled(!canSend)
         .accessibilityLabel("Send")
       }
+      .glassGroup(spacing: 8)
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
-    .background(.bar)
   }
 
   private func send() {
@@ -131,13 +131,15 @@ struct PausedBanner: View {
       Label("All activity is paused.", systemImage: "pause.circle.fill")
       Spacer()
       Button("Resume") { Task { try? await store.setPaused(false) } }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
+        .buttonStyle(.borderless)
+        .fontWeight(.semibold)
     }
     .font(.subheadline)
-    .padding(.horizontal, 14)
-    .padding(.vertical, 8)
-    .background(.bar)
+    .padding(.horizontal, 16)
+    .padding(.vertical, 10)
+    .glassSurface(in: .capsule)
+    .padding(.horizontal, 12)
+    .padding(.vertical, 6)
   }
 }
 
@@ -342,9 +344,9 @@ struct ApprovalBody: View {
     }
     HStack {
       Button("Deny", role: .destructive) { decide(.deny) }
-        .buttonStyle(.bordered)
+        .glassButton()
       Button("Approve") { decide(.approve) }
-        .buttonStyle(.borderedProminent)
+        .glassButton(prominent: true)
         .tint(.attention)
     }
     .controlSize(.small)

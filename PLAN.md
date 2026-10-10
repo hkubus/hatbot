@@ -150,7 +150,8 @@ Shared API types and zod schemas for the brain and web. The iOS app mirrors the 
 - the provisioning scripts for both guests, `verify.sh`, and `deploy.sh`, which installs the app and its systemd unit.
 
 ### 4.6 `apps/ios` — SwiftUI
-- **Native**: SwiftUI on iOS 18+, SF Symbols and the system font, the same amber, blue, red and green as the web. No dependencies.
+- **Native**: SwiftUI, built with the newest Xcode and iOS SDK (27), running on iOS 18+. SF Symbols and the system font, the same amber, blue, red and green as the web. No dependencies.
+- **Liquid Glass**: system bars, tab bar and lists get it from the SDK. The chat composer, the paused banner, the toast and the buttons use glass on iOS 26+ (a material before); messages and screenshots stay solid. The tab bar shrinks while you scroll.
 - **Tabs**: Chat, Tasks (with a badge for what needs you), Live, Settings, like the web on a phone.
 - **Auth**: password + TOTP once, then a bearer token named after the device, kept in the Keychain. Signing out deletes the token on the brain.
 - **Live events**: the same `/stream` WebSocket while the app is in front; it reconnects and reloads after a gap. iOS stops it in the background, so notifications stay with the ntfy app.
