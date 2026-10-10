@@ -13,6 +13,8 @@ export const Settings = z.object({
   owner: z.object({ name: z.string().min(1), email: z.string().min(1) }),
   /** Pause all (PLAN.md §6.5). */
   paused: z.boolean(),
+  /** What tapping a notification opens: the web app, or the iOS app (hatbot:// links). */
+  notificationsOpen: z.enum(["web", "app"]),
 });
 export type Settings = z.infer<typeof Settings>;
 
@@ -21,6 +23,7 @@ export const DEFAULT_SETTINGS: Settings = {
   chatEffort: "low",
   owner: { name: "You", email: "owner@local" },
   paused: false,
+  notificationsOpen: "web",
 };
 
 export class SettingsStore {

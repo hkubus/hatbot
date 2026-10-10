@@ -255,4 +255,6 @@ export type AppSettings = {
   chatEffort: "low" | "medium";
   owner: { name: string; email: string };
   paused: boolean;
+  /** What tapping a notification opens: the web app, or the iOS app (hatbot:// links). */
+  notificationsOpen: "web" | "app";
 };

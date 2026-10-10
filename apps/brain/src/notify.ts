@@ -61,3 +61,36 @@ export class NtfyNotifier implements Notifier {
     }
   }
 }
+
+/**
+ * The web page a notification opens, as the iOS app's link (hatbot://), or null if the app has no
+ * such page.
+ */
+export function appLink(url: string, publicUrl: string): string | null {
+  if (!url.startsWith(`${publicUrl}/`)) return null;
+  const u = new URL(url);
+  const approval = u.searchParams.get("approval");
+  if (u.pathname === "/" && approval && /^\d+$/.test(approval))
+    return `hatbot://approvals/${approval}`;
+  const m = /^\/(tasks|schedules|triggers)\/(\d+)$/.exec(u.pathname);
+  return m ? `hatbot://${m[1]}/${m[2]}` : null;
+}
+
+/** Points notifications at the iOS app instead of the web app, when Settings say so. */
+export class LinkingNotifier implements Notifier {
+  constructor(
+    private inner: Notifier,
+    private publicUrl: string,
+    private opens: () => "web" | "app",
+  ) {}
+
+  send(n: Notification) {
+    if (this.opens() !== "app") return this.inner.send(n);
+    const link = (url: string) => appLink(url, this.publicUrl) ?? url;
+    return this.inner.send({
+      ...n,
+      click: n.click && link(n.click),
+      actions: n.actions?.map((a) => (a.action === "view" ? { ...a, url: link(a.url) } : a)),
+    });
+  }
+}

@@ -183,6 +183,28 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
         </section>
 
         <section className="group">
+          <h2>Notifications</h2>
+          <div className="group-box">
+            <div className="row">
+              <div className="txt">
+                <b>Tapping one opens</b>
+              </div>
+              <select
+                value={settings.notificationsOpen}
+                onChange={(e) =>
+                  update({
+                    notificationsOpen: e.target.value as AppSettings["notificationsOpen"],
+                  })
+                }
+              >
+                <option value="web">The web app</option>
+                <option value="app">The iOS app</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <section className="group">
           <h2>Account</h2>
           <div className="group-box">
             {tokens.map((t) => (

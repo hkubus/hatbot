@@ -13,7 +13,7 @@ import { openDb } from "../src/db";
 import { Desktop } from "../src/desktop/service";
 import { EventBus, type HatbotEvent } from "../src/events";
 import { MemoryStore } from "../src/memory/store";
-import type { Notification, Notifier } from "../src/notify";
+import { LinkingNotifier, type Notification, type Notifier } from "../src/notify";
 import type { Plugin } from "../src/plugins/plugin";
 import { Plugins } from "../src/plugins/registry";
 import { Proxmox } from "../src/proxmox";
@@ -82,7 +82,8 @@ export async function testApp(
   await plugins.startAll();
   const thread = new Thread({ db, memory, events, spend, settings, model, plugins, clock });
   taskModel.onCreate ??= () => '{"suspected": false, "excerpt": ""}';
-  const notifier = new FakeNotifier();
+  const sent = new FakeNotifier();
+  const notifier = new LinkingNotifier(sent, ORIGIN, () => settings.get().notificationsOpen);
   const archive = new Archive(tempDir("hatbot-test-archive-"), clock);
   const agent = new FakeDesktop();
   const desktop = new Desktop(agent, events);
@@ -178,7 +179,7 @@ export async function testApp(
     desktop,
     agent,
     archive,
-    notifier,
+    notifier: sent,
     spend,
     thread,
     schedules,

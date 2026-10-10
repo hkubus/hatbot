@@ -12,7 +12,7 @@ import { HttpDesktopAgent } from "./desktop/client";
 import { Desktop } from "./desktop/service";
 import { EventBus } from "./events";
 import { MemoryStore } from "./memory/store";
-import { NtfyNotifier } from "./notify";
+import { LinkingNotifier, NtfyNotifier } from "./notify";
 import { PLUGINS } from "./plugins";
 import { Plugins } from "./plugins/registry";
 import { Proxmox } from "./proxmox";
@@ -44,7 +44,11 @@ const pluginsStarted = plugins
   .startAll()
   .catch((err) => console.error("plugins failed to start", err));
 const thread = new Thread({ db, memory, events, spend, settings, model, plugins });
-const notifier = new NtfyNotifier();
+const notifier = new LinkingNotifier(
+  new NtfyNotifier(),
+  config.publicUrl,
+  () => settings.get().notificationsOpen,
+);
 const archive = new Archive(config.archiveDir);
 const desktop = new Desktop(new HttpDesktopAgent(), events);
 const approvals = new Approvals(db, events, notifier, config.publicUrl);
