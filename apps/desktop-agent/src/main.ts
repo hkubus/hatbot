@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { AgentAction, AgentStatus, LiveInput } from "@hatbot/shared/desktop";
 import { context, inspect } from "./cdp";
 import { browserKey } from "./keys";
+import { SHELL_SOCKET } from "./shell";
 import { ActionError, act, LiveCapture, screenSize, screenshot, xdotool, zoom } from "./x11";
 
 const token = process.env.DESKTOP_AGENT_TOKEN ?? "";
@@ -117,6 +118,29 @@ const server = Bun.serve<{ off?: () => void }>({
           if (locked) return json({ error: "The owner has control of the desktop." }, 423);
           const { name, input } = (await req.json()) as AgentAction;
           return json(await serial(() => act(size, name, input ?? {})));
+        }
+        case "POST /exec": {
+          // Not serialised with input: the shell doesn't touch the screen.
+          if (locked) return json({ error: "The owner has control of the desktop." }, 423);
+          let res: Response;
+          try {
+            res = await fetch("http://shell/exec", {
+              method: "POST",
+              unix: SHELL_SOCKET,
+              headers: { "content-type": "application/json" },
+              body: await req.text(),
+              signal: AbortSignal.timeout(11 * 60_000),
+            } as RequestInit);
+          } catch {
+            return json(
+              { error: "The desktop's shell isn't running (deploy.sh sets it up)." },
+              503,
+            );
+          }
+          return new Response(res.body, {
+            status: res.status,
+            headers: { "content-type": "application/json" },
+          });
         }
         case "GET /context":
           return json(await context(url.searchParams.get("text") === "1"));

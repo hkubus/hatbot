@@ -10,6 +10,7 @@ import { screenPage } from "../agent/screening";
 import { localStamp } from "../agent/thread";
 import type { Outcome } from "../approvals";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
+import { destructive } from "../plugins/ssh/policy";
 import { BudgetError, priceOf } from "../spend";
 import { skillPath } from "../teach/skills";
 import { checkFor, consequential } from "./policy";
@@ -54,6 +55,16 @@ const RequestTakeover = z.object({
     .max(200)
     .describe('What the owner needs to do, e.g. "Log in to OpenTable"'),
 });
+const DesktopShell = z.object({
+  command: z.string().min(1).max(20_000).describe("A bash command; it runs in your shell's home"),
+  timeout_s: z
+    .number()
+    .int()
+    .min(1)
+    .max(600)
+    .optional()
+    .describe("Seconds before it's killed; 60 if left out"),
+});
 const FinishTask = z.object({
   outcome: z.enum(["done", "failed", "blocked"]),
   summary: z.string().min(1).max(2000).describe("What you did and the result, for the owner"),
@@ -71,6 +82,12 @@ const CUSTOM_TOOLS: Anthropic.Beta.BetaTool[] = [
     description:
       "Ask the owner to take control of the desktop: to log in, enter a password, 2FA code or payment details, solve a captcha, or get you unstuck. Returns when they hand it back, with the current screen.",
     schema: RequestTakeover,
+  },
+  {
+    name: "desktop_shell",
+    description:
+      "Run a bash command on the desktop as a separate shell user, and get its exit code and output as text. Use it for computing, scripts, downloading and processing files, and trying things out: it's faster than typing into a terminal on screen. Its home (/var/lib/hatbot-shell) persists between tasks. It can't see the browser profile, the browser's downloads or the screen, has no sudo, and reaches the internet but not the owner's network. Commands that delete data recursively or the like ask the owner first.",
+    schema: DesktopShell,
   },
   {
     name: "finish_task",
@@ -429,6 +446,28 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     ]);
   };
 
+  /** The desktop's shell. Destructive patterns ask, as on your hosts (PLAN.md §5.5). */
+  const shellCall = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> => {
+    const p = DesktopShell.safeParse(call.input);
+    if (!p.success) return textResult(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+    const { command, timeout_s: timeoutS = 60 } = p.data;
+    if (d.desktop.get().control === "owner") await waitForOwner();
+    const danger = destructive(command);
+    if (danger) {
+      const outcome = await askApproval({
+        kind: danger.kind,
+        summary: `On the desktop: ${command}`.slice(0, 300),
+        reason: `This command ${danger.why}.`,
+      });
+      if (outcome !== "approved")
+        return textResult(call, "The owner denied this. Don't try it another way.", true);
+    }
+    tasks.addStep(id, { kind: "action", name: "desktop_shell", detail: command, url: null });
+    const r = await agent.exec(command, timeoutS);
+    const head = r.timedOut ? `Killed after ${timeoutS} s.` : `Exit code ${r.exitCode}`;
+    return textResult(call, `${head}\n${r.output}`, r.timedOut || r.exitCode !== 0);
+  };
+
   const requestTakeover = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> => {
     const p = RequestTakeover.safeParse(call.input);
     if (!p.success) return textResult(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
@@ -568,6 +607,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           results.push(await confirmIntent(call));
         } else if (call.name === "request_takeover") {
           results.push(await requestTakeover(call));
+        } else if (call.name === "desktop_shell") {
+          results.push(await shellCall(call));
         } else if (call.name === "finish_task") {
           const p = FinishTask.safeParse(call.input);
           if (p.success) finished = p.data;

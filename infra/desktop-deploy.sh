@@ -69,6 +69,36 @@ ProtectHome=yes
 WantedBy=multi-user.target
 EOF
 
+# The desktop's shell (desktop_shell): its own throwaway user, a home in /var/lib/hatbot-shell, no /home
+# (the browser profile), no screen, no secrets. desktop-agent reaches it on a Unix socket.
+cat >/etc/systemd/system/hatbot-desktop-shell.service <<EOF
+[Unit]
+Description=Hatbot desktop shell: commands from desktop tasks, kept away from the browser profile
+
+[Service]
+DynamicUser=yes
+StateDirectory=hatbot-shell
+RuntimeDirectory=hatbot-shell
+RuntimeDirectoryMode=0755
+Environment=HOME=/var/lib/hatbot-shell
+WorkingDirectory=/var/lib/hatbot-shell
+ExecStart=/usr/local/bin/bun $DIR/src/shell.ts
+Restart=always
+RestartSec=2
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+TasksMax=256
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 # Updates from the brain. Only deploy.sh runs install the installer, so an update can't change it.
 if [[ $(realpath "$0") != "$SELF" ]]; then
   install -m 755 "$0" "$SELF.new"
@@ -95,9 +125,9 @@ ExecStart=$SELF $STATE/update.tar
 EOF
 
 systemctl daemon-reload
-systemctl enable -q hatbot-desktop-agent
+systemctl enable -q hatbot-desktop-agent hatbot-desktop-shell
 systemctl enable -q --now hatbot-desktop-agent-update.path
-systemctl restart hatbot-desktop-agent
+systemctl restart hatbot-desktop-shell hatbot-desktop-agent
 
 # shellcheck source=/dev/null
 token=$(. /etc/hatbot-desktop/secrets.env && printf '%s' "$DESKTOP_AGENT_TOKEN")

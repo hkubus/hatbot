@@ -232,6 +232,7 @@ Later, run a small test on real tasks to see whether Haiku 5.5 (72% on OSWorld) 
 | `run_desktop_task(goal, success_criteria)` | screen | Starts the Opus computer-use subloop; queued per §5.6 |
 | `run_task(title, goal, effort?)` | bg | Chat only. Starts a background task with every plugin tool, for anything that changes something (§4.5); shows under the reply |
 | `request_takeover(reason)` | screen | Pauses and notifies you (logins, 2FA, captchas) |
+| `desktop_shell(command)` | screen | Desktop tasks only. Runs as `hatbot-desktop-shell`'s own systemd DynamicUser (home `/var/lib/hatbot-shell`): no `/home` (the browser profile), no screen, no secrets, Unix socket relayed by desktop-agent. Destructive patterns ask |
 | `memory_*` (list/read/write/search) | bg | Free; every write is a git commit |
 | `search_history` | bg | Free |
 | `schedule_*` / `trigger_*` (create/list/update/delete) | bg | Free; everything visible in the UI |

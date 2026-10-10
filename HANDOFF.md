@@ -7,7 +7,7 @@ Delete it, or fold it into `PLAN.md`, once the work below is done.
 
 - **Built:** M0–M5 and the iOS app (see the checklists in `PLAN.md` §11). M4 and M5 are built and committed but not yet deployed or tried live.
 - **Not yet tried live** (the owner does these): the M2 lock-screen approval, the M3 morning schedule, Forgejo webhook and Kuma alert, all of M4 and M5, and the first iOS install from SideStore.
-- **Checks:** 128 brain tests and 18 iOS core tests pass, and Biome and `tsc -b` are clean.
+- **Checks:** 132 tests (brain and desktop-agent) and 18 iOS core tests pass, and Biome and `tsc -b` are clean.
 
 ## How to work here
 
@@ -40,6 +40,10 @@ These came out of the M4 security review.
 ## 3. iOS app — remaining items (PLAN §11, "iOS app")
 - **Built, not yet compiled by CI:** the Memory tab (files, read and edit, history, diff, revert), Schedules & Triggers under Settings (schedules made and edited here; triggers edited, switched, re-keyed and deleted, but made on the web), and Settings → Notifications (web or app). SwiftUI can't be type-checked on Linux, so the first CI run on the GitHub mirror is the real check.
 - **Optional:** Settings → Plugins and teach mode aren't in the app. The plan doesn't ask for them.
+
+## Desktop shell (built 2026-10-10, not deployed)
+- `desktop_shell` in desktop tasks runs commands through `hatbot-desktop-shell` (`apps/desktop-agent/src/shell.ts`), relayed by desktop-agent's `POST /exec`. The owner chose to add it for experiments.
+- **Run `infra/deploy.sh` once** for the desktop: updates from the Settings button use the installed copy of `desktop-deploy.sh`, which doesn't know the new unit. Until then the tool answers that the shell isn't running.
 
 ## 4. Later (not v1, don't start without the owner)
 - **GitHub plugin**, next to Forgejo. Same shape as `apps/brain/src/plugins/forgejo/`.

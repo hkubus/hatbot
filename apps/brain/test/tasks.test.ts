@@ -250,3 +250,34 @@ test("one task at a time on the screen; waiting for approval frees it", async ()
   expect(t.tasks.get(a.id)?.summary).toBe("A done.");
   expect(t.tasks.lane.holderId).toBeNull();
 });
+
+test("desktop_shell runs commands as text; destructive ones ask first", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("desktop_shell", { command: "python3 -c 'print(6*7)'" })] },
+    { content: [toolUse("desktop_shell", { command: "rm -rf ~/experiments" })] },
+    finish("Worked it out."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.agent.shell = (c) => ({
+    exitCode: 0,
+    output: c.includes("print") ? "42" : "",
+    timedOut: false,
+  });
+  const task = startTask(t, "Compute");
+  const approval = await pending(t);
+  expect(approval).toMatchObject({
+    kind: "delete",
+    summary: "On the desktop: rm -rf ~/experiments",
+    reason: "This command deletes files recursively.",
+  });
+  expect(t.agent.commands).toEqual(["python3 -c 'print(6*7)'"]);
+  t.approvals.decide(approval.id, "deny", "web");
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)?.status).toBe("done");
+  expect(t.agent.commands).toHaveLength(1);
+  const first = JSON.stringify(work.requests[1]?.messages.at(-1)?.content);
+  expect(first).toContain("Exit code 0\\n42");
+  const denied = JSON.stringify(work.requests[2]?.messages.at(-1)?.content);
+  expect(denied).toContain("The owner denied this.");
+  expect(t.tasks.steps(task.id).some((s) => s.name === "desktop_shell")).toBe(true);
+});

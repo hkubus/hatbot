@@ -54,6 +54,9 @@ export type AgentElement = {
   secret?: boolean;
 };
 
+/** POST /exec: a command run by the desktop's shell, which can't see the browser profile or the screen. */
+export type ShellResult = { exitCode: number; output: string; timedOut: boolean };
+
 /** Messages the brain sends on the /live socket while the owner has control (PLAN.md §10.5). */
 export type LiveInput =
   | { t: "move"; x: number; y: number }

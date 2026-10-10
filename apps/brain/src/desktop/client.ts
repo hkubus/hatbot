@@ -5,6 +5,7 @@ import type {
   AgentContext,
   AgentElement,
   AgentStatus,
+  ShellResult,
 } from "@hatbot/shared/desktop";
 
 export class DesktopError extends Error {
@@ -26,6 +27,8 @@ export interface DesktopAgent {
   action(a: AgentAction): Promise<AgentActionResult>;
   context(withText?: boolean): Promise<AgentContext>;
   inspect(x?: number, y?: number): Promise<AgentElement | null>;
+  /** A command in the desktop's shell, which can't see the browser profile or the screen. */
+  exec(command: string, timeoutS: number): Promise<ShellResult>;
   lock(): Promise<void>;
   unlock(): Promise<void>;
   /** WebSocket URL and headers for the live view. */
@@ -83,6 +86,11 @@ export class HttpDesktopAgent implements DesktopAgent {
   }
   async inspect(x?: number, y?: number) {
     return (await (await this.req("POST", "/inspect", { x, y })).json()) as AgentElement | null;
+  }
+  async exec(command: string, timeoutS: number) {
+    return (await (
+      await this.req("POST", "/exec", { command, timeoutS }, (timeoutS + 15) * 1000)
+    ).json()) as ShellResult;
   }
   async lock() {
     await this.req("POST", "/lock");

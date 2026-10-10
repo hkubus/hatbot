@@ -1,4 +1,10 @@
-import type { AgentAction, AgentContext, AgentElement, AgentStatus } from "@hatbot/shared/desktop";
+import type {
+  AgentAction,
+  AgentContext,
+  AgentElement,
+  AgentStatus,
+  ShellResult,
+} from "@hatbot/shared/desktop";
 import { type DesktopAgent, DesktopError } from "../src/desktop/client";
 
 /** A desktop that records what it's asked to do. Set `page` and `element` to shape what the policy sees. */
@@ -9,6 +15,12 @@ export class FakeDesktop implements DesktopAgent {
   locked = false;
   page: AgentContext = { url: "https://example.com/", title: "Example", text: "Hello" };
   element: AgentElement | null = null;
+  commands: string[] = [];
+  shell: (command: string) => ShellResult = (c) => ({
+    exitCode: 0,
+    output: `ran ${c}`,
+    timedOut: false,
+  });
 
   async status(): Promise<AgentStatus> {
     return { ok: true, width: 1280, height: 800, locked: this.locked };
@@ -30,6 +42,11 @@ export class FakeDesktop implements DesktopAgent {
   }
   async inspect() {
     return this.element;
+  }
+  async exec(command: string) {
+    if (this.locked) throw new DesktopError("The owner has control of the desktop.", 423);
+    this.commands.push(command);
+    return this.shell(command);
   }
   async lock() {
     this.locked = true;
