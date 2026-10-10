@@ -383,3 +383,22 @@ test("on Opus the chat has no ask_opus, keeps its fallback, and a switch starts 
   expect(opus?.messages.length).toBe(1);
   expect(lastUserText(opus as never)).toContain("Owner: first");
 });
+
+test("a task started from the chat keeps what you said, for its approval check", async () => {
+  const model = new FakeModel([
+    {
+      content: [
+        toolUse("run_task", { title: "Restart jellyfin", goal: "Restart jellyfin on nas" }),
+      ],
+    },
+    { content: [text("On it.")] },
+  ]);
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Done.", notify: false })] },
+  ]);
+  const t = await testApp(model, work);
+  await t.thread.post("please restart jellyfin").done;
+  await t.tasks.idle();
+  const task = t.tasks.list({}).at(-1);
+  expect(t.tasks.requestOf(task?.id as number)).toContain("please restart jellyfin");
+});

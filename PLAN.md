@@ -297,6 +297,7 @@ How it's enforced:
 - **Where you approve**: in the web UI (inline card + side panel), or with ntfy action buttons.
 - **ntfy buttons**: carry a **single-use, short-lived signed token** (HMAC over approval ID + decision + expiry). Payments and credential approvals only show *Open in Hatbot*.
 - **Waiting**: the task pauses and frees the screen lane. It auto-cancels after **24h** and notifies you.
+- **What you asked for doesn't ask again**: when a background task you started from the chat is about to ask, Haiku 5.5 compares the action with your own last three messages in that conversation (stored with the task). If you explicitly asked for this exact action on this exact target, the task goes ahead and its timeline says so. Strict: a goal ("fix jellyfin") isn't a request for a change, every part of a command must be covered, and doubt means asking. Never for payments, purchases, account security, budget or suspected injection, nor for tasks from schedules and triggers. Settings → Safety turns it off.
 
 ### 6.3 Spending
 - **Price table**: per-model prices live in config. Cost = `usage` × price, recorded per request, task and day.

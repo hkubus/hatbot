@@ -10,6 +10,7 @@ import { ApiError, api } from "../api";
 import { Icon } from "../icons";
 import { navigate } from "../router";
 import { setPaused, useStore } from "../store";
+import { Switch } from "../switch";
 import { getTheme, setTheme, type Theme } from "../theme";
 import { PluginPage, PluginsGroup } from "./Plugins";
 
@@ -300,6 +301,15 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
               >
                 {paused ? "Resume" : "Pause all"}
               </button>
+            </div>
+            <div className="row">
+              <div className="txt">
+                <b>Don't ask again for what I asked for</b>
+              </div>
+              <Switch
+                on={settings.skipAskedApprovals}
+                onChange={(on) => update({ skipAskedApprovals: on })}
+              />
             </div>
             <RollbackRow toast={toast} />
           </div>

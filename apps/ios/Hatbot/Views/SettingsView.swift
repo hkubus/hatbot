@@ -71,6 +71,13 @@ struct SettingsView: View {
           }
         }
         Section("Safety") {
+          if let skip = settings?.skipAskedApprovals {
+            Toggle(
+              "Don't ask again for what I asked for",
+              isOn: Binding(
+                get: { skip },
+                set: { on in Task { await act { settings = try await store.setSkipAskedApprovals(on) } } }))
+          }
           if store.paused {
             Button("Resume") { Task { await act { try await store.setPaused(false) } } }
           } else {

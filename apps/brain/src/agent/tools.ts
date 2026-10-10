@@ -27,6 +27,8 @@ export type ToolContext = {
   tainted?: () => boolean;
   /** Marks the conversation as having read untrusted content. */
   taint?: () => void;
+  /** Your own latest messages in this conversation, for a task's approval check. */
+  ownerSaid?: () => string;
 };
 
 export const DesktopTaskInput = z.object({
@@ -203,7 +205,7 @@ export const TOOLS = [
     description:
       "Start a background task for work that changes something: restarting or changing a guest, running commands on a host, commenting on or opening pull requests, writing code. It gets your memory, every tool your plugins offer (including the ones that change things, which you can't call here) and the desktop, and it asks the owner before risky steps. Its progress and result show under your reply; you're told how it ended at the start of a later turn. It can't see this conversation, so give it everything it needs.",
     schema: RunTaskInput,
-    run: async ({ title, goal, effort }, { tasks, messageId, tainted }) => {
+    run: async ({ title, goal, effort }, { tasks, messageId, tainted, ownerSaid }) => {
       if (!tasks) return "Tasks aren't available.";
       const task = tasks.createBackgroundTask({
         title,
@@ -212,6 +214,7 @@ export const TOOLS = [
         effort,
         message: messageId,
         tainted: tainted?.() ?? false,
+        request: ownerSaid?.(),
       });
       if (!task) return "The task couldn't start.";
       return `Started task #${task.id}. It's running in the background; the owner sees its progress and result under this reply. Don't wait for it.`;

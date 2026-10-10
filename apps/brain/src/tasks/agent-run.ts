@@ -3,6 +3,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ApprovalKind } from "@hatbot/shared";
 import { z } from "zod";
+import { mayCheck, ownerAsked } from "../agent/intent";
 import { modelErrorText } from "../agent/model";
 import { AGENT_PROMPT } from "../agent/prompt";
 import { localStamp } from "../agent/thread";
@@ -180,6 +181,35 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     tasks.raiseBudget(id, extra);
   };
 
+  /**
+   * Whether you asked for this exact action in the chat that started the task, so it doesn't ask again.
+   * Never for money, accounts or suspected injection, and only for tasks you started from the chat.
+   */
+  const alreadyAsked = async (
+    t: PluginTool,
+    call: Anthropic.Beta.BetaToolUseBlock,
+    what: string,
+    verdict: { why: string; kind?: ApprovalKind },
+  ): Promise<boolean> => {
+    const request = tasks.requestOf(id);
+    if (!request || !d.settings.get().skipAskedApprovals) return false;
+    if (!mayCheck(verdict.kind ?? "other") || tasks.get(id)?.injectionSuspected) return false;
+    const check = await ownerAsked(d, id, request, {
+      tool: t.name,
+      input: call.input,
+      what,
+      why: verdict.why,
+    });
+    if (!check.asked) return false;
+    tasks.addStep(id, {
+      kind: "approval",
+      name: "Not asking: you asked for this",
+      detail: check.why ? `${what}. ${check.why}` : what,
+      url: null,
+    });
+    return true;
+  };
+
   /** A plugin tool: its policy and the untrusted-content rule first, then the call. */
   const pluginCall = async (
     t: PluginTool,
@@ -197,7 +227,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       });
       return result(call, `Refused: ${verdict.why}`, true);
     }
-    if (verdict.action === "ask") {
+    if (verdict.action === "ask" && !(await alreadyAsked(t, call, what, verdict))) {
       const outcome = await askApproval({
         kind: verdict.kind ?? "other",
         summary: what,

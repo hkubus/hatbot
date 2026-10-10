@@ -244,6 +244,8 @@ export class Tasks {
     /** Unset: the chat's effort. */
     effort?: "medium" | "high";
     message?: number;
+    /** Your own recent chat messages, when you started it from the chat: what the approval check reads. */
+    request?: string;
   }): Task | null {
     if (input.runKey && this.activeFor(input.runKey)) return null;
     const tainted = input.tainted || (input.payload !== undefined && !input.trusted);
@@ -260,6 +262,7 @@ export class Tasks {
       trigger_id: input.triggerId ?? null,
       run_key: input.runKey ?? null,
       payload: input.payload ?? null,
+      request: input.request ?? null,
       tainted: tainted ? 1 : 0,
     });
     if (input.origin === "chat" && !(input.message && this.d.thread.attachTask(input.message, id)))
@@ -284,6 +287,15 @@ export class Tasks {
       .get(...Object.values(cols))?.id;
     if (!id) throw new Error("task insert failed");
     return id;
+  }
+
+  /** What you said in the chat when you started it, or null. */
+  requestOf(id: number): string | null {
+    return (
+      this.d.db
+        .query<{ request: string | null }, [number]>("SELECT request FROM tasks WHERE id = ?")
+        .get(id)?.request ?? null
+    );
   }
 
   /** The unfinished task for a schedule, trigger or monitor. */

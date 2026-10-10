@@ -3,6 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Task } from "@hatbot/shared";
+import { INTENT_PROMPT } from "../src/agent/prompt";
 import type { CallContext } from "../src/plugins/plugin";
 import { verdictFor } from "../src/plugins/registry";
 import { sshPlugin } from "../src/plugins/ssh";
@@ -247,4 +248,75 @@ test("logs and files are untrusted: after reading one, a task asks before changi
   expect(JSON.stringify(work.requests[1]?.messages)).toContain('trusted=\\"false\\"');
   t.approvals.decide(approval.id, "deny", "web");
   await waitFor(() => t.tasks.get(task.id)?.finishedAt);
+});
+
+/** A Haiku that says whether the owner asked, and counts how often it was consulted. */
+function intentModel(script: ReturnType<typeof toolUse>[][], asked: boolean) {
+  const model = new FakeModel(script.map((content) => ({ content })));
+  const checks: string[] = [];
+  model.onCreate = (p) => {
+    if (p.system !== INTENT_PROMPT) return '{"suspected": false, "excerpt": ""}';
+    checks.push(JSON.stringify(p.messages));
+    return JSON.stringify({
+      asked,
+      why: asked ? "You asked to restart jellyfin." : "You asked to look.",
+    });
+  };
+  return { model, checks };
+}
+
+const restartScript = () => [
+  [toolUse("ssh_exec", { host: "nas", command: "echo restarted jellyfin" })],
+  [toolUse("finish_task", { outcome: "done", summary: "Restarted.", notify: true })],
+];
+
+const chatTask = (t: Awaited<ReturnType<typeof started>>["t"], request?: string) =>
+  t.tasks.createBackgroundTask({
+    title: "Restart jellyfin",
+    goal: "Restart jellyfin on nas",
+    origin: request ? "chat" : "schedule",
+    tainted: true,
+    request,
+  }) as Task;
+
+test("a tainted task doesn't ask again for a change you asked for in the chat", async () => {
+  const { model, checks } = intentModel(restartScript(), true);
+  const { t } = await started(model);
+  const task = chatTask(t, "[Sat 11 Oct 10:00] restart jellyfin on the nas please");
+  await waitFor(() => t.tasks.get(task.id)?.finishedAt);
+  expect(t.tasks.get(task.id)?.status).toBe("done");
+  expect(t.approvals.list(true)).toHaveLength(0);
+  expect(checks[0]).toContain("restart jellyfin on the nas please");
+  expect(checks[0]).toContain("echo restarted jellyfin");
+  const step = t.tasks.steps(task.id).find((s) => s.name === "Not asking: you asked for this");
+  expect(step?.detail).toContain("You asked to restart jellyfin.");
+  expect(
+    t.db.query("SELECT purpose FROM spend_ledger WHERE purpose = 'intent'").all(),
+  ).toHaveLength(1);
+});
+
+test("it asks when you didn't ask for that, when it's switched off, or when no one asked", async () => {
+  // Haiku says no.
+  const no = intentModel(restartScript(), false);
+  const a = await started(no.model);
+  const first = chatTask(a.t, "look into jellyfin, it's slow");
+  const approval = await waitFor(() => a.t.approvals.list(true)[0]);
+  expect(approval.summary).toBe("On nas: echo restarted jellyfin");
+  a.t.approvals.decide(approval.id, "deny", "web");
+  await waitFor(() => a.t.tasks.get(first.id)?.finishedAt);
+
+  // Switched off: no check at all.
+  const off = intentModel(restartScript(), true);
+  const b = await started(off.model);
+  b.t.settings.update({ skipAskedApprovals: false });
+  chatTask(b.t, "restart jellyfin on the nas");
+  await waitFor(() => b.t.approvals.list(true)[0]);
+  expect(off.checks).toHaveLength(0);
+
+  // A scheduled task: nobody said anything in the chat.
+  const sched = intentModel(restartScript(), true);
+  const c = await started(sched.model);
+  chatTask(c.t);
+  await waitFor(() => c.t.approvals.list(true)[0]);
+  expect(sched.checks).toHaveLength(0);
 });

@@ -283,6 +283,8 @@ export type AppSettings = {
   chatModel: "claude-haiku-5-5" | "claude-opus-5-5";
   owner: { name: string; email: string };
   paused: boolean;
+  /** A task started from the chat doesn't ask again for what you explicitly asked for. */
+  skipAskedApprovals: boolean;
   /** What tapping a notification opens: the web app, or the iOS app (hatbot:// links). */
   notificationsOpen: "web" | "app";
   /** The model that drives desktop tasks. */

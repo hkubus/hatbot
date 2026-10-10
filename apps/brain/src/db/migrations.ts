@@ -242,4 +242,7 @@ export const migrations: string[] = [
   /* 10: a finished conversation's recap, shown where it's folded up in the chat */ `
   ALTER TABLE episodes ADD COLUMN recap TEXT;
   `,
+  /* 11: what the owner said when they started a task from the chat, for the approval check (PLAN.md §6.2) */ `
+  ALTER TABLE tasks ADD COLUMN request TEXT;
+  `,
 ];

@@ -293,6 +293,8 @@ struct AppSettings: Codable, Equatable, Sendable {
   var desktopModel: DesktopModel?
   /// The chat's model; missing on brains from before the setting.
   var chatModel: ChatModel?
+  /// A task from the chat doesn't ask again for what you asked for; missing on older brains.
+  var skipAskedApprovals: Bool?
 
   enum ChatModel: String, LenientEnum, CaseIterable {
     case haiku = "claude-haiku-5-5"

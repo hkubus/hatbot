@@ -181,6 +181,18 @@ export class Thread {
     if (tainted) this.taint(episodeId);
   }
 
+  /** Your last few messages in this conversation, as you wrote them. */
+  private ownerSaid(episodeId: number): string {
+    return this.d.db
+      .query<{ text: string; created_at: string }, [number]>(
+        "SELECT text, created_at FROM messages WHERE episode_id = ? AND role = 'user' ORDER BY id DESC LIMIT 3",
+      )
+      .all(episodeId)
+      .reverse()
+      .map((m) => `[${localStamp(new Date(m.created_at))}] ${m.text}`)
+      .join("\n\n");
+  }
+
   private tainted(episodeId: number): boolean {
     return Boolean(
       this.d.db
@@ -623,6 +635,7 @@ export class Thread {
               messageId: out.id,
               tainted: () => this.tainted(episode.id),
               taint: () => this.taint(episode.id),
+              ownerSaid: () => this.ownerSaid(episode.id),
               scheduleCard: (sc: Schedule) =>
                 this.addCard(
                   "schedule",
