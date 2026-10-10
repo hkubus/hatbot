@@ -403,7 +403,7 @@ The visual reference is the clickable prototype in [`prototype/`](prototype/). O
   - Inter for UI chrome: sidebar, toolbar, titles, buttons, labels, tables.
   - Noto Sans (`--font-text`) for reading text: chat messages and the composer.
   - Mono is `ui-monospace, "SF Mono", Menlo`.
-- **Chat messages**: no avatar or sender name; the timestamp sits under each message (left for Hatbot, right for you). Hovering a message (tapping, on a phone) shows **Copy**, and **Open** when it leads to a task or schedule.
+- **Chat messages**: bubbles, grey for Hatbot and orange for you; no avatar or sender name; the timestamp sits under each message (left for Hatbot, right for you). Hovering a message (tapping, on a phone) shows **Copy**, and **Open** when it leads to a task or schedule.
 - **Icons**: **Lucide**. SF Symbols aren't licensed for the web. The brand mark is a minimal line-drawn hat.
 - **Components**: built on unstyled **Radix** primitives (dialog, popover, dropdown, tabs, switch, tooltip) styled with CSS variables. No Tailwind.
 

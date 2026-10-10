@@ -49,6 +49,7 @@
   --accent-soft: #fdf0e1;
   --accent-text: #a55a00;
   --user-bubble: #fce7cf;
+  --bot-bubble: #efeff2;
   --attention: #007aff;
   --attention-hover: #0062cc;
   --attention-soft: #e5f1ff;
@@ -87,6 +88,7 @@ html[data-theme="dark"] {
   --accent-soft: rgba(255, 159, 46, 0.14);
   --accent-text: #ffb866;
   --user-bubble: rgba(255, 159, 46, 0.2);
+  --bot-bubble: #2c2c2f;
   --attention: #0a84ff;
   --attention-hover: #409cff;
   --attention-soft: rgba(10, 132, 255, 0.17);
@@ -120,6 +122,7 @@ html[data-theme="dark"] {
     --accent-soft: rgba(255, 159, 46, 0.14);
     --accent-text: #ffb866;
     --user-bubble: rgba(255, 159, 46, 0.2);
+    --bot-bubble: #2c2c2f;
     --attention: #0a84ff;
     --attention-hover: #409cff;
     --attention-soft: rgba(10, 132, 255, 0.17);
@@ -593,6 +596,13 @@ html[data-theme="dark"] .seg button.active {
   width: 100%;
   display: grid;
   gap: 8px;
+}
+.msg:not(.user) .body {
+  width: fit-content;
+  max-width: min(88%, 640px);
+  background: var(--bot-bubble);
+  padding: 8px 13px;
+  border-radius: 18px 18px 18px 6px;
 }
 .msg .time {
   font-size: 11px;
@@ -1534,6 +1544,14 @@ html[data-theme="dark"] .seg button.active {
   border-radius: 8px;
   overflow-x: auto;
 }
+.msg:not(.user) .md code,
+.msg:not(.user) .md pre {
+  background: var(--surface);
+}
+.msg .md table {
+  display: block;
+  overflow-x: auto;
+}
 .msg .md pre code {
   background: none;
   padding: 0;
@@ -2108,7 +2126,8 @@ pre.payload {
   gap: 8px;
 }
 .msg .resolved {
-  font-size: 12.5px;
+  font-family: var(--font-text);
+  font-size: 13px;
 }
 .msg .shot {
   max-width: 280px;
