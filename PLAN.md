@@ -186,7 +186,7 @@ build context (system + memory index + task)  →  call model (stream)
   - the last ~10 messages
   - your new message
 - **`search_history(query, range?)`**: a full-text search over the thread in SQLite (FTS5). Hatbot pulls in older messages only when it needs them.
-- **Tasks started from chat** run in their own contexts and post **cards** back into the thread (§10.4). The thread never carries a 30-step browser transcript.
+- **Tasks started from chat** run in their own contexts and post **messages** back into the thread (§10.4). The thread never carries a 30-step browser transcript.
 - **Durable facts** go to memory, not the thread.
 
 ### 5.4 Model routing
@@ -228,7 +228,7 @@ The `run_desktop_task` **subloop** uses Opus with the computer toolset against t
 - **Screen lane**: a single FIFO queue. While a screen task waits for approval or takeover, it **releases** the lane. When it resumes, it takes a fresh screenshot and re-checks the state before doing anything.
 - **Background lane**: a worker pool, with a concurrency of 3 by default.
 - **Scheduled and trigger tasks**: background tasks on Opus 5.5 (the chat's effort setting) with memory, history search and `run_desktop_task`, which waits for the desktop task and returns its summary as untrusted data. They can't create schedules. They enter the same queues. If one fires while its previous run is still going, the new run is skipped: one run at a time per schedule, per webhook, and per Uptime Kuma monitor (later alerts and "back up" go on the running task's timeline).
-- **Reporting**: a run ends with `finish_task(summary, notify)`. With news (or a failure) it posts a card in the thread and sends a notification, and the chat hears about it in `<task_updates>`; a routine result only shows in Tasks and on its schedule's page.
+- **Reporting**: a run ends with `finish_task(summary, notify)`. With news (or a failure) it posts a message in the thread and sends a notification, and the chat hears about it in `<task_updates>`; a routine result only shows in Tasks and on its schedule's page.
 
 ---
 
@@ -288,7 +288,7 @@ How it's enforced:
 - **SSH**: a dedicated `hatbot` user on each allowlisted host, with a key per host and restricted sudo rules where needed.
 
 ### 6.5 Kill switch
-- **Pause all** (in the UI and as an ntfy action) stops all loops, empties the queues and locks the desktop's input.
+- **Pause all** (in Settings → Safety, and as an ntfy action) stops all loops, empties the queues and locks the desktop's input.
 - **Resume** is a deliberate click.
 
 ---
@@ -401,27 +401,26 @@ The visual reference is the clickable prototype in [`prototype/`](prototype/). O
 | `--success` | `#34C759` | `#30D158` | Done, healthy |
 - **Fonts** (self-hosted variable woff2, both OFL-1.1, same on every platform):
   - Inter for UI chrome: sidebar, toolbar, titles, buttons, labels, tables.
-  - Noto Sans (`--font-text`) for reading text: chat messages, card bodies, the composer.
+  - Noto Sans (`--font-text`) for reading text: chat messages and the composer.
   - Mono is `ui-monospace, "SF Mono", Menlo`.
-- **Chat messages**: no avatar or sender name; the timestamp sits under each message (left for Hatbot, right for you).
+- **Chat messages**: no avatar or sender name; the timestamp sits under each message (left for Hatbot, right for you). Hovering a message (tapping, on a phone) shows **Copy**, and **Open** when it leads to a task or schedule.
 - **Icons**: **Lucide**. SF Symbols aren't licensed for the web. The brand mark is a minimal line-drawn hat.
 - **Components**: built on unstyled **Radix** primitives (dialog, popover, dropdown, tabs, switch, tooltip) styled with CSS variables. No Tailwind.
 
 ### 10.3 Layout
 - **Desktop (≥ 900px)**:
   - **Sidebar** (240px): Chat, Tasks (with a count of what needs you), Live, Schedules & Triggers, Memory, Spend, Settings.
-  - **Centre**: a toolbar with the title, status and *Pause all*, then the content.
+  - **Centre**: a toolbar with the title, then the content.
   - **Side panel** (420px, toggled from the toolbar): **Live**. Task details are their own page (`/tasks/:id`).
 - **Phone (< 900px)**:
   - A single column with an iOS-style **bottom tab bar** (Chat, Tasks, Live, Memory, Settings). Spend opens from Settings.
   - Live is a full page; a Keyboard button opens the phone's keyboard during takeover.
 
-### 10.4 Chat cards
-- **Task**: title, origin, lane, model, steps, cost, status, live thumbnail while running.
-- **Approval**: what Hatbot wants to do, why, which untrusted source tainted the task, a preview, **Approve** (blue) and **Deny**.
-- **Alert**: an Uptime Kuma event, followed by what Hatbot found and did.
-- **Memory change**: file, diff, **Revert**.
-- **Schedule created**: name, cadence, origin, toggle.
+### 10.4 Task, approval and schedule messages
+Plain messages, not cards; the details live on the task's or schedule's page.
+- **Task**: the title in bold, then what it's doing while it runs, or its summary once it ends.
+- **Approval**: what Hatbot wants to do, why, which untrusted page it read, a screenshot, **Approve** (blue) and **Deny**. Once answered it shrinks to one line.
+- **Schedule created**: "Scheduled **name**: every day at 08:00."
 
 Markdown and code blocks render fully.
 
