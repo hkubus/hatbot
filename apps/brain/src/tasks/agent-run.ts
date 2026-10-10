@@ -181,6 +181,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     tasks.raiseBudget(id, extra);
   };
 
+  /** An alert task skips asking once at most: the instructions allow one fix, then it's the owner's turn. */
+  let alertSkipped = false;
   /**
    * Whether you asked for this exact action in the chat that started the task, so it doesn't ask again.
    * Never for money, accounts or suspected injection, and only for tasks you started from the chat.
@@ -191,8 +193,13 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     what: string,
     verdict: { why: string; kind?: ApprovalKind },
   ): Promise<boolean> => {
-    const request = tasks.requestOf(id);
+    // An alert task's own words are the instructions you wrote for its trigger, and the alert; one action at most.
+    const alert = task.origin === "alert";
+    const request = alert
+      ? `Standing instructions for the trigger "${task.source ?? ""}":\n${task.goal}\n\nThe alert that started this task (from Uptime Kuma):\n${task.payload ?? ""}`
+      : tasks.requestOf(id);
     if (!request || !d.settings.get().skipAskedApprovals) return false;
+    if (alert && alertSkipped) return false;
     if (!mayCheck(verdict.kind ?? "other") || tasks.get(id)?.injectionSuspected) return false;
     const check = await ownerAsked(d, id, request, {
       tool: t.name,
@@ -201,9 +208,12 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       why: verdict.why,
     });
     if (!check.asked) return false;
+    if (alert) alertSkipped = true;
     tasks.addStep(id, {
       kind: "approval",
-      name: "Not asking: you asked for this",
+      name: alert
+        ? "Not asking: your alert instructions allow this"
+        : "Not asking: you asked for this",
       detail: check.why ? `${what}. ${check.why}` : what,
       url: null,
     });

@@ -320,3 +320,36 @@ test("it asks when you didn't ask for that, when it's switched off, or when no o
   await waitFor(() => c.t.approvals.list(true)[0]);
   expect(sched.checks).toHaveLength(0);
 });
+
+test("an alert task makes the one fix its trigger allows without asking; a second one asks", async () => {
+  const { model, checks } = intentModel(
+    [
+      [toolUse("ssh_exec", { host: "nas", command: "echo restarted jellyfin" })],
+      [toolUse("ssh_exec", { host: "nas", command: "echo restarted jellyfin again" })],
+      [toolUse("finish_task", { outcome: "done", summary: "Restarted.", notify: true })],
+    ],
+    true,
+  );
+  const { t } = await started(model);
+  const task = t.tasks.createBackgroundTask({
+    title: "Jellyfin is down",
+    goal: "Investigate, make one safe restart, then verify.",
+    origin: "alert",
+    source: "Kuma",
+    runKey: "kuma:1:7",
+    payload: '{"monitor": "Jellyfin", "status": "down"}',
+    trusted: true,
+    // As if it had read logs since.
+    tainted: true,
+  }) as Task;
+  const approval = await waitFor(() => t.approvals.list(true)[0]);
+  expect(approval.summary).toBe("On nas: echo restarted jellyfin again");
+  expect(checks).toHaveLength(1);
+  expect(checks[0]).toContain("Investigate, make one safe restart");
+  expect(checks[0]).toContain('\\"monitor\\": \\"Jellyfin\\"');
+  expect(
+    t.tasks.steps(task.id).some((s) => s.name === "Not asking: your alert instructions allow this"),
+  ).toBe(true);
+  t.approvals.decide(approval.id, "deny", "web");
+  await waitFor(() => t.tasks.get(task.id)?.finishedAt);
+});

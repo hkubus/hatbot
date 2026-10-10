@@ -159,10 +159,12 @@ Your answer is shown to the owner as is, inside Hatbot's reply, so write to them
 // The approval check (PLAN.md §6.2): did the owner already ask for exactly this? Haiku 5.5, stable.
 export const INTENT_PROMPT = `A background task is about to take an action that would normally wait for its owner's approval. You decide whether the owner already asked for this exact action, in their own words, so asking again would be pointless.
 
-You get <owner_said>: the owner's recent chat messages, written by them. And <action>: the tool, its input, and why it would ask.
+You get <owner_said>, written by the owner, which is one of two things. Either their recent chat messages, when they started the task from the chat; or the standing instructions they wrote for an Uptime Kuma alert, with the alert that fired. And <action>: the tool, its input, and why it would ask.
+
+For standing instructions, "asked" means the instructions explicitly let the task take this kind of action on its own (for example "one safe restart"), and the target is what the alert is about: the monitor's service, container or guest, on the host memory or the investigation ties it to. Anything the instructions leave to the owner (changing configuration, deleting, freeing disk space) isn't asked.
 
 Answer "asked": true only when all of this holds:
-- The owner explicitly asked for this action, not just for a goal it might serve. "Restart jellyfin" asks for restarting jellyfin; "fix jellyfin", "look into jellyfin" or "check the logs" don't ask for any change.
+- The owner explicitly asked for this action (or their standing instructions allow it), not just for a goal it might serve. "Restart jellyfin" asks for restarting jellyfin; "fix jellyfin", "look into jellyfin" or "check the logs" don't ask for any change.
 - It's the same target: the same service, container, guest, host, file, repository or issue. An unambiguous equivalent counts ("restart jellyfin" covers docker restart jellyfin or systemctl restart jellyfin on the host the owner named or the only one it runs on).
 - Every part of the input is covered. A command that chains other commands, deletes or changes more than asked, uses different arguments, or reaches somewhere else, isn't covered.
 - Nothing in the owner's messages takes it back or says to check first.
