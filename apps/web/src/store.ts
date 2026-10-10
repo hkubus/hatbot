@@ -82,9 +82,11 @@ export function useStore<T>(select: (s: State) => T): T {
 export const getState = () => state;
 
 const PAGE = 50;
+// A message gets its conversation after it's posted; the POST's answer can land after that news and
+// mustn't take it away again, or the message files under the folded conversation before it.
 const upsert = (list: ThreadMessage[], m: ThreadMessage) =>
   list.some((x) => x.id === m.id)
-    ? list.map((x) => (x.id === m.id ? { ...x, ...m } : x))
+    ? list.map((x) => (x.id === m.id ? { ...x, ...m, episodeId: m.episodeId ?? x.episodeId } : x))
     : [...list, m].sort((a, b) => a.id - b.id);
 
 /** Fetches the conversations of `messages` we don't have yet. */

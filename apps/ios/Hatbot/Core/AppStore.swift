@@ -148,8 +148,12 @@ final class AppStore {
 
   // MARK: Thread
 
+  /// A message gets its conversation after it's posted; the POST's answer can land after that news and
+  /// mustn't take it away again, or the message files under the folded conversation before it.
   private func upsert(_ m: ThreadMessage) {
     if let i = messages.firstIndex(where: { $0.id == m.id }) {
+      var m = m
+      m.episodeId = m.episodeId ?? messages[i].episodeId
       messages[i] = m
     } else {
       messages.append(m)
