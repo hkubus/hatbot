@@ -504,8 +504,8 @@ Each milestone ends with a working, demo-able system.
 - [x] Proxmox plugin (`proxmox_*`) using the scoped token: guests, a guest, the host, recent tasks; start/reboot free, shutdown/stop and "careful" guests ask, the brain refused; snapshots of own guests
 - [x] SSH plugin: hosts in Settings, host keys pinned on first connect (forget in Settings), `ssh_check`/`ssh_read_file` read freely, `ssh_exec`/`ssh_write_file` with a destructive-pattern gate, writes outside home ask, "careful" hosts ask for everything
 - [x] Forgejo plugin (`forgejo_*`) with the bot account: repos, issues and PRs (untrusted), files, CI; comment, open issues and PRs, commit files through the API; merging, committing to the default branch and changing CI workflows ask (GitHub later)
-- [ ] Code tasks: `run_task` with effort medium, high on request or after a failed attempt (§5.4)
-- [ ] Uptime Kuma alert handling: investigate → safe restart → report
+- [x] Code tasks: `run_task` with effort medium, high on request or after a failed attempt (§5.4); more steps and output room; new branch + pull request
+- [x] Uptime Kuma alert handling: investigate → one safe restart → verify → report; later Kuma events reach the running task
 - [ ] MCP plugin + per-tool allow/ask/block
 - **Done when**: a Kuma "down" alert at 3am is fixed or diagnosed before you wake up.
 

@@ -22,7 +22,8 @@ import { Switch } from "../switch";
 import { StatusChip, whenText } from "../tasks";
 
 const KIND = { webhook: "Webhook", kuma: "Uptime Kuma" } as const;
-const KUMA_PROMPT = "Find out why it's down if you can, and tell me what you found.";
+const KUMA_PROMPT =
+  "Find out why it's down. If a restart is likely to fix it, restart the service or guest once and check that it's back. Don't change configuration or delete anything. Tell me what was wrong, what you did, and whether it's working now.";
 /** A trigger just made, so its page can show the secret after the route changes to its id. */
 let fresh: TriggerWithSecret | null = null;
 

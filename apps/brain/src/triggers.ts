@@ -217,24 +217,26 @@ export class Triggers {
     const runKey = `kuma:${t.id}:${monitor.id ?? name}`;
     const active = this.tasks.activeFor(runKey);
     const message = hb.msg || body.msg || "";
+    // More news while a task looks into it: on its timeline, and told to the task.
+    const update = (taskId: number, what: string) => {
+      this.tasks.addStep(taskId, {
+        kind: "note",
+        name: `${name} ${what}`,
+        detail: message,
+        url: null,
+      });
+      this.tasks.tell(
+        taskId,
+        JSON.stringify({ monitor: name, status: what, message, time: hb.time ?? this.now() }),
+      );
+    };
     if (hb.status === 1) {
-      if (active)
-        this.tasks.addStep(active.id, {
-          kind: "note",
-          name: `${name} is back up`,
-          detail: message,
-          url: null,
-        });
+      if (active) update(active.id, "is back up");
       return { status: "skipped", reason: "ignored" };
     }
     if (hb.status !== 0) return { status: "skipped", reason: "ignored" };
     if (active) {
-      this.tasks.addStep(active.id, {
-        kind: "note",
-        name: `${name} is still down`,
-        detail: message,
-        url: null,
-      });
+      update(active.id, "is still down");
       return { status: "skipped", reason: "running" };
     }
     const blocked = this.blocked(t);

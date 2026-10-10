@@ -106,6 +106,8 @@ export class Tasks {
   readonly lane = new ScreenLane();
   readonly pool = new Pool(BACKGROUND_SLOTS);
   private running = new Map<number, AbortController>();
+  /** Events for running tasks, delivered with their next tool results. */
+  private inbox = new Map<number, string[]>();
   private runs = new Set<Promise<void>>();
   readonly clock: () => number;
 
@@ -334,6 +336,7 @@ export class Tasks {
       .catch((err) => console.error(`task ${id} crashed`, err))
       .finally(() => {
         this.running.delete(id);
+        this.inbox.delete(id);
         this.runs.delete(run);
       });
     this.runs.add(run);
@@ -396,6 +399,18 @@ export class Tasks {
     if (!row) throw new Error("step insert failed");
     this.d.events.emit({ type: "task.step", step: row });
     return row;
+  }
+
+  /** Tells a running task about something that happened, e.g. its monitor came back up. */
+  tell(id: number, event: string) {
+    this.inbox.set(id, [...(this.inbox.get(id) ?? []), event]);
+  }
+
+  /** What a task has been told since it last looked. */
+  takeInbox(id: number): string[] {
+    const events = this.inbox.get(id) ?? [];
+    this.inbox.delete(id);
+    return events;
   }
 
   setStepScreenshot(stepId: number, path: string) {

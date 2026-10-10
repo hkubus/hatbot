@@ -15,6 +15,8 @@ import type { Tasks } from "./service";
 
 export const AGENT_MODEL = "claude-opus-5-5";
 const MAX_STEPS = 30;
+/** Code work (effort medium or high) reads and writes more. */
+const MAX_CODE_STEPS = 80;
 const BETAS: Anthropic.Beta.AnthropicBeta[] = ["thinking-display-updates-2026-08-18"];
 /** The chat's tools a background task gets. Schedules and triggers stay with the chat. */
 const SHARED_TOOLS = [
@@ -227,8 +229,9 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
     for (let step = 0; ; step++) {
       if (signal.aborted) throw signal.reason;
-      if (step >= MAX_STEPS)
-        throw new Stop("failed", `Stopped after ${MAX_STEPS} steps without finishing.`);
+      const maxSteps = task.effort ? MAX_CODE_STEPS : MAX_STEPS;
+      if (step >= maxSteps)
+        throw new Stop("failed", `Stopped after ${maxSteps} steps without finishing.`);
       try {
         d.spend.check(estimateCost(messages), { id, limitUsd: tasks.budget(id) });
       } catch (err) {
@@ -241,7 +244,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       const res = await d.model.stream(
         {
           model: AGENT_MODEL,
-          max_tokens: 16000,
+          // Code work writes whole files into tool calls.
+          max_tokens: task.effort ? 32000 : 16000,
           betas: BETAS,
           system: [{ type: "text", text: system }],
           cache_control: { type: "ephemeral" },
@@ -323,6 +327,9 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         }
       }
       if (finished) throw new Stop(finished.outcome, finished.summary, finished.notify);
+      // What happened meanwhile, e.g. the monitor came back up. Trusted: it comes from the trigger.
+      for (const event of tasks.takeInbox(id))
+        results.push({ type: "text", text: `<event trusted="true">\n${event}\n</event>` });
       record("user", results);
     }
   } catch (err) {
