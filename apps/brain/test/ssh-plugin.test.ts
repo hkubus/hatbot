@@ -416,3 +416,29 @@ test("an alert task makes the one fix its trigger allows without asking; a secon
   t.approvals.decide(approval.id, "deny", "web");
   await waitFor(() => t.tasks.get(task.id)?.finishedAt);
 });
+
+test("ssh_pct_exec runs a command in a container through a Proxmox host, quoted, and only there", async () => {
+  const hosts = [...HOSTS, { name: "pve", address: "10.0.0.2", proxmox: true }];
+  const { t, sshTool } = await started(new FakeModel(), hosts);
+  const pct = sshTool("ssh_pct_exec");
+  await pct.run({ host: "pve", guest: 105, command: "systemctl restart nginx && echo 'ok'" }, call);
+  const args = readFileSync(join(dir, "ssh.log"), "utf8").trim().split("\n").at(-1) ?? "";
+  expect(args).toContain(
+    String.raw`-l hatbot -- 10.0.0.2 sudo -n /usr/local/sbin/hatbot-pct-exec 105 'systemctl restart nginx && echo '\''ok'\'''`,
+  );
+  await expect(pct.run({ host: "nas", guest: 105, command: "ls" }, call)).rejects.toThrow(
+    "isn't set up as a Proxmox host",
+  );
+  expect(verdictFor(pct, { host: "pve", guest: 105, command: "rm -rf /srv" }, call)).toMatchObject({
+    action: "ask",
+    kind: "delete",
+  });
+  expect(
+    verdictFor(pct, { host: "pve", guest: 105, command: "docker restart app" }, call).action,
+  ).toBe("allow");
+  expect(JSON.stringify(t.plugins.guidance())).toContain("pve is a Proxmox host");
+  // Writes only in tasks; without a Proxmox host there's no such tool.
+  expect(t.plugins.tools("chat").some((x) => x.name === "ssh_pct_exec")).toBe(false);
+  const plain = await started();
+  expect(plain.t.plugins.tools("task").some((x) => x.name === "ssh_pct_exec")).toBe(false);
+});

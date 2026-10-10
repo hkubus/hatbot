@@ -5,10 +5,25 @@ import { Icon } from "../icons";
 import { Switch } from "../switch";
 import type { PluginSettingsProps } from ".";
 
-type Host = { name: string; address: string; user: string; port: number; careful: boolean };
+type Host = {
+  name: string;
+  address: string;
+  user: string;
+  port: number;
+  careful: boolean;
+  /** infra/pct-exec-setup.sh ran on it: Hatbot can run commands in its containers. */
+  proxmox: boolean;
+};
 type Config = { hosts: Host[] };
 
-const blank = (): Host => ({ name: "", address: "", user: "hatbot", port: 22, careful: false });
+const blank = (): Host => ({
+  name: "",
+  address: "",
+  user: "hatbot",
+  port: 22,
+  careful: false,
+  proxmox: false,
+});
 const errorText = (err: unknown) =>
   err instanceof ApiError ? err.message : "Couldn't reach Hatbot.";
 
@@ -108,6 +123,10 @@ export function SshSettings({ config, save, action }: PluginSettingsProps<Config
             <div className="form-row">
               <span className="label">Ask before every command</span>
               <Switch on={h.careful} onChange={(careful) => set(i, { careful })} />
+            </div>
+            <div className="form-row">
+              <span className="label">Proxmox host: run commands in its containers</span>
+              <Switch on={h.proxmox} onChange={(proxmox) => set(i, { proxmox })} />
             </div>
             <div className="form-row">
               <span className="label mono">{keys[h.name] ?? "No key pinned yet"}</span>

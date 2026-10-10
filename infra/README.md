@@ -10,6 +10,7 @@ Scripts that set up Hatbot on the Proxmox host (PLAN.md §9).
 | `hatbot-update.sh` | inside `hatbot-brain`, as root | the Update button in Settings: pulls from git, updates desktop-agent, then runs `brain-deploy.sh` |
 | `desktop-provision.sh` | inside `hatbot-desktop` | `desk` user, Xvnc + XFCE, Chromium, Bun, firewall |
 | `verify.sh` | on the host, as root | checks isolation, token permissions, snapshots and backups; changes nothing |
+| `pct-exec-setup.sh` | on the host, as root | optional: lets Hatbot run commands in your containers (`ssh_pct_exec`) |
 | `test-firewall.sh` | anywhere, as root | tests the desktop firewall in throwaway network namespaces |
 
 ## Run it
@@ -68,6 +69,18 @@ After that, **Settings → Updates → Update** pulls the branch and deploys it:
 - It refuses while a task is running, because the brain restarts.
 - It doesn't touch the host. If a commit changes host-side scripts (`host-setup.sh`, `deploy.sh`, `desktop-deploy.sh` and so on), Settings says so; run `deploy.sh` on the host for those.
 - Logs: `/var/lib/hatbot-update/last.log` on the brain, and `journalctl -u hatbot-desktop-agent-update` on the desktop.
+
+## Commands in your containers (optional)
+
+Proxmox's API can't run commands inside containers, so Hatbot does it over SSH through the host. On the host:
+
+```sh
+cd /root/infra && ./pct-exec-setup.sh
+```
+
+It adds a `hatbot` Unix user that logs in with the brain's key, installs `/usr/local/sbin/hatbot-pct-exec` (one command in one running container, as root there; Hatbot's own brain and desktop are refused) and a sudo rule for that program alone. Then add the host in **Settings → Plugins → SSH** (user `hatbot`) and switch on **Proxmox host**. Background tasks get `ssh_pct_exec(host, guest, command)`; destructive commands ask first, and a "careful" host asks for everything.
+
+This makes Hatbot root inside your other containers. Leave it out if you'd rather keep Hatbot to starting and stopping them.
 
 ## Plugins
 

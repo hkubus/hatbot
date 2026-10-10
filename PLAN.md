@@ -239,6 +239,7 @@ Later, run a small test on real tasks to see whether Haiku 5.5 (72% on OSWorld) 
 | `web_fetch` / `web_search` | bg | Free; output is **untrusted** |
 | `proxmox_*` plugin (status, list, start/stop/restart, snapshot of own guests) | bg | Read and restart free; anything else needs approval |
 | `ssh_exec(host, cmd)` plugin | bg | Hosts from Settings, as the `hatbot` user; destructive patterns need approval |
+| `ssh_pct_exec(host, guest, cmd)` plugin | bg | Optional: a command in a Proxmox container through a host marked "Proxmox host" (`infra/pct-exec-setup.sh`): root in the container via a sudo-only wrapper that refuses Hatbot's own guests; same rules as `ssh_exec` |
 | `forgejo_*` plugin (read, comment, open PR) | bg | Merge, force-push and delete need approval |
 | `notify(message, priority)` | bg | Free |
 | `mcp_*` plugin (each server's tools) | bg | Default **ask**; set allow/ask/block per tool |
@@ -394,6 +395,7 @@ The app itself is installed by `infra/deploy.sh`, run on the host for the first 
 - **`HatbotOps` on `/`**: `VM.Audit`, `VM.PowerMgmt`, `Sys.Audit`, `Datastore.Audit`. Hatbot can see and start/stop/restart every guest.
 - **`HatbotSnapshots` on `/pool/hatbot`**: `VM.Audit`, `VM.Snapshot`, `VM.Snapshot.Rollback`. Only Hatbot's own guests.
 - **Never**: config change, allocate, console, migrate, or destroy rights. `infra/verify.sh` checks this.
+- **Commands in containers** don't use the token: the optional `infra/pct-exec-setup.sh` gives a `hatbot` Unix user on the host one sudo rule, for a wrapper around `pct exec` that refuses the brain and desktop. It makes Hatbot root inside your other containers, by the owner's choice (2026-10-11).
 
 ### 9.4 Exposure (you own this part)
 - **Your reverse proxy** → `http://<brain-LAN-IP>:8080` for `hatbot.gaycats.ovh`. It must pass WebSockets (`/api/v1/stream`, `/api/v1/desktop/live`). Hatbot trusts `X-Forwarded-*` from your proxy's IP only (`HATBOT_TRUSTED_PROXIES`, asked by `deploy.sh`).

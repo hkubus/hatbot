@@ -7,7 +7,7 @@ Delete it, or fold it into `PLAN.md`, once the work below is done.
 
 - **Built:** M0–M5 and the iOS app (see the checklists in `PLAN.md` §11). M4 and M5 are built and committed but not yet deployed or tried live.
 - **Not yet tried live** (the owner does these): the M2 lock-screen approval, the M3 morning schedule, Forgejo webhook and Kuma alert, all of M4 and M5, and the first iOS install from SideStore.
-- **Checks:** 144 tests (brain and desktop-agent) and 19 iOS core tests pass, and Biome and `tsc -b` are clean.
+- **Checks:** 145 tests (brain and desktop-agent) and 19 iOS core tests pass, and Biome and `tsc -b` are clean.
 
 ## How to work here
 
@@ -44,6 +44,9 @@ These came out of the M4 security review.
 ## Desktop shell (built 2026-10-10, not deployed)
 - `desktop_shell` in desktop tasks runs commands through `hatbot-desktop-shell` (`apps/desktop-agent/src/shell.ts`), relayed by desktop-agent's `POST /exec`. The owner chose to add it for experiments.
 - **Run `infra/deploy.sh` once** for the desktop: updates from the Settings button use the installed copy of `desktop-deploy.sh`, which doesn't know the new unit. Until then the tool answers that the shell isn't running.
+
+## Commands in containers (built 2026-10-11, not set up)
+- `ssh_pct_exec` in the SSH plugin, for hosts marked "Proxmox host". The owner runs `infra/pct-exec-setup.sh` on the Proxmox host, then adds it in Settings → Plugins → SSH. The wrapper's `pct exec` path is only tested on the real host.
 
 ## 4. Later (not v1, don't start without the owner)
 - **GitHub plugin**, next to Forgejo. Same shape as `apps/brain/src/plugins/forgejo/`.

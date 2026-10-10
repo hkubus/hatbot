@@ -22,6 +22,8 @@ const Host = z.object({
   port: z.number().int().min(1).max(65535).default(22),
   /** Every command on it asks you first. */
   careful: z.boolean().default(false),
+  /** A Proxmox host with infra/pct-exec-setup.sh run: ssh_pct_exec reaches its containers. */
+  proxmox: z.boolean().default(false),
 });
 type Host = z.infer<typeof Host>;
 
@@ -110,6 +112,7 @@ export const sshPlugin = definePlugin({
     const keygen = spawnRun(env.HATBOT_SSH_KEYGEN_BIN ?? "ssh-keygen");
     const hosts = new Map(config.hosts.map((h) => [h.name, h]));
     const hostNames = config.hosts.map((h) => h.name);
+    const pctHosts = config.hosts.filter((h) => h.proxmox).map((h) => h.name);
 
     const hostOf = (name: string): Host => {
       const h = hosts.get(name);
@@ -249,6 +252,46 @@ export const sshPlugin = definePlugin({
         run: async ({ host, command, timeout_s }, { signal }) =>
           (await exec(hostOf(host), command, (timeout_s ?? 120) * 1000, signal)).text,
       }),
+      ...(pctHosts.length
+        ? [
+            tool({
+              name: "ssh_pct_exec",
+              description:
+                "Run a shell command inside a Proxmox container (LXC), as root in the container, through its Proxmox host. Find the container's ID with proxmox_guests. Hatbot's own brain and desktop are refused. Destructive commands ask the owner first, as with ssh_exec.",
+              access: "write",
+              schema: z.object({
+                host: z.string().describe(`The Proxmox host: ${pctHosts.join(", ")}`),
+                guest: z.number().int().min(100).max(999_999_999).describe("The container's ID"),
+                command: z.string().min(1).max(10_000),
+                timeout_s: z
+                  .number()
+                  .int()
+                  .min(1)
+                  .max(1800)
+                  .optional()
+                  .describe("How long to let it run; default 120"),
+              }),
+              describe: ({ host, guest, command }) =>
+                `In CT ${guest} on ${host}: ${command.length > 160 ? `${command.slice(0, 160)}…` : command}`,
+              policy: ({ host, command }) => {
+                const d = destructive(command);
+                if (d) return ask(`This command ${d.why}.`, d.kind);
+                if (hosts.get(host)?.careful)
+                  return ask(`The owner asked to approve every command on ${host}.`);
+                return allow();
+              },
+              run: async ({ host, guest, command, timeout_s }, { signal }) => {
+                const h = hostOf(host);
+                if (!h.proxmox)
+                  throw new PluginError(
+                    `${host} isn't set up as a Proxmox host. Use: ${pctHosts.join(", ")}.`,
+                  );
+                const cmd = `sudo -n /usr/local/sbin/hatbot-pct-exec ${guest} ${quote(command)}`;
+                return (await exec(h, cmd, (timeout_s ?? 120) * 1000, signal)).text;
+              },
+            }),
+          ]
+        : []),
       tool({
         name: "ssh_write_file",
         description:
@@ -324,7 +367,7 @@ export const sshPlugin = definePlugin({
 
     return ready(tools, {
       guidance: hostNames.length
-        ? `You can reach these hosts over SSH: ${config.hosts.map((h) => `${h.name} (${h.user}@${h.address}${h.careful ? ", every command asks the owner" : ""})`).join("; ")}. Read memory for what runs where. Look with ssh_check and ssh_read_file; ssh_exec and ssh_write_file change things, and destructive commands ask the owner first. Restarting a service (systemctl restart) runs right away.`
+        ? `You can reach these hosts over SSH: ${config.hosts.map((h) => `${h.name} (${h.user}@${h.address}${h.careful ? ", every command asks the owner" : ""})`).join("; ")}. Read memory for what runs where. Look with ssh_check and ssh_read_file; ssh_exec and ssh_write_file change things, and destructive commands ask the owner first. Restarting a service (systemctl restart) runs right away.${pctHosts.length ? ` ${pctHosts.join(" and ")} ${pctHosts.length > 1 ? "are Proxmox hosts" : "is a Proxmox host"}: ssh_pct_exec runs a command inside one of its containers, by ID.` : ""}`
         : undefined,
       test: async () => {
         if (!hostNames.length) throw new PluginError("Add a host first.");
