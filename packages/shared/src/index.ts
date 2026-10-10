@@ -199,7 +199,7 @@ export type TeachSession = {
   status: "recording" | "drafting" | "draft" | "failed" | "saved" | "discarded";
   startedAt: string;
   stoppedAt: string | null;
-  /** Steps recorded: clicks, keys, typing, pages. */
+  /** What you did while recording: clicks, keys, typing and scrolling. */
   steps: number;
   /** The suggested name, then the saved one. */
   name: string | null;

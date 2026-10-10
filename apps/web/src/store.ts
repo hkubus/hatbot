@@ -8,6 +8,7 @@ import {
   type Schedule,
   type Task,
   type TaskStep,
+  type TeachSession,
   type ThreadMessage,
   type Trigger,
 } from "@hatbot/shared";
@@ -35,6 +36,8 @@ type State = {
   schedules: Record<number, Schedule | null>;
   triggers: Record<number, Trigger | null>;
   plugins: Record<string, PluginInfo>;
+  /** Teach-by-showing: the recording in progress and drafts, by id. */
+  teach: Record<number, TeachSession>;
 };
 
 let state: State = {
@@ -54,6 +57,7 @@ let state: State = {
   schedules: {},
   triggers: {},
   plugins: {},
+  teach: {},
 };
 const listeners = new Set<() => void>();
 const set = (patch: Partial<State>) => {
@@ -184,9 +188,10 @@ export async function saveSchedule(id: number, patch: Partial<Schedule> & { at?:
 }
 
 async function loadLive() {
-  const [pending, desktop] = await Promise.all([
+  const [pending, desktop, teach] = await Promise.all([
     api<Approval[]>("/approvals?pending=1"),
     api<DesktopState>("/desktop/status").catch(() => null),
+    api<{ recording: TeachSession | null; drafts: TeachSession[] }>("/teach").catch(() => null),
   ]);
   const approvals = { ...state.approvals };
   // Anything we thought pending but the server doesn't list was decided while we were away.
@@ -196,6 +201,15 @@ async function loadLive() {
     if (a.status === "pending" && !pending.some((p) => p.id === a.id)) delete approvals[a.id];
   for (const a of pending) approvals[a.id] = a;
   set({ approvals, desktop });
+  if (teach) {
+    // A recording that ended while we were away isn't listed any more.
+    const sessions = Object.fromEntries(
+      Object.entries(state.teach).filter(([, s]) => s.status !== "recording"),
+    );
+    for (const s of [...teach.drafts, ...(teach.recording ? [teach.recording] : [])])
+      sessions[s.id] = s;
+    set({ teach: sessions });
+  }
   for (const t of Object.values(state.tasks))
     if (state.steps[t.id] && t.finishedAt === null) void loadTask(t.id).catch(() => {});
 }
@@ -215,6 +229,40 @@ export async function takeover() {
 export async function handback() {
   set({ desktop: await api<DesktopState>("/desktop/handback", { body: {} }) });
 }
+
+const putTeach = (s: TeachSession) => set({ teach: { ...state.teach, [s.id]: s } });
+
+/** Takes the desktop for you and starts recording. */
+export async function startTeach() {
+  putTeach(await api<TeachSession>("/teach/start", { body: {} }));
+  // Your input only reaches the desktop once the live view knows you have control.
+  set({ desktop: await api<DesktopState>("/desktop/status") });
+}
+/** Stops recording; the skill is drafted next. */
+export async function stopTeach() {
+  const s = await api<TeachSession>("/teach/stop", { body: {} });
+  putTeach(s);
+  return s;
+}
+export async function loadTeach(id: number) {
+  putTeach(await api<TeachSession>(`/teach/${id}`));
+}
+export async function redraftTeach(id: number) {
+  putTeach(await api<TeachSession>(`/teach/${id}/draft`, { body: {} }));
+}
+export async function discardTeach(id: number) {
+  putTeach(await api<TeachSession>(`/teach/${id}`, { method: "DELETE" }));
+}
+export async function saveSkill(
+  id: number,
+  body: { name: string; content: string; replace?: boolean },
+) {
+  const r = await api<{ session: TeachSession; path: string }>(`/teach/${id}/save`, { body });
+  putTeach(r.session);
+  return r.path;
+}
+export const recording = (s: State) =>
+  Object.values(s.teach).find((t) => t.status === "recording") ?? null;
 
 /** Approvals waiting for you, plus a takeover request. */
 export const needsYou = (s: State) =>
@@ -293,6 +341,8 @@ function apply(e: HatbotEvent) {
       return set({ triggers: { ...state.triggers, [e.id]: null } });
     case "plugin.updated":
       return set({ plugins: { ...state.plugins, [e.plugin.id]: e.plugin } });
+    case "teach.updated":
+      return putTeach(e.session);
   }
 }
 

@@ -2,6 +2,7 @@ import type { Commit, MemoryFile } from "@hatbot/shared";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, api } from "../api";
 import { Icon } from "../icons";
+import { navigate } from "../router";
 import { bumpMemory, useStore } from "../store";
 
 type Selection = { kind: "file"; path: string } | { kind: "diff"; commit: Commit };
@@ -42,11 +43,19 @@ function DiffView({ diff }: { diff: string }) {
   );
 }
 
-export function Memory({ toast }: { toast: (t: string) => void }) {
+export function Memory({ toast, open }: { toast: (t: string) => void; open?: string }) {
   const version = useStore((s) => s.memoryVersion);
+  const teach = useStore((s) => s.teach);
+  const drafts = useMemo(
+    () =>
+      Object.values(teach)
+        .filter((t) => t.status === "drafting" || t.status === "draft" || t.status === "failed")
+        .sort((a, b) => b.id - a.id),
+    [teach],
+  );
   const [files, setFiles] = useState<MemoryFile[]>([]);
   const [log, setLog] = useState<Commit[]>([]);
-  const [sel, setSel] = useState<Selection>({ kind: "file", path: "INDEX.md" });
+  const [sel, setSel] = useState<Selection>({ kind: "file", path: open || "INDEX.md" });
   const [content, setContent] = useState("");
   const [saved, setSaved] = useState("");
   const [diff, setDiff] = useState("");
@@ -175,6 +184,20 @@ export function Memory({ toast }: { toast: (t: string) => void }) {
             <Icon name="plus" />
             New file
           </button>
+          {drafts.length > 0 && (
+            <>
+              <div className="folder">
+                <Icon name="teach" />
+                Skill drafts
+              </div>
+              {drafts.map((d) => (
+                <button type="button" key={d.id} onClick={() => navigate(`/memory/teach/${d.id}`)}>
+                  <Icon name="file" />
+                  {d.name ?? `Recording, ${when(d.startedAt)}`}
+                </button>
+              ))}
+            </>
+          )}
         </div>
 
         <div className="editor">

@@ -6,7 +6,16 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError } from "./api";
 import { Icon } from "./icons";
 import { navigate } from "./router";
-import { ensureTask, handback, takeover, useStore } from "./store";
+import {
+  discardTeach,
+  ensureTask,
+  handback,
+  recording,
+  startTeach,
+  stopTeach,
+  takeover,
+  useStore,
+} from "./store";
 import { taskLine } from "./tasks";
 
 const time = (iso: string) =>
@@ -65,7 +74,8 @@ function useFrames(canvas: React.RefObject<HTMLCanvasElement | null>) {
         else void draw(e.data);
       };
       ws.onclose = () => {
-        socket.current = null;
+        // A socket closed by an earlier mount mustn't clear the one that replaced it.
+        if (socket.current === ws) socket.current = null;
         if (stopped) return;
         setConn("offline");
         timer = setTimeout(open, Math.min(15_000, 1000 * 2 ** retry++));
@@ -220,6 +230,7 @@ export function LiveView({ taskId }: { taskId?: number }) {
   const task = useStore((s) => (activeId ? s.tasks[activeId] : undefined));
   const steps = useStore((s) => (activeId ? s.steps[activeId] : undefined));
   const progress = useStore((s) => (activeId ? s.taskProgress[activeId] : undefined));
+  const teach = useStore(recording);
   const [error, setError] = useState("");
   useEffect(() => {
     if (activeId) ensureTask(activeId);
@@ -231,9 +242,31 @@ export function LiveView({ taskId }: { taskId?: number }) {
     fn().catch((err) => setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot."));
   };
 
+  const stop = () =>
+    run(async () => {
+      const s = await stopTeach();
+      navigate(`/memory/teach/${s.id}`);
+    });
+  const discard = (id: number) => {
+    if (confirm("Throw this recording away?")) run(() => discardTeach(id));
+  };
+
   return (
     <div className="live">
-      {control ? (
+      {teach ? (
+        <div className="control-banner attn">
+          <Icon name="teach" />
+          Recording. Show Hatbot how.
+          <div className="actions">
+            <button type="button" className="btn sm" onClick={() => discard(teach.id)}>
+              Discard
+            </button>
+            <button type="button" className="btn sm primary" onClick={stop}>
+              Stop & create skill
+            </button>
+          </div>
+        </div>
+      ) : control ? (
         <div className="control-banner attn">
           <Icon name="hand" />
           You're in control. Hatbot is paused.
@@ -267,6 +300,12 @@ export function LiveView({ taskId }: { taskId?: number }) {
             <Icon name="hand" />
             Take over
           </button>
+          {!task && (
+            <button type="button" className="btn" onClick={() => run(startTeach)}>
+              <Icon name="teach" />
+              Teach a skill
+            </button>
+          )}
         </div>
       )}
       {error && <div className="form-error">{error}</div>}

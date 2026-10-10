@@ -55,6 +55,10 @@ type Row = {
   error: string | null;
 };
 
+/** Steps where you did something, rather than pages loading or the pointer passing by. */
+const actions = (steps: RecStep[]) =>
+  steps.filter((s) => s.kind !== "page" && s.kind !== "move").length;
+
 /** Evenly spread picks from `items`, keeping the first and the last. */
 function spread<T>(items: T[], n: number): T[] {
   if (items.length <= n) return items;
@@ -108,12 +112,9 @@ export class Teach {
   }
 
   private toSession(r: Row): TeachSession {
-    const steps =
-      this.rec?.id === r.id
-        ? this.rec.recorder.steps.length
-        : r.events
-          ? (JSON.parse(r.events) as unknown[]).length
-          : 0;
+    const steps = actions(
+      this.rec?.id === r.id ? this.rec.recorder.steps : (JSON.parse(r.events ?? "[]") as RecStep[]),
+    );
     return {
       id: r.id,
       status: r.status,
@@ -224,7 +225,7 @@ export class Teach {
     const id = this.rec?.id;
     if (id === undefined) throw new TeachError("Nothing is being recorded.", 409);
     const steps = (await this.endRecording(id)) ?? [];
-    const acted = steps.some((s) => s.kind !== "page" && s.kind !== "move");
+    const acted = actions(steps) > 0;
     this.update(id, {
       status: acted ? "drafting" : "failed",
       stopped_at: this.now(),
@@ -241,7 +242,7 @@ export class Teach {
     if (!r) throw new TeachError("No such recording.", 404);
     if (r.status !== "failed" && r.status !== "draft")
       throw new TeachError("This recording can't be drafted now.", 409);
-    if (!r.events || !(JSON.parse(r.events) as RecStep[]).some((s) => s.kind !== "page"))
+    if (!actions(JSON.parse(r.events ?? "[]") as RecStep[]))
       throw new TeachError("Nothing was recorded.", 409);
     this.update(id, { status: "drafting", error: null });
     void this.write(id);

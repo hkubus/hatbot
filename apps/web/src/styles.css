@@ -1604,6 +1604,13 @@ html[data-theme="dark"] .seg button.active {
   flex: 1;
   width: 100%;
 }
+/* A skill draft: the editor on its own. */
+.view > .editor {
+  height: 100%;
+}
+.editor > .form-error {
+  padding: 8px 20px 0;
+}
 .qr {
   width: 180px;
   height: 180px;
@@ -1757,6 +1764,17 @@ html[data-theme="dark"] .seg button.active {
 }
 .control-banner .spacer {
   flex: 1;
+}
+.control-banner .actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.control-banner:has(.actions) {
+  flex-wrap: wrap;
+}
+.control-banner .btn {
+  white-space: nowrap;
 }
 .panel {
   background: var(--surface);

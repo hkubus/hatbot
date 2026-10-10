@@ -8,6 +8,7 @@ import { Login, Setup } from "./pages/Login";
 import { Memory } from "./pages/Memory";
 import { SchedulesView } from "./pages/Schedules";
 import { Settings } from "./pages/Settings";
+import { SkillDraft } from "./pages/SkillDraft";
 import { Spend } from "./pages/Spend";
 import { TaskDetail, Tasks } from "./pages/Tasks";
 import { navigate, useRoute } from "./router";
@@ -67,6 +68,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const [insp, setInsp] = useState(() => localStorage.getItem("hatbot:insp") === "1");
   const view = viewOf(path);
   const taskId = /^\/tasks\/(\d+)$/.exec(path)?.[1];
+  const teachId = /^\/memory\/teach\/(\d+)$/.exec(path)?.[1];
   const approvalId = Number(params.get("approval"));
 
   // An approval notification opens /?approval=<id>: show it on its task.
@@ -161,7 +163,16 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
             </section>
           )}
           {view.path === "/schedules" && <SchedulesView path={path} params={params} />}
-          {view.path === "/memory" && <Memory toast={toast} />}
+          {view.path === "/memory" &&
+            (teachId ? (
+              <SkillDraft key={teachId} id={Number(teachId)} toast={toast} />
+            ) : (
+              <Memory
+                key={params.get("path") ?? ""}
+                toast={toast}
+                open={params.get("path") ?? ""}
+              />
+            ))}
           {view.path === "/spend" && <Spend />}
           {view.path === "/settings" && (
             <Settings path={path} toast={toast} onSignOut={onSignOut} />
