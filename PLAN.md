@@ -263,7 +263,7 @@ Every piece of content entering a context is labelled **trusted** or **untrusted
 - your chat messages
 - memory files
 - Uptime Kuma alerts
-- command output from your hosts
+- command output from your hosts, except logs and files (below)
 - Proxmox API data
 
 **Untrusted:**
@@ -272,6 +272,7 @@ Every piece of content entering a context is labelled **trusted** or **untrusted
 - Forgejo/GitHub issue, PR and comment text
 - generic webhook payloads (each trigger can be marked trusted)
 - MCP tool output (unless the server is marked trusted)
+- logs and files read from your hosts (`ssh_check logs`/`errors`, `ssh_read_file`): anyone who reaches a service can write into its logs
 
 Once a task has read **any untrusted content**, it is *tainted*. In a tainted task, these **outward actions** need your approval:
 - sending or posting

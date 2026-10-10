@@ -7,7 +7,7 @@ Delete it, or fold it into `PLAN.md`, once the work below is done.
 
 - **Built:** M0–M5 and the iOS app (see the checklists in `PLAN.md` §11). M4 and M5 are built and committed but not yet deployed or tried live.
 - **Not yet tried live** (the owner does these): the M2 lock-screen approval, the M3 morning schedule, Forgejo webhook and Kuma alert, all of M4 and M5, and the first iOS install from SideStore.
-- **Checks:** 122 tests pass, and Biome and `tsc -b` are clean.
+- **Checks:** 123 tests pass, and Biome and `tsc -b` are clean.
 
 ## How to work here
 
@@ -21,18 +21,13 @@ Delete it, or fold it into `PLAN.md`, once the work below is done.
 - **Swift on Linux:** `cd apps/ios && /opt/swift61/usr/bin/swift test -Xswiftc -use-ld=lld` tests `Hatbot/Core`. SwiftUI files can only be `swiftc -parse`d here; CI on the GitHub mirror builds the app.
 - **Licences:** no copyleft dependencies (PLAN §2), not even MPL. That's why the live view is our own MJPEG stream and not noVNC (MPL).
 
-## 1. Decisions the owner still has to make (ask before building)
+## 1. Trust-tracking gaps (PLAN §6.1): decided 2026-10-10
 
-These came out of the M4 security review. They're trust-tracking gaps (PLAN §6.1), left open on purpose.
+These came out of the M4 security review.
 
-1. **`memory_write` from a tainted chat or task.** Content that came from strangers can end up in memory, and memory is trusted on every later read. The options:
-   - Ask for approval when tainted.
-   - Record which files a tainted context wrote (for example, a `tainted` front-matter flag or a table), and treat reading them as untrusted.
-   - Leave it as it is.
-
-   Ask the owner which. The second option keeps "notes for next run" working.
-2. **Thread summaries** (Haiku, `agent/thread.ts`) don't carry taint. Once tainted messages are summarised away, the taint is lost. A likely fix is to mark a summary tainted when any message it covers came from a tainted episode, and taint episodes that inherit it.
-3. **SSH output** is trusted, as the plan says, but `ssh_check logs` / `errors` and `ssh_read_file` can contain text strangers wrote (web server logs, for example). The plugin API already supports a per-input `untrusted: (input) => boolean`.
+1. **`memory_write` from a tainted chat or task:** left as it is, by the owner's choice. Memory, skills included, stays trusted on every read. If it ever needs closing, flagging tainted writes to `skills/` would cover most of the risk.
+2. **Thread summaries** (Haiku, `agent/thread.ts`) don't carry taint. Left for now: the path from a summary to an unapproved change is long.
+3. **SSH logs and files:** done. `ssh_check logs`/`errors` and `ssh_read_file` are untrusted and taint the task.
 
 ## 2. M5 — Teach-by-showing (built, not tried live)
 
