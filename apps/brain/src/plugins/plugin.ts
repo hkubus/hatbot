@@ -8,7 +8,8 @@ import type { Db } from "../db";
 /** Whether a call may run. The core takes the strictest of this and the untrusted-content rule (§6.1). */
 export type Verdict =
   | { action: "allow" }
-  | { action: "ask"; why: string; kind?: ApprovalKind }
+  /** `tainted`: only the untrusted-content rule asks, so Haiku may review it (PLAN.md §6.1). */
+  | { action: "ask"; why: string; kind?: ApprovalKind; tainted?: boolean }
   | { action: "block"; why: string };
 
 export const allow = (): Verdict => ({ action: "allow" });

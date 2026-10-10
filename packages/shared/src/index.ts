@@ -286,6 +286,8 @@ export type AppSettings = {
   paused: boolean;
   /** A task started from the chat doesn't ask again for what you explicitly asked for. */
   skipAskedApprovals: boolean;
+  /** After untrusted content, a task makes changes Haiku finds safe without asking. */
+  reviewTaintedChanges: boolean;
   /** What tapping a notification opens: the web app, or the iOS app (hatbot:// links). */
   notificationsOpen: "web" | "app";
   /** The model that drives desktop tasks. */

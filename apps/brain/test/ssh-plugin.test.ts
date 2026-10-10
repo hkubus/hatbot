@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Task } from "@hatbot/shared";
-import { INTENT_PROMPT } from "../src/agent/prompt";
+import { INTENT_PROMPT, REVIEW_PROMPT } from "../src/agent/prompt";
 import type { CallContext } from "../src/plugins/plugin";
 import { verdictFor } from "../src/plugins/registry";
 import { sshPlugin } from "../src/plugins/ssh";
@@ -415,6 +415,68 @@ test("an alert task makes the one fix its trigger allows without asking; a secon
   ).toBe(true);
   t.approvals.decide(approval.id, "deny", "web");
   await waitFor(() => t.tasks.get(task.id)?.finishedAt);
+});
+
+/** A Haiku that says you didn't ask, and whether a tainted task's change is safe. */
+function reviewModel(script: ReturnType<typeof toolUse>[][], safe: boolean) {
+  const model = new FakeModel(script.map((content) => ({ content })));
+  const reviews: string[] = [];
+  model.onCreate = (p) => {
+    if (p.system === INTENT_PROMPT) return '{"asked": false, "why": "You asked to look."}';
+    if (p.system !== REVIEW_PROMPT) return '{"suspected": false, "excerpt": ""}';
+    reviews.push(JSON.stringify(p.messages));
+    return JSON.stringify({
+      safe,
+      why: safe ? "A restart of the service the task is about." : "It sends data off the host.",
+    });
+  };
+  return { model, reviews };
+}
+
+test("after untrusted content, Haiku lets a safe change through and asks about the rest", async () => {
+  const yes = reviewModel(restartScript(), true);
+  const a = await started(yes.model);
+  const task = chatTask(a.t, "jellyfin is slow, look into it");
+  await waitFor(() => a.t.tasks.get(task.id)?.finishedAt);
+  expect(a.t.tasks.get(task.id)?.status).toBe("done");
+  expect(a.t.approvals.list(true)).toHaveLength(0);
+  expect(yes.reviews[0]).toContain("jellyfin is slow, look into it");
+  expect(yes.reviews[0]).toContain("echo restarted jellyfin");
+  const step = a.t.tasks.steps(task.id).find((s) => s.name === "Not asking: Haiku found it safe");
+  expect(step?.detail).toContain("A restart of the service the task is about.");
+
+  // Unsafe: it asks, and says why.
+  const no = reviewModel(restartScript(), false);
+  const b = await started(no.model);
+  const second = chatTask(b.t, "jellyfin is slow, look into it");
+  const approval = await waitFor(() => b.t.approvals.list(true)[0]);
+  expect(approval.reason).toContain("untrusted");
+  expect(approval.reason).toContain("It sends data off the host.");
+  b.t.approvals.decide(approval.id, "deny", "web");
+  await waitFor(() => b.t.tasks.get(second.id)?.finishedAt);
+
+  // Switched off: no review.
+  const off = reviewModel(restartScript(), true);
+  const c = await started(off.model);
+  c.t.settings.update({ reviewTaintedChanges: false });
+  chatTask(c.t, "jellyfin is slow, look into it");
+  await waitFor(() => c.t.approvals.list(true)[0]);
+  expect(off.reviews).toHaveLength(0);
+});
+
+test("a destructive command still asks without a review, tainted or not", async () => {
+  const { model, reviews } = reviewModel(
+    [
+      [toolUse("ssh_exec", { host: "nas", command: "rm -rf /srv/media" })],
+      [toolUse("finish_task", { outcome: "done", summary: "Done.", notify: true })],
+    ],
+    true,
+  );
+  const { t } = await started(model);
+  chatTask(t, "free up space on the nas");
+  const approval = await waitFor(() => t.approvals.list(true)[0]);
+  expect(approval.kind).toBe("delete");
+  expect(reviews).toHaveLength(0);
 });
 
 test("ssh_pct_exec runs a command in a container through a Proxmox host, quoted, and only there", async () => {

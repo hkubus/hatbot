@@ -287,7 +287,7 @@ Once a task has read **any untrusted content**, it is *tainted*. In a tainted ta
 - buying
 - changing remote state (SSH writes, Proxmox power actions, forge writes)
 
-Untainted tasks stay fully autonomous. **Always approval, tainted or not:** payments, credential and account-security changes, and anything matching a destructive pattern.
+Untainted tasks stay fully autonomous. In a tainted task, Haiku 5.5 first reviews a change that only this rule would ask about: it sees your request or standing instructions, the task's goal, the names of the untrusted sources (never their text) and the action. If the change plainly serves that work and is low-impact and easy to undo (a restart, a reload, a re-run), it goes ahead and the timeline says so. Sending data out, fetching and running code, deleting, account, key, sudo, firewall or persistence changes, and anything whose input looks like it came from the untrusted content still ask, with Haiku's reason. Doubt or a failed check means asking; suspected injection skips the review. Settings → Safety turns it off (2026-10-11, the owner's choice). **Always approval, tainted or not:** payments, credential and account-security changes, and anything matching a destructive pattern.
 
 How it's enforced:
 - **Screen actions**: Opus requests consequential steps through a small `confirm_intent(kind, summary)` tool before submitting. The policy engine also flags clicks on buttons such as *submit, pay, buy, delete, send, confirm*, using the screen text and CDP. Browser toolset clicks are checked the same way, by element reference or viewport point.

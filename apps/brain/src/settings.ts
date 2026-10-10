@@ -17,6 +17,8 @@ export const Settings = z.object({
   paused: z.boolean(),
   /** A task started from the chat doesn't ask again for what you explicitly asked for (Haiku checks). */
   skipAskedApprovals: z.boolean(),
+  /** After untrusted content, a task makes changes Haiku finds safe without asking (PLAN.md §6.1). */
+  reviewTaintedChanges: z.boolean(),
   /** What tapping a notification opens: the web app, or the iOS app (hatbot:// links). */
   notificationsOpen: z.enum(["web", "app"]),
   /** The model that drives the desktop (PLAN.md §5.4). Haiku 5.5 is the experiment: far cheaper, less tested. */
@@ -31,6 +33,7 @@ export const DEFAULT_SETTINGS: Settings = {
   owner: { name: "You", email: "owner@local" },
   paused: false,
   skipAskedApprovals: true,
+  reviewTaintedChanges: true,
   notificationsOpen: "web",
   desktopModel: "claude-opus-5-5",
 };

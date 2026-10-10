@@ -6,7 +6,6 @@ import type { Db } from "../db";
 import type { EventBus } from "../events";
 import {
   allow,
-  ask,
   type CallContext,
   type Plugin,
   PluginError,
@@ -302,6 +301,10 @@ export function verdictFor(t: PluginTool, input: unknown, call: CallContext): Ve
   const own = t.policy ? t.policy(parsed.data, call) : allow();
   if (own.action !== "allow") return own;
   if (call.task?.tainted)
-    return ask("This task has read untrusted content, so changes need your approval.");
+    return {
+      action: "ask",
+      why: "This task has read untrusted content, so changes need your approval.",
+      tainted: true,
+    };
   return own;
 }

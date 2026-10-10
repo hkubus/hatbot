@@ -3,7 +3,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ApprovalKind } from "@hatbot/shared";
 import { z } from "zod";
-import { mayCheck, ownerAsked } from "../agent/intent";
+import { mayCheck, ownerAsked, safeDespiteTaint } from "../agent/intent";
 import { modelErrorText } from "../agent/model";
 import { AGENT_PROMPT } from "../agent/prompt";
 import { localStamp } from "../agent/thread";
@@ -246,6 +246,38 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     return true;
   };
 
+  /**
+   * Whether Haiku finds a change safe that only the untrusted-content rule would ask about (PLAN.md
+   * §6.1). Its reason, either way, for the timeline or the approval.
+   */
+  const reviewed = async (
+    t: PluginTool,
+    call: Anthropic.Beta.BetaToolUseBlock,
+    what: string,
+    verdict: { why: string; tainted?: boolean },
+  ): Promise<{ safe: boolean; why: string }> => {
+    if (!verdict.tainted || !d.settings.get().reviewTaintedChanges) return { safe: false, why: "" };
+    if (tasks.get(id)?.injectionSuspected) return { safe: false, why: "" };
+    const check = await safeDespiteTaint(
+      d,
+      id,
+      {
+        ownerSaid: task.origin === "chat" ? tasks.requestOf(id) : standingWords(),
+        goal: task.goal,
+        sources: [...sources],
+      },
+      { tool: t.name, input: call.input, what, why: verdict.why },
+    );
+    if (check.safe)
+      tasks.addStep(id, {
+        kind: "approval",
+        name: "Not asking: Haiku found it safe",
+        detail: check.why ? `${what}. ${check.why}` : what,
+        url: null,
+      });
+    return check;
+  };
+
   /** A plugin tool: its policy and the untrusted-content rule first, then the call. */
   const pluginCall = async (
     t: PluginTool,
@@ -264,13 +296,16 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       return result(call, `Refused: ${verdict.why}`, true);
     }
     if (verdict.action === "ask" && !(await alreadyAsked(t, call, what, verdict))) {
-      const outcome = await askApproval({
-        kind: verdict.kind ?? "other",
-        summary: what,
-        reason: verdict.why,
-      });
-      if (outcome !== "approved")
-        return result(call, "The owner denied this. Don't try it another way.", true);
+      const review = await reviewed(t, call, what, verdict);
+      if (!review.safe) {
+        const outcome = await askApproval({
+          kind: verdict.kind ?? "other",
+          summary: what,
+          reason: review.why ? `${verdict.why} Haiku: ${review.why}` : verdict.why,
+        });
+        if (outcome !== "approved")
+          return result(call, "The owner denied this. Don't try it another way.", true);
+      }
     }
     tasks.addStep(id, { kind: "action", name: t.name, detail: what, url: null });
     const r = await runPluginTool(t, call.input, cc);

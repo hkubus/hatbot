@@ -298,6 +298,8 @@ struct AppSettings: Codable, Equatable, Sendable {
   var chatModel: ChatModel?
   /// A task from the chat doesn't ask again for what you asked for; missing on older brains.
   var skipAskedApprovals: Bool?
+  /// After untrusted content, a task makes changes Haiku finds safe without asking; missing on older brains.
+  var reviewTaintedChanges: Bool?
 
   enum ChatModel: String, LenientEnum, CaseIterable {
     case haiku = "claude-haiku-5-5"

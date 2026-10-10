@@ -78,6 +78,13 @@ struct SettingsView: View {
                 get: { skip },
                 set: { on in Task { await act { settings = try await store.setSkipAskedApprovals(on) } } }))
           }
+          if let review = settings?.reviewTaintedChanges {
+            Toggle(
+              "Let Haiku allow safe changes after untrusted content",
+              isOn: Binding(
+                get: { review },
+                set: { on in Task { await act { settings = try await store.setReviewTaintedChanges(on) } } }))
+          }
           if store.paused {
             Button("Resume") { Task { await act { try await store.setPaused(false) } } }
           } else {

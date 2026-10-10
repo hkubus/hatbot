@@ -311,6 +311,15 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
                 onChange={(on) => update({ skipAskedApprovals: on })}
               />
             </div>
+            <div className="row">
+              <div className="txt">
+                <b>Let Haiku allow safe changes after untrusted content</b>
+              </div>
+              <Switch
+                on={settings.reviewTaintedChanges}
+                onChange={(on) => update({ reviewTaintedChanges: on })}
+              />
+            </div>
             <RollbackRow toast={toast} />
           </div>
         </section>
