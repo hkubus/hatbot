@@ -112,6 +112,14 @@ export class Plugins {
     return s.instance.test();
   }
 
+  /** A call from the plugin's settings form. Works while it's starting up or needs setup, too. */
+  async action(id: string, name: string, args: unknown): Promise<unknown> {
+    const s = this.slots.get(id);
+    const fn = s?.instance?.actions?.[name];
+    if (!s || !fn) throw new PluginError(`${s?.plugin.name ?? id} can't do "${name}" right now.`);
+    return fn(args);
+  }
+
   /**
    * Tools of the ready plugins, in a stable order (it's part of the prompt cache). The chat gets the
    * read tools; tasks get all of them.

@@ -25,6 +25,17 @@ export const pluginRoutes = new Hono<AppEnv>()
       throw err;
     }
   })
+  .post("/plugins/:id/actions/:name", async (c) => {
+    const args = await c.req.json().catch(() => ({}));
+    try {
+      return c.json({
+        result: await c.var.plugins.action(c.req.param("id"), c.req.param("name"), args),
+      });
+    } catch (err) {
+      if (err instanceof PluginError) return c.json({ error: err.message }, 400);
+      throw err;
+    }
+  })
   .post("/plugins/:id/test", async (c) => {
     try {
       return c.json({ ok: true, message: await c.var.plugins.test(c.req.param("id")) });

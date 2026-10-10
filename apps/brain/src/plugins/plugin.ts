@@ -61,6 +61,11 @@ export type PluginInstance = {
   guidance?: string;
   /** Settings' Test button: a quick check that says what it found. Throws PluginError on failure. */
   test?: () => Promise<string>;
+  /**
+   * Calls its settings form makes, e.g. "show the public key" or "forget a host key". They return
+   * JSON for the form; throw PluginError to show a message.
+   */
+  actions?: Record<string, (args: unknown) => Promise<unknown>>;
   stop?: () => Promise<void> | void;
 };
 

@@ -1,7 +1,7 @@
 // Plugins in Settings (PLAN.md §4.5): the list, and a page per plugin with its switch, secrets,
 // settings and Test button.
 import type { PluginInfo } from "@hatbot/shared";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "../api";
 import { Icon } from "../icons";
 import { PLUGIN_SETTINGS } from "../plugins";
@@ -59,6 +59,11 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
   const [error, setError] = useState("");
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const action = useCallback(
+    async <T,>(name: string, args: unknown = {}) =>
+      (await api<{ result: T }>(`/plugins/${id}/actions/${name}`, { body: args })).result,
+    [id],
+  );
 
   useEffect(() => {
     if (!p) loadPlugins().catch((err) => setError(errorText(err)));
@@ -85,6 +90,7 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
     await savePlugin(p.id, { config });
     toast("Saved");
   };
+
   const test = async () => {
     setTesting(true);
     setResult(null);
@@ -129,7 +135,15 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
           )}
         </div>
 
-        {Settings && <Settings config={p.config} save={save} />}
+        {Settings && (
+          <Settings
+            key={JSON.stringify(p.config)}
+            config={p.config}
+            save={save}
+            action={action}
+            ready={p.state === "ready"}
+          />
+        )}
 
         {p.tools.length > 0 && (
           <section className="group">
