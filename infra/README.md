@@ -69,6 +69,27 @@ After that, **Settings → Updates → Update** pulls the branch and deploys it:
 - It doesn't touch the host. If a commit changes host-side scripts (`host-setup.sh`, `deploy.sh`, `desktop-deploy.sh` and so on), Settings says so; run `deploy.sh` on the host for those.
 - Logs: `/var/lib/hatbot-update/last.log` on the brain, and `journalctl -u hatbot-desktop-agent-update` on the desktop.
 
+## Plugins
+
+Integrations are plugins you switch on in the web app, under **Settings → Plugins** (PLAN.md §4.5). Their secrets live in env files inside the brain; create them readable by the service, then restart it:
+
+```sh
+pct exec <brain> -- sh -c 'install -m 640 -g hatbot /dev/stdin /etc/hatbot/forgejo.env <<EOF
+FORGEJO_URL=https://git.gaycats.ovh
+FORGEJO_TOKEN=…
+EOF
+systemctl restart hatbot-brain'
+```
+
+| Plugin | Needs |
+|---|---|
+| Proxmox | nothing more: `host-setup.sh` already wrote `/etc/hatbot/proxmox.env` |
+| SSH | on each host, a `hatbot` user with the brain's public key (shown on the plugin's page) in `~hatbot/.ssh/authorized_keys`, and sudo rules for what it may do as root. Hosts are added on the plugin's page; each host's key is pinned the first time Hatbot connects |
+| Forgejo | `/etc/hatbot/forgejo.env` with `FORGEJO_URL` and `FORGEJO_TOKEN`: a token of Hatbot's bot account with read and write access to repositories and issues. Add the bot as a collaborator to the repos it should work on |
+| MCP | servers are added on the plugin's page. Secrets they need go in `/etc/hatbot/mcp.env` and are referenced as `${NAME}` in headers or environment. A "Command" server runs inside the brain as the `hatbot` user, which can read the brain's other secrets, so only run servers you trust there; prefer HTTP servers running elsewhere |
+
+The brain's unit loads `forgejo.env` and `mcp.env` from the first deploy after this change.
+
 ## Settings
 
 Set any of these as environment variables, or answer the prompts. Defaults are in the top of `host-setup.sh`.

@@ -153,6 +153,7 @@ Integrations are plugins: Proxmox, SSH, Forgejo and MCP. The core keeps memory, 
 - **Tools**: named `<plugin id>_…`. A **read** tool looks without changing anything; the chat calls it directly. A **write** tool changes something; only tasks get it, so the chat hands changes to a task with `run_task` (§5.5). A tool can mark its output **untrusted** (issue text, MCP output): it's wrapped as labelled JSON, and a task or chat episode that reads it becomes tainted.
 - **Policy**: a write tool may have a `policy(input, task)` that allows, asks you first, or refuses. The core takes the stricter of that and the untrusted-content rule (§6.1), raises the approval, and logs the call on the task's timeline. Plugins never build approvals themselves.
 - **Prompt cache**: the chat's tools and system prompt include the plugins that are on, so switching one on or off starts a new episode (§5.3). A task fixes its tools when it starts.
+- **MCP stdio servers** run inside the brain as the `hatbot` user with a clean environment (no inherited secrets), but that user can read `/etc/hatbot/*.env`. Run only servers you trust that way; prefer HTTP servers elsewhere.
 - **Web**: Settings lists the plugins; each has a page with its switch, which secrets are set, its settings form (`apps/web/src/plugins/<id>.tsx`), a Test button and its tools.
 
 ### 4.6 `infra/`
@@ -398,8 +399,8 @@ The app itself is installed by `infra/deploy.sh`, run on the host for the first 
 
 ### 9.5 Prerequisites (you)
 - Max 20x with API credits linked to a Console org, plus an API key.
-- Bot accounts: `hatbot` on Forgejo (and GitHub if wanted), added as collaborators to chosen repos.
-- A `hatbot` user and SSH key on each allowlisted host.
+- Bot accounts: `hatbot` on Forgejo (and GitHub if wanted), added as collaborators to chosen repos, with a token in `/etc/hatbot/forgejo.env`.
+- A `hatbot` user on each host Hatbot may reach, with the brain's public key (shown in Settings → Plugins → SSH).
 - An Uptime Kuma webhook notification pointing at Hatbot.
 - The ntfy iOS app subscribed to Hatbot's topic.
 
@@ -506,7 +507,7 @@ Each milestone ends with a working, demo-able system.
 - [x] Forgejo plugin (`forgejo_*`) with the bot account: repos, issues and PRs (untrusted), files, CI; comment, open issues and PRs, commit files through the API; merging, committing to the default branch and changing CI workflows ask (GitHub later)
 - [x] Code tasks: `run_task` with effort medium, high on request or after a failed attempt (§5.4); more steps and output room; new branch + pull request
 - [x] Uptime Kuma alert handling: investigate → one safe restart → verify → report; later Kuma events reach the running task
-- [ ] MCP plugin + per-tool allow/ask/block
+- [x] MCP plugin: HTTP and stdio servers, secrets as `${NAME}` from `mcp.env`, per-tool ask / allow / allow in chat / off, untrusted output unless the server is trusted, stdio servers get a clean environment
 - **Done when**: a Kuma "down" alert at 3am is fixed or diagnosed before you wake up.
 
 ### M5 — Teach-by-showing

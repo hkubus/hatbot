@@ -26,6 +26,8 @@ export type PluginTool<I = unknown> = {
   name: string;
   description: string;
   schema: z.ZodType<I>;
+  /** Sent to the model instead of `schema`'s JSON Schema: for tools defined elsewhere (MCP servers). */
+  jsonSchema?: Record<string, unknown>;
   /**
    * read: looks without changing anything; the chat may call it directly.
    * write: changes something; only tasks get it, and its policy applies.
