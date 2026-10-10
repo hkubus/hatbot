@@ -1,6 +1,7 @@
 // Renders Hatbot's Markdown: blocks from Markdown.parse, inline formatting and links through
-// AttributedString. Raw HTML is shown as text, never rendered.
+// AttributedString, charts through ChartView. Raw HTML is shown as text, never rendered.
 import SwiftUI
+import UIKit
 
 struct MarkdownText: View {
   let text: String
@@ -40,12 +41,11 @@ struct MarkdownText: View {
       }
       .fixedSize(horizontal: false, vertical: true)
     case let .code(_, code):
-      ScrollView(.horizontal) {
-        Text(code)
-          .font(.system(.footnote, design: .monospaced))
-          .padding(10)
-      }
-      .background(.fill.tertiary, in: .rect(cornerRadius: 8))
+      CodeBlock(code: code)
+    case let .chart(spec):
+      ChartView(spec: spec)
+    case .chartPending:
+      RoundedRectangle(cornerRadius: 8).fill(.fill.tertiary).frame(height: ChartView.height)
     case let .table(header, rows):
       ScrollView(.horizontal) {
         Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
@@ -65,5 +65,39 @@ struct MarkdownText: View {
   private func inline(_ text: String) -> AttributedString {
     let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
     return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+  }
+}
+
+/// A code block, with Copy in its corner.
+private struct CodeBlock: View {
+  let code: String
+  @State private var copied = false
+
+  var body: some View {
+    ScrollView(.horizontal) {
+      Text(code)
+        .font(.system(.footnote, design: .monospaced))
+        .padding(10)
+        .padding(.trailing, 24)
+    }
+    .background(.fill.tertiary, in: .rect(cornerRadius: 8))
+    .overlay(alignment: .topTrailing) {
+      Button {
+        UIPasteboard.general.string = code
+        copied = true
+        Task {
+          try? await Task.sleep(for: .seconds(1.5))
+          copied = false
+        }
+      } label: {
+        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+          .font(.caption)
+          .frame(width: 30, height: 30)
+          .contentShape(.rect)
+      }
+      .buttonStyle(.borderless)
+      .foregroundStyle(.secondary)
+      .accessibilityLabel("Copy code")
+    }
   }
 }

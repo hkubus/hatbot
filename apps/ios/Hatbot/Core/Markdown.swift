@@ -1,5 +1,5 @@
 // Splits Hatbot's Markdown into blocks; the views render inline formatting with AttributedString.
-// Covers what replies use: headings, paragraphs, lists, quotes, fenced code, tables and rules.
+// Covers what replies use: headings, paragraphs, lists, quotes, fenced code, charts, tables and rules.
 // An unclosed fence (a reply still streaming) runs to the end.
 import Foundation
 
@@ -17,6 +17,10 @@ enum MDBlock: Equatable, Sendable {
   case list([Item])
   case quote(String)
   case code(language: String?, code: String)
+  /// A ```chart block that checks out; one that doesn't stays code.
+  case chart(ChartSpec)
+  /// A ```chart block still streaming in.
+  case chartPending
   case table(header: [String], rows: [[String]])
   case rule
 }
@@ -52,8 +56,20 @@ enum Markdown {
           code.append(lines[i])
           i += 1
         }
+        let closed = i < lines.count
         i += 1
-        blocks.append(.code(language: language.isEmpty ? nil : language, code: code.joined(separator: "\n")))
+        let source = code.joined(separator: "\n")
+        if language == "chart" {
+          if let spec = ChartSpec.parse(source) {
+            blocks.append(.chart(spec))
+            continue
+          }
+          if !closed {
+            blocks.append(.chartPending)
+            continue
+          }
+        }
+        blocks.append(.code(language: language.isEmpty ? nil : language, code: source))
         continue
       }
 
