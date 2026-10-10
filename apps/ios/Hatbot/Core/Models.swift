@@ -201,6 +201,9 @@ struct Trigger: Codable, Identifiable, Equatable, Sendable {
   var trusted: Bool
   var prompt: String
   var enabled: Bool
+  /// Uptime Kuma: how many more of the monitor's checks a down alert waits for, 0 to 2; one back up in
+  /// the meantime starts nothing. Missing on older brains.
+  var confirmChecks: Int?
   /// Where to send events.
   var url: String
   var createdAt: String

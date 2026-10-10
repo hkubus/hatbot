@@ -72,7 +72,9 @@ const answer = (r: Received) =>
     ? { status: 202 as const, body: { ok: true, taskId: r.task.id } }
     : r.status === "test"
       ? { status: 200 as const, body: { ok: true } }
-      : { status: 200 as const, body: { ok: true, skipped: r.reason } };
+      : r.status === "waiting"
+        ? { status: 202 as const, body: { ok: true, waitingUntil: r.until } }
+        : { status: 200 as const, body: { ok: true, skipped: r.reason } };
 
 /** Reads at most MAX_HOOK_BYTES of the body; null if it's bigger. */
 async function body(req: Request): Promise<Uint8Array | null> {
@@ -139,7 +141,7 @@ const kumaHook = async (c: Context<AppEnv>) => {
   }
   const r = triggers.receiveKuma(id(c), event);
   console.log(
-    `${hook}: ${r.status === "skipped" ? `skipped (${r.reason})` : r.status === "started" ? `started task #${r.task.id}` : "test message"}`,
+    `${hook}: ${r.status === "skipped" ? `skipped (${r.reason})` : r.status === "started" ? `started task #${r.task.id}` : r.status === "waiting" ? `waiting for more checks until ${r.until}` : "test message"}`,
   );
   const a = answer(r);
   return c.json(a.body, a.status);

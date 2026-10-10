@@ -13,6 +13,10 @@ const MAX_SKEW_S = 300;
 const REPLAY_WINDOW_MS = 24 * 3600_000;
 /** What a run gets to see of a payload. */
 const MAX_PAYLOAD_CHARS = 20_000;
+/** A Kuma monitor's check interval when its alert doesn't say, and the range we believe. */
+const KUMA_INTERVAL_S = { fallback: 60, min: 20, max: 900 };
+/** Time for the check after the wait to run and its "up" to reach us. */
+const KUMA_SLACK_MS = 30_000;
 
 type Row = {
   id: number;
@@ -22,6 +26,7 @@ type Row = {
   trusted: number;
   prompt: string;
   enabled: number;
+  confirm_checks: number;
   created_at: string;
   last_fired_at: string | null;
   last_task_id: number | null;
@@ -33,12 +38,22 @@ const SELECT = `SELECT g.*, (SELECT max(id) FROM tasks t WHERE t.trigger_id = g.
 export type Received =
   | { status: "started"; task: Task }
   | { status: "skipped"; reason: "paused" | "running" | "disabled" | "duplicate" | "ignored" }
+  /** A down alert waiting for the monitor's next checks before it starts a task. */
+  | { status: "waiting"; until: string }
   | { status: "test" };
 
 /** Uptime Kuma's webhook body (its "Application/json" preset). */
 type KumaBody = {
   heartbeat?: { status?: number; msg?: string; time?: string } | null;
-  monitor?: { id?: number; name?: string; url?: string; hostname?: string; type?: string } | null;
+  monitor?: {
+    id?: number;
+    name?: string;
+    url?: string;
+    hostname?: string;
+    type?: string;
+    /** Seconds between checks. */
+    interval?: number;
+  } | null;
   msg?: string;
 };
 
@@ -65,6 +80,7 @@ export class Triggers {
     trusted: r.kind === "kuma" || Boolean(r.trusted),
     prompt: r.prompt,
     enabled: Boolean(r.enabled),
+    confirmChecks: r.confirm_checks,
     url: `${this.publicUrl}${API_PREFIX}/hooks/${r.kind === "kuma" ? "kuma/" : ""}${r.id}`,
     createdAt: r.created_at,
     lastFiredAt: r.last_fired_at,
@@ -89,31 +105,49 @@ export class Triggers {
     kind: Trigger["kind"];
     prompt: string;
     trusted?: boolean;
+    confirmChecks?: number;
   }): TriggerWithSecret {
     const secret = newSecret();
     const row = this.db
-      .query<{ id: number }, [string, string, string, number, string, string]>(
-        `INSERT INTO triggers (name, kind, secret, trusted, prompt, created_at) VALUES (?, ?, ?, ?, ?, ?)
-         RETURNING id`,
+      .query<{ id: number }, [string, string, string, number, string, number, string]>(
+        `INSERT INTO triggers (name, kind, secret, trusted, prompt, confirm_checks, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       )
-      .get(input.name, input.kind, secret, input.trusted ? 1 : 0, input.prompt, this.now());
+      .get(
+        input.name,
+        input.kind,
+        secret,
+        input.trusted ? 1 : 0,
+        input.prompt,
+        input.confirmChecks ?? 0,
+        this.now(),
+      );
     const trigger = this.changed(row?.id ?? -1) as Trigger;
     return { ...trigger, secret };
   }
 
   update(
     id: number,
-    patch: { name?: string; prompt?: string; trusted?: boolean; enabled?: boolean },
+    patch: {
+      name?: string;
+      prompt?: string;
+      trusted?: boolean;
+      enabled?: boolean;
+      confirmChecks?: number;
+    },
   ): Trigger | null {
     const r = this.db.query<Row, [number]>(`${SELECT} WHERE g.id = ?`).get(id);
     if (!r) return null;
     this.db
-      .query("UPDATE triggers SET name = ?, prompt = ?, trusted = ?, enabled = ? WHERE id = ?")
+      .query(
+        "UPDATE triggers SET name = ?, prompt = ?, trusted = ?, enabled = ?, confirm_checks = ? WHERE id = ?",
+      )
       .run(
         patch.name ?? r.name,
         patch.prompt ?? r.prompt,
         (patch.trusted ?? Boolean(r.trusted)) ? 1 : 0,
         (patch.enabled ?? Boolean(r.enabled)) ? 1 : 0,
+        patch.confirmChecks ?? r.confirm_checks,
         id,
       );
     return this.changed(id);
@@ -194,8 +228,10 @@ export class Triggers {
   }
 
   /**
-   * An Uptime Kuma event. "Down" starts an alert task per monitor; more alerts while it runs, and the
-   * monitor coming back up, go on that task's timeline. Kuma's test message only marks the trigger as heard from.
+   * An Uptime Kuma event. "Down" starts an alert task per monitor, or first waits for the monitor's next
+   * checks if the trigger says so, and drops the alert when it comes back up in time. More alerts while
+   * the task runs, and the monitor coming back up, go on that task's timeline. Kuma's test message only
+   * marks the trigger as heard from.
    */
   receiveKuma(id: number, body: KumaBody): Received {
     const t = this.get(id);
@@ -231,6 +267,8 @@ export class Triggers {
       );
     };
     if (hb.status === 1) {
+      if (this.db.query("DELETE FROM kuma_waiting WHERE run_key = ?").run(runKey).changes)
+        console.log(`kuma: ${name} came back up in time; dropped its alert`);
       if (active) update(active.id, "is back up");
       return { status: "skipped", reason: "ignored" };
     }
@@ -241,6 +279,10 @@ export class Triggers {
     }
     const blocked = this.blocked(t);
     if (blocked) return blocked;
+    const waiting = this.db
+      .query<{ due_at: string }, [string]>("SELECT due_at FROM kuma_waiting WHERE run_key = ?")
+      .get(runKey);
+    if (waiting) return { status: "waiting", until: waiting.due_at };
     const alert = {
       monitor: name,
       type: monitor.type,
@@ -250,6 +292,40 @@ export class Triggers {
       message,
       time: hb.time,
     };
+    if (t.confirmChecks > 0) {
+      const raw = Number(monitor.interval);
+      const interval = Number.isFinite(raw) && raw > 0 ? raw : KUMA_INTERVAL_S.fallback;
+      const each = Math.min(KUMA_INTERVAL_S.max, Math.max(KUMA_INTERVAL_S.min, interval));
+      const until = new Date(this.clock() + t.confirmChecks * each * 1000 + KUMA_SLACK_MS);
+      this.db
+        .query(
+          "INSERT INTO kuma_waiting (run_key, trigger_id, due_at, name, alert) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(runKey, t.id, until.toISOString(), name, JSON.stringify(alert, null, 2));
+      return { status: "waiting", until: until.toISOString() };
+    }
+    return this.startAlert(t, runKey, name, JSON.stringify(alert, null, 2));
+  }
+
+  /** Starts the alerts whose wait is over: their monitor didn't come back up. The brain calls it often. */
+  tick() {
+    const due = this.db
+      .query<{ run_key: string; trigger_id: number; name: string; alert: string }, [string]>(
+        "SELECT run_key, trigger_id, name, alert FROM kuma_waiting WHERE due_at <= ? ORDER BY due_at",
+      )
+      .all(this.now());
+    for (const w of due) {
+      this.db.query("DELETE FROM kuma_waiting WHERE run_key = ?").run(w.run_key);
+      const t = this.get(w.trigger_id);
+      if (!t || this.blocked(t)) continue;
+      const r = this.startAlert(t, w.run_key, w.name, w.alert);
+      console.log(
+        `kuma: ${w.name} is still down; ${r.status === "started" ? `started task #${r.task.id}` : "a task is already on it"}`,
+      );
+    }
+  }
+
+  private startAlert(t: Trigger, runKey: string, name: string, payload: string): Received {
     const task = this.tasks.createBackgroundTask({
       title: `${name} is down`,
       goal: t.prompt,
@@ -257,7 +333,7 @@ export class Triggers {
       source: t.name,
       triggerId: t.id,
       runKey,
-      payload: JSON.stringify(alert, null, 2),
+      payload,
       trusted: true,
     });
     return task ? { status: "started", task } : { status: "skipped", reason: "running" };

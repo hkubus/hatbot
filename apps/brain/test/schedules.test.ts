@@ -268,6 +268,64 @@ test("Uptime Kuma: down starts a trusted alert task per monitor; later events go
   expect(t.thread.list().find((m) => m.kind === "task")?.taskId).toBe(taskId);
 });
 
+test("Uptime Kuma: an alert can wait for more failed checks; a monitor back up in time starts nothing", async () => {
+  const work = new FakeModel([
+    finish("Forgejo is still down; restarted it.", true),
+    finish("Gitea is back.", true),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const call = await owner(t);
+  const kuma = (await (
+    await call("POST", "/triggers", {
+      name: "Kuma",
+      kind: "kuma",
+      prompt: "Fix it.",
+      confirmChecks: 2,
+    })
+  ).json()) as TriggerWithSecret;
+  expect(kuma.confirmChecks).toBe(2);
+  const event = (status: number, name = "Forgejo", interval = 60) => ({
+    heartbeat: { status, msg: status ? "200 - OK" : "timeout" },
+    monitor: { id: name.length, name, interval },
+  });
+
+  // A blip: down, then back up within two checks.
+  expect(t.triggers.receiveKuma(kuma.id, event(0, "Jellyfin"))).toMatchObject({
+    status: "waiting",
+  });
+  t.advance(60_000);
+  t.triggers.receiveKuma(kuma.id, event(1, "Jellyfin"));
+  t.advance(120_000);
+  t.triggers.tick();
+
+  // Still down after two checks and the slack: now it starts, once.
+  const first = t.triggers.receiveKuma(kuma.id, event(0));
+  expect(first).toMatchObject({ status: "waiting" });
+  // Kuma's resent alert doesn't restart the wait.
+  t.advance(60_000);
+  expect(t.triggers.receiveKuma(kuma.id, event(0))).toEqual(first);
+  t.advance(60_000);
+  t.triggers.tick();
+  expect(t.tasks.list({}).length).toBe(0);
+  t.advance(30_000);
+  t.triggers.tick();
+  await t.tasks.idle();
+  const tasks = t.tasks.list({});
+  expect(tasks.map((x) => x.title)).toEqual(["Forgejo is down"]);
+  expect(JSON.parse(tasks[0]?.payload as string)).toMatchObject({
+    monitor: "Forgejo",
+    status: "down",
+  });
+
+  // Back to acting at once.
+  const patched = (await (
+    await call("PATCH", `/triggers/${kuma.id}`, { confirmChecks: 0 })
+  ).json()) as TriggerWithSecret;
+  expect(patched.confirmChecks).toBe(0);
+  expect(t.triggers.receiveKuma(kuma.id, event(0, "Gitea"))).toMatchObject({ status: "started" });
+  await t.tasks.idle();
+});
+
 test("a background task runs a desktop task, waits for it, and reports for both", async () => {
   // One model answers both: the background task, then its desktop task, then the background task again.
   const work = new FakeModel([

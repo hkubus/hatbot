@@ -172,12 +172,13 @@ final class ScheduleAndMemoryTests: XCTestCase {
     let json = #"""
       {"type":"trigger.updated","trigger":{"id":3,"name":"Kuma","kind":"kuma","trusted":true,"prompt":"Fix it",
        "enabled":true,"url":"https://h.example/api/v1/hooks/kuma/3","createdAt":"2026-10-10T08:00:00.000Z",
-       "lastFiredAt":null,"lastTaskId":null}}
+       "lastFiredAt":null,"lastTaskId":null,"confirmChecks":1}}
       """#
     guard case let .triggerUpdated(t) = try JSONDecoder().decode(HatbotEvent.self, from: Data(json.utf8)) else {
       return XCTFail("not a trigger")
     }
     XCTAssertEqual(t.kind, .kuma)
+    XCTAssertEqual(t.confirmChecks, 1)
     let withSecret = #"""
       {"id":3,"name":"Kuma","kind":"kuma","trusted":true,"prompt":"Fix it","enabled":true,
        "url":"https://h.example/api/v1/hooks/kuma/3","createdAt":"2026-10-10T08:00:00.000Z","lastFiredAt":null,

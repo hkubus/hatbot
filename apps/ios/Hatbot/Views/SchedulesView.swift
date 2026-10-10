@@ -320,6 +320,13 @@ struct TriggerDetailView: View {
         if t.kind == .webhook {
           Toggle("Trust its payloads", isOn: binding(t.trusted) { AppStore.TriggerChange(trusted: $0) })
         }
+        if t.kind == .kuma, let checks = t.confirmChecks {
+          Picker("Start a task after", selection: confirmBinding(checks)) {
+            Text("First failure").tag(0)
+            Text("2 failures").tag(1)
+            Text("3 failures").tag(2)
+          }
+        }
       } footer: {
         if t.kind == .webhook {
           Text("Untrusted payloads make the run ask before it changes anything.")
@@ -380,6 +387,15 @@ struct TriggerDetailView: View {
     Binding(
       get: { value },
       set: { new in Task { await act { _ = try await store.saveTrigger(id, change(new)) } } })
+  }
+
+  /// Failed checks before a down alert starts a task; saves as soon as it's picked.
+  private func confirmBinding(_ value: Int) -> Binding<Int> {
+    Binding(
+      get: { value },
+      set: { new in
+        Task { await act { _ = try await store.saveTrigger(id, AppStore.TriggerChange(confirmChecks: new)) } }
+      })
   }
 
   private func act(_ work: () async throws -> Void) async {

@@ -90,7 +90,11 @@ setInterval(() => void thread.sweep(), 60_000);
 // Runs missed while the brain was down start once plugins are up, so they get their tools.
 void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {
   schedules.tick();
-  setInterval(() => schedules.tick(), 10_000);
+  triggers.tick();
+  setInterval(() => {
+    schedules.tick();
+    triggers.tick();
+  }, 10_000);
 });
 const loginLimits = {
   perIp: new FailureLimiter(10, 15 * 60_000),
