@@ -286,7 +286,7 @@ export async function runPluginTool(
 export function describeCall(t: PluginTool, input: unknown): string {
   const parsed = t.schema.safeParse(input);
   if (parsed.success && t.describe) return t.describe(parsed.data);
-  return `${t.name} ${JSON.stringify(input ?? {}).slice(0, 200)}`;
+  return `${t.name} ${JSON.stringify(input ?? {})}`;
 }
 
 /**

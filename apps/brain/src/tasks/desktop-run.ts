@@ -544,7 +544,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     if (danger) {
       const outcome = await askApproval({
         kind: danger.kind,
-        summary: `On the desktop: ${command}`.slice(0, 300),
+        summary: `On the desktop: ${command}`,
         reason: `This command ${danger.why}.`,
       });
       if (outcome !== "approved")

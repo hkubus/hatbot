@@ -50,7 +50,7 @@ async function haikuJson(
 }
 
 const whyOf = (json: Record<string, unknown> | null) =>
-  typeof json?.why === "string" ? json.why.slice(0, 200) : "";
+  typeof json?.why === "string" ? json.why : "";
 
 type Action = { tool: string; input: unknown; what: string; why: string };
 
