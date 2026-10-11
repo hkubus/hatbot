@@ -6,8 +6,9 @@ extension Color {
   /// Hatbot's amber (PLAN.md §10.2). Blue means "needs you", red destructive, green done.
   static let brand = Color(light: 0xE8820C, dark: 0xFF9F2E)
   static let attention = Color.blue
-  static let userBubble = Color(light: 0xFCE7CF, dark: 0xFF9F2E, darkOpacity: 0.2)
-  static let botBubble = Color(light: 0xEFEFF2, dark: 0x2C2C2F)
+  /// Solid, with white text, like Messages' blue; Hatbot's grey is Messages' too.
+  static let userBubble = Color(uiColor: UIColor(hex: 0xE8820C, alpha: 1))
+  static let botBubble = Color(light: 0xE9E9EB, dark: 0x262628)
 
   init(light: UInt32, dark: UInt32, darkOpacity: CGFloat = 1) {
     self.init(

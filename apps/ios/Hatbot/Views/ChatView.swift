@@ -1,5 +1,5 @@
-// The thread (PLAN.md §10.2, §10.4): plain bubbles, a time under each, Copy and Open in a long-press
-// menu. A task shows under the reply that started it; approvals carry Approve and Deny, and fold into
+// The thread (PLAN.md §10.2, §10.4): Messages-style bubbles, grouped by sender with a tail on the
+// last, a centered time after a pause, Copy and Open in a long-press menu. A task shows under the reply that started it; approvals carry Approve and Deny, and fold into
 // the task's message once it ends. Finished conversations fold up under their recap.
 import SwiftUI
 import UIKit
@@ -14,18 +14,19 @@ struct ChatView: View {
   @State private var loaded = false
   @State private var unfolded = Set<Int>()
 
-  /// What the list shows: day labels, folds, and the messages that aren't folded away.
+  /// What the list shows: times, folds, and the messages that aren't folded away.
   private enum Row: Identifiable {
-    case day(String, before: Int)
+    case time(String, before: Int)
     case fold(ThreadGroup)
-    /// `approvals`: an ended task's, shown in this message instead of their own.
-    case message(ThreadMessage, approvals: [Int])
+    /// `approvals`: an ended task's, shown in this message instead of their own. `joined`: it follows
+    /// a message from the same sender; `tail`: it's the last of them.
+    case message(ThreadMessage, approvals: [Int], joined: Bool = false, tail: Bool = true)
 
     var id: String {
       switch self {
-      case let .day(_, before): "d\(before)"
+      case let .time(_, before): "t\(before)"
       case let .fold(g): "f\(g.id)"
-      case let .message(m, _): "m\(m.id)"
+      case let .message(m, _, _, _): "m\(m.id)"
       }
     }
   }
@@ -37,7 +38,7 @@ struct ChatView: View {
       store.tasks[id].map { !$0.isActive } ?? false
     }
     func add(_ m: ThreadMessage, as row: Row) {
-      if let day = dayChange(m, after: previous) { rows.append(.day(day, before: m.id)) }
+      if let time = pause(m, after: previous) { rows.append(.time(time, before: m.id)) }
       previous = m
       rows.append(row)
     }
@@ -59,13 +60,26 @@ struct ChatView: View {
         : g.messages.filter { m in m.approvalId.map { store.approvals[$0]?.status == .pending } ?? false }
       for m in shown { add(m) }
     }
-    return rows
+    return grouped(rows)
+  }
+
+  /// Runs of messages from the same sender sit close together, with a tail on the last.
+  private func grouped(_ rows: [Row]) -> [Row] {
+    func sender(_ row: Row?) -> ThreadMessage.Role? {
+      if case let .message(m, _, _, _)? = row { m.role } else { nil }
+    }
+    return rows.indices.map { i in
+      guard case let .message(m, approvals, _, _) = rows[i] else { return rows[i] }
+      let before = i > 0 ? rows[i - 1] : nil
+      let after = i + 1 < rows.count ? rows[i + 1] : nil
+      return .message(m, approvals: approvals, joined: sender(before) == m.role, tail: sender(after) != m.role)
+    }
   }
 
   var body: some View {
     NavigationStack(path: $path) {
       ScrollView {
-        LazyVStack(spacing: 14) {
+        LazyVStack(spacing: 0) {
           if store.hasEarlier {
             Button("Earlier messages") { Task { try? await store.loadEarlier() } }
               .buttonStyle(.borderless)
@@ -76,8 +90,10 @@ struct ChatView: View {
           }
           ForEach(rows) { row in
             switch row {
-            case let .day(day, _):
-              Text(day).font(.footnote.weight(.medium)).foregroundStyle(.secondary).padding(.top, 6)
+            case let .time(time, _):
+              Text(time).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                .padding(.top, 14)
+                .padding(.bottom, 4)
             case let .fold(g):
               FoldRow(group: g, open: g.episodeId.map { unfolded.contains($0) } ?? false) {
                 guard let id = g.episodeId else { return }
@@ -85,8 +101,10 @@ struct ChatView: View {
                   if unfolded.remove(id) == nil { unfolded.insert(id) }
                 }
               }
-            case let .message(m, approvals):
-              MessageRow(m: m, approvals: approvals, open: { path.append($0) })
+              .padding(.top, 10)
+            case let .message(m, approvals, joined, tail):
+              MessageRow(m: m, approvals: approvals, tail: tail, open: { path.append($0) })
+                .padding(.top, joined ? 2 : 10)
             }
           }
         }
@@ -115,20 +133,22 @@ struct ChatView: View {
     }
   }
 
-  /// "Today", "Yesterday" or the date, when a message starts a new day.
-  private func dayChange(_ m: ThreadMessage, after previous: ThreadMessage?) -> String? {
+  /// "Today 14:05", like Messages, when a message comes an hour or more after the one before.
+  private func pause(_ m: ThreadMessage, after previous: ThreadMessage?) -> String? {
     guard let date = Format.date(m.createdAt) else { return nil }
-    if let prev = Format.date(previous?.createdAt),
-      Calendar.current.isDate(prev, inSameDayAs: date)
-    {
-      return nil
+    if let prev = Format.date(previous?.createdAt), date.timeIntervalSince(prev) < 3600 { return nil }
+    let time = date.formatted(date: .omitted, time: .shortened)
+    let calendar = Calendar.current
+    if calendar.isDateInToday(date) { return "Today \(time)" }
+    if calendar.isDateInYesterday(date) { return "Yesterday \(time)" }
+    if let weekAgo = calendar.date(byAdding: .day, value: -6, to: calendar.startOfDay(for: .now)), date >= weekAgo {
+      return "\(date.formatted(.dateTime.weekday(.wide))) \(time)"
     }
-    if Calendar.current.isDateInToday(date) { return "Today" }
-    if Calendar.current.isDateInYesterday(date) { return "Yesterday" }
-    let thisYear = Calendar.current.isDate(date, equalTo: .now, toGranularity: .year)
-    return thisYear
-      ? date.formatted(.dateTime.weekday(.wide).day().month(.wide))
-      : date.formatted(.dateTime.weekday(.wide).day().month(.wide).year())
+    let thisYear = calendar.isDate(date, equalTo: .now, toGranularity: .year)
+    let day = thisYear
+      ? date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
+      : date.formatted(.dateTime.day().month(.abbreviated).year())
+    return "\(day) at \(time)"
   }
 
   private var canSend: Bool {
@@ -234,36 +254,40 @@ private struct MessageRow: View {
   let m: ThreadMessage
   /// An ended task's approvals, shown here instead of their own messages.
   let approvals: [Int]
+  /// The last of a run from the same sender, so its bubble has a tail.
+  let tail: Bool
   let open: (Route) -> Void
   @Environment(AppStore.self) private var store
 
   var body: some View {
     if m.role == .user {
-      VStack(alignment: .trailing, spacing: 4) {
-        Text(m.text)
-          .textSelection(.enabled)
-          .padding(.horizontal, 13)
-          .padding(.vertical, 8)
-          .background(Color.userBubble, in: UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 18, bottomTrailingRadius: 6, topTrailingRadius: 18))
-          .contextMenu { copyButton(m.text) }
-        Text(m.createdAt.timeText).font(.caption2).foregroundStyle(.secondary)
-      }
-      .padding(.leading, 48)
-      .frame(maxWidth: .infinity, alignment: .trailing)
+      let shape = Bubble(tail: tail, side: .trailing)
+      Text(m.text)
+        .foregroundStyle(.white)
+        .textSelection(.enabled)
+        .padding(Bubble.insets(.trailing))
+        .background(Color.userBubble, in: shape)
+        .contentShape(.contextMenuPreview, shape)
+        .contextMenu { copyButton(m.text) }
+        .padding(.leading, 56)
+        .frame(maxWidth: .infinity, alignment: .trailing)
     } else {
-      VStack(alignment: .leading, spacing: 4) {
+      let shape = Bubble(tail: tail, side: .leading)
+      VStack(alignment: .leading, spacing: 3) {
         VStack(alignment: .leading, spacing: 8) { content }
-          .padding(.horizontal, 13)
-          .padding(.vertical, 8)
-          .background(Color.botBubble, in: UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 6, bottomTrailingRadius: 18, topTrailingRadius: 18))
+          .padding(Bubble.insets(.leading))
+          .background(Color.botBubble, in: shape)
+          .contentShape(.contextMenuPreview, shape)
           .contextMenu { menu }
-        if m.status != .streaming {
-          Text(m.createdAt.timeText + (updatedAt.map { " · Updated \($0.timeText)" } ?? ""))
+        // Like Messages' "Edited": the task's result changed this message after it was sent.
+        if m.status != .streaming, let updatedAt {
+          Text("Updated \(updatedAt.timeText)")
             .font(.caption2)
             .foregroundStyle(.secondary)
+            .padding(.leading, Bubble.tailWidth + 12)
         }
       }
-      .padding(.trailing, 32)
+      .padding(.trailing, 40)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
   }
@@ -536,5 +560,46 @@ private struct ScheduleMessage: View {
       }
     }
     .onAppear { store.ensureSchedule(scheduleId) }
+  }
+}
+
+/// A Messages bubble: a rounded rectangle, with a tail curling out of the bottom corner on `side`.
+/// The tail's room is kept even without one, so a run of bubbles lines up.
+private struct Bubble: Shape {
+  var tail: Bool
+  var side: HorizontalEdge
+  static let tailWidth: CGFloat = 6
+
+  /// The text's padding inside the bubble, with room for the tail.
+  static func insets(_ side: HorizontalEdge) -> EdgeInsets {
+    EdgeInsets(
+      top: 7, leading: 12 + (side == .leading ? tailWidth : 0),
+      bottom: 7, trailing: 12 + (side == .trailing ? tailWidth : 0))
+  }
+
+  func path(in rect: CGRect) -> Path {
+    // Drawn with the tail on the right, then flipped for the left.
+    let w = rect.width
+    let h = rect.height
+    let body = w - Self.tailWidth
+    let r = min(18, h / 2, body / 2)
+    var p = Path()
+    p.move(to: CGPoint(x: r, y: 0))
+    p.addArc(tangent1End: CGPoint(x: body, y: 0), tangent2End: CGPoint(x: body, y: h), radius: r)
+    if tail && h >= r + 10 {
+      p.addLine(to: CGPoint(x: body, y: h - 10))
+      p.addCurve(to: CGPoint(x: w, y: h), control1: CGPoint(x: body, y: h - 3), control2: CGPoint(x: w - 2, y: h))
+      p.addCurve(
+        to: CGPoint(x: body - 9, y: h - 1.5),
+        control1: CGPoint(x: w - 4, y: h - 0.5), control2: CGPoint(x: body - 3, y: h - 1.5))
+      p.addQuadCurve(to: CGPoint(x: body - 13, y: h), control: CGPoint(x: body - 11, y: h))
+    } else {
+      p.addArc(tangent1End: CGPoint(x: body, y: h), tangent2End: CGPoint(x: 0, y: h), radius: r)
+    }
+    p.addArc(tangent1End: CGPoint(x: 0, y: h), tangent2End: CGPoint(x: 0, y: 0), radius: r)
+    p.addArc(tangent1End: CGPoint(x: 0, y: 0), tangent2End: CGPoint(x: body, y: 0), radius: r)
+    p.closeSubpath()
+    let flip = side == .leading ? CGAffineTransform(scaleX: -1, y: 1).translatedBy(x: -w, y: 0) : .identity
+    return p.applying(flip.concatenating(CGAffineTransform(translationX: rect.minX, y: rect.minY)))
   }
 }
