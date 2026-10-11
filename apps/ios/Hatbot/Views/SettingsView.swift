@@ -48,6 +48,14 @@ struct SettingsView: View {
               Text("Medium").tag(AppSettings.Effort.medium)
             }
           }
+          if let model = settings.taskModel {
+            Section("Tasks") {
+              Picker("Model for background tasks", selection: taskModel(model)) {
+                Text("Haiku 5.5").tag(AppSettings.TaskModel.haiku)
+                Text("Opus 5.5").tag(AppSettings.TaskModel.opus)
+              }
+            }
+          }
           if let model = settings.desktopModel {
             Section("Desktop") {
               Picker("Model for desktop tasks", selection: desktopModel(model)) {
@@ -129,6 +137,14 @@ struct SettingsView: View {
       get: { current },
       set: { value in
         Task { await act { settings = try await store.setChatModel(value) } }
+      })
+  }
+
+  private func taskModel(_ current: AppSettings.TaskModel) -> Binding<AppSettings.TaskModel> {
+    Binding(
+      get: { current },
+      set: { value in
+        Task { await act { settings = try await store.setTaskModel(value) } }
       })
   }
 

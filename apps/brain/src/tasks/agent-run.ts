@@ -1,5 +1,6 @@
-// Background tasks (PLAN.md §5.1, §5.6): started by a schedule, a trigger, or the chat's run_task. Opus
-// with Hatbot's own tools and the plugins' tools, in the background lane, reporting back through finish_task.
+// Background tasks (PLAN.md §5.1, §5.6): started by a schedule, a trigger, or the chat's run_task. The
+// model Settings choose (Haiku by default) with Hatbot's own tools and the plugins' tools, in the
+// background lane, reporting back through finish_task.
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ApprovalKind } from "@hatbot/shared";
 import { z } from "zod";
@@ -12,10 +13,9 @@ import { ownerNote } from "../approvals";
 import type { PluginTool } from "../plugins/plugin";
 import { describeCall, runPluginTool, verdictFor } from "../plugins/registry";
 import { BudgetError, priceOf } from "../spend";
-import { Stop } from "./desktop-run";
+import { Stop, UPDATES_MODELS } from "./desktop-run";
 import type { Tasks } from "./service";
 
-export const AGENT_MODEL = "claude-opus-5-5";
 const MAX_STEPS = 30;
 /** Code work (effort medium or high) reads and writes more. */
 const MAX_CODE_STEPS = 80;
@@ -63,8 +63,8 @@ const CORE_TOOLS: Anthropic.Beta.BetaTool[] = [
 ];
 
 /** Rough upper estimate before a request: cached prefix at read price, plus room for a reply. */
-function estimateCost(messages: Anthropic.Beta.BetaMessageParam[]): number {
-  const p = priceOf(AGENT_MODEL);
+function estimateCost(messages: Anthropic.Beta.BetaMessageParam[], model: string): number {
+  const p = priceOf(model);
   const tokens = JSON.stringify(messages).length / 3 + 4000;
   return (tokens * p.input * 0.3 + 2000 * p.output) / 1_000_000;
 }
@@ -376,7 +376,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       if (step >= maxSteps)
         throw new Stop("failed", `Stopped after ${maxSteps} steps without finishing.`);
       try {
-        d.spend.check(estimateCost(messages), { id, limitUsd: tasks.budget(id) });
+        d.spend.check(estimateCost(messages, task.model), { id, limitUsd: tasks.budget(id) });
       } catch (err) {
         if (!(err instanceof BudgetError)) throw err;
         if (err.limit !== "task") throw new Stop("failed", `Stopped: ${err.message}`);
@@ -386,14 +386,16 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
       const res = await d.model.stream(
         {
-          model: AGENT_MODEL,
+          model: task.model,
           // Code work writes whole files into tool calls.
           max_tokens: task.effort ? 32000 : 16000,
           betas: BETAS,
           system: [{ type: "text", text: system }],
           cache_control: { type: "ephemeral" },
           tools,
-          thinking: { type: "adaptive", display: "updates" },
+          thinking: UPDATES_MODELS.has(task.model)
+            ? { type: "adaptive", display: "updates" }
+            : { type: "adaptive" },
           // The chat's dial unless the task asked for more: the same kind of work, without a screen.
           output_config: { effort: task.effort ?? d.settings.get().chatEffort },
           messages,
@@ -405,7 +407,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         },
       );
       d.spend.recordResponse({
-        model: AGENT_MODEL,
+        model: task.model,
         purpose: "task",
         usage: res.usage,
         taskId: id,

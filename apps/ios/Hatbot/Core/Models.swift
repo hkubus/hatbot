@@ -299,6 +299,8 @@ struct AppSettings: Codable, Equatable, Sendable {
   var notificationsOpen: Opens?
   /// The model that drives desktop tasks; missing on brains from before the setting.
   var desktopModel: DesktopModel?
+  /// The model background tasks run on; missing on brains from before the setting.
+  var taskModel: TaskModel?
   /// The chat's model; missing on brains from before the setting.
   var chatModel: ChatModel?
   /// A task from the chat doesn't ask again for what you asked for; missing on older brains.
@@ -316,6 +318,12 @@ struct AppSettings: Codable, Equatable, Sendable {
     case opus = "claude-opus-5-5"
     case haiku = "claude-haiku-5-5"
     static let fallback = DesktopModel.opus
+  }
+
+  enum TaskModel: String, LenientEnum, CaseIterable {
+    case haiku = "claude-haiku-5-5"
+    case opus = "claude-opus-5-5"
+    static let fallback = TaskModel.haiku
   }
 }
 

@@ -297,4 +297,6 @@ export type AppSettings = {
   notificationsOpen: "web" | "app";
   /** The model that drives desktop tasks. */
   desktopModel: "claude-opus-5-5" | "claude-haiku-5-5";
+  /** The model background tasks (SSH, Proxmox, code work) run on. */
+  taskModel: "claude-haiku-5-5" | "claude-opus-5-5";
 };

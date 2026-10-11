@@ -66,9 +66,10 @@ test("chat creates a schedule; it runs when due and reports only when there's ne
     Date.parse(s.nextRunAt as string) + 24 * 3600_000,
   );
 
-  // The request: Opus, Hatbot's memory tools, the desktop and finish_task, but no schedule tools.
+  // The request: Haiku by default, Hatbot's memory tools, the desktop and finish_task, but no schedule tools.
   const req = work.requests[0];
-  expect(req?.model).toBe("claude-opus-5-5");
+  expect(req?.model).toBe("claude-haiku-5-5");
+  expect(req?.thinking).toEqual({ type: "adaptive" });
   const names = req?.tools?.map((x) => ("name" in x ? x.name : ""));
   expect(names).toContain("memory_read");
   expect(names).toContain("run_desktop_task");
@@ -76,12 +77,16 @@ test("chat creates a schedule; it runs when due and reports only when there's ne
   expect(names).not.toContain("schedule_create");
   expect(JSON.stringify(req?.messages[0])).toContain("Started by the schedule");
 
-  // News: a card and a notification, and the chat hears about it.
+  // News: a card and a notification, and the chat hears about it. Opus in Settings: this run is on it.
+  t.settings.update({ taskModel: "claude-opus-5-5" });
   t.advance(24 * 3600_000);
   t.schedules.tick();
   await t.tasks.idle();
   const second = t.tasks.list()[0] as Task;
   expect(second.id).not.toBe(first.id);
+  expect(second.model).toBe("claude-opus-5-5");
+  expect(work.requests[1]?.model).toBe("claude-opus-5-5");
+  expect(work.requests[1]?.thinking).toMatchObject({ display: "updates" });
   expect(t.thread.list().find((m) => m.kind === "task")?.taskId).toBe(second.id);
   expect(t.notifier.sent.at(-1)?.title).toContain("Framework stock check");
   t.thread.post("is it in stock?");

@@ -15,7 +15,7 @@ import type { Plugins } from "../plugins/registry";
 import type { SettingsStore } from "../settings";
 import type { Spend } from "../spend";
 import type { Skills } from "../teach/skills";
-import { AGENT_MODEL, runAgentTask } from "./agent-run";
+import { runAgentTask } from "./agent-run";
 import { runDesktopTask } from "./desktop-run";
 import { Pool, ScreenLane } from "./lane";
 
@@ -255,7 +255,8 @@ export class Tasks {
       success_criteria: "",
       origin: input.origin,
       lane: "background",
-      model: AGENT_MODEL,
+      // Fixed for the task, like a desktop task's.
+      model: this.d.settings.get().taskModel,
       effort: input.effort ?? null,
       source: input.source ?? null,
       schedule_id: input.scheduleId ?? null,

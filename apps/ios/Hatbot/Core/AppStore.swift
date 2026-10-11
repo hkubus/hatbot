@@ -463,6 +463,11 @@ final class AppStore {
     return try await api.put("/settings", body: Body(desktopModel: model))
   }
 
+  func setTaskModel(_ model: AppSettings.TaskModel) async throws -> AppSettings {
+    struct Body: Encodable { let taskModel: AppSettings.TaskModel }
+    return try await api.put("/settings", body: Body(taskModel: model))
+  }
+
   func setNotificationsOpen(_ opens: AppSettings.Opens) async throws -> AppSettings {
     struct Body: Encodable { let notificationsOpen: AppSettings.Opens }
     return try await api.put("/settings", body: Body(notificationsOpen: opens))

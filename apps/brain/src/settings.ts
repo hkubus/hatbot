@@ -23,6 +23,8 @@ export const Settings = z.object({
   notificationsOpen: z.enum(["web", "app"]),
   /** The model that drives the desktop (PLAN.md §5.4). Haiku 5.5 is the experiment: far cheaper, less tested. */
   desktopModel: z.enum(["claude-opus-5-5", "claude-haiku-5-5"]),
+  /** The model background tasks run on (SSH, Proxmox, code work: anything without a screen). */
+  taskModel: z.enum(["claude-haiku-5-5", "claude-opus-5-5"]),
 });
 export type Settings = z.infer<typeof Settings>;
 
@@ -36,6 +38,7 @@ export const DEFAULT_SETTINGS: Settings = {
   reviewTaintedChanges: true,
   notificationsOpen: "web",
   desktopModel: "claude-opus-5-5",
+  taskModel: "claude-haiku-5-5",
 };
 
 export class SettingsStore {

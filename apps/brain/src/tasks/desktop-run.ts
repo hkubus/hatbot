@@ -23,7 +23,7 @@ import { checkFor, consequential } from "./policy";
 import type { Tasks } from "./service";
 
 /** Models whose between-tool progress notes (`display: "updates"`) are documented. */
-const UPDATES_MODELS = new Set(["claude-opus-5-5"]);
+export const UPDATES_MODELS = new Set(["claude-opus-5-5"]);
 const MAX_STEPS = 80;
 const MAX_ACTIVE_MS = 30 * 60_000;
 const TAKEOVER_TIMEOUT_MS = 24 * 3600_000;
