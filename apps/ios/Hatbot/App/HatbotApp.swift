@@ -1,4 +1,4 @@
-// The app: sign-in until there's a token, then tabs like the web app on a phone (PLAN.md §10.3).
+// The app: sign-in until there's a token, then chat, with the other sections in a sidebar (PLAN.md §10.3).
 // Notifications come from the ntfy app; hatbot:// links open tasks, approvals, schedules and triggers.
 import SwiftUI
 
@@ -21,44 +21,18 @@ struct HatbotApp: App {
   }
 }
 
-enum AppTab: Hashable {
-  case chat, tasks, live, memory, settings
-}
-
 struct MainView: View {
   @Environment(AppStore.self) private var store
   @Environment(\.scenePhase) private var phase
   @State private var tab = AppTab.chat
+  @State private var sidebar = false
   @State private var tasksPath: [Route] = []
   @State private var settingsPath: [Route] = []
 
   var body: some View {
-    TabView(selection: $tab) {
-      Tab("Chat", systemImage: "bubble.left.and.bubble.right", value: .chat) {
-        ChatView()
-      }
-      Tab("Tasks", systemImage: "checklist", value: .tasks) {
-        TasksView(path: $tasksPath)
-      }
-      .badge(store.needsYou)
-      Tab("Live", systemImage: "display", value: .live) {
-        NavigationStack {
-          // While you have control, drags go to the desktop.
-          ScrollView { LiveView() }
-            .scrollDisabled(store.desktop?.control == .owner)
-            .navigationTitle("Live")
-            .navigationBarTitleDisplayMode(.inline)
-            .routes()
-        }
-      }
-      Tab("Memory", systemImage: "book", value: .memory) {
-        MemoryView()
-      }
-      Tab("Settings", systemImage: "gearshape", value: .settings) {
-        SettingsView(path: $settingsPath)
-      }
-    }
-    .minimizingTabBar()
+    section
+      .environment(\.openSidebar) { withAnimation(.snappy) { sidebar = true } }
+      .overlay { Sidebar(tab: $tab, open: $sidebar) }
     // The event stream runs while the app is in front; iOS would cut it in the background anyway.
     .onChange(of: phase, initial: true) { _, phase in
       if phase == .active {
@@ -71,9 +45,30 @@ struct MainView: View {
     .overlay(alignment: .top) { Toast() }
   }
 
+  @ViewBuilder
+  private var section: some View {
+    switch tab {
+    case .chat: ChatView()
+    case .tasks: TasksView(path: $tasksPath)
+    case .live:
+      NavigationStack {
+        // While you have control, drags go to the desktop.
+        ScrollView { LiveView() }
+          .scrollDisabled(store.desktop?.control == .owner)
+          .navigationTitle("Live")
+          .navigationBarTitleDisplayMode(.inline)
+          .sidebarButton()
+          .routes()
+      }
+    case .memory: MemoryView()
+    case .settings: SettingsView(path: $settingsPath)
+    }
+  }
+
   /// hatbot://tasks/12 opens a task, hatbot://approvals/5 the approval's task; schedules and triggers
   /// open under Settings, like on the web app on a phone.
   private func open(_ url: URL) {
+    sidebar = false
     switch AppLink(url: url) {
     case let .task(id):
       tab = .tasks

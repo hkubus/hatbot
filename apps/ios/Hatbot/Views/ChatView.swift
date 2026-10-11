@@ -120,6 +120,7 @@ struct ChatView: View {
       }
       .edgeBar(.bottom) { composer }
       .navigationTitle("Hatbot")
+      .sidebarButton()
       .navigationBarTitleDisplayMode(.inline)
       .routes()
       .task {

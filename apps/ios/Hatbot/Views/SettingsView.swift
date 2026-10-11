@@ -97,6 +97,7 @@ struct SettingsView: View {
         }
       }
       .navigationTitle("Settings")
+      .sidebarButton()
       .confirmationDialog("Pause all?", isPresented: $confirmPause, titleVisibility: .visible) {
         Button("Pause all", role: .destructive) { Task { await act { try await store.setPaused(true) } } }
       }

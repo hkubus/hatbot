@@ -44,6 +44,7 @@ struct TasksView: View {
         }
       }
       .navigationTitle("Tasks")
+      .sidebarButton()
       .toolbar {
         ToolbarItem(placement: .principal) {
           Picker("Tasks", selection: $filter) {

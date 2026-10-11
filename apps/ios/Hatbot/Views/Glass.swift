@@ -45,14 +45,4 @@ extension View {
       self
     }
   }
-
-  /// The tab bar shrinks while you scroll down, on iOS 26 and later.
-  @ViewBuilder
-  func minimizingTabBar() -> some View {
-    if #available(iOS 26, *) {
-      tabBarMinimizeBehavior(.onScrollDown)
-    } else {
-      self
-    }
-  }
 }

@@ -27,6 +27,7 @@ struct MemoryView: View {
       }
       .overlay { if files == nil && error == nil { ProgressView() } }
       .navigationTitle("Memory")
+      .sidebarButton()
       .toolbar {
         ToolbarItem {
           NavigationLink(value: Route.memoryHistory(path: nil)) {
