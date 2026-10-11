@@ -3,7 +3,10 @@
 // host down, and every write still needs approval once a task has read untrusted content.
 import type { ApprovalKind } from "@hatbot/shared";
 
-type Rule = { re: RegExp; why: string; kind?: ApprovalKind };
+const REBOOT = /\breboot\b|\binit\s+6\b/;
+
+/** `host`: only on a host; inside a container, rebooting it is no worse than restarting a service. */
+type Rule = { re: RegExp; why: string; kind?: ApprovalKind; host?: boolean };
 
 const RULES: Rule[] = [
   { re: /\brm\s+(-\S*\s+)*-\S*[rR]/, why: "deletes files recursively", kind: "delete" },
@@ -27,19 +30,19 @@ const RULES: Rule[] = [
   { re: /\b(lvremove|vgremove|pvremove|lvreduce)\b/, why: "removes LVM storage", kind: "delete" },
   { re: /\btruncate\b/, why: "truncates files", kind: "delete" },
   {
-    re: /\b(shutdown|poweroff|halt)\b|\breboot\b|\binit\s+[06]\b/,
-    why: "shuts down or reboots the host",
-  },
-  {
-    re: /\bsystemctl\s+(\S+\s+)*(poweroff|reboot|halt|kexec|rescue|emergency|isolate)\b/,
-    why: "shuts down or reboots the host",
-  },
-  { re: /\bsystemctl\s+(\S+\s+)*(stop|disable|mask|kill)\b/, why: "stops or disables a service" },
-  {
     re: /\b(pct|qm)\s+(destroy|stop|shutdown|rollback|delsnapshot)\b/,
     why: "destroys or stops a guest",
     kind: "delete",
   },
+  { re: /\b(shutdown|poweroff|halt)\b|\binit\s+0\b/, why: "shuts down {where}" },
+  {
+    re: /\bsystemctl\s+(\S+\s+)*(poweroff|halt|kexec|rescue|emergency|isolate)\b/,
+    why: "shuts down {where}",
+  },
+  // proxmox_power reboots a guest with the brain, the desktop and careful guests checked.
+  { re: /\b(pct|qm)\s+reboot\b/, why: "reboots a guest" },
+  { re: REBOOT, why: "reboots the host", host: true },
+  { re: /\bsystemctl\s+(\S+\s+)*(stop|disable|mask|kill)\b/, why: "stops or disables a service" },
   {
     re: /\bdocker\s+(compose\s+)?(rm|rmi|down|kill|prune|system\s+prune|volume\s+(rm|prune)|network\s+rm|image\s+prune|container\s+prune)\b/,
     why: "removes Docker containers, images or volumes",
@@ -83,8 +86,16 @@ const RULES: Rule[] = [
   { re: /\bmv\s+[^|;&]*\s(\/dev\/null|\/)\s*$/, why: "moves files away for good", kind: "delete" },
 ];
 
-/** Why this command needs approval, or null. */
-export function destructive(command: string): { why: string; kind: ApprovalKind } | null {
-  for (const r of RULES) if (r.re.test(command)) return { why: r.why, kind: r.kind ?? "other" };
+/** Why this command needs approval, or null. `where`: on a host, or inside a container (ssh_pct_exec). */
+export function destructive(
+  command: string,
+  where: "host" | "container" = "host",
+): { why: string; kind: ApprovalKind } | null {
+  for (const r of RULES)
+    if (!(r.host && where === "container") && r.re.test(command))
+      return { why: r.why.replace("{where}", `the ${where}`), kind: r.kind ?? "other" };
   return null;
 }
+
+/** Whether a command reboots the machine it runs on. */
+export const reboots = (command: string) => REBOOT.test(command);

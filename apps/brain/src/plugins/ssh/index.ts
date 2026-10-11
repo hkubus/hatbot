@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { allow, ask, definePlugin, PluginError, ready, tool } from "../plugin";
-import { destructive } from "./policy";
+import { destructive, reboots } from "./policy";
 
 const OUTPUT_CHARS = 15_000;
 
@@ -104,7 +104,7 @@ export const sshPlugin = definePlugin({
   name: "SSH",
   description: "Run commands on your hosts",
   config: Config,
-  start: ({ env, config }) => {
+  start: ({ env, config, db }) => {
     const home = env.HOME ?? homedir();
     const key = env.HATBOT_SSH_KEY ?? join(home, ".ssh/id_ed25519");
     const knownHosts = env.HATBOT_SSH_KNOWN_HOSTS ?? join(home, ".ssh/known_hosts");
@@ -175,6 +175,17 @@ export const sshPlugin = definePlugin({
       if (r.stdout.trim()) parts.push(cut(r.stdout.trimEnd()));
       if (r.stderr.trim()) parts.push(`stderr:\n${cut(r.stderr.trimEnd())}`);
       return { text: parts.join("\n"), ok: r.code === 0 && !r.timedOut };
+    };
+
+    /** The Proxmox plugin's guests whose power actions always ask, read live from its settings. */
+    const carefulGuests = (): number[] => {
+      const row = db
+        .query<{ value: string }, [string]>("SELECT value FROM settings WHERE key = ?")
+        .get("plugin:proxmox");
+      const parsed = z
+        .object({ config: z.object({ careful: z.array(z.number()).default([]) }) })
+        .safeParse(row ? JSON.parse(row.value) : {});
+      return parsed.success ? parsed.data.config.careful : [];
     };
 
     const hostField = z.string().describe(`One of: ${hostNames.join(", ") || "(none yet)"}`);
@@ -273,11 +284,13 @@ export const sshPlugin = definePlugin({
               }),
               describe: ({ host, guest, command }) =>
                 `In CT ${guest} on ${host}: ${command.length > 160 ? `${command.slice(0, 160)}…` : command}`,
-              policy: ({ host, command }) => {
-                const d = destructive(command);
+              policy: ({ host, guest, command }) => {
+                const d = destructive(command, "container");
                 if (d) return ask(`This command ${d.why}.`, d.kind);
                 if (hosts.get(host)?.careful)
                   return ask(`The owner asked to approve every command on ${host}.`);
+                if (reboots(command) && carefulGuests().includes(guest))
+                  return ask("The owner asked to approve power actions on it.");
                 return allow();
               },
               run: async ({ host, guest, command, timeout_s }, { signal }) => {

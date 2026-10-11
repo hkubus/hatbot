@@ -72,6 +72,9 @@ test("the destructive-command check", () => {
     "systemctl stop nginx",
     "sudo systemctl disable --now jellyfin",
     "reboot",
+    "sudo systemctl reboot",
+    "pct reboot 105",
+    "shutdown -h now",
     "zfs destroy tank/media",
     "docker compose down -v",
     "docker system prune -af",
@@ -98,6 +101,12 @@ test("the destructive-command check", () => {
   ])
     expect(destructive(cmd), cmd).toBeNull();
   expect(destructive("passwd hatbot")?.kind).toBe("account_security");
+  // Inside a container a reboot is like restarting a service; shutting it down still asks.
+  expect(destructive("reboot", "container")).toBeNull();
+  expect(destructive("systemctl reboot", "container")).toBeNull();
+  expect(destructive("poweroff", "container")?.why).toBe("shuts down the container");
+  expect(destructive("rm -rf /srv", "container")?.kind).toBe("delete");
+  expect(destructive("pct reboot 105")?.why).toBe("reboots a guest");
 });
 
 test("no hosts: it needs setup, but shows the public key to install", async () => {
@@ -497,6 +506,17 @@ test("ssh_pct_exec runs a command in a container through a Proxmox host, quoted,
   });
   expect(
     verdictFor(pct, { host: "pve", guest: 105, command: "docker restart app" }, call).action,
+  ).toBe("allow");
+  // A container reboot runs, unless the Proxmox plugin marks the guest careful.
+  expect(verdictFor(pct, { host: "pve", guest: 105, command: "reboot" }, call).action).toBe(
+    "allow",
+  );
+  t.db
+    .query("INSERT INTO settings (key, value) VALUES (?, ?)")
+    .run("plugin:proxmox", JSON.stringify({ enabled: false, config: { careful: [105] } }));
+  expect(verdictFor(pct, { host: "pve", guest: 105, command: "reboot" }, call).action).toBe("ask");
+  expect(
+    verdictFor(pct, { host: "pve", guest: 105, command: "systemctl restart nginx" }, call).action,
   ).toBe("allow");
   expect(JSON.stringify(t.plugins.guidance())).toContain("pve is a Proxmox host");
   // Writes only in tasks; without a Proxmox host there's no such tool.
