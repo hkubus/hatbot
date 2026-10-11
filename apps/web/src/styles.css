@@ -1620,6 +1620,11 @@ html[data-theme="dark"] .seg button.active {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* An approval's summary can be a whole command: all of it shows. */
+.card-head .title.full {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .card-head .right {
   margin-left: auto;
   display: flex;
@@ -2939,6 +2944,7 @@ html[data-theme="dark"] .seg button.active {
 }
 .log li,
 .tl-step {
+  overflow-wrap: anywhere;
   display: grid;
   grid-template-columns: 42px 16px minmax(0, 1fr);
   gap: 6px;
@@ -3264,6 +3270,7 @@ pre.payload {
   gap: 8px;
 }
 .msg .resolved {
+  overflow-wrap: anywhere;
   font-family: var(--font-text);
   font-size: 13px;
 }

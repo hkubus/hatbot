@@ -518,6 +518,11 @@ test("ssh_pct_exec runs a command in a container through a Proxmox host, quoted,
   expect(
     verdictFor(pct, { host: "pve", guest: 105, command: "systemctl restart nginx" }, call).action,
   ).toBe("allow");
+  // The approval and the timeline show the whole command.
+  const long = `${"echo checking; ".repeat(20)}systemctl restart ntfy`;
+  expect(pct.describe?.({ host: "pve", guest: 105, command: long })).toBe(
+    `In CT 105 on pve: ${long}`,
+  );
   expect(JSON.stringify(t.plugins.guidance())).toContain("pve is a Proxmox host");
   // Writes only in tasks; without a Proxmox host there's no such tool.
   expect(t.plugins.tools("chat").some((x) => x.name === "ssh_pct_exec")).toBe(false);

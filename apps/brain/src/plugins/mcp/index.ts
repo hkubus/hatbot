@@ -182,8 +182,7 @@ export const mcpPlugin = definePlugin({
             label: `Using ${c.server.name}`,
             schema: z.record(z.string(), z.unknown()),
             jsonSchema: { type: "object", properties: {}, ...withoutMeta(t.inputSchema) },
-            describe: (input) =>
-              `${c.server.name}: ${t.name} ${JSON.stringify(input).slice(0, 160)}`,
+            describe: (input) => `${c.server.name}: ${t.name} ${JSON.stringify(input)}`,
             ...(mode === "chat"
               ? {}
               : {

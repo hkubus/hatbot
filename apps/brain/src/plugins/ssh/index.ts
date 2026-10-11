@@ -251,8 +251,7 @@ export const sshPlugin = definePlugin({
             .optional()
             .describe("How long to let it run; default 120"),
         }),
-        describe: ({ host, command }) =>
-          `On ${host}: ${command.length > 160 ? `${command.slice(0, 160)}…` : command}`,
+        describe: ({ host, command }) => `On ${host}: ${command}`,
         policy: ({ host, command }) => {
           const d = destructive(command);
           if (d) return ask(`This command ${d.why}.`, d.kind);
@@ -282,8 +281,7 @@ export const sshPlugin = definePlugin({
                   .optional()
                   .describe("How long to let it run; default 120"),
               }),
-              describe: ({ host, guest, command }) =>
-                `In CT ${guest} on ${host}: ${command.length > 160 ? `${command.slice(0, 160)}…` : command}`,
+              describe: ({ host, guest, command }) => `In CT ${guest} on ${host}: ${command}`,
               policy: ({ host, guest, command }) => {
                 const d = destructive(command, "container");
                 if (d) return ask(`This command ${d.why}.`, d.kind);

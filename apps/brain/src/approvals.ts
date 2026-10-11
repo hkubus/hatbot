@@ -220,9 +220,16 @@ export class Approvals {
       body: JSON.stringify({ decision, exp, sig: this.sign(a.id, decision, exp) }),
       clear: true,
     });
+    // A long summary (a whole command) is cut in the title, so the message has it in full.
+    const title = `Approve: ${a.summary}`;
+    const cut = title.length > 120;
     await this.notifier.send({
-      title: `Approve: ${a.summary}`.slice(0, 120),
-      message: [a.reason, a.taskId ? `Task #${a.taskId}, $${a.costUsd.toFixed(2)} so far` : ""]
+      title: cut ? `${title.slice(0, 119)}…` : title,
+      message: [
+        cut ? a.summary : "",
+        a.reason,
+        a.taskId ? `Task #${a.taskId}, $${a.costUsd.toFixed(2)} so far` : "",
+      ]
         .filter(Boolean)
         .join("\n"),
       priority: 4,

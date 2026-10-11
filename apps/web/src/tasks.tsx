@@ -116,7 +116,7 @@ export function ApprovalCard({
   return (
     <div className="card attn">
       <div className="card-head">
-        <div className="title">{a.summary}</div>
+        <div className="title full">{a.summary}</div>
       </div>
       <div className="card-body">
         <div className={a.taskId && a.screenshotStepId ? "thumb-wrap" : ""}>

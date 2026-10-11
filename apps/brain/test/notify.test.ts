@@ -33,3 +33,13 @@ test("notifications open the web app, or the iOS app when Settings say so", asyn
   const ended = t.notifier.sent.at(-1);
   expect(ended?.click).toStartWith(`${ORIGIN}/tasks/`);
 });
+
+test("a long approval keeps its whole summary in the notification", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel());
+  const command = `On pve: ${"journalctl -u ntfy -n 50; ".repeat(10)}systemctl restart ntfy`;
+  t.approvals.create({ taskId: null, kind: "other", summary: command });
+  const n = await waitFor(() => t.notifier.sent.find((x) => x.title.startsWith("Approve")));
+  expect(n.title).toHaveLength(120);
+  expect(n.title).toEndWith("…");
+  expect(n.message).toContain(command);
+});

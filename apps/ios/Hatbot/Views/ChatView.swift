@@ -497,12 +497,13 @@ struct ApprovalBody: View {
 
   var body: some View {
     let a = approval
+    // The summary can be a whole shell command: shown as written, not read as Markdown.
+    Text("\(Text("Can I go ahead?").bold()) \(a.summary)").textSelection(.enabled)
     let text = [
-      "**Can I go ahead?** \(a.summary)",
       a.reason,
       a.sources.isEmpty ? "" : "_After reading \(a.sources.joined(separator: ", "))_",
     ].filter { !$0.isEmpty }.joined(separator: "\n\n")
-    MarkdownText(text: text)
+    if !text.isEmpty { MarkdownText(text: text) }
     if let taskId = a.taskId, let stepId = a.screenshotStepId {
       Screenshot(taskId: taskId, stepId: stepId)
     }
