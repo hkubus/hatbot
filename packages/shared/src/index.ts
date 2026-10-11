@@ -114,6 +114,8 @@ export type Task = {
   status: TaskStatus;
   /** It has read untrusted content (PLAN.md §6.1). */
   tainted: boolean;
+  /** The first untrusted thing it read, or what started it tainted. Null before this was kept. */
+  taintedBy: string | null;
   injectionSuspected: boolean;
   summary: string | null;
   costUsd: number;

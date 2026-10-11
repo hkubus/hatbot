@@ -101,6 +101,8 @@ struct AgentTask: Codable, Identifiable, Equatable, Sendable {
   var skill: String?
   var status: TaskStatus
   var tainted: Bool
+  /// The first untrusted thing it read, or what started it tainted.
+  var taintedBy: String?
   var injectionSuspected: Bool
   var summary: String?
   var costUsd: Double
@@ -194,6 +196,8 @@ struct Schedule: Codable, Identifiable, Equatable, Sendable {
   var lastTaskId: Int?
   /// The chat made or changed it after reading untrusted content; saving it yourself clears this.
   var tainted: Bool?
+  /// What the chat had read.
+  var taintedBy: String?
 }
 
 /// A webhook or Uptime Kuma trigger (packages/shared/src/schedule.ts).

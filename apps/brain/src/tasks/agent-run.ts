@@ -11,7 +11,7 @@ import { localStamp } from "../agent/thread";
 import { DesktopTaskInput, missingSkill, runTool, TOOL_PARAMS, toolParam } from "../agent/tools";
 import { ownerNote } from "../approvals";
 import type { PluginTool } from "../plugins/plugin";
-import { describeCall, runPluginTool, verdictFor } from "../plugins/registry";
+import { describeCall, runPluginTool, untrustedDefinitions, verdictFor } from "../plugins/registry";
 import { BudgetError, priceOf } from "../spend";
 import { Stop, UPDATES_MODELS } from "./desktop-run";
 import type { Tasks } from "./service";
@@ -95,7 +95,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     sources.add(source);
     if (task.tainted) return;
     task.tainted = true;
-    tasks.mark(id, "tainted");
+    task.taintedBy = source;
+    tasks.taint(id, source);
   };
 
   const record = (
@@ -344,17 +345,9 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     slot = true;
     tasks.setStatus(id, "running");
     // Why it may already be tainted, for its approvals (PLAN.md §6.2).
-    if (task.tainted)
-      sources.add(
-        task.origin === "chat"
-          ? "Untrusted content the chat had read before starting it"
-          : `The event that started it (${task.source ?? task.origin})`,
-      );
-    const foreign = [...pluginTools.values()].filter((t) => t.untrustedDefinition);
-    if (foreign.length)
-      taint(
-        `Tool descriptions from untrusted MCP servers (${[...new Set(foreign.map((t) => t.name.split("_")[1]))].join(", ")})`,
-      );
+    if (task.tainted) sources.add(task.taintedBy ?? "What started it");
+    const foreign = untrustedDefinitions([...pluginTools.values()]);
+    if (foreign) taint(foreign);
     const index = (await d.memory.exists("INDEX.md"))
       ? await d.memory.read("INDEX.md")
       : "(no INDEX.md yet)";

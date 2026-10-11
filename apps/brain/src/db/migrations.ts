@@ -268,4 +268,9 @@ export const migrations: string[] = [
   -- Everything from before counts as seen.
   UPDATE messages SET seen_at = strftime('%Y-%m-%dT%H:%M:%fZ');
   `,
+  /* 15: what first tainted a task, a conversation or a schedule, for the owner to see */ `
+  ALTER TABLE tasks ADD COLUMN tainted_by TEXT;
+  ALTER TABLE episodes ADD COLUMN tainted_by TEXT;
+  ALTER TABLE schedules ADD COLUMN tainted_by TEXT;
+  `,
 ];

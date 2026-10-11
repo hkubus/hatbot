@@ -310,7 +310,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     if (!task.tainted) {
       // The screen shows untrusted content from here on (PLAN.md §6.1).
       task.tainted = true;
-      tasks.mark(id, "tainted");
+      tasks.taint(id, lastUrl ? `The page at ${lastUrl}` : "What was on the screen");
     }
     return path;
   };

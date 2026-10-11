@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
 import type { MemoryStore } from "../memory/store";
-import type { Plugins } from "../plugins/registry";
+import { type Plugins, untrustedDefinitions } from "../plugins/registry";
 import type { Schedules } from "../schedules";
 import type { SettingsStore } from "../settings";
 import { BudgetError, priceOf, type Spend, tokenCount, tokensOf } from "../spend";
@@ -193,9 +193,14 @@ export class Thread {
     Object.assign(this.d, parts);
   }
 
-  /** The episode has read untrusted content: tasks and schedules it makes from here on start tainted. */
-  private taint(episodeId: number) {
-    this.d.db.query("UPDATE episodes SET tainted = 1 WHERE id = ?").run(episodeId);
+  /**
+   * The episode has read untrusted content, `by`: tasks and schedules it makes from here on start
+   * tainted. The first `by` is kept.
+   */
+  private taint(episodeId: number, by: string) {
+    this.d.db
+      .query("UPDATE episodes SET tainted = 1, tainted_by = coalesce(tainted_by, ?) WHERE id = ?")
+      .run(by, episodeId);
   }
 
   /**
@@ -205,15 +210,24 @@ export class Thread {
   private inheritTaint(episodeId: number, beforeMessageId: number) {
     const recent = this.list(beforeMessageId, RECENT_MESSAGES).map((m) => m.id);
     if (!recent.length) return;
-    const tainted = this.d.db
-      .query<{ n: number }, number[]>(
-        `SELECT count(*) AS n FROM messages m
+    const from = this.d.db
+      .query<{ episode: string | null; task_id: number | null; title: string | null }, number[]>(
+        `SELECT CASE WHEN e.tainted = 1 THEN coalesce(e.tainted_by, '') END AS episode,
+           t.id AS task_id, t.title
+         FROM messages m
          LEFT JOIN episodes e ON e.id = m.episode_id
          LEFT JOIN tasks t ON t.id = m.task_id
-         WHERE m.id IN (${recent.map(() => "?").join(", ")}) AND (e.tainted = 1 OR t.tainted = 1)`,
+         WHERE m.id IN (${recent.map(() => "?").join(", ")}) AND (e.tainted = 1 OR t.tainted = 1)
+         ORDER BY m.id LIMIT 1`,
       )
-      .get(...recent)?.n;
-    if (tainted) this.taint(episodeId);
+      .get(...recent);
+    if (from)
+      this.taint(
+        episodeId,
+        from.episode !== null
+          ? from.episode || "Untrusted content"
+          : `Task #${from.task_id} "${from.title}"`,
+      );
   }
 
   /** Your last few messages in this conversation, as you wrote them. */
@@ -228,12 +242,14 @@ export class Thread {
       .join("\n\n");
   }
 
-  private tainted(episodeId: number): boolean {
-    return Boolean(
-      this.d.db
-        .query<{ tainted: number }, [number]>("SELECT tainted FROM episodes WHERE id = ?")
-        .get(episodeId)?.tainted,
-    );
+  /** What the episode first read that was untrusted, or null. */
+  private tainted(episodeId: number): string | null {
+    const e = this.d.db
+      .query<{ tainted: number; tainted_by: string | null }, [number]>(
+        "SELECT tainted, tainted_by FROM episodes WHERE id = ?",
+      )
+      .get(episodeId);
+    return e?.tainted ? (e.tainted_by ?? "Untrusted content") : null;
   }
 
   /** Pause all: stops the reply in progress. */
@@ -461,10 +477,12 @@ export class Thread {
       this.inheritTaint(episode.id, user.id);
     }
     // An untrusted MCP server's tool descriptions are in the prompt now.
-    if (pluginTools.some((t) => t.untrustedDefinition)) this.taint(episode.id);
+    const foreign = untrustedDefinitions(pluginTools);
+    if (foreign) this.taint(episode.id, foreign);
     const ended = this.d.tasks?.takeUnreported() ?? [];
     // What tainted tasks report carries what they read.
-    if (ended.some((t) => t.tainted)) this.taint(episode.id);
+    const tainted = ended.find((t) => t.tainted);
+    if (tainted) this.taint(episode.id, `Task #${tainted.id} "${tainted.title}"`);
     if (ended.length) {
       const lines = ended.map((t) => `Task #${t.id} "${t.title}" ${t.status}: ${t.summary ?? ""}`);
       userBlocks.push({
@@ -669,7 +687,7 @@ export class Thread {
               ...this.d,
               messageId: out.id,
               tainted: () => this.tainted(episode.id),
-              taint: () => this.taint(episode.id),
+              taint: (by: string) => this.taint(episode.id, by),
               ownerSaid: () => this.ownerSaid(episode.id),
               scheduleCard: (sc: Schedule) =>
                 this.addCard(

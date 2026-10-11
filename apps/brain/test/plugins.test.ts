@@ -246,7 +246,7 @@ test("after untrusted content, a task from the chat starts tainted and every cha
   // The untrusted output reached the chat labelled, as data.
   expect(JSON.stringify(chat.requests[1]?.messages)).toContain('trusted=\\"false\\"');
   const [task] = t.tasks.list() as [Task];
-  expect(task.tainted).toBe(true);
+  expect(task.taintedBy).toBe('The chat had read: lab_issue {"n":7}');
 
   // First restart: denied.
   const first = await waitFor(() => t.approvals.list(true)[0]);
@@ -303,7 +303,7 @@ test("a task reading untrusted output becomes tainted and its writes then ask", 
     runKey: "schedule:2",
   }) as Task;
   const approval = await waitFor(() => t.approvals.list(true)[0]);
-  expect(t.tasks.get(task.id)?.tainted).toBe(true);
+  expect(t.tasks.get(task.id)?.taintedBy).toBe('lab_issue {"n":1}');
   expect(approval.sources).toEqual(['lab_issue {"n":1}']);
   t.approvals.decide(approval.id, "approve", "web");
   await ended(t, task.id);
@@ -327,17 +327,20 @@ test("a tainted chat's schedules run tainted until you save them; it can't rewri
   await t.thread.idle();
 
   const [s] = t.schedules.list();
-  expect(s?.tainted).toBe(true);
+  expect(s).toMatchObject({ tainted: true, taintedBy: 'lab_issue {"n":3}' });
   expect(t.triggers.get(trigger.id)?.prompt).toBe("Summarise it");
   expect(JSON.stringify(chat.requests[2]?.messages)).toContain("can't rewrite what a trigger does");
 
   // Its run starts tainted.
   const run = t.schedules.runNow(s?.id as number) as Task;
-  expect(run.tainted).toBe(true);
+  expect(run.taintedBy).toBe('Its schedule, which the chat wrote after reading: lab_issue {"n":3}');
   await t.tasks.idle();
   // Switching it off and on doesn't clear the mark; saving its instructions does.
   expect(t.schedules.update(s?.id as number, { enabled: false })?.tainted).toBe(true);
-  expect(t.schedules.update(s?.id as number, { prompt: "Restart web" })?.tainted).toBe(false);
+  expect(t.schedules.update(s?.id as number, { prompt: "Restart web" })).toMatchObject({
+    tainted: false,
+    taintedBy: null,
+  });
 });
 
 test("a tainted task's result taints the chat that hears about it, and the next episode", async () => {
@@ -355,7 +358,7 @@ test("a tainted task's result taints the chat that hears about it, and the next 
     title: "Read a PR",
     goal: "Read it",
     origin: "chat",
-    tainted: true,
+    taintedBy: "A web page",
   }) as Task;
   await t.tasks.idle();
   expect(t.tasks.get(first.id)?.tainted).toBe(true);
@@ -366,7 +369,7 @@ test("a tainted task's result taints the chat that hears about it, and the next 
   await t.thread.idle();
   await t.tasks.idle();
   const follow = t.tasks.list().find((x) => x.title === "Follow up");
-  expect(follow?.tainted).toBe(true);
+  expect(follow?.taintedBy).toBe(`The chat had read: Task #${first.id} "Read a PR"`);
   expect(t.approvals.list(false).length).toBe(0);
 
   // 31 minutes later: a new episode, still carrying those messages, still tainted.
@@ -374,7 +377,9 @@ test("a tainted task's result taints the chat that hears about it, and the next 
   t.thread.post("and again");
   await t.thread.idle();
   await t.tasks.idle();
-  expect(t.tasks.list().find((x) => x.title === "Again")?.tainted).toBe(true);
+  expect(t.tasks.list().find((x) => x.title === "Again")?.taintedBy).toBe(
+    `The chat had read: Task #${first.id} "Read a PR"`,
+  );
 });
 
 test("an untrusted tool's error is labelled and taints too", async () => {

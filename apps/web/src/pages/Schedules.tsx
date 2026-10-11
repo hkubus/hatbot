@@ -386,7 +386,8 @@ function ScheduleEdit({ id }: { id: number | null }) {
           </label>
           {stored?.tainted && (
             <div className="hint">
-              Hatbot wrote this after reading untrusted content, so its runs ask before changing
+              Hatbot wrote this after reading untrusted content
+              {stored.taintedBy ? ` (${stored.taintedBy})` : ""}, so its runs ask before changing
               anything. Check what it does and save to trust it.
             </div>
           )}

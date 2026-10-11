@@ -57,6 +57,7 @@ type Row = {
   effort: Task["effort"];
   status: TaskStatus;
   tainted: number;
+  tainted_by: string | null;
   injection_suspected: number;
   budget_usd: number;
   summary: string | null;
@@ -89,6 +90,7 @@ const toTask = (r: Row): Task => ({
   effort: r.effort,
   status: r.status,
   tainted: Boolean(r.tainted),
+  taintedBy: r.tainted_by,
   injectionSuspected: Boolean(r.injection_suspected),
   summary: r.summary,
   costUsd: r.cost_usd ?? 0,
@@ -239,8 +241,8 @@ export class Tasks {
     /** The event that started it. Untrusted unless `trusted`: the task starts tainted. */
     payload?: string;
     trusted?: boolean;
-    /** It starts tainted: what started it had read untrusted content. */
-    tainted?: boolean;
+    /** It starts tainted: what started it had read untrusted content, this. */
+    taintedBy?: string | null;
     /** Unset: the chat's effort. */
     effort?: "medium" | "high";
     message?: number;
@@ -248,7 +250,11 @@ export class Tasks {
     request?: string;
   }): Task | null {
     if (input.runKey && this.activeFor(input.runKey)) return null;
-    const tainted = input.tainted || (input.payload !== undefined && !input.trusted);
+    const taintedBy =
+      input.taintedBy ||
+      (input.payload !== undefined && !input.trusted
+        ? `The event that started it (${input.source ?? input.origin})`
+        : null);
     const id = this.insert({
       title: input.title,
       goal: input.goal,
@@ -264,7 +270,8 @@ export class Tasks {
       run_key: input.runKey ?? null,
       payload: input.payload ?? null,
       request: input.request ?? null,
-      tainted: tainted ? 1 : 0,
+      tainted: taintedBy ? 1 : 0,
+      tainted_by: taintedBy,
     });
     if (input.origin === "chat" && !(input.message && this.d.thread.attachTask(input.message, id)))
       this.d.thread.addCard("task", `Task #${id}: ${input.title}`, { taskId: id });
@@ -382,8 +389,16 @@ export class Tasks {
     this.emit(id);
   }
 
-  mark(id: number, flag: "tainted" | "injection_suspected") {
+  mark(id: number, flag: "injection_suspected") {
     this.d.db.query(`UPDATE tasks SET ${flag} = 1 WHERE id = ?`).run(id);
+    this.emit(id);
+  }
+
+  /** It has read untrusted content; `by` is what, kept only the first time. */
+  taint(id: number, by: string) {
+    this.d.db
+      .query("UPDATE tasks SET tainted = 1, tainted_by = coalesce(tainted_by, ?) WHERE id = ?")
+      .run(by, id);
     this.emit(id);
   }
 

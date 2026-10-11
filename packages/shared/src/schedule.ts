@@ -21,6 +21,8 @@ export type Schedule = {
    * change asks). Saving it yourself clears this.
    */
   tainted: boolean;
+  /** What the chat had read. Null before this was kept. */
+  taintedBy: string | null;
 };
 
 const name = z.string().trim().min(1).max(80);

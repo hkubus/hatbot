@@ -190,7 +190,12 @@ test("a signed webhook starts an untrusted background task; bad or replayed ones
   expect(ok.status).toBe(202);
   const { taskId } = (await ok.json()) as { taskId: number };
   const task = await ended(t, taskId);
-  expect(task).toMatchObject({ origin: "webhook", tainted: true, triggerId: created.id });
+  expect(task).toMatchObject({
+    origin: "webhook",
+    tainted: true,
+    taintedBy: "The event that started it (Forgejo pushes)",
+    triggerId: created.id,
+  });
   expect(task.payload).toContain('"ref": "refs/heads/main"');
   expect(JSON.stringify(work.requests[0]?.messages[0])).toContain('<event trusted=\\"false\\">');
 

@@ -284,7 +284,7 @@ const chatTask = (t: Awaited<ReturnType<typeof started>>["t"], request?: string)
     title: "Restart jellyfin",
     goal: "Restart jellyfin on nas",
     origin: request ? "chat" : "schedule",
-    tainted: true,
+    taintedBy: "A web page",
     request,
   }) as Task;
 
@@ -341,7 +341,7 @@ test("it asks when you didn't ask for that, when it's switched off, or when no o
     origin: "schedule",
     source: s.name,
     scheduleId: s.id,
-    tainted: true,
+    taintedBy: "A web page",
   });
   await waitFor(() => c.t.approvals.list(true)[0]);
   expect(sched.checks).toHaveLength(0);
@@ -365,7 +365,7 @@ test("schedules and webhooks get the check too; an untrusted webhook's event isn
     origin: "schedule",
     source: s.name,
     scheduleId: s.id,
-    tainted: true,
+    taintedBy: "A web page",
   }) as Task;
   await waitFor(() => a.t.tasks.get(run.id)?.finishedAt);
   expect(a.t.approvals.list(true)).toHaveLength(0);
@@ -412,7 +412,7 @@ test("an alert task makes the one fix its trigger allows without asking; a secon
     payload: '{"monitor": "Jellyfin", "status": "down"}',
     trusted: true,
     // As if it had read logs since.
-    tainted: true,
+    taintedBy: "A web page",
   }) as Task;
   const approval = await waitFor(() => t.approvals.list(true)[0]);
   expect(approval.summary).toBe("On nas: echo restarted jellyfin again");

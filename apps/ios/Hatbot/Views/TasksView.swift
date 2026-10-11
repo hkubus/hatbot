@@ -211,6 +211,9 @@ private struct TaskDetails: View {
             ? (task.lane == .screen ? "Read web pages" : "Read untrusted content") : "Trusted sources only")
       }
     }
+    if let taintedBy = task.taintedBy {
+      LabeledContent("Tainted by") { Text(taintedBy).multilineTextAlignment(.trailing) }
+    }
     LabeledContent("Cost", value: Format.money(task.costUsd))
     if let payload = task.payload {
       VStack(alignment: .leading, spacing: 6) {

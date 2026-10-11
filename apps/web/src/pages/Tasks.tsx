@@ -146,6 +146,12 @@ function Details({ task }: { task: Task }) {
           "Trusted sources only"
         )}
       </dd>
+      {task.taintedBy && (
+        <>
+          <dt>Tainted by</dt>
+          <dd>{task.taintedBy}</dd>
+        </>
+      )}
       <dt>Cost</dt>
       <dd className="tnum">{money(task.costUsd)}</dd>
       {task.payload && (

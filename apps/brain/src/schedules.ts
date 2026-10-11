@@ -24,6 +24,7 @@ type Row = {
   last_run_at: string | null;
   last_task_id: number | null;
   tainted: number;
+  tainted_by: string | null;
 };
 
 const SELECT = `SELECT s.*, (SELECT max(id) FROM tasks t WHERE t.schedule_id = s.id) AS last_task_id
@@ -42,6 +43,7 @@ const toSchedule = (r: Row): Schedule => ({
   lastRunAt: r.last_run_at,
   lastTaskId: r.last_task_id,
   tainted: Boolean(r.tainted),
+  taintedBy: r.tainted_by,
 });
 
 export type ScheduleInput = {
@@ -82,8 +84,10 @@ export class Schedules {
   create(
     input: ScheduleInput & { name: string; prompt: string },
     via: "chat" | "owner",
-    tainted = false,
+    /** What the chat had read, when it had read untrusted content. */
+    taintedBy: string | null = null,
   ): Schedule {
+    taintedBy = via === "chat" ? taintedBy : null;
     const when = this.when(input.cron, input.at);
     const enabled = input.enabled ?? true;
     const row = this.db
@@ -99,10 +103,11 @@ export class Schedules {
           string,
           string | null,
           number,
+          string | null,
         ]
       >(
-        `INSERT INTO schedules (name, cron, run_at, prompt, enabled, created_via, created_at, next_run_at, tainted)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        `INSERT INTO schedules (name, cron, run_at, prompt, enabled, created_via, created_at, next_run_at, tainted, tainted_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       )
       .get(
         input.name,
@@ -113,19 +118,20 @@ export class Schedules {
         via,
         this.now(),
         enabled ? when.next : null,
-        via === "chat" && tainted ? 1 : 0,
+        taintedBy ? 1 : 0,
+        taintedBy,
       );
     return this.changed(row?.id ?? -1) as Schedule;
   }
 
   /**
    * `by`: you, from the app (saving the instructions clears the tainted mark), or the chat
-   * (`tainted`: after reading untrusted content, which sets it).
+   * (`taintedBy`: what untrusted content it had read, which sets the mark).
    */
   update(
     id: number,
     patch: ScheduleInput,
-    by: { via: "owner" } | { via: "chat"; tainted: boolean } = { via: "owner" },
+    by: { via: "owner" } | { via: "chat"; taintedBy: string | null } = { via: "owner" },
   ): Schedule | null {
     const current = this.get(id);
     if (!current) return null;
@@ -144,10 +150,16 @@ export class Schedules {
     const tainted =
       by.via === "owner"
         ? patch.prompt === undefined && current.tainted
-        : by.tainted || current.tainted;
+        : Boolean(by.taintedBy) || current.tainted;
+    // The first thing that tainted it stays.
+    const taintedBy = tainted
+      ? current.tainted
+        ? current.taintedBy
+        : by.via === "chat" && by.taintedBy
+      : null;
     this.db
       .query(
-        "UPDATE schedules SET name = ?, prompt = ?, cron = ?, run_at = ?, enabled = ?, next_run_at = ?, tainted = ? WHERE id = ?",
+        "UPDATE schedules SET name = ?, prompt = ?, cron = ?, run_at = ?, enabled = ?, next_run_at = ?, tainted = ?, tainted_by = ? WHERE id = ?",
       )
       .run(
         patch.name ?? current.name,
@@ -157,6 +169,7 @@ export class Schedules {
         enabled ? 1 : 0,
         enabled ? nextRunAt : null,
         tainted ? 1 : 0,
+        taintedBy || null,
         id,
       );
     return this.changed(id);
@@ -208,7 +221,9 @@ export class Schedules {
       source: s.name,
       scheduleId: s.id,
       runKey: `schedule:${s.id}`,
-      tainted: s.tainted,
+      taintedBy: s.tainted
+        ? `Its schedule, which the chat wrote after reading: ${s.taintedBy ?? "untrusted content"}`
+        : null,
     });
     if (!task) return null;
     this.db.query("UPDATE schedules SET last_run_at = ? WHERE id = ?").run(this.now(), s.id);

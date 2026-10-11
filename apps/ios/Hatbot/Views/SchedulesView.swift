@@ -151,9 +151,10 @@ struct ScheduleDetailView: View {
     let changed = stored.map { Form($0) != f } ?? true
     return SwiftUI.Form {
       if let error { Text(error).foregroundStyle(.red) }
-      if stored?.tainted == true {
+      if let stored, stored.tainted == true {
+        let read = stored.taintedBy.map { " (\($0))" } ?? ""
         Label(
-          "Made or changed by the chat after it read untrusted content, so its runs ask before changing anything. Saving it yourself clears this.",
+          "Made or changed by the chat after it read untrusted content\(read), so its runs ask before changing anything. Saving it yourself clears this.",
           systemImage: "exclamationmark.shield"
         )
         .font(.footnote)

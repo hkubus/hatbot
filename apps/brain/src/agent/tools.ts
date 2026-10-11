@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
 import { HATBOT, MemoryError, type MemoryStore } from "../memory/store";
-import { type Plugins, runPluginTool } from "../plugins/registry";
+import { describeCall, type Plugins, runPluginTool } from "../plugins/registry";
 import { ScheduleError, type Schedules } from "../schedules";
 import type { Tasks } from "../tasks/service";
 import { skillPath } from "../teach/skills";
@@ -23,10 +23,13 @@ export type ToolContext = {
   /** Adds a schedule's card to the thread. */
   scheduleCard?: (s: Schedule) => void;
   plugins?: Plugins;
-  /** The conversation has read untrusted content; tasks it starts begin tainted (PLAN.md §6.1). */
-  tainted?: () => boolean;
-  /** Marks the conversation as having read untrusted content. */
-  taint?: () => void;
+  /**
+   * What untrusted content the conversation first read, or null; tasks it starts begin tainted
+   * (PLAN.md §6.1).
+   */
+  tainted?: () => string | null;
+  /** Marks the conversation as having read untrusted content: `by`. */
+  taint?: (by: string) => void;
   /** Your own latest messages in this conversation, for a task's approval check. */
   ownerSaid?: () => string;
 };
@@ -83,6 +86,9 @@ const local = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) : "–";
 const scheduleLine = (s: Schedule) =>
   `#${s.id} "${s.name}": ${s.cron ? `${describeCron(s.cron)} (cron ${s.cron})` : `once, ${local(s.runAt)}`}; ${s.enabled ? `next run ${local(s.nextRunAt)}` : "off"}${s.lastRunAt ? `; last ran ${local(s.lastRunAt)}${s.lastTaskId ? ` (task #${s.lastTaskId})` : ""}` : ""}\n  Does: ${s.prompt}`;
+/** Why a task the chat starts is tainted, from what the chat had read. */
+const chatTaint = (by: string | null | undefined) => by && `The chat had read: ${by}`;
+
 const scheduleWhen = {
   cron: z
     .string()
@@ -213,7 +219,7 @@ export const TOOLS = [
         origin: "chat",
         effort,
         message: messageId,
-        tainted: tainted?.() ?? false,
+        taintedBy: chatTaint(tainted?.()),
         request: ownerSaid?.(),
       });
       if (!task) return "The task couldn't start.";
@@ -228,7 +234,7 @@ export const TOOLS = [
       const task = tasks?.get(id);
       if (!tasks || !task) return `No task #${id}.`;
       // Its summary and steps carry what it read.
-      if (task.tainted) taint?.();
+      if (task.tainted) taint?.(`Task #${task.id} "${task.title}"`);
       const steps = tasks
         .steps(id)
         .filter((s) => s.kind !== "screenshot")
@@ -256,7 +262,7 @@ export const TOOLS = [
     run: async ({ name, prompt, cron, at }, { schedules, scheduleCard, tainted }) => {
       if (!schedules) return "Schedules aren't available.";
       if (Boolean(cron) === Boolean(at)) return "Give either cron or at.";
-      const s = schedules.create({ name, prompt, cron, at }, "chat", tainted?.() ?? false);
+      const s = schedules.create({ name, prompt, cron, at }, "chat", tainted?.() ?? null);
       scheduleCard?.(s);
       return `Created schedule ${scheduleLine(s)}`;
     },
@@ -281,7 +287,7 @@ export const TOOLS = [
     }),
     run: async ({ id, ...patch }, { schedules, tainted }) => {
       if (patch.cron && patch.at) return "Give either cron or at, not both.";
-      const s = schedules?.update(id, patch, { via: "chat", tainted: tainted?.() ?? false });
+      const s = schedules?.update(id, patch, { via: "chat", taintedBy: tainted?.() ?? null });
       return s ? `Updated schedule ${scheduleLine(s)}` : `No schedule #${id}.`;
     },
   }),
@@ -369,7 +375,7 @@ export async function runTool(
     const plugin = ctx.plugins?.tools("chat").find((t) => t.name === name);
     if (plugin) {
       const r = await runPluginTool(plugin, input, { task: null, signal });
-      if (r.untrusted) ctx.taint?.();
+      if (r.untrusted) ctx.taint?.(describeCall(plugin, input));
       return r;
     }
     const names = [...TOOLS, ...(ctx.plugins?.tools("chat") ?? [])].map((t) => t.name);
