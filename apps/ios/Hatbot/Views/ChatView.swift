@@ -83,10 +83,11 @@ struct ChatView: View {
     NavigationStack(path: $path) {
       ScrollView {
         LazyVStack(spacing: 0) {
+          // Scrolling up to the top loads the page before it; the bottom anchor keeps your place.
           if store.hasEarlier {
-            Button("Earlier messages") { Task { try? await store.loadEarlier() } }
-              .buttonStyle(.borderless)
-              .font(.subheadline)
+            ProgressView()
+              .padding(.vertical, 8)
+              .task(id: store.messages.first?.id) { try? await store.loadEarlier() }
           }
           if loaded && store.messages.isEmpty {
             Text("Say hello to Hatbot.").foregroundStyle(.secondary).padding(.top, 40)

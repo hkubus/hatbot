@@ -16,6 +16,7 @@ final class AppStore {
   /// What each streaming reply has used so far.
   var usage: [Int: ReplyUsage] = [:]
   var hasEarlier = false
+  @ObservationIgnored private var loadingEarlier = false
   /// Hatbot's messages sent or edited since you last saw them.
   var unread: [Int] = []
   var paused = false
@@ -194,7 +195,9 @@ final class AppStore {
   }
 
   func loadEarlier() async throws {
-    guard let first = messages.first else { return }
+    guard let first = messages.first, !loadingEarlier else { return }
+    loadingEarlier = true
+    defer { loadingEarlier = false }
     let older: [ThreadMessage] = try await api.get("/thread/messages?limit=\(Self.page)&before=\(first.id)")
     try? await loadEpisodes(older)
     messages = older + messages
