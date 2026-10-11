@@ -68,6 +68,9 @@ export function taskLine(t: Task, progress?: string): string {
   }
 }
 
+/** Approvals whose answer can carry a note to the task: the task carries on afterwards. */
+export const takesNote = (a: Approval) => a.kind !== "budget" && a.kind !== "injection_warning";
+
 const RESOLVED: Record<Exclude<Approval["status"], "pending">, [string, string]> = {
   approved: ["ok", "Approved"],
   denied: ["bad", "Denied"],
@@ -85,6 +88,7 @@ export function ApprovalCard({
   const a = useStore((s) => s.approvals[approvalId]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [note, setNote] = useState("");
   useEffect(() => ensureApproval(approvalId), [approvalId]);
   if (!a) return null;
 
@@ -97,7 +101,10 @@ export function ApprovalCard({
           {a.status === "denied" && <Icon name="x" />}
           {label}
         </span>
-        <span className="muted">{a.summary}</span>
+        <span className="muted">
+          {a.summary}
+          {a.note && ` You said: ${a.note}`}
+        </span>
       </div>
     );
   }
@@ -106,7 +113,7 @@ export function ApprovalCard({
     setBusy(true);
     setError("");
     try {
-      await decideApproval(a.id, decision);
+      await decideApproval(a.id, decision, note);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
       setBusy(false);
@@ -128,6 +135,16 @@ export function ApprovalCard({
             <Shot taskId={a.taskId} stepId={a.screenshotStepId} alt="The screen before this step" />
           )}
         </div>
+        {takesNote(a) && (
+          <textarea
+            className="field approval-note"
+            rows={2}
+            maxLength={4000}
+            value={note}
+            placeholder="Tell it what to do instead, or how to go ahead"
+            onChange={(e) => setNote(e.target.value)}
+          />
+        )}
         {error && <div className="form-error">{error}</div>}
       </div>
       <div className="card-foot">

@@ -256,4 +256,7 @@ export const migrations: string[] = [
     alert TEXT NOT NULL
   );
   `,
+  /* 13: what the owner told the task along with their decision on an approval */ `
+  ALTER TABLE approvals ADD COLUMN note TEXT;
+  `,
 ];

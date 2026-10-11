@@ -14,7 +14,7 @@ import { modelErrorText } from "../agent/model";
 import { DESKTOP_PROMPT } from "../agent/prompt";
 import { screenPage } from "../agent/screening";
 import { localStamp } from "../agent/thread";
-import type { Outcome } from "../approvals";
+import { type Outcome, ownerNote } from "../approvals";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import { destructive } from "../plugins/ssh/policy";
 import { BudgetError, priceOf } from "../spend";
@@ -354,7 +354,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     summary: string;
     reason?: string;
     screenshotStepId?: number | null;
-  }): Promise<Outcome> => {
+  }): Promise<{ outcome: Outcome; note: string | null }> => {
     const approval = d.approvals.create({ taskId: id, sources: [...sources], ...input });
     tasks.addStep(id, {
       kind: "approval",
@@ -372,7 +372,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     if (outcome === "expired")
       throw new Stop("cancelled", "Nobody answered the approval within 24 hours.");
     if (outcome === "cancelled") throw new Stop("cancelled", "The approval was cancelled.");
-    return outcome;
+    const note = d.approvals.get(approval.id)?.note ?? null;
+    if (note) tasks.addStep(id, { kind: "note", name: "Your note", detail: note, url: lastUrl });
+    return { outcome, note };
   };
 
   /** Waits while you have the desktop, holding the screen lane: you're working on this task's behalf. */
@@ -417,7 +419,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         detail: verdict.excerpt,
         url,
       });
-      const outcome = await askApproval({
+      const { outcome } = await askApproval({
         kind: "injection_warning",
         summary: `Keep going on ${host}?`,
         reason: `This page may contain instructions aimed at Hatbot: "${verdict.excerpt}"`,
@@ -520,17 +522,24 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       url: lastUrl,
     });
     await capture(bytes, "Before approval", "screenshot", step.id);
-    const outcome = await askApproval({ ...p.data, screenshotStepId: step.id });
+    const { outcome, note } = await askApproval({ ...p.data, screenshotStepId: step.id });
     if (outcome !== "approved") {
       return textResult(
         call,
-        "The owner denied this. Don't do it. Finish the task, or carry on another way that doesn't need it.",
+        note
+          ? `The owner denied this. Don't do it. ${ownerNote(note)}`
+          : "The owner denied this. Don't do it. Finish the task, or carry on another way that doesn't need it.",
       );
     }
     armed = true;
     return textResult(
       call,
-      await look("After approval", "Approved by the owner. Go ahead with exactly this action."),
+      await look(
+        "After approval",
+        note
+          ? `Approved by the owner. ${ownerNote(note)}`
+          : "Approved by the owner. Go ahead with exactly this action.",
+      ),
     );
   };
 
@@ -541,19 +550,31 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     const { command, timeout_s: timeoutS = 60 } = p.data;
     if (d.desktop.get().control === "owner") await waitForOwner();
     const danger = destructive(command);
+    let note: string | null = null;
     if (danger) {
-      const outcome = await askApproval({
+      const answer = await askApproval({
         kind: danger.kind,
         summary: `On the desktop: ${command}`,
         reason: `This command ${danger.why}.`,
       });
-      if (outcome !== "approved")
-        return textResult(call, "The owner denied this. Don't try it another way.", true);
+      note = answer.note;
+      if (answer.outcome !== "approved")
+        return textResult(
+          call,
+          note
+            ? `The owner denied this. ${ownerNote(note)}`
+            : "The owner denied this. Don't try it another way.",
+          true,
+        );
     }
     tasks.addStep(id, { kind: "action", name: "desktop_shell", detail: command, url: null });
     const r = await agent.exec(command, timeoutS);
     const head = r.timedOut ? `Killed after ${timeoutS} s.` : `Exit code ${r.exitCode}`;
-    return textResult(call, `${head}\n${r.output}`, r.timedOut || r.exitCode !== 0);
+    return textResult(
+      call,
+      `${head}\n${r.output}${note ? `\n\n${ownerNote(note)}` : ""}`,
+      r.timedOut || r.exitCode !== 0,
+    );
   };
 
   const requestTakeover = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> => {
@@ -605,7 +626,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         if (!(err instanceof BudgetError)) throw err;
         if (err.limit !== "task") throw new Stop("failed", `Stopped: ${err.message}`);
         const extra = d.settings.get().limits.taskUsd;
-        const outcome = await askApproval({
+        const { outcome } = await askApproval({
           kind: "budget",
           summary: `Let task #${id} spend $${extra} more`,
           reason: `"${task.title}" has used its $${tasks.budget(id)} limit.`,

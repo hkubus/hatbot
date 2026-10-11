@@ -189,6 +189,7 @@ function TaskApprovals({ ids }: { ids: number[] }) {
     return (
       <div key={id} className="muted resolved">
         {RESOLVED_WORD[a.status]}: {a.summary}
+        {a.note && ` You said: ${a.note}`}
       </div>
     );
   });
@@ -338,6 +339,7 @@ function ApprovalMessage({ m, approvalId }: { m: ThreadMessage; approvalId: numb
         <div className="body">
           <div className="muted resolved">
             {word}: {a.summary}
+            {a.note && ` You said: ${a.note}`}
           </div>
         </div>
         <Meta m={m} copy={a.summary} open={open} />

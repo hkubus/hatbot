@@ -8,6 +8,7 @@ import { modelErrorText } from "../agent/model";
 import { AGENT_PROMPT } from "../agent/prompt";
 import { localStamp } from "../agent/thread";
 import { DesktopTaskInput, missingSkill, runTool, TOOL_PARAMS, toolParam } from "../agent/tools";
+import { ownerNote } from "../approvals";
 import type { PluginTool } from "../plugins/plugin";
 import { describeCall, runPluginTool, verdictFor } from "../plugins/registry";
 import { BudgetError, priceOf } from "../spend";
@@ -145,7 +146,13 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     );
   };
 
-  /** Asks you and waits. Nobody answering within 24 hours, or a cancelled approval, ends the task. */
+  /** What you told the task on its approvals, newest last: your words, for the approval checks. */
+  const notes: string[] = [];
+
+  /**
+   * Asks you and waits, with your note if you wrote one. Nobody answering within 24 hours, or a
+   * cancelled approval, ends the task.
+   */
   const askApproval = async (input: { kind: ApprovalKind; summary: string; reason: string }) => {
     const approval = d.approvals.create({ taskId: id, sources: [...sources], ...input });
     tasks.addStep(id, {
@@ -165,14 +172,19 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     if (outcome === "expired")
       throw new Stop("cancelled", "Nobody answered the approval within 24 hours.");
     if (outcome === "cancelled") throw new Stop("cancelled", "The approval was cancelled.");
+    const note = d.approvals.get(approval.id)?.note ?? null;
+    if (note) {
+      notes.push(`[${localStamp(new Date())}] ${note}`);
+      tasks.addStep(id, { kind: "note", name: "Your note", detail: note, url: null });
+    }
     tasks.setStatus(id, "running");
-    return outcome;
+    return { outcome, note };
   };
 
   /** Asks for more money when the task hits its limit (PLAN.md §6.3). */
   const askBudget = async () => {
     const extra = d.settings.get().limits.taskUsd;
-    const outcome = await askApproval({
+    const { outcome } = await askApproval({
       kind: "budget",
       summary: `Let task #${id} spend $${extra} more`,
       reason: `"${task.title}" has used its $${tasks.budget(id)} limit.`,
@@ -211,6 +223,12 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       : `${head}\n\nThe event that started this task came from outside and isn't trusted, so it isn't shown: it can't choose what to act on.`;
   };
 
+  /** Your words for the approval checks, with the notes you gave on this task's approvals. */
+  const withNotes = (words: string | null): string | null =>
+    notes.length
+      ? `${words ?? ""}\n\nWhat the owner told this task on its approvals:\n${notes.join("\n")}`.trim()
+      : words;
+
   /**
    * Whether you already asked for this exact action, so the task doesn't ask again: in the chat that
    * started it, or in the instructions you wrote for its schedule, webhook or alert. Never for money,
@@ -223,7 +241,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     verdict: { why: string; kind?: ApprovalKind },
   ): Promise<boolean> => {
     const standing = task.origin !== "chat";
-    const request = standing ? standingWords() : tasks.requestOf(id);
+    const request = withNotes(standing ? standingWords() : tasks.requestOf(id));
     if (!request || !d.settings.get().skipAskedApprovals) return false;
     if (standing && standingSkipped) return false;
     if (!mayCheck(verdict.kind ?? "other") || tasks.get(id)?.injectionSuspected) return false;
@@ -262,7 +280,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       d,
       id,
       {
-        ownerSaid: task.origin === "chat" ? tasks.requestOf(id) : standingWords(),
+        ownerSaid: withNotes(task.origin === "chat" ? tasks.requestOf(id) : standingWords()),
         goal: task.goal,
         sources: [...sources],
       },
@@ -286,6 +304,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const cc = { task: { id, tainted: task.tainted }, signal };
     const what = describeCall(t, call.input);
     const verdict = verdictFor(t, call.input, cc);
+    let note: string | null = null;
     if (verdict.action === "block") {
       tasks.addStep(id, {
         kind: "note",
@@ -298,19 +317,26 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     if (verdict.action === "ask" && !(await alreadyAsked(t, call, what, verdict))) {
       const review = await reviewed(t, call, what, verdict);
       if (!review.safe) {
-        const outcome = await askApproval({
+        const answer = await askApproval({
           kind: verdict.kind ?? "other",
           summary: what,
           reason: review.why ? `${verdict.why} Haiku: ${review.why}` : verdict.why,
         });
-        if (outcome !== "approved")
-          return result(call, "The owner denied this. Don't try it another way.", true);
+        note = answer.note;
+        if (answer.outcome !== "approved")
+          return result(
+            call,
+            note
+              ? `The owner denied this. ${ownerNote(note)}`
+              : "The owner denied this. Don't try it another way.",
+            true,
+          );
       }
     }
     tasks.addStep(id, { kind: "action", name: t.name, detail: what, url: null });
     const r = await runPluginTool(t, call.input, cc);
     if (r.untrusted) taint(what);
-    return result(call, r.content, r.isError);
+    return result(call, note ? `${r.content}\n\n${ownerNote(note)}` : r.content, r.isError);
   };
 
   try {

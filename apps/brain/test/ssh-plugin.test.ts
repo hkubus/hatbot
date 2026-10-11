@@ -529,3 +529,37 @@ test("ssh_pct_exec runs a command in a container through a Proxmox host, quoted,
   const plain = await started();
   expect(plain.t.plugins.tools("task").some((x) => x.name === "ssh_pct_exec")).toBe(false);
 });
+
+test("a note on an approval steers the task: it reads it, and the check counts it as yours", async () => {
+  const { model, checks } = intentModel(
+    [
+      [toolUse("ssh_exec", { host: "nas", command: "systemctl stop jellyfin" })],
+      [toolUse("ssh_exec", { host: "nas", command: "echo restarted jellyfin" })],
+      [toolUse("finish_task", { outcome: "done", summary: "Restarted.", notify: true })],
+    ],
+    false,
+  );
+  // Haiku says you asked once your note is among your words.
+  const answer = model.onCreate;
+  model.onCreate = (p) => {
+    const out = answer?.(p);
+    return p.system === INTENT_PROMPT && JSON.stringify(p.messages).includes("restart it.")
+      ? JSON.stringify({ asked: true, why: "You said to restart it." })
+      : out;
+  };
+  const { t } = await started(model);
+  const task = chatTask(t, "[Sat 11 Oct 10:00] look into jellyfin");
+  const approval = await waitFor(() => t.approvals.list(true)[0]);
+  const decided = t.approvals.decide(approval.id, "deny", "web", "Don't stop it, restart it.");
+  expect(decided?.note).toBe("Don't stop it, restart it.");
+  await waitFor(() => t.tasks.get(task.id)?.finishedAt);
+  expect(t.tasks.get(task.id)?.status).toBe("done");
+  // The model got the note with the denial.
+  const sent = JSON.stringify(model.requests.map((r) => r.messages));
+  expect(sent).toContain("<owner_note>");
+  expect(sent).toContain("Don't stop it, restart it.");
+  // The restart didn't ask: the note is in what Haiku reads as the owner's words.
+  expect(t.approvals.list(true)).toHaveLength(0);
+  expect(checks.at(-1)).toContain("Don't stop it, restart it.");
+  expect(t.tasks.steps(task.id).some((s) => s.name === "Your note")).toBe(true);
+});

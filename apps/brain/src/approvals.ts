@@ -11,6 +11,10 @@ const WEB_ONLY: ApprovalKind[] = ["payment", "account_security"];
 
 export type Outcome = "approved" | "denied" | "expired" | "cancelled";
 
+/** Your note on an approval, for the task's tool result: it's yours, so the task follows it. */
+export const ownerNote = (note: string) =>
+  `The owner answered with this note. Follow it; it overrides your plan:\n<owner_note>\n${note}\n</owner_note>`;
+
 type Row = {
   id: number;
   task_id: number | null;
@@ -25,6 +29,7 @@ type Row = {
   expires_at: string;
   decided_at: string | null;
   cost_usd: number | null;
+  note: string | null;
 };
 
 const SELECT = `SELECT a.*, (SELECT sum(cost_usd) FROM spend_ledger s WHERE s.task_id = a.task_id) AS cost_usd
@@ -44,6 +49,7 @@ const toApproval = (r: Row): Approval => ({
   createdAt: r.created_at,
   expiresAt: r.expires_at,
   decidedAt: r.decided_at,
+  note: r.note,
 });
 
 export type NewApproval = {
@@ -154,12 +160,13 @@ export class Approvals {
     id: number,
     status: Outcome,
     via: Approval["decidedVia"] = null,
+    note: string | null = null,
   ): Approval | null {
     const changed = this.db
       .query(
-        "UPDATE approvals SET status = ?, decided_via = ?, decided_at = ? WHERE id = ? AND status = 'pending'",
+        "UPDATE approvals SET status = ?, decided_via = ?, decided_at = ?, note = ? WHERE id = ? AND status = 'pending'",
       )
-      .run(status, via, this.now(), id);
+      .run(status, via, this.now(), note, id);
     if (!changed.changes) return null;
     const approval = this.get(id);
     if (approval) this.events.emit({ type: "approval.resolved", approval });
@@ -168,9 +175,14 @@ export class Approvals {
     return approval;
   }
 
-  /** Your decision. Null if the approval isn't pending any more. */
-  decide(id: number, decision: "approve" | "deny", via: "web" | "ntfy"): Approval | null {
-    return this.resolve(id, decision === "approve" ? "approved" : "denied", via);
+  /** Your decision, with what you told the task. Null if the approval isn't pending any more. */
+  decide(
+    id: number,
+    decision: "approve" | "deny",
+    via: "web" | "ntfy",
+    note?: string,
+  ): Approval | null {
+    return this.resolve(id, decision === "approve" ? "approved" : "denied", via, note || null);
   }
 
   cancel(id: number) {

@@ -382,7 +382,7 @@ private struct TaskApprovals: View {
     VStack(alignment: .leading, spacing: 2) {
       ForEach(ids, id: \.self) { id in
         if let a = store.approvals[id], a.status != .pending {
-          Text("\(a.status.word): \(a.summary)").font(.subheadline).foregroundStyle(.secondary)
+          Text(a.resolvedText).font(.subheadline).foregroundStyle(.secondary)
         }
       }
     }
@@ -480,7 +480,7 @@ private struct ApprovalMessage: View {
         if a.status == .pending {
           ApprovalBody(approval: a)
         } else {
-          Text("\(a.status.word): \(a.summary)").foregroundStyle(.secondary)
+          Text(a.resolvedText).foregroundStyle(.secondary)
         }
       }
     }
@@ -494,6 +494,7 @@ struct ApprovalBody: View {
   @Environment(AppStore.self) private var store
   @State private var busy = false
   @State private var error: String?
+  @State private var note = ""
 
   var body: some View {
     let a = approval
@@ -506,6 +507,11 @@ struct ApprovalBody: View {
     if !text.isEmpty { MarkdownText(text: text) }
     if let taskId = a.taskId, let stepId = a.screenshotStepId {
       Screenshot(taskId: taskId, stepId: stepId)
+    }
+    if a.takesNote {
+      TextField("Tell it what to do instead, or how to go ahead", text: $note, axis: .vertical)
+        .lineLimit(1...6)
+        .textFieldStyle(.roundedBorder)
     }
     if let error {
       Text(error).font(.footnote).foregroundStyle(.red)
@@ -526,12 +532,21 @@ struct ApprovalBody: View {
     error = nil
     Task {
       do {
-        try await store.decide(approval.id, decision)
+        try await store.decide(approval.id, decision, note: note)
       } catch {
         self.error = message(for: error)
         busy = false
       }
     }
+  }
+}
+
+extension Approval {
+  /// "Denied: …", with your note.
+  var resolvedText: String {
+    let line = "\(status.word): \(summary)"
+    guard let note, !note.isEmpty else { return line }
+    return "\(line) You said: \(note)"
   }
 }
 

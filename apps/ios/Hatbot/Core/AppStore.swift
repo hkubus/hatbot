@@ -257,9 +257,14 @@ final class AppStore {
     }
   }
 
-  func decide(_ id: Int, _ decision: Decision) async throws {
-    struct Body: Encodable { let decision: Decision }
-    let a: Approval = try await api.post("/approvals/\(id)", body: Body(decision: decision))
+  func decide(_ id: Int, _ decision: Decision, note: String = "") async throws {
+    struct Body: Encodable {
+      let decision: Decision
+      let note: String?
+    }
+    let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+    let body = Body(decision: decision, note: trimmed.isEmpty ? nil : trimmed)
+    let a: Approval = try await api.post("/approvals/\(id)", body: body)
     approvals[a.id] = a
   }
 

@@ -159,8 +159,13 @@ export type Approval = {
   createdAt: string;
   expiresAt: string;
   decidedAt: string | null;
+  /** What you told the task along with your decision: what to do instead, or how to go ahead. */
+  note: string | null;
 };
-export const DecideApproval = z.object({ decision: z.enum(["approve", "deny"]) });
+export const DecideApproval = z.object({
+  decision: z.enum(["approve", "deny"]),
+  note: z.string().trim().max(4000).optional(),
+});
 export const TokenDecision = z.object({
   decision: z.enum(["approve", "deny"]),
   exp: z.number().int(),

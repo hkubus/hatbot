@@ -1625,6 +1625,14 @@ html[data-theme="dark"] .seg button.active {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.field.approval-note {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 10px;
+  padding: 6px 9px;
+  resize: vertical;
+}
 .card-head .right {
   margin-left: auto;
   display: flex;

@@ -63,11 +63,8 @@ export const approvalRoutes = new Hono<AppEnv>()
     return approval ? c.json(approval) : c.json({ error: "not found" }, 404);
   })
   .post("/approvals/:id", json(DecideApproval), (c) => {
-    const approval = c.var.approvals.decide(
-      Number(c.req.param("id")),
-      c.req.valid("json").decision,
-      "web",
-    );
+    const { decision, note } = c.req.valid("json");
+    const approval = c.var.approvals.decide(Number(c.req.param("id")), decision, "web", note);
     if (!approval) return c.json({ error: "already decided" }, 409);
     return c.json(approval);
   });

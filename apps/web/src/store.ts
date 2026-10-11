@@ -235,8 +235,10 @@ async function loadLive() {
     if (state.steps[t.id] && t.finishedAt === null) void loadTask(t.id).catch(() => {});
 }
 
-export async function decideApproval(id: number, decision: "approve" | "deny") {
-  const a = await api<Approval>(`/approvals/${id}`, { body: { decision } });
+export async function decideApproval(id: number, decision: "approve" | "deny", note = "") {
+  const a = await api<Approval>(`/approvals/${id}`, {
+    body: { decision, ...(note.trim() ? { note: note.trim() } : {}) },
+  });
   set({ approvals: { ...state.approvals, [a.id]: a } });
 }
 

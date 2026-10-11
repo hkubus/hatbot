@@ -148,6 +148,11 @@ struct Approval: Codable, Identifiable, Equatable, Sendable {
   var createdAt: String
   var expiresAt: String
   var decidedAt: String?
+  /// What you told the task along with your decision.
+  var note: String?
+
+  /// Whether the answer can carry a note: the task carries on afterwards.
+  var takesNote: Bool { kind != "budget" && kind != "injection_warning" }
 }
 
 enum Decision: String, Encodable, Sendable {
