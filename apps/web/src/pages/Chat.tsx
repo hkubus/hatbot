@@ -24,11 +24,15 @@ import {
   getState,
   loadEarlier,
   loadThread,
+  markSeen,
   sendMessage,
   setPaused,
   useStore,
 } from "../store";
 import { isActive, Shot, taskLine, tokenText, whenText } from "../tasks";
+
+/** How long an unread message stays on screen before it counts as seen. */
+const SEEN_AFTER_MS = 1500;
 
 const time = (iso: string) =>
   new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
@@ -129,21 +133,17 @@ function Meta({
   m,
   copy,
   open,
-  updated,
 }: {
   m: ThreadMessage;
   copy?: string;
   open?: { to: string; label: string };
-  /** When a task's result changed the message after it was sent. */
-  updated?: string | null;
 }) {
   const [copied, doCopy] = useCopy();
   return (
     <div className="meta">
-      <span className="time">
-        {time(m.createdAt)}
-        {updated && ` · Updated ${time(updated)}`}
-      </span>
+      <span className="time">{time(m.createdAt)}</span>
+      {/* A task's result changed the message after it was sent. */}
+      {m.editedAt && <span className="edited">Edited {time(m.editedAt)}</span>}
       <span className="msg-actions">
         {copy && (
           <button
@@ -239,8 +239,6 @@ function TaskMessage({
         m={m}
         copy={active ? undefined : (task.summary ?? task.title)}
         open={{ to: `/tasks/${taskId}`, label: "Open task" }}
-        // A card added when the task ended wasn't updated; one that showed it running was.
-        updated={task.finishedAt && task.finishedAt > m.createdAt ? task.finishedAt : null}
       />
     </>
   );
@@ -275,7 +273,10 @@ function TaskResult({ taskId }: { taskId: number }) {
   return <div className="muted resolved">Cancelled.</div>;
 }
 
-/** Hatbot's reply, with the task it started (if any) working and then reporting under it. */
+/**
+ * Hatbot's reply, with the task it started (if any) working under it. A task that finished or failed
+ * replaces the reply with its result; a cancelled one leaves the reply.
+ */
 function ReplyMessage({
   m,
   progress,
@@ -290,10 +291,11 @@ function ReplyMessage({
   const streaming = m.status === "streaming";
   const note = progress?.trim().split("\n").filter(Boolean).at(-1);
   const ended = task && !isActive(task) ? task : null;
+  const replaced = ended !== null && ended.status !== "cancelled";
   return (
     <>
       <div className="body">
-        {m.text && <AssistantBody text={m.text} streaming={streaming} />}
+        {m.text && !replaced && <AssistantBody text={m.text} streaming={streaming} />}
         {streaming && !m.text && !m.taskId && (
           <div className="typing">
             <span />
@@ -307,17 +309,15 @@ function ReplyMessage({
             {tokenText(used.tokens)} tokens · ${used.costUsd.toFixed(3)}
           </div>
         )}
-        {/* The result came later: a rule sets it apart from the reply, like text after a tool. */}
-        {ended && m.text && <hr className="result-rule" />}
+        {ended && !replaced && m.text && <hr className="result-rule" />}
         {approvals && <TaskApprovals ids={approvals} />}
         {m.taskId && <TaskResult taskId={m.taskId} />}
       </div>
       {!streaming && (
         <Meta
           m={m}
-          copy={[m.text, ended?.summary].filter(Boolean).join("\n\n---\n\n")}
+          copy={replaced ? (ended.summary ?? "") : m.text}
           open={m.taskId ? { to: `/tasks/${m.taskId}`, label: "Open task" } : undefined}
-          updated={ended?.finishedAt}
         />
       )}
     </>
@@ -417,16 +417,19 @@ function Message({
   progress,
   approvals,
   animate,
+  unread,
 }: {
   m: ThreadMessage;
   progress?: string;
   /** An ended task's approvals, shown in this message instead of their own. */
   approvals?: number[];
   animate: boolean;
+  /** Sent or edited since you last saw it. */
+  unread: boolean;
 }) {
   // Touch screens have no hover: a tap shows the message's actions.
   const [tapped, setTapped] = useState(false);
-  const cls = `msg ${m.role === "user" ? "user" : ""} ${animate ? "new" : ""} ${tapped ? "tapped" : ""}`;
+  const cls = `msg ${m.role === "user" ? "user" : ""} ${animate ? "new" : ""} ${tapped ? "tapped" : ""} ${unread ? "unread" : ""}`;
   let inner: React.ReactNode;
   if (m.role === "user") {
     inner = (
@@ -446,7 +449,7 @@ function Message({
   }
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: a tap only reveals the buttons, which are reachable by keyboard anyway
-    <div className={cls} onClick={() => setTapped((v) => !v)}>
+    <div className={cls} data-id={m.id} onClick={() => setTapped((v) => !v)}>
       {inner}
     </div>
   );
@@ -489,6 +492,7 @@ export function Chat() {
   );
   const [unfolded, setUnfolded] = useState<Set<number>>(() => new Set());
   const progress = useStore((s) => s.progress);
+  const unread = useStore((s) => s.unread);
   const hasEarlier = useStore((s) => s.hasEarlier);
   const paused = useStore((s) => s.paused);
   const [draft, setDraft] = useState("");
@@ -523,6 +527,27 @@ export function Chat() {
     ro.observe(content);
     return () => ro.disconnect();
   }, []);
+
+  // An unread message that has been on screen for a moment, with the window in front, is seen.
+  useEffect(() => {
+    if (!unread.length) return;
+    const since = new Map<number, number>();
+    const timer = setInterval(() => {
+      const el = scroller.current;
+      if (!el || document.visibilityState !== "visible" || !document.hasFocus())
+        return since.clear();
+      const view = el.getBoundingClientRect();
+      const now = Date.now();
+      for (const id of unread) {
+        const r = el.querySelector(`[data-id="${id}"]`)?.getBoundingClientRect();
+        if (r && r.top < view.bottom && r.bottom > view.top) since.set(id, since.get(id) ?? now);
+        else since.delete(id);
+      }
+      const seen = [...since].filter(([, t]) => now - t >= SEEN_AFTER_MS).map(([id]) => id);
+      if (seen.length) markSeen(seen);
+    }, 500);
+    return () => clearInterval(timer);
+  }, [unread]);
 
   const onScroll = () => {
     const el = scroller.current;
@@ -581,6 +606,7 @@ export function Chat() {
           progress={progress[m.id]}
           approvals={m.kind !== "approval" && m.taskId !== null ? merged.get(m.taskId) : undefined}
           animate={m.id >= animateFrom.current}
+          unread={unread.includes(m.id)}
         />
       </Fragment>
     );
@@ -617,9 +643,11 @@ export function Chat() {
               if (g.fold === null || g.episodeId === null) return g.messages.map(row);
               const id = g.episodeId;
               const open = unfolded.has(id);
-              // An approval still waiting for you stays in view.
+              // An approval still waiting for you, or a message you haven't seen, stays in view.
               const waiting = g.messages.filter(
-                (m) => m.approvalId && approvals[m.approvalId]?.status === "pending",
+                (m) =>
+                  (m.approvalId && approvals[m.approvalId]?.status === "pending") ||
+                  unread.includes(m.id),
               );
               return (
                 <Fragment key={`fold-${id}`}>

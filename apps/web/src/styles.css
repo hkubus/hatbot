@@ -310,6 +310,10 @@ svg.i {
   background: var(--attention);
   color: #fff;
 }
+.nav-item .count.unread {
+  background: var(--accent);
+  color: #fff;
+}
 
 .mini-meter {
   display: grid;
@@ -627,6 +631,20 @@ html[data-theme="dark"] .seg button.active {
   display: grid;
   gap: 4px;
   justify-items: start;
+}
+/* Hatbot's messages: an accent line on the left while unread, fading once seen. */
+.msg:not(.user) {
+  margin-left: -12px;
+  padding-left: 10px;
+  border-left: 2px solid transparent;
+  transition: border-color 1s;
+}
+.msg.unread {
+  border-left-color: var(--accent);
+}
+.msg .edited {
+  font-size: 11px;
+  color: var(--accent-text);
 }
 .msg.new {
   animation: rise 0.4s var(--spring) both;
@@ -1548,6 +1566,9 @@ html[data-theme="dark"] .seg button.active {
     display: grid;
     place-items: center;
     padding: 0 4px;
+  }
+  .tabbar .badge.unread {
+    background: var(--accent);
   }
 }
 

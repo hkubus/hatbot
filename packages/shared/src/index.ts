@@ -42,6 +42,7 @@ export type Me = { setupDone: boolean; authenticated: boolean };
 export type ApiError = { error: string };
 
 export const PostMessage = z.object({ text: z.string().trim().min(1).max(100_000) });
+export const SeenMessages = z.object({ ids: z.array(z.number().int().positive()).min(1).max(200) });
 export const PutMemoryFile = z.object({
   content: z.string().max(1_000_000),
   message: z.string().max(200).optional(),
@@ -60,6 +61,10 @@ export type ThreadMessage = {
   scheduleId: number | null;
   /** The conversation it belongs to; cards from background tasks have none. */
   episodeId: number | null;
+  /** When a task's result changed it after it was sent. */
+  editedAt: string | null;
+  /** When you last saw it. Hatbot's messages are unread while this is before they were sent or edited. */
+  seenAt: string | null;
 };
 
 /** A conversation in the thread (PLAN.md §5.3). Finished ones fold up under their recap. */
@@ -191,6 +196,10 @@ export type HatbotEvent =
   | { type: "message.done"; id: number; text: string; status: "done" | "error" }
   /** A task now shows under this reply. */
   | { type: "message.task"; id: number; taskId: number }
+  /** A task's result changed this message. */
+  | { type: "message.edited"; id: number; editedAt: string }
+  /** You saw these messages (on any device). */
+  | { type: "message.seen"; ids: number[]; seenAt: string }
   /** What the reply being written has used so far, across its model calls. */
   | { type: "message.usage"; id: number; tokens: number; costUsd: number }
   | { type: "spend.updated"; todayUsd: number; monthUsd: number }

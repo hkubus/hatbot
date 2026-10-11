@@ -259,4 +259,13 @@ export const migrations: string[] = [
   /* 13: what the owner told the task along with their decision on an approval */ `
   ALTER TABLE approvals ADD COLUMN note TEXT;
   `,
+  /* 14: when a task's result changed a message, and when you last saw each message (unread) */ `
+  ALTER TABLE messages ADD COLUMN edited_at TEXT;
+  ALTER TABLE messages ADD COLUMN seen_at TEXT;
+  UPDATE messages SET edited_at = (SELECT t.finished_at FROM tasks t WHERE t.id = messages.task_id)
+    WHERE kind IN ('text', 'task')
+    AND (SELECT t.finished_at FROM tasks t WHERE t.id = messages.task_id) > created_at;
+  -- Everything from before counts as seen.
+  UPDATE messages SET seen_at = strftime('%Y-%m-%dT%H:%M:%fZ');
+  `,
 ];

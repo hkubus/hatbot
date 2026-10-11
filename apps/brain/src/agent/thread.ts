@@ -24,7 +24,7 @@ const RECENT_MESSAGES = 10;
 const MAX_STEPS = 25;
 const MAX_TURN_MS = 10 * 60_000;
 const MESSAGE_COLUMNS =
-  "id, role, kind, text, status, created_at AS createdAt, task_id AS taskId, approval_id AS approvalId, schedule_id AS scheduleId, episode_id AS episodeId";
+  "id, role, kind, text, status, created_at AS createdAt, task_id AS taskId, approval_id AS approvalId, schedule_id AS scheduleId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt";
 const EPISODE_COLUMNS = "id, started_at AS startedAt, last_activity_at AS lastActivityAt, recap";
 const BETAS: Anthropic.Beta.AnthropicBeta[] = [
   "server-side-fallback-2026-07-01",
@@ -135,6 +135,41 @@ export class Thread {
     if (!row) throw new Error("card insert failed");
     this.d.events.emit({ type: "message.created", message: row });
     return row;
+  }
+
+  /** Hatbot's messages sent or edited since you last saw them, oldest first. */
+  unread(): number[] {
+    return this.d.db
+      .query<{ id: number }, []>(
+        `SELECT id FROM messages WHERE role = 'assistant' AND status != 'streaming'
+         AND (seen_at IS NULL OR seen_at < coalesce(edited_at, created_at)) ORDER BY id`,
+      )
+      .all()
+      .map((r) => r.id);
+  }
+
+  /** You saw these messages. One still streaming isn't seen until it's done. */
+  markSeen(ids: number[]) {
+    const seenAt = this.now();
+    const marked = this.d.db
+      .query<{ id: number }, (string | number)[]>(
+        `UPDATE messages SET seen_at = ? WHERE id IN (${ids.map(() => "?").join(", ")})
+         AND status != 'streaming' RETURNING id`,
+      )
+      .all(seenAt, ...ids)
+      .map((r) => r.id);
+    if (marked.length) this.d.events.emit({ type: "message.seen", ids: marked, seenAt });
+  }
+
+  /** A task's result changed these messages: the card that showed it running, or the reply that started it. */
+  markEdited(taskId: number) {
+    const editedAt = this.now();
+    const rows = this.d.db
+      .query<{ id: number }, [string, number]>(
+        "UPDATE messages SET edited_at = ? WHERE task_id = ? AND kind IN ('text', 'task') RETURNING id",
+      )
+      .all(editedAt, taskId);
+    for (const r of rows) this.d.events.emit({ type: "message.edited", id: r.id, editedAt });
   }
 
   /** Shows a task under the reply that started it, so its progress and result don't need a card. */

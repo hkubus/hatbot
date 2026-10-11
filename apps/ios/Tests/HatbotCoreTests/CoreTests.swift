@@ -329,3 +329,23 @@ final class UsageTests: XCTestCase {
     XCTAssertEqual([950, 4200, 3_100_000].map(Format.tokens), ["950", "4.2k", "3.1M"])
   }
 }
+
+// Not a @MainActor method: Linux XCTest can't run those.
+final class UnreadTests: XCTestCase {
+  func testEditedAndSeenEventsTrackUnread() async throws {
+    try await MainActor.run { try Self.editedAndSeenEventsTrackUnread() }
+  }
+
+  @MainActor private static func editedAndSeenEventsTrackUnread() throws {
+    let decode = { (json: String) in try JSONDecoder().decode(HatbotEvent.self, from: Data(json.utf8)) }
+    let store = AppStore(api: API(server: URL(string: "https://h.example")!, token: nil))
+    store.apply(try decode(
+      #"{"type":"message.created","message":{"id":3,"role":"assistant","kind":"text","text":"On it.","status":"done","createdAt":"2026-10-11T10:00:00.000Z","taskId":7,"approvalId":null,"scheduleId":null,"episodeId":1,"editedAt":null,"seenAt":null}}"#))
+    XCTAssertEqual(store.unread, [3])
+    store.apply(try decode(#"{"type":"message.seen","ids":[3],"seenAt":"2026-10-11T10:00:01.000Z"}"#))
+    XCTAssertEqual(store.unread, [])
+    store.apply(try decode(#"{"type":"message.edited","id":3,"editedAt":"2026-10-11T10:05:00.000Z"}"#))
+    XCTAssertEqual(store.unread, [3])
+    XCTAssertEqual(store.messages.first?.editedAt, "2026-10-11T10:05:00.000Z")
+  }
+}

@@ -64,6 +64,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const { path, params } = useRoute();
   const theme = useTheme();
   const pending = useStore(needsYou);
+  const unread = useStore((s) => s.unread.length);
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
   const [insp, setInsp] = useState(() => localStorage.getItem("hatbot:insp") === "1");
   const view = viewOf(path);
@@ -125,6 +126,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
                 {v.path === "/tasks" && pending > 0 && (
                   <span className="count attn">{pending}</span>
                 )}
+                {v.path === "/" && unread > 0 && <span className="count unread">{unread}</span>}
               </button>
             ))}
           </nav>
@@ -211,6 +213,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
             <Icon name={v.icon} />
             {v.title}
             {v.path === "/tasks" && pending > 0 && <span className="badge">{pending}</span>}
+            {v.path === "/" && unread > 0 && <span className="badge unread">{unread}</span>}
           </button>
         ))}
       </nav>

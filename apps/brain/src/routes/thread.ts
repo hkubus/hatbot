@@ -1,4 +1,4 @@
-import { PostMessage } from "@hatbot/shared";
+import { PostMessage, SeenMessages } from "@hatbot/shared";
 import { Hono } from "hono";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware";
@@ -27,4 +27,10 @@ export const threadRoutes = new Hono<AppEnv>()
   .post("/thread/messages", json(PostMessage), (c) => {
     const { message } = c.var.thread.post(c.req.valid("json").text);
     return c.json(message, 202);
+  })
+  // Unread: Hatbot's messages sent or edited since you last saw them.
+  .get("/thread/unread", (c) => c.json(c.var.thread.unread()))
+  .post("/thread/seen", json(SeenMessages), (c) => {
+    c.var.thread.markSeen(c.req.valid("json").ids);
+    return c.json({ ok: true });
   });

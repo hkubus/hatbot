@@ -16,6 +16,8 @@ final class AppStore {
   /// What each streaming reply has used so far.
   var usage: [Int: ReplyUsage] = [:]
   var hasEarlier = false
+  /// Hatbot's messages sent or edited since you last saw them.
+  var unread: [Int] = []
   var paused = false
   var todayUsd: Double?
   var monthUsd: Double?
@@ -91,6 +93,13 @@ final class AppStore {
     switch event {
     case let .messageCreated(m):
       upsert(m)
+      if m.role == .assistant && m.status != .streaming { addUnread(m.id) }
+    case let .messageEdited(id, editedAt):
+      if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].editedAt = editedAt }
+      addUnread(id)
+    case let .messageSeen(ids, seenAt):
+      for i in messages.indices where ids.contains(messages[i].id) { messages[i].seenAt = seenAt }
+      unread.removeAll { ids.contains($0) }
     case let .messageDelta(id, text):
       if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].text += text }
     case let .messageProgress(id, text):
@@ -106,6 +115,7 @@ final class AppStore {
         messages[i].text = text
         messages[i].status = status
       }
+      addUnread(id)
     case let .spendUpdated(today, month):
       todayUsd = today
       monthUsd = month
@@ -159,6 +169,21 @@ final class AppStore {
       messages.append(m)
       messages.sort { $0.id < $1.id }
     }
+  }
+
+  private func addUnread(_ id: Int) {
+    guard !unread.contains(id) else { return }
+    unread.append(id)
+    unread.sort()
+  }
+
+  /// You've seen these messages: they stop counting as unread here and on your other devices.
+  func markSeen(_ ids: [Int]) {
+    let seen = ids.filter { unread.contains($0) }
+    guard !seen.isEmpty else { return }
+    unread.removeAll { seen.contains($0) }
+    struct Body: Encodable { let ids: [Int] }
+    Task { let _: Empty? = try? await api.post("/thread/seen", body: Body(ids: seen)) }
   }
 
   func loadThread() async throws {
@@ -252,6 +277,8 @@ final class AppStore {
     }
     for a in pending { approvals[a.id] = a }
     desktop = state
+    // A brain from before unread answers 404.
+    if let list: [Int] = try? await api.get("/thread/unread") { unread = list }
     for t in tasks.values where steps[t.id] != nil && t.isActive {
       try? await loadTask(t.id)
     }

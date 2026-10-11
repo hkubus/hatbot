@@ -55,10 +55,12 @@ struct ChatView: View {
         continue
       }
       add(g.messages[0], as: .fold(g))
-      // An approval still waiting for you stays in view.
+      // An approval still waiting for you, or a message you haven't seen, stays in view.
       let shown = unfolded.contains(id)
         ? g.messages
-        : g.messages.filter { m in m.approvalId.map { store.approvals[$0]?.status == .pending } ?? false }
+        : g.messages.filter { m in
+          (m.approvalId.map { store.approvals[$0]?.status == .pending } ?? false) || store.unread.contains(m.id)
+        }
       for m in shown { add(m) }
     }
     return grouped(rows)
@@ -281,6 +283,8 @@ private struct MessageRow: View {
   let tail: Bool
   let open: (Route) -> Void
   @Environment(AppStore.self) private var store
+  @Environment(\.scenePhase) private var scenePhase
+  @State private var onScreen = false
 
   var body: some View {
     if m.role == .user {
@@ -296,6 +300,7 @@ private struct MessageRow: View {
         .frame(maxWidth: .infinity, alignment: .trailing)
     } else {
       let shape = Bubble(tail: tail, side: .leading)
+      let unread = store.unread.contains(m.id)
       VStack(alignment: .leading, spacing: 3) {
         VStack(alignment: .leading, spacing: 8) { content }
           .padding(Bubble.insets(.leading))
@@ -303,15 +308,28 @@ private struct MessageRow: View {
           .contentShape(.contextMenuPreview, shape)
           .contextMenu { menu }
         // Like Messages' "Edited": the task's result changed this message after it was sent.
-        if m.status != .streaming, let updatedAt {
-          Text("Updated \(updatedAt.timeText)")
+        if m.status != .streaming, let editedAt {
+          Text("Edited \(editedAt.timeText)")
             .font(.caption2)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Color.brand)
             .padding(.leading, Bubble.tailWidth + 12)
         }
       }
       .padding(.trailing, 40)
       .frame(maxWidth: .infinity, alignment: .leading)
+      // Unread: an accent line at the edge, fading once you've seen it.
+      .overlay(alignment: .leading) {
+        Capsule().fill(Color.brand).frame(width: 3).padding(.vertical, 4).offset(x: -9)
+          .opacity(unread ? 1 : 0)
+          .animation(.easeOut(duration: 1), value: unread)
+      }
+      .onScrollVisibilityChange(threshold: 0.5) { onScreen = $0 }
+      // On screen for a moment, with the app in front: seen.
+      .task(id: unread && onScreen && scenePhase == .active) {
+        guard unread && onScreen && scenePhase == .active else { return }
+        try? await Task.sleep(for: .seconds(1.5))
+        if !Task.isCancelled { store.markSeen([m.id]) }
+      }
     }
   }
 
@@ -325,9 +343,10 @@ private struct MessageRow: View {
     }
   }
 
-  /// When a task's result changed the message after it was sent: a reply's task once it ends, or a task
-  /// card that showed it running (one added when the task ended wasn't updated).
-  private var updatedAt: String? {
+  /// When a task's result changed the message after it was sent. A brain from before doesn't say: then a
+  /// reply's task once it ends, or a task card that showed it running (one added when it ended wasn't).
+  private var editedAt: String? {
+    if let editedAt = m.editedAt { return editedAt }
     guard let task = m.taskId.flatMap({ store.tasks[$0] }), let done = task.finishedAt else { return nil }
     switch m.kind {
     case .text: return done
@@ -356,7 +375,8 @@ private struct MessageRow: View {
       if m.kind == .task {
         if let task { copyButton(result ?? task.title) }
       } else {
-        copyButton([m.text, result ?? ""].filter { !$0.isEmpty }.joined(separator: "\n\n---\n\n"))
+        // A finished or failed task's result replaced the reply.
+        copyButton(task.map(ReplyMessage.replaced) == true ? result ?? "" : m.text)
       }
       if let taskId = m.taskId { openButton(taskId) }
     }
@@ -371,14 +391,21 @@ private struct MessageRow: View {
   }
 }
 
-/// A reply, with the task it started (if any) working and then reporting under it.
+/// A reply, with the task it started (if any) working under it. A task that finished or failed replaces
+/// the reply with its result; a cancelled one leaves the reply.
 private struct ReplyMessage: View {
   let m: ThreadMessage
   let approvals: [Int]
   @Environment(AppStore.self) private var store
 
+  static func replaced(_ task: AgentTask) -> Bool {
+    !task.isActive && task.status != .cancelled
+  }
+
   var body: some View {
-    if !m.text.isEmpty { MarkdownText(text: m.text) }
+    let task = m.taskId.flatMap { store.tasks[$0] }
+    let replaced = task.map(Self.replaced) ?? false
+    if !m.text.isEmpty && !replaced { MarkdownText(text: m.text) }
     if m.status == .streaming && m.text.isEmpty && m.taskId == nil { TypingDots() }
     if m.status == .streaming, let note = Format.lastLine(store.progress[m.id]) {
       Text(note).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
@@ -388,8 +415,7 @@ private struct ReplyMessage: View {
         .font(.footnote.monospacedDigit())
         .foregroundStyle(.secondary)
     }
-    // The result came later: a rule sets it apart from the reply, like text after a tool.
-    if !m.text.isEmpty, let task = m.taskId.flatMap({ store.tasks[$0] }), !task.isActive { Divider() }
+    if !m.text.isEmpty && !replaced, let task, !task.isActive { Divider() }
     if !approvals.isEmpty { TaskApprovals(ids: approvals) }
     if let taskId = m.taskId { TaskResult(taskId: taskId) }
   }

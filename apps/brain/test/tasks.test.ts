@@ -46,6 +46,13 @@ test("chat starts a desktop task that runs, archives screenshots and reports bac
   expect(task?.status).toBe("done");
   expect(task?.summary).toBe("Example.com is up.");
   expect(task?.tainted).toBe(true);
+
+  // Its result edited the reply, which is unread until you've seen it.
+  const edited = t.thread.list().find((m) => m.id === reply?.id);
+  expect(edited?.editedAt).toBe(task?.finishedAt as string);
+  expect(t.thread.unread()).toContain(reply?.id as number);
+  t.thread.markSeen(t.thread.unread());
+  expect(t.thread.unread()).toEqual([]);
   expect(t.agent.actions.map((a) => a.name)).toEqual(["left_click"]);
   expect(task?.costUsd).toBeGreaterThan(0);
 

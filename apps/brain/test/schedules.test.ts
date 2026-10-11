@@ -87,7 +87,11 @@ test("chat creates a schedule; it runs when due and reports only when there's ne
   expect(second.model).toBe("claude-opus-5-5");
   expect(work.requests[1]?.model).toBe("claude-opus-5-5");
   expect(work.requests[1]?.thinking).toMatchObject({ display: "updates" });
-  expect(t.thread.list().find((m) => m.kind === "task")?.taskId).toBe(second.id);
+  const taskCard = t.thread.list().find((m) => m.kind === "task");
+  expect(taskCard?.taskId).toBe(second.id);
+  // Added when the task ended: unread, but not edited.
+  expect(taskCard?.editedAt).toBeNull();
+  expect(t.thread.unread()).toContain(taskCard?.id as number);
   expect(t.notifier.sent.at(-1)?.title).toContain("Framework stock check");
   t.thread.post("is it in stock?");
   await t.thread.idle();

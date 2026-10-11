@@ -66,6 +66,7 @@ private struct SidebarButton: ViewModifier {
 
 private struct Count: View {
   let n: Int
+  var color = Color.attention
 
   var body: some View {
     Text("\(n)")
@@ -73,7 +74,7 @@ private struct Count: View {
       .foregroundStyle(.white)
       .padding(.horizontal, 5)
       .frame(minWidth: 18, minHeight: 18)
-      .background(Color.attention, in: .capsule)
+      .background(color, in: .capsule)
   }
 }
 
@@ -143,6 +144,7 @@ struct Sidebar<Content: View>: View {
             Text(t.title)
             Spacer()
             if t == .tasks && store.needsYou > 0 { Count(n: store.needsYou) }
+            if t == .chat && !store.unread.isEmpty { Count(n: store.unread.count, color: .brand) }
           }
           .font(.body.weight(t == tab ? .semibold : .regular))
           .foregroundStyle(t == tab ? Color.brand : .primary)

@@ -471,7 +471,8 @@ export class Tasks {
     const underReply = this.d.db
       .query("SELECT 1 FROM messages WHERE kind = 'text' AND task_id = ?")
       .get(id);
-    if (!card.changes && !underReply && tell && task.lane === "background")
+    if (card.changes || underReply) this.d.thread.markEdited(id);
+    else if (tell && task.lane === "background")
       this.d.thread.addCard("task", text, { taskId: id });
     this.emit(id);
     if (!tell) return;

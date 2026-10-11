@@ -50,6 +50,10 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   var scheduleId: Int?
   /// The conversation it belongs to; cards from background tasks have none.
   var episodeId: Int?
+  /// When a task's result changed it after it was sent; missing on brains from before.
+  var editedAt: String?
+  /// When you last saw it; missing on brains from before.
+  var seenAt: String?
 }
 
 /// A conversation in the thread. Finished ones fold up under their recap.
@@ -334,6 +338,8 @@ enum HatbotEvent: Decodable, Sendable {
   case messageProgress(id: Int, text: String)
   case messageDone(id: Int, text: String, status: ThreadMessage.Status)
   case messageTask(id: Int, taskId: Int)
+  case messageEdited(id: Int, editedAt: String)
+  case messageSeen(ids: [Int], seenAt: String)
   case messageUsage(id: Int, ReplyUsage)
   case spendUpdated(todayUsd: Double, monthUsd: Double)
   case memoryCommitted(sha: String, message: String, author: String)
@@ -353,7 +359,7 @@ enum HatbotEvent: Decodable, Sendable {
 
   private enum Key: String, CodingKey {
     case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused, tokens, costUsd
-    case task, step, approval, state, schedule, trigger, episode
+    case task, step, approval, state, schedule, trigger, episode, editedAt, ids, seenAt
   }
 
   init(from decoder: Decoder) throws {
@@ -372,6 +378,10 @@ enum HatbotEvent: Decodable, Sendable {
         status: try c.decode(ThreadMessage.Status.self, forKey: .status))
     case "message.task":
       self = .messageTask(id: try c.decode(Int.self, forKey: .id), taskId: try c.decode(Int.self, forKey: .taskId))
+    case "message.edited":
+      self = .messageEdited(id: try c.decode(Int.self, forKey: .id), editedAt: try c.decode(String.self, forKey: .editedAt))
+    case "message.seen":
+      self = .messageSeen(ids: try c.decode([Int].self, forKey: .ids), seenAt: try c.decode(String.self, forKey: .seenAt))
     case "message.usage":
       self = .messageUsage(
         id: try c.decode(Int.self, forKey: .id),

@@ -25,6 +25,8 @@ type State = {
   /** What each streaming reply has used so far. */
   usage: Record<number, { tokens: number; costUsd: number }>;
   hasEarlier: boolean;
+  /** Hatbot's messages sent or edited since you last saw them. */
+  unread: number[];
   paused: boolean;
   todayUsd: number | null;
   monthUsd: number | null;
@@ -51,6 +53,7 @@ let state: State = {
   progress: {},
   usage: {},
   hasEarlier: false,
+  unread: [],
   paused: false,
   todayUsd: null,
   monthUsd: null,
@@ -116,6 +119,17 @@ export async function loadEarlier() {
 export async function sendMessage(text: string) {
   const m = await api<ThreadMessage>("/thread/messages", { body: { text } });
   set({ messages: upsert(state.messages, m) });
+}
+
+const addUnread = (id: number) =>
+  state.unread.includes(id) ? state.unread : [...state.unread, id].sort((a, b) => a - b);
+
+/** You've seen these messages: they stop counting as unread here and on your other devices. */
+export function markSeen(ids: number[]) {
+  const seen = ids.filter((id) => state.unread.includes(id));
+  if (!seen.length) return;
+  set({ unread: state.unread.filter((id) => !seen.includes(id)) });
+  void api("/thread/seen", { body: { ids: seen } }).catch(() => {});
 }
 
 export async function setPaused(paused: boolean) {
@@ -209,11 +223,13 @@ export async function saveSchedule(id: number, patch: Partial<Schedule> & { at?:
 }
 
 async function loadLive() {
-  const [pending, desktop, teach] = await Promise.all([
+  const [pending, desktop, teach, unread] = await Promise.all([
     api<Approval[]>("/approvals?pending=1"),
     api<DesktopState>("/desktop/status").catch(() => null),
     api<{ recording: TeachSession | null; drafts: TeachSession[] }>("/teach").catch(() => null),
+    api<number[]>("/thread/unread").catch(() => null),
   ]);
+  if (unread) set({ unread });
   const approvals = { ...state.approvals };
   // Anything we thought pending but the server doesn't list was decided while we were away.
   for (const a of Object.values(approvals))
@@ -301,7 +317,25 @@ export const onToast = (fn: Toast) => {
 function apply(e: HatbotEvent) {
   switch (e.type) {
     case "message.created":
-      return set({ messages: upsert(state.messages, e.message) });
+      return set({
+        messages: upsert(state.messages, e.message),
+        unread:
+          e.message.role === "assistant" && e.message.status !== "streaming"
+            ? addUnread(e.message.id)
+            : state.unread,
+      });
+    case "message.edited":
+      return set({
+        messages: state.messages.map((m) => (m.id === e.id ? { ...m, editedAt: e.editedAt } : m)),
+        unread: addUnread(e.id),
+      });
+    case "message.seen":
+      return set({
+        messages: state.messages.map((m) =>
+          e.ids.includes(m.id) ? { ...m, seenAt: e.seenAt } : m,
+        ),
+        unread: state.unread.filter((id) => !e.ids.includes(id)),
+      });
     case "message.delta":
       return set({
         messages: state.messages.map((m) => (m.id === e.id ? { ...m, text: m.text + e.text } : m)),
@@ -322,6 +356,7 @@ function apply(e: HatbotEvent) {
       return set({
         progress,
         usage,
+        unread: addUnread(e.id),
         messages: state.messages.map((m) =>
           m.id === e.id ? { ...m, text: e.text, status: e.status } : m,
         ),
