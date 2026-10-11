@@ -1,5 +1,6 @@
-// The sections, in a sidebar that slides in from the left, so chat gets the whole screen. The
-// button that opens it sits at the top left of each section and counts what needs you.
+// The sections, in a drawer under the left edge, so chat gets the whole screen. The section slides
+// aside to show it, following your finger: swipe in from the left edge, or tap the button at the
+// top left of each section, which counts what needs you.
 import SwiftUI
 
 enum AppTab: Hashable, CaseIterable {
@@ -28,6 +29,9 @@ enum AppTab: Hashable, CaseIterable {
 
 extension EnvironmentValues {
   @Entry var openSidebar: (() -> Void)?
+  /// A section's first page tells the drawer when it shows, so the edge swipe stays the back
+  /// gesture on the pages pushed over it.
+  @Entry var sidebarRoot: ((Bool) -> Void)?
 }
 
 extension View {
@@ -37,22 +41,26 @@ extension View {
 
 private struct SidebarButton: ViewModifier {
   @Environment(\.openSidebar) private var openSidebar
+  @Environment(\.sidebarRoot) private var sidebarRoot
   @Environment(AppStore.self) private var store
 
   func body(content: Content) -> some View {
-    content.toolbar {
-      if let openSidebar {
-        ToolbarItem(placement: .topBarLeading) {
-          Button(action: openSidebar) {
-            Image(systemName: "line.3.horizontal")
-              .overlay(alignment: .topTrailing) {
-                if store.needsYou > 0 { Count(n: store.needsYou).offset(x: 10, y: -8) }
-              }
+    content
+      .onAppear { sidebarRoot?(true) }
+      .onDisappear { sidebarRoot?(false) }
+      .toolbar {
+        if let openSidebar {
+          ToolbarItem(placement: .topBarLeading) {
+            Button(action: openSidebar) {
+              Image(systemName: "line.3.horizontal")
+                .overlay(alignment: .topTrailing) {
+                  if store.needsYou > 0 { Count(n: store.needsYou).offset(x: 10, y: -8) }
+                }
+            }
+            .accessibilityLabel(store.needsYou > 0 ? "Menu, \(store.needsYou) need you" : "Menu")
           }
-          .accessibilityLabel(store.needsYou > 0 ? "Menu, \(store.needsYou) need you" : "Menu")
         }
       }
-    }
   }
 }
 
@@ -69,34 +77,58 @@ private struct Count: View {
   }
 }
 
-struct Sidebar: View {
+struct Sidebar<Content: View>: View {
   @Binding var tab: AppTab
   @Binding var open: Bool
+  @ViewBuilder var content: Content
   @Environment(AppStore.self) private var store
-  @GestureState private var drag: CGFloat = 0
+  @GestureState(resetTransaction: Transaction(animation: .snappy)) private var drag: CGFloat = 0
+  @State private var roots = 0
 
   var body: some View {
-    ZStack(alignment: .leading) {
-      if open {
-        Color.black.opacity(0.2)
-          .ignoresSafeArea()
-          .onTapGesture(perform: close)
-          .accessibilityHidden(true)
-          .transition(.opacity)
+    GeometryReader { geo in
+      let width = min(300, geo.size.width * 0.82)
+      let shown = min(1, max(0, (open ? 1 : 0) + drag / width))
+      ZStack(alignment: .leading) {
+        content
+          .environment(\.openSidebar) { setOpen(true) }
+          .environment(\.sidebarRoot) { roots = max(0, roots + ($0 ? 1 : -1)) }
+          .overlay {
+            Color.black.opacity(0.25 * shown)
+              .ignoresSafeArea()
+              .allowsHitTesting(open)
+              .onTapGesture { setOpen(false) }
+          }
+          .overlay(alignment: .leading) {
+            if !open && roots > 0 {
+              Color.clear
+                .frame(width: 16)
+                .contentShape(.rect)
+                .ignoresSafeArea()
+                .gesture(swipe(width))
+            }
+          }
+          .accessibilityHidden(open)
+          .offset(x: shown * width)
         panel
-          .offset(x: min(0, drag))
-          .gesture(
-            DragGesture()
-              .updating($drag) { value, state, _ in state = value.translation.width }
-              .onEnded { value in
-                if value.predictedEndTranslation.width < -100 { close() }
-              }
-          )
+          .frame(width: width)
+          .offset(x: (shown - 1) * width)
+          .accessibilityHidden(!open)
           .accessibilityAddTraits(.isModal)
-          .accessibilityAction(.escape, close)
-          .transition(.move(edge: .leading))
+          .accessibilityAction(.escape) { setOpen(false) }
       }
+      .gesture(swipe(width), including: open ? .all : .subviews)
     }
+  }
+
+  /// Follows the finger, then settles open or shut by where the throw would land. Measured on the
+  /// screen, since the section moves under the finger.
+  private func swipe(_ width: CGFloat) -> some Gesture {
+    DragGesture(minimumDistance: 10, coordinateSpace: .global)
+      .updating($drag) { value, state, _ in state = value.translation.width }
+      .onEnded { value in
+        setOpen((open ? width : 0) + value.predictedEndTranslation.width > width / 2)
+      }
   }
 
   private var panel: some View {
@@ -104,7 +136,7 @@ struct Sidebar: View {
       ForEach(AppTab.allCases, id: \.self) { t in
         Button {
           tab = t
-          close()
+          setOpen(false)
         } label: {
           HStack(spacing: 14) {
             Image(systemName: t.icon).frame(width: 26)
@@ -124,15 +156,13 @@ struct Sidebar: View {
       }
       Spacer()
     }
-    .padding(10)
+    .padding(.horizontal, 10)
     .padding(.top, 8)
-    .frame(width: 270)
     .frame(maxHeight: .infinity)
-    .glassSurface(in: .rect(cornerRadius: 32))
-    .padding(8)
+    .background(Color(uiColor: .secondarySystemBackground).ignoresSafeArea())
   }
 
-  private func close() {
-    withAnimation(.snappy) { open = false }
+  private func setOpen(_ value: Bool) {
+    withAnimation(.snappy) { open = value }
   }
 }

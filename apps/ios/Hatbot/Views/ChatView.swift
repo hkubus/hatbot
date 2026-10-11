@@ -13,6 +13,7 @@ struct ChatView: View {
   @State private var position = ScrollPosition(edge: .bottom)
   @State private var loaded = false
   @State private var unfolded = Set<Int>()
+  @State private var farFromBottom = false
 
   /// What the list shows: times, folds, and the messages that aren't folded away.
   private enum Row: Identifiable {
@@ -114,6 +115,27 @@ struct ChatView: View {
       .scrollPosition($position)
       .defaultScrollAnchor(.bottom)
       .defaultScrollAnchor(.bottom, for: .sizeChanges)
+      .onScrollGeometryChange(for: Bool.self) { geo in
+        geo.contentSize.height - geo.visibleRect.maxY > 400
+      } action: { _, far in
+        withAnimation(.snappy) { farFromBottom = far }
+      }
+      .overlay(alignment: .bottom) {
+        if farFromBottom {
+          Button {
+            withAnimation { position.scrollTo(edge: .bottom) }
+          } label: {
+            Image(systemName: "arrow.down")
+              .font(.body.weight(.semibold))
+              .frame(width: 26, height: 30)
+          }
+          .glassButton()
+          .buttonBorderShape(.circle)
+          .padding(.bottom, 8)
+          .transition(.scale.combined(with: .opacity))
+          .accessibilityLabel("Scroll to bottom")
+        }
+      }
       .scrollDismissesKeyboard(.interactively)
       .edgeBar(.top) {
         if store.paused { PausedBanner() }

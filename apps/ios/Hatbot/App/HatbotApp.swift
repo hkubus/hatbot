@@ -30,9 +30,7 @@ struct MainView: View {
   @State private var settingsPath: [Route] = []
 
   var body: some View {
-    section
-      .environment(\.openSidebar) { withAnimation(.snappy) { sidebar = true } }
-      .overlay { Sidebar(tab: $tab, open: $sidebar) }
+    Sidebar(tab: $tab, open: $sidebar) { section }
     // The event stream runs while the app is in front; iOS would cut it in the background anyway.
     .onChange(of: phase, initial: true) { _, phase in
       if phase == .active {

@@ -164,8 +164,9 @@ Integrations are plugins: Proxmox, SSH, Forgejo and MCP. The core keeps memory, 
 
 ### 4.7 `apps/ios` — SwiftUI
 - **Native**: SwiftUI, built with the newest Xcode and iOS SDK (27), running on iOS 18+. SF Symbols and the system font, the same amber, blue, red and green as the web. No dependencies.
-- **Liquid Glass**: system bars, tab bar and lists get it from the SDK. The chat composer, the paused banner, the toast and the buttons use glass on iOS 26+ (a material before); messages and screenshots stay solid. The sidebar is a glass panel.
-- **Sidebar**: chat fills the screen; a menu button at the top left of each section slides in Chat, Tasks, Live, Memory and Settings from the left. The button and the Tasks row count what needs you.
+- **Liquid Glass**: system bars, tab bar and lists get it from the SDK. The chat composer, the paused banner, the toast and the buttons use glass on iOS 26+ (a material before); messages and screenshots stay solid. The sidebar is a solid drawer, not glass.
+- **Sidebar**: chat fills the screen; Chat, Tasks, Live, Memory and Settings sit in a drawer under the left edge. A swipe in from the edge (on a section's first page; deeper, it's the back swipe) or the menu button at the top left slides the section aside to show it, following the finger; a swipe back or a tap on the section closes it. The button and the Tasks row count what needs you.
+- **Scroll to bottom**: scrolled well up in chat, a round button above the composer jumps back to the latest.
 - **Auth**: password + TOTP once, then a bearer token named after the device, kept in the Keychain. Signing out deletes the token on the brain.
 - **Live events**: the same `/stream` WebSocket while the app is in front; it reconnects and reloads after a gap. iOS stops it in the background, so notifications stay with the ntfy app.
 - **Live view**: the `/desktop/live` frames. During takeover a tap clicks, a drag drags, a long press right-clicks, two fingers scroll, and a Keyboard button types.
