@@ -51,13 +51,12 @@ export const PutMemoryFile = z.object({
 export type ThreadMessage = {
   id: number;
   role: "user" | "assistant";
-  /** "task", "approval" and "schedule" messages are cards; their text is a plain-text fallback. */
-  kind: "text" | "task" | "approval" | "schedule";
+  /** "task" and "schedule" messages are cards; their text is a plain-text fallback. */
+  kind: "text" | "task" | "schedule";
   text: string;
   status: "streaming" | "done" | "error";
   createdAt: string;
   taskId: number | null;
-  approvalId: number | null;
   scheduleId: number | null;
   /** The conversation it belongs to; cards from background tasks have none. */
   episodeId: number | null;

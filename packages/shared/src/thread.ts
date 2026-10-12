@@ -38,23 +38,3 @@ export function threadGroups(
   });
   return groups;
 }
-
-/**
- * Once a task has ended, its approvals fold into the message that shows it (the reply that started it,
- * or its card), so the thread keeps one message per task. Only when that message is loaded too. By
- * task: its approvals, oldest first.
- */
-export function mergedApprovals(
-  messages: ThreadMessage[],
-  ended: (taskId: number) => boolean,
-): Map<number, number[]> {
-  const shown = new Set<number>();
-  for (const m of messages) if (m.kind !== "approval" && m.taskId !== null) shown.add(m.taskId);
-  const merged = new Map<number, number[]>();
-  for (const m of messages) {
-    if (m.kind !== "approval" || m.taskId === null || m.approvalId === null) continue;
-    if (!shown.has(m.taskId) || !ended(m.taskId)) continue;
-    merged.set(m.taskId, [...(merged.get(m.taskId) ?? []), m.approvalId]);
-  }
-  return merged;
-}

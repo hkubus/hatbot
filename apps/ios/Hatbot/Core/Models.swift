@@ -28,9 +28,9 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
     static let fallback = Role.assistant
   }
 
-  /// "task", "approval" and "schedule" messages show the thing they point at; `text` is a fallback.
+  /// "task" and "schedule" messages show the thing they point at; `text` is a fallback.
   enum Kind: String, LenientEnum {
-    case text, task, approval, schedule
+    case text, task, schedule
     static let fallback = Kind.text
   }
 
@@ -46,7 +46,6 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   var status: Status
   var createdAt: String
   var taskId: Int?
-  var approvalId: Int?
   var scheduleId: Int?
   /// The conversation it belongs to; cards from background tasks have none.
   var episodeId: Int?

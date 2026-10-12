@@ -273,4 +273,7 @@ export const migrations: string[] = [
   ALTER TABLE episodes ADD COLUMN tainted_by TEXT;
   ALTER TABLE schedules ADD COLUMN tainted_by TEXT;
   `,
+  /* 16: approvals no longer show as chat messages; they wait above the composer instead */ `
+  DELETE FROM messages WHERE kind = 'approval';
+  `,
 ];

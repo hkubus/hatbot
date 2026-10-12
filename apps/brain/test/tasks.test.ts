@@ -97,9 +97,8 @@ test("a consequential click is held back until confirm_intent is approved", asyn
   expect(t.tasks.get(task.id)?.status).toBe("waiting_approval");
   // Payments only offer "Open in Hatbot" on the phone.
   expect(t.notifier.sent.at(-1)?.actions?.map((a) => a.label)).toEqual(["Open in Hatbot"]);
-  expect(t.thread.list().some((m) => m.kind === "approval" && m.approvalId === approval.id)).toBe(
-    true,
-  );
+  // It waits above the composer, not in the thread.
+  expect(t.thread.list().map((m) => m.kind as string)).not.toContain("approval");
 
   const { cookie } = await setUpOwner(t);
   const res = await t.call(

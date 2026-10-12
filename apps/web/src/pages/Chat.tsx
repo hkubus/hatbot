@@ -1,4 +1,4 @@
-import { mergedApprovals, parseChart, type ThreadMessage, threadGroups } from "@hatbot/shared";
+import { type Approval, parseChart, type ThreadMessage, threadGroups } from "@hatbot/shared";
 import {
   createContext,
   Fragment,
@@ -18,7 +18,6 @@ import { Icon } from "../icons";
 import { navigate } from "../router";
 import {
   decideApproval,
-  ensureApproval,
   ensureSchedule,
   ensureTask,
   getState,
@@ -170,43 +169,8 @@ function Meta({
   );
 }
 
-const RESOLVED_WORD = {
-  approved: "Approved",
-  denied: "Denied",
-  expired: "Expired",
-  cancelled: "Cancelled",
-} as const;
-
-/** An ended task's approvals, one line each, in the message that shows the task. */
-function TaskApprovals({ ids }: { ids: number[] }) {
-  const approvals = useStore((s) => s.approvals);
-  useEffect(() => {
-    for (const id of ids) ensureApproval(id);
-  }, [ids]);
-  const lines = ids.map((id) => {
-    const a = approvals[id];
-    if (!a || a.status === "pending") return null;
-    return (
-      <div key={id} className="muted resolved">
-        {RESOLVED_WORD[a.status]}: {a.summary}
-        {a.note && ` You said: ${a.note}`}
-      </div>
-    );
-  });
-  if (!lines.some(Boolean)) return null;
-  return <div className="task-approvals">{lines}</div>;
-}
-
 /** A task, as a message: what it's doing while it runs, then how it ended. */
-function TaskMessage({
-  m,
-  taskId,
-  approvals,
-}: {
-  m: ThreadMessage;
-  taskId: number;
-  approvals?: number[];
-}) {
+function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
   const task = useStore((s) => s.tasks[taskId]);
   const progress = useStore((s) => s.taskProgress[taskId]);
   const control = useStore((s) => s.desktop?.control);
@@ -231,7 +195,6 @@ function TaskMessage({
     <>
       <div className="body">
         <AssistantBody text={text} />
-        {approvals && <TaskApprovals ids={approvals} />}
         {result && <AssistantBody text={result} />}
         {active && <div className="progress-note">{note}</div>}
       </div>
@@ -277,15 +240,7 @@ function TaskResult({ taskId }: { taskId: number }) {
  * Hatbot's reply, with the task it started (if any) working under it. A task that finished or failed
  * replaces the reply with its result; a cancelled one leaves the reply.
  */
-function ReplyMessage({
-  m,
-  progress,
-  approvals,
-}: {
-  m: ThreadMessage;
-  progress?: string;
-  approvals?: number[];
-}) {
+function ReplyMessage({ m, progress }: { m: ThreadMessage; progress?: string }) {
   const task = useStore((s) => (m.taskId ? s.tasks[m.taskId] : undefined));
   const used = useStore((s) => s.usage[m.id]);
   const streaming = m.status === "streaming";
@@ -310,7 +265,6 @@ function ReplyMessage({
           </div>
         )}
         {ended && !replaced && m.text && <hr className="result-rule" />}
-        {approvals && <TaskApprovals ids={approvals} />}
         {m.taskId && <TaskResult taskId={m.taskId} />}
       </div>
       {!streaming && (
@@ -324,28 +278,10 @@ function ReplyMessage({
   );
 }
 
-/** An approval, as a message with Approve and Deny under it. */
-function ApprovalMessage({ m, approvalId }: { m: ThreadMessage; approvalId: number }) {
-  const a = useStore((s) => s.approvals[approvalId]);
+/** An approval waiting for you, above the composer, with Approve and Deny under it. */
+function PendingApproval({ a }: { a: Approval }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  useEffect(() => ensureApproval(approvalId), [approvalId]);
-  if (!a) return null;
-  const open = a.taskId ? { to: `/tasks/${a.taskId}`, label: "Open task" } : undefined;
-  if (a.status !== "pending") {
-    const word = RESOLVED_WORD[a.status];
-    return (
-      <>
-        <div className="body">
-          <div className="muted resolved">
-            {word}: {a.summary}
-            {a.note && ` You said: ${a.note}`}
-          </div>
-        </div>
-        <Meta m={m} copy={a.summary} open={open} />
-      </>
-    );
-  }
   const decide = async (decision: "approve" | "deny") => {
     setBusy(true);
     setError("");
@@ -364,29 +300,36 @@ function ApprovalMessage({ m, approvalId }: { m: ThreadMessage; approvalId: numb
     .filter(Boolean)
     .join("\n\n");
   return (
-    <>
-      <div className="body">
-        <AssistantBody text={text} />
-        {a.taskId && a.screenshotStepId && (
-          <Shot taskId={a.taskId} stepId={a.screenshotStepId} alt="The screen before this step" />
-        )}
-        {error && <div className="form-error">{error}</div>}
-        <div className="msg-buttons">
-          <button type="button" className="btn sm" disabled={busy} onClick={() => decide("deny")}>
-            Deny
-          </button>
+    <div className="pending-approval">
+      <AssistantBody text={text} />
+      {a.taskId && a.screenshotStepId && (
+        <Shot taskId={a.taskId} stepId={a.screenshotStepId} alt="The screen before this step" />
+      )}
+      {error && <div className="form-error">{error}</div>}
+      <div className="msg-buttons">
+        {a.taskId && (
           <button
             type="button"
-            className="btn sm primary"
-            disabled={busy}
-            onClick={() => decide("approve")}
+            className="btn sm ghost"
+            onClick={() => navigate(`/tasks/${a.taskId}`)}
           >
-            Approve
+            Open task
           </button>
-        </div>
+        )}
+        <span className="spacer" />
+        <button type="button" className="btn sm" disabled={busy} onClick={() => decide("deny")}>
+          Deny
+        </button>
+        <button
+          type="button"
+          className="btn sm primary"
+          disabled={busy}
+          onClick={() => decide("approve")}
+        >
+          Approve
+        </button>
       </div>
-      <Meta m={m} copy={a.summary} open={open} />
-    </>
+    </div>
   );
 }
 
@@ -415,14 +358,11 @@ function ScheduleMessage({ m, scheduleId }: { m: ThreadMessage; scheduleId: numb
 function Message({
   m,
   progress,
-  approvals,
   animate,
   unread,
 }: {
   m: ThreadMessage;
   progress?: string;
-  /** An ended task's approvals, shown in this message instead of their own. */
-  approvals?: number[];
   animate: boolean;
   /** Sent or edited since you last saw it. */
   unread: boolean;
@@ -439,13 +379,11 @@ function Message({
       </>
     );
   } else if (m.kind === "task" && m.taskId) {
-    inner = <TaskMessage m={m} taskId={m.taskId} approvals={approvals} />;
-  } else if (m.kind === "approval" && m.approvalId) {
-    inner = <ApprovalMessage m={m} approvalId={m.approvalId} />;
+    inner = <TaskMessage m={m} taskId={m.taskId} />;
   } else if (m.kind === "schedule" && m.scheduleId) {
     inner = <ScheduleMessage m={m} scheduleId={m.scheduleId} />;
   } else {
-    inner = <ReplyMessage m={m} progress={progress} approvals={approvals} />;
+    inner = <ReplyMessage m={m} progress={progress} />;
   }
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: a tap only reveals the buttons, which are reachable by keyboard anyway
@@ -481,14 +419,12 @@ export function Chat() {
   const messages = useStore((s) => s.messages);
   const episodes = useStore((s) => s.episodes);
   const approvals = useStore((s) => s.approvals);
-  const tasks = useStore((s) => s.tasks);
-  const merged = useMemo(
+  const pending = useMemo(
     () =>
-      mergedApprovals(messages, (id) => {
-        const t = tasks[id];
-        return t !== undefined && !isActive(t);
-      }),
-    [messages, tasks],
+      Object.values(approvals)
+        .filter((a) => a.status === "pending")
+        .sort((a, b) => a.id - b.id),
+    [approvals],
   );
   const [unfolded, setUnfolded] = useState<Set<number>>(() => new Set());
   const progress = useStore((s) => s.progress);
@@ -577,11 +513,14 @@ export function Chat() {
     setSending(true);
     setError("");
     stick.current = true;
+    // Clear it right away; it comes back if the send fails.
+    setDraft("");
+    requestAnimationFrame(resize);
     try {
       await sendMessage(text);
-      setDraft("");
-      requestAnimationFrame(resize);
     } catch {
+      setDraft((d) => d || text);
+      requestAnimationFrame(resize);
       setError("Couldn't send. Check your connection and try again.");
     } finally {
       setSending(false);
@@ -595,22 +534,17 @@ export function Chat() {
     lastDay = day;
     return show ? <div className="day">{day}</div> : null;
   };
-  const row = (m: ThreadMessage) => {
-    // An ended task's approval shows in the task's own message.
-    if (m.kind === "approval" && m.taskId !== null && merged.has(m.taskId)) return null;
-    return (
-      <Fragment key={m.id}>
-        {dayBefore(m)}
-        <Message
-          m={m}
-          progress={progress[m.id]}
-          approvals={m.kind !== "approval" && m.taskId !== null ? merged.get(m.taskId) : undefined}
-          animate={m.id >= animateFrom.current}
-          unread={unread.includes(m.id)}
-        />
-      </Fragment>
-    );
-  };
+  const row = (m: ThreadMessage) => (
+    <Fragment key={m.id}>
+      {dayBefore(m)}
+      <Message
+        m={m}
+        progress={progress[m.id]}
+        animate={m.id >= animateFrom.current}
+        unread={unread.includes(m.id)}
+      />
+    </Fragment>
+  );
   const toggle = (id: number) =>
     setUnfolded((s) => {
       const next = new Set(s);
@@ -643,12 +577,8 @@ export function Chat() {
               if (g.fold === null || g.episodeId === null) return g.messages.map(row);
               const id = g.episodeId;
               const open = unfolded.has(id);
-              // An approval still waiting for you, or a message you haven't seen, stays in view.
-              const waiting = g.messages.filter(
-                (m) =>
-                  (m.approvalId && approvals[m.approvalId]?.status === "pending") ||
-                  unread.includes(m.id),
-              );
+              // A message you haven't seen stays in view.
+              const waiting = g.messages.filter((m) => unread.includes(m.id));
               return (
                 <Fragment key={`fold-${id}`}>
                   {dayBefore(g.messages[0] as ThreadMessage)}
@@ -666,6 +596,13 @@ export function Chat() {
         </div>
       </section>
       <div className="composer-wrap">
+        {pending.length > 0 && (
+          <div className="approval-tray">
+            {pending.map((a) => (
+              <PendingApproval key={a.id} a={a} />
+            ))}
+          </div>
+        )}
         {error && (
           <div className="form-error" style={{ maxWidth: 760, margin: "0 auto 6px" }}>
             {error}

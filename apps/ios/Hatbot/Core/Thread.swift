@@ -35,19 +35,4 @@ enum ThreadFolds {
     }
     return groups
   }
-
-  /// Once a task has ended, its approvals fold into the message that shows it (the reply that started
-  /// it, or its card), so the thread keeps one message per task. Only when that message is loaded too.
-  /// By task: its approvals, oldest first.
-  static func mergedApprovals(_ messages: [ThreadMessage], ended: (Int) -> Bool) -> [Int: [Int]] {
-    let shown = Set(messages.compactMap { $0.kind == .approval ? nil : $0.taskId })
-    var merged: [Int: [Int]] = [:]
-    for m in messages where m.kind == .approval {
-      guard let task = m.taskId, let approval = m.approvalId, shown.contains(task), ended(task) else {
-        continue
-      }
-      merged[task, default: []].append(approval)
-    }
-    return merged
-  }
 }

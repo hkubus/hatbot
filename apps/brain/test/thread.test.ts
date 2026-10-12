@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mergedApprovals, type ThreadMessage, threadGroups } from "@hatbot/shared";
+import { type ThreadMessage, threadGroups } from "@hatbot/shared";
 import { activity, parseSummary } from "../src/agent/thread";
 import { costOf } from "../src/spend";
 import { FakeModel, text, toolUse } from "./fake-model";
@@ -264,31 +264,6 @@ test("the chat folds every finished conversation; cards join the one before", ()
     [2, [5], "message 5"],
     [3, [6, 7], null],
   ]);
-});
-
-test("an ended task takes its approvals into its own message, when that's loaded", () => {
-  const card = (id: number, kind: ThreadMessage["kind"], taskId: number, approvalId?: number) =>
-    ({
-      id,
-      role: "assistant",
-      kind,
-      text: "",
-      taskId,
-      approvalId: approvalId ?? null,
-    }) as ThreadMessage;
-  const merged = mergedApprovals(
-    [
-      card(1, "text", 7),
-      card(2, "approval", 7, 30),
-      card(3, "approval", 7, 31),
-      card(4, "task", 8),
-      card(5, "approval", 8, 32),
-      card(6, "approval", 9, 33),
-    ],
-    (id) => id !== 8,
-  );
-  // Task 8 still runs; task 9's own message isn't loaded.
-  expect([...merged]).toEqual([[7, [30, 31]]]);
 });
 
 test("while it works the reply says what it's doing and what it has used", async () => {

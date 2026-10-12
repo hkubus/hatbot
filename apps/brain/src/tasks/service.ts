@@ -126,13 +126,6 @@ export class Tasks {
          finished_at = ? WHERE status IN (${ACTIVE.map(() => "?").join(", ")})`,
       )
       .run(this.now(), ...ACTIVE);
-    d.approvals.onCreated = (a) => {
-      if (a.taskId)
-        d.thread.addCard("approval", `Approval needed: ${a.summary}`, {
-          taskId: a.taskId,
-          approvalId: a.id,
-        });
-    };
   }
 
   now() {

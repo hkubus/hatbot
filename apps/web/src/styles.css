@@ -3332,3 +3332,30 @@ pre.payload {
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* Approvals waiting for you, above the composer */
+.approval-tray {
+  max-width: 760px;
+  max-height: 45vh;
+  overflow-y: auto;
+  margin: 0 auto 8px;
+  display: grid;
+  gap: 8px;
+}
+.pending-approval {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 0.5px solid var(--line-strong);
+}
+.pending-approval .shot {
+  max-width: 280px;
+}
+.pending-approval .msg-buttons {
+  align-items: center;
+}
+.pending-approval .spacer {
+  flex: 1;
+}

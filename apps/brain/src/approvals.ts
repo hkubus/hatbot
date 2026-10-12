@@ -64,8 +64,6 @@ export type NewApproval = {
 export class Approvals {
   private waiters = new Map<number, (o: Outcome) => void>();
   private key: Buffer;
-  /** Adds the approval's card to the thread; set by the task runner. */
-  onCreated: (a: Approval) => void = () => {};
 
   constructor(
     private db: Db,
@@ -133,7 +131,6 @@ export class Approvals {
     const approval = this.get(row?.id ?? -1);
     if (!approval) throw new Error("approval insert failed");
     this.events.emit({ type: "approval.created", approval });
-    this.onCreated(approval);
     void this.notify(approval);
     return approval;
   }

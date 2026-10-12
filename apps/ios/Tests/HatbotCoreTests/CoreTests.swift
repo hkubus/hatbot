@@ -292,23 +292,6 @@ final class FoldTests: XCTestCase {
     XCTAssertEqual(groups.map(\.fold), [nil, "Talked about one.", "message 5", nil])
   }
 
-  func testEndedTasksTakeTheirApprovalsIn() {
-    func card(_ id: Int, _ kind: ThreadMessage.Kind, task: Int, approval: Int? = nil) -> ThreadMessage {
-      ThreadMessage(
-        id: id, role: .assistant, kind: kind, text: "", status: .done, createdAt: "", taskId: task,
-        approvalId: approval)
-    }
-    let merged = ThreadFolds.mergedApprovals(
-      [
-        card(1, .text, task: 7), card(2, .approval, task: 7, approval: 30),
-        card(3, .approval, task: 7, approval: 31), card(4, .task, task: 8),
-        card(5, .approval, task: 8, approval: 32), card(6, .approval, task: 9, approval: 33),
-      ],
-      ended: { $0 != 8 })
-    // Task 8 still runs; task 9's own message isn't loaded.
-    XCTAssertEqual(merged, [7: [30, 31]])
-  }
-
   func testDecodesEpisodeEvents() throws {
     let json = #"{"type":"episode.updated","episode":{"id":4,"startedAt":"a","lastActivityAt":"b","recap":"R"}}"#
     guard case let .episodeUpdated(e) = try JSONDecoder().decode(HatbotEvent.self, from: Data(json.utf8)) else {

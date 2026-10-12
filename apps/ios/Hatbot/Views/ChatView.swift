@@ -1,6 +1,6 @@
 // The thread (PLAN.md §10.2, §10.4): Messages-style bubbles, grouped by sender with a tail on the
-// last, a centered time after a pause, Copy and Open in a long-press menu. A task shows under the reply that started it; approvals carry Approve and Deny, and fold into
-// the task's message once it ends. Finished conversations fold up under their recap.
+// last, a centered time after a pause, Copy and Open in a long-press menu. A task shows under the reply
+// that started it; approvals wait above the composer. Finished conversations fold up under their recap.
 import SwiftUI
 import UIKit
 
@@ -19,15 +19,14 @@ struct ChatView: View {
   private enum Row: Identifiable {
     case time(String, before: Int)
     case fold(ThreadGroup)
-    /// `approvals`: an ended task's, shown in this message instead of their own. `joined`: it follows
-    /// a message from the same sender; `tail`: it's the last of them.
-    case message(ThreadMessage, approvals: [Int], joined: Bool = false, tail: Bool = true)
+    /// `joined`: it follows a message from the same sender; `tail`: it's the last of them.
+    case message(ThreadMessage, joined: Bool = false, tail: Bool = true)
 
     var id: String {
       switch self {
       case let .time(_, before): "t\(before)"
       case let .fold(g): "f\(g.id)"
-      case let .message(m, _, _, _): "m\(m.id)"
+      case let .message(m, _, _): "m\(m.id)"
       }
     }
   }
@@ -35,32 +34,20 @@ struct ChatView: View {
   private var rows: [Row] {
     var rows: [Row] = []
     var previous: ThreadMessage?
-    let merged = ThreadFolds.mergedApprovals(store.messages) { id in
-      store.tasks[id].map { !$0.isActive } ?? false
-    }
     func add(_ m: ThreadMessage, as row: Row) {
       if let time = pause(m, after: previous) { rows.append(.time(time, before: m.id)) }
       previous = m
       rows.append(row)
     }
-    func add(_ m: ThreadMessage) {
-      // An ended task's approval shows in the task's own message.
-      if m.kind == .approval, let task = m.taskId, merged[task] != nil { return }
-      let approvals = m.kind == .approval ? nil : m.taskId.flatMap { merged[$0] }
-      add(m, as: .message(m, approvals: approvals ?? []))
-    }
+    func add(_ m: ThreadMessage) { add(m, as: .message(m)) }
     for g in ThreadFolds.groups(store.messages, episodes: store.episodes) {
       guard g.fold != nil, let id = g.episodeId else {
         for m in g.messages { add(m) }
         continue
       }
       add(g.messages[0], as: .fold(g))
-      // An approval still waiting for you, or a message you haven't seen, stays in view.
-      let shown = unfolded.contains(id)
-        ? g.messages
-        : g.messages.filter { m in
-          (m.approvalId.map { store.approvals[$0]?.status == .pending } ?? false) || store.unread.contains(m.id)
-        }
+      // A message you haven't seen stays in view.
+      let shown = unfolded.contains(id) ? g.messages : g.messages.filter { store.unread.contains($0.id) }
       for m in shown { add(m) }
     }
     return grouped(rows)
@@ -69,13 +56,13 @@ struct ChatView: View {
   /// Runs of messages from the same sender sit close together, with a tail on the last.
   private func grouped(_ rows: [Row]) -> [Row] {
     func sender(_ row: Row?) -> ThreadMessage.Role? {
-      if case let .message(m, _, _, _)? = row { m.role } else { nil }
+      if case let .message(m, _, _)? = row { m.role } else { nil }
     }
     return rows.indices.map { i in
-      guard case let .message(m, approvals, _, _) = rows[i] else { return rows[i] }
+      guard case let .message(m, _, _) = rows[i] else { return rows[i] }
       let before = i > 0 ? rows[i - 1] : nil
       let after = i + 1 < rows.count ? rows[i + 1] : nil
-      return .message(m, approvals: approvals, joined: sender(before) == m.role, tail: sender(after) != m.role)
+      return .message(m, joined: sender(before) == m.role, tail: sender(after) != m.role)
     }
   }
 
@@ -106,8 +93,8 @@ struct ChatView: View {
                 }
               }
               .padding(.top, 10)
-            case let .message(m, approvals, joined, tail):
-              MessageRow(m: m, approvals: approvals, tail: tail, open: { path.append($0) })
+            case let .message(m, joined, tail):
+              MessageRow(m: m, tail: tail, open: { path.append($0) })
                 .padding(.top, joined ? 2 : 10)
             }
           }
@@ -183,6 +170,20 @@ struct ChatView: View {
 
   private var composer: some View {
     VStack(spacing: 6) {
+      // The oldest approval waiting for you; the next shows once you've answered it.
+      if let a = store.pendingApprovals.first {
+        VStack(alignment: .leading, spacing: 10) {
+          ApprovalBody(approval: a).id(a.id)
+          if store.pendingApprovals.count > 1 {
+            Text("\(store.pendingApprovals.count - 1) more waiting")
+              .font(.footnote)
+              .foregroundStyle(.secondary)
+          }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .glassSurface(in: .rect(cornerRadius: 22))
+      }
       if let error {
         Text(error).font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading)
       }
@@ -210,17 +211,25 @@ struct ChatView: View {
   }
 
   private func send() {
-    let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+    let typed = draft
+    let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty, !sending else { return }
     sending = true
     error = nil
+    // Cleared before it's sent, and put back if sending fails.
+    draft = ""
+    withAnimation { position.scrollTo(edge: .bottom) }
+    Task {
+      // The keyboard can commit an autocorrection into the field just after it's cleared.
+      try? await Task.sleep(for: .milliseconds(80))
+      if !draft.isEmpty && typed.hasSuffix(draft) { draft = "" }
+    }
     Task {
       do {
         try await store.send(text)
-        draft = ""
-        withAnimation { position.scrollTo(edge: .bottom) }
       } catch {
-        self.error = "Couldn't send. Check your connection and try again."
+        if draft.isEmpty { draft = typed }
+        self.error = message(for: error)
       }
       sending = false
     }
@@ -278,8 +287,6 @@ private struct FoldRow: View {
 
 private struct MessageRow: View {
   let m: ThreadMessage
-  /// An ended task's approvals, shown here instead of their own messages.
-  let approvals: [Int]
   /// The last of a run from the same sender, so its bubble has a tail.
   let tail: Bool
   let open: (Route) -> Void
@@ -337,10 +344,9 @@ private struct MessageRow: View {
   @ViewBuilder
   private var content: some View {
     switch m.kind {
-    case .task where m.taskId != nil: TaskMessage(taskId: m.taskId!, approvals: approvals)
-    case .approval where m.approvalId != nil: ApprovalMessage(approvalId: m.approvalId!)
+    case .task where m.taskId != nil: TaskMessage(taskId: m.taskId!)
     case .schedule where m.scheduleId != nil: ScheduleMessage(scheduleId: m.scheduleId!)
-    default: ReplyMessage(m: m, approvals: approvals)
+    default: ReplyMessage(m: m)
     }
   }
 
@@ -352,7 +358,7 @@ private struct MessageRow: View {
     switch m.kind {
     case .text: return done
     case .task: return done > m.createdAt ? done : nil
-    case .approval, .schedule: return nil
+    case .schedule: return nil
     }
   }
 
@@ -360,11 +366,6 @@ private struct MessageRow: View {
   @ViewBuilder
   private var menu: some View {
     switch m.kind {
-    case .approval:
-      if let id = m.approvalId, let a = store.approvals[id] {
-        copyButton(a.summary)
-        if let taskId = a.taskId { openButton(taskId) }
-      }
     case .schedule:
       if let id = m.scheduleId, let s = store.schedules[id] {
         copyButton(s.prompt)
@@ -396,7 +397,6 @@ private struct MessageRow: View {
 /// the reply with its result; a cancelled one leaves the reply.
 private struct ReplyMessage: View {
   let m: ThreadMessage
-  let approvals: [Int]
   @Environment(AppStore.self) private var store
 
   static func replaced(_ task: AgentTask) -> Bool {
@@ -417,25 +417,7 @@ private struct ReplyMessage: View {
         .foregroundStyle(.secondary)
     }
     if !m.text.isEmpty && !replaced, let task, !task.isActive { Divider() }
-    if !approvals.isEmpty { TaskApprovals(ids: approvals) }
     if let taskId = m.taskId { TaskResult(taskId: taskId) }
-  }
-}
-
-/// An ended task's approvals, one line each, in the message that shows the task.
-private struct TaskApprovals: View {
-  let ids: [Int]
-  @Environment(AppStore.self) private var store
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 2) {
-      ForEach(ids, id: \.self) { id in
-        if let a = store.approvals[id], a.status != .pending {
-          Text(a.resolvedText).font(.subheadline).foregroundStyle(.secondary)
-        }
-      }
-    }
-    .onAppear { for id in ids { store.ensureApproval(id) } }
   }
 }
 
@@ -475,14 +457,12 @@ private struct TaskResult: View {
 /// A background task (schedule, trigger), as a message: what it's doing, then how it ended.
 private struct TaskMessage: View {
   let taskId: Int
-  let approvals: [Int]
   @Environment(AppStore.self) private var store
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       if let task = store.tasks[taskId] {
         MarkdownText(text: text(task))
-        if !approvals.isEmpty { TaskApprovals(ids: approvals) }
         if let result = result(task) { MarkdownText(text: result) }
         if task.isActive {
           Text(note(task)).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
@@ -501,7 +481,7 @@ private struct TaskMessage: View {
     }
   }
 
-  /// How it ended, under its title and approvals.
+  /// How it ended, under its title.
   private func result(_ task: AgentTask) -> String? {
     if task.isActive { return nil }
     switch task.status {
@@ -515,25 +495,6 @@ private struct TaskMessage: View {
     store.desktop?.control == .owner && task.status == .running
       ? "Paused while you have control."
       : Format.taskLine(task, progress: store.taskProgress[taskId])
-  }
-}
-
-/// An approval, as a message with Approve and Deny under it; one line once it's answered.
-private struct ApprovalMessage: View {
-  let approvalId: Int
-  @Environment(AppStore.self) private var store
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      if let a = store.approvals[approvalId] {
-        if a.status == .pending {
-          ApprovalBody(approval: a)
-        } else {
-          Text(a.resolvedText).foregroundStyle(.secondary)
-        }
-      }
-    }
-    .onAppear { store.ensureApproval(approvalId) }
   }
 }
 
@@ -586,27 +547,6 @@ struct ApprovalBody: View {
         self.error = message(for: error)
         busy = false
       }
-    }
-  }
-}
-
-extension Approval {
-  /// "Denied: …", with your note.
-  var resolvedText: String {
-    let line = "\(status.word): \(summary)"
-    guard let note, !note.isEmpty else { return line }
-    return "\(line) You said: \(note)"
-  }
-}
-
-extension Approval.Status {
-  var word: String {
-    switch self {
-    case .pending: "Pending"
-    case .approved: "Approved"
-    case .denied: "Denied"
-    case .expired: "Expired"
-    case .cancelled: "Cancelled"
     }
   }
 }

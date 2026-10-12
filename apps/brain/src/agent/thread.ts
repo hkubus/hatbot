@@ -24,7 +24,7 @@ const RECENT_MESSAGES = 10;
 const MAX_STEPS = 25;
 const MAX_TURN_MS = 10 * 60_000;
 const MESSAGE_COLUMNS =
-  "id, role, kind, text, status, created_at AS createdAt, task_id AS taskId, approval_id AS approvalId, schedule_id AS scheduleId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt";
+  "id, role, kind, text, status, created_at AS createdAt, task_id AS taskId, schedule_id AS scheduleId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt";
 const EPISODE_COLUMNS = "id, started_at AS startedAt, last_activity_at AS lastActivityAt, recap";
 const BETAS: Anthropic.Beta.AnthropicBeta[] = [
   "server-side-fallback-2026-07-01",
@@ -113,25 +113,14 @@ export class Thread {
       .reverse();
   }
 
-  /** A task, approval or schedule card in the thread. `text` is what search and summaries see. */
-  addCard(
-    kind: "task" | "approval" | "schedule",
-    text: string,
-    ref: { taskId?: number; approvalId?: number; scheduleId?: number },
-  ) {
+  /** A task or schedule card in the thread. `text` is what search and summaries see. */
+  addCard(kind: "task" | "schedule", text: string, ref: { taskId?: number; scheduleId?: number }) {
     const row = this.d.db
-      .query<ThreadMessage, [string, string, string, number | null, number | null, number | null]>(
-        `INSERT INTO messages (role, kind, text, status, created_at, task_id, approval_id, schedule_id)
-         VALUES ('assistant', ?, ?, 'done', ?, ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
+      .query<ThreadMessage, [string, string, string, number | null, number | null]>(
+        `INSERT INTO messages (role, kind, text, status, created_at, task_id, schedule_id)
+         VALUES ('assistant', ?, ?, 'done', ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
       )
-      .get(
-        kind,
-        text,
-        this.now(),
-        ref.taskId ?? null,
-        ref.approvalId ?? null,
-        ref.scheduleId ?? null,
-      );
+      .get(kind, text, this.now(), ref.taskId ?? null, ref.scheduleId ?? null);
     if (!row) throw new Error("card insert failed");
     this.d.events.emit({ type: "message.created", message: row });
     return row;
