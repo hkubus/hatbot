@@ -173,17 +173,19 @@ test("fallback iterations are billed per model", async () => {
   expect(t.spend.summary().todayUsd).toBeCloseTo(3, 6);
 });
 
-test("search_history finds older messages", async () => {
+test("search_history finds older conversations, not the one you're in", async () => {
   const model = new FakeModel([
     { content: [text("Got it.")] },
-    { content: [toolUse("search_history", { query: "wireguard" })] },
+    { content: [toolUse("search_history", { query: "wireguard port" })] },
     { content: [text("Found it.")] },
   ]);
   const t = await testApp(model);
   await t.thread.post("my wireguard port is 51820").done;
-  await t.thread.post("what was that port?").done;
+  t.advance(31 * 60_000);
+  await t.thread.post("what was my wireguard port?").done;
   const result = JSON.stringify(model.requests[2]?.messages.at(-1)?.content);
   expect(result).toContain("51820");
+  expect(result).not.toContain("what was my");
 });
 
 test("Haiku 5.5 bills the whole request at the long-prompt price past 100k prompt tokens", () => {

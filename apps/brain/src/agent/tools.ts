@@ -20,6 +20,8 @@ export type ToolContext = {
   triggers?: Triggers;
   /** The chat reply being written; a task it starts shows under it. */
   messageId?: number;
+  /** The conversation the reply is in: history search leaves it out, since the model already has it. */
+  episodeId?: number;
   /** Adds a schedule's card to the thread. */
   scheduleCard?: (s: Schedule) => void;
   plugins?: Plugins;
@@ -167,16 +169,26 @@ export const TOOLS = [
       after: z.string().optional().describe("Only messages on or after this date, YYYY-MM-DD"),
       before: z.string().optional().describe("Only messages before this date, YYYY-MM-DD"),
     }),
-    run: async ({ query, after, before }, { db }) => {
+    run: async ({ query, after, before }, { db, episodeId }) => {
       const terms = query.match(/[\p{L}\p{N}_]+/gu) ?? [];
       if (!terms.length) return "No searchable words in the query.";
+      // Not the conversation you're in: the message asking would otherwise be the best match.
       const rows = db
-        .query<{ role: string; text: string; created_at: string }, [string, string, string]>(
+        .query<
+          { role: string; text: string; created_at: string },
+          [string, string, string, number]
+        >(
           `SELECT m.role, m.text, m.created_at FROM messages_fts f JOIN messages m ON m.id = f.rowid
            WHERE messages_fts MATCH ? AND m.created_at >= ? AND m.created_at < ?
+           AND m.episode_id IS NOT ?
            ORDER BY rank LIMIT 20`,
         )
-        .all(terms.map((t) => `"${t}"`).join(" "), after ?? "0000", before ?? "9999");
+        .all(
+          terms.map((t) => `"${t}"`).join(" "),
+          after ?? "0000",
+          before ?? "9999",
+          episodeId ?? -1,
+        );
       if (!rows.length) return "No matches.";
       return rows
         .map(

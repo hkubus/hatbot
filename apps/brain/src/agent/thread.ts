@@ -675,6 +675,7 @@ export class Thread {
             {
               ...this.d,
               messageId: out.id,
+              episodeId: episode.id,
               tainted: () => this.tainted(episode.id),
               taint: (by: string) => this.taint(episode.id, by),
               ownerSaid: () => this.ownerSaid(episode.id),
