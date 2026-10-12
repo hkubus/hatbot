@@ -1,0 +1,199 @@
+// Files in the chat: the ones on messages (pictures inline, the rest open in Quick Look) and the ones
+// waiting in the composer while they upload.
+import PhotosUI
+import QuickLook
+import SwiftUI
+import UniformTypeIdentifiers
+
+/// Attachments need the bearer token, so they don't go through AsyncImage.
+@MainActor
+final class AttachmentCache {
+  static let shared = AttachmentCache()
+  private let images = NSCache<NSString, UIImage>()
+
+  func image(_ api: API, id: Int) async throws -> UIImage {
+    let key = "\(api.server.absoluteString)/\(id)" as NSString
+    if let hit = images.object(forKey: key) { return hit }
+    let data = try await api.data("/attachments/\(id)")
+    guard let image = await Task.detached(operation: { UIImage(data: data)?.preparingForDisplay() }).value else {
+      throw APIError(status: 0, message: "Not an image")
+    }
+    images.setObject(image, forKey: key)
+    return image
+  }
+
+  /// The file saved where Quick Look can open it, under its own name.
+  func file(_ api: API, _ a: Attachment) async throws -> URL {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("attachments/\(a.id)", isDirectory: true)
+    let url = dir.appendingPathComponent(a.name.replacingOccurrences(of: "/", with: "_"))
+    if FileManager.default.fileExists(atPath: url.path) { return url }
+    let data = try await api.data("/attachments/\(a.id)?download")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    try data.write(to: url)
+    return url
+  }
+}
+
+/// A message's files, aligned to its side.
+struct MessageFiles: View {
+  let list: [Attachment]
+  let alignment: HorizontalAlignment
+
+  var body: some View {
+    VStack(alignment: alignment, spacing: 6) {
+      ForEach(list) { a in
+        if a.isPicture { PictureFile(attachment: a) } else { FileRow(attachment: a) }
+      }
+    }
+  }
+}
+
+/// A picture on a message; a tap opens it full screen.
+private struct PictureFile: View {
+  let attachment: Attachment
+  @Environment(AppStore.self) private var store
+  @State private var image: UIImage?
+  @State private var failed = false
+  @State private var full = false
+
+  var body: some View {
+    Group {
+      if let image {
+        Image(uiImage: image).resizable().aspectRatio(contentMode: .fit)
+      } else {
+        Rectangle().fill(.quaternary)
+          .aspectRatio(4 / 3, contentMode: .fit)
+          .overlay { if failed { Image(systemName: "photo").foregroundStyle(.secondary) } else { ProgressView() } }
+      }
+    }
+    .frame(maxWidth: 240, maxHeight: 240)
+    .clipShape(.rect(cornerRadius: 14))
+    .contentShape(.rect)
+    .onTapGesture { if image != nil { full = true } }
+    .fullScreenCover(isPresented: $full) {
+      if let image { ImageViewer(image: image) }
+    }
+    .task(id: attachment.id) {
+      do {
+        image = try await AttachmentCache.shared.image(store.api, id: attachment.id)
+      } catch {
+        failed = true
+      }
+    }
+    .accessibilityLabel(attachment.name)
+  }
+}
+
+/// Any other file: its name; a tap opens it in Quick Look, which can share or save it.
+private struct FileRow: View {
+  let attachment: Attachment
+  @Environment(AppStore.self) private var store
+  @State private var url: URL?
+  @State private var loading = false
+
+  var body: some View {
+    Button {
+      guard !loading else { return }
+      loading = true
+      Task {
+        url = try? await AttachmentCache.shared.file(store.api, attachment)
+        loading = false
+      }
+    } label: {
+      HStack(spacing: 8) {
+        if loading { ProgressView().controlSize(.small) } else { Image(systemName: "doc") }
+        Text(attachment.name).lineLimit(1).truncationMode(.middle)
+      }
+      .font(.subheadline)
+      .padding(.horizontal, 12)
+      .padding(.vertical, 9)
+      .frame(maxWidth: 260, alignment: .leading)
+      .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 12))
+    }
+    .buttonStyle(.plain)
+    .quickLookPreview($url)
+  }
+}
+
+/// A file in the composer: uploading, uploaded, or failed.
+struct ComposerFile: Identifiable {
+  let id = UUID()
+  let name: String
+  var preview: UIImage?
+  var attachment: Attachment?
+  var error: String?
+}
+
+/// What a picked photo or file becomes before it's uploaded.
+enum PickedFile {
+  /// Photos go up as JPEG, at most 2048 pixels on the long side: the model reads those directly.
+  static func photo(_ data: Data, index: Int) -> (data: Data, name: String, preview: UIImage?)? {
+    guard let image = UIImage(data: data) else { return nil }
+    let longest = max(image.size.width, image.size.height)
+    let scale = min(1, 2048 / max(longest, 1))
+    let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let resized = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+      image.draw(in: CGRect(origin: .zero, size: size))
+    }
+    guard let jpeg = resized.jpegData(compressionQuality: 0.85) else { return nil }
+    return (jpeg, "photo-\(index).jpg", resized)
+  }
+
+  /// A file from Files, read inside its security scope.
+  static func file(_ url: URL) -> (data: Data, name: String, mediaType: String)? {
+    let scoped = url.startAccessingSecurityScopedResource()
+    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+    guard let data = try? Data(contentsOf: url) else { return nil }
+    let type = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+    return (data, url.lastPathComponent, type)
+  }
+}
+
+/// The files waiting in the composer, with a button to take each out.
+struct ComposerFiles: View {
+  let files: [ComposerFile]
+  let remove: (UUID) -> Void
+
+  var body: some View {
+    ScrollView(.horizontal, showsIndicators: false) {
+      HStack(spacing: 8) {
+        ForEach(files) { f in
+          Group {
+            if let preview = f.preview {
+              Image(uiImage: preview).resizable().scaledToFill().frame(width: 56, height: 56)
+            } else {
+              HStack(spacing: 6) {
+                Image(systemName: "doc")
+                Text(f.name).lineLimit(1).truncationMode(.middle)
+              }
+              .font(.footnote)
+              .padding(.horizontal, 10)
+              .frame(maxWidth: 200, minHeight: 56)
+            }
+          }
+          .background(.quaternary.opacity(0.6))
+          .clipShape(.rect(cornerRadius: 12))
+          .overlay {
+            RoundedRectangle(cornerRadius: 12)
+              .strokeBorder(f.error == nil ? Color.clear : Color.red, lineWidth: 1)
+          }
+          .opacity(f.attachment == nil && f.error == nil ? 0.5 : 1)
+          .overlay(alignment: .topTrailing) {
+            Button {
+              remove(f.id)
+            } label: {
+              Image(systemName: "xmark.circle.fill")
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(.white, .black.opacity(0.55))
+            }
+            .padding(3)
+            .accessibilityLabel("Remove \(f.name)")
+          }
+        }
+      }
+      .padding(.horizontal, 4)
+    }
+  }
+}

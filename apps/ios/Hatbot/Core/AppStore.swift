@@ -109,6 +109,10 @@ final class AppStore {
       if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].taskId = taskId }
     case let .messageUsage(id, used):
       usage[id] = used
+    case let .messageAttachment(id, a):
+      if let i = messages.firstIndex(where: { $0.id == id }), !(messages[i].attachments ?? []).contains(where: { $0.id == a.id }) {
+        messages[i].attachments = (messages[i].attachments ?? []) + [a]
+      }
     case let .messageDone(id, text, status):
       progress[id] = nil
       usage[id] = nil
@@ -212,10 +216,18 @@ final class AppStore {
     for e in found { episodes[e.id] = e }
   }
 
-  func send(_ text: String) async throws {
-    struct Body: Encodable { let text: String }
-    let m: ThreadMessage = try await api.post("/thread/messages", body: Body(text: text))
+  func send(_ text: String, attachmentIds: [Int] = []) async throws {
+    struct Body: Encodable {
+      let text: String
+      let attachmentIds: [Int]
+    }
+    let m: ThreadMessage = try await api.post("/thread/messages", body: Body(text: text, attachmentIds: attachmentIds))
     upsert(m)
+  }
+
+  /// Uploads a file for your next message.
+  func upload(_ data: Data, name: String, mediaType: String) async throws -> Attachment {
+    try await api.upload("/attachments", data: data, name: name, mediaType: mediaType)
   }
 
   // MARK: Tasks and approvals

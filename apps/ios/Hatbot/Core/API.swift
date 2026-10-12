@@ -92,6 +92,34 @@ final class API: Sendable {
     return data
   }
 
+  /// A file as multipart field "file"; the answer is JSON.
+  func upload<T: Decodable>(_ path: String, data: Data, name: String, mediaType: String) async throws -> T {
+    var req = request(path, method: "POST")
+    req.timeoutInterval = 120
+    let boundary = "hatbot-\(UUID().uuidString)"
+    req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+    let safe = name.replacingOccurrences(of: "\"", with: "_").replacingOccurrences(of: "\r", with: "_")
+      .replacingOccurrences(of: "\n", with: "_")
+    var body = Data()
+    body.append(Data("--\(boundary)\r\n".utf8))
+    body.append(Data("Content-Disposition: form-data; name=\"file\"; filename=\"\(safe)\"\r\n".utf8))
+    body.append(Data("Content-Type: \(mediaType)\r\n\r\n".utf8))
+    body.append(data)
+    body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+    let (out, response): (Data, URLResponse)
+    do {
+      (out, response) = try await session.upload(for: req, from: body)
+    } catch {
+      throw APIError(status: 0, message: "Couldn't reach Hatbot.")
+    }
+    try check(response, data: out, path: path)
+    do {
+      return try JSONDecoder().decode(T.self, from: out)
+    } catch {
+      throw APIError(status: 0, message: "Hatbot sent something this app doesn't understand.")
+    }
+  }
+
   /// A WebSocket with the bearer token; the brain checks it before upgrading.
   func webSocket(_ path: String) -> URLSessionWebSocketTask {
     var req = request(path, method: "GET")

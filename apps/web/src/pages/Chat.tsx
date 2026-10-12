@@ -203,6 +203,7 @@ function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
         <AssistantBody text={text} />
         {result && <AssistantBody text={result} />}
         {active && <div className="progress-note">{note}</div>}
+        {m.attachments?.length ? <Files list={m.attachments} /> : null}
       </div>
       <Meta
         m={m}
@@ -438,6 +439,7 @@ function Message({
   } else {
     inner = <ReplyMessage m={m} progress={progress} />;
   }
+
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: a tap only reveals the buttons, which are reachable by keyboard anyway
     <div className={cls} data-id={m.id} onClick={() => setTapped((v) => !v)}>

@@ -340,3 +340,23 @@ final class UnreadTests: XCTestCase {
     XCTAssertEqual(store.messages.first?.editedAt, "2026-10-11T10:05:00.000Z")
   }
 }
+
+// Not a @MainActor method: Linux XCTest can't run those.
+final class AttachmentTests: XCTestCase {
+  func testAttachmentEventsAddFilesOnce() async throws {
+    try await MainActor.run { try Self.attachmentEventsAddFilesOnce() }
+  }
+
+  @MainActor private static func attachmentEventsAddFilesOnce() throws {
+    let store = AppStore(api: API(server: URL(string: "https://h.example")!, token: nil))
+    let created = #"{"type":"message.created","message":{"id":5,"role":"assistant","kind":"text","text":"Here","status":"done","createdAt":"t"}}"#
+    store.apply(try JSONDecoder().decode(HatbotEvent.self, from: Data(created.utf8)))
+    XCTAssertNil(store.messages.first?.attachments)
+    let json = #"{"type":"message.attachment","id":5,"attachment":{"id":3,"name":"chart.png","mediaType":"image/png","size":2048,"from":"hatbot","createdAt":"t"}}"#
+    let event = try JSONDecoder().decode(HatbotEvent.self, from: Data(json.utf8))
+    store.apply(event)
+    store.apply(event)
+    XCTAssertEqual(store.messages.first?.attachments?.map(\.id), [3])
+    XCTAssertEqual(store.messages.first?.attachments?.first?.isPicture, true)
+  }
+}

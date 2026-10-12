@@ -1,6 +1,7 @@
 // The thread (PLAN.md §10.2, §10.4): Messages-style bubbles, grouped by sender with a tail on the
 // last, a centered time after a pause, Copy and Open in a long-press menu. A task shows under the reply
 // that started it; approvals wait above the composer. Finished conversations fold up under their recap.
+import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -8,6 +9,10 @@ struct ChatView: View {
   @Environment(AppStore.self) private var store
   @State private var path: [Route] = []
   @State private var draft = ""
+  @State private var files: [ComposerFile] = []
+  @State private var photos: [PhotosPickerItem] = []
+  @State private var pickingPhotos = false
+  @State private var pickingFiles = false
   @State private var sending = false
   @State private var error: String?
   @State private var position = ScrollPosition(edge: .bottom)
@@ -164,8 +169,27 @@ struct ChatView: View {
     return "\(day) at \(time)"
   }
 
+  private var uploading: Bool { files.contains { $0.attachment == nil && $0.error == nil } }
+
   private var canSend: Bool {
-    !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !sending
+    let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let hasFiles = files.contains { $0.attachment != nil }
+    return (hasText || hasFiles) && !sending && !uploading
+  }
+
+  /// Adds a file to the composer and uploads it straight away.
+  private func attach(_ data: Data, name: String, mediaType: String, preview: UIImage? = nil) {
+    let f = ComposerFile(name: name, preview: preview)
+    files.append(f)
+    Task {
+      do {
+        let a = try await store.upload(data, name: name, mediaType: mediaType)
+        if let i = files.firstIndex(where: { $0.id == f.id }) { files[i].attachment = a }
+      } catch {
+        if let i = files.firstIndex(where: { $0.id == f.id }) { files[i].error = message(for: error) }
+        self.error = message(for: error)
+      }
+    }
   }
 
   private var composer: some View {
@@ -187,7 +211,21 @@ struct ChatView: View {
       if let error {
         Text(error).font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading)
       }
+      if !files.isEmpty {
+        ComposerFiles(files: files) { id in files.removeAll { $0.id == id } }
+      }
       HStack(alignment: .bottom, spacing: 8) {
+        Menu {
+          Button("Photos", systemImage: "photo.on.rectangle") { pickingPhotos = true }
+          Button("Files", systemImage: "folder") { pickingFiles = true }
+        } label: {
+          Image(systemName: "paperclip")
+            .font(.body.weight(.semibold))
+            .frame(width: 26, height: 30)
+        }
+        .glassButton()
+        .buttonBorderShape(.circle)
+        .accessibilityLabel("Attach")
         TextField("Message Hatbot…", text: $draft, axis: .vertical)
           .lineLimit(1...6)
           .padding(.horizontal, 16)
@@ -208,16 +246,45 @@ struct ChatView: View {
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
+    .photosPicker(isPresented: $pickingPhotos, selection: $photos, maxSelectionCount: 10, matching: .images)
+    .onChange(of: photos) { _, picked in
+      guard !picked.isEmpty else { return }
+      photos = []
+      Task {
+        for (i, item) in picked.enumerated() {
+          guard let data = try? await item.loadTransferable(type: Data.self),
+            let photo = PickedFile.photo(data, index: files.count + i + 1)
+          else {
+            error = "Couldn't read that photo."
+            continue
+          }
+          attach(photo.data, name: photo.name, mediaType: "image/jpeg", preview: photo.preview)
+        }
+      }
+    }
+    .fileImporter(isPresented: $pickingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+      guard case let .success(urls) = result else { return }
+      for url in urls.prefix(10) {
+        guard let f = PickedFile.file(url) else {
+          error = "Couldn't read \(url.lastPathComponent)."
+          continue
+        }
+        attach(f.data, name: f.name, mediaType: f.mediaType)
+      }
+    }
   }
 
   private func send() {
     let typed = draft
     let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty, !sending else { return }
+    let attached = files
+    let ids = attached.compactMap { $0.attachment?.id }
+    guard canSend else { return }
     sending = true
     error = nil
     // Cleared before it's sent, and put back if sending fails.
     draft = ""
+    files = []
     withAnimation { position.scrollTo(edge: .bottom) }
     Task {
       // The keyboard can commit an autocorrection into the field just after it's cleared.
@@ -226,9 +293,10 @@ struct ChatView: View {
     }
     Task {
       do {
-        try await store.send(text)
+        try await store.send(text, attachmentIds: ids)
       } catch {
         if draft.isEmpty { draft = typed }
+        if files.isEmpty { files = attached }
         self.error = message(for: error)
       }
       sending = false
@@ -297,15 +365,20 @@ private struct MessageRow: View {
   var body: some View {
     if m.role == .user {
       let shape = Bubble(tail: tail, side: .trailing)
-      Text(m.text)
-        .foregroundStyle(.white)
-        .textSelection(.enabled)
-        .padding(Bubble.insets(.trailing))
-        .background(Color.userBubble, in: shape)
-        .contentShape(.contextMenuPreview, shape)
-        .contextMenu { copyButton(m.text) }
-        .padding(.leading, 56)
-        .frame(maxWidth: .infinity, alignment: .trailing)
+      VStack(alignment: .trailing, spacing: 4) {
+        if let list = m.attachments, !list.isEmpty { MessageFiles(list: list, alignment: .trailing) }
+        if !m.text.isEmpty {
+          Text(m.text)
+            .foregroundStyle(.white)
+            .textSelection(.enabled)
+            .padding(Bubble.insets(.trailing))
+            .background(Color.userBubble, in: shape)
+            .contentShape(.contextMenuPreview, shape)
+            .contextMenu { copyButton(m.text) }
+        }
+      }
+      .padding(.leading, 56)
+      .frame(maxWidth: .infinity, alignment: .trailing)
     } else {
       let shape = Bubble(tail: tail, side: .leading)
       let unread = store.unread.contains(m.id)
@@ -348,6 +421,7 @@ private struct MessageRow: View {
     case .schedule where m.scheduleId != nil: ScheduleMessage(scheduleId: m.scheduleId!)
     default: ReplyMessage(m: m)
     }
+    if let list = m.attachments, !list.isEmpty { MessageFiles(list: list, alignment: .leading) }
   }
 
   /// When a task's result changed the message after it was sent. A brain from before doesn't say: then a

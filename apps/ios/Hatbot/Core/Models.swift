@@ -53,6 +53,26 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   var editedAt: String?
   /// When you last saw it; missing on brains from before.
   var seenAt: String?
+  /// Its files, and for a message showing a task, the task's; missing when there are none.
+  var attachments: [Attachment]?
+}
+
+/// A file on a message: one you attached, or one Hatbot or a task sent you.
+struct Attachment: Codable, Identifiable, Equatable, Sendable {
+  enum From: String, LenientEnum {
+    case owner, hatbot
+    static let fallback = From.hatbot
+  }
+
+  let id: Int
+  var name: String
+  var mediaType: String
+  var size: Int
+  var from: From
+  var createdAt: String
+
+  /// Shown as a picture rather than a file.
+  var isPicture: Bool { ["image/jpeg", "image/png", "image/gif", "image/webp", "image/heic"].contains(mediaType) }
 }
 
 /// A conversation in the thread. Finished ones fold up under their recap.
@@ -355,6 +375,7 @@ enum HatbotEvent: Decodable, Sendable {
   case messageEdited(id: Int, editedAt: String)
   case messageSeen(ids: [Int], seenAt: String)
   case messageUsage(id: Int, ReplyUsage)
+  case messageAttachment(id: Int, Attachment)
   case spendUpdated(todayUsd: Double, monthUsd: Double)
   case memoryCommitted(sha: String, message: String, author: String)
   case paused(Bool)
@@ -373,7 +394,7 @@ enum HatbotEvent: Decodable, Sendable {
 
   private enum Key: String, CodingKey {
     case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused, tokens, costUsd
-    case task, step, approval, state, schedule, trigger, episode, editedAt, ids, seenAt
+    case task, step, approval, state, schedule, trigger, episode, editedAt, ids, seenAt, attachment
   }
 
   init(from decoder: Decoder) throws {
@@ -400,6 +421,8 @@ enum HatbotEvent: Decodable, Sendable {
       self = .messageUsage(
         id: try c.decode(Int.self, forKey: .id),
         ReplyUsage(tokens: try c.decode(Int.self, forKey: .tokens), costUsd: try c.decode(Double.self, forKey: .costUsd)))
+    case "message.attachment":
+      self = .messageAttachment(id: try c.decode(Int.self, forKey: .id), try c.decode(Attachment.self, forKey: .attachment))
     case "spend.updated":
       self = .spendUpdated(
         todayUsd: try c.decode(Double.self, forKey: .todayUsd),
