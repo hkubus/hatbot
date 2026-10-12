@@ -419,6 +419,28 @@ export async function runTool(
   }
 }
 
+/** Core tools that only look things up, so several can run at once. */
+export const LOOKUP_TOOLS = ["memory_list", "memory_read", "memory_search", "search_history"];
+
+/**
+ * Runs a turn's tool calls in order, except that a run of lookups (`parallel`) runs at once. Results
+ * come back in the calls' order.
+ */
+export async function inBatches<C, R>(
+  calls: C[],
+  parallel: (call: C) => boolean,
+  run: (call: C) => Promise<R>,
+): Promise<R[]> {
+  const out: R[] = [];
+  for (let i = 0; i < calls.length; ) {
+    let j = i + 1;
+    if (parallel(calls[i] as C)) while (j < calls.length && parallel(calls[j] as C)) j++;
+    out.push(...(await Promise.all(calls.slice(i, j).map(run))));
+    i = j;
+  }
+  return out;
+}
+
 /** The core's tool names, which plugin tools can't take. */
 export const CORE_TOOL_NAMES = [
   ...TOOLS.map((t) => t.name),

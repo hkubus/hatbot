@@ -8,8 +8,16 @@ import { mayCheck, ownerAsked, safeDespiteTaint } from "../agent/intent";
 import { modelErrorText } from "../agent/model";
 import { AGENT_PROMPT } from "../agent/prompt";
 import { localStamp } from "../agent/thread";
-import { DesktopTaskInput, missingSkill, runTool, TOOL_PARAMS, toolParam } from "../agent/tools";
-import { ownerNote } from "../approvals";
+import {
+  DesktopTaskInput,
+  inBatches,
+  LOOKUP_TOOLS,
+  missingSkill,
+  runTool,
+  TOOL_PARAMS,
+  toolParam,
+} from "../agent/tools";
+import { type Outcome, ownerNote } from "../approvals";
 import type { PluginTool } from "../plugins/plugin";
 import { describeCall, runPluginTool, untrustedDefinitions, verdictFor } from "../plugins/registry";
 import { BudgetError, priceOf } from "../spend";
@@ -163,7 +171,16 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       url: null,
     });
     tasks.setStatus(id, "waiting_approval");
-    const outcome = await d.approvals.wait(approval.id, signal);
+    // Waiting for you doesn't hold a slot other tasks could use.
+    tasks.pool.release();
+    slot = false;
+    let outcome: Outcome;
+    try {
+      outcome = await d.approvals.wait(approval.id, signal);
+    } finally {
+      await tasks.pool.acquire(signal);
+      slot = true;
+    }
     tasks.addStep(id, {
       kind: "approval",
       name: `Approval ${outcome}`,
@@ -287,13 +304,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       },
       { tool: t.name, input: call.input, what, why: verdict.why },
     );
-    if (check.safe)
-      tasks.addStep(id, {
-        kind: "approval",
-        name: "Not asking: Haiku found it safe",
-        detail: check.why ? `${what}. ${check.why}` : what,
-        url: null,
-      });
     return check;
   };
 
@@ -315,9 +325,20 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       });
       return result(call, `Refused: ${verdict.why}`, true);
     }
-    if (verdict.action === "ask" && !(await alreadyAsked(t, call, what, verdict))) {
-      const review = await reviewed(t, call, what, verdict);
-      if (!review.safe) {
+    if (verdict.action === "ask") {
+      // Both checks at once; either one lets it through.
+      const [asked, review] = await Promise.all([
+        alreadyAsked(t, call, what, verdict),
+        reviewed(t, call, what, verdict),
+      ]);
+      if (!asked && review.safe)
+        tasks.addStep(id, {
+          kind: "approval",
+          name: "Not asking: Haiku found it safe",
+          detail: review.why ? `${what}. ${review.why}` : what,
+          url: null,
+        });
+      if (!asked && !review.safe) {
         const answer = await askApproval({
           kind: verdict.kind ?? "other",
           summary: what,
@@ -428,30 +449,28 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         throw new Stop("done", text || "Finished.");
       }
 
-      const results: BlockParam[] = [];
       let finished: z.infer<typeof FinishTask> | null = null;
-      for (const call of calls) {
-        if (res.stop_reason === "max_tokens") {
-          results.push(
-            result(call, "Input was cut off at max_tokens. Retry with a shorter input.", true),
-          );
-        } else if (finished) {
-          results.push(result(call, "Not run: the task already finished.", true));
-        } else if (call.name === "finish_task") {
+      // Lookups in a row run at once; anything that changes things, or asks, runs on its own.
+      const lookup = (call: Anthropic.Beta.BetaToolUseBlock) =>
+        res.stop_reason !== "max_tokens" &&
+        (LOOKUP_TOOLS.includes(call.name) || pluginTools.get(call.name)?.access === "read");
+      const results: BlockParam[] = await inBatches(calls, lookup, async (call) => {
+        if (res.stop_reason === "max_tokens")
+          return result(call, "Input was cut off at max_tokens. Retry with a shorter input.", true);
+        if (finished) return result(call, "Not run: the task already finished.", true);
+        if (call.name === "finish_task") {
           const p = FinishTask.safeParse(call.input);
           if (p.success) finished = p.data;
-          results.push(
-            result(
-              call,
-              p.success ? "Finished." : `Invalid input: ${z.prettifyError(p.error)}`,
-              !p.success,
-            ),
+          return result(
+            call,
+            p.success ? "Finished." : `Invalid input: ${z.prettifyError(p.error)}`,
+            !p.success,
           );
-        } else if (call.name === "run_desktop_task") {
-          results.push(await desktopTask(call));
-        } else if (pluginTools.has(call.name)) {
-          results.push(await pluginCall(pluginTools.get(call.name) as PluginTool, call));
-        } else if (SHARED_TOOLS.includes(call.name)) {
+        }
+        if (call.name === "run_desktop_task") return desktopTask(call);
+        const plugin = pluginTools.get(call.name);
+        if (plugin) return pluginCall(plugin, call);
+        if (SHARED_TOOLS.includes(call.name)) {
           tasks.addStep(id, {
             kind: "action",
             name: call.name,
@@ -459,12 +478,13 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
             url: null,
           });
           const r = await runTool(call.name, call.input, ctx);
-          results.push(result(call, r.content, r.isError));
-        } else {
-          results.push(result(call, `Unknown tool "${call.name}".`, true));
+          return result(call, r.content, r.isError);
         }
-      }
-      if (finished) throw new Stop(finished.outcome, finished.summary, finished.notify);
+        return result(call, `Unknown tool "${call.name}".`, true);
+      });
+      // Set inside the calls above, which TypeScript can't see.
+      const ended = finished as z.infer<typeof FinishTask> | null;
+      if (ended) throw new Stop(ended.outcome, ended.summary, ended.notify);
       // What happened meanwhile, e.g. the monitor came back up. Trusted: it comes from the trigger.
       for (const event of tasks.takeInbox(id))
         results.push({ type: "text", text: `<event trusted="true">\n${event}\n</event>` });

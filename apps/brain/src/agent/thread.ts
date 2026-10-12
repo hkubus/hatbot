@@ -23,7 +23,7 @@ import type { Triggers } from "../triggers";
 import { mayCheck, ownerAsked, safeDespiteTaint } from "./intent";
 import { type ModelClient, modelErrorText } from "./model";
 import { EXPERT_PROMPT, SUMMARY_PROMPT, SYSTEM_PROMPT } from "./prompt";
-import { runTool, TOOL_PARAMS, toolParam } from "./tools";
+import { inBatches, LOOKUP_TOOLS, runTool, TOOL_PARAMS, toolParam } from "./tools";
 
 /** What ask_opus consults when the chat runs on Haiku 5.5. */
 export const EXPERT_MODEL = "claude-opus-5-5";
@@ -744,29 +744,27 @@ export class Thread {
           return finish("done");
         }
 
-        // Every tool_use needs a result, or the episode can't continue.
-        const results: BlockParam[] = [];
-        for (const call of toolUses) {
-          if (res.stop_reason === "max_tokens") {
-            results.push({
+        // Every tool_use needs a result, or the episode can't continue. Lookups in a row run at once.
+        const lookup = (call: Anthropic.Beta.BetaToolUseBlock) =>
+          res.stop_reason !== "max_tokens" &&
+          (LOOKUP_TOOLS.includes(call.name) ||
+            pluginTools.find((t) => t.name === call.name)?.access === "read");
+        const results = await inBatches(toolUses, lookup, async (call): Promise<BlockParam> => {
+          if (res.stop_reason === "max_tokens")
+            return {
               type: "tool_result",
               tool_use_id: call.id,
               is_error: true,
               content: "Input was cut off at max_tokens. Retry with a shorter input.",
-            });
-            continue;
-          }
+            };
           if (call.name === "ask_opus" && onHaiku) {
             progress("Asking Opus…");
-            results.push(await askOpus(call));
-            continue;
+            return askOpus(call);
           }
-          progress(
-            activity(
-              pluginTools.find((t) => t.name === call.name)?.label ?? toolLabel(call.name, plugins),
-              call.input,
-            ),
-          );
+          const plugin = pluginTools.find((t) => t.name === call.name);
+          // A change says what it's doing once its checks are done.
+          if (plugin?.access !== "write")
+            progress(activity(plugin?.label ?? toolLabel(call.name, plugins), call.input));
           const r = await runTool(
             call.name,
             call.input,
@@ -795,13 +793,13 @@ export class Thread {
             },
             abort.signal,
           );
-          results.push({
+          return {
             type: "tool_result",
             tool_use_id: call.id,
             is_error: r.isError,
             content: r.content,
-          });
-        }
+          };
+        });
         this.appendTurn(episode.id, "user", results);
       }
     } catch (err) {

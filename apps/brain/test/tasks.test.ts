@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Approval } from "@hatbot/shared";
+import { inBatches } from "../src/agent/tools";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
 
@@ -367,4 +368,26 @@ test("a consequential browser click is checked by its element reference", async 
   // The batch stops at the held-back click: typing would land in the wrong place.
   expect(results[1]?.is_error).toBe(true);
   expect(results[1]?.content).toBe("Not executed: an earlier action in this turn failed.");
+});
+
+test("lookups in a row run at once; everything else runs on its own, in order", async () => {
+  const log: string[] = [];
+  const run = async (c: string) => {
+    log.push(`start ${c}`);
+    await Bun.sleep(5);
+    log.push(`end ${c}`);
+    return c.toUpperCase();
+  };
+  const out = await inBatches(["r1", "r2", "w", "r3"], (c) => c.startsWith("r"), run);
+  expect(out).toEqual(["R1", "R2", "W", "R3"]);
+  expect(log).toEqual([
+    "start r1",
+    "start r2",
+    "end r1",
+    "end r2",
+    "start w",
+    "end w",
+    "start r3",
+    "end r3",
+  ]);
 });
