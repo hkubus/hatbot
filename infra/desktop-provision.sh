@@ -22,7 +22,9 @@ apt-get install -y -qq --no-install-recommends \
   ca-certificates curl unzip nftables \
   dbus-x11 xfce4 xfce4-terminal tigervnc-standalone-server tigervnc-tools x11-xserver-utils \
   chromium xdotool scrot fonts-noto-core fonts-noto-color-emoji fonts-noto-cjk \
-  fonts-liberation2 fonts-dejavu-core fonts-croscore >/dev/null
+  fonts-liberation2 fonts-dejavu-core fonts-croscore \
+  python3 python3-numpy python3-pandas python3-matplotlib python3-openpyxl poppler-utils jq sqlite3 \
+  git >/dev/null
 
 say "Bun $BUN_VERSION (for desktop-agent, M2)"
 if [[ $(/usr/local/bin/bun --version 2>/dev/null) != "$BUN_VERSION" ]]; then

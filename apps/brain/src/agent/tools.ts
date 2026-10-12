@@ -2,7 +2,9 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { describeCron, type Schedule, SKILL_NAME } from "@hatbot/shared";
 import { z } from "zod";
+import type { Attachments } from "../attachments";
 import type { Db } from "../db";
+import { type DesktopAgent, DesktopError } from "../desktop/client";
 import type { EventBus } from "../events";
 import { HATBOT, MemoryError, type MemoryStore } from "../memory/store";
 import type { PluginTool } from "../plugins/plugin";
@@ -23,6 +25,11 @@ export type ToolContext = {
   messageId?: number;
   /** The conversation the reply is in: history search leaves it out, since the model already has it. */
   episodeId?: number;
+  /** The background task running the tool: files it sends go on the task. */
+  taskId?: number;
+  attachments?: Attachments;
+  /** The desktop, whose sandbox send_file takes files from. */
+  desktop?: DesktopAgent;
   /** Adds a schedule's card to the thread. */
   scheduleCard?: (s: Schedule) => void;
   plugins?: Plugins;
@@ -203,6 +210,26 @@ export const TOOLS = [
             `[${r.created_at.slice(0, 16).replace("T", " ")}] ${r.role}: ${r.text.slice(0, 1500)}`,
         )
         .join("\n\n");
+    },
+  }),
+  def({
+    name: "send_file",
+    description:
+      "Send the owner a file from the desktop's sandbox (a path relative to its home, as code_run sees it): a chart, a CSV, a converted document. It shows under your reply, for them to open or save. Up to 25 MB.",
+    schema: z.object({
+      path: z.string().min(1).max(500).describe('The file in the sandbox, e.g. "out/chart.png"'),
+      name: z
+        .string()
+        .max(200)
+        .optional()
+        .describe("The name the owner sees, if not the file's own"),
+    }),
+    run: async ({ path, name }, { attachments, desktop, messageId, taskId }) => {
+      if (!attachments || !desktop?.configured)
+        throw new DesktopError("The desktop isn't set up.", 0);
+      const target = taskId ? { taskId } : { messageId };
+      const a = await attachments.fromDesktop(desktop, { path, name }, target);
+      return `Sent "${a.name}" (${a.mediaType}).`;
     },
   }),
   def({
@@ -412,7 +439,7 @@ export async function runTool(
     // biome-ignore lint/suspicious/noExplicitAny: each tool's run matches its own schema
     return { content: await tool.run(parsed.data as any, ctx), isError: false };
   } catch (err) {
-    if (err instanceof MemoryError || err instanceof ScheduleError)
+    if (err instanceof MemoryError || err instanceof ScheduleError || err instanceof DesktopError)
       return { content: err.message, isError: true };
     console.error(`tool ${name} failed`, err);
     return { content: "The tool failed with an internal error.", isError: true };

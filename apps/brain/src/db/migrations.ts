@@ -276,4 +276,19 @@ export const migrations: string[] = [
   /* 16: approvals no longer show as chat messages; they wait above the composer instead */ `
   DELETE FROM messages WHERE kind = 'approval';
   `,
+  /* 17: files in the chat, yours and Hatbot's; the bytes live in the archive */ `
+  CREATE TABLE attachments (
+    id INTEGER PRIMARY KEY,
+    message_id INTEGER REFERENCES messages(id),
+    task_id INTEGER REFERENCES tasks(id),
+    name TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    sender TEXT NOT NULL CHECK (sender IN ('owner', 'hatbot')),
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX attachments_message ON attachments(message_id);
+  CREATE INDEX attachments_task ON attachments(task_id);
+  `,
 ];

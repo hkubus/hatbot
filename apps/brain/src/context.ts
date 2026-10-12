@@ -1,6 +1,7 @@
 import type { Thread } from "./agent/thread";
 import type { Approvals } from "./approvals";
 import type { Archive } from "./archive";
+import type { Attachments } from "./attachments";
 import type { AuthService, FailureLimiter, Principal } from "./auth/service";
 import type { Config } from "./config";
 import type { Db } from "./db";
@@ -32,6 +33,7 @@ export type Deps = {
   approvals: Approvals;
   desktop: Desktop;
   archive: Archive;
+  attachments: Attachments;
   proxmox: Proxmox;
   updates: Updates;
   schedules: Schedules;

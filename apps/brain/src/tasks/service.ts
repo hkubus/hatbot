@@ -5,6 +5,7 @@ import type { Thread } from "../agent/thread";
 import type { ToolContext } from "../agent/tools";
 import type { Approvals } from "../approvals";
 import type { Archive } from "../archive";
+import type { Attachments } from "../attachments";
 import type { Config } from "../config";
 import type { Db } from "../db";
 import type { Desktop } from "../desktop/service";
@@ -29,6 +30,8 @@ export type TasksDeps = {
   approvals: Approvals;
   notifier: Notifier;
   archive: Archive;
+  /** Files tasks send the owner. */
+  attachments?: Attachments;
   thread: Thread;
   config: Config;
   memory: MemoryStore;
@@ -348,6 +351,8 @@ export class Tasks {
       events: this.d.events,
       tasks: this,
       plugins: this.d.plugins,
+      attachments: this.d.attachments,
+      desktop: this.d.desktop.agent,
     };
   }
 

@@ -6,6 +6,7 @@ import { CORE_TOOL_NAMES } from "../src/agent/tools";
 import { createApp } from "../src/app";
 import { Approvals } from "../src/approvals";
 import { Archive } from "../src/archive";
+import { Attachments } from "../src/attachments";
 import { AuthService, FailureLimiter } from "../src/auth/service";
 import { stepOf, totpAt } from "../src/auth/totp";
 import { loadConfig } from "../src/config";
@@ -14,6 +15,7 @@ import { Desktop } from "../src/desktop/service";
 import { EventBus, type HatbotEvent } from "../src/events";
 import { MemoryStore } from "../src/memory/store";
 import { LinkingNotifier, type Notification, type Notifier } from "../src/notify";
+import { codePlugin } from "../src/plugins/code";
 import type { Plugin } from "../src/plugins/plugin";
 import { Plugins } from "../src/plugins/registry";
 import { Proxmox } from "../src/proxmox";
@@ -73,7 +75,11 @@ export async function testApp(
   await memory.init();
   const skills = new Skills(db, memory, clock);
   skills.watch(events);
-  const plugins = new Plugins(pluginList, {
+  const archive = new Archive(tempDir("hatbot-test-archive-"), clock);
+  const attachments = new Attachments({ db, archive, events }, clock);
+  const agent = new FakeDesktop();
+  const desktop = new Desktop(agent, events);
+  const plugins = new Plugins([...pluginList, codePlugin({ desktop: agent, attachments })], {
     db,
     events,
     env: pluginEnv,
@@ -84,9 +90,6 @@ export async function testApp(
   taskModel.onCreate ??= () => '{"suspected": false, "excerpt": ""}';
   const sent = new FakeNotifier();
   const notifier = new LinkingNotifier(sent, ORIGIN, () => settings.get().notificationsOpen);
-  const archive = new Archive(tempDir("hatbot-test-archive-"), clock);
-  const agent = new FakeDesktop();
-  const desktop = new Desktop(agent, events);
   const approvals = new Approvals(db, events, notifier, ORIGIN, clock);
   const tasks = new Tasks({
     db,
@@ -98,6 +101,7 @@ export async function testApp(
     approvals,
     notifier,
     archive,
+    attachments,
     thread,
     config,
     memory,
@@ -120,7 +124,7 @@ export async function testApp(
   tempTeach.push(teach);
   const schedules = new Schedules(db, events, settings, tasks, clock);
   const triggers = new Triggers(db, events, settings, tasks, notifier, ORIGIN, clock);
-  thread.attach({ tasks, schedules, triggers, approvals });
+  thread.attach({ tasks, schedules, triggers, approvals, attachments, desktop: agent });
   const updateDir = tempDir("hatbot-test-update-");
   const updates = new Updates(
     {
@@ -146,6 +150,7 @@ export async function testApp(
     approvals,
     desktop,
     archive,
+    attachments,
     proxmox,
     updates,
     schedules,
@@ -179,6 +184,7 @@ export async function testApp(
     desktop,
     agent,
     archive,
+    attachments,
     notifier: sent,
     spend,
     thread,

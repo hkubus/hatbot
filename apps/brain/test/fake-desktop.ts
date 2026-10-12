@@ -54,6 +54,24 @@ export class FakeDesktop implements DesktopAgent {
     this.commands.push(command);
     return this.shell(command);
   }
+  /** The shell's files, by path. */
+  files = new Map<string, Uint8Array>();
+  async putFile(path: string, bytes: Uint8Array) {
+    if (this.locked) throw new DesktopError("The owner has control of the desktop.", 423);
+    this.files.set(path, bytes);
+  }
+  async getFile(path: string) {
+    const f = this.files.get(path);
+    if (!f) throw new DesktopError(`There's no file at ${path}.`, 404);
+    return f;
+  }
+  /** Finished browser downloads, by id. */
+  downloads = new Map<string, { name: string; bytes: Uint8Array }>();
+  async getDownload(id: string) {
+    const d = this.downloads.get(id);
+    if (!d) throw new DesktopError("There's no finished download with that id.", 404);
+    return d;
+  }
   async browser(call: BrowserCall): Promise<BrowserResult> {
     if (this.locked) throw new DesktopError("The owner has control of the desktop.", 423);
     this.browserCalls.push(call);

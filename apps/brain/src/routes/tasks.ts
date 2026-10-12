@@ -23,7 +23,11 @@ export const taskRoutes = new Hono<AppEnv>()
     const taskId = Number(c.req.param("id"));
     const task = c.var.tasks.get(taskId);
     if (!task) return c.json({ error: "not found" }, 404);
-    return c.json({ task, steps: c.var.tasks.steps(taskId) });
+    return c.json({
+      task,
+      steps: c.var.tasks.steps(taskId),
+      attachments: c.var.attachments.forTask(taskId),
+    });
   })
   .post("/tasks/:id/cancel", (c) => {
     if (!c.var.tasks.cancel(Number(c.req.param("id"))))

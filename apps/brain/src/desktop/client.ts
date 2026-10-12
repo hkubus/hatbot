@@ -33,6 +33,12 @@ export interface DesktopAgent {
   inspect(x?: number, y?: number): Promise<AgentElement | null>;
   /** A command in the desktop's shell, which can't see the browser profile or the screen. */
   exec(command: string, timeoutS: number): Promise<ShellResult>;
+  /** Puts a file in the shell's home (a relative path) or anywhere it may write. */
+  putFile(path: string, bytes: Uint8Array): Promise<void>;
+  /** A file the shell can read, up to 25 MB. */
+  getFile(path: string): Promise<Uint8Array>;
+  /** A browser download that finished, by the id the model saw (dl-3). */
+  getDownload(id: string): Promise<{ name: string; bytes: Uint8Array }>;
   /** One browser toolset member, run on Chromium over CDP. */
   browser(call: BrowserCall): Promise<BrowserResult>;
   browserState(): Promise<BrowserState>;
@@ -54,15 +60,24 @@ export class HttpDesktopAgent implements DesktopAgent {
     this.configured = Boolean(baseUrl && token);
   }
 
-  private async req(method: string, path: string, body?: unknown, timeoutMs = 20_000) {
+  private async req(
+    method: string,
+    path: string,
+    body?: unknown,
+    timeoutMs = 20_000,
+    raw?: Uint8Array,
+  ) {
     if (!this.configured)
       throw new DesktopError("The desktop isn't set up (no DESKTOP_AGENT_URL).", 0);
     let res: Response;
     try {
       res = await fetch(`${this.baseUrl}${path}`, {
         method,
-        headers: { authorization: `Bearer ${this.token}`, "content-type": "application/json" },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        headers: {
+          authorization: `Bearer ${this.token}`,
+          "content-type": raw ? "application/octet-stream" : "application/json",
+        },
+        body: raw ?? (body === undefined ? undefined : JSON.stringify(body)),
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch {
@@ -100,6 +115,21 @@ export class HttpDesktopAgent implements DesktopAgent {
     return (await (
       await this.req("POST", "/exec", { command, timeoutS }, (timeoutS + 15) * 1000)
     ).json()) as ShellResult;
+  }
+  async putFile(path: string, bytes: Uint8Array) {
+    await this.req("PUT", `/files?path=${encodeURIComponent(path)}`, undefined, 120_000, bytes);
+  }
+  async getFile(path: string) {
+    return (
+      await this.req("GET", `/files?path=${encodeURIComponent(path)}`, undefined, 120_000)
+    ).bytes();
+  }
+  async getDownload(id: string) {
+    const res = await this.req("GET", `/download?id=${encodeURIComponent(id)}`, undefined, 120_000);
+    return {
+      name: decodeURIComponent(res.headers.get("x-filename") ?? "download"),
+      bytes: await res.bytes(),
+    };
   }
   async browser(call: BrowserCall) {
     // `wait` and page loads may take up to 30 s.

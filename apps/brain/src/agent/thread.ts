@@ -4,7 +4,9 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { describeCron, type Episode, type Schedule, type ThreadMessage } from "@hatbot/shared";
 import { z } from "zod";
 import { type Approvals, ownerNote } from "../approvals";
+import type { Attachments } from "../attachments";
 import type { Db } from "../db";
+import type { DesktopAgent } from "../desktop/client";
 import type { EventBus } from "../events";
 import type { MemoryStore } from "../memory/store";
 import type { PluginTool } from "../plugins/plugin";
@@ -90,6 +92,9 @@ export type ThreadDeps = {
   schedules?: Schedules;
   triggers?: Triggers;
   approvals?: Approvals;
+  /** Files in the chat, and the desktop whose sandbox send_file takes them from. */
+  attachments?: Attachments;
+  desktop?: DesktopAgent;
   db: Db;
   memory: MemoryStore;
   events: EventBus;
@@ -125,12 +130,13 @@ export class Thread {
   }
 
   list(before?: number, limit = 50): ThreadMessage[] {
-    return this.d.db
+    const rows = this.d.db
       .query<ThreadMessage, [number, number]>(
         `SELECT ${MESSAGE_COLUMNS} FROM messages WHERE id < ? ORDER BY id DESC LIMIT ?`,
       )
       .all(before ?? Number.MAX_SAFE_INTEGER, limit)
       .reverse();
+    return this.d.attachments?.fill(rows) ?? rows;
   }
 
   /** A task or schedule card in the thread. `text` is what search and summaries see. */
@@ -191,8 +197,11 @@ export class Thread {
   }
 
   /** Stores the owner's message and queues Hatbot's reply, which streams over the event bus. */
-  post(text: string): { message: ThreadMessage; done: Promise<void> } {
-    const message = this.insertMessage("user", text, "done");
+  post(
+    text: string,
+    attachmentIds: number[] = [],
+  ): { message: ThreadMessage; done: Promise<void> } {
+    const message = this.insertMessage("user", text, "done", undefined, attachmentIds);
     // Writing again instead of answering an approval moves on without it.
     if (this.waiting !== null) this.d.approvals?.cancel(this.waiting);
     const done = this.chain.then(() => this.reply(message));
@@ -200,7 +209,12 @@ export class Thread {
     return { message, done };
   }
 
-  attach(parts: Pick<ThreadDeps, "tasks" | "schedules" | "triggers" | "approvals">) {
+  attach(
+    parts: Pick<
+      ThreadDeps,
+      "tasks" | "schedules" | "triggers" | "approvals" | "attachments" | "desktop"
+    >,
+  ) {
     Object.assign(this.d, parts);
   }
 
@@ -365,14 +379,17 @@ export class Thread {
     text: string,
     status: string,
     episodeId?: number,
+    attachmentIds: number[] = [],
   ): ThreadMessage {
-    const row = this.d.db
+    const inserted = this.d.db
       .query<ThreadMessage, [number | null, string, string, string, string]>(
         `INSERT INTO messages (episode_id, role, text, status, created_at) VALUES (?, ?, ?, ?, ?)
          RETURNING ${MESSAGE_COLUMNS}`,
       )
       .get(episodeId ?? null, role, text, status, this.now());
-    if (!row) throw new Error("message insert failed");
+    if (!inserted) throw new Error("message insert failed");
+    const files = this.d.attachments?.bind(attachmentIds, inserted.id) ?? [];
+    const row = files.length ? { ...inserted, attachments: files } : inserted;
     this.d.events.emit({ type: "message.created", message: row });
     return row;
   }
@@ -591,8 +608,13 @@ export class Thread {
     }
     userBlocks.push({
       type: "text",
-      text: `[${localStamp(new Date(user.createdAt))}]\n${user.text}`,
+      text: `[${localStamp(new Date(user.createdAt))}]\n${user.text || "(no text, only files)"}`,
     });
+    // Your files: what's in them was written by whoever made them, so they're untrusted (PLAN.md §6.1).
+    if (user.attachments?.length && this.d.attachments) {
+      userBlocks.push(...(await this.d.attachments.blocks(user.attachments)));
+      this.taint(episode.id, `Attached file "${user.attachments[0]?.name}"`);
+    }
     this.appendTurn(episode.id, "user", userBlocks);
 
     const out = this.insertMessage("assistant", "", "streaming", episode.id);
@@ -854,6 +876,7 @@ function toolLabel(name: string, plugins: Plugins): string {
     trigger_update: "Changing a trigger",
     run_task: "Starting a task",
     ask_opus: "Asking Opus",
+    send_file: "Sending a file",
   };
   const plugin = plugins.pluginOf(name);
   return labels[name] ?? `Using ${plugin?.name ?? name}`;

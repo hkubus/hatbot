@@ -38,6 +38,7 @@ const SHARED_TOOLS = [
   "memory_delete",
   "memory_search",
   "search_history",
+  "send_file",
 ];
 
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
@@ -528,6 +529,13 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         }
         if (call.name === "run_desktop_task") return desktopTask(call);
         if (call.name === "wait") return wait(call);
+        if (call.name === "send_file") {
+          // On the task, so it shows wherever the task does.
+          const r = await runTool(call.name, call.input, { ...ctx, taskId: id });
+          if (!r.isError)
+            tasks.addStep(id, { kind: "action", name: "send_file", detail: r.content, url: null });
+          return result(call, r.content, r.isError);
+        }
         if (call.name === "notify_owner") {
           const p = NotifyOwner.safeParse(call.input);
           if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);

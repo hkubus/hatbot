@@ -41,7 +41,15 @@ export type Me = { setupDone: boolean; authenticated: boolean };
 
 export type ApiError = { error: string };
 
-export const PostMessage = z.object({ text: z.string().trim().min(1).max(100_000) });
+export const PostMessage = z
+  .object({
+    text: z.string().trim().max(100_000),
+    /** Files uploaded first with POST /api/attachments. */
+    attachmentIds: z.array(z.number().int().positive()).max(10).default([]),
+  })
+  .refine((m) => m.text.length > 0 || m.attachmentIds.length > 0, {
+    message: "A message needs text or a file.",
+  });
 export const SeenMessages = z.object({ ids: z.array(z.number().int().positive()).min(1).max(200) });
 export const PutMemoryFile = z.object({
   content: z.string().max(1_000_000),
@@ -64,6 +72,18 @@ export type ThreadMessage = {
   editedAt: string | null;
   /** When you last saw it. Hatbot's messages are unread while this is before they were sent or edited. */
   seenAt: string | null;
+  /** Files sent with it: yours, or ones Hatbot (or the task under it) sent you. Absent when none. */
+  attachments?: Attachment[];
+};
+
+/** A file in the chat. Its bytes are at GET /api/attachments/:id. */
+export type Attachment = {
+  id: number;
+  name: string;
+  mediaType: string;
+  size: number;
+  from: "owner" | "hatbot";
+  createdAt: string;
 };
 
 /** A conversation in the thread (PLAN.md §5.3). Finished ones fold up under their recap. */
@@ -206,6 +226,7 @@ export type HatbotEvent =
   | { type: "message.task"; id: number; taskId: number }
   /** A task's result changed this message. */
   | { type: "message.edited"; id: number; editedAt: string }
+  | { type: "message.attachment"; id: number; attachment: Attachment }
   /** You saw these messages (on any device). */
   | { type: "message.seen"; ids: number[]; seenAt: string }
   /** What the reply being written has used so far, across its model calls. */

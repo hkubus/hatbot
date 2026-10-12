@@ -1,6 +1,7 @@
 // The browser toolset (browser_toolset_20260801) on the desktop's Chromium, over its DevTools protocol: one
 // browser-level connection, a session per tab, and element references from page.ts. Input goes in through CDP, so
 // it reaches the right tab whatever window is on top.
+import { join } from "node:path";
 import type {
   AgentElement,
   BrowserResult,
@@ -297,6 +298,9 @@ export class Browser {
   private reported = new Set<string>();
   private changes: BrowserStateChange[] = [];
   private downloads = new Map<string, { id: string; url: string }>();
+  /** Finished downloads by id: the file's name and where Chromium saved it. */
+  private saved = new Map<string, { name: string; path: string }>();
+  private names = new Map<string, string>();
   private nextDownload = 1;
   private lifecycle: Lifecycle[] = [];
   private seq = 0;
@@ -304,8 +308,14 @@ export class Browser {
   /** Where the pointer last was in each tab, so the next move starts there. */
   private pointers = new Map<string, Point>();
 
-  constructor() {
+  /** `downloadDir`: where downloads go, named by their guid, so they can be sent on; null leaves Chromium's default. */
+  constructor(private downloadDir: string | null = null) {
     this.cdp.on((method, p, sessionId) => this.event(method, p, sessionId));
+  }
+
+  /** A finished download's file, by the id the model saw. */
+  download(id: string): { name: string; path: string } | null {
+    return this.saved.get(id) ?? null;
   }
 
   /** Connects (again) when needed, and learns the open tabs. */
@@ -318,7 +328,12 @@ export class Browser {
     for (const t of targetInfos) this.targets.set(t.targetId, t);
     await this.cdp.send("Target.setDiscoverTargets", { discover: true });
     await this.cdp
-      .send("Browser.setDownloadBehavior", { behavior: "default", eventsEnabled: true })
+      .send(
+        "Browser.setDownloadBehavior",
+        this.downloadDir
+          ? { behavior: "allowAndName", downloadPath: this.downloadDir, eventsEnabled: true }
+          : { behavior: "default", eventsEnabled: true },
+      )
       .catch(() => {});
     this.reported = new Set(this.pages().map((t) => t.targetId));
   }
@@ -379,6 +394,7 @@ export class Browser {
         const id = `dl-${this.nextDownload++}`;
         const url = sanitize(String(p.url ?? "").split("?")[0] ?? "", 2000);
         this.downloads.set(p.guid as string, { id, url });
+        this.names.set(id, sanitize(String(p.suggestedFilename ?? "download"), 200));
         this.changes.push({ type: "download_started", download_id: id, url });
         return;
       }
@@ -386,6 +402,11 @@ export class Browser {
         const d = this.downloads.get(p.guid as string);
         if (!d || p.state === "inProgress") return;
         this.downloads.delete(p.guid as string);
+        if (p.state === "completed" && this.downloadDir)
+          this.saved.set(d.id, {
+            name: this.names.get(d.id) ?? "download",
+            path: join(this.downloadDir, p.guid as string),
+          });
         this.changes.push(
           p.state === "completed"
             ? {

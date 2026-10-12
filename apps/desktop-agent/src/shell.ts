@@ -2,11 +2,15 @@
 // systemd DynamicUser. It can't see /home (the browser profile and its logins) or the screen, and it
 // holds no secrets: it listens on a Unix socket, which web pages can't reach, and desktop-agent relays.
 import { chmodSync, rmSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import type { ShellResult } from "@hatbot/shared/desktop";
 
 export const SHELL_SOCKET = process.env.HATBOT_SHELL_SOCKET ?? "/run/hatbot-shell/shell.sock";
 const MAX_OUTPUT = 30_000;
 const MAX_TIMEOUT_S = 600;
+/** The most a file going in or out may be: the brain's attachment limit. */
+export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 
 /** Long output keeps its start and end, where errors and results usually are. */
 export function clip(out: string, max = MAX_OUTPUT): string {
@@ -56,12 +60,44 @@ export async function run(command: string, timeoutS = 60): Promise<ShellResult> 
   return { exitCode, output: clip(output), timedOut };
 }
 
+/**
+ * A file the brain hands in (PUT) or takes out (GET), relative to the shell's home. It's no boundary:
+ * commands can read and write the same files anyway.
+ */
+export async function file(req: Request, home = process.env.HOME ?? "/tmp"): Promise<Response> {
+  const rel = new URL(req.url).searchParams.get("path") ?? "";
+  if (!rel || rel.length > 500) return Response.json({ error: "path is missing" }, { status: 400 });
+  const path = resolve(home, rel);
+  if (req.method === "PUT") {
+    const bytes = new Uint8Array(await req.arrayBuffer());
+    if (bytes.byteLength > MAX_FILE_BYTES)
+      return Response.json({ error: "The file is too big." }, { status: 413 });
+    await mkdir(dirname(path), { recursive: true });
+    await Bun.write(path, bytes);
+    return Response.json({ path });
+  }
+  const f = Bun.file(path);
+  if (!(await f.exists()))
+    return Response.json({ error: `There's no file at ${rel}.` }, { status: 404 });
+  if (f.size > MAX_FILE_BYTES)
+    return Response.json({ error: `${rel} is over 25 MB.` }, { status: 413 });
+  return new Response(f);
+}
+
 if (import.meta.main) {
   rmSync(SHELL_SOCKET, { force: true });
   Bun.serve({
     unix: SHELL_SOCKET,
     async fetch(req) {
-      if (req.method !== "POST" || new URL(req.url).pathname !== "/exec")
+      const route = new URL(req.url).pathname;
+      if (route === "/files" && (req.method === "GET" || req.method === "PUT")) {
+        try {
+          return await file(req);
+        } catch (err) {
+          return Response.json({ error: (err as Error).message }, { status: 400 });
+        }
+      }
+      if (req.method !== "POST" || route !== "/exec")
         return Response.json({ error: "not found" }, { status: 404 });
       const { command, timeoutS } = (await req.json()) as { command?: unknown; timeoutS?: unknown };
       if (typeof command !== "string" || !command.trim() || command.length > 20_000)

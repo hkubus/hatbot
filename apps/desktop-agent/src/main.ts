@@ -1,6 +1,6 @@
 // desktop-agent: runs on the desktop, takes orders only from the brain (PLAN.md §4.2).
 import { timingSafeEqual } from "node:crypto";
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
   AgentAction,
@@ -33,7 +33,10 @@ const MAX_UPDATE_BYTES = 10 * 1024 * 1024;
 
 const size = await screenSize();
 const live = new LiveCapture(size);
-const browser = new Browser();
+// Downloads land where desktop-agent can read them (it can't see /home), to be sent on to the owner.
+const downloadDir = stateDir ? join(stateDir, "downloads") : null;
+if (downloadDir) mkdirSync(downloadDir, { recursive: true });
+const browser = new Browser(downloadDir);
 /** A watcher that falls this far behind skips frames instead of seeing the desktop late. */
 const LIVE_BUFFER_BYTES = 256 * 1024;
 /** While locked (the owner has control, or Pause all), the brain's model can't act. Live input still works. */
@@ -148,6 +151,41 @@ const server = Bun.serve<{ off?: () => void }>({
           return new Response(res.body, {
             status: res.status,
             headers: { "content-type": "application/json" },
+          });
+        }
+        case "GET /download": {
+          const d = browser.download(url.searchParams.get("id") ?? "");
+          if (!d || !(await Bun.file(d.path).exists()))
+            return json({ error: "There's no finished download with that id." }, 404);
+          return new Response(Bun.file(d.path), {
+            headers: {
+              "content-type": "application/octet-stream",
+              "x-filename": encodeURIComponent(d.name),
+            },
+          });
+        }
+        case "GET /files":
+        case "PUT /files": {
+          if (locked) return json({ error: "The owner has control of the desktop." }, 423);
+          let res: Response;
+          try {
+            res = await fetch(`http://shell/files${url.search}`, {
+              method: req.method,
+              unix: SHELL_SOCKET,
+              body: req.method === "PUT" ? await req.arrayBuffer() : undefined,
+              signal: AbortSignal.timeout(120_000),
+            } as RequestInit);
+          } catch {
+            return json(
+              { error: "The desktop's shell isn't running (deploy.sh sets it up)." },
+              503,
+            );
+          }
+          return new Response(res.body, {
+            status: res.status,
+            headers: {
+              "content-type": res.headers.get("content-type") ?? "application/octet-stream",
+            },
           });
         }
         case "POST /browser": {

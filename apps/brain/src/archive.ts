@@ -26,6 +26,24 @@ export class Archive {
     return rel;
   }
 
+  /** Saves a chat attachment in the day's folder as `<id>-<name>`. */
+  async saveFile(id: number, name: string, bytes: Uint8Array): Promise<string> {
+    const d = new Date(this.clock());
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const safe = name.replace(/[^\w.-]+/g, "_").slice(-100) || "file";
+    const rel = join(
+      "files",
+      String(d.getFullYear()),
+      pad(d.getMonth() + 1),
+      pad(d.getDate()),
+      `${id}-${safe}`,
+    );
+    const abs = join(this.dir, rel);
+    await mkdir(join(abs, ".."), { recursive: true });
+    await Bun.write(abs, bytes);
+    return rel;
+  }
+
   /** A file for reading, or null if the path leaves the archive. */
   file(rel: string) {
     const root = resolve(this.dir);

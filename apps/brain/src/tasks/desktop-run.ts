@@ -71,6 +71,13 @@ const DesktopShell = z.object({
     .optional()
     .describe("Seconds before it's killed; 60 if left out"),
 });
+const SendFile = z
+  .object({
+    download_id: z.string().max(100).optional().describe("A finished browser download's id"),
+    path: z.string().max(500).optional().describe("A file in desktop_shell's home, relative to it"),
+    name: z.string().max(200).optional().describe("The name the owner sees, if not the file's own"),
+  })
+  .refine((v) => !!v.download_id !== !!v.path, "Give either download_id or path.");
 const FinishTask = z.object({
   outcome: z.enum(["done", "failed", "blocked"]),
   summary: z.string().min(1).max(2000).describe("What you did and the result, for the owner"),
@@ -94,6 +101,12 @@ const CUSTOM_TOOLS: Anthropic.Beta.BetaTool[] = [
     description:
       "Run a bash command on the desktop as a separate shell user, and get its exit code and output as text. Use it for computing, scripts, downloading and processing files, and trying things out: it's faster than typing into a terminal on screen. Its home (/var/lib/hatbot-shell) persists between tasks. It can't see the browser profile, the browser's downloads or the screen, has no sudo, and reaches the internet but not the owner's network. Commands that delete data recursively or the like ask the owner first.",
     schema: DesktopShell,
+  },
+  {
+    name: "send_file",
+    description:
+      "Send the owner a file: a browser download once it's completed (download_id), or one desktop_shell made (path). It shows with the task's result, for them to open or save. Up to 25 MB.",
+    schema: SendFile,
   },
   {
     name: "finish_task",
@@ -577,6 +590,24 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     );
   };
 
+  const sendFile = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> => {
+    const p = SendFile.safeParse(call.input);
+    if (!p.success) return textResult(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+    if (!d.attachments) return textResult(call, "Files can't be sent here.", true);
+    try {
+      const a = await d.attachments.fromDesktop(
+        agent,
+        { download: p.data.download_id, path: p.data.path, name: p.data.name },
+        { taskId: id },
+      );
+      tasks.addStep(id, { kind: "action", name: "send_file", detail: a.name, url: null });
+      return textResult(call, `Sent "${a.name}".`);
+    } catch (err) {
+      if (err instanceof DesktopError) return textResult(call, err.message, true);
+      throw err;
+    }
+  };
+
   const requestTakeover = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> => {
     const p = RequestTakeover.safeParse(call.input);
     if (!p.success) return textResult(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
@@ -721,6 +752,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           results.push(await requestTakeover(call));
         } else if (call.name === "desktop_shell") {
           results.push(await shellCall(call));
+        } else if (call.name === "send_file") {
+          results.push(await sendFile(call));
         } else if (call.name === "finish_task") {
           const p = FinishTask.safeParse(call.input);
           if (p.success) finished = p.data;

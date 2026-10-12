@@ -5,6 +5,7 @@ import { CORE_TOOL_NAMES } from "./agent/tools";
 import { createApp } from "./app";
 import { Approvals } from "./approvals";
 import { Archive } from "./archive";
+import { Attachments } from "./attachments";
 import { AuthService, FailureLimiter } from "./auth/service";
 import { loadConfig } from "./config";
 import { openDb } from "./db";
@@ -14,6 +15,7 @@ import { EventBus } from "./events";
 import { MemoryStore } from "./memory/store";
 import { LinkingNotifier, NtfyNotifier } from "./notify";
 import { PLUGINS } from "./plugins";
+import { codePlugin } from "./plugins/code";
 import { Plugins } from "./plugins/registry";
 import { Proxmox } from "./proxmox";
 import { Schedules } from "./schedules";
@@ -38,7 +40,14 @@ const skills = new Skills(db, memory);
 await skills.refresh();
 skills.watch(events);
 const model = new AnthropicModelClient();
-const plugins = new Plugins(PLUGINS, { db, events, reserved: CORE_TOOL_NAMES });
+const archive = new Archive(config.archiveDir);
+const attachments = new Attachments({ db, archive, events });
+const desktop = new Desktop(new HttpDesktopAgent(), events);
+const plugins = new Plugins([...PLUGINS, codePlugin({ desktop: desktop.agent, attachments })], {
+  db,
+  events,
+  reserved: CORE_TOOL_NAMES,
+});
 // In the background: an MCP server that is slow to answer mustn't hold up the health check.
 const pluginsStarted = plugins
   .startAll()
@@ -49,8 +58,6 @@ const notifier = new LinkingNotifier(
   config.publicUrl,
   () => settings.get().notificationsOpen,
 );
-const archive = new Archive(config.archiveDir);
-const desktop = new Desktop(new HttpDesktopAgent(), events);
 const approvals = new Approvals(db, events, notifier, config.publicUrl);
 const tasks = new Tasks({
   db,
@@ -62,6 +69,7 @@ const tasks = new Tasks({
   approvals,
   notifier,
   archive,
+  attachments,
   thread,
   config,
   memory,
@@ -81,7 +89,7 @@ const teach = new Teach({
 });
 const schedules = new Schedules(db, events, settings, tasks);
 const triggers = new Triggers(db, events, settings, tasks, notifier, config.publicUrl);
-thread.attach({ tasks, schedules, triggers, approvals });
+thread.attach({ tasks, schedules, triggers, approvals, attachments, desktop: desktop.agent });
 await desktop.setPaused(settings.get().paused);
 await desktop.refresh();
 setInterval(() => void desktop.refresh(), 30_000);
@@ -115,6 +123,7 @@ const app = createApp({
   approvals,
   desktop,
   archive,
+  attachments,
   proxmox: new Proxmox(),
   updates: new Updates(config),
   schedules,
