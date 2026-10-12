@@ -398,3 +398,40 @@ test("a task's timeline keeps only the model's latest note, and all of yours", (
   const steps = [step(1, "note"), step(2, "action"), step(3, "note", "Your note"), step(4, "note")];
   expect(latestNoteOnly(steps).map((s) => s.id)).toEqual([2, 3, 4]);
 });
+
+test("a task waits without a slot, wakes on an event, and can notify before it ends", async () => {
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("notify_owner", { message: "The backup started late." }),
+        toolUse("wait", { minutes: 30, for: "the backup to finish" }),
+      ],
+    },
+    {
+      content: [
+        toolUse("finish_task", { outcome: "done", summary: "Backup finished.", notify: false }),
+      ],
+    },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = t.tasks.createBackgroundTask({
+    title: "Watch the backup",
+    goal: "Tell me when the backup finishes",
+    origin: "schedule",
+    source: "nightly",
+    runKey: "schedule:1",
+  });
+  if (!task) throw new Error("no task");
+  await waitFor(() => t.tasks.steps(task.id).find((s) => s.name === "wait"));
+  // Waiting gives its slot back: every slot is free.
+  const signal = AbortSignal.timeout(500);
+  for (let i = 0; i < t.tasks.pool.size; i++) await t.tasks.pool.acquire(signal);
+  for (let i = 0; i < t.tasks.pool.size; i++) t.tasks.pool.release();
+  t.tasks.tell(task.id, "Backup job finished OK.");
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)?.summary).toBe("Backup finished.");
+  const results = JSON.stringify(work.requests[1]?.messages.at(-1));
+  expect(results).toContain("Woke early");
+  expect(results).toContain("Backup job finished OK.");
+  expect(t.notifier.sent.map((n) => n.message)).toEqual(["The backup started late."]);
+});

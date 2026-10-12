@@ -114,6 +114,8 @@ export class Tasks {
   private running = new Map<number, AbortController>();
   /** Events for running tasks, delivered with their next tool results. */
   private inbox = new Map<number, string[]>();
+  /** Wakes a task waiting for its inbox. */
+  private wakers = new Map<number, () => void>();
   private runs = new Set<Promise<void>>();
   readonly clock: () => number;
 
@@ -433,6 +435,40 @@ export class Tasks {
   /** Tells a running task about something that happened, e.g. its monitor came back up. */
   tell(id: number, event: string) {
     this.inbox.set(id, [...(this.inbox.get(id) ?? []), event]);
+    this.wakers.get(id)?.();
+  }
+
+  /**
+   * Waits up to `ms` for a task to be told something. True if it was (or already had been), false
+   * when the time ran out.
+   */
+  nextEvent(id: number, ms: number, signal: AbortSignal): Promise<boolean> {
+    if (this.inbox.get(id)?.length) return Promise.resolve(true);
+    signal.throwIfAborted();
+    return new Promise((resolve, reject) => {
+      const end = (fn: () => void) => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", abort);
+        this.wakers.delete(id);
+        fn();
+      };
+      const timer = setTimeout(() => end(() => resolve(false)), ms);
+      const abort = () => end(() => reject(signal.reason));
+      signal.addEventListener("abort", abort, { once: true });
+      this.wakers.set(id, () => end(() => resolve(true)));
+    });
+  }
+
+  /** A notification from a running task, before it ends: for news the owner shouldn't wait for. */
+  notifyOwner(id: number, message: string) {
+    const task = this.get(id);
+    if (!task) return;
+    void this.d.notifier.send({
+      title: task.title.slice(0, 120),
+      message,
+      priority: 4,
+      click: `${this.d.config.publicUrl}/tasks/${id}`,
+    });
   }
 
   /** What a task has been told since it last looked. */
