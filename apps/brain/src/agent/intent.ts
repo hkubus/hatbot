@@ -75,9 +75,9 @@ export async function ownerAsked(
 }
 
 /**
- * Asks Haiku whether a tainted task's change is safe to make without you: it fits what the task is for
- * and is low-impact, nothing the untrusted content could profit from. Haiku never sees that content,
- * only its sources. Any failure or unclear answer is unsafe, so the task asks.
+ * Asks Haiku whether a tainted task's change is safe to make without you: nothing destructive or
+ * dangerous, and nothing the untrusted content could have put there. Whether the task needs it isn't
+ * Haiku's call. Haiku never sees that content, only its sources. Any failure is unsafe, so the task asks.
  */
 export async function safeDespiteTaint(
   d: { model: ModelClient; spend: Spend },
