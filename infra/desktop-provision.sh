@@ -16,12 +16,13 @@ source /etc/hatbot-desktop/secrets.env
 : "${VNC_PASSWORD:?missing in /etc/hatbot-desktop/secrets.env}"
 : "${DESKTOP_IP:?set DESKTOP_IP}" "${BRAIN_IP:?set BRAIN_IP}"
 
-say "Packages (XFCE, TigerVNC, Chromium, xdotool)"
+say "Packages (XFCE, TigerVNC, Chromium, xdotool, the fonts a desktop usually has)"
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends \
   ca-certificates curl unzip nftables \
   dbus-x11 xfce4 xfce4-terminal tigervnc-standalone-server tigervnc-tools x11-xserver-utils \
-  chromium xdotool scrot fonts-noto-core fonts-noto-color-emoji >/dev/null
+  chromium xdotool scrot fonts-noto-core fonts-noto-color-emoji fonts-noto-cjk \
+  fonts-liberation2 fonts-dejavu-core fonts-croscore >/dev/null
 
 say "Bun $BUN_VERSION (for desktop-agent, M2)"
 if [[ $(/usr/local/bin/bun --version 2>/dev/null) != "$BUN_VERSION" ]]; then

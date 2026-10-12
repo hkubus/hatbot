@@ -86,7 +86,7 @@ const CUSTOM_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "request_takeover",
     description:
-      "Ask the owner to take control of the desktop: to log in, enter a password, 2FA code or payment details, solve a captcha, or get you unstuck. Returns when they hand it back, with the current screen.",
+      "Ask the owner to take control of the desktop: to log in, enter a password, 2FA code or payment details, solve a captcha challenge, or get you unstuck. Returns when they hand it back, with the current screen.",
     schema: RequestTakeover,
   },
   {

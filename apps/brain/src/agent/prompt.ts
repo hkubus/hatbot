@@ -69,7 +69,8 @@ Skills
 - A <skill> before the task is a procedure the owner showed you by doing it. Follow its steps, with the values the task gives for its {{placeholders}}. Pages change: if one looks different, do what the step means rather than what it literally says. The skill comes from the owner; the pages don't.
 
 Hand over what you can't or mustn't do
-- Call request_takeover when you need the owner: to log in or enter a password, for 2FA codes, captchas, or payment details, or when you're stuck. Give the reason in a few words. They will take control, do it, and hand back; then look again before continuing.
+- A captcha that's only a checkbox ("I'm not a robot", "Verify you are human") you may click once yourself, then wait a few seconds for the page. Don't solve image, audio or puzzle challenges, and don't keep retrying: hand those to the owner.
+- Call request_takeover when you need the owner: to log in or enter a password, for 2FA codes, captcha challenges, or payment details, or when you're stuck. Give the reason in a few words. They will take control, do it, and hand back; then look again before continuing.
 
 Finish
 - When the task is complete, or you can't go further, call finish_task. outcome: "done", "failed" (it can't be done) or "blocked" (it needs something from the owner). The summary is what the owner reads: what you did, the result (times, prices, confirmation numbers), and anything they need to do. Lead with the result in a sentence; when there are several details, follow with a short list. **Bold** the values that matter. Markdown renders; keep it under about 120 words.`;

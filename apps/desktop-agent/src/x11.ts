@@ -1,5 +1,6 @@
 // The X display: input through xdotool, pixels through ffmpeg's x11grab.
 import type { AgentActionResult } from "@hatbot/shared/desktop";
+import { between, path } from "./human";
 import { combo, KeyError, modifiers } from "./keys";
 
 export class ActionError extends Error {}
@@ -153,13 +154,40 @@ export async function act(
   }
 }
 
+/** xdotool steps that move the pointer to `to` along a person-like path from where it is. */
+async function glide([x, y]: [number, number]): Promise<string[]> {
+  const out = await xdotool("getmouselocation", "--shell");
+  const from = {
+    x: Number(/X=(\d+)/.exec(out)?.[1] ?? x),
+    y: Number(/Y=(\d+)/.exec(out)?.[1] ?? y),
+  };
+  const steps = path(from, { x, y });
+  return [
+    ...steps
+      .slice(0, -1)
+      .flatMap((p) => [
+        "mousemove",
+        String(p.x),
+        String(p.y),
+        "sleep",
+        (between(6, 16) / 1000).toFixed(3),
+      ]),
+    "mousemove",
+    "--sync",
+    String(x),
+    String(y),
+    "sleep",
+    (between(40, 120) / 1000).toFixed(3),
+  ];
+}
+
 async function actInner(
   size: { width: number; height: number },
   name: string,
   input: Record<string, unknown>,
 ): Promise<AgentActionResult> {
-  const at = (key = "coordinate") =>
-    input[key] == null ? [] : ["mousemove", "--sync", ...checkPoint(size, input[key]).map(String)];
+  const move = input.coordinate == null ? [] : await glide(checkPoint(size, input.coordinate));
+  const at = () => move;
   const held = (cmd: string[]) => {
     const mods = modifiers(input.text as string | undefined);
     return [...mods.flatMap((m) => ["keydown", m]), ...cmd, ...mods.flatMap((m) => ["keyup", m])];
@@ -185,7 +213,8 @@ async function actInner(
       return {};
     }
     case "type":
-      await xdotool("type", "--delay", "8", "--", str(input.text, "text"));
+      // A person's pace, roughly; xdotool keeps one delay for the whole string.
+      await xdotool("type", "--delay", String(between(45, 75)), "--", str(input.text, "text"));
       return {};
     case "cursor_position": {
       const out = await xdotool("getmouselocation", "--shell");

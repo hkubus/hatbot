@@ -8,6 +8,7 @@ import type {
   BrowserStateChange,
   BrowserTab,
 } from "@hatbot/shared/desktop";
+import { between, keyGap, type Point, path } from "./human";
 import {
   FORM_INPUT,
   INSPECT,
@@ -300,6 +301,8 @@ export class Browser {
   private lifecycle: Lifecycle[] = [];
   private seq = 0;
   private buttons = 0;
+  /** Where the pointer last was in each tab, so the next move starts there. */
+  private pointers = new Map<string, Point>();
 
   constructor() {
     this.cdp.on((method, p, sessionId) => this.event(method, p, sessionId));
@@ -594,6 +597,19 @@ export class Browser {
     );
   }
 
+  /** Moves the pointer to `p` along a person-like path, from wherever it last was in the tab. */
+  private async moveTo(targetId: string, s: string, p: Point, extra: Json = {}) {
+    const from = this.pointers.get(targetId) ?? {
+      x: between(p.x / 2, p.x * 1.5 + 50),
+      y: between(p.y / 2, p.y * 1.5 + 50),
+    };
+    for (const step of path(from, p)) {
+      await this.mouse(s, "mouseMoved", step, extra);
+      await sleep(between(6, 16));
+    }
+    this.pointers.set(targetId, p);
+  }
+
   private async click(
     targetId: string,
     input: Json,
@@ -604,10 +620,13 @@ export class Browser {
     const modifiers = modifierBits(input.modifiers);
     const s = await this.session(targetId);
     const since = this.seq;
-    await this.mouse(s, "mouseMoved", p, { modifiers });
+    await this.moveTo(targetId, s, p, { modifiers });
+    await sleep(between(40, 120));
     for (let i = 1; i <= count; i++) {
+      if (i > 1) await sleep(between(60, 110));
       this.buttons |= BUTTONS[button];
       await this.mouse(s, "mousePressed", p, { button, clickCount: i, modifiers });
+      await sleep(between(50, 110));
       this.buttons &= ~BUTTONS[button];
       await this.mouse(s, "mouseReleased", p, { button, clickCount: i, modifiers });
     }
@@ -649,12 +668,16 @@ export class Browser {
   }
 
   private async typeText(s: string, text: string) {
-    // Long text goes in at once; short text key by key, for pages that listen for keystrokes.
+    // Long text goes in at once, like a paste; short text key by key at a person's pace, for pages
+    // that listen for keystrokes or time them.
     if (text.length > 300 && !text.includes("\n")) {
       await this.cdp.send("Input.insertText", { text }, s);
       return;
     }
+    let first = true;
     for (const ch of text) {
+      if (!first) await sleep(keyGap());
+      first = false;
       if (ch === "\r") continue;
       if (ch === "\n") await this.press(s, "Enter");
       else if (ch === "\t") await this.press(s, "Tab");
@@ -763,7 +786,7 @@ export class Browser {
           name === "hover"
             ? await this.point(t, input.target)
             : await this.coordinate(t, input.target);
-        await this.mouse(await this.session(t), "mouseMoved", p);
+        await this.moveTo(t, await this.session(t), p);
         await sleep(100);
         return { kind: "none" };
       }
@@ -773,7 +796,7 @@ export class Browser {
         const p = await this.coordinate(t, input.target);
         const s = await this.session(t);
         const down = name === "left_mouse_down";
-        await this.mouse(s, "mouseMoved", p);
+        await this.moveTo(t, s, p);
         if (down) this.buttons |= 1;
         else this.buttons &= ~1;
         await this.mouse(s, down ? "mousePressed" : "mouseReleased", p, {
@@ -787,16 +810,17 @@ export class Browser {
         const from = await this.coordinate(t, input.from);
         const to = await this.coordinate(t, input.target);
         const s = await this.session(t);
-        await this.mouse(s, "mouseMoved", from);
+        await this.moveTo(t, s, from);
         this.buttons |= 1;
         await this.mouse(s, "mousePressed", from, { button: "left", clickCount: 1 });
-        for (let i = 1; i <= 5; i++) {
-          await this.mouse(s, "mouseMoved", {
-            x: Math.round(from.x + ((to.x - from.x) * i) / 5),
-            y: Math.round(from.y + ((to.y - from.y) * i) / 5),
-          });
-          await sleep(20);
+        await sleep(between(80, 150));
+        // Slower while dragging, as a hand is.
+        for (const step of path(from, to)) {
+          await this.mouse(s, "mouseMoved", step);
+          await sleep(between(12, 28));
         }
+        this.pointers.set(t, to);
+        await sleep(between(60, 120));
         this.buttons &= ~1;
         await this.mouse(s, "mouseReleased", to, { button: "left", clickCount: 1 });
         return { kind: "none" };
@@ -808,7 +832,9 @@ export class Browser {
         const dir = String(input.scroll_direction);
         const delta = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[dir];
         if (!delta) throw new BrowserError("scroll_direction must be up, down, left or right.");
-        await this.mouse(await this.session(t), "mouseWheel", p, {
+        const ws = await this.session(t);
+        await this.moveTo(t, ws, p);
+        await this.mouse(ws, "mouseWheel", p, {
           deltaX: (delta[0] as number) * amount * 100,
           deltaY: (delta[1] as number) * amount * 100,
         });
