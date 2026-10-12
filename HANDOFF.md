@@ -55,6 +55,12 @@ These came out of the M4 security review.
 - **Browser input** (`apps/desktop-agent/src/human.ts`): curved pointer paths, held clicks, a person's typing pace. Re-run `infra/desktop-provision.sh` for the extra fonts. Still a tell: WebGL renders in software (no GPU in the container). The container's timezone should match the owner's.
 - **Captchas:** the desktop model clicks a plain checkbox once; image and puzzle challenges go to the owner.
 
+## Attachments and code (built 2026-10-12, not tried live)
+- **Both ways:** the owner uploads with `POST /attachments` and then posts the ids with the message. The model gets these directly: images up to 5 MB, PDFs up to 20 MB, and text up to 400 KB. Anything else is reached through `code_run`. Attached files taint the conversation. Hatbot sends files back with `send_file`, from the sandbox or from a desktop task's browser download (saved in desktop-agent's state dir). A task's files show on the messages that show the task. Files live in the archive under `files/` and are limited to 25 MB.
+- **Code:** the Code plugin (`apps/brain/src/plugins/code/`) is off until it's switched on in Settings → Plugins. `code_run` runs as the desktop shell user and goes through the usual write gating. Commands that fetch from the network make it untrusted.
+- **To set up:** re-run `infra/desktop-provision.sh` (Python, numpy, pandas, matplotlib, poppler, jq and more), redeploy desktop-agent (`/files` and `/download`), and redeploy the brain (migration 17).
+- **Unchecked:** the web composer was never looked at in a browser. The iOS views were only syntax-checked.
+
 ## 4. Later (not v1, don't start without the owner)
 - **GitHub plugin**, next to Forgejo. Same shape as `apps/brain/src/plugins/forgejo/`.
 - **After v1** (PLAN §11): email via Proton Bridge, more than one agent, a heartbeat that acts on its own, an open-source release.
