@@ -36,8 +36,8 @@ test("no servers: needs setup; a bad config is refused", async () => {
 test("connects over stdio, offers its tools as ask-first, untrusted, and runs them", async () => {
   const { t, info } = await started();
   expect(info.state).toBe("ready");
-  expect(t.plugins.tools("chat")).toHaveLength(0);
-  const tools = t.plugins.tools("task");
+  expect(t.plugins.tools().filter((x) => x.access === "read")).toHaveLength(0);
+  const tools = t.plugins.tools();
   expect(tools.map((x) => x.name)).toEqual(["mcp_fix_echo", "mcp_fix_secret", "mcp_fix_broken"]);
   const echo = tools[0];
   if (!echo) throw new Error("no echo");
@@ -68,8 +68,13 @@ test("per-tool modes: allowed in chat, allowed in tasks, off; trusted servers ar
     trusted: true,
     tools: { echo: "chat", secret: "off", broken: "allow" },
   });
-  expect(t.plugins.tools("chat").map((x) => x.name)).toEqual(["mcp_fix_echo"]);
-  const tools = t.plugins.tools("task");
+  expect(
+    t.plugins
+      .tools()
+      .filter((x) => x.access === "read")
+      .map((x) => x.name),
+  ).toEqual(["mcp_fix_echo"]);
+  const tools = t.plugins.tools();
   expect(tools.map((x) => x.name)).toEqual(["mcp_fix_echo", "mcp_fix_broken"]);
   expect(verdictFor(tools[1] as never, {}, call).action).toBe("allow");
   const r = await runPluginTool(tools[0] as never, { text: "x" }, call);

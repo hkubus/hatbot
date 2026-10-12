@@ -17,7 +17,7 @@ export const ask = (why: string, kind?: ApprovalKind): Verdict => ({ action: "as
 export const block = (why: string): Verdict => ({ action: "block", why });
 
 export type CallContext = {
-  /** The task making the call; null for a read tool called from the chat. */
+  /** The task making the call; null for a call from the chat. */
   task: { id: number; tainted: boolean } | null;
   signal: AbortSignal;
 };

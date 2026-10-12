@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
 import { HATBOT, MemoryError, type MemoryStore } from "../memory/store";
+import type { PluginTool } from "../plugins/plugin";
 import { describeCall, type Plugins, runPluginTool } from "../plugins/registry";
 import { ScheduleError, type Schedules } from "../schedules";
 import type { Tasks } from "../tasks/service";
@@ -34,6 +35,12 @@ export type ToolContext = {
   taint?: (by: string) => void;
   /** Your own latest messages in this conversation, for a task's approval check. */
   ownerSaid?: () => string;
+  /** Runs a plugin tool that changes something, after its checks and your approval if it needs one. */
+  gated?: (
+    t: PluginTool,
+    input: unknown,
+    signal: AbortSignal,
+  ) => Promise<{ content: string; isError: boolean }>;
 };
 
 export const DesktopTaskInput = z.object({
@@ -221,7 +228,7 @@ export const TOOLS = [
   def({
     name: "run_task",
     description:
-      "Start a background task for work that changes something: restarting or changing a guest, running commands on a host, commenting on or opening pull requests, writing code. It gets your memory, every tool your plugins offer (including the ones that change things, which you can't call here) and the desktop, and it asks the owner before risky steps. Its progress and result show under your reply; you're told how it ended at the start of a later turn. It can't see this conversation, so give it everything it needs.",
+      "Start a background task for longer work: several steps that depend on each other, anything that takes more than a minute or two, writing code, or work that should go on after this reply. It gets your memory, every tool your plugins offer and the desktop, and it asks the owner before risky steps. Its progress and result show under your reply; you're told how it ended at the start of a later turn. It can't see this conversation, so give it everything it needs. For a command or two, use the plugin tools yourself instead.",
     schema: RunTaskInput,
     run: async ({ title, goal, effort }, { tasks, messageId, tainted, ownerSaid }) => {
       if (!tasks) return "Tasks aren't available.";
@@ -371,8 +378,9 @@ export const toolParam = (t: {
 export const TOOL_PARAMS: Anthropic.Beta.BetaTool[] = TOOLS.map(toolParam);
 
 /**
- * Runs a chat tool call: a core tool, or a plugin's read tool. Input is validated here: with eager
- * input streaming the API doesn't. `untrusted`: the output was untrusted content.
+ * Runs a chat tool call: a core tool, or a plugin's tool (one that changes something goes through
+ * `gated`). Input is validated here: with eager input streaming the API doesn't. `untrusted`: the output
+ * was untrusted content.
  */
 export async function runTool(
   name: string,
@@ -384,13 +392,17 @@ export async function runTool(
     TOOLS.find((t) => t.name === name) ??
     TOOLS.find((t) => t.name.toLowerCase() === name.toLowerCase());
   if (!tool) {
-    const plugin = ctx.plugins?.tools("chat").find((t) => t.name === name);
+    const plugin = ctx.plugins?.tools().find((t) => t.name === name);
+    if (plugin?.access === "write") {
+      if (!ctx.gated) return { content: `${name} can't run here.`, isError: true };
+      return ctx.gated(plugin, input, signal);
+    }
     if (plugin) {
       const r = await runPluginTool(plugin, input, { task: null, signal });
       if (r.untrusted) ctx.taint?.(describeCall(plugin, input));
       return r;
     }
-    const names = [...TOOLS, ...(ctx.plugins?.tools("chat") ?? [])].map((t) => t.name);
+    const names = [...TOOLS, ...(ctx.plugins?.tools() ?? [])].map((t) => t.name);
     return { content: `Unknown tool "${name}". Available: ${names.join(", ")}`, isError: true };
   }
   const parsed = tool.schema.safeParse(input);

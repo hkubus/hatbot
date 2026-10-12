@@ -119,16 +119,12 @@ export class Plugins {
     return fn(args);
   }
 
-  /**
-   * Tools of the ready plugins, in a stable order (it's part of the prompt cache). The chat gets the
-   * read tools; tasks get all of them.
-   */
-  tools(scope: "chat" | "task"): PluginTool[] {
+  /** Tools of the ready plugins, for the chat and tasks, in a stable order (it's part of the prompt cache). */
+  tools(): PluginTool[] {
     return [...this.slots.values()]
       .filter((s) => s.state === "ready" && s.instance)
       .sort((a, b) => a.plugin.id.localeCompare(b.plugin.id))
-      .flatMap((s) => s.instance?.tools ?? [])
-      .filter((t) => scope === "task" || t.access === "read");
+      .flatMap((s) => s.instance?.tools ?? []);
   }
 
   /** The ready plugins' paragraphs for the system prompt. */
@@ -301,19 +297,25 @@ export function describeCall(t: PluginTool, input: unknown): string {
 
 /**
  * Whether a call may run: the tool's own policy, made stricter by the untrusted-content rule. Once a
- * task has read untrusted content, every write needs your approval (PLAN.md §6.1).
+ * task or a conversation has read untrusted content, every write needs your approval (PLAN.md §6.1),
+ * unless Haiku's review lets it through.
  */
-export function verdictFor(t: PluginTool, input: unknown, call: CallContext): Verdict {
+export function verdictFor(
+  t: PluginTool,
+  input: unknown,
+  call: CallContext,
+  tainted = call.task?.tainted ?? false,
+): Verdict {
   if (t.access === "read") return allow();
   const parsed = t.schema.safeParse(input);
   // Bad input fails in runPluginTool, before anything runs.
   if (!parsed.success) return allow();
   const own = t.policy ? t.policy(parsed.data, call) : allow();
   if (own.action !== "allow") return own;
-  if (call.task?.tainted)
+  if (tainted)
     return {
       action: "ask",
-      why: "This task has read untrusted content, so changes need your approval.",
+      why: `This ${call.task ? "task" : "conversation"} has read untrusted content, so changes need your approval.`,
       tainted: true,
     };
   return own;

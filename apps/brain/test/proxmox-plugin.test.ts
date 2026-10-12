@@ -155,7 +155,7 @@ async function started(model = new FakeModel(), config?: unknown) {
   if (config) await t.plugins.update("proxmox", { config });
   await t.plugins.update("proxmox", { enabled: true });
   const pveTool = (name: string) => {
-    const found = t.plugins.tools("task").find((x) => x.name === name);
+    const found = t.plugins.tools().find((x) => x.name === name);
     if (!found) throw new Error(`no tool ${name}`);
     return found;
   };
@@ -173,12 +173,12 @@ test("without the token it needs setup", async () => {
 
 test("reads guests, a guest, the host and recent tasks", async () => {
   const { t, pveTool } = await started();
-  expect(t.plugins.tools("chat").map((x) => x.name)).toEqual([
-    "proxmox_guests",
-    "proxmox_guest",
-    "proxmox_node",
-    "proxmox_tasks",
-  ]);
+  expect(
+    t.plugins
+      .tools()
+      .filter((x) => x.access === "read")
+      .map((x) => x.name),
+  ).toEqual(["proxmox_guests", "proxmox_guest", "proxmox_node", "proxmox_tasks"]);
   const guests = await pveTool("proxmox_guests").run({}, call);
   expect(guests).toContain(
     "CT 105 (jellyfin): running, up 1d 1h, CPU 5% of 2, memory 512 MiB of 2.0 GiB, disk 3.0 GiB of 8.0 GiB, tags media, docker",

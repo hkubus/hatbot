@@ -87,7 +87,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const sources = new Set<string>();
   let slot = false;
   // Fixed for the whole run: the tool list is part of the prompt cache.
-  const pluginTools = new Map<string, PluginTool>(d.plugins.tools("task").map((t) => [t.name, t]));
+  const pluginTools = new Map<string, PluginTool>(d.plugins.tools().map((t) => [t.name, t]));
   const tools = [...CORE_TOOLS, ...[...pluginTools.values()].map(toolParam)];
   const guidance = d.plugins.guidance();
   const system = guidance ? `${AGENT_PROMPT}\n\nYour plugins\n\n${guidance}` : AGENT_PROMPT;
@@ -246,7 +246,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     if (!request || !d.settings.get().skipAskedApprovals) return false;
     if (standing && standingSkipped) return false;
     if (!mayCheck(verdict.kind ?? "other") || tasks.get(id)?.injectionSuspected) return false;
-    const check = await ownerAsked(d, id, request, {
+    const check = await ownerAsked(d, { taskId: id }, request, {
       tool: t.name,
       input: call.input,
       what,
@@ -279,7 +279,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     if (tasks.get(id)?.injectionSuspected) return { safe: false, why: "" };
     const check = await safeDespiteTaint(
       d,
-      id,
+      { taskId: id },
       {
         ownerSaid: withNotes(task.origin === "chat" ? tasks.requestOf(id) : standingWords()),
         goal: task.goal,

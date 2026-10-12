@@ -28,7 +28,7 @@ type Status = {
 const MODES: [Mode, string][] = [
   ["ask", "Ask first"],
   ["allow", "Allow"],
-  ["chat", "Allow in chat"],
+  ["chat", "Read-only"],
   ["off", "Off"],
 ];
 const blank = (): Server => ({

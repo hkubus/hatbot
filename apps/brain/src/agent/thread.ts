@@ -3,15 +3,24 @@ import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import { describeCron, type Episode, type Schedule, type ThreadMessage } from "@hatbot/shared";
 import { z } from "zod";
+import { type Approvals, ownerNote } from "../approvals";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
 import type { MemoryStore } from "../memory/store";
-import { type Plugins, untrustedDefinitions } from "../plugins/registry";
+import type { PluginTool } from "../plugins/plugin";
+import {
+  describeCall,
+  type Plugins,
+  runPluginTool,
+  untrustedDefinitions,
+  verdictFor,
+} from "../plugins/registry";
 import type { Schedules } from "../schedules";
 import type { SettingsStore } from "../settings";
 import { BudgetError, priceOf, type Spend, tokenCount, tokensOf } from "../spend";
 import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
+import { mayCheck, ownerAsked, safeDespiteTaint } from "./intent";
 import { type ModelClient, modelErrorText } from "./model";
 import { EXPERT_PROMPT, SUMMARY_PROMPT, SYSTEM_PROMPT } from "./prompt";
 import { runTool, TOOL_PARAMS, toolParam } from "./tools";
@@ -72,6 +81,7 @@ export type ThreadDeps = {
   tasks?: Tasks;
   schedules?: Schedules;
   triggers?: Triggers;
+  approvals?: Approvals;
   db: Db;
   memory: MemoryStore;
   events: EventBus;
@@ -96,6 +106,8 @@ export class Thread {
   /** Summaries being written, so the sweep and a new message don't write one twice. */
   private summarizing = new Map<number, Promise<void>>();
   private current: AbortController | null = null;
+  /** The approval the reply in progress waits for; your next message cancels it. */
+  private waiting: number | null = null;
   private clock: () => number;
 
   constructor(private d: ThreadDeps) {
@@ -173,12 +185,14 @@ export class Thread {
   /** Stores the owner's message and queues Hatbot's reply, which streams over the event bus. */
   post(text: string): { message: ThreadMessage; done: Promise<void> } {
     const message = this.insertMessage("user", text, "done");
+    // Writing again instead of answering an approval moves on without it.
+    if (this.waiting !== null) this.d.approvals?.cancel(this.waiting);
     const done = this.chain.then(() => this.reply(message));
     this.chain = done.catch((err) => console.error("thread turn failed", err));
     return { message, done };
   }
 
-  attach(parts: Pick<ThreadDeps, "tasks" | "schedules" | "triggers">) {
+  attach(parts: Pick<ThreadDeps, "tasks" | "schedules" | "triggers" | "approvals">) {
     Object.assign(this.d, parts);
   }
 
@@ -239,6 +253,89 @@ export class Thread {
       )
       .get(episodeId);
     return e?.tainted ? (e.tainted_by ?? "Untrusted content") : null;
+  }
+
+  /**
+   * A plugin tool that changes something, called from the chat: its policy and the untrusted-content
+   * rule, then Haiku's checks (you already asked for it; it isn't destructive), then your approval,
+   * which the reply waits for (PLAN.md §6.2).
+   */
+  private async gatedCall(
+    episodeId: number,
+    t: PluginTool,
+    input: unknown,
+    signal: AbortSignal,
+    progress: (line: string) => void,
+  ): Promise<{ content: string; isError: boolean }> {
+    const { approvals, settings } = this.d;
+    const taintedBy = this.tainted(episodeId);
+    const cc = { task: null, signal };
+    const what = describeCall(t, input);
+    const verdict = verdictFor(t, input, cc, taintedBy !== null);
+    if (verdict.action === "block") return { content: `Refused: ${verdict.why}`, isError: true };
+    let note: string | null = null;
+    if (verdict.action === "ask") {
+      const s = settings.get();
+      const action = { tool: t.name, input, what, why: verdict.why };
+      const ownerSaid = this.ownerSaid(episodeId);
+      const kind = verdict.kind ?? "other";
+      let skip = false;
+      let review = "";
+      if (s.skipAskedApprovals && mayCheck(kind)) {
+        progress("Checking you asked for this");
+        skip = (await ownerAsked(this.d, { episodeId }, ownerSaid, action)).asked;
+      }
+      if (!skip && verdict.tainted && s.reviewTaintedChanges) {
+        progress("Checking it's safe");
+        const check = await safeDespiteTaint(
+          this.d,
+          { episodeId },
+          {
+            ownerSaid,
+            goal: "(none: the owner is asking in the chat)",
+            sources: [taintedBy ?? ""],
+          },
+          action,
+        );
+        skip = check.safe;
+        review = check.why;
+      }
+      if (!skip) {
+        if (!approvals)
+          return { content: "Approvals aren't available; use run_task.", isError: true };
+        const approval = approvals.create({
+          taskId: null,
+          kind,
+          summary: what,
+          reason: review ? `${verdict.why} Haiku: ${review}` : verdict.why,
+          sources: taintedBy ? [taintedBy] : [],
+        });
+        progress("Waiting for your approval");
+        this.waiting = approval.id;
+        let outcome: Awaited<ReturnType<Approvals["wait"]>>;
+        try {
+          outcome = await approvals.wait(approval.id, signal);
+        } finally {
+          this.waiting = null;
+          // A paused reply leaves nothing waiting.
+          if (signal.aborted) approvals.cancel(approval.id);
+        }
+        note = approvals.get(approval.id)?.note ?? null;
+        if (outcome !== "approved") {
+          const content =
+            outcome === "denied"
+              ? note
+                ? `The owner denied this. ${ownerNote(note)}`
+                : "The owner denied this. Don't try it another way."
+              : "The owner wrote again instead of answering, so this didn't run. Don't try it another way; end your reply briefly.";
+          return { content, isError: true };
+        }
+      }
+    }
+    progress(activity(t.label ?? `Using ${t.name}`, input));
+    const r = await runPluginTool(t, input, cc);
+    if (r.untrusted) this.taint(episodeId, what);
+    return { content: note ? `${r.content}\n\n${ownerNote(note)}` : r.content, isError: r.isError };
   }
 
   /** Pause all: stops the reply in progress. */
@@ -450,7 +547,7 @@ export class Thread {
     // Fixed for the turn; a plugin switched on or off shows from the next one.
     const guidance = plugins.guidance();
     const system = guidance ? `${SYSTEM_PROMPT}\n\nYour plugins\n\n${guidance}` : SYSTEM_PROMPT;
-    const pluginTools = plugins.tools("chat");
+    const pluginTools = plugins.tools();
     // Fixed for the reply; a change starts a new episode, since thinking blocks are bound to the model.
     const chatModel = settings.get().chatModel;
     const onHaiku = chatModel === "claude-haiku-5-5";
@@ -560,13 +657,14 @@ export class Thread {
     };
 
     const started = this.clock();
+    let waited = 0;
     const abort = new AbortController();
     this.current = abort;
     try {
       for (let step = 0; ; step++) {
         const s = settings.get();
         if (s.paused) return finish("error", "_Paused. Resume to continue._");
-        if (step >= MAX_STEPS || this.clock() - started > MAX_TURN_MS) {
+        if (step >= MAX_STEPS || this.clock() - started - waited > MAX_TURN_MS) {
           return finish("error", "_Stopped: this reply hit its step or time limit._");
         }
 
@@ -679,6 +777,15 @@ export class Thread {
               tainted: () => this.tainted(episode.id),
               taint: (by: string) => this.taint(episode.id, by),
               ownerSaid: () => this.ownerSaid(episode.id),
+              gated: async (t, input, signal) => {
+                const from = this.clock();
+                try {
+                  return await this.gatedCall(episode.id, t, input, signal, progress);
+                } finally {
+                  // Time waiting for you doesn't count against the reply's limit.
+                  waited += this.clock() - from;
+                }
+              },
               scheduleCard: (sc: Schedule) =>
                 this.addCard(
                   "schedule",

@@ -114,7 +114,7 @@ async function started() {
   await t.plugins.update("forgejo", { enabled: true });
   await Bun.sleep(20); // the default-branch cache warms up
   const fj = (name: string) => {
-    const found = t.plugins.tools("task").find((x) => x.name === name);
+    const found = t.plugins.tools().find((x) => x.name === name);
     if (!found) throw new Error(`no tool ${name}`);
     return found;
   };

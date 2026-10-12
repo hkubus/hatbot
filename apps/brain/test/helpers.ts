@@ -120,7 +120,7 @@ export async function testApp(
   tempTeach.push(teach);
   const schedules = new Schedules(db, events, settings, tasks, clock);
   const triggers = new Triggers(db, events, settings, tasks, notifier, ORIGIN, clock);
-  thread.attach({ tasks, schedules, triggers });
+  thread.attach({ tasks, schedules, triggers, approvals });
   const updateDir = tempDir("hatbot-test-update-");
   const updates = new Updates(
     {

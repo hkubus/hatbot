@@ -56,7 +56,7 @@ async function started(model = new FakeModel(), hosts: unknown[] = HOSTS) {
   const t = await testApp(new FakeModel(), model, {}, [sshPlugin], env());
   await t.plugins.update("ssh", { enabled: true, config: { hosts } });
   const sshTool = (name: string) => {
-    const found = t.plugins.tools("task").find((x) => x.name === name);
+    const found = t.plugins.tools().find((x) => x.name === name);
     if (!found) throw new Error(`no tool ${name}`);
     return found;
   };
@@ -127,7 +127,12 @@ test("bad host settings are refused", async () => {
 
 test("checks run fixed commands with the pinned-key options; the chat gets them", async () => {
   const { t, sshTool } = await started();
-  expect(t.plugins.tools("chat").map((x) => x.name)).toEqual(["ssh_check", "ssh_read_file"]);
+  expect(
+    t.plugins
+      .tools()
+      .filter((x) => x.access === "read")
+      .map((x) => x.name),
+  ).toEqual(["ssh_check", "ssh_read_file"]);
   const out = await sshTool("ssh_check").run({ host: "nas", what: "overview" }, call);
   expect(out.startsWith("Exit code ")).toBe(true);
   const args = readFileSync(join(dir, "ssh.log"), "utf8").trim().split("\n").at(-1) ?? "";
@@ -524,10 +529,10 @@ test("ssh_pct_exec runs a command in a container through a Proxmox host, quoted,
     `In CT 105 on pve: ${long}`,
   );
   expect(JSON.stringify(t.plugins.guidance())).toContain("pve is a Proxmox host");
-  // Writes only in tasks; without a Proxmox host there's no such tool.
-  expect(t.plugins.tools("chat").some((x) => x.name === "ssh_pct_exec")).toBe(false);
+  // Without a Proxmox host there's no such tool.
+  expect(t.plugins.tools().some((x) => x.name === "ssh_pct_exec")).toBe(true);
   const plain = await started();
-  expect(plain.t.plugins.tools("task").some((x) => x.name === "ssh_pct_exec")).toBe(false);
+  expect(plain.t.plugins.tools().some((x) => x.name === "ssh_pct_exec")).toBe(false);
 });
 
 test("a note on an approval steers the task: it reads it, and the check counts it as yours", async () => {

@@ -102,7 +102,7 @@ test("plugins are off until switched on, and say what's missing", async () => {
   const on = (await (await call("PATCH", "/plugins/lab", { enabled: true })).json()) as PluginInfo;
   expect(on).toMatchObject({ enabled: true, state: "needs_setup" });
   expect(on.message).toContain("LAB_TOKEN");
-  expect(t.plugins.tools("task")).toHaveLength(0);
+  expect(t.plugins.tools()).toHaveLength(0);
 
   // Bad settings are refused.
   const bad = await call("PATCH", "/plugins/lab", { config: { greeting: 5 } });
@@ -116,7 +116,10 @@ test("settings persist and restart the plugin; the test button runs its check", 
   const { cookie } = await setUpOwner(t);
   const res = await t.call("PATCH", "/plugins/lab", { config: { greeting: "hello" } }, { cookie });
   expect(((await res.json()) as PluginInfo).state).toBe("ready");
-  const status = t.plugins.tools("chat").find((x) => x.name === "lab_status");
+  const status = t.plugins
+    .tools()
+    .filter((x) => x.access === "read")
+    .find((x) => x.name === "lab_status");
   await status?.run({}, { task: null, signal: new AbortController().signal });
   expect(calls).toEqual(["status"]);
 
@@ -143,30 +146,89 @@ test("settings persist and restart the plugin; the test button runs its check", 
   const r = await testApp(new FakeModel(), new FakeModel(), {}, [rogue]);
   const info = await r.plugins.update("rogue", { enabled: true });
   expect(info.state).toBe("error");
-  expect(r.plugins.tools("task")).toHaveLength(0);
+  expect(r.plugins.tools()).toHaveLength(0);
 });
 
-test("the chat gets a plugin's read tools inline, but not its write tools", async () => {
+test("the chat runs a plugin's tools itself; an untainted, harmless change just runs", async () => {
   const calls: string[] = [];
   const chat = new FakeModel([
     { content: [toolUse("lab_status", {})] },
     { content: [toolUse("lab_restart", { guest: "web" })] },
-    { content: [text("All guests are running.")] },
+    { content: [text("Restarted web.")] },
   ]);
   const t = await lab(chat, new FakeModel(), calls);
-  t.thread.post("how's the lab?");
+  t.thread.post("restart web");
   await t.thread.idle();
 
   const req = chat.requests[0];
   expect(toolNames(req)).toContain("lab_status");
+  expect(toolNames(req)).toContain("lab_restart");
   expect(toolNames(req)).toContain("run_task");
-  expect(toolNames(req)).not.toContain("lab_restart");
-  const system = JSON.stringify(req?.system);
-  expect(system).toContain("Guests: web, db.");
-  expect(calls).toEqual(["status"]);
+  expect(JSON.stringify(req?.system)).toContain("Guests: web, db.");
+  expect(calls).toEqual(["status", "restart web"]);
   const results = JSON.stringify(chat.requests[2]?.messages);
   expect(results).toContain("hi: all guests running");
-  expect(results).toContain('Unknown tool \\"lab_restart\\"');
+  expect(results).toContain("Restarted web.");
+  expect(t.tasks.list()).toHaveLength(0);
+  expect(t.approvals.list(false)).toHaveLength(0);
+});
+
+test("in the chat, a risky change waits for your approval, and a denial reaches the model", async () => {
+  const calls: string[] = [];
+  const chat = new FakeModel([
+    { content: [toolUse("lab_restart", { guest: "db" })] },
+    { content: [toolUse("lab_restart", { guest: "db" })] },
+    { content: [text("Restarted db.")] },
+  ]);
+  const t = await lab(chat, new FakeModel(), calls);
+  t.thread.post("bounce the database");
+
+  const first = await waitFor(() => t.approvals.list(true)[0]);
+  expect(first).toMatchObject({ taskId: null, kind: "delete", summary: "Restart db" });
+  t.approvals.decide(first.id, "deny", "web", "Wait until tonight");
+  const second = await waitFor(() => t.approvals.list(true)[0]);
+  t.approvals.decide(second.id, "approve", "web");
+  await t.thread.idle();
+
+  expect(calls).toEqual(["restart db"]);
+  const results = JSON.stringify(chat.requests[1]?.messages);
+  expect(results).toContain("The owner denied this");
+  expect(results).toContain("Wait until tonight");
+});
+
+test("writing again instead of answering moves on without the change", async () => {
+  const calls: string[] = [];
+  const chat = new FakeModel([
+    { content: [toolUse("lab_restart", { guest: "db" })] },
+    { content: [text("Left it alone.")] },
+    { content: [text("OK.")] },
+  ]);
+  const t = await lab(chat, new FakeModel(), calls);
+  t.thread.post("bounce the database");
+  const approval = await waitFor(() => t.approvals.list(true)[0]);
+  t.thread.post("actually, never mind");
+  await t.thread.idle();
+
+  expect(t.approvals.get(approval.id)?.status).toBe("cancelled");
+  expect(calls).toEqual([]);
+  expect(JSON.stringify(chat.requests[1]?.messages)).toContain("didn't run");
+});
+
+test("after untrusted content, a change from the chat asks too", async () => {
+  const calls: string[] = [];
+  const chat = new FakeModel([
+    { content: [toolUse("lab_issue", { n: 7 })] },
+    { content: [toolUse("lab_restart", { guest: "web" })] },
+    { content: [text("Restarted.")] },
+  ]);
+  const t = await lab(chat, new FakeModel(), calls);
+  t.thread.post("look at issue 7 and do it");
+  const approval = await waitFor(() => t.approvals.list(true)[0]);
+  expect(approval.reason).toContain("conversation has read untrusted content");
+  expect(approval.sources).toEqual(['lab_issue {"n":7}']);
+  t.approvals.decide(approval.id, "approve", "web");
+  await t.thread.idle();
+  expect(calls).toEqual(["restart web"]);
 });
 
 test("switching a plugin on starts a new episode, since the tools changed", async () => {

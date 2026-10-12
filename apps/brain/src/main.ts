@@ -81,7 +81,7 @@ const teach = new Teach({
 });
 const schedules = new Schedules(db, events, settings, tasks);
 const triggers = new Triggers(db, events, settings, tasks, notifier, config.publicUrl);
-thread.attach({ tasks, schedules, triggers });
+thread.attach({ tasks, schedules, triggers, approvals });
 await desktop.setPaused(settings.get().paused);
 await desktop.refresh();
 setInterval(() => void desktop.refresh(), 30_000);
