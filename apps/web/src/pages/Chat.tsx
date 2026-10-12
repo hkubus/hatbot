@@ -1,4 +1,10 @@
-import { type Approval, parseChart, type ThreadMessage, threadGroups } from "@hatbot/shared";
+import {
+  type Approval,
+  type Attachment,
+  parseChart,
+  type ThreadMessage,
+  threadGroups,
+} from "@hatbot/shared";
 import {
   createContext,
   Fragment,
@@ -12,7 +18,7 @@ import {
 } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ApiError } from "../api";
+import { ApiError, attachmentUrl, upload } from "../api";
 import { Chart, ChartPending } from "../chart";
 import { Icon } from "../icons";
 import { navigate } from "../router";
@@ -266,6 +272,7 @@ function ReplyMessage({ m, progress }: { m: ThreadMessage; progress?: string }) 
         )}
         {ended && !replaced && m.text && <hr className="result-rule" />}
         {m.taskId && <TaskResult taskId={m.taskId} />}
+        {m.attachments?.length ? <Files list={m.attachments} /> : null}
       </div>
       {!streaming && (
         <Meta
@@ -355,6 +362,51 @@ function ScheduleMessage({ m, scheduleId }: { m: ThreadMessage; scheduleId: numb
   );
 }
 
+/** Types the page shows as pictures; the rest are links. */
+const PICTURES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+
+/** A message's files: pictures you can open, the rest to open or save. */
+function Files({ list }: { list: Attachment[] }) {
+  return (
+    <div className="files">
+      {list.map((a) =>
+        PICTURES.includes(a.mediaType) ? (
+          <a
+            key={a.id}
+            className="file-picture"
+            href={attachmentUrl(a.id)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <img src={attachmentUrl(a.id)} alt={a.name} loading="lazy" />
+          </a>
+        ) : (
+          <a
+            key={a.id}
+            className="file"
+            href={attachmentUrl(a.id, a.mediaType !== "application/pdf")}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <Icon name="file" />
+            {a.name}
+          </a>
+        ),
+      )}
+    </div>
+  );
+}
+
+/** A file in the composer: uploading, uploaded, or failed. */
+type Draft = {
+  key: number;
+  name: string;
+  preview?: string;
+  attachment?: Attachment;
+  error?: string;
+};
+let draftKey = 0;
+
 function Message({
   m,
   progress,
@@ -374,7 +426,8 @@ function Message({
   if (m.role === "user") {
     inner = (
       <>
-        <div className="bubble">{m.text}</div>
+        {m.attachments?.length ? <Files list={m.attachments} /> : null}
+        {m.text && <div className="bubble">{m.text}</div>}
         <Meta m={m} copy={m.text} />
       </>
     );
@@ -432,6 +485,8 @@ export function Chat() {
   const hasEarlier = useStore((s) => s.hasEarlier);
   const paused = useStore((s) => s.paused);
   const [draft, setDraft] = useState("");
+  const [files, setFiles] = useState<Draft[]>([]);
+  const picker = useRef<HTMLInputElement>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const scroller = useRef<HTMLElement>(null);
@@ -507,18 +562,52 @@ export function Chat() {
     ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
   };
 
+  const attach = (list: FileList | File[]) => {
+    for (const file of Array.from(list).slice(0, 10)) {
+      const key = ++draftKey;
+      const preview = PICTURES.includes(file.type) ? URL.createObjectURL(file) : undefined;
+      setFiles((f) => [...f, { key, name: file.name, preview }]);
+      upload(file).then(
+        (attachment) => setFiles((f) => f.map((d) => (d.key === key ? { ...d, attachment } : d))),
+        (err) =>
+          setFiles((f) =>
+            f.map((d) =>
+              d.key === key
+                ? { ...d, error: err instanceof ApiError ? err.message : "Couldn't upload." }
+                : d,
+            ),
+          ),
+      );
+    }
+  };
+  const unattach = (key: number) =>
+    setFiles((f) => {
+      const d = f.find((x) => x.key === key);
+      if (d?.preview) URL.revokeObjectURL(d.preview);
+      return f.filter((x) => x.key !== key);
+    });
+  const uploading = files.some((d) => !d.attachment && !d.error);
+  const ready = files.filter((d) => d.attachment);
+
   const send = async () => {
     const text = draft.trim();
-    if (!text || sending) return;
+    if ((!text && !ready.length) || sending || uploading) return;
     setSending(true);
     setError("");
     stick.current = true;
     // Clear it right away; it comes back if the send fails.
+    const sent = files;
     setDraft("");
+    setFiles([]);
     requestAnimationFrame(resize);
     try {
-      await sendMessage(text);
+      await sendMessage(
+        text,
+        ready.map((d) => (d.attachment as Attachment).id),
+      );
+      for (const d of sent) if (d.preview) URL.revokeObjectURL(d.preview);
     } catch {
+      setFiles((f) => (f.length ? f : sent));
       setDraft((d) => d || text);
       requestAnimationFrame(resize);
       setError("Couldn't send. Check your connection and try again.");
@@ -608,7 +697,42 @@ export function Chat() {
             {error}
           </div>
         )}
+        {files.length > 0 && (
+          <div className="composer-files">
+            {files.map((d) => (
+              <span
+                key={d.key}
+                className={`composer-file ${d.attachment ? "" : "loading"} ${d.error ? "failed" : ""}`}
+                title={d.error ?? d.name}
+              >
+                {d.preview ? <img src={d.preview} alt="" /> : <Icon name="file" />}
+                {!d.preview && <span className="name">{d.name}</span>}
+                <button type="button" title="Remove" onClick={() => unattach(d.key)}>
+                  <Icon name="x" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="composer">
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              if (e.target.files) attach(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <button
+            type="button"
+            className="icon-btn"
+            title="Attach files"
+            onClick={() => picker.current?.click()}
+          >
+            <Icon name="clip" />
+          </button>
           <textarea
             ref={textarea}
             rows={1}
@@ -617,6 +741,12 @@ export function Chat() {
             onChange={(e) => {
               setDraft(e.target.value);
               resize();
+            }}
+            onPaste={(e) => {
+              if (e.clipboardData.files.length) {
+                e.preventDefault();
+                attach(e.clipboardData.files);
+              }
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -629,7 +759,7 @@ export function Chat() {
             type="button"
             className="icon-btn send"
             title="Send"
-            disabled={!draft.trim() || sending}
+            disabled={(!draft.trim() && !ready.length) || sending || uploading}
             onClick={send}
           >
             <Icon name="up" />

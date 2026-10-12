@@ -116,8 +116,8 @@ export async function loadEarlier() {
   set({ messages: [...older, ...state.messages], hasEarlier: older.length === PAGE });
 }
 
-export async function sendMessage(text: string) {
-  const m = await api<ThreadMessage>("/thread/messages", { body: { text } });
+export async function sendMessage(text: string, attachmentIds: number[] = []) {
+  const m = await api<ThreadMessage>("/thread/messages", { body: { text, attachmentIds } });
   set({ messages: upsert(state.messages, m) });
 }
 
@@ -344,6 +344,14 @@ function apply(e: HatbotEvent) {
       const text = ((state.progress[e.id] ?? "") + e.text).slice(-400);
       return set({ progress: { ...state.progress, [e.id]: text } });
     }
+    case "message.attachment":
+      return set({
+        messages: state.messages.map((m) =>
+          m.id === e.id && !m.attachments?.some((a) => a.id === e.attachment.id)
+            ? { ...m, attachments: [...(m.attachments ?? []), e.attachment] }
+            : m,
+        ),
+      });
     case "message.task":
       return set({
         messages: state.messages.map((m) => (m.id === e.id ? { ...m, taskId: e.taskId } : m)),

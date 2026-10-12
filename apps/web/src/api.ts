@@ -1,4 +1,4 @@
-import { API_PREFIX } from "@hatbot/shared";
+import { API_PREFIX, type Attachment } from "@hatbot/shared";
 
 export class ApiError extends Error {
   constructor(
@@ -28,3 +28,22 @@ export async function api<T>(
   }
   return data as T;
 }
+
+/** Uploads a file for your next message. */
+export async function upload(file: File): Promise<Attachment> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_PREFIX}/attachments`, {
+    method: "POST",
+    body: form,
+    credentials: "same-origin",
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok)
+    throw new ApiError(res.status, (data as { error?: string }).error ?? `HTTP ${res.status}`);
+  return data as Attachment;
+}
+
+/** Where an attachment's file is served. */
+export const attachmentUrl = (id: number, download = false) =>
+  `${API_PREFIX}/attachments/${id}${download ? "?download" : ""}`;

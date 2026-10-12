@@ -3359,3 +3359,114 @@ pre.payload {
 .pending-approval .spacer {
   flex: 1;
 }
+
+/* Files on messages and in the composer. */
+.files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0;
+}
+.msg.user .files {
+  justify-content: flex-end;
+  max-width: min(78%, 560px);
+}
+.file-picture img {
+  display: block;
+  max-width: 240px;
+  max-height: 240px;
+  border-radius: 12px;
+  border: 0.5px solid var(--line);
+  object-fit: cover;
+}
+.file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 280px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 0.5px solid var(--line-strong);
+  color: inherit;
+  text-decoration: none;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file:hover {
+  background: var(--surface-2);
+}
+.file svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+}
+.composer-files {
+  max-width: 760px;
+  margin: 0 auto 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.composer-file {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 52px;
+  min-width: 52px;
+  max-width: 220px;
+  padding: 0 28px 0 10px;
+  border-radius: 10px;
+  border: 0.5px solid var(--line-strong);
+  background: var(--surface);
+  font-size: 12.5px;
+}
+.composer-file:has(img) {
+  padding: 0;
+  overflow: hidden;
+}
+.composer-file img {
+  width: 52px;
+  height: 52px;
+  object-fit: cover;
+}
+.composer-file svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+}
+.composer-file .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-file.loading {
+  opacity: 0.55;
+}
+.composer-file.failed {
+  border-color: var(--danger, #d33);
+}
+.composer-file button {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface-3);
+  color: var(--text, inherit);
+  cursor: pointer;
+}
+.composer-file button svg {
+  width: 11px;
+  height: 11px;
+  color: inherit;
+}
