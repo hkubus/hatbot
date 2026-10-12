@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Approval } from "@hatbot/shared";
+import { type Approval, latestNoteOnly, type TaskStep } from "@hatbot/shared";
 import { inBatches } from "../src/agent/tools";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
@@ -390,4 +390,11 @@ test("lookups in a row run at once; everything else runs on its own, in order", 
     "start r3",
     "end r3",
   ]);
+});
+
+test("a task's timeline keeps only the model's latest note, and all of yours", () => {
+  const step = (id: number, kind: TaskStep["kind"], name = "Note") =>
+    ({ id, kind, name }) as TaskStep;
+  const steps = [step(1, "note"), step(2, "action"), step(3, "note", "Your note"), step(4, "note")];
+  expect(latestNoteOnly(steps).map((s) => s.id)).toEqual([2, 3, 4]);
 });

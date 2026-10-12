@@ -180,7 +180,7 @@ private struct ScreenTask: View {
         Text(Format.taskLine(task, progress: store.taskProgress[taskId]))
           .font(.subheadline)
           .foregroundStyle(.secondary)
-        ForEach((store.steps[taskId] ?? []).suffix(6).reversed()) { step in
+        ForEach((store.steps[taskId] ?? []).latestNoteOnly.suffix(6).reversed()) { step in
           HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(step.createdAt.timeText).monospacedDigit().foregroundStyle(.secondary)
             Text(step.detail.isEmpty ? step.name : step.detail)

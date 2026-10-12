@@ -36,6 +36,9 @@ export class AnthropicModelClient implements ModelClient {
   async stream(params: Omit<StreamParams, "stream">, handlers: StreamHandlers) {
     const stream = this.client.beta.messages.stream(params, { signal: handlers.signal });
     for await (const event of stream) {
+      // Each thinking block starts on a line of its own, so the last line is the latest thought.
+      if (event.type === "content_block_start" && event.content_block.type === "thinking")
+        handlers.onThinking?.("\n");
       if (event.type !== "content_block_delta") continue;
       if (event.delta.type === "text_delta") handlers.onText?.(event.delta.text);
       else if (event.delta.type === "thinking_delta") handlers.onThinking?.(event.delta.thinking);

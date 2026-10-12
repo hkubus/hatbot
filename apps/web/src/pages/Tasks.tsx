@@ -1,4 +1,4 @@
-import type { Task } from "@hatbot/shared";
+import { latestNoteOnly, type Task } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { ApiError } from "../api";
 import { Icon } from "../icons";
@@ -247,7 +247,7 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
             <div className="muted">{active ? "Hasn't started yet." : "No steps."}</div>
           ) : (
             <ol className="timeline">
-              {steps.map((s) => (
+              {latestNoteOnly(steps).map((s) => (
                 <li key={s.id} className={`tl-step tl-${s.kind}`}>
                   <span className="t">{time(s.createdAt)}</span>
                   <StepIcon kind={s.kind} name={s.name} />

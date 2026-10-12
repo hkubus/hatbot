@@ -1,6 +1,6 @@
 // The desktop's live view (PLAN.md §10.5): JPEG frames over a WebSocket, drawn to a canvas.
 // While you have control, your pointer and keys go to the desktop.
-import { API_PREFIX, type TaskStep } from "@hatbot/shared";
+import { API_PREFIX, latestNoteOnly, type TaskStep } from "@hatbot/shared";
 import type { LiveInput } from "@hatbot/shared/desktop";
 import { useEffect, useRef, useState } from "react";
 import { ApiError } from "./api";
@@ -318,7 +318,7 @@ export function LiveView({ taskId }: { taskId?: number }) {
           <div className="label">{taskLine(task, progress)}</div>
           {steps && steps.length > 0 && (
             <ul className="log">
-              {steps
+              {latestNoteOnly(steps)
                 .slice(-6)
                 .reverse()
                 .map((s) => (

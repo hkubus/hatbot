@@ -292,6 +292,14 @@ final class FoldTests: XCTestCase {
     XCTAssertEqual(groups.map(\.fold), [nil, "Talked about one.", "message 5", nil])
   }
 
+  func testTimelineKeepsOnlyTheLatestModelNote() {
+    func step(_ id: Int, _ kind: TaskStep.Kind, _ name: String = "Note") -> TaskStep {
+      TaskStep(id: id, taskId: 1, kind: kind, name: name, detail: "", createdAt: "")
+    }
+    let steps = [step(1, .note), step(2, .action), step(3, .note, "Your note"), step(4, .note)]
+    XCTAssertEqual(steps.latestNoteOnly.map(\.id), [2, 3, 4])
+  }
+
   func testDecodesEpisodeEvents() throws {
     let json = #"{"type":"episode.updated","episode":{"id":4,"startedAt":"a","lastActivityAt":"b","recap":"R"}}"#
     guard case let .episodeUpdated(e) = try JSONDecoder().decode(HatbotEvent.self, from: Data(json.utf8)) else {

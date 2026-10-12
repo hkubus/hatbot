@@ -127,6 +127,17 @@ struct TaskStep: Codable, Identifiable, Equatable, Sendable {
   var screenshot: String?
   var url: String?
   var createdAt: String
+
+  /// The model's own notes; yours on approvals are named "Your note".
+  var isModelNote: Bool { kind == .note && name != "Your note" }
+}
+
+extension [TaskStep] {
+  /// With only the model's latest note; your own notes on approvals stay.
+  var latestNoteOnly: [TaskStep] {
+    let last = self.last(where: \.isModelNote)?.id
+    return filter { !$0.isModelNote || $0.id == last }
+  }
 }
 
 struct TaskWithSteps: Decodable, Sendable {

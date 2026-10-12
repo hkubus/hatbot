@@ -156,7 +156,7 @@ struct TaskDetailView: View {
         DisclosureGroup("Details") { TaskDetails(task: task) }
       }
       Section("Timeline") {
-        let steps = store.steps[taskId] ?? []
+        let steps = (store.steps[taskId] ?? []).latestNoteOnly
         if steps.isEmpty {
           Text(task.isActive ? "Hasn't started yet." : "No steps.").foregroundStyle(.secondary)
         }

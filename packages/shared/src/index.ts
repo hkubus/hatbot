@@ -138,6 +138,13 @@ export type TaskStep = {
   createdAt: string;
 };
 
+/** A task's steps with only the model's latest note; your own notes on approvals stay. */
+export function latestNoteOnly(steps: TaskStep[]): TaskStep[] {
+  const isModelNote = (s: TaskStep) => s.kind === "note" && s.name !== "Your note";
+  const last = steps.findLast(isModelNote);
+  return steps.filter((s) => !isModelNote(s) || s === last);
+}
+
 export type ApprovalKind =
   | "send"
   | "submit_personal_data"
