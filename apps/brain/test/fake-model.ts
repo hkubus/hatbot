@@ -49,7 +49,10 @@ export class FakeModel implements ModelClient {
     const next = this.script.shift();
     if (!next) throw new Error("FakeModel: no scripted response left");
     if (h.signal?.aborted) throw h.signal.reason;
-    for (const b of next.content) if (b.type === "text") h.onText?.(b.text);
+    for (const b of next.content) {
+      if (b.type === "text") h.onText?.(b.text);
+      if (b.type === "server_tool_use") h.onServerTool?.(b.name, b.input);
+    }
     const stop =
       next.stop_reason ??
       (next.content.some((b) => b.type === "tool_use") ? "tool_use" : "end_turn");

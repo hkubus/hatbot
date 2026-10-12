@@ -14,6 +14,8 @@ export type CreateParams = Anthropic.Beta.Messages.MessageCreateParamsNonStreami
 export type StreamHandlers = {
   onText?: (delta: string) => void;
   onThinking?: (delta: string) => void;
+  /** A tool the API runs itself, like web search, once its input is complete. */
+  onServerTool?: (name: string, input: Record<string, unknown>) => void;
   signal?: AbortSignal;
 };
 
@@ -35,18 +37,39 @@ export class AnthropicModelClient implements ModelClient {
 
   async stream(params: Omit<StreamParams, "stream">, handlers: StreamHandlers) {
     const stream = this.client.beta.messages.stream(params, { signal: handlers.signal });
+    /** Server tool calls by block index, with their input so far. */
+    const server = new Map<number, { name: string; json: string }>();
     for await (const event of stream) {
-      // Each thinking block starts on a line of its own, so the last line is the latest thought.
-      if (event.type === "content_block_start" && event.content_block.type === "thinking")
-        handlers.onThinking?.("\n");
+      if (event.type === "content_block_start") {
+        // Each thinking block starts on a line of its own, so the last line is the latest thought.
+        if (event.content_block.type === "thinking") handlers.onThinking?.("\n");
+        if (event.content_block.type === "server_tool_use")
+          server.set(event.index, { name: event.content_block.name, json: "" });
+      }
+      if (event.type === "content_block_stop") {
+        const call = server.get(event.index);
+        if (call) handlers.onServerTool?.(call.name, parseInput(call.json));
+      }
       if (event.type !== "content_block_delta") continue;
       if (event.delta.type === "text_delta") handlers.onText?.(event.delta.text);
       else if (event.delta.type === "thinking_delta") handlers.onThinking?.(event.delta.thinking);
+      else if (event.delta.type === "input_json_delta") {
+        const call = server.get(event.index);
+        if (call) call.json += event.delta.partial_json;
+      }
     }
     return stream.finalMessage();
   }
 
   create(params: CreateParams) {
     return this.client.beta.messages.create(params);
+  }
+}
+
+function parseInput(json: string): Record<string, unknown> {
+  try {
+    return JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return {};
   }
 }

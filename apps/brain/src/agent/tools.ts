@@ -208,7 +208,7 @@ export const TOOLS = [
   def({
     name: "run_desktop_task",
     description:
-      "Start a task on your Linux desktop (Chromium, plus a shell for commands and experiments), for anything that needs a browser or a sandbox to try things in: booking, buying, filling in forms, checking websites, running a script. It runs in the background on a separate model and its progress and result show under your reply; the owner can watch it live and approves consequential steps. You're told how it ended at the start of a later turn. Give it everything it needs to know: it can't see this conversation.",
+      "Start a task on your Linux desktop (Chromium, plus a shell for commands and experiments), for anything that needs a browser or a sandbox to try things in: booking, buying, filling in forms, pages that need a login, running a script. To look something up, web_search and web_fetch are quicker. It runs in the background on a separate model and its progress and result show under your reply; the owner can watch it live and approves consequential steps. You're told how it ended at the start of a later turn. Give it everything it needs to know: it can't see this conversation.",
     schema: DesktopTaskInput,
     run: async ({ title, goal, success_criteria, skill }, { tasks, messageId, memory }) => {
       if (!tasks) return "Desktop tasks aren't available.";
@@ -448,3 +448,22 @@ export const CORE_TOOL_NAMES = [
   "confirm_intent",
   "request_takeover",
 ];
+
+/**
+ * Anthropic's web search and fetch, run by the API itself. The basic versions: dynamic filtering would
+ * bring a code container into every conversation. Fetch only takes URLs already in the conversation.
+ */
+export const WEB_TOOLS: Anthropic.Beta.BetaToolUnion[] = [
+  { type: "web_search_20250305", name: "web_search", max_uses: 8 },
+  { type: "web_fetch_20250910", name: "web_fetch", max_uses: 8, max_content_tokens: 30000 },
+];
+
+/** What a reply looked up on the web, in a line each: `Searched the web for "x"`, `Read https://…`. */
+export function webReads(content: Anthropic.Beta.BetaContentBlock[]): string[] {
+  return content.flatMap((b) => {
+    if (b.type !== "server_tool_use") return [];
+    if (b.name === "web_search") return [`Searched the web for "${String(b.input.query ?? "")}"`];
+    if (b.name === "web_fetch") return [`Read ${String(b.input.url ?? "a web page")}`];
+    return [];
+  });
+}

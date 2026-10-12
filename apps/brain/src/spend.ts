@@ -106,6 +106,8 @@ const startOfLocalMonth = (ms: number) => {
 const localDate = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
+const WEB_SEARCH_USD = 0.01;
+
 export class Spend {
   constructor(
     private db: Db,
@@ -120,9 +122,11 @@ export class Spend {
     usage: UsageLike;
     episodeId?: number;
     taskId?: number;
+    /** Charges on top of tokens, like web searches. */
+    extraUsd?: number;
   }): number {
     const t = tokensOf(entry.usage);
-    const cost = costOf(entry.model, t);
+    const cost = costOf(entry.model, t) + (entry.extraUsd ?? 0);
     this.db
       .query(
         `INSERT INTO spend_ledger (created_at, model, purpose, episode_id, task_id, input_tokens, cache_write_5m_tokens,
@@ -153,15 +157,21 @@ export class Spend {
   recordResponse(entry: {
     model: string;
     purpose: string;
-    usage: UsageLike & { iterations?: ({ model?: string | null } & UsageLike)[] | null };
+    usage: UsageLike & {
+      iterations?: ({ model?: string | null } & UsageLike)[] | null;
+      server_tool_use?: { web_search_requests?: number } | null;
+    };
     episodeId?: number;
     taskId?: number;
   }): number {
     const parts = entry.usage.iterations?.length ? entry.usage.iterations : [entry.usage];
+    // Web searches cost $10 per 1,000 on top of tokens; they go on the first part.
+    let extraUsd = (entry.usage.server_tool_use?.web_search_requests ?? 0) * WEB_SEARCH_USD;
     let total = 0;
     for (const part of parts) {
       const model = "model" in part && part.model ? part.model : entry.model;
-      total += this.record({ ...entry, model, usage: part });
+      total += this.record({ ...entry, model, usage: part, extraUsd });
+      extraUsd = 0;
     }
     return total;
   }

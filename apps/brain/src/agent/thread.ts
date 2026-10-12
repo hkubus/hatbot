@@ -23,7 +23,15 @@ import type { Triggers } from "../triggers";
 import { mayCheck, ownerAsked, safeDespiteTaint } from "./intent";
 import { type ModelClient, modelErrorText } from "./model";
 import { EXPERT_PROMPT, SUMMARY_PROMPT, SYSTEM_PROMPT } from "./prompt";
-import { inBatches, LOOKUP_TOOLS, runTool, TOOL_PARAMS, toolParam } from "./tools";
+import {
+  inBatches,
+  LOOKUP_TOOLS,
+  runTool,
+  TOOL_PARAMS,
+  toolParam,
+  WEB_TOOLS,
+  webReads,
+} from "./tools";
 
 /** What ask_opus consults when the chat runs on Haiku 5.5. */
 export const EXPERT_MODEL = "claude-opus-5-5";
@@ -45,7 +53,7 @@ const BETAS: Anthropic.Beta.AnthropicBeta[] = [
  * rejects replayed thinking when these change, so an update or a plugin switched on or off that changes
  * them starts a new episode.
  */
-const prefixOf = (model: string, system: string, tools: Anthropic.Beta.BetaTool[]) =>
+const prefixOf = (model: string, system: string, tools: Anthropic.Beta.BetaToolUnion[]) =>
   createHash("sha256")
     .update(JSON.stringify([model, system, tools]))
     .digest("hex")
@@ -551,7 +559,12 @@ export class Thread {
     // Fixed for the reply; a change starts a new episode, since thinking blocks are bound to the model.
     const chatModel = settings.get().chatModel;
     const onHaiku = chatModel === "claude-haiku-5-5";
-    const tools = [...TOOL_PARAMS, ...(onHaiku ? [ASK_OPUS] : []), ...pluginTools.map(toolParam)];
+    const tools = [
+      ...TOOL_PARAMS,
+      ...(onHaiku ? [ASK_OPUS] : []),
+      ...pluginTools.map(toolParam),
+      ...WEB_TOOLS,
+    ];
     const episode = await this.episodeFor(prefixOf(chatModel, system, tools));
     db.query("UPDATE messages SET episode_id = ? WHERE id = ?").run(episode.id, user.id);
     // Clients file your message under its conversation now that it has one.
@@ -709,6 +722,11 @@ export class Thread {
             onText: say,
             onThinking: (delta) =>
               events.emit({ type: "message.progress", id: out.id, text: delta }),
+            onServerTool: (name, input) => {
+              if (name === "web_search") progress(activity("Searching the web", input));
+              else if (name === "web_fetch")
+                progress(`Reading ${String(input.url ?? "a web page")}`);
+            },
             signal: abort.signal,
           },
         );
@@ -728,6 +746,9 @@ export class Thread {
         used.tokens += tokenCount(tokensOf(res.usage));
         events.emit({ type: "message.usage", id: out.id, ...used });
         this.appendTurn(episode.id, "assistant", res.content);
+        // Web pages are untrusted (PLAN.md §6.1).
+        const web = webReads(res.content);
+        if (web.length) this.taint(episode.id, web[0] as string);
 
         const toolUses = res.content.filter(
           (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use",
