@@ -48,6 +48,13 @@ These came out of the M4 security review.
 ## Commands in containers (built 2026-10-11, not set up)
 - `ssh_pct_exec` in the SSH plugin, for hosts marked "Proxmox host". The owner runs `infra/pct-exec-setup.sh` on the Proxmox host, then adds it in Settings → Plugins → SSH. The wrapper's `pct exec` path is only tested on the real host.
 
+## Web, homelab plugins, browser input (built 2026-10-12, not tried live)
+- **Web search and fetch** are Anthropic's server tools, the basic versions (`WEB_TOOLS` in `apps/brain/src/agent/tools.ts`) on both models. The dynamic-filtering versions would save tokens on Opus but bring a code container into every conversation. What they read taints the conversation or task. Each search is billed at $0.01 in the spend ledger.
+- **Plugins:** Proxmox Backup Server, Home Assistant and Uptime Kuma, tested only against stand-in servers. Their env files are in `infra/README.md`. Redeploy the brain once so its unit loads them.
+- **Task tools:** `wait` gives up the slot and wakes early on an event; `notify_owner` sends at most 5 notifications per task.
+- **Browser input** (`apps/desktop-agent/src/human.ts`): curved pointer paths, held clicks, a person's typing pace. Re-run `infra/desktop-provision.sh` for the extra fonts. Still a tell: WebGL renders in software (no GPU in the container). The container's timezone should match the owner's.
+- **Captchas:** the desktop model clicks a plain checkbox once; image and puzzle challenges go to the owner.
+
 ## 4. Later (not v1, don't start without the owner)
 - **GitHub plugin**, next to Forgejo. Same shape as `apps/brain/src/plugins/forgejo/`.
 - **After v1** (PLAN §11): email via Proton Bridge, more than one agent, a heartbeat that acts on its own, an open-source release.
