@@ -34,6 +34,87 @@ function decodeChunked(body: Buffer): Buffer {
   return Buffer.concat(out);
 }
 
+/** A Proxmox-style API (VE or Backup Server) behind a self-signed certificate. */
+export type PinnedApi = {
+  /** For messages: "Proxmox", "Proxmox Backup Server". */
+  name: string;
+  host: string;
+  port: number;
+  /** SHA-256, colons optional. */
+  fingerprint: string;
+  /** The Authorization header. */
+  auth: string;
+};
+
+/** One call to /api2/json over a connection checked against the pinned fingerprint; its `data`. */
+export async function pinnedRequest(
+  api: PinnedApi,
+  method: "GET" | "POST" | "DELETE",
+  path: string,
+  form?: Record<string, string>,
+): Promise<unknown> {
+  const body = form ? new URLSearchParams(form).toString() : "";
+  const socket = connect({ host: api.host, port: api.port, rejectUnauthorized: false });
+  socket.setTimeout(30_000, () => socket.destroy(new Error("timed out")));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      socket.once("secureConnect", resolve);
+      socket.once("error", reject);
+    });
+  } catch (err) {
+    socket.destroy();
+    throw new ProxmoxError(`Can't reach ${api.name}: ${(err as Error).message}`);
+  }
+  if (
+    normalizeFp(socket.getPeerCertificate().fingerprint256 ?? "") !== normalizeFp(api.fingerprint)
+  ) {
+    socket.destroy();
+    throw new ProxmoxError(`${api.name}'s certificate doesn't match the pinned fingerprint.`);
+  }
+  const chunks: Buffer[] = [];
+  const done = new Promise<void>((resolve, reject) => {
+    socket.on("data", (c: Buffer) => chunks.push(c));
+    socket.once("end", resolve);
+    socket.once("close", () => resolve());
+    socket.once("error", reject);
+  });
+  socket.write(
+    [
+      `${method} /api2/json${path} HTTP/1.1`,
+      `Host: ${api.host}:${api.port}`,
+      `Authorization: ${api.auth}`,
+      "Accept: application/json",
+      "Connection: close",
+      ...(form
+        ? [
+            "Content-Type: application/x-www-form-urlencoded",
+            `Content-Length: ${Buffer.byteLength(body)}`,
+          ]
+        : []),
+      "",
+      body,
+    ].join("\r\n"),
+  );
+  try {
+    await done;
+  } catch (err) {
+    throw new ProxmoxError(`${api.name} request failed: ${(err as Error).message}`);
+  } finally {
+    socket.destroy();
+  }
+
+  const raw = Buffer.concat(chunks);
+  const split = raw.indexOf("\r\n\r\n");
+  if (split < 0) throw new ProxmoxError(`${api.name} sent a malformed response.`);
+  const head = raw.subarray(0, split).toString();
+  let payload: Buffer = raw.subarray(split + 4);
+  if (/^transfer-encoding:\s*chunked/im.test(head)) payload = decodeChunked(payload);
+  const status = /^HTTP\/1\.[01] (\d{3}) ?(.*)$/m.exec(head);
+  const code = Number(status?.[1] ?? 0);
+  if (code !== 200) throw new ProxmoxError(`${api.name}: ${status?.[2] || `HTTP ${code}`}`, code);
+  return (JSON.parse(payload.toString() || "{}") as { data: unknown }).data;
+}
+
 export class Proxmox {
   /** The API's address, token and fingerprint are set. */
   readonly hasApi: boolean;
@@ -76,66 +157,20 @@ export class Proxmox {
     return this.request("POST", path, form);
   }
 
-  private async request(method: "GET" | "POST", path: string, form?: Record<string, string>) {
+  private request(method: "GET" | "POST", path: string, form?: Record<string, string>) {
     if (!this.hasApi) throw new ProxmoxError("Proxmox isn't set up (no /etc/hatbot/proxmox.env).");
-    const body = form ? new URLSearchParams(form).toString() : "";
-    const socket = connect({ host: this.host, port: this.port, rejectUnauthorized: false });
-    socket.setTimeout(30_000, () => socket.destroy(new Error("timed out")));
-    try {
-      await new Promise<void>((resolve, reject) => {
-        socket.once("secureConnect", resolve);
-        socket.once("error", reject);
-      });
-    } catch (err) {
-      socket.destroy();
-      throw new ProxmoxError(`Can't reach Proxmox: ${(err as Error).message}`);
-    }
-    if (normalizeFp(socket.getPeerCertificate().fingerprint256 ?? "") !== this.fingerprint) {
-      socket.destroy();
-      throw new ProxmoxError("Proxmox's certificate doesn't match the pinned fingerprint.");
-    }
-    const chunks: Buffer[] = [];
-    const done = new Promise<void>((resolve, reject) => {
-      socket.on("data", (c: Buffer) => chunks.push(c));
-      socket.once("end", resolve);
-      socket.once("close", () => resolve());
-      socket.once("error", reject);
-    });
-    socket.write(
-      [
-        `${method} /api2/json${path} HTTP/1.1`,
-        `Host: ${this.host}:${this.port}`,
-        `Authorization: ${this.auth}`,
-        "Accept: application/json",
-        "Connection: close",
-        ...(form
-          ? [
-              "Content-Type: application/x-www-form-urlencoded",
-              `Content-Length: ${Buffer.byteLength(body)}`,
-            ]
-          : []),
-        "",
-        body,
-      ].join("\r\n"),
+    return pinnedRequest(
+      {
+        name: "Proxmox",
+        host: this.host,
+        port: this.port,
+        fingerprint: this.fingerprint,
+        auth: this.auth,
+      },
+      method,
+      path,
+      form,
     );
-    try {
-      await done;
-    } catch (err) {
-      throw new ProxmoxError(`Proxmox request failed: ${(err as Error).message}`);
-    } finally {
-      socket.destroy();
-    }
-
-    const raw = Buffer.concat(chunks);
-    const split = raw.indexOf("\r\n\r\n");
-    if (split < 0) throw new ProxmoxError("Proxmox sent a malformed response.");
-    const head = raw.subarray(0, split).toString();
-    let payload: Buffer = raw.subarray(split + 4);
-    if (/^transfer-encoding:\s*chunked/im.test(head)) payload = decodeChunked(payload);
-    const status = /^HTTP\/1\.[01] (\d{3}) ?(.*)$/m.exec(head);
-    const code = Number(status?.[1] ?? 0);
-    if (code !== 200) throw new ProxmoxError(`Proxmox: ${status?.[2] || `HTTP ${code}`}`, code);
-    return (JSON.parse(payload.toString() || "{}") as { data: unknown }).data;
   }
 
   private get lxc() {

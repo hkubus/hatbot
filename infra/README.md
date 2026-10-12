@@ -99,9 +99,12 @@ systemctl restart hatbot-brain'
 | Proxmox | nothing more: `host-setup.sh` already wrote `/etc/hatbot/proxmox.env` |
 | SSH | on each host, a `hatbot` user with the brain's public key (shown on the plugin's page) in `~hatbot/.ssh/authorized_keys`, and sudo rules for what it may do as root. Hosts are added on the plugin's page; each host's key is pinned the first time Hatbot connects |
 | Forgejo | `/etc/hatbot/forgejo.env` with `FORGEJO_URL` and `FORGEJO_TOKEN`: a token of Hatbot's bot account with read and write access to repositories and issues. Add the bot as a collaborator to the repos it should work on |
+| Proxmox Backup Server | `/etc/hatbot/pbs.env` with `PBS_URL` (`https://<pbs>:8007`), `PBS_TOKEN_ID` (`hatbot@pbs!brain`), `PBS_TOKEN_SECRET` and `PBS_TLS_FINGERPRINT` (Dashboard → Show Fingerprint). Give the token DatastoreAudit and DatastoreBackup on `/datastore`, and Sys.Audit on `/`; deleting a backup also needs DatastorePrune |
+| Home Assistant | `/etc/hatbot/homeassistant.env` with `HOMEASSISTANT_URL` and `HOMEASSISTANT_TOKEN`: a long-lived access token (your profile → Security), ideally of a user made for Hatbot |
+| Uptime Kuma | `/etc/hatbot/uptimekuma.env` with `UPTIME_KUMA_URL` and `UPTIME_KUMA_API_KEY` (Settings → API Keys). It only reads monitors; alerts still come in as triggers |
 | MCP | servers are added on the plugin's page. Secrets they need go in `/etc/hatbot/mcp.env` and are referenced as `${NAME}` in headers or environment. A "Command" server runs inside the brain as the `hatbot` user, which can read the brain's other secrets, so only run servers you trust there; prefer HTTP servers running elsewhere |
 
-The brain's unit loads `forgejo.env` and `mcp.env` from the first deploy after this change.
+The brain's unit loads these env files from the first deploy after they were added; redeploy the brain once for `pbs.env`, `homeassistant.env` and `uptimekuma.env`.
 
 ## Settings
 
