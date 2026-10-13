@@ -60,6 +60,8 @@ export type PluginTool<I = unknown> = {
    * once when each acts on a different thing; ones on the same thing keep their order.
    */
   target?: (input: I) => string;
+  /** How many commands a write runs, for the chat's limit: a shell loop is many. Without it, one. */
+  commands?: (input: I) => number;
   /** Write tools: allow, ask you first, or refuse. Without one, a write is allowed. */
   policy?: (input: I, call: CallContext) => Verdict;
   run: (input: I, call: CallContext) => Promise<string>;

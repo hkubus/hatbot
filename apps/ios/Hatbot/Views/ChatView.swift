@@ -82,7 +82,14 @@ struct ChatView: View {
               .task(id: store.messages.first?.id) { try? await store.loadEarlier() }
           }
           if loaded && store.messages.isEmpty {
-            Text("Say hello to Hatbot.").foregroundStyle(.secondary).padding(.top, 40)
+            Text(
+              store.incognito
+                ? "Hatbot can't see earlier conversations here, and this one is deleted when you leave."
+                : "Say hello to Hatbot."
+            )
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .padding(.top, 40)
           }
           ForEach(rows) { row in
             switch row {
@@ -136,8 +143,20 @@ struct ChatView: View {
         if store.paused { PausedBanner() }
       }
       .edgeBar(.bottom) { composer }
-      .navigationTitle("Hatbot")
+      .navigationTitle(store.incognito ? "Incognito" : "Hatbot")
       .sidebarButton()
+      .toolbar {
+        ToolbarItem(placement: .topBarTrailing) {
+          // Leaving deletes the incognito conversation.
+          Button {
+            Task { await store.setIncognito(!store.incognito) }
+          } label: {
+            Image(systemName: "eyeglasses")
+              .foregroundStyle(store.incognito ? Color.accentColor : Color.primary)
+          }
+          .accessibilityLabel(store.incognito ? "Leave incognito" : "Incognito")
+        }
+      }
       .navigationBarTitleDisplayMode(.inline)
       .routes()
       .task {
@@ -227,7 +246,7 @@ struct ChatView: View {
         .glassButton()
         .buttonBorderShape(.circle)
         .accessibilityLabel("Attach")
-        TextField("Message Hatbot…", text: $draft, axis: .vertical)
+        TextField(store.incognito ? "Message Hatbot incognito…" : "Message Hatbot…", text: $draft, axis: .vertical)
           .lineLimit(1...6)
           .padding(.horizontal, 16)
           .padding(.vertical, 11)
@@ -275,7 +294,7 @@ struct ChatView: View {
     }
   }
 
-  private var commands: [ChatCommand] { ChatCommand.matching(draft) }
+  private var commands: [ChatCommand] { ChatCommand.matching(draft, incognito: store.incognito) }
 
   /// What "/…" could mean. One that needs more goes in the composer to finish; the rest run at once.
   private var commandList: some View {

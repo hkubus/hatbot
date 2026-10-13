@@ -8,6 +8,9 @@ import Observation
 final class AppStore {
   static let page = 50
 
+  /// The incognito conversation is showing instead of the thread. Kept while the app runs, not across
+  /// launches: the brain deletes the conversation after 30 idle minutes anyway.
+  private(set) var incognito = false
   var messages: [ThreadMessage] = []
   /// The conversations the loaded messages belong to, for their recaps.
   var episodes: [Int: Episode] = [:]
@@ -43,6 +46,8 @@ final class AppStore {
   @ObservationIgnored let api: API
   @ObservationIgnored private var requested = Set<String>()
   @ObservationIgnored private var stream: Socket?
+  /// Messages in an incognito conversation: they're never unread.
+  @ObservationIgnored private var incognitoIds = Set<Int>()
 
   init(api: API) {
     self.api = api
@@ -93,7 +98,9 @@ final class AppStore {
   func apply(_ event: HatbotEvent) {
     switch event {
     case let .messageCreated(m):
-      upsert(m)
+      if m.isIncognito { incognitoIds.insert(m.id) }
+      // Only the conversation that's showing.
+      if m.isIncognito == incognito { upsert(m) }
       // What came of your own command arrives already seen.
       if m.role == .assistant && m.status != .streaming && m.seenAt == nil { addUnread(m.id) }
     case let .messageEdited(id, editedAt):
@@ -101,6 +108,9 @@ final class AppStore {
       addUnread(id)
     case let .messageSeen(ids, seenAt):
       for i in messages.indices where ids.contains(messages[i].id) { messages[i].seenAt = seenAt }
+      unread.removeAll { ids.contains($0) }
+    case let .messageDeleted(ids):
+      messages.removeAll { ids.contains($0.id) }
       unread.removeAll { ids.contains($0) }
     case let .messageDelta(id, text):
       if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].text += text }
@@ -178,7 +188,7 @@ final class AppStore {
   }
 
   private func addUnread(_ id: Int) {
-    guard !unread.contains(id) else { return }
+    guard !unread.contains(id), !incognitoIds.contains(id) else { return }
     unread.append(id)
     unread.sort()
   }
@@ -192,18 +202,35 @@ final class AppStore {
     Task { let _: Empty? = try? await api.post("/thread/seen", body: Body(ids: seen)) }
   }
 
+  private func page(before: Int? = nil) -> String {
+    "/thread/messages?limit=\(Self.page)" + (before.map { "&before=\($0)" } ?? "") + (incognito ? "&incognito=1" : "")
+  }
+
   func loadThread() async throws {
-    let list: [ThreadMessage] = try await api.get("/thread/messages?limit=\(Self.page)")
+    let wasIncognito = incognito
+    let list: [ThreadMessage] = try await api.get(page())
     try? await loadEpisodes(list)
+    // Switched while it loaded: the other conversation's load wins.
+    guard wasIncognito == incognito else { return }
     messages = list
     hasEarlier = list.count == Self.page
+  }
+
+  /// Into incognito, or out of it, which deletes its conversation.
+  func setIncognito(_ on: Bool) async {
+    guard on != incognito else { return }
+    incognito = on
+    messages = []
+    hasEarlier = false
+    if !on { let _: Empty? = try? await api.delete("/thread/incognito") }
+    try? await loadThread()
   }
 
   func loadEarlier() async throws {
     guard let first = messages.first, !loadingEarlier else { return }
     loadingEarlier = true
     defer { loadingEarlier = false }
-    let older: [ThreadMessage] = try await api.get("/thread/messages?limit=\(Self.page)&before=\(first.id)")
+    let older: [ThreadMessage] = try await api.get(page(before: first.id))
     try? await loadEpisodes(older)
     messages = older + messages
     hasEarlier = older.count == Self.page
@@ -221,9 +248,11 @@ final class AppStore {
     struct Body: Encodable {
       let text: String
       let attachmentIds: [Int]
+      let incognito: Bool
     }
-    let m: ThreadMessage = try await api.post("/thread/messages", body: Body(text: text, attachmentIds: attachmentIds))
-    upsert(m)
+    let m: ThreadMessage = try await api.post(
+      "/thread/messages", body: Body(text: text, attachmentIds: attachmentIds, incognito: incognito))
+    if m.isIncognito == incognito { upsert(m) }
   }
 
   /// Uploads a file for your next message.

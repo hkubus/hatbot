@@ -61,6 +61,17 @@ function labPlugin(calls: string[] = []): Plugin {
               return `Restarted ${guest}.`;
             },
           }),
+          tool({
+            name: "lab_shell",
+            description: "Run shell commands",
+            access: "write",
+            schema: z.object({ commands: z.array(z.string()) }),
+            commands: ({ commands }) => commands.length,
+            run: async ({ commands }) => {
+              calls.push(...commands);
+              return "ok";
+            },
+          }),
         ],
         { guidance: "Guests: web, db.", test: async () => "3 guests" },
       );
@@ -173,7 +184,7 @@ test("the chat runs a plugin's tools itself; an untainted, harmless change just 
   expect(t.approvals.list(false)).toHaveLength(0);
 });
 
-test("a reply makes at most two changes itself; a third is sent to run_task", async () => {
+test("a reply runs at most two commands itself; a third is sent to run_task", async () => {
   const calls: string[] = [];
   const chat = new FakeModel([
     { content: [toolUse("lab_restart", { guest: "web" })] },
@@ -187,12 +198,24 @@ test("a reply makes at most two changes itself; a third is sent to run_task", as
   t.thread.post("restart web, cache and proxy");
   await t.thread.idle();
   expect(calls).toEqual(["restart web", "restart cache"]);
-  expect(JSON.stringify(chat.requests[3]?.messages)).toContain("Start run_task for the rest");
+  expect(JSON.stringify(chat.requests[3]?.messages)).toContain("Start run_task for the work");
 
   // The count is per reply.
   t.thread.post("now restart proxy");
   await t.thread.idle();
   expect(calls).toEqual(["restart web", "restart cache", "restart proxy"]);
+});
+
+test("commands chained into one call count one by one", async () => {
+  const calls: string[] = [];
+  const chat = new FakeModel([
+    { content: [toolUse("lab_shell", { commands: ["check web", "check db", "check proxy"] })] },
+    { content: [text("That goes to a task.")] },
+  ]);
+  const t = await lab(chat, new FakeModel(), calls);
+  await t.thread.post("check every guest").done;
+  expect(calls).toEqual([]);
+  expect(JSON.stringify(chat.requests[1]?.messages)).toContain("Start run_task for the work");
 });
 
 test("in the chat, a risky change waits for your approval, and a denial reaches the model", async () => {

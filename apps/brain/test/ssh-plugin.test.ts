@@ -7,7 +7,7 @@ import { REVIEW_PROMPT } from "../src/agent/prompt";
 import type { CallContext } from "../src/plugins/plugin";
 import { verdictFor } from "../src/plugins/registry";
 import { sshPlugin } from "../src/plugins/ssh";
-import { destructive } from "../src/plugins/ssh/policy";
+import { commandCount, destructive } from "../src/plugins/ssh/policy";
 import { FakeModel, toolUse } from "./fake-model";
 import { tempDirs, testApp, waitFor } from "./helpers";
 
@@ -461,4 +461,16 @@ test("a note on an approval steers the task: it reads it, and the review counts 
   expect(t.approvals.list(true)).toHaveLength(0);
   expect(reviews.at(-1)).toContain("Don't stop it, restart it.");
   expect(t.tasks.steps(task.id).some((s) => s.name === "Your note")).toBe(true);
+});
+
+test("a shell line counts each chained part, and a loop as many", () => {
+  expect(commandCount("apt list --upgradable 2>/dev/null | wc -l")).toBe(1);
+  expect(commandCount("apt-get update && apt-get -y upgrade")).toBe(2);
+  expect(commandCount("cd /srv; git pull\nsystemctl restart app")).toBe(3);
+  expect(
+    commandCount("for ct in 101 102 103; do pct exec $ct -- apt list --upgradable; done"),
+  ).toBe(Number.POSITIVE_INFINITY);
+  expect(commandCount("pct list | awk 'NR>1{print $1}' | xargs -n1 pct status")).toBe(
+    Number.POSITIVE_INFINITY,
+  );
 });

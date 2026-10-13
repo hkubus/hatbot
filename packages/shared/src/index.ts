@@ -46,6 +46,8 @@ export const PostMessage = z
     text: z.string().trim().max(100_000),
     /** Files uploaded first with POST /api/attachments. */
     attachmentIds: z.array(z.number().int().positive()).max(10).default([]),
+    /** In the incognito conversation: it sees no history and is deleted when it ends. */
+    incognito: z.boolean().default(false),
   })
   .refine((m) => m.text.length > 0 || m.attachmentIds.length > 0, {
     message: "A message needs text or a file.",
@@ -77,6 +79,8 @@ export type ThreadMessage = {
   seenAt: string | null;
   /** Files sent with it: yours, or ones Hatbot (or the task under it) sent you. Absent when none. */
   attachments?: Attachment[];
+  /** In the incognito conversation, which isn't kept. Absent otherwise. */
+  incognito?: true;
 };
 
 /** A file in the chat. Its bytes are at GET /api/attachments/:id. */
@@ -232,6 +236,8 @@ export type HatbotEvent =
   | { type: "message.attachment"; id: number; attachment: Attachment }
   /** You saw these messages (on any device). */
   | { type: "message.seen"; ids: number[]; seenAt: string }
+  /** These messages are gone: the incognito conversation they were in ended. */
+  | { type: "message.deleted"; ids: number[] }
   /** What the reply being written has used so far, across its model calls. */
   | { type: "message.usage"; id: number; tokens: number; costUsd: number }
   | { type: "spend.updated"; todayUsd: number; monthUsd: number }

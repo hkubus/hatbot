@@ -86,6 +86,18 @@ const RULES: Rule[] = [
   { re: /\bmv\s+[^|;&]*\s(\/dev\/null|\/)\s*$/, why: "moves files away for good", kind: "delete" },
 ];
 
+/**
+ * Roughly how many commands a shell line runs: one per part between ;, && and ||, and a loop or
+ * xargs runs any number. Pipes are one command.
+ */
+export function commandCount(command: string): number {
+  if (
+    /\b(for|while|until)\b[\s\S]*\bdo\b|\b(xargs|parallel)\b|\bfind\b[^|;&]*\s-exec/.test(command)
+  )
+    return Number.POSITIVE_INFINITY;
+  return Math.max(1, command.split(/;|&&|\|\||\n/).filter((part) => part.trim()).length);
+}
+
 /** Why this command needs approval, or null. `where`: on a host, or inside a container (ssh_pct_exec). */
 export function destructive(
   command: string,

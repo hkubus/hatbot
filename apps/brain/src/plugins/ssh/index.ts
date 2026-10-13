@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { allow, ask, askAlways, definePlugin, PluginError, ready, tool } from "../plugin";
-import { destructive, reboots } from "./policy";
+import { commandCount, destructive, reboots } from "./policy";
 
 const OUTPUT_CHARS = 15_000;
 
@@ -253,6 +253,7 @@ export const sshPlugin = definePlugin({
         }),
         describe: ({ host, command }) => `On ${host}: ${command}`,
         target: ({ host }) => host,
+        commands: ({ command }) => commandCount(command),
         policy: ({ host, command }) => {
           const d = destructive(command);
           if (d) return ask(`This command ${d.why}.`, d.kind);
@@ -285,6 +286,7 @@ export const sshPlugin = definePlugin({
               describe: ({ host, guest, command }) => `In CT ${guest} on ${host}: ${command}`,
               // The container's own; its host's commands don't touch it.
               target: ({ host, guest }) => `${host}/${guest}`,
+              commands: ({ command }) => commandCount(command),
               policy: ({ host, guest, command }) => {
                 const d = destructive(command, "container");
                 if (d) return ask(`This command ${d.why}.`, d.kind);

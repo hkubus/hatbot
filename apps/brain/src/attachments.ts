@@ -175,6 +175,17 @@ export class Attachments {
       .map(plain);
   }
 
+  /** Deletes the files on these messages, rows and bytes, so the messages can go too. */
+  async removeFor(messageIds: number[]) {
+    if (!messageIds.length) return;
+    const rows = this.d.db
+      .query<{ path: string }, number[]>(
+        `DELETE FROM attachments WHERE message_id IN (${messageIds.map(() => "?").join(", ")}) RETURNING path`,
+      )
+      .all(...messageIds);
+    await Promise.all(rows.map((r) => r.path && this.d.archive.remove(r.path)));
+  }
+
   /** Each message with its files: its own, and those of the task it shows. */
   fill(messages: ThreadMessage[]): ThreadMessage[] {
     if (!messages.length) return messages;

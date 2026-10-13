@@ -12,7 +12,15 @@ import { SkillDraft } from "./pages/SkillDraft";
 import { Spend } from "./pages/Spend";
 import { TaskDetail, Tasks } from "./pages/Tasks";
 import { navigate, useRoute } from "./router";
-import { connect, disconnect, ensureApproval, needsYou, onToast, useStore } from "./store";
+import {
+  connect,
+  disconnect,
+  ensureApproval,
+  needsYou,
+  onToast,
+  setIncognito,
+  useStore,
+} from "./store";
 import { getTheme, setTheme, type Theme } from "./theme";
 
 const VIEWS = [
@@ -65,6 +73,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const theme = useTheme();
   const pending = useStore(needsYou);
   const unread = useStore((s) => s.unread.length);
+  const incognito = useStore((s) => s.incognito);
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
   const [insp, setInsp] = useState(() => localStorage.getItem("hatbot:insp") === "1");
   const view = viewOf(path);
@@ -134,8 +143,18 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
 
         <main className="main">
           <header className="toolbar">
-            <h1>{view.title}</h1>
+            <h1>{view.path === "/" && incognito ? "Incognito" : view.title}</h1>
             <span className="spacer" />
+            {view.path === "/" && (
+              <button
+                type="button"
+                className={`tb-btn ${incognito ? "on" : ""}`}
+                onClick={() => void setIncognito(!incognito)}
+                title={incognito ? "Leave incognito" : "Incognito"}
+              >
+                <Icon name="incognito" />
+              </button>
+            )}
             {view.path !== "/live" && (
               <button
                 type="button"

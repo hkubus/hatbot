@@ -323,6 +323,7 @@ final class FoldTests: XCTestCase {
     XCTAssertEqual(ChatCommand.matching("/task x"), [])
     XCTAssertEqual(ChatCommand.matching("/etc/"), [])
     XCTAssertEqual(ChatCommand.matching("hi"), [])
+    XCTAssertEqual(ChatCommand.matching("/", incognito: true).map(\.name), ["new", "stop"])
     XCTAssertTrue(ChatCommand.all[2].needsMore)
     XCTAssertFalse(ChatCommand.all[1].needsMore)
     var note = m(5, 1)
@@ -398,5 +399,27 @@ final class AttachmentTests: XCTestCase {
     store.apply(event)
     XCTAssertEqual(store.messages.first?.attachments?.map(\.id), [3])
     XCTAssertEqual(store.messages.first?.attachments?.first?.isPicture, true)
+  }
+}
+
+// Not a @MainActor method: Linux XCTest can't run those.
+final class IncognitoTests: XCTestCase {
+  func testIncognitoMessagesStayOutOfTheThreadAndAreNeverUnread() async throws {
+    try await MainActor.run { try Self.incognitoMessagesStayOut() }
+  }
+
+  @MainActor private static func incognitoMessagesStayOut() throws {
+    let decode = { (json: String) in try JSONDecoder().decode(HatbotEvent.self, from: Data(json.utf8)) }
+    let store = AppStore(api: API(server: URL(string: "https://h.example")!, token: nil))
+    store.apply(try decode(
+      #"{"type":"message.created","message":{"id":4,"role":"assistant","kind":"text","text":"Psst.","status":"done","createdAt":"t","incognito":true}}"#))
+    store.apply(try decode(#"{"type":"message.done","id":4,"text":"Psst.","status":"done"}"#))
+    store.apply(try decode(
+      #"{"type":"message.created","message":{"id":5,"role":"assistant","kind":"text","text":"Hi.","status":"done","createdAt":"t"}}"#))
+    XCTAssertEqual(store.messages.map(\.id), [5])
+    XCTAssertEqual(store.unread, [5])
+    store.apply(try decode(#"{"type":"message.deleted","ids":[5]}"#))
+    XCTAssertEqual(store.messages, [])
+    XCTAssertEqual(store.unread, [])
   }
 }
