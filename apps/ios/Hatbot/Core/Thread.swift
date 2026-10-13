@@ -54,11 +54,14 @@ struct ChatCommand: Identifiable, Equatable, Sendable {
     ChatCommand(name: "remember", args: "<fact>", description: "Save it to memory as written"),
   ]
 
+  /// The ones that work in incognito: the rest would outlast it.
+  static let incognito: Set = ["new", "stop"]
+
   /// The commands a composer's "/…" could mean, while you type the name.
-  static func matching(_ text: String) -> [ChatCommand] {
+  static func matching(_ text: String, incognito: Bool = false) -> [ChatCommand] {
     guard text.hasPrefix("/") else { return [] }
     let typed = text.dropFirst().lowercased()
     guard typed.allSatisfy({ $0.isASCII && $0.isLetter }) else { return [] }
-    return all.filter { $0.name.hasPrefix(typed) }
+    return all.filter { $0.name.hasPrefix(typed) && (!incognito || Self.incognito.contains($0.name)) }
   }
 }

@@ -56,6 +56,10 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   var seenAt: String?
   /// Its files, and for a message showing a task, the task's; missing when there are none.
   var attachments: [Attachment]?
+  /// In the incognito conversation, which isn't kept; missing otherwise.
+  var incognito: Bool?
+
+  var isIncognito: Bool { incognito == true }
 
   /// What came of a command you ran, shown as a quiet line; one that started a task shows like a reply.
   var isNote: Bool { role == .assistant && kind == .command && taskId == nil }
@@ -376,6 +380,8 @@ enum HatbotEvent: Decodable, Sendable {
   case messageTask(id: Int, taskId: Int)
   case messageEdited(id: Int, editedAt: String)
   case messageSeen(ids: [Int], seenAt: String)
+  /// These messages are gone: the incognito conversation they were in ended.
+  case messageDeleted(ids: [Int])
   case messageUsage(id: Int, ReplyUsage)
   case messageAttachment(id: Int, Attachment)
   case spendUpdated(todayUsd: Double, monthUsd: Double)
@@ -419,6 +425,7 @@ enum HatbotEvent: Decodable, Sendable {
       self = .messageEdited(id: try c.decode(Int.self, forKey: .id), editedAt: try c.decode(String.self, forKey: .editedAt))
     case "message.seen":
       self = .messageSeen(ids: try c.decode([Int].self, forKey: .ids), seenAt: try c.decode(String.self, forKey: .seenAt))
+    case "message.deleted": self = .messageDeleted(ids: try c.decode([Int].self, forKey: .ids))
     case "message.usage":
       self = .messageUsage(
         id: try c.decode(Int.self, forKey: .id),
