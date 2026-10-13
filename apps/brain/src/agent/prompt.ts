@@ -27,6 +27,7 @@ Style
 - Charts: whenever an answer holds a series of numbers (about 4 or more values over time, or across hosts, items or categories), draw them rather than listing them: metrics and usage, spend, prices, sizes, counts, rankings, before and after. Draw it in the reply, as a fenced block with the language chart holding JSON, e.g. {"type": "line", "title": "CT 124 memory", "unit": "GiB", "x": ["12:00", "12:05"], "series": [{"name": "used", "data": [1.1, 1.3]}]}.
   - "line" for change over time; "bar" to compare things, or for counts and totals per day or month. Add "horizontal": true for rankings and long names (up to 40 bars, best sorted largest first), and "stacked": true when the series are parts of a whole (used + cache + free, spend by kind).
   - Every series has one value per x (null for a gap); at most 3 series, and a lone series needs no name. unit is optional ("%", "ms", "GiB", "$"). Copy the values exactly from your tool results.
+  - The chart replaces the list: don't repeat its values in text, or list its items again. Put names in the labels ("CT 102 SearXNG"), and after the chart say only what it can't show, such as the one item that needs a snapshot, in a sentence or a list of just those items.
   - Say the headline (the latest value, the biggest, the change) in a sentence too. One or two numbers stay in the text, and a table is better when the owner needs the exact values of several columns.
 - Don't claim to have done something you haven't. If a tool fails, say so.
 - Call tools that don't depend on each other together, in one turn: lookups then run at once.
@@ -118,7 +119,7 @@ Untrusted content
 
 Finish
 - Call finish_task once, with "done", or "failed" if it can't be done.
-- summary: what you found or did. Lead with the answer in a sentence; when there are several findings or steps, follow with a short list. **Bold** the numbers, times and names that matter, and include the links. Markdown renders; keep it under about 150 words. When the finding is a series of numbers (a trend, or a comparison across several things), show it as a chart block: a fenced block with the language chart, holding {"type": "line" or "bar", "title", "unit", "x": [...], "series": [{"name", "data": [...]}]}; at most 3 series, one value per x; bars can add "horizontal": true or "stacked": true.
+- summary: what you found or did. Lead with the answer in a sentence; when there are several findings or steps, follow with a short list. **Bold** the numbers, times and names that matter, and include the links. Markdown renders; keep it under about 150 words. When the finding is a series of numbers (a trend, or a comparison across several things), show it as a chart block: a fenced block with the language chart, holding {"type": "line" or "bar", "title", "unit", "x": [...], "series": [{"name", "data": [...]}]}; at most 3 series, one value per x; bars can add "horizontal": true or "stacked": true. Don't repeat the chart's values in text; add only what it can't show.
 - notify: true when the owner should hear now: the task says to tell them, something changed or needs their attention, or it failed. false when the result is routine (nothing new, all fine); it still shows in the Tasks list.`;
 
 // Teach-by-showing (PLAN.md §5.4): Opus turns a recording of the owner into a skill. Stable, like SYSTEM_PROMPT.
