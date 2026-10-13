@@ -535,7 +535,9 @@ export class Thread {
     const chatModel = bot.chatModel ?? settings.get().chatModel;
     const onHaiku = chatModel === "claude-haiku-5-5";
     const tools = [
-      ...(incognito ? TOOL_PARAMS.filter((t) => INCOGNITO_TOOLS.includes(t.name)) : TOOL_PARAMS),
+      ...(incognito ? TOOL_PARAMS.filter((t) => INCOGNITO_TOOLS.includes(t.name)) : TOOL_PARAMS)
+        // Alone, Hatbot's tools stay as they were, and its cache with them.
+        .filter((t) => others.length || t.name !== "ask_bot"),
       ...(onHaiku ? [ASK_OPUS] : []),
       ...pluginTools.map(toolParam),
       ...WEB_TOOLS,
@@ -963,7 +965,10 @@ export class Thread {
     const tainted = ended.find((t) => t.tainted);
     if (tainted) this.taint(episode.id, `Task #${tainted.id} "${tainted.title}"`);
     if (ended.length) {
-      const lines = ended.map((t) => `Task #${t.id} "${t.title}" ${t.status}: ${t.summary ?? ""}`);
+      const lines = ended.map(
+        (t) =>
+          `Task #${t.id} "${t.title}"${t.botId === bot.id ? "" : ` (by ${this.d.bots.nameOf(t.botId)}, which you asked)`} ${t.status}: ${t.summary ?? ""}`,
+      );
       userBlocks.push({
         type: "text",
         text: `<task_updates>\n${lines.join("\n")}\n</task_updates>`,
@@ -1311,6 +1316,7 @@ function toolLabel(name: string, plugins: Plugins): string {
     trigger_list: "Looking at triggers",
     trigger_update: "Changing a trigger",
     run_task: "Starting a task",
+    ask_bot: "Asking another bot",
     ask_opus: "Asking Opus",
     send_file: "Sending a file",
   };

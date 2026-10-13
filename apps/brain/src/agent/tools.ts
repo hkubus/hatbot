@@ -83,6 +83,17 @@ export async function missingSkill(memory: MemoryStore, skill?: string): Promise
   return `There's no skill called "${skill}" (skills/${skill}.md). Check INDEX.md, or leave skill out.`;
 }
 
+export const AskBotInput = z.object({
+  bot: z.string().min(1).max(40).describe("The bot's name or id"),
+  request: z
+    .string()
+    .min(1)
+    .max(4000)
+    .describe(
+      "What it should do and what to report back, with every detail from the conversation it needs",
+    ),
+});
+
 export const RunTaskInput = z.object({
   title: z
     .string()
@@ -310,6 +321,29 @@ export const TOOLS = [
       });
       if (!task) return "The task couldn't start.";
       return `Started task #${task.id}. It's running in the background; the owner sees its progress and result under this reply. Don't wait for it.`;
+    },
+  }),
+  def({
+    name: "ask_bot",
+    description:
+      "Hand something to another of the owner's bots, for work in its line: it does it as its own task, with its own role, memory folder and plugins. Its progress shows under your reply, and you're told how it ended at the start of a later turn; then tell the owner what came of it. It can't see this conversation, so give it everything it needs. Don't wait for it.",
+    schema: AskBotInput,
+    run: async (
+      { bot: to, request },
+      { tasks, messageId, tainted, ownerSaid, bot, conversationId },
+    ) => {
+      if (!tasks || !bot) return "Other bots aren't available.";
+      const task = tasks.askBot({
+        from: bot,
+        to,
+        request,
+        conversationId,
+        message: messageId,
+        taintedBy: chatTaint(tainted?.()) || null,
+        ownerSaid: ownerSaid?.(),
+      });
+      if (typeof task === "string") return task;
+      return `Asked ${tasks.d.bots.nameOf(task.botId)}: task #${task.id}. The owner sees its progress under this reply.`;
     },
   }),
   def({

@@ -51,6 +51,8 @@ export type TasksDeps = {
 
 /** Background tasks at once (PLAN.md §5.6). */
 const BACKGROUND_SLOTS = 3;
+/** Bots handing work to bots that hand it on: at most this many in a row. */
+export const MAX_HANDOFFS = 3;
 
 type Row = {
   id: number;
@@ -373,6 +375,58 @@ export class Tasks {
     return id;
   }
 
+  /** How many hand-offs between bots led to this task, its own included. */
+  handoffs(task: Task | null): number {
+    let n = 0;
+    for (let t = task; t; t = t.parentId ? this.get(t.parentId) : null) if (t.requestedBy) n++;
+    return n;
+  }
+
+  /**
+   * ask_bot: another bot works on `request` as its own task, with what the asker had read. From the
+   * chat it shows under the asker's reply (`message`), and the asker hears how it ended; from a task
+   * (`parent`), that task waits for it. A string says why it couldn't start.
+   */
+  askBot(input: {
+    from: Bot;
+    to: string;
+    request: string;
+    conversationId?: number;
+    message?: number;
+    parent?: Task;
+    taintedBy: string | null;
+    ownerSaid?: string;
+  }): Task | string {
+    const want = input.to.trim().toLowerCase();
+    const to = this.d.bots.list().find((b) => b.id === want || b.name.toLowerCase() === want);
+    if (!to) {
+      const names = this.d.bots
+        .list()
+        .filter((b) => b.id !== input.from.id)
+        .map((b) => b.name);
+      return `There's no bot called "${input.to}". The owner's other bots: ${names.join(", ") || "none"}.`;
+    }
+    if (to.id === input.from.id)
+      return "That's you. Do it yourself, or start a task with run_task.";
+    if (this.handoffs(input.parent ?? null) >= MAX_HANDOFFS)
+      return `Hand-offs between bots go at most ${MAX_HANDOFFS} deep, and this would be deeper. Do it yourself, or report what you have.`;
+    const firstLine = input.request.trim().split("\n")[0] ?? "";
+    const task = this.createBackgroundTask({
+      title: firstLine.length > 80 ? `${firstLine.slice(0, 79)}…` : firstLine,
+      goal: input.request,
+      origin: input.parent?.origin ?? "chat",
+      source: input.parent?.source ?? undefined,
+      botId: to.id,
+      conversationId: input.conversationId,
+      requestedBy: input.from.id,
+      parent: input.parent,
+      message: input.message,
+      taintedBy: input.taintedBy,
+      request: input.ownerSaid,
+    });
+    return task ?? "The task couldn't start.";
+  }
+
   /** What you said in the chat when you started it, or null. */
   requestOf(id: number): string | null {
     return (
@@ -604,11 +658,13 @@ export class Tasks {
     // The bot that asked for it tells you, in the chat it was started from.
     const reporter = task.requestedBy ?? task.botId;
     const conversationId = this.conversationOf(id) ?? this.home(reporter);
-    // Started from the chat: the chat model hears now and answers, with the conversation in mind.
-    if (underReply && tell && status !== "cancelled")
+    // Started from the chat: the chat model hears now and answers, with the conversation in mind. A
+    // bot that asked another always passes on what came of it.
+    const asked = !task.parentId && task.requestedBy !== null;
+    if (underReply && (tell || asked) && status !== "cancelled")
       void this.d.chats.taskEnded(conversationId, reporter);
     else if (tell && task.lane === "background")
-      this.d.chats.addCard(conversationId, task.botId, "task", text, { taskId: id });
+      this.d.chats.addCard(conversationId, reporter, "task", text, { taskId: id });
     this.emit(id);
     if (!tell) return;
     void this.d.notifier.send({

@@ -1,14 +1,16 @@
-// Background tasks (PLAN.md §5.1, §5.6): started by a schedule, a trigger, or the chat's run_task. The
+// Background tasks (PLAN.md §5.1, §5.6): started by a schedule, a trigger, the chat's run_task, or
+// another bot's ask_bot. The
 // model Settings choose (Haiku by default) with Hatbot's own tools and the plugins' tools, in the
 // background lane, reporting back through finish_task.
 import type Anthropic from "@anthropic-ai/sdk";
-import type { ApprovalKind } from "@hatbot/shared";
+import type { ApprovalKind, Task } from "@hatbot/shared";
 import { z } from "zod";
 import { modelErrorText } from "../agent/model";
 import { AGENT_PROMPT } from "../agent/prompt";
 import { mayReview, safeToRun } from "../agent/review";
 import { localStamp, memoryIndex } from "../agent/thread";
 import {
+  AskBotInput,
   DesktopTaskInput,
   inBatches,
   LOOKUP_TOOLS,
@@ -84,6 +86,12 @@ const CORE_TOOLS: Anthropic.Beta.BetaTool[] = [
     schema: DesktopTaskInput,
   }),
   toolParam({
+    name: "ask_bot",
+    description:
+      "Hand part of this task to another of the owner's bots, for work in its line: it does it as its own task, with its own role, memory folder and plugins. This waits until it ends and returns its summary. It can't see this task, so give it everything it needs.",
+    schema: AskBotInput,
+  }),
+  toolParam({
     name: "wait",
     description:
       "Pause the task for a while without using the model, e.g. between checks while a backup, a build or a restart finishes. It wakes early if an event about the task arrives (an Uptime Kuma alert changing, say). Check again when it returns; to watch something, alternate checks and waits.",
@@ -133,13 +141,14 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const pluginTools = new Map<string, PluginTool>(
     d.plugins.tools(bot.plugins).map((t) => [t.name, t]),
   );
-  const tools = [...CORE_TOOLS, ...[...pluginTools.values()].map(toolParam), ...WEB_TOOLS];
+  const others = d.bots.list().filter((b) => b.id !== bot.id);
+  const tools = [
+    ...CORE_TOOLS.filter((t) => others.length || t.name !== "ask_bot"),
+    ...[...pluginTools.values()].map(toolParam),
+    ...WEB_TOOLS,
+  ];
   const guidance = d.plugins.guidance(bot.plugins);
-  const prompt = promptFor(
-    AGENT_PROMPT,
-    bot,
-    d.bots.list().filter((b) => b.id !== bot.id),
-  );
+  const prompt = promptFor(AGENT_PROMPT, bot, others);
   const system = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
   const taint = (source: string) => {
     sources.add(source);
@@ -194,6 +203,46 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     return result(
       call,
       `Desktop task #${child.id} ended: ${ended.status}, $${ended.costUsd.toFixed(2)}.\n<desktop_summary trusted="false">\n${JSON.stringify(ended.summary ?? "")}\n</desktop_summary>`,
+    );
+  };
+
+  const askBot = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
+    const p = AskBotInput.safeParse(call.input);
+    if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+    const child = tasks.askBot({
+      from: bot,
+      to: p.data.bot,
+      request: p.data.request,
+      parent: task,
+      taintedBy: task.tainted
+        ? `Task #${id}, which asked: ${task.taintedBy ?? "untrusted content"}`
+        : null,
+      ownerSaid: tasks.requestOf(id) ?? undefined,
+    });
+    if (typeof child === "string") return result(call, child, true);
+    const name = d.bots.nameOf(child.botId);
+    children.add(child.id);
+    tasks.addStep(id, {
+      kind: "task",
+      name: `Asked ${name}: ${child.title}`,
+      detail: "",
+      url: `/tasks/${child.id}`,
+    });
+    // Waiting doesn't hold a slot: the bot asked needs one.
+    tasks.pool.release();
+    slot = false;
+    let ended: Task;
+    try {
+      ended = await tasks.waitFor(child.id, signal);
+    } finally {
+      children.delete(child.id);
+      await tasks.pool.acquire(signal);
+      slot = true;
+    }
+    if (ended.tainted) taint(`Task #${child.id} by ${name}`);
+    return result(
+      call,
+      `${name}'s task #${child.id} ended: ${ended.status}, $${ended.costUsd.toFixed(2)}.\n<summary from="${name}">\n${ended.summary ?? ""}\n</summary>`,
     );
   };
 
@@ -402,10 +451,14 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const payload = task.payload
       ? `\n<event trusted="${task.tainted ? "false" : "true"}">\n${JSON.stringify(task.payload)}\n</event>`
       : "";
+    const asker = task.requestedBy && d.bots.nameOf(task.requestedBy);
+    const startedBy = asker
+      ? `Asked by ${asker}, another of the owner's bots, ${task.parentId ? "from one of its tasks" : "from its chat with the owner"}. Your summary goes back to ${asker}. Started`
+      : `Started by ${STARTED_BY[task.origin](source)}`;
     record("user", [
       {
         type: "text",
-        text: `${index}\n\n${skills ? `${skills}\n\n` : ""}<task>\n${task.goal}\n</task>${payload}\n\nStarted by ${STARTED_BY[task.origin](source)} at ${localStamp(new Date(tasks.clock()))}, the owner's local time.`,
+        text: `${index}\n\n${skills ? `${skills}\n\n` : ""}<task>\n${task.goal}\n</task>${payload}\n\n${startedBy} at ${localStamp(new Date(tasks.clock()))}, the owner's local time.`,
       },
     ]);
 
@@ -509,6 +562,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           );
         }
         if (call.name === "run_desktop_task") return desktopTask(call);
+        if (call.name === "ask_bot") return askBot(call);
         if (call.name === "wait") return wait(call);
         if (call.name === "send_file") {
           // On the task, so it shows wherever the task does.

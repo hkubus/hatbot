@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import type { Bot, Conversation, ThreadMessage } from "@hatbot/shared";
+import type { Bot, Conversation, Task, ThreadMessage } from "@hatbot/shared";
 import { slugOf } from "../src/bots";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { setUpOwner, testApp } from "./helpers";
+import { setUpOwner, type TestApp, testApp } from "./helpers";
 
 const systemOf = (req: { system?: unknown } | undefined) => JSON.stringify(req?.system);
 
@@ -156,4 +156,104 @@ test("a bot's id comes from its name", () => {
   expect(slugOf("Home Lab")).toBe("home-lab");
   expect(slugOf("Café")).toBe("cafe");
   expect(slugOf("42")).toBe("bot-42");
+});
+
+const chef = (t: TestApp) =>
+  t.bots.create({
+    name: "Chef",
+    instructions: "Plans meals.",
+    chatModel: null,
+    chatEffort: null,
+    plugins: null,
+  });
+
+test("from the chat, ask_bot starts the other bot's task, and the asker reports", async () => {
+  const model = new FakeModel([
+    { content: [toolUse("ask_bot", { bot: "chef", request: "Plan Sunday dinner" })] },
+    { content: [text("Asked Chef.")] },
+    { content: [text("Chef says: soup.")] },
+  ]);
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Soup.", notify: false })] },
+  ]);
+  const t = await testApp(model, work);
+  await setUpOwner(t);
+  chef(t);
+  await t.thread.post("what's for Sunday? ask Chef").done;
+  const task = t.tasks.list({}).find((x) => x.botId === "chef");
+  if (!task) throw new Error("no task");
+  expect(task).toMatchObject({
+    requestedBy: "hatbot",
+    parentId: null,
+    title: "Plan Sunday dinner",
+  });
+  // Under Hatbot's reply, in Hatbot's chat.
+  expect(t.thread.list().find((m) => m.taskId === task.id)?.botId).toBe("hatbot");
+  await t.tasks.idle();
+  await t.chats.idle();
+  expect(JSON.stringify(work.requests[0]?.messages)).toContain("Asked by Hatbot");
+  expect(systemOf(work.requests[0])).toContain("You are Chef");
+  // Hatbot hears how it ended and tells you.
+  expect(JSON.stringify(model.requests[2]?.messages.at(-1))).toContain("by Chef, which you asked");
+  expect(t.thread.list().at(-1)?.text).toBe("Chef says: soup.");
+  expect(t.chats.direct("chef").list()).toEqual([]);
+});
+
+test("from a task, ask_bot waits for the other bot, and taint goes both ways", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("ask_bot", { bot: "Chef", request: "Plan Sunday dinner" })] },
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Soup.", notify: false })] },
+    {
+      content: [toolUse("finish_task", { outcome: "done", summary: "Chef: soup.", notify: false })],
+    },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  chef(t);
+  const parent = t.tasks.createBackgroundTask({
+    title: "Weekend",
+    goal: "Plan the weekend",
+    origin: "webhook",
+    source: "hook",
+    payload: "{}",
+  });
+  if (!parent) throw new Error("no task");
+  await t.tasks.idle();
+  const child = t.tasks.list({}).find((x) => x.botId === "chef");
+  expect(child).toMatchObject({ parentId: parent.id, requestedBy: "hatbot", tainted: true });
+  expect(JSON.stringify(work.requests[2]?.messages.at(-1))).toContain('<summary from=\\"Chef\\">');
+  expect(t.tasks.get(parent.id)?.summary).toBe("Chef: soup.");
+});
+
+test("hand-offs nest at most 3 deep, and a bot can't ask itself", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel());
+  const c = chef(t);
+  const hatbot = t.bots.hatbot();
+  let parent: Task | undefined;
+  for (let i = 0; i < 3; i++) {
+    const next = t.tasks.askBot({
+      from: i % 2 ? c : hatbot,
+      to: i % 2 ? "hatbot" : "chef",
+      request: `step ${i}`,
+      parent,
+      taintedBy: null,
+    });
+    if (typeof next === "string") throw new Error(next);
+    parent = next;
+  }
+  expect(t.tasks.handoffs(parent ?? null)).toBe(3);
+  expect(
+    t.tasks.askBot({ from: c, to: "hatbot", request: "more", parent, taintedBy: null }),
+  ).toContain("at most 3 deep");
+  expect(t.tasks.askBot({ from: c, to: "Chef", request: "x", taintedBy: null })).toContain(
+    "That's you",
+  );
+  await t.tasks.idle();
+});
+
+test("alone, Hatbot isn't offered ask_bot", async () => {
+  const t = await testApp(new FakeModel([{ content: [text("Hi.")] }]));
+  await setUpOwner(t);
+  await t.thread.post("hi").done;
+  const names = t.model.requests[0]?.tools?.map((x) => ("name" in x ? x.name : ""));
+  expect(names).not.toContain("ask_bot");
 });
