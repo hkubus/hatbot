@@ -52,7 +52,7 @@ test("chat starts a desktop task that runs, archives screenshots and reports bac
   const edited = t.thread.list().find((m) => m.id === reply?.id);
   expect(edited?.editedAt).toBe(task?.finishedAt as string);
   expect(t.thread.unread()).toContain(reply?.id as number);
-  t.thread.markSeen(t.thread.unread());
+  t.chats.markSeen(t.thread.unread());
   expect(t.thread.unread()).toEqual([]);
   expect(t.agent.actions.map((a) => a.name)).toEqual(["left_click"]);
   expect(task?.costUsd).toBeGreaterThan(0);

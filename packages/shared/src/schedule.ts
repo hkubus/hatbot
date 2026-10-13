@@ -3,6 +3,8 @@ import { z } from "zod";
 
 export type Schedule = {
   id: number;
+  /** The bot its runs are. */
+  botId: string;
   name: string;
   /** Five-field cron, in the brain's time zone. Exactly one of cron and runAt is set. */
   cron: string | null;
@@ -33,11 +35,19 @@ const when = {
   at: z.string().trim().min(1).max(40).optional(),
 };
 
+const botId = z.string().regex(/^[a-z][a-z0-9-]{0,30}$/);
+
 export const CreateSchedule = z
-  .object({ name, prompt, enabled: z.boolean().default(true), ...when })
+  .object({
+    name,
+    prompt,
+    enabled: z.boolean().default(true),
+    botId: botId.default("hatbot"),
+    ...when,
+  })
   .refine((s) => Boolean(s.cron) !== Boolean(s.at), "set either cron or at");
 export const UpdateSchedule = z
-  .object({ name, prompt, enabled: z.boolean(), ...when })
+  .object({ name, prompt, enabled: z.boolean(), botId, ...when })
   .partial()
   .refine((s) => !(s.cron && s.at), "set either cron or at");
 
@@ -45,6 +55,8 @@ export type TriggerKind = "webhook" | "kuma";
 
 export type Trigger = {
   id: number;
+  /** The bot its runs are. */
+  botId: string;
   name: string;
   kind: TriggerKind;
   /** Payloads count as trusted content (PLAN.md §6.1). Uptime Kuma alerts always do. */
@@ -72,6 +84,7 @@ export const CreateTrigger = z.object({
   prompt,
   trusted: z.boolean().default(false),
   confirmChecks: z.number().int().min(0).max(2).default(0),
+  botId: botId.default("hatbot"),
 });
 export const UpdateTrigger = z
   .object({
@@ -80,6 +93,7 @@ export const UpdateTrigger = z
     trusted: z.boolean(),
     enabled: z.boolean(),
     confirmChecks: z.number().int().min(0).max(2),
+    botId,
   })
   .partial();
 

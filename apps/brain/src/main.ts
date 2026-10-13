@@ -1,12 +1,13 @@
 import { websocket } from "hono/bun";
+import { Chats } from "./agent/chats";
 import { AnthropicModelClient } from "./agent/model";
-import { Thread } from "./agent/thread";
 import { CORE_TOOL_NAMES } from "./agent/tools";
 import { createApp } from "./app";
 import { Approvals } from "./approvals";
 import { Archive } from "./archive";
 import { Attachments } from "./attachments";
 import { AuthService, FailureLimiter } from "./auth/service";
+import { Bots } from "./bots";
 import { loadConfig } from "./config";
 import { openDb } from "./db";
 import { HttpDesktopAgent } from "./desktop/client";
@@ -52,13 +53,14 @@ const plugins = new Plugins([...PLUGINS, codePlugin({ desktop: desktop.agent, at
 const pluginsStarted = plugins
   .startAll()
   .catch((err) => console.error("plugins failed to start", err));
-const thread = new Thread({ db, memory, events, spend, settings, model, plugins });
+const bots = new Bots(db, events);
+const chats = new Chats({ db, memory, events, spend, settings, model, plugins, bots });
 const notifier = new LinkingNotifier(
   new NtfyNotifier(),
   config.publicUrl,
   () => settings.get().notificationsOpen,
 );
-const approvals = new Approvals(db, events, notifier, config.publicUrl);
+const approvals = new Approvals(db, events, notifier, config.publicUrl, Date.now, bots);
 const tasks = new Tasks({
   db,
   events,
@@ -70,7 +72,8 @@ const tasks = new Tasks({
   notifier,
   archive,
   attachments,
-  thread,
+  chats,
+  bots,
   config,
   memory,
   plugins,
@@ -89,14 +92,14 @@ const teach = new Teach({
 });
 const schedules = new Schedules(db, events, settings, tasks);
 const triggers = new Triggers(db, events, settings, tasks, notifier, config.publicUrl);
-thread.attach({ tasks, schedules, triggers, approvals, attachments, desktop: desktop.agent });
+chats.attach({ tasks, schedules, triggers, approvals, attachments, desktop: desktop.agent });
 // A restart ends an incognito conversation.
-await thread.endIncognito();
+await chats.endIncognito();
 await desktop.setPaused(settings.get().paused);
 await desktop.refresh();
 setInterval(() => void desktop.refresh(), 30_000);
 setInterval(() => approvals.expireDue(), 60_000);
-setInterval(() => void thread.sweep(), 60_000);
+setInterval(() => void chats.sweep(), 60_000);
 // Runs missed while the brain was down start once plugins are up, so they get their tools.
 void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {
   schedules.tick();
@@ -120,7 +123,8 @@ const app = createApp({
   settings,
   spend,
   memory,
-  thread,
+  chats,
+  bots,
   tasks,
   approvals,
   desktop,

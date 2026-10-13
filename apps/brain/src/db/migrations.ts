@@ -312,4 +312,63 @@ export const migrations: string[] = [
     INSERT INTO messages_fts (rowid, text) VALUES (new.id, new.text);
   END;
   `,
+  /* 20: more than one bot (PLAN.md §14): bots, their conversations, and who each thing belongs to */ `
+  CREATE TABLE bots (
+    -- Fixed when it's made: its memory folder (bots/<id>/) and browser profile go by it.
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    -- Its role, in the owner's words; part of its system prompt.
+    instructions TEXT NOT NULL DEFAULT '',
+    -- Null: what Settings say.
+    chat_model TEXT,
+    chat_effort TEXT,
+    -- The plugin ids it may use, as JSON; null: every plugin that's on.
+    plugins TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ')),
+    deleted_at TEXT
+  );
+  INSERT INTO bots (id, name) VALUES ('hatbot', 'Hatbot');
+  CREATE TABLE conversations (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('direct', 'group')),
+    title TEXT,
+    -- The rolling summary of its earlier episodes (PLAN.md §5.3).
+    summary TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ')),
+    deleted_at TEXT
+  );
+  CREATE TABLE conversation_bots (
+    conversation_id INTEGER NOT NULL REFERENCES conversations(id),
+    bot_id TEXT NOT NULL REFERENCES bots(id),
+    position INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (conversation_id, bot_id)
+  );
+  INSERT INTO conversations (id, kind, summary)
+    VALUES (1, 'direct', coalesce((SELECT value FROM settings WHERE key = 'thread_summary'), ''));
+  INSERT INTO conversation_bots (conversation_id, bot_id) VALUES (1, 'hatbot');
+  DELETE FROM settings WHERE key = 'thread_summary';
+
+  ALTER TABLE episodes ADD COLUMN conversation_id INTEGER NOT NULL DEFAULT 1 REFERENCES conversations(id);
+  CREATE INDEX episodes_conversation ON episodes (conversation_id, incognito, id);
+  -- In a group each bot keeps its own turns: its own prompt, tools and cache.
+  ALTER TABLE episode_turns ADD COLUMN bot_id TEXT NOT NULL DEFAULT 'hatbot';
+  ALTER TABLE messages ADD COLUMN conversation_id INTEGER NOT NULL DEFAULT 1 REFERENCES conversations(id);
+  -- Who wrote it; null for the owner's.
+  ALTER TABLE messages ADD COLUMN bot_id TEXT;
+  UPDATE messages SET bot_id = 'hatbot' WHERE role = 'assistant';
+  CREATE INDEX messages_conversation ON messages (conversation_id, incognito, id);
+  ALTER TABLE tasks ADD COLUMN bot_id TEXT NOT NULL DEFAULT 'hatbot';
+  -- Where its news goes.
+  ALTER TABLE tasks ADD COLUMN conversation_id INTEGER REFERENCES conversations(id);
+  UPDATE tasks SET conversation_id = 1;
+  -- The bot that handed it over with ask_bot, and hears how it ended.
+  ALTER TABLE tasks ADD COLUMN requested_by TEXT;
+  ALTER TABLE approvals ADD COLUMN bot_id TEXT NOT NULL DEFAULT 'hatbot';
+  ALTER TABLE approvals ADD COLUMN conversation_id INTEGER REFERENCES conversations(id);
+  UPDATE approvals SET conversation_id = 1 WHERE task_id IS NULL;
+  ALTER TABLE schedules ADD COLUMN bot_id TEXT NOT NULL DEFAULT 'hatbot';
+  ALTER TABLE triggers ADD COLUMN bot_id TEXT NOT NULL DEFAULT 'hatbot';
+  ALTER TABLE spend_ledger ADD COLUMN bot_id TEXT;
+  UPDATE spend_ledger SET bot_id = 'hatbot';
+  `,
 ];

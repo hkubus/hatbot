@@ -1,6 +1,12 @@
 // Triggers (PLAN.md §4.1, §8): signed webhooks and Uptime Kuma alerts start background tasks.
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { API_PREFIX, type Task, type Trigger, type TriggerWithSecret } from "@hatbot/shared";
+import {
+  API_PREFIX,
+  HATBOT_ID,
+  type Task,
+  type Trigger,
+  type TriggerWithSecret,
+} from "@hatbot/shared";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
 import type { Notifier } from "./notify";
@@ -30,6 +36,7 @@ type Row = {
   created_at: string;
   last_fired_at: string | null;
   last_task_id: number | null;
+  bot_id: string;
 };
 
 const SELECT = `SELECT g.*, (SELECT max(id) FROM tasks t WHERE t.trigger_id = g.id) AS last_task_id
@@ -85,6 +92,7 @@ export class Triggers {
     createdAt: r.created_at,
     lastFiredAt: r.last_fired_at,
     lastTaskId: r.last_task_id,
+    botId: r.bot_id,
   });
 
   private now() {
@@ -106,12 +114,13 @@ export class Triggers {
     prompt: string;
     trusted?: boolean;
     confirmChecks?: number;
+    botId?: string;
   }): TriggerWithSecret {
     const secret = newSecret();
     const row = this.db
-      .query<{ id: number }, [string, string, string, number, string, number, string]>(
-        `INSERT INTO triggers (name, kind, secret, trusted, prompt, confirm_checks, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      .query<{ id: number }, [string, string, string, number, string, number, string, string]>(
+        `INSERT INTO triggers (name, kind, secret, trusted, prompt, confirm_checks, created_at, bot_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       )
       .get(
         input.name,
@@ -121,6 +130,7 @@ export class Triggers {
         input.prompt,
         input.confirmChecks ?? 0,
         this.now(),
+        input.botId ?? HATBOT_ID,
       );
     const trigger = this.changed(row?.id ?? -1) as Trigger;
     return { ...trigger, secret };
@@ -134,13 +144,14 @@ export class Triggers {
       trusted?: boolean;
       enabled?: boolean;
       confirmChecks?: number;
+      botId?: string;
     },
   ): Trigger | null {
     const r = this.db.query<Row, [number]>(`${SELECT} WHERE g.id = ?`).get(id);
     if (!r) return null;
     this.db
       .query(
-        "UPDATE triggers SET name = ?, prompt = ?, trusted = ?, enabled = ?, confirm_checks = ? WHERE id = ?",
+        "UPDATE triggers SET name = ?, prompt = ?, trusted = ?, enabled = ?, confirm_checks = ?, bot_id = ? WHERE id = ?",
       )
       .run(
         patch.name ?? r.name,
@@ -148,6 +159,7 @@ export class Triggers {
         (patch.trusted ?? Boolean(r.trusted)) ? 1 : 0,
         (patch.enabled ?? Boolean(r.enabled)) ? 1 : 0,
         patch.confirmChecks ?? r.confirm_checks,
+        patch.botId ?? r.bot_id,
         id,
       );
     return this.changed(id);
@@ -220,6 +232,7 @@ export class Triggers {
       origin: "webhook",
       source: t.name,
       triggerId: t.id,
+      botId: t.botId,
       runKey: `trigger:${t.id}`,
       payload: pretty(body),
       trusted: t.trusted,
@@ -332,6 +345,7 @@ export class Triggers {
       origin: "alert",
       source: t.name,
       triggerId: t.id,
+      botId: t.botId,
       runKey,
       payload,
       trusted: true,

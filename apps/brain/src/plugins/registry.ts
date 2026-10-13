@@ -119,18 +119,23 @@ export class Plugins {
     return fn(args);
   }
 
-  /** Tools of the ready plugins, for the chat and tasks, in a stable order (it's part of the prompt cache). */
-  tools(): PluginTool[] {
+  /**
+   * Tools of the ready plugins, for the chat and tasks, in a stable order (it's part of the prompt
+   * cache). With `only`, just those of the plugins a bot may use.
+   */
+  tools(only: string[] | null = null): PluginTool[] {
     return [...this.slots.values()]
-      .filter((s) => s.state === "ready" && s.instance)
+      .filter((s) => s.state === "ready" && s.instance && (!only || only.includes(s.plugin.id)))
       .sort((a, b) => a.plugin.id.localeCompare(b.plugin.id))
       .flatMap((s) => s.instance?.tools ?? []);
   }
 
   /** The ready plugins' paragraphs for the system prompt. */
-  guidance(): string {
+  guidance(only: string[] | null = null): string {
     return [...this.slots.values()]
-      .filter((s) => s.state === "ready" && s.instance?.guidance)
+      .filter(
+        (s) => s.state === "ready" && s.instance?.guidance && (!only || only.includes(s.plugin.id)),
+      )
       .sort((a, b) => a.plugin.id.localeCompare(b.plugin.id))
       .map((s) => `${s.plugin.name}\n${s.instance?.guidance?.trim()}`)
       .join("\n\n");

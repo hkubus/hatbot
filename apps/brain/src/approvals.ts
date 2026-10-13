@@ -1,6 +1,7 @@
 // Approvals (PLAN.md §6.2): a task asks, you decide in the web app or from an ntfy notification.
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import type { Approval, ApprovalKind } from "@hatbot/shared";
+import { type Approval, type ApprovalKind, HATBOT_ID } from "@hatbot/shared";
+import type { Bots } from "./bots";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
 import type { Notifier } from "./notify";
@@ -17,7 +18,9 @@ export const ownerNote = (note: string) =>
 
 type Row = {
   id: number;
+  bot_id: string;
   task_id: number | null;
+  conversation_id: number | null;
   kind: ApprovalKind;
   summary: string;
   reason: string;
@@ -37,7 +40,9 @@ const SELECT = `SELECT a.*, (SELECT sum(cost_usd) FROM spend_ledger s WHERE s.ta
 
 const toApproval = (r: Row): Approval => ({
   id: r.id,
+  botId: r.bot_id,
   taskId: r.task_id,
+  conversationId: r.conversation_id,
   kind: r.kind,
   summary: r.summary,
   reason: r.reason,
@@ -54,6 +59,10 @@ const toApproval = (r: Row): Approval => ({
 
 export type NewApproval = {
   taskId: number | null;
+  /** The bot asking; Hatbot by default. */
+  botId?: string;
+  /** The chat waiting for it, when no task is. */
+  conversationId?: number | null;
   kind: ApprovalKind;
   summary: string;
   reason?: string;
@@ -71,6 +80,8 @@ export class Approvals {
     private notifier: Notifier,
     private publicUrl: string,
     private clock: () => number = Date.now,
+    /** For the bot's name on notifications. */
+    private bots?: Bots,
   ) {
     this.key = this.signingKey();
     // Nothing waits on approvals from before a restart: their tasks were stopped.
@@ -113,13 +124,26 @@ export class Approvals {
     const row = this.db
       .query<
         { id: number },
-        [number | null, string, string, string, string, number | null, string, string]
+        [
+          string,
+          number | null,
+          number | null,
+          string,
+          string,
+          string,
+          string,
+          number | null,
+          string,
+          string,
+        ]
       >(
-        `INSERT INTO approvals (task_id, kind, summary, reason, sources, screenshot_step_id, created_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        `INSERT INTO approvals (bot_id, task_id, conversation_id, kind, summary, reason, sources, screenshot_step_id, created_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       )
       .get(
+        input.botId ?? HATBOT_ID,
         input.taskId,
+        input.conversationId ?? null,
         input.kind,
         input.summary,
         input.reason ?? "",
@@ -230,7 +254,8 @@ export class Approvals {
       clear: true,
     });
     // A long summary (a whole command) is cut in the title, so the message has it in full.
-    const title = `Approve: ${a.summary}`;
+    const who = a.botId === HATBOT_ID ? "" : `${this.bots?.nameOf(a.botId) ?? a.botId} · `;
+    const title = `${who}Approve: ${a.summary}`;
     const cut = title.length > 120;
     await this.notifier.send({
       title: cut ? `${title.slice(0, 119)}…` : title,

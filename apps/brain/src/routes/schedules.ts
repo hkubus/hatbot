@@ -11,6 +11,10 @@ const MAX_HOOK_BYTES = 256 * 1024;
 
 const id = (c: { req: { param: (k: string) => string | undefined } }) => Number(c.req.param("id"));
 
+/** Unset, or a bot that isn't deleted. */
+const knownBot = (c: { var: AppEnv["Variables"] }, botId: string | undefined) =>
+  botId === undefined || c.var.bots.active(botId) !== null;
+
 export const scheduleRoutes = new Hono<AppEnv>()
   .use("/schedules", requireAuth)
   .use("/schedules/*", requireAuth)
@@ -18,6 +22,7 @@ export const scheduleRoutes = new Hono<AppEnv>()
   .use("/triggers/*", requireAuth)
   .get("/schedules", (c) => c.json(c.var.schedules.list()))
   .post("/schedules", json(CreateSchedule), (c) => {
+    if (!knownBot(c, c.req.valid("json").botId)) return c.json({ error: "No such bot." }, 400);
     try {
       return c.json(c.var.schedules.create(c.req.valid("json"), "owner"), 201);
     } catch (err) {
@@ -30,6 +35,7 @@ export const scheduleRoutes = new Hono<AppEnv>()
     return s ? c.json(s) : c.json({ error: "not found" }, 404);
   })
   .patch("/schedules/:id", json(UpdateSchedule), (c) => {
+    if (!knownBot(c, c.req.valid("json").botId)) return c.json({ error: "No such bot." }, 400);
     try {
       const s = c.var.schedules.update(id(c), c.req.valid("json"));
       return s ? c.json(s) : c.json({ error: "not found" }, 404);
@@ -48,14 +54,16 @@ export const scheduleRoutes = new Hono<AppEnv>()
     return task ? c.json(task, 201) : c.json({ error: "Its last run is still going." }, 409);
   })
   .get("/triggers", (c) => c.json(c.var.triggers.list()))
-  .post("/triggers", json(CreateTrigger), (c) =>
-    c.json(c.var.triggers.create(c.req.valid("json")), 201),
-  )
+  .post("/triggers", json(CreateTrigger), (c) => {
+    if (!knownBot(c, c.req.valid("json").botId)) return c.json({ error: "No such bot." }, 400);
+    return c.json(c.var.triggers.create(c.req.valid("json")), 201);
+  })
   .get("/triggers/:id", (c) => {
     const t = c.var.triggers.get(id(c));
     return t ? c.json(t) : c.json({ error: "not found" }, 404);
   })
   .patch("/triggers/:id", json(UpdateTrigger), (c) => {
+    if (!knownBot(c, c.req.valid("json").botId)) return c.json({ error: "No such bot." }, 400);
     const t = c.var.triggers.update(id(c), c.req.valid("json"));
     return t ? c.json(t) : c.json({ error: "not found" }, 404);
   })

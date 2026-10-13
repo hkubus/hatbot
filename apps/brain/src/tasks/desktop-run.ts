@@ -15,6 +15,7 @@ import { DESKTOP_PROMPT } from "../agent/prompt";
 import { screenPage } from "../agent/screening";
 import { localStamp } from "../agent/thread";
 import { type Outcome, ownerNote } from "../approvals";
+import { promptFor } from "../bots";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import { destructive } from "../plugins/ssh/policy";
 import { BudgetError, priceOf } from "../spend";
@@ -291,7 +292,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     await tasks.lane.acquire(id, signal);
     holding = true;
     since = tasks.clock();
-    d.desktop.setActiveTask(id);
+    d.desktop.setActiveTask(id, task.botId);
     tasks.setStatus(id, "running");
   };
   const release = () => {
@@ -299,7 +300,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     activeMs += tasks.clock() - since;
     holding = false;
     tasks.lane.release(id);
-    d.desktop.setActiveTask(tasks.lane.holderId);
+    const holder = tasks.lane.holderId;
+    d.desktop.setActiveTask(holder, holder === null ? null : (tasks.get(holder)?.botId ?? null));
   };
   /** Waits for you with the screen released (PLAN.md §5.6), then queues for it again. */
   const away = async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -368,7 +370,12 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     reason?: string;
     screenshotStepId?: number | null;
   }): Promise<{ outcome: Outcome; note: string | null }> => {
-    const approval = d.approvals.create({ taskId: id, sources: [...sources], ...input });
+    const approval = d.approvals.create({
+      taskId: id,
+      botId: task.botId,
+      sources: [...sources],
+      ...input,
+    });
     tasks.addStep(id, {
       kind: "approval",
       name: "Asked for approval",
@@ -619,7 +626,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       url: lastUrl,
     });
     void d.notifier.send({
-      title: `Hatbot needs you: ${p.data.reason}`.slice(0, 120),
+      title: `${d.bots.nameOf(task.botId)} needs you: ${p.data.reason}`.slice(0, 120),
       message: `Task #${id}: ${task.title}. Open the live view, take over, and hand back when you're done.`,
       priority: 4,
       click: `${d.config.publicUrl}/tasks/${id}?live=1`,
@@ -629,6 +636,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     tasks.addStep(id, { kind: "takeover", name: "You handed back", detail: "", url: lastUrl });
     return textResult(call, await look("After takeover", "The owner handed the desktop back."));
   };
+
+  // Its bot's name; the desktop model needs no role or memory.
+  const system = promptFor(DESKTOP_PROMPT, { ...tasks.botOf(task), instructions: "" }, []);
 
   try {
     // The owner saved it (PLAN.md §5.4), so it's trusted like the task itself.
@@ -672,7 +682,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           model: task.model,
           max_tokens: 16000,
           betas: BETAS,
-          system: [{ type: "text", text: DESKTOP_PROMPT }],
+          system: [{ type: "text", text: system }],
           cache_control: { type: "ephemeral" },
           tools: [computer.toJSON(), browser.toJSON(), ...CUSTOM_TOOLS],
           thinking: UPDATES_MODELS.has(task.model)

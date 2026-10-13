@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Thread } from "../src/agent/thread";
+import { Chats } from "../src/agent/chats";
 import { CORE_TOOL_NAMES } from "../src/agent/tools";
 import { createApp } from "../src/app";
 import { Approvals } from "../src/approvals";
@@ -9,6 +9,7 @@ import { Archive } from "../src/archive";
 import { Attachments } from "../src/attachments";
 import { AuthService, FailureLimiter } from "../src/auth/service";
 import { stepOf, totpAt } from "../src/auth/totp";
+import { Bots } from "../src/bots";
 import { loadConfig } from "../src/config";
 import { openDb } from "../src/db";
 import { Desktop } from "../src/desktop/service";
@@ -86,11 +87,12 @@ export async function testApp(
     reserved: CORE_TOOL_NAMES,
   });
   await plugins.startAll();
-  const thread = new Thread({ db, memory, events, spend, settings, model, plugins, clock });
+  const bots = new Bots(db, events, clock);
+  const chats = new Chats({ db, memory, events, spend, settings, model, plugins, bots, clock });
   taskModel.onCreate ??= () => '{"suspected": false, "excerpt": ""}';
   const sent = new FakeNotifier();
   const notifier = new LinkingNotifier(sent, ORIGIN, () => settings.get().notificationsOpen);
-  const approvals = new Approvals(db, events, notifier, ORIGIN, clock);
+  const approvals = new Approvals(db, events, notifier, ORIGIN, clock, bots);
   const tasks = new Tasks({
     db,
     events,
@@ -102,7 +104,8 @@ export async function testApp(
     notifier,
     archive,
     attachments,
-    thread,
+    chats,
+    bots,
     config,
     memory,
     plugins,
@@ -124,7 +127,7 @@ export async function testApp(
   tempTeach.push(teach);
   const schedules = new Schedules(db, events, settings, tasks, clock);
   const triggers = new Triggers(db, events, settings, tasks, notifier, ORIGIN, clock);
-  thread.attach({ tasks, schedules, triggers, approvals, attachments, desktop: agent });
+  chats.attach({ tasks, schedules, triggers, approvals, attachments, desktop: agent });
   const updateDir = tempDir("hatbot-test-update-");
   const updates = new Updates(
     {
@@ -145,7 +148,8 @@ export async function testApp(
     settings,
     spend,
     memory,
-    thread,
+    chats,
+    bots,
     tasks,
     approvals,
     desktop,
@@ -187,7 +191,10 @@ export async function testApp(
     attachments,
     notifier: sent,
     spend,
-    thread,
+    /** Hatbot's own chat. */
+    thread: chats.hatbot(),
+    chats,
+    bots,
     schedules,
     triggers,
     plugins,

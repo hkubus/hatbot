@@ -9,6 +9,7 @@ export class Desktop {
     control: "hatbot",
     request: null,
     activeTaskId: null,
+    botId: null,
   };
   private paused = false;
   private waiters = new Set<() => void>();
@@ -44,8 +45,9 @@ export class Desktop {
     }
   }
 
-  setActiveTask(taskId: number | null) {
-    this.set({ activeTaskId: taskId });
+  /** The task using the screen, and its bot. */
+  setActiveTask(taskId: number | null, botId: string | null = null) {
+    this.set({ activeTaskId: taskId, botId: taskId === null ? null : botId });
   }
 
   async takeover() {

@@ -1,8 +1,9 @@
 // Built-in tools for the chat thread (PLAN.md §5.5): memory, history search, desktop tasks, schedules.
 import type Anthropic from "@anthropic-ai/sdk";
-import { describeCron, type Schedule, SKILL_NAME } from "@hatbot/shared";
+import { type Bot, describeCron, HATBOT_ID, type Schedule, SKILL_NAME } from "@hatbot/shared";
 import { z } from "zod";
 import type { Attachments } from "../attachments";
+import { type Bots, botFolder } from "../bots";
 import type { Db } from "../db";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import type { EventBus } from "../events";
@@ -18,6 +19,11 @@ export type ToolContext = {
   db: Db;
   memory: MemoryStore;
   events: EventBus;
+  /** The bot calling: whose memory commits these are, and whose tasks and schedules it starts. */
+  bot?: Bot;
+  bots?: Bots;
+  /** The chat the reply is in: where tasks it starts report. */
+  conversationId?: number;
   tasks?: Tasks;
   schedules?: Schedules;
   triggers?: Triggers;
@@ -102,6 +108,24 @@ const local = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) : "–";
 const scheduleLine = (s: Schedule) =>
   `#${s.id} "${s.name}": ${s.cron ? `${describeCron(s.cron)} (cron ${s.cron})` : `once, ${local(s.runAt)}`}; ${s.enabled ? `next run ${local(s.nextRunAt)}` : "off"}${s.lastRunAt ? `; last ran ${local(s.lastRunAt)}${s.lastTaskId ? ` (task #${s.lastTaskId})` : ""}` : ""}\n  Does: ${s.prompt}`;
+/** "Runs as Coder", for a schedule or trigger another bot runs. */
+const whose = (botId: string, bot?: Bot, bots?: Bots) =>
+  bots && botId !== (bot?.id ?? HATBOT_ID) ? `\n  Runs as: ${bots.nameOf(botId)}` : "";
+
+/**
+ * Who a memory change is by: the bot calling. Another bot's folder (bots/<id>/) is that bot's own, so
+ * it's refused.
+ */
+function authorOf(ctx: ToolContext, path: string) {
+  const id = ctx.bot?.id ?? HATBOT_ID;
+  const theirs = /^bots\/([^/]+)\//.exec(path.replace(/^\.\//, ""))?.[1];
+  if (theirs && `bots/${theirs}` !== botFolder(id))
+    throw new MemoryError(
+      `${path} is in ${ctx.bots?.nameOf(theirs) ?? theirs}'s own memory folder; leave it to them.`,
+    );
+  return ctx.bots?.author(id) ?? HATBOT;
+}
+
 /** Why a task the chat starts is tainted, from what the chat had read. */
 const chatTaint = (by: string | null | undefined) => by && `The chat had read: ${by}`;
 
@@ -149,10 +173,11 @@ export const TOOLS = [
       content: z.string().describe("The complete new file content"),
       reason: z.string().describe("Short commit message saying what changed and why"),
     }),
-    run: async ({ path, content, reason }, { memory, events }) => {
-      const sha = await memory.write(path, content, HATBOT, reason);
+    run: async ({ path, content, reason }, ctx) => {
+      const author = authorOf(ctx, path);
+      const sha = await ctx.memory.write(path, content, author, reason);
       if (!sha) return "No change: the file already had this content.";
-      events.emit({ type: "memory.committed", sha, message: reason, author: HATBOT.name });
+      ctx.events.emit({ type: "memory.committed", sha, message: reason, author: author.name });
       return `Saved ${path} (commit ${sha.slice(0, 7)}).`;
     },
   }),
@@ -160,9 +185,11 @@ export const TOOLS = [
     name: "memory_delete",
     description: "Delete a file from your memory repo. It stays in git history.",
     schema: z.object({ path: z.string(), reason: z.string().describe("Short commit message") }),
-    run: async ({ path, reason }, { memory, events }) => {
-      const sha = await memory.delete(path, HATBOT, reason);
-      if (sha) events.emit({ type: "memory.committed", sha, message: reason, author: HATBOT.name });
+    run: async ({ path, reason }, ctx) => {
+      const author = authorOf(ctx, path);
+      const sha = await ctx.memory.delete(path, author, reason);
+      if (sha)
+        ctx.events.emit({ type: "memory.committed", sha, message: reason, author: author.name });
       return `Deleted ${path}.`;
     },
   }),
@@ -183,18 +210,20 @@ export const TOOLS = [
       after: z.string().optional().describe("Only messages on or after this date, YYYY-MM-DD"),
       before: z.string().optional().describe("Only messages before this date, YYYY-MM-DD"),
     }),
-    run: async ({ query, after, before }, { db, episodeId }) => {
+    run: async ({ query, after, before }, { db, episodeId, bot, bots }) => {
       const terms = query.match(/[\p{L}\p{N}_]+/gu) ?? [];
       if (!terms.length) return "No searchable words in the query.";
-      // Not the conversation you're in: the message asking would otherwise be the best match.
+      // Not the conversation you're in: the message asking would otherwise be the best match. Only
+      // the chats this bot is in.
       const rows = db
         .query<
-          { role: string; text: string; created_at: string },
-          [string, string, string, number]
+          { role: string; bot_id: string | null; text: string; created_at: string },
+          [string, string, string, number, string]
         >(
-          `SELECT m.role, m.text, m.created_at FROM messages_fts f JOIN messages m ON m.id = f.rowid
+          `SELECT m.role, m.bot_id, m.text, m.created_at FROM messages_fts f JOIN messages m ON m.id = f.rowid
            WHERE messages_fts MATCH ? AND m.created_at >= ? AND m.created_at < ?
            AND m.episode_id IS NOT ?
+           AND m.conversation_id IN (SELECT conversation_id FROM conversation_bots WHERE bot_id = ?)
            ORDER BY rank LIMIT 20`,
         )
         .all(
@@ -202,12 +231,13 @@ export const TOOLS = [
           after ?? "0000",
           before ?? "9999",
           episodeId ?? -1,
+          bot?.id ?? HATBOT_ID,
         );
       if (!rows.length) return "No matches.";
       return rows
         .map(
           (r) =>
-            `[${r.created_at.slice(0, 16).replace("T", " ")}] ${r.role}: ${r.text.slice(0, 1500)}`,
+            `[${r.created_at.slice(0, 16).replace("T", " ")}] ${r.role === "user" ? "owner" : (bots?.nameOf(r.bot_id ?? HATBOT_ID) ?? "assistant")}: ${r.text.slice(0, 1500)}`,
         )
         .join("\n\n");
     },
@@ -237,7 +267,10 @@ export const TOOLS = [
     description:
       "Start a task on your Linux desktop (Chromium, plus a shell for commands and experiments), for anything that needs a browser or a sandbox to try things in: booking, buying, filling in forms, pages that need a login, running a script. To look something up, web_search and web_fetch are quicker. It runs in the background on a separate model and its progress and result show under your reply; the owner can watch it live and approves consequential steps. You're told how it ended at the start of a later turn. Give it everything it needs to know: it can't see this conversation.",
     schema: DesktopTaskInput,
-    run: async ({ title, goal, success_criteria, skill }, { tasks, messageId, memory }) => {
+    run: async (
+      { title, goal, success_criteria, skill },
+      { tasks, messageId, memory, bot, conversationId },
+    ) => {
       if (!tasks) return "Desktop tasks aren't available.";
       const missing = await missingSkill(memory, skill);
       if (missing) return missing;
@@ -247,6 +280,8 @@ export const TOOLS = [
         successCriteria: success_criteria,
         skill,
         origin: "chat",
+        botId: bot?.id,
+        conversationId,
         message: messageId,
       });
       return `Started task #${task.id}. It's running in the background; the owner sees its progress and result under this reply. Don't wait for it.`;
@@ -257,12 +292,17 @@ export const TOOLS = [
     description:
       "Start a background task for longer work: several steps that depend on each other, anything that takes more than a minute or two, writing code, or work that should go on after this reply. It gets your memory, every tool your plugins offer and the desktop, and it asks the owner before risky steps. Its progress and result show under your reply; you're told how it ended at the start of a later turn. It can't see this conversation, so give it everything it needs. For a command or two, use the plugin tools yourself instead.",
     schema: RunTaskInput,
-    run: async ({ title, goal, effort }, { tasks, messageId, tainted, ownerSaid }) => {
+    run: async (
+      { title, goal, effort },
+      { tasks, messageId, tainted, ownerSaid, bot, conversationId },
+    ) => {
       if (!tasks) return "Tasks aren't available.";
       const task = tasks.createBackgroundTask({
         title,
         goal,
         origin: "chat",
+        botId: bot?.id,
+        conversationId,
         effort,
         message: messageId,
         taintedBy: chatTaint(tainted?.()),
@@ -305,10 +345,14 @@ export const TOOLS = [
         ),
       ...scheduleWhen,
     }),
-    run: async ({ name, prompt, cron, at }, { schedules, scheduleCard, tainted }) => {
+    run: async ({ name, prompt, cron, at }, { schedules, scheduleCard, tainted, bot }) => {
       if (!schedules) return "Schedules aren't available.";
       if (Boolean(cron) === Boolean(at)) return "Give either cron or at.";
-      const s = schedules.create({ name, prompt, cron, at }, "chat", tainted?.() ?? null);
+      const s = schedules.create(
+        { name, prompt, cron, at, botId: bot?.id ?? HATBOT_ID },
+        "chat",
+        tainted?.() ?? null,
+      );
       scheduleCard?.(s);
       return `Created schedule ${scheduleLine(s)}`;
     },
@@ -317,8 +361,11 @@ export const TOOLS = [
     name: "schedule_list",
     description: "List every schedule with its timing, next run and what it does.",
     schema: z.object({}),
-    run: async (_, { schedules }) =>
-      schedules?.list().map(scheduleLine).join("\n") || "No schedules.",
+    run: async (_, { schedules, bot, bots }) =>
+      schedules
+        ?.list()
+        .map((s) => scheduleLine(s) + whose(s.botId, bot, bots))
+        .join("\n") || "No schedules.",
   }),
   def({
     name: "schedule_update",
@@ -349,12 +396,12 @@ export const TOOLS = [
     description:
       "List the webhooks and Uptime Kuma alert hooks that start background tasks, with what each run does. The owner creates them in Schedules & Triggers.",
     schema: z.object({}),
-    run: async (_, { triggers }) =>
+    run: async (_, { triggers, bot, bots }) =>
       triggers
         ?.list()
         .map(
           (t) =>
-            `#${t.id} "${t.name}" (${t.kind === "kuma" ? "Uptime Kuma" : "webhook"}${t.trusted ? ", trusted" : ""}${t.enabled ? "" : ", off"}${t.confirmChecks ? `, waits for ${t.confirmChecks} more failed check${t.confirmChecks > 1 ? "s" : ""}` : ""})${t.lastFiredAt ? `; last event ${local(t.lastFiredAt)}` : ""}\n  Does: ${t.prompt}`,
+            `#${t.id} "${t.name}" (${t.kind === "kuma" ? "Uptime Kuma" : "webhook"}${t.trusted ? ", trusted" : ""}${t.enabled ? "" : ", off"}${t.confirmChecks ? `, waits for ${t.confirmChecks} more failed check${t.confirmChecks > 1 ? "s" : ""}` : ""})${t.lastFiredAt ? `; last event ${local(t.lastFiredAt)}` : ""}\n  Does: ${t.prompt}${whose(t.botId, bot, bots)}`,
         )
         .join("\n") || "No triggers.",
   }),

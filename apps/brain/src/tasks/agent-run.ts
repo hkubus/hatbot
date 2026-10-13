@@ -7,7 +7,7 @@ import { z } from "zod";
 import { modelErrorText } from "../agent/model";
 import { AGENT_PROMPT } from "../agent/prompt";
 import { mayReview, safeToRun } from "../agent/review";
-import { localStamp } from "../agent/thread";
+import { localStamp, memoryIndex } from "../agent/thread";
 import {
   DesktopTaskInput,
   inBatches,
@@ -20,6 +20,7 @@ import {
   webReads,
 } from "../agent/tools";
 import { type Outcome, ownerNote } from "../approvals";
+import { promptFor } from "../bots";
 import type { PluginTool, Verdict } from "../plugins/plugin";
 import { describeCall, runPluginTool, untrustedDefinitions, verdictFor } from "../plugins/registry";
 import { BudgetError, priceOf } from "../spend";
@@ -119,7 +120,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const { d } = tasks;
   const task = tasks.get(id);
   if (!task) return;
-  const ctx = tasks.toolContext();
+  const ctx = tasks.toolContext(task);
+  const bot = tasks.botOf(task);
   const messages: Anthropic.Beta.BetaMessageParam[] = [];
   const children = new Set<number>();
   /** Untrusted things the task has read, for approvals (PLAN.md §6.2). */
@@ -127,10 +129,18 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   let slot = false;
   let notified = 0;
   // Fixed for the whole run: the tool list is part of the prompt cache.
-  const pluginTools = new Map<string, PluginTool>(d.plugins.tools().map((t) => [t.name, t]));
+  // A bot gets only the plugins it may use.
+  const pluginTools = new Map<string, PluginTool>(
+    d.plugins.tools(bot.plugins).map((t) => [t.name, t]),
+  );
   const tools = [...CORE_TOOLS, ...[...pluginTools.values()].map(toolParam), ...WEB_TOOLS];
-  const guidance = d.plugins.guidance();
-  const system = guidance ? `${AGENT_PROMPT}\n\nYour plugins\n\n${guidance}` : AGENT_PROMPT;
+  const guidance = d.plugins.guidance(bot.plugins);
+  const prompt = promptFor(
+    AGENT_PROMPT,
+    bot,
+    d.bots.list().filter((b) => b.id !== bot.id),
+  );
+  const system = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
   const taint = (source: string) => {
     sources.add(source);
     if (task.tainted) return;
@@ -195,7 +205,12 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
    * cancelled approval, ends the task.
    */
   const askApproval = async (input: { kind: ApprovalKind; summary: string; reason: string }) => {
-    const approval = d.approvals.create({ taskId: id, sources: [...sources], ...input });
+    const approval = d.approvals.create({
+      taskId: id,
+      botId: bot.id,
+      sources: [...sources],
+      ...input,
+    });
     tasks.addStep(id, {
       kind: "approval",
       name: "Asked for approval",
@@ -381,9 +396,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     if (task.tainted) sources.add(task.taintedBy ?? "What started it");
     const foreign = untrustedDefinitions([...pluginTools.values()]);
     if (foreign) taint(foreign);
-    const index = (await d.memory.exists("INDEX.md"))
-      ? await d.memory.read("INDEX.md")
-      : "(no INDEX.md yet)";
+    const index = await memoryIndex(d.memory, bot.id);
     const skills = d.skills.prompt();
     const source = task.source ?? "";
     const payload = task.payload
@@ -392,7 +405,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     record("user", [
       {
         type: "text",
-        text: `<memory_index>\n${index.trim()}\n</memory_index>\n\n${skills ? `${skills}\n\n` : ""}<task>\n${task.goal}\n</task>${payload}\n\nStarted by ${STARTED_BY[task.origin](source)} at ${localStamp(new Date(tasks.clock()))}, the owner's local time.`,
+        text: `${index}\n\n${skills ? `${skills}\n\n` : ""}<task>\n${task.goal}\n</task>${payload}\n\nStarted by ${STARTED_BY[task.origin](source)} at ${localStamp(new Date(tasks.clock()))}, the owner's local time.`,
       },
     ]);
 

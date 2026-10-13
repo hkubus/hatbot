@@ -1,0 +1,52 @@
+import { CreateBot, UpdateBot } from "@hatbot/shared";
+import { Hono } from "hono";
+import { z } from "zod";
+import { requireAuth } from "../auth/middleware";
+import { BotError } from "../bots";
+import type { AppEnv } from "../context";
+import { json, query } from "./util";
+
+export const botRoutes = new Hono<AppEnv>()
+  .use("/bots", requireAuth)
+  .use("/bots/*", requireAuth)
+  .use("/spend/by-bot", requireAuth)
+  .get("/bots", (c) => c.json(c.var.bots.list()))
+  .post("/bots", json(CreateBot), (c) => {
+    try {
+      const bot = c.var.bots.create(c.req.valid("json"));
+      // Its own chat, so it's in the list straight away.
+      c.var.chats.changed(c.var.chats.direct(bot.id).conversationId);
+      return c.json(bot, 201);
+    } catch (err) {
+      if (err instanceof BotError) return c.json({ error: err.message }, 400);
+      throw err;
+    }
+  })
+  .get("/bots/:id", (c) => {
+    const bot = c.var.bots.active(c.req.param("id"));
+    return bot ? c.json(bot) : c.json({ error: "not found" }, 404);
+  })
+  .patch("/bots/:id", json(UpdateBot), (c) => {
+    try {
+      const bot = c.var.bots.update(c.req.param("id"), c.req.valid("json"));
+      return bot ? c.json(bot) : c.json({ error: "not found" }, 404);
+    } catch (err) {
+      if (err instanceof BotError) return c.json({ error: err.message }, 400);
+      throw err;
+    }
+  })
+  .delete("/bots/:id", (c) => {
+    try {
+      return c.var.bots.delete(c.req.param("id"))
+        ? c.json({ ok: true })
+        : c.json({ error: "not found" }, 404);
+    } catch (err) {
+      if (err instanceof BotError) return c.json({ error: err.message }, 400);
+      throw err;
+    }
+  })
+  .get(
+    "/spend/by-bot",
+    query(z.object({ days: z.coerce.number().int().min(1).max(366).default(30) })),
+    (c) => c.json(c.var.spend.byBot(c.req.valid("query").days)),
+  );
