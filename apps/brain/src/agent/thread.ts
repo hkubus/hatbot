@@ -587,11 +587,11 @@ export class Thread {
         console.log(`episode ${last.id}: the prompt or tools changed; starting a new episode`);
     }
     if (last && !last.summarized) {
-      try {
-        await this.summarize(last.id);
-      } catch (err) {
-        console.error("thread summary failed; keeping the previous one", err);
-      }
+      const summary = this.summarize(last.id).catch((err) =>
+        console.error("thread summary failed; keeping the previous one", err),
+      );
+      // /new opens right away; the first reply in it waits for the summary instead.
+      if (!fresh) await summary;
     }
     const row = this.d.db
       .query<{ id: number }, [string, string, string, number]>(
@@ -756,6 +756,8 @@ export class Thread {
 
     const userBlocks: BlockParam[] = [];
     if (episode.isNew) {
+      // The summary a /new left running is part of the context.
+      await Promise.allSettled(this.summarizing.values());
       userBlocks.push({
         type: "text",
         text: await this.episodeContext(user.id, episode.id, episode.fresh),
