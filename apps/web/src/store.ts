@@ -17,6 +17,8 @@ import { useSyncExternalStore } from "react";
 import { ApiError, api } from "./api";
 
 type State = {
+  /** The incognito conversation is showing instead of the thread. */
+  incognito: boolean;
   messages: ThreadMessage[];
   /** The conversations the loaded messages belong to, for their recaps. */
   episodes: Record<number, Episode>;
@@ -47,7 +49,10 @@ type State = {
   teach: Record<number, TeachSession>;
 };
 
+const INCOGNITO_KEY = "hatbot:incognito";
+
 let state: State = {
+  incognito: sessionStorage.getItem(INCOGNITO_KEY) === "1",
   messages: [],
   episodes: {},
   progress: {},
@@ -102,27 +107,49 @@ async function loadEpisodes(messages: ThreadMessage[]) {
   set({ episodes: { ...state.episodes, ...Object.fromEntries(list.map((e) => [e.id, e])) } });
 }
 
+const page = (before?: number) =>
+  `/thread/messages?limit=${PAGE}${before ? `&before=${before}` : ""}${state.incognito ? "&incognito=1" : ""}`;
+
 export async function loadThread() {
-  const messages = await api<ThreadMessage[]>(`/thread/messages?limit=${PAGE}`);
+  const incognito = state.incognito;
+  const messages = await api<ThreadMessage[]>(page());
   await loadEpisodes(messages).catch(() => {});
+  // Switched while it loaded: the other conversation's load wins.
+  if (incognito !== state.incognito) return;
   set({ messages, hasEarlier: messages.length === PAGE });
 }
 
 export async function loadEarlier() {
   const first = state.messages[0];
   if (!first) return;
-  const older = await api<ThreadMessage[]>(`/thread/messages?limit=${PAGE}&before=${first.id}`);
+  const older = await api<ThreadMessage[]>(page(first.id));
   await loadEpisodes(older).catch(() => {});
   set({ messages: [...older, ...state.messages], hasEarlier: older.length === PAGE });
 }
 
 export async function sendMessage(text: string, attachmentIds: number[] = []) {
-  const m = await api<ThreadMessage>("/thread/messages", { body: { text, attachmentIds } });
-  set({ messages: upsert(state.messages, m) });
+  const m = await api<ThreadMessage>("/thread/messages", {
+    body: { text, attachmentIds, incognito: state.incognito },
+  });
+  if (!!m.incognito === state.incognito) set({ messages: upsert(state.messages, m) });
 }
 
+/** Into incognito, or out of it, which deletes its conversation. */
+export async function setIncognito(on: boolean) {
+  if (on === state.incognito) return;
+  if (on) sessionStorage.setItem(INCOGNITO_KEY, "1");
+  else sessionStorage.removeItem(INCOGNITO_KEY);
+  set({ incognito: on, messages: [], hasEarlier: false });
+  // The chat loads the conversation it switched to.
+  if (!on) await api("/thread/incognito", { method: "DELETE" }).catch(() => {});
+}
+
+/** Messages in an incognito conversation: they're never unread. */
+const incognitoIds = new Set<number>();
 const addUnread = (id: number) =>
-  state.unread.includes(id) ? state.unread : [...state.unread, id].sort((a, b) => a - b);
+  state.unread.includes(id) || incognitoIds.has(id)
+    ? state.unread
+    : [...state.unread, id].sort((a, b) => a - b);
 
 /** You've seen these messages: they stop counting as unread here and on your other devices. */
 export function markSeen(ids: number[]) {
@@ -317,8 +344,13 @@ export const onToast = (fn: Toast) => {
 function apply(e: HatbotEvent) {
   switch (e.type) {
     case "message.created":
+      if (e.message.incognito) incognitoIds.add(e.message.id);
       return set({
-        messages: upsert(state.messages, e.message),
+        // Only the conversation that's showing.
+        messages:
+          !!e.message.incognito === state.incognito
+            ? upsert(state.messages, e.message)
+            : state.messages,
         unread:
           // What came of your own command arrives already seen.
           e.message.role === "assistant" && e.message.status !== "streaming" && !e.message.seenAt
@@ -335,6 +367,11 @@ function apply(e: HatbotEvent) {
         messages: state.messages.map((m) =>
           e.ids.includes(m.id) ? { ...m, seenAt: e.seenAt } : m,
         ),
+        unread: state.unread.filter((id) => !e.ids.includes(id)),
+      });
+    case "message.deleted":
+      return set({
+        messages: state.messages.filter((m) => !e.ids.includes(m.id)),
         unread: state.unread.filter((id) => !e.ids.includes(id)),
       });
     case "message.delta":

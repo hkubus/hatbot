@@ -1,5 +1,5 @@
 // The archive on the HDD mount (PLAN.md §7.3): screenshots, kept forever.
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 
 export class Archive {
@@ -50,5 +50,11 @@ export class Archive {
     const abs = resolve(root, rel);
     if (!abs.startsWith(root + sep)) return null;
     return Bun.file(abs);
+  }
+
+  /** Deletes a file; one that's already gone is fine. */
+  async remove(rel: string) {
+    const f = this.file(rel);
+    if (f?.name) await rm(f.name, { force: true });
   }
 }

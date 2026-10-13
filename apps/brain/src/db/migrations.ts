@@ -294,4 +294,22 @@ export const migrations: string[] = [
   /* 18: a conversation you started with /new carries nothing over from before it */ `
   ALTER TABLE episodes ADD COLUMN fresh INTEGER NOT NULL DEFAULT 0;
   `,
+  /* 19: incognito: a conversation that sees no history and is deleted when it ends */ `
+  ALTER TABLE episodes ADD COLUMN incognito INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE messages ADD COLUMN incognito INTEGER NOT NULL DEFAULT 0;
+  -- Kept out of the search index, so nothing of it is left there.
+  DROP TRIGGER messages_ai;
+  DROP TRIGGER messages_ad;
+  DROP TRIGGER messages_au;
+  CREATE TRIGGER messages_ai AFTER INSERT ON messages WHEN new.incognito = 0 BEGIN
+    INSERT INTO messages_fts (rowid, text) VALUES (new.id, new.text);
+  END;
+  CREATE TRIGGER messages_ad AFTER DELETE ON messages WHEN old.incognito = 0 BEGIN
+    INSERT INTO messages_fts (messages_fts, rowid, text) VALUES ('delete', old.id, old.text);
+  END;
+  CREATE TRIGGER messages_au AFTER UPDATE OF text ON messages WHEN new.incognito = 0 BEGIN
+    INSERT INTO messages_fts (messages_fts, rowid, text) VALUES ('delete', old.id, old.text);
+    INSERT INTO messages_fts (rowid, text) VALUES (new.id, new.text);
+  END;
+  `,
 ];
