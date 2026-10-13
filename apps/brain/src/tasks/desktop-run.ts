@@ -294,6 +294,16 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     since = tasks.clock();
     d.desktop.setActiveTask(id, task.botId);
     tasks.setStatus(id, "running");
+    // Its bot's logins, not another's. Another task may have switched it while this one was away.
+    try {
+      await d.desktop.agent.useProfile(task.botId);
+    } catch (err) {
+      release();
+      throw new Stop(
+        "failed",
+        `Couldn't open ${d.bots.nameOf(task.botId)}'s browser profile: ${(err as Error).message}`,
+      );
+    }
   };
   const release = () => {
     if (!holding) return;

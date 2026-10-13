@@ -12,6 +12,7 @@ import type {
 import { Browser, BrowserError } from "./browser";
 import { context, inspect } from "./cdp";
 import { browserKey } from "./keys";
+import { useProfile } from "./profile";
 import { SHELL_SOCKET } from "./shell";
 import { ActionError, act, LiveCapture, screenSize, screenshot, xdotool, zoom } from "./x11";
 
@@ -192,6 +193,12 @@ const server = Bun.serve<{ off?: () => void }>({
           if (locked) return json({ error: "The owner has control of the desktop." }, 423);
           const { name, input } = (await req.json()) as BrowserCall;
           return json(await serial(() => browser.call(name, input ?? {})));
+        }
+        case "POST /browser/profile": {
+          // Before a task's first look at the screen: no input is going on.
+          if (locked) return json({ error: "The owner has control of the desktop." }, 423);
+          const { id } = (await req.json()) as { id: string };
+          return json({ profile: await serial(() => useProfile(id, stateDir ?? null, browser)) });
         }
         case "GET /browser/state":
           return json(await serial(() => browser.state()));

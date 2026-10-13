@@ -313,6 +313,19 @@ export class Browser {
     this.cdp.on((method, p, sessionId) => this.event(method, p, sessionId));
   }
 
+  /** Closes Chromium, every window and tab. hatbot-chromium.service opens it again. */
+  async quit() {
+    try {
+      await this.cdp.ready();
+      await this.cdp.send("Browser.close", {}, undefined, 5000);
+    } catch {
+      // Closing drops the connection, sometimes before the answer.
+    }
+    this.targets.clear();
+    this.tabIds.clear();
+    this.active = null;
+  }
+
   /** A finished download's file, by the id the model saw. */
   download(id: string): { name: string; path: string } | null {
     return this.saved.get(id) ?? null;

@@ -99,6 +99,51 @@ MemoryMax=1G
 WantedBy=multi-user.target
 EOF
 
+# Chromium, on the profile desktop-agent last asked for (PLAN.md §14): Hatbot's is chrome-profile, each
+# other bot's chrome-profiles/<id>. desktop-agent closes it to switch; it comes straight back. Chromium
+# needs a non-default profile dir for remote debugging; CDP stays on localhost for desktop-agent.
+cat >/usr/local/bin/hatbot-chromium <<'EOF'
+#!/bin/sh
+want=$(cat /var/lib/hatbot-desktop-agent/browser-profile 2>/dev/null)
+case $want in
+  [a-z]*) case $want in *[!a-z0-9-]*) want=hatbot ;; esac ;;
+  *) want=hatbot ;;
+esac
+if [ "$want" = hatbot ]; then dir=/home/desk/chrome-profile; else dir=/home/desk/chrome-profiles/$want; fi
+mkdir -p -m 700 "$dir"
+printf '%s\n' "$want" >/run/hatbot-chromium/profile
+exec chromium --user-data-dir="$dir" --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 \
+  --no-first-run --no-default-browser-check --password-store=basic --start-maximized
+EOF
+chmod 755 /usr/local/bin/hatbot-chromium
+cat >/etc/systemd/system/hatbot-chromium.service <<'EOF'
+[Unit]
+Description=Hatbot desktop: Chromium, on the profile of the bot using it
+Requires=hatbot-xvnc.service
+After=hatbot-session.service
+
+[Service]
+User=desk
+Environment=DISPLAY=:1
+RuntimeDirectory=hatbot-chromium
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+WorkingDirectory=/home/desk
+ExecStart=/usr/local/bin/hatbot-chromium
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+install -d -o desk -g desk -m 700 /home/desk/chrome-profiles
+# Before the service, the XFCE session started Chromium itself.
+if [[ -e /home/desk/.config/autostart/hatbot-chromium.desktop ]]; then
+  rm -f /home/desk/.config/autostart/hatbot-chromium.desktop
+  pkill -u desk -f -- '--user-data-dir=/home/desk/chrome-profile' || true
+  sleep 2
+fi
+
 # Updates from the brain. Only deploy.sh runs install the installer, so an update can't change it.
 if [[ $(realpath "$0") != "$SELF" ]]; then
   install -m 755 "$0" "$SELF.new"
@@ -126,6 +171,7 @@ EOF
 
 systemctl daemon-reload
 systemctl enable -q hatbot-desktop-agent hatbot-desktop-shell
+systemctl enable -q --now hatbot-chromium
 systemctl enable -q --now hatbot-desktop-agent-update.path
 systemctl restart hatbot-desktop-shell hatbot-desktop-agent
 

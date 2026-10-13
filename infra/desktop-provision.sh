@@ -35,21 +35,14 @@ fi
 say "desk user"
 id desk >/dev/null 2>&1 || useradd --create-home --shell /bin/bash desk
 home=/home/desk
-install -d -o desk -g desk -m 700 "$home/.vnc" "$home/.config" "$home/.config/autostart" "$home/chrome-profile"
+install -d -o desk -g desk -m 700 "$home/.vnc" "$home/.config" "$home/.config/autostart" "$home/chrome-profile" "$home/chrome-profiles"
 printf '%s\n' "$VNC_PASSWORD" | vncpasswd -f >"$home/.vnc/passwd"
 chown desk:desk "$home/.vnc/passwd"
 chmod 600 "$home/.vnc/passwd"
 chmod 750 /etc/hatbot-desktop
 chmod 600 /etc/hatbot-desktop/secrets.env
 
-# Chromium needs a non-default profile dir for remote debugging. CDP stays on localhost for desktop-agent.
-cat >"$home/.config/autostart/hatbot-chromium.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Chromium (Hatbot)
-Exec=chromium --user-data-dir=/home/desk/chrome-profile --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 --no-first-run --no-default-browser-check --password-store=basic --start-maximized
-X-GNOME-Autostart-enabled=true
-EOF
+# Chromium itself is hatbot-chromium.service, which desktop-deploy.sh installs: a profile per bot.
 cat >"$home/.config/autostart/hatbot-no-blanking.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application

@@ -257,3 +257,23 @@ test("alone, Hatbot isn't offered ask_bot", async () => {
   const names = t.model.requests[0]?.tools?.map((x) => ("name" in x ? x.name : ""));
   expect(names).not.toContain("ask_bot");
 });
+
+test("a desktop task opens its bot's browser profile", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Looked.", notify: false })] },
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Looked.", notify: false })] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  chef(t);
+  for (const botId of ["chef", "hatbot"]) {
+    t.tasks.createDesktopTask({
+      title: "Look",
+      goal: "Look",
+      successCriteria: "",
+      origin: "chat",
+      botId,
+    });
+    await t.tasks.idle();
+  }
+  expect(t.agent.profiles).toEqual(["chef", "hatbot"]);
+});
