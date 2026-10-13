@@ -66,6 +66,13 @@ These came out of the M4 security review.
 - `/new` starts a `fresh` episode (migration 18): no recent messages and no taint carried over, only the running summary. `/task` runs your words as an untainted background task. `/remember` appends to the Notes section of INDEX.md, as the owner. The model hears about commands in `<owner_commands>` with your next message.
 - **To set up:** redeploy the brain (migration 18). The web composer was checked in headless Chromium; the iOS views were only syntax-checked.
 
+## Incognito (built 2026-10-13, not tried live)
+- The chat toolbar's incognito button (web and iOS) switches to a conversation apart from the thread. `incognito: true` on `POST /thread/messages`; `GET /thread/messages?incognito=1` lists it; `DELETE /thread/incognito` ends it. The owner chose these rules:
+  - **No history:** no summary, no earlier messages, no `search_history`, no task news. It isn't summarized, unread or in the search index.
+  - **Memory read-only, lookups only:** memory reads, schedule and trigger lists, plugins' read tools, web search, `ask_opus`. No writes, tasks or schedules; `/task` and `/remember` answer that they don't work there.
+  - **Deleted** (messages, files, model turns) when you leave, after 30 idle minutes, on `/new`, or when the brain restarts. Spend stays in the ledger without it. `secure_delete` and a WAL checkpoint keep the text out of the database files; a PBS backup taken while one is open still has it.
+- **To set up:** redeploy the brain (migration 19). The web view was checked in headless Chromium; the iOS views were only syntax-checked.
+
 ## 4. Later (not v1, don't start without the owner)
 - **GitHub plugin**, next to Forgejo. Same shape as `apps/brain/src/plugins/forgejo/`.
 - **After v1** (PLAN §11): email via Proton Bridge, more than one agent, a heartbeat that acts on its own, an open-source release.
