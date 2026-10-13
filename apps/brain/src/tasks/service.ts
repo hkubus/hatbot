@@ -518,7 +518,7 @@ export class Tasks {
       .run(text, id);
     // Shown under the reply that started it: its result shows there too.
     const underReply = this.d.db
-      .query("SELECT 1 FROM messages WHERE kind = 'text' AND task_id = ?")
+      .query("SELECT 1 FROM messages WHERE kind IN ('text', 'command') AND task_id = ?")
       .get(id);
     if (card.changes || underReply) this.d.thread.markEdited(id);
     else if (tell && task.lane === "background")
@@ -550,7 +550,7 @@ export class Tasks {
     const rows = this.d.db
       .query<Row, []>(
         `${SELECT} WHERE t.reported_at IS NULL AND t.status IN ('done', 'failed', 'cancelled')
-         AND EXISTS (SELECT 1 FROM messages m WHERE m.kind IN ('task', 'text') AND m.task_id = t.id) ORDER BY t.id`,
+         AND EXISTS (SELECT 1 FROM messages m WHERE m.kind IN ('task', 'text', 'command') AND m.task_id = t.id) ORDER BY t.id`,
       )
       .all();
     if (rows.length)

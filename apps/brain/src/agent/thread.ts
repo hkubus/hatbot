@@ -1,14 +1,21 @@
 // The single chat thread, run as episodes (PLAN.md §5.2, §5.3).
 import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
-import { describeCron, type Episode, type Schedule, type ThreadMessage } from "@hatbot/shared";
+import {
+  type ChatCommand,
+  describeCron,
+  type Episode,
+  parseCommand,
+  type Schedule,
+  type ThreadMessage,
+} from "@hatbot/shared";
 import { z } from "zod";
 import { type Approvals, ownerNote } from "../approvals";
 import type { Attachments } from "../attachments";
 import type { Db } from "../db";
 import type { DesktopAgent } from "../desktop/client";
 import type { EventBus } from "../events";
-import type { MemoryStore } from "../memory/store";
+import { MemoryError, type MemoryStore } from "../memory/store";
 import type { PluginTool } from "../plugins/plugin";
 import {
   describeCall,
@@ -44,6 +51,8 @@ const MAX_STEPS = 25;
 const MAX_TURN_MS = 10 * 60_000;
 /** Changes one reply makes itself; past this, the work belongs in a background task (run_task). */
 const MAX_CHAT_CHANGES = 2;
+/** Why a reply was cut off: /stop, rather than Pause all. */
+const STOPPED = "stopped";
 const MESSAGE_COLUMNS =
   "id, role, kind, text, status, created_at AS createdAt, task_id AS taskId, schedule_id AS scheduleId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt";
 const EPISODE_COLUMNS = "id, started_at AS startedAt, last_activity_at AS lastActivityAt, recap";
@@ -183,7 +192,7 @@ export class Thread {
     const editedAt = this.now();
     const rows = this.d.db
       .query<{ id: number }, [string, number]>(
-        "UPDATE messages SET edited_at = ? WHERE task_id = ? AND kind IN ('text', 'task') RETURNING id",
+        "UPDATE messages SET edited_at = ? WHERE task_id = ? AND kind IN ('text', 'task', 'command') RETURNING id",
       )
       .all(editedAt, taskId);
     for (const r of rows) this.d.events.emit({ type: "message.edited", id: r.id, editedAt });
@@ -192,21 +201,34 @@ export class Thread {
   /** Shows a task under the reply that started it, so its progress and result don't need a card. */
   attachTask(messageId: number, taskId: number): boolean {
     const done = this.d.db
-      .query("UPDATE messages SET task_id = ? WHERE id = ? AND task_id IS NULL AND kind = 'text'")
+      .query(
+        "UPDATE messages SET task_id = ? WHERE id = ? AND task_id IS NULL AND kind IN ('text', 'command')",
+      )
       .run(taskId, messageId).changes;
     if (done) this.d.events.emit({ type: "message.task", id: messageId, taskId });
     return done > 0;
   }
 
-  /** Stores the owner's message and queues Hatbot's reply, which streams over the event bus. */
+  /**
+   * Stores the owner's message and queues Hatbot's reply, which streams over the event bus. A command
+   * ("/new", "/task …") runs in the brain instead, without the model.
+   */
   post(
     text: string,
     attachmentIds: number[] = [],
   ): { message: ThreadMessage; done: Promise<void> } {
-    const message = this.insertMessage("user", text, "done", undefined, attachmentIds);
+    const command = attachmentIds.length ? null : parseCommand(text);
+    const message = this.insertMessage("user", text, "done", undefined, attachmentIds, command);
     // Writing again instead of answering an approval moves on without it.
     if (this.waiting !== null) this.d.approvals?.cancel(this.waiting);
-    const done = this.chain.then(() => this.reply(message));
+    // Stopping can't wait its turn behind the reply it stops.
+    if (command?.name === "stop") {
+      this.stop(command.arg, message);
+      return { message, done: Promise.resolve() };
+    }
+    const done = this.chain.then(() =>
+      command ? this.command(command, message) : this.reply(message),
+    );
     this.chain = done.catch((err) => console.error("thread turn failed", err));
     return { message, done };
   }
@@ -360,6 +382,117 @@ export class Thread {
     this.current?.abort();
   }
 
+  /** Files your message under its conversation, now that it has one. */
+  private file(message: ThreadMessage, episodeId: number) {
+    this.d.db.query("UPDATE messages SET episode_id = ? WHERE id = ?").run(episodeId, message.id);
+    this.d.events.emit({ type: "message.created", message: { ...message, episodeId } });
+  }
+
+  /** What came of a command, as a line in the chat. You just did it, so it's already seen. */
+  private commandNote(text: string, episodeId: number | null): ThreadMessage {
+    const now = this.now();
+    const row = this.d.db
+      .query<ThreadMessage, [number | null, string, string, string]>(
+        `INSERT INTO messages (episode_id, role, kind, text, status, created_at, seen_at)
+         VALUES (?, 'assistant', 'command', ?, 'done', ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
+      )
+      .get(episodeId, text, now, now);
+    if (!row) throw new Error("note insert failed");
+    this.d.events.emit({ type: "message.created", message: row });
+    return row;
+  }
+
+  /** /stop: the reply being written, or with a number, that task. */
+  private stop(arg: string, message: ThreadMessage) {
+    const episodeId =
+      this.d.db.query<{ id: number }, []>("SELECT id FROM episodes ORDER BY id DESC LIMIT 1").get()
+        ?.id ?? null;
+    if (episodeId !== null) this.file(message, episodeId);
+    if (!arg) {
+      if (this.current) this.current.abort(STOPPED);
+      else this.commandNote("Nothing to stop.", episodeId);
+      return;
+    }
+    const id = Number(arg.replace(/^#/, ""));
+    if (!Number.isInteger(id) || id <= 0) {
+      this.commandNote("Give the task's number, like /stop 12.", episodeId);
+      return;
+    }
+    this.commandNote(
+      this.d.tasks?.cancel(id) ? `Stopping task #${id}.` : `Task #${id} isn't running.`,
+      episodeId,
+    );
+  }
+
+  /** /new, /task and /remember, in turn with replies. */
+  private async command(c: ChatCommand, message: ThreadMessage) {
+    const { db, tasks, memory, events, settings } = this.d;
+    const episode = await this.episodeFor(this.turnSetup().prefix, c.name === "new");
+    this.file(message, episode.id);
+    db.query("UPDATE episodes SET last_activity_at = ? WHERE id = ?").run(this.now(), episode.id);
+    if (c.name === "task") {
+      if (!c.arg)
+        return void this.commandNote("Say what to do, like /task check the backups.", episode.id);
+      if (!tasks) return void this.commandNote("Tasks aren't available.", episode.id);
+      const note = this.commandNote("Started a task.", episode.id);
+      // Your own words: the task isn't tainted by what the conversation read.
+      tasks.createBackgroundTask({
+        title: titleOf(c.arg),
+        goal: c.arg,
+        origin: "chat",
+        message: note.id,
+        request: c.arg,
+      });
+    } else if (c.name === "remember") {
+      if (!c.arg)
+        return void this.commandNote(
+          "Say what to remember, like /remember the NAS is at .20.",
+          episode.id,
+        );
+      const owner = settings.get().owner;
+      const reason = `Remember: ${titleOf(c.arg, 60)}`;
+      try {
+        const index = (await memory.exists("INDEX.md")) ? await memory.read("INDEX.md") : "";
+        const sha = await memory.write("INDEX.md", withNote(index, c.arg), owner, reason);
+        if (sha)
+          events.emit({ type: "memory.committed", sha, message: reason, author: owner.name });
+        this.commandNote("Saved to memory.", episode.id);
+      } catch (err) {
+        if (!(err instanceof MemoryError)) console.error("/remember failed", err);
+        this.commandNote(
+          `Couldn't save it: ${err instanceof MemoryError ? err.message : "memory failed"}`,
+          episode.id,
+        );
+      }
+    }
+  }
+
+  /** What a reply is bound to: the prompt, the tools and the model. */
+  private turnSetup() {
+    const { settings, plugins } = this.d;
+    // Fixed for the turn; a plugin switched on or off shows from the next one.
+    const guidance = plugins.guidance();
+    const system = guidance ? `${SYSTEM_PROMPT}\n\nYour plugins\n\n${guidance}` : SYSTEM_PROMPT;
+    const pluginTools = plugins.tools();
+    // Fixed for the reply; a change starts a new episode, since thinking blocks are bound to the model.
+    const chatModel = settings.get().chatModel;
+    const onHaiku = chatModel === "claude-haiku-5-5";
+    const tools = [
+      ...TOOL_PARAMS,
+      ...(onHaiku ? [ASK_OPUS] : []),
+      ...pluginTools.map(toolParam),
+      ...WEB_TOOLS,
+    ];
+    return {
+      system,
+      pluginTools,
+      chatModel,
+      onHaiku,
+      tools,
+      prefix: prefixOf(chatModel, system, tools),
+    };
+  }
+
   /** Waits for queued replies (tests, shutdown). */
   idle(): Promise<void> {
     return this.chain;
@@ -375,13 +508,14 @@ export class Thread {
     status: string,
     episodeId?: number,
     attachmentIds: number[] = [],
+    command: ChatCommand | null = null,
   ): ThreadMessage {
     const inserted = this.d.db
-      .query<ThreadMessage, [number | null, string, string, string, string]>(
-        `INSERT INTO messages (episode_id, role, text, status, created_at) VALUES (?, ?, ?, ?, ?)
+      .query<ThreadMessage, [number | null, string, string, string, string, string]>(
+        `INSERT INTO messages (episode_id, role, kind, text, status, created_at) VALUES (?, ?, ?, ?, ?, ?)
          RETURNING ${MESSAGE_COLUMNS}`,
       )
-      .get(episodeId ?? null, role, text, status, this.now());
+      .get(episodeId ?? null, role, command ? "command" : "text", text, status, this.now());
     if (!inserted) throw new Error("message insert failed");
     const files = this.d.attachments?.bind(attachmentIds, inserted.id) ?? [];
     const row = files.length ? { ...inserted, attachments: files } : inserted;
@@ -410,20 +544,47 @@ export class Thread {
       .map((r) => ({ role: r.role, content: JSON.parse(r.content) }));
   }
 
+  private hasTurns(episodeId: number): boolean {
+    return !!this.d.db
+      .query("SELECT 1 FROM episode_turns WHERE episode_id = ? LIMIT 1")
+      .get(episodeId);
+  }
+
   /**
-   * Continues the current episode, or starts a new one after 30 minutes idle, or when an update changed
-   * the system prompt, tools or model.
+   * Continues the current episode, or starts a new one after 30 minutes idle, when an update changed
+   * the system prompt, tools or model, or when you asked for one (/new, `fresh`). `isNew`: the model
+   * hasn't seen it yet, so it opens with the context.
    */
-  private async episodeFor(prefix: string): Promise<{ id: number; isNew: boolean }> {
+  private async episodeFor(
+    prefix: string,
+    fresh = false,
+  ): Promise<{ id: number; isNew: boolean; fresh: boolean }> {
     const last = this.d.db
       .query<
-        { id: number; last_activity_at: string; summarized: number; prefix: string | null },
+        {
+          id: number;
+          last_activity_at: string;
+          summarized: number;
+          prefix: string | null;
+          fresh: number;
+        },
         []
-      >("SELECT id, last_activity_at, summarized, prefix FROM episodes ORDER BY id DESC LIMIT 1")
+      >(
+        "SELECT id, last_activity_at, summarized, prefix, fresh FROM episodes ORDER BY id DESC LIMIT 1",
+      )
       .get();
-    if (last && this.clock() - Date.parse(last.last_activity_at) < EPISODE_IDLE_MS) {
-      if (last.prefix === prefix) return { id: last.id, isNew: false };
-      console.log(`episode ${last.id}: the prompt or tools changed; starting a new episode`);
+    const open = last && this.clock() - Date.parse(last.last_activity_at) < EPISODE_IDLE_MS;
+    if (last && open && (!fresh || last.fresh)) {
+      const untouched = !this.hasTurns(last.id);
+      if (last.prefix === prefix && (!fresh || untouched))
+        return { id: last.id, isNew: untouched, fresh: !!last.fresh };
+      // Nothing in it is bound to the old prompt yet; a second /new is the same new conversation.
+      if (untouched) {
+        this.d.db.query("UPDATE episodes SET prefix = ? WHERE id = ?").run(prefix, last.id);
+        return { id: last.id, isNew: true, fresh: !!last.fresh };
+      }
+      if (!fresh)
+        console.log(`episode ${last.id}: the prompt or tools changed; starting a new episode`);
     }
     if (last && !last.summarized) {
       try {
@@ -433,12 +594,12 @@ export class Thread {
       }
     }
     const row = this.d.db
-      .query<{ id: number }, [string, string, string]>(
-        "INSERT INTO episodes (started_at, last_activity_at, prefix) VALUES (?, ?, ?) RETURNING id",
+      .query<{ id: number }, [string, string, string, number]>(
+        "INSERT INTO episodes (started_at, last_activity_at, prefix, fresh) VALUES (?, ?, ?, ?) RETURNING id",
       )
-      .get(this.now(), this.now(), prefix);
+      .get(this.now(), this.now(), prefix, fresh ? 1 : 0);
     if (!row) throw new Error("episode insert failed");
-    return { id: row.id, isNew: true };
+    return { id: row.id, isNew: true, fresh };
   }
 
   private threadSummary(): string {
@@ -500,7 +661,8 @@ export class Thread {
           `[${localStamp(new Date(m.created_at))}] ${m.role === "user" ? "Owner" : "Hatbot"}: ${m.text}`,
       )
       .join("\n\n");
-    if (transcript) {
+    // One with only commands in it (/new and nothing after) has nothing to summarize.
+    if (transcript && this.hasTurns(episodeId)) {
       const res = await this.d.model.create({
         model: SUMMARY_MODEL,
         max_tokens: 4000,
@@ -541,13 +703,20 @@ export class Thread {
     if (episode) this.d.events.emit({ type: "episode.updated", episode });
   }
 
-  /** Opening context for a new episode: memory index, summary, the last few messages. */
-  private async episodeContext(beforeMessageId: number): Promise<string> {
+  /**
+   * Opening context for a new episode: memory index, summary, the last few messages. One you started
+   * with /new (`fresh`) gets only its own.
+   */
+  private async episodeContext(
+    beforeMessageId: number,
+    episodeId: number,
+    fresh: boolean,
+  ): Promise<string> {
     const index = (await this.d.memory.exists("INDEX.md"))
       ? await this.d.memory.read("INDEX.md")
       : "(no INDEX.md yet)";
     const recent = this.list(beforeMessageId, RECENT_MESSAGES)
-      .filter((m) => m.status !== "streaming")
+      .filter((m) => m.status !== "streaming" && (!fresh || m.episodeId === episodeId))
       .map(
         (m) =>
           `[${localStamp(new Date(m.createdAt))}] ${m.role === "user" ? "Owner" : "Hatbot"}: ${m.text}`,
@@ -562,30 +731,44 @@ export class Thread {
     ].join("\n");
   }
 
+  /** Commands you ran in the episode since your last message, for the model to know about. */
+  private commandsSince(episodeId: number, userId: number): string {
+    return this.d.db
+      .query<{ role: string; text: string; task_id: number | null; created_at: string }, number[]>(
+        `SELECT role, text, task_id, created_at FROM messages
+         WHERE episode_id = ? AND kind = 'command' AND id < ? AND id > coalesce(
+           (SELECT max(id) FROM messages WHERE episode_id = ? AND role = 'user' AND kind = 'text' AND id < ?), 0)
+         ORDER BY id`,
+      )
+      .all(episodeId, userId, episodeId, userId)
+      .map(
+        (m) =>
+          `[${localStamp(new Date(m.created_at))}] ${m.role === "user" ? "Owner" : "Hatbot"}: ${m.text}${m.task_id ? ` (task #${m.task_id})` : ""}`,
+      )
+      .join("\n");
+  }
+
   private async reply(user: ThreadMessage) {
     const { db, events, spend, settings, model, plugins } = this.d;
-    // Fixed for the turn; a plugin switched on or off shows from the next one.
-    const guidance = plugins.guidance();
-    const system = guidance ? `${SYSTEM_PROMPT}\n\nYour plugins\n\n${guidance}` : SYSTEM_PROMPT;
-    const pluginTools = plugins.tools();
-    // Fixed for the reply; a change starts a new episode, since thinking blocks are bound to the model.
-    const chatModel = settings.get().chatModel;
-    const onHaiku = chatModel === "claude-haiku-5-5";
-    const tools = [
-      ...TOOL_PARAMS,
-      ...(onHaiku ? [ASK_OPUS] : []),
-      ...pluginTools.map(toolParam),
-      ...WEB_TOOLS,
-    ];
-    const episode = await this.episodeFor(prefixOf(chatModel, system, tools));
-    db.query("UPDATE messages SET episode_id = ? WHERE id = ?").run(episode.id, user.id);
-    // Clients file your message under its conversation now that it has one.
-    events.emit({ type: "message.created", message: { ...user, episodeId: episode.id } });
+    const { system, pluginTools, chatModel, onHaiku, tools, prefix } = this.turnSetup();
+    const episode = await this.episodeFor(prefix);
+    this.file(user, episode.id);
 
     const userBlocks: BlockParam[] = [];
     if (episode.isNew) {
-      userBlocks.push({ type: "text", text: await this.episodeContext(user.id) });
-      this.inheritTaint(episode.id, user.id);
+      userBlocks.push({
+        type: "text",
+        text: await this.episodeContext(user.id, episode.id, episode.fresh),
+      });
+      // /new leaves what came before, and what it had read, behind.
+      if (!episode.fresh) this.inheritTaint(episode.id, user.id);
+    } else {
+      const commands = this.commandsSince(episode.id, user.id);
+      if (commands)
+        userBlocks.push({
+          type: "text",
+          text: `<owner_commands>\nCommands the owner ran since their last message; Hatbot's lines are what the app answered.\n${commands}\n</owner_commands>`,
+        });
     }
     // An untrusted MCP server's tool descriptions are in the prompt now.
     const foreign = untrustedDefinitions(pluginTools);
@@ -848,7 +1031,10 @@ export class Thread {
         this.appendTurn(episode.id, "user", results);
       }
     } catch (err) {
-      if (abort.signal.aborted) return finish("error", "_Paused. Resume to continue._");
+      if (abort.signal.aborted)
+        return abort.signal.reason === STOPPED
+          ? finish("done", "_Stopped._")
+          : finish("error", "_Paused. Resume to continue._");
       console.error("chat turn failed", err);
       return finish(
         "error",
@@ -882,6 +1068,28 @@ function toolLabel(name: string, plugins: Plugins): string {
   };
   const plugin = plugins.pluginOf(name);
   return labels[name] ?? `Using ${plugin?.name ?? name}`;
+}
+
+/** A task's title from what you typed: its first line, cut at a word. */
+export function titleOf(text: string, max = 80): string {
+  const line = text.split("\n")[0]?.trim() ?? "";
+  if (line.length <= max) return line;
+  const cut = line.slice(0, max - 1);
+  const space = cut.lastIndexOf(" ");
+  return `${space > max / 2 ? cut.slice(0, space) : cut}…`;
+}
+
+/** INDEX.md with `fact` added at the end of its Notes section, which is made if it's missing. */
+export function withNote(index: string, fact: string): string {
+  const line = `- ${fact.trim().replace(/\s*\n\s*/g, " ")}`;
+  const lines = index.replace(/\s+$/, "").split("\n");
+  const at = lines.findIndex((l) => /^##\s+Notes\s*$/i.test(l));
+  if (at < 0) return `${index.trim() ? `${lines.join("\n")}\n\n` : ""}## Notes\n\n${line}\n`;
+  let end = lines.findIndex((l, i) => i > at && /^#{1,2}\s/.test(l));
+  if (end < 0) end = lines.length;
+  while (end > at + 1 && !lines[end - 1]?.trim()) end--;
+  lines.splice(end, 0, line);
+  return `${lines.join("\n")}\n`;
 }
 
 /** Inputs worth naming in a working line, in this order. */

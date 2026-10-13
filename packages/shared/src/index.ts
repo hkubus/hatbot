@@ -59,8 +59,11 @@ export const PutMemoryFile = z.object({
 export type ThreadMessage = {
   id: number;
   role: "user" | "assistant";
-  /** "task" and "schedule" messages are cards; their text is a plain-text fallback. */
-  kind: "text" | "task" | "schedule";
+  /**
+   * "task" and "schedule" messages are cards; their text is a plain-text fallback. "command": a command
+   * you typed, or what came of it (one with a task shows the task like a reply does).
+   */
+  kind: "text" | "task" | "schedule" | "command";
   text: string;
   status: "streaming" | "done" | "error";
   createdAt: string;
