@@ -863,13 +863,27 @@ export class Thread {
       .join("\n");
   }
 
-  private async reply(user: ThreadMessage) {
+  /**
+   * A task you started from the chat ended: Hatbot tells you what came of it in a reply of its own,
+   * with the conversation in mind. In turn with replies.
+   */
+  taskEnded() {
+    const done = this.chain.then(() => this.reply(null));
+    this.chain = done.catch((err) => console.error("thread turn failed", err));
+    return done;
+  }
+
+  /** Replies to your message, or with `user` null to tasks that ended since the thread last heard. */
+  private async reply(user: ThreadMessage | null) {
     const { db, events, spend, settings, model, plugins } = this.d;
-    const incognito = !!user.incognito;
+    const incognito = !!user?.incognito;
+    // Told already, with a message of yours that came first.
+    if (!user && !this.d.tasks?.hasUnreported()) return;
+    const userId = user?.id ?? Number.MAX_SAFE_INTEGER;
     const { system, pluginTools, chatModel, onHaiku, tools, prefix } = this.turnSetup(incognito);
     const offered = new Set(tools.map((t) => ("name" in t ? t.name : "")));
     const episode = await this.episodeFor(prefix, false, incognito);
-    if (!this.file(user, episode.id)) return;
+    if (user && !this.file(user, episode.id)) return;
 
     const userBlocks: BlockParam[] = [];
     if (episode.isNew) {
@@ -877,12 +891,12 @@ export class Thread {
       await Promise.allSettled(this.summarizing.values());
       userBlocks.push({
         type: "text",
-        text: await this.episodeContext(user.id, episode.id, episode.fresh, incognito),
+        text: await this.episodeContext(userId, episode.id, episode.fresh, incognito),
       });
       // /new and incognito leave what came before, and what it had read, behind.
-      if (!episode.fresh && !incognito) this.inheritTaint(episode.id, user.id);
+      if (!episode.fresh && !incognito) this.inheritTaint(episode.id, userId);
     } else {
-      const commands = this.commandsSince(episode.id, user.id);
+      const commands = this.commandsSince(episode.id, userId);
       if (commands)
         userBlocks.push({
           type: "text",
@@ -906,10 +920,12 @@ export class Thread {
     }
     userBlocks.push({
       type: "text",
-      text: `[${localStamp(new Date(user.createdAt))}]\n${user.text || "(no text, only files)"}`,
+      text: user
+        ? `[${localStamp(new Date(user.createdAt))}]\n${user.text || "(no text, only files)"}`
+        : `[${localStamp(new Date(this.clock()))}]\n(No message from the owner: a task they started from the chat ended. Tell them what came of it, briefly, with what you know from this conversation. Don't repeat what they can already see.)`,
     });
     // Your files: what's in them was written by whoever made them, so they're untrusted (PLAN.md §6.1).
-    if (user.attachments?.length && this.d.attachments) {
+    if (user?.attachments?.length && this.d.attachments) {
       userBlocks.push(...(await this.d.attachments.blocks(user.attachments)));
       this.taint(episode.id, `Attached file "${user.attachments[0]?.name}"`);
     }

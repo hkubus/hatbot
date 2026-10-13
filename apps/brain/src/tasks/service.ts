@@ -521,6 +521,8 @@ export class Tasks {
       .query("SELECT 1 FROM messages WHERE kind IN ('text', 'command') AND task_id = ?")
       .get(id);
     if (card.changes || underReply) this.d.thread.markEdited(id);
+    // Started from the chat: the chat model hears now and answers, with the conversation in mind.
+    if (underReply && tell && status !== "cancelled") void this.d.thread.taskEnded();
     else if (tell && task.lane === "background")
       this.d.thread.addCard("task", text, { taskId: id });
     this.emit(id);
@@ -543,6 +545,16 @@ export class Tasks {
   /** Pause all: stops every task (PLAN.md §6.5). */
   cancelAll() {
     for (const c of this.running.values()) c.abort(new Error("paused"));
+  }
+
+  /** Whether takeUnreported has anything. */
+  hasUnreported(): boolean {
+    return !!this.d.db
+      .query(
+        `SELECT 1 FROM tasks t WHERE t.reported_at IS NULL AND t.status IN ('done', 'failed', 'cancelled')
+         AND EXISTS (SELECT 1 FROM messages m WHERE m.kind IN ('task', 'text', 'command') AND m.task_id = t.id)`,
+      )
+      .get();
   }
 
   /** Tasks shown in the thread (a card or under a reply) that ended since the thread last heard; marks them reported. */
