@@ -5,6 +5,8 @@ import { z } from "zod";
 /** Past three series the colours stop telling apart for colour-blind readers. */
 export const CHART_MAX_SERIES = 3;
 export const CHART_MAX_POINTS = 500;
+/** Horizontal bars take a row each, so fewer of them. */
+export const CHART_MAX_ROWS = 40;
 
 export const ChartSpec = z
   .object({
@@ -12,6 +14,10 @@ export const ChartSpec = z
     title: z.string().max(120).optional(),
     /** "%", "GiB", "ms", or a currency symbol ("$", "€"), which goes in front. */
     unit: z.string().max(12).optional(),
+    /** Bars: the series stack into one bar per x, as parts of its total. */
+    stacked: z.boolean().optional(),
+    /** Bars: one row per x, for rankings and long names. */
+    horizontal: z.boolean().optional(),
     x: z
       .array(z.union([z.string().max(60), z.number()]))
       .min(1)
@@ -32,6 +38,9 @@ export const ChartSpec = z
   })
   .refine((s) => s.series.some((se) => se.data.some((v) => v !== null)), {
     message: "no values",
+  })
+  .refine((s) => !(s.type === "bar" && s.horizontal) || s.x.length <= CHART_MAX_ROWS, {
+    message: `at most ${CHART_MAX_ROWS} horizontal bars`,
   });
 export type ChartSpec = z.infer<typeof ChartSpec>;
 
@@ -49,6 +58,32 @@ export function parseChart(source: string): ChartSpec | null {
 
 /** Series names, with "Series 2" for one Hatbot left unnamed. */
 export const seriesNames = (s: ChartSpec) => s.series.map((se, i) => se.name || `Series ${i + 1}`);
+
+/** Whether the bars stack: asked for, and more than one series to stack. */
+export const isStacked = (s: ChartSpec) => s.type === "bar" && !!s.stacked && s.series.length > 1;
+
+/** Each x's stack of bars: [start, end] per series, positives up from 0 and negatives down. */
+export function stackSpans(s: ChartSpec): ([number, number] | null)[][] {
+  return s.x.map((_, i) => {
+    let up = 0;
+    let down = 0;
+    return s.series.map((se) => {
+      const v = se.data[i];
+      if (v == null || v === 0) return null;
+      const side = v > 0 ? up : down;
+      if (v > 0) up += v;
+      else down += v;
+      return [side, side + v];
+    });
+  });
+}
+
+/** The sum at each x, or null where every series is a gap. */
+export const stackTotals = (s: ChartSpec) =>
+  s.x.map((_, i) => {
+    const vs = s.series.map((se) => se.data[i]).filter((v): v is number => v != null);
+    return vs.length ? vs.reduce((a, b) => a + b, 0) : null;
+  });
 
 const CURRENCY = /^[$€£¥₽₹]$/;
 

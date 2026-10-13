@@ -23,7 +23,7 @@ export const codePlugin = (d: { desktop: DesktopAgent; attachments: Attachments 
         tool({
           name: "code_run",
           description:
-            "Run a bash command in the sandbox: a throwaway Linux user on the desktop container with Python 3 (numpy, pandas, matplotlib, openpyxl), jq, sqlite3, poppler-utils and git. Use it to compute, convert or analyse files, make charts, or test a snippet. The working directory is the sandbox's home and persists between calls; files: copies the owner's attachments into in/ first. It reaches the internet and the LAN but can't see the browser or the screen. send_file hands the owner a file it made.",
+            "Run a bash command in the sandbox: a throwaway Linux user on the desktop container with Python 3 (numpy, pandas, matplotlib, openpyxl), jq, sqlite3, poppler-utils and git. Use it to compute, convert or analyse files, make files and images, or test a snippet. The working directory is the sandbox's home and persists between calls; files: copies the owner's attachments into in/ first. It reaches the internet and the LAN but can't see the browser or the screen. send_file hands the owner a file it made.",
           access: "write",
           label: "Running code",
           schema: z.object({
@@ -71,7 +71,7 @@ export const codePlugin = (d: { desktop: DesktopAgent; attachments: Attachments 
       ];
       return ready(tools, {
         guidance:
-          "code_run runs commands in a sandbox on the desktop container: for computing, converting and analysing files, charts and quick scripts. Its home persists. The owner's attachments go in with files: [ids]; send_file hands back what you made.",
+          "code_run runs commands in a sandbox on the desktop container: for computing, converting and analysing files and quick scripts. Its home persists. The owner's attachments go in with files: [ids]; send_file hands back what you made.",
         test: async () => {
           try {
             const r = await d.desktop.exec("python3 --version; whoami", 20);

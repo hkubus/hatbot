@@ -132,6 +132,23 @@ final class MarkdownTests: XCTestCase {
     XCTAssertEqual(Markdown.parse("```chart\n\(bad)\n```"), [.code(language: "chart", code: bad)])
   }
 
+  func testStackedAndHorizontalBars() {
+    let spec = ChartSpec.parse(
+      #"{"type":"bar","stacked":true,"x":["a","b"],"series":[{"data":[2,-1]},{"data":[3,null]},{"data":[-4,5]}]}"#)!
+    XCTAssertTrue(spec.isStacked)
+    XCTAssertFalse(spec.horizontal)
+    let spans = spec.stackSpans.map { $0.map { $0.map { [$0.start, $0.end] } } }
+    XCTAssertEqual(spans, [[[0, 2], [2, 5], [0, -4]], [[0, -1], nil, [0, 5]]])
+    XCTAssertEqual(spec.stackTotals, [1, 4])
+    func rows(_ n: Int) -> String {
+      let x = (0..<n).map { "\"h\($0)\"" }.joined(separator: ",")
+      let d = Array(repeating: "1", count: n).joined(separator: ",")
+      return #"{"type":"bar","horizontal":true,"x":["# + x + #"],"series":[{"data":["# + d + "]}]}"
+    }
+    XCTAssertNotNil(ChartSpec.parse(rows(40)))
+    XCTAssertNil(ChartSpec.parse(rows(41)))
+  }
+
   func testChartValues() {
     func spec(_ unit: String?) -> ChartSpec {
       ChartSpec.parse(#"{"type":"line","x":["a"],"series":[{"data":[1]}]}"#.replacingOccurrences(
@@ -290,6 +307,29 @@ final class FoldTests: XCTestCase {
     XCTAssertEqual(groups.map(\.episodeId), [nil, 1, 2, 3])
     XCTAssertEqual(groups.map { $0.messages.map(\.id) }, [[1], [2, 3, 4], [5], [6, 7]])
     XCTAssertEqual(groups.map(\.fold), [nil, "Talked about one.", "message 5", nil])
+  }
+
+  func testCommandsFoldWithoutNamingTheConversation() {
+    var command = m(2, 1, .user)
+    command.kind = .command
+    command.text = "/remember x"
+    let groups = ThreadFolds.groups([command, m(3, 1, .user), m(4, 2, .user)], episodes: [:])
+    XCTAssertEqual(groups.map(\.fold), ["message 3", nil])
+  }
+
+  func testMatchesCommandsWhileYouTypeTheName() {
+    XCTAssertEqual(ChatCommand.matching("/").map(\.name), ["new", "stop", "task", "remember"])
+    XCTAssertEqual(ChatCommand.matching("/RE").map(\.name), ["remember"])
+    XCTAssertEqual(ChatCommand.matching("/task x"), [])
+    XCTAssertEqual(ChatCommand.matching("/etc/"), [])
+    XCTAssertEqual(ChatCommand.matching("hi"), [])
+    XCTAssertTrue(ChatCommand.all[2].needsMore)
+    XCTAssertFalse(ChatCommand.all[1].needsMore)
+    var note = m(5, 1)
+    note.kind = .command
+    XCTAssertTrue(note.isNote)
+    note.taskId = 3
+    XCTAssertFalse(note.isNote)
   }
 
   func testTimelineKeepsOnlyTheLatestModelNote() {

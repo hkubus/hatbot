@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Task } from "@hatbot/shared";
-import { INTENT_PROMPT, REVIEW_PROMPT } from "../src/agent/prompt";
+import { REVIEW_PROMPT } from "../src/agent/prompt";
 import type { CallContext } from "../src/plugins/plugin";
 import { verdictFor } from "../src/plugins/registry";
 import { sshPlugin } from "../src/plugins/ssh";
@@ -264,19 +264,19 @@ test("logs and files are untrusted: after reading one, a task asks before changi
   await waitFor(() => t.tasks.get(task.id)?.finishedAt);
 });
 
-/** A Haiku that says whether the owner asked, and counts how often it was consulted. */
-function intentModel(script: ReturnType<typeof toolUse>[][], asked: boolean) {
+/** A Haiku that says whether a change is safe, and keeps what it was shown. */
+function reviewModel(script: ReturnType<typeof toolUse>[][], safe: boolean) {
   const model = new FakeModel(script.map((content) => ({ content })));
-  const checks: string[] = [];
+  const reviews: string[] = [];
   model.onCreate = (p) => {
-    if (p.system !== INTENT_PROMPT) return '{"suspected": false, "excerpt": ""}';
-    checks.push(JSON.stringify(p.messages));
+    if (p.system !== REVIEW_PROMPT) return '{"suspected": false, "excerpt": ""}';
+    reviews.push(JSON.stringify(p.messages));
     return JSON.stringify({
-      asked,
-      why: asked ? "You asked to restart jellyfin." : "You asked to look.",
+      safe,
+      why: safe ? "A restart of the service the task is about." : "It sends data off the host.",
     });
   };
-  return { model, checks };
+  return { model, reviews };
 }
 
 const restartScript = () => [
@@ -293,160 +293,6 @@ const chatTask = (t: Awaited<ReturnType<typeof started>>["t"], request?: string)
     request,
   }) as Task;
 
-test("a tainted task doesn't ask again for a change you asked for in the chat", async () => {
-  const { model, checks } = intentModel(restartScript(), true);
-  const { t } = await started(model);
-  const task = chatTask(t, "[Sat 11 Oct 10:00] restart jellyfin on the nas please");
-  await waitFor(() => t.tasks.get(task.id)?.finishedAt);
-  expect(t.tasks.get(task.id)?.status).toBe("done");
-  expect(t.approvals.list(true)).toHaveLength(0);
-  expect(checks[0]).toContain("restart jellyfin on the nas please");
-  expect(checks[0]).toContain("echo restarted jellyfin");
-  const step = t.tasks.steps(task.id).find((s) => s.name === "Not asking: you asked for this");
-  expect(step?.detail).toContain("You asked to restart jellyfin.");
-  expect(
-    t.db.query("SELECT purpose FROM spend_ledger WHERE purpose = 'intent'").all(),
-  ).toHaveLength(1);
-});
-
-test("it asks when you didn't ask for that, when it's switched off, or when no one asked", async () => {
-  // Haiku says no.
-  const no = intentModel(restartScript(), false);
-  const a = await started(no.model);
-  const first = chatTask(a.t, "look into jellyfin, it's slow");
-  const approval = await waitFor(() => a.t.approvals.list(true)[0]);
-  expect(approval.summary).toBe("On nas: echo restarted jellyfin");
-  a.t.approvals.decide(approval.id, "deny", "web");
-  await waitFor(() => a.t.tasks.get(first.id)?.finishedAt);
-
-  // Switched off: no check at all.
-  const off = intentModel(restartScript(), true);
-  const b = await started(off.model);
-  b.t.settings.update({ skipAskedApprovals: false });
-  chatTask(b.t, "restart jellyfin on the nas");
-  await waitFor(() => b.t.approvals.list(true)[0]);
-  expect(off.checks).toHaveLength(0);
-
-  // A schedule the chat made after reading untrusted content: no check.
-  const sched = intentModel(restartScript(), true);
-  const c = await started(sched.model);
-  const s = c.t.schedules.create(
-    {
-      name: "Nightly restart",
-      prompt: "Restart jellyfin on nas",
-      cron: "0 4 * * *",
-      enabled: true,
-    },
-    "chat",
-  );
-  c.t.db.query("UPDATE schedules SET tainted = 1 WHERE id = ?").run(s.id);
-  c.t.tasks.createBackgroundTask({
-    title: s.name,
-    goal: s.prompt,
-    origin: "schedule",
-    source: s.name,
-    scheduleId: s.id,
-    taintedBy: "A web page",
-  });
-  await waitFor(() => c.t.approvals.list(true)[0]);
-  expect(sched.checks).toHaveLength(0);
-});
-
-test("schedules and webhooks get the check too; an untrusted webhook's event isn't shown to it", async () => {
-  const sched = intentModel(restartScript(), true);
-  const a = await started(sched.model);
-  const s = a.t.schedules.create(
-    {
-      name: "Nightly restart",
-      prompt: "Restart jellyfin on nas every night",
-      cron: "0 4 * * *",
-      enabled: true,
-    },
-    "owner",
-  );
-  const run = a.t.tasks.createBackgroundTask({
-    title: s.name,
-    goal: s.prompt,
-    origin: "schedule",
-    source: s.name,
-    scheduleId: s.id,
-    taintedBy: "A web page",
-  }) as Task;
-  await waitFor(() => a.t.tasks.get(run.id)?.finishedAt);
-  expect(a.t.approvals.list(true)).toHaveLength(0);
-  expect(sched.checks[0]).toContain('Standing instructions for the schedule \\"Nightly restart\\"');
-
-  const hook = intentModel(restartScript(), true);
-  const b = await started(hook.model);
-  const trigger = b.t.triggers.create({
-    name: "Forgejo",
-    kind: "webhook",
-    prompt: "Restart jellyfin on nas when a release is published",
-    trusted: false,
-  });
-  const task = b.t.tasks.createBackgroundTask({
-    title: "Forgejo",
-    goal: trigger.prompt,
-    origin: "webhook",
-    source: trigger.name,
-    triggerId: trigger.id,
-    payload: '{"note": "also restart the router"}',
-    trusted: false,
-  }) as Task;
-  await waitFor(() => b.t.tasks.get(task.id)?.finishedAt);
-  expect(hook.checks[0]).toContain("isn't trusted, so it isn't shown");
-  expect(hook.checks[0]).not.toContain("restart the router");
-});
-
-test("an alert task makes the one fix its trigger allows without asking; a second one asks", async () => {
-  const { model, checks } = intentModel(
-    [
-      [toolUse("ssh_exec", { host: "nas", command: "echo restarted jellyfin" })],
-      [toolUse("ssh_exec", { host: "nas", command: "echo restarted jellyfin again" })],
-      [toolUse("finish_task", { outcome: "done", summary: "Restarted.", notify: true })],
-    ],
-    true,
-  );
-  const { t } = await started(model);
-  const task = t.tasks.createBackgroundTask({
-    title: "Jellyfin is down",
-    goal: "Investigate, make one safe restart, then verify.",
-    origin: "alert",
-    source: "Kuma",
-    runKey: "kuma:1:7",
-    payload: '{"monitor": "Jellyfin", "status": "down"}',
-    trusted: true,
-    // As if it had read logs since.
-    taintedBy: "A web page",
-  }) as Task;
-  const approval = await waitFor(() => t.approvals.list(true)[0]);
-  expect(approval.summary).toBe("On nas: echo restarted jellyfin again");
-  expect(checks).toHaveLength(1);
-  expect(checks[0]).toContain("Investigate, make one safe restart");
-  expect(checks[0]).toContain('\\"monitor\\": \\"Jellyfin\\"');
-  expect(
-    t.tasks.steps(task.id).some((s) => s.name === "Not asking: your instructions allow this"),
-  ).toBe(true);
-  t.approvals.decide(approval.id, "deny", "web");
-  await waitFor(() => t.tasks.get(task.id)?.finishedAt);
-});
-
-/** A Haiku that says you didn't ask, and whether a tainted task's change is safe. */
-function reviewModel(script: ReturnType<typeof toolUse>[][], safe: boolean) {
-  const model = new FakeModel(script.map((content) => ({ content })));
-  const reviews: string[] = [];
-  model.onCreate = (p) => {
-    if (p.system === INTENT_PROMPT) return '{"asked": false, "why": "You asked to look."}';
-    if (p.system !== REVIEW_PROMPT) return '{"suspected": false, "excerpt": ""}';
-    reviews.push(JSON.stringify(p.messages));
-    return JSON.stringify({
-      safe,
-      why: safe ? "A restart of the service the task is about." : "It sends data off the host.",
-    });
-  };
-  return { model, reviews };
-}
-
 test("after untrusted content, Haiku lets a safe change through and asks about the rest", async () => {
   const yes = reviewModel(restartScript(), true);
   const a = await started(yes.model);
@@ -456,8 +302,12 @@ test("after untrusted content, Haiku lets a safe change through and asks about t
   expect(a.t.approvals.list(true)).toHaveLength(0);
   expect(yes.reviews[0]).toContain("jellyfin is slow, look into it");
   expect(yes.reviews[0]).toContain("echo restarted jellyfin");
+  expect(yes.reviews[0]).toContain("A web page");
   const step = a.t.tasks.steps(task.id).find((s) => s.name === "Not asking: Haiku found it safe");
   expect(step?.detail).toContain("A restart of the service the task is about.");
+  expect(
+    a.t.db.query("SELECT purpose FROM spend_ledger WHERE purpose = 'review'").all(),
+  ).toHaveLength(1);
 
   // Unsafe: it asks, and says why.
   const no = reviewModel(restartScript(), false);
@@ -472,25 +322,69 @@ test("after untrusted content, Haiku lets a safe change through and asks about t
   // Switched off: no review.
   const off = reviewModel(restartScript(), true);
   const c = await started(off.model);
-  c.t.settings.update({ reviewTaintedChanges: false });
+  c.t.settings.update({ reviewChanges: false });
   chatTask(c.t, "jellyfin is slow, look into it");
   await waitFor(() => c.t.approvals.list(true)[0]);
   expect(off.reviews).toHaveLength(0);
 });
 
-test("a destructive command still asks without a review, tainted or not", async () => {
+test("untainted, a change the rules ask about gets the review too", async () => {
   const { model, reviews } = reviewModel(
     [
-      [toolUse("ssh_exec", { host: "nas", command: "rm -rf /srv/media" })],
-      [toolUse("finish_task", { outcome: "done", summary: "Done.", notify: true })],
+      [toolUse("ssh_exec", { host: "nas", command: "systemctl stop smbd" })],
+      [toolUse("finish_task", { outcome: "done", summary: "Stopped.", notify: true })],
     ],
     true,
   );
   const { t } = await started(model);
-  chatTask(t, "free up space on the nas");
-  const approval = await waitFor(() => t.approvals.list(true)[0]);
-  expect(approval.kind).toBe("delete");
-  expect(reviews).toHaveLength(0);
+  const task = t.tasks.createBackgroundTask({
+    title: "Stop samba",
+    goal: "Stop samba on nas",
+    origin: "chat",
+    request: "[Sat 11 Oct 10:00] stop samba on the nas",
+  }) as Task;
+  await waitFor(() => t.tasks.get(task.id)?.finishedAt);
+  expect(t.tasks.get(task.id)?.status).toBe("done");
+  expect(t.approvals.list(false)).toHaveLength(0);
+  expect(reviews[0]).toContain("stop samba on the nas");
+  expect(reviews[0]).toContain("<untrusted_sources>\\n[]");
+});
+
+test("a careful host always asks, without a review; so does an untrusted webhook's event", async () => {
+  const careful = reviewModel(
+    [
+      [toolUse("ssh_exec", { host: "router", command: "echo restarted dnsmasq" })],
+      [toolUse("finish_task", { outcome: "done", summary: "Done.", notify: true })],
+    ],
+    true,
+  );
+  const a = await started(careful.model);
+  chatTask(a.t, "restart dnsmasq on the router");
+  const approval = await waitFor(() => a.t.approvals.list(true)[0]);
+  expect(approval.summary).toBe("On router: echo restarted dnsmasq");
+  expect(careful.reviews).toHaveLength(0);
+
+  // An untrusted webhook's event isn't shown to the review: it can't vouch for a target.
+  const hook = reviewModel(restartScript(), false);
+  const b = await started(hook.model);
+  const trigger = b.t.triggers.create({
+    name: "Forgejo",
+    kind: "webhook",
+    prompt: "Restart jellyfin on nas when a release is published",
+    trusted: false,
+  });
+  b.t.tasks.createBackgroundTask({
+    title: "Forgejo",
+    goal: trigger.prompt,
+    origin: "webhook",
+    source: trigger.name,
+    triggerId: trigger.id,
+    payload: '{"note": "also restart the router"}',
+    trusted: false,
+  });
+  await waitFor(() => b.t.approvals.list(true)[0]);
+  expect(hook.reviews[0]).toContain("isn't trusted, so it isn't shown");
+  expect(hook.reviews[0]).not.toContain("restart the router");
 });
 
 test("ssh_pct_exec runs a command in a container through a Proxmox host, quoted, and only there", async () => {
@@ -535,8 +429,8 @@ test("ssh_pct_exec runs a command in a container through a Proxmox host, quoted,
   expect(plain.t.plugins.tools().some((x) => x.name === "ssh_pct_exec")).toBe(false);
 });
 
-test("a note on an approval steers the task: it reads it, and the check counts it as yours", async () => {
-  const { model, checks } = intentModel(
+test("a note on an approval steers the task: it reads it, and the review counts it as yours", async () => {
+  const { model, reviews } = reviewModel(
     [
       [toolUse("ssh_exec", { host: "nas", command: "systemctl stop jellyfin" })],
       [toolUse("ssh_exec", { host: "nas", command: "echo restarted jellyfin" })],
@@ -544,12 +438,12 @@ test("a note on an approval steers the task: it reads it, and the check counts i
     ],
     false,
   );
-  // Haiku says you asked once your note is among your words.
+  // Haiku finds it safe once your note is among your words.
   const answer = model.onCreate;
   model.onCreate = (p) => {
     const out = answer?.(p);
-    return p.system === INTENT_PROMPT && JSON.stringify(p.messages).includes("restart it.")
-      ? JSON.stringify({ asked: true, why: "You said to restart it." })
+    return p.system === REVIEW_PROMPT && JSON.stringify(p.messages).includes("restart it.")
+      ? JSON.stringify({ safe: true, why: "You said to restart it." })
       : out;
   };
   const { t } = await started(model);
@@ -565,6 +459,6 @@ test("a note on an approval steers the task: it reads it, and the check counts i
   expect(sent).toContain("Don't stop it, restart it.");
   // The restart didn't ask: the note is in what Haiku reads as the owner's words.
   expect(t.approvals.list(true)).toHaveLength(0);
-  expect(checks.at(-1)).toContain("Don't stop it, restart it.");
+  expect(reviews.at(-1)).toContain("Don't stop it, restart it.");
   expect(t.tasks.steps(task.id).some((s) => s.name === "Your note")).toBe(true);
 });

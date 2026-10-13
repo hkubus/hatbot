@@ -210,7 +210,7 @@ test("reboot runs right away; shutdown, careful guests and the desktop ask; the 
   expect(v({ vmid: 105, action: "reboot" }).action).toBe("allow");
   expect(v({ vmid: 105, action: "start" }).action).toBe("allow");
   expect(v({ vmid: 105, action: "shutdown" }).action).toBe("ask");
-  expect(v({ vmid: 200, action: "reboot" }).action).toBe("ask");
+  expect(v({ vmid: 200, action: "reboot" })).toMatchObject({ action: "ask", always: true });
   expect(v({ vmid: 126, action: "reboot" }).action).toBe("ask");
   expect(v({ vmid: 125, action: "reboot" }).action).toBe("block");
   // Tainted: even a reboot asks.

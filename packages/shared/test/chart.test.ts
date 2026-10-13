@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
-import { chartValue, niceTicks, parseChart, seriesNames } from "../src/chart";
+import {
+  chartValue,
+  isStacked,
+  niceTicks,
+  parseChart,
+  seriesNames,
+  stackSpans,
+  stackTotals,
+} from "../src/chart";
 
 test("a chart block parses, and anything else is null", () => {
   const spec = parseChart(
@@ -36,4 +44,36 @@ test("ticks are round and cover the data", () => {
   expect(niceTicks(0.1, 0.7)).toEqual([0, 0.2, 0.4, 0.6, 0.8]);
   expect(niceTicks(-3, 9)).toEqual([-5, 0, 5, 10]);
   expect(niceTicks(5, 5)).toEqual([4.5, 4.75, 5, 5.25, 5.5]);
+});
+
+test("stacked bars pile positives up and negatives down, and sum each x", () => {
+  const spec = parseChart(
+    '{"type":"bar","stacked":true,"x":["a","b"],"series":[{"data":[2,-1]},{"data":[3,null]},{"data":[-4,5]}]}',
+  );
+  if (!spec) throw new Error("no spec");
+  expect(isStacked(spec)).toBe(true);
+  expect(stackSpans(spec)).toEqual([
+    [
+      [0, 2],
+      [2, 5],
+      [0, -4],
+    ],
+    [[0, -1], null, [0, 5]],
+  ]);
+  expect(stackTotals(spec)).toEqual([1, 4]);
+  // One series has nothing to stack on.
+  const one = parseChart('{"type":"bar","stacked":true,"x":["a"],"series":[{"data":[1]}]}');
+  expect(one && isStacked(one)).toBe(false);
+});
+
+test("horizontal bars cap their rows", () => {
+  const rows = (n: number) =>
+    JSON.stringify({
+      type: "bar",
+      horizontal: true,
+      x: Array.from({ length: n }, (_, i) => `host ${i}`),
+      series: [{ data: Array.from({ length: n }, () => 1) }],
+    });
+  expect(parseChart(rows(40))).not.toBeNull();
+  expect(parseChart(rows(41))).toBeNull();
 });

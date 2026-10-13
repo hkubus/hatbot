@@ -61,6 +61,11 @@ These came out of the M4 security review.
 - **To set up:** re-run `infra/desktop-provision.sh` (Python, numpy, pandas, matplotlib, poppler, jq and more), redeploy desktop-agent (`/files` and `/download`), and redeploy the brain (migration 17).
 - **Unchecked:** the web composer was never looked at in a browser. The iOS views were only syntax-checked.
 
+## Chat commands (built 2026-10-13, not tried live)
+- `/new`, `/stop [task]`, `/task <what>` and `/remember <fact>` run in the brain without the model (`Thread.post` in `apps/brain/src/agent/thread.ts`; the list is `CHAT_COMMANDS` in `packages/shared`, mirrored in `apps/ios/Hatbot/Core/Thread.swift`). An unknown `/word` is an ordinary message.
+- `/new` starts a `fresh` episode (migration 18): no recent messages and no taint carried over, only the running summary. `/task` runs your words as an untainted background task. `/remember` appends to the Notes section of INDEX.md, as the owner. The model hears about commands in `<owner_commands>` with your next message.
+- **To set up:** redeploy the brain (migration 18). The web composer was checked in headless Chromium; the iOS views were only syntax-checked.
+
 ## 4. Later (not v1, don't start without the owner)
 - **GitHub plugin**, next to Forgejo. Same shape as `apps/brain/src/plugins/forgejo/`.
 - **After v1** (PLAN §11): email via Proton Bridge, more than one agent, a heartbeat that acts on its own, an open-source release.

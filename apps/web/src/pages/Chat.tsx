@@ -1,6 +1,7 @@
 import {
   type Approval,
   type Attachment,
+  matchingCommands,
   parseChart,
   type ThreadMessage,
   threadGroups,
@@ -422,6 +423,13 @@ function Message({
 }) {
   // Touch screens have no hover: a tap shows the message's actions.
   const [tapped, setTapped] = useState(false);
+  // What came of a command: a quiet line rather than a message.
+  if (m.role === "assistant" && m.kind === "command" && !m.taskId)
+    return (
+      <div className="msg-note" data-id={m.id}>
+        {m.text}
+      </div>
+    );
   const cls = `msg ${m.role === "user" ? "user" : ""} ${animate ? "new" : ""} ${tapped ? "tapped" : ""} ${unread ? "unread" : ""}`;
   let inner: React.ReactNode;
   if (m.role === "user") {
@@ -487,6 +495,9 @@ export function Chat() {
   const hasEarlier = useStore((s) => s.hasEarlier);
   const paused = useStore((s) => s.paused);
   const [draft, setDraft] = useState("");
+  // The command list under "/…": which one is picked, and whether Escape closed it.
+  const [pick, setPick] = useState(0);
+  const [menuClosed, setMenuClosed] = useState(false);
   const [files, setFiles] = useState<Draft[]>([]);
   const picker = useRef<HTMLInputElement>(null);
   const [sending, setSending] = useState(false);
@@ -591,8 +602,18 @@ export function Chat() {
   const uploading = files.some((d) => !d.attachment && !d.error);
   const ready = files.filter((d) => d.attachment);
 
-  const send = async () => {
-    const text = draft.trim();
+  const commands = menuClosed ? [] : matchingCommands(draft);
+  const picked = commands[Math.min(pick, commands.length - 1)];
+  // One that needs more goes in the composer for you to finish; the rest run at once.
+  const choose = (c: (typeof commands)[number]) => {
+    if (c.args.startsWith("<")) {
+      setDraft(`/${c.name} `);
+      textarea.current?.focus();
+    } else void send(`/${c.name}`);
+  };
+
+  const send = async (command?: string) => {
+    const text = (command ?? draft).trim();
     if ((!text && !ready.length) || sending || uploading) return;
     setSending(true);
     setError("");
@@ -699,6 +720,28 @@ export function Chat() {
             {error}
           </div>
         )}
+        {commands.length > 0 && (
+          <div className="command-menu" role="listbox">
+            {commands.map((c) => (
+              <button
+                key={c.name}
+                type="button"
+                role="option"
+                aria-selected={c === picked}
+                className={c === picked ? "on" : ""}
+                // Keeps the focus in the composer.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => choose(c)}
+              >
+                <span className="name">
+                  /{c.name}
+                  {c.args && <span className="args"> {c.args}</span>}
+                </span>
+                <span className="desc">{c.description}</span>
+              </button>
+            ))}
+          </div>
+        )}
         {files.length > 0 && (
           <div className="composer-files">
             {files.map((d) => (
@@ -742,6 +785,8 @@ export function Chat() {
             value={draft}
             onChange={(e) => {
               setDraft(e.target.value);
+              setPick(0);
+              setMenuClosed(false);
               resize();
             }}
             onPaste={(e) => {
@@ -751,6 +796,19 @@ export function Chat() {
               }
             }}
             onKeyDown={(e) => {
+              if (picked && !e.nativeEvent.isComposing) {
+                const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+                if (step) {
+                  e.preventDefault();
+                  const at = commands.indexOf(picked);
+                  return setPick((at + step + commands.length) % commands.length);
+                }
+                if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
+                  e.preventDefault();
+                  return choose(picked);
+                }
+                if (e.key === "Escape") return setMenuClosed(true);
+              }
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 void send();
@@ -762,7 +820,7 @@ export function Chat() {
             className="icon-btn send"
             title="Send"
             disabled={(!draft.trim() && !ready.length) || sending || uploading}
-            onClick={send}
+            onClick={() => send()}
           >
             <Icon name="up" />
           </button>

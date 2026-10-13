@@ -291,4 +291,7 @@ export const migrations: string[] = [
   CREATE INDEX attachments_message ON attachments(message_id);
   CREATE INDEX attachments_task ON attachments(task_id);
   `,
+  /* 18: a conversation you started with /new carries nothing over from before it */ `
+  ALTER TABLE episodes ADD COLUMN fresh INTEGER NOT NULL DEFAULT 0;
+  `,
 ];

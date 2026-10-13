@@ -2667,6 +2667,10 @@ html[data-theme="dark"] .seg button.active {
   fill: var(--text-2);
   dominant-baseline: middle;
 }
+.chart .tick.row {
+  fill: var(--text-2);
+  dominant-baseline: middle;
+}
 .chart .line {
   fill: none;
   stroke-width: 2;
@@ -2708,6 +2712,9 @@ html[data-theme="dark"] .seg button.active {
 }
 .chart-tip-row span {
   color: var(--muted);
+}
+.chart-tip-row.total {
+  padding-left: 18px;
 }
 .sr-only {
   position: absolute;
@@ -3469,4 +3476,51 @@ pre.payload {
   width: 11px;
   height: 11px;
   color: inherit;
+}
+
+/* Commands: what "/…" in the composer could mean. */
+.command-menu {
+  max-width: 760px;
+  margin: 0 auto 6px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.command-menu button {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.command-menu button.on {
+  background: var(--surface-2);
+}
+.command-menu .name {
+  font-weight: 500;
+}
+.command-menu .args,
+.command-menu .desc {
+  color: var(--muted);
+  font-weight: 400;
+}
+.command-menu .desc {
+  margin-left: auto;
+}
+/* What came of a command: a quiet line, not a message. */
+.msg-note {
+  align-self: center;
+  padding: 2px 0;
+  font-size: 12px;
+  color: var(--muted);
 }

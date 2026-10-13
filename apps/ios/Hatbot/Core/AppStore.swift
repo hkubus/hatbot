@@ -94,7 +94,8 @@ final class AppStore {
     switch event {
     case let .messageCreated(m):
       upsert(m)
-      if m.role == .assistant && m.status != .streaming { addUnread(m.id) }
+      // What came of your own command arrives already seen.
+      if m.role == .assistant && m.status != .streaming && m.seenAt == nil { addUnread(m.id) }
     case let .messageEdited(id, editedAt):
       if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].editedAt = editedAt }
       addUnread(id)
@@ -485,14 +486,9 @@ final class AppStore {
     return try await api.put("/settings", body: Body(chatEffort: effort))
   }
 
-  func setSkipAskedApprovals(_ on: Bool) async throws -> AppSettings {
-    struct Body: Encodable { let skipAskedApprovals: Bool }
-    return try await api.put("/settings", body: Body(skipAskedApprovals: on))
-  }
-
-  func setReviewTaintedChanges(_ on: Bool) async throws -> AppSettings {
-    struct Body: Encodable { let reviewTaintedChanges: Bool }
-    return try await api.put("/settings", body: Body(reviewTaintedChanges: on))
+  func setReviewChanges(_ on: Bool) async throws -> AppSettings {
+    struct Body: Encodable { let reviewChanges: Bool }
+    return try await api.put("/settings", body: Body(reviewChanges: on))
   }
 
   func setChatModel(_ model: AppSettings.ChatModel) async throws -> AppSettings {
