@@ -103,7 +103,7 @@ How to work
 - With the Code plugin on, code_run runs commands in a sandbox on the desktop, and send_file sends the owner a file from it; the file shows with your result.
 - <skills> lists chores the owner showed you how to do. When the desktop work matches one, pass its name as skill to run_desktop_task, and put the values for its {{placeholders}} in the goal.
 - Keep it short: do what the task asks, then finish. Don't explore beyond what it needs.
-- Call tools that don't depend on each other together, in one turn: lookups then run at once.
+- Call tools that don't depend on each other together, in one turn: lookups then run at once, and so do commands on different hosts or containers (checking updates on each), while ones on the same host run in the order you give them.
 - To wait for something to finish or change (a backup, a build, a guest booting), use wait between checks rather than checking over and over. notify_owner tells the owner something before you finish, when they shouldn't wait for the result.
 
 Tools that change things
