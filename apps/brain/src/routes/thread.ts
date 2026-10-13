@@ -62,11 +62,12 @@ export const threadRoutes = new Hono<AppEnv>()
       z.object({
         before: z.coerce.number().int().positive().optional(),
         limit: z.coerce.number().int().min(1).max(200).optional(),
+        incognito: z.enum(["0", "1"]).optional(),
       }),
     ),
     (c) => {
-      const { before, limit } = c.req.valid("query");
-      return c.json(c.var.thread.list(before, limit));
+      const { before, limit, incognito } = c.req.valid("query");
+      return c.json(c.var.thread.list(before, limit, incognito === "1"));
     },
   )
   // The conversations messages belong to, for their recaps where they fold up.
@@ -74,11 +75,16 @@ export const threadRoutes = new Hono<AppEnv>()
     c.json(c.var.thread.episodes(c.req.valid("query").ids.split(",").map(Number))),
   )
   .post("/thread/messages", json(PostMessage), (c) => {
-    const { text, attachmentIds } = c.req.valid("json");
+    const { text, attachmentIds, incognito } = c.req.valid("json");
     if (attachmentIds.some((id) => c.var.attachments.get(id)?.from !== "owner"))
       return c.json({ error: "unknown attachment" }, 400);
-    const { message } = c.var.thread.post(text, attachmentIds);
+    const { message } = c.var.thread.post(text, attachmentIds, incognito);
     return c.json(message, 202);
+  })
+  // Leaving incognito: its conversation is deleted.
+  .delete("/thread/incognito", async (c) => {
+    await c.var.thread.endIncognito();
+    return c.json({ ok: true });
   })
   // Unread: Hatbot's messages sent or edited since you last saw them.
   .get("/thread/unread", (c) => c.json(c.var.thread.unread()))

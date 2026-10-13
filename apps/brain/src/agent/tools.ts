@@ -446,6 +446,18 @@ export async function runTool(
   }
 }
 
+/**
+ * The core tools an incognito conversation gets: lookups that leave nothing behind. Not history search,
+ * which it doesn't see, or anything that writes or starts work that outlives it.
+ */
+export const INCOGNITO_TOOLS = [
+  "memory_list",
+  "memory_read",
+  "memory_search",
+  "schedule_list",
+  "trigger_list",
+];
+
 /** Core tools that only look things up, so several can run at once. */
 export const LOOKUP_TOOLS = ["memory_list", "memory_read", "memory_search", "search_history"];
 

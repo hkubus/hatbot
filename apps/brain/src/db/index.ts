@@ -12,6 +12,8 @@ export function openDb(path: string): Db {
   db.exec("PRAGMA foreign_keys = ON");
   db.exec("PRAGMA busy_timeout = 5000");
   db.exec("PRAGMA synchronous = NORMAL");
+  // Deleted rows are zeroed on disk, so an incognito conversation doesn't linger in free pages.
+  db.exec("PRAGMA secure_delete = ON");
   migrate(db);
   return db;
 }

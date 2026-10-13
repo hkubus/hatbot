@@ -30,9 +30,10 @@ import { BudgetError, priceOf, type Spend, tokenCount, tokensOf } from "../spend
 import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
 import { type ModelClient, modelErrorText } from "./model";
-import { EXPERT_PROMPT, SUMMARY_PROMPT, SYSTEM_PROMPT } from "./prompt";
+import { EXPERT_PROMPT, INCOGNITO_PROMPT, SUMMARY_PROMPT, SYSTEM_PROMPT } from "./prompt";
 import { mayReview, safeToRun } from "./review";
 import {
+  INCOGNITO_TOOLS,
   inBatches,
   LOOKUP_TOOLS,
   runTool,
@@ -54,7 +55,11 @@ const MAX_CHAT_CHANGES = 2;
 /** Why a reply was cut off: /stop, rather than Pause all. */
 const STOPPED = "stopped";
 const MESSAGE_COLUMNS =
-  "id, role, kind, text, status, created_at AS createdAt, task_id AS taskId, schedule_id AS scheduleId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt";
+  "id, role, kind, text, status, created_at AS createdAt, task_id AS taskId, schedule_id AS scheduleId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt, incognito";
+type MessageRow = Omit<ThreadMessage, "incognito"> & { incognito: number };
+/** A message as the app gets it: `incognito` only on the ones that are. */
+const messageOf = ({ incognito, ...m }: MessageRow): ThreadMessage =>
+  incognito ? { ...m, incognito: true } : m;
 const EPISODE_COLUMNS = "id, started_at AS startedAt, last_activity_at AS lastActivityAt, recap";
 const BETAS: Anthropic.Beta.AnthropicBeta[] = [
   "server-side-fallback-2026-07-01",
@@ -130,6 +135,8 @@ export class Thread {
   /** Summaries being written, so the sweep and a new message don't write one twice. */
   private summarizing = new Map<number, Promise<void>>();
   private current: AbortController | null = null;
+  /** The reply in progress is in the incognito conversation. */
+  private currentIncognito = false;
   /** The approval the reply in progress waits for; your next message cancels it. */
   private waiting: number | null = null;
   private clock: () => number;
@@ -140,34 +147,37 @@ export class Thread {
     d.db.query("UPDATE messages SET status = 'error' WHERE status = 'streaming'").run();
   }
 
-  list(before?: number, limit = 50): ThreadMessage[] {
+  /** The thread's messages, or with `incognito`, the incognito conversation's. */
+  list(before?: number, limit = 50, incognito = false): ThreadMessage[] {
     const rows = this.d.db
-      .query<ThreadMessage, [number, number]>(
-        `SELECT ${MESSAGE_COLUMNS} FROM messages WHERE id < ? ORDER BY id DESC LIMIT ?`,
+      .query<MessageRow, [number, number, number]>(
+        `SELECT ${MESSAGE_COLUMNS} FROM messages WHERE id < ? AND incognito = ? ORDER BY id DESC LIMIT ?`,
       )
-      .all(before ?? Number.MAX_SAFE_INTEGER, limit)
-      .reverse();
+      .all(before ?? Number.MAX_SAFE_INTEGER, incognito ? 1 : 0, limit)
+      .reverse()
+      .map(messageOf);
     return this.d.attachments?.fill(rows) ?? rows;
   }
 
   /** A task or schedule card in the thread. `text` is what search and summaries see. */
   addCard(kind: "task" | "schedule", text: string, ref: { taskId?: number; scheduleId?: number }) {
     const row = this.d.db
-      .query<ThreadMessage, [string, string, string, number | null, number | null]>(
+      .query<MessageRow, [string, string, string, number | null, number | null]>(
         `INSERT INTO messages (role, kind, text, status, created_at, task_id, schedule_id)
          VALUES ('assistant', ?, ?, 'done', ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
       )
       .get(kind, text, this.now(), ref.taskId ?? null, ref.scheduleId ?? null);
     if (!row) throw new Error("card insert failed");
-    this.d.events.emit({ type: "message.created", message: row });
-    return row;
+    const message = messageOf(row);
+    this.d.events.emit({ type: "message.created", message });
+    return message;
   }
 
   /** Hatbot's messages sent or edited since you last saw them, oldest first. */
   unread(): number[] {
     return this.d.db
       .query<{ id: number }, []>(
-        `SELECT id FROM messages WHERE role = 'assistant' AND status != 'streaming'
+        `SELECT id FROM messages WHERE role = 'assistant' AND status != 'streaming' AND incognito = 0
          AND (seen_at IS NULL OR seen_at < coalesce(edited_at, created_at)) ORDER BY id`,
       )
       .all()
@@ -211,14 +221,24 @@ export class Thread {
 
   /**
    * Stores the owner's message and queues Hatbot's reply, which streams over the event bus. A command
-   * ("/new", "/task …") runs in the brain instead, without the model.
+   * ("/new", "/task …") runs in the brain instead, without the model. `incognito`: in the incognito
+   * conversation, which sees no history and is deleted when it ends.
    */
   post(
     text: string,
     attachmentIds: number[] = [],
+    incognito = false,
   ): { message: ThreadMessage; done: Promise<void> } {
     const command = attachmentIds.length ? null : parseCommand(text);
-    const message = this.insertMessage("user", text, "done", undefined, attachmentIds, command);
+    const message = this.insertMessage(
+      "user",
+      text,
+      "done",
+      undefined,
+      attachmentIds,
+      command,
+      incognito,
+    );
     // Writing again instead of answering an approval moves on without it.
     if (this.waiting !== null) this.d.approvals?.cancel(this.waiting);
     // Stopping can't wait its turn behind the reply it stops.
@@ -382,54 +402,74 @@ export class Thread {
     this.current?.abort();
   }
 
-  /** Files your message under its conversation, now that it has one. */
-  private file(message: ThreadMessage, episodeId: number) {
-    this.d.db.query("UPDATE messages SET episode_id = ? WHERE id = ?").run(episodeId, message.id);
-    this.d.events.emit({ type: "message.created", message: { ...message, episodeId } });
+  /**
+   * Files your message under its conversation, now that it has one. False if it's gone: you left
+   * incognito before its turn came.
+   */
+  private file(message: ThreadMessage, episodeId: number): boolean {
+    const filed = this.d.db
+      .query("UPDATE messages SET episode_id = ? WHERE id = ?")
+      .run(episodeId, message.id).changes;
+    if (filed) this.d.events.emit({ type: "message.created", message: { ...message, episodeId } });
+    return filed > 0;
   }
 
   /** What came of a command, as a line in the chat. You just did it, so it's already seen. */
-  private commandNote(text: string, episodeId: number | null): ThreadMessage {
+  private commandNote(text: string, episodeId: number | null, incognito = false): ThreadMessage {
     const now = this.now();
     const row = this.d.db
-      .query<ThreadMessage, [number | null, string, string, string]>(
-        `INSERT INTO messages (episode_id, role, kind, text, status, created_at, seen_at)
-         VALUES (?, 'assistant', 'command', ?, 'done', ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
+      .query<MessageRow, [number | null, string, string, string, number]>(
+        `INSERT INTO messages (episode_id, role, kind, text, status, created_at, seen_at, incognito)
+         VALUES (?, 'assistant', 'command', ?, 'done', ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
       )
-      .get(episodeId, text, now, now);
+      .get(episodeId, text, now, now, incognito ? 1 : 0);
     if (!row) throw new Error("note insert failed");
-    this.d.events.emit({ type: "message.created", message: row });
-    return row;
+    const message = messageOf(row);
+    this.d.events.emit({ type: "message.created", message });
+    return message;
   }
 
   /** /stop: the reply being written, or with a number, that task. */
   private stop(arg: string, message: ThreadMessage) {
+    const incognito = !!message.incognito;
     const episodeId =
-      this.d.db.query<{ id: number }, []>("SELECT id FROM episodes ORDER BY id DESC LIMIT 1").get()
-        ?.id ?? null;
+      this.d.db
+        .query<{ id: number }, [number]>(
+          "SELECT id FROM episodes WHERE incognito = ? ORDER BY id DESC LIMIT 1",
+        )
+        .get(incognito ? 1 : 0)?.id ?? null;
     if (episodeId !== null) this.file(message, episodeId);
+    const note = (text: string) => void this.commandNote(text, episodeId, incognito);
     if (!arg) {
-      if (this.current) this.current.abort(STOPPED);
-      else this.commandNote("Nothing to stop.", episodeId);
+      // Only the reply in the conversation you're looking at.
+      if (this.current && this.currentIncognito === incognito) this.current.abort(STOPPED);
+      else note("Nothing to stop.");
       return;
     }
     const id = Number(arg.replace(/^#/, ""));
-    if (!Number.isInteger(id) || id <= 0) {
-      this.commandNote("Give the task's number, like /stop 12.", episodeId);
-      return;
-    }
-    this.commandNote(
-      this.d.tasks?.cancel(id) ? `Stopping task #${id}.` : `Task #${id} isn't running.`,
-      episodeId,
-    );
+    if (!Number.isInteger(id) || id <= 0) return note("Give the task's number, like /stop 12.");
+    note(this.d.tasks?.cancel(id) ? `Stopping task #${id}.` : `Task #${id} isn't running.`);
   }
 
   /** /new, /task and /remember, in turn with replies. */
   private async command(c: ChatCommand, message: ThreadMessage) {
     const { db, tasks, memory, events, settings } = this.d;
-    const episode = await this.episodeFor(this.turnSetup().prefix, c.name === "new");
-    this.file(message, episode.id);
+    const incognito = !!message.incognito;
+    // A new incognito conversation: the one before it is gone, /new included.
+    if (incognito && c.name === "new") return this.deleteIncognito();
+    const episode = await this.episodeFor(
+      this.turnSetup(incognito).prefix,
+      c.name === "new",
+      incognito,
+    );
+    if (!this.file(message, episode.id)) return;
     db.query("UPDATE episodes SET last_activity_at = ? WHERE id = ?").run(this.now(), episode.id);
+    if (incognito)
+      return void this.commandNote(
+        `/${c.name} doesn't work in incognito; it would outlast the conversation.`,
+        episode.id,
+        true,
+      );
     if (c.name === "task") {
       if (!c.arg)
         return void this.commandNote("Say what to do, like /task check the backups.", episode.id);
@@ -467,18 +507,22 @@ export class Thread {
     }
   }
 
-  /** What a reply is bound to: the prompt, the tools and the model. */
-  private turnSetup() {
+  /**
+   * What a reply is bound to: the prompt, the tools and the model. Incognito gets only lookups, and no
+   * history search.
+   */
+  private turnSetup(incognito = false) {
     const { settings, plugins } = this.d;
     // Fixed for the turn; a plugin switched on or off shows from the next one.
     const guidance = plugins.guidance();
-    const system = guidance ? `${SYSTEM_PROMPT}\n\nYour plugins\n\n${guidance}` : SYSTEM_PROMPT;
-    const pluginTools = plugins.tools();
+    const base = guidance ? `${SYSTEM_PROMPT}\n\nYour plugins\n\n${guidance}` : SYSTEM_PROMPT;
+    const system = incognito ? `${base}\n\n${INCOGNITO_PROMPT}` : base;
+    const pluginTools = plugins.tools().filter((t) => !incognito || t.access === "read");
     // Fixed for the reply; a change starts a new episode, since thinking blocks are bound to the model.
     const chatModel = settings.get().chatModel;
     const onHaiku = chatModel === "claude-haiku-5-5";
     const tools = [
-      ...TOOL_PARAMS,
+      ...(incognito ? TOOL_PARAMS.filter((t) => INCOGNITO_TOOLS.includes(t.name)) : TOOL_PARAMS),
       ...(onHaiku ? [ASK_OPUS] : []),
       ...pluginTools.map(toolParam),
       ...WEB_TOOLS,
@@ -509,18 +553,28 @@ export class Thread {
     episodeId?: number,
     attachmentIds: number[] = [],
     command: ChatCommand | null = null,
+    incognito = false,
   ): ThreadMessage {
-    const inserted = this.d.db
-      .query<ThreadMessage, [number | null, string, string, string, string, string]>(
-        `INSERT INTO messages (episode_id, role, kind, text, status, created_at) VALUES (?, ?, ?, ?, ?, ?)
-         RETURNING ${MESSAGE_COLUMNS}`,
+    const row = this.d.db
+      .query<MessageRow, [number | null, string, string, string, string, string, number]>(
+        `INSERT INTO messages (episode_id, role, kind, text, status, created_at, incognito)
+         VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
       )
-      .get(episodeId ?? null, role, command ? "command" : "text", text, status, this.now());
-    if (!inserted) throw new Error("message insert failed");
+      .get(
+        episodeId ?? null,
+        role,
+        command ? "command" : "text",
+        text,
+        status,
+        this.now(),
+        incognito ? 1 : 0,
+      );
+    if (!row) throw new Error("message insert failed");
+    const inserted = messageOf(row);
     const files = this.d.attachments?.bind(attachmentIds, inserted.id) ?? [];
-    const row = files.length ? { ...inserted, attachments: files } : inserted;
-    this.d.events.emit({ type: "message.created", message: row });
-    return row;
+    const message = files.length ? { ...inserted, attachments: files } : inserted;
+    this.d.events.emit({ type: "message.created", message });
+    return message;
   }
 
   private appendTurn(
@@ -553,11 +607,12 @@ export class Thread {
   /**
    * Continues the current episode, or starts a new one after 30 minutes idle, when an update changed
    * the system prompt, tools or model, or when you asked for one (/new, `fresh`). `isNew`: the model
-   * hasn't seen it yet, so it opens with the context.
+   * hasn't seen it yet, so it opens with the context. Incognito conversations run apart from the rest.
    */
   private async episodeFor(
     prefix: string,
     fresh = false,
+    incognito = false,
   ): Promise<{ id: number; isNew: boolean; fresh: boolean }> {
     const last = this.d.db
       .query<
@@ -568,11 +623,11 @@ export class Thread {
           prefix: string | null;
           fresh: number;
         },
-        []
+        [number]
       >(
-        "SELECT id, last_activity_at, summarized, prefix, fresh FROM episodes ORDER BY id DESC LIMIT 1",
+        "SELECT id, last_activity_at, summarized, prefix, fresh FROM episodes WHERE incognito = ? ORDER BY id DESC LIMIT 1",
       )
-      .get();
+      .get(incognito ? 1 : 0);
     const open = last && this.clock() - Date.parse(last.last_activity_at) < EPISODE_IDLE_MS;
     if (last && open && (!fresh || last.fresh)) {
       const untouched = !this.hasTurns(last.id);
@@ -586,7 +641,9 @@ export class Thread {
       if (!fresh)
         console.log(`episode ${last.id}: the prompt or tools changed; starting a new episode`);
     }
-    if (last && !last.summarized) {
+    // An incognito conversation that went idle ends; one whose prompt changed carries on in a new episode.
+    if (incognito && last && !open) await this.deleteIncognito(true);
+    if (!incognito && last && !last.summarized) {
       try {
         await this.summarize(last.id);
       } catch (err) {
@@ -594,10 +651,10 @@ export class Thread {
       }
     }
     const row = this.d.db
-      .query<{ id: number }, [string, string, string, number]>(
-        "INSERT INTO episodes (started_at, last_activity_at, prefix, fresh) VALUES (?, ?, ?, ?) RETURNING id",
+      .query<{ id: number }, [string, string, string, number, number]>(
+        "INSERT INTO episodes (started_at, last_activity_at, prefix, fresh, incognito) VALUES (?, ?, ?, ?, ?) RETURNING id",
       )
-      .get(this.now(), this.now(), prefix, fresh ? 1 : 0);
+      .get(this.now(), this.now(), prefix, fresh ? 1 : 0, incognito ? 1 : 0);
     if (!row) throw new Error("episode insert failed");
     return { id: row.id, isNew: true, fresh };
   }
@@ -621,12 +678,26 @@ export class Thread {
 
   /**
    * Summarizes the last episode once it has been idle for 30 minutes, so it folds up in the chat
-   * without waiting for the next message. The brain calls it every minute.
+   * without waiting for the next message, and ends an incognito conversation idle that long. The brain
+   * calls it every minute.
    */
   async sweep() {
+    const incognitoAt = this.d.db
+      .query<{ at: string | null }, []>(
+        `SELECT max(at) AS at FROM (
+           SELECT last_activity_at AS at FROM episodes WHERE incognito = 1
+           UNION ALL SELECT created_at FROM messages WHERE incognito = 1)`,
+      )
+      .get()?.at;
+    if (
+      incognitoAt &&
+      this.clock() - Date.parse(incognitoAt) >= EPISODE_IDLE_MS &&
+      !(this.current && this.currentIncognito)
+    )
+      await this.deleteIncognito();
     const last = this.d.db
       .query<{ id: number; last_activity_at: string }, []>(
-        "SELECT id, last_activity_at FROM episodes WHERE summarized = 0 ORDER BY id DESC LIMIT 1",
+        "SELECT id, last_activity_at FROM episodes WHERE summarized = 0 AND incognito = 0 ORDER BY id DESC LIMIT 1",
       )
       .get();
     if (!last || this.clock() - Date.parse(last.last_activity_at) < EPISODE_IDLE_MS) return;
@@ -635,6 +706,43 @@ export class Thread {
     } catch (err) {
       console.error("thread summary failed; trying again later", err);
     }
+  }
+
+  /** Leaving incognito: stops its reply and deletes the conversation. The brain does it on start too. */
+  async endIncognito() {
+    if (this.current && this.currentIncognito) this.current.abort(STOPPED);
+    await this.deleteIncognito();
+  }
+
+  /**
+   * Deletes the incognito conversation: its messages, files and model turns. What it cost stays in the
+   * ledger, without it. `onlyFiled` keeps your messages still waiting for their turn, which start the
+   * next one.
+   */
+  private async deleteIncognito(onlyFiled = false) {
+    const { db } = this.d;
+    const ids = db
+      .query<{ id: number }, []>(
+        `SELECT id FROM messages WHERE incognito = 1${onlyFiled ? " AND episode_id IS NOT NULL" : ""}`,
+      )
+      .all()
+      .map((r) => r.id);
+    await this.d.attachments?.removeFor(ids);
+    const list = ids.map(() => "?").join(", ");
+    db.transaction(() => {
+      if (ids.length) {
+        db.query(`DELETE FROM attachments WHERE message_id IN (${list})`).run(...ids);
+        db.query(`DELETE FROM messages WHERE id IN (${list})`).run(...ids);
+      }
+      const episodes = "(SELECT id FROM episodes WHERE incognito = 1)";
+      db.query(`DELETE FROM episode_turns WHERE episode_id IN ${episodes}`).run();
+      db.query(`UPDATE spend_ledger SET episode_id = NULL WHERE episode_id IN ${episodes}`).run();
+      db.query("DELETE FROM episodes WHERE incognito = 1").run();
+    })();
+    if (!ids.length) return;
+    // Out of the write-ahead log too, not only the database file.
+    db.query("PRAGMA wal_checkpoint(TRUNCATE)").get();
+    this.d.events.emit({ type: "message.deleted", ids });
   }
 
   /** Folds a finished episode into the rolling thread summary with Haiku, and writes its recap. */
@@ -705,17 +813,19 @@ export class Thread {
 
   /**
    * Opening context for a new episode: memory index, summary, the last few messages. One you started
-   * with /new (`fresh`) gets only its own.
+   * with /new (`fresh`) gets only its own; an incognito one only the incognito conversation's, and no
+   * summary.
    */
   private async episodeContext(
     beforeMessageId: number,
     episodeId: number,
     fresh: boolean,
+    incognito: boolean,
   ): Promise<string> {
     const index = (await this.d.memory.exists("INDEX.md"))
       ? await this.d.memory.read("INDEX.md")
       : "(no INDEX.md yet)";
-    const recent = this.list(beforeMessageId, RECENT_MESSAGES)
+    const recent = this.list(beforeMessageId, RECENT_MESSAGES, incognito)
       .filter((m) => m.status !== "streaming" && (!fresh || m.episodeId === episodeId))
       .map(
         (m) =>
@@ -725,7 +835,11 @@ export class Thread {
     return [
       "<context>",
       `<memory_index>\n${index.trim()}\n</memory_index>`,
-      `<summary_of_earlier_conversations>\n${this.threadSummary() || "(none yet)"}\n</summary_of_earlier_conversations>`,
+      ...(incognito
+        ? []
+        : [
+            `<summary_of_earlier_conversations>\n${this.threadSummary() || "(none yet)"}\n</summary_of_earlier_conversations>`,
+          ]),
       `<recent_messages>\n${recent || "(none)"}\n</recent_messages>`,
       "</context>",
     ].join("\n");
@@ -750,18 +864,20 @@ export class Thread {
 
   private async reply(user: ThreadMessage) {
     const { db, events, spend, settings, model, plugins } = this.d;
-    const { system, pluginTools, chatModel, onHaiku, tools, prefix } = this.turnSetup();
-    const episode = await this.episodeFor(prefix);
-    this.file(user, episode.id);
+    const incognito = !!user.incognito;
+    const { system, pluginTools, chatModel, onHaiku, tools, prefix } = this.turnSetup(incognito);
+    const offered = new Set(tools.map((t) => ("name" in t ? t.name : "")));
+    const episode = await this.episodeFor(prefix, false, incognito);
+    if (!this.file(user, episode.id)) return;
 
     const userBlocks: BlockParam[] = [];
     if (episode.isNew) {
       userBlocks.push({
         type: "text",
-        text: await this.episodeContext(user.id, episode.id, episode.fresh),
+        text: await this.episodeContext(user.id, episode.id, episode.fresh, incognito),
       });
-      // /new leaves what came before, and what it had read, behind.
-      if (!episode.fresh) this.inheritTaint(episode.id, user.id);
+      // /new and incognito leave what came before, and what it had read, behind.
+      if (!episode.fresh && !incognito) this.inheritTaint(episode.id, user.id);
     } else {
       const commands = this.commandsSince(episode.id, user.id);
       if (commands)
@@ -773,7 +889,8 @@ export class Thread {
     // An untrusted MCP server's tool descriptions are in the prompt now.
     const foreign = untrustedDefinitions(pluginTools);
     if (foreign) this.taint(episode.id, foreign);
-    const ended = this.d.tasks?.takeUnreported() ?? [];
+    // Task news waits for the conversation that's kept.
+    const ended = incognito ? [] : (this.d.tasks?.takeUnreported() ?? []);
     // What tainted tasks report carries what they read.
     const tainted = ended.find((t) => t.tainted);
     if (tainted) this.taint(episode.id, `Task #${tainted.id} "${tainted.title}"`);
@@ -795,7 +912,7 @@ export class Thread {
     }
     this.appendTurn(episode.id, "user", userBlocks);
 
-    const out = this.insertMessage("assistant", "", "streaming", episode.id);
+    const out = this.insertMessage("assistant", "", "streaming", episode.id, [], null, incognito);
     let text = "";
     let separate = false;
     /** This reply's model calls so far, shown under the working dots. */
@@ -874,6 +991,7 @@ export class Thread {
     let changes = 0;
     const abort = new AbortController();
     this.current = abort;
+    this.currentIncognito = incognito;
     try {
       for (let step = 0; ; step++) {
         const s = settings.get();
@@ -978,6 +1096,13 @@ export class Thread {
               tool_use_id: call.id,
               is_error: true,
               content: "Input was cut off at max_tokens. Retry with a shorter input.",
+            };
+          if (!offered.has(call.name))
+            return {
+              type: "tool_result",
+              tool_use_id: call.id,
+              is_error: true,
+              content: `${call.name} isn't available in this conversation.`,
             };
           if (call.name === "ask_opus" && onHaiku) {
             progress("Asking Opus…");

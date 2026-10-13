@@ -34,6 +34,12 @@ Style
 
 Once you have answered something, treat that answer as done. On later turns, focus on what the owner is asking now, and don't revisit an earlier answer unless they ask about it or point out a problem with it.`;
 
+/** After SYSTEM_PROMPT (and the plugins) in an incognito conversation; it overrides what's above. */
+export const INCOGNITO_PROMPT = `This conversation is incognito
+- The owner switched to incognito. You don't see earlier conversations or a summary of them, and this conversation is deleted when it ends: nothing in it is summarized, searchable or kept.
+- Memory is read-only here. You can read it, but not save, change or delete anything, so don't offer to remember things.
+- You can only look things up: memory, the web, schedules and triggers, and plugins' read tools. You can't start tasks, make or change schedules, or change anything in the homelab. If the owner asks for that, say it needs a normal conversation.`;
+
 export const SUMMARY_PROMPT = `You maintain a running summary of a long chat between a person and their assistant, Hatbot. You get the previous summary and the transcript of the latest conversation. Write two things.
 
 <recap>: what the latest conversation was about, for the person scrolling back through the chat, where it stands folded up in its place. One or two plain sentences, at most 40 words, about what was asked and what came of it ("Asked about the NAS disks; Hatbot found one failing and scheduled a weekly check."). No dates, no preamble.

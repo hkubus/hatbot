@@ -90,6 +90,8 @@ const teach = new Teach({
 const schedules = new Schedules(db, events, settings, tasks);
 const triggers = new Triggers(db, events, settings, tasks, notifier, config.publicUrl);
 thread.attach({ tasks, schedules, triggers, approvals, attachments, desktop: desktop.agent });
+// A restart ends an incognito conversation.
+await thread.endIncognito();
 await desktop.setPaused(settings.get().paused);
 await desktop.refresh();
 setInterval(() => void desktop.refresh(), 30_000);

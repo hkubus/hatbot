@@ -554,3 +554,120 @@ test("notes go at the end of the Notes section, made if it's missing", () => {
   expect(titleOf("short")).toBe("short");
   expect(titleOf("word ".repeat(30))).toBe(`${"word ".repeat(15).trim()}…`);
 });
+
+const toolNames = (req: { tools?: unknown[] } | undefined) =>
+  (req?.tools ?? []).flatMap((x) => (x && typeof x === "object" && "name" in x ? [x.name] : []));
+
+test("incognito sees no history, leaves none, and is deleted when you leave", async () => {
+  const model = new FakeModel([
+    { content: [text("Got it.")] },
+    { content: [text("Hello.")] },
+    { content: [text("Still here.")] },
+    { content: [text("Back.")] },
+  ]);
+  const t = await testApp(model);
+  const { cookie } = await setUpOwner(t);
+  await t.thread.post("my wireguard port is 51820").done;
+  t.db
+    .query("INSERT INTO settings (key, value) VALUES ('thread_summary', 'They run WireGuard.')")
+    .run();
+  const post = (text: string) =>
+    t.call("POST", "/thread/messages", { text, incognito: true }, { cookie });
+  expect((await post("hello in secret")).status).toBe(202);
+  await t.thread.idle();
+  await post("and again");
+  await t.thread.idle();
+
+  const opening = model.requests[1];
+  expect(lastUserText(opening as never)).toContain("<memory_index>");
+  expect(lastUserText(opening as never)).not.toContain("51820");
+  expect(lastUserText(opening as never)).not.toContain("They run WireGuard.");
+  expect(JSON.stringify(opening?.system)).toContain("This conversation is incognito");
+  const tools = toolNames(opening);
+  expect(tools).toContain("memory_read");
+  for (const name of ["search_history", "memory_write", "run_task", "schedule_create"])
+    expect(tools).not.toContain(name);
+  // The second message continues the incognito conversation.
+  expect(model.requests[2]?.messages.length).toBe(3);
+
+  // None of it is in the thread, unread, or the search index.
+  expect(t.thread.list().map((m) => m.text)).toEqual(["my wireguard port is 51820", "Got it."]);
+  const secret = t.thread.list(undefined, 50, true);
+  expect(secret.map((m) => [m.text, m.incognito])).toEqual([
+    ["hello in secret", true],
+    ["Hello.", true],
+    ["and again", true],
+    ["Still here.", true],
+  ]);
+  expect(t.thread.unread().some((id) => secret.some((m) => m.id === id))).toBe(false);
+  expect(
+    t.db.query("SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'secret'").all(),
+  ).toEqual([]);
+
+  expect((await t.call("DELETE", "/thread/incognito", undefined, { cookie })).status).toBe(200);
+  expect(t.thread.list(undefined, 50, true)).toEqual([]);
+  expect(t.events.at(-1)).toEqual({ type: "message.deleted", ids: secret.map((m) => m.id) });
+  const count = (sql: string) => t.db.query<{ n: number }, []>(sql).get()?.n;
+  expect(count("SELECT count(*) AS n FROM episodes WHERE incognito = 1")).toBe(0);
+  expect(count("SELECT count(*) AS n FROM episode_turns WHERE episode_id != 1")).toBe(0);
+  // What it cost is still counted.
+  expect(count("SELECT count(*) AS n FROM spend_ledger WHERE episode_id IS NULL")).toBe(2);
+
+  // The kept conversation carries on where it was.
+  await t.thread.post("back").done;
+  expect(model.requests[3]?.messages.length).toBe(3);
+});
+
+test("incognito can't write memory or start work, and /new starts it afresh", async () => {
+  const model = new FakeModel([
+    { content: [toolUse("memory_write", { path: "x.md", content: "x", reason: "x" })] },
+    { content: [text("I can't save that here.")] },
+  ]);
+  const t = await testApp(model);
+  await setUpOwner(t);
+  await t.thread.post("remember x", [], true).done;
+  expect(JSON.stringify(model.requests[1]?.messages.at(-1)?.content)).toContain(
+    "memory_write isn't available",
+  );
+  expect(await t.memory.exists("x.md")).toBe(false);
+  await t.thread.post("/remember x", [], true).done;
+  await t.thread.post("/task do x", [], true).done;
+  expect(
+    t.thread
+      .list(undefined, 50, true)
+      .filter((m) => m.role === "assistant" && m.kind === "command")
+      .map((m) => m.text),
+  ).toEqual([
+    "/remember doesn't work in incognito; it would outlast the conversation.",
+    "/task doesn't work in incognito; it would outlast the conversation.",
+  ]);
+  expect(t.tasks.list().length).toBe(0);
+  await t.thread.post("/new", [], true).done;
+  expect(t.thread.list(undefined, 50, true)).toEqual([]);
+});
+
+test("an incognito conversation idle for 30 minutes is deleted, its files too", async () => {
+  const model = new FakeModel([{ content: [text("Nice photo.")] }]);
+  const t = await testApp(model);
+  const a = await t.attachments.save({
+    bytes: new TextEncoder().encode("hello"),
+    name: "note.txt",
+    mediaType: "text/plain",
+    from: "owner",
+  });
+  const path = t.db
+    .query<{ path: string }, [number]>("SELECT path FROM attachments WHERE id = ?")
+    .get(a.id)?.path as string;
+  await t.thread.post("look", [a.id], true).done;
+  expect(await t.archive.file(path)?.exists()).toBe(true);
+  t.advance(29 * 60_000);
+  await t.thread.sweep();
+  expect(t.thread.list(undefined, 50, true).length).toBe(2);
+  t.advance(2 * 60_000);
+  await t.thread.sweep();
+  expect(t.thread.list(undefined, 50, true)).toEqual([]);
+  expect(t.attachments.get(a.id)).toBeNull();
+  expect(await t.archive.file(path)?.exists()).toBe(false);
+  // It's never summarized.
+  expect(model.creates.length).toBe(0);
+});
