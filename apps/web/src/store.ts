@@ -320,7 +320,8 @@ function apply(e: HatbotEvent) {
       return set({
         messages: upsert(state.messages, e.message),
         unread:
-          e.message.role === "assistant" && e.message.status !== "streaming"
+          // What came of your own command arrives already seen.
+          e.message.role === "assistant" && e.message.status !== "streaming" && !e.message.seenAt
             ? addUnread(e.message.id)
             : state.unread,
       });
