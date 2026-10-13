@@ -536,12 +536,13 @@ export class Thread {
   }
 
   private loadTurns(episodeId: number): Turn[] {
-    return this.d.db
+    const turns = this.d.db
       .query<{ role: "user" | "assistant"; content: string }, [number]>(
         "SELECT role, content FROM episode_turns WHERE episode_id = ? ORDER BY id",
       )
       .all(episodeId)
       .map((r) => ({ role: r.role, content: JSON.parse(r.content) }));
+    return answered(turns);
   }
 
   private hasTurns(episodeId: number): boolean {
@@ -1044,6 +1045,41 @@ export class Thread {
       this.current = null;
     }
   }
+}
+
+/**
+ * Turns where every tool call has its result. A reply stopped while its tools ran never stored
+ * theirs, and the API turns the whole episode away without them.
+ */
+export function answered(turns: Turn[]): Turn[] {
+  const out: Turn[] = [];
+  for (let i = 0; i < turns.length; i++) {
+    const turn = turns[i] as Turn;
+    out.push(turn);
+    if (turn.role !== "assistant" || typeof turn.content === "string") continue;
+    const calls = turn.content.filter((b) => b.type === "tool_use");
+    if (!calls.length) continue;
+    const next = turns[i + 1];
+    const content: BlockParam[] =
+      next?.role === "user"
+        ? typeof next.content === "string"
+          ? [{ type: "text", text: next.content }]
+          : next.content
+        : [];
+    const results = content.filter((b) => b.type === "tool_result");
+    const missing = calls.filter((c) => !results.some((r) => r.tool_use_id === c.id));
+    if (!missing.length) continue;
+    const filled: BlockParam[] = missing.map((c) => ({
+      type: "tool_result",
+      tool_use_id: c.id,
+      is_error: true,
+      content: "Stopped before this finished; it may or may not have run.",
+    }));
+    const rest = content.filter((b) => b.type !== "tool_result");
+    out.push({ role: "user", content: [...results, ...filled, ...rest] });
+    if (next?.role === "user") i++;
+  }
+  return out;
 }
 
 function toolLabel(name: string, plugins: Plugins): string {

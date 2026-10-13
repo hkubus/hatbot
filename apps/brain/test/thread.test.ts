@@ -499,6 +499,32 @@ test("/stop stops the reply being written; with a number, that task", async () =
   expect(t.thread.unread()).not.toContain(t.thread.list().at(-1)?.id as number);
 });
 
+test("tool calls a stop cut off get a result, so the next message still goes through", async () => {
+  const model = new FakeModel([{ content: [text("one")] }, { content: [text("two")] }]);
+  const t = await testApp(model);
+  await t.thread.post("first").done;
+  // What a reply stopped mid-tool leaves behind: the calls, and no results.
+  const calls = [
+    toolUse("memory_read", { path: "a.md" }, "toolu_a"),
+    toolUse("memory_read", { path: "b.md" }, "toolu_b"),
+  ];
+  t.db
+    .query(
+      "INSERT INTO episode_turns (episode_id, role, content, created_at) VALUES (1, 'assistant', ?, ?)",
+    )
+    .run(JSON.stringify(calls), new Date().toISOString());
+  await t.thread.post("second").done;
+
+  const messages = model.requests[1]?.messages ?? [];
+  expect(messages.at(-2)?.content).toMatchObject(calls);
+  const last = messages.at(-1)?.content as { type: string; tool_use_id?: string }[];
+  expect(last.slice(0, 2)).toMatchObject([
+    { type: "tool_result", tool_use_id: "toolu_a", is_error: true },
+    { type: "tool_result", tool_use_id: "toolu_b", is_error: true },
+  ]);
+  expect(JSON.stringify(last.slice(2))).toContain("second");
+});
+
 test("/task runs what you typed as a background task, shown under the line it starts", async () => {
   const model = new FakeModel([{ content: [text("hi")] }, { content: [text("It's running.")] }]);
   const work = new FakeModel([
