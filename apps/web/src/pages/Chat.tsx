@@ -494,6 +494,7 @@ export function Chat() {
   const unread = useStore((s) => s.unread);
   const hasEarlier = useStore((s) => s.hasEarlier);
   const paused = useStore((s) => s.paused);
+  const incognito = useStore((s) => s.incognito);
   const [draft, setDraft] = useState("");
   // The command list under "/…": which one is picked, and whether Escape closed it.
   const [pick, setPick] = useState(0);
@@ -509,11 +510,15 @@ export function Chat() {
   // Only messages that arrive after the first paint animate in.
   const animateFrom = useRef<number>(Number.POSITIVE_INFINITY);
 
+  // Switching to or from incognito loads the other conversation in the store.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset the animation on each switch
   useEffect(() => {
+    animateFrom.current = Number.POSITIVE_INFINITY;
+    stick.current = true;
     loadThread().then(() => {
       animateFrom.current = (getState().messages.at(-1)?.id ?? 0) + 1;
     });
-  }, []);
+  }, [incognito]);
 
   // Follow the conversation while the view is at the bottom.
   useLayoutEffect(() => {
@@ -602,7 +607,10 @@ export function Chat() {
   const uploading = files.some((d) => !d.attachment && !d.error);
   const ready = files.filter((d) => d.attachment);
 
-  const commands = menuClosed ? [] : matchingCommands(draft);
+  // Incognito keeps nothing, so commands that would outlast it aren't offered.
+  const commands = menuClosed
+    ? []
+    : matchingCommands(draft).filter((c) => !incognito || c.name === "new" || c.name === "stop");
   const picked = commands[Math.min(pick, commands.length - 1)];
   // One that needs more goes in the composer for you to finish; the rest run at once.
   const choose = (c: (typeof commands)[number]) => {
@@ -684,7 +692,13 @@ export function Chat() {
                 Earlier messages
               </button>
             )}
-            {!messages.length && <div className="empty">Say hello to Hatbot.</div>}
+            {!messages.length && (
+              <div className="empty">
+                {incognito
+                  ? "Hatbot can't see earlier conversations here, and this one is deleted when you leave."
+                  : "Say hello to Hatbot."}
+              </div>
+            )}
             {threadGroups(messages, episodes).map((g) => {
               if (g.fold === null || g.episodeId === null) return g.messages.map(row);
               const id = g.episodeId;
@@ -781,7 +795,7 @@ export function Chat() {
           <textarea
             ref={textarea}
             rows={1}
-            placeholder="Message Hatbot…"
+            placeholder={incognito ? "Message Hatbot incognito…" : "Message Hatbot…"}
             value={draft}
             onChange={(e) => {
               setDraft(e.target.value);
