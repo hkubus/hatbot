@@ -341,6 +341,41 @@ final class FoldTests: XCTestCase {
     XCTAssertEqual(steps.latestNoteOnly.map(\.id), [2, 3, 4])
   }
 
+  func testDecodesBotsAndConversations() throws {
+    let bot = #"""
+      {"type":"bot.updated","bot":{"id":"chef","name":"Chef","instructions":"Plans meals.","chatModel":null,
+       "chatEffort":"medium","plugins":["mail"],"createdAt":"2026-10-14T08:00:00.000Z"}}
+      """#
+    guard case let .botUpdated(b) = try JSONDecoder().decode(HatbotEvent.self, from: Data(bot.utf8)) else {
+      return XCTFail("not a bot")
+    }
+    XCTAssertEqual(b.id, "chef")
+    XCTAssertNil(b.chatModel)
+    XCTAssertEqual(b.chatEffort, .medium)
+    XCTAssertEqual(b.plugins, ["mail"])
+    let chat = #"""
+      {"type":"conversation.updated","conversation":{"id":2,"kind":"party","title":null,"botIds":["chef"],
+       "unread":3,"lastMessageAt":null}}
+      """#
+    guard case let .conversationUpdated(c) = try JSONDecoder().decode(HatbotEvent.self, from: Data(chat.utf8)) else {
+      return XCTFail("not a conversation")
+    }
+    XCTAssertEqual(c.kind, .direct)
+    XCTAssertEqual(c.unread, 3)
+    guard case .conversationDeleted(id: 2) = try JSONDecoder().decode(
+      HatbotEvent.self, from: Data(#"{"type":"conversation.deleted","id":2}"#.utf8))
+    else { return XCTFail("not deleted") }
+  }
+
+  func testEncodesABotChangeWithNulls() throws {
+    let change = AppStore.BotChange(name: nil, instructions: "x", chatModel: nil, chatEffort: .low, plugins: nil)
+    let json = String(decoding: try JSONEncoder().encode(change), as: UTF8.self)
+    XCTAssertFalse(json.contains("\"name\""))
+    XCTAssertTrue(json.contains("\"chatModel\":null"))
+    XCTAssertTrue(json.contains("\"plugins\":null"))
+    XCTAssertTrue(json.contains("\"chatEffort\":\"low\""))
+  }
+
   func testDecodesEpisodeEvents() throws {
     let json = #"{"type":"episode.updated","episode":{"id":4,"startedAt":"a","lastActivityAt":"b","recap":"R"}}"#
     guard case let .episodeUpdated(e) = try JSONDecoder().decode(HatbotEvent.self, from: Data(json.utf8)) else {

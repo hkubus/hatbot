@@ -18,6 +18,7 @@ struct ChatView: View {
   @State private var position = ScrollPosition(edge: .bottom)
   @State private var loaded = false
   @State private var unfolded = Set<Int>()
+  private var name: String { store.chatName(store.currentChat) }
   @State private var farFromBottom = false
 
   /// What the list shows: times, folds, and the messages that aren't folded away.
@@ -84,8 +85,8 @@ struct ChatView: View {
           if loaded && store.messages.isEmpty {
             Text(
               store.incognito
-                ? "Hatbot can't see earlier conversations here, and this one is deleted when you leave."
-                : "Say hello to Hatbot."
+                ? "\(name) can't see earlier conversations here, and this one is deleted when you leave."
+                : "Say hello to \(name)."
             )
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
@@ -143,9 +144,15 @@ struct ChatView: View {
         if store.paused { PausedBanner() }
       }
       .edgeBar(.bottom) { composer }
-      .navigationTitle(store.incognito ? "Incognito" : "Hatbot")
+      .navigationTitle(store.incognito ? "Incognito" : name)
       .sidebarButton()
       .toolbar {
+        if let bot = store.currentChat.flatMap({ $0.kind == .direct ? $0.botIds.first : nil }) {
+          ToolbarItem(placement: .topBarTrailing) {
+            NavigationLink(value: Route.bot(bot)) { Image(systemName: "slider.horizontal.3") }
+              .accessibilityLabel("About \(name)")
+          }
+        }
         ToolbarItem(placement: .topBarTrailing) {
           // Leaving deletes the incognito conversation.
           Button {
@@ -159,6 +166,10 @@ struct ChatView: View {
       }
       .navigationBarTitleDisplayMode(.inline)
       .routes()
+      .onChange(of: store.conversationId) {
+        path = []
+        unfolded = []
+      }
       .task {
         do {
           try await store.loadThread()
@@ -246,7 +257,7 @@ struct ChatView: View {
         .glassButton()
         .buttonBorderShape(.circle)
         .accessibilityLabel("Attach")
-        TextField(store.incognito ? "Message Hatbot incognito…" : "Message Hatbot…", text: $draft, axis: .vertical)
+        TextField(store.incognito ? "Message \(name) incognito…" : "Message \(name)…", text: $draft, axis: .vertical)
           .lineLimit(1...6)
           .padding(.horizontal, 16)
           .padding(.vertical, 11)
