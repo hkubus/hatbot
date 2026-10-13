@@ -132,6 +132,23 @@ final class MarkdownTests: XCTestCase {
     XCTAssertEqual(Markdown.parse("```chart\n\(bad)\n```"), [.code(language: "chart", code: bad)])
   }
 
+  func testStackedAndHorizontalBars() {
+    let spec = ChartSpec.parse(
+      #"{"type":"bar","stacked":true,"x":["a","b"],"series":[{"data":[2,-1]},{"data":[3,null]},{"data":[-4,5]}]}"#)!
+    XCTAssertTrue(spec.isStacked)
+    XCTAssertFalse(spec.horizontal)
+    let spans = spec.stackSpans.map { $0.map { $0.map { [$0.start, $0.end] } } }
+    XCTAssertEqual(spans, [[[0, 2], [2, 5], [0, -4]], [[0, -1], nil, [0, 5]]])
+    XCTAssertEqual(spec.stackTotals, [1, 4])
+    func rows(_ n: Int) -> String {
+      let x = (0..<n).map { "\"h\($0)\"" }.joined(separator: ",")
+      let d = Array(repeating: "1", count: n).joined(separator: ",")
+      return #"{"type":"bar","horizontal":true,"x":["# + x + #"],"series":[{"data":["# + d + "]}]}"
+    }
+    XCTAssertNotNil(ChartSpec.parse(rows(40)))
+    XCTAssertNil(ChartSpec.parse(rows(41)))
+  }
+
   func testChartValues() {
     func spec(_ unit: String?) -> ChartSpec {
       ChartSpec.parse(#"{"type":"line","x":["a"],"series":[{"data":[1]}]}"#.replacingOccurrences(

@@ -1,5 +1,5 @@
 // A ```chart block in a reply, drawn with Swift Charts in Hatbot's colours (the web's chart.tsx):
-// a line or bar chart; touch and drag for the values at a point.
+// lines, columns (grouped or stacked) or horizontal bars; touch and drag for the values at a point.
 import Charts
 import SwiftUI
 
@@ -42,6 +42,53 @@ struct ChartView: View {
     return out
   }
 
+  /// A bar from start to end; stacked ones keep a gap from the one below and round only the stack's ends.
+  private struct Segment: Identifiable {
+    var series: Int
+    var index: Int
+    var start: Double
+    var end: Double
+    var outer: Bool
+    /// The value (a stack's total) at its tip, on horizontal bars.
+    var tip: String?
+    var id: String { "\(series)-\(index)" }
+  }
+
+  /// `gap` is 2pt in value units, for the space between stacked segments.
+  private func barSegments(gap: Double) -> [Segment] {
+    guard spec.isStacked else {
+      return points.filter { $0.value != 0 }.map {
+        Segment(series: $0.series, index: $0.index, start: 0, end: $0.value, outer: true, tip: spec.format($0.value))
+      }
+    }
+    let totals = spec.stackTotals
+    var out: [Segment] = []
+    for (i, stack) in spec.stackSpans.enumerated() {
+      // The total goes at the end of the side it falls on.
+      let total = totals[i]
+      let tipAt = stack.indices.last { stack[$0].map { ($0.end > 0) == ((total ?? 0) >= 0) } ?? false }
+      for (s, span) in stack.enumerated() {
+        guard let span else { continue }
+        let up = span.end > 0
+        let start = span.start == 0 ? 0 : span.start + (up ? gap : -gap)
+        guard up ? span.end > start : span.end < start else { continue }
+        let outer = !stack[(s + 1)...].contains { $0.map { ($0.end > 0) == up } ?? false }
+        out.append(Segment(
+          series: s, index: i, start: start, end: span.end, outer: outer,
+          tip: s == tipAt ? total.map { spec.format($0) } : nil))
+      }
+    }
+    return out
+  }
+
+  /// The values the bars span, for the gap's size.
+  private var barRange: Double {
+    let ends = spec.isStacked
+      ? spec.stackSpans.flatMap { $0.compactMap { $0?.end } }
+      : points.map(\.value)
+    return max(ends.max() ?? 0, 0) - min(ends.min() ?? 0, 0)
+  }
+
   private var single: Bool { spec.series.count == 1 }
   private var n: Int { spec.x.count }
   private var selected: Int? {
@@ -49,15 +96,26 @@ struct ChartView: View {
     return i.flatMap { spec.x.indices.contains($0) ? $0 : nil }
   }
 
+  /// Horizontal bars: one row per x, its bars side by side.
+  private var rowBars: Int { spec.isStacked ? 1 : spec.series.count }
+  private var rowThickness: CGFloat { rowBars == 1 ? 14 : 10 }
+  private var rowHeight: CGFloat { CGFloat(rowBars) * rowThickness + CGFloat(2 * (rowBars - 1)) + 10 }
+
+  private var horizontal: Bool { spec.type == .bar && spec.horizontal }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       if let title = spec.title, !title.isEmpty {
         Text(title).font(.footnote.weight(.semibold))
       }
-      GeometryReader { geo in
-        if spec.type == .bar { bars(width: geo.size.width) } else { lines(width: geo.size.width) }
+      if horizontal {
+        rows().frame(height: CGFloat(n) * rowHeight + (single ? 0 : 24))
+      } else {
+        GeometryReader { geo in
+          if spec.type == .bar { bars(width: geo.size.width) } else { lines(width: geo.size.width) }
+        }
+        .frame(height: single ? Self.height : Self.height + 24)
       }
-      .frame(height: single ? Self.height : Self.height + 24)
     }
   }
 
@@ -116,17 +174,21 @@ struct ChartView: View {
   // MARK: Bars
 
   private func bars(width: CGFloat) -> some View {
-    let k = spec.series.count
+    let k = spec.isStacked ? 1 : spec.series.count
     let band = max(1, (width - 44) / CGFloat(n))
     let group = min(band * 0.72, CGFloat(24 * k + 2 * (k - 1)))
     let bar = max(1, min(24, (group - CGFloat(2 * (k - 1))) / CGFloat(k)))
+    let segments = barSegments(gap: 2 * barRange / Double(Self.height - 30))
     return Chart {
-      ForEach(points) { p in
-        BarMark(x: .value("x", String(p.index)), y: .value("Value", p.value), width: .fixed(bar))
-          .foregroundStyle(by: .value("Series", spec.names[p.series]))
-          .position(by: .value("Series", spec.names[p.series]), axis: .horizontal, span: .fixed(group))
-          .cornerRadius(4)
-          .opacity(selected == nil || selected == p.index ? 1 : 0.45)
+      ForEach(segments) { b in
+        BarMark(
+          x: .value("x", String(b.index)), yStart: .value("Value", b.start), yEnd: .value("Value", b.end),
+          width: .fixed(bar)
+        )
+        .foregroundStyle(by: .value("Series", spec.names[b.series]))
+        .position(by: .value("Series", spec.isStacked ? "" : spec.names[b.series]), axis: .horizontal, span: .fixed(group))
+        .cornerRadius(b.outer ? 4 : 0)
+        .opacity(selected == nil || selected == b.index ? 1 : 0.45)
       }
       RuleMark(y: .value("Value", 0))
         .foregroundStyle(Color.secondary.opacity(0.5))
@@ -153,6 +215,59 @@ struct ChartView: View {
     }
     .chartXSelection(value: $selectedBar)
     .modifier(Styled(spec: spec))
+  }
+
+  // MARK: Rows
+
+  private func rows() -> some View {
+    let k = rowBars
+    let thick = rowThickness
+    let group = CGFloat(k) * thick + CGFloat(2 * (k - 1))
+    // Rows are about 300pt of value axis wide on a phone; near enough for a 2pt gap.
+    let segments = barSegments(gap: 2 * barRange / 300)
+    return Chart {
+      ForEach(segments) { b in
+        BarMark(
+          xStart: .value("Value", b.start), xEnd: .value("Value", b.end), y: .value("x", String(b.index)),
+          height: .fixed(thick)
+        )
+        .foregroundStyle(by: .value("Series", spec.names[b.series]))
+        .position(by: .value("Series", spec.isStacked ? "" : spec.names[b.series]), axis: .vertical, span: .fixed(group))
+        .cornerRadius(b.outer ? 4 : 0)
+        .opacity(selected == nil || selected == b.index ? 1 : 0.45)
+        .annotation(position: b.end < 0 ? .leading : .trailing, spacing: 4, overflowResolution: .init(x: .padScale, y: .disabled)) {
+          if let tip = b.tip {
+            Text(tip).font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+          }
+        }
+      }
+      RuleMark(x: .value("Value", 0))
+        .foregroundStyle(Color.secondary.opacity(0.5))
+        .lineStyle(StrokeStyle(lineWidth: 1))
+      if let i = selected {
+        RuleMark(y: .value("x", String(i)))
+          .foregroundStyle(.clear)
+          .annotation(
+            position: .bottom, spacing: 0,
+            overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))
+          ) { readout(i) }
+      }
+    }
+    .chartYScale(domain: spec.x.indices.map(String.init))
+    .chartYAxis {
+      AxisMarks(position: .leading, values: spec.x.indices.map(String.init)) { value in
+        AxisValueLabel {
+          if let key = value.as(String.self), let i = Int(key), spec.x.indices.contains(i) {
+            Text(spec.x[i]).lineLimit(1).truncationMode(.middle).frame(maxWidth: 120, alignment: .leading)
+          }
+        }
+      }
+    }
+    .chartXAxis(.hidden)
+    .chartYSelection(value: $selectedBar)
+    .chartForegroundStyleScale(domain: spec.names, range: Array(Self.palette.prefix(spec.series.count)))
+    .chartLegend(single ? .hidden : .visible)
+    .chartLegend(position: .top, alignment: .leading)
   }
 
   // MARK: Parts
@@ -186,6 +301,13 @@ struct ChartView: View {
           Text(spec.series[s].data[i].map { spec.format($0) } ?? "–").fontWeight(.semibold).monospacedDigit()
           if !single { Text(spec.names[s]).foregroundStyle(.secondary) }
         }
+      }
+      if spec.isStacked, let total = spec.stackTotals[i] {
+        HStack(spacing: 5) {
+          Text(spec.format(total)).fontWeight(.semibold).monospacedDigit()
+          Text("total").foregroundStyle(.secondary)
+        }
+        .padding(.leading, 15)
       }
     }
     .font(.caption2)

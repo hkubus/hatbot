@@ -16,16 +16,22 @@ struct ChartSpec: Decodable, Equatable, Sendable {
   /// Past three series the colours stop telling apart for colour-blind readers.
   static let maxSeries = 3
   static let maxPoints = 500
+  /// Horizontal bars take a row each, so fewer of them.
+  static let maxRows = 40
 
   var type: Kind
   var title: String?
   /// "%", "GiB", "ms", or a currency symbol ("$", "€"), which goes in front.
   var unit: String?
+  /// Bars: the series stack into one bar per x, as parts of its total.
+  var stacked: Bool
+  /// Bars: one row per x, for rankings and long names.
+  var horizontal: Bool
   var x: [String]
   var series: [Series]
 
   private enum CodingKeys: String, CodingKey {
-    case type, title, unit, x, series
+    case type, title, unit, stacked, horizontal, x, series
   }
 
   /// x labels are strings or numbers.
@@ -47,6 +53,8 @@ struct ChartSpec: Decodable, Equatable, Sendable {
     type = try c.decode(Kind.self, forKey: .type)
     title = try c.decodeIfPresent(String.self, forKey: .title)
     unit = try c.decodeIfPresent(String.self, forKey: .unit)
+    stacked = try c.decodeIfPresent(Bool.self, forKey: .stacked) ?? false
+    horizontal = try c.decodeIfPresent(Bool.self, forKey: .horizontal) ?? false
     x = try c.decode([Label].self, forKey: .x).map(\.text)
     series = try c.decode([Series].self, forKey: .series)
   }
@@ -56,7 +64,8 @@ struct ChartSpec: Decodable, Equatable, Sendable {
     guard let spec = try? JSONDecoder().decode(ChartSpec.self, from: Data(source.utf8)) else { return nil }
     guard (1...maxPoints).contains(spec.x.count), (1...maxSeries).contains(spec.series.count),
       spec.series.allSatisfy({ $0.data.count == spec.x.count }),
-      spec.series.contains(where: { $0.data.contains { $0 != nil } })
+      spec.series.contains(where: { $0.data.contains { $0 != nil } }),
+      !(spec.type == .bar && spec.horizontal) || spec.x.count <= maxRows
     else { return nil }
     return spec
   }
@@ -66,6 +75,31 @@ struct ChartSpec: Decodable, Equatable, Sendable {
     series.indices.map { i in
       let name = series[i].name ?? ""
       return name.isEmpty ? "Series \(i + 1)" : name
+    }
+  }
+
+  /// Whether the bars stack: asked for, and more than one series to stack.
+  var isStacked: Bool { type == .bar && stacked && series.count > 1 }
+
+  /// Each x's stack of bars: (start, end) per series, positives up from 0 and negatives down.
+  var stackSpans: [[(start: Double, end: Double)?]] {
+    x.indices.map { i in
+      var up = 0.0
+      var down = 0.0
+      return series.map { se -> (start: Double, end: Double)? in
+        guard let v = se.data[i], v != 0 else { return nil }
+        let start = v > 0 ? up : down
+        if v > 0 { up += v } else { down += v }
+        return (start, start + v)
+      }
+    }
+  }
+
+  /// The sum at each x, or nil where every series is a gap.
+  var stackTotals: [Double?] {
+    x.indices.map { i in
+      let vs = series.compactMap { $0.data[i] }
+      return vs.isEmpty ? nil : vs.reduce(0, +)
     }
   }
 
