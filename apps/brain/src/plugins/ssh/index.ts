@@ -238,7 +238,7 @@ export const sshPlugin = definePlugin({
       tool({
         name: "ssh_exec",
         description:
-          "Run a shell command on a host and return its exit code and output. Prefer ssh_check for looking around. Destructive commands (deleting data, stopping services, shutting down, changing accounts or the firewall) ask the owner first. Use sudo -n for root; the hatbot user's sudo rules decide what's allowed.",
+          "Run a shell command on a host and return its exit code and output. Prefer ssh_check for looking around. Destructive commands (deleting data, stopping services, shutting down, changing accounts or the firewall) ask the owner first. Use sudo -n for root; the hatbot user's sudo rules decide what's allowed. For several hosts, call it once per host in the same turn: they run at once.",
         access: "write",
         schema: z.object({
           host: hostField,
@@ -269,7 +269,7 @@ export const sshPlugin = definePlugin({
             tool({
               name: "ssh_pct_exec",
               description:
-                "Run a shell command inside a Proxmox container (LXC), as root in the container, through its Proxmox host. Find the container's ID with proxmox_guests. Hatbot's own brain and desktop are refused. Destructive commands ask the owner first, as with ssh_exec.",
+                "Run a shell command inside a Proxmox container (LXC), as root in the container, through its Proxmox host. Find the container's ID with proxmox_guests. Hatbot's own brain and desktop are refused. Destructive commands ask the owner first, as with ssh_exec. Calls for different containers in the same turn run at once.",
               access: "write",
               schema: z.object({
                 host: z.string().describe(`The Proxmox host: ${pctHosts.join(", ")}`),
