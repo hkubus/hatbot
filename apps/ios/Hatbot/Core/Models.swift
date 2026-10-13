@@ -28,9 +28,10 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
     static let fallback = Role.assistant
   }
 
-  /// "task" and "schedule" messages show the thing they point at; `text` is a fallback.
+  /// "task" and "schedule" messages show the thing they point at; `text` is a fallback. "command": a
+  /// command you typed, or what came of it.
   enum Kind: String, LenientEnum {
-    case text, task, schedule
+    case text, task, schedule, command
     static let fallback = Kind.text
   }
 
@@ -55,6 +56,9 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   var seenAt: String?
   /// Its files, and for a message showing a task, the task's; missing when there are none.
   var attachments: [Attachment]?
+
+  /// What came of a command you ran, shown as a quiet line; one that started a task shows like a reply.
+  var isNote: Bool { role == .assistant && kind == .command && taskId == nil }
 }
 
 /// A file on a message: one you attached, or one Hatbot or a task sent you.

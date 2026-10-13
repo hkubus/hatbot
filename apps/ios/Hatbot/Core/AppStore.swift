@@ -94,7 +94,8 @@ final class AppStore {
     switch event {
     case let .messageCreated(m):
       upsert(m)
-      if m.role == .assistant && m.status != .streaming { addUnread(m.id) }
+      // What came of your own command arrives already seen.
+      if m.role == .assistant && m.status != .streaming && m.seenAt == nil { addUnread(m.id) }
     case let .messageEdited(id, editedAt):
       if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].editedAt = editedAt }
       addUnread(id)

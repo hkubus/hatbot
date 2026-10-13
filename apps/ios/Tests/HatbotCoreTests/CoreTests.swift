@@ -309,6 +309,29 @@ final class FoldTests: XCTestCase {
     XCTAssertEqual(groups.map(\.fold), [nil, "Talked about one.", "message 5", nil])
   }
 
+  func testCommandsFoldWithoutNamingTheConversation() {
+    var command = m(2, 1, .user)
+    command.kind = .command
+    command.text = "/remember x"
+    let groups = ThreadFolds.groups([command, m(3, 1, .user), m(4, 2, .user)], episodes: [:])
+    XCTAssertEqual(groups.map(\.fold), ["message 3", nil])
+  }
+
+  func testMatchesCommandsWhileYouTypeTheName() {
+    XCTAssertEqual(ChatCommand.matching("/").map(\.name), ["new", "stop", "task", "remember"])
+    XCTAssertEqual(ChatCommand.matching("/RE").map(\.name), ["remember"])
+    XCTAssertEqual(ChatCommand.matching("/task x"), [])
+    XCTAssertEqual(ChatCommand.matching("/etc/"), [])
+    XCTAssertEqual(ChatCommand.matching("hi"), [])
+    XCTAssertTrue(ChatCommand.all[2].needsMore)
+    XCTAssertFalse(ChatCommand.all[1].needsMore)
+    var note = m(5, 1)
+    note.kind = .command
+    XCTAssertTrue(note.isNote)
+    note.taskId = 3
+    XCTAssertFalse(note.isNote)
+  }
+
   func testTimelineKeepsOnlyTheLatestModelNote() {
     func step(_ id: Int, _ kind: TaskStep.Kind, _ name: String = "Note") -> TaskStep {
       TaskStep(id: id, taskId: 1, kind: kind, name: name, detail: "", createdAt: "")
