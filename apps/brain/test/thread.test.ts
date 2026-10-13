@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { type ThreadMessage, threadGroups } from "@hatbot/shared";
-import { activity, parseSummary } from "../src/agent/thread";
+import { matchingCommands, parseCommand, type ThreadMessage, threadGroups } from "@hatbot/shared";
+import type { StreamHandlers, StreamParams } from "../src/agent/model";
+import { activity, parseSummary, titleOf, withNote } from "../src/agent/thread";
 import { costOf } from "../src/spend";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, testApp } from "./helpers";
@@ -403,4 +404,153 @@ test("a task started from the chat keeps what you said, for its approval check",
   await t.tasks.idle();
   const task = t.tasks.list({}).at(-1);
   expect(t.tasks.requestOf(task?.id as number)).toContain("please restart jellyfin");
+});
+
+test("commands are a known name after a slash; anything else is a message", () => {
+  expect(parseCommand("/new")).toEqual({ name: "new", arg: "" });
+  expect(parseCommand("  /Task  check the\nbackups ")).toEqual({
+    name: "task",
+    arg: "check the\nbackups",
+  });
+  expect(parseCommand("/etc/hosts is wrong")).toBeNull();
+  expect(parseCommand("/newer")).toBeNull();
+  expect(parseCommand("say /new")).toBeNull();
+  expect(matchingCommands("/").map((c) => c.name)).toEqual(["new", "stop", "task", "remember"]);
+  expect(matchingCommands("/re").map((c) => c.name)).toEqual(["remember"]);
+  expect(matchingCommands("/remember x")).toEqual([]);
+});
+
+test("/new starts a conversation that carries nothing over, and folds the last one", async () => {
+  const model = new FakeModel(
+    [{ content: [text("one")] }, { content: [text("two")] }],
+    ["<recap>Said one.</recap><summary>They said one.</summary>"],
+  );
+  const t = await testApp(model);
+  await t.thread.post("first").done;
+  t.db.query("UPDATE episodes SET tainted = 1, tainted_by = 'https://example.com'").run();
+  t.advance(60_000);
+  await t.thread.post("/new").done;
+  // A second /new is the same new conversation.
+  await t.thread.post("/new").done;
+  await t.thread.post("second").done;
+
+  expect(model.creates.length).toBe(1);
+  expect(model.requests[1]?.messages.length).toBe(1);
+  const opening = lastUserText(model.requests[1] as never);
+  expect(opening).toContain("They said one.");
+  expect(opening).not.toContain("Owner: first");
+  const episodes = t.db
+    .query<{ tainted: number; fresh: number }, []>(
+      "SELECT tainted, fresh FROM episodes ORDER BY id",
+    )
+    .all();
+  expect(episodes).toEqual([
+    { tainted: 1, fresh: 0 },
+    { tainted: 0, fresh: 1 },
+  ]);
+  const list = t.thread.list();
+  expect(list.map((m) => [m.kind, m.text, m.episodeId])).toEqual([
+    ["text", "first", 1],
+    ["text", "one", 1],
+    ["command", "/new", 2],
+    ["command", "/new", 2],
+    ["text", "second", 2],
+    ["text", "two", 2],
+  ]);
+  const episodesById = Object.fromEntries(t.thread.episodes([1, 2]).map((e) => [e.id, e]));
+  expect(threadGroups(list, episodesById).map((g) => g.fold)).toEqual(["Said one.", null]);
+});
+
+/** A model that streams until it's stopped. */
+class HangingModel extends FakeModel {
+  started = Promise.withResolvers<void>();
+  override async stream(params: Omit<StreamParams, "stream">, h: StreamHandlers) {
+    this.requests.push(structuredClone(params));
+    this.started.resolve();
+    h.onText?.("Let me think about ");
+    return new Promise<never>((_, reject) =>
+      h.signal?.addEventListener("abort", () => reject(h.signal?.reason)),
+    );
+  }
+}
+
+test("/stop stops the reply being written; with a number, that task", async () => {
+  const model = new HangingModel();
+  const t = await testApp(model);
+  const reply = t.thread.post("write me an essay");
+  await model.started.promise;
+  t.thread.post("/stop");
+  await reply.done;
+  expect(t.thread.list().at(-1)).toMatchObject({ kind: "command", text: "/stop" });
+  expect(t.thread.list().at(-2)).toMatchObject({
+    text: "Let me think about \n\n---\n\n_Stopped._",
+    status: "done",
+  });
+
+  await t.thread.post("/stop").done;
+  expect(t.thread.list().at(-1)).toMatchObject({
+    role: "assistant",
+    kind: "command",
+    text: "Nothing to stop.",
+  });
+  await t.thread.post("/stop #99").done;
+  expect(t.thread.list().at(-1)?.text).toBe("Task #99 isn't running.");
+  // Lines like these are yours already: never unread.
+  expect(t.thread.unread()).not.toContain(t.thread.list().at(-1)?.id as number);
+});
+
+test("/task runs what you typed as a background task, shown under the line it starts", async () => {
+  const model = new FakeModel([{ content: [text("hi")] }, { content: [text("It's running.")] }]);
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "done", summary: "All fine.", notify: false })] },
+  ]);
+  const t = await testApp(model, work);
+  await t.thread.post("hello").done;
+  // The conversation had read something untrusted; what you type yourself isn't.
+  t.db.query("UPDATE episodes SET tainted = 1, tainted_by = 'https://example.com'").run();
+  await t.thread.post("/task check the backups on the PBS\nand tell me if any failed").done;
+  await t.tasks.idle();
+
+  const task = t.tasks.list({}).at(-1);
+  expect(task).toMatchObject({ title: "check the backups on the PBS", origin: "chat" });
+  expect(task?.tainted).toBeFalsy();
+  expect(t.tasks.requestOf(task?.id as number)).toContain("tell me if any failed");
+  const line = t.thread.list().at(-1);
+  expect(line).toMatchObject({ kind: "command", text: "Started a task.", taskId: task?.id });
+  // Its result shows there, not as a card of its own.
+  expect(t.thread.list().filter((m) => m.kind === "task")).toEqual([]);
+
+  // The model hears about it with your next message.
+  await t.thread.post("how's it going?").done;
+  const said = lastUserText(model.requests[1] as never);
+  expect(said).toContain("<owner_commands>");
+  expect(said).toContain(`Hatbot: Started a task. (task #${task?.id})`);
+  expect(said).toContain("how's it going?");
+
+  await t.thread.post("/task").done;
+  expect(t.thread.list().at(-1)?.text).toContain("Say what to do");
+});
+
+test("/remember saves what you typed to INDEX.md's Notes, word for word", async () => {
+  const t = await testApp(new FakeModel());
+  await t.thread.post("/remember the NAS is at 192.168.55.120").done;
+  await t.thread.post("/remember Jellyfin runs in CT 105").done;
+  expect(await t.memory.read("INDEX.md")).toContain(
+    "## Notes\n\n- the NAS is at 192.168.55.120\n- Jellyfin runs in CT 105\n",
+  );
+  expect(t.thread.list().at(-1)).toMatchObject({ kind: "command", text: "Saved to memory." });
+  expect(t.events.some((e) => e.type === "memory.committed")).toBe(true);
+  expect(t.model.requests.length).toBe(0);
+});
+
+test("notes go at the end of the Notes section, made if it's missing", () => {
+  expect(withNote("", "a")).toBe("## Notes\n\n- a\n");
+  expect(withNote("# Index\n\n- homelab.md\n", "a")).toBe(
+    "# Index\n\n- homelab.md\n\n## Notes\n\n- a\n",
+  );
+  expect(withNote("# Index\n\n## Notes\n\n- a\n\n## Skills\n\n- x\n", "b\nc")).toBe(
+    "# Index\n\n## Notes\n\n- a\n- b c\n\n## Skills\n\n- x\n",
+  );
+  expect(titleOf("short")).toBe("short");
+  expect(titleOf("word ".repeat(30))).toBe(`${"word ".repeat(15).trim()}…`);
 });

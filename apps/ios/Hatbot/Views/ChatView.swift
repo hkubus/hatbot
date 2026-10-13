@@ -61,7 +61,7 @@ struct ChatView: View {
   /// Runs of messages from the same sender sit close together, with a tail on the last.
   private func grouped(_ rows: [Row]) -> [Row] {
     func sender(_ row: Row?) -> ThreadMessage.Role? {
-      if case let .message(m, _, _)? = row { m.role } else { nil }
+      if case let .message(m, _, _)? = row, !m.isNote { m.role } else { nil }
     }
     return rows.indices.map { i in
       guard case let .message(m, _, _) = rows[i] else { return rows[i] }
@@ -214,6 +214,7 @@ struct ChatView: View {
       if !files.isEmpty {
         ComposerFiles(files: files) { id in files.removeAll { $0.id == id } }
       }
+      if !commands.isEmpty { commandList }
       HStack(alignment: .bottom, spacing: 8) {
         Menu {
           Button("Photos", systemImage: "photo.on.rectangle") { pickingPhotos = true }
@@ -231,7 +232,7 @@ struct ChatView: View {
           .padding(.horizontal, 16)
           .padding(.vertical, 11)
           .glassSurface(in: .rect(cornerRadius: 22), interactive: true)
-        Button(action: send) {
+        Button { send() } label: {
           Image(systemName: "arrow.up")
             .font(.body.weight(.semibold))
             .frame(width: 26, height: 30)
@@ -274,17 +275,44 @@ struct ChatView: View {
     }
   }
 
-  private func send() {
-    let typed = draft
+  private var commands: [ChatCommand] { ChatCommand.matching(draft) }
+
+  /// What "/…" could mean. One that needs more goes in the composer to finish; the rest run at once.
+  private var commandList: some View {
+    VStack(spacing: 0) {
+      ForEach(commands) { c in
+        Button {
+          if c.needsMore { draft = "/\(c.name) " } else { send("/\(c.name)") }
+        } label: {
+          HStack(alignment: .firstTextBaseline) {
+            let args = Text(c.args.isEmpty ? "" : " \(c.args)").foregroundStyle(.secondary)
+            Text("\(Text("/\(c.name)").fontWeight(.medium))\(args)")
+            Spacer(minLength: 12)
+            Text(c.description).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+          }
+          .padding(.horizontal, 16)
+          .padding(.vertical, 10)
+          .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+      }
+    }
+    .padding(.vertical, 4)
+    .glassSurface(in: .rect(cornerRadius: 22))
+  }
+
+  /// Sends the composer, or `command` when you picked one from the list.
+  private func send(_ command: String? = nil) {
+    let typed = command ?? draft
     let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
-    let attached = files
+    let attached = command == nil ? files : []
     let ids = attached.compactMap { $0.attachment?.id }
-    guard canSend else { return }
+    guard command != nil ? !sending : canSend else { return }
     sending = true
     error = nil
     // Cleared before it's sent, and put back if sending fails.
     draft = ""
-    files = []
+    if command == nil { files = [] }
     withAnimation { position.scrollTo(edge: .bottom) }
     Task {
       // The keyboard can commit an autocorrection into the field just after it's cleared.
@@ -296,7 +324,7 @@ struct ChatView: View {
         try await store.send(text, attachmentIds: ids)
       } catch {
         if draft.isEmpty { draft = typed }
-        if files.isEmpty { files = attached }
+        if files.isEmpty && !attached.isEmpty { files = attached }
         self.error = message(for: error)
       }
       sending = false
@@ -363,7 +391,14 @@ private struct MessageRow: View {
   @State private var onScreen = false
 
   var body: some View {
-    if m.role == .user {
+    if m.isNote {
+      // What came of a command: a quiet line rather than a message.
+      Text(m.text)
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity)
+    } else if m.role == .user {
       let shape = Bubble(tail: tail, side: .trailing)
       VStack(alignment: .trailing, spacing: 4) {
         if let list = m.attachments, !list.isEmpty { MessageFiles(list: list, alignment: .trailing) }
@@ -430,7 +465,7 @@ private struct MessageRow: View {
     if let editedAt = m.editedAt { return editedAt }
     guard let task = m.taskId.flatMap({ store.tasks[$0] }), let done = task.finishedAt else { return nil }
     switch m.kind {
-    case .text: return done
+    case .text, .command: return done
     case .task: return done > m.createdAt ? done : nil
     case .schedule: return nil
     }

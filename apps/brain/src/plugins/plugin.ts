@@ -8,12 +8,22 @@ import type { Db } from "../db";
 /** Whether a call may run. The core takes the strictest of this and the untrusted-content rule (§6.1). */
 export type Verdict =
   | { action: "allow" }
-  /** `tainted`: only the untrusted-content rule asks, so Haiku may review it (PLAN.md §6.1). */
-  | { action: "ask"; why: string; kind?: ApprovalKind; tainted?: boolean }
+  /**
+   * `tainted`: only the untrusted-content rule asks. `always`: the owner said to always ask about this,
+   * so Haiku's review can't let it through (PLAN.md §6.1).
+   */
+  | { action: "ask"; why: string; kind?: ApprovalKind; tainted?: boolean; always?: boolean }
   | { action: "block"; why: string };
 
 export const allow = (): Verdict => ({ action: "allow" });
 export const ask = (why: string, kind?: ApprovalKind): Verdict => ({ action: "ask", why, kind });
+/** Asks the owner every time: Haiku's review never lets it through. */
+export const askAlways = (why: string, kind?: ApprovalKind): Verdict => ({
+  action: "ask",
+  why,
+  kind,
+  always: true,
+});
 export const block = (why: string): Verdict => ({ action: "block", why });
 
 export type CallContext = {

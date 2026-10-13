@@ -59,8 +59,11 @@ export const PutMemoryFile = z.object({
 export type ThreadMessage = {
   id: number;
   role: "user" | "assistant";
-  /** "task" and "schedule" messages are cards; their text is a plain-text fallback. */
-  kind: "text" | "task" | "schedule";
+  /**
+   * "task" and "schedule" messages are cards; their text is a plain-text fallback. "command": a command
+   * you typed, or what came of it (one with a task shows the task like a reply does).
+   */
+  kind: "text" | "task" | "schedule" | "command";
   text: string;
   status: "streaming" | "done" | "error";
   createdAt: string;
@@ -327,10 +330,8 @@ export type AppSettings = {
   chatModel: "claude-haiku-5-5" | "claude-opus-5-5";
   owner: { name: string; email: string };
   paused: boolean;
-  /** A task started from the chat doesn't ask again for what you explicitly asked for. */
-  skipAskedApprovals: boolean;
-  /** After untrusted content, a task makes changes Haiku finds safe without asking. */
-  reviewTaintedChanges: boolean;
+  /** Changes Haiku finds safe go ahead without asking. */
+  reviewChanges: boolean;
   /** What tapping a notification opens: the web app, or the iOS app (hatbot:// links). */
   notificationsOpen: "web" | "app";
   /** The model that drives desktop tasks. */
