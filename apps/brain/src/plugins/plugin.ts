@@ -55,6 +55,8 @@ export type PluginTool<I = unknown> = {
   label?: string;
   /** The call in a line, for the timeline and approvals: "Restart CT 105 (jellyfin)". */
   describe?: (input: I) => string;
+  /** How many commands a write runs, for the chat's limit: a shell loop is many. Without it, one. */
+  commands?: (input: I) => number;
   /** Write tools: allow, ask you first, or refuse. Without one, a write is allowed. */
   policy?: (input: I, call: CallContext) => Verdict;
   run: (input: I, call: CallContext) => Promise<string>;

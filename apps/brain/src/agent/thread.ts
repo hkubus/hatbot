@@ -49,8 +49,8 @@ const EPISODE_IDLE_MS = 30 * 60_000;
 const RECENT_MESSAGES = 10;
 const MAX_STEPS = 25;
 const MAX_TURN_MS = 10 * 60_000;
-/** Changes one reply makes itself; past this, the work belongs in a background task (run_task). */
-const MAX_CHAT_CHANGES = 2;
+/** Commands one reply runs itself; past this, the work belongs in a background task (run_task). */
+const MAX_CHAT_COMMANDS = 2;
 /** Why a reply was cut off: /stop, rather than Pause all. */
 const STOPPED = "stopped";
 const MESSAGE_COLUMNS =
@@ -536,12 +536,13 @@ export class Thread {
   }
 
   private loadTurns(episodeId: number): Turn[] {
-    return this.d.db
+    const turns = this.d.db
       .query<{ role: "user" | "assistant"; content: string }, [number]>(
         "SELECT role, content FROM episode_turns WHERE episode_id = ? ORDER BY id",
       )
       .all(episodeId)
       .map((r) => ({ role: r.role, content: JSON.parse(r.content) }));
+    return answered(turns);
   }
 
   private hasTurns(episodeId: number): boolean {
@@ -871,7 +872,7 @@ export class Thread {
 
     const started = this.clock();
     let waited = 0;
-    let changes = 0;
+    let commands = 0;
     const abort = new AbortController();
     this.current = abort;
     try {
@@ -998,12 +999,16 @@ export class Thread {
               taint: (by: string) => this.taint(episode.id, by),
               ownerSaid: () => this.ownerSaid(episode.id),
               gated: async (t, input, signal) => {
-                // The sandbox is scratch space; only changes to the homelab and accounts count.
-                if (plugins.pluginOf(t.name)?.id !== "code" && ++changes > MAX_CHAT_CHANGES)
-                  return {
-                    content: `Not run: that would be change number ${changes} in this reply, and the chat makes at most ${MAX_CHAT_CHANGES}. Start run_task for the rest, with everything you've found so far in its goal, and tell the owner it's running.`,
-                    isError: true,
-                  };
+                // The sandbox is scratch space; only commands on the homelab and accounts count.
+                if (plugins.pluginOf(t.name)?.id !== "code") {
+                  const parsed = t.schema.safeParse(input);
+                  commands += parsed.success && t.commands ? t.commands(parsed.data) : 1;
+                  if (commands > MAX_CHAT_COMMANDS)
+                    return {
+                      content: `Not run: that would take this reply past ${MAX_CHAT_COMMANDS} commands (each part of a chained command counts, and a loop is many), the most the chat runs itself. Start run_task for the work, with everything you've found so far in its goal, and tell the owner it's running.`,
+                      isError: true,
+                    };
+                }
                 const from = this.clock();
                 try {
                   return await this.gatedCall(episode.id, t, input, signal, progress);
@@ -1044,6 +1049,41 @@ export class Thread {
       this.current = null;
     }
   }
+}
+
+/**
+ * Turns where every tool call has its result. A reply stopped while its tools ran never stored
+ * theirs, and the API turns the whole episode away without them.
+ */
+export function answered(turns: Turn[]): Turn[] {
+  const out: Turn[] = [];
+  for (let i = 0; i < turns.length; i++) {
+    const turn = turns[i] as Turn;
+    out.push(turn);
+    if (turn.role !== "assistant" || typeof turn.content === "string") continue;
+    const calls = turn.content.filter((b) => b.type === "tool_use");
+    if (!calls.length) continue;
+    const next = turns[i + 1];
+    const content: BlockParam[] =
+      next?.role === "user"
+        ? typeof next.content === "string"
+          ? [{ type: "text", text: next.content }]
+          : next.content
+        : [];
+    const results = content.filter((b) => b.type === "tool_result");
+    const missing = calls.filter((c) => !results.some((r) => r.tool_use_id === c.id));
+    if (!missing.length) continue;
+    const filled: BlockParam[] = missing.map((c) => ({
+      type: "tool_result",
+      tool_use_id: c.id,
+      is_error: true,
+      content: "Stopped before this finished; it may or may not have run.",
+    }));
+    const rest = content.filter((b) => b.type !== "tool_result");
+    out.push({ role: "user", content: [...results, ...filled, ...rest] });
+    if (next?.role === "user") i++;
+  }
+  return out;
 }
 
 function toolLabel(name: string, plugins: Plugins): string {
