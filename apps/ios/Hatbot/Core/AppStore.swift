@@ -485,14 +485,9 @@ final class AppStore {
     return try await api.put("/settings", body: Body(chatEffort: effort))
   }
 
-  func setSkipAskedApprovals(_ on: Bool) async throws -> AppSettings {
-    struct Body: Encodable { let skipAskedApprovals: Bool }
-    return try await api.put("/settings", body: Body(skipAskedApprovals: on))
-  }
-
-  func setReviewTaintedChanges(_ on: Bool) async throws -> AppSettings {
-    struct Body: Encodable { let reviewTaintedChanges: Bool }
-    return try await api.put("/settings", body: Body(reviewTaintedChanges: on))
+  func setReviewChanges(_ on: Bool) async throws -> AppSettings {
+    struct Body: Encodable { let reviewChanges: Bool }
+    return try await api.put("/settings", body: Body(reviewChanges: on))
   }
 
   func setChatModel(_ model: AppSettings.ChatModel) async throws -> AppSettings {

@@ -4,9 +4,9 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ApprovalKind } from "@hatbot/shared";
 import { z } from "zod";
-import { checkAction, mayCheck } from "../agent/intent";
 import { modelErrorText } from "../agent/model";
 import { AGENT_PROMPT } from "../agent/prompt";
+import { mayReview, safeToRun } from "../agent/review";
 import { localStamp } from "../agent/thread";
 import {
   DesktopTaskInput,
@@ -20,7 +20,7 @@ import {
   webReads,
 } from "../agent/tools";
 import { type Outcome, ownerNote } from "../approvals";
-import type { PluginTool } from "../plugins/plugin";
+import type { PluginTool, Verdict } from "../plugins/plugin";
 import { describeCall, runPluginTool, untrustedDefinitions, verdictFor } from "../plugins/registry";
 import { BudgetError, priceOf } from "../spend";
 import { Stop, UPDATES_MODELS } from "./desktop-run";
@@ -244,12 +244,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   };
 
   /**
-   * A schedule's, webhook's or alert's task skips asking once at most: its instructions allow one fix,
-   * then it's your turn.
-   */
-  let standingSkipped = false;
-  /**
-   * The instructions you wrote for what started this task, as the approval check reads them. A trusted
+   * The instructions you wrote for what started this task, as Haiku's review reads them. A trusted
    * event (an alert, a trusted webhook) comes with them; an untrusted one doesn't, so it can't pick the
    * target. Null for a schedule the chat made after reading untrusted content.
    */
@@ -280,52 +275,36 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       : words;
 
   /**
-   * Haiku's check on a change that would ask (PLAN.md §6.1, §6.2), in one call: whether you already
-   * asked for this exact action (in the chat that started the task, or in the instructions you wrote
-   * for its schedule, webhook or alert), and after untrusted content, whether it's safe without you.
-   * Never for money, accounts or suspected injection. Notes on the timeline when it goes ahead; the
-   * reason either way.
+   * Haiku's review of a change that would ask (PLAN.md §6.1): if it isn't destructive or dangerous,
+   * it goes ahead and the timeline says so. Never for money, accounts, what you said to always ask
+   * about, or suspected injection. Its reason either way.
    */
-  const checked = async (
+  const reviewed = async (
     t: PluginTool,
     call: Anthropic.Beta.BetaToolUseBlock,
     what: string,
-    verdict: { why: string; kind?: ApprovalKind; tainted?: boolean },
-  ): Promise<{ go: boolean; why: string }> => {
-    if (tasks.get(id)?.injectionSuspected) return { go: false, why: "" };
-    const s = d.settings.get();
-    const standing = task.origin !== "chat";
-    const ownerSaid = withNotes(standing ? standingWords() : tasks.requestOf(id));
-    const check = await checkAction(
+    verdict: Extract<Verdict, { action: "ask" }>,
+  ): Promise<{ safe: boolean; why: string }> => {
+    if (!d.settings.get().reviewChanges || !mayReview(verdict)) return { safe: false, why: "" };
+    if (tasks.get(id)?.injectionSuspected) return { safe: false, why: "" };
+    const check = await safeToRun(
       d,
       { taskId: id },
       {
-        ownerSaid,
-        asked:
-          s.skipAskedApprovals &&
-          mayCheck(verdict.kind ?? "other") &&
-          !(standing && standingSkipped),
-        review:
-          verdict.tainted && s.reviewTaintedChanges
-            ? { goal: task.goal, sources: [...sources] }
-            : null,
+        ownerSaid: withNotes(task.origin === "chat" ? tasks.requestOf(id) : standingWords()),
+        goal: task.goal,
+        sources: [...sources],
       },
       { tool: t.name, input: call.input, what, why: verdict.why },
     );
-    if (!check) return { go: false, why: "" };
-    if (check.asked && standing) standingSkipped = true;
-    if (check.asked || check.safe)
+    if (check.safe)
       tasks.addStep(id, {
         kind: "approval",
-        name: check.asked
-          ? standing
-            ? "Not asking: your instructions allow this"
-            : "Not asking: you asked for this"
-          : "Not asking: Haiku found it safe",
+        name: "Not asking: Haiku found it safe",
         detail: check.why ? `${what}. ${check.why}` : what,
         url: null,
       });
-    return { go: check.asked || check.safe, why: check.why };
+    return check;
   };
 
   /** A plugin tool: its policy and the untrusted-content rule first, then the call. */
@@ -347,8 +326,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       return result(call, `Refused: ${verdict.why}`, true);
     }
     if (verdict.action === "ask") {
-      const check = await checked(t, call, what, verdict);
-      if (!check.go) {
+      const check = await reviewed(t, call, what, verdict);
+      if (!check.safe) {
         const answer = await askApproval({
           kind: verdict.kind ?? "other",
           summary: what,

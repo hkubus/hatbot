@@ -79,19 +79,12 @@ struct SettingsView: View {
           }
         }
         Section("Safety") {
-          if let skip = settings?.skipAskedApprovals {
+          if let review = settings?.reviewChanges {
             Toggle(
-              "Don't ask again for what I asked for",
-              isOn: Binding(
-                get: { skip },
-                set: { on in Task { await act { settings = try await store.setSkipAskedApprovals(on) } } }))
-          }
-          if let review = settings?.reviewTaintedChanges {
-            Toggle(
-              "Let Haiku allow safe changes after untrusted content",
+              "Let Haiku allow safe changes",
               isOn: Binding(
                 get: { review },
-                set: { on in Task { await act { settings = try await store.setReviewTaintedChanges(on) } } }))
+                set: { on in Task { await act { settings = try await store.setReviewChanges(on) } } }))
           }
           if store.paused {
             Button("Resume") { Task { await act { try await store.setPaused(false) } } }

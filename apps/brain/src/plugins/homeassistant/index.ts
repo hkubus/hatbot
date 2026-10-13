@@ -2,7 +2,16 @@
 // HA's REST API with a long-lived access token. Everyday device control just runs; locks, alarms,
 // covers (doors, garage, gates) and anything that changes Home Assistant itself ask the owner first.
 import { z } from "zod";
-import { allow, ask, definePlugin, needsSetup, PluginError, ready, tool } from "../plugin";
+import {
+  allow,
+  ask,
+  askAlways,
+  definePlugin,
+  needsSetup,
+  PluginError,
+  ready,
+  tool,
+} from "../plugin";
 
 const EntityId = z
   .string()
@@ -71,6 +80,11 @@ const CAREFUL: Record<string, string> = {
   shell_command: "It runs a command on the Home Assistant host.",
   rest_command: "It sends a request to another service.",
 };
+
+/** Who can get in: these always ask, whatever Haiku's review says. */
+const ACCESS = new Set(["lock", "alarm_control_panel", "cover"]);
+const careful = (domain: string) =>
+  ACCESS.has(domain) ? askAlways(CAREFUL[domain] ?? "") : ask(CAREFUL[domain] ?? "");
 
 const domainOf = (entityId: string) => entityId.split(".")[0] ?? "";
 const time = (iso: string) => iso.slice(0, 16).replace("T", " ");
@@ -232,7 +246,7 @@ export const homeassistantPlugin = definePlugin({
         policy: ({ domain, service, entity_id, data }) => {
           if (domain === "recorder" && service === "purge")
             return ask("It deletes recorded history.", "delete");
-          if (CAREFUL[domain]) return ask(CAREFUL[domain]);
+          if (CAREFUL[domain]) return careful(domain);
           if (!EVERYDAY.has(domain) && !domain.startsWith("input_"))
             return ask(`It calls ${domain}.${service}, which isn't everyday device control.`);
           // A scene or a stray entity_id in data can still reach a lock or a garage door.
@@ -242,8 +256,8 @@ export const homeassistantPlugin = definePlugin({
             ...Object.keys((data?.entities as Record<string, unknown> | undefined) ?? {}),
           ];
           for (const t of targets) {
-            const why = CAREFUL[domainOf(String(t))];
-            if (why) return ask(why);
+            const domain = domainOf(String(t));
+            if (CAREFUL[domain]) return careful(domain);
           }
           return allow();
         },

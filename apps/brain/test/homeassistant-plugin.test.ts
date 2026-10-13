@@ -172,14 +172,18 @@ test("policy: everyday control runs; locks, purges, unknown domains and tainted 
   expect(
     v({ domain: "input_boolean", service: "toggle", entity_id: "input_boolean.guest" }).action,
   ).toBe("allow");
+  // Who can get in always asks; Haiku's review can't let it through.
   expect(v({ domain: "lock", service: "unlock", entity_id: "lock.front_door" })).toMatchObject({
     action: "ask",
     why: "Unlocking or locking changes who can get in.",
+    always: true,
   });
-  expect(v({ domain: "cover", service: "open_cover", entity_id: "cover.garage" }).action).toBe(
-    "ask",
-  );
-  expect(v({ domain: "homeassistant", service: "restart" }).action).toBe("ask");
+  expect(v({ domain: "cover", service: "open_cover", entity_id: "cover.garage" })).toMatchObject({
+    action: "ask",
+    always: true,
+  });
+  expect(v({ domain: "homeassistant", service: "restart" })).toMatchObject({ action: "ask" });
+  expect(v({ domain: "homeassistant", service: "restart" })).not.toHaveProperty("always", true);
   expect(v({ domain: "recorder", service: "purge", data: { keep_days: 1 } })).toMatchObject({
     action: "ask",
     kind: "delete",
@@ -194,8 +198,8 @@ test("policy: everyday control runs; locks, purges, unknown domains and tainted 
       domain: "scene",
       service: "apply",
       data: { entities: { "lock.front_door": "unlocked" } },
-    }).action,
-  ).toBe("ask");
+    }),
+  ).toMatchObject({ action: "ask", always: true });
   expect(
     verdictFor(
       t,

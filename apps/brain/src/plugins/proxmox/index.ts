@@ -2,7 +2,7 @@
 // down. Uses the scoped token from /etc/hatbot/proxmox.env, which can't change configs or destroy.
 import { z } from "zod";
 import { Proxmox, ProxmoxError } from "../../proxmox";
-import { allow, ask, block, definePlugin, needsSetup, ready, tool } from "../plugin";
+import { allow, ask, askAlways, block, definePlugin, needsSetup, ready, tool } from "../plugin";
 
 /** How long a power action may take before the tool stops waiting. */
 const POWER_TIMEOUT_MS = 3 * 60_000;
@@ -186,7 +186,8 @@ export const proxmoxPlugin = definePlugin({
             );
           if (action === "shutdown" || action === "stop")
             return ask(`It stays off until someone starts it again.`);
-          if (careful.has(vmid)) return ask("The owner asked to approve power actions on it.");
+          if (careful.has(vmid))
+            return askAlways("The owner asked to approve power actions on it.");
           if (vmid === desktop) return ask("The desktop may be in use by a desktop task.");
           return allow();
         },

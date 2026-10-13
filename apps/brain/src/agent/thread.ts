@@ -22,9 +22,9 @@ import type { SettingsStore } from "../settings";
 import { BudgetError, priceOf, type Spend, tokenCount, tokensOf } from "../spend";
 import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
-import { checkAction, mayCheck } from "./intent";
 import { type ModelClient, modelErrorText } from "./model";
 import { EXPERT_PROMPT, SUMMARY_PROMPT, SYSTEM_PROMPT } from "./prompt";
+import { mayReview, safeToRun } from "./review";
 import {
   inBatches,
   LOOKUP_TOOLS,
@@ -281,8 +281,8 @@ export class Thread {
 
   /**
    * A plugin tool that changes something, called from the chat: its policy and the untrusted-content
-   * rule, then Haiku's check, one call for both questions (you already asked for it; it isn't
-   * destructive), then your approval, which the reply waits for (PLAN.md §6.2).
+   * rule, then Haiku's review (it isn't destructive or dangerous), then your approval, which the reply
+   * waits for (PLAN.md §6.1).
    */
   private async gatedCall(
     episodeId: number,
@@ -299,29 +299,23 @@ export class Thread {
     if (verdict.action === "block") return { content: `Refused: ${verdict.why}`, isError: true };
     let note: string | null = null;
     if (verdict.action === "ask") {
-      const s = settings.get();
-      const action = { tool: t.name, input, what, why: verdict.why };
-      const ownerSaid = this.ownerSaid(episodeId);
       const kind = verdict.kind ?? "other";
       let skip = false;
       let review = "";
-      if ((s.skipAskedApprovals && mayCheck(kind)) || (verdict.tainted && s.reviewTaintedChanges)) {
-        progress("Checking with Haiku");
-        const check = await checkAction(
+      if (settings.get().reviewChanges && mayReview(verdict)) {
+        progress("Checking it's safe");
+        const check = await safeToRun(
           this.d,
           { episodeId },
           {
-            ownerSaid,
-            asked: s.skipAskedApprovals && mayCheck(kind),
-            review:
-              verdict.tainted && s.reviewTaintedChanges
-                ? { goal: "(none: the owner is asking in the chat)", sources: [taintedBy ?? ""] }
-                : null,
+            ownerSaid: this.ownerSaid(episodeId),
+            goal: "(none: the owner is asking in the chat)",
+            sources: taintedBy ? [taintedBy] : [],
           },
-          action,
+          { tool: t.name, input, what, why: verdict.why },
         );
-        skip = check !== null && (check.asked || check.safe);
-        review = check?.why ?? "";
+        skip = check.safe;
+        review = check.why;
       }
       if (!skip) {
         if (!approvals)

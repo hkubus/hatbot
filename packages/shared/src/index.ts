@@ -327,10 +327,8 @@ export type AppSettings = {
   chatModel: "claude-haiku-5-5" | "claude-opus-5-5";
   owner: { name: string; email: string };
   paused: boolean;
-  /** A task started from the chat doesn't ask again for what you explicitly asked for. */
-  skipAskedApprovals: boolean;
-  /** After untrusted content, a task makes changes Haiku finds safe without asking. */
-  reviewTaintedChanges: boolean;
+  /** Changes Haiku finds safe go ahead without asking. */
+  reviewChanges: boolean;
   /** What tapping a notification opens: the web app, or the iOS app (hatbot:// links). */
   notificationsOpen: "web" | "app";
   /** The model that drives desktop tasks. */

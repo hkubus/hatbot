@@ -4,7 +4,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { allow, ask, definePlugin, PluginError, ready, tool } from "../plugin";
+import { allow, ask, askAlways, definePlugin, PluginError, ready, tool } from "../plugin";
 import { destructive, reboots } from "./policy";
 
 const OUTPUT_CHARS = 15_000;
@@ -256,7 +256,7 @@ export const sshPlugin = definePlugin({
           const d = destructive(command);
           if (d) return ask(`This command ${d.why}.`, d.kind);
           if (hosts.get(host)?.careful)
-            return ask(`The owner asked to approve every command on ${host}.`);
+            return askAlways(`The owner asked to approve every command on ${host}.`);
           return allow();
         },
         run: async ({ host, command, timeout_s }, { signal }) =>
@@ -286,9 +286,9 @@ export const sshPlugin = definePlugin({
                 const d = destructive(command, "container");
                 if (d) return ask(`This command ${d.why}.`, d.kind);
                 if (hosts.get(host)?.careful)
-                  return ask(`The owner asked to approve every command on ${host}.`);
+                  return askAlways(`The owner asked to approve every command on ${host}.`);
                 if (reboots(command) && carefulGuests().includes(guest))
-                  return ask("The owner asked to approve power actions on it.");
+                  return askAlways("The owner asked to approve power actions on it.");
                 return allow();
               },
               run: async ({ host, guest, command, timeout_s }, { signal }) => {
@@ -326,7 +326,7 @@ export const sshPlugin = definePlugin({
           if (!mine) return ask(`It writes ${path}, outside the hatbot user's own files.`);
           if (/authorized_keys|\/\.ssh\//.test(path))
             return ask("It changes SSH keys.", "account_security");
-          if (h?.careful) return ask(`The owner asked to approve every change on ${host}.`);
+          if (h?.careful) return askAlways(`The owner asked to approve every change on ${host}.`);
           return allow();
         },
         run: async ({ host, path, content, sudo }, { signal }) => {
