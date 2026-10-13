@@ -252,6 +252,7 @@ export const sshPlugin = definePlugin({
             .describe("How long to let it run; default 120"),
         }),
         describe: ({ host, command }) => `On ${host}: ${command}`,
+        target: ({ host }) => host,
         policy: ({ host, command }) => {
           const d = destructive(command);
           if (d) return ask(`This command ${d.why}.`, d.kind);
@@ -282,6 +283,8 @@ export const sshPlugin = definePlugin({
                   .describe("How long to let it run; default 120"),
               }),
               describe: ({ host, guest, command }) => `In CT ${guest} on ${host}: ${command}`,
+              // The container's own; its host's commands don't touch it.
+              target: ({ host, guest }) => `${host}/${guest}`,
               policy: ({ host, guest, command }) => {
                 const d = destructive(command, "container");
                 if (d) return ask(`This command ${d.why}.`, d.kind);

@@ -467,10 +467,21 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       }
 
       let finished: z.infer<typeof FinishTask> | null = null;
-      // Lookups in a row run at once; anything that changes things, or asks, runs on its own.
-      const lookup = (call: Anthropic.Beta.BetaToolUseBlock) =>
-        res.stop_reason !== "max_tokens" &&
-        (LOOKUP_TOOLS.includes(call.name) || pluginTools.get(call.name)?.access === "read");
+      // Lookups in a row run at once, and so do changes allowed without asking, each on a different
+      // thing (checking updates on every host); anything that asks runs on its own.
+      const lookup = (call: Anthropic.Beta.BetaToolUseBlock): boolean | string => {
+        if (res.stop_reason === "max_tokens") return false;
+        const t = pluginTools.get(call.name);
+        if (LOOKUP_TOOLS.includes(call.name) || t?.access === "read") return true;
+        if (!t?.target) return false;
+        const parsed = t.schema.safeParse(call.input);
+        if (!parsed.success) return false;
+        const cc = { task: { id, tainted: task.tainted }, signal };
+        if (verdictFor(t, call.input, cc).action !== "allow") return false;
+        const untrusted =
+          typeof t.untrusted === "function" ? t.untrusted(parsed.data) : Boolean(t.untrusted);
+        return !untrusted && `${t.name.split("_")[0]}:${t.target(parsed.data)}`;
+      };
       const results: BlockParam[] = await inBatches(calls, lookup, async (call) => {
         if (res.stop_reason === "max_tokens")
           return result(call, "Input was cut off at max_tokens. Retry with a shorter input.", true);

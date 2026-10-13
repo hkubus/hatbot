@@ -450,18 +450,30 @@ export async function runTool(
 export const LOOKUP_TOOLS = ["memory_list", "memory_read", "memory_search", "search_history"];
 
 /**
- * Runs a turn's tool calls in order, except that a run of lookups (`parallel`) runs at once. Results
- * come back in the calls' order.
+ * Runs a turn's tool calls in order, except that calls in a row that may run together do: what
+ * `parallel` says may (true, or the thing a change acts on) and, for changes, each on a different
+ * thing. Lookups and changes don't share a batch. Results come back in the calls' order.
  */
 export async function inBatches<C, R>(
   calls: C[],
-  parallel: (call: C) => boolean,
+  parallel: (call: C) => boolean | string,
   run: (call: C) => Promise<R>,
 ): Promise<R[]> {
   const out: R[] = [];
   for (let i = 0; i < calls.length; ) {
+    const first = parallel(calls[i] as C);
+    const targets = new Set<string>();
+    if (typeof first === "string") targets.add(first);
     let j = i + 1;
-    if (parallel(calls[i] as C)) while (j < calls.length && parallel(calls[j] as C)) j++;
+    while (first !== false && j < calls.length) {
+      const next = parallel(calls[j] as C);
+      if (typeof next !== typeof first || next === false) break;
+      if (typeof next === "string") {
+        if (targets.has(next)) break;
+        targets.add(next);
+      }
+      j++;
+    }
     out.push(...(await Promise.all(calls.slice(i, j).map(run))));
     i = j;
   }

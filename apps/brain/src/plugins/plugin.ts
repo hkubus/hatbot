@@ -55,6 +55,11 @@ export type PluginTool<I = unknown> = {
   label?: string;
   /** The call in a line, for the timeline and approvals: "Restart CT 105 (jellyfin)". */
   describe?: (input: I) => string;
+  /**
+   * Write tools: the thing it acts on, e.g. a host. A task runs changes allowed without asking at
+   * once when each acts on a different thing; ones on the same thing keep their order.
+   */
+  target?: (input: I) => string;
   /** Write tools: allow, ask you first, or refuse. Without one, a write is allowed. */
   policy?: (input: I, call: CallContext) => Verdict;
   run: (input: I, call: CallContext) => Promise<string>;

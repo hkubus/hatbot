@@ -392,6 +392,29 @@ test("lookups in a row run at once; everything else runs on its own, in order", 
   ]);
 });
 
+test("changes on different things run at once; on the same thing, in order", async () => {
+  const log: string[] = [];
+  const run = async (c: string) => {
+    log.push(`start ${c}`);
+    await Bun.sleep(5);
+    log.push(`end ${c}`);
+    return c;
+  };
+  // "a1" on host a, "b1" on host b, "a2" on a again, "r" a lookup.
+  const on = (c: string) => (c === "r" ? true : (c[0] as string));
+  await inBatches(["a1", "b1", "a2", "r"], on, run);
+  expect(log).toEqual([
+    "start a1",
+    "start b1",
+    "end a1",
+    "end b1",
+    "start a2",
+    "end a2",
+    "start r",
+    "end r",
+  ]);
+});
+
 test("a task's timeline keeps only the model's latest note, and all of yours", () => {
   const step = (id: number, kind: TaskStep["kind"], name = "Note") =>
     ({ id, kind, name }) as TaskStep;
