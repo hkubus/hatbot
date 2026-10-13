@@ -75,7 +75,7 @@ These came out of the M4 security review.
 
 ## 4. Later (not v1, don't start without the owner)
 - **GitHub plugin**, next to Forgejo. Same shape as `apps/brain/src/plugins/forgejo/`.
-- **After v1** (PLAN §11): email via Proton Bridge, more than one agent, a heartbeat that acts on its own, an open-source release.
+- **After v1** (PLAN §11): email via Proton Bridge, more than one agent (planned in PLAN §14), a heartbeat that acts on its own, an open-source release.
 
 ## Things the owner should know when testing M4
 - **Kuma prompt:** existing Uptime Kuma triggers keep their old prompt. Re-save them with the new default (`KUMA_PROMPT` in `apps/web/src/pages/Schedules.tsx`) to get investigate → one restart → verify.

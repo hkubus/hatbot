@@ -25,7 +25,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 ### v1 is not
 - Email or calendar. You use Proton Mail and no calendar; this can come later via Proton Bridge.
 - Open-ended goals ("grow my newsletter"), or a proactive heartbeat that wakes up and decides on its own what to do.
-- More than one agent, or teams of agents. The architecture leaves room for both.
+- More than one agent. It's planned for after v1 (§14).
 - Multiple users. It's single-operator by design.
 
 ---
@@ -542,7 +542,7 @@ Each milestone ends with a working, demo-able system.
 - **Done when**: you can chat, approve and take over from the app on your phone.
 
 ### After v1
-Email via Proton Bridge · more than one agent · a heartbeat that acts on its own · open-source release (choose a licence, docs, one-command installer).
+Email via Proton Bridge · more than one agent (§14) · a heartbeat that acts on its own · open-source release (choose a licence, docs, one-command installer).
 
 ---
 
@@ -567,3 +567,41 @@ Email via Proton Bridge · more than one agent · a heartbeat that acts on its o
 4. Guest sizes: brain 2 GiB, desktop 1.5 GiB / 2 vCPU. The preflight checks real free RAM first.
 5. Skills live in the memory repo under `skills/`.
 6. The roles are as described in §9.3.
+
+---
+
+## 14. Multiple bots
+
+More than one Hatbot, like Grok Bot: several named bots, each with its own role, chat, memory and logins, which hand work to each other. Agreed 2026-10-14; not started.
+
+### 14.1 Decisions
+| Area | Decision |
+|---|---|
+| Bot | A row in `bots`: id, name, instructions (its role, markdown), chat model and effort, plugin allowlist (a subset of the plugins switched on). Hatbot is bot #1 (`hatbot`), the default, and can't be deleted |
+| Chats | One direct chat per bot. Group chats come last (§14.4) |
+| Memory | One git repo. Each bot has `bots/<slug>/INDEX.md` for its own notes and commits under its own name; the root `INDEX.md` and `skills/` are shared, read and written by every bot. `/remember` and teach-by-showing go to the shared part |
+| Hand-offs | `ask_bot(bot, request)` runs as a task owned by the other bot, under its plugins; the result returns to the bot that asked. Hand-offs nest at most 3 deep |
+| Trust | Bots are a security boundary, unlike Grok Bot's: a bot only gets its allowlisted plugins, and a hand-off from a tainted chat or task starts tainted (§6.1) |
+| Desktop | One shared desktop and screen lane. Each bot gets its own Chromium profile (`--user-data-dir`), so logins aren't shared. The live view says which bot is driving |
+| Spending | Global limits only ($10/day · $200/month · $3/task); the ledger records the bot for Spend's breakdown |
+| Notifications | One ntfy topic; titles name the bot when it isn't Hatbot ("Coder · Approve: …") |
+
+### 14.2 Data
+- **`bots`** (migration 20), seeded with Hatbot.
+- **`conversations`**: `kind` (`direct` or `group`), members; one direct conversation per bot. The rolling summary moves from `settings.thread_summary` onto the conversation.
+- **`bot_id`** on episodes, messages (who spoke), tasks, approvals, schedules, triggers, spend and attachments (`sender` becomes `owner` or a bot id); **`conversation_id`** on episodes and messages. Existing rows go to Hatbot.
+- Episodes, the 30-minute idle rule, `/new`, incognito, folding and `search_history` work per conversation. `takeUnreported()` reports a task's news to its bot's chat.
+- A schedule or trigger runs as the bot that owns it.
+
+### 14.3 Prompts, API and UI
+- **Prompt**: `SYSTEM_PROMPT` takes the bot's name and instructions, plus the other bots with one line each, for `ask_bot`. Task and desktop prompts name the bot too.
+- **API**: `/bots` (CRUD) and `/conversations/:id/messages`. `/thread/*` stays as Hatbot's direct chat so installed iOS builds keep working. Message, task, approval and desktop events carry `botId` (and `conversationId`); `DesktopState.control` becomes a bot id or `owner`.
+- **Web**: the sidebar's Chat becomes a list of bots, each with its name and unread count, and **New bot**. A bot's page: name, instructions, model, plugins, its memory folder.
+- **iOS**: the same list in the drawer, and the bot's page. Models in `Models.swift` change with `packages/shared`.
+
+### 14.4 Milestones
+- **B1, the model**: migration 20, Hatbot as bot #1, `conversation_id`/`bot_id` everywhere, the API and events. Done when everything behaves as before and the tests pass.
+- **B2, direct chats**: create and edit bots; per-bot prompt, memory folder, plugins and model; bot-owned tasks, schedules and triggers; web sidebar. Done when you chat with a "Coder" and a "Homelab" bot apart.
+- **B3, hand-offs**: `ask_bot`, taint carried over, the depth cap. Done when Hatbot hands a repo fix to Coder and reports back.
+- **B4, desktop and iOS**: a browser profile per bot; the bot list and pages in the iOS app.
+- **B5, group chats** (low priority): 2–6 bots and you. `@name` picks who answers; with no mention the last bot to speak does; a bot can bring another in with `@name`; at most 4 bot replies per message from you. Sender names show above a run of messages, only in groups. `@` autocompletes in the composer.
