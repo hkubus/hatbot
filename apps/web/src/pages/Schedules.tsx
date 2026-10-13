@@ -1,6 +1,7 @@
 // Schedules & Triggers (PLAN.md §10.3): see, pause and edit what runs on its own.
 import {
   describeCron,
+  HATBOT_ID,
   type Schedule,
   type Task,
   type Trigger,
@@ -217,7 +218,12 @@ function ScheduleEdit({ id }: { id: number | null }) {
     cron: string;
     at: string;
     prompt: string;
-  } | null>(id === null ? { name: "", repeat: true, cron: "0 8 * * *", at: "", prompt: "" } : null);
+    botId: string;
+  } | null>(
+    id === null
+      ? { name: "", repeat: true, cron: "0 8 * * *", at: "", prompt: "", botId: HATBOT_ID }
+      : null,
+  );
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -233,6 +239,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
         cron: stored.cron ?? "0 8 * * *",
         at: stored.runAt ? localInput(stored.runAt) : "",
         prompt: stored.prompt,
+        botId: stored.botId,
       });
   }, [stored, form]);
 
@@ -246,6 +253,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
     stored.tainted ||
     form.name !== stored.name ||
     form.prompt !== stored.prompt ||
+    form.botId !== stored.botId ||
     (form.repeat
       ? form.cron.trim() !== stored.cron
       : !stored.runAt || form.at !== localInput(stored.runAt));
@@ -259,12 +267,13 @@ function ScheduleEdit({ id }: { id: number | null }) {
         await saveSchedule(stored.id, {
           name: form.name,
           prompt: form.prompt,
+          botId: form.botId,
           ...when,
           ...(!stored.enabled && !stored.cron ? { enabled: true } : {}),
         });
       } else {
         const s = await api<Schedule>("/schedules", {
-          body: { name: form.name, prompt: form.prompt, ...when },
+          body: { name: form.name, prompt: form.prompt, botId: form.botId, ...when },
         });
         putSchedule(s);
         navigate(`/schedules/${s.id}`, true);
@@ -384,6 +393,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
               onChange={(e) => set({ prompt: e.target.value })}
             />
           </label>
+          <BotPicker value={form.botId} onChange={(botId) => set({ botId })} />
           {stored?.tainted && (
             <div className="hint">
               Hatbot wrote this after reading untrusted content
@@ -467,6 +477,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
     prompt: string;
     trusted: boolean;
     confirmChecks: number;
+    botId: string;
   } | null>(
     id === null
       ? {
@@ -475,6 +486,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
           prompt: newKind === "kuma" ? KUMA_PROMPT : "",
           trusted: false,
           confirmChecks: 0,
+          botId: HATBOT_ID,
         }
       : null,
   );
@@ -498,6 +510,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
         prompt: stored.prompt,
         trusted: stored.trusted,
         confirmChecks: stored.confirmChecks,
+        botId: stored.botId,
       });
   }, [stored, form]);
 
@@ -510,7 +523,8 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
     form.name !== stored.name ||
     form.prompt !== stored.prompt ||
     form.trusted !== stored.trusted ||
-    form.confirmChecks !== stored.confirmChecks;
+    form.confirmChecks !== stored.confirmChecks ||
+    form.botId !== stored.botId;
 
   const save = async () => {
     setBusy(true);
@@ -525,6 +539,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
               prompt: form.prompt,
               trusted: form.trusted,
               confirmChecks: form.confirmChecks,
+              botId: form.botId,
             },
           }),
         );
@@ -631,6 +646,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
               onChange={(e) => set({ prompt: e.target.value })}
             />
           </label>
+          <BotPicker value={form.botId} onChange={(botId) => set({ botId })} />
           {form.kind === "kuma" && (
             <div className="form-row">
               <span className="label">Start a task after</span>
@@ -678,5 +694,24 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
         {stored && <Runs filter={{ triggerId: stored.id }} />}
       </div>
     </section>
+  );
+}
+
+/** Which bot runs it: its prompt, plugins and memory. Only when there's more than one. */
+function BotPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  const ids = useStore((s) => s.botIds);
+  const bots = useStore((s) => s.bots);
+  if (ids.length < 2 && value === HATBOT_ID) return null;
+  return (
+    <div className="form-row">
+      <span className="label">Runs as</span>
+      <select className="field" value={value} onChange={(e) => onChange(e.target.value)}>
+        {(ids.includes(value) ? ids : [...ids, value]).map((id) => (
+          <option key={id} value={id}>
+            {bots[id]?.name ?? id}
+          </option>
+        ))}
+      </select>
+    </div>
   );
 }

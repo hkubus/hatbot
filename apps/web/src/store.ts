@@ -2,6 +2,8 @@
 import {
   API_PREFIX,
   type Approval,
+  type Bot,
+  type Conversation,
   type DesktopState,
   type Episode,
   type HatbotEvent,
@@ -17,7 +19,9 @@ import { useSyncExternalStore } from "react";
 import { ApiError, api } from "./api";
 
 type State = {
-  /** The incognito conversation is showing instead of the thread. */
+  /** The chat that's showing: a bot's own, or a group. */
+  conversationId: number;
+  /** The incognito conversation is showing instead of the chat. */
   incognito: boolean;
   messages: ThreadMessage[];
   /** The conversations the loaded messages belong to, for their recaps. */
@@ -47,11 +51,21 @@ type State = {
   plugins: Record<string, PluginInfo>;
   /** Teach-by-showing: the recording in progress and drafts, by id. */
   teach: Record<number, TeachSession>;
+  /** Your bots, deleted ones too once seen: old messages still name them. */
+  bots: Record<string, Bot>;
+  /** Bots that aren't deleted, Hatbot first. */
+  botIds: string[];
+  /** Your chats: each bot's own, then groups. */
+  conversations: Conversation[];
 };
+
+/** Hatbot's own chat: the first one, made with the database. */
+export const HATBOT_CHAT = 1;
 
 const INCOGNITO_KEY = "hatbot:incognito";
 
 let state: State = {
+  conversationId: HATBOT_CHAT,
   incognito: sessionStorage.getItem(INCOGNITO_KEY) === "1",
   messages: [],
   episodes: {},
@@ -73,6 +87,9 @@ let state: State = {
   triggers: {},
   plugins: {},
   teach: {},
+  bots: {},
+  botIds: [],
+  conversations: [],
 };
 const listeners = new Set<() => void>();
 const set = (patch: Partial<State>) => {
@@ -103,35 +120,40 @@ async function loadEpisodes(messages: ThreadMessage[]) {
     (id): id is number => id !== null && !state.episodes[id],
   );
   if (!ids.length) return;
-  const list = await api<Episode[]>(`/thread/episodes?ids=${ids.join(",")}`);
+  const list = await api<Episode[]>(
+    `/conversations/${state.conversationId}/episodes?ids=${ids.join(",")}`,
+  );
   set({ episodes: { ...state.episodes, ...Object.fromEntries(list.map((e) => [e.id, e])) } });
 }
 
 const page = (before?: number) =>
-  `/thread/messages?limit=${PAGE}${before ? `&before=${before}` : ""}${state.incognito ? "&incognito=1" : ""}`;
+  `/conversations/${state.conversationId}/messages?limit=${PAGE}${before ? `&before=${before}` : ""}${state.incognito ? "&incognito=1" : ""}`;
 
 export async function loadThread() {
-  const incognito = state.incognito;
+  const { incognito, conversationId } = state;
   const messages = await api<ThreadMessage[]>(page());
   await loadEpisodes(messages).catch(() => {});
   // Switched while it loaded: the other conversation's load wins.
-  if (incognito !== state.incognito) return;
+  if (incognito !== state.incognito || conversationId !== state.conversationId) return;
   set({ messages, hasEarlier: messages.length === PAGE });
 }
 
 export async function loadEarlier() {
   const first = state.messages[0];
   if (!first) return;
+  const { conversationId } = state;
   const older = await api<ThreadMessage[]>(page(first.id));
   await loadEpisodes(older).catch(() => {});
+  if (conversationId !== state.conversationId) return;
   set({ messages: [...older, ...state.messages], hasEarlier: older.length === PAGE });
 }
 
 export async function sendMessage(text: string, attachmentIds: number[] = []) {
-  const m = await api<ThreadMessage>("/thread/messages", {
+  const m = await api<ThreadMessage>(`/conversations/${state.conversationId}/messages`, {
     body: { text, attachmentIds, incognito: state.incognito },
   });
-  if (!!m.incognito === state.incognito) set({ messages: upsert(state.messages, m) });
+  if (!!m.incognito === state.incognito && m.conversationId === state.conversationId)
+    set({ messages: upsert(state.messages, m) });
 }
 
 /** Into incognito, or out of it, which deletes its conversation. */
@@ -141,8 +163,81 @@ export async function setIncognito(on: boolean) {
   else sessionStorage.removeItem(INCOGNITO_KEY);
   set({ incognito: on, messages: [], hasEarlier: false });
   // The chat loads the conversation it switched to.
-  if (!on) await api("/thread/incognito", { method: "DELETE" }).catch(() => {});
+  if (!on)
+    await api(`/conversations/${state.conversationId}/incognito`, { method: "DELETE" }).catch(
+      () => {},
+    );
 }
+
+/** Shows another chat. Leaving one in incognito deletes its conversation. */
+export async function openConversation(id: number) {
+  if (id === state.conversationId) return;
+  const left = state.conversationId;
+  const wasIncognito = state.incognito;
+  sessionStorage.removeItem(INCOGNITO_KEY);
+  set({ conversationId: id, incognito: false, messages: [], hasEarlier: false });
+  if (wasIncognito)
+    await api(`/conversations/${left}/incognito`, { method: "DELETE" }).catch(() => {});
+}
+
+export async function loadBots() {
+  const [bots, conversations] = await Promise.all([
+    api<Bot[]>("/bots"),
+    api<Conversation[]>("/conversations"),
+  ]);
+  set({
+    bots: { ...state.bots, ...Object.fromEntries(bots.map((b) => [b.id, b])) },
+    botIds: bots.map((b) => b.id),
+    conversations,
+  });
+}
+
+let refreshing: ReturnType<typeof setTimeout> | null = null;
+/** The chats' unread counts and order, soon: news comes in bursts. */
+function refreshConversations() {
+  if (refreshing) return;
+  refreshing = setTimeout(() => {
+    refreshing = null;
+    api<Conversation[]>("/conversations").then(
+      (conversations) => set({ conversations }),
+      () => {},
+    );
+  }, 300);
+}
+
+export async function createBot(body: Partial<Bot> & { name: string }) {
+  const bot = await api<Bot>("/bots", { body });
+  putBot(bot);
+  await loadBots();
+  return bot;
+}
+export async function saveBot(id: string, patch: Partial<Bot>) {
+  const bot = await api<Bot>(`/bots/${id}`, { method: "PATCH", body: patch });
+  putBot(bot);
+  return bot;
+}
+export async function deleteBot(id: string) {
+  await api(`/bots/${id}`, { method: "DELETE" });
+  set({ botIds: state.botIds.filter((b) => b !== id) });
+  await loadBots();
+}
+const putBot = (b: Bot) =>
+  set({
+    bots: { ...state.bots, [b.id]: b },
+    botIds: state.botIds.includes(b.id) ? state.botIds : [...state.botIds, b.id],
+  });
+
+/** A bot's name; the id for one we don't know. */
+export const botName = (s: State, id: string | null | undefined) =>
+  id ? (s.bots[id]?.name ?? id) : "";
+/** A chat's name: a group's title, or its bot's name. */
+export const chatName = (s: State, c: Conversation | undefined) =>
+  !c
+    ? "Chat"
+    : c.kind === "group"
+      ? c.title || c.botIds.map((id) => botName(s, id)).join(", ")
+      : botName(s, c.botIds[0]);
+export const currentChat = (s: State) => s.conversations.find((c) => c.id === s.conversationId);
 
 /** Messages in an incognito conversation: they're never unread. */
 const incognitoIds = new Set<number>();
@@ -250,6 +345,7 @@ export async function saveSchedule(id: number, patch: Partial<Schedule> & { at?:
 }
 
 async function loadLive() {
+  void loadBots().catch(() => {});
   const [pending, desktop, teach, unread] = await Promise.all([
     api<Approval[]>("/approvals?pending=1"),
     api<DesktopState>("/desktop/status").catch(() => null),
@@ -345,10 +441,12 @@ function apply(e: HatbotEvent) {
   switch (e.type) {
     case "message.created":
       if (e.message.incognito) incognitoIds.add(e.message.id);
+      if (e.message.role === "assistant") refreshConversations();
       return set({
         // Only the conversation that's showing.
         messages:
-          !!e.message.incognito === state.incognito
+          !!e.message.incognito === state.incognito &&
+          e.message.conversationId === state.conversationId
             ? upsert(state.messages, e.message)
             : state.messages,
         unread:
@@ -358,11 +456,13 @@ function apply(e: HatbotEvent) {
             : state.unread,
       });
     case "message.edited":
+      refreshConversations();
       return set({
         messages: state.messages.map((m) => (m.id === e.id ? { ...m, editedAt: e.editedAt } : m)),
         unread: addUnread(e.id),
       });
     case "message.seen":
+      refreshConversations();
       return set({
         messages: state.messages.map((m) =>
           e.ids.includes(m.id) ? { ...m, seenAt: e.seenAt } : m,
@@ -370,6 +470,7 @@ function apply(e: HatbotEvent) {
         unread: state.unread.filter((id) => !e.ids.includes(id)),
       });
     case "message.deleted":
+      refreshConversations();
       return set({
         messages: state.messages.filter((m) => !e.ids.includes(m.id)),
         unread: state.unread.filter((id) => !e.ids.includes(id)),
@@ -399,6 +500,7 @@ function apply(e: HatbotEvent) {
     case "message.done": {
       const { [e.id]: _, ...progress } = state.progress;
       const { [e.id]: __, ...usage } = state.usage;
+      refreshConversations();
       return set({
         progress,
         usage,
@@ -411,7 +513,7 @@ function apply(e: HatbotEvent) {
     case "spend.updated":
       return set({ todayUsd: e.todayUsd, monthUsd: e.monthUsd });
     case "memory.committed":
-      if (e.author === "Hatbot") toast(`Memory: ${e.message}`);
+      if (state.botIds.some((id) => botName(state, id) === e.author)) toast(`Memory: ${e.message}`);
       return set({ memoryVersion: state.memoryVersion + 1 });
     case "paused":
       return set({ paused: e.paused });
@@ -453,6 +555,21 @@ function apply(e: HatbotEvent) {
       return putTeach(e.session);
     case "episode.updated":
       return set({ episodes: { ...state.episodes, [e.episode.id]: e.episode } });
+    case "bot.updated":
+      return putBot(e.bot);
+    case "bot.deleted":
+      refreshConversations();
+      return set({ botIds: state.botIds.filter((id) => id !== e.id) });
+    case "conversation.updated": {
+      const known = state.conversations.some((c) => c.id === e.conversation.id);
+      return set({
+        conversations: known
+          ? state.conversations.map((c) => (c.id === e.conversation.id ? e.conversation : c))
+          : [...state.conversations, e.conversation],
+      });
+    }
+    case "conversation.deleted":
+      return set({ conversations: state.conversations.filter((c) => c.id !== e.id) });
   }
 }
 

@@ -187,6 +187,8 @@ export function Spend() {
   const [days, setDays] = useState<SpendDay[]>([]);
   const [hours, setHours] = useState<SpendHour[]>([]);
   const [models, setModels] = useState<SpendByModel[]>([]);
+  const [byBot, setByBot] = useState<{ botId: string; usd: number }[]>([]);
+  const botNames = useStore((s) => s.bots);
   const live = useStore((s) => s.todayUsd);
   const [tick, setTick] = useState(0);
 
@@ -202,11 +204,13 @@ export function Spend() {
     api<SpendHour[]>("/spend/hourly?hours=24").then(setHours);
     api<SpendDay[]>("/spend/daily?days=30").then(setDays);
     api<SpendByModel[]>("/spend/by-model?days=30").then(setModels);
+    api<{ botId: string; usd: number }[]>("/spend/by-bot?days=30").then(setByBot);
   }, [live, tick]);
 
   if (!summary) return <section className="view" />;
   const { todayUsd, monthUsd, limits } = summary;
   const mMax = Math.max(0.0001, ...models.map((m) => m.usd));
+  const bMax = Math.max(0.0001, ...byBot.map((b) => b.usd));
   const hourPoints: Point[] = hours.map((h, i) => ({
     key: h.hour,
     usd: h.usd,
@@ -280,6 +284,25 @@ export function Spend() {
             <div className="muted">Nothing spent yet.</div>
           )}
         </div>
+
+        {byBot.length > 1 && (
+          <div className="chart-card">
+            <div className="chart-head">
+              <h3>By bot, last 30 days</h3>
+            </div>
+            <div className="hbars">
+              {byBot.map((b) => (
+                <div className="hbar" key={b.botId}>
+                  <span>{botNames[b.botId]?.name ?? b.botId}</span>
+                  <div className="track">
+                    <div className="fill" style={{ width: `${(b.usd / bMax) * 100}%` }} />
+                  </div>
+                  <span className="v">{money(b.usd)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );
