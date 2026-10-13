@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Task } from "@hatbot/shared";
-import { INTENT_PROMPT, REVIEW_PROMPT } from "../src/agent/prompt";
+import { CHECK_PROMPT } from "../src/agent/prompt";
 import type { CallContext } from "../src/plugins/plugin";
 import { verdictFor } from "../src/plugins/registry";
 import { sshPlugin } from "../src/plugins/ssh";
@@ -264,12 +264,17 @@ test("logs and files are untrusted: after reading one, a task asks before changi
   await waitFor(() => t.tasks.get(task.id)?.finishedAt);
 });
 
-/** A Haiku that says whether the owner asked, and counts how often it was consulted. */
+/** Which questions the approval check put to Haiku. */
+const questionsOf = (p: { messages: { content: unknown }[] }): string[] =>
+  JSON.parse(/<questions>\n(.*)\n/.exec(String(p.messages[0]?.content))?.[1] ?? "[]");
+
+/** A Haiku that says whether the owner asked, and counts how often it was asked that. */
 function intentModel(script: ReturnType<typeof toolUse>[][], asked: boolean) {
   const model = new FakeModel(script.map((content) => ({ content })));
   const checks: string[] = [];
   model.onCreate = (p) => {
-    if (p.system !== INTENT_PROMPT) return '{"suspected": false, "excerpt": ""}';
+    if (p.system !== CHECK_PROMPT) return '{"suspected": false, "excerpt": ""}';
+    if (!questionsOf(p).includes("asked")) return '{"safe": false, "why": "Not reviewed."}';
     checks.push(JSON.stringify(p.messages));
     return JSON.stringify({
       asked,
@@ -304,9 +309,9 @@ test("a tainted task doesn't ask again for a change you asked for in the chat", 
   expect(checks[0]).toContain("echo restarted jellyfin");
   const step = t.tasks.steps(task.id).find((s) => s.name === "Not asking: you asked for this");
   expect(step?.detail).toContain("You asked to restart jellyfin.");
-  expect(
-    t.db.query("SELECT purpose FROM spend_ledger WHERE purpose = 'intent'").all(),
-  ).toHaveLength(1);
+  expect(t.db.query("SELECT purpose FROM spend_ledger WHERE purpose = 'check'").all()).toHaveLength(
+    1,
+  );
 });
 
 test("it asks when you didn't ask for that, when it's switched off, or when no one asked", async () => {
@@ -436,10 +441,11 @@ function reviewModel(script: ReturnType<typeof toolUse>[][], safe: boolean) {
   const model = new FakeModel(script.map((content) => ({ content })));
   const reviews: string[] = [];
   model.onCreate = (p) => {
-    if (p.system === INTENT_PROMPT) return '{"asked": false, "why": "You asked to look."}';
-    if (p.system !== REVIEW_PROMPT) return '{"suspected": false, "excerpt": ""}';
+    if (p.system !== CHECK_PROMPT) return '{"suspected": false, "excerpt": ""}';
+    if (!questionsOf(p).includes("safe")) return '{"asked": false, "why": "You asked to look."}';
     reviews.push(JSON.stringify(p.messages));
     return JSON.stringify({
+      asked: false,
       safe,
       why: safe ? "A restart of the service the task is about." : "It sends data off the host.",
     });
@@ -458,6 +464,11 @@ test("after untrusted content, Haiku lets a safe change through and asks about t
   expect(yes.reviews[0]).toContain("echo restarted jellyfin");
   const step = a.t.tasks.steps(task.id).find((s) => s.name === "Not asking: Haiku found it safe");
   expect(step?.detail).toContain("A restart of the service the task is about.");
+  // Both questions in one call.
+  expect(yes.reviews[0]).toContain('[\\"asked\\",\\"safe\\"]');
+  expect(
+    a.t.db.query("SELECT purpose FROM spend_ledger WHERE purpose = 'check'").all(),
+  ).toHaveLength(1);
 
   // Unsafe: it asks, and says why.
   const no = reviewModel(restartScript(), false);
@@ -548,7 +559,7 @@ test("a note on an approval steers the task: it reads it, and the check counts i
   const answer = model.onCreate;
   model.onCreate = (p) => {
     const out = answer?.(p);
-    return p.system === INTENT_PROMPT && JSON.stringify(p.messages).includes("restart it.")
+    return p.system === CHECK_PROMPT && JSON.stringify(p.messages).includes("restart it.")
       ? JSON.stringify({ asked: true, why: "You said to restart it." })
       : out;
   };

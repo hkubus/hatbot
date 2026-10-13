@@ -4,7 +4,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ApprovalKind } from "@hatbot/shared";
 import { z } from "zod";
-import { mayCheck, ownerAsked, safeDespiteTaint } from "../agent/intent";
+import { checkAction, mayCheck } from "../agent/intent";
 import { modelErrorText } from "../agent/model";
 import { AGENT_PROMPT } from "../agent/prompt";
 import { localStamp } from "../agent/thread";
@@ -280,63 +280,52 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       : words;
 
   /**
-   * Whether you already asked for this exact action, so the task doesn't ask again: in the chat that
-   * started it, or in the instructions you wrote for its schedule, webhook or alert. Never for money,
-   * accounts or suspected injection.
+   * Haiku's check on a change that would ask (PLAN.md §6.1, §6.2), in one call: whether you already
+   * asked for this exact action (in the chat that started the task, or in the instructions you wrote
+   * for its schedule, webhook or alert), and after untrusted content, whether it's safe without you.
+   * Never for money, accounts or suspected injection. Notes on the timeline when it goes ahead; the
+   * reason either way.
    */
-  const alreadyAsked = async (
+  const checked = async (
     t: PluginTool,
     call: Anthropic.Beta.BetaToolUseBlock,
     what: string,
-    verdict: { why: string; kind?: ApprovalKind },
-  ): Promise<boolean> => {
+    verdict: { why: string; kind?: ApprovalKind; tainted?: boolean },
+  ): Promise<{ go: boolean; why: string }> => {
+    if (tasks.get(id)?.injectionSuspected) return { go: false, why: "" };
+    const s = d.settings.get();
     const standing = task.origin !== "chat";
-    const request = withNotes(standing ? standingWords() : tasks.requestOf(id));
-    if (!request || !d.settings.get().skipAskedApprovals) return false;
-    if (standing && standingSkipped) return false;
-    if (!mayCheck(verdict.kind ?? "other") || tasks.get(id)?.injectionSuspected) return false;
-    const check = await ownerAsked(d, { taskId: id }, request, {
-      tool: t.name,
-      input: call.input,
-      what,
-      why: verdict.why,
-    });
-    if (!check.asked) return false;
-    if (standing) standingSkipped = true;
-    tasks.addStep(id, {
-      kind: "approval",
-      name: standing
-        ? "Not asking: your instructions allow this"
-        : "Not asking: you asked for this",
-      detail: check.why ? `${what}. ${check.why}` : what,
-      url: null,
-    });
-    return true;
-  };
-
-  /**
-   * Whether Haiku finds a change safe that only the untrusted-content rule would ask about (PLAN.md
-   * §6.1). Its reason, either way, for the timeline or the approval.
-   */
-  const reviewed = async (
-    t: PluginTool,
-    call: Anthropic.Beta.BetaToolUseBlock,
-    what: string,
-    verdict: { why: string; tainted?: boolean },
-  ): Promise<{ safe: boolean; why: string }> => {
-    if (!verdict.tainted || !d.settings.get().reviewTaintedChanges) return { safe: false, why: "" };
-    if (tasks.get(id)?.injectionSuspected) return { safe: false, why: "" };
-    const check = await safeDespiteTaint(
+    const ownerSaid = withNotes(standing ? standingWords() : tasks.requestOf(id));
+    const check = await checkAction(
       d,
       { taskId: id },
       {
-        ownerSaid: withNotes(task.origin === "chat" ? tasks.requestOf(id) : standingWords()),
-        goal: task.goal,
-        sources: [...sources],
+        ownerSaid,
+        asked:
+          s.skipAskedApprovals &&
+          mayCheck(verdict.kind ?? "other") &&
+          !(standing && standingSkipped),
+        review:
+          verdict.tainted && s.reviewTaintedChanges
+            ? { goal: task.goal, sources: [...sources] }
+            : null,
       },
       { tool: t.name, input: call.input, what, why: verdict.why },
     );
-    return check;
+    if (!check) return { go: false, why: "" };
+    if (check.asked && standing) standingSkipped = true;
+    if (check.asked || check.safe)
+      tasks.addStep(id, {
+        kind: "approval",
+        name: check.asked
+          ? standing
+            ? "Not asking: your instructions allow this"
+            : "Not asking: you asked for this"
+          : "Not asking: Haiku found it safe",
+        detail: check.why ? `${what}. ${check.why}` : what,
+        url: null,
+      });
+    return { go: check.asked || check.safe, why: check.why };
   };
 
   /** A plugin tool: its policy and the untrusted-content rule first, then the call. */
@@ -358,23 +347,12 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       return result(call, `Refused: ${verdict.why}`, true);
     }
     if (verdict.action === "ask") {
-      // Both checks at once; either one lets it through.
-      const [asked, review] = await Promise.all([
-        alreadyAsked(t, call, what, verdict),
-        reviewed(t, call, what, verdict),
-      ]);
-      if (!asked && review.safe)
-        tasks.addStep(id, {
-          kind: "approval",
-          name: "Not asking: Haiku found it safe",
-          detail: review.why ? `${what}. ${review.why}` : what,
-          url: null,
-        });
-      if (!asked && !review.safe) {
+      const check = await checked(t, call, what, verdict);
+      if (!check.go) {
         const answer = await askApproval({
           kind: verdict.kind ?? "other",
           summary: what,
-          reason: review.why ? `${verdict.why} Haiku: ${review.why}` : verdict.why,
+          reason: check.why ? `${verdict.why} Haiku: ${check.why}` : verdict.why,
         });
         note = answer.note;
         if (answer.outcome !== "approved")

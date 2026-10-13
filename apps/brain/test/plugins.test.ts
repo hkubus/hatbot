@@ -173,6 +173,28 @@ test("the chat runs a plugin's tools itself; an untainted, harmless change just 
   expect(t.approvals.list(false)).toHaveLength(0);
 });
 
+test("a reply makes at most two changes itself; a third is sent to run_task", async () => {
+  const calls: string[] = [];
+  const chat = new FakeModel([
+    { content: [toolUse("lab_restart", { guest: "web" })] },
+    { content: [toolUse("lab_restart", { guest: "cache" })] },
+    { content: [toolUse("lab_restart", { guest: "proxy" })] },
+    { content: [text("The rest goes to a task.")] },
+    { content: [toolUse("lab_restart", { guest: "proxy" })] },
+    { content: [text("Restarted proxy.")] },
+  ]);
+  const t = await lab(chat, new FakeModel(), calls);
+  t.thread.post("restart web, cache and proxy");
+  await t.thread.idle();
+  expect(calls).toEqual(["restart web", "restart cache"]);
+  expect(JSON.stringify(chat.requests[3]?.messages)).toContain("Start run_task for the rest");
+
+  // The count is per reply.
+  t.thread.post("now restart proxy");
+  await t.thread.idle();
+  expect(calls).toEqual(["restart web", "restart cache", "restart proxy"]);
+});
+
 test("in the chat, a risky change waits for your approval, and a denial reaches the model", async () => {
   const calls: string[] = [];
   const chat = new FakeModel([

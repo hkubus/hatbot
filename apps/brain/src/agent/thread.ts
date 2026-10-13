@@ -22,7 +22,7 @@ import type { SettingsStore } from "../settings";
 import { BudgetError, priceOf, type Spend, tokenCount, tokensOf } from "../spend";
 import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
-import { mayCheck, ownerAsked, safeDespiteTaint } from "./intent";
+import { checkAction, mayCheck } from "./intent";
 import { type ModelClient, modelErrorText } from "./model";
 import { EXPERT_PROMPT, SUMMARY_PROMPT, SYSTEM_PROMPT } from "./prompt";
 import {
@@ -42,6 +42,8 @@ const EPISODE_IDLE_MS = 30 * 60_000;
 const RECENT_MESSAGES = 10;
 const MAX_STEPS = 25;
 const MAX_TURN_MS = 10 * 60_000;
+/** Changes one reply makes itself; past this, the work belongs in a background task (run_task). */
+const MAX_CHAT_CHANGES = 2;
 const MESSAGE_COLUMNS =
   "id, role, kind, text, status, created_at AS createdAt, task_id AS taskId, schedule_id AS scheduleId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt";
 const EPISODE_COLUMNS = "id, started_at AS startedAt, last_activity_at AS lastActivityAt, recap";
@@ -279,8 +281,8 @@ export class Thread {
 
   /**
    * A plugin tool that changes something, called from the chat: its policy and the untrusted-content
-   * rule, then Haiku's checks (you already asked for it; it isn't destructive), then your approval,
-   * which the reply waits for (PLAN.md §6.2).
+   * rule, then Haiku's check, one call for both questions (you already asked for it; it isn't
+   * destructive), then your approval, which the reply waits for (PLAN.md §6.2).
    */
   private async gatedCall(
     episodeId: number,
@@ -303,24 +305,23 @@ export class Thread {
       const kind = verdict.kind ?? "other";
       let skip = false;
       let review = "";
-      if (s.skipAskedApprovals && mayCheck(kind)) {
-        progress("Checking you asked for this");
-        skip = (await ownerAsked(this.d, { episodeId }, ownerSaid, action)).asked;
-      }
-      if (!skip && verdict.tainted && s.reviewTaintedChanges) {
-        progress("Checking it's safe");
-        const check = await safeDespiteTaint(
+      if ((s.skipAskedApprovals && mayCheck(kind)) || (verdict.tainted && s.reviewTaintedChanges)) {
+        progress("Checking with Haiku");
+        const check = await checkAction(
           this.d,
           { episodeId },
           {
             ownerSaid,
-            goal: "(none: the owner is asking in the chat)",
-            sources: [taintedBy ?? ""],
+            asked: s.skipAskedApprovals && mayCheck(kind),
+            review:
+              verdict.tainted && s.reviewTaintedChanges
+                ? { goal: "(none: the owner is asking in the chat)", sources: [taintedBy ?? ""] }
+                : null,
           },
           action,
         );
-        skip = check.safe;
-        review = check.why;
+        skip = check !== null && (check.asked || check.safe);
+        review = check?.why ?? "";
       }
       if (!skip) {
         if (!approvals)
@@ -693,6 +694,7 @@ export class Thread {
 
     const started = this.clock();
     let waited = 0;
+    let changes = 0;
     const abort = new AbortController();
     this.current = abort;
     try {
@@ -819,6 +821,12 @@ export class Thread {
               taint: (by: string) => this.taint(episode.id, by),
               ownerSaid: () => this.ownerSaid(episode.id),
               gated: async (t, input, signal) => {
+                // The sandbox is scratch space; only changes to the homelab and accounts count.
+                if (plugins.pluginOf(t.name)?.id !== "code" && ++changes > MAX_CHAT_CHANGES)
+                  return {
+                    content: `Not run: that would be change number ${changes} in this reply, and the chat makes at most ${MAX_CHAT_CHANGES}. Start run_task for the rest, with everything you've found so far in its goal, and tell the owner it's running.`,
+                    isError: true,
+                  };
                 const from = this.clock();
                 try {
                   return await this.gatedCall(episode.id, t, input, signal, progress);
