@@ -1,0 +1,45 @@
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { migrate } from "../src/db";
+import { migrations } from "../src/db/migrations";
+
+/** A database at `version`, with foreign keys on as in openDb. */
+function at(version: number) {
+  const db = new Database(":memory:", { strict: true });
+  db.exec("PRAGMA foreign_keys = ON");
+  db.exec("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY)");
+  for (let v = 1; v <= version; v++) {
+    db.exec(migrations[v - 1] as string);
+    db.query("INSERT INTO schema_migrations (version) VALUES (?)").run(v);
+  }
+  return db;
+}
+
+// A fresh database has empty tables, and some ALTERs only fail on one with rows.
+test("migration 20 (bots) runs on a database with a thread, tasks and approvals", () => {
+  const db = at(19);
+  const now = "2026-10-01T00:00:00Z";
+  db.exec(`INSERT INTO settings (key, value) VALUES ('thread_summary', 'Earlier: backups.')`);
+  db.exec(`INSERT INTO episodes (started_at, last_activity_at) VALUES ('${now}', '${now}')`);
+  db.exec(`INSERT INTO messages (episode_id, role, text, status, created_at, kind)
+    VALUES (1, 'user', 'hi', 'done', '${now}', 'text'), (1, 'assistant', 'Hello.', 'done', '${now}', 'text')`);
+  db.exec(`INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at)
+    VALUES ('t', 'g', '', 'chat', 'background', 'm', 'done', 1, '${now}')`);
+  db.exec(`INSERT INTO approvals (kind, summary, reason, sources, status, created_at, expires_at)
+    VALUES ('k', 's', 'r', '[]', 'pending', '${now}', '${now}')`);
+
+  migrate(db);
+
+  expect(db.query("SELECT summary FROM conversations WHERE id = 1").get()).toEqual({
+    summary: "Earlier: backups.",
+  });
+  expect(db.query("SELECT conversation_id, bot_id FROM messages ORDER BY id").all()).toEqual([
+    { conversation_id: 1, bot_id: null },
+    { conversation_id: 1, bot_id: "hatbot" },
+  ]);
+  expect(db.query("SELECT conversation_id FROM episodes").get()).toEqual({ conversation_id: 1 });
+  expect(db.query("SELECT conversation_id, bot_id FROM tasks").get()).toEqual({
+    conversation_id: 1,
+    bot_id: "hatbot",
+  });
+});

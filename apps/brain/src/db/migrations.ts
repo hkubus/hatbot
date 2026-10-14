@@ -348,11 +348,12 @@ export const migrations: string[] = [
   INSERT INTO conversation_bots (conversation_id, bot_id) VALUES (1, 'hatbot');
   DELETE FROM settings WHERE key = 'thread_summary';
 
-  ALTER TABLE episodes ADD COLUMN conversation_id INTEGER NOT NULL DEFAULT 1 REFERENCES conversations(id);
+  -- No REFERENCES on these two: SQLite won't add one with a non-null default to a table that has rows.
+  ALTER TABLE episodes ADD COLUMN conversation_id INTEGER NOT NULL DEFAULT 1;
   CREATE INDEX episodes_conversation ON episodes (conversation_id, incognito, id);
   -- In a group each bot keeps its own turns: its own prompt, tools and cache.
   ALTER TABLE episode_turns ADD COLUMN bot_id TEXT NOT NULL DEFAULT 'hatbot';
-  ALTER TABLE messages ADD COLUMN conversation_id INTEGER NOT NULL DEFAULT 1 REFERENCES conversations(id);
+  ALTER TABLE messages ADD COLUMN conversation_id INTEGER NOT NULL DEFAULT 1;
   -- Who wrote it; null for the owner's.
   ALTER TABLE messages ADD COLUMN bot_id TEXT;
   UPDATE messages SET bot_id = 'hatbot' WHERE role = 'assistant';
