@@ -48,12 +48,6 @@ test("chat starts a desktop task that runs, archives screenshots and reports bac
   expect(task?.summary).toBe("Example.com is up.");
   expect(task?.tainted).toBe(true);
 
-  // Its result edited the reply, which is unread until you've seen it.
-  const edited = t.thread.list().find((m) => m.id === reply?.id);
-  expect(edited?.editedAt).toBe(task?.finishedAt as string);
-  expect(t.thread.unread()).toContain(reply?.id as number);
-  t.chats.markSeen(t.thread.unread());
-  expect(t.thread.unread()).toEqual([]);
   expect(t.agent.actions.map((a) => a.name)).toEqual(["left_click"]);
   expect(task?.costUsd).toBeGreaterThan(0);
 
@@ -72,12 +66,20 @@ test("chat starts a desktop task that runs, archives screenshots and reports bac
   expect(shots.length).toBe(2);
   expect(await t.archive.file(shots[1]?.screenshot as string)?.exists()).toBe(true);
 
-  // The chat model hears how it ended right away, and answers in a reply of its own.
+  // The chat model hears how it ended right away, and writes the reply that started it again: no
+  // message of its own. The edited reply is unread until you've seen it.
   await t.thread.idle();
   const told = JSON.stringify(chat.requests.at(-1)?.messages.at(-1));
   expect(told).toContain("<task_updates>");
-  expect(told).toContain("No message from the owner");
-  expect(t.thread.list().at(-1)?.text).toBe("It worked.");
+  expect(told).toContain("replaces your reply that started it");
+  const after = t.thread.list().filter((m) => m.role === "assistant");
+  expect(after.map((m) => m.id)).toEqual([reply?.id as number]);
+  expect(after[0]?.text).toBe("It worked.");
+  expect(after[0]?.status).toBe("done");
+  expect(after[0]?.editedAt).toBeTruthy();
+  expect(t.thread.unread()).toContain(reply?.id as number);
+  t.chats.markSeen(t.thread.unread());
+  expect(t.thread.unread()).toEqual([]);
   expect(t.notifier.sent.at(-1)?.title).toContain("Done");
   // Told once: your next message doesn't bring it up again.
   const asked = chat.requests.length;

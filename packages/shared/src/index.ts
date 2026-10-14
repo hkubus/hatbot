@@ -247,6 +247,8 @@ export type HatbotEvent =
   | { type: "message.task"; id: number; taskId: number }
   /** A task's result changed this message. */
   | { type: "message.edited"; id: number; editedAt: string }
+  /** The task shown under this reply ended: its bot is writing the reply again, to say what came of it. */
+  | { type: "message.rewrite"; id: number }
   | { type: "message.attachment"; id: number; attachment: Attachment }
   /** You saw these messages (on any device). */
   | { type: "message.seen"; ids: number[]; seenAt: string }

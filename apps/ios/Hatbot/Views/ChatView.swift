@@ -572,8 +572,8 @@ private struct MessageRow: View {
       if m.kind == .task {
         if let task { copyButton(result ?? task.title) }
       } else {
-        // A finished or failed task's result replaced the reply.
-        copyButton(task.map(ReplyMessage.replaced) == true ? result ?? "" : m.text)
+        // A finished or failed task's result in the reply's place.
+        copyButton(task.map { ReplyMessage.showsResult(m, $0) } == true ? result ?? "" : m.text)
       }
       if let taskId = m.taskId { openButton(taskId) }
     }
@@ -588,31 +588,47 @@ private struct MessageRow: View {
   }
 }
 
-/// A reply, with the task it started (if any) working under it. A task that finished or failed replaces
-/// the reply with its result; a cancelled one leaves the reply.
+/// A reply, with the task it started (if any) working under it. Once the task finishes or fails, its bot
+/// writes the reply again to say what came of it; if it doesn't, the task's result shows in the reply's
+/// place. A cancelled task leaves the reply.
 private struct ReplyMessage: View {
   let m: ThreadMessage
   @Environment(AppStore.self) private var store
 
-  static func replaced(_ task: AgentTask) -> Bool {
+  static func ended(_ task: AgentTask) -> Bool {
     !task.isActive && task.status != .cancelled
+  }
+
+  /// The task ended and its bot didn't write the reply again: told some other way, or it failed to.
+  static func showsResult(_ m: ThreadMessage, _ task: AgentTask) -> Bool {
+    ended(task) && m.status != .streaming && (m.status == .error || m.text.isEmpty)
   }
 
   var body: some View {
     let task = m.taskId.flatMap { store.tasks[$0] }
-    let replaced = task.map(Self.replaced) ?? false
-    if !m.text.isEmpty && !replaced { MarkdownText(text: m.text) }
-    if m.status == .streaming && m.text.isEmpty && m.taskId == nil { TypingDots() }
-    if m.status == .streaming, let note = Format.lastLine(store.progress[m.id]) {
-      Text(note).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+    let ended = task.map(Self.ended) ?? false
+    if let task, Self.showsResult(m, task) {
+      TaskResult(taskId: task.id)
+      if !m.text.isEmpty {
+        Divider()
+        MarkdownText(text: m.text)
+      }
+    } else {
+      if !m.text.isEmpty { MarkdownText(text: m.text) }
+      if m.status == .streaming && m.text.isEmpty && (m.taskId == nil || ended) { TypingDots() }
+      if m.status == .streaming, let note = Format.lastLine(store.progress[m.id]) {
+        Text(note).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+      }
+      if m.status == .streaming, let used = store.usage[m.id] {
+        Text("\(Format.tokens(used.tokens)) tokens · \(String(format: "$%.3f", used.costUsd))")
+          .font(.footnote.monospacedDigit())
+          .foregroundStyle(.secondary)
+      }
+      if !ended, let taskId = m.taskId {
+        if !m.text.isEmpty, let task, !task.isActive { Divider() }
+        TaskResult(taskId: taskId)
+      }
     }
-    if m.status == .streaming, let used = store.usage[m.id] {
-      Text("\(Format.tokens(used.tokens)) tokens · \(String(format: "$%.3f", used.costUsd))")
-        .font(.footnote.monospacedDigit())
-        .foregroundStyle(.secondary)
-    }
-    if !m.text.isEmpty && !replaced, let task, !task.isActive { Divider() }
-    if let taskId = m.taskId { TaskResult(taskId: taskId) }
   }
 }
 

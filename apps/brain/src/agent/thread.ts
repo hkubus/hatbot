@@ -9,6 +9,7 @@ import {
   HATBOT_ID,
   parseCommand,
   type Schedule,
+  type Task,
   type ThreadMessage,
 } from "@hatbot/shared";
 import { z } from "zod";
@@ -70,6 +71,10 @@ export type MessageRow = Omit<ThreadMessage, "incognito"> & { incognito: number 
 /** A message as the app gets it: `incognito` only on the ones that are. */
 export const messageOf = ({ incognito, ...m }: MessageRow): ThreadMessage =>
   incognito ? { ...m, incognito: true } : m;
+/** How a task ended, in the place of the reply that started it when its bot doesn't write that again. */
+export const resultText = (t: Pick<Task, "status" | "summary">) =>
+  t.status === "failed" ? `**Didn't finish.** ${t.summary ?? ""}`.trim() : t.summary || "Done.";
+
 const EPISODE_COLUMNS = "id, started_at AS startedAt, last_activity_at AS lastActivityAt, recap";
 const BETAS: Anthropic.Beta.AnthropicBeta[] = [
   "server-side-fallback-2026-07-01",
@@ -1005,18 +1010,58 @@ export class Thread {
   }
 
   /**
-   * A task you started from the chat ended: the bot that started it (`botId`) tells you what came of
-   * it in a reply of its own, with the conversation in mind. In turn with replies.
+   * A task you started from the chat ended: the bot that started it (`botId`) writes the reply that
+   * started it again, to tell you what came of it with the conversation in mind. In turn with replies.
    */
   taskEnded(botId = this.bot().id) {
-    const done = this.chain.then(async () => {
-      const bot = this.d.bots.get(botId);
-      if (!bot) return;
-      if (this.group()) await this.round(null, [bot]);
-      else await this.reply(null, bot);
-    });
+    const done = this.chain
+      .then(async () => {
+        const bot = this.d.bots.get(botId);
+        if (!bot) return;
+        if (this.group()) await this.round(null, [bot]);
+        else await this.reply(null, bot);
+      })
+      .finally(() => this.settleRewrites());
     this.chain = done.catch((err) => console.error("thread turn failed", err));
     return done;
+  }
+
+  /** The reply that started one of these tasks, the latest: what a bot telling you about them rewrites. */
+  private taskReply(tasks: { id: number }[]): ThreadMessage | null {
+    if (!tasks.length) return null;
+    const row = this.d.db
+      .query<MessageRow, number[]>(
+        `SELECT ${MESSAGE_COLUMNS} FROM messages WHERE conversation_id = ? AND kind IN ('text', 'command')
+         AND task_id IN (${tasks.map(() => "?").join(", ")}) ORDER BY id DESC LIMIT 1`,
+      )
+      .get(this.conversationId, ...tasks.map((t) => t.id));
+    return row ? messageOf(row) : null;
+  }
+
+  /** Writes a task's reply again: emptied, and shown as being written. */
+  private rewriteMessage(m: ThreadMessage): ThreadMessage {
+    this.d.db.query("UPDATE messages SET text = '', status = 'streaming' WHERE id = ?").run(m.id);
+    this.d.events.emit({ type: "message.rewrite", id: m.id });
+    return { ...m, text: "", status: "streaming" };
+  }
+
+  /**
+   * Replies whose task ended, still waiting for their bot to write them again when nothing will: it
+   * was told with a message of yours, or its turn failed. Their task's result takes their place.
+   */
+  private settleRewrites() {
+    const rows = this.d.db
+      .query<{ id: number; status: Task["status"]; summary: string | null }, [number]>(
+        `SELECT m.id, t.status, t.summary FROM messages m JOIN tasks t ON t.id = m.task_id
+         WHERE m.conversation_id = ? AND m.status = 'streaming' AND m.kind IN ('text', 'command')
+         AND t.status IN ('done', 'failed')`,
+      )
+      .all(this.conversationId);
+    for (const r of rows) {
+      const text = resultText(r);
+      this.d.db.query("UPDATE messages SET text = ?, status = 'done' WHERE id = ?").run(text, r.id);
+      this.d.events.emit({ type: "message.done", id: r.id, text, status: "done" });
+    }
   }
 
   /**
@@ -1099,7 +1144,13 @@ export class Thread {
         text: `<task_updates>\n${lines.join("\n")}\n</task_updates>`,
       });
     }
-    const taskNews = `[${localStamp(new Date(this.clock()))}]\n(No message from the owner: a task they started from the chat ended. Tell them what came of it, briefly, with what you know from this conversation. Don't repeat what they can already see.)`;
+    // Telling you about a task shown under its reply: that reply is written again, not a new one.
+    const rewrite = !user && !group?.nudged ? this.taskReply(ended) : null;
+    const taskNews = `[${localStamp(new Date(this.clock()))}]\n(No message from the owner: a task they started from the chat ended. ${
+      rewrite
+        ? "What you write now replaces your reply that started it, and it's all the owner sees of how it went. Tell them what came of it, briefly, with what you know from this conversation."
+        : "Tell them what came of it, briefly, with what you know from this conversation. Don't repeat what they can already see."
+    })`;
     if (group) {
       const since = this.groupSince(bot, spoke);
       userBlocks.push({
@@ -1130,16 +1181,9 @@ export class Thread {
     }
     this.appendTurn(episode.id, bot.id, "user", userBlocks);
 
-    const out = this.insertMessage(
-      "assistant",
-      "",
-      "streaming",
-      episode.id,
-      [],
-      null,
-      incognito,
-      bot.id,
-    );
+    const out = rewrite
+      ? this.rewriteMessage(rewrite)
+      : this.insertMessage("assistant", "", "streaming", episode.id, [], null, incognito, bot.id);
     let text = "";
     let separate = false;
     /** This reply's model calls so far, shown under the working dots. */
@@ -1163,6 +1207,11 @@ export class Thread {
       db.query("UPDATE messages SET text = ?, status = ? WHERE id = ?").run(text, status, out.id);
       db.query("UPDATE episodes SET last_activity_at = ? WHERE id = ?").run(this.now(), episode.id);
       events.emit({ type: "message.done", id: out.id, text, status });
+      if (rewrite) {
+        const editedAt = this.now();
+        db.query("UPDATE messages SET edited_at = ? WHERE id = ?").run(editedAt, out.id);
+        events.emit({ type: "message.edited", id: out.id, editedAt });
+      }
       return { text, status };
     };
 

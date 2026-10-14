@@ -482,6 +482,13 @@ function apply(e: HatbotEvent) {
         messages: state.messages.map((m) => (m.id === e.id ? { ...m, editedAt: e.editedAt } : m)),
         unread: addUnread(e.id),
       });
+    case "message.rewrite":
+      // Its task ended: its bot is writing it again.
+      return set({
+        messages: state.messages.map((m) =>
+          m.id === e.id ? { ...m, text: "", status: "streaming" } : m,
+        ),
+      });
     case "message.seen":
       refreshConversations();
       return set({

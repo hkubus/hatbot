@@ -1,8 +1,8 @@
 // Your chats (PLAN.md §14): each bot's own, and groups of bots. One Thread runs each; what isn't tied
 // to one chat (tasks' messages, what you've seen) is here.
-import { type Conversation, HATBOT_ID } from "@hatbot/shared";
+import { type Conversation, HATBOT_ID, type Task } from "@hatbot/shared";
 import { BotError } from "../bots";
-import { Thread, type ThreadDeps } from "./thread";
+import { resultText, Thread, type ThreadDeps } from "./thread";
 
 type Parts = Pick<
   ThreadDeps,
@@ -178,6 +178,29 @@ export class Chats {
       )
       .all(editedAt, taskId);
     for (const r of rows) this.d.events.emit({ type: "message.edited", id: r.id, editedAt });
+  }
+
+  /**
+   * A task shown under a reply ended (not cancelled). With `rewrite`, its bot is about to write the
+   * reply again, so it shows as being written; otherwise the task's result takes its place. Not a reply
+   * still being written: its bot rewrites that one when it's done.
+   */
+  endReply(task: Task, rewrite: boolean) {
+    const rows = this.d.db
+      .query<
+        { id: number; text: string; status: "done" | "error" | "streaming" },
+        [string, number]
+      >(
+        `UPDATE messages SET text = ?, status = CASE WHEN ${rewrite ? 1 : 0} THEN 'streaming' ELSE status END
+         WHERE task_id = ? AND kind IN ('text', 'command') AND status != 'streaming' RETURNING id, text, status`,
+      )
+      .all(rewrite ? "" : resultText(task), task.id);
+    for (const r of rows)
+      this.d.events.emit(
+        r.status === "streaming"
+          ? { type: "message.rewrite", id: r.id }
+          : { type: "message.done", id: r.id, text: r.text, status: r.status },
+      );
   }
 
   /** Shows a task under the reply that started it, so its progress and result don't need a card. */
