@@ -190,7 +190,9 @@ test("a background task hands the chat a JSON file; the bot reads it and the cha
   const chat = new FakeModel([
     { content: [toolUse("run_task", { title: "CPU this week", goal: "Get CPU per day" })] },
     { content: [text("On it.")] },
-    { content: [text('```chart\n{"type": "line"}\n```')] },
+    {
+      content: [text('```chart\n{"type": "line", "x": ["Mon"], "series": [{"data": [12]}]}\n```')],
+    },
   ]);
   const work = new FakeModel([
     {
