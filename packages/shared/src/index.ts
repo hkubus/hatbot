@@ -61,6 +61,10 @@ export const PutMemoryFile = z.object({
 export type ThreadMessage = {
   id: number;
   role: "user" | "assistant";
+  /** The conversation it's in: a bot's own chat, or a group. */
+  conversationId: number;
+  /** The bot that wrote it; null for yours. */
+  botId: string | null;
   /**
    * "task" and "schedule" messages are cards; their text is a plain-text fallback. "command": a command
    * you typed, or what came of it (one with a task shows the task like a reply does).
@@ -119,6 +123,10 @@ export const ACTIVE_TASK_STATUSES: TaskStatus[] = [
 
 export type Task = {
   id: number;
+  /** The bot doing it: its prompt, plugins and browser profile. */
+  botId: string;
+  /** The bot that handed it over with ask_bot; null when you or its own bot started it. */
+  requestedBy: string | null;
   title: string;
   goal: string;
   successCriteria: string;
@@ -185,7 +193,11 @@ export type ApprovalKind =
 
 export type Approval = {
   id: number;
+  /** The bot asking. */
+  botId: string;
   taskId: number | null;
+  /** The chat that waits for it, when no task does. */
+  conversationId: number | null;
   kind: ApprovalKind;
   summary: string;
   reason: string;
@@ -221,6 +233,8 @@ export type DesktopState = {
   request: { taskId: number; reason: string } | null;
   /** The task using the screen. */
   activeTaskId: number | null;
+  /** The bot whose task that is, and whose browser profile is open. */
+  botId: string | null;
 };
 
 /** Live events on /api/v1/stream. */
@@ -255,7 +269,70 @@ export type HatbotEvent =
   | { type: "trigger.deleted"; id: number }
   | { type: "plugin.updated"; plugin: PluginInfo }
   | { type: "teach.updated"; session: TeachSession }
-  | { type: "episode.updated"; episode: Episode };
+  | { type: "episode.updated"; episode: Episode }
+  | { type: "bot.updated"; bot: Bot }
+  | { type: "bot.deleted"; id: string }
+  | { type: "conversation.updated"; conversation: Conversation }
+  | { type: "conversation.deleted"; id: number };
+
+/** The first bot. It can't be deleted, and /thread is its chat. */
+export const HATBOT_ID = "hatbot";
+/** A bot's id: made from its first name, and fixed after that. */
+export const BOT_ID = /^[a-z][a-z0-9-]{0,30}$/;
+
+/** One of your bots (PLAN.md §14): its own role, chat, memory folder, plugins and browser profile. */
+export type Bot = {
+  id: string;
+  name: string;
+  /** Its role, in your words. */
+  instructions: string;
+  /** Null: what Settings → Chat say. */
+  chatModel: AppSettings["chatModel"] | null;
+  chatEffort: AppSettings["chatEffort"] | null;
+  /** The plugins it may use, by id; null: every plugin that's on. */
+  plugins: string[] | null;
+  createdAt: string;
+};
+const botFields = {
+  name: z.string().trim().min(1).max(40),
+  instructions: z.string().trim().max(8000),
+  chatModel: z.enum(["claude-haiku-5-5", "claude-opus-5-5"]).nullable(),
+  chatEffort: z.enum(["low", "medium"]).nullable(),
+  plugins: z.array(z.string().min(1).max(40)).max(50).nullable(),
+};
+export const CreateBot = z.object({
+  ...botFields,
+  instructions: botFields.instructions.default(""),
+  chatModel: botFields.chatModel.default(null),
+  chatEffort: botFields.chatEffort.default(null),
+  plugins: botFields.plugins.default(null),
+});
+export const UpdateBot = z.object(botFields).partial();
+
+/** Most bots in a group, besides you. */
+export const MAX_GROUP_BOTS = 6;
+
+/** A chat: one bot's own, or a group of bots and you. */
+export type Conversation = {
+  id: number;
+  kind: "direct" | "group";
+  /** A group's name; null for a bot's own chat, which goes by the bot's. */
+  title: string | null;
+  botIds: string[];
+  /** Messages from its bots you haven't seen. */
+  unread: number;
+  lastMessageAt: string | null;
+};
+export const CreateGroup = z.object({
+  title: z.string().trim().max(80).optional(),
+  botIds: z.array(z.string().regex(BOT_ID)).min(2).max(MAX_GROUP_BOTS),
+});
+export const UpdateGroup = z
+  .object({
+    title: z.string().trim().max(80),
+    botIds: z.array(z.string().regex(BOT_ID)).min(2).max(MAX_GROUP_BOTS),
+  })
+  .partial();
 
 /** A skill's name: its file is skills/<name>.md. */
 export const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,59}$/;

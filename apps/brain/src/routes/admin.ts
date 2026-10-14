@@ -34,7 +34,7 @@ export const adminRoutes = new Hono<AppEnv>()
   // Kill switch (PLAN.md §6.5). Resume is a separate, deliberate call.
   .post("/pause-all", (c) => {
     c.var.settings.update({ paused: true });
-    c.var.thread.abortCurrent();
+    c.var.chats.abortAll();
     c.var.tasks.cancelAll();
     void c.var.desktop.setPaused(true);
     c.var.events.emit({ type: "paused", paused: true });

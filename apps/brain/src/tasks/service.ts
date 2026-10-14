@@ -1,11 +1,19 @@
 // Tasks (PLAN.md §5.1): storage, cards in the thread, the timeline, and starting runs.
-import type { ACTIVE_TASK_STATUSES, Task, TaskStatus, TaskStep } from "@hatbot/shared";
+import {
+  type ACTIVE_TASK_STATUSES,
+  type Bot,
+  HATBOT_ID,
+  type Task,
+  type TaskStatus,
+  type TaskStep,
+} from "@hatbot/shared";
+import type { Chats } from "../agent/chats";
 import type { ModelClient } from "../agent/model";
-import type { Thread } from "../agent/thread";
 import type { ToolContext } from "../agent/tools";
 import type { Approvals } from "../approvals";
 import type { Archive } from "../archive";
 import type { Attachments } from "../attachments";
+import type { Bots } from "../bots";
 import type { Config } from "../config";
 import type { Db } from "../db";
 import type { Desktop } from "../desktop/service";
@@ -32,7 +40,8 @@ export type TasksDeps = {
   archive: Archive;
   /** Files tasks send the owner. */
   attachments?: Attachments;
-  thread: Thread;
+  chats: Chats;
+  bots: Bots;
   config: Config;
   memory: MemoryStore;
   plugins: Plugins;
@@ -42,9 +51,14 @@ export type TasksDeps = {
 
 /** Background tasks at once (PLAN.md §5.6). */
 const BACKGROUND_SLOTS = 3;
+/** Bots handing work to bots that hand it on: at most this many in a row. */
+export const MAX_HANDOFFS = 3;
 
 type Row = {
   id: number;
+  bot_id: string;
+  conversation_id: number | null;
+  requested_by: string | null;
   title: string;
   goal: string;
   success_criteria: string;
@@ -78,6 +92,8 @@ const SELECT = `SELECT t.*,
 
 const toTask = (r: Row): Task => ({
   id: r.id,
+  botId: r.bot_id,
+  requestedBy: r.requested_by,
   title: r.title,
   goal: r.goal,
   successCriteria: r.success_criteria,
@@ -102,6 +118,11 @@ const toTask = (r: Row): Task => ({
   startedAt: r.started_at,
   finishedAt: r.finished_at,
 });
+
+/** Ended tasks shown in a chat that its bot hasn't heard about: a chat's id, then a bot's. */
+const UNREPORTED = `t.reported_at IS NULL AND t.status IN ('done', 'failed', 'cancelled')
+  AND coalesce(t.conversation_id, 1) = ? AND coalesce(t.requested_by, t.bot_id) = ?
+  AND EXISTS (SELECT 1 FROM messages m WHERE m.kind IN ('task', 'text', 'command') AND m.task_id = t.id)`;
 
 const ACTIVE: typeof ACTIVE_TASK_STATUSES = [
   "queued",
@@ -200,9 +221,17 @@ export class Tasks {
     skill?: string;
     parent?: Task;
     message?: number;
+    /** The bot doing it; a parent task's, or Hatbot. */
+    botId?: string;
+    /** The chat it reports to; the bot's own by default. */
+    conversationId?: number;
   }): Task {
     const p = input.parent;
+    const botId = input.botId ?? p?.botId ?? HATBOT_ID;
+    const conversationId = input.conversationId ?? this.conversationOf(p?.id) ?? this.home(botId);
     const id = this.insert({
+      bot_id: botId,
+      conversation_id: conversationId,
       title: input.title,
       goal: input.goal,
       success_criteria: input.successCriteria,
@@ -216,11 +245,35 @@ export class Tasks {
       schedule_id: p?.scheduleId ?? null,
       trigger_id: p?.triggerId ?? null,
     });
-    if (!p && !(input.message && this.d.thread.attachTask(input.message, id)))
-      this.d.thread.addCard("task", `Task #${id}: ${input.title}`, { taskId: id });
+    if (!p && !(input.message && this.d.chats.attachTask(input.message, id)))
+      this.d.chats.addCard(conversationId, botId, "task", `Task #${id}: ${input.title}`, {
+        taskId: id,
+      });
     this.emit(id);
     this.start(id);
     return this.get(id) as Task;
+  }
+
+  /** A bot's own chat. */
+  private home(botId: string): number {
+    return this.d.chats.direct(botId).conversationId;
+  }
+
+  /** The chat a task reports to. */
+  private conversationOf(id: number | undefined): number | null {
+    if (id === undefined) return null;
+    return (
+      this.d.db
+        .query<{ conversation_id: number | null }, [number]>(
+          "SELECT conversation_id FROM tasks WHERE id = ?",
+        )
+        .get(id)?.conversation_id ?? null
+    );
+  }
+
+  /** The bot doing a task. */
+  botOf(task: Task): Bot {
+    return this.d.bots.get(task.botId) ?? this.d.bots.hatbot();
   }
 
   /**
@@ -246,6 +299,14 @@ export class Tasks {
     message?: number;
     /** Your own recent chat messages, when you started it from the chat: what the approval check reads. */
     request?: string;
+    /** The bot doing it; Hatbot by default. */
+    botId?: string;
+    /** The chat it reports to; the bot's own by default. */
+    conversationId?: number;
+    /** The bot that handed it over (ask_bot), which hears how it ended. */
+    requestedBy?: string;
+    /** The task that handed it over, which waits for it; it shows nowhere in the chat. */
+    parent?: Task;
   }): Task | null {
     if (input.runKey && this.activeFor(input.runKey)) return null;
     const taintedBy =
@@ -253,7 +314,14 @@ export class Tasks {
       (input.payload !== undefined && !input.trusted
         ? `The event that started it (${input.source ?? input.origin})`
         : null);
+    const botId = input.botId ?? HATBOT_ID;
+    const conversationId =
+      input.conversationId ?? this.conversationOf(input.parent?.id) ?? this.home(botId);
     const id = this.insert({
+      bot_id: botId,
+      conversation_id: conversationId,
+      requested_by: input.requestedBy ?? null,
+      parent_id: input.parent?.id ?? null,
       title: input.title,
       goal: input.goal,
       success_criteria: "",
@@ -271,8 +339,20 @@ export class Tasks {
       tainted: taintedBy ? 1 : 0,
       tainted_by: taintedBy,
     });
-    if (input.origin === "chat" && !(input.message && this.d.thread.attachTask(input.message, id)))
-      this.d.thread.addCard("task", `Task #${id}: ${input.title}`, { taskId: id });
+    if (
+      input.origin === "chat" &&
+      !input.parent &&
+      !(input.message && this.d.chats.attachTask(input.message, id))
+    )
+      this.d.chats.addCard(
+        conversationId,
+        input.requestedBy ?? botId,
+        "task",
+        `Task #${id}: ${input.title}`,
+        {
+          taskId: id,
+        },
+      );
     this.emit(id);
     this.start(id);
     return this.get(id) as Task;
@@ -293,6 +373,58 @@ export class Tasks {
       .get(...Object.values(cols))?.id;
     if (!id) throw new Error("task insert failed");
     return id;
+  }
+
+  /** How many hand-offs between bots led to this task, its own included. */
+  handoffs(task: Task | null): number {
+    let n = 0;
+    for (let t = task; t; t = t.parentId ? this.get(t.parentId) : null) if (t.requestedBy) n++;
+    return n;
+  }
+
+  /**
+   * ask_bot: another bot works on `request` as its own task, with what the asker had read. From the
+   * chat it shows under the asker's reply (`message`), and the asker hears how it ended; from a task
+   * (`parent`), that task waits for it. A string says why it couldn't start.
+   */
+  askBot(input: {
+    from: Bot;
+    to: string;
+    request: string;
+    conversationId?: number;
+    message?: number;
+    parent?: Task;
+    taintedBy: string | null;
+    ownerSaid?: string;
+  }): Task | string {
+    const want = input.to.trim().toLowerCase();
+    const to = this.d.bots.list().find((b) => b.id === want || b.name.toLowerCase() === want);
+    if (!to) {
+      const names = this.d.bots
+        .list()
+        .filter((b) => b.id !== input.from.id)
+        .map((b) => b.name);
+      return `There's no bot called "${input.to}". The owner's other bots: ${names.join(", ") || "none"}.`;
+    }
+    if (to.id === input.from.id)
+      return "That's you. Do it yourself, or start a task with run_task.";
+    if (this.handoffs(input.parent ?? null) >= MAX_HANDOFFS)
+      return `Hand-offs between bots go at most ${MAX_HANDOFFS} deep, and this would be deeper. Do it yourself, or report what you have.`;
+    const firstLine = input.request.trim().split("\n")[0] ?? "";
+    const task = this.createBackgroundTask({
+      title: firstLine.length > 80 ? `${firstLine.slice(0, 79)}…` : firstLine,
+      goal: input.request,
+      origin: input.parent?.origin ?? "chat",
+      source: input.parent?.source ?? undefined,
+      botId: to.id,
+      conversationId: input.conversationId,
+      requestedBy: input.from.id,
+      parent: input.parent,
+      message: input.message,
+      taintedBy: input.taintedBy,
+      request: input.ownerSaid,
+    });
+    return task ?? "The task couldn't start.";
   }
 
   /** What you said in the chat when you started it, or null. */
@@ -343,12 +475,14 @@ export class Tasks {
     });
   }
 
-  /** What background tasks' tools need. */
-  toolContext(): ToolContext {
+  /** What a background task's tools need. */
+  toolContext(task: Task): ToolContext {
     return {
       db: this.d.db,
       memory: this.d.memory,
       events: this.d.events,
+      bot: this.botOf(task),
+      bots: this.d.bots,
       tasks: this,
       plugins: this.d.plugins,
       attachments: this.d.attachments,
@@ -469,7 +603,7 @@ export class Tasks {
     const task = this.get(id);
     if (!task) return;
     void this.d.notifier.send({
-      title: task.title.slice(0, 120),
+      title: this.titled(task, task.title),
       message,
       priority: 4,
       click: `${this.d.config.publicUrl}/tasks/${id}`,
@@ -520,17 +654,31 @@ export class Tasks {
     const underReply = this.d.db
       .query("SELECT 1 FROM messages WHERE kind IN ('text', 'command') AND task_id = ?")
       .get(id);
-    if (card.changes || underReply) this.d.thread.markEdited(id);
+    if (card.changes || underReply) this.d.chats.markEdited(id);
+    // The bot that asked for it tells you, in the chat it was started from.
+    const reporter = task.requestedBy ?? task.botId;
+    const conversationId = this.conversationOf(id) ?? this.home(reporter);
+    // Started from the chat: the chat model hears now and answers, with the conversation in mind. A
+    // bot that asked another always passes on what came of it.
+    const asked = !task.parentId && task.requestedBy !== null;
+    if (underReply && (tell || asked) && status !== "cancelled")
+      void this.d.chats.taskEnded(conversationId, reporter);
     else if (tell && task.lane === "background")
-      this.d.thread.addCard("task", text, { taskId: id });
+      this.d.chats.addCard(conversationId, reporter, "task", text, { taskId: id });
     this.emit(id);
     if (!tell) return;
     void this.d.notifier.send({
-      title: `${word}: ${task.title}`.slice(0, 120),
+      title: this.titled(task, `${word}: ${task.title}`),
       message: summary || word,
       priority: status === "done" ? 3 : 4,
       click: `${this.d.config.publicUrl}/tasks/${id}`,
     });
+  }
+
+  /** A notification's title: another bot's says which. */
+  titled(task: Task, title: string): string {
+    const named = task.botId === HATBOT_ID ? title : `${this.d.bots.nameOf(task.botId)} · ${title}`;
+    return named.slice(0, 120);
   }
 
   cancel(id: number): boolean {
@@ -545,14 +693,21 @@ export class Tasks {
     for (const c of this.running.values()) c.abort(new Error("paused"));
   }
 
-  /** Tasks shown in the thread (a card or under a reply) that ended since the thread last heard; marks them reported. */
-  takeUnreported(): Task[] {
+  /** Whether takeUnreported has anything for this chat and bot. */
+  hasUnreported(conversationId: number, botId: string): boolean {
+    return !!this.d.db
+      .query<unknown, [number, string]>(`SELECT 1 FROM tasks t WHERE ${UNREPORTED}`)
+      .get(conversationId, botId);
+  }
+
+  /**
+   * Tasks shown in a chat (a card or under a reply) that ended since `botId`, which started or asked
+   * for them, last heard; marks them reported.
+   */
+  takeUnreported(conversationId: number, botId: string): Task[] {
     const rows = this.d.db
-      .query<Row, []>(
-        `${SELECT} WHERE t.reported_at IS NULL AND t.status IN ('done', 'failed', 'cancelled')
-         AND EXISTS (SELECT 1 FROM messages m WHERE m.kind IN ('task', 'text', 'command') AND m.task_id = t.id) ORDER BY t.id`,
-      )
-      .all();
+      .query<Row, [number, string]>(`${SELECT} WHERE ${UNREPORTED} ORDER BY t.id`)
+      .all(conversationId, botId);
     if (rows.length)
       this.d.db
         .query(`UPDATE tasks SET reported_at = ? WHERE id IN (${rows.map((r) => r.id).join(", ")})`)

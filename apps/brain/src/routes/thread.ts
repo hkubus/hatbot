@@ -1,8 +1,10 @@
-import { PostMessage, SeenMessages } from "@hatbot/shared";
-import { Hono } from "hono";
+import { CreateGroup, PostMessage, SeenMessages, UpdateGroup } from "@hatbot/shared";
+import { type Context, Hono } from "hono";
 import { z } from "zod";
+import type { Thread } from "../agent/thread";
 import { MAX_ATTACHMENT_BYTES } from "../attachments";
 import { requireAuth } from "../auth/middleware";
+import { BotError } from "../bots";
 import type { AppEnv } from "../context";
 import { json, query } from "./util";
 
@@ -16,8 +18,17 @@ const INLINE = [
   "text/plain",
 ];
 
+const ListMessages = z.object({
+  before: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  incognito: z.enum(["0", "1"]).optional(),
+});
+const EpisodeIds = z.object({ ids: z.string().regex(/^\d+(,\d+){0,199}$/) });
+
 export const threadRoutes = new Hono<AppEnv>()
   .use("/thread/*", requireAuth)
+  .use("/conversations", requireAuth)
+  .use("/conversations/*", requireAuth)
   .use("/attachments", requireAuth)
   .use("/attachments/*", requireAuth)
   // A file for your next message: uploaded first, then posted with it by id.
@@ -56,39 +67,89 @@ export const threadRoutes = new Hono<AppEnv>()
       },
     });
   })
-  .get(
-    "/thread/messages",
-    query(
-      z.object({
-        before: z.coerce.number().int().positive().optional(),
-        limit: z.coerce.number().int().min(1).max(200).optional(),
-        incognito: z.enum(["0", "1"]).optional(),
-      }),
-    ),
-    (c) => {
-      const { before, limit, incognito } = c.req.valid("query");
-      return c.json(c.var.thread.list(before, limit, incognito === "1"));
-    },
+  .get("/conversations", (c) => c.json(c.var.chats.list()))
+  // Group chats (PLAN.md §14.4): bots' own chats come and go with the bots.
+  .post("/conversations", json(CreateGroup), (c) => {
+    const { title, botIds } = c.req.valid("json");
+    return groupError(() => c.json(c.var.chats.createGroup(title, botIds), 201), c);
+  })
+  .patch("/conversations/:id", json(UpdateGroup), (c) =>
+    groupError(() => {
+      const group = c.var.chats.updateGroup(Number(c.req.param("id")), c.req.valid("json"));
+      return group ? c.json(group) : c.json({ error: "not found" }, 404);
+    }, c),
+  )
+  .delete("/conversations/:id", (c) =>
+    c.var.chats.deleteGroup(Number(c.req.param("id")))
+      ? c.json({ ok: true })
+      : c.json({ error: "not found" }, 404),
+  )
+  .get("/thread/messages", query(ListMessages), (c) => listMessages(c, c.var.chats.hatbot()))
+  .get("/conversations/:id/messages", query(ListMessages), (c) =>
+    withThread(c, (t) => listMessages(c, t)),
   )
   // The conversations messages belong to, for their recaps where they fold up.
-  .get("/thread/episodes", query(z.object({ ids: z.string().regex(/^\d+(,\d+){0,199}$/) })), (c) =>
-    c.json(c.var.thread.episodes(c.req.valid("query").ids.split(",").map(Number))),
+  .get("/thread/episodes", query(EpisodeIds), (c) => episodes(c, c.var.chats.hatbot()))
+  .get("/conversations/:id/episodes", query(EpisodeIds), (c) =>
+    withThread(c, (t) => episodes(c, t)),
   )
-  .post("/thread/messages", json(PostMessage), (c) => {
-    const { text, attachmentIds, incognito } = c.req.valid("json");
-    if (attachmentIds.some((id) => c.var.attachments.get(id)?.from !== "owner"))
-      return c.json({ error: "unknown attachment" }, 400);
-    const { message } = c.var.thread.post(text, attachmentIds, incognito);
-    return c.json(message, 202);
-  })
+  .post("/thread/messages", json(PostMessage), (c) => post(c, c.var.chats.hatbot()))
+  .post("/conversations/:id/messages", json(PostMessage), (c) => withThread(c, (t) => post(c, t)))
   // Leaving incognito: its conversation is deleted.
   .delete("/thread/incognito", async (c) => {
-    await c.var.thread.endIncognito();
+    await c.var.chats.hatbot().endIncognito();
     return c.json({ ok: true });
   })
-  // Unread: Hatbot's messages sent or edited since you last saw them.
-  .get("/thread/unread", (c) => c.json(c.var.thread.unread()))
+  .delete("/conversations/:id/incognito", (c) =>
+    withThread(c, async (t) => {
+      await t.endIncognito();
+      return c.json({ ok: true });
+    }),
+  )
+  // Unread: your bots' messages, in every chat, sent or edited since you last saw them.
+  .get("/thread/unread", (c) => c.json(c.var.chats.unread()))
   .post("/thread/seen", json(SeenMessages), (c) => {
-    c.var.thread.markSeen(c.req.valid("json").ids);
+    c.var.chats.markSeen(c.req.valid("json").ids);
     return c.json({ ok: true });
   });
+
+// biome-ignore lint/suspicious/noExplicitAny: the handlers' contexts differ only in their validated input.
+type Ctx = Context<AppEnv, string, any>;
+
+function groupError(f: () => Response, c: Ctx): Response {
+  try {
+    return f();
+  } catch (err) {
+    if (err instanceof BotError) return c.json({ error: err.message }, 400);
+    throw err;
+  }
+}
+
+function withThread(c: Ctx, f: (t: Thread) => Response | Promise<Response>) {
+  const id = Number(c.req.param("id"));
+  const thread = Number.isInteger(id) ? c.var.chats.thread(id) : null;
+  return thread ? f(thread) : c.json({ error: "not found" }, 404);
+}
+
+function listMessages(c: Ctx, t: Thread) {
+  const { before, limit, incognito } = c.req.valid("query" as never) as z.infer<
+    typeof ListMessages
+  >;
+  return c.json(t.list(before, limit, incognito === "1"));
+}
+
+function episodes(c: Ctx, t: Thread) {
+  const { ids } = c.req.valid("query" as never) as z.infer<typeof EpisodeIds>;
+  return c.json(t.episodes(ids.split(",").map(Number)));
+}
+
+function post(c: Ctx, t: Thread) {
+  const { text, attachmentIds, incognito } = c.req.valid("json" as never) as z.infer<
+    typeof PostMessage
+  >;
+  if (attachmentIds.some((id) => c.var.attachments.get(id)?.from !== "owner"))
+    return c.json({ error: "unknown attachment" }, 400);
+  if (incognito && t.group()) return c.json({ error: "Group chats have no incognito." }, 400);
+  const { message } = t.post(text, attachmentIds, incognito);
+  return c.json(message, 202);
+}

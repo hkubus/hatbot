@@ -3517,10 +3517,111 @@ pre.payload {
 .command-menu .desc {
   margin-left: auto;
 }
+/* In a group, who wrote the run of messages below. */
+.msg-sender {
+  margin: 10px 0 -4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
 /* What came of a command: a quiet line, not a message. */
 .msg-note {
   align-self: center;
   padding: 2px 0;
   font-size: 12px;
   color: var(--muted);
+}
+
+/* Chats in the sidebar, above the other views. */
+.nav-views {
+  margin-top: 14px;
+}
+.nav-item .nav-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* On a phone the chat's name switches chats. */
+.chat-switch {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+}
+.chat-switch h1 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-switch svg.i {
+  width: 14px;
+  height: 14px;
+  transform: rotate(90deg);
+  color: var(--muted);
+}
+.chat-menu {
+  position: absolute;
+  top: 50px;
+  left: 8px;
+  z-index: 30;
+  min-width: 220px;
+  max-width: calc(100% - 16px);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+}
+.chat-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+}
+.chat-menu button.on {
+  background: var(--surface-2);
+  font-weight: 550;
+}
+.chat-menu .badge {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #fff;
+}
+@media (max-width: 899px) {
+  .chat-switch.show-phone-inline {
+    display: flex;
+  }
+  .toolbar h1.hide-phone {
+    display: none;
+  }
+}
+@media (min-width: 900px) {
+  .chat-menu {
+    display: none;
+  }
+}
+.panel.form .form-row select.field {
+  width: auto;
 }

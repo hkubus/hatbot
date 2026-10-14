@@ -42,6 +42,15 @@ final class AppStore {
   var memoryVersion = 0
   /// A short note to show briefly, like a memory commit.
   var toast: String?
+  /// The chat that's showing: a bot's own, or a group. Hatbot's own is the first.
+  private(set) var conversationId = 1
+  /// Your bots, deleted ones too once seen: old messages still name them.
+  var bots: [String: Bot] = [:]
+  /// Bots that aren't deleted, Hatbot first.
+  var botIds: [String] = []
+  /// Your chats: each bot's own, then groups. Empty on brains from before bots.
+  var conversations: [Conversation] = []
+  @ObservationIgnored private var refreshing = false
 
   @ObservationIgnored let api: API
   @ObservationIgnored private var requested = Set<String>()
@@ -99,16 +108,19 @@ final class AppStore {
     switch event {
     case let .messageCreated(m):
       if m.isIncognito { incognitoIds.insert(m.id) }
+      if m.role == .assistant { refreshConversations() }
       // Only the conversation that's showing.
-      if m.isIncognito == incognito { upsert(m) }
+      if m.isIncognito == incognito && (m.conversationId ?? 1) == conversationId { upsert(m) }
       // What came of your own command arrives already seen.
       if m.role == .assistant && m.status != .streaming && m.seenAt == nil { addUnread(m.id) }
     case let .messageEdited(id, editedAt):
       if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].editedAt = editedAt }
       addUnread(id)
+      refreshConversations()
     case let .messageSeen(ids, seenAt):
       for i in messages.indices where ids.contains(messages[i].id) { messages[i].seenAt = seenAt }
       unread.removeAll { ids.contains($0) }
+      refreshConversations()
     case let .messageDeleted(ids):
       messages.removeAll { ids.contains($0.id) }
       unread.removeAll { ids.contains($0) }
@@ -132,11 +144,12 @@ final class AppStore {
         messages[i].status = status
       }
       addUnread(id)
+      refreshConversations()
     case let .spendUpdated(today, month):
       todayUsd = today
       monthUsd = month
     case let .memoryCommitted(_, message, author):
-      if author == "Hatbot" { toast = "Memory: \(message)" }
+      if botIds.contains(where: { botName($0) == author }) || author == "Hatbot" { toast = "Memory: \(message)" }
       memoryVersion += 1
     case let .paused(value):
       paused = value
@@ -167,6 +180,16 @@ final class AppStore {
       deletedTriggers.insert(id)
     case let .episodeUpdated(e):
       episodes[e.id] = e
+    case let .botUpdated(b):
+      bots[b.id] = b
+      if !botIds.contains(b.id) { botIds.append(b.id) }
+    case let .botDeleted(id):
+      botIds.removeAll { $0 == id }
+      refreshConversations()
+    case let .conversationUpdated(c):
+      put(c)
+    case let .conversationDeleted(id):
+      conversations.removeAll { $0.id == id }
     case .unknown:
       break
     }
@@ -202,16 +225,20 @@ final class AppStore {
     Task { let _: Empty? = try? await api.post("/thread/seen", body: Body(ids: seen)) }
   }
 
+  /// The chat's API path; a brain from before bots has only the one, /thread.
+  private var chatPath: String { conversations.isEmpty ? "/thread" : "/conversations/\(conversationId)" }
+
   private func page(before: Int? = nil) -> String {
-    "/thread/messages?limit=\(Self.page)" + (before.map { "&before=\($0)" } ?? "") + (incognito ? "&incognito=1" : "")
+    "\(chatPath)/messages?limit=\(Self.page)" + (before.map { "&before=\($0)" } ?? "") + (incognito ? "&incognito=1" : "")
   }
 
   func loadThread() async throws {
     let wasIncognito = incognito
+    let shown = conversationId
     let list: [ThreadMessage] = try await api.get(page())
     try? await loadEpisodes(list)
     // Switched while it loaded: the other conversation's load wins.
-    guard wasIncognito == incognito else { return }
+    guard wasIncognito == incognito, shown == conversationId else { return }
     messages = list
     hasEarlier = list.count == Self.page
   }
@@ -222,8 +249,132 @@ final class AppStore {
     incognito = on
     messages = []
     hasEarlier = false
-    if !on { let _: Empty? = try? await api.delete("/thread/incognito") }
+    if !on { let _: Empty? = try? await api.delete("\(chatPath)/incognito") }
     try? await loadThread()
+  }
+
+  /// Shows another chat. Leaving one in incognito deletes its conversation.
+  func openConversation(_ id: Int) async {
+    guard id != conversationId else { return }
+    let left = chatPath
+    let wasIncognito = incognito
+    conversationId = id
+    incognito = false
+    messages = []
+    hasEarlier = false
+    if wasIncognito { let _: Empty? = try? await api.delete("\(left)/incognito") }
+    try? await loadThread()
+  }
+
+  // MARK: Bots
+
+  /// Bots and chats. A brain from before bots answers 404, and the app keeps to /thread.
+  func loadBots() async {
+    guard let list: [Bot] = try? await api.get("/bots"),
+      let chats: [Conversation] = try? await api.get("/conversations")
+    else { return }
+    for b in list { bots[b.id] = b }
+    botIds = list.map(\.id)
+    conversations = chats
+  }
+
+  /// The chats' unread counts, soon: news comes in bursts.
+  private func refreshConversations() {
+    guard !refreshing, !conversations.isEmpty else { return }
+    refreshing = true
+    Task {
+      try? await Task.sleep(for: .milliseconds(300))
+      refreshing = false
+      if let chats: [Conversation] = try? await api.get("/conversations") { conversations = chats }
+    }
+  }
+
+  func botName(_ id: String?) -> String {
+    guard let id else { return "" }
+    return bots[id]?.name ?? (id == Bot.hatbot ? "Hatbot" : id)
+  }
+
+  /// A group's title, or its bot's name.
+  func chatName(_ c: Conversation?) -> String {
+    guard let c else { return "Hatbot" }
+    if c.kind == .group { return c.title ?? c.botIds.map(botName).joined(separator: ", ") }
+    return botName(c.botIds.first)
+  }
+
+  var currentChat: Conversation? { conversations.first { $0.id == conversationId } }
+
+  /// A bot's name, role, model and plugins. nil model, effort or plugins: as in Settings, every plugin.
+  struct BotChange: Encodable, Sendable {
+    var name: String?
+    var instructions: String
+    var chatModel: AppSettings.ChatModel?
+    var chatEffort: AppSettings.Effort?
+    var plugins: [String]?
+
+    private enum Key: String, CodingKey { case name, instructions, chatModel, chatEffort, plugins }
+
+    /// nil is sent as null, which means "as in Settings", except for the name.
+    func encode(to encoder: Encoder) throws {
+      var c = encoder.container(keyedBy: Key.self)
+      try c.encodeIfPresent(name, forKey: .name)
+      try c.encode(instructions, forKey: .instructions)
+      try c.encode(chatModel, forKey: .chatModel)
+      try c.encode(chatEffort, forKey: .chatEffort)
+      try c.encode(plugins, forKey: .plugins)
+    }
+  }
+
+  func createBot(_ change: BotChange) async throws -> Bot {
+    let b: Bot = try await api.post("/bots", body: change)
+    bots[b.id] = b
+    await loadBots()
+    return b
+  }
+
+  @discardableResult
+  func saveBot(_ id: String, _ change: BotChange) async throws -> Bot {
+    let b: Bot = try await api.patch("/bots/\(id)", body: change)
+    bots[b.id] = b
+    return b
+  }
+
+  func deleteBot(_ id: String) async throws {
+    let _: Empty = try await api.delete("/bots/\(id)")
+    botIds.removeAll { $0 == id }
+    await loadBots()
+    if !conversations.contains(where: { $0.id == conversationId }) { await openConversation(1) }
+  }
+
+  /// A group chat's name and bots.
+  struct GroupChange: Encodable, Sendable {
+    var title: String
+    var botIds: [String]
+  }
+
+  func createGroup(_ change: GroupChange) async throws -> Conversation {
+    let c: Conversation = try await api.post("/conversations", body: change)
+    put(c)
+    return c
+  }
+
+  func saveGroup(_ id: Int, _ change: GroupChange) async throws {
+    let c: Conversation = try await api.patch("/conversations/\(id)", body: change)
+    put(c)
+  }
+
+  func deleteGroup(_ id: Int) async throws {
+    let _: Empty = try await api.delete("/conversations/\(id)")
+    conversations.removeAll { $0.id == id }
+    if conversationId == id { await openConversation(1) }
+  }
+
+  private func put(_ c: Conversation) {
+    if let i = conversations.firstIndex(where: { $0.id == c.id }) { conversations[i] = c } else { conversations.append(c) }
+  }
+
+  /// The plugins a bot may be given.
+  func loadPluginNames() async throws -> [PluginName] {
+    try await api.get("/plugins")
   }
 
   func loadEarlier() async throws {
@@ -240,7 +391,7 @@ final class AppStore {
   private func loadEpisodes(_ list: [ThreadMessage]) async throws {
     let ids = Set(list.compactMap(\.episodeId)).filter { episodes[$0] == nil }.sorted()
     guard !ids.isEmpty else { return }
-    let found: [Episode] = try await api.get("/thread/episodes?ids=" + ids.map(String.init).joined(separator: ","))
+    let found: [Episode] = try await api.get("\(chatPath)/episodes?ids=" + ids.map(String.init).joined(separator: ","))
     for e in found { episodes[e.id] = e }
   }
 
@@ -251,8 +402,8 @@ final class AppStore {
       let incognito: Bool
     }
     let m: ThreadMessage = try await api.post(
-      "/thread/messages", body: Body(text: text, attachmentIds: attachmentIds, incognito: incognito))
-    if m.isIncognito == incognito { upsert(m) }
+      "\(chatPath)/messages", body: Body(text: text, attachmentIds: attachmentIds, incognito: incognito))
+    if m.isIncognito == incognito && (m.conversationId ?? 1) == conversationId { upsert(m) }
   }
 
   /// Uploads a file for your next message.
@@ -314,6 +465,7 @@ final class AppStore {
 
   /// Pending approvals and the desktop; anything we thought pending but the brain doesn't list was decided meanwhile.
   func loadLive() async throws {
+    await loadBots()
     let pending: [Approval] = try await api.get("/approvals?pending=1")
     let state: DesktopState? = try? await api.get("/desktop/status")
     for a in approvals.values where a.status == .pending {
@@ -387,6 +539,7 @@ final class AppStore {
     var cron: String?
     /// ISO 8601 date and time, for a one-off run.
     var at: String?
+    var botId: String?
   }
 
   @discardableResult
@@ -421,6 +574,7 @@ final class AppStore {
     var trusted: Bool?
     var enabled: Bool?
     var confirmChecks: Int?
+    var botId: String?
   }
 
   @discardableResult

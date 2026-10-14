@@ -1,10 +1,12 @@
-// The single chat thread, run as episodes (PLAN.md §5.2, §5.3).
+// A chat with your bots, run as episodes (PLAN.md §5.2, §5.3): one bot's own, or a group (§14).
 import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
+  type Bot,
   type ChatCommand,
   describeCron,
   type Episode,
+  HATBOT_ID,
   parseCommand,
   type Schedule,
   type ThreadMessage,
@@ -12,6 +14,7 @@ import {
 import { z } from "zod";
 import { type Approvals, ownerNote } from "../approvals";
 import type { Attachments } from "../attachments";
+import { type Bots, botIndex, promptFor } from "../bots";
 import type { Db } from "../db";
 import type { DesktopAgent } from "../desktop/client";
 import type { EventBus } from "../events";
@@ -30,7 +33,14 @@ import { BudgetError, priceOf, type Spend, tokenCount, tokensOf } from "../spend
 import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
 import { type ModelClient, modelErrorText } from "./model";
-import { EXPERT_PROMPT, INCOGNITO_PROMPT, SUMMARY_PROMPT, SYSTEM_PROMPT } from "./prompt";
+import {
+  EXPERT_PROMPT,
+  groupPrompt,
+  INCOGNITO_PROMPT,
+  MAX_GROUP_REPLIES,
+  SUMMARY_PROMPT,
+  SYSTEM_PROMPT,
+} from "./prompt";
 import { mayReview, safeToRun } from "./review";
 import {
   INCOGNITO_TOOLS,
@@ -54,11 +64,11 @@ const MAX_TURN_MS = 10 * 60_000;
 const MAX_CHAT_COMMANDS = 2;
 /** Why a reply was cut off: /stop, rather than Pause all. */
 const STOPPED = "stopped";
-const MESSAGE_COLUMNS =
-  "id, role, kind, text, status, created_at AS createdAt, task_id AS taskId, schedule_id AS scheduleId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt, incognito";
-type MessageRow = Omit<ThreadMessage, "incognito"> & { incognito: number };
+export const MESSAGE_COLUMNS =
+  "id, role, conversation_id AS conversationId, bot_id AS botId, kind, text, status, created_at AS createdAt, task_id AS taskId, schedule_id AS scheduleId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt, incognito";
+export type MessageRow = Omit<ThreadMessage, "incognito"> & { incognito: number };
 /** A message as the app gets it: `incognito` only on the ones that are. */
-const messageOf = ({ incognito, ...m }: MessageRow): ThreadMessage =>
+export const messageOf = ({ incognito, ...m }: MessageRow): ThreadMessage =>
   incognito ? { ...m, incognito: true } : m;
 const EPISODE_COLUMNS = "id, started_at AS startedAt, last_activity_at AS lastActivityAt, recap";
 const BETAS: Anthropic.Beta.AnthropicBeta[] = [
@@ -101,6 +111,8 @@ const ASK_OPUS = toolParam({
 
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 type Turn = Anthropic.Beta.BetaMessageParam;
+/** How a reply ended: its text, for the @names that bring other bots in. */
+type Said = { text: string; status: "done" | "error"; stopped?: boolean };
 
 export type ThreadDeps = {
   /** Set once these exist; they need the thread too. */
@@ -118,6 +130,7 @@ export type ThreadDeps = {
   settings: SettingsStore;
   model: ModelClient;
   plugins: Plugins;
+  bots: Bots;
   clock?: () => number;
 };
 
@@ -141,82 +154,107 @@ export class Thread {
   private waiting: number | null = null;
   private clock: () => number;
 
-  constructor(private d: ThreadDeps) {
+  constructor(
+    private d: ThreadDeps,
+    readonly conversationId: number,
+  ) {
     this.clock = d.clock ?? Date.now;
-    // A restart cuts off any reply that was streaming.
-    d.db.query("UPDATE messages SET status = 'error' WHERE status = 'streaming'").run();
   }
 
-  /** The thread's messages, or with `incognito`, the incognito conversation's. */
+  /** The bots in it, in their order: one for a bot's own chat. A group's deleted bots have left it. */
+  members(): Bot[] {
+    const group = this.group();
+    return this.d.db
+      .query<{ bot_id: string }, [number]>(
+        "SELECT bot_id FROM conversation_bots WHERE conversation_id = ? ORDER BY position, bot_id",
+      )
+      .all(this.conversationId)
+      .map((r) => (group ? this.d.bots.active(r.bot_id) : this.d.bots.get(r.bot_id)))
+      .filter((b): b is Bot => b !== null);
+  }
+
+  /** A group chat's title, or null for a bot's own chat. */
+  group(): { title: string | null } | null {
+    const c = this.d.db
+      .query<{ kind: string; title: string | null }, [number]>(
+        "SELECT kind, title FROM conversations WHERE id = ?",
+      )
+      .get(this.conversationId);
+    return c?.kind === "group" ? { title: c.title } : null;
+  }
+
+  /**
+   * Who answers your message in a group: the bots you @mention, in order; with none, the last bot to
+   * speak; else the first.
+   */
+  private responders(text: string): Bot[] {
+    const members = this.members();
+    const named = mentionsIn(text, members);
+    if (named.length) return named;
+    const last = this.d.db
+      .query<{ bot_id: string }, [number]>(
+        `SELECT bot_id FROM messages WHERE conversation_id = ? AND role = 'assistant' AND kind = 'text'
+         AND incognito = 0 AND bot_id IS NOT NULL ORDER BY id DESC LIMIT 1`,
+      )
+      .get(this.conversationId)?.bot_id;
+    const speaker = members.find((b) => b.id === last);
+    return [speaker ?? members[0] ?? this.d.bots.hatbot()];
+  }
+
+  /** The bot a bot's own chat is with; a group's first bot. */
+  bot(): Bot {
+    return this.members()[0] ?? this.d.bots.hatbot();
+  }
+
+  /** The chat's messages, or with `incognito`, its incognito conversation's. */
   list(before?: number, limit = 50, incognito = false): ThreadMessage[] {
     const rows = this.d.db
-      .query<MessageRow, [number, number, number]>(
-        `SELECT ${MESSAGE_COLUMNS} FROM messages WHERE id < ? AND incognito = ? ORDER BY id DESC LIMIT ?`,
+      .query<MessageRow, [number, number, number, number]>(
+        `SELECT ${MESSAGE_COLUMNS} FROM messages WHERE conversation_id = ? AND id < ? AND incognito = ?
+         ORDER BY id DESC LIMIT ?`,
       )
-      .all(before ?? Number.MAX_SAFE_INTEGER, incognito ? 1 : 0, limit)
+      .all(this.conversationId, before ?? Number.MAX_SAFE_INTEGER, incognito ? 1 : 0, limit)
       .reverse()
       .map(messageOf);
     return this.d.attachments?.fill(rows) ?? rows;
   }
 
-  /** A task or schedule card in the thread. `text` is what search and summaries see. */
-  addCard(kind: "task" | "schedule", text: string, ref: { taskId?: number; scheduleId?: number }) {
+  /** A task or schedule card from `botId`. `text` is what search and summaries see. */
+  addCard(
+    kind: "task" | "schedule",
+    text: string,
+    ref: { taskId?: number; scheduleId?: number },
+    botId = this.bot().id,
+  ) {
     const row = this.d.db
-      .query<MessageRow, [string, string, string, number | null, number | null]>(
-        `INSERT INTO messages (role, kind, text, status, created_at, task_id, schedule_id)
-         VALUES ('assistant', ?, ?, 'done', ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
+      .query<MessageRow, [number, string, string, string, string, number | null, number | null]>(
+        `INSERT INTO messages (conversation_id, bot_id, role, kind, text, status, created_at, task_id, schedule_id)
+         VALUES (?, ?, 'assistant', ?, ?, 'done', ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
       )
-      .get(kind, text, this.now(), ref.taskId ?? null, ref.scheduleId ?? null);
+      .get(
+        this.conversationId,
+        botId,
+        kind,
+        text,
+        this.now(),
+        ref.taskId ?? null,
+        ref.scheduleId ?? null,
+      );
     if (!row) throw new Error("card insert failed");
     const message = messageOf(row);
     this.d.events.emit({ type: "message.created", message });
     return message;
   }
 
-  /** Hatbot's messages sent or edited since you last saw them, oldest first. */
+  /** The bots' messages here sent or edited since you last saw them, oldest first. */
   unread(): number[] {
     return this.d.db
-      .query<{ id: number }, []>(
-        `SELECT id FROM messages WHERE role = 'assistant' AND status != 'streaming' AND incognito = 0
-         AND (seen_at IS NULL OR seen_at < coalesce(edited_at, created_at)) ORDER BY id`,
+      .query<{ id: number }, [number]>(
+        `SELECT id FROM messages WHERE conversation_id = ? AND role = 'assistant' AND status != 'streaming'
+         AND incognito = 0 AND (seen_at IS NULL OR seen_at < coalesce(edited_at, created_at)) ORDER BY id`,
       )
-      .all()
+      .all(this.conversationId)
       .map((r) => r.id);
-  }
-
-  /** You saw these messages. One still streaming isn't seen until it's done. */
-  markSeen(ids: number[]) {
-    const seenAt = this.now();
-    const marked = this.d.db
-      .query<{ id: number }, (string | number)[]>(
-        `UPDATE messages SET seen_at = ? WHERE id IN (${ids.map(() => "?").join(", ")})
-         AND status != 'streaming' RETURNING id`,
-      )
-      .all(seenAt, ...ids)
-      .map((r) => r.id);
-    if (marked.length) this.d.events.emit({ type: "message.seen", ids: marked, seenAt });
-  }
-
-  /** A task's result changed these messages: the card that showed it running, or the reply that started it. */
-  markEdited(taskId: number) {
-    const editedAt = this.now();
-    const rows = this.d.db
-      .query<{ id: number }, [string, number]>(
-        "UPDATE messages SET edited_at = ? WHERE task_id = ? AND kind IN ('text', 'task', 'command') RETURNING id",
-      )
-      .all(editedAt, taskId);
-    for (const r of rows) this.d.events.emit({ type: "message.edited", id: r.id, editedAt });
-  }
-
-  /** Shows a task under the reply that started it, so its progress and result don't need a card. */
-  attachTask(messageId: number, taskId: number): boolean {
-    const done = this.d.db
-      .query(
-        "UPDATE messages SET task_id = ? WHERE id = ? AND task_id IS NULL AND kind IN ('text', 'command')",
-      )
-      .run(taskId, messageId).changes;
-    if (done) this.d.events.emit({ type: "message.task", id: messageId, taskId });
-    return done > 0;
   }
 
   /**
@@ -246,11 +284,30 @@ export class Thread {
       this.stop(command.arg, message);
       return { message, done: Promise.resolve() };
     }
-    const done = this.chain.then(() =>
-      command ? this.command(command, message) : this.reply(message),
-    );
+    const group = this.group() !== null;
+    const first = group ? this.responders(text) : [this.bot()];
+    const done = this.chain.then(async () => {
+      if (command) await this.command(command, message, first[0] as Bot);
+      else if (group) await this.round(message, first);
+      else await this.reply(message, first[0] as Bot);
+    });
     this.chain = done.catch((err) => console.error("thread turn failed", err));
     return { message, done };
+  }
+
+  /**
+   * A group's bots answer in turn: those first, then any bot one of them brings in with @name, up to
+   * MAX_GROUP_REPLIES. `user` null: a task ended, and the bot that started it tells you.
+   */
+  private async round(user: ThreadMessage | null, first: Bot[]) {
+    const queue = [...first];
+    for (let n = 0; n < MAX_GROUP_REPLIES && queue.length; n++) {
+      const bot = queue.shift() as Bot;
+      const said = await this.reply(n === 0 ? user : null, bot, { nudged: n > 0, round: user });
+      if (!said || said.status === "error" || said.stopped) return;
+      for (const b of mentionsIn(said.text, this.members()))
+        if (b.id !== bot.id && !queue.some((q) => q.id === b.id)) queue.push(b);
+    }
   }
 
   attach(
@@ -328,6 +385,7 @@ export class Thread {
    */
   private async gatedCall(
     episodeId: number,
+    bot: Bot,
     t: PluginTool,
     input: unknown,
     signal: AbortSignal,
@@ -372,6 +430,8 @@ export class Thread {
           return { content: "Approvals aren't available; use run_task.", isError: true };
         const approval = approvals.create({
           taskId: null,
+          botId: bot.id,
+          conversationId: this.conversationId,
           kind,
           summary: what,
           reason: review ? `${verdict.why} Haiku: ${review}` : verdict.why,
@@ -423,14 +483,19 @@ export class Thread {
   }
 
   /** What came of a command, as a line in the chat. You just did it, so it's already seen. */
-  private commandNote(text: string, episodeId: number | null, incognito = false): ThreadMessage {
+  private commandNote(
+    text: string,
+    episodeId: number | null,
+    incognito = false,
+    botId = this.bot().id,
+  ): ThreadMessage {
     const now = this.now();
     const row = this.d.db
-      .query<MessageRow, [number | null, string, string, string, number]>(
-        `INSERT INTO messages (episode_id, role, kind, text, status, created_at, seen_at, incognito)
-         VALUES (?, 'assistant', 'command', ?, 'done', ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
+      .query<MessageRow, [number, string, number | null, string, string, string, number]>(
+        `INSERT INTO messages (conversation_id, bot_id, episode_id, role, kind, text, status, created_at, seen_at, incognito)
+         VALUES (?, ?, ?, 'assistant', 'command', ?, 'done', ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
       )
-      .get(episodeId, text, now, now, incognito ? 1 : 0);
+      .get(this.conversationId, botId, episodeId, text, now, now, incognito ? 1 : 0);
     if (!row) throw new Error("note insert failed");
     const message = messageOf(row);
     this.d.events.emit({ type: "message.created", message });
@@ -442,10 +507,10 @@ export class Thread {
     const incognito = !!message.incognito;
     const episodeId =
       this.d.db
-        .query<{ id: number }, [number]>(
-          "SELECT id FROM episodes WHERE incognito = ? ORDER BY id DESC LIMIT 1",
+        .query<{ id: number }, [number, number]>(
+          "SELECT id FROM episodes WHERE conversation_id = ? AND incognito = ? ORDER BY id DESC LIMIT 1",
         )
-        .get(incognito ? 1 : 0)?.id ?? null;
+        .get(this.conversationId, incognito ? 1 : 0)?.id ?? null;
     if (episodeId !== null) this.file(message, episodeId);
     const note = (text: string) => void this.commandNote(text, episodeId, incognito);
     if (!arg) {
@@ -460,13 +525,13 @@ export class Thread {
   }
 
   /** /new, /task and /remember, in turn with replies. */
-  private async command(c: ChatCommand, message: ThreadMessage) {
+  private async command(c: ChatCommand, message: ThreadMessage, bot: Bot) {
     const { db, tasks, memory, events, settings } = this.d;
     const incognito = !!message.incognito;
     // A new incognito conversation: the one before it is gone, /new included.
     if (incognito && c.name === "new") return this.deleteIncognito();
     const episode = await this.episodeFor(
-      this.turnSetup(incognito).prefix,
+      this.prefixFor(bot, incognito),
       c.name === "new",
       incognito,
     );
@@ -488,6 +553,8 @@ export class Thread {
         title: titleOf(c.arg),
         goal: c.arg,
         origin: "chat",
+        botId: bot.id,
+        conversationId: this.conversationId,
         message: note.id,
         request: c.arg,
       });
@@ -519,18 +586,29 @@ export class Thread {
    * What a reply is bound to: the prompt, the tools and the model. Incognito gets only lookups, and no
    * history search.
    */
-  private turnSetup(incognito = false) {
-    const { settings, plugins } = this.d;
-    // Fixed for the turn; a plugin switched on or off shows from the next one.
-    const guidance = plugins.guidance();
-    const base = guidance ? `${SYSTEM_PROMPT}\n\nYour plugins\n\n${guidance}` : SYSTEM_PROMPT;
+  private turnSetup(bot: Bot, incognito = false) {
+    const { settings, plugins, bots } = this.d;
+    // Fixed for the turn; a plugin switched on or off shows from the next one. A bot only gets its own.
+    const guidance = plugins.guidance(bot.plugins);
+    const others = bots.list().filter((b) => b.id !== bot.id);
+    const group = this.group();
+    const prompt = group
+      ? `${promptFor(SYSTEM_PROMPT, bot, others)}\n\n${groupPrompt(
+          group.title,
+          bot.name,
+          this.members().map((b) => b.name),
+        )}`
+      : promptFor(SYSTEM_PROMPT, bot, others);
+    const base = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
     const system = incognito ? `${base}\n\n${INCOGNITO_PROMPT}` : base;
-    const pluginTools = plugins.tools().filter((t) => !incognito || t.access === "read");
+    const pluginTools = plugins.tools(bot.plugins).filter((t) => !incognito || t.access === "read");
     // Fixed for the reply; a change starts a new episode, since thinking blocks are bound to the model.
-    const chatModel = settings.get().chatModel;
+    const chatModel = bot.chatModel ?? settings.get().chatModel;
     const onHaiku = chatModel === "claude-haiku-5-5";
     const tools = [
-      ...(incognito ? TOOL_PARAMS.filter((t) => INCOGNITO_TOOLS.includes(t.name)) : TOOL_PARAMS),
+      ...(incognito ? TOOL_PARAMS.filter((t) => INCOGNITO_TOOLS.includes(t.name)) : TOOL_PARAMS)
+        // Alone, Hatbot's tools stay as they were, and its cache with them.
+        .filter((t) => others.length || t.name !== "ask_bot"),
       ...(onHaiku ? [ASK_OPUS] : []),
       ...pluginTools.map(toolParam),
       ...WEB_TOOLS,
@@ -539,10 +617,41 @@ export class Thread {
       system,
       pluginTools,
       chatModel,
+      chatEffort: bot.chatEffort ?? settings.get().chatEffort,
       onHaiku,
       tools,
       prefix: prefixOf(chatModel, system, tools),
     };
+  }
+
+  /** What an episode is bound to: the prompt, tools and model of each bot in it. */
+  private prefixFor(bot: Bot, incognito: boolean): string {
+    if (!this.group()) return this.turnSetup(bot, incognito).prefix;
+    return createHash("sha256")
+      .update(
+        this.members()
+          .map((b) => this.turnSetup(b, incognito).prefix)
+          .join(","),
+      )
+      .digest("hex")
+      .slice(0, 16);
+  }
+
+  /** In a group: what was said since `bot` last spoke, by you and the other bots. */
+  private groupSince(bot: Bot, after: number): string {
+    return this.d.db
+      .query<
+        { role: string; bot_id: string | null; text: string; created_at: string },
+        [number, number, string]
+      >(
+        `SELECT role, bot_id, text, created_at FROM messages WHERE conversation_id = ? AND id > ?
+         AND incognito = 0 AND status != 'streaming' AND (role = 'user' OR bot_id != ?)
+         ORDER BY id DESC LIMIT ${RECENT_MESSAGES * 3}`,
+      )
+      .all(this.conversationId, after, bot.id)
+      .reverse()
+      .map((m) => `[${localStamp(new Date(m.created_at))}] ${this.speaker(m)}: ${m.text}`)
+      .join("\n\n");
   }
 
   /** Waits for queued replies (tests, shutdown). */
@@ -562,13 +671,19 @@ export class Thread {
     attachmentIds: number[] = [],
     command: ChatCommand | null = null,
     incognito = false,
+    botId: string | null = null,
   ): ThreadMessage {
     const row = this.d.db
-      .query<MessageRow, [number | null, string, string, string, string, string, number]>(
-        `INSERT INTO messages (episode_id, role, kind, text, status, created_at, incognito)
-         VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
+      .query<
+        MessageRow,
+        [number, string | null, number | null, string, string, string, string, string, number]
+      >(
+        `INSERT INTO messages (conversation_id, bot_id, episode_id, role, kind, text, status, created_at, incognito)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
       )
       .get(
+        this.conversationId,
+        botId,
         episodeId ?? null,
         role,
         command ? "command" : "text",
@@ -587,30 +702,35 @@ export class Thread {
 
   private appendTurn(
     episodeId: number,
+    botId: string,
     role: "user" | "assistant",
     content: BlockParam[] | Anthropic.Beta.BetaContentBlock[],
   ) {
     this.d.db
       .query(
-        "INSERT INTO episode_turns (episode_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO episode_turns (episode_id, bot_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
       )
-      .run(episodeId, role, JSON.stringify(content), this.now());
+      .run(episodeId, botId, role, JSON.stringify(content), this.now());
   }
 
-  private loadTurns(episodeId: number): Turn[] {
+  /** A bot's own API conversation in the episode: in a group, each bot keeps its own. */
+  private loadTurns(episodeId: number, botId: string): Turn[] {
     const turns = this.d.db
-      .query<{ role: "user" | "assistant"; content: string }, [number]>(
-        "SELECT role, content FROM episode_turns WHERE episode_id = ? ORDER BY id",
+      .query<{ role: "user" | "assistant"; content: string }, [number, string]>(
+        "SELECT role, content FROM episode_turns WHERE episode_id = ? AND bot_id = ? ORDER BY id",
       )
-      .all(episodeId)
+      .all(episodeId, botId)
       .map((r) => ({ role: r.role, content: JSON.parse(r.content) }));
     return answered(turns);
   }
 
-  private hasTurns(episodeId: number): boolean {
+  /** Whether the model has seen the episode yet: any bot, or with `botId` that one. */
+  private hasTurns(episodeId: number, botId?: string): boolean {
     return !!this.d.db
-      .query("SELECT 1 FROM episode_turns WHERE episode_id = ? LIMIT 1")
-      .get(episodeId);
+      .query<unknown, [number, string | null, string | null]>(
+        "SELECT 1 FROM episode_turns WHERE episode_id = ? AND (? IS NULL OR bot_id = ?) LIMIT 1",
+      )
+      .get(episodeId, botId ?? null, botId ?? null);
   }
 
   /**
@@ -632,11 +752,11 @@ export class Thread {
           prefix: string | null;
           fresh: number;
         },
-        [number]
+        [number, number]
       >(
-        "SELECT id, last_activity_at, summarized, prefix, fresh FROM episodes WHERE incognito = ? ORDER BY id DESC LIMIT 1",
+        "SELECT id, last_activity_at, summarized, prefix, fresh FROM episodes WHERE conversation_id = ? AND incognito = ? ORDER BY id DESC LIMIT 1",
       )
-      .get(incognito ? 1 : 0);
+      .get(this.conversationId, incognito ? 1 : 0);
     const open = last && this.clock() - Date.parse(last.last_activity_at) < EPISODE_IDLE_MS;
     if (last && open && (!fresh || last.fresh)) {
       const untouched = !this.hasTurns(last.id);
@@ -660,10 +780,10 @@ export class Thread {
       if (!fresh) await summary;
     }
     const row = this.d.db
-      .query<{ id: number }, [string, string, string, number, number]>(
-        "INSERT INTO episodes (started_at, last_activity_at, prefix, fresh, incognito) VALUES (?, ?, ?, ?, ?) RETURNING id",
+      .query<{ id: number }, [number, string, string, string, number, number]>(
+        "INSERT INTO episodes (conversation_id, started_at, last_activity_at, prefix, fresh, incognito) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
       )
-      .get(this.now(), this.now(), prefix, fresh ? 1 : 0, incognito ? 1 : 0);
+      .get(this.conversationId, this.now(), this.now(), prefix, fresh ? 1 : 0, incognito ? 1 : 0);
     if (!row) throw new Error("episode insert failed");
     return { id: row.id, isNew: true, fresh };
   }
@@ -671,8 +791,8 @@ export class Thread {
   private threadSummary(): string {
     return (
       this.d.db
-        .query<{ value: string }, []>("SELECT value FROM settings WHERE key = 'thread_summary'")
-        .get()?.value ?? ""
+        .query<{ summary: string }, [number]>("SELECT summary FROM conversations WHERE id = ?")
+        .get(this.conversationId)?.summary ?? ""
     );
   }
 
@@ -692,12 +812,12 @@ export class Thread {
    */
   async sweep() {
     const incognitoAt = this.d.db
-      .query<{ at: string | null }, []>(
+      .query<{ at: string | null }, [number, number]>(
         `SELECT max(at) AS at FROM (
-           SELECT last_activity_at AS at FROM episodes WHERE incognito = 1
-           UNION ALL SELECT created_at FROM messages WHERE incognito = 1)`,
+           SELECT last_activity_at AS at FROM episodes WHERE conversation_id = ? AND incognito = 1
+           UNION ALL SELECT created_at FROM messages WHERE conversation_id = ? AND incognito = 1)`,
       )
-      .get()?.at;
+      .get(this.conversationId, this.conversationId)?.at;
     if (
       incognitoAt &&
       this.clock() - Date.parse(incognitoAt) >= EPISODE_IDLE_MS &&
@@ -705,10 +825,10 @@ export class Thread {
     )
       await this.deleteIncognito();
     const last = this.d.db
-      .query<{ id: number; last_activity_at: string }, []>(
-        "SELECT id, last_activity_at FROM episodes WHERE summarized = 0 AND incognito = 0 ORDER BY id DESC LIMIT 1",
+      .query<{ id: number; last_activity_at: string }, [number]>(
+        "SELECT id, last_activity_at FROM episodes WHERE conversation_id = ? AND summarized = 0 AND incognito = 0 ORDER BY id DESC LIMIT 1",
       )
-      .get();
+      .get(this.conversationId);
     if (!last || this.clock() - Date.parse(last.last_activity_at) < EPISODE_IDLE_MS) return;
     try {
       await this.summarize(last.id);
@@ -731,10 +851,10 @@ export class Thread {
   private async deleteIncognito(onlyFiled = false) {
     const { db } = this.d;
     const ids = db
-      .query<{ id: number }, []>(
-        `SELECT id FROM messages WHERE incognito = 1${onlyFiled ? " AND episode_id IS NOT NULL" : ""}`,
+      .query<{ id: number }, [number]>(
+        `SELECT id FROM messages WHERE conversation_id = ? AND incognito = 1${onlyFiled ? " AND episode_id IS NOT NULL" : ""}`,
       )
-      .all()
+      .all(this.conversationId)
       .map((r) => r.id);
     await this.d.attachments?.removeFor(ids);
     const list = ids.map(() => "?").join(", ");
@@ -743,10 +863,11 @@ export class Thread {
         db.query(`DELETE FROM attachments WHERE message_id IN (${list})`).run(...ids);
         db.query(`DELETE FROM messages WHERE id IN (${list})`).run(...ids);
       }
-      const episodes = "(SELECT id FROM episodes WHERE incognito = 1)";
-      db.query(`DELETE FROM episode_turns WHERE episode_id IN ${episodes}`).run();
-      db.query(`UPDATE spend_ledger SET episode_id = NULL WHERE episode_id IN ${episodes}`).run();
-      db.query("DELETE FROM episodes WHERE incognito = 1").run();
+      const c = this.conversationId;
+      const episodes = "(SELECT id FROM episodes WHERE conversation_id = ? AND incognito = 1)";
+      db.query(`DELETE FROM episode_turns WHERE episode_id IN ${episodes}`).run(c);
+      db.query(`UPDATE spend_ledger SET episode_id = NULL WHERE episode_id IN ${episodes}`).run(c);
+      db.query("DELETE FROM episodes WHERE conversation_id = ? AND incognito = 1").run(c);
     })();
     if (!ids.length) return;
     // Out of the write-ahead log too, not only the database file.
@@ -769,23 +890,24 @@ export class Thread {
       .get(episodeId)?.summarized;
     if (done) return;
     const transcript = this.d.db
-      .query<{ role: string; text: string; created_at: string }, [number]>(
-        "SELECT role, text, created_at FROM messages WHERE episode_id = ? AND status != 'streaming' ORDER BY id",
+      .query<{ role: string; bot_id: string | null; text: string; created_at: string }, [number]>(
+        "SELECT role, bot_id, text, created_at FROM messages WHERE episode_id = ? AND status != 'streaming' ORDER BY id",
       )
       .all(episodeId)
-      .map(
-        (m) =>
-          `[${localStamp(new Date(m.created_at))}] ${m.role === "user" ? "Owner" : "Hatbot"}: ${m.text}`,
-      )
+      .map((m) => `[${localStamp(new Date(m.created_at))}] ${this.speaker(m)}: ${m.text}`)
       .join("\n\n");
     // One with only commands in it (/new and nothing after) has nothing to summarize.
     if (transcript && this.hasTurns(episodeId)) {
+      const names = this.members().map((b) => b.name);
       const res = await this.d.model.create({
         model: SUMMARY_MODEL,
         max_tokens: 4000,
         thinking: { type: "adaptive" },
         output_config: { effort: "low" },
-        system: SUMMARY_PROMPT,
+        system:
+          names.length === 1 && names[0] === "Hatbot"
+            ? SUMMARY_PROMPT
+            : SUMMARY_PROMPT.replace(/\bHatbot\b/g, names.join(" and ")),
         messages: [
           {
             role: "user",
@@ -798,6 +920,7 @@ export class Thread {
         purpose: "summary",
         usage: res.usage,
         episodeId,
+        botId: this.bot().id,
       });
       const out = res.content
         .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
@@ -807,10 +930,8 @@ export class Thread {
       const { recap, summary } = parseSummary(out);
       if (res.stop_reason === "end_turn" && summary) {
         this.d.db
-          .query(
-            "INSERT INTO settings (key, value) VALUES ('thread_summary', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-          )
-          .run(summary);
+          .query("UPDATE conversations SET summary = ? WHERE id = ?")
+          .run(summary, this.conversationId);
         if (recap)
           this.d.db.query("UPDATE episodes SET recap = ? WHERE id = ?").run(recap, episodeId);
       }
@@ -826,24 +947,22 @@ export class Thread {
    * summary.
    */
   private async episodeContext(
+    bot: Bot,
     beforeMessageId: number,
     episodeId: number,
     fresh: boolean,
     incognito: boolean,
   ): Promise<string> {
-    const index = (await this.d.memory.exists("INDEX.md"))
-      ? await this.d.memory.read("INDEX.md")
-      : "(no INDEX.md yet)";
     const recent = this.list(beforeMessageId, RECENT_MESSAGES, incognito)
       .filter((m) => m.status !== "streaming" && (!fresh || m.episodeId === episodeId))
       .map(
         (m) =>
-          `[${localStamp(new Date(m.createdAt))}] ${m.role === "user" ? "Owner" : "Hatbot"}: ${m.text}`,
+          `[${localStamp(new Date(m.createdAt))}] ${this.speaker({ role: m.role, bot_id: m.botId })}: ${m.text}`,
       )
       .join("\n\n");
     return [
       "<context>",
-      `<memory_index>\n${index.trim()}\n</memory_index>`,
+      await memoryIndex(this.d.memory, bot.id),
       ...(incognito
         ? []
         : [
@@ -857,8 +976,17 @@ export class Thread {
   /** Commands you ran in the episode since your last message, for the model to know about. */
   private commandsSince(episodeId: number, userId: number): string {
     return this.d.db
-      .query<{ role: string; text: string; task_id: number | null; created_at: string }, number[]>(
-        `SELECT role, text, task_id, created_at FROM messages
+      .query<
+        {
+          role: string;
+          bot_id: string | null;
+          text: string;
+          task_id: number | null;
+          created_at: string;
+        },
+        number[]
+      >(
+        `SELECT role, bot_id, text, task_id, created_at FROM messages
          WHERE episode_id = ? AND kind = 'command' AND id < ? AND id > coalesce(
            (SELECT max(id) FROM messages WHERE episode_id = ? AND role = 'user' AND kind = 'text' AND id < ?), 0)
          ORDER BY id`,
@@ -866,64 +994,152 @@ export class Thread {
       .all(episodeId, userId, episodeId, userId)
       .map(
         (m) =>
-          `[${localStamp(new Date(m.created_at))}] ${m.role === "user" ? "Owner" : "Hatbot"}: ${m.text}${m.task_id ? ` (task #${m.task_id})` : ""}`,
+          `[${localStamp(new Date(m.created_at))}] ${this.speaker(m)}: ${m.text}${m.task_id ? ` (task #${m.task_id})` : ""}`,
       )
       .join("\n");
   }
 
-  private async reply(user: ThreadMessage) {
-    const { db, events, spend, settings, model, plugins } = this.d;
-    const incognito = !!user.incognito;
-    const { system, pluginTools, chatModel, onHaiku, tools, prefix } = this.turnSetup(incognito);
+  /** "Owner", or the bot that wrote it. */
+  private speaker(m: { role: string; bot_id: string | null }): string {
+    return m.role === "user" ? "Owner" : this.d.bots.nameOf(m.bot_id ?? HATBOT_ID);
+  }
+
+  /**
+   * A task you started from the chat ended: the bot that started it (`botId`) tells you what came of
+   * it in a reply of its own, with the conversation in mind. In turn with replies.
+   */
+  taskEnded(botId = this.bot().id) {
+    const done = this.chain.then(async () => {
+      const bot = this.d.bots.get(botId);
+      if (!bot) return;
+      if (this.group()) await this.round(null, [bot]);
+      else await this.reply(null, bot);
+    });
+    this.chain = done.catch((err) => console.error("thread turn failed", err));
+    return done;
+  }
+
+  /**
+   * `bot` replies to your message, or with `user` null to tasks that ended since it last heard. In a
+   * group, `nudged`: another bot or your message mentioned it after the first answered; `round`: your
+   * message the bots are answering.
+   */
+  private async reply(
+    user: ThreadMessage | null,
+    bot: Bot,
+    group: { nudged: boolean; round: ThreadMessage | null } | null = null,
+  ): Promise<Said | undefined> {
+    const { db, events, spend, model, plugins } = this.d;
+    const incognito = !!user?.incognito;
+    // Told already, with a message of yours that came first.
+    if (!user && !group?.nudged && !this.d.tasks?.hasUnreported(this.conversationId, bot.id))
+      return;
+    const userId = user?.id ?? Number.MAX_SAFE_INTEGER;
+    const { system, pluginTools, chatModel, chatEffort, onHaiku, tools, prefix } = this.turnSetup(
+      bot,
+      incognito,
+    );
     const offered = new Set(tools.map((t) => ("name" in t ? t.name : "")));
-    const episode = await this.episodeFor(prefix, false, incognito);
-    if (!this.file(user, episode.id)) return;
+    // A group's episode is bound to every bot's prefix.
+    const episode = await this.episodeFor(
+      group ? this.prefixFor(bot, incognito) : prefix,
+      false,
+      incognito,
+    );
+    if (user && !this.file(user, episode.id)) return;
 
     const userBlocks: BlockParam[] = [];
-    if (episode.isNew) {
+    // In a group each bot has its own turns: one new to the episode opens it with the context, up to
+    // the message the bots are answering, and gets what came after in <group_messages>.
+    const firstTurn = group ? !this.hasTurns(episode.id, bot.id) : episode.isNew;
+    const contextBefore = group ? (group.round?.id ?? userId) : userId;
+    const spoke = group
+      ? firstTurn
+        ? contextBefore - 1
+        : (db
+            .query<{ id: number | null }, [number, string]>(
+              "SELECT max(id) AS id FROM messages WHERE episode_id = ? AND bot_id = ? AND role = 'assistant' AND kind = 'text'",
+            )
+            .get(episode.id, bot.id)?.id ?? contextBefore - 1)
+      : 0;
+    if (firstTurn) {
       // The summary a /new left running is part of the context.
       await Promise.allSettled(this.summarizing.values());
       userBlocks.push({
         type: "text",
-        text: await this.episodeContext(user.id, episode.id, episode.fresh, incognito),
+        text: await this.episodeContext(bot, contextBefore, episode.id, episode.fresh, incognito),
       });
       // /new and incognito leave what came before, and what it had read, behind.
-      if (!episode.fresh && !incognito) this.inheritTaint(episode.id, user.id);
+      if (episode.isNew && !episode.fresh && !incognito) this.inheritTaint(episode.id, userId);
     } else {
-      const commands = this.commandsSince(episode.id, user.id);
+      const commands = this.commandsSince(episode.id, userId);
       if (commands)
         userBlocks.push({
           type: "text",
-          text: `<owner_commands>\nCommands the owner ran since their last message; Hatbot's lines are what the app answered.\n${commands}\n</owner_commands>`,
+          text: `<owner_commands>\nCommands the owner ran since their last message; ${bot.name}'s lines are what the app answered.\n${commands}\n</owner_commands>`,
         });
     }
     // An untrusted MCP server's tool descriptions are in the prompt now.
     const foreign = untrustedDefinitions(pluginTools);
     if (foreign) this.taint(episode.id, foreign);
     // Task news waits for the conversation that's kept.
-    const ended = incognito ? [] : (this.d.tasks?.takeUnreported() ?? []);
+    const ended = incognito
+      ? []
+      : (this.d.tasks?.takeUnreported(this.conversationId, bot.id) ?? []);
     // What tainted tasks report carries what they read.
     const tainted = ended.find((t) => t.tainted);
     if (tainted) this.taint(episode.id, `Task #${tainted.id} "${tainted.title}"`);
     if (ended.length) {
-      const lines = ended.map((t) => `Task #${t.id} "${t.title}" ${t.status}: ${t.summary ?? ""}`);
+      const lines = ended.map(
+        (t) =>
+          `Task #${t.id} "${t.title}"${t.botId === bot.id ? "" : ` (by ${this.d.bots.nameOf(t.botId)}, which you asked)`} ${t.status}: ${t.summary ?? ""}`,
+      );
       userBlocks.push({
         type: "text",
         text: `<task_updates>\n${lines.join("\n")}\n</task_updates>`,
       });
     }
-    userBlocks.push({
-      type: "text",
-      text: `[${localStamp(new Date(user.createdAt))}]\n${user.text || "(no text, only files)"}`,
-    });
+    const taskNews = `[${localStamp(new Date(this.clock()))}]\n(No message from the owner: a task they started from the chat ended. Tell them what came of it, briefly, with what you know from this conversation. Don't repeat what they can already see.)`;
+    if (group) {
+      const since = this.groupSince(bot, spoke);
+      userBlocks.push({
+        type: "text",
+        text:
+          [
+            ...(since ? [`<group_messages>\n${since}\n</group_messages>`] : []),
+            ...(user
+              ? []
+              : [
+                  group.nudged
+                    ? `(Your turn, ${bot.name}: you were mentioned above. Answer your part.)`
+                    : taskNews,
+                ]),
+          ].join("\n\n") || taskNews,
+      });
+    } else
+      userBlocks.push({
+        type: "text",
+        text: user
+          ? `[${localStamp(new Date(user.createdAt))}]\n${user.text || "(no text, only files)"}`
+          : taskNews,
+      });
     // Your files: what's in them was written by whoever made them, so they're untrusted (PLAN.md §6.1).
-    if (user.attachments?.length && this.d.attachments) {
+    if (user?.attachments?.length && this.d.attachments) {
       userBlocks.push(...(await this.d.attachments.blocks(user.attachments)));
       this.taint(episode.id, `Attached file "${user.attachments[0]?.name}"`);
     }
-    this.appendTurn(episode.id, "user", userBlocks);
+    this.appendTurn(episode.id, bot.id, "user", userBlocks);
 
-    const out = this.insertMessage("assistant", "", "streaming", episode.id, [], null, incognito);
+    const out = this.insertMessage(
+      "assistant",
+      "",
+      "streaming",
+      episode.id,
+      [],
+      null,
+      incognito,
+      bot.id,
+    );
     let text = "";
     let separate = false;
     /** This reply's model calls so far, shown under the working dots. */
@@ -939,7 +1155,7 @@ export class Thread {
       text += delta;
       events.emit({ type: "message.delta", id: out.id, text: delta });
     };
-    const finish = (status: "done" | "error", note?: string) => {
+    const finish = (status: "done" | "error", note?: string): Said => {
       if (note) {
         separate = true;
         say(note);
@@ -947,6 +1163,7 @@ export class Thread {
       db.query("UPDATE messages SET text = ?, status = ? WHERE id = ?").run(text, status, out.id);
       db.query("UPDATE episodes SET last_activity_at = ? WHERE id = ?").run(this.now(), episode.id);
       events.emit({ type: "message.done", id: out.id, text, status });
+      return { text, status };
     };
 
     let askedOpus = false;
@@ -985,6 +1202,7 @@ export class Thread {
         purpose: "expert",
         usage: res.usage,
         episodeId: episode.id,
+        botId: bot.id,
       });
       used.tokens += tokenCount(tokensOf(res.usage));
       events.emit({ type: "message.usage", id: out.id, ...used });
@@ -1005,13 +1223,13 @@ export class Thread {
     this.currentIncognito = incognito;
     try {
       for (let step = 0; ; step++) {
-        const s = settings.get();
+        const s = this.d.settings.get();
         if (s.paused) return finish("error", "_Paused. Resume to continue._");
         if (step >= MAX_STEPS || this.clock() - started - waited > MAX_TURN_MS) {
           return finish("error", "_Stopped: this reply hit its step or time limit._");
         }
 
-        const messages = this.loadTurns(episode.id);
+        const messages = this.loadTurns(episode.id, bot.id);
         try {
           spend.check(estimateCost(messages, chatModel));
         } catch (err) {
@@ -1045,7 +1263,7 @@ export class Thread {
               ...(onHaiku ? {} : { display: "updates" as const }),
               block_binding: { prefix_mismatch_behavior: "drop_block" },
             },
-            output_config: { effort: s.chatEffort },
+            output_config: { effort: chatEffort },
             messages,
           },
           {
@@ -1072,10 +1290,11 @@ export class Thread {
           purpose: "thread",
           usage: res.usage,
           episodeId: episode.id,
+          botId: bot.id,
         });
         used.tokens += tokenCount(tokensOf(res.usage));
         events.emit({ type: "message.usage", id: out.id, ...used });
-        this.appendTurn(episode.id, "assistant", res.content);
+        this.appendTurn(episode.id, bot.id, "assistant", res.content);
         // Web pages are untrusted (PLAN.md §6.1).
         const web = webReads(res.content);
         if (web.length) this.taint(episode.id, web[0] as string);
@@ -1128,6 +1347,8 @@ export class Thread {
             call.input,
             {
               ...this.d,
+              bot,
+              conversationId: this.conversationId,
               messageId: out.id,
               episodeId: episode.id,
               tainted: () => this.tainted(episode.id),
@@ -1146,7 +1367,7 @@ export class Thread {
                 }
                 const from = this.clock();
                 try {
-                  return await this.gatedCall(episode.id, t, input, signal, progress, out.id);
+                  return await this.gatedCall(episode.id, bot, t, input, signal, progress, out.id);
                 } finally {
                   // Time waiting for you doesn't count against the reply's limit.
                   waited += this.clock() - from;
@@ -1157,6 +1378,7 @@ export class Thread {
                   "schedule",
                   `Schedule "${sc.name}": ${sc.cron ? describeCron(sc.cron) : `once at ${sc.runAt}`}. ${sc.prompt}`,
                   { scheduleId: sc.id },
+                  bot.id,
                 ),
             },
             abort.signal,
@@ -1168,12 +1390,12 @@ export class Thread {
             content: r.content,
           };
         });
-        this.appendTurn(episode.id, "user", results);
+        this.appendTurn(episode.id, bot.id, "user", results);
       }
     } catch (err) {
       if (abort.signal.aborted)
         return abort.signal.reason === STOPPED
-          ? finish("done", "_Stopped._")
+          ? { ...finish("done", "_Stopped._"), stopped: true }
           : finish("error", "_Paused. Resume to continue._");
       console.error("chat turn failed", err);
       return finish(
@@ -1184,6 +1406,23 @@ export class Thread {
       this.current = null;
     }
   }
+}
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** The bots `text` brings in with @name (or @id), in the order it names them. */
+export function mentionsIn(text: string, bots: Bot[]): Bot[] {
+  return bots
+    .map((b) => ({
+      b,
+      at: new RegExp(
+        `(?:^|[^\\w@])@(?:${[b.name, b.id].map(escapeRe).join("|")})(?![\\w-])`,
+        "i",
+      ).exec(text)?.index,
+    }))
+    .filter((m): m is { b: Bot; at: number } => m.at !== undefined)
+    .sort((x, y) => x.at - y.at)
+    .map((m) => m.b);
 }
 
 /**
@@ -1238,6 +1477,7 @@ function toolLabel(name: string, plugins: Plugins): string {
     trigger_list: "Looking at triggers",
     trigger_update: "Changing a trigger",
     run_task: "Starting a task",
+    ask_bot: "Asking another bot",
     ask_opus: "Asking Opus",
     send_file: "Sending a file",
   };
@@ -1305,4 +1545,17 @@ export function localStamp(d: Date): string {
   const day = d.toLocaleDateString("en-GB", { weekday: "short" });
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${day} ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/**
+ * The memory a bot opens a conversation or task with: INDEX.md, and its own folder's INDEX.md when it
+ * has one.
+ */
+export async function memoryIndex(memory: MemoryStore, botId: string): Promise<string> {
+  const index = (await memory.exists("INDEX.md"))
+    ? await memory.read("INDEX.md")
+    : "(no INDEX.md yet)";
+  const own = botIndex(botId);
+  const mine = own && (await memory.exists(own)) ? await memory.read(own) : null;
+  return `<memory_index>\n${index.trim()}\n</memory_index>${mine === null ? "" : `\n<your_memory_index path="${own}">\n${mine.trim()}\n</your_memory_index>`}`;
 }

@@ -1,0 +1,146 @@
+// A bot's page (PLAN.md §14): its name, role, model and plugins. No id makes one.
+import SwiftUI
+
+struct BotView: View {
+  let id: String?
+  /// After making one.
+  var made: ((Bot) -> Void)?
+  @Environment(AppStore.self) private var store
+  @Environment(\.dismiss) private var dismiss
+  @State private var form = Form()
+  @State private var plugins: [PluginName] = []
+  @State private var busy = false
+  @State private var confirmDelete = false
+  @State private var error: String?
+
+  struct Form: Equatable {
+    var name = ""
+    var instructions = ""
+    var chatModel: AppSettings.ChatModel?
+    var chatEffort: AppSettings.Effort?
+    var plugins: [String]?
+
+    init() {}
+    init(_ b: Bot) {
+      name = b.name
+      instructions = b.instructions
+      chatModel = b.chatModel
+      chatEffort = b.chatEffort
+      plugins = b.plugins
+    }
+
+    func change(rename: Bool) -> AppStore.BotChange {
+      AppStore.BotChange(
+        name: rename ? name.trimmingCharacters(in: .whitespacesAndNewlines) : nil,
+        instructions: instructions, chatModel: chatModel, chatEffort: chatEffort, plugins: plugins)
+    }
+  }
+
+  private var stored: Bot? { id.flatMap { store.bots[$0] } }
+  private var isHatbot: Bool { id == Bot.hatbot }
+
+  var body: some View {
+    let changed = stored.map { Form($0) != form } ?? true
+    SwiftUI.Form {
+      if let error { Text(error).foregroundStyle(.red) }
+      Section {
+        TextField("Name", text: $form.name).disabled(isHatbot)
+      }
+      Section("Role") {
+        TextField(
+          "Plans the week's meals around what's in the fridge. Keeps the shopping list.",
+          text: $form.instructions, axis: .vertical
+        )
+        .lineLimit(4...16)
+      }
+      Section {
+        Picker("Model", selection: $form.chatModel) {
+          Text("As in Settings").tag(AppSettings.ChatModel?.none)
+          Text("Haiku 5.5").tag(AppSettings.ChatModel?.some(.haiku))
+          Text("Opus 5.5").tag(AppSettings.ChatModel?.some(.opus))
+        }
+        Picker("Effort", selection: $form.chatEffort) {
+          Text("As in Settings").tag(AppSettings.Effort?.none)
+          Text("Low").tag(AppSettings.Effort?.some(.low))
+          Text("Medium").tag(AppSettings.Effort?.some(.medium))
+        }
+      }
+      if !plugins.isEmpty {
+        Section("Plugins") {
+          Toggle(
+            "Every plugin that's on",
+            isOn: Binding(
+              get: { form.plugins == nil },
+              set: { form.plugins = $0 ? nil : plugins.map(\.id) }))
+          if let on = form.plugins {
+            ForEach(plugins) { p in
+              Toggle(
+                p.name,
+                isOn: Binding(
+                  get: { on.contains(p.id) },
+                  set: { form.plugins = $0 ? on + [p.id] : on.filter { $0 != p.id } }))
+            }
+          }
+        }
+      }
+      if let id, !isHatbot {
+        Section {
+          NavigationLink("Its notes", value: Route.memoryFile("bots/\(id)/INDEX.md"))
+        }
+        Section {
+          Button("Delete \(stored?.name ?? "bot")", role: .destructive) { confirmDelete = true }
+        } footer: {
+          Text("Its chat and notes stay readable; its schedules and triggers go to Hatbot.")
+        }
+      }
+    }
+    .navigationTitle(id == nil ? "New bot" : stored?.name ?? "Bot")
+    .navigationBarTitleDisplayMode(.inline)
+    .toolbar {
+      if id == nil {
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Cancel") { dismiss() }
+        }
+      }
+      ToolbarItem(placement: .confirmationAction) {
+        Button(id == nil ? "Create" : "Save") { Task { await save() } }
+          .disabled(busy || !changed || form.name.trimmingCharacters(in: .whitespaces).isEmpty)
+      }
+    }
+    .confirmationDialog("Delete \(stored?.name ?? "this bot")?", isPresented: $confirmDelete, titleVisibility: .visible) {
+      Button("Delete", role: .destructive) {
+        Task {
+          guard let id else { return }
+          do {
+            try await store.deleteBot(id)
+            dismiss()
+          } catch {
+            self.error = message(for: error)
+          }
+        }
+      }
+    }
+    .task(id: id) {
+      if let stored { form = Form(stored) }
+      plugins = ((try? await store.loadPluginNames()) ?? []).sorted { $0.name < $1.name }
+    }
+  }
+
+  private func save() async {
+    busy = true
+    defer { busy = false }
+    error = nil
+    do {
+      if let id {
+        form = Form(try await store.saveBot(id, form.change(rename: !isHatbot)))
+        store.toast = "Saved"
+      } else {
+        let bot = try await store.createBot(form.change(rename: true))
+        store.toast = "Made \(bot.name)"
+        if let made { made(bot) } else { dismiss() }
+      }
+    } catch {
+      self.error = message(for: error)
+    }
+  }
+}

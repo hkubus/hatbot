@@ -44,6 +44,11 @@ export interface DesktopAgent {
   browserState(): Promise<BrowserState>;
   /** The element a browser click or Enter would act on. */
   browserInspect(at: BrowserInspect): Promise<AgentElement | null>;
+  /**
+   * Chromium on this bot's own profile (PLAN.md §14), closing it if it's on another's. False where the
+   * desktop has the one shared profile.
+   */
+  useProfile(botId: string): Promise<boolean>;
   lock(): Promise<void>;
   unlock(): Promise<void>;
   /** WebSocket URL and headers for the live view. */
@@ -140,6 +145,16 @@ export class HttpDesktopAgent implements DesktopAgent {
   }
   async browserInspect(at: BrowserInspect) {
     return (await (await this.req("POST", "/browser/inspect", at)).json()) as AgentElement | null;
+  }
+  async useProfile(botId: string) {
+    try {
+      const res = await this.req("POST", "/browser/profile", { id: botId }, 45_000);
+      return ((await res.json()) as { profile: string | null }).profile !== null;
+    } catch (err) {
+      // An older desktop-agent: one profile for every bot.
+      if (err instanceof DesktopError && err.status === 404) return false;
+      throw err;
+    }
   }
   async lock() {
     await this.req("POST", "/lock");

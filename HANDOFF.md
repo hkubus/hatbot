@@ -7,7 +7,7 @@ Delete it, or fold it into `PLAN.md`, once the work below is done.
 
 - **Built:** M0–M5 and the iOS app (see the checklists in `PLAN.md` §11). M4 and M5 are built and committed but not yet deployed or tried live.
 - **Not yet tried live** (the owner does these): the M2 lock-screen approval, the M3 morning schedule, Forgejo webhook and Kuma alert, all of M4 and M5, and the first iOS install from SideStore.
-- **Checks:** 145 tests (brain and desktop-agent) and 19 iOS core tests pass, and Biome and `tsc -b` are clean.
+- **Checks:** 214 tests (brain and desktop-agent) and 31 iOS core tests pass, and Biome and `tsc -b` are clean. One desktop-agent shell test ("a command's exit code and output…") fails on this machine; it failed before the bots work too.
 
 ## How to work here
 
@@ -73,6 +73,12 @@ These came out of the M4 security review.
   - **Deleted** (messages, files, model turns) when you leave, after 30 idle minutes, on `/new`, or when the brain restarts. Spend stays in the ledger without it. `secure_delete` and a WAL checkpoint keep the text out of the database files; a PBS backup taken while one is open still has it.
 - **To set up:** redeploy the brain (migration 19). The web view was checked in headless Chromium; the iOS views were only syntax-checked.
 
+## More than one bot (built 2026-10-14, not tried live)
+- PLAN §14, milestones B1–B5: bots with their own role, chat, memory folder (`bots/<id>/`), plugins, model and browser profile; `ask_bot` hand-offs, at most 3 deep; group chats of 2–6 bots, where `@name` picks who answers and at most 4 bot replies follow each message. Spend limits stay global. §14.5 says how it's built.
+- **To set up:** redeploy the brain (migration 20 moves the thread into conversation 1, Hatbot's chat). **Run `infra/deploy.sh` once** for the desktop: it installs `hatbot-chromium.service`, which replaces the autostart Chromium, and the per-bot profiles need it. An update from the Settings button uses the old installer; until the full deploy, every bot shares the one browser profile.
+- **Checked:** the web views in headless Chromium (chat list, bot and group pages, the schedule's "Runs as", @ autocomplete, sender names). The iOS views were only syntax-checked.
+- **Not tried:** two bots answering in a group with the real model, and per-bot profiles on the real desktop.
+
 ## Copying files (built 2026-10-14, not tried live)
 - `ssh_copy_file` in the SSH plugin copies any file up to 25 MB between hosts, containers on a Proxmox host (through `hatbot-pct-exec`), the desktop's sandbox, and the chat: the owner's attachments in, or out to the owner under the reply or on the task (`CallContext.sendFile`). Plugins get the sandbox and the chat's files as `PluginContext.files`.
 - Writes on a host follow `ssh_write_file`'s rules; in a container, outside /root and /tmp asks. Only a write on a host counts against the chat's two changes. A host's file copied into the sandbox taints the conversation, as `ssh_read_file` does. In a tainted conversation, sending to the owner asks too, like every write.
@@ -80,7 +86,7 @@ These came out of the M4 security review.
 
 ## 4. Later (not v1, don't start without the owner)
 - **GitHub plugin**, next to Forgejo. Same shape as `apps/brain/src/plugins/forgejo/`.
-- **After v1** (PLAN §11): email via Proton Bridge, more than one agent, a heartbeat that acts on its own, an open-source release.
+- **After v1** (PLAN §11): email via Proton Bridge, a heartbeat that acts on its own, an open-source release.
 
 ## Things the owner should know when testing M4
 - **Kuma prompt:** existing Uptime Kuma triggers keep their old prompt. Re-save them with the new default (`KUMA_PROMPT` in `apps/web/src/pages/Schedules.tsx`) to get investigate → one restart → verify.

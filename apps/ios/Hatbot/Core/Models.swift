@@ -58,6 +58,10 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   var attachments: [Attachment]?
   /// In the incognito conversation, which isn't kept; missing otherwise.
   var incognito: Bool?
+  /// The chat it's in: a bot's own, or a group. Missing on brains from before bots.
+  var conversationId: Int?
+  /// The bot that wrote it; nil for yours.
+  var botId: String?
 
   var isIncognito: Bool { incognito == true }
 
@@ -137,6 +141,10 @@ struct AgentTask: Codable, Identifiable, Equatable, Sendable {
   var createdAt: String
   var startedAt: String?
   var finishedAt: String?
+  /// The bot doing it; missing on brains from before bots.
+  var botId: String?
+  /// The bot that handed it over with ask_bot.
+  var requestedBy: String?
 
   var isActive: Bool { finishedAt == nil }
 }
@@ -194,6 +202,8 @@ struct Approval: Codable, Identifiable, Equatable, Sendable {
   var decidedAt: String?
   /// What you told the task along with your decision.
   var note: String?
+  /// The bot asking.
+  var botId: String?
 
   /// Whether the answer can carry a note: the task carries on afterwards.
   var takesNote: Bool { kind != "budget" && kind != "injection_warning" }
@@ -218,6 +228,8 @@ struct DesktopState: Codable, Equatable, Sendable {
   var control: Control
   var request: Request?
   var activeTaskId: Int?
+  /// The bot whose task that is, and whose browser profile is open.
+  var botId: String?
 }
 
 struct Schedule: Codable, Identifiable, Equatable, Sendable {
@@ -236,6 +248,8 @@ struct Schedule: Codable, Identifiable, Equatable, Sendable {
   var tainted: Bool?
   /// What the chat had read.
   var taintedBy: String?
+  /// The bot it runs as; missing on brains from before bots.
+  var botId: String?
 }
 
 /// A webhook or Uptime Kuma trigger (packages/shared/src/schedule.ts).
@@ -260,6 +274,71 @@ struct Trigger: Codable, Identifiable, Equatable, Sendable {
   var createdAt: String
   var lastFiredAt: String?
   var lastTaskId: Int?
+  /// The bot it runs as; missing on brains from before bots.
+  var botId: String?
+}
+
+/// One of your bots (PLAN.md §14): its own role, chat, memory folder, plugins and browser profile.
+struct Bot: Codable, Identifiable, Equatable, Sendable {
+  static let hatbot = "hatbot"
+
+  let id: String
+  var name: String
+  /// Its role, in the owner's words.
+  var instructions: String
+  /// nil: as in Settings.
+  var chatModel: AppSettings.ChatModel?
+  var chatEffort: AppSettings.Effort?
+  /// nil: every plugin that's on.
+  var plugins: [String]?
+  var createdAt: String
+}
+
+/// A plugin, as far as a bot's page needs it.
+struct PluginName: Decodable, Identifiable, Equatable, Sendable {
+  let id: String
+  var name: String
+}
+
+/// "@" in a group's composer (PLAN.md §14.4).
+enum Mention {
+  /// What's typed after an "@" at the end of `draft`, or nil when it doesn't end in one.
+  static func partial(_ draft: String) -> String? {
+    guard let at = draft.lastIndex(of: "@") else { return nil }
+    let typed = draft[draft.index(after: at)...]
+    if typed.contains(where: { $0.isWhitespace || $0 == "@" }) { return nil }
+    if at != draft.startIndex, !draft[draft.index(before: at)].isWhitespace { return nil }
+    return String(typed)
+  }
+
+  /// `draft` with its partial mention finished as "@Name ".
+  static func complete(_ draft: String, with name: String) -> String {
+    guard let partial = partial(draft) else { return draft }
+    return String(draft.dropLast(partial.count + 1)) + "@\(name) "
+  }
+
+  /// The bots whose name or id starts with what's typed.
+  static func matching(_ partial: String, in bots: [Bot]) -> [Bot] {
+    let p = partial.lowercased()
+    return bots.filter { $0.id.hasPrefix(p) || $0.name.lowercased().hasPrefix(p) }
+  }
+}
+
+/// A chat: one bot's own, or a group of bots and you.
+struct Conversation: Codable, Identifiable, Equatable, Sendable {
+  enum Kind: String, LenientEnum {
+    case direct, group
+    static let fallback = Kind.direct
+  }
+
+  let id: Int
+  var kind: Kind
+  /// A group's name; nil for a bot's own chat, which goes by the bot's.
+  var title: String?
+  var botIds: [String]
+  /// Messages from its bots you haven't seen.
+  var unread: Int
+  var lastMessageAt: String?
 }
 
 /// A trigger with its secret: only right after it's made or the secret is replaced.
@@ -398,11 +477,16 @@ enum HatbotEvent: Decodable, Sendable {
   case triggerUpdated(Trigger)
   case triggerDeleted(id: Int)
   case episodeUpdated(Episode)
+  case botUpdated(Bot)
+  case botDeleted(id: String)
+  case conversationUpdated(Conversation)
+  case conversationDeleted(id: Int)
   case unknown(String)
 
   private enum Key: String, CodingKey {
     case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused, tokens, costUsd
     case task, step, approval, state, schedule, trigger, episode, editedAt, ids, seenAt, attachment
+    case bot, conversation
   }
 
   init(from decoder: Decoder) throws {
@@ -454,6 +538,11 @@ enum HatbotEvent: Decodable, Sendable {
     case "trigger.updated": self = .triggerUpdated(try c.decode(Trigger.self, forKey: .trigger))
     case "trigger.deleted": self = .triggerDeleted(id: try c.decode(Int.self, forKey: .id))
     case "episode.updated": self = .episodeUpdated(try c.decode(Episode.self, forKey: .episode))
+    case "bot.updated": self = .botUpdated(try c.decode(Bot.self, forKey: .bot))
+    case "bot.deleted": self = .botDeleted(id: try c.decode(String.self, forKey: .id))
+    case "conversation.updated":
+      self = .conversationUpdated(try c.decode(Conversation.self, forKey: .conversation))
+    case "conversation.deleted": self = .conversationDeleted(id: try c.decode(Int.self, forKey: .id))
     default: self = .unknown(type)
     }
   }

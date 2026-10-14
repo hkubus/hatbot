@@ -4,6 +4,7 @@ import { getConnInfo } from "hono/bun";
 import type { AppEnv, Deps } from "./context";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
+import { botRoutes } from "./routes/bots";
 import { desktopRoutes } from "./routes/desktop";
 import { memoryRoutes } from "./routes/memory";
 import { pluginRoutes } from "./routes/plugins";
@@ -27,6 +28,7 @@ export function createApp(deps: Deps) {
   app.get("/health", (c) => c.json<Health>({ ok: true, version: VERSION }));
   app.route("/", authRoutes);
   app.route("/", threadRoutes);
+  app.route("/", botRoutes);
   app.route("/", memoryRoutes);
   app.route("/", adminRoutes);
   app.route("/", streamRoutes);

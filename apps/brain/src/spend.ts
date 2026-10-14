@@ -122,6 +122,8 @@ export class Spend {
     usage: UsageLike;
     episodeId?: number;
     taskId?: number;
+    /** The bot it was for; a task's when left out. */
+    botId?: string;
     /** Charges on top of tokens, like web searches. */
     extraUsd?: number;
   }): number {
@@ -129,14 +131,17 @@ export class Spend {
     const cost = costOf(entry.model, t) + (entry.extraUsd ?? 0);
     this.db
       .query(
-        `INSERT INTO spend_ledger (created_at, model, purpose, episode_id, task_id, input_tokens, cache_write_5m_tokens,
-           cache_write_1h_tokens, cache_read_tokens, output_tokens, cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO spend_ledger (created_at, model, purpose, episode_id, task_id, bot_id, input_tokens, cache_write_5m_tokens,
+           cache_write_1h_tokens, cache_read_tokens, output_tokens, cost_usd)
+         VALUES (?, ?, ?, ?, ?, coalesce(?, (SELECT bot_id FROM tasks WHERE id = ?)), ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         new Date(this.clock()).toISOString(),
         entry.model,
         entry.purpose,
         entry.episodeId ?? null,
+        entry.taskId ?? null,
+        entry.botId ?? null,
         entry.taskId ?? null,
         t.input,
         t.cacheWrite5m,
@@ -163,6 +168,7 @@ export class Spend {
     };
     episodeId?: number;
     taskId?: number;
+    botId?: string;
   }): number {
     const parts = entry.usage.iterations?.length ? entry.usage.iterations : [entry.usage];
     // Web searches cost $10 per 1,000 on top of tokens; they go on the first part.
@@ -257,6 +263,17 @@ export class Spend {
     return this.db
       .query<{ model: string; usd: number }, [string]>(
         "SELECT model, sum(cost_usd) AS usd FROM spend_ledger WHERE created_at >= ? GROUP BY model ORDER BY usd DESC",
+      )
+      .all(from.toISOString());
+  }
+
+  /** Spend per bot, for Spend's breakdown. */
+  byBot(days: number): { botId: string; usd: number }[] {
+    const from = startOfLocalDay(this.clock() - (days - 1) * 86400_000);
+    return this.db
+      .query<{ botId: string; usd: number }, [string]>(
+        `SELECT coalesce(bot_id, 'hatbot') AS botId, sum(cost_usd) AS usd FROM spend_ledger
+         WHERE created_at >= ? GROUP BY coalesce(bot_id, 'hatbot') ORDER BY usd DESC`,
       )
       .all(from.toISOString());
   }

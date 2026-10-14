@@ -1,8 +1,9 @@
-import type { Thread } from "./agent/thread";
+import type { Chats } from "./agent/chats";
 import type { Approvals } from "./approvals";
 import type { Archive } from "./archive";
 import type { Attachments } from "./attachments";
 import type { AuthService, FailureLimiter, Principal } from "./auth/service";
+import type { Bots } from "./bots";
 import type { Config } from "./config";
 import type { Db } from "./db";
 import type { Desktop } from "./desktop/service";
@@ -28,7 +29,8 @@ export type Deps = {
   settings: SettingsStore;
   spend: Spend;
   memory: MemoryStore;
-  thread: Thread;
+  chats: Chats;
+  bots: Bots;
   tasks: Tasks;
   approvals: Approvals;
   desktop: Desktop;

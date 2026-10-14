@@ -22,12 +22,18 @@ export class FakeDesktop implements DesktopAgent {
   page: AgentContext = { url: "https://example.com/", title: "Example", text: "Hello" };
   element: AgentElement | null = null;
   commands: string[] = [];
+  /** The bots whose browser profile was asked for, in order. */
+  profiles: string[] = [];
   shell: (command: string) => ShellResult = (c) => ({
     exitCode: 0,
     output: `ran ${c}`,
     timedOut: false,
   });
 
+  async useProfile(botId: string) {
+    if (this.profiles.at(-1) !== botId) this.profiles.push(botId);
+    return true;
+  }
   async status(): Promise<AgentStatus> {
     return { ok: true, width: 1280, height: 800, locked: this.locked };
   }

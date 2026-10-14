@@ -1,5 +1,5 @@
 // Schedules (PLAN.md §4.1, §5.6): cron or one-off, stored in SQLite, run in-process as background tasks.
-import type { Schedule } from "@hatbot/shared";
+import { HATBOT_ID, type Schedule } from "@hatbot/shared";
 import { Cron } from "croner";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
@@ -25,6 +25,7 @@ type Row = {
   last_task_id: number | null;
   tainted: number;
   tainted_by: string | null;
+  bot_id: string;
 };
 
 const SELECT = `SELECT s.*, (SELECT max(id) FROM tasks t WHERE t.schedule_id = s.id) AS last_task_id
@@ -44,6 +45,7 @@ const toSchedule = (r: Row): Schedule => ({
   lastTaskId: r.last_task_id,
   tainted: Boolean(r.tainted),
   taintedBy: r.tainted_by,
+  botId: r.bot_id,
 });
 
 export type ScheduleInput = {
@@ -52,6 +54,7 @@ export type ScheduleInput = {
   enabled?: boolean;
   cron?: string;
   at?: string;
+  botId?: string;
 };
 
 export class Schedules {
@@ -104,10 +107,11 @@ export class Schedules {
           string | null,
           number,
           string | null,
+          string,
         ]
       >(
-        `INSERT INTO schedules (name, cron, run_at, prompt, enabled, created_via, created_at, next_run_at, tainted, tainted_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        `INSERT INTO schedules (name, cron, run_at, prompt, enabled, created_via, created_at, next_run_at, tainted, tainted_by, bot_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       )
       .get(
         input.name,
@@ -120,6 +124,7 @@ export class Schedules {
         enabled ? when.next : null,
         taintedBy ? 1 : 0,
         taintedBy,
+        input.botId ?? HATBOT_ID,
       );
     return this.changed(row?.id ?? -1) as Schedule;
   }
@@ -159,7 +164,7 @@ export class Schedules {
       : null;
     this.db
       .query(
-        "UPDATE schedules SET name = ?, prompt = ?, cron = ?, run_at = ?, enabled = ?, next_run_at = ?, tainted = ?, tainted_by = ? WHERE id = ?",
+        "UPDATE schedules SET name = ?, prompt = ?, cron = ?, run_at = ?, enabled = ?, next_run_at = ?, tainted = ?, tainted_by = ?, bot_id = ? WHERE id = ?",
       )
       .run(
         patch.name ?? current.name,
@@ -170,6 +175,7 @@ export class Schedules {
         enabled ? nextRunAt : null,
         tainted ? 1 : 0,
         taintedBy || null,
+        patch.botId ?? current.botId,
         id,
       );
     return this.changed(id);
@@ -220,6 +226,7 @@ export class Schedules {
       origin: "schedule",
       source: s.name,
       scheduleId: s.id,
+      botId: s.botId,
       runKey: `schedule:${s.id}`,
       taintedBy: s.tainted
         ? `Its schedule, which the chat wrote after reading: ${s.taintedBy ?? "untrusted content"}`

@@ -90,6 +90,7 @@ struct ScheduleDetailView: View {
     var at = Date().addingTimeInterval(3600)
     var prompt = ""
     var enabled = true
+    var botId = Bot.hatbot
 
     init() {}
     init(_ s: Schedule) {
@@ -99,6 +100,7 @@ struct ScheduleDetailView: View {
       at = Format.date(s.runAt) ?? Date().addingTimeInterval(3600)
       prompt = s.prompt
       enabled = s.enabled
+      botId = s.botId ?? Bot.hatbot
     }
 
     var change: AppStore.ScheduleChange {
@@ -107,7 +109,8 @@ struct ScheduleDetailView: View {
         prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines),
         enabled: enabled,
         cron: repeats ? cron.trimmingCharacters(in: .whitespaces) : nil,
-        at: repeats ? nil : at.formatted(.iso8601))
+        at: repeats ? nil : at.formatted(.iso8601),
+        botId: botId)
     }
 
     var valid: Bool {
@@ -163,6 +166,11 @@ struct ScheduleDetailView: View {
       Section {
         TextField("Name", text: form.name)
         Toggle("On", isOn: form.enabled)
+        if store.botIds.count > 1 {
+          Picker("Runs as", selection: form.botId) {
+            ForEach(store.botIds, id: \.self) { Text(store.botName($0)).tag($0) }
+          }
+        }
       }
       Section {
         Picker("When", selection: form.repeats) {
@@ -318,6 +326,16 @@ struct TriggerDetailView: View {
       Section {
         TextField("Name", text: $name)
         Toggle("On", isOn: binding(t.enabled) { AppStore.TriggerChange(enabled: $0) })
+        if store.botIds.count > 1 {
+          Picker(
+            "Runs as",
+            selection: Binding(
+              get: { t.botId ?? Bot.hatbot },
+              set: { new in Task { await act { _ = try await store.saveTrigger(id, AppStore.TriggerChange(botId: new)) } } })
+          ) {
+            ForEach(store.botIds, id: \.self) { Text(store.botName($0)).tag($0) }
+          }
+        }
         if t.kind == .webhook {
           Toggle("Trust its payloads", isOn: binding(t.trusted) { AppStore.TriggerChange(trusted: $0) })
         }

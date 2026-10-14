@@ -37,6 +37,8 @@ enum Route: Hashable {
   case schedule(Int)
   case newSchedule
   case trigger(Int)
+  case bot(String)
+  case group(Int)
 }
 
 extension View {
@@ -52,6 +54,8 @@ extension View {
       case let .schedule(id): ScheduleDetailView(id: id)
       case .newSchedule: ScheduleDetailView(id: nil)
       case let .trigger(id): TriggerDetailView(id: id)
+      case let .bot(id): BotView(id: id)
+      case let .group(id): GroupView(id: id)
       }
     }
   }

@@ -52,7 +52,7 @@ test("chat starts a desktop task that runs, archives screenshots and reports bac
   const edited = t.thread.list().find((m) => m.id === reply?.id);
   expect(edited?.editedAt).toBe(task?.finishedAt as string);
   expect(t.thread.unread()).toContain(reply?.id as number);
-  t.thread.markSeen(t.thread.unread());
+  t.chats.markSeen(t.thread.unread());
   expect(t.thread.unread()).toEqual([]);
   expect(t.agent.actions.map((a) => a.name)).toEqual(["left_click"]);
   expect(task?.costUsd).toBeGreaterThan(0);
@@ -72,11 +72,17 @@ test("chat starts a desktop task that runs, archives screenshots and reports bac
   expect(shots.length).toBe(2);
   expect(await t.archive.file(shots[1]?.screenshot as string)?.exists()).toBe(true);
 
-  // The next chat turn hears how it ended.
-  t.thread.post("thanks");
+  // The chat model hears how it ended right away, and answers in a reply of its own.
   await t.thread.idle();
-  expect(JSON.stringify(chat.requests.at(-1)?.messages.at(-1))).toContain("<task_updates>");
+  const told = JSON.stringify(chat.requests.at(-1)?.messages.at(-1));
+  expect(told).toContain("<task_updates>");
+  expect(told).toContain("No message from the owner");
+  expect(t.thread.list().at(-1)?.text).toBe("It worked.");
   expect(t.notifier.sent.at(-1)?.title).toContain("Done");
+  // Told once: your next message doesn't bring it up again.
+  const asked = chat.requests.length;
+  await t.thread.taskEnded();
+  expect(chat.requests.length).toBe(asked);
 });
 
 test("a consequential click is held back until confirm_intent is approved", async () => {

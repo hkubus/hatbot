@@ -18,6 +18,7 @@ struct ChatView: View {
   @State private var position = ScrollPosition(edge: .bottom)
   @State private var loaded = false
   @State private var unfolded = Set<Int>()
+  private var name: String { store.chatName(store.currentChat) }
   @State private var farFromBottom = false
 
   /// What the list shows: times, folds, and the messages that aren't folded away.
@@ -58,17 +59,25 @@ struct ChatView: View {
     return grouped(rows)
   }
 
-  /// Runs of messages from the same sender sit close together, with a tail on the last.
+  /// Runs of messages from the same sender sit close together, with a tail on the last. In a group
+  /// each bot is a sender of its own.
   private func grouped(_ rows: [Row]) -> [Row] {
-    func sender(_ row: Row?) -> ThreadMessage.Role? {
-      if case let .message(m, _, _)? = row, !m.isNote { m.role } else { nil }
+    func sender(_ row: Row?) -> String? {
+      if case let .message(m, _, _)? = row, !m.isNote { key(m) } else { nil }
     }
+    func key(_ m: ThreadMessage) -> String { m.role == .user ? "owner" : "bot:\(m.botId ?? "")" }
     return rows.indices.map { i in
       guard case let .message(m, _, _) = rows[i] else { return rows[i] }
       let before = i > 0 ? rows[i - 1] : nil
       let after = i + 1 < rows.count ? rows[i + 1] : nil
-      return .message(m, joined: sender(before) == m.role, tail: sender(after) != m.role)
+      return .message(m, joined: sender(before) == key(m), tail: sender(after) != key(m))
     }
+  }
+
+  /// A group's bots, for the names above their messages and @ in the composer.
+  private var members: [Bot]? {
+    guard let c = store.currentChat, c.kind == .group else { return nil }
+    return c.botIds.compactMap { store.bots[$0] }
   }
 
   var body: some View {
@@ -84,8 +93,8 @@ struct ChatView: View {
           if loaded && store.messages.isEmpty {
             Text(
               store.incognito
-                ? "Hatbot can't see earlier conversations here, and this one is deleted when you leave."
-                : "Say hello to Hatbot."
+                ? "\(name) can't see earlier conversations here, and this one is deleted when you leave."
+                : "Say hello to \(name)."
             )
             .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
@@ -106,8 +115,18 @@ struct ChatView: View {
               }
               .padding(.top, 10)
             case let .message(m, joined, tail):
+              // In a group, the bot's name above each run of its messages.
+              let named = members != nil && !joined && m.role == .assistant && !m.isNote
+              if named {
+                Text(store.botName(m.botId))
+                  .font(.caption.weight(.semibold))
+                  .foregroundStyle(.secondary)
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                  .padding(.leading, 14)
+                  .padding(.top, 10)
+              }
               MessageRow(m: m, tail: tail, open: { path.append($0) })
-                .padding(.top, joined ? 2 : 10)
+                .padding(.top, joined || named ? 2 : 10)
             }
           }
         }
@@ -143,22 +162,37 @@ struct ChatView: View {
         if store.paused { PausedBanner() }
       }
       .edgeBar(.bottom) { composer }
-      .navigationTitle(store.incognito ? "Incognito" : "Hatbot")
+      .navigationTitle(store.incognito ? "Incognito" : name)
       .sidebarButton()
       .toolbar {
-        ToolbarItem(placement: .topBarTrailing) {
-          // Leaving deletes the incognito conversation.
-          Button {
-            Task { await store.setIncognito(!store.incognito) }
-          } label: {
-            Image(systemName: "eyeglasses")
-              .foregroundStyle(store.incognito ? Color.accentColor : Color.primary)
+        if let c = store.currentChat {
+          ToolbarItem(placement: .topBarTrailing) {
+            NavigationLink(value: c.kind == .group ? Route.group(c.id) : Route.bot(c.botIds.first ?? Bot.hatbot)) {
+              Image(systemName: "slider.horizontal.3")
+            }
+            .accessibilityLabel("About \(name)")
           }
-          .accessibilityLabel(store.incognito ? "Leave incognito" : "Incognito")
+        }
+        // Groups have no incognito.
+        if members == nil {
+          ToolbarItem(placement: .topBarTrailing) {
+            // Leaving deletes the incognito conversation.
+            Button {
+              Task { await store.setIncognito(!store.incognito) }
+            } label: {
+              Image(systemName: "eyeglasses")
+                .foregroundStyle(store.incognito ? Color.accentColor : Color.primary)
+            }
+            .accessibilityLabel(store.incognito ? "Leave incognito" : "Incognito")
+          }
         }
       }
       .navigationBarTitleDisplayMode(.inline)
       .routes()
+      .onChange(of: store.conversationId) {
+        path = []
+        unfolded = []
+      }
       .task {
         do {
           try await store.loadThread()
@@ -233,7 +267,11 @@ struct ChatView: View {
       if !files.isEmpty {
         ComposerFiles(files: files) { id in files.removeAll { $0.id == id } }
       }
-      if !commands.isEmpty { commandList }
+      if !mentionable.isEmpty {
+        mentionList
+      } else if !commands.isEmpty {
+        commandList
+      }
       HStack(alignment: .bottom, spacing: 8) {
         Menu {
           Button("Photos", systemImage: "photo.on.rectangle") { pickingPhotos = true }
@@ -246,7 +284,7 @@ struct ChatView: View {
         .glassButton()
         .buttonBorderShape(.circle)
         .accessibilityLabel("Attach")
-        TextField(store.incognito ? "Message Hatbot incognito…" : "Message Hatbot…", text: $draft, axis: .vertical)
+        TextField(store.incognito ? "Message \(name) incognito…" : "Message \(name)…", text: $draft, axis: .vertical)
           .lineLimit(1...6)
           .padding(.horizontal, 16)
           .padding(.vertical, 11)
@@ -295,6 +333,35 @@ struct ChatView: View {
   }
 
   private var commands: [ChatCommand] { ChatCommand.matching(draft, incognito: store.incognito) }
+
+  /// In a group, the bots "@…" at the end of the draft could mean.
+  private var mentionable: [Bot] {
+    guard let members, let partial = Mention.partial(draft) else { return [] }
+    return Mention.matching(partial, in: members)
+  }
+
+  private var mentionList: some View {
+    VStack(spacing: 0) {
+      ForEach(mentionable) { b in
+        Button {
+          draft = Mention.complete(draft, with: b.name)
+        } label: {
+          HStack(alignment: .firstTextBaseline) {
+            Text("@\(b.name)").fontWeight(.medium)
+            Spacer(minLength: 12)
+            Text(b.instructions.split(separator: "\n").first.map(String.init) ?? "")
+              .font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+          }
+          .padding(.horizontal, 16)
+          .padding(.vertical, 10)
+          .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+      }
+    }
+    .padding(.vertical, 4)
+    .glassSurface(in: .rect(cornerRadius: 22))
+  }
 
   /// What "/…" could mean. One that needs more goes in the composer to finish; the rest run at once.
   private var commandList: some View {

@@ -85,6 +85,8 @@ struct Sidebar<Content: View>: View {
   @Environment(AppStore.self) private var store
   @GestureState(resetTransaction: Transaction(animation: .snappy)) private var drag: CGFloat = 0
   @State private var roots = 0
+  @State private var newBot = false
+  @State private var newGroup = false
 
   var body: some View {
     GeometryReader { geo in
@@ -133,35 +135,88 @@ struct Sidebar<Content: View>: View {
   }
 
   private var panel: some View {
-    VStack(alignment: .leading, spacing: 2) {
-      ForEach(AppTab.allCases, id: \.self) { t in
-        Button {
-          tab = t
-          setOpen(false)
-        } label: {
-          HStack(spacing: 14) {
-            Image(systemName: t.icon).frame(width: 26)
-            Text(t.title)
-            Spacer()
-            if t == .tasks && store.needsYou > 0 { Count(n: store.needsYou) }
-            if t == .chat && !store.unread.isEmpty { Count(n: store.unread.count, color: .brand) }
+    ScrollView {
+      VStack(alignment: .leading, spacing: 2) {
+        if store.conversations.isEmpty {
+          row(AppTab.chat.title, icon: AppTab.chat.icon, selected: tab == .chat, count: store.unread.count) {
+            tab = .chat
           }
-          .font(.body.weight(t == tab ? .semibold : .regular))
-          .foregroundStyle(t == tab ? Color.brand : .primary)
-          .padding(.horizontal, 14)
-          .padding(.vertical, 12)
-          .background(t == tab ? Color.brand.opacity(0.14) : .clear, in: .capsule)
-          .contentShape(.capsule)
+        } else {
+          // The chats, each bot's own and the groups, in place of one Chat.
+          ForEach(store.conversations) { c in
+            row(
+              store.chatName(c), icon: c.kind == .group ? "person.3" : "bubble.left",
+              selected: tab == .chat && c.id == store.conversationId, count: c.unread
+            ) {
+              tab = .chat
+              Task { await store.openConversation(c.id) }
+            }
+          }
+          row("New bot", icon: "plus", selected: false, count: 0) { newBot = true }
+          if store.botIds.count > 1 {
+            row("New group", icon: "person.3", selected: false, count: 0) { newGroup = true }
+          }
+          Divider().padding(.vertical, 6).padding(.horizontal, 14)
         }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(t == tab ? .isSelected : [])
+        ForEach(AppTab.allCases.filter { $0 != .chat }, id: \.self) { t in
+          row(t.title, icon: t.icon, selected: t == tab, count: t == .tasks ? store.needsYou : 0, color: .attention) {
+            tab = t
+          }
+        }
       }
-      Spacer()
+      .padding(.horizontal, 10)
+      .padding(.top, 8)
     }
-    .padding(.horizontal, 10)
-    .padding(.top, 8)
     .frame(maxHeight: .infinity)
     .background(Color(uiColor: .secondarySystemBackground).ignoresSafeArea())
+    .sheet(isPresented: $newBot) {
+      NavigationStack {
+        BotView(id: nil) { bot in
+          newBot = false
+          tab = .chat
+          setOpen(false)
+          if let c = store.conversations.first(where: { $0.kind == .direct && $0.botIds.first == bot.id }) {
+            Task { await store.openConversation(c.id) }
+          }
+        }
+        .routes()
+      }
+    }
+    .sheet(isPresented: $newGroup) {
+      NavigationStack {
+        GroupView(id: nil) { c in
+          newGroup = false
+          tab = .chat
+          setOpen(false)
+          Task { await store.openConversation(c.id) }
+        }
+      }
+    }
+  }
+
+  private func row(
+    _ title: String, icon: String, selected: Bool, count: Int, color: Color = .brand,
+    action: @escaping () -> Void
+  ) -> some View {
+    Button {
+      action()
+      setOpen(false)
+    } label: {
+      HStack(spacing: 14) {
+        Image(systemName: icon).frame(width: 26)
+        Text(title).lineLimit(1)
+        Spacer()
+        if count > 0 { Count(n: count, color: color) }
+      }
+      .font(.body.weight(selected ? .semibold : .regular))
+      .foregroundStyle(selected ? Color.brand : .primary)
+      .padding(.horizontal, 14)
+      .padding(.vertical, 12)
+      .background(selected ? Color.brand.opacity(0.14) : .clear, in: .capsule)
+      .contentShape(.capsule)
+    }
+    .buttonStyle(.plain)
+    .accessibilityAddTraits(selected ? .isSelected : [])
   }
 
   private func setOpen(_ value: Bool) {
