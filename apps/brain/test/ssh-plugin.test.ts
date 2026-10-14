@@ -1,5 +1,5 @@
 import { beforeAll, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Task } from "@hatbot/shared";
@@ -8,7 +8,7 @@ import type { CallContext } from "../src/plugins/plugin";
 import { verdictFor } from "../src/plugins/registry";
 import { sshPlugin } from "../src/plugins/ssh";
 import { commandCount, destructive } from "../src/plugins/ssh/policy";
-import { FakeModel, toolUse } from "./fake-model";
+import { FakeModel, text, toolUse } from "./fake-model";
 import { tempDirs, testApp, waitFor } from "./helpers";
 
 let dir = "";
@@ -32,9 +32,21 @@ case "$last" in
   *fail-connect*) echo "ssh: connect to host 10.0.0.9 port 22: No route to host" >&2; exit 255 ;;
   *key-changed*) echo "@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @" >&2; exit 255 ;;
 esac
-exec sh -c "$last"
+PATH=${dir}/bin:$PATH exec sh -c "$last"
 `,
   );
+  // sudo for the container wrapper: CT 900 is "here"; anything else isn't run.
+  mkdirSync(join(dir, "bin"));
+  writeFileSync(
+    join(dir, "bin", "sudo"),
+    `#!/bin/sh
+[ "$1" = -n ] && shift
+[ "$1" = /usr/local/sbin/hatbot-pct-exec ] && [ "$2" = 900 ] && exec sh -c "$3"
+echo "sudo: not here" >&2
+exit 1
+`,
+  );
+  chmodSync(join(dir, "bin", "sudo"), 0o755);
   writeFileSync(
     join(dir, "ssh-keygen"),
     `#!/bin/sh
@@ -473,4 +485,149 @@ test("a shell line counts each chained part, and a loop as many", () => {
   expect(commandCount("pct list | awk 'NR>1{print $1}' | xargs -n1 pct status")).toBe(
     Number.POSITIVE_INFINITY,
   );
+});
+
+test("copy_file moves bytes between hosts, containers, the sandbox and the chat", async () => {
+  const hosts = [...HOSTS, { name: "pve", address: "10.0.0.2", proxmox: true }];
+  const { t, sshTool } = await started(new FakeModel(), hosts);
+  const copy = sshTool("ssh_copy_file");
+  const bin = new Uint8Array([0, 255, 10, 39, 36, 128, 0]);
+  const src = join(dir, "copy", "blob.bin");
+  mkdirSync(join(dir, "copy"), { recursive: true });
+  writeFileSync(src, bin);
+
+  // Host → sandbox, into a directory: the bytes as they were.
+  expect(await copy.run({ from: { host: "nas", path: src }, to: { sandbox: "in/" } }, call)).toBe(
+    `Copied nas:${src} to the sandbox: in/blob.bin (1 KB).`,
+  );
+  expect(t.agent.files.get("in/blob.bin")).toEqual(bin);
+
+  // Sandbox → a container, and an attachment → a host.
+  const inCt = join(dir, "copy", "ct", "blob.bin");
+  await copy.run(
+    { from: { sandbox: "in/blob.bin" }, to: { host: "pve", guest: 900, path: inCt } },
+    call,
+  );
+  expect(new Uint8Array(readFileSync(inCt))).toEqual(bin);
+  const a = await t.attachments.save({
+    bytes: bin,
+    name: "it's.bin",
+    mediaType: "",
+    from: "owner",
+  });
+  await copy.run(
+    { from: { attachment: a.id }, to: { host: "nas", path: `${dir}/copy/up/` } },
+    call,
+  );
+  expect(new Uint8Array(readFileSync(join(dir, "copy", "up", "it's.bin")))).toEqual(bin);
+
+  // A host's file → the owner, through the call's sendFile.
+  const sent: { name: string; bytes: Uint8Array }[] = [];
+  const out = await copy.run(
+    { from: { host: "nas", path: src }, to: { owner: true, name: "data.bin" } },
+    {
+      ...call,
+      sendFile: async (name, bytes) => {
+        sent.push({ name, bytes });
+        return t.attachments.save({ bytes, name, mediaType: "", from: "hatbot" });
+      },
+    },
+  );
+  expect(out).toStartWith('Sent "data.bin"');
+  expect(sent[0]?.bytes).toEqual(bin);
+  await expect(
+    copy.run({ from: { host: "nas", path: src }, to: { owner: true } }, call),
+  ).rejects.toThrow("can't be sent to the owner from here");
+
+  // Errors say what went wrong.
+  await expect(
+    copy.run({ from: { host: "nas", path: `${dir}/nope` }, to: { sandbox: "x" } }, call),
+  ).rejects.toThrow(`Couldn't read nas:${dir}/nope:`);
+  await expect(
+    copy.run({ from: { host: "nas", guest: 900, path: src }, to: { sandbox: "x" } }, call),
+  ).rejects.toThrow("nas isn't set up as a Proxmox host");
+  await expect(copy.run({ from: { attachment: 999 }, to: { sandbox: "x" } }, call)).rejects.toThrow(
+    "There's no attachment #999.",
+  );
+  await expect(copy.run({ from: { sandbox: "gone" }, to: { sandbox: "x" } }, call)).rejects.toThrow(
+    "There's no file at gone.",
+  );
+});
+
+test("copy_file: writes on hosts follow write_file's rules; reading a host's file into the sandbox is untrusted", async () => {
+  const hosts = [...HOSTS, { name: "pve", address: "10.0.0.2", proxmox: true }];
+  const { sshTool } = await started(new FakeModel(), hosts);
+  const copy = sshTool("ssh_copy_file");
+  const v = (input: unknown) => verdictFor(copy, input, call);
+  const from = { sandbox: "out/x" };
+  expect(v({ from, to: { host: "nas", path: "~/x" } }).action).toBe("allow");
+  expect(v({ from, to: { host: "nas", path: "/etc/x" } }).action).toBe("ask");
+  expect(v({ from, to: { host: "nas", path: "~/x", sudo: true } }).action).toBe("ask");
+  expect(v({ from, to: { host: "nas", path: "~/.ssh/" } })).toMatchObject({
+    kind: "account_security",
+  });
+  expect(v({ from, to: { host: "router", path: "/tmp/x" } }).action).toBe("ask");
+  expect(v({ from, to: { host: "pve", guest: 105, path: "/root/x" } }).action).toBe("allow");
+  expect(v({ from, to: { host: "pve", guest: 105, path: "/etc/x" } })).toMatchObject({
+    why: "It writes /etc/x in CT 105, outside /root and /tmp.",
+  });
+  const host = { host: "nas", path: "/var/log/syslog" };
+  expect(v({ from: host, to: { sandbox: "in/" } }).action).toBe("allow");
+  expect(v({ from: host, to: { owner: true } }).action).toBe("allow");
+  // Tainted, every write asks, as usual.
+  expect(verdictFor(copy, { from: host, to: { owner: true } }, call, true).action).toBe("ask");
+
+  const untrusted = copy.untrusted as (i: unknown) => boolean;
+  expect(untrusted({ from: host, to: { sandbox: "in/" } })).toBe(true);
+  expect(untrusted({ from: host, to: { owner: true } })).toBe(false);
+  expect(untrusted({ from, to: { host: "nas", path: "~/x" } })).toBe(false);
+  // Only a write on a host counts against the chat's limit on changes.
+  expect(copy.commands?.({ from: host, to: { owner: true } })).toBe(0);
+  expect(copy.commands?.({ from, to: { host: "nas", path: "~/x" } })).toBe(1);
+  expect(
+    copy.describe?.({ from: { host: "pve", guest: 105, path: "/a" }, to: { owner: true } }),
+  ).toBe("Copy CT 105 on pve:/a to the owner");
+});
+
+test("in the chat, a host's file goes to the owner under the reply", async () => {
+  const src = join(dir, "report.csv");
+  writeFileSync(src, "a,b\n1,2\n");
+  const chat = new FakeModel([
+    {
+      content: [
+        toolUse("ssh_copy_file", { from: { host: "nas", path: src }, to: { owner: true } }),
+      ],
+    },
+    { content: [text("Here it is.")] },
+  ]);
+  const t = await testApp(chat, new FakeModel(), {}, [sshPlugin], env());
+  await t.plugins.update("ssh", { enabled: true, config: { hosts: HOSTS } });
+  await t.thread.post("send me the report from nas").done;
+  const reply = t.thread.list().at(-1);
+  expect(reply?.text).toBe("Here it is.");
+  expect(reply?.attachments).toMatchObject([
+    { name: "report.csv", mediaType: "text/csv", from: "hatbot" },
+  ]);
+});
+
+test("a task's copy to the owner shows on the task", async () => {
+  const src = join(dir, "task-report.txt");
+  writeFileSync(src, "done\n");
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("ssh_copy_file", { from: { host: "nas", path: src }, to: { owner: true } }),
+      ],
+    },
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Sent it.", notify: false })] },
+  ]);
+  const { t } = await started(work);
+  const task = t.tasks.createBackgroundTask({
+    title: "Report",
+    goal: "Send the report",
+    origin: "schedule",
+  }) as Task;
+  await waitFor(() => t.tasks.get(task.id)?.finishedAt);
+  expect(t.tasks.get(task.id)?.status).toBe("done");
+  expect(t.attachments.forTask(task.id)).toMatchObject([{ name: "task-report.txt" }]);
 });

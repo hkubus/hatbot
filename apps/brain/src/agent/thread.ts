@@ -16,7 +16,7 @@ import type { Db } from "../db";
 import type { DesktopAgent } from "../desktop/client";
 import type { EventBus } from "../events";
 import { MemoryError, type MemoryStore } from "../memory/store";
-import type { PluginTool } from "../plugins/plugin";
+import type { CallContext, PluginTool } from "../plugins/plugin";
 import {
   describeCall,
   type Plugins,
@@ -332,10 +332,18 @@ export class Thread {
     input: unknown,
     signal: AbortSignal,
     progress: (line: string) => void,
+    messageId: number,
   ): Promise<{ content: string; isError: boolean }> {
-    const { approvals, settings } = this.d;
+    const { approvals, settings, attachments } = this.d;
     const taintedBy = this.tainted(episodeId);
-    const cc = { task: null, signal };
+    const cc: CallContext = {
+      task: null,
+      signal,
+      sendFile: attachments
+        ? (name, bytes) =>
+            attachments.save({ bytes, name, mediaType: "", from: "hatbot", messageId })
+        : undefined,
+    };
     const what = describeCall(t, input);
     const verdict = verdictFor(t, input, cc, taintedBy !== null);
     if (verdict.action === "block") return { content: `Refused: ${verdict.why}`, isError: true };
@@ -1138,7 +1146,7 @@ export class Thread {
                 }
                 const from = this.clock();
                 try {
-                  return await this.gatedCall(episode.id, t, input, signal, progress);
+                  return await this.gatedCall(episode.id, t, input, signal, progress, out.id);
                 } finally {
                   // Time waiting for you doesn't count against the reply's limit.
                   waited += this.clock() - from;

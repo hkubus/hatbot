@@ -1,9 +1,11 @@
 // Plugins (PLAN.md §4.5): integrations like Proxmox, SSH, Forgejo and MCP. Each one ships with Hatbot,
 // is switched on in Settings, and contributes tools. The core decides who gets a tool and when it needs
 // your approval; a plugin only says what its tools do.
-import type { ApprovalKind } from "@hatbot/shared";
+import type { ApprovalKind, Attachment } from "@hatbot/shared";
 import type { z } from "zod";
+import type { Attachments } from "../attachments";
 import type { Db } from "../db";
+import type { DesktopAgent } from "../desktop/client";
 
 /** Whether a call may run. The core takes the strictest of this and the untrusted-content rule (§6.1). */
 export type Verdict =
@@ -30,6 +32,8 @@ export type CallContext = {
   /** The task making the call; null for a call from the chat. */
   task: { id: number; tainted: boolean } | null;
   signal: AbortSignal;
+  /** Puts a file in the chat for the owner: on the reply or the task making the call. */
+  sendFile?: (name: string, bytes: Uint8Array) => Promise<Attachment>;
 };
 
 export type PluginTool<I = unknown> = {
@@ -94,10 +98,17 @@ export type PluginInstance = {
   stop?: () => Promise<void> | void;
 };
 
+/** Where Hatbot keeps files of its own, for plugins that move them: the sandbox and the chat's files. */
+export type PluginFiles = {
+  desktop: DesktopAgent;
+  attachments: Attachments;
+};
+
 export type PluginContext<C> = {
   config: C;
   env: Record<string, string | undefined>;
   db: Db;
+  files?: PluginFiles;
 };
 
 export type Plugin<C = unknown> = {

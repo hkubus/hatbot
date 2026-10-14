@@ -83,6 +83,7 @@ export async function testApp(
     db,
     events,
     env: pluginEnv,
+    files: { desktop: agent, attachments },
     reserved: CORE_TOOL_NAMES,
   });
   await plugins.startAll();
