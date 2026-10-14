@@ -36,6 +36,12 @@ export type AgentStatus = {
   locked: boolean;
   /** The commit desktop-agent was built from, when deployed. */
   version?: string;
+  /** The bot profile Chromium is on; null with the one shared profile (no hatbot-chromium.service). */
+  profile?: string | null;
+  /** The desktop's time zone, e.g. "Europe/Prague", which pages see. */
+  timeZone?: string;
+  /** What this copy can do beyond the basics, so the brain knows when it's out of date. */
+  features?: string[];
 };
 
 /** GET /context: the visible Chromium tab. `text` only with ?text=1. */

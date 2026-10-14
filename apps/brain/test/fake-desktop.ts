@@ -34,8 +34,10 @@ export class FakeDesktop implements DesktopAgent {
     if (this.profiles.at(-1) !== botId) this.profiles.push(botId);
     return true;
   }
+  /** More of what /health says: version, profile, time zone, features. */
+  health: Partial<AgentStatus> = {};
   async status(): Promise<AgentStatus> {
-    return { ok: true, width: 1280, height: 800, locked: this.locked };
+    return { ok: true, width: 1280, height: 800, locked: this.locked, ...this.health };
   }
   async screenshot() {
     this.screenshots++;

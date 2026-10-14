@@ -42,6 +42,13 @@ export class NtfyNotifier implements Notifier {
     return Boolean(this.url);
   }
 
+  /** The server's own health check, for the self-check. Throws with what went wrong. */
+  async health(): Promise<void> {
+    const res = await fetch(`${this.url}/v1/health`, { signal: AbortSignal.timeout(10_000) });
+    const body = (await res.json().catch(() => ({}))) as { healthy?: boolean };
+    if (!res.ok || body.healthy !== true) throw new Error(`ntfy answered ${res.status}`);
+  }
+
   async send(n: Notification) {
     if (!this.url) return;
     try {

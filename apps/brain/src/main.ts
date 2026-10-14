@@ -8,6 +8,7 @@ import { Archive } from "./archive";
 import { Attachments } from "./attachments";
 import { AuthService, FailureLimiter } from "./auth/service";
 import { Bots } from "./bots";
+import { Checks } from "./checks";
 import { loadConfig } from "./config";
 import { openDb } from "./db";
 import { HttpDesktopAgent } from "./desktop/client";
@@ -56,8 +57,9 @@ const pluginsStarted = plugins
   .catch((err) => console.error("plugins failed to start", err));
 const bots = new Bots(db, events);
 const chats = new Chats({ db, memory, events, spend, settings, model, plugins, bots });
+const ntfy = new NtfyNotifier();
 const notifier = new LinkingNotifier(
-  new NtfyNotifier(),
+  ntfy,
   config.publicUrl,
   () => settings.get().notificationsOpen,
 );
@@ -110,6 +112,24 @@ void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {
     triggers.tick();
   }, 10_000);
 });
+const proxmox = new Proxmox();
+const updates = new Updates(config);
+const checks = new Checks({
+  db,
+  config,
+  settings,
+  spend,
+  model,
+  memory,
+  archive,
+  desktop,
+  plugins,
+  approvals,
+  proxmox,
+  updates,
+  ntfy,
+  apiKeySet: Boolean(process.env.ANTHROPIC_API_KEY),
+});
 const loginLimits = {
   perIp: new FailureLimiter(10, 15 * 60_000),
   global: new FailureLimiter(50, 15 * 60_000),
@@ -131,12 +151,13 @@ const app = createApp({
   desktop,
   archive,
   attachments,
-  proxmox: new Proxmox(),
-  updates: new Updates(config),
+  proxmox,
+  updates,
   schedules,
   triggers,
   plugins,
   teach,
+  checks,
 });
 const web = webHandler(config.webDir);
 const server = Bun.serve({

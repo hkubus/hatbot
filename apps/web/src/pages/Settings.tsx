@@ -12,6 +12,7 @@ import { navigate } from "../router";
 import { setPaused, useStore } from "../store";
 import { Switch } from "../switch";
 import { getTheme, setTheme, type Theme } from "../theme";
+import { Checks } from "./Checks";
 import { PluginPage, PluginsGroup } from "./Plugins";
 
 export function Settings({
@@ -25,6 +26,7 @@ export function Settings({
 }) {
   const plugin = /^\/settings\/plugins\/([a-z0-9]+)$/.exec(path)?.[1];
   if (plugin) return <PluginPage key={plugin} id={plugin} toast={toast} />;
+  if (path === "/settings/checks") return <Checks />;
   return <SettingsHome toast={toast} onSignOut={onSignOut} />;
 }
 
@@ -330,6 +332,17 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
               />
             </div>
             <RollbackRow toast={toast} />
+          </div>
+        </section>
+
+        <section className="group">
+          <div className="group-box">
+            <button type="button" className="row link" onClick={() => navigate("/settings/checks")}>
+              <div className="txt">
+                <b>Check everything</b>
+              </div>
+              <Icon name="chevron" className="chev" />
+            </button>
           </div>
         </section>
 

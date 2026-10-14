@@ -5,6 +5,7 @@ import type { AppEnv, Deps } from "./context";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
 import { botRoutes } from "./routes/bots";
+import { checkRoutes } from "./routes/checks";
 import { desktopRoutes } from "./routes/desktop";
 import { memoryRoutes } from "./routes/memory";
 import { pluginRoutes } from "./routes/plugins";
@@ -39,6 +40,7 @@ export function createApp(deps: Deps) {
   app.route("/", hookRoutes);
   app.route("/", pluginRoutes);
   app.route("/", teachRoutes);
+  app.route("/", checkRoutes);
 
   app.notFound((c) => c.json({ error: "not found" }, 404));
   app.onError((err, c) => {

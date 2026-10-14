@@ -10,6 +10,7 @@ import { Attachments } from "../src/attachments";
 import { AuthService, FailureLimiter } from "../src/auth/service";
 import { stepOf, totpAt } from "../src/auth/totp";
 import { Bots } from "../src/bots";
+import { Checks } from "../src/checks";
 import { loadConfig } from "../src/config";
 import { openDb } from "../src/db";
 import { Desktop } from "../src/desktop/service";
@@ -140,6 +141,26 @@ export async function testApp(
   );
   const proxmox = new Proxmox(proxmoxEnv);
   proxmox.pollMs = 5;
+  const checks = new Checks({
+    db,
+    config,
+    settings,
+    spend,
+    model: taskModel,
+    memory,
+    archive,
+    desktop,
+    plugins,
+    approvals,
+    proxmox,
+    updates,
+    ntfy: null,
+    fetch: async (url) =>
+      url === `${ORIGIN}/api/v1/health`
+        ? Response.json({ ok: true })
+        : new Response(null, { status: 404 }),
+    clock,
+  });
   const app = createApp({
     config,
     db,
@@ -162,6 +183,7 @@ export async function testApp(
     triggers,
     plugins,
     teach,
+    checks,
   });
 
   const call = (
@@ -201,6 +223,7 @@ export async function testApp(
     plugins,
     skills,
     teach,
+    checks,
     updateDir,
     events: seen,
     call,

@@ -127,6 +127,15 @@ export class MemoryStore {
       .filter((h): h is SearchHit => h !== null);
   }
 
+  /** Files changed outside Hatbot and not committed, e.g. edited by hand on the brain. */
+  async uncommitted(): Promise<string[]> {
+    const res = await this.git(["status", "--porcelain"]);
+    return res.stdout
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => l.slice(3));
+  }
+
   async log(limit = 50, path?: string): Promise<Commit[]> {
     const args = ["log", `-n${limit}`, "--format=%x1e%H%x1f%an%x1f%aI%x1f%s", "--name-only"];
     if (path) args.push("--", this.resolve(path).rel);

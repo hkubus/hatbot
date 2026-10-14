@@ -10,6 +10,7 @@ Scripts that set up Hatbot on the Proxmox host (PLAN.md §9).
 | `hatbot-update.sh` | inside `hatbot-brain`, as root | the Update button in Settings: pulls from git, updates desktop-agent, then runs `brain-deploy.sh` |
 | `desktop-provision.sh` | inside `hatbot-desktop` | `desk` user, Xvnc + XFCE, Chromium, Bun, firewall |
 | `verify.sh` | on the host, as root | checks isolation, token permissions, snapshots and backups; changes nothing |
+| `smoke.sh` | anywhere, with an API token | Settings → Check everything from a shell: the API, desktop, plugins, notifications; changes nothing |
 | `pct-exec-setup.sh` | on the host, as root | optional: lets Hatbot run commands in your containers (`ssh_pct_exec`) |
 | `test-firewall.sh` | anywhere, as root | tests the desktop firewall in throwaway network namespaces |
 

@@ -12,7 +12,7 @@ import type {
 import { Browser, BrowserError } from "./browser";
 import { context, inspect } from "./cdp";
 import { browserKey } from "./keys";
-import { useProfile } from "./profile";
+import { runningProfile, useProfile } from "./profile";
 import { SHELL_SOCKET } from "./shell";
 import { ActionError, act, LiveCapture, screenSize, screenshot, xdotool, zoom } from "./x11";
 
@@ -31,6 +31,8 @@ const version = (() => {
 /** Set by systemd's StateDirectory=; an archive dropped here is installed by a root service. */
 const stateDir = process.env.STATE_DIRECTORY;
 const MAX_UPDATE_BYTES = 10 * 1024 * 1024;
+/** Endpoints added since the first deploy; the brain's checks say when the desktop is behind. */
+const FEATURES = ["profiles", "exec", "files"];
 
 const size = await screenSize();
 const live = new LiveCapture(size);
@@ -49,6 +51,15 @@ const authorized = (req: Request) => {
   return got.length === want.length && timingSafeEqual(got, want);
 };
 const json = (body: unknown, status = 200) => Response.json(body, { status });
+const health = (): AgentStatus => ({
+  ok: true,
+  ...size,
+  locked,
+  version,
+  profile: runningProfile(),
+  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  features: FEATURES,
+});
 const image = (bytes: Uint8Array) =>
   new Response(bytes, { headers: { "content-type": "image/webp", "cache-control": "no-store" } });
 
@@ -107,7 +118,7 @@ const server = Bun.serve<{ off?: () => void }>({
     try {
       switch (route) {
         case "GET /health":
-          return json({ ok: true, ...size, locked, version } satisfies AgentStatus);
+          return json(health());
         case "POST /update": {
           // A new copy of this app from the brain's updater (the Update button in Settings).
           // hatbot-desktop-agent-update.path picks it up and installs it as root, then restarts us.
@@ -214,10 +225,10 @@ const server = Bun.serve<{ off?: () => void }>({
         }
         case "POST /lock":
           locked = true;
-          return json({ ok: true, ...size, locked, version } satisfies AgentStatus);
+          return json(health());
         case "POST /unlock":
           locked = false;
-          return json({ ok: true, ...size, locked, version } satisfies AgentStatus);
+          return json(health());
         case "GET /live":
           if (srv.upgrade(req, { data: {} })) return undefined;
           return json({ error: "expected a WebSocket" }, 400);

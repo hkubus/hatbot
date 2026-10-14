@@ -4,6 +4,7 @@ import type { Archive } from "./archive";
 import type { Attachments } from "./attachments";
 import type { AuthService, FailureLimiter, Principal } from "./auth/service";
 import type { Bots } from "./bots";
+import type { Checks } from "./checks";
 import type { Config } from "./config";
 import type { Db } from "./db";
 import type { Desktop } from "./desktop/service";
@@ -42,6 +43,7 @@ export type Deps = {
   triggers: Triggers;
   plugins: Plugins;
   teach: Teach;
+  checks: Checks;
 };
 
 export type AppEnv = {

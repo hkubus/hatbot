@@ -1,5 +1,5 @@
 // The archive on the HDD mount (PLAN.md §7.3): screenshots, kept forever.
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, statfs } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 
 export class Archive {
@@ -56,5 +56,15 @@ export class Archive {
   async remove(rel: string) {
     const f = this.file(rel);
     if (f?.name) await rm(f.name, { force: true });
+  }
+
+  /** Writes and removes a file, for the self-check; the free space left, in bytes. */
+  async probe(): Promise<number> {
+    await mkdir(this.dir, { recursive: true });
+    const path = join(this.dir, ".check");
+    await Bun.write(path, "ok");
+    await rm(path, { force: true });
+    const fs = await statfs(this.dir);
+    return fs.bavail * fs.bsize;
   }
 }
