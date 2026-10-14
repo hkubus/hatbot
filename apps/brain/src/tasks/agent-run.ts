@@ -22,13 +22,12 @@ import {
   webReads,
 } from "../agent/tools";
 import { type Outcome, ownerNote } from "../approvals";
-import { sizeText } from "../attachments";
 import { promptFor } from "../bots";
-import { DesktopError } from "../desktop/client";
 import type { CallContext, PluginTool, Verdict } from "../plugins/plugin";
 import { describeCall, runPluginTool, untrustedDefinitions, verdictFor } from "../plugins/registry";
 import { BudgetError, priceOf } from "../spend";
 import { Stop, UPDATES_MODELS } from "./desktop-run";
+import { SEND_TO_CHAT_DESCRIPTION, SendToChat, sendToChat } from "./send-to-chat";
 import type { Tasks } from "./service";
 
 const MAX_STEPS = 30;
@@ -75,33 +74,6 @@ const NotifyOwner = z.object({
   message: z.string().min(1).max(500).describe("What the owner should know now, in a line or two"),
 });
 
-const SendToChat = z
-  .object({
-    name: z
-      .string()
-      .min(1)
-      .max(200)
-      .optional()
-      .describe("The file's name, with its type: \"cpu-week.json\". A path's own name if unset"),
-    content: z
-      .string()
-      .min(1)
-      .max(400_000)
-      .optional()
-      .describe("The file's text, written out: JSON, CSV or the like"),
-    path: z
-      .string()
-      .min(1)
-      .max(500)
-      .optional()
-      .describe("Or a file in the desktop's sandbox, relative to its home as code_run sees it"),
-  })
-  .refine((v) => !v.content !== !v.path, "Give either content or path.")
-  .refine((v) => !v.content || v.name, "A file written out with content needs a name.");
-
-/** Files one task may hand the chat. */
-const MAX_CHAT_FILES = 5;
-
 /** Notifications one task may send before it ends; its result notifies on its own. */
 const MAX_NOTIFICATIONS = 5;
 
@@ -128,8 +100,7 @@ const CORE_TOOLS: Anthropic.Beta.BetaTool[] = [
   }),
   toolParam({
     name: "send_to_chat",
-    description:
-      "Hand the bot in the chat a file to use when it's told how this task ended: data for it to show the owner, like a JSON series to draw as a chart, or a CSV table. Write it out (content) or take it from the sandbox (path). The owner doesn't get it as a file; send_file is for that. Text up to 400 KB and images are read whole; the bot reaches bigger files through its sandbox.",
+    description: SEND_TO_CHAT_DESCRIPTION,
     schema: SendToChat,
   }),
   toolParam({
@@ -172,7 +143,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const sources = new Set<string>();
   let slot = false;
   let notified = 0;
-  let handed = 0;
   // Fixed for the whole run: the tool list is part of the prompt cache.
   // A bot gets only the plugins it may use.
   const pluginTools = new Map<string, PluginTool>(
@@ -212,45 +182,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     content,
     ...(isError ? { is_error: true } : {}),
   });
-
-  /** send_to_chat: a file on the task that only the bot in the chat reads. */
-  const sendToChat = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
-    const p = SendToChat.safeParse(call.input);
-    if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
-    if (!attachments) return result(call, "Files can't be handed to the chat here.", true);
-    if (handed >= MAX_CHAT_FILES)
-      return result(call, `Not sent: a task hands the chat at most ${MAX_CHAT_FILES} files.`, true);
-    const { name, content, path } = p.data;
-    try {
-      const a = content
-        ? await attachments.save({
-            bytes: new TextEncoder().encode(content),
-            name: name as string,
-            mediaType: "",
-            from: "hatbot",
-            taskId: id,
-            forChat: true,
-          })
-        : ctx.desktop?.configured
-          ? await attachments.fromDesktop(
-              ctx.desktop,
-              { path, name },
-              { taskId: id, forChat: true },
-            )
-          : null;
-      if (!a)
-        return result(call, "The desktop isn't set up: write the file out with content.", true);
-      handed++;
-      tasks.addStep(id, { kind: "action", name: "send_to_chat", detail: a.name, url: null });
-      return result(
-        call,
-        `Handed "${a.name}" (${a.mediaType}, ${sizeText(a.size)}) to the chat. The bot there gets it with your result; say in your summary what it holds.`,
-      );
-    } catch (err) {
-      if (err instanceof DesktopError) return result(call, err.message, true);
-      throw err;
-    }
-  };
 
   const desktopTask = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
     const p = DesktopTaskInput.safeParse(call.input);
@@ -654,7 +585,12 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
             tasks.addStep(id, { kind: "action", name: "send_file", detail: r.content, url: null });
           return result(call, r.content, r.isError);
         }
-        if (call.name === "send_to_chat") return sendToChat(call);
+        if (call.name === "send_to_chat") {
+          const p = SendToChat.safeParse(call.input);
+          if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+          const r = await sendToChat(tasks, id, p.data, ctx.desktop);
+          return result(call, r.text, r.isError);
+        }
         if (call.name === "notify_owner") {
           const p = NotifyOwner.safeParse(call.input);
           if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
