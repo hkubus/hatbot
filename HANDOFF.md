@@ -79,6 +79,11 @@ These came out of the M4 security review.
 - **Checked:** the web views in headless Chromium (chat list, bot and group pages, the schedule's "Runs as", @ autocomplete, sender names). The iOS views were only syntax-checked.
 - **Not tried:** two bots answering in a group with the real model, and per-bot profiles on the real desktop.
 
+## Copying files (built 2026-10-14, not tried live)
+- `ssh_copy_file` in the SSH plugin copies any file up to 25 MB between hosts, containers on a Proxmox host (through `hatbot-pct-exec`), the desktop's sandbox, and the chat: the owner's attachments in, or out to the owner under the reply or on the task (`CallContext.sendFile`). Plugins get the sandbox and the chat's files as `PluginContext.files`.
+- Writes on a host follow `ssh_write_file`'s rules; in a container, outside /root and /tmp asks. Only a write on a host counts against the chat's two changes. A host's file copied into the sandbox taints the conversation, as `ssh_read_file` does. In a tainted conversation, sending to the owner asks too, like every write.
+- Bytes go over ssh's stdin and stdout, so nothing new is needed on hosts; the container path relies on `pct exec` passing stdin through, untested on the real host.
+
 ## 4. Later (not v1, don't start without the owner)
 - **GitHub plugin**, next to Forgejo. Same shape as `apps/brain/src/plugins/forgejo/`.
 - **After v1** (PLAN §11): email via Proton Bridge, a heartbeat that acts on its own, an open-source release.

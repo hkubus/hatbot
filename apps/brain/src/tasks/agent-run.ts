@@ -23,7 +23,7 @@ import {
 } from "../agent/tools";
 import { type Outcome, ownerNote } from "../approvals";
 import { promptFor } from "../bots";
-import type { PluginTool, Verdict } from "../plugins/plugin";
+import type { CallContext, PluginTool, Verdict } from "../plugins/plugin";
 import { describeCall, runPluginTool, untrustedDefinitions, verdictFor } from "../plugins/registry";
 import { BudgetError, priceOf } from "../spend";
 import { Stop, UPDATES_MODELS } from "./desktop-run";
@@ -130,6 +130,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   if (!task) return;
   const ctx = tasks.toolContext(task);
   const bot = tasks.botOf(task);
+  const { attachments } = ctx;
   const messages: Anthropic.Beta.BetaMessageParam[] = [];
   const children = new Set<number>();
   /** Untrusted things the task has read, for approvals (PLAN.md §6.2). */
@@ -376,7 +377,14 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     t: PluginTool,
     call: Anthropic.Beta.BetaToolUseBlock,
   ): Promise<BlockParam> => {
-    const cc = { task: { id, tainted: task.tainted }, signal };
+    const cc: CallContext = {
+      task: { id, tainted: task.tainted },
+      signal,
+      sendFile: attachments
+        ? (name, bytes) =>
+            attachments.save({ bytes, name, mediaType: "", from: "hatbot", taskId: id })
+        : undefined,
+    };
     const what = describeCall(t, call.input);
     const verdict = verdictFor(t, call.input, cc);
     let note: string | null = null;

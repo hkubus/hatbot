@@ -9,6 +9,7 @@ import {
   type CallContext,
   type Plugin,
   PluginError,
+  type PluginFiles,
   type PluginInstance,
   type PluginTool,
   type Verdict,
@@ -33,6 +34,7 @@ export type PluginsDeps = {
   db: Db;
   events: EventBus;
   env?: Record<string, string | undefined>;
+  files?: PluginFiles;
   /** The core's own tool names; plugin tools can't take them. */
   reserved: string[];
 };
@@ -171,7 +173,12 @@ export class Plugins {
     let state: PluginState;
     let message: string | null = null;
     try {
-      instance = await s.plugin.start({ config: s.config, env: this.env, db: this.d.db });
+      instance = await s.plugin.start({
+        config: s.config,
+        env: this.env,
+        db: this.d.db,
+        files: this.d.files,
+      });
       this.checkTools(s.plugin, instance.tools);
       state = instance.status.state;
       if (instance.status.state !== "ready") message = instance.status.message;
