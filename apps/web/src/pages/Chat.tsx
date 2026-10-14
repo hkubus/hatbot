@@ -24,6 +24,7 @@ import { Chart, ChartPending } from "../chart";
 import { Icon } from "../icons";
 import { navigate } from "../router";
 import {
+  botName,
   chatName,
   currentChat,
   decideApproval,
@@ -402,6 +403,9 @@ function Files({ list }: { list: Attachment[] }) {
 }
 
 /** A file in the composer: uploading, uploaded, or failed. */
+/** A line in the menu over the composer: a command, or in a group a bot to @mention. */
+type Option = { key: string; label: React.ReactNode; desc: string; choose: () => void };
+
 type Draft = {
   key: number;
   name: string;
@@ -499,6 +503,12 @@ export function Chat() {
   const incognito = useStore((s) => s.incognito);
   const conversationId = useStore((s) => s.conversationId);
   const name = useStore((s) => chatName(s, currentChat(s)));
+  // A group's bots, for the names above their messages and @ in the composer.
+  const members = useStore((s) => {
+    const c = currentChat(s);
+    return c?.kind === "group" ? c.botIds : null;
+  });
+  const bots = useStore((s) => s.bots);
   const [draft, setDraft] = useState("");
   // The command list under "/…": which one is picked, and whether Escape closed it.
   const [pick, setPick] = useState(0);
@@ -615,7 +625,6 @@ export function Chat() {
   const commands = menuClosed
     ? []
     : matchingCommands(draft).filter((c) => !incognito || c.name === "new" || c.name === "stop");
-  const picked = commands[Math.min(pick, commands.length - 1)];
   // One that needs more goes in the composer for you to finish; the rest run at once.
   const choose = (c: (typeof commands)[number]) => {
     if (c.args.startsWith("<")) {
@@ -623,6 +632,36 @@ export function Chat() {
       textarea.current?.focus();
     } else void send(`/${c.name}`);
   };
+  // In a group, "@" at the end offers its bots.
+  const at = members && !menuClosed ? /(?:^|\s)@([^\s@]*)$/.exec(draft) : null;
+  const typed = at?.[1]?.toLowerCase() ?? "";
+  const mentionable = at
+    ? (members ?? []).filter(
+        (id) => id.startsWith(typed) || botName(getState(), id).toLowerCase().startsWith(typed),
+      )
+    : [];
+  const options: Option[] = mentionable.length
+    ? mentionable.map((id) => ({
+        key: id,
+        label: `@${bots[id]?.name ?? id}`,
+        desc: bots[id]?.instructions.split("\n")[0] ?? "",
+        choose: () => {
+          setDraft(`${draft.slice(0, draft.length - typed.length - 1)}@${bots[id]?.name ?? id} `);
+          textarea.current?.focus();
+        },
+      }))
+    : commands.map((c) => ({
+        key: c.name,
+        label: (
+          <>
+            /{c.name}
+            {c.args && <span className="args"> {c.args}</span>}
+          </>
+        ),
+        desc: c.description,
+        choose: () => choose(c),
+      }));
+  const picked = options[Math.min(pick, options.length - 1)];
 
   const send = async (command?: string) => {
     const text = (command ?? draft).trim();
@@ -658,9 +697,18 @@ export function Chat() {
     lastDay = day;
     return show ? <div className="day">{day}</div> : null;
   };
+  // In a group, the bot's name above each run of its messages.
+  let lastSender: string | null = null;
+  const senderBefore = (m: ThreadMessage) => {
+    const sender = m.role === "assistant" ? m.botId : null;
+    const show = members && sender && sender !== lastSender && m.kind !== "command";
+    lastSender = sender;
+    return show ? <div className="msg-sender">{bots[sender]?.name ?? sender}</div> : null;
+  };
   const row = (m: ThreadMessage) => (
     <Fragment key={m.id}>
       {dayBefore(m)}
+      {senderBefore(m)}
       <Message
         m={m}
         progress={progress[m.id]}
@@ -738,24 +786,21 @@ export function Chat() {
             {error}
           </div>
         )}
-        {commands.length > 0 && (
+        {options.length > 0 && (
           <div className="command-menu" role="listbox">
-            {commands.map((c) => (
+            {options.map((o) => (
               <button
-                key={c.name}
+                key={o.key}
                 type="button"
                 role="option"
-                aria-selected={c === picked}
-                className={c === picked ? "on" : ""}
+                aria-selected={o === picked}
+                className={o === picked ? "on" : ""}
                 // Keeps the focus in the composer.
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => choose(c)}
+                onClick={o.choose}
               >
-                <span className="name">
-                  /{c.name}
-                  {c.args && <span className="args"> {c.args}</span>}
-                </span>
-                <span className="desc">{c.description}</span>
+                <span className="name">{o.label}</span>
+                <span className="desc">{o.desc}</span>
               </button>
             ))}
           </div>
@@ -818,12 +863,12 @@ export function Chat() {
                 const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
                 if (step) {
                   e.preventDefault();
-                  const at = commands.indexOf(picked);
-                  return setPick((at + step + commands.length) % commands.length);
+                  const i = options.indexOf(picked);
+                  return setPick((i + step + options.length) % options.length);
                 }
                 if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
                   e.preventDefault();
-                  return choose(picked);
+                  return picked.choose();
                 }
                 if (e.key === "Escape") return setMenuClosed(true);
               }

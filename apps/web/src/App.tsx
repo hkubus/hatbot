@@ -5,6 +5,7 @@ import { Icon, type IconName } from "./icons";
 import { LiveView } from "./live";
 import { BotPage } from "./pages/Bot";
 import { Chat } from "./pages/Chat";
+import { GroupPage } from "./pages/Group";
 import { Login, Setup } from "./pages/Login";
 import { Memory } from "./pages/Memory";
 import { SchedulesView } from "./pages/Schedules";
@@ -44,7 +45,10 @@ const viewOf = (path: string) =>
     path.startsWith("/triggers/")
       ? v.path === "/schedules"
       : v.path === "/"
-        ? path === "/" || path.startsWith("/chat/") || path.startsWith("/bots/")
+        ? path === "/" ||
+          path.startsWith("/chat/") ||
+          path.startsWith("/bots/") ||
+          path.startsWith("/groups/")
         : path === v.path || path.startsWith(`${v.path}/`),
   ) ?? VIEWS[0];
 
@@ -94,6 +98,8 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const teachId = /^\/memory\/teach\/(\d+)$/.exec(path)?.[1];
   const approvalId = Number(params.get("approval"));
   const botPage = /^\/bots\/([a-z0-9-]+)$/.exec(path)?.[1];
+  const groupPage = /^\/groups\/(new|\d+)$/.exec(path)?.[1];
+  const manyBots = useStore((s) => s.botIds.length > 1);
   const chatId = path === "/" ? HATBOT_CHAT : Number(/^\/chat\/(\d+)$/.exec(path)?.[1] ?? 0);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: closes on every navigation
@@ -179,6 +185,16 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               <Icon name="plus" />
               <span>New bot</span>
             </button>
+            {manyBots && (
+              <button
+                type="button"
+                className={`nav-item ${groupPage === "new" ? "active" : ""}`}
+                onClick={() => navigate("/groups/new")}
+              >
+                <Icon name="users" />
+                <span>New group</span>
+              </button>
+            )}
           </nav>
           <nav className="nav nav-views">
             {VIEWS.filter((v) => v.path !== "/").map((v) => (
@@ -213,14 +229,26 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
                 </button>
               </>
             ) : (
-              <h1>{botPage ? (botPage === "new" ? "New bot" : "Bot") : view.title}</h1>
+              <h1>
+                {botPage
+                  ? botPage === "new"
+                    ? "New bot"
+                    : "Bot"
+                  : groupPage
+                    ? groupPage === "new"
+                      ? "New group"
+                      : "Group"
+                    : view.title}
+              </h1>
             )}
             <span className="spacer" />
-            {chat?.kind === "direct" && chatId > 0 && (
+            {chat && chatId > 0 && (
               <button
                 type="button"
                 className="tb-btn"
-                onClick={() => navigate(`/bots/${chat.botIds[0]}`)}
+                onClick={() =>
+                  navigate(chat.kind === "group" ? `/groups/${chat.id}` : `/bots/${chat.botIds[0]}`)
+                }
                 title={`About ${title}`}
               >
                 <Icon name="sliders" />
@@ -275,10 +303,22 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               >
                 <span className="name">New bot</span>
               </button>
+              {manyBots && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setChatMenu(false);
+                    navigate("/groups/new");
+                  }}
+                >
+                  <span className="name">New group</span>
+                </button>
+              )}
             </div>
           )}
           {chatId > 0 && <Chat key={chatId} />}
           {botPage && <BotPage key={botPage} id={botPage} toast={toast} />}
+          {groupPage && <GroupPage key={groupPage} id={groupPage} toast={toast} />}
           {view.path === "/tasks" &&
             (taskId ? (
               <TaskDetail key={taskId} id={Number(taskId)} live={params.get("live") === "1"} />

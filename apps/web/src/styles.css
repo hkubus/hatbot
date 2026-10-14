@@ -3517,6 +3517,13 @@ pre.payload {
 .command-menu .desc {
   margin-left: auto;
 }
+/* In a group, who wrote the run of messages below. */
+.msg-sender {
+  margin: 10px 0 -4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
 /* What came of a command: a quiet line, not a message. */
 .msg-note {
   align-self: center;

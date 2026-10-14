@@ -221,6 +221,27 @@ export async function deleteBot(id: string) {
   set({ botIds: state.botIds.filter((b) => b !== id) });
   await loadBots();
 }
+/** A group chat of `botIds` and you. */
+export async function createGroup(body: { title: string; botIds: string[] }) {
+  const c = await api<Conversation>("/conversations", { body });
+  putConversation(c);
+  return c;
+}
+export async function saveGroup(id: number, patch: { title?: string; botIds?: string[] }) {
+  putConversation(
+    await api<Conversation>(`/conversations/${id}`, { method: "PATCH", body: patch }),
+  );
+}
+export async function deleteGroup(id: number) {
+  await api(`/conversations/${id}`, { method: "DELETE" });
+  set({ conversations: state.conversations.filter((c) => c.id !== id) });
+}
+const putConversation = (c: Conversation) =>
+  set({
+    conversations: state.conversations.some((x) => x.id === c.id)
+      ? state.conversations.map((x) => (x.id === c.id ? c : x))
+      : [...state.conversations, c],
+  });
 const putBot = (b: Bot) =>
   set({
     bots: { ...state.bots, [b.id]: b },
@@ -560,14 +581,8 @@ function apply(e: HatbotEvent) {
     case "bot.deleted":
       refreshConversations();
       return set({ botIds: state.botIds.filter((id) => id !== e.id) });
-    case "conversation.updated": {
-      const known = state.conversations.some((c) => c.id === e.conversation.id);
-      return set({
-        conversations: known
-          ? state.conversations.map((c) => (c.id === e.conversation.id ? e.conversation : c))
-          : [...state.conversations, e.conversation],
-      });
-    }
+    case "conversation.updated":
+      return putConversation(e.conversation);
     case "conversation.deleted":
       return set({ conversations: state.conversations.filter((c) => c.id !== e.id) });
   }
