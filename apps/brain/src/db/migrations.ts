@@ -372,4 +372,8 @@ export const migrations: string[] = [
   ALTER TABLE spend_ledger ADD COLUMN bot_id TEXT;
   UPDATE spend_ledger SET bot_id = 'hatbot';
   `,
+  /* 21: a bot's icon and colour */ `
+  ALTER TABLE bots ADD COLUMN icon TEXT NOT NULL DEFAULT 'hat';
+  ALTER TABLE bots ADD COLUMN color TEXT NOT NULL DEFAULT 'amber';
+  `,
 ];

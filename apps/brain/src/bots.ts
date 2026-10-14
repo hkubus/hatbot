@@ -2,7 +2,7 @@
 // Hatbot is the first, and can't be deleted.
 
 import type { CreateBot, UpdateBot } from "@hatbot/shared";
-import { type Bot, HATBOT_ID } from "@hatbot/shared";
+import { BOT_COLORS, type Bot, HATBOT_ID } from "@hatbot/shared";
 import type { z } from "zod";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
@@ -11,6 +11,8 @@ import { type Author, HATBOT } from "./memory/store";
 type Row = {
   id: string;
   name: string;
+  icon: Bot["icon"];
+  color: Bot["color"];
   instructions: string;
   chat_model: Bot["chatModel"];
   chat_effort: Bot["chatEffort"];
@@ -21,6 +23,8 @@ type Row = {
 const toBot = (r: Row): Bot => ({
   id: r.id,
   name: r.name,
+  icon: r.icon,
+  color: r.color,
   instructions: r.instructions,
   chatModel: r.chat_model,
   chatEffort: r.chat_effort,
@@ -96,12 +100,14 @@ export class Bots {
     if (taken) throw new BotError(`There's already a bot called ${taken.name}.`);
     this.db
       .query(
-        `INSERT INTO bots (id, name, instructions, chat_model, chat_effort, plugins, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO bots (id, name, icon, color, instructions, chat_model, chat_effort, plugins, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
         input.name,
+        input.icon ?? "hat",
+        input.color ?? this.freeColor(),
         input.instructions,
         input.chatModel,
         input.chatEffort,
@@ -123,10 +129,12 @@ export class Bots {
     const next = { ...bot, ...patch };
     this.db
       .query(
-        "UPDATE bots SET name = ?, instructions = ?, chat_model = ?, chat_effort = ?, plugins = ? WHERE id = ?",
+        "UPDATE bots SET name = ?, icon = ?, color = ?, instructions = ?, chat_model = ?, chat_effort = ?, plugins = ? WHERE id = ?",
       )
       .run(
         next.name,
+        next.icon,
+        next.color,
         next.instructions,
         next.chatModel,
         next.chatEffort,
@@ -151,6 +159,13 @@ export class Bots {
     })();
     this.events.emit({ type: "bot.deleted", id });
     return true;
+  }
+
+  /** The first colour no bot has, so a new one stands apart; once they're all taken, the least used. */
+  private freeColor(): Bot["color"] {
+    const used = this.list().map((b) => b.color);
+    const count = (c: Bot["color"]) => used.filter((u) => u === c).length;
+    return BOT_COLORS.reduce((best, c) => (count(c) < count(best) ? c : best));
   }
 
   private changed(id: string): Bot {

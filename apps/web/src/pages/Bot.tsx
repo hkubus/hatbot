@@ -1,14 +1,16 @@
 // A bot's page (PLAN.md §14): its name, role, model and plugins. "new" makes one.
-import { type Bot, HATBOT_ID } from "@hatbot/shared";
+import { BOT_COLORS, BOT_ICONS, type Bot, HATBOT_ID } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { ApiError } from "../api";
-import { Icon } from "../icons";
+import { BotMark, Icon } from "../icons";
 import { navigate } from "../router";
 import { createBot, deleteBot, loadPlugins, saveBot, useStore } from "../store";
 import { Switch } from "../switch";
 
 type Form = {
   name: string;
+  icon: Bot["icon"];
+  color: Bot["color"];
   instructions: string;
   chatModel: Bot["chatModel"];
   chatEffort: Bot["chatEffort"];
@@ -18,6 +20,8 @@ type Form = {
 
 const EMPTY: Form = {
   name: "",
+  icon: "sparkles",
+  color: "amber",
   instructions: "",
   chatModel: null,
   chatEffort: null,
@@ -34,6 +38,12 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
     s.conversations.find((c) => c.kind === "direct" && c.botIds[0] === id),
   );
   const plugins = useStore((s) => s.plugins);
+  // A new bot starts in a colour none of the others has yet.
+  const freeColor = useStore((s) => {
+    const used = s.botIds.map((b) => s.bots[b]?.color);
+    const count = (c: Bot["color"]) => used.filter((u) => u === c).length;
+    return BOT_COLORS.reduce((best, c) => (count(c) < count(best) ? c : best));
+  });
   const [form, setForm] = useState<Form>(EMPTY);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -44,6 +54,10 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
   useEffect(() => {
     if (stored) setForm({ ...stored });
   }, [stored]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only when the page opens, not as bots change
+  useEffect(() => {
+    if (isNew) setForm({ ...EMPTY, color: freeColor });
+  }, [isNew]);
 
   if (!isNew && !stored) return <section className="view" />;
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }));
@@ -51,6 +65,8 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
     isNew ||
     (stored !== undefined &&
       (form.name !== stored.name ||
+        form.icon !== stored.icon ||
+        form.color !== stored.color ||
         form.instructions !== stored.instructions ||
         form.chatModel !== stored.chatModel ||
         form.chatEffort !== stored.chatEffort ||
@@ -125,6 +141,40 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
               onChange={(e) => set({ name: e.target.value })}
             />
           </label>
+          <fieldset className="bot-field">
+            <legend className="label">Icon</legend>
+            <div className="bot-picks">
+              {BOT_ICONS.map((icon) => (
+                <button
+                  type="button"
+                  key={icon}
+                  aria-pressed={form.icon === icon}
+                  aria-label={icon}
+                  className={`bot-pick ${form.icon === icon ? "on" : ""}`}
+                  onClick={() => set({ icon })}
+                >
+                  <BotMark bot={{ icon, color: form.color }} />
+                </button>
+              ))}
+            </div>
+          </fieldset>
+          <fieldset className="bot-field">
+            <legend className="label">Colour</legend>
+            <div className="bot-picks">
+              {BOT_COLORS.map((color) => (
+                <button
+                  type="button"
+                  key={color}
+                  aria-pressed={form.color === color}
+                  aria-label={color}
+                  className={`bot-pick ${form.color === color ? "on" : ""}`}
+                  onClick={() => set({ color })}
+                >
+                  <span className="swatch" style={{ background: `var(--bot-${color})` }} />
+                </button>
+              ))}
+            </div>
+          </fieldset>
           <label>
             <span className="label">Role</span>
             <textarea

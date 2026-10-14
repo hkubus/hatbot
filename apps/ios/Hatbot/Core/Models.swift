@@ -284,6 +284,8 @@ struct Bot: Codable, Identifiable, Equatable, Sendable {
 
   let id: String
   var name: String
+  var icon: Icon = .hat
+  var color: Tint = .amber
   /// Its role, in the owner's words.
   var instructions: String
   /// nil: as in Settings.
@@ -292,6 +294,52 @@ struct Bot: Codable, Identifiable, Equatable, Sendable {
   /// nil: every plugin that's on.
   var plugins: [String]?
   var createdAt: String
+
+  /// BOT_ICONS in packages/shared, each with its SF Symbol.
+  enum Icon: String, LenientEnum, CaseIterable {
+    case hat, sparkles, brain, code, terminal, server, wrench, shield, globe, house, book, pen, chart
+    case mail, cart, cat, heart
+    static let fallback = Icon.hat
+
+    var symbol: String {
+      switch self {
+      case .hat: "hat.widebrim"
+      case .code: "chevron.left.forwardslash.chevron.right"
+      case .server: "server.rack"
+      case .wrench: "wrench.adjustable"
+      case .pen: "pencil"
+      case .chart: "chart.xyaxis.line"
+      case .mail: "envelope"
+      default: rawValue
+      }
+    }
+  }
+
+  /// BOT_COLORS in packages/shared: Apple's system colours, with Hatbot's amber first.
+  enum Tint: String, LenientEnum, CaseIterable {
+    case amber, red, pink, purple, indigo, blue, teal, green, gray
+    static let fallback = Tint.amber
+  }
+}
+
+extension Bot {
+  private enum CodingKeys: String, CodingKey {
+    case id, name, icon, color, instructions, chatModel, chatEffort, plugins, createdAt
+  }
+
+  /// The icon and colour are missing on brains from before them.
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    id = try c.decode(String.self, forKey: .id)
+    name = try c.decode(String.self, forKey: .name)
+    icon = try c.decodeIfPresent(Icon.self, forKey: .icon) ?? .hat
+    color = try c.decodeIfPresent(Tint.self, forKey: .color) ?? .amber
+    instructions = try c.decode(String.self, forKey: .instructions)
+    chatModel = try c.decodeIfPresent(AppSettings.ChatModel.self, forKey: .chatModel)
+    chatEffort = try c.decodeIfPresent(AppSettings.Effort.self, forKey: .chatEffort)
+    plugins = try c.decodeIfPresent([String].self, forKey: .plugins)
+    createdAt = try c.decode(String.self, forKey: .createdAt)
+  }
 }
 
 /// A plugin, as far as a bot's page needs it.

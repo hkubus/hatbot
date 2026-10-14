@@ -144,9 +144,11 @@ struct Sidebar<Content: View>: View {
         } else {
           // The chats, each bot's own and the groups, in place of one Chat.
           ForEach(store.conversations) { c in
+            // A bot's own chat goes by its icon, in its colour.
+            let bot = c.kind == .direct ? c.botIds.first.flatMap { store.bots[$0] } : nil
             row(
-              store.chatName(c), icon: c.kind == .group ? "person.3" : "bubble.left",
-              selected: tab == .chat && c.id == store.conversationId, count: c.unread
+              store.chatName(c), icon: bot?.icon.symbol ?? (c.kind == .group ? "person.3" : "bubble.left"),
+              tint: bot?.color.color, selected: tab == .chat && c.id == store.conversationId, count: c.unread
             ) {
               tab = .chat
               Task { await store.openConversation(c.id) }
@@ -195,7 +197,7 @@ struct Sidebar<Content: View>: View {
   }
 
   private func row(
-    _ title: String, icon: String, selected: Bool, count: Int, color: Color = .brand,
+    _ title: String, icon: String, tint: Color? = nil, selected: Bool, count: Int, color: Color = .brand,
     action: @escaping () -> Void
   ) -> some View {
     Button {
@@ -203,7 +205,7 @@ struct Sidebar<Content: View>: View {
       setOpen(false)
     } label: {
       HStack(spacing: 14) {
-        Image(systemName: icon).frame(width: 26)
+        Image(systemName: icon).frame(width: 26).foregroundStyle(tint ?? (selected ? Color.brand : .primary))
         Text(title).lineLimit(1)
         Spacer()
         if count > 0 { Count(n: count, color: color) }

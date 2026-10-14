@@ -15,6 +15,8 @@ struct BotView: View {
 
   struct Form: Equatable {
     var name = ""
+    var icon = Bot.Icon.sparkles
+    var color = Bot.Tint.amber
     var instructions = ""
     var chatModel: AppSettings.ChatModel?
     var chatEffort: AppSettings.Effort?
@@ -23,6 +25,8 @@ struct BotView: View {
     init() {}
     init(_ b: Bot) {
       name = b.name
+      icon = b.icon
+      color = b.color
       instructions = b.instructions
       chatModel = b.chatModel
       chatEffort = b.chatEffort
@@ -32,7 +36,8 @@ struct BotView: View {
     func change(rename: Bool) -> AppStore.BotChange {
       AppStore.BotChange(
         name: rename ? name.trimmingCharacters(in: .whitespacesAndNewlines) : nil,
-        instructions: instructions, chatModel: chatModel, chatEffort: chatEffort, plugins: plugins)
+        instructions: instructions, chatModel: chatModel, chatEffort: chatEffort, plugins: plugins,
+        icon: icon, color: color)
     }
   }
 
@@ -45,6 +50,41 @@ struct BotView: View {
       if let error { Text(error).foregroundStyle(.red) }
       Section {
         TextField("Name", text: $form.name).disabled(isHatbot)
+      }
+      Section("Icon") {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 40))], spacing: 8) {
+          ForEach(Bot.Icon.allCases, id: \.self) { icon in
+            Button { form.icon = icon } label: {
+              Image(systemName: icon.symbol)
+                .font(.title3)
+                .foregroundStyle(form.color.color)
+                .frame(width: 40, height: 40)
+                .background(form.icon == icon ? Color.secondary.opacity(0.18) : .clear, in: .rect(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(icon.rawValue)
+            .accessibilityAddTraits(form.icon == icon ? .isSelected : [])
+          }
+        }
+        .padding(.vertical, 4)
+      }
+      Section("Colour") {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 40))], spacing: 8) {
+          ForEach(Bot.Tint.allCases, id: \.self) { tint in
+            Button { form.color = tint } label: {
+              Circle()
+                .fill(tint.color)
+                .frame(width: 26, height: 26)
+                .padding(4)
+                .overlay { if form.color == tint { Circle().strokeBorder(Color.secondary, lineWidth: 1.5) } }
+                .frame(width: 40, height: 40)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(tint.rawValue)
+            .accessibilityAddTraits(form.color == tint ? .isSelected : [])
+          }
+        }
+        .padding(.vertical, 4)
       }
       Section("Role") {
         TextField(
@@ -121,7 +161,15 @@ struct BotView: View {
       }
     }
     .task(id: id) {
-      if let stored { form = Form(stored) }
+      if let stored {
+        form = Form(stored)
+      } else {
+        // A new bot starts in a colour none of the others has yet.
+        let used = store.botIds.compactMap { store.bots[$0]?.color }
+        form.color = Bot.Tint.allCases.min { a, b in
+          used.filter { $0 == a }.count < used.filter { $0 == b }.count
+        } ?? .amber
+      }
       plugins = ((try? await store.loadPluginNames()) ?? []).sorted { $0.name < $1.name }
     }
   }

@@ -310,8 +310,11 @@ final class AppStore {
     var chatModel: AppSettings.ChatModel?
     var chatEffort: AppSettings.Effort?
     var plugins: [String]?
+    /// nil: left as it is, or for a new bot, the brain picks.
+    var icon: Bot.Icon?
+    var color: Bot.Tint?
 
-    private enum Key: String, CodingKey { case name, instructions, chatModel, chatEffort, plugins }
+    private enum Key: String, CodingKey { case name, instructions, chatModel, chatEffort, plugins, icon, color }
 
     /// nil is sent as null, which means "as in Settings", except for the name.
     func encode(to encoder: Encoder) throws {
@@ -321,6 +324,8 @@ final class AppStore {
       try c.encode(chatModel, forKey: .chatModel)
       try c.encode(chatEffort, forKey: .chatEffort)
       try c.encode(plugins, forKey: .plugins)
+      try c.encodeIfPresent(icon, forKey: .icon)
+      try c.encodeIfPresent(color, forKey: .color)
     }
   }
 

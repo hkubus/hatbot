@@ -152,6 +152,25 @@ test("a bot's tasks report in its chat, and deleting it hands its schedules to H
   expect(chats.map((c) => c.botIds)).toEqual([["hatbot"]]);
 });
 
+test("a bot has an icon and a colour, a new one in a colour no other bot has", async () => {
+  const t = await testApp(new FakeModel());
+  const { cookie } = await setUpOwner(t);
+  const post = async (body: object) =>
+    (await (await t.call("POST", "/bots", body, { cookie })).json()) as Bot;
+  expect(t.bots.hatbot()).toMatchObject({ icon: "hat", color: "amber" });
+  expect(await post({ name: "Chef" })).toMatchObject({ icon: "hat", color: "red" });
+  expect(await post({ name: "Coder", icon: "code", color: "blue" })).toMatchObject({
+    icon: "code",
+    color: "blue",
+  });
+  expect((await post({ name: "Gardener" })).color).toBe("pink");
+  expect((await t.call("POST", "/bots", { name: "X", icon: "nope" }, { cookie })).status).toBe(400);
+
+  const res = await t.call("PATCH", "/bots/hatbot", { icon: "cat", color: "teal" }, { cookie });
+  expect(await res.json()).toMatchObject({ name: "Hatbot", icon: "cat", color: "teal" });
+  expect(t.bots.hatbot()).toMatchObject({ icon: "cat", color: "teal" });
+});
+
 test("a bot's id comes from its name", () => {
   expect(slugOf("Home Lab")).toBe("home-lab");
   expect(slugOf("Café")).toBe("cafe");

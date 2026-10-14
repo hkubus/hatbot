@@ -67,6 +67,16 @@
   --series-1: #c96f0a;
   --series-2: #2a78d6;
   --series-3: #138a60;
+  /* Bots' colours (BOT_COLORS): Apple's system colours. */
+  --bot-amber: var(--accent);
+  --bot-red: #ff3b30;
+  --bot-pink: #ff2d55;
+  --bot-purple: #af52de;
+  --bot-indigo: #5856d6;
+  --bot-blue: #007aff;
+  --bot-teal: #30b0c7;
+  --bot-green: #34c759;
+  --bot-gray: #8e8e93;
   --radius: 10px;
   --spring: cubic-bezier(0.32, 0.72, 0, 1);
 
@@ -108,6 +118,13 @@ html[data-theme="dark"] {
   --series-1: #d87a12;
   --series-2: #3987e5;
   --series-3: #199e70;
+  --bot-red: #ff453a;
+  --bot-pink: #ff375f;
+  --bot-purple: #bf5af2;
+  --bot-indigo: #5e5ce6;
+  --bot-blue: #0a84ff;
+  --bot-teal: #40c8e0;
+  --bot-green: #30d158;
   color-scheme: dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -145,6 +162,13 @@ html[data-theme="dark"] {
     --series-1: #d87a12;
     --series-2: #3987e5;
     --series-3: #199e70;
+    --bot-red: #ff453a;
+    --bot-pink: #ff375f;
+    --bot-purple: #bf5af2;
+    --bot-indigo: #5e5ce6;
+    --bot-blue: #0a84ff;
+    --bot-teal: #40c8e0;
+    --bot-green: #30d158;
     color-scheme: dark;
   }
 }
@@ -3535,6 +3559,44 @@ pre.payload {
 /* Chats in the sidebar, above the other views. */
 .nav-views {
   margin-top: 14px;
+}
+/* A bot's page: its icon and colour. */
+.bot-field {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.bot-field legend {
+  padding: 0;
+  margin-bottom: 5px;
+}
+.bot-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.bot-pick {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+}
+.bot-pick:hover {
+  background: rgba(127, 127, 127, 0.1);
+}
+.bot-pick.on {
+  border-color: var(--line-strong);
+  background: rgba(127, 127, 127, 0.14);
+}
+.bot-pick .swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
 }
 .nav-item .nav-name {
   min-width: 0;

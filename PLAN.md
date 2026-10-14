@@ -577,7 +577,7 @@ More than one Hatbot, like Grok Bot: several named bots, each with its own role,
 ### 14.1 Decisions
 | Area | Decision |
 |---|---|
-| Bot | A row in `bots`: id, name, instructions (its role, markdown), chat model and effort, plugin allowlist (a subset of the plugins switched on). Hatbot is bot #1 (`hatbot`), the default, and can't be deleted |
+| Bot | A row in `bots`: id, name, icon and colour (from fixed lists in `packages/shared`; iOS maps them to SF Symbols and system colours), instructions (its role, markdown), chat model and effort, plugin allowlist (a subset of the plugins switched on). Hatbot is bot #1 (`hatbot`), the default, and can't be deleted |
 | Chats | One direct chat per bot. Group chats come last (§14.4) |
 | Memory | One git repo. Each bot has `bots/<slug>/INDEX.md` for its own notes and commits under its own name; the root `INDEX.md` and `skills/` are shared, read and written by every bot. `/remember` and teach-by-showing go to the shared part |
 | Hand-offs | `ask_bot(bot, request)` runs as a task owned by the other bot, under its plugins; the result returns to the bot that asked. Hand-offs nest at most 3 deep |

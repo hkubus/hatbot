@@ -703,7 +703,14 @@ export function Chat() {
     const sender = m.role === "assistant" ? m.botId : null;
     const show = members && sender && sender !== lastSender && m.kind !== "command";
     lastSender = sender;
-    return show ? <div className="msg-sender">{bots[sender]?.name ?? sender}</div> : null;
+    return show ? (
+      <div
+        className="msg-sender"
+        style={bots[sender] ? { color: `var(--bot-${bots[sender].color})` } : undefined}
+      >
+        {bots[sender]?.name ?? sender}
+      </div>
+    ) : null;
   };
   const row = (m: ThreadMessage) => (
     <Fragment key={m.id}>

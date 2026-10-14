@@ -280,10 +280,47 @@ export const HATBOT_ID = "hatbot";
 /** A bot's id: made from its first name, and fixed after that. */
 export const BOT_ID = /^[a-z][a-z0-9-]{0,30}$/;
 
+/** The icons a bot can have. The web draws them; iOS maps them to SF Symbols. */
+export const BOT_ICONS = [
+  "hat",
+  "sparkles",
+  "brain",
+  "code",
+  "terminal",
+  "server",
+  "wrench",
+  "shield",
+  "globe",
+  "house",
+  "book",
+  "pen",
+  "chart",
+  "mail",
+  "cart",
+  "cat",
+  "heart",
+] as const;
+export type BotIcon = (typeof BOT_ICONS)[number];
+/** The colours a bot can have: Apple's system colours, with Hatbot's amber first. */
+export const BOT_COLORS = [
+  "amber",
+  "red",
+  "pink",
+  "purple",
+  "indigo",
+  "blue",
+  "teal",
+  "green",
+  "gray",
+] as const;
+export type BotColor = (typeof BOT_COLORS)[number];
+
 /** One of your bots (PLAN.md §14): its own role, chat, memory folder, plugins and browser profile. */
 export type Bot = {
   id: string;
   name: string;
+  icon: BotIcon;
+  color: BotColor;
   /** Its role, in your words. */
   instructions: string;
   /** Null: what Settings → Chat say. */
@@ -295,6 +332,8 @@ export type Bot = {
 };
 const botFields = {
   name: z.string().trim().min(1).max(40),
+  icon: z.enum(BOT_ICONS),
+  color: z.enum(BOT_COLORS),
   instructions: z.string().trim().max(8000),
   chatModel: z.enum(["claude-haiku-5-5", "claude-opus-5-5"]).nullable(),
   chatEffort: z.enum(["low", "medium"]).nullable(),
@@ -302,6 +341,9 @@ const botFields = {
 };
 export const CreateBot = z.object({
   ...botFields,
+  // Left out: a hat, in a colour no other bot has yet.
+  icon: botFields.icon.optional(),
+  color: botFields.color.optional(),
   instructions: botFields.instructions.default(""),
   chatModel: botFields.chatModel.default(null),
   chatEffort: botFields.chatEffort.default(null),

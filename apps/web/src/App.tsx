@@ -1,7 +1,7 @@
-import type { Approval, Me } from "@hatbot/shared";
+import type { Approval, Conversation, Me } from "@hatbot/shared";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { api } from "./api";
-import { Icon, type IconName } from "./icons";
+import { BotMark, Icon, type IconName } from "./icons";
 import { LiveView } from "./live";
 import { BotPage } from "./pages/Bot";
 import { Chat } from "./pages/Chat";
@@ -162,7 +162,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
                 className={`nav-item ${chatId === c.id ? "active" : ""}`}
                 onClick={() => navigate(chatPath(c.id))}
               >
-                <Icon name={c.kind === "group" ? "users" : "chat"} />
+                <ChatIcon chat={c} />
                 <span className="nav-name">{chatName(getState(), c)}</span>
                 {c.unread > 0 && <span className="count unread">{c.unread}</span>}
               </button>
@@ -396,4 +396,11 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
       </div>
     </>
   );
+}
+
+/** A bot's own chat goes by its icon; a group by the group icon. */
+function ChatIcon({ chat }: { chat: Conversation }) {
+  const bot = useStore((s) => (chat.kind === "direct" ? s.bots[chat.botIds[0] ?? ""] : undefined));
+  if (bot) return <BotMark bot={bot} />;
+  return <Icon name={chat.kind === "group" ? "users" : "chat"} />;
 }

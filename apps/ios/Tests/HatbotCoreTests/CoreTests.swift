@@ -381,6 +381,16 @@ final class FoldTests: XCTestCase {
     XCTAssertEqual(Mention.matching("", in: bots).count, 2)
   }
 
+  func testDecodesABotsIconAndColour() throws {
+    let json = #"{"id":"chef","name":"Chef","icon":"cat","color":"teal","instructions":"","createdAt":""}"#
+    let bot = try JSONDecoder().decode(Bot.self, from: Data(json.utf8))
+    XCTAssertEqual(bot.icon, .cat)
+    XCTAssertEqual(bot.color, .teal)
+    let newer = json.replacingOccurrences(of: "\"cat\"", with: "\"rocket\"")
+    XCTAssertEqual(try JSONDecoder().decode(Bot.self, from: Data(newer.utf8)).icon, .hat)
+    XCTAssertEqual(Bot.Icon.code.symbol, "chevron.left.forwardslash.chevron.right")
+  }
+
   func testEncodesABotChangeWithNulls() throws {
     let change = AppStore.BotChange(name: nil, instructions: "x", chatModel: nil, chatEffort: .low, plugins: nil)
     let json = String(decoding: try JSONEncoder().encode(change), as: UTF8.self)
@@ -388,6 +398,7 @@ final class FoldTests: XCTestCase {
     XCTAssertTrue(json.contains("\"chatModel\":null"))
     XCTAssertTrue(json.contains("\"plugins\":null"))
     XCTAssertTrue(json.contains("\"chatEffort\":\"low\""))
+    XCTAssertFalse(json.contains("\"icon\""))
   }
 
   func testDecodesEpisodeEvents() throws {

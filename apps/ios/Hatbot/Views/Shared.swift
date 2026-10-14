@@ -18,6 +18,22 @@ extension Color {
   }
 }
 
+extension Bot.Tint {
+  var color: Color {
+    switch self {
+    case .amber: .brand
+    case .red: .red
+    case .pink: .pink
+    case .purple: .purple
+    case .indigo: .indigo
+    case .blue: .blue
+    case .teal: .teal
+    case .green: .green
+    case .gray: .gray
+    }
+  }
+}
+
 extension UIColor {
   convenience init(hex: UInt32, alpha: CGFloat) {
     self.init(

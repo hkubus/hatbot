@@ -120,7 +120,7 @@ struct ChatView: View {
               if named {
                 Text(store.botName(m.botId))
                   .font(.caption.weight(.semibold))
-                  .foregroundStyle(.secondary)
+                  .foregroundStyle(m.botId.flatMap { store.bots[$0]?.color.color } ?? .secondary)
                   .frame(maxWidth: .infinity, alignment: .leading)
                   .padding(.leading, 14)
                   .padding(.top, 10)

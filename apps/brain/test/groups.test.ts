@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Conversation } from "@hatbot/shared";
+import type { Bot, Conversation } from "@hatbot/shared";
 import { mentionsIn } from "../src/agent/thread";
 import { FakeModel, text } from "./fake-model";
 import { setUpOwner, type TestApp, testApp } from "./helpers";
@@ -121,9 +121,11 @@ test("a group's name and bots change, and it can be deleted", async () => {
 });
 
 test("mentions are found by name or id, in order", () => {
-  const b = (id: string, name: string) => ({
+  const b = (id: string, name: string): Bot => ({
     id,
     name,
+    icon: "hat",
+    color: "amber",
     instructions: "",
     chatModel: null,
     chatEffort: null,
