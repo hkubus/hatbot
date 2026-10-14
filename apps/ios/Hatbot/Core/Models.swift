@@ -506,6 +506,7 @@ enum HatbotEvent: Decodable, Sendable {
   case messageDone(id: Int, text: String, status: ThreadMessage.Status)
   case messageTask(id: Int, taskId: Int)
   case messageEdited(id: Int, editedAt: String)
+  case messageRewrite(id: Int)
   case messageSeen(ids: [Int], seenAt: String)
   /// These messages are gone: the incognito conversation they were in ended.
   case messageDeleted(ids: [Int])
@@ -555,6 +556,7 @@ enum HatbotEvent: Decodable, Sendable {
       self = .messageTask(id: try c.decode(Int.self, forKey: .id), taskId: try c.decode(Int.self, forKey: .taskId))
     case "message.edited":
       self = .messageEdited(id: try c.decode(Int.self, forKey: .id), editedAt: try c.decode(String.self, forKey: .editedAt))
+    case "message.rewrite": self = .messageRewrite(id: try c.decode(Int.self, forKey: .id))
     case "message.seen":
       self = .messageSeen(ids: try c.decode([Int].self, forKey: .ids), seenAt: try c.decode(String.self, forKey: .seenAt))
     case "message.deleted": self = .messageDeleted(ids: try c.decode([Int].self, forKey: .ids))

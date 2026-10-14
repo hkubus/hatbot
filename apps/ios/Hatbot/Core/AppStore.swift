@@ -117,6 +117,12 @@ final class AppStore {
       if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].editedAt = editedAt }
       addUnread(id)
       refreshConversations()
+    case let .messageRewrite(id):
+      // Its task ended: its bot is writing it again.
+      if let i = messages.firstIndex(where: { $0.id == id }) {
+        messages[i].text = ""
+        messages[i].status = .streaming
+      }
     case let .messageSeen(ids, seenAt):
       for i in messages.indices where ids.contains(messages[i].id) { messages[i].seenAt = seenAt }
       unread.removeAll { ids.contains($0) }

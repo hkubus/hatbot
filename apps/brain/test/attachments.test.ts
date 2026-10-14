@@ -184,3 +184,84 @@ test("a desktop task sends a browser download; it shows on the task and its mess
   ]);
   expect(t.tasks.steps(task.id).some((s) => s.name === "send_file")).toBe(true);
 });
+
+test("a background task hands the chat a JSON file; the bot reads it and the chat doesn't show it", async () => {
+  const series = JSON.stringify({ x: ["Mon", "Tue"], cpu: [12, 40] });
+  const chat = new FakeModel([
+    { content: [toolUse("run_task", { title: "CPU this week", goal: "Get CPU per day" })] },
+    { content: [text("On it.")] },
+    { content: [text('```chart\n{"type": "line"}\n```')] },
+  ]);
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("send_to_chat", { name: "cpu.json", content: series }),
+        toolUse("send_to_chat", { path: "out/cpu.png" }),
+      ],
+    },
+    {
+      content: [toolUse("finish_task", { outcome: "done", summary: "CPU per day.", notify: true })],
+    },
+  ]);
+  const t = await testApp(chat, work);
+  t.agent.files.set("out/cpu.png", PNG);
+  t.thread.post("chart CPU this week");
+  await t.thread.idle();
+  await t.tasks.idle();
+  await t.thread.idle();
+
+  const [task] = t.tasks.list();
+  expect(t.attachments.forTask(task?.id as number)).toMatchObject([
+    { name: "cpu.json", mediaType: "application/json", forChat: true },
+    { name: "cpu.png", mediaType: "image/png", forChat: true },
+  ]);
+  expect(t.tasks.steps(task?.id as number).filter((s) => s.name === "send_to_chat").length).toBe(2);
+  // The bot gets them with the task's result, and writes its reply again with the chart.
+  const told = JSON.stringify(chat.requests.at(-1)?.messages.at(-1));
+  expect(told).toContain('handed you, below: #1 \\"cpu.json\\", #2 \\"cpu.png\\"');
+  expect(told).toContain(JSON.stringify(series).slice(1, -1));
+  expect(told).toContain('"type":"image"');
+  const reply = t.thread.list().find((m) => m.taskId === task?.id);
+  expect(reply?.text).toContain("```chart");
+  // Not yours: nothing under the reply, and no event that put them there.
+  expect(reply?.attachments).toBeUndefined();
+  expect(t.events.some((e) => e.type === "message.attachment")).toBe(false);
+});
+
+test("a desktop task hands the chat a download; under a background task, it goes with that one's result", async () => {
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("run_desktop_task", {
+          title: "Export",
+          goal: "Export the CSV",
+          success_criteria: "",
+        }),
+      ],
+    },
+    { content: [toolUse("send_to_chat", { download_id: "d1", name: "usage.csv" })] },
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Exported." })] },
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Usage.", notify: true })] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.agent.downloads.set("d1", {
+    name: "export.csv",
+    bytes: new TextEncoder().encode("day,gb\n1,2"),
+  });
+  const parent = t.tasks.createBackgroundTask({
+    title: "Usage",
+    goal: "Get usage",
+    origin: "chat",
+  });
+  await t.tasks.idle();
+
+  const child = t.tasks.list().find((x) => x.parentId === parent?.id);
+  expect(child?.status).toBe("done");
+  expect(t.attachments.forTask(child?.id as number)).toEqual([]);
+  expect(t.attachments.forTask(parent?.id as number)).toMatchObject([
+    { name: "usage.csv", mediaType: "text/csv", forChat: true },
+  ]);
+  expect(t.tasks.steps(child?.id as number).some((s) => s.name === "send_to_chat")).toBe(true);
+  const said = JSON.stringify(work.requests[2]?.messages.at(-1));
+  expect(said).toContain(`It goes with task #${parent?.id}'s result.`);
+});

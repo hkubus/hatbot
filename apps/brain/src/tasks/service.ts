@@ -634,8 +634,9 @@ export class Tasks {
   }
 
   /**
-   * Ends a task: status, summary, the card's text, and a notification. A background task's card is
-   * added now; with `notify` false (a routine result), a finished one gets neither card nor notification.
+   * Ends a task: status, summary, the card's text, and a notification. One under a reply has its bot
+   * write that reply again, to say what came of it. A background task's card is added now; with
+   * `notify` false (a routine result), a finished one gets neither card nor notification.
    */
   finish(id: number, status: "done" | "failed" | "cancelled", summary: string, notify = true) {
     this.d.db
@@ -654,15 +655,16 @@ export class Tasks {
     const underReply = this.d.db
       .query("SELECT 1 FROM messages WHERE kind IN ('text', 'command') AND task_id = ?")
       .get(id);
-    if (card.changes || underReply) this.d.chats.markEdited(id);
     // The bot that asked for it tells you, in the chat it was started from.
     const reporter = task.requestedBy ?? task.botId;
     const conversationId = this.conversationOf(id) ?? this.home(reporter);
-    // Started from the chat: the chat model hears now and answers, with the conversation in mind. A
-    // bot that asked another always passes on what came of it.
+    // Started from the chat: the chat model hears now and writes the reply again, with the conversation
+    // in mind. A bot that asked another always passes on what came of it.
     const asked = !task.parentId && task.requestedBy !== null;
-    if (underReply && (tell || asked) && status !== "cancelled")
-      void this.d.chats.taskEnded(conversationId, reporter);
+    const told = !!underReply && (tell || asked) && status !== "cancelled";
+    if (underReply && status !== "cancelled") this.d.chats.endReply(task, told);
+    if (card.changes || (underReply && !told)) this.d.chats.markEdited(id);
+    if (told) void this.d.chats.taskEnded(conversationId, reporter);
     else if (tell && task.lane === "background")
       this.d.chats.addCard(conversationId, reporter, "task", text, { taskId: id });
     this.emit(id);

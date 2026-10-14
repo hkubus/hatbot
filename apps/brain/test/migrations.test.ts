@@ -43,3 +43,24 @@ test("migration 20 (bots) runs on a database with a thread, tasks and approvals"
     bot_id: "hatbot",
   });
 });
+
+test("migration 22 puts an ended task's result in the place of the reply that started it", () => {
+  const db = at(21);
+  const now = "2026-10-01T00:00:00Z";
+  db.exec(`INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, summary, budget_usd, created_at)
+    VALUES ('a', 'g', '', 'chat', 'background', 'm', 'done', 'All fine.', 1, '${now}'),
+      ('b', 'g', '', 'chat', 'background', 'm', 'failed', 'No route.', 1, '${now}'),
+      ('c', 'g', '', 'chat', 'background', 'm', 'cancelled', null, 1, '${now}')`);
+  db.exec(`INSERT INTO messages (role, text, status, created_at, kind, task_id) VALUES
+    ('assistant', 'On it.', 'done', '${now}', 'text', 1),
+    ('assistant', 'Started a task.', 'done', '${now}', 'command', 2),
+    ('assistant', 'On it.', 'done', '${now}', 'text', 3)`);
+
+  migrate(db);
+
+  expect(db.query("SELECT text FROM messages ORDER BY id").all()).toEqual([
+    { text: "All fine." },
+    { text: "**Didn't finish.** No route." },
+    { text: "On it." },
+  ]);
+});

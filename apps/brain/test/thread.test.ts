@@ -541,16 +541,16 @@ test("/task runs what you typed as a background task, shown under the line it st
   expect(task).toMatchObject({ title: "check the backups on the PBS", origin: "chat" });
   expect(task?.tainted).toBeFalsy();
   expect(t.tasks.requestOf(task?.id as number)).toContain("tell me if any failed");
+  // A routine result: the model isn't told now, and the result takes the line's place, not a card.
   const line = t.thread.list().at(-1);
-  expect(line).toMatchObject({ kind: "command", text: "Started a task.", taskId: task?.id });
-  // Its result shows there, not as a card of its own.
+  expect(line).toMatchObject({ kind: "command", text: "All fine.", taskId: task?.id });
   expect(t.thread.list().filter((m) => m.kind === "task")).toEqual([]);
 
   // The model hears about it with your next message.
   await t.thread.post("how's it going?").done;
   const said = lastUserText(model.requests[1] as never);
   expect(said).toContain("<owner_commands>");
-  expect(said).toContain(`Hatbot: Started a task. (task #${task?.id})`);
+  expect(said).toContain(`Hatbot: All fine. (task #${task?.id})`);
   expect(said).toContain("how's it going?");
 
   await t.thread.post("/task").done;

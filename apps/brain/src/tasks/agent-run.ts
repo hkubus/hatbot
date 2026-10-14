@@ -27,6 +27,7 @@ import type { CallContext, PluginTool, Verdict } from "../plugins/plugin";
 import { describeCall, runPluginTool, untrustedDefinitions, verdictFor } from "../plugins/registry";
 import { BudgetError, priceOf } from "../spend";
 import { Stop, UPDATES_MODELS } from "./desktop-run";
+import { SEND_TO_CHAT_DESCRIPTION, SendToChat, sendToChat } from "./send-to-chat";
 import type { Tasks } from "./service";
 
 const MAX_STEPS = 30;
@@ -96,6 +97,11 @@ const CORE_TOOLS: Anthropic.Beta.BetaTool[] = [
     description:
       "Pause the task for a while without using the model, e.g. between checks while a backup, a build or a restart finishes. It wakes early if an event about the task arrives (an Uptime Kuma alert changing, say). Check again when it returns; to watch something, alternate checks and waits.",
     schema: Wait,
+  }),
+  toolParam({
+    name: "send_to_chat",
+    description: SEND_TO_CHAT_DESCRIPTION,
+    schema: SendToChat,
   }),
   toolParam({
     name: "notify_owner",
@@ -578,6 +584,12 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           if (!r.isError)
             tasks.addStep(id, { kind: "action", name: "send_file", detail: r.content, url: null });
           return result(call, r.content, r.isError);
+        }
+        if (call.name === "send_to_chat") {
+          const p = SendToChat.safeParse(call.input);
+          if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+          const r = await sendToChat(tasks, id, p.data, ctx.desktop);
+          return result(call, r.text, r.isError);
         }
         if (call.name === "notify_owner") {
           const p = NotifyOwner.safeParse(call.input);

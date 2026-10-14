@@ -248,8 +248,9 @@ function TaskResult({ taskId }: { taskId: number }) {
 }
 
 /**
- * Hatbot's reply, with the task it started (if any) working under it. A task that finished or failed
- * replaces the reply with its result; a cancelled one leaves the reply.
+ * Hatbot's reply, with the task it started (if any) working under it. Once the task finishes or fails,
+ * its bot writes the reply again to say what came of it; if it doesn't, the task's result shows in the
+ * reply's place. A cancelled task leaves the reply.
  */
 function ReplyMessage({ m, progress }: { m: ThreadMessage; progress?: string }) {
   const task = useStore((s) => (m.taskId ? s.tasks[m.taskId] : undefined));
@@ -257,12 +258,16 @@ function ReplyMessage({ m, progress }: { m: ThreadMessage; progress?: string }) 
   const streaming = m.status === "streaming";
   const note = progress?.trim().split("\n").filter(Boolean).at(-1);
   const ended = task && !isActive(task) ? task : null;
-  const replaced = ended !== null && ended.status !== "cancelled";
+  const finished = ended !== null && ended.status !== "cancelled";
+  // Its bot didn't write it again: told some other way, or it failed to.
+  const replaced = finished && !streaming && (m.status === "error" || !m.text);
   return (
     <>
       <div className="body">
-        {m.text && !replaced && <AssistantBody text={m.text} streaming={streaming} />}
-        {streaming && !m.text && !m.taskId && (
+        {replaced && m.taskId && <TaskResult taskId={m.taskId} />}
+        {replaced && m.text && <hr className="result-rule" />}
+        {m.text && <AssistantBody text={m.text} streaming={streaming} />}
+        {streaming && !m.text && (!m.taskId || finished) && (
           <div className="typing">
             <span />
             <span />
@@ -275,8 +280,8 @@ function ReplyMessage({ m, progress }: { m: ThreadMessage; progress?: string }) 
             {tokenText(used.tokens)} tokens · ${used.costUsd.toFixed(3)}
           </div>
         )}
-        {ended && !replaced && m.text && <hr className="result-rule" />}
-        {m.taskId && <TaskResult taskId={m.taskId} />}
+        {ended && !finished && m.text && <hr className="result-rule" />}
+        {m.taskId && !finished && <TaskResult taskId={m.taskId} />}
         {m.attachments?.length ? <Files list={m.attachments} /> : null}
       </div>
       {!streaming && (

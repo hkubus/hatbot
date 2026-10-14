@@ -439,6 +439,10 @@ final class UnreadTests: XCTestCase {
     store.apply(try decode(#"{"type":"message.edited","id":3,"editedAt":"2026-10-11T10:05:00.000Z"}"#))
     XCTAssertEqual(store.unread, [3])
     XCTAssertEqual(store.messages.first?.editedAt, "2026-10-11T10:05:00.000Z")
+    // Its task ended: its bot writes it again.
+    store.apply(try decode(#"{"type":"message.rewrite","id":3}"#))
+    XCTAssertEqual(store.messages.first?.text, "")
+    XCTAssertEqual(store.messages.first?.status, .streaming)
   }
 }
 

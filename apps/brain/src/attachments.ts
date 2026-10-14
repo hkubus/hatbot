@@ -69,10 +69,16 @@ export const sizeText = (n: number) =>
     ? `${(n / 1024 / 1024).toFixed(1)} MB`
     : `${Math.max(1, Math.round(n / 1024))} KB`;
 
-type Row = Attachment & { path: string; messageId: number | null; taskId: number | null };
+type Row = Omit<Attachment, "forChat"> & {
+  path: string;
+  messageId: number | null;
+  taskId: number | null;
+  forChat: number;
+};
 const COLUMNS =
-  'id, name, media_type AS mediaType, size, sender AS "from", created_at AS createdAt, path, message_id AS messageId, task_id AS taskId';
-const plain = ({ path: _p, messageId: _m, taskId: _t, ...a }: Row): Attachment => a;
+  'id, name, media_type AS mediaType, size, sender AS "from", created_at AS createdAt, path, message_id AS messageId, task_id AS taskId, for_chat AS forChat';
+const plain = ({ path: _p, messageId: _m, taskId: _t, forChat, ...a }: Row): Attachment =>
+  forChat ? { ...a, forChat: true } : a;
 
 export class Attachments {
   constructor(
@@ -82,7 +88,7 @@ export class Attachments {
 
   /**
    * Stores a file. Yours wait unbound until the message they go with is posted; Hatbot's go straight
-   * onto a message or a task.
+   * onto a message or a task. One `forChat` is a task's, for the bot in the chat: not shown there.
    */
   async save(input: {
     bytes: Uint8Array;
@@ -91,19 +97,21 @@ export class Attachments {
     from: "owner" | "hatbot";
     messageId?: number;
     taskId?: number;
+    forChat?: boolean;
   }): Promise<Attachment> {
     const name = input.name.replace(/[\r\n/\\]/g, "_").slice(0, 200) || "file";
     const row = this.d.db
       .query<
         { id: number },
-        [number | null, number | null, string, string, number, string, string]
+        [number | null, number | null, number, string, string, number, string, string]
       >(
-        `INSERT INTO attachments (message_id, task_id, name, media_type, size, path, sender, created_at)
-         VALUES (?, ?, ?, ?, ?, '', ?, ?) RETURNING id`,
+        `INSERT INTO attachments (message_id, task_id, for_chat, name, media_type, size, path, sender, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, '', ?, ?) RETURNING id`,
       )
       .get(
         input.messageId ?? null,
         input.taskId ?? null,
+        input.forChat ? 1 : 0,
         name,
         mediaTypeOf(name, input.mediaType),
         input.bytes.byteLength,
@@ -117,7 +125,7 @@ export class Attachments {
     if (input.messageId)
       this.d.events.emit({ type: "message.attachment", id: input.messageId, attachment: a });
     // A task's file shows on the messages that show the task.
-    if (input.taskId) {
+    if (input.taskId && !input.forChat) {
       const shown = this.d.db
         .query<{ id: number }, [number]>("SELECT id FROM messages WHERE task_id = ?")
         .all(input.taskId);
@@ -134,7 +142,7 @@ export class Attachments {
   async fromDesktop(
     agent: DesktopAgent,
     src: { path?: string; download?: string; name?: string },
-    target: { messageId?: number; taskId?: number },
+    target: { messageId?: number; taskId?: number; forChat?: boolean },
   ): Promise<Attachment> {
     let file: { name: string; bytes: Uint8Array };
     if (src.download) file = await agent.getDownload(src.download);
@@ -186,7 +194,7 @@ export class Attachments {
     await Promise.all(rows.map((r) => r.path && this.d.archive.remove(r.path)));
   }
 
-  /** Each message with its files: its own, and those of the task it shows. */
+  /** Each message with its files: its own, and those the task it shows sent you. */
   fill(messages: ThreadMessage[]): ThreadMessage[] {
     if (!messages.length) return messages;
     const ids = messages.map((m) => m.id);
@@ -194,7 +202,7 @@ export class Attachments {
     const rows = this.d.db
       .query<Row, number[]>(
         `SELECT ${COLUMNS} FROM attachments WHERE message_id IN (${ids.map(() => "?").join(", ")})
-         ${taskIds.length ? `OR task_id IN (${taskIds.map(() => "?").join(", ")})` : ""} ORDER BY id`,
+         ${taskIds.length ? `OR (task_id IN (${taskIds.map(() => "?").join(", ")}) AND for_chat = 0)` : ""} ORDER BY id`,
       )
       .all(...ids, ...taskIds);
     if (!rows.length) return messages;
@@ -202,6 +210,17 @@ export class Attachments {
       const mine = rows.filter((r) => r.messageId === m.id || (m.taskId && r.taskId === m.taskId));
       return mine.length ? { ...m, attachments: mine.map(plain) } : m;
     });
+  }
+
+  /** Every file these tasks sent: you, or the bot in the chat. */
+  ofTasks(taskIds: number[]): (Attachment & { taskId: number })[] {
+    if (!taskIds.length) return [];
+    return this.d.db
+      .query<Row, number[]>(
+        `SELECT ${COLUMNS} FROM attachments WHERE task_id IN (${taskIds.map(() => "?").join(", ")}) ORDER BY id`,
+      )
+      .all(...taskIds)
+      .map((r) => ({ ...plain(r), taskId: r.taskId as number }));
   }
 
   forTask(taskId: number): Attachment[] {

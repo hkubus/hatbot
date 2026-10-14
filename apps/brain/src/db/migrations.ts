@@ -376,4 +376,16 @@ export const migrations: string[] = [
   ALTER TABLE bots ADD COLUMN icon TEXT NOT NULL DEFAULT 'hat';
   ALTER TABLE bots ADD COLUMN color TEXT NOT NULL DEFAULT 'amber';
   `,
+  /* 22: an ended task's result in its reply's place */ `
+  -- A reply's task that ended now has its bot write the reply again. Before, the task's result hid the
+  -- reply and the bot answered in a message of its own: the result takes the hidden text's place.
+  UPDATE messages SET text = (
+    SELECT CASE t.status WHEN 'failed' THEN trim('**Didn''t finish.** ' || coalesce(t.summary, ''))
+      ELSE coalesce(nullif(t.summary, ''), 'Done.') END
+    FROM tasks t WHERE t.id = messages.task_id)
+  WHERE kind IN ('text', 'command') AND task_id IN (SELECT id FROM tasks WHERE status IN ('done', 'failed'));
+  `,
+  /* 23: files a task hands the bot in the chat */ `
+  ALTER TABLE attachments ADD COLUMN for_chat INTEGER NOT NULL DEFAULT 0;
+  `,
 ];

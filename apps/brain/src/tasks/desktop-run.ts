@@ -21,6 +21,7 @@ import { destructive } from "../plugins/ssh/policy";
 import { BudgetError, priceOf } from "../spend";
 import { skillPath } from "../teach/skills";
 import { checkFor, consequential } from "./policy";
+import { DesktopSendToChat, SEND_TO_CHAT_DESCRIPTION, sendToChat } from "./send-to-chat";
 import type { Tasks } from "./service";
 
 /** Models whose between-tool progress notes (`display: "updates"`) are documented. */
@@ -108,6 +109,11 @@ const CUSTOM_TOOLS: Anthropic.Beta.BetaTool[] = [
     description:
       "Send the owner a file: a browser download once it's completed (download_id), or one desktop_shell made (path). It shows with the task's result, for them to open or save. Up to 25 MB.",
     schema: SendFile,
+  },
+  {
+    name: "send_to_chat",
+    description: SEND_TO_CHAT_DESCRIPTION,
+    schema: DesktopSendToChat,
   },
   {
     name: "finish_task",
@@ -774,6 +780,14 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           results.push(await shellCall(call));
         } else if (call.name === "send_file") {
           results.push(await sendFile(call));
+        } else if (call.name === "send_to_chat") {
+          const p = DesktopSendToChat.safeParse(call.input);
+          if (!p.success)
+            results.push(textResult(call, `Invalid input: ${z.prettifyError(p.error)}`, true));
+          else {
+            const r = await sendToChat(tasks, id, p.data, agent);
+            results.push(textResult(call, r.text, r.isError));
+          }
         } else if (call.name === "finish_task") {
           const p = FinishTask.safeParse(call.input);
           if (p.success) finished = p.data;
