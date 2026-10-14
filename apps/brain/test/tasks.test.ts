@@ -466,3 +466,40 @@ test("a task waits without a slot, wakes on an event, and can notify before it e
   expect(results).toContain("Backup job finished OK.");
   expect(t.notifier.sent.map((n) => n.message)).toEqual(["The backup started late."]);
 });
+
+test("a summary whose chart doesn't draw goes back to the task once", async () => {
+  const broken = '```chart\n{"type":"line","x":["1"],"series":[{"data":[1,2]}]}\n```';
+  const fixed = '```chart\n{"type":"line","x":["1","2"],"series":[{"data":[1,2]}]}\n```';
+  const done = (summary: string) => ({
+    content: [toolUse("finish_task", { outcome: "done", summary, notify: false })],
+  });
+  const work = new FakeModel([done(broken), done(fixed)]);
+  const t = await testApp(new FakeModel(), work);
+  const task = t.tasks.createBackgroundTask({
+    title: "Chart",
+    goal: "Chart it",
+    origin: "schedule",
+    source: "nightly",
+    runKey: "schedule:2",
+  });
+  if (!task) throw new Error("no task");
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)?.summary).toBe(fixed);
+  expect(JSON.stringify(work.requests[1]?.messages.at(-1))).toContain(
+    "chart 1 doesn't draw (x has 1 value but series 1 has 2 values)",
+  );
+
+  // Still broken the second time: it's kept as it is rather than holding the task up.
+  const again = new FakeModel([done(broken), done(broken)]);
+  const t2 = await testApp(new FakeModel(), again);
+  const task2 = t2.tasks.createBackgroundTask({
+    title: "Chart",
+    goal: "Chart it",
+    origin: "schedule",
+    source: "nightly",
+    runKey: "schedule:3",
+  });
+  if (!task2) throw new Error("no task");
+  await t2.tasks.idle();
+  expect(t2.tasks.get(task2.id)?.summary).toBe(broken);
+});

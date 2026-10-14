@@ -4,6 +4,8 @@ import type Anthropic from "@anthropic-ai/sdk";
 import {
   type Bot,
   type ChatCommand,
+  chartBlocks,
+  chartProblem,
   describeCron,
   type Episode,
   HATBOT_ID,
@@ -1330,11 +1332,18 @@ export class Thread {
       : this.insertMessage("assistant", "", "streaming", episode.id, [], null, incognito, bot.id);
     let text = "";
     let separate = false;
+    /** Charts in the reply that don't draw, while the model writes them again, out of view. */
+    let chartFix: { broken: { start: number; end: number }[]; text: string } | null = null;
+    let fixedCharts = false;
     /** This reply's model calls so far, shown under the working dots. */
     const used = { tokens: 0, costUsd: 0 };
     const progress = (line: string) =>
       events.emit({ type: "message.progress", id: out.id, text: `\n${line}\n` });
     const say = (delta: string) => {
+      if (chartFix) {
+        chartFix.text += delta;
+        return;
+      }
       // Text after a tool call gets a rule, so what came after the tool reads apart from what came before.
       if (separate && text) {
         delta = `\n\n---\n\n${delta}`;
@@ -1504,6 +1513,38 @@ export class Thread {
         }
         if (!toolUses.length) {
           if (res.stop_reason === "max_tokens") return finish("error", "_(My reply was cut off.)_");
+          if (chartFix) {
+            // Each chart that now draws takes the broken one's place; one that still doesn't stays code.
+            const fixes = chartBlocks(chartFix.text);
+            const { broken } = chartFix;
+            chartFix = null;
+            for (let i = broken.length - 1; i >= 0; i--) {
+              const b = broken[i] as { start: number; end: number };
+              const fix = fixes[i]?.source;
+              if (fix !== undefined && !chartProblem(fix))
+                text = `${text.slice(0, b.start)}${fix}\n${text.slice(b.end)}`;
+            }
+            return finish("done");
+          }
+          // A chart that doesn't draw shows the owner a wall of numbers; ask once for it again.
+          const broken = fixedCharts
+            ? []
+            : chartBlocks(text).flatMap((b, i) => {
+                const problem = chartProblem(b.source);
+                return problem ? [{ ...b, problem, n: i + 1 }] : [];
+              });
+          if (broken.length) {
+            fixedCharts = true;
+            chartFix = { broken, text: "" };
+            progress(broken.length > 1 ? "Fixing charts…" : "Fixing a chart…");
+            this.appendTurn(episode.id, bot.id, "user", [
+              {
+                type: "text",
+                text: `(No message from the owner: the app checked your reply. ${broken.length > 1 ? "These chart blocks don't" : "This chart block doesn't"} draw, so the owner sees ${broken.length > 1 ? "them" : "it"} as code:\n${broken.map((b) => `- chart ${b.n}: ${b.problem}`).join("\n")}\nAnswer with only the corrected chart ${broken.length > 1 ? "blocks, each in its own fenced chart block, in this order" : "block, in a fenced chart block"}, and nothing else: it replaces the broken one in your reply. Don't guess where a value belongs; if you can't tell, get the numbers again, and with code_run print the chart JSON from it with json.dumps.)`,
+              },
+            ]);
+            continue;
+          }
           return finish("done");
         }
 

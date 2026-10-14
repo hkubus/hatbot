@@ -3,7 +3,7 @@
 // model Settings choose (Haiku by default) with Hatbot's own tools and the plugins' tools, in the
 // background lane, reporting back through finish_task.
 import type Anthropic from "@anthropic-ai/sdk";
-import type { ApprovalKind, Task } from "@hatbot/shared";
+import { type ApprovalKind, chartBlocks, chartProblem, type Task } from "@hatbot/shared";
 import { z } from "zod";
 import { modelErrorText } from "../agent/model";
 import { AGENT_PROMPT } from "../agent/prompt";
@@ -60,6 +60,16 @@ const FinishTask = z.object({
       "true if the owner should hear about this now: they asked to be told, something changed or needs them, or it failed. false for a routine result (nothing new, all fine); it stays in the Tasks list",
     ),
 });
+
+/** What's wrong with the summary's charts, or "" if they all draw. */
+function brokenCharts(summary: string): string {
+  return chartBlocks(summary)
+    .flatMap((b, i) => {
+      const problem = chartProblem(b.source);
+      return problem ? [`chart ${i + 1} doesn't draw (${problem}).`] : [];
+    })
+    .join(" ");
+}
 
 const Wait = z.object({
   minutes: z.number().int().min(1).max(240).describe("How long to wait at most"),
@@ -476,6 +486,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       },
     ]);
 
+    /** finish_task sends a summary whose charts don't draw back once, not every time. */
+    let chartsChecked = false;
     for (let step = 0; ; step++) {
       if (signal.aborted) throw signal.reason;
       const maxSteps = task.effort ? MAX_CODE_STEPS : MAX_STEPS;
@@ -568,6 +580,15 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         if (finished) return result(call, "Not run: the task already finished.", true);
         if (call.name === "finish_task") {
           const p = FinishTask.safeParse(call.input);
+          // A chart that doesn't draw shows the owner a wall of numbers: send it back once.
+          const broken = p.success && !chartsChecked ? brokenCharts(p.data.summary) : "";
+          if (p.success) chartsChecked = true;
+          if (broken)
+            return result(
+              call,
+              `Not finished: ${broken} Call finish_task again with it fixed. Don't guess where a value belongs; if you can't tell, get the numbers again, and with code_run print the chart JSON from it with json.dumps.`,
+              true,
+            );
           if (p.success) finished = p.data;
           return result(
             call,

@@ -328,6 +328,37 @@ test("text after a tool call is set apart with a rule", async () => {
   expect(reply?.text).toBe("Let me check.\n\n---\n\nNothing in memory yet.");
 });
 
+test("a chart that doesn't draw is written again out of view and takes the broken one's place", async () => {
+  const chart = (lan: number[]) =>
+    `\`\`\`chart\n${JSON.stringify({ type: "line", x: ["1", "2"], series: [{ name: "lan", data: lan }] })}\n\`\`\``;
+  const model = new FakeModel([
+    { content: [text(`Loss today:\n\n${chart([0, 0, 0])}\n\nAll quiet.`)] },
+    { content: [text(chart([0, 1]))] },
+  ]);
+  const t = await testApp(model);
+  await t.thread.post("packet loss?").done;
+  expect(t.thread.list().at(-1)?.text).toBe(`Loss today:\n\n${chart([0, 1])}\n\nAll quiet.`);
+  expect(lastUserText(model.requests[1] as never)).toContain(
+    'chart 1: x has 2 values but series \\"lan\\" has 3 values',
+  );
+  // The fix isn't streamed: only message.done carries it.
+  const streamed = t.events.flatMap((e) => (e.type === "message.delta" ? [e.text] : [])).join("");
+  expect(streamed).not.toContain("[0,1]");
+  expect(t.events.at(-1)).toMatchObject({ type: "message.done", status: "done" });
+});
+
+test("a chart that still doesn't draw stays as it was, and is asked for once", async () => {
+  const broken = '```chart\n{"type":"line","x":["1"],"series":[{"data":[1,2]}]}\n```';
+  const model = new FakeModel([
+    { content: [text(broken)] },
+    { content: [text("```chart\n{\n```")] },
+  ]);
+  const t = await testApp(model);
+  await t.thread.post("chart?").done;
+  expect(t.thread.list().at(-1)?.text).toBe(broken);
+  expect(model.requests).toHaveLength(2);
+});
+
 test("on Haiku the chat can ask Opus once per reply; the answer goes in as is", async () => {
   const code = "```python\nprint(sum(range(10)))\n```";
   const model = new FakeModel([

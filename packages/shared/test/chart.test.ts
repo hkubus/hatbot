@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import {
+  chartBlocks,
+  chartProblem,
   chartValue,
   isStacked,
   niceTicks,
@@ -24,6 +26,25 @@ test("a chart block parses, and anything else is null", () => {
   expect(parseChart(JSON.stringify({ type: "bar", x: ["a"], series: four }))).toBeNull();
   // Nothing to draw.
   expect(parseChart('{"type":"bar","x":["a"],"series":[{"data":[null]}]}')).toBeNull();
+});
+
+test("a chart that doesn't draw says why, in words the model can fix it from", () => {
+  expect(chartProblem('{"type":"line","x":["a","b"],"series":[{"data":[1,2]}]}')).toBeNull();
+  expect(
+    chartProblem(
+      '{"type":"line","x":["a","b"],"series":[{"name":"wan","data":[1,2]},{"name":"lan","data":[0,0,0]}]}',
+    ),
+  ).toBe('x has 2 values but series "lan" has 3 values');
+  expect(chartProblem('{"type":"line","x":["a"')).toStartWith("it isn't valid JSON");
+  expect(chartProblem('{"type":"pie","x":["a"],"series":[{"data":[1]}]}')).toContain("type");
+});
+
+test("chart blocks are found in a reply, closed or not", () => {
+  const reply =
+    'Loss:\n\n```chart\n{"a":1}\n```\n\nand\n~~~chart\n{"b":2}\n~~~\n\n```js\nx\n```\n\n```chart\n{"c"';
+  const blocks = chartBlocks(reply);
+  expect(blocks.map((b) => b.source)).toEqual(['{"a":1}', '{"b":2}', '{"c"']);
+  expect(reply.slice(blocks[0]?.start, blocks[0]?.end)).toBe('{"a":1}\n');
 });
 
 test("values read the way the owner writes them", () => {

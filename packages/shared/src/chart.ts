@@ -56,6 +56,48 @@ export function parseChart(source: string): ChartSpec | null {
   return p.success ? p.data : null;
 }
 
+/** Why a chart block's source doesn't draw, in words the model can fix it from; null if it does. */
+export function chartProblem(source: string): string | null {
+  let json: unknown;
+  try {
+    json = JSON.parse(source);
+  } catch (err) {
+    return `it isn't valid JSON (${(err as Error).message})`;
+  }
+  const p = ChartSpec.safeParse(json);
+  if (p.success) return null;
+  // The usual slip: a long series typed out by hand with a value too many or too few.
+  const o = json as { x?: unknown; series?: unknown };
+  const values = (n: number) => `${n} value${n === 1 ? "" : "s"}`;
+  if (Array.isArray(o?.x) && Array.isArray(o.series)) {
+    const xs = o.x.length;
+    const off = o.series.flatMap((se: { name?: unknown; data?: unknown }, i) =>
+      Array.isArray(se?.data) && se.data.length !== xs
+        ? [
+            `series ${typeof se.name === "string" ? `"${se.name}"` : i + 1} has ${values(se.data.length)}`,
+          ]
+        : [],
+    );
+    if (off.length) return `x has ${values(xs)} but ${off.join(" and ")}`;
+  }
+  return z.prettifyError(p.error).replace(/\s*\n\s*/g, "; ");
+}
+
+/** Each ```chart block in a reply, closed or not: where its source sits in the text. */
+export function chartBlocks(markdown: string): { start: number; end: number; source: string }[] {
+  const blocks: { start: number; end: number; source: string }[] = [];
+  const fence = /^[ \t]*(`{3,}|~{3,})[ \t]*chart[ \t]*\n/gm;
+  for (let m = fence.exec(markdown); m; m = fence.exec(markdown)) {
+    const start = m.index + m[0].length;
+    const close = new RegExp(`^[ \\t]*${m[1]}[ \\t]*$`, "m");
+    const at = close.exec(markdown.slice(start));
+    const end = at ? start + at.index : markdown.length;
+    blocks.push({ start, end, source: markdown.slice(start, end).replace(/\n$/, "") });
+    fence.lastIndex = at ? end + at[0].length : markdown.length;
+  }
+  return blocks;
+}
+
 /** Series names, with "Series 2" for one Hatbot left unnamed. */
 export const seriesNames = (s: ChartSpec) => s.series.map((se, i) => se.name || `Series ${i + 1}`);
 
