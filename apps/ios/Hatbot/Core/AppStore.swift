@@ -187,7 +187,7 @@ final class AppStore {
       botIds.removeAll { $0 == id }
       refreshConversations()
     case let .conversationUpdated(c):
-      if let i = conversations.firstIndex(where: { $0.id == c.id }) { conversations[i] = c } else { conversations.append(c) }
+      put(c)
     case let .conversationDeleted(id):
       conversations.removeAll { $0.id == id }
     case .unknown:
@@ -343,6 +343,33 @@ final class AppStore {
     botIds.removeAll { $0 == id }
     await loadBots()
     if !conversations.contains(where: { $0.id == conversationId }) { await openConversation(1) }
+  }
+
+  /// A group chat's name and bots.
+  struct GroupChange: Encodable, Sendable {
+    var title: String
+    var botIds: [String]
+  }
+
+  func createGroup(_ change: GroupChange) async throws -> Conversation {
+    let c: Conversation = try await api.post("/conversations", body: change)
+    put(c)
+    return c
+  }
+
+  func saveGroup(_ id: Int, _ change: GroupChange) async throws {
+    let c: Conversation = try await api.patch("/conversations/\(id)", body: change)
+    put(c)
+  }
+
+  func deleteGroup(_ id: Int) async throws {
+    let _: Empty = try await api.delete("/conversations/\(id)")
+    conversations.removeAll { $0.id == id }
+    if conversationId == id { await openConversation(1) }
+  }
+
+  private func put(_ c: Conversation) {
+    if let i = conversations.firstIndex(where: { $0.id == c.id }) { conversations[i] = c } else { conversations.append(c) }
   }
 
   /// The plugins a bot may be given.

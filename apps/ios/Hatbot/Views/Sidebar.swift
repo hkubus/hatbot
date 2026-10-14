@@ -86,6 +86,7 @@ struct Sidebar<Content: View>: View {
   @GestureState(resetTransaction: Transaction(animation: .snappy)) private var drag: CGFloat = 0
   @State private var roots = 0
   @State private var newBot = false
+  @State private var newGroup = false
 
   var body: some View {
     GeometryReader { geo in
@@ -152,6 +153,9 @@ struct Sidebar<Content: View>: View {
             }
           }
           row("New bot", icon: "plus", selected: false, count: 0) { newBot = true }
+          if store.botIds.count > 1 {
+            row("New group", icon: "person.3", selected: false, count: 0) { newGroup = true }
+          }
           Divider().padding(.vertical, 6).padding(.horizontal, 14)
         }
         ForEach(AppTab.allCases.filter { $0 != .chat }, id: \.self) { t in
@@ -176,6 +180,16 @@ struct Sidebar<Content: View>: View {
           }
         }
         .routes()
+      }
+    }
+    .sheet(isPresented: $newGroup) {
+      NavigationStack {
+        GroupView(id: nil) { c in
+          newGroup = false
+          tab = .chat
+          setOpen(false)
+          Task { await store.openConversation(c.id) }
+        }
       }
     }
   }

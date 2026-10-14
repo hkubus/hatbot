@@ -300,6 +300,30 @@ struct PluginName: Decodable, Identifiable, Equatable, Sendable {
   var name: String
 }
 
+/// "@" in a group's composer (PLAN.md §14.4).
+enum Mention {
+  /// What's typed after an "@" at the end of `draft`, or nil when it doesn't end in one.
+  static func partial(_ draft: String) -> String? {
+    guard let at = draft.lastIndex(of: "@") else { return nil }
+    let typed = draft[draft.index(after: at)...]
+    if typed.contains(where: { $0.isWhitespace || $0 == "@" }) { return nil }
+    if at != draft.startIndex, !draft[draft.index(before: at)].isWhitespace { return nil }
+    return String(typed)
+  }
+
+  /// `draft` with its partial mention finished as "@Name ".
+  static func complete(_ draft: String, with name: String) -> String {
+    guard let partial = partial(draft) else { return draft }
+    return String(draft.dropLast(partial.count + 1)) + "@\(name) "
+  }
+
+  /// The bots whose name or id starts with what's typed.
+  static func matching(_ partial: String, in bots: [Bot]) -> [Bot] {
+    let p = partial.lowercased()
+    return bots.filter { $0.id.hasPrefix(p) || $0.name.lowercased().hasPrefix(p) }
+  }
+}
+
 /// A chat: one bot's own, or a group of bots and you.
 struct Conversation: Codable, Identifiable, Equatable, Sendable {
   enum Kind: String, LenientEnum {

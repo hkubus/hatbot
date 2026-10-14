@@ -367,6 +367,20 @@ final class FoldTests: XCTestCase {
     else { return XCTFail("not deleted") }
   }
 
+  func testCompletesMentions() {
+    XCTAssertEqual(Mention.partial("hi @ch"), "ch")
+    XCTAssertEqual(Mention.partial("@"), "")
+    XCTAssertNil(Mention.partial("me@ch"))
+    XCTAssertNil(Mention.partial("@chef done"))
+    XCTAssertEqual(Mention.complete("ask @ho", with: "Home Lab"), "ask @Home Lab ")
+    let bots = [
+      Bot(id: "chef", name: "Chef", instructions: "", createdAt: ""),
+      Bot(id: "home-lab", name: "Home Lab", instructions: "", createdAt: ""),
+    ]
+    XCTAssertEqual(Mention.matching("H", in: bots).map(\.id), ["home-lab"])
+    XCTAssertEqual(Mention.matching("", in: bots).count, 2)
+  }
+
   func testEncodesABotChangeWithNulls() throws {
     let change = AppStore.BotChange(name: nil, instructions: "x", chatModel: nil, chatEffort: .low, plugins: nil)
     let json = String(decoding: try JSONEncoder().encode(change), as: UTF8.self)
