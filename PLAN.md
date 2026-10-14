@@ -572,7 +572,7 @@ Email via Proton Bridge · more than one agent (§14) · a heartbeat that acts o
 
 ## 14. Multiple bots
 
-More than one Hatbot, like Grok Bot: several named bots, each with its own role, chat, memory and logins, which hand work to each other. Agreed 2026-10-14; not started.
+More than one Hatbot, like Grok Bot: several named bots, each with its own role, chat, memory and logins, which hand work to each other. Agreed 2026-10-14. B1–B5 built 2026-10-14; not yet deployed or tried live.
 
 ### 14.1 Decisions
 | Area | Decision |
@@ -589,7 +589,7 @@ More than one Hatbot, like Grok Bot: several named bots, each with its own role,
 ### 14.2 Data
 - **`bots`** (migration 20), seeded with Hatbot.
 - **`conversations`**: `kind` (`direct` or `group`), members; one direct conversation per bot. The rolling summary moves from `settings.thread_summary` onto the conversation.
-- **`bot_id`** on episodes, messages (who spoke), tasks, approvals, schedules, triggers, spend and attachments (`sender` becomes `owner` or a bot id); **`conversation_id`** on episodes and messages. Existing rows go to Hatbot.
+- **`bot_id`** on episode turns (each bot in a group keeps its own), messages (who spoke), tasks, approvals, schedules, triggers and spend; **`conversation_id`** on episodes and messages. Existing rows go to Hatbot. Attachments keep `sender` as `owner` or `hatbot`; the message a file is on says which bot sent it.
 - Episodes, the 30-minute idle rule, `/new`, incognito, folding and `search_history` work per conversation. `takeUnreported()` reports a task's news to its bot's chat.
 - A schedule or trigger runs as the bot that owns it.
 
@@ -605,3 +605,10 @@ More than one Hatbot, like Grok Bot: several named bots, each with its own role,
 - **B3, hand-offs**: `ask_bot`, taint carried over, the depth cap. Done when Hatbot hands a repo fix to Coder and reports back.
 - **B4, desktop and iOS**: a browser profile per bot; the bot list and pages in the iOS app.
 - **B5, group chats** (low priority): 2–6 bots and you. `@name` picks who answers; with no mention the last bot to speak does; a bot can bring another in with `@name`; at most 4 bot replies per message from you. Sender names show above a run of messages, only in groups. `@` autocompletes in the composer.
+
+### 14.5 As built
+- **Chats:** `Chats` (`apps/brain/src/agent/chats.ts`) runs one `Thread` per conversation. `/conversations` lists them with unread counts; `POST`, `PATCH` and `DELETE /conversations/:id` make, change and delete groups. `/thread/*` is still Hatbot's chat.
+- **Prompt cache:** Hatbot on its own keeps its old prompt and tools (no roster, no `ask_bot`), so an existing install's cache carries on.
+- **Hand-offs:** `ask_bot` from the chat starts the other bot's task (`requested_by` is the asker) and the asker reports back when it ends. From a task it waits for the result, giving up its background slot meanwhile. Taint goes both ways.
+- **Desktop:** Chromium is `hatbot-chromium.service`, which reads its profile from desktop-agent's state dir; `POST /browser/profile` switches it, restarting Chromium.
+- **Groups:** the episode is bound to every member's prompt. Each bot has its own turns in it; a bot new to the episode opens with the context, and every bot gets what others said since its last turn in `<group_messages>`. No incognito in groups.
