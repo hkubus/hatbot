@@ -46,6 +46,7 @@ const desktop = new Desktop(new HttpDesktopAgent(), events);
 const plugins = new Plugins([...PLUGINS, codePlugin({ desktop: desktop.agent, attachments })], {
   db,
   events,
+  files: { desktop: desktop.agent, attachments },
   reserved: CORE_TOOL_NAMES,
 });
 // In the background: an MCP server that is slow to answer mustn't hold up the health check.
