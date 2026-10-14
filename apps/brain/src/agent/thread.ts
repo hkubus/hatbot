@@ -33,7 +33,14 @@ import { BudgetError, priceOf, type Spend, tokenCount, tokensOf } from "../spend
 import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
 import { type ModelClient, modelErrorText } from "./model";
-import { EXPERT_PROMPT, INCOGNITO_PROMPT, SUMMARY_PROMPT, SYSTEM_PROMPT } from "./prompt";
+import {
+  EXPERT_PROMPT,
+  groupPrompt,
+  INCOGNITO_PROMPT,
+  MAX_GROUP_REPLIES,
+  SUMMARY_PROMPT,
+  SYSTEM_PROMPT,
+} from "./prompt";
 import { mayReview, safeToRun } from "./review";
 import {
   INCOGNITO_TOOLS,
@@ -104,6 +111,8 @@ const ASK_OPUS = toolParam({
 
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 type Turn = Anthropic.Beta.BetaMessageParam;
+/** How a reply ended: its text, for the @names that bring other bots in. */
+type Said = { text: string; status: "done" | "error"; stopped?: boolean };
 
 export type ThreadDeps = {
   /** Set once these exist; they need the thread too. */
@@ -152,15 +161,44 @@ export class Thread {
     this.clock = d.clock ?? Date.now;
   }
 
-  /** The bots in it, in their order: one for a bot's own chat. */
+  /** The bots in it, in their order: one for a bot's own chat. A group's deleted bots have left it. */
   members(): Bot[] {
+    const group = this.group();
     return this.d.db
       .query<{ bot_id: string }, [number]>(
         "SELECT bot_id FROM conversation_bots WHERE conversation_id = ? ORDER BY position, bot_id",
       )
       .all(this.conversationId)
-      .map((r) => this.d.bots.get(r.bot_id))
+      .map((r) => (group ? this.d.bots.active(r.bot_id) : this.d.bots.get(r.bot_id)))
       .filter((b): b is Bot => b !== null);
+  }
+
+  /** A group chat's title, or null for a bot's own chat. */
+  group(): { title: string | null } | null {
+    const c = this.d.db
+      .query<{ kind: string; title: string | null }, [number]>(
+        "SELECT kind, title FROM conversations WHERE id = ?",
+      )
+      .get(this.conversationId);
+    return c?.kind === "group" ? { title: c.title } : null;
+  }
+
+  /**
+   * Who answers your message in a group: the bots you @mention, in order; with none, the last bot to
+   * speak; else the first.
+   */
+  private responders(text: string): Bot[] {
+    const members = this.members();
+    const named = mentionsIn(text, members);
+    if (named.length) return named;
+    const last = this.d.db
+      .query<{ bot_id: string }, [number]>(
+        `SELECT bot_id FROM messages WHERE conversation_id = ? AND role = 'assistant' AND kind = 'text'
+         AND incognito = 0 AND bot_id IS NOT NULL ORDER BY id DESC LIMIT 1`,
+      )
+      .get(this.conversationId)?.bot_id;
+    const speaker = members.find((b) => b.id === last);
+    return [speaker ?? members[0] ?? this.d.bots.hatbot()];
   }
 
   /** The bot a bot's own chat is with; a group's first bot. */
@@ -246,12 +284,30 @@ export class Thread {
       this.stop(command.arg, message);
       return { message, done: Promise.resolve() };
     }
-    const bot = this.bot();
-    const done = this.chain.then(() =>
-      command ? this.command(command, message, bot) : this.reply(message, bot),
-    );
+    const group = this.group() !== null;
+    const first = group ? this.responders(text) : [this.bot()];
+    const done = this.chain.then(async () => {
+      if (command) await this.command(command, message, first[0] as Bot);
+      else if (group) await this.round(message, first);
+      else await this.reply(message, first[0] as Bot);
+    });
     this.chain = done.catch((err) => console.error("thread turn failed", err));
     return { message, done };
+  }
+
+  /**
+   * A group's bots answer in turn: those first, then any bot one of them brings in with @name, up to
+   * MAX_GROUP_REPLIES. `user` null: a task ended, and the bot that started it tells you.
+   */
+  private async round(user: ThreadMessage | null, first: Bot[]) {
+    const queue = [...first];
+    for (let n = 0; n < MAX_GROUP_REPLIES && queue.length; n++) {
+      const bot = queue.shift() as Bot;
+      const said = await this.reply(n === 0 ? user : null, bot, { nudged: n > 0, round: user });
+      if (!said || said.status === "error" || said.stopped) return;
+      for (const b of mentionsIn(said.text, this.members()))
+        if (b.id !== bot.id && !queue.some((q) => q.id === b.id)) queue.push(b);
+    }
   }
 
   attach(
@@ -527,7 +583,14 @@ export class Thread {
     // Fixed for the turn; a plugin switched on or off shows from the next one. A bot only gets its own.
     const guidance = plugins.guidance(bot.plugins);
     const others = bots.list().filter((b) => b.id !== bot.id);
-    const prompt = promptFor(SYSTEM_PROMPT, bot, others);
+    const group = this.group();
+    const prompt = group
+      ? `${promptFor(SYSTEM_PROMPT, bot, others)}\n\n${groupPrompt(
+          group.title,
+          bot.name,
+          this.members().map((b) => b.name),
+        )}`
+      : promptFor(SYSTEM_PROMPT, bot, others);
     const base = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
     const system = incognito ? `${base}\n\n${INCOGNITO_PROMPT}` : base;
     const pluginTools = plugins.tools(bot.plugins).filter((t) => !incognito || t.access === "read");
@@ -555,7 +618,32 @@ export class Thread {
 
   /** What an episode is bound to: the prompt, tools and model of each bot in it. */
   private prefixFor(bot: Bot, incognito: boolean): string {
-    return this.turnSetup(bot, incognito).prefix;
+    if (!this.group()) return this.turnSetup(bot, incognito).prefix;
+    return createHash("sha256")
+      .update(
+        this.members()
+          .map((b) => this.turnSetup(b, incognito).prefix)
+          .join(","),
+      )
+      .digest("hex")
+      .slice(0, 16);
+  }
+
+  /** In a group: what was said since `bot` last spoke, by you and the other bots. */
+  private groupSince(bot: Bot, after: number): string {
+    return this.d.db
+      .query<
+        { role: string; bot_id: string | null; text: string; created_at: string },
+        [number, number, string]
+      >(
+        `SELECT role, bot_id, text, created_at FROM messages WHERE conversation_id = ? AND id > ?
+         AND incognito = 0 AND status != 'streaming' AND (role = 'user' OR bot_id != ?)
+         ORDER BY id DESC LIMIT ${RECENT_MESSAGES * 3}`,
+      )
+      .all(this.conversationId, after, bot.id)
+      .reverse()
+      .map((m) => `[${localStamp(new Date(m.created_at))}] ${this.speaker(m)}: ${m.text}`)
+      .join("\n\n");
   }
 
   /** Waits for queued replies (tests, shutdown). */
@@ -913,39 +1001,68 @@ export class Thread {
    * it in a reply of its own, with the conversation in mind. In turn with replies.
    */
   taskEnded(botId = this.bot().id) {
-    const done = this.chain.then(() => {
+    const done = this.chain.then(async () => {
       const bot = this.d.bots.get(botId);
-      return bot ? this.reply(null, bot) : undefined;
+      if (!bot) return;
+      if (this.group()) await this.round(null, [bot]);
+      else await this.reply(null, bot);
     });
     this.chain = done.catch((err) => console.error("thread turn failed", err));
     return done;
   }
 
-  /** `bot` replies to your message, or with `user` null to tasks that ended since it last heard. */
-  private async reply(user: ThreadMessage | null, bot: Bot) {
+  /**
+   * `bot` replies to your message, or with `user` null to tasks that ended since it last heard. In a
+   * group, `nudged`: another bot or your message mentioned it after the first answered; `round`: your
+   * message the bots are answering.
+   */
+  private async reply(
+    user: ThreadMessage | null,
+    bot: Bot,
+    group: { nudged: boolean; round: ThreadMessage | null } | null = null,
+  ): Promise<Said | undefined> {
     const { db, events, spend, model, plugins } = this.d;
     const incognito = !!user?.incognito;
     // Told already, with a message of yours that came first.
-    if (!user && !this.d.tasks?.hasUnreported(this.conversationId, bot.id)) return;
+    if (!user && !group?.nudged && !this.d.tasks?.hasUnreported(this.conversationId, bot.id))
+      return;
     const userId = user?.id ?? Number.MAX_SAFE_INTEGER;
     const { system, pluginTools, chatModel, chatEffort, onHaiku, tools, prefix } = this.turnSetup(
       bot,
       incognito,
     );
     const offered = new Set(tools.map((t) => ("name" in t ? t.name : "")));
-    const episode = await this.episodeFor(prefix, false, incognito);
+    // A group's episode is bound to every bot's prefix.
+    const episode = await this.episodeFor(
+      group ? this.prefixFor(bot, incognito) : prefix,
+      false,
+      incognito,
+    );
     if (user && !this.file(user, episode.id)) return;
 
     const userBlocks: BlockParam[] = [];
-    if (episode.isNew) {
+    // In a group each bot has its own turns: one new to the episode opens it with the context, up to
+    // the message the bots are answering, and gets what came after in <group_messages>.
+    const firstTurn = group ? !this.hasTurns(episode.id, bot.id) : episode.isNew;
+    const contextBefore = group ? (group.round?.id ?? userId) : userId;
+    const spoke = group
+      ? firstTurn
+        ? contextBefore - 1
+        : (db
+            .query<{ id: number | null }, [number, string]>(
+              "SELECT max(id) AS id FROM messages WHERE episode_id = ? AND bot_id = ? AND role = 'assistant' AND kind = 'text'",
+            )
+            .get(episode.id, bot.id)?.id ?? contextBefore - 1)
+      : 0;
+    if (firstTurn) {
       // The summary a /new left running is part of the context.
       await Promise.allSettled(this.summarizing.values());
       userBlocks.push({
         type: "text",
-        text: await this.episodeContext(bot, userId, episode.id, episode.fresh, incognito),
+        text: await this.episodeContext(bot, contextBefore, episode.id, episode.fresh, incognito),
       });
       // /new and incognito leave what came before, and what it had read, behind.
-      if (!episode.fresh && !incognito) this.inheritTaint(episode.id, userId);
+      if (episode.isNew && !episode.fresh && !incognito) this.inheritTaint(episode.id, userId);
     } else {
       const commands = this.commandsSince(episode.id, userId);
       if (commands)
@@ -974,12 +1091,30 @@ export class Thread {
         text: `<task_updates>\n${lines.join("\n")}\n</task_updates>`,
       });
     }
-    userBlocks.push({
-      type: "text",
-      text: user
-        ? `[${localStamp(new Date(user.createdAt))}]\n${user.text || "(no text, only files)"}`
-        : `[${localStamp(new Date(this.clock()))}]\n(No message from the owner: a task they started from the chat ended. Tell them what came of it, briefly, with what you know from this conversation. Don't repeat what they can already see.)`,
-    });
+    const taskNews = `[${localStamp(new Date(this.clock()))}]\n(No message from the owner: a task they started from the chat ended. Tell them what came of it, briefly, with what you know from this conversation. Don't repeat what they can already see.)`;
+    if (group) {
+      const since = this.groupSince(bot, spoke);
+      userBlocks.push({
+        type: "text",
+        text:
+          [
+            ...(since ? [`<group_messages>\n${since}\n</group_messages>`] : []),
+            ...(user
+              ? []
+              : [
+                  group.nudged
+                    ? `(Your turn, ${bot.name}: you were mentioned above. Answer your part.)`
+                    : taskNews,
+                ]),
+          ].join("\n\n") || taskNews,
+      });
+    } else
+      userBlocks.push({
+        type: "text",
+        text: user
+          ? `[${localStamp(new Date(user.createdAt))}]\n${user.text || "(no text, only files)"}`
+          : taskNews,
+      });
     // Your files: what's in them was written by whoever made them, so they're untrusted (PLAN.md §6.1).
     if (user?.attachments?.length && this.d.attachments) {
       userBlocks.push(...(await this.d.attachments.blocks(user.attachments)));
@@ -1012,7 +1147,7 @@ export class Thread {
       text += delta;
       events.emit({ type: "message.delta", id: out.id, text: delta });
     };
-    const finish = (status: "done" | "error", note?: string) => {
+    const finish = (status: "done" | "error", note?: string): Said => {
       if (note) {
         separate = true;
         say(note);
@@ -1020,6 +1155,7 @@ export class Thread {
       db.query("UPDATE messages SET text = ?, status = ? WHERE id = ?").run(text, status, out.id);
       db.query("UPDATE episodes SET last_activity_at = ? WHERE id = ?").run(this.now(), episode.id);
       events.emit({ type: "message.done", id: out.id, text, status });
+      return { text, status };
     };
 
     let askedOpus = false;
@@ -1251,7 +1387,7 @@ export class Thread {
     } catch (err) {
       if (abort.signal.aborted)
         return abort.signal.reason === STOPPED
-          ? finish("done", "_Stopped._")
+          ? { ...finish("done", "_Stopped._"), stopped: true }
           : finish("error", "_Paused. Resume to continue._");
       console.error("chat turn failed", err);
       return finish(
@@ -1262,6 +1398,23 @@ export class Thread {
       this.current = null;
     }
   }
+}
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** The bots `text` brings in with @name (or @id), in the order it names them. */
+export function mentionsIn(text: string, bots: Bot[]): Bot[] {
+  return bots
+    .map((b) => ({
+      b,
+      at: new RegExp(
+        `(?:^|[^\\w@])@(?:${[b.name, b.id].map(escapeRe).join("|")})(?![\\w-])`,
+        "i",
+      ).exec(text)?.index,
+    }))
+    .filter((m): m is { b: Bot; at: number } => m.at !== undefined)
+    .sort((x, y) => x.at - y.at)
+    .map((m) => m.b);
 }
 
 /**

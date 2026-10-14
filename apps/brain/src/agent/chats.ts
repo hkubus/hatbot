@@ -1,6 +1,7 @@
 // Your chats (PLAN.md §14): each bot's own, and groups of bots. One Thread runs each; what isn't tied
 // to one chat (tasks' messages, what you've seen) is here.
 import { type Conversation, HATBOT_ID } from "@hatbot/shared";
+import { BotError } from "../bots";
 import { Thread, type ThreadDeps } from "./thread";
 
 type Parts = Pick<
@@ -204,6 +205,67 @@ export class Chats {
   /** A task ended: `botId` tells you in the chat it was started from. */
   taskEnded(conversationId: number, botId: string) {
     return (this.thread(conversationId) ?? this.direct(botId)).taskEnded(botId);
+  }
+
+  /** A group of `botIds` and you. */
+  createGroup(title: string | undefined, botIds: string[]): Conversation {
+    const ids = this.groupBots(botIds);
+    const id = this.d.db.transaction(() => {
+      const row = this.d.db
+        .query<{ id: number }, [string | null, string]>(
+          "INSERT INTO conversations (kind, title, created_at) VALUES ('group', ?, ?) RETURNING id",
+        )
+        .get(title || null, this.now());
+      if (!row) throw new Error("conversation insert failed");
+      this.setBots(row.id, ids);
+      return row.id;
+    })();
+    this.changed(id);
+    return this.get(id) as Conversation;
+  }
+
+  /** A group's name or bots. Null if there's no such group. */
+  updateGroup(id: number, patch: { title?: string; botIds?: string[] }): Conversation | null {
+    if (this.get(id)?.kind !== "group") return null;
+    const ids = patch.botIds && this.groupBots(patch.botIds);
+    this.d.db.transaction(() => {
+      if (patch.title !== undefined)
+        this.d.db
+          .query("UPDATE conversations SET title = ? WHERE id = ?")
+          .run(patch.title || null, id);
+      if (ids) {
+        this.d.db.query("DELETE FROM conversation_bots WHERE conversation_id = ?").run(id);
+        this.setBots(id, ids);
+      }
+    })();
+    this.changed(id);
+    return this.get(id);
+  }
+
+  /** Deletes a group; its bots' own chats stay. False if there's no such group. */
+  deleteGroup(id: number): boolean {
+    if (this.get(id)?.kind !== "group") return false;
+    this.threads.get(id)?.abortCurrent();
+    this.threads.delete(id);
+    this.d.db.query("UPDATE conversations SET deleted_at = ? WHERE id = ?").run(this.now(), id);
+    this.d.events.emit({ type: "conversation.deleted", id });
+    return true;
+  }
+
+  /** A group's bots: ones that exist, each once. */
+  private groupBots(botIds: string[]): string[] {
+    const ids = [...new Set(botIds)];
+    const missing = ids.find((b) => !this.d.bots.active(b));
+    if (missing) throw new BotError(`No bot "${missing}".`);
+    if (ids.length < 2) throw new BotError("A group needs at least two bots.");
+    return ids;
+  }
+
+  private setBots(id: number, botIds: string[]) {
+    const add = this.d.db.query(
+      "INSERT INTO conversation_bots (conversation_id, bot_id, position) VALUES (?, ?, ?)",
+    );
+    for (const [i, b] of botIds.entries()) add.run(id, b, i);
   }
 
   /** Tells the apps a chat's name or bots changed. */

@@ -41,6 +41,18 @@ export const INCOGNITO_PROMPT = `This conversation is incognito
 - Memory is read-only here. You can read it, but not save, change or delete anything, so don't offer to remember things.
 - You can only look things up: memory, the web, schedules and triggers, and plugins' read tools. You can't start tasks, make or change schedules, or change anything in the homelab. If the owner asks for that, say it needs a normal conversation.`;
 
+/** Most bot replies to one message from the owner in a group chat (PLAN.md §14.4). */
+export const MAX_GROUP_REPLIES = 4;
+
+/** After the bot's prompt in a group chat. */
+export function groupPrompt(title: string | null, me: string, names: string[]): string {
+  return `This is a group chat
+- ${title ? `"${title}" is` : "This is"} a group chat with the owner and these bots: ${names.join(", ")}. You are ${me}; the others answer for themselves.
+- What was said since your last turn comes in <group_messages>, each line with who said it. Answer what's addressed to you, and don't repeat what another bot already said.
+- To bring another bot in, write @ and its name, like @${names.find((n) => n !== me) ?? names[0]}; it answers after you. Do it only when its part is needed: at most ${MAX_GROUP_REPLIES} bot replies follow each message from the owner.
+- There's no incognito here.`;
+}
+
 export const SUMMARY_PROMPT = `You maintain a running summary of a long chat between a person and their assistant, Hatbot. You get the previous summary and the transcript of the latest conversation. Write two things.
 
 <recap>: what the latest conversation was about, for the person scrolling back through the chat, where it stands folded up in its place. One or two plain sentences, at most 40 words, about what was asked and what came of it ("Asked about the NAS disks; Hatbot found one failing and scheduled a weekly check."). No dates, no preamble.

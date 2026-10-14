@@ -1,9 +1,10 @@
-import { PostMessage, SeenMessages } from "@hatbot/shared";
+import { CreateGroup, PostMessage, SeenMessages, UpdateGroup } from "@hatbot/shared";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
 import type { Thread } from "../agent/thread";
 import { MAX_ATTACHMENT_BYTES } from "../attachments";
 import { requireAuth } from "../auth/middleware";
+import { BotError } from "../bots";
 import type { AppEnv } from "../context";
 import { json, query } from "./util";
 
@@ -67,6 +68,22 @@ export const threadRoutes = new Hono<AppEnv>()
     });
   })
   .get("/conversations", (c) => c.json(c.var.chats.list()))
+  // Group chats (PLAN.md §14.4): bots' own chats come and go with the bots.
+  .post("/conversations", json(CreateGroup), (c) => {
+    const { title, botIds } = c.req.valid("json");
+    return groupError(() => c.json(c.var.chats.createGroup(title, botIds), 201), c);
+  })
+  .patch("/conversations/:id", json(UpdateGroup), (c) =>
+    groupError(() => {
+      const group = c.var.chats.updateGroup(Number(c.req.param("id")), c.req.valid("json"));
+      return group ? c.json(group) : c.json({ error: "not found" }, 404);
+    }, c),
+  )
+  .delete("/conversations/:id", (c) =>
+    c.var.chats.deleteGroup(Number(c.req.param("id")))
+      ? c.json({ ok: true })
+      : c.json({ error: "not found" }, 404),
+  )
   .get("/thread/messages", query(ListMessages), (c) => listMessages(c, c.var.chats.hatbot()))
   .get("/conversations/:id/messages", query(ListMessages), (c) =>
     withThread(c, (t) => listMessages(c, t)),
@@ -99,6 +116,15 @@ export const threadRoutes = new Hono<AppEnv>()
 // biome-ignore lint/suspicious/noExplicitAny: the handlers' contexts differ only in their validated input.
 type Ctx = Context<AppEnv, string, any>;
 
+function groupError(f: () => Response, c: Ctx): Response {
+  try {
+    return f();
+  } catch (err) {
+    if (err instanceof BotError) return c.json({ error: err.message }, 400);
+    throw err;
+  }
+}
+
 function withThread(c: Ctx, f: (t: Thread) => Response | Promise<Response>) {
   const id = Number(c.req.param("id"));
   const thread = Number.isInteger(id) ? c.var.chats.thread(id) : null;
@@ -123,6 +149,7 @@ function post(c: Ctx, t: Thread) {
   >;
   if (attachmentIds.some((id) => c.var.attachments.get(id)?.from !== "owner"))
     return c.json({ error: "unknown attachment" }, 400);
+  if (incognito && t.group()) return c.json({ error: "Group chats have no incognito." }, 400);
   const { message } = t.post(text, attachmentIds, incognito);
   return c.json(message, 202);
 }
