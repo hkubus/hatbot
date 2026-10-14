@@ -36,6 +36,7 @@ import type { Triggers } from "../triggers";
 import { type ModelClient, modelErrorText } from "./model";
 import {
   EXPERT_PROMPT,
+  FORGET_PROMPT,
   groupPrompt,
   INCOGNITO_PROMPT,
   MAX_GROUP_REPLIES,
@@ -152,6 +153,8 @@ export class Thread {
   private chain: Promise<void> = Promise.resolve();
   /** Summaries being written, so the sweep and a new message don't write one twice. */
   private summarizing = new Map<number, Promise<void>>();
+  /** Summaries and deletions take turns: each rewrites the running summary from the last one. */
+  private summaryTurn: Promise<unknown> = Promise.resolve();
   private current: AbortController | null = null;
   /** The reply in progress is in the incognito conversation. */
   private currentIncognito = false;
@@ -884,9 +887,139 @@ export class Thread {
   summarize(episodeId: number): Promise<void> {
     const running = this.summarizing.get(episodeId);
     if (running) return running;
-    const run = this.writeSummary(episodeId).finally(() => this.summarizing.delete(episodeId));
+    const run = this.inSummaryTurn(() => this.writeSummary(episodeId)).finally(() =>
+      this.summarizing.delete(episodeId),
+    );
     this.summarizing.set(episodeId, run);
     return run;
+  }
+
+  private inSummaryTurn<T>(f: () => Promise<T>): Promise<T> {
+    const run = this.summaryTurn.then(f);
+    this.summaryTurn = run.catch(() => {});
+    return run;
+  }
+
+  /**
+   * Deletes a conversation from the chat for good: its messages and the cards among them, their files,
+   * the model's turns, its place in search, and what the running summary kept of it. Tasks it started
+   * stay on Tasks; what it cost stays in the ledger, without it. False if there's no such one. Throws,
+   * deleting nothing, if Haiku can't rewrite the summary.
+   */
+  async deleteEpisode(episodeId: number): Promise<boolean> {
+    const latest = this.d.db
+      .query<{ id: number }, [number]>(
+        "SELECT max(id) AS id FROM episodes WHERE conversation_id = ? AND incognito = 0",
+      )
+      .get(this.conversationId)?.id;
+    if (!this.ownEpisode(episodeId)) return false;
+    if (episodeId !== latest) return this.inSummaryTurn(() => this.forget(episodeId));
+    // The reply in progress may be in it: stopped, and deleted once it has ended.
+    if (this.current && !this.currentIncognito) this.current.abort(STOPPED);
+    const done = this.chain.then(() => this.inSummaryTurn(() => this.forget(episodeId)));
+    this.chain = done.then(
+      () => {},
+      () => {},
+    );
+    return done;
+  }
+
+  private ownEpisode(episodeId: number): boolean {
+    return !!this.d.db
+      .query("SELECT 1 FROM episodes WHERE id = ? AND conversation_id = ? AND incognito = 0")
+      .get(episodeId, this.conversationId);
+  }
+
+  private async forget(episodeId: number): Promise<boolean> {
+    const { db } = this.d;
+    if (!this.ownEpisode(episodeId)) return false;
+    // Its messages, and the cards after them that fold up with it: up to the next conversation's.
+    const rows = db
+      .query<
+        { id: number; role: string; bot_id: string | null; text: string; created_at: string },
+        number[]
+      >(
+        `WITH span AS (
+           SELECT (SELECT min(id) FROM messages WHERE episode_id = ?1) AS first,
+             coalesce((SELECT min(id) FROM messages WHERE conversation_id = ?2 AND incognito = 0
+               AND episode_id IS NOT NULL AND episode_id != ?1
+               AND id > (SELECT min(id) FROM messages WHERE episode_id = ?1)), 9e18) AS next)
+         SELECT m.id, m.role, m.bot_id, m.text, m.created_at FROM messages m, span
+         WHERE m.episode_id = ?1 OR (m.conversation_id = ?2 AND m.incognito = 0
+           AND m.episode_id IS NULL AND m.role = 'assistant' AND m.id > span.first AND m.id < span.next)
+         ORDER BY m.id`,
+      )
+      .all(episodeId, this.conversationId);
+    const summarized = db
+      .query<{ summarized: number }, [number]>("SELECT summarized FROM episodes WHERE id = ?")
+      .get(episodeId)?.summarized;
+    const previous = this.threadSummary();
+    let summary = previous;
+    if (summarized && previous && rows.length && this.hasTurns(episodeId))
+      summary = await this.summaryWithout(episodeId, rows);
+    const ids = rows.map((r) => r.id);
+    await this.d.attachments?.removeFor(ids);
+    const list = ids.map(() => "?").join(", ");
+    db.transaction(() => {
+      if (ids.length) {
+        db.query(`DELETE FROM attachments WHERE message_id IN (${list})`).run(...ids);
+        db.query(`DELETE FROM messages WHERE id IN (${list})`).run(...ids);
+      }
+      db.query("DELETE FROM episode_turns WHERE episode_id = ?").run(episodeId);
+      db.query("UPDATE spend_ledger SET episode_id = NULL WHERE episode_id = ?").run(episodeId);
+      db.query("DELETE FROM episodes WHERE id = ?").run(episodeId);
+      if (summary !== previous)
+        db.query("UPDATE conversations SET summary = ? WHERE id = ?").run(
+          summary,
+          this.conversationId,
+        );
+    })();
+    // Out of the search index's segments and the write-ahead log too, not only the tables.
+    db.query("INSERT INTO messages_fts (messages_fts) VALUES ('optimize')").run();
+    db.query("PRAGMA wal_checkpoint(TRUNCATE)").get();
+    if (ids.length) this.d.events.emit({ type: "message.deleted", ids });
+    return true;
+  }
+
+  /** The running summary with what a deleted conversation put in it taken out, by Haiku. */
+  private async summaryWithout(
+    episodeId: number,
+    rows: { role: string; bot_id: string | null; text: string; created_at: string }[],
+  ): Promise<string> {
+    const transcript = rows
+      .map((m) => `[${localStamp(new Date(m.created_at))}] ${this.speaker(m)}: ${m.text}`)
+      .join("\n\n");
+    const names = this.members().map((b) => b.name);
+    const res = await this.d.model.create({
+      model: SUMMARY_MODEL,
+      max_tokens: 4000,
+      thinking: { type: "adaptive" },
+      output_config: { effort: "low" },
+      system:
+        names.length === 1 && names[0] === "Hatbot"
+          ? FORGET_PROMPT
+          : FORGET_PROMPT.replace(/\bHatbot\b/g, names.join(" and ")),
+      messages: [
+        {
+          role: "user",
+          content: `<summary>\n${this.threadSummary()}\n</summary>\n\n<deleted_conversation>\n${transcript}\n</deleted_conversation>`,
+        },
+      ],
+    });
+    this.d.spend.recordResponse({
+      model: SUMMARY_MODEL,
+      purpose: "summary",
+      usage: res.usage,
+      botId: this.bot().id,
+    });
+    const out = res.content
+      .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("\n");
+    const summary = /<summary>([\s\S]*?)<\/summary>/.exec(out)?.[1];
+    if (res.stop_reason !== "end_turn" || summary === undefined)
+      throw new Error(`no summary in the rewrite for episode ${episodeId} (${res.stop_reason})`);
+    return summary.trim();
   }
 
   private async writeSummary(episodeId: number) {

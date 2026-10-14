@@ -18,6 +18,8 @@ struct ChatView: View {
   @State private var position = ScrollPosition(edge: .bottom)
   @State private var loaded = false
   @State private var unfolded = Set<Int>()
+  /// The folded conversation you asked to delete, waiting for you to confirm.
+  @State private var deleting: Int?
   private var name: String { store.chatName(store.currentChat) }
   @State private var farFromBottom = false
 
@@ -113,6 +115,11 @@ struct ChatView: View {
                   if unfolded.remove(id) == nil { unfolded.insert(id) }
                 }
               }
+              .contextMenu {
+                Button("Delete Conversation", systemImage: "trash", role: .destructive) {
+                  deleting = g.episodeId
+                }
+              }
               .padding(.top, 10)
             case let .message(m, joined, tail):
               // In a group, the bot's name above each run of its messages.
@@ -188,6 +195,23 @@ struct ChatView: View {
         }
       }
       .navigationBarTitleDisplayMode(.inline)
+      .confirmationDialog(
+        "Delete this conversation for good? \(name) forgets it too.",
+        isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+        titleVisibility: .visible
+      ) {
+        Button("Delete", role: .destructive) {
+          guard let id = deleting else { return }
+          Task {
+            do {
+              error = nil
+              try await store.deleteEpisode(id)
+            } catch {
+              self.error = message(for: error)
+            }
+          }
+        }
+      }
       .routes()
       .onChange(of: store.conversationId) {
         path = []

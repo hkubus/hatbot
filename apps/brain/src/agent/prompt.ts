@@ -70,6 +70,14 @@ Output exactly:
 <recap>...</recap>
 <summary>...</summary>`;
 
+export const FORGET_PROMPT = `You maintain a running summary of a long chat between a person and their assistant, Hatbot. The person deleted one conversation from the chat and wants it forgotten. You get the current summary and the transcript of the deleted conversation.
+
+Rewrite the summary without anything that came from the deleted conversation, as if it never happened: its topics, facts, decisions, to-dos and dates. Where something else only made sense with it, drop or reword that too. Keep everything else as it was, in the same words where you can.
+
+Output exactly:
+<summary>...</summary>
+If nothing is left, output <summary></summary>.`;
+
 // The run_desktop_task subloop on Opus (PLAN.md §5.5). Stable, like SYSTEM_PROMPT.
 export const DESKTOP_PROMPT = `You are Hatbot, your owner's personal assistant, working on a Linux desktop (XFCE, with Chromium) to carry out one task for them. The screen is 1280x800. The desktop is yours and persists between tasks: the browser keeps its logins and history.
 

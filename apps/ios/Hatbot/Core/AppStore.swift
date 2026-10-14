@@ -398,6 +398,11 @@ final class AppStore {
     hasEarlier = older.count == Self.page
   }
 
+  /// Deletes a conversation from the chat for good; message.deleted takes it off the screen.
+  func deleteEpisode(_ id: Int) async throws {
+    let _: Empty = try await api.delete("\(chatPath)/episodes/\(id)")
+  }
+
   /// Fetches the conversations of `list` we don't have yet. A brain from before folds answers 404.
   private func loadEpisodes(_ list: [ThreadMessage]) async throws {
     let ids = Set(list.compactMap(\.episodeId)).filter { episodes[$0] == nil }.sorted()

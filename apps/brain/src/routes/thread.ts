@@ -93,6 +93,11 @@ export const threadRoutes = new Hono<AppEnv>()
   .get("/conversations/:id/episodes", query(EpisodeIds), (c) =>
     withThread(c, (t) => episodes(c, t)),
   )
+  // Deleting a conversation from the chat for good.
+  .delete("/thread/episodes/:episodeId", (c) => deleteEpisode(c, c.var.chats.hatbot()))
+  .delete("/conversations/:id/episodes/:episodeId", (c) =>
+    withThread(c, (t) => deleteEpisode(c, t)),
+  )
   .post("/thread/messages", json(PostMessage), (c) => post(c, c.var.chats.hatbot()))
   .post("/conversations/:id/messages", json(PostMessage), (c) => withThread(c, (t) => post(c, t)))
   // Leaving incognito: its conversation is deleted.
@@ -141,6 +146,18 @@ function listMessages(c: Ctx, t: Thread) {
 function episodes(c: Ctx, t: Thread) {
   const { ids } = c.req.valid("query" as never) as z.infer<typeof EpisodeIds>;
   return c.json(t.episodes(ids.split(",").map(Number)));
+}
+
+async function deleteEpisode(c: Ctx, t: Thread) {
+  const id = Number(c.req.param("episodeId"));
+  try {
+    return Number.isInteger(id) && (await t.deleteEpisode(id))
+      ? c.json({ ok: true })
+      : c.json({ error: "not found" }, 404);
+  } catch (err) {
+    console.error("deleting a conversation failed", err);
+    return c.json({ error: "Couldn't take it out of the summary. Nothing was deleted." }, 502);
+  }
 }
 
 function post(c: Ctx, t: Thread) {

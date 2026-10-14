@@ -156,6 +156,11 @@ export async function sendMessage(text: string, attachmentIds: number[] = []) {
     set({ messages: upsert(state.messages, m) });
 }
 
+/** Deletes a conversation from the chat for good; message.deleted takes it off the screen. */
+export async function deleteEpisode(id: number) {
+  await api(`/conversations/${state.conversationId}/episodes/${id}`, { method: "DELETE" });
+}
+
 /** Into incognito, or out of it, which deletes its conversation. */
 export async function setIncognito(on: boolean) {
   if (on === state.incognito) return;

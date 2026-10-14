@@ -697,3 +697,72 @@ test("an incognito conversation idle for 30 minutes is deleted, its files too", 
   // It's never summarized.
   expect(model.creates.length).toBe(0);
 });
+
+test("deleting a conversation takes it out of the chat, search, files and the summary", async () => {
+  const model = new FakeModel(
+    [{ content: [text("Noted, 51820.")] }, { content: [text("Hi.")] }, { content: [text("Yes.")] }],
+    [
+      "<recap>WireGuard port.</recap><summary>2026-10-15: WireGuard runs on 51820. They like tea.</summary>",
+    ],
+  );
+  const t = await testApp(model);
+  const { cookie } = await setUpOwner(t);
+  const a = await t.attachments.save({
+    bytes: new TextEncoder().encode("wg0.conf"),
+    name: "wg0.conf",
+    mediaType: "text/plain",
+    from: "owner",
+  });
+  const path = t.db
+    .query<{ path: string }, [number]>("SELECT path FROM attachments WHERE id = ?")
+    .get(a.id)?.path as string;
+  await t.thread.post("my wireguard port is 51820", [a.id]).done;
+  const card = t.thread.addCard("task", "Checked the wireguard tunnel.", {});
+  t.advance(31 * 60_000);
+  await t.thread.sweep();
+  await t.thread.post("hello").done;
+  const [first, , , , kept] = t.thread.list();
+  const gone = t.thread.list().filter((m) => m.episodeId === first?.episodeId || m.id === card.id);
+  expect(gone.length).toBe(3);
+  const del = (episode: number) =>
+    t.call("DELETE", `/thread/episodes/${episode}`, undefined, { cookie });
+  const summary = () =>
+    t.db.query<{ summary: string }, []>("SELECT summary FROM conversations WHERE id = 1").get()
+      ?.summary;
+
+  // Haiku couldn't rewrite the summary: nothing is deleted.
+  model.onCreate = () => "I can't.";
+  expect((await del(first?.episodeId as number)).status).toBe(502);
+  expect(t.thread.list().length).toBe(5);
+
+  model.onCreate = () => "<summary>They like tea.</summary>";
+  expect((await del(first?.episodeId as number)).status).toBe(200);
+  expect(JSON.stringify(model.creates.at(-1)?.messages)).toContain("my wireguard port is 51820");
+  expect(summary()).toBe("They like tea.");
+  expect(t.thread.list().map((m) => m.text)).toEqual(["hello", "Hi."]);
+  expect(t.events.at(-1)).toEqual({ type: "message.deleted", ids: gone.map((m) => m.id) });
+  expect(
+    t.db.query("SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'wireguard'").all(),
+  ).toEqual([]);
+  expect(t.attachments.get(a.id)).toBeNull();
+  expect(await t.archive.file(path)?.exists()).toBe(false);
+  const count = (sql: string) => t.db.query<{ n: number }, []>(sql).get()?.n;
+  expect(count(`SELECT count(*) AS n FROM episodes WHERE id = ${first?.episodeId}`)).toBe(0);
+  expect(
+    count(`SELECT count(*) AS n FROM episode_turns WHERE episode_id = ${first?.episodeId}`),
+  ).toBe(0);
+  expect((await del(first?.episodeId as number)).status).toBe(404);
+  expect(
+    (await t.call("DELETE", `/conversations/99/episodes/${kept?.episodeId}`, undefined, { cookie }))
+      .status,
+  ).toBe(404);
+
+  // The one you're in, not summarized yet: no summary to rewrite, and the next message starts afresh.
+  const creates = model.creates.length;
+  expect((await del(kept?.episodeId as number)).status).toBe(200);
+  expect(model.creates.length).toBe(creates);
+  expect(t.thread.list()).toEqual([]);
+  await t.thread.post("still there?").done;
+  expect(lastUserText(model.requests.at(-1) as never)).not.toContain("hello");
+  expect(t.thread.list().map((m) => m.text)).toEqual(["still there?", "Yes."]);
+});

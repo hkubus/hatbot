@@ -616,6 +616,26 @@ html[data-theme="dark"] .seg button.active {
   padding: 6px 0 0;
 }
 /* A finished conversation, folded up under its recap. */
+.fold-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.fold-row .msg-act {
+  flex: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.fold-row:hover .msg-act,
+.fold-row:focus-within .msg-act,
+.fold-row.open .msg-act {
+  opacity: 1;
+}
+@media (hover: none) {
+  .fold-row:hover:not(.open) .msg-act {
+    opacity: 0;
+  }
+}
 .fold {
   display: flex;
   align-items: baseline;
@@ -640,7 +660,7 @@ html[data-theme="dark"] .seg button.active {
   align-self: center;
   transition: transform 0.2s var(--spring);
 }
-.fold.open svg.i {
+.fold-row.open .fold svg.i {
   transform: rotate(90deg);
 }
 .fold-text {

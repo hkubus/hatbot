@@ -28,6 +28,7 @@ import {
   chatName,
   currentChat,
   decideApproval,
+  deleteEpisode,
   ensureSchedule,
   ensureTask,
   getState,
@@ -473,19 +474,26 @@ function Fold({
   text,
   open,
   onToggle,
+  onDelete,
 }: {
   messages: ThreadMessage[];
   text: string;
   open: boolean;
   onToggle: () => void;
+  onDelete: () => void;
 }) {
   const first = messages[0] as ThreadMessage;
   return (
-    <button type="button" className={`fold ${open ? "open" : ""}`} onClick={onToggle}>
-      <Icon name="chevron" />
-      <span className="fold-text">{text}</span>
-      <span className="t">{time(first.createdAt)}</span>
-    </button>
+    <div className={`fold-row ${open ? "open" : ""}`}>
+      <button type="button" className="fold" onClick={onToggle}>
+        <Icon name="chevron" />
+        <span className="fold-text">{text}</span>
+        <span className="t">{time(first.createdAt)}</span>
+      </button>
+      <button type="button" className="msg-act" title="Delete conversation" onClick={onDelete}>
+        <Icon name="trash" />
+      </button>
+    </div>
   );
 }
 
@@ -777,6 +785,14 @@ export function Chat() {
                     text={g.fold}
                     open={open}
                     onToggle={() => toggle(id)}
+                    onDelete={() => {
+                      if (!confirm(`Delete this conversation for good? ${name} forgets it too.`))
+                        return;
+                      setError("");
+                      deleteEpisode(id).catch((err) =>
+                        setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot."),
+                      );
+                    }}
                   />
                   {open ? g.messages.map(row) : waiting.map(row)}
                 </Fragment>
