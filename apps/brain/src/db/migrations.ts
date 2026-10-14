@@ -385,4 +385,7 @@ export const migrations: string[] = [
     FROM tasks t WHERE t.id = messages.task_id)
   WHERE kind IN ('text', 'command') AND task_id IN (SELECT id FROM tasks WHERE status IN ('done', 'failed'));
   `,
+  /* 23: files a task hands the bot in the chat */ `
+  ALTER TABLE attachments ADD COLUMN for_chat INTEGER NOT NULL DEFAULT 0;
+  `,
 ];

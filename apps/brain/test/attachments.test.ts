@@ -184,3 +184,46 @@ test("a desktop task sends a browser download; it shows on the task and its mess
   ]);
   expect(t.tasks.steps(task.id).some((s) => s.name === "send_file")).toBe(true);
 });
+
+test("a background task hands the chat a JSON file; the bot reads it and the chat doesn't show it", async () => {
+  const series = JSON.stringify({ x: ["Mon", "Tue"], cpu: [12, 40] });
+  const chat = new FakeModel([
+    { content: [toolUse("run_task", { title: "CPU this week", goal: "Get CPU per day" })] },
+    { content: [text("On it.")] },
+    { content: [text('```chart\n{"type": "line"}\n```')] },
+  ]);
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("send_to_chat", { name: "cpu.json", content: series }),
+        toolUse("send_to_chat", { path: "out/cpu.png" }),
+      ],
+    },
+    {
+      content: [toolUse("finish_task", { outcome: "done", summary: "CPU per day.", notify: true })],
+    },
+  ]);
+  const t = await testApp(chat, work);
+  t.agent.files.set("out/cpu.png", PNG);
+  t.thread.post("chart CPU this week");
+  await t.thread.idle();
+  await t.tasks.idle();
+  await t.thread.idle();
+
+  const [task] = t.tasks.list();
+  expect(t.attachments.forTask(task?.id as number)).toMatchObject([
+    { name: "cpu.json", mediaType: "application/json", forChat: true },
+    { name: "cpu.png", mediaType: "image/png", forChat: true },
+  ]);
+  expect(t.tasks.steps(task?.id as number).filter((s) => s.name === "send_to_chat").length).toBe(2);
+  // The bot gets them with the task's result, and writes its reply again with the chart.
+  const told = JSON.stringify(chat.requests.at(-1)?.messages.at(-1));
+  expect(told).toContain('handed you, below: #1 \\"cpu.json\\", #2 \\"cpu.png\\"');
+  expect(told).toContain(JSON.stringify(series).slice(1, -1));
+  expect(told).toContain('"type":"image"');
+  const reply = t.thread.list().find((m) => m.taskId === task?.id);
+  expect(reply?.text).toContain("```chart");
+  // Not yours: nothing under the reply, and no event that put them there.
+  expect(reply?.attachments).toBeUndefined();
+  expect(t.events.some((e) => e.type === "message.attachment")).toBe(false);
+});

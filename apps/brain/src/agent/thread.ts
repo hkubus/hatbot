@@ -1135,14 +1135,25 @@ export class Thread {
     const tainted = ended.find((t) => t.tainted);
     if (tainted) this.taint(episode.id, `Task #${tainted.id} "${tainted.title}"`);
     if (ended.length) {
-      const lines = ended.map(
-        (t) =>
+      const files = this.d.attachments?.ofTasks(ended.map((t) => t.id)) ?? [];
+      const named = (list: typeof files) => list.map((a) => `#${a.id} "${a.name}"`).join(", ");
+      const lines = ended.map((t) => {
+        const sent = files.filter((a) => a.taskId === t.id && !a.forChat);
+        const handed = files.filter((a) => a.taskId === t.id && a.forChat);
+        return [
           `Task #${t.id} "${t.title}"${t.botId === bot.id ? "" : ` (by ${this.d.bots.nameOf(t.botId)}, which you asked)`} ${t.status}: ${t.summary ?? ""}`,
-      );
+          ...(sent.length ? [`Files it sent the owner, shown with it: ${named(sent)}.`] : []),
+          ...(handed.length ? [`Files it handed you, below: ${named(handed)}.`] : []),
+        ].join("\n");
+      });
       userBlocks.push({
         type: "text",
         text: `<task_updates>\n${lines.join("\n")}\n</task_updates>`,
       });
+      // Data a task handed over for this reply, e.g. a series to draw. What it holds came from the task.
+      const handed = files.filter((a) => a.forChat);
+      if (handed.length && this.d.attachments)
+        userBlocks.push(...(await this.d.attachments.blocks(handed)));
     }
     // Telling you about a task shown under its reply: that reply is written again, not a new one.
     const rewrite = !user && !group?.nudged ? this.taskReply(ended) : null;

@@ -95,6 +95,8 @@ export type Attachment = {
   size: number;
   from: "owner" | "hatbot";
   createdAt: string;
+  /** A task handed it to the bot in the chat (send_to_chat): data for its reply, not shown in the chat. */
+  forChat?: true;
 };
 
 /** A conversation in the thread (PLAN.md §5.3). Finished ones fold up under their recap. */
