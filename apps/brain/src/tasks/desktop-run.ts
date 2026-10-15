@@ -1,4 +1,5 @@
 // run_desktop_task: the computer- and browser-use subloop (PLAN.md §5.5, §5.6, §6.1).
+import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
   BetaAbstractBrowserToolset20260801,
@@ -12,7 +13,7 @@ import type { AgentElement, BrowserState, ComputerMember } from "@hatbot/shared/
 import { z } from "zod";
 import { modelErrorText } from "../agent/model";
 import { DESKTOP_PROMPT } from "../agent/prompt";
-import { screenPage } from "../agent/screening";
+import { type Screening, screenPage } from "../agent/screening";
 import { localStamp } from "../agent/thread";
 import { type Outcome, ownerNote } from "../approvals";
 import { promptFor } from "../bots";
@@ -414,7 +415,12 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     tasks.setStatus(id, "running");
   };
 
-  /** Logs page changes and screens each new page for prompt injection. */
+  /** Verdicts by page, so a page seen again isn't screened again. */
+  const verdicts = new Map<string, Screening>();
+  /** Pages being screened while the model reads them; their verdicts come before its next actions. */
+  let screening: Promise<{ verdict: Screening; host: string; url: string }>[] = [];
+
+  /** Logs page changes and starts screening each new page for prompt injection. */
   const observePage = async () => {
     const ctx = await agent.context(false).catch(() => null);
     const url = ctx?.url?.split("#")[0] ?? null;
@@ -425,32 +431,52 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     tasks.addStep(id, { kind: "page", name: ctx?.title || url, detail: "", url });
     const host = new URL(url).host;
     if (trustedHosts.has(host)) return;
-    try {
-      const page = await agent.context(true);
-      const verdict = await screenPage(d.model, d.spend, id, {
-        url,
-        title: page.title,
-        text: page.text ?? "",
-      });
-      if (!verdict.suspected) return;
-      tasks.mark(id, "injection_suspected");
-      tasks.addStep(id, {
-        kind: "note",
-        name: "Possible prompt injection",
-        detail: verdict.excerpt,
-        url,
-      });
+    const page = await agent.context(true).catch((err) => {
+      if (signal.aborted) throw err;
+      console.error(`task ${id}: couldn't read the page to screen it`, err);
+      return null;
+    });
+    if (!page) return;
+    const text = page.text ?? "";
+    const key = createHash("sha256").update(`${url}\n${text}`).digest("hex");
+    const known = verdicts.get(key);
+    // Never rejects: it may be left unread when the task stops first.
+    const verdict = known
+      ? Promise.resolve(known)
+      : screenPage(d.model, d.spend, id, { url, title: page.title, text }).then((v) => {
+          if (!v.failed) verdicts.set(key, v);
+          return v;
+        });
+    screening.push(verdict.then((v) => ({ verdict: v, host, url })));
+  };
+
+  /** Applies the verdicts on the pages the model just read: a suspected one asks you to go on. */
+  const screened = async () => {
+    const pending = screening;
+    screening = [];
+    for (const { verdict, host, url } of await Promise.all(pending)) {
+      if (!verdict.suspected || trustedHosts.has(host)) continue;
+      if (verdict.failed)
+        tasks.addStep(id, { kind: "note", name: "Couldn't check the page", detail: "", url });
+      else {
+        tasks.mark(id, "injection_suspected");
+        tasks.addStep(id, {
+          kind: "note",
+          name: "Possible prompt injection",
+          detail: verdict.excerpt,
+          url,
+        });
+      }
       const { outcome } = await askApproval({
         kind: "injection_warning",
         summary: `Keep going on ${host}?`,
-        reason: `This page may contain instructions aimed at Hatbot: "${verdict.excerpt}"`,
+        reason: verdict.failed
+          ? "Hatbot couldn't check this page for instructions aimed at it."
+          : `This page may contain instructions aimed at Hatbot: "${verdict.excerpt}"`,
       });
       if (outcome !== "approved")
         throw new Stop("cancelled", `Stopped on ${host}: the page may contain a prompt injection.`);
       trustedHosts.add(host);
-    } catch (err) {
-      if (err instanceof Stop || signal.aborted) throw err;
-      console.error(`task ${id}: page screening failed`, err);
     }
   };
 
@@ -719,6 +745,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         taskId: id,
       });
       record("assistant", res.content);
+      // The model read the pages while Haiku screened them; nothing it asks for runs before the verdict.
+      await screened();
       for (const b of res.content) {
         const note = b.type === "text" ? b.text : b.type === "thinking" ? b.thinking : "";
         if (note.trim())

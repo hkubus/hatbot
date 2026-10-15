@@ -203,6 +203,65 @@ test("a page that looks like a prompt injection stops the task unless you approv
   expect(JSON.stringify(work.creates[0]?.messages)).toContain("page_json");
 });
 
+test("a page is screened while the model reads it, its verdict before the actions, once per page", async () => {
+  const work = new FakeModel([
+    { content: [computer("screenshot")] },
+    { content: [computer("screenshot")] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const a = { url: "https://a.example/", title: "A", text: "Page A" };
+  const b = { url: "https://b.example/", title: "B", text: "Page B" };
+  t.agent.page = a;
+  const pages = [a, b, a];
+  const stream = work.stream.bind(work);
+  work.stream = async (p, h) => {
+    const res = await stream(p, h);
+    t.agent.page = pages[work.requests.length] ?? a;
+    return res;
+  };
+  // Haiku can't give a verdict on A: the first request is out, and its screenshot waits for you.
+  work.onCreate = (p) => (JSON.stringify(p.messages).includes("Page A") ? "not JSON" : undefined);
+  const task = startTask(t);
+  const approval = await pending(t);
+  expect(approval.reason).toContain("couldn't check this page");
+  expect(work.requests).toHaveLength(1);
+  expect(t.agent.actions).toHaveLength(0);
+  expect(work.creates[0]?.output_config?.format?.type).toBe("json_schema");
+  t.approvals.decide(approval.id, "approve", "web");
+  work.onCreate = () => '{"suspected": false, "excerpt": ""}';
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)?.status).toBe("done");
+  expect(t.tasks.get(task.id)?.injectionSuspected).toBe(false);
+  // A, then B; A again was trusted once you said to go on.
+  expect(work.creates).toHaveLength(2);
+});
+
+test("a page seen again isn't screened again", async () => {
+  const work = new FakeModel([
+    { content: [computer("screenshot")] },
+    { content: [computer("screenshot")] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const a = { url: "https://a.example/", title: "A", text: "Page A" };
+  const b = { url: "https://a.example/b", title: "B", text: "Page B" };
+  t.agent.page = a;
+  const pages = [a, b, a];
+  const stream = work.stream.bind(work);
+  work.stream = async (p, h) => {
+    const res = await stream(p, h);
+    t.agent.page = pages[work.requests.length] ?? a;
+    return res;
+  };
+  startTask(t);
+  await t.tasks.idle();
+  expect(work.creates.map((c) => JSON.stringify(c.messages).includes("Page A"))).toEqual([
+    true,
+    false,
+  ]);
+});
+
 test("Pause all cancels running tasks and locks the desktop", async () => {
   const work = new FakeModel([{ content: [toolUse("request_takeover", { reason: "2FA" })] }]);
   const t = await testApp(new FakeModel(), work);
