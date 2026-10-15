@@ -598,8 +598,13 @@ export class Thread {
       const owner = settings.get().owner;
       const reason = `Remember: ${titleOf(c.arg, 60)}`;
       try {
-        const index = (await memory.exists("INDEX.md")) ? await memory.read("INDEX.md") : "";
-        const sha = await memory.write("INDEX.md", withNote(index, c.arg), owner, reason);
+        const fact = c.arg;
+        const sha = await memory.update(
+          "INDEX.md",
+          (index) => withNote(index ?? "", fact),
+          owner,
+          reason,
+        );
         if (sha)
           events.emit({ type: "memory.committed", sha, message: reason, author: owner.name });
         this.commandNote("Saved to memory.", episode.id);
