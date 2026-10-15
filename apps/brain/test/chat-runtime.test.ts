@@ -226,6 +226,34 @@ test("only the latest reply that failed can be tried again", async () => {
   expect(t.thread.list().at(-1)).toMatchObject({ id: second?.id, text: "Two, in full." });
 });
 
+test("a new conversation doesn't wait long for the last one's summary, which lands for the next", async () => {
+  const model = new FakeModel(
+    [{ content: [text("one")] }, { content: [text("two")] }, { content: [text("three")] }],
+    ["<summary>Talked about one.</summary>", "<summary>Talked about one and two.</summary>"],
+  );
+  let release = () => {};
+  const slow = new Promise<void>((r) => {
+    release = r;
+  });
+  const create = model.create.bind(model);
+  let calls = 0;
+  model.create = async (p) => {
+    if (calls++ === 0) await slow;
+    return create(p);
+  };
+  const t = await testApp(model);
+  t.thread.summaryWaitMs = 20;
+  await t.thread.post("first").done;
+  t.advance(31 * 60_000);
+  await t.thread.post("second").done;
+  expect(lastUserText(model.requests[1] as never)).not.toContain("Talked about one");
+  release();
+  await waitFor(() => summarized(t)[0]?.summarized);
+  t.advance(31 * 60_000);
+  await t.thread.post("third").done;
+  expect(lastUserText(model.requests[2] as never)).toContain("Talked about one");
+});
+
 test("a background task waiting on a desktop task doesn't hold a slot", async () => {
   let release = () => {};
   const screen = new Promise<void>((r) => {

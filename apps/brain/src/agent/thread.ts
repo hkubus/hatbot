@@ -160,6 +160,8 @@ export class Thread {
   private chain: Promise<void> = Promise.resolve();
   /** Summaries being written, so the sweep and a new message don't write one twice. */
   private summarizing = new Map<number, Promise<void>>();
+  /** How long a new conversation waits for the one before it to be summarized. */
+  summaryWaitMs = 3000;
   /** Summaries and deletions take turns: each rewrites the running summary from the last one. */
   private summaryTurn: Promise<unknown> = Promise.resolve();
   /** Summaries that failed, by episode, so the sweep gives up on one after a few tries. */
@@ -813,7 +815,7 @@ export class Thread {
         console.error("thread summary failed; keeping the previous one", err),
       );
       // /new opens right away; the first reply in it waits for the summary instead.
-      if (!fresh) await summary;
+      if (!fresh) await this.awhile(summary);
     }
     const row = this.d.db
       .query<{ id: number }, [number, string, string, string, number, number]>(
@@ -935,6 +937,19 @@ export class Thread {
     // Out of the write-ahead log too, not only the database file.
     db.query("PRAGMA wal_checkpoint(TRUNCATE)").get();
     this.d.events.emit({ type: "message.deleted", ids });
+  }
+
+  /**
+   * Waits for a summary, but not long: one that's slow lands in the background, in time for the
+   * conversation after, and this one starts from the summary before it.
+   */
+  private async awhile(summary: Promise<unknown>) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cap = new Promise((r) => {
+      timer = setTimeout(r, this.summaryWaitMs);
+    });
+    await Promise.race([summary, cap]);
+    clearTimeout(timer);
   }
 
   /** Folds a finished episode into the rolling thread summary with Haiku, and writes its recap. */
@@ -1361,7 +1376,7 @@ export class Thread {
         : 0;
       if (firstTurn) {
         // The summary a /new left running is part of the context.
-        await Promise.allSettled(this.summarizing.values());
+        await this.awhile(Promise.allSettled(this.summarizing.values()));
         userBlocks.push({
           type: "text",
           text: await this.episodeContext(bot, contextBefore, episode.id, episode.fresh, incognito),
