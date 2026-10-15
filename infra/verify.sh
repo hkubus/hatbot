@@ -139,6 +139,7 @@ else
 fi
 expect "the brain holds the Proxmox token" pct exec "$BRAIN_ID" -- test -s /etc/hatbot/proxmox.env
 # "Roll back desktop" lists snapshots with this token (the brain pins the certificate itself).
+# shellcheck disable=SC2016 # expands inside the brain
 expect "the brain's token can list the desktop's snapshots" pct exec "$BRAIN_ID" -- sh -c \
   '. /etc/hatbot/proxmox.env && printf "Authorization: PVEAPIToken=%s=%s\n" "$PROXMOX_TOKEN_ID" "$PROXMOX_TOKEN_SECRET" | curl -fsSk -m 5 -o /dev/null -H @- "$PROXMOX_URL/api2/json/nodes/$PROXMOX_NODE/lxc/$HATBOT_DESKTOP_ID/snapshot"'
 expect "the brain holds the desktop secrets" pct exec "$BRAIN_ID" -- test -s /etc/hatbot/desktop.env
