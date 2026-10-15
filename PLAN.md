@@ -148,7 +148,7 @@ Desktop-first, three panes. Design spec in §10; visual reference in `prototype/
 Shared API types and zod schemas for the brain and web. The iOS app mirrors the types it uses in `apps/ios/Hatbot/Core/Models.swift`; change both together.
 
 ### 4.5 Plugins (`apps/brain/src/plugins/`)
-Integrations are plugins: Proxmox, SSH, Forgejo and MCP. The core keeps memory, chat history, schedules, tasks and the desktop.
+Integrations are plugins: Proxmox, Proxmox Backup Server, SSH, Home Assistant, Uptime Kuma, Forgejo, GitHub, Code and MCP. The core keeps memory, chat history, schedules, tasks and the desktop.
 - **Shape**: each plugin is a folder exporting one `definePlugin({...})`: an id, a name, its settings (a zod schema whose fields all have defaults), the environment variables it reads from `/etc/hatbot/*.env` (secrets never reach the model or the web app), and `start(ctx)`, which returns its status, tools, an optional paragraph for the system prompt and an optional Test.
 - **Built in, not installed at runtime**: plugins ship with Hatbot. Code loaded at runtime would run in the brain next to the API key, the Proxmox token and the SSH key. Third-party extensions come in through the MCP plugin, whose servers run as separate processes behind the same approval rules.
 - **On and off**: every plugin starts off. Settings → Plugins switches one on and edits its settings; it restarts with them. One that's on but missing its secrets or settings shows *Needs setup* and offers no tools.
@@ -165,13 +165,15 @@ Integrations are plugins: Proxmox, SSH, Forgejo and MCP. The core keeps memory, 
 ### 4.7 `apps/ios` — SwiftUI
 - **Native**: SwiftUI, built with the newest Xcode and iOS SDK (27), running on iOS 18+. SF Symbols and the system font, the same amber, blue, red and green as the web. No dependencies.
 - **Liquid Glass**: system bars, tab bar and lists get it from the SDK. The chat composer, the paused banner, the toast and the buttons use glass on iOS 26+ (a material before); messages and screenshots stay solid. The sidebar is a solid drawer, not glass.
-- **Sidebar**: chat fills the screen; Chat, Tasks, Live, Memory and Settings sit in a drawer under the left edge. A swipe in from the edge (on a section's first page; deeper, it's the back swipe) or the menu button at the top left slides the section aside to show it, following the finger; a swipe back or a tap on the section closes it. The button and the Tasks row count what needs you.
+- **Sidebar**: chat fills the screen; Chat, Search, Tasks, Live, Memory and Settings sit in a drawer under the left edge. A swipe in from the edge (on a section's first page; deeper, it's the back swipe) or the menu button at the top left slides the section aside to show it, following the finger; a swipe back or a tap on the section closes it. The button and the Tasks row count what needs you.
 - **Scroll to bottom**: scrolled well up in chat, a round button above the composer jumps back to the latest.
 - **Auth**: password + TOTP once, then a bearer token named after the device, kept in the Keychain. Signing out deletes the token on the brain.
 - **Live events**: the same `/stream` WebSocket while the app is in front; it reconnects and reloads after a gap. iOS stops it in the background, so notifications stay with the ntfy app.
 - **Live view**: the `/desktop/live` frames. During takeover a tap clicks, a drag drags, a long press right-clicks, two fingers scroll, and a Keyboard button types.
 - **Build**: `project.yml` (XcodeGen) → `build-ipa.sh` makes an unsigned IPA; SideStore signs it with your Apple ID. The GitHub mirror's iOS workflow builds it on macOS for every change and, on `main`, publishes it with a SideStore source at `https://hkubus.github.io/hatbot/source.json`, so SideStore installs and updates it. `Hatbot/Core` is also a Swift package, tested with `swift test` (on Linux too).
 - **Links**: `hatbot://tasks/<id>` and `hatbot://approvals/<id>`.
+- **Siri and Shortcuts**: App Intents in the app: Ask Hatbot (`POST /thread/ask`, which waits up to 50 seconds for the reply), Give Hatbot a Task (`/task`), Send to Hatbot (text and files).
+- **Share sheet**: the `HatbotShare` extension sends text, links, photos and files with a note to Hatbot's chat. The app keeps the token in the App Group's Keychain access group (`group.ovh.gaycats.hatbot`, renamed by SideStore with the team ID) and the address in the group's defaults. It's a second App ID in SideStore.
 
 ---
 
@@ -244,6 +246,8 @@ Later, run a small test on real tasks to see whether Haiku 5.5 (72% on OSWorld) 
 | `ssh_exec(host, cmd)` plugin | bg | Hosts from Settings, as the `hatbot` user; destructive patterns need approval |
 | `ssh_pct_exec(host, guest, cmd)` plugin | bg | Optional: a command in a Proxmox container through a host marked "Proxmox host" (`infra/pct-exec-setup.sh`): root in the container via a sudo-only wrapper that refuses Hatbot's own guests; same rules as `ssh_exec` |
 | `forgejo_*` plugin (read, comment, open PR) | bg | Merge, force-push and delete need approval |
+| `github_*` plugin (the same, on GitHub) | bg | Merging, committing to the default branch and changing workflows ask |
+| `watch_*` (create/list/update/delete) | bg | Free; a watcher made after untrusted content starts its tasks tainted (§15) |
 | `notify(message, priority)` | bg | Free |
 | `mcp_*` plugin (each server's tools) | bg | Default **ask**; set allow/ask/block per tool |
 
@@ -356,8 +360,8 @@ REST + JSON under `/api/v1`. One WebSocket at `/api/v1/stream` for events. A gen
 | Area | Endpoints |
 |---|---|
 | Auth | `POST /auth/login` (password + TOTP) → session cookie (web) or bearer token (apps) · `POST /auth/logout` (ends the session, or the bearer token it's called with) · `GET/POST/DELETE /tokens` |
-| Thread | `GET /thread/messages?before=` · `POST /thread/messages` (streams the reply over WS) · `GET /thread/episodes?ids=` (recaps) |
-| Tasks | `GET /tasks?status=` · `GET /tasks/:id` (+ steps) · `POST /tasks/:id/cancel` · `GET /tasks/:id/screens/:stepId` (a raised budget is an approval) |
+| Thread | `GET /thread/messages?before=` · `POST /thread/messages` (streams the reply over WS) · `POST /thread/ask` (waits for the reply, for Siri) · `GET /thread/episodes?ids=` (recaps) |
+| Tasks | `GET /tasks?status=` · `GET /tasks/:id` (+ steps) · `POST /tasks/:id/cancel` · `POST /tasks/:id/rerun` `{goal?}` · `GET /tasks/:id/screens/:stepId` (a raised budget is an approval) |
 | Approvals | `GET /approvals?pending` · `POST /approvals/:id` `{decision}` · `POST /approvals/:id/token-decision` (ntfy) |
 | Desktop | `GET /desktop/status` · `POST /desktop/takeover` · `POST /desktop/handback` · `WS /desktop/live` (frames + input) · `GET /desktop/snapshots` · `POST /desktop/rollback` |
 | Schedules/triggers | CRUD at `/schedules`, `/triggers` · `POST /schedules/:id/run` · `POST /triggers/:id/secret` (a new secret, shown once) · `GET /tasks?scheduleId=&triggerId=` |
@@ -367,8 +371,12 @@ REST + JSON under `/api/v1`. One WebSocket at `/api/v1/stream` for events. A gen
 | Teach | `GET /teach` (recording + drafts) · `POST /teach/start` · `POST /teach/stop` → draft skill · `GET /teach/:id` · `POST /teach/:id/draft` (again) · `POST /teach/:id/save` `{name, content, replace?}` · `DELETE /teach/:id` |
 | Admin | `POST /pause-all` · `POST /resume` · `GET/PUT /settings` · `GET/POST /update` |
 | Plugins | `GET /plugins` · `GET/PATCH /plugins/:id` `{enabled?, config?}` · `POST /plugins/:id/test` |
+| Watchers | CRUD at `/watchers` · `POST /watchers/preview` (a try, saving nothing) · `GET /watchers/:id/values` · `POST /watchers/:id/check` |
+| Looking after | `GET/POST /checks` (`?text=1` for `infra/smoke.sh`) · `POST /checks/approval` · `GET /heartbeat` · `POST /heartbeat/run` · `GET /report` · `POST /report/send` |
+| Proposals | `GET /proposals?status=` · `POST /proposals/tidy` · `POST /proposals/:id/apply` · `POST /proposals/:id/dismiss` · `GET /skills` · `POST /skills/:name/fix` |
+| Search | `GET /search?q=` (messages, tasks, memory, schedules, triggers and watchers) |
 
-**WS events**: `message.created`, `message.delta`, `message.progress`, `message.done`, `task.updated`, `task.step`, `task.progress`, `approval.created`, `approval.resolved`, `desktop.state`, `spend.updated`, `memory.committed`, `paused`, `schedule.updated`, `schedule.deleted`, `trigger.updated`, `trigger.deleted`, `plugin.updated`.
+**WS events**: `message.created`, `message.delta`, `message.progress`, `message.done`, `task.updated`, `task.step`, `task.progress`, `approval.created`, `approval.resolved`, `desktop.state`, `spend.updated`, `memory.committed`, `paused`, `schedule.updated`, `schedule.deleted`, `trigger.updated`, `trigger.deleted`, `plugin.updated`, `watcher.updated`, `watcher.deleted`, `proposal.updated`.
 
 ---
 
@@ -539,10 +547,12 @@ Each milestone ends with a working, demo-able system.
 - [ ] First build by the iOS workflow, installed from the SideStore source and tried against the brain
 - [x] Memory (tree, file, history) and Schedules & Triggers (triggers are made on the web)
 - [x] ntfy notifications open the app (`hatbot://` click URLs), chosen in Settings → Notifications
+- [x] Siri and Shortcuts actions, and a share extension
+- [x] Search, watchers, Check everything, the heartbeat and weekly report, memory proposals, Run again
 - **Done when**: you can chat, approve and take over from the app on your phone.
 
 ### After v1
-Email via Proton Bridge · more than one agent (§14) · a heartbeat that acts on its own · open-source release (choose a licence, docs, one-command installer).
+Email via Proton Bridge · more than one agent (§14) · a heartbeat that acts on its own (§15) · open-source release (choose a licence, docs, one-command installer).
 
 ---
 
@@ -612,3 +622,17 @@ More than one Hatbot, like Grok Bot: several named bots, each with its own role,
 - **Hand-offs:** `ask_bot` from the chat starts the other bot's task (`requested_by` is the asker) and the asker reports back when it ends. From a task it waits for the result, giving up its background slot meanwhile. Taint goes both ways.
 - **Desktop:** Chromium is `hatbot-chromium.service`, which reads its profile from desktop-agent's state dir; `POST /browser/profile` switches it, restarting Chromium.
 - **Groups:** the episode is bound to every member's prompt. Each bot has its own turns in it; a bot new to the episode opens with the context, and every bot gets what others said since its last turn in `<group_messages>`. No incognito in groups.
+
+---
+
+## 15. Looking after things (built 2026-10-15)
+What runs without you asking, and the tools to see that it works.
+
+- **Check everything** (Settings, `apps/brain/src/checks.ts`): a real try of each part: the database and its migrations, the public address, a Haiku call, memory, the archive, spending, the last update, ntfy, desktop snapshots, the desktop (version, browser profiles, time zone, shell, browser), schedules that keep failing, old approvals, watchers that can't read, and each plugin's own test. A test approval tries the lock-screen buttons. `infra/smoke.sh` runs it from a shell with an API token.
+- **Watchers** (`apps/brain/src/watch/`, migration 24): a page (fetched by the desktop, which only reaches the internet) or a plugin's read tool, picked out by CSS selector, JSON path or pattern, looked at every 5 minutes or more. No model call: only a change *into* the condition (changed, contains, missing, below, above) counts, and then it tells you or starts a background task with the watcher's prompt. Page text is untrusted, so those tasks start tainted. Made in the chat (`watch_*`) or on the web.
+- **Search**: one box over messages (FTS5), tasks, memory, schedules, triggers and watchers. A found message opens in its chat.
+- **Run again**: an ended root background task starts anew with its goal as you edit it, keeping its origin, bot, payload and taint.
+- **Heartbeat** (`apps/brain/src/heartbeat.ts`, off by default): every 30 minutes a look, without the model, at failed tasks, expired approvals, watchers and plugins that can't be read, an offline desktop, spend over 80%, and plugin signals (Uptime Kuma monitors down, PBS jobs failed or datastores over 90%). Only something new goes to Haiku, which lets it be, tells you, or starts a task with your instructions. Its tasks start untrusted.
+- **Weekly report** (`apps/brain/src/report.ts`, on by default, Monday 09:00): spend by bot, tasks done and failed, approvals, watchers, memory commits. In Hatbot's chat and as a notification, made without the model.
+- **Proposals** (`apps/brain/src/memory/proposals.ts`, migration 25): Opus proposes a tidy-up of memory (weekly when switched on, or Tidy up in Memory) and fixes to skills whose tasks failed or needed you since they last changed. Each is a diff per file; Apply commits it as you, Dismiss drops it, and a proposal goes stale if memory changed under it.
+

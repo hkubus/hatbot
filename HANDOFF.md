@@ -5,9 +5,9 @@ Delete it, or fold it into `PLAN.md`, once the work below is done.
 
 ## Where things stand
 
-- **Built:** M0–M5 and the iOS app (see the checklists in `PLAN.md` §11). M4 and M5 are built and committed but not yet deployed or tried live.
+- **Built:** M0–M5, the iOS app, more than one bot (§14) and looking after things (§15). M4 onwards is built and committed but not yet deployed or tried live.
 - **Not yet tried live** (the owner does these): the M2 lock-screen approval, the M3 morning schedule, Forgejo webhook and Kuma alert, all of M4 and M5, and the first iOS install from SideStore.
-- **Checks:** 214 tests (brain and desktop-agent) and 31 iOS core tests pass, and Biome and `tsc -b` are clean. One desktop-agent shell test ("a command's exit code and output…") fails on this machine; it failed before the bots work too.
+- **Checks:** 256 tests (brain and desktop-agent) and 37 iOS core tests pass, and Biome and `tsc -b` are clean. One desktop-agent shell test ("a command's exit code and output…") fails on this machine; it failed before the bots work too.
 
 ## How to work here
 
@@ -18,7 +18,7 @@ Delete it, or fold it into `PLAN.md`, once the work below is done.
 - **Code style:** match the surrounding code. Comments are sparse and explain *why*; user-facing text is plain, short English.
 - **UI style:** no decorative clutter, meaning no status dots, subtext, kickers or meta chips.
 - **Shared types:** they live in `packages/shared`. The iOS app mirrors the ones it uses in `apps/ios/Hatbot/Core/Models.swift`, so change both together. The iOS decoder tolerates unknown events and enum values.
-- **Swift on Linux:** this machine has no toolchain; use Docker's `swift:6.1` image (command in `apps/ios/README.md`) for `swift test` on `Hatbot/Core` and `swiftc -parse` on the views. CI on the GitHub mirror builds the app.
+- **Swift on Linux:** the toolchain is in `/opt/swift61` (reinstall it if it's gone; no Docker here). `swift test -Xswiftc -use-ld=lld --scratch-path /tmp/hbswiftbuild` in `apps/ios` tests `Hatbot/Core`; `swiftc -parse` checks the views' syntax. SwiftUI can't be type-checked on Linux; CI on the GitHub mirror builds the app.
 - **Licences:** no copyleft dependencies (PLAN §2), not even MPL. That's why the live view is our own MJPEG stream and not noVNC (MPL).
 
 ## 1. Trust-tracking gaps (PLAN §6.1): decided 2026-10-10
@@ -84,9 +84,17 @@ These came out of the M4 security review.
 - Writes on a host follow `ssh_write_file`'s rules; in a container, outside /root and /tmp asks. Only a write on a host counts against the chat's two changes. A host's file copied into the sandbox taints the conversation, as `ssh_read_file` does. In a tainted conversation, sending to the owner asks too, like every write.
 - Bytes go over ssh's stdin and stdout, so nothing new is needed on hosts; the container path relies on `pct exec` passing stdin through, untested on the real host.
 
+## Looking after things, GitHub, Siri and sharing (built 2026-10-15, not tried live)
+The owner asked for all of these at once. PLAN §15 describes them.
+- **Brain:** Check everything (Settings, `infra/smoke.sh`), watchers (`watch_*` in the chat), search, Run again, the heartbeat (off by default), the weekly report (on, Monday 09:00), memory tidy-ups and skill fixes as proposals (the weekly tidy-up is off by default), the GitHub plugin, and `POST /thread/ask` for Siri.
+- **To set up:** redeploy the brain (migrations 24 and 25). **Redeploy desktop-agent:** watchers fetch pages through its new `/fetch`, and Check everything reads its new health fields. For GitHub, create `/etc/hatbot/github.env` with `GITHUB_TOKEN` (`infra/README.md`) and run `infra/brain-deploy.sh` once so the unit loads it.
+- **Plugin signals** for the heartbeat: Uptime Kuma (monitors down) and PBS (failed tasks, full datastores). A plugin adds one with `signals()` on its instance.
+- **GitHub:** a commit of many files is one commit through the git tree API (the contents API makes one per file). Tested only against a stand-in server.
+- **iOS:** Search in the drawer; Watchers, Check everything and Heartbeat under Settings, with the weekly report and memory tidy-up switches; proposals and skills that went wrong in Memory; Run again on an ended task. App Intents (Ask Hatbot, Give Hatbot a Task, Send to Hatbot) and a share extension. The token moved into the App Group's Keychain access group on first launch, so the extension can read it; `build-ipa.sh` signs both ad hoc with their entitlements, since SideStore reads the App Group from them, and the SideStore source lists the entitlement. **Unchecked:** none of the iOS views, the intents or the extension have been compiled (only syntax-checked); the first CI run is the real check. If SideStore refuses the App Group, take `entitlements` and the extension out of `project.yml`; the app works without them.
+- **Checked:** brain tests, `tsc -b`, Biome, the iOS core's 37 tests. The web pages were built but not looked at in a browser.
+
 ## 4. Later (not v1, don't start without the owner)
-- **GitHub plugin**, next to Forgejo. Same shape as `apps/brain/src/plugins/forgejo/`.
-- **After v1** (PLAN §11): email via Proton Bridge, a heartbeat that acts on its own, an open-source release.
+- **After v1** (PLAN §11): email via Proton Bridge, an open-source release.
 
 ## Things the owner should know when testing M4
 - **Kuma prompt:** existing Uptime Kuma triggers keep their old prompt. Re-save them with the new default (`KUMA_PROMPT` in `apps/web/src/pages/Schedules.tsx`) to get investigate → one restart → verify.
