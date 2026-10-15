@@ -58,6 +58,16 @@ export interface DesktopAgent {
   liveSocket(): { url: string; headers: Record<string, string> };
 }
 
+/**
+ * `wait` may take up to 30 s. desktop-agent types the first 200 characters at a person's pace (up to
+ * 15 s) and longer text at about 12 ms a character, so the wait grows with the text.
+ */
+export function actionTimeoutMs(a: AgentAction): number {
+  const text = a.name === "type" ? a.input?.text : undefined;
+  const chars = typeof text === "string" ? text.length : 0;
+  return 45_000 + (chars > 200 ? chars * 25 : 0);
+}
+
 export class HttpDesktopAgent implements DesktopAgent {
   readonly configured: boolean;
 
@@ -108,8 +118,9 @@ export class HttpDesktopAgent implements DesktopAgent {
     return (await this.req("POST", "/zoom", { region })).bytes();
   }
   async action(a: AgentAction) {
-    // `wait` may take up to 30 s.
-    return (await (await this.req("POST", "/action", a, 45_000)).json()) as AgentActionResult;
+    return (await (
+      await this.req("POST", "/action", a, actionTimeoutMs(a))
+    ).json()) as AgentActionResult;
   }
   async context(withText = false) {
     return (await (

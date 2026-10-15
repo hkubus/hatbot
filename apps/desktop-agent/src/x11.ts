@@ -179,6 +179,8 @@ const REPEATS = {
   triple_click: 3,
 } as const;
 const WHEEL = { up: "4", down: "5", left: "6", right: "7" } as const;
+/** Longer text than this is typed fast, in chunks this long; the brain's timeout for `type` assumes it. */
+const HUMAN_TYPING_CHARS = 200;
 
 /** Runs one computer toolset member (not screenshot or zoom). */
 export async function act(
@@ -252,10 +254,22 @@ async function actInner(
       await xdotool("keydown", k, "sleep", String(secs), "keyup", k);
       return {};
     }
-    case "type":
-      // A person's pace, roughly; xdotool keeps one delay for the whole string.
-      await xdotool("type", "--delay", String(between(45, 75)), "--", str(input.text, "text"));
+    case "type": {
+      const text = str(input.text, "text");
+      const chars = Array.from(text);
+      if (chars.length <= HUMAN_TYPING_CHARS) {
+        // A person's pace, roughly; xdotool keeps one delay for the whole string.
+        await xdotool("type", "--delay", String(between(45, 75)), "--", text);
+        return {};
+      }
+      // Pasting a long text in, more or less: at a person's pace 5000 characters would take minutes.
+      for (let i = 0; i < chars.length; i += HUMAN_TYPING_CHARS) {
+        if (i) await Bun.sleep(between(80, 200));
+        const chunk = chars.slice(i, i + HUMAN_TYPING_CHARS).join("");
+        await xdotool("type", "--delay", "8", "--", chunk);
+      }
       return {};
+    }
     case "cursor_position": {
       const out = await xdotool("getmouselocation", "--shell");
       const x = Number(/X=(\d+)/.exec(out)?.[1]);
