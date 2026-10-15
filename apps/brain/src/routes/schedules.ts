@@ -84,11 +84,27 @@ const answer = (r: Received) =>
         ? { status: 202 as const, body: { ok: true, waitingUntil: r.until } }
         : { status: 200 as const, body: { ok: true, skipped: r.reason } };
 
-/** Reads at most MAX_HOOK_BYTES of the body; null if it's bigger. */
+/**
+ * Reads at most MAX_HOOK_BYTES of the body, a chunk at a time, so an unsigned stranger can't make the
+ * brain hold more than that before the signature is checked. Null if it's bigger.
+ */
 async function body(req: Request): Promise<Uint8Array | null> {
   if (Number(req.headers.get("content-length") ?? 0) > MAX_HOOK_BYTES) return null;
-  const bytes = new Uint8Array(await req.arrayBuffer());
-  return bytes.length > MAX_HOOK_BYTES ? null : bytes;
+  if (!req.body) return new Uint8Array();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  const reader = req.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > MAX_HOOK_BYTES) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks);
 }
 
 const json_ = (text: string | null | undefined): unknown => {

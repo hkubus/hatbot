@@ -155,6 +155,29 @@ function sign(secret: string, body: string, t: number) {
   return `t=${t},v1=${v1}`;
 }
 
+test("a webhook body over 256 KB is refused before it's all read, with or without a length", async () => {
+  const t = await testApp();
+  const chunk = new Uint8Array(64 * 1024);
+  let sent = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(c) {
+      sent++;
+      // Far more than the limit if it were all read.
+      if (sent > 200) c.close();
+      else c.enqueue(chunk);
+    },
+  });
+  const res = await t.app.request("/api/v1/hooks/1", { method: "POST", body: stream });
+  expect(res.status).toBe(413);
+  expect(sent).toBeLessThan(10);
+  const big = await t.app.request("/api/v1/hooks/1", {
+    method: "POST",
+    headers: { "content-length": String(300 * 1024) },
+    body: "x",
+  });
+  expect(big.status).toBe(413);
+});
+
 test("a signed webhook starts an untrusted background task; bad or replayed ones don't", async () => {
   const work = new FakeModel([finish("Nothing to do.", false), finish("Second.", false)]);
   const t = await testApp(new FakeModel(), work);

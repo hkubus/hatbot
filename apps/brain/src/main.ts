@@ -225,6 +225,8 @@ const web = webHandler(config.webDir);
 const server = Bun.serve({
   hostname: config.host,
   port: config.port,
+  // Attachments are at most 25 MB; a little over for the multipart framing.
+  maxRequestBodySize: 26 * 1024 * 1024,
   fetch: (req, srv) =>
     new URL(req.url).pathname.startsWith("/api/") ? app.fetch(req, srv) : web(req),
   websocket,
