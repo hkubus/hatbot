@@ -392,9 +392,8 @@ private struct Composer: View {
       photos = []
       Task {
         for (i, item) in picked.enumerated() {
-          guard let data = try? await item.loadTransferable(type: Data.self),
-            let photo = PickedFile.photo(data, index: files.count + i + 1)
-          else {
+          let index = files.count + i + 1
+          guard let photo = await Self.load(item, index: index) else {
             error = "Couldn't read that photo."
             continue
           }
@@ -404,14 +403,29 @@ private struct Composer: View {
     }
     .fileImporter(isPresented: $pickingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
       guard case let .success(urls) = result else { return }
-      for url in urls.prefix(10) {
-        guard let f = PickedFile.file(url) else {
-          error = "Couldn't read \(url.lastPathComponent)."
-          continue
+      Task {
+        for url in urls.prefix(10) {
+          guard let f = await Task.detached(operation: { PickedFile.file(url) }).value else {
+            error = "Couldn't read \(url.lastPathComponent)."
+            continue
+          }
+          attach(f.data, name: f.name, mediaType: f.mediaType)
         }
-        attach(f.data, name: f.name, mediaType: f.mediaType)
       }
     }
+  }
+
+  /// A picked photo, scaled from its file off the main thread; as data if the library won't give a file.
+  private static func load(_ item: PhotosPickerItem, index: Int) async -> PickedFile.Photo? {
+    if let file = try? await item.loadTransferable(type: PickedPhoto.self) {
+      let url = file.url
+      return await Task.detached {
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        return PickedFile.photo(at: url, index: index)
+      }.value
+    }
+    guard let data = try? await item.loadTransferable(type: Data.self) else { return nil }
+    return await Task.detached { PickedFile.photo(data, index: index) }.value
   }
 
   private var commands: [ChatCommand] { ChatCommand.matching(draft, incognito: store.incognito) }

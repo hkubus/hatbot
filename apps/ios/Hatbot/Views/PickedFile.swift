@@ -1,22 +1,54 @@
-// Photos and files on their way up: the composer's and the share extension's.
+// Photos and files on their way up: the composer's and the share extension's. Photos are scaled with
+// ImageIO straight from the file, never decoded whole, which keeps the share extension under its memory limit.
+import ImageIO
 import UIKit
 import UniformTypeIdentifiers
 
 /// What a picked photo or file becomes before it's uploaded.
 enum PickedFile {
+  /// A photo as it goes up, with a small preview for the composer.
+  struct Photo: @unchecked Sendable {
+    var data: Data
+    var name: String
+    var preview: UIImage?
+  }
+
   /// Photos go up as JPEG, at most 2048 pixels on the long side: the model reads those directly.
-  static func photo(_ data: Data, index: Int) -> (data: Data, name: String, preview: UIImage?)? {
-    guard let image = UIImage(data: data) else { return nil }
-    let longest = max(image.size.width, image.size.height)
-    let scale = min(1, 2048 / max(longest, 1))
-    let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-    let format = UIGraphicsImageRendererFormat()
-    format.scale = 1
-    let resized = UIGraphicsImageRenderer(size: size, format: format).image { _ in
-      image.draw(in: CGRect(origin: .zero, size: size))
-    }
-    guard let jpeg = resized.jpegData(compressionQuality: 0.85) else { return nil }
-    return (jpeg, "photo-\(index).jpg", resized)
+  static let longSide = 2048
+
+  static func photo(_ data: Data, index: Int) -> Photo? {
+    CGImageSourceCreateWithData(data as CFData, nil).flatMap { photo($0, index: index) }
+  }
+
+  static func photo(at url: URL, index: Int) -> Photo? {
+    CGImageSourceCreateWithURL(url as CFURL, nil).flatMap { photo($0, index: index) }
+  }
+
+  private static func photo(_ source: CGImageSource, index: Int) -> Photo? {
+    guard let image = thumbnail(source, longSide), let jpeg = jpeg(image) else { return nil }
+    let preview = thumbnail(source, 240).map { UIImage(cgImage: $0) }
+    return Photo(data: jpeg, name: "photo-\(index).jpg", preview: preview)
+  }
+
+  /// The image at most `size` pixels on its long side, turned upright; a smaller one stays its size.
+  private static func thumbnail(_ source: CGImageSource, _ size: Int) -> CGImage? {
+    let options: [CFString: Any] = [
+      kCGImageSourceCreateThumbnailFromImageAlways: true,
+      kCGImageSourceCreateThumbnailWithTransform: true,
+      kCGImageSourceShouldCacheImmediately: true,
+      kCGImageSourceThumbnailMaxPixelSize: size,
+    ]
+    return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+  }
+
+  private static func jpeg(_ image: CGImage) -> Data? {
+    let out = NSMutableData()
+    guard let dest = CGImageDestinationCreateWithData(out as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil)
+    else { return nil }
+    let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 0.85]
+    CGImageDestinationAddImage(dest, image, options as CFDictionary)
+    guard CGImageDestinationFinalize(dest) else { return nil }
+    return out as Data
   }
 
   /// A file from Files, read inside its security scope.
@@ -24,7 +56,25 @@ enum PickedFile {
     let scoped = url.startAccessingSecurityScopedResource()
     defer { if scoped { url.stopAccessingSecurityScopedResource() } }
     guard let data = try? Data(contentsOf: url) else { return nil }
-    let type = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
-    return (data, url.lastPathComponent, type)
+    return (data, url.lastPathComponent, mediaType(url))
+  }
+
+  /// A file lent for a moment (the share sheet's), copied somewhere it stays until it's uploaded.
+  static func copy(_ url: URL, name: String? = nil) -> URL? {
+    let scoped = url.startAccessingSecurityScopedResource()
+    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let copy = dir.appendingPathComponent((name ?? url.lastPathComponent).replacingOccurrences(of: "/", with: "_"))
+    do {
+      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+      try FileManager.default.copyItem(at: url, to: copy)
+      return copy
+    } catch {
+      return nil
+    }
+  }
+
+  static func mediaType(_ url: URL) -> String {
+    UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
   }
 }

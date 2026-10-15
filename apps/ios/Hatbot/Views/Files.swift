@@ -115,6 +115,19 @@ private struct FileRow: View {
   }
 }
 
+/// A photo from the library as a file of our own, so it isn't read into memory whole.
+struct PickedPhoto: Transferable {
+  let url: URL
+
+  static var transferRepresentation: some TransferRepresentation {
+    FileRepresentation(importedContentType: .image) { received in
+      // The file is the picker's only until this returns.
+      guard let copy = PickedFile.copy(received.file) else { throw CocoaError(.fileReadUnknown) }
+      return PickedPhoto(url: copy)
+    }
+  }
+}
+
 /// A file in the composer: uploading, uploaded, or failed.
 struct ComposerFile: Identifiable {
   let id = UUID()
