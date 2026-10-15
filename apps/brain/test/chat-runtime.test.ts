@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { FakeModel, text } from "./fake-model";
+import { FakeModel, text, toolUse } from "./fake-model";
 import { testApp, waitFor } from "./helpers";
 
 const lastUserText = (req: { messages: { role: string; content: unknown }[] }) =>
@@ -54,4 +54,48 @@ test("a summary that fails is tried again, and given up after three tries", asyn
   await t.thread.sweep();
   expect(model.creates.length).toBe(5);
   expect(lastUserText(model.requests[1] as never)).toContain("earlier_conversations>\\nS\\n");
+});
+
+test("a conversation whose last request passed 90k tokens carries on in a new one", async () => {
+  const model = new FakeModel(
+    [
+      {
+        content: [text("A long answer.")],
+        usage: { input_tokens: 2000, cache_read_input_tokens: 93_000 },
+      },
+      { content: [text("Fresh start.")] },
+    ],
+    ["<summary>They talked at length.</summary>"],
+  );
+  const t = await testApp(model);
+  await t.thread.post("first").done;
+  t.advance(60_000);
+  await t.thread.post("second").done;
+  expect(model.requests[1]?.messages.length).toBe(1);
+  const opening = lastUserText(model.requests[1] as never);
+  expect(opening).toContain("Owner: first");
+  expect(opening).toContain("They talked at length.");
+  const [one, two] = t.thread.list().filter((m) => m.role === "user");
+  expect(two?.episodeId).not.toBe(one?.episodeId as number);
+  expect(t.events.some((e) => e.type === "message.progress" && e.text.includes("got long"))).toBe(
+    true,
+  );
+  // The chat reads less of a page than a task does.
+  const fetch = model.requests[0]?.tools?.find((x) => "name" in x && x.name === "web_fetch");
+  expect(fetch).toMatchObject({ max_content_tokens: 10000 });
+});
+
+test("a background task clears old tool results past 70k", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Done.", notify: false })] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.tasks.createBackgroundTask({ title: "Check", goal: "Check", origin: "schedule" });
+  await t.tasks.idle();
+  const req = work.requests[0];
+  expect(req?.betas).toContain("context-management-2025-06-27");
+  expect(req?.context_management?.edits?.[0]).toMatchObject({
+    type: "clear_tool_uses_20250919",
+    trigger: { type: "input_tokens", value: 70_000 },
+  });
 });

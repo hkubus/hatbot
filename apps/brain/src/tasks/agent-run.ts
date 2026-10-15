@@ -33,7 +33,10 @@ import type { Tasks } from "./service";
 const MAX_STEPS = 30;
 /** Code work (effort medium or high) reads and writes more. */
 const MAX_CODE_STEPS = 80;
-const BETAS: Anthropic.Beta.AnthropicBeta[] = ["thinking-display-updates-2026-08-18"];
+const BETAS: Anthropic.Beta.AnthropicBeta[] = [
+  "thinking-display-updates-2026-08-18",
+  "context-management-2025-06-27",
+];
 /** The chat's tools a background task gets. Schedules and triggers stay with the chat. */
 const SHARED_TOOLS = [
   "memory_list",
@@ -530,6 +533,19 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
             : { type: "adaptive" },
           // The chat's dial unless the task asked for more: the same kind of work, without a screen.
           output_config: { effort: task.effort ?? d.settings.get().chatEffort },
+          // Old tool results are cleared on the server once the prompt passes 70k, below the 100k
+          // where Haiku 5.5 bills the whole request at 5x.
+          context_management: {
+            edits: [
+              {
+                type: "clear_tool_uses_20250919",
+                trigger: { type: "input_tokens", value: 70_000 },
+                keep: { type: "tool_uses", value: 6 },
+                clear_at_least: { type: "input_tokens", value: 20_000 },
+                exclude_tools: ["finish_task"],
+              },
+            ],
+          },
           messages,
         },
         {

@@ -747,6 +747,12 @@ export const WEB_TOOLS: Anthropic.Beta.BetaToolUnion[] = [
   { type: "web_fetch_20250910", name: "web_fetch", max_uses: 8, max_content_tokens: 30000 },
 ];
 
+/** The chat's: a page stays in the conversation for every later reply, so it reads less of one. */
+export const CHAT_WEB_TOOLS: Anthropic.Beta.BetaToolUnion[] = [
+  { type: "web_search_20250305", name: "web_search", max_uses: 8 },
+  { type: "web_fetch_20250910", name: "web_fetch", max_uses: 8, max_content_tokens: 10000 },
+];
+
 /** What a reply looked up on the web, in a line each: `Searched the web for "x"`, `Read https://…`. */
 export function webReads(content: Anthropic.Beta.BetaContentBlock[]): string[] {
   return content.flatMap((b) => {

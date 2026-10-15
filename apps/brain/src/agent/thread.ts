@@ -48,13 +48,13 @@ import {
 } from "./prompt";
 import { mayReview, safeToRun } from "./review";
 import {
+  CHAT_WEB_TOOLS,
   INCOGNITO_TOOLS,
   inBatches,
   LOOKUP_TOOLS,
   runTool,
   TOOL_PARAMS,
   toolParam,
-  WEB_TOOLS,
   webReads,
 } from "./tools";
 
@@ -63,6 +63,8 @@ export const EXPERT_MODEL = "claude-opus-5-5";
 export const SUMMARY_MODEL = "claude-haiku-5-5";
 const EPISODE_IDLE_MS = 30 * 60_000;
 const MAX_SUMMARY_TRIES = 3;
+/** A conversation whose last request was this long carries on in a new one. */
+const LONG_EPISODE_TOKENS = 90_000;
 const RECENT_MESSAGES = 10;
 const MAX_STEPS = 25;
 const MAX_TURN_MS = 10 * 60_000;
@@ -634,7 +636,7 @@ export class Thread {
         .filter((t) => others.length || t.name !== "ask_bot"),
       ...(onHaiku ? [ASK_OPUS] : []),
       ...pluginTools.map(toolParam),
-      ...WEB_TOOLS,
+      ...CHAT_WEB_TOOLS,
     ];
     return {
       system,
@@ -771,7 +773,8 @@ export class Thread {
     prefix: string,
     fresh = false,
     incognito = false,
-  ): Promise<{ id: number; isNew: boolean; fresh: boolean }> {
+  ): Promise<{ id: number; isNew: boolean; fresh: boolean; long?: boolean }> {
+    let long = false;
     const last = this.d.db
       .query<
         {
@@ -789,14 +792,18 @@ export class Thread {
     const open = last && this.clock() - Date.parse(last.last_activity_at) < EPISODE_IDLE_MS;
     if (last && open && (!fresh || last.fresh)) {
       const untouched = !this.hasTurns(last.id);
-      if (last.prefix === prefix && (!fresh || untouched))
+      // Past this, every reply rereads a long prompt (and Haiku bills all of it at 5x past 100k);
+      // the summary and the last few messages carry it into a new one.
+      long = !untouched && this.promptTokens(last.id) > LONG_EPISODE_TOKENS;
+      if (last.prefix === prefix && (!fresh || untouched) && !long)
         return { id: last.id, isNew: untouched, fresh: !!last.fresh };
       // Nothing in it is bound to the old prompt yet; a second /new is the same new conversation.
       if (untouched) {
         this.d.db.query("UPDATE episodes SET prefix = ? WHERE id = ?").run(prefix, last.id);
         return { id: last.id, isNew: true, fresh: !!last.fresh };
       }
-      if (!fresh)
+      if (long) console.log(`episode ${last.id}: it got long; starting a new episode`);
+      else if (!fresh)
         console.log(`episode ${last.id}: the prompt or tools changed; starting a new episode`);
     }
     // An incognito conversation that went idle ends; one whose prompt changed carries on in a new episode.
@@ -814,7 +821,19 @@ export class Thread {
       )
       .get(this.conversationId, this.now(), this.now(), prefix, fresh ? 1 : 0, incognito ? 1 : 0);
     if (!row) throw new Error("episode insert failed");
-    return { id: row.id, isNew: true, fresh };
+    return { id: row.id, isNew: true, fresh, long };
+  }
+
+  /** How long the episode's last chat request was, in prompt tokens. */
+  private promptTokens(episodeId: number): number {
+    return (
+      this.d.db
+        .query<{ tokens: number }, [number]>(
+          `SELECT input_tokens + cache_read_tokens + cache_write_5m_tokens + cache_write_1h_tokens AS tokens
+           FROM spend_ledger WHERE episode_id = ? AND purpose = 'thread' ORDER BY id DESC LIMIT 1`,
+        )
+        .get(episodeId)?.tokens ?? 0
+    );
   }
 
   private threadSummary(): string {
@@ -1454,6 +1473,7 @@ export class Thread {
       );
     };
 
+    if (episode.long) progress("The conversation got long; carrying on in a new one");
     const files = new Map<number, BlockParam[]>();
     const started = this.clock();
     let waited = 0;
