@@ -617,3 +617,22 @@ final class LookingAfterThingsTests: XCTestCase {
     XCTAssertEqual(try JSONDecoder().decode(AgentTask.self, from: Data(task.utf8)).origin, .watch)
   }
 }
+
+final class ZoomTests: XCTestCase {
+  func testZoomingKeepsThePointUnderTheFingersAndTheScreenCovered() {
+    let size = CGSize(width: 400, height: 250)
+    let z = Zoom().zoomed(by: 2, at: CGPoint(x: 100, y: 50), in: size)
+    XCTAssertEqual(z.scale, 2)
+    let p = z.unzoomed(CGPoint(x: 100, y: 50))
+    XCTAssertEqual(p.x, 100, accuracy: 0.001)
+    XCTAssertEqual(p.y, 50, accuracy: 0.001)
+    // Moved past the edge, it stops at it.
+    let moved = z.moved(by: CGPoint(x: 1000, y: -1000), in: size)
+    XCTAssertEqual(moved.offset.x, 0)
+    XCTAssertEqual(moved.offset.y, -250)
+    XCTAssertEqual(moved.unzoomed(CGPoint(x: 400, y: 250)).x, 200, accuracy: 0.001)
+    // Out past 1, it's back to the whole screen.
+    XCTAssertEqual(z.zoomed(by: 0.1, at: .zero, in: size), Zoom())
+    XCTAssertEqual(Zoom().zoomed(by: 100, at: .zero, in: size).scale, Zoom.most)
+  }
+}

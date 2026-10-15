@@ -73,7 +73,7 @@ struct MainView: View {
     case .live:
       NavigationStack {
         // While you have control, drags go to the desktop.
-        ScrollView { LiveView() }
+        ScrollView { LiveView(fullScreen: true) }
           .scrollDisabled(store.desktop?.control == .owner)
           .navigationTitle("Live")
           .navigationBarTitleDisplayMode(.inline)
