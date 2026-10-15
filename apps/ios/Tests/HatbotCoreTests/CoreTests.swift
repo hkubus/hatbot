@@ -206,12 +206,14 @@ final class StoreTests: XCTestCase {
     store.apply(.messageDelta(id: 7, text: "Hel"))
     store.apply(.messageDelta(id: 7, text: "lo"))
     store.apply(.messageProgress(id: 7, text: "thinking"))
-    XCTAssertEqual(store.messages.first?.text, "Hello")
-    XCTAssertEqual(store.progress[7], "thinking")
+    // The deltas go to the live reply, not the message list.
+    XCTAssertEqual(store.reply(7)?.text, "Hello")
+    XCTAssertEqual(store.messages.first.map(store.text), "Hello")
+    XCTAssertEqual(store.reply(7)?.progress, "thinking")
     store.apply(.messageDone(id: 7, text: "Hello.", status: .done))
     XCTAssertEqual(store.messages.first?.text, "Hello.")
     XCTAssertEqual(store.messages.first?.status, .done)
-    XCTAssertNil(store.progress[7])
+    XCTAssertNil(store.reply(7))
   }
 
   @MainActor private static func countsWhatNeedsYou() {

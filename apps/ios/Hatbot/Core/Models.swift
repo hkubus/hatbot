@@ -45,7 +45,9 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   var kind: Kind
   var text: String
   var status: Status
-  var createdAt: String
+  var createdAt: String { didSet { date = Format.date(createdAt) } }
+  /// `createdAt`, parsed once: the chat compares every message's to the one before.
+  private(set) var date: Date?
   var taskId: Int?
   var scheduleId: Int?
   /// The conversation it belongs to; cards from background tasks have none.
@@ -67,6 +69,54 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
 
   /// What came of a command you ran, shown as a quiet line; one that started a task shows like a reply.
   var isNote: Bool { role == .assistant && kind == .command && taskId == nil }
+
+  private enum CodingKeys: String, CodingKey {
+    case id, role, kind, text, status, createdAt, taskId, scheduleId, episodeId, editedAt, seenAt, attachments
+    case incognito, conversationId, botId
+  }
+
+  init(
+    id: Int, role: Role, kind: Kind, text: String, status: Status, createdAt: String, taskId: Int? = nil,
+    scheduleId: Int? = nil, episodeId: Int? = nil, editedAt: String? = nil, seenAt: String? = nil,
+    attachments: [Attachment]? = nil, incognito: Bool? = nil, conversationId: Int? = nil, botId: String? = nil
+  ) {
+    self.id = id
+    self.role = role
+    self.kind = kind
+    self.text = text
+    self.status = status
+    self.createdAt = createdAt
+    date = Format.date(createdAt)
+    self.taskId = taskId
+    self.scheduleId = scheduleId
+    self.episodeId = episodeId
+    self.editedAt = editedAt
+    self.seenAt = seenAt
+    self.attachments = attachments
+    self.incognito = incognito
+    self.conversationId = conversationId
+    self.botId = botId
+  }
+
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    try self.init(
+      id: c.decode(Int.self, forKey: .id),
+      role: c.decode(Role.self, forKey: .role),
+      kind: c.decode(Kind.self, forKey: .kind),
+      text: c.decode(String.self, forKey: .text),
+      status: c.decode(Status.self, forKey: .status),
+      createdAt: c.decode(String.self, forKey: .createdAt),
+      taskId: c.decodeIfPresent(Int.self, forKey: .taskId),
+      scheduleId: c.decodeIfPresent(Int.self, forKey: .scheduleId),
+      episodeId: c.decodeIfPresent(Int.self, forKey: .episodeId),
+      editedAt: c.decodeIfPresent(String.self, forKey: .editedAt),
+      seenAt: c.decodeIfPresent(String.self, forKey: .seenAt),
+      attachments: c.decodeIfPresent([Attachment].self, forKey: .attachments),
+      incognito: c.decodeIfPresent(Bool.self, forKey: .incognito),
+      conversationId: c.decodeIfPresent(Int.self, forKey: .conversationId),
+      botId: c.decodeIfPresent(String.self, forKey: .botId))
+  }
 }
 
 /// A file on a message: one you attached, or one Hatbot or a task sent you.

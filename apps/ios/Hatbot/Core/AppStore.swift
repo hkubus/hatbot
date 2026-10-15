@@ -3,6 +3,17 @@
 import Foundation
 import Observation
 
+/// A reply as it's written: its text, latest progress note and what it has used so far.
+@MainActor
+@Observable
+final class LiveReply {
+  var text: String
+  var progress = ""
+  var usage: ReplyUsage?
+
+  init(text: String) { self.text = text }
+}
+
 @MainActor
 @Observable
 final class AppStore {
@@ -14,10 +25,8 @@ final class AppStore {
   var messages: [ThreadMessage] = []
   /// The conversations the loaded messages belong to, for their recaps.
   var episodes: [Int: Episode] = [:]
-  /// Latest progress note per streaming reply.
-  var progress: [Int: String] = [:]
-  /// What each streaming reply has used so far.
-  var usage: [Int: ReplyUsage] = [:]
+  /// The replies being written, each in its own object: a delta then redraws only its bubble, not the chat.
+  @ObservationIgnored private var replies: [Int: LiveReply] = [:]
   var hasEarlier = false
   @ObservationIgnored private var loadingEarlier = false
   /// An earlier page is going in above.
@@ -137,7 +146,10 @@ final class AppStore {
       if m.isIncognito { incognitoIds.insert(m.id) }
       if m.role == .assistant { refreshConversations() }
       // Only the conversation that's showing.
-      if m.isIncognito == incognito && (m.conversationId ?? 1) == conversationId { upsert(m) }
+      if m.isIncognito == incognito && (m.conversationId ?? 1) == conversationId {
+        if m.status == .streaming && replies[m.id] == nil { replies[m.id] = LiveReply(text: m.text) }
+        upsert(m)
+      }
       // What came of your own command arrives already seen.
       if m.role == .assistant && m.status != .streaming && m.seenAt == nil { addUnread(m.id) }
     case let .messageEdited(id, editedAt):
@@ -147,6 +159,7 @@ final class AppStore {
     case let .messageRewrite(id):
       // Its task ended: its bot is writing it again.
       if let i = messages.firstIndex(where: { $0.id == id }) {
+        replies[id] = LiveReply(text: "")
         messages[i].text = ""
         messages[i].status = .streaming
       }
@@ -155,23 +168,23 @@ final class AppStore {
       unread.removeAll { ids.contains($0) }
       refreshConversations()
     case let .messageDeleted(ids):
+      for id in ids { replies[id] = nil }
       messages.removeAll { ids.contains($0.id) }
       unread.removeAll { ids.contains($0) }
     case let .messageDelta(id, text):
-      if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].text += text }
+      if let r = live(id) { r.text += text }
     case let .messageProgress(id, text):
-      progress[id] = String(((progress[id] ?? "") + text).suffix(400))
+      if let r = live(id) { r.progress = String((r.progress + text).suffix(400)) }
     case let .messageTask(id, taskId):
       if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].taskId = taskId }
     case let .messageUsage(id, used):
-      usage[id] = used
+      live(id)?.usage = used
     case let .messageAttachment(id, a):
       if let i = messages.firstIndex(where: { $0.id == id }), !(messages[i].attachments ?? []).contains(where: { $0.id == a.id }) {
         messages[i].attachments = (messages[i].attachments ?? []) + [a]
       }
     case let .messageDone(id, text, status):
-      progress[id] = nil
-      usage[id] = nil
+      replies[id] = nil
       if let i = messages.firstIndex(where: { $0.id == id }) {
         messages[i].text = text
         messages[i].status = status
@@ -245,6 +258,40 @@ final class AppStore {
     }
   }
 
+  /// The reply being written, for its bubble.
+  func reply(_ id: Int) -> LiveReply? { replies[id] }
+
+  /// A message's text as it is now: a streaming reply's is in its live reply.
+  func text(_ m: ThreadMessage) -> String {
+    m.status == .streaming ? replies[m.id]?.text ?? m.text : m.text
+  }
+
+  /// The live reply for a streaming message. One made here, for a message loaded mid-reply, goes in with
+  /// a change to the message, so its bubble notices.
+  private func live(_ id: Int) -> LiveReply? {
+    if let r = replies[id] { return r }
+    guard let i = messages.firstIndex(where: { $0.id == id }), messages[i].status == .streaming else { return nil }
+    let r = LiveReply(text: messages[i].text)
+    replies[id] = r
+    messages[i].text = r.text
+    return r
+  }
+
+  /// After loading the latest page: its streaming replies start again from the text the brain sent.
+  private func syncReplies(_ page: [ThreadMessage]) {
+    for m in page {
+      if m.status != .streaming {
+        replies[m.id] = nil
+      } else if let r = replies[m.id] {
+        r.text = m.text
+      } else {
+        replies[m.id] = LiveReply(text: m.text)
+      }
+    }
+    let shown = Set(messages.map(\.id))
+    for id in replies.keys where !shown.contains(id) { replies[id] = nil }
+  }
+
   private func addUnread(_ id: Int) {
     guard !unread.contains(id), !incognitoIds.contains(id) else { return }
     unread.append(id)
@@ -275,6 +322,7 @@ final class AppStore {
     // Switched while it loaded: the other conversation's load wins.
     guard wasIncognito == incognito, shown == conversationId else { return }
     (messages, hasEarlier) = ThreadMerge.merge(messages, hasEarlier: hasEarlier, latest: list, page: Self.page)
+    syncReplies(list)
   }
 
   /// Into incognito, or out of it, which deletes its conversation.
