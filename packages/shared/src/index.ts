@@ -509,6 +509,8 @@ export type SpendSummary = {
 export type SpendHour = SpendWindow & { hour: string };
 export type SpendDay = { date: string; usd: number };
 export type SpendByModel = { model: string; usd: number };
+/** GET /spend/by-purpose: what the money went on, the most first. */
+export type SpendByPurpose = { purpose: string; costUsd: number };
 
 export type AppSettings = {
   limits: Limits;

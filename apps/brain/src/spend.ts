@@ -1,4 +1,5 @@
 // Spend ledger and limits (PLAN.md §6.3).
+import type { SpendByPurpose } from "@hatbot/shared";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
 import type { SettingsStore } from "./settings";
@@ -263,6 +264,17 @@ export class Spend {
     return this.db
       .query<{ model: string; usd: number }, [string]>(
         "SELECT model, sum(cost_usd) AS usd FROM spend_ledger WHERE created_at >= ? GROUP BY model ORDER BY usd DESC",
+      )
+      .all(from.toISOString());
+  }
+
+  /** Spend per purpose (chat, task, heartbeat, tidy…), the most first, for Spend's breakdown. */
+  byPurpose(days: number): SpendByPurpose[] {
+    const from = startOfLocalDay(this.clock() - (days - 1) * 86400_000);
+    return this.db
+      .query<SpendByPurpose, [string]>(
+        `SELECT purpose, sum(cost_usd) AS costUsd FROM spend_ledger
+         WHERE created_at >= ? GROUP BY purpose ORDER BY costUsd DESC`,
       )
       .all(from.toISOString());
   }

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Approval, Commit, Task } from "@hatbot/shared";
+import type { Approval, Commit, SpendByPurpose, Task } from "@hatbot/shared";
 import { HATBOT } from "../src/memory/store";
 import { setUpOwner, testApp } from "./helpers";
 
@@ -49,4 +49,17 @@ test("tasks, approvals and memory history come a page at a time", async () => {
   for (const n of [1, 2, 3]) await t.memory.write(`n${n}.md`, `${n}`, HATBOT, `Note ${n}`);
   const log = await get<Commit[]>("/memory/log?limit=2&skip=1");
   expect(log.map((c) => c.message)).toEqual(["Note 2", "Note 1"]);
+});
+
+test("spend by purpose, the most first", async () => {
+  const t = await testApp();
+  const { cookie } = await setUpOwner(t);
+  const usage = { input_tokens: 1000, output_tokens: 100 };
+  t.spend.record({ model: "claude-haiku-5-5", purpose: "thread", usage });
+  t.spend.record({ model: "claude-opus-5-5", purpose: "tidy", usage });
+  t.spend.record({ model: "claude-haiku-5-5", purpose: "thread", usage });
+  const res = await t.call("GET", "/spend/by-purpose?days=30", undefined, { cookie });
+  const rows = (await res.json()) as SpendByPurpose[];
+  expect(rows.map((r) => r.purpose)).toEqual(["tidy", "thread"]);
+  expect(rows[0]?.costUsd).toBeGreaterThan(0);
 });
