@@ -54,6 +54,12 @@ test("an old desktop, a shared profile and a broken schedule are flagged", async
   expect(checks["desktop.profiles"]?.state).toBe("warn");
   expect(checks["desktop.timezone"]?.detail).toContain("Pacific/Chatham");
   expect(checks.schedules?.detail).toContain('"Stock check"');
+
+  // The deep health check: Chromium's DevTools down.
+  t.agent.health = { ok: false, x: true, cdp: false };
+  const again = byId(await t.checks.run());
+  expect(again.desktop).toMatchObject({ state: "fail" });
+  expect(again.desktop?.detail).toContain("DevTools");
 });
 
 test("a test approval goes out, and its answer shows", async () => {

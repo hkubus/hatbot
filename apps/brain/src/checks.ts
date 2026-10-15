@@ -298,7 +298,7 @@ export class Checks {
       return [
         { id: "desktop", name: "Desktop", run: async () => skip("DESKTOP_AGENT_URL isn't set.") },
       ];
-    const status = agent.status();
+    const status = agent.status(true);
     // Every desktop check waits on the one health call.
     const reachable = status.then(
       () => true,
@@ -320,6 +320,14 @@ export class Checks {
           } catch (err) {
             return fail(`desktop-agent isn't answering: ${errorText(err)}`);
           }
+          if (s.x === false)
+            return fail(
+              "desktop-agent answers, but no frame came from the screen. Restart the desktop.",
+            );
+          if (s.cdp === false)
+            return fail(
+              "Chromium's DevTools isn't answering. Restart hatbot-chromium on the desktop.",
+            );
           const missing = DESKTOP_FEATURES.filter((f) => !s.features?.includes(f));
           if (missing.length)
             return warn("desktop-agent is older than the brain. Run Update, or infra/deploy.sh.");

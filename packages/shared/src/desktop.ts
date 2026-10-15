@@ -40,7 +40,8 @@ export type AgentAction = {
 export type AgentActionResult = { text?: string; x?: number; y?: number };
 
 export type AgentStatus = {
-  ok: true;
+  /** False when a deep check found something down. */
+  ok: boolean;
   width: number;
   height: number;
   locked: boolean;
@@ -52,6 +53,10 @@ export type AgentStatus = {
   timeZone?: string;
   /** What this copy can do beyond the basics, so the brain knows when it's out of date. */
   features?: string[];
+  /** With ?deep=1: whether a frame could be grabbed from the X display. */
+  x?: boolean;
+  /** With ?deep=1: whether Chromium's DevTools answered. */
+  cdp?: boolean;
 };
 
 /** GET /context: the visible Chromium tab. `text` only with ?text=1. */
