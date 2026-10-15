@@ -752,6 +752,21 @@ private struct MessageRow: View, Equatable {
         copyButton(task.map { ReplyMessage.showsResult(m, $0) } == true ? result ?? "" : m.text)
       }
       if let taskId = m.taskId { openButton(taskId) }
+      if m.status == .error && m.role == .assistant {
+        Button("Try again", systemImage: "arrow.clockwise") { retry() }
+      }
+    }
+  }
+
+  private func retry() {
+    Task {
+      do {
+        try await store.retry(m.id)
+      } catch let e as APIError where e.status == 409 {
+        store.toast = "Only the latest reply can be tried again."
+      } catch {
+        store.toast = message(for: error)
+      }
     }
   }
 

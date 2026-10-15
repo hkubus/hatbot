@@ -509,6 +509,11 @@ final class AppStore {
     }
   }
 
+  /// Writes an errored reply again: message.rewrite, then its deltas, follow. Only the latest one can be.
+  func retry(_ messageId: Int) async throws {
+    let _: Empty = try await api.post("\(chatPath)/messages/\(messageId)/retry", body: Empty())
+  }
+
   /// Deletes a conversation from the chat for good; message.deleted takes it off the screen.
   func deleteEpisode(_ id: Int) async throws {
     let _: Empty = try await api.delete("\(chatPath)/episodes/\(id)")
