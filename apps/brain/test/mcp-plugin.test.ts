@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Task } from "@hatbot/shared";
+import { z } from "zod";
 import { mcpPlugin, toolName } from "../src/plugins/mcp";
-import type { CallContext } from "../src/plugins/plugin";
+import { type CallContext, definePlugin, PluginError, ready } from "../src/plugins/plugin";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { FakeModel, toolUse } from "./fake-model";
 import { testApp, waitFor } from "./helpers";
@@ -93,6 +96,46 @@ test("a server that won't start is reported, and a missing secret says which", a
   expect(r.info.message).toContain("MCP_NOPE isn't set");
   await t.plugins.stopAll();
   await r.t.plugins.stopAll();
+});
+
+test("a server that was down at the start comes back later, with its tools", async () => {
+  const marker = join(mkdtempSync(join(tmpdir(), "hatbot-mcp-")), "up");
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {
+    MCP_GREETING: "hi",
+  });
+  t.plugins.retryMs = [50];
+  const late = { ...fixture, name: "late", env: { ...fixture.env, MCP_WAIT_FOR: marker } };
+  const info = await t.plugins.update("mcp", {
+    enabled: true,
+    config: { servers: [fixture, late] },
+  });
+  expect(info.state).toBe("ready");
+  expect(info.message).toContain("late:");
+  expect(t.plugins.tools().some((x) => x.name.startsWith("mcp_late_"))).toBe(false);
+  writeFileSync(marker, "");
+  await waitFor(() => t.plugins.tools().some((x) => x.name === "mcp_late_echo"), 10_000);
+  expect(t.plugins.get("mcp")?.message).toBeNull();
+  await t.plugins.stopAll();
+});
+
+test("a plugin that fails to start is started again later", async () => {
+  let starts = 0;
+  const flaky = definePlugin({
+    id: "flaky",
+    name: "Flaky",
+    description: "",
+    config: z.object({}),
+    start: () => {
+      if (++starts < 3) throw new PluginError("not yet");
+      return ready([]);
+    },
+  });
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [flaky]);
+  t.plugins.retryMs = [10, 20];
+  expect((await t.plugins.update("flaky", { enabled: true })).state).toBe("error");
+  await waitFor(() => t.plugins.get("flaky")?.state === "ready");
+  expect(starts).toBe(3);
+  await t.plugins.stopAll();
 });
 
 test("a task's MCP call asks first, then runs", async () => {

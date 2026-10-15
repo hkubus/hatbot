@@ -100,6 +100,12 @@ export type PluginInstance = {
    * JSON for the form; throw PluginError to show a message.
    */
   actions?: Record<string, (args: unknown) => Promise<unknown>>;
+  /**
+   * A ready plugin with a part down, such as an MCP server that wasn't up: what's down, or null.
+   * The registry calls `recover` with backoff while it says something; `tools` may change after.
+   */
+  down?: () => string | null;
+  recover?: () => Promise<void>;
   stop?: () => Promise<void> | void;
 };
 

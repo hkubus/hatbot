@@ -222,7 +222,19 @@ export const mcpPlugin = definePlugin({
           }),
         );
 
-    const tools = conns.flatMap(toolsOf);
+    let tools = conns.flatMap(toolsOf);
+    const guidance = () =>
+      tools.length
+        ? `MCP servers: ${conns
+            .filter((c) => c.client)
+            .map(
+              (c) =>
+                `${c.server.name} (${c.server.trusted ? "trusted" : "its output is untrusted"})`,
+            )
+            .join(", ")}. Their tools are named mcp_<server>_<tool>.`
+        : undefined;
+    let guide = guidance();
+    const failed = () => conns.filter((c) => !c.client);
     const status = () =>
       config.servers.map((s) => {
         const c = conns.find((x) => x.server.name === s.name);
@@ -247,16 +259,13 @@ export const mcpPlugin = definePlugin({
               message: conns.map((c) => `${c.server.name}: ${c.error}`).join("\n"),
             }
           : { state: "ready" },
-      tools,
-      guidance: tools.length
-        ? `MCP servers: ${conns
-            .filter((c) => c.client)
-            .map(
-              (c) =>
-                `${c.server.name} (${c.server.trusted ? "trusted" : "its output is untrusted"})`,
-            )
-            .join(", ")}. Their tools are named mcp_<server>_<tool>.`
-        : undefined,
+      // Getters: a server that comes back later brings its tools.
+      get tools() {
+        return tools;
+      },
+      get guidance() {
+        return guide;
+      },
       test: async () =>
         status()
           .map((s) =>
@@ -266,6 +275,26 @@ export const mcpPlugin = definePlugin({
           )
           .join("\n") || "No servers.",
       actions: { status: async () => status() },
+      // Servers that were down at the start, or dropped and couldn't be reconnected.
+      down: () => {
+        const down = failed();
+        return down.length ? down.map((c) => `${c.server.name}: ${c.error}`).join("\n") : null;
+      },
+      recover: async () => {
+        const down = failed();
+        if (!down.length) return;
+        await Promise.all(down.map(reconnect));
+        if (down.some((c) => c.client)) {
+          tools = conns.flatMap(toolsOf);
+          guide = guidance();
+          console.log(
+            `mcp: ${down
+              .filter((c) => c.client)
+              .map((c) => c.server.name)
+              .join(", ")} back`,
+          );
+        }
+      },
       stop: async () => {
         stopped = true;
         await Promise.all(reconnecting.values()).catch(() => {});
