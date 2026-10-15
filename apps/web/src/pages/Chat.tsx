@@ -22,6 +22,7 @@ import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ApiError, attachmentUrl, upload } from "../api";
 import { Chart, ChartPending } from "../chart";
+import { type DraftFile, draftText, saveDraftText, setDraftFiles, useDraftFiles } from "../drafts";
 import { Icon } from "../icons";
 import { navigate, useRoute } from "../router";
 import {
@@ -411,17 +412,9 @@ function Files({ list }: { list: Attachment[] }) {
   );
 }
 
-/** A file in the composer: uploading, uploaded, or failed. */
 /** A line in the menu over the composer: a command, or in a group a bot to @mention. */
 type Option = { key: string; label: React.ReactNode; desc: string; choose: () => void };
 
-type Draft = {
-  key: number;
-  name: string;
-  preview?: string;
-  attachment?: Attachment;
-  error?: string;
-};
 let draftKey = 0;
 
 // Memoized: while a reply streams only its own message redraws, not the whole thread's markdown.
@@ -744,7 +737,11 @@ export function Chat() {
             {error}
           </div>
         )}
-        <Composer onSend={onSend} />
+        <Composer
+          key={`${conversationId}${incognito ? ":incognito" : ""}`}
+          chat={`${conversationId}${incognito ? ":incognito" : ""}`}
+          onSend={onSend}
+        />
       </div>
     </>
   );
@@ -757,16 +754,24 @@ const groupMembers = (s: ReturnType<typeof getState>) => {
 };
 
 /** What you're writing, its files and the menu over it; apart from the thread, so typing redraws only this. */
-function Composer({ onSend }: { onSend: () => void }) {
+function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
   const incognito = useStore((s) => s.incognito);
   const name = useStore((s) => chatName(s, currentChat(s)));
   const members = useStore(groupMembers);
   const bots = useStore((s) => s.bots);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraftState] = useState(() => draftText(chat));
+  const setDraft = (fn: string | ((d: string) => string)) =>
+    setDraftState((d) => {
+      const next = typeof fn === "string" ? fn : fn(d);
+      saveDraftText(chat, next);
+      return next;
+    });
   // The command list under "/…": which one is picked, and whether Escape closed it.
   const [pick, setPick] = useState(0);
   const [menuClosed, setMenuClosed] = useState(false);
-  const [files, setFiles] = useState<Draft[]>([]);
+  const files = useDraftFiles(chat);
+  // Uploads finish into their own chat's draft, even after you've gone to another.
+  const setFiles = (fn: (f: DraftFile[]) => DraftFile[]) => setDraftFiles(chat, fn);
   const picker = useRef<HTMLInputElement>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
@@ -778,6 +783,8 @@ function Composer({ onSend }: { onSend: () => void }) {
     ta.style.height = "auto";
     ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
   };
+  // A kept draft can be several lines; sized once, on opening.
+  useLayoutEffect(resize, []);
 
   const attach = (list: FileList | File[]) => {
     for (const file of Array.from(list).slice(0, 10)) {
@@ -857,7 +864,7 @@ function Composer({ onSend }: { onSend: () => void }) {
     // Clear it right away; it comes back if the send fails.
     const sent = files;
     setDraft("");
-    setFiles([]);
+    setFiles(() => []);
     requestAnimationFrame(resize);
     try {
       await sendMessage(
