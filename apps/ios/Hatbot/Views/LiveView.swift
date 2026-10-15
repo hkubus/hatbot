@@ -110,6 +110,8 @@ struct LiveView: View {
       if phase == .active { feed.start(store) } else if phase == .background { feed.stop() }
     }
     .onChange(of: control) { _, control in if !control { typing = false } }
+    // Taking over and handing back.
+    .sensoryFeedback(.impact(weight: .medium), trigger: control)
     // The screen changes size.
     .onChange(of: landscape) { zoom = Zoom() }
   }

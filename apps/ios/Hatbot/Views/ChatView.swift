@@ -433,6 +433,8 @@ private struct Composer: View {
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
     .photosPicker(isPresented: $pickingPhotos, selection: $photos, maxSelectionCount: 10, matching: .images)
+    // A tap as it goes.
+    .sensoryFeedback(.impact(weight: .light), trigger: sending) { _, sending in sending }
     .onAppear { draft = drafts.texts[key] ?? "" }
     .onDisappear { drafts.texts[key] = draft }
     .onChange(of: key) { old, new in
@@ -927,6 +929,7 @@ struct ApprovalBody: View {
   @State private var busy = false
   @State private var error: String?
   @State private var note = ""
+  @State private var decided: Decision?
 
   var body: some View {
     let a = approval
@@ -957,6 +960,13 @@ struct ApprovalBody: View {
     }
     .controlSize(.small)
     .disabled(busy)
+    .sensoryFeedback(trigger: decided) { _, decided in
+      switch decided {
+      case .approve: .success
+      case .deny: .warning
+      case nil: nil
+      }
+    }
   }
 
   private func decide(_ decision: Decision) {
@@ -965,6 +975,7 @@ struct ApprovalBody: View {
     Task {
       do {
         try await store.decide(approval.id, decision, note: note)
+        decided = decision
       } catch {
         self.error = message(for: error)
         busy = false

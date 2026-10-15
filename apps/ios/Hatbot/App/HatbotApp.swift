@@ -52,6 +52,8 @@ struct MainView: View {
     .onOpenURL(perform: open)
     .overlay(alignment: .top) { Toast() }
     .environment(drafts)
+    // Hatbot needs you: an approval came in, or the desktop asks for you.
+    .sensoryFeedback(.warning, trigger: store.needsYou) { old, new in new > old }
   }
 
   @ViewBuilder
