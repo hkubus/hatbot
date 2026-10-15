@@ -1,12 +1,13 @@
 // Settings → Check everything: a quick, real try of each part Hatbot depends on, so a deploy step
 // that was missed shows up here instead of in the middle of a task.
-import type { Approval, CheckReport, CheckResult, ChecksInfo } from "@hatbot/shared";
+import type { Approval, CheckReport, CheckResult, ChecksInfo, StorageInfo } from "@hatbot/shared";
 import { type ModelClient, modelErrorText } from "./agent/model";
 import type { Approvals } from "./approvals";
 import type { Archive } from "./archive";
 import type { Config } from "./config";
 import type { Db } from "./db";
 import { migrations } from "./db/migrations";
+import { inWorker } from "./db/worker";
 import { DesktopError } from "./desktop/client";
 import type { Desktop } from "./desktop/service";
 import type { MemoryStore } from "./memory/store";
@@ -14,12 +15,15 @@ import type { Plugins } from "./plugins/registry";
 import type { Proxmox } from "./proxmox";
 import type { SettingsStore } from "./settings";
 import type { Spend } from "./spend";
+import { type Storage, storageLine } from "./storage";
 import type { Updates } from "./updates";
 
 /** The cheapest real model call there is: it proves the key, the network and billing. */
 export const CHECK_MODEL = "claude-haiku-5-5";
 const CHECK_TIMEOUT_MS = 30_000;
 const LOW_DISK_BYTES = 5 * 1024 ** 3;
+/** A write-ahead log this big means checkpoints aren't keeping up: something holds a read open. */
+const BIG_WAL_BYTES = 512 * 1024 ** 2;
 /** Nightly snapshots: one older than this means they've stopped. */
 const SNAPSHOT_MAX_AGE_MS = 36 * 3600_000;
 /** Features the brain uses that an older desktop-agent doesn't have. */
@@ -33,6 +37,7 @@ export type ChecksDeps = {
   model: ModelClient;
   memory: MemoryStore;
   archive: Archive;
+  storage: Storage;
   desktop: Desktop;
   plugins: Plugins;
   approvals: Approvals;
@@ -104,7 +109,10 @@ export class Checks {
 
   private async runAll(): Promise<CheckReport> {
     const startedAt = this.now();
-    const checks = this.checks();
+    let storage: StorageInfo | undefined;
+    const checks = this.checks((s) => {
+      storage = s;
+    });
     const results = await Promise.all(
       checks.map(async (c): Promise<CheckResult> => {
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -123,12 +131,12 @@ export class Checks {
         }
       }),
     );
-    const report = { startedAt, finishedAt: this.now(), results };
+    const report: CheckReport = { startedAt, finishedAt: this.now(), results, storage };
     this.save("checks:last", report);
     return report;
   }
 
-  private checks(): Check[] {
+  private checks(measured: (s: StorageInfo) => void): Check[] {
     const d = this.d;
     const list: Check[] = [
       { id: "database", name: "Database", run: () => this.database() },
@@ -136,6 +144,17 @@ export class Checks {
       { id: "model", name: "Claude API", run: () => this.modelCall() },
       { id: "memory", name: "Memory", run: () => this.memory() },
       { id: "archive", name: "Archive", run: () => this.archive() },
+      {
+        id: "storage",
+        name: "Storage",
+        run: async () => {
+          const s = await d.storage.measure();
+          measured(s);
+          if (s.walBytes > BIG_WAL_BYTES)
+            return warn(`${storageLine(s)} The WAL isn't being checkpointed; restart the brain.`);
+          return ok(storageLine(s));
+        },
+      },
       { id: "spend", name: "Spending", run: async () => this.spending() },
       { id: "updates", name: "Last update", run: async () => this.lastUpdate() },
       { id: "notifications", name: "Notifications", run: () => this.notifications() },
@@ -162,7 +181,8 @@ export class Checks {
   }
 
   private async database() {
-    const found = this.d.db.query("PRAGMA quick_check").values().flat().join("; ");
+    // On its own connection: on a big database it takes a while, and the brain keeps answering.
+    const found = await inWorker(this.d.db, { op: "quick_check", path: this.d.db.filename });
     if (found !== "ok") return fail(`SQLite's quick check found: ${found}`);
     const v =
       this.d.db

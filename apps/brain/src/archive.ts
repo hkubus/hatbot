@@ -4,7 +4,7 @@ import { join, resolve, sep } from "node:path";
 
 export class Archive {
   constructor(
-    private dir: string,
+    readonly dir: string,
     private clock: () => number = Date.now,
   ) {}
 

@@ -27,6 +27,7 @@ import { WeeklyReport } from "../src/report";
 import { Schedules } from "../src/schedules";
 import { SettingsStore } from "../src/settings";
 import { Spend } from "../src/spend";
+import { Storage } from "../src/storage";
 import { Tasks } from "../src/tasks/service";
 import { Teach } from "../src/teach/service";
 import { Skills } from "../src/teach/skills";
@@ -83,6 +84,7 @@ export async function testApp(
   skills.watch(events);
   const archive = new Archive(tempDir("hatbot-test-archive-"), clock);
   const attachments = new Attachments({ db, archive, events }, clock);
+  const storage = new Storage({ db, archive, clock });
   const agent = new FakeDesktop();
   const desktop = new Desktop(agent, events, db);
   const plugins = new Plugins([...pluginList, codePlugin({ desktop: agent, attachments })], {
@@ -179,6 +181,7 @@ export async function testApp(
     notifier,
     bots,
     memory,
+    storage,
     publicUrl: ORIGIN,
     clock,
   });
@@ -202,6 +205,7 @@ export async function testApp(
     model: taskModel,
     memory,
     archive,
+    storage,
     desktop,
     plugins,
     approvals,
@@ -285,6 +289,7 @@ export async function testApp(
     skills,
     teach,
     checks,
+    storage,
     updateDir,
     events: seen,
     call,
