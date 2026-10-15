@@ -3,3 +3,5 @@ build/
 Hatbot.xcodeproj/
 Hatbot/Info.plist
 *.xcuserstate
+Share/Info.plist
+*.entitlements

@@ -100,6 +100,9 @@ export const threadRoutes = new Hono<AppEnv>()
   )
   .post("/thread/messages", json(PostMessage), (c) => post(c, c.var.chats.hatbot()))
   .post("/conversations/:id/messages", json(PostMessage), (c) => withThread(c, (t) => post(c, t)))
+  // Shortcuts and Siri: posts like /thread/messages, then waits a while for the answer.
+  .post("/thread/ask", json(PostMessage), (c) => ask(c, c.var.chats.hatbot()))
+  .post("/conversations/:id/ask", json(PostMessage), (c) => withThread(c, (t) => ask(c, t)))
   // Leaving incognito: its conversation is deleted.
   .delete("/thread/incognito", async (c) => {
     await c.var.chats.hatbot().endIncognito();
@@ -169,4 +172,32 @@ function post(c: Ctx, t: Thread) {
   if (incognito && t.group()) return c.json({ error: "Group chats have no incognito." }, 400);
   const { message } = t.post(text, attachmentIds, incognito);
   return c.json(message, 202);
+}
+
+/** How long /ask waits for the reply before it answers with what's there. */
+export const ASK_WAIT_MS = 50_000;
+
+async function ask(c: Ctx, t: Thread) {
+  const { text, attachmentIds, incognito } = c.req.valid("json" as never) as z.infer<
+    typeof PostMessage
+  >;
+  if (attachmentIds.some((id) => c.var.attachments.get(id)?.from !== "owner"))
+    return c.json({ error: "unknown attachment" }, 400);
+  if (incognito && t.group()) return c.json({ error: "Group chats have no incognito." }, 400);
+  const { message, done } = t.post(text, attachmentIds, incognito);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const finished = await Promise.race([
+    done.then(
+      () => true,
+      () => true,
+    ),
+    new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), ASK_WAIT_MS);
+    }),
+  ]);
+  clearTimeout(timer);
+  const replies = t
+    .list(undefined, 50, incognito)
+    .filter((m) => m.id > message.id && m.role === "assistant");
+  return c.json({ message, replies, finished });
 }

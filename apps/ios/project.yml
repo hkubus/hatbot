@@ -39,6 +39,49 @@ targets:
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         NSLocalNetworkUsageDescription: Hatbot connects to your brain on the local network.
+    # Shared with the share extension: the brain's address and the token (Hatbot/App/AppGroup.swift).
+    entitlements:
+      path: Hatbot/Hatbot.entitlements
+      properties:
+        com.apple.security.application-groups: [group.ovh.gaycats.hatbot]
+    dependencies:
+      - target: HatbotShare
+  # The share sheet's Hatbot. It's a second App ID in SideStore.
+  HatbotShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Share
+      - path: Hatbot/Core
+      - path: Hatbot/App/AppGroup.swift
+      - path: Hatbot/App/KeychainVault.swift
+      - path: Hatbot/Views/PickedFile.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ovh.gaycats.hatbot.share
+        # Swift 5 for NSItemProvider's callbacks.
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Hatbot
+    info:
+      path: Share/Info.plist
+      properties:
+        CFBundleDisplayName: Hatbot
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsText: true
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsImageWithMaxCount: 10
+              NSExtensionActivationSupportsFileWithMaxCount: 10
+    entitlements:
+      path: Share/HatbotShare.entitlements
+      properties:
+        com.apple.security.application-groups: [group.ovh.gaycats.hatbot]
   HatbotCoreTests:
     type: bundle.unit-test
     platform: iOS

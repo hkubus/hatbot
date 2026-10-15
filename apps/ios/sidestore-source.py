@@ -48,7 +48,11 @@ print(
                     "versionDate": date,
                     "downloadURL": url,
                     "size": size,
-                    "appPermissions": {"entitlements": [], "privacy": {}},
+                    # Sources must list what the app asks for, or SideStore refuses it.
+                    "appPermissions": {
+                        "entitlements": ["com.apple.security.application-groups"],
+                        "privacy": {},
+                    },
                 }
             ],
             "news": [],

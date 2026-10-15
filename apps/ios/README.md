@@ -6,8 +6,10 @@ API with a bearer token. Notifications still come from the ntfy app.
 - `Hatbot/Core`: Foundation only. API types, the API client, the reconnecting WebSocket, the live
   store, Markdown blocks, cron in words. `Package.swift` builds it on its own so it compiles and
   tests anywhere Swift runs.
-- `Hatbot/Views`, `Hatbot/App`: SwiftUI and UIKit. Chat, Tasks, Live, Memory and Settings tabs;
-  Schedules & Triggers open from Settings.
+- `Hatbot/Views`, `Hatbot/App`: SwiftUI and UIKit. Chat, Search, Tasks, Live, Memory and Settings;
+  Schedules & Triggers, Watchers, Check everything and the Heartbeat open from Settings. Siri and
+  Shortcuts actions are in `Hatbot/App/Intents.swift`.
+- `Share`: the share extension. It sends what you share, with a note, to Hatbot's chat.
 - `project.yml`: the Xcode project, generated with [XcodeGen](https://github.com/yonaskolb/XcodeGen).
 
 ## Install with SideStore
@@ -50,6 +52,23 @@ SwiftUI isn't there on Linux: `swiftc -parse Hatbot/Views/*.swift` checks the vi
 Enter the brain's address (`hatbot.gaycats.ovh`, or `http://192.168.55.<id>:8080` on the LAN),
 your password and a TOTP code. The app gets its own API token, named after the device; it shows in
 Settings → API tokens on the web, and signing out of the app deletes it.
+
+## Siri, Shortcuts and the share sheet
+
+Shortcuts has three Hatbot actions, and Siri knows them without setup:
+
+- **Ask Hatbot** ("Ask Hatbot"): sends the question to Hatbot's chat and answers with the reply. It
+  waits up to 50 seconds; a longer answer is in the chat.
+- **Give Hatbot a Task** ("Give Hatbot a task"): starts a background task, like `/task` in the chat.
+- **Send to Hatbot**: text and files into the chat. Photos go up as JPEG.
+
+**Hatbot** in the share sheet sends text, links, photos and files (up to 10) with a note. It reads
+the token from the App Group the app shares with it (`group.ovh.gaycats.hatbot`; SideStore adds your
+team ID to the name), so open the app once after updating. If the share sheet says to sign in, the
+group wasn't set up by the install; the rest of the app works without it.
+
+The extension is a second App ID: with a free Apple ID SideStore has 10 App IDs a week, so Hatbot
+takes 2 of them.
 
 ## Links
 

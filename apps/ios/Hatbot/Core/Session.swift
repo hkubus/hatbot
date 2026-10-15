@@ -13,7 +13,7 @@ protocol TokenVault: Sendable {
 @MainActor
 @Observable
 final class Session {
-  static let serverKey = "server"
+  nonisolated static let serverKey = "server"
 
   /// The signed-in app state; nil shows the sign-in screen.
   private(set) var store: AppStore?

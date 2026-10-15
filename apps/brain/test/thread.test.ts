@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { matchingCommands, parseCommand, type ThreadMessage, threadGroups } from "@hatbot/shared";
+import {
+  type AskResult,
+  matchingCommands,
+  parseCommand,
+  type ThreadMessage,
+  threadGroups,
+} from "@hatbot/shared";
 import type { StreamHandlers, StreamParams } from "../src/agent/model";
 import { activity, parseSummary, titleOf, withNote } from "../src/agent/thread";
 import { costOf } from "../src/spend";
@@ -796,4 +802,18 @@ test("deleting a conversation takes it out of the chat, search, files and the su
   await t.thread.post("still there?").done;
   expect(lastUserText(model.requests.at(-1) as never)).not.toContain("hello");
   expect(t.thread.list().map((m) => m.text)).toEqual(["still there?", "Yes."]);
+});
+
+test("ask posts a message and answers with the reply once it's done", async () => {
+  const t = await testApp(new FakeModel([{ content: [text("It's 21 degrees.")] }]));
+  const { cookie } = await setUpOwner(t);
+  const res = await t.call("POST", "/thread/ask", { text: "How warm is it?" }, { cookie });
+  expect(res.status).toBe(200);
+  const r = (await res.json()) as AskResult;
+  expect(r.finished).toBe(true);
+  expect(r.message.text).toBe("How warm is it?");
+  expect(r.replies.map((m) => [m.role, m.text, m.status])).toEqual([
+    ["assistant", "It's 21 degrees.", "done"],
+  ]);
+  expect((await t.call("POST", "/thread/ask", { text: "" }, { cookie })).status).toBe(400);
 });

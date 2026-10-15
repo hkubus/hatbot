@@ -91,6 +91,9 @@ export type ThreadMessage = {
   incognito?: true;
 };
 
+/** POST /thread/ask: your message, and the replies to it once they're done or the wait ran out. */
+export type AskResult = { message: ThreadMessage; replies: ThreadMessage[]; finished: boolean };
+
 /** A file in the chat. Its bytes are at GET /api/attachments/:id. */
 export type Attachment = {
   id: number;

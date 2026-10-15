@@ -4,7 +4,13 @@ import SwiftUI
 
 @main
 struct HatbotApp: App {
-  @State private var session = Session(vault: KeychainVault())
+  @State private var session: Session
+
+  init() {
+    let vault = KeychainVault()
+    AppGroup.migrate(vault: vault)
+    _session = State(initialValue: Session(vault: vault, defaults: AppGroup.defaults))
+  }
 
   var body: some Scene {
     WindowGroup {
@@ -47,6 +53,13 @@ struct MainView: View {
   private var section: some View {
     switch tab {
     case .chat: ChatView()
+    case .search:
+      SearchView { id in
+        tab = .chat
+        if store.conversations.contains(where: { $0.id == id }) {
+          Task { await store.openConversation(id) }
+        }
+      }
     case .tasks: TasksView(path: $tasksPath)
     case .live:
       NavigationStack {

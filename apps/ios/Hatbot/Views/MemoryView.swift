@@ -8,12 +8,35 @@ struct MemoryView: View {
   @State private var error: String?
   @State private var naming = false
   @State private var newName = ""
+  @State private var proposals: [Proposal] = []
+  @State private var skills: [SkillStatus] = []
+  @State private var asking: String?
 
   var body: some View {
     NavigationStack(path: $path) {
       List {
         if let error {
           Text(error).foregroundStyle(.red)
+        }
+        if !proposals.isEmpty {
+          Section("To look over") {
+            ForEach(proposals) { p in
+              NavigationLink(value: Route.proposal(p)) { Label(p.title, systemImage: "wand.and.stars") }
+            }
+          }
+        }
+        let troubled = skills.filter { s in s.troubled && !proposals.contains { $0.skill == s.name } }
+        if !troubled.isEmpty {
+          Section("Skills that went wrong") {
+            ForEach(troubled) { s in
+              VStack(alignment: .leading, spacing: 6) {
+                Text(s.name)
+                Text(trouble(s)).font(.footnote).foregroundStyle(.secondary)
+                Button(asking == s.name ? "Looking…" : "Suggest a fix") { fix(s.name) }
+                  .disabled(asking != nil)
+              }
+            }
+          }
         }
         ForEach(MemoryTree.groups(files ?? []), id: \.folder) { group in
           Section(group.folder.isEmpty ? "" : group.folder + "/") {
@@ -33,6 +56,10 @@ struct MemoryView: View {
           NavigationLink(value: Route.memoryHistory(path: nil)) {
             Label("History", systemImage: "clock.arrow.circlepath")
           }
+        }
+        ToolbarItem {
+          Button(asking == "" ? "Tidying…" : "Tidy up", systemImage: "wand.and.stars") { tidy() }
+            .disabled(asking != nil)
         }
         ToolbarItem {
           Button("New file", systemImage: "plus") {
@@ -63,7 +90,36 @@ struct MemoryView: View {
     } catch {
       self.error = message(for: error)
     }
+    // Brains from before proposals answer 404; the files still show.
+    proposals = (try? await store.loadProposals()) ?? []
+    skills = (try? await store.loadSkills()) ?? []
   }
+
+  private func trouble(_ s: SkillStatus) -> String {
+    var parts: [String] = []
+    if !s.failed.isEmpty { parts.append("\(s.failed.count) of \(s.runs) failed") }
+    if !s.takeovers.isEmpty { parts.append("\(s.takeovers.count) needed you") }
+    return parts.joined(separator: ", ")
+  }
+
+  /// A tidy-up of all of memory ("") or a fix to one skill, opened when there is one.
+  private func propose(_ asking: String, _ work: () async throws -> Proposal?) async {
+    self.asking = asking
+    do {
+      if let p = try await work() {
+        proposals = (try? await store.loadProposals()) ?? [p]
+        path.append(.proposal(p))
+      } else {
+        store.toast = asking.isEmpty ? "Nothing to tidy" : "No fix found"
+      }
+    } catch {
+      self.error = message(for: error)
+    }
+    self.asking = nil
+  }
+
+  private func tidy() { Task { await propose("") { try await store.proposeTidy() } } }
+  private func fix(_ name: String) { Task { await propose(name) { try await store.proposeSkillFix(name) } } }
 }
 
 /// A memory file: rendered to read, plain text to edit. Your saves are commits in your name.
@@ -236,21 +292,7 @@ struct CommitView: View {
           .font(.footnote).foregroundStyle(.secondary)
         if let error { Text(error).foregroundStyle(.red) }
         if let lines {
-          ScrollView(.horizontal) {
-            VStack(alignment: .leading, spacing: 0) {
-              ForEach(lines.indices, id: \.self) { i in
-                let line = lines[i]
-                Text(line.text.isEmpty ? " " : line.text)
-                  .foregroundStyle(line.kind == .hunk ? .secondary : .primary)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-                  .background(
-                    line.kind == .added
-                      ? Color.green.opacity(0.15) : line.kind == .removed ? Color.red.opacity(0.15) : Color.clear)
-              }
-            }
-            .font(.system(.caption, design: .monospaced))
-            .textSelection(.enabled)
-          }
+          DiffLines(lines: lines)
         } else {
           ProgressView()
         }

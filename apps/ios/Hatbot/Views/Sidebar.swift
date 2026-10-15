@@ -4,11 +4,12 @@
 import SwiftUI
 
 enum AppTab: Hashable, CaseIterable {
-  case chat, tasks, live, memory, settings
+  case chat, search, tasks, live, memory, settings
 
   var title: String {
     switch self {
     case .chat: "Chat"
+    case .search: "Search"
     case .tasks: "Tasks"
     case .live: "Live"
     case .memory: "Memory"
@@ -19,6 +20,7 @@ enum AppTab: Hashable, CaseIterable {
   var icon: String {
     switch self {
     case .chat: "bubble.left.and.bubble.right"
+    case .search: "magnifyingglass"
     case .tasks: "checklist"
     case .live: "display"
     case .memory: "book"

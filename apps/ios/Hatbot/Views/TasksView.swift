@@ -101,6 +101,8 @@ struct TaskDetailView: View {
   @State private var missing = false
   @State private var watch = false
   @State private var confirmCancel = false
+  @State private var rerunGoal: String?
+  @State private var rerun: Int?
   @State private var error: String?
 
   var body: some View {
@@ -172,8 +174,38 @@ struct TaskDetailView: View {
         ToolbarItem {
           Button("Cancel task", role: .destructive) { confirmCancel = true }
         }
+      } else if task.lane == .background && task.parentId == nil {
+        ToolbarItem { Button("Run again", systemImage: "arrow.clockwise") { rerunGoal = task.goal } }
       }
     }
+    .sheet(item: Binding(get: { rerunGoal.map(Goal.init) }, set: { rerunGoal = $0?.text })) { _ in
+      NavigationStack {
+        Form {
+          TextField("Goal", text: Binding(get: { rerunGoal ?? "" }, set: { rerunGoal = $0 }), axis: .vertical)
+            .lineLimit(4...16)
+        }
+        .navigationTitle("Run again")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+          ToolbarItem(placement: .cancellationAction) { Button("Cancel") { rerunGoal = nil } }
+          ToolbarItem(placement: .confirmationAction) {
+            Button("Run") {
+              let goal = rerunGoal?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+              rerunGoal = nil
+              Task {
+                do {
+                  rerun = try await store.rerunTask(taskId, goal: goal == task.goal ? nil : goal).id
+                } catch {
+                  self.error = message(for: error)
+                }
+              }
+            }
+            .disabled((rerunGoal ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+          }
+        }
+      }
+    }
+    .navigationDestination(item: $rerun) { id in TaskDetailView(taskId: id) }
     .confirmationDialog("Cancel “\(task.title)”?", isPresented: $confirmCancel, titleVisibility: .visible) {
       Button("Cancel task", role: .destructive) {
         Task {
@@ -183,6 +215,12 @@ struct TaskDetailView: View {
       Button("Keep running", role: .cancel) {}
     }
   }
+}
+
+/// The goal being edited before a task runs again.
+private struct Goal: Identifiable {
+  let text: String
+  var id: Int { 0 }
 }
 
 private struct TaskDetails: View {

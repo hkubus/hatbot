@@ -1,5 +1,5 @@
-// Settings: spend against the limits, Schedules & Triggers, chat effort, what notifications open,
-// Pause all (PLAN.md §6.5), and signing out.
+// Settings: spend against the limits, Schedules & Triggers, watchers, Check everything, the heartbeat
+// and weekly report, chat effort, what notifications open, Pause all (PLAN.md §6.5), and signing out.
 import SwiftUI
 
 struct SettingsView: View {
@@ -34,6 +34,37 @@ struct SettingsView: View {
         }
         Section {
           NavigationLink("Schedules & Triggers", value: Route.schedules)
+          NavigationLink("Watchers", value: Route.watchers)
+        }
+        Section("Looking after things") {
+          NavigationLink("Check everything", value: Route.checks)
+          NavigationLink("Heartbeat", value: Route.heartbeat)
+          if let report = settings?.weeklyReport {
+            Toggle("Weekly report", isOn: weeklyReport(report, \.enabled))
+            if report.enabled {
+              Picker("Day", selection: weeklyReport(report, \.weekday)) {
+                ForEach(0..<7, id: \.self) { d in Text(Calendar.current.weekdaySymbols[d]).tag(d) }
+              }
+              Picker("Time", selection: weeklyReport(report, \.hour)) {
+                ForEach(0..<24, id: \.self) { h in Text(String(format: "%02d:00", h)).tag(h) }
+              }
+            }
+            Button("Send the report now") {
+              Task {
+                await act {
+                  _ = try await store.sendReport()
+                  store.toast = "Sent to the chat"
+                }
+              }
+            }
+          }
+          if let tidy = settings?.memoryTidy {
+            Toggle(
+              "Propose a memory tidy-up weekly",
+              isOn: Binding(
+                get: { tidy },
+                set: { on in Task { await act { settings = try await store.setMemoryTidy(on) } } }))
+          }
         }
         if let settings {
           Section("Chat") {
@@ -154,6 +185,18 @@ struct SettingsView: View {
       get: { current },
       set: { value in
         Task { await act { settings = try await store.setNotificationsOpen(value) } }
+      })
+  }
+
+  private func weeklyReport<V>(
+    _ current: AppSettings.WeeklyReport, _ key: WritableKeyPath<AppSettings.WeeklyReport, V>
+  ) -> Binding<V> {
+    Binding(
+      get: { current[keyPath: key] },
+      set: { value in
+        var next = current
+        next[keyPath: key] = value
+        Task { await act { settings = try await store.setWeeklyReport(next) } }
       })
   }
 

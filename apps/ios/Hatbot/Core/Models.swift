@@ -107,7 +107,7 @@ enum TaskStatus: String, LenientEnum {
 /// A task (PLAN.md §5.1). Not `Task`, which is Swift's.
 struct AgentTask: Codable, Identifiable, Equatable, Sendable {
   enum Origin: String, LenientEnum {
-    case chat, schedule, webhook, alert
+    case chat, schedule, webhook, alert, watch, heartbeat
     static let fallback = Origin.chat
   }
 
@@ -478,6 +478,26 @@ struct AppSettings: Codable, Equatable, Sendable {
   var chatModel: ChatModel?
   /// Changes Haiku finds safe go ahead without asking; missing on older brains.
   var reviewChanges: Bool?
+  /// Every few minutes a look over what went wrong; missing on older brains.
+  var heartbeat: Heartbeat?
+  /// The week in a few lines, in the chat and as a notification; missing on older brains.
+  var weeklyReport: WeeklyReport?
+  /// A tidy-up of memory proposed weekly; missing on older brains.
+  var memoryTidy: Bool?
+
+  struct Heartbeat: Codable, Equatable, Sendable {
+    var enabled: Bool
+    var everyMinutes: Int
+    var botId: String
+    var instructions: String
+  }
+
+  struct WeeklyReport: Codable, Equatable, Sendable {
+    var enabled: Bool
+    /// 0 is Sunday.
+    var weekday: Int
+    var hour: Int
+  }
 
   enum ChatModel: String, LenientEnum, CaseIterable {
     case haiku = "claude-haiku-5-5"

@@ -158,6 +158,8 @@ final class API: Sendable {
     do {
       return try JSONDecoder().decode(T.self, from: data.isEmpty ? Data("{}".utf8) : data)
     } catch {
+      // 204 No Content, where an optional is expected: nothing.
+      if data.isEmpty, let none = try? JSONDecoder().decode(T.self, from: Data("null".utf8)) { return none }
       throw APIError(status: 0, message: "Hatbot sent something this app doesn't understand.")
     }
   }

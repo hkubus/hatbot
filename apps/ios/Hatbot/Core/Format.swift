@@ -14,6 +14,11 @@ enum Format {
   }
 
   /// 950, 12.4k, 3.1M.
+  /// 1000 or 12.5: no ".0" on whole numbers.
+  static func number(_ n: Double) -> String {
+    n == n.rounded() && abs(n) < 1e15 ? String(Int(n)) : String(n)
+  }
+
   static func tokens(_ n: Int) -> String {
     n < 1000 ? "\(n)" : n < 1_000_000 ? String(format: "%.1fk", Double(n) / 1000) : String(format: "%.1fM", Double(n) / 1_000_000)
   }

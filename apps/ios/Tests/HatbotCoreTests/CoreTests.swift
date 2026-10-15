@@ -487,3 +487,68 @@ final class IncognitoTests: XCTestCase {
     XCTAssertEqual(store.unread, [])
   }
 }
+
+final class LookingAfterThingsTests: XCTestCase {
+  func testDiffsProposalsLikeTheWeb() {
+    let before = "# Home\na\nb\nc\nd\ne\nf\nRouter: old\n"
+    let after = "# Home\na\nb\nc\nd\ne\nf\nRouter: new\nAlso\n"
+    XCTAssertEqual(
+      LineDiff.of(before, after).map(\.text),
+      ["…", " e", " f", "-Router: old", "+Router: new", "+Also"])
+    XCTAssertEqual(LineDiff.of(nil, "x\n").map(\.kind), [.added])
+    XCTAssertEqual(LineDiff.of("x\ny\n", nil).map(\.text), ["-x", "-y"])
+  }
+
+  func testSplitsSearchSnippetsAtTheMarks() {
+    let parts = Search.parts("the \u{02}router\u{03} is at \u{02}.1\u{03}")
+    XCTAssertEqual(parts.map(\.text), ["the ", "router", " is at ", ".1"])
+    XCTAssertEqual(parts.map(\.match), [false, true, false, true])
+  }
+
+  func testSharesTheNoteThenTextAndLinks() {
+    let url = URL(string: "https://example.com/a")!
+    let draft = ShareDraft(note: " Read this ", texts: ["A page", "https://example.com/a"], urls: [url])
+    XCTAssertEqual(draft.text, "Read this\n\nA page\n\nhttps://example.com/a")
+    XCTAssertEqual(ShareDraft(urls: [url]).text, "https://example.com/a")
+  }
+
+  func testAskAnswersWithTheRepliesOrSaysItsStillGoing() throws {
+    let m = #"{"id":%d,"role":"%@","kind":"text","text":"%@","status":"done","createdAt":"2026-10-15T08:00:00Z"}"#
+    let json = """
+      {"message":\(String(format: m, 1, "user", "Warm?")),
+       "replies":[\(String(format: m, 2, "assistant", "21 degrees."))],"finished":true}
+      """
+    let r = try JSONDecoder().decode(AskResult.self, from: Data(json.utf8))
+    XCTAssertEqual(r.answer, "21 degrees.")
+    let waiting = AskResult(message: r.message, replies: [], finished: false)
+    XCTAssertEqual(waiting.answer, "Hatbot is still on it. The answer will be in the chat.")
+  }
+
+  func testDecodesWatchersAndNewSettings() throws {
+    let w = #"""
+      {"id":3,"botId":"hatbot","name":"GPU price","source":{"kind":"page","url":"https://shop.test/gpu",
+       "selector":".price"},"condition":{"when":"below","value":500},"prompt":"","everyMinutes":60,"once":false,
+       "enabled":true,"createdVia":"chat","tainted":false,"taintedBy":null,"createdAt":"2026-10-15T08:00:00Z",
+       "nextCheckAt":null,"lastCheckedAt":null,"lastValue":"549","lastChangedAt":null,"lastFiredAt":null,
+       "lastError":null,"errors":0,"lastTaskId":null}
+      """#
+    let watcher = try JSONDecoder().decode(Watcher.self, from: Data(w.utf8))
+    XCTAssertEqual(watcher.condition.description, "Below 500")
+    XCTAssertEqual(watcher.source.text, "https://shop.test/gpu")
+    XCTAssertEqual(Watcher.every(90), "Every 90 minutes")
+    XCTAssertEqual(Watcher.every(120), "Every 2 hours")
+
+    let s = #"""
+      {"limits":{"dailyUsd":5,"monthlyUsd":50,"taskUsd":1},"chatEffort":"low","owner":{"name":"K","email":"k@x"},
+       "paused":false,"memoryTidy":true,"weeklyReport":{"enabled":true,"weekday":1,"hour":9},
+       "heartbeat":{"enabled":false,"everyMinutes":30,"botId":"hatbot","instructions":""}}
+      """#
+    let settings = try JSONDecoder().decode(AppSettings.self, from: Data(s.utf8))
+    XCTAssertEqual(settings.weeklyReport?.hour, 9)
+    XCTAssertEqual(settings.heartbeat?.everyMinutes, 30)
+    XCTAssertEqual(settings.memoryTidy, true)
+
+    let task = #"{"id":1,"title":"t","goal":"g","successCriteria":"","origin":"watch","lane":"background","model":"m","status":"done","tainted":false,"injectionSuspected":false,"costUsd":0,"steps":0,"createdAt":"2026-10-15T08:00:00Z"}"#
+    XCTAssertEqual(try JSONDecoder().decode(AgentTask.self, from: Data(task.utf8)).origin, .watch)
+  }
+}
