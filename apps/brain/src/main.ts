@@ -113,6 +113,7 @@ const watchers = new Watchers({
 });
 const heartbeat = new Heartbeat({
   db,
+  events,
   settings,
   spend,
   model,

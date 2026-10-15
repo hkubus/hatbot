@@ -545,4 +545,15 @@ export type HeartbeatInfo = {
   action: "nothing" | "notify" | "task" | null;
   note: string;
   taskId: number | null;
+  /** The last 20 looks that found something, newest first. */
+  recent: HeartbeatRun[];
+};
+
+/** A look that found something. */
+export type HeartbeatRun = {
+  at: string;
+  found: string[];
+  action: "nothing" | "notify" | "task";
+  note: string;
+  taskId: number | null;
 };

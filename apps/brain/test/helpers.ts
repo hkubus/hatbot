@@ -148,6 +148,7 @@ export async function testApp(
   });
   const heartbeat = new Heartbeat({
     db,
+    events,
     settings,
     spend,
     model: taskModel,
