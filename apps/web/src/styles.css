@@ -3800,3 +3800,8 @@ mark {
   color: var(--text-2);
   font-size: 14px;
 }
+.offline-banner {
+  flex: none;
+  width: calc(100% - 32px);
+  margin: 10px auto 0;
+}

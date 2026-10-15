@@ -865,11 +865,19 @@ function Composer({ onSend }: { onSend: () => void }) {
         ready.map((d) => (d.attachment as Attachment).id),
       );
       for (const d of sent) if (d.preview) URL.revokeObjectURL(d.preview);
-    } catch {
+    } catch (err) {
       setFiles((f) => (f.length ? f : sent));
       setDraft((d) => d || text);
       requestAnimationFrame(resize);
-      setError("Couldn't send. Check your connection and try again.");
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : !navigator.onLine
+            ? "You're offline. It wasn't sent."
+            : getState().connected
+              ? "Couldn't send. Try again."
+              : "Can't reach Hatbot. It wasn't sent.",
+      );
     } finally {
       setSending(false);
     }

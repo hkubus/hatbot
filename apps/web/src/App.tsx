@@ -26,6 +26,7 @@ import {
   needsYou,
   onToast,
   openConversation,
+  reconnectNow,
   setIncognito,
   useStore,
 } from "./store";
@@ -109,6 +110,14 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const chat = useStore(currentChat);
   const title = useStore((s) => chatName(s, currentChat(s)));
   const [chatMenu, setChatMenu] = useState(false);
+  const connected = useStore((s) => s.connected);
+  // A blip while reconnecting isn't worth a banner.
+  const [down, setDown] = useState(false);
+  useEffect(() => {
+    if (connected) return setDown(false);
+    const t = setTimeout(() => setDown(true), 4000);
+    return () => clearTimeout(t);
+  }, [connected]);
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
   const [insp, setInsp] = useState(() => localStorage.getItem("hatbot:insp") === "1");
   const view = viewOf(path);
@@ -306,6 +315,15 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               <Icon name={theme === "light" ? "sun" : theme === "dark" ? "moon" : "auto"} />
             </button>
           </header>
+          {down && (
+            <div className="paused-banner offline-banner">
+              Can't reach Hatbot.
+              <span style={{ flex: 1 }} />
+              <button type="button" className="btn sm" onClick={reconnectNow}>
+                Retry
+              </button>
+            </div>
+          )}
           {chatMenu && chatId > 0 && (
             <div className="chat-menu">
               {chats.map((c) => (

@@ -10,6 +10,7 @@ import {
   type PluginInfo,
   type Proposal,
   type Schedule,
+  type SpendSummary,
   type Task,
   type TaskStep,
   type TeachSession,
@@ -660,32 +661,96 @@ function apply(e: HatbotEvent) {
   }
 }
 
+/** The latest page again, merged into what's loaded: earlier pages stay, so the view doesn't jump. */
+async function refreshThread() {
+  const { incognito, conversationId } = state;
+  const latest = await api<ThreadMessage[]>(page());
+  await loadEpisodes(latest).catch(() => {});
+  if (incognito !== state.incognito || conversationId !== state.conversationId) return;
+  const first = latest[0];
+  const last = state.messages.at(-1);
+  // The whole conversation, or a full page past everything loaded (a gap): it starts again from here.
+  if (!first || latest.length < PAGE || !last || last.id < first.id)
+    return set({ messages: latest, hasEarlier: latest.length === PAGE });
+  set({ messages: [...state.messages.filter((m) => m.id < first.id), ...latest] });
+}
+
+/** What may have changed while the stream was down. */
+async function catchUp() {
+  void refreshThread().catch(() => {});
+  refreshConversations();
+  void api<SpendSummary>("/spend/summary").then(
+    (s) => set({ todayUsd: s.todayUsd, monthUsd: s.monthUsd }),
+    () => {},
+  );
+  if (Object.keys(state.schedules).length || Object.keys(state.watchers).length)
+    void loadSchedules().catch(() => {});
+  const active = await loadTasks({ status: "active" }).catch(() => null);
+  // Ones we thought running that aren't any more ended while we were away.
+  if (active)
+    for (const t of Object.values(state.tasks))
+      if (t.finishedAt === null && !active.includes(t.id)) void loadTask(t.id).catch(() => {});
+}
+
 let socket: WebSocket | null = null;
 let retry = 0;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let stopped = false;
+let opened = false;
+let listening = false;
 
-/** Opens the event stream and keeps it open, reloading the thread after a reconnect. */
+/** Opens the event stream and keeps it open, catching up after a reconnect. */
 export function connect() {
   stopped = false;
+  if (retryTimer) clearTimeout(retryTimer);
+  retryTimer = null;
+  if (!listening) {
+    listening = true;
+    // Back online or back in front: try at once rather than at the next backoff.
+    const wake = () => {
+      if (document.visibilityState === "visible") reconnectNow();
+    };
+    window.addEventListener("online", wake);
+    window.addEventListener("focus", wake);
+    document.addEventListener("visibilitychange", wake);
+  }
   const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${API_PREFIX}/stream`;
-  socket = new WebSocket(url);
-  socket.onopen = () => {
-    if (retry > 0) void loadThread();
+  const ws = new WebSocket(url);
+  socket = ws;
+  // A socket that's been replaced (StrictMode opens two) says nothing more.
+  ws.onopen = () => {
+    if (ws !== socket) return;
+    if (opened) void catchUp();
+    opened = true;
     void loadLive().catch(() => {});
     retry = 0;
     set({ connected: true });
   };
-  socket.onmessage = (ev) => apply(JSON.parse(ev.data) as HatbotEvent);
-  socket.onclose = () => {
-    set({ connected: false });
-    socket = null;
-    if (stopped) return;
-    const delay = Math.min(30_000, 1000 * 2 ** retry++);
-    setTimeout(connect, delay);
+  ws.onmessage = (ev) => {
+    if (ws === socket) apply(JSON.parse(ev.data) as HatbotEvent);
   };
+  ws.onclose = () => {
+    if (ws !== socket) return;
+    socket = null;
+    set({ connected: false });
+    if (stopped) return;
+    retryTimer = setTimeout(connect, Math.min(30_000, 1000 * 2 ** retry++));
+  };
+}
+
+/** Reconnects now if the stream is down and waiting to try again. */
+export function reconnectNow() {
+  if (stopped || socket) return;
+  retry = 0;
+  connect();
 }
 
 export function disconnect() {
   stopped = true;
-  socket?.close();
+  if (retryTimer) clearTimeout(retryTimer);
+  retryTimer = null;
+  const ws = socket;
+  socket = null;
+  ws?.close();
+  if (state.connected) set({ connected: false });
 }
