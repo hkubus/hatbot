@@ -43,7 +43,7 @@ extension AppStore {
   }
 
   func runChecks() async throws -> CheckReport {
-    try await api.post("/checks", body: Empty())
+    try await api.post("/checks", body: Empty(), timeout: API.checksTimeout)
   }
 
   // MARK: Heartbeat and weekly report
@@ -80,25 +80,32 @@ extension AppStore {
 
   // MARK: Proposals
 
-  func loadProposals() async throws -> [Proposal] {
-    try await api.get("/proposals?status=pending")
+  func loadProposals() async throws {
+    let list: [Proposal] = try await api.get("/proposals?status=pending")
+    proposals = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
   }
 
-  /// Asks for a tidy-up now; nil when there's nothing to tidy.
-  func proposeTidy() async throws -> Proposal? {
+  /// The proposals waiting for you, oldest first.
+  var pendingProposals: [Proposal] {
+    proposals.values.filter { $0.status == .pending }.sorted { $0.id < $1.id }
+  }
+
+  /// Asks for a tidy-up. The brain answers at once and the proposal comes as proposal.updated; a brain
+  /// from before answers with it, or nothing when there's nothing to tidy.
+  func proposeTidy() async throws -> ProposalStarted {
     try await api.post("/proposals/tidy", body: Empty())
   }
 
   func applyProposal(_ id: Int) async throws -> Proposal {
     let p: Proposal = try await api.post("/proposals/\(id)/apply", body: Empty())
+    proposals[p.id] = p
     memoryVersion += 1
     return p
   }
 
   func dismissProposal(_ id: Int) async throws -> Proposal {
     let p: Proposal = try await api.post("/proposals/\(id)/dismiss", body: Empty())
-    // The memory screen lists what's left.
-    memoryVersion += 1
+    proposals[p.id] = p
     return p
   }
 
@@ -106,8 +113,8 @@ extension AppStore {
     try await api.get("/skills")
   }
 
-  /// Asks for a fix to a skill; nil when Hatbot found nothing to change.
-  func proposeSkillFix(_ name: String) async throws -> Proposal? {
+  /// Asks for a fix to a skill, like `proposeTidy`.
+  func proposeSkillFix(_ name: String) async throws -> ProposalStarted {
     try await api.post("/skills/\(API.query(name))/fix", body: Empty())
   }
 

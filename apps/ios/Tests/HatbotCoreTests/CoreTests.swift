@@ -503,6 +503,28 @@ final class IncognitoTests: XCTestCase {
 }
 
 final class LookingAfterThingsTests: XCTestCase {
+  func testAskingForAProposalStartsItOrAnswersWithIt() throws {
+    let started = try JSONDecoder().decode(ProposalStarted.self, from: Data(#"{"started":true}"#.utf8))
+    XCTAssertTrue(started.started)
+    XCTAssertNil(started.proposal)
+    let old = try JSONDecoder().decode(
+      ProposalStarted.self,
+      from: Data(
+        #"{"id":3,"kind":"tidy","title":"T","reason":"R","changes":[],"status":"pending","createdAt":"t"}"#.utf8))
+    XCTAssertFalse(old.started)
+    XCTAssertEqual(old.proposal?.id, 3)
+    let nothing = try JSONDecoder().decode(ProposalStarted.self, from: Data("{}".utf8))
+    XCTAssertNil(nothing.proposal)
+    XCTAssertFalse(nothing.started)
+    let event = try JSONDecoder().decode(
+      HatbotEvent.self,
+      from: Data(
+        #"{"type":"proposal.updated","proposal":{"id":4,"kind":"skill","title":"T","reason":"R","changes":[],"skill":"s","status":"pending","createdAt":"t"}}"#
+          .utf8))
+    guard case let .proposalUpdated(p) = event else { return XCTFail("not a proposal") }
+    XCTAssertEqual(p.skill, "s")
+  }
+
   func testDiffsProposalsLikeTheWeb() {
     let before = "# Home\na\nb\nc\nd\ne\nf\nRouter: old\n"
     let after = "# Home\na\nb\nc\nd\ne\nf\nRouter: new\nAlso\n"

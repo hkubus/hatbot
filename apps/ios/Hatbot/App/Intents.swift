@@ -26,7 +26,8 @@ struct AskHatbotIntent: AppIntent {
   static var parameterSummary: some ParameterSummary { Summary("Ask Hatbot \(\.$question)") }
 
   func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
-    let r: AskResult = try await signedIn().post("/thread/ask", body: Post(text: question))
+    let r: AskResult = try await signedIn().post(
+      "/thread/ask", body: Post(text: question), timeout: API.askTimeout)
     return .result(value: r.answer, dialog: IntentDialog(stringLiteral: r.answer))
   }
 }

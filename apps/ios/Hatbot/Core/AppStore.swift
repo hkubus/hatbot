@@ -40,6 +40,8 @@ final class AppStore {
   var deletedTriggers: Set<Int> = []
   /// Bumped when memory changes, so open memory views reload.
   var memoryVersion = 0
+  /// Proposed memory changes, as loaded and as proposal.updated tells.
+  var proposals: [Int: Proposal] = [:]
   /// A short note to show briefly, like a memory commit.
   var toast: String?
   /// The chat that's showing: a bot's own, or a group. Hatbot's own is the first.
@@ -196,6 +198,8 @@ final class AppStore {
       put(c)
     case let .conversationDeleted(id):
       conversations.removeAll { $0.id == id }
+    case let .proposalUpdated(p):
+      proposals[p.id] = p
     case .unknown:
       break
     }

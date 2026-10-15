@@ -58,7 +58,7 @@ Settings → API tokens on the web, and signing out of the app deletes it.
 Shortcuts has three Hatbot actions, and Siri knows them without setup:
 
 - **Ask Hatbot** ("Ask Hatbot"): sends the question to Hatbot's chat and answers with the reply. It
-  waits up to 50 seconds; a longer answer is in the chat.
+  waits up to 25 seconds; a longer answer is in the chat.
 - **Give Hatbot a Task** ("Give Hatbot a task"): starts a background task, like `/task` in the chat.
 - **Send to Hatbot**: text and files into the chat. Photos go up as JPEG.
 
