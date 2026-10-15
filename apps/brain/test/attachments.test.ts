@@ -64,7 +64,9 @@ test("you upload a photo, send it with a message, and the model sees it; it tain
   // The turn keeps the file's id, not its bytes; each request has the bytes, the same each time.
   const b64 = Buffer.from(PNG).toString("base64");
   const stored = t.db
-    .query<{ content: string }, []>("SELECT content FROM episode_turns ORDER BY id LIMIT 1")
+    .query<{ content: string }, []>(
+      "SELECT content FROM episode_turns WHERE role = 'user' AND content LIKE '[%' ORDER BY id LIMIT 1",
+    )
     .get()?.content;
   expect(stored).not.toContain(b64);
   expect(stored).toContain(`"id":${a.id}`);

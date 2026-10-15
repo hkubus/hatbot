@@ -286,6 +286,37 @@ test("tasks a restart stopped are told in their chat, with one notification", as
   expect(t.notifier.sent.length).toBe(sent + 1);
 });
 
+test("an effort change mid-conversation is a message where it was made, so the cache stays", async () => {
+  const model = new FakeModel([
+    { content: [text("one")] },
+    { content: [text("two")] },
+    { content: [text("three")] },
+  ]);
+  const t = await testApp(model);
+  await t.thread.post("first").done;
+  t.settings.update({ chatEffort: "medium" });
+  await t.thread.post("second").done;
+  await t.thread.post("third").done;
+  const [one, two, three] = model.requests;
+  for (const req of [one, two, three]) {
+    expect(req?.output_config).toEqual({ effort: "low" });
+    expect(req?.betas).toContain("mid-conversation-output-config-2026-07-01");
+  }
+  const marker = { role: "system", content: [], output_config: { effort: "medium" } };
+  expect(two?.messages.slice(0, 1)).toEqual(one?.messages as never);
+  expect(two?.messages[1]?.role).toBe("assistant");
+  expect(two?.messages[2]).toEqual(marker as never);
+  expect(two?.messages[3]?.role).toBe("user");
+  // Set once: the next reply carries on at it.
+  expect(three?.messages.filter((m) => m.role === "system")).toHaveLength(1);
+  // A new conversation starts at it.
+  t.advance(31 * 60_000);
+  model.script.push({ content: [text("four")] });
+  await t.thread.post("fourth").done;
+  expect(model.requests[3]?.output_config).toEqual({ effort: "medium" });
+  expect(model.requests[3]?.messages.some((m) => m.role === "system")).toBe(false);
+});
+
 test("a background task waiting on a desktop task doesn't hold a slot", async () => {
   let release = () => {};
   const screen = new Promise<void>((r) => {

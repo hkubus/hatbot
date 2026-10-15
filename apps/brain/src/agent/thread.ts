@@ -87,6 +87,7 @@ const BETAS: Anthropic.Beta.AnthropicBeta[] = [
   "server-side-fallback-2026-07-01",
   "thinking-display-updates-2026-08-18",
   "thinking-binding-controls-2026-08-01",
+  "mid-conversation-output-config-2026-07-01",
 ];
 /**
  * What an episode's thinking blocks are bound to: the system prompt, the tools and the model. The API
@@ -123,6 +124,9 @@ const ASK_OPUS = toolParam({
 
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 type Turn = Anthropic.Beta.BetaMessageParam;
+type Effort = NonNullable<Anthropic.Beta.BetaOutputConfig["effort"]>;
+/** Stored among a bot's turns where its chat effort was set: not a turn itself. */
+type EffortMark = { effort: Effort };
 /** How a reply ended: its text, for the @names that bring other bots in. */
 type Said = { text: string; status: "done" | "error"; stopped?: boolean };
 
@@ -740,21 +744,52 @@ export class Thread {
       .run(episodeId, botId, role, JSON.stringify(content), this.now());
   }
 
-  /** A bot's own API conversation in the episode: in a group, each bot keeps its own. */
-  /** `files`: the reply's files, read once. Older turns hold the bytes themselves. */
+  /**
+   * A bot's own API conversation in the episode: in a group, each bot keeps its own. `files`: the
+   * reply's files, read once; older turns hold the bytes themselves. `effort`: the episode's first,
+   * for the request; a later change is a message where it was made, so the cache stays.
+   */
   private async loadTurns(
     episodeId: number,
     botId: string,
     files?: Map<number, BlockParam[]>,
-  ): Promise<Turn[]> {
+  ): Promise<{ turns: Turn[]; effort: Effort | null }> {
+    let effort: Effort | null = null;
     const turns = this.d.db
       .query<{ role: "user" | "assistant"; content: string }, [number, string]>(
         "SELECT role, content FROM episode_turns WHERE episode_id = ? AND bot_id = ? ORDER BY id",
       )
       .all(episodeId, botId)
-      .map((r) => ({ role: r.role, content: JSON.parse(r.content) }));
+      .flatMap((r): Turn[] => {
+        const content = JSON.parse(r.content);
+        if (Array.isArray(content)) return [{ role: r.role, content }];
+        const set = (content as EffortMark).effort;
+        if (effort === null) {
+          effort = set;
+          return [];
+        }
+        return [{ role: "system", content: [], output_config: { effort: set } }];
+      });
     const all = answered(turns);
-    return this.d.attachments ? this.d.attachments.expand(all, files) : all;
+    return {
+      turns: this.d.attachments ? await this.d.attachments.expand(all, files) : all,
+      effort,
+    };
+  }
+
+  /** The effort the bot's next reply in the episode runs at, set where it changed. */
+  private setEffort(episodeId: number, botId: string, effort: Effort) {
+    const last = this.d.db
+      .query<{ content: string }, [number, string]>(
+        "SELECT content FROM episode_turns WHERE episode_id = ? AND bot_id = ? AND substr(content, 1, 1) = '{' ORDER BY id DESC LIMIT 1",
+      )
+      .get(episodeId, botId);
+    if (last && (JSON.parse(last.content) as EffortMark).effort === effort) return;
+    this.d.db
+      .query(
+        "INSERT INTO episode_turns (episode_id, bot_id, role, content, created_at) VALUES (?, ?, 'user', ?, ?)",
+      )
+      .run(episodeId, botId, JSON.stringify({ effort } satisfies EffortMark), this.now());
   }
 
   /** Whether the model has seen the episode yet: any bot, or with `botId` that one. */
@@ -1351,7 +1386,7 @@ export class Thread {
     let rewrite: ThreadMessage | null = null;
     if (again) {
       // The turns it had are there to run again; after a reply the model ended, it needs a word.
-      const turns = await this.loadTurns(episode.id, bot.id, new Map());
+      const { turns } = await this.loadTurns(episode.id, bot.id, new Map());
       if (turns.at(-1)?.role === "assistant")
         this.appendTurn(episode.id, bot.id, "user", [
           {
@@ -1455,6 +1490,7 @@ export class Thread {
         userBlocks.push(...this.d.attachments.refs(user.attachments));
         this.taint(episode.id, `Attached file "${user.attachments[0]?.name}"`);
       }
+      this.setEffort(episode.id, bot.id, chatEffort);
       this.appendTurn(episode.id, bot.id, "user", userBlocks);
     }
 
@@ -1601,7 +1637,7 @@ export class Thread {
           return finish("error", "_Stopped: this reply hit its step or time limit._");
         }
 
-        const messages = await this.loadTurns(episode.id, bot.id, files);
+        const { turns: messages, effort } = await this.loadTurns(episode.id, bot.id, files);
         try {
           spend.check(estimateCost(messages, chatModel));
         } catch (err) {
@@ -1635,7 +1671,7 @@ export class Thread {
               display: onHaiku ? "summarized" : "updates",
               block_binding: { prefix_mismatch_behavior: "drop_block" },
             },
-            output_config: { effort: chatEffort },
+            output_config: { effort: effort ?? chatEffort },
             messages,
           },
           {
