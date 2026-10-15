@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { type Approval, latestNoteOnly, type TaskStep } from "@hatbot/shared";
+import { type Approval, latestNoteOnly, type Task, type TaskStep } from "@hatbot/shared";
 import { inBatches } from "../src/agent/tools";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
@@ -502,4 +502,43 @@ test("a summary whose chart doesn't draw goes back to the task once", async () =
   if (!task2) throw new Error("no task");
   await t2.tasks.idle();
   expect(t2.tasks.get(task2.id)?.summary).toBe(broken);
+});
+
+test("an ended task runs again with its goal as you edited it, still tainted", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "done", summary: "First.", notify: false })] },
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Second.", notify: false })] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const { cookie } = await setUpOwner(t);
+  const first = t.tasks.createBackgroundTask({
+    title: "Deploy",
+    goal: "Deploy main",
+    origin: "webhook",
+    source: "Forgejo",
+    payload: '{"ref":"main"}',
+  }) as Task;
+  await waitFor(() => t.tasks.get(first.id)?.finishedAt);
+
+  const res = await t.call(
+    "POST",
+    `/tasks/${first.id}/rerun`,
+    { goal: "Deploy main again" },
+    { cookie },
+  );
+  expect(res.status).toBe(201);
+  const again = (await res.json()) as Task;
+  expect(again).toMatchObject({
+    title: "Deploy",
+    goal: "Deploy main again",
+    origin: "webhook",
+    source: "Forgejo",
+    payload: '{"ref":"main"}',
+    tainted: true,
+    taintedBy: "The event that started it (Forgejo)",
+  });
+  // Still running: not twice at once.
+  expect((await t.call("POST", `/tasks/${again.id}/rerun`, {}, { cookie })).status).toBe(409);
+  await waitFor(() => t.tasks.get(again.id)?.finishedAt);
+  expect(JSON.stringify(work.requests[1]?.messages)).toContain("Deploy main again");
 });

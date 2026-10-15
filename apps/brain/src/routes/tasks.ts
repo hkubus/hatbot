@@ -5,6 +5,8 @@ import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
 import { json, query } from "./util";
 
+const Rerun = z.object({ goal: z.string().max(8000).optional() });
+
 export const taskRoutes = new Hono<AppEnv>()
   .use("/tasks", requireAuth)
   .use("/tasks/*", requireAuth)
@@ -29,6 +31,21 @@ export const taskRoutes = new Hono<AppEnv>()
       steps: c.var.tasks.steps(taskId),
       attachments: c.var.attachments.forTask(taskId),
     });
+  })
+  // Runs an ended task again, with its goal as you edited it.
+  .post("/tasks/:id/rerun", json(Rerun), (c) => {
+    const old = c.var.tasks.get(Number(c.req.param("id")));
+    if (!old) return c.json({ error: "not found" }, 404);
+    if (old.parentId || old.lane !== "background")
+      return c.json({ error: "Run the task that started it again." }, 400);
+    if (c.var.settings.get().paused) return c.json({ error: "Hatbot is paused." }, 409);
+    if (!c.var.bots.active(old.botId)) return c.json({ error: "Its bot has been deleted." }, 409);
+    const task = c.var.tasks.rerun(old.id, c.req.valid("json").goal);
+    if (task) return c.json(task, 201);
+    return c.json(
+      { error: old.finishedAt ? "Its last run is still going." : "It hasn't ended yet." },
+      409,
+    );
   })
   .post("/tasks/:id/cancel", (c) => {
     if (!c.var.tasks.cancel(Number(c.req.param("id"))))

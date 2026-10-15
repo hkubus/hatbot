@@ -1,6 +1,6 @@
 import { latestNoteOnly, type Task } from "@hatbot/shared";
 import { useEffect, useState } from "react";
-import { ApiError } from "../api";
+import { ApiError, api } from "../api";
 import { Icon } from "../icons";
 import { LiveView, StepIcon } from "../live";
 import { navigate } from "../router";
@@ -178,6 +178,9 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   const [watch, setWatch] = useState(live);
   const [missing, setMissing] = useState(false);
   const [error, setError] = useState("");
+  /** The goal being edited to run it again; null when that form is closed. */
+  const [again, setAgain] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     loadTask(id).catch(() => setMissing(true));
@@ -201,6 +204,21 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
     }
   };
 
+  const rerun = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const t = await api<Task>(`/tasks/${id}/rerun`, {
+        body: { goal: again === task.goal ? undefined : again },
+      });
+      setAgain(null);
+      navigate(`/tasks/${t.id}`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
+    }
+    setBusy(false);
+  };
+
   return (
     <section className="view">
       <div className="page narrow">
@@ -221,8 +239,41 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
               Cancel task
             </button>
           )}
+          {!active && !task.parentId && !screen && again === null && (
+            <button type="button" className="btn sm" onClick={() => setAgain(task.goal)}>
+              <Icon name="undo" />
+              Run again
+            </button>
+          )}
         </div>
         {error && <div className="form-error">{error}</div>}
+        {again !== null && (
+          <div className="panel form">
+            <label>
+              <span className="label">What to do</span>
+              <textarea
+                className="field"
+                rows={5}
+                maxLength={8000}
+                value={again}
+                onChange={(e) => setAgain(e.target.value)}
+              />
+            </label>
+            <div className="form-actions">
+              <button type="button" className="btn ghost" onClick={() => setAgain(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn accent"
+                disabled={busy || !again.trim()}
+                onClick={rerun}
+              >
+                Run
+              </button>
+            </div>
+          </div>
+        )}
 
         {pending.map((a) => (
           <ApprovalCard key={a.id} approvalId={a.id} showDetails={false} />

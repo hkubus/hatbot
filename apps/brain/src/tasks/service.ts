@@ -304,7 +304,7 @@ export class Tasks {
     /** It starts tainted: what started it had read untrusted content, this. */
     taintedBy?: string | null;
     /** Unset: the chat's effort. */
-    effort?: "medium" | "high";
+    effort?: Exclude<Task["effort"], null>;
     message?: number;
     /** Your own recent chat messages, when you started it from the chat: what the approval check reads. */
     request?: string;
@@ -435,6 +435,41 @@ export class Tasks {
       request: input.ownerSaid,
     });
     return task ?? "The task couldn't start.";
+  }
+
+  /**
+   * Runs an ended task again as a new one, with the same bot, chat and event, and `goal` if you changed
+   * it. What it was started by stays: a schedule's rerun shows in its runs. Its taint stays too: the
+   * event it read is the same. null if it can't run again now: still going, or its schedule's, trigger's
+   * or watcher's run is.
+   */
+  rerun(id: number, goal?: string): Task | null {
+    const t = this.get(id);
+    if (!t || t.parentId || t.lane !== "background" || !t.finishedAt) return null;
+    const r = this.d.db
+      .query<
+        { request: string | null; run_key: string | null; conversation_id: number | null },
+        [number]
+      >("SELECT request, run_key, conversation_id FROM tasks WHERE id = ?")
+      .get(id);
+    return this.createBackgroundTask({
+      title: t.title,
+      goal: goal?.trim() || t.goal,
+      origin: t.origin,
+      source: t.source ?? undefined,
+      scheduleId: t.scheduleId ?? undefined,
+      triggerId: t.triggerId ?? undefined,
+      watcherId: t.watcherId ?? undefined,
+      runKey: r?.run_key ?? undefined,
+      payload: t.payload ?? undefined,
+      // The taint it had is carried over as it was, so the payload needn't be judged again.
+      trusted: true,
+      taintedBy: t.tainted ? (t.taintedBy ?? "The task it runs again") : null,
+      effort: t.effort ?? undefined,
+      request: r?.request ?? undefined,
+      botId: t.botId,
+      conversationId: r?.conversation_id ?? undefined,
+    });
   }
 
   /** What you said in the chat when you started it, or null. */
