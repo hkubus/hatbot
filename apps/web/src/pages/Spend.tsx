@@ -1,4 +1,10 @@
-import type { SpendByModel, SpendDay, SpendByPurpose, SpendHour, SpendSummary } from "@hatbot/shared";
+import type {
+  SpendByModel,
+  SpendByPurpose,
+  SpendDay,
+  SpendHour,
+  SpendSummary,
+} from "@hatbot/shared";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { LoadError, loadErrorText } from "../load";
