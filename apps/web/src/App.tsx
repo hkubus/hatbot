@@ -193,6 +193,17 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     return disconnect;
   }, [toast]);
 
+  // What's waiting shows in the tab's title, and on the app's icon where the system has badges.
+  useEffect(() => {
+    const n = unread + pending;
+    document.title = n ? `(${n}) Hatbot` : "Hatbot";
+    const nav = navigator as Navigator & {
+      setAppBadge?: (n: number) => Promise<void>;
+      clearAppBadge?: () => Promise<void>;
+    };
+    void (n ? nav.setAppBadge?.(n) : nav.clearAppBadge?.())?.catch(() => {});
+  }, [unread, pending]);
+
   // Cmd/Ctrl-K: Search. Escape: closes the chat switcher, else the live panel.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
