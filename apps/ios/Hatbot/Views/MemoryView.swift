@@ -3,7 +3,7 @@ import SwiftUI
 
 struct MemoryView: View {
   @Environment(AppStore.self) private var store
-  @State private var path: [Route] = []
+  @Binding var path: [Route]
   @State private var files: [MemoryFile]?
   @State private var error: String?
   @State private var naming = false

@@ -279,8 +279,14 @@ final class ScheduleAndMemoryTests: XCTestCase {
     XCTAssertEqual(link("hatbot://approvals/5"), .approval(5))
     XCTAssertEqual(link("hatbot://schedules/2"), .schedule(2))
     XCTAssertEqual(link("hatbot://triggers/3"), .trigger(3))
-    XCTAssertNil(link("hatbot://memory/1"))
+    XCTAssertEqual(link("hatbot://memory/notes/my%20servers.md"), .memory("notes/my servers.md"))
+    XCTAssertEqual(link("hatbot://new"), .newMessage)
+    XCTAssertEqual(link("hatbot://live"), .live)
+    XCTAssertEqual(link("hatbot://tasks"), .tasks)
+    XCTAssertNil(link("hatbot://memory"))
+    XCTAssertNil(link("hatbot://approvals"))
     XCTAssertNil(link("hatbot://tasks/1/2"))
+    for l in [AppLink.memory("notes/my servers.md"), .task(4), .newMessage] { XCTAssertEqual(AppLink(url: l.url), l) }
     XCTAssertNil(link("https://tasks/1"))
   }
 

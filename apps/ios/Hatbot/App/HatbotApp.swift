@@ -1,9 +1,12 @@
 // The app: sign-in until there's a token, then chat, with the other sections in a sidebar (PLAN.md §10.3).
-// Notifications come from the ntfy app; hatbot:// links open tasks, approvals, schedules and triggers.
+// Notifications come from the ntfy app; hatbot:// links open tasks, approvals, schedules and triggers,
+// and quick actions and Spotlight results open theirs (App/Extras.swift).
+import CoreSpotlight
 import SwiftUI
 
 @main
 struct HatbotApp: App {
+  @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
   @State private var session: Session
 
   init() {
@@ -23,6 +26,12 @@ struct HatbotApp: App {
       }
       .environment(session)
       .tint(.brand)
+      .onChange(of: session.store == nil) { _, out in
+        if out {
+          Spotlight.clear()
+          Task { await Badge.show(0) }
+        }
+      }
     }
   }
 }
@@ -38,6 +47,7 @@ struct MainView: View {
   /// A message to show in the chat, from Search.
   @State private var focus: Int?
   @State private var settingsPath: [Route] = []
+  @State private var memoryPath: [Route] = []
 
   var body: some View {
     Sidebar(tab: $tab, open: $sidebar) { section }
@@ -50,6 +60,22 @@ struct MainView: View {
       }
     }
     .onOpenURL(perform: open)
+    .onContinueUserActivity(CSSearchableItemActionType) { activity in
+      if let url = Spotlight.link(activity) { open(url) }
+    }
+    .onChange(of: QuickActions.shared.url, initial: true) { _, url in
+      guard let url else { return }
+      QuickActions.shared.url = nil
+      open(url)
+    }
+    // The count on the app icon, while the app's been open: there's no push to change it after.
+    .task { await Badge.allow() }
+    .onChange(of: store.needsYou, initial: true) { _, n in Task { await Badge.show(n) } }
+    // What Spotlight finds, a little after launch.
+    .task {
+      try? await Task.sleep(for: .seconds(5))
+      await Spotlight.index(store)
+    }
     .overlay(alignment: .top) { Toast() }
     .environment(drafts)
     // Hatbot needs you: an approval came in, or the desktop asks for you.
@@ -82,7 +108,7 @@ struct MainView: View {
           .sidebarButton()
           .routes()
       }
-    case .memory: MemoryView()
+    case .memory: MemoryView(path: $memoryPath)
     case .settings: SettingsView(path: $settingsPath)
     }
   }
@@ -111,6 +137,17 @@ struct MainView: View {
     case let .trigger(id):
       tab = .settings
       settingsPath = [.schedules, .trigger(id)]
+    case .newMessage:
+      tab = .chat
+      chatPath = []
+    case .live:
+      tab = .live
+    case .tasks:
+      tab = .tasks
+      tasksPath = []
+    case let .memory(path):
+      tab = .memory
+      memoryPath = [.memoryFile(path)]
     case nil:
       break
     }

@@ -35,6 +35,17 @@ targets:
         CFBundleURLTypes:
           - CFBundleURLName: ovh.gaycats.hatbot
             CFBundleURLSchemes: [hatbot]
+        # Home-screen quick actions: each type is the hatbot:// link it opens (App/Extras.swift).
+        UIApplicationShortcutItems:
+          - UIApplicationShortcutItemType: hatbot://new
+            UIApplicationShortcutItemTitle: New Message
+            UIApplicationShortcutItemIconSymbolName: square.and.pencil
+          - UIApplicationShortcutItemType: hatbot://live
+            UIApplicationShortcutItemTitle: Live
+            UIApplicationShortcutItemIconSymbolName: display
+          - UIApplicationShortcutItemType: hatbot://tasks
+            UIApplicationShortcutItemTitle: Tasks
+            UIApplicationShortcutItemIconSymbolName: checklist
         # Plain http to the brain on the LAN (192.168.55.x:8080); everything else needs TLS.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
