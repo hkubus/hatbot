@@ -75,14 +75,20 @@ struct LimitsView: View {
           .disabled(saving || limits == nil || limits == saved || !valid)
       }
     }
-    .task {
-      do {
-        let s = try await store.loadSettings()
-        limits = s.limits
-        saved = s.limits
-      } catch {
-        self.error = message(for: error)
-      }
+    .task { await load() }
+    // Changed elsewhere: shown, unless you're changing them here.
+    .onChange(of: store.settingsVersion) {
+      if limits == saved { Task { await load() } }
+    }
+  }
+
+  private func load() async {
+    do {
+      let s = try await store.loadSettings()
+      limits = s.limits
+      saved = s.limits
+    } catch {
+      self.error = message(for: error)
     }
   }
 

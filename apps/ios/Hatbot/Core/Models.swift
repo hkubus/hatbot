@@ -602,6 +602,10 @@ enum HatbotEvent: Decodable, Sendable {
   case conversationDeleted(id: Int)
   case proposalUpdated(Proposal)
   case watcherUpdated(Watcher)
+  /// Settings changed, here or elsewhere: open settings refetch.
+  case settingsUpdated
+  /// The heartbeat looked again.
+  case heartbeatUpdated
   case watcherDeleted(id: Int)
   case unknown(String)
 
@@ -668,6 +672,8 @@ enum HatbotEvent: Decodable, Sendable {
     case "conversation.deleted": self = .conversationDeleted(id: try c.decode(Int.self, forKey: .id))
     case "proposal.updated": self = .proposalUpdated(try c.decode(Proposal.self, forKey: .proposal))
     case "watcher.updated": self = .watcherUpdated(try c.decode(Watcher.self, forKey: .watcher))
+    case "settings.updated": self = .settingsUpdated
+    case "heartbeat.updated": self = .heartbeatUpdated
     case "watcher.deleted": self = .watcherDeleted(id: try c.decode(Int.self, forKey: .id))
     default: self = .unknown(type)
     }

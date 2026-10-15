@@ -691,6 +691,25 @@ final class SpendTests: XCTestCase {
     XCTAssertEqual(try JSONDecoder().decode([ApiToken].self, from: Data(tokens.utf8)).first?.id, 3)
   }
 
+  func testHeartbeatRunsAndRefetchEventsDecode() throws {
+    let info = #"""
+      {"at":"2026-10-15T10:00:00.000Z","found":[],"action":"nothing","note":"","taskId":null,
+       "recent":[{"at":"2026-10-15T09:00:00.000Z","found":["Kuma: nas down"],"action":"task"}]}
+      """#
+    let hb = try JSONDecoder().decode(HeartbeatInfo.self, from: Data(info.utf8))
+    XCTAssertEqual(hb.recent?.first?.found, ["Kuma: nas down"])
+    XCTAssertEqual(hb.recent?.first?.action, .task)
+    let old = #"{"at":null,"found":[],"note":""}"#
+    XCTAssertNil(try JSONDecoder().decode(HeartbeatInfo.self, from: Data(old.utf8)).recent)
+    for (json, settings) in [(#"{"type":"settings.updated","settings":{}}"#, true), (#"{"type":"heartbeat.updated"}"#, false)] {
+      switch try JSONDecoder().decode(HatbotEvent.self, from: Data(json.utf8)) {
+      case .settingsUpdated: XCTAssertTrue(settings)
+      case .heartbeatUpdated: XCTAssertFalse(settings)
+      default: XCTFail(json)
+      }
+    }
+  }
+
   func testWatcherEventsDecode() throws {
     let deleted = #"{"type":"watcher.deleted","id":4}"#
     guard case .watcherDeleted(4) = try JSONDecoder().decode(HatbotEvent.self, from: Data(deleted.utf8)) else {

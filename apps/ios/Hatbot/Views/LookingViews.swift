@@ -406,6 +406,7 @@ struct HeartbeatView: View {
   @State private var settings: AppSettings.Heartbeat?
   @State private var info: HeartbeatInfo?
   @State private var looking = false
+  @FocusState private var writing: Bool
   @State private var error: String?
 
   var body: some View {
@@ -428,6 +429,7 @@ struct HeartbeatView: View {
         Section("What you want done") {
           TextField("Restart a monitor that's down once before telling me", text: s.instructions, axis: .vertical)
             .lineLimit(3...10)
+            .focused($writing)
             .onSubmit { save() }
           Button("Save") { save() }
         }
@@ -450,9 +452,26 @@ struct HeartbeatView: View {
         }
         .disabled(looking)
       }
+      if let recent = info?.recent, !recent.isEmpty {
+        Section("Before") {
+          ForEach(recent, id: \.at) { run in
+            LabeledContent(run.at.stampText) {
+              Text(Self.line(run)).multilineTextAlignment(.trailing)
+            }
+          }
+        }
+      }
     }
     .navigationTitle("Heartbeat")
     .navigationBarTitleDisplayMode(.inline)
+    .onChange(of: store.heartbeatVersion) {
+      Task { if let last = try? await store.loadHeartbeat() { info = last } }
+    }
+    // Changed elsewhere; not while you're writing what you want done.
+    .onChange(of: store.settingsVersion) {
+      guard !writing else { return }
+      Task { if let all = try? await store.loadSettings() { settings = all.heartbeat } }
+    }
     .task {
       do {
         async let s = store.loadSettings()
@@ -464,6 +483,16 @@ struct HeartbeatView: View {
       } catch {
         self.error = message(for: error)
       }
+    }
+  }
+
+  /// What a look found and did.
+  static func line(_ run: HeartbeatInfo.Run) -> String {
+    let found = run.found.isEmpty ? "Nothing" : run.found.joined(separator: ", ")
+    switch run.action {
+    case .notify: return "\(found), told you"
+    case .task: return "\(found), started a task"
+    case .nothing, nil: return found
     }
   }
 

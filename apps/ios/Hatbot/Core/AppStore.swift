@@ -57,6 +57,9 @@ final class AppStore {
   var memoryVersion = 0
   /// Proposed memory changes, as loaded and as proposal.updated tells.
   var proposals: [Int: Proposal] = [:]
+  /// Bumped by settings.updated and heartbeat.updated, so open views refetch.
+  var settingsVersion = 0
+  var heartbeatVersion = 0
   /// Watchers as loaded and as watcher.updated tells; `watchersLoaded` once the list has come.
   var watchers: [Int: Watcher] = [:]
   var watchersLoaded = false
@@ -284,6 +287,10 @@ final class AppStore {
       proposals[p.id] = p
     case let .watcherUpdated(w):
       watchers[w.id] = w
+    case .settingsUpdated:
+      settingsVersion += 1
+    case .heartbeatUpdated:
+      heartbeatVersion += 1
     case let .watcherDeleted(id):
       watchers[id] = nil
       deletedWatchers.insert(id)

@@ -169,11 +169,20 @@ struct HeartbeatInfo: Codable, Equatable, Sendable {
     static let fallback = Action.nothing
   }
 
+  /// One look of the ones before.
+  struct Run: Codable, Equatable, Sendable {
+    var at: String
+    var found: [String]
+    var action: Action?
+  }
+
   var at: String?
   var found: [String]
   var action: Action?
   var note: String
   var taskId: Int?
+  /// The last few looks, newest first; missing on brains from before.
+  var recent: [Run]?
 }
 
 enum LineDiff {

@@ -141,6 +141,7 @@ struct SettingsView: View {
       }
       .task { await load() }
       .refreshable { await load() }
+      .onChange(of: store.settingsVersion) { Task { await load() } }
       .routes()
     }
   }
