@@ -176,6 +176,8 @@ export class Tasks {
       before?: number;
       botId?: string;
       origin?: string;
+      /** A LIKE pattern, backslash-escaped, for the title, goal or summary: Search. */
+      like?: string;
     } = {},
   ): Task[] {
     const where: string[] = [];
@@ -209,6 +211,12 @@ export class Tasks {
       where.push("t.origin = ?");
       args.push(opts.origin);
     }
+    if (opts.like !== undefined) {
+      where.push(
+        "(t.title LIKE ? ESCAPE '\\' OR t.goal LIKE ? ESCAPE '\\' OR coalesce(t.summary, '') LIKE ? ESCAPE '\\')",
+      );
+      args.push(opts.like, opts.like, opts.like);
+    }
     return this.d.db
       .query<Row, (number | string)[]>(
         `${SELECT} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY t.id DESC LIMIT ?`,
@@ -227,7 +235,12 @@ export class Tasks {
   }
 
   step(taskId: number, stepId: number): TaskStep | null {
-    return this.steps(taskId).find((s) => s.id === stepId) ?? null;
+    return this.d.db
+      .query<TaskStep, [number, number]>(
+        `SELECT id, task_id AS taskId, kind, name, detail, screenshot, url, created_at AS createdAt
+         FROM task_steps WHERE id = ? AND task_id = ?`,
+      )
+      .get(stepId, taskId);
   }
 
   /**

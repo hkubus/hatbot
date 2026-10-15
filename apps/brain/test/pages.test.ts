@@ -25,6 +25,17 @@ test("tasks, approvals and memory history come a page at a time", async () => {
   expect((await get<Task[]>("/tasks?origin=schedule")).map((x) => x.id)).toEqual([6, 4, 2]);
   expect((await get<Task[]>("/tasks?botId=chef")).map((x) => x.id)).toEqual([7]);
   expect((await t.call("GET", "/tasks?limit=500", undefined, { cookie })).status).toBe(400);
+  // Search finds them in one query.
+  expect(t.tasks.list({ like: "%t1%" }).map((x) => x.id)).toEqual([1]);
+
+  // A step is looked up by its id and its task's.
+  t.db
+    .query(
+      "INSERT INTO task_steps (task_id, kind, name, detail, created_at) VALUES (2, 'note', 'n', '', ?)",
+    )
+    .run(now);
+  expect(t.tasks.step(2, 1)).toMatchObject({ id: 1, taskId: 2, name: "n" });
+  expect(t.tasks.step(3, 1)).toBeNull();
 
   for (let i = 0; i < 3; i++)
     t.db
