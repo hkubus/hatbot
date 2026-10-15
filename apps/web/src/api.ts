@@ -4,6 +4,8 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** The whole answer, for errors that say more, like a 409's current version. */
+    readonly data: unknown = null,
   ) {
     super(message);
   }
@@ -28,6 +30,7 @@ export async function api<T>(
     throw new ApiError(
       res.status,
       (data as { error?: string } | null)?.error ?? `HTTP ${res.status}`,
+      data,
     );
   }
   return data as T;

@@ -7,6 +7,28 @@ const subscribe = (l: () => void) => {
 };
 const snapshot = () => location.pathname + location.search;
 
+/** Asked before leaving the page that set it, e.g. an editor with unsaved changes: true to go. */
+let leaveGuard: (() => boolean) | null = null;
+export function setLeaveGuard(guard: () => boolean) {
+  leaveGuard = guard;
+  return () => {
+    if (leaveGuard === guard) leaveGuard = null;
+  };
+}
+let shown = snapshot();
+let ours = false;
+// Back and Forward have already moved the address when we hear of them: put it back if the page says
+// stay. Registered before anything renders, so it runs before the routes read the address.
+window.addEventListener("popstate", (e) => {
+  if (ours) return;
+  if (leaveGuard && !leaveGuard()) {
+    e.stopImmediatePropagation();
+    history.pushState(null, "", shown);
+    return;
+  }
+  shown = snapshot();
+});
+
 export type Route = { path: string; params: URLSearchParams };
 
 export function useRoute(): Route {
@@ -16,6 +38,13 @@ export function useRoute(): Route {
 }
 
 export function navigate(to: string, replace = false) {
+  if (to !== snapshot() && leaveGuard && !leaveGuard()) return;
   if (to !== snapshot()) history[replace ? "replaceState" : "pushState"](null, "", to);
-  window.dispatchEvent(new PopStateEvent("popstate"));
+  shown = snapshot();
+  ours = true;
+  try {
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  } finally {
+    ours = false;
+  }
 }
