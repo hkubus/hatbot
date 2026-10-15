@@ -8,6 +8,7 @@ export * from "./chart";
 export * from "./checks";
 export * from "./plugin";
 export * from "./schedule";
+export * from "./search";
 export * from "./thread";
 export * from "./watch";
 

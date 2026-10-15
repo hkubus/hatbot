@@ -22,7 +22,7 @@ import remarkGfm from "remark-gfm";
 import { ApiError, attachmentUrl, upload } from "../api";
 import { Chart, ChartPending } from "../chart";
 import { Icon } from "../icons";
-import { navigate } from "../router";
+import { navigate, useRoute } from "../router";
 import {
   botName,
   chatName,
@@ -536,16 +536,54 @@ export function Chat() {
   const stick = useRef(true);
   // Only messages that arrive after the first paint animate in.
   const animateFrom = useRef<number>(Number.POSITIVE_INFINITY);
+  const loaded = useRef<Promise<void>>(Promise.resolve());
+  // A message to show, from search: ?message=<id>.
+  const { path, params } = useRoute();
+  const target = Number(params.get("message")) || 0;
 
   // Switching chats, or to or from incognito, loads the other conversation in the store.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset the animation on each switch
   useEffect(() => {
     animateFrom.current = Number.POSITIVE_INFINITY;
     stick.current = true;
-    loadThread().then(() => {
+    loaded.current = loadThread().then(() => {
       animateFrom.current = (getState().messages.at(-1)?.id ?? 0) + 1;
     });
   }, [incognito, conversationId]);
+
+  // Loads back to the message, opens its conversation if it's folded, and scrolls to it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs once per message asked for
+  useEffect(() => {
+    if (!target) return;
+    let gone = false;
+    void (async () => {
+      await loaded.current.catch(() => {});
+      for (let i = 0; i < 40 && !gone; i++) {
+        const s = getState();
+        if (s.messages.some((m) => m.id === target) || !s.hasEarlier) break;
+        stick.current = false;
+        await loadEarlier();
+      }
+      if (gone) return;
+      const m = getState().messages.find((x) => x.id === target);
+      navigate(path, true);
+      if (!m) return setError("That message isn't in this chat any more.");
+      stick.current = false;
+      if (m.episodeId) setUnfolded((s) => new Set(s).add(m.episodeId as number));
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          const el = scroller.current?.querySelector(`[data-id="${target}"]`);
+          if (!el) return;
+          el.scrollIntoView({ block: "center" });
+          el.classList.add("msg-found");
+          setTimeout(() => el.classList.remove("msg-found"), 2500);
+        }),
+      );
+    })();
+    return () => {
+      gone = true;
+    };
+  }, [target]);
 
   // Follow the conversation while the view is at the bottom.
   useLayoutEffect(() => {

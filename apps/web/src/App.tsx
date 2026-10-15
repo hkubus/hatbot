@@ -9,6 +9,7 @@ import { GroupPage } from "./pages/Group";
 import { Login, Setup } from "./pages/Login";
 import { Memory } from "./pages/Memory";
 import { SchedulesView } from "./pages/Schedules";
+import { Search } from "./pages/Search";
 import { Settings } from "./pages/Settings";
 import { SkillDraft } from "./pages/SkillDraft";
 import { Spend } from "./pages/Spend";
@@ -33,6 +34,7 @@ import { getTheme, setTheme, type Theme } from "./theme";
 const VIEWS = [
   { path: "/", title: "Chat", icon: "chat", phone: true },
   { path: "/tasks", title: "Tasks", icon: "tasks", phone: true },
+  { path: "/search", title: "Search", icon: "search", phone: false },
   { path: "/live", title: "Live", icon: "monitor", phone: true },
   { path: "/schedules", title: "Schedules & Triggers", icon: "clock", phone: false },
   { path: "/memory", title: "Memory", icon: "book", phone: true },
@@ -264,6 +266,16 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
                 <Icon name="incognito" />
               </button>
             )}
+            {view.path !== "/search" && (
+              <button
+                type="button"
+                className="tb-btn show-phone"
+                onClick={() => navigate("/search")}
+                title="Search"
+              >
+                <Icon name="search" />
+              </button>
+            )}
             {view.path !== "/live" && (
               <button
                 type="button"
@@ -344,6 +356,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               />
             ))}
           {view.path === "/spend" && <Spend />}
+          {view.path === "/search" && <Search query={params.get("q") ?? ""} />}
           {view.path === "/settings" && (
             <Settings path={path} toast={toast} onSignOut={onSignOut} />
           )}

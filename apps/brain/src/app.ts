@@ -10,6 +10,7 @@ import { desktopRoutes } from "./routes/desktop";
 import { memoryRoutes } from "./routes/memory";
 import { pluginRoutes } from "./routes/plugins";
 import { hookRoutes, scheduleRoutes } from "./routes/schedules";
+import { searchRoutes } from "./routes/search";
 import { streamRoutes } from "./routes/stream";
 import { approvalRoutes, taskRoutes } from "./routes/tasks";
 import { teachRoutes } from "./routes/teach";
@@ -43,6 +44,7 @@ export function createApp(deps: Deps) {
   app.route("/", teachRoutes);
   app.route("/", checkRoutes);
   app.route("/", watcherRoutes);
+  app.route("/", searchRoutes);
 
   app.notFound((c) => c.json({ error: "not found" }, 404));
   app.onError((err, c) => {

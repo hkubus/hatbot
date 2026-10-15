@@ -3707,3 +3707,54 @@ pre.payload {
 .panel.form .form-row select.field {
   width: auto;
 }
+
+/* Search */
+@media (max-width: 899px) {
+  .toolbar .tb-btn.show-phone {
+    display: inline-flex;
+  }
+}
+.search-box {
+  position: relative;
+  margin-bottom: 18px;
+}
+.search-box svg.i {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+.search-box .field {
+  width: 100%;
+  padding-left: 34px;
+}
+.row .txt.snippet {
+  display: block;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.row .txt.snippet b {
+  font-weight: 550;
+}
+mark {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+.msg-found {
+  animation: msg-found 2.4s ease-out;
+  border-radius: 10px;
+}
+@keyframes msg-found {
+  0%,
+  40% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 3px transparent;
+  }
+}
