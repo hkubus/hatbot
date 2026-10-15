@@ -310,6 +310,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     release();
     tasks.setStatus(id, "waiting_approval");
     const out = await fn();
+    // Approved or answered: what it waits for now is the screen.
+    tasks.setStatus(id, "queued");
     await acquire();
     return out;
   };

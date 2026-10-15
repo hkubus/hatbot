@@ -127,6 +127,24 @@ test("a consequential click is held back until confirm_intent is approved", asyn
   expect(t.tasks.get(task.id)?.status).toBe("done");
 });
 
+test("an approved desktop task waiting for the screen shows as queued", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("confirm_intent", { kind: "send", summary: "Send the email" })] },
+    finish("Sent."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = startTask(t, "Send the email");
+  const approval = await pending(t);
+  expect(t.tasks.get(task.id)?.status).toBe("waiting_approval");
+  // Another task has the screen meanwhile.
+  await t.tasks.lane.acquire(-5, new AbortController().signal);
+  t.approvals.decide(approval.id, "approve", "web");
+  await waitFor(() => t.tasks.get(task.id)?.status === "queued");
+  t.tasks.lane.release(-5);
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)?.status).toBe("done");
+});
+
 test("a denied approval tells the model not to do it", async () => {
   const work = new FakeModel([
     { content: [toolUse("confirm_intent", { kind: "send", summary: "Send the email" })] },
