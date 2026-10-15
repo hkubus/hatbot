@@ -683,7 +683,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           model: task.model,
           max_tokens: 16000,
           betas: BETAS,
-          system: [{ type: "text", text: system }],
+          // Tools and system end here, the same for each of this bot's tasks, so they share the entry; the
+          // top-level breakpoint follows the conversation. Two of the four breakpoints allowed.
+          system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
           cache_control: { type: "ephemeral" },
           tools: [computer.toJSON(), browser.toJSON(), ...CUSTOM_TOOLS],
           thinking: UPDATES_MODELS.has(task.model)

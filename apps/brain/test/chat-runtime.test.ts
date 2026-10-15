@@ -99,3 +99,25 @@ test("a background task clears old tool results past 70k", async () => {
     trigger: { type: "input_tokens", value: 70_000 },
   });
 });
+
+const breakpoints = (req: unknown) => JSON.stringify(req).match(/"cache_control"/g)?.length ?? 0;
+
+test("tasks cache their tools and system apart from the conversation, within four breakpoints", async () => {
+  const done = { outcome: "done", summary: "Done.", notify: false };
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", done)] },
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Booked." })] },
+  ]);
+  const t = await testApp(new FakeModel([{ content: [text("Hi.")] }]), work);
+  t.tasks.createBackgroundTask({ title: "Check", goal: "Check", origin: "schedule" });
+  await t.tasks.idle();
+  t.tasks.createDesktopTask({ title: "Book", goal: "Book", successCriteria: "", origin: "chat" });
+  await t.tasks.idle();
+  await t.thread.post("hello").done;
+  for (const req of [...work.requests, ...t.model.requests]) {
+    expect((req.system as { cache_control?: unknown }[])[0]?.cache_control).toBeDefined();
+    expect(req.cache_control).toBeDefined();
+    expect(breakpoints(req)).toBeLessThanOrEqual(4);
+  }
+  expect(work.requests).toHaveLength(2);
+});
