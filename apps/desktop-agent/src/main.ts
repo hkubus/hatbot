@@ -13,6 +13,7 @@ import { Browser, BrowserError } from "./browser";
 import { context, inspect } from "./cdp";
 import { FetchError, fetchPage } from "./fetch";
 import { browserKey } from "./keys";
+import { LiveQueue } from "./livequeue";
 import { runningProfile, useProfile } from "./profile";
 import { SHELL_SOCKET } from "./shell";
 import {
@@ -118,6 +119,8 @@ async function liveInput(m: LiveInput) {
     }
   }
 }
+
+const liveQueue = new LiveQueue((m) => serial(() => liveInput(m)));
 
 const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
   hostname: host,
@@ -294,7 +297,7 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
       } catch {
         return;
       }
-      void serial(() => liveInput(m)).catch((err) => console.error("live input", err));
+      liveQueue.push(m);
     },
     close(ws) {
       ws.data.off?.();
