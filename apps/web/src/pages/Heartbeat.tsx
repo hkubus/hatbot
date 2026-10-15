@@ -1,31 +1,65 @@
 // Settings → Heartbeat: a look every few minutes at what went wrong; only news goes to Haiku.
 import { type AppSettings, describeEvery, type HeartbeatInfo } from "@hatbot/shared";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api";
 import { Icon } from "../icons";
+import { LoadError, loadErrorText } from "../load";
 import { navigate } from "../router";
+import { useStore } from "../store";
 import { Switch } from "../switch";
 import { BotPicker, stamp } from "./Schedules";
 
 const EVERY = [5, 10, 15, 30, 60, 120, 360];
-const DID = { nothing: "Let it be", notify: "Told you", task: "Started a task" } as const;
+const DID: Record<string, string> = {
+  nothing: "Let it be",
+  notify: "Told you",
+  task: "Started a task",
+};
+
+// TODO(shared): HeartbeatInfo gains this in @hatbot/shared; use it from there after the merge.
+type Recent = { at: string; found: string[]; action: string };
 
 export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [info, setInfo] = useState<HeartbeatInfo | null>(null);
+  const [info, setInfo] = useState<(HeartbeatInfo & { recent?: Recent[] }) | null>(null);
   const [instructions, setInstructions] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  const settingsVersion = useStore((s) => s.settingsVersion);
+  const heartbeatVersion = useStore((s) => s.heartbeatVersion);
+  // The instructions as saved: a change from elsewhere replaces them only if you haven't edited them.
+  const savedInstructions = useRef<string | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refetch when settings change anywhere
   useEffect(() => {
-    api<AppSettings>("/settings").then((s) => {
-      setSettings(s);
-      setInstructions(s.heartbeat.instructions);
-    });
-    api<HeartbeatInfo>("/heartbeat").then(setInfo, () => {});
-  }, []);
+    setLoadError("");
+    api<AppSettings>("/settings").then(
+      (s) => {
+        setSettings(s);
+        const was = savedInstructions.current;
+        setInstructions((cur) => (was === null || cur === was ? s.heartbeat.instructions : cur));
+        savedInstructions.current = s.heartbeat.instructions;
+      },
+      (err) => setLoadError(loadErrorText(err)),
+    );
+  }, [settingsVersion, attempt]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refetch after each heartbeat
+  useEffect(() => {
+    api<HeartbeatInfo & { recent?: Recent[] }>("/heartbeat").then(setInfo, () => {});
+  }, [heartbeatVersion]);
 
-  if (!settings) return <section className="view" />;
+  if (!settings)
+    return (
+      <section className="view">
+        {loadError && (
+          <div className="page narrow">
+            <LoadError error={loadError} retry={() => setAttempt((n) => n + 1)} />
+          </div>
+        )}
+      </section>
+    );
   const hb = settings.heartbeat;
   const save = async (patch: Partial<AppSettings["heartbeat"]>) => {
     setError("");
@@ -35,6 +69,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
         body: { heartbeat: { ...hb, ...patch } },
       });
       setSettings(s);
+      savedInstructions.current = s.heartbeat.instructions;
       toast("Saved");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't save");
@@ -44,7 +79,8 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
     setBusy(true);
     setError("");
     try {
-      setInfo(await api<HeartbeatInfo>("/heartbeat/run", { body: {} }));
+      const ran = await api<HeartbeatInfo>("/heartbeat/run", { body: {} });
+      setInfo((old) => ({ ...ran, recent: old?.recent }));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
     }
@@ -137,6 +173,24 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
                   </dd>
                 </>
               )}
+            </dl>
+          </div>
+        )}
+        {info?.recent && info.recent.length > 0 && (
+          <div className="panel">
+            <h3 className="section-title">Recent finds</h3>
+            <dl className="kv">
+              {info.recent.map((r) => (
+                <Fragment key={r.at}>
+                  <dt>{stamp(r.at)}</dt>
+                  <dd>
+                    {r.found.map((f) => (
+                      <div key={f}>{f}</div>
+                    ))}
+                    <div className="muted">{DID[r.action] ?? r.action}</div>
+                  </dd>
+                </Fragment>
+              ))}
             </dl>
           </div>
         )}

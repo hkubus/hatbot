@@ -50,6 +50,11 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
   const [theme, setThemeState] = useState<Theme>(getTheme());
   const paused = useStore((s) => s.paused);
   const [loadError, setLoadError] = useState("");
+  // Saved elsewhere (the app, another tab): shown here too.
+  const settingsVersion = useStore((s) => s.settingsVersion);
+  useEffect(() => {
+    if (settingsVersion) api<AppSettings>("/settings").then(setSettings, () => {});
+  }, [settingsVersion]);
 
   const load = useCallback(() => {
     setLoadError("");

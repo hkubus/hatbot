@@ -15,6 +15,22 @@ const MODEL_NAMES: Record<string, string> = {
   "claude-haiku-5-5": "Haiku 5.5",
   "claude-haiku-4-5": "Haiku 4.5",
 };
+/** What the ledger's purposes are, in words. */
+const PURPOSE_NAMES: Record<string, string> = {
+  thread: "Chat",
+  task: "Tasks",
+  summary: "Summaries",
+  expert: "Asking Opus",
+  review: "Reviewing changes",
+  screening: "Checking pages",
+  heartbeat: "Heartbeat",
+  check: "Check everything",
+  teach: "Teaching",
+  tidy: "Memory tidy-ups",
+  "skill-fix": "Skill fixes",
+};
+const purposeName = (p: string) =>
+  PURPOSE_NAMES[p] ?? p.charAt(0).toUpperCase() + p.slice(1).replace(/-/g, " ");
 const parseDay = (d: string) => new Date(`${d}T12:00:00`);
 const fmtDay = (d: string) =>
   parseDay(d).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
@@ -189,8 +205,12 @@ export function Spend() {
   const [hours, setHours] = useState<SpendHour[]>([]);
   const [models, setModels] = useState<SpendByModel[]>([]);
   const [byBot, setByBot] = useState<{ botId: string; usd: number }[]>([]);
+  // TODO(shared): SpendByPurpose from @hatbot/shared once it's there.
+  const [byPurpose, setByPurpose] = useState<{ purpose: string; costUsd: number }[]>([]);
   const botNames = useStore((s) => s.bots);
   const live = useStore((s) => s.todayUsd);
+  // New limits.
+  const settingsVersion = useStore((s) => s.settingsVersion);
   const [tick, setTick] = useState(0);
   const [loadError, setLoadError] = useState("");
 
@@ -200,7 +220,7 @@ export function Spend() {
     return () => clearInterval(t);
   }, []);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh when a request is billed, and every 30 s
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh when a request is billed or limits change, and every 30 s
   useEffect(() => {
     setLoadError("");
     // A refresh that fails leaves what's showing; only the first load says so.
@@ -210,7 +230,12 @@ export function Spend() {
     api<SpendDay[]>("/spend/daily?days=30").then(setDays, failed);
     api<SpendByModel[]>("/spend/by-model?days=30").then(setModels, failed);
     api<{ botId: string; usd: number }[]>("/spend/by-bot?days=30").then(setByBot, failed);
-  }, [live, tick]);
+    // A brain from before it had this answers 404; the card just stays away.
+    api<{ purpose: string; costUsd: number }[]>("/spend/by-purpose?days=30").then(
+      setByPurpose,
+      () => {},
+    );
+  }, [live, tick, settingsVersion]);
 
   if (!summary)
     return (
@@ -225,6 +250,7 @@ export function Spend() {
   const { todayUsd, monthUsd, limits } = summary;
   const mMax = Math.max(0.0001, ...models.map((m) => m.usd));
   const bMax = Math.max(0.0001, ...byBot.map((b) => b.usd));
+  const pMax = Math.max(0.0001, ...byPurpose.map((p) => p.costUsd));
   const hourPoints: Point[] = hours.map((h, i) => ({
     key: h.hour,
     usd: h.usd,
@@ -312,6 +338,25 @@ export function Spend() {
                     <div className="fill" style={{ width: `${(b.usd / bMax) * 100}%` }} />
                   </div>
                   <span className="v">{money(b.usd)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {byPurpose.length > 0 && (
+          <div className="chart-card">
+            <div className="chart-head">
+              <h3>By purpose, last 30 days</h3>
+            </div>
+            <div className="hbars">
+              {byPurpose.map((p) => (
+                <div className="hbar" key={p.purpose}>
+                  <span>{purposeName(p.purpose)}</span>
+                  <div className="track">
+                    <div className="fill" style={{ width: `${(p.costUsd / pMax) * 100}%` }} />
+                  </div>
+                  <span className="v">{money(p.costUsd)}</span>
                 </div>
               ))}
             </div>

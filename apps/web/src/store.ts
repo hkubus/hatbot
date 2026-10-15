@@ -40,6 +40,9 @@ type State = {
   todayUsd: number | null;
   monthUsd: number | null;
   memoryVersion: number;
+  /** Bumped when settings change anywhere, and after each heartbeat: pages showing them refetch. */
+  settingsVersion: number;
+  heartbeatVersion: number;
   connected: boolean;
   tasks: Record<number, Task>;
   /** Steps of the tasks that have been opened or shown as a card. */
@@ -83,6 +86,8 @@ let state: State = {
   todayUsd: null,
   monthUsd: null,
   memoryVersion: 0,
+  settingsVersion: 0,
+  heartbeatVersion: 0,
   connected: false,
   tasks: {},
   steps: {},
@@ -535,6 +540,10 @@ function apply(e: HatbotEvent) {
   }
   // Everything else lands after the deltas that came before it.
   flushDeltas();
+  // TODO(shared): in HatbotEvent once packages/shared has them (contract #2).
+  const type = (e as { type: string }).type;
+  if (type === "settings.updated") return set({ settingsVersion: state.settingsVersion + 1 });
+  if (type === "heartbeat.updated") return set({ heartbeatVersion: state.heartbeatVersion + 1 });
   switch (e.type) {
     case "message.created":
       if (e.message.incognito) incognitoIds.add(e.message.id);
