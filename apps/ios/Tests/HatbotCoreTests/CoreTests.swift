@@ -618,6 +618,15 @@ final class LookingAfterThingsTests: XCTestCase {
   }
 }
 
+final class PlainTextTests: XCTestCase {
+  func testPlainTextHasNoMarkdown() {
+    let md = "# Done\n\nI **fixed** the `nginx` config, see [the docs](https://x.y) and _this_.\n\n- one\n- two\n\n1. first"
+    XCTAssertEqual(
+      Markdown.plain(md), "Done\n\nI fixed the nginx config, see the docs and this.\n\none\ntwo\n\n1. first")
+    XCTAssertEqual(Markdown.inline("snake_case_name and 2*3*4"), "snake_case_name and 2*3*4")
+  }
+}
+
 final class SpendTests: XCTestCase {
   func testSpendChartsAreBarsAndRankings() throws {
     let hours = [SpendHour(hour: "2026-10-15T13:00:00.000Z", usd: 0.5, tokens: 10)]

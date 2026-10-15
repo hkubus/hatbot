@@ -666,6 +666,7 @@ private struct MessageRow: View, Equatable {
             .background(Color.userBubble, in: shape)
             .contentShape(.contextMenuPreview, shape)
             .contextMenu { copyButton(m.text) }
+            .modifier(Spoken(label: "You", text: m.text))
         }
       }
       .padding(.leading, 56)
@@ -679,6 +680,7 @@ private struct MessageRow: View, Equatable {
           .background(Color.botBubble, in: shape)
           .contentShape(.contextMenuPreview, shape)
           .contextMenu { menu }
+          .modifier(Spoken(label: store.botName(m.botId) + (unread ? ", unread" : ""), text: spokenText))
         // Like Messages' "Edited": the task's result changed this message after it was sent.
         if m.status != .streaming, let editedAt {
           Text("Edited \(editedAt.timeText)")
@@ -721,6 +723,13 @@ private struct MessageRow: View, Equatable {
     default: ReplyMessage(m: m)
     }
     if let list = m.attachments, !list.isEmpty { MessageFiles(list: list, alignment: .leading) }
+  }
+
+  /// A plain reply, read as one: Markdown left out, and not word by word as it streams. Others, with
+  /// tasks, schedules or approvals to act on, keep their parts.
+  private var spokenText: String? {
+    guard m.kind == .text || m.kind == .command, m.taskId == nil else { return nil }
+    return m.status == .streaming ? "Writing" : Markdown.plain(m.text)
   }
 
   /// When a task's result changed the message after it was sent. A brain from before doesn't say: then a
@@ -919,6 +928,22 @@ private struct TaskMessage: View {
     store.desktop?.control == .owner && task.status == .running
       ? "Paused while you have control."
       : Format.taskLine(task, progress: store.taskProgress[taskId])
+  }
+}
+
+/// For VoiceOver, a bubble is one element: who it's from, then what it says. With no `text`, its parts
+/// stay their own, under who it's from.
+private struct Spoken: ViewModifier {
+  let label: String
+  let text: String?
+
+  @ViewBuilder
+  func body(content: Content) -> some View {
+    if let text {
+      content.accessibilityElement(children: .combine).accessibilityLabel(label).accessibilityValue(text)
+    } else {
+      content.accessibilityElement(children: .contain).accessibilityLabel(label)
+    }
   }
 }
 

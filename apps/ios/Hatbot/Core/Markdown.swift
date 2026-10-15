@@ -48,6 +48,32 @@ enum Markdown {
     return blocks
   }
 
+  /// The text without its Markdown, for Siri to say and VoiceOver to read.
+  static func plain(_ source: String) -> String {
+    cached(source).map { block -> String in
+      switch block {
+      case let .heading(_, text), let .paragraph(text), let .quote(text): inline(text)
+      case let .list(items):
+        items.map { ($0.marker == "•" ? "" : "\($0.marker) ") + inline($0.text) }.joined(separator: "\n")
+      case let .code(_, code): code
+      case let .chart(spec): spec.title ?? "A chart."
+      case .chartPending, .rule: ""
+      case let .table(header, rows):
+        ([header] + rows).map { $0.map(inline).joined(separator: ", ") }.joined(separator: "\n")
+      }
+    }
+    .filter { !$0.isEmpty }
+    .joined(separator: "\n\n")
+  }
+
+  /// A line without links' addresses or emphasis and code marks.
+  static func inline(_ text: String) -> String {
+    var s = text.replacingOccurrences(of: #"!?\[([^\]]*)\]\([^)]*\)"#, with: "$1", options: .regularExpression)
+    s = s.replacingOccurrences(of: #"\*\*|__|~~|`"#, with: "", options: .regularExpression)
+    return s.replacingOccurrences(
+      of: #"(?<![\w*])[*_](?=\S)(.+?)(?<=\S)[*_](?![\w*])"#, with: "$1", options: .regularExpression)
+  }
+
   static func parse(_ source: String) -> [MDBlock] {
     let lines = source.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
     var blocks: [MDBlock] = []
