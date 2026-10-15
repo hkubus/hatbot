@@ -1064,6 +1064,29 @@ export class Browser {
   }
 
   /**
+   * At a task's start: every tab but the one on screen is closed, and what happened before is forgotten, so
+   * tabs don't pile up from task to task.
+   */
+  async reset(): Promise<{ closed: number }> {
+    await this.ready();
+    await this.refresh();
+    await this.syncActive();
+    const keep = this.active ?? this.pages()[0]?.targetId;
+    let closed = 0;
+    for (const t of this.pages()) {
+      if (t.targetId === keep) continue;
+      await this.cdp.send("Target.closeTarget", { targetId: t.targetId }).catch(() => {});
+      this.targets.delete(t.targetId);
+      closed++;
+    }
+    if (keep) await this.cdp.send("Target.activateTarget", { targetId: keep }).catch(() => {});
+    this.active = keep ?? null;
+    this.changes = [];
+    this.reported = new Set(this.pages().map((t) => t.targetId));
+    return { closed };
+  }
+
+  /**
    * The tab on screen, for the computer toolset's /context and /inspect: its URL and title, and what `script`
    * (one of page.ts's kind, or null for none) returns in Hatbot's isolated world.
    */

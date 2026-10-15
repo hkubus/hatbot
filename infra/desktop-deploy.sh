@@ -134,7 +134,10 @@ ProtectControlGroups=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 IPAddressDeny=localhost $DESKTOP_IP
 TasksMax=256
+MemoryHigh=600M
 MemoryMax=1G
+# Under memory pressure the kernel kills a runaway command before Chromium or desktop-agent.
+OOMScoreAdjust=500
 
 [Install]
 WantedBy=multi-user.target

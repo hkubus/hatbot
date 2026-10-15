@@ -45,7 +45,7 @@ const version = (() => {
 const stateDir = process.env.STATE_DIRECTORY;
 const MAX_UPDATE_BYTES = 10 * 1024 * 1024;
 /** Endpoints added since the first deploy; the brain's checks say when the desktop is behind. */
-const FEATURES = ["profiles", "exec", "files", "fetch", "deep-health"];
+const FEATURES = ["profiles", "exec", "files", "fetch", "deep-health", "browser-reset"];
 
 // The display may still be starting (Xvnc restarting, say): wait for it rather than exit and be restarted.
 const size = await (async () => {
@@ -267,6 +267,9 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
           const { id } = (await req.json()) as { id: string };
           return json({ profile: await serial(() => useProfile(id, stateDir ?? null, browser)) });
         }
+        case "POST /browser/reset":
+          if (locked) return json({ error: "The owner has control of the desktop." }, 423);
+          return json(await serial(() => browser.reset()));
         case "GET /browser/state":
           return json(await serial(() => browser.state()));
         case "POST /browser/inspect": {
