@@ -35,6 +35,11 @@ export class FakeDesktop implements DesktopAgent {
     if (this.profiles.at(-1) !== botId) this.profiles.push(botId);
     return true;
   }
+  resets = 0;
+  async resetBrowser() {
+    this.resets++;
+    return true;
+  }
   /** More of what /health says: version, profile, time zone, features. */
   health: Partial<AgentStatus> = {};
   async status(): Promise<AgentStatus> {

@@ -674,6 +674,11 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         ? `<skill name="${task.skill}">\n${(await d.memory.read(skillPath(task.skill))).trim()}\n</skill>\n\n`
         : "";
     await acquire();
+    // Tabs an earlier task left open would be in this one's way, and in its context.
+    await d.desktop.agent.resetBrowser().catch((err) => {
+      if (signal.aborted) throw err;
+      console.error(`task ${id}: couldn't close the old tabs`, err);
+    });
     const first = await look(
       "Start",
       `${skill}<task>\n${task.goal}\nDone when: ${task.successCriteria || "the goal is met"}\n</task>\nStarted ${localStamp(new Date(tasks.clock()))}, the owner's local time.`,

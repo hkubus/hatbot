@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { type Approval, latestNoteOnly, type Task, type TaskStep } from "@hatbot/shared";
 import { inBatches } from "../src/agent/tools";
+import { HttpDesktopAgent } from "../src/desktop/client";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
 
@@ -235,6 +236,34 @@ test("a page is screened while the model reads it, its verdict before the action
   expect(t.tasks.get(task.id)?.injectionSuspected).toBe(false);
   // A, then B; A again was trusted once you said to go on.
   expect(work.creates).toHaveLength(2);
+});
+
+test("a desktop task starts with the old tabs closed, on a desktop-agent old or new", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel([finish()]));
+  startTask(t);
+  await t.tasks.idle();
+  expect(t.agent.resets).toBe(1);
+
+  let status = 200;
+  const paths: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    fetch: (req) => {
+      paths.push(`${req.method} ${new URL(req.url).pathname}`);
+      return new Response("{}", { status });
+    },
+  });
+  try {
+    const client = new HttpDesktopAgent(`http://127.0.0.1:${server.port}`, "token");
+    expect(await client.resetBrowser()).toBe(true);
+    status = 404;
+    expect(await client.resetBrowser()).toBe(false);
+    status = 500;
+    await expect(client.resetBrowser()).rejects.toThrow();
+    expect(paths[0]).toBe("POST /browser/reset");
+  } finally {
+    server.stop(true);
+  }
 });
 
 test("a page seen again isn't screened again", async () => {
