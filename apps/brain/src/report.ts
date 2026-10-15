@@ -21,6 +21,15 @@ export type ReportDeps = {
   clock?: () => number;
 };
 
+/** The last time a weekly job was due at or before `now`, in the brain's time zone. */
+export function lastDue(now: number, weekday: number, hour: number): number {
+  const t = new Date(now);
+  t.setHours(hour, 0, 0, 0);
+  t.setDate(t.getDate() - ((t.getDay() - weekday + 7) % 7));
+  if (t.getTime() > now) t.setDate(t.getDate() - 7);
+  return t.getTime();
+}
+
 const usd = (n: number) => `$${n.toFixed(2)}`;
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
@@ -32,22 +41,13 @@ export class WeeklyReport {
     this.clock = d.clock ?? Date.now;
   }
 
-  /** The last time it was due at or before `now`, in the brain's time zone. */
-  private dueAt(now: number): number {
-    const { weekday, hour } = this.d.settings.get().weeklyReport;
-    const t = new Date(now);
-    t.setHours(hour, 0, 0, 0);
-    t.setDate(t.getDate() - ((t.getDay() - weekday + 7) % 7));
-    if (t.getTime() > now) t.setDate(t.getDate() - 7);
-    return t.getTime();
-  }
-
   /** Sends it once it's due; the brain calls it every few seconds. A day late at most. */
   tick() {
     const s = this.d.settings.get();
     if (s.paused || !s.weeklyReport.enabled || this.sending) return;
     const now = this.clock();
-    const due = this.dueAt(now);
+    const { weekday, hour } = s.weeklyReport;
+    const due = lastDue(now, weekday, hour);
     const last = this.lastSent();
     if ((last !== null && last >= due) || now - due > 86400_000) return;
     void this.send();

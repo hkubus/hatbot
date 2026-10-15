@@ -477,4 +477,19 @@ export const migrations: string[] = [
   CREATE INDEX tasks_run_key ON tasks (run_key, status);
   CREATE INDEX tasks_watcher ON tasks (watcher_id);
   `,
+  /* 25: proposals: memory tidy-ups and skill fixes, as diffs for you to apply or dismiss */ `
+  CREATE TABLE proposals (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('tidy', 'skill')),
+    title TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    -- [{path, before, after}]: null before is a new file, null after deletes it.
+    changes TEXT NOT NULL,
+    skill TEXT,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'applied', 'dismissed', 'stale')),
+    created_at TEXT NOT NULL,
+    resolved_at TEXT
+  );
+  CREATE INDEX proposals_status ON proposals (status, id);
+  `,
 ];

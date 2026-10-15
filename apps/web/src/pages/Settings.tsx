@@ -17,6 +17,7 @@ import { Checks } from "./Checks";
 import { HeartbeatPage } from "./Heartbeat";
 import { PluginPage, PluginsGroup } from "./Plugins";
 
+const HOURS = Array.from({ length: 24 }, (_, h) => h);
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export function Settings({
@@ -240,6 +241,12 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
             </button>
             <div className="row">
               <div className="txt">
+                <b>Propose a memory tidy-up weekly</b>
+              </div>
+              <Switch on={settings.memoryTidy} onChange={(memoryTidy) => update({ memoryTidy })} />
+            </div>
+            <div className="row">
+              <div className="txt">
                 <b>Weekly report</b>
               </div>
               <Switch
@@ -276,7 +283,7 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
                     })
                   }
                 >
-                  {Array.from({ length: 24 }, (_, h) => (
+                  {HOURS.map((h) => (
                     <option key={h} value={h}>
                       {String(h).padStart(2, "0")}:00
                     </option>

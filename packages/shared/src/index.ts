@@ -266,6 +266,7 @@ export type HatbotEvent =
   | { type: "message.usage"; id: number; tokens: number; costUsd: number }
   | { type: "spend.updated"; todayUsd: number; monthUsd: number }
   | { type: "memory.committed"; sha: string; message: string; author: string }
+  | { type: "proposal.updated"; proposal: Proposal }
   | { type: "paused"; paused: boolean }
   | { type: "task.updated"; task: Task }
   | { type: "task.step"; step: TaskStep }
@@ -436,6 +437,32 @@ export type UpdateInfo = {
 };
 
 export type MemoryFile = { path: string; size: number };
+
+/** A change to memory for you to look over: a tidy-up, or a fix to a skill. */
+export type Proposal = {
+  id: number;
+  kind: "tidy" | "skill";
+  title: string;
+  reason: string;
+  /** null before: a new file; null after: deleted. */
+  changes: { path: string; before: string | null; after: string | null }[];
+  /** For a skill fix, the skill's name. */
+  skill: string | null;
+  /** stale: memory changed since, so it can't be applied as it is. */
+  status: "pending" | "applied" | "dismissed" | "stale";
+  createdAt: string;
+  resolvedAt: string | null;
+};
+
+/** A skill, and the tasks following it that failed or needed you since it last changed. */
+export type SkillStatus = {
+  name: string;
+  description: string;
+  /** Tasks since the skill last changed. */
+  runs: number;
+  failed: number[];
+  takeovers: number[];
+};
 export type Commit = {
   sha: string;
   author: string;
@@ -476,6 +503,8 @@ export type AppSettings = {
   /** The model background tasks (SSH, Proxmox, code work) run on. */
   taskModel: "claude-haiku-5-5" | "claude-opus-5-5";
   heartbeat: HeartbeatSettings;
+  /** A tidy-up of memory proposed weekly, at the weekly report's time. */
+  memoryTidy: boolean;
   weeklyReport: WeeklyReportSettings;
 };
 

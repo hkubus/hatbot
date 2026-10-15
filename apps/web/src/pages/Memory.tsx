@@ -1,11 +1,15 @@
-import type { Commit, MemoryFile } from "@hatbot/shared";
+import type { Commit, MemoryFile, Proposal, SkillStatus } from "@hatbot/shared";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, api } from "../api";
+import { lineDiff } from "../diff";
 import { Icon } from "../icons";
 import { navigate } from "../router";
-import { bumpMemory, useStore } from "../store";
+import { bumpMemory, loadProposals, putProposal, startTeach, useStore } from "../store";
 
-type Selection = { kind: "file"; path: string } | { kind: "diff"; commit: Commit };
+type Selection =
+  | { kind: "file"; path: string }
+  | { kind: "diff"; commit: Commit }
+  | { kind: "proposal"; id: number };
 
 const enc = encodeURIComponent;
 const when = (iso: string) =>
@@ -43,8 +47,47 @@ function DiffView({ diff }: { diff: string }) {
   );
 }
 
+/** A proposal's changes, file by file, with why. */
+function ProposalView({ p }: { p: Proposal }) {
+  return (
+    <div style={{ padding: "16px 20px" }}>
+      {p.reason && <p className="proposal-reason">{p.reason}</p>}
+      {p.changes.map((c) => (
+        <div key={c.path} className="proposal-file">
+          <div className="path">
+            {c.path}
+            {c.before === null ? " (new)" : c.after === null ? " (deleted)" : ""}
+          </div>
+          <div className="diff">
+            {lineDiff(c.before, c.after).map((l, i) => (
+              <div
+                // biome-ignore lint/suspicious/noArrayIndexKey: diff lines have no identity of their own
+                key={i}
+                className={l.kind === "same" ? "" : l.kind === "gap" ? "muted" : l.kind}
+              >
+                {l.kind === "add" ? "+" : l.kind === "del" ? "-" : " "}
+                {l.text || " "}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function Memory({ toast, open }: { toast: (t: string) => void; open?: string }) {
   const version = useStore((s) => s.memoryVersion);
+  const allProposals = useStore((s) => s.proposals);
+  const pending = useMemo(
+    () =>
+      Object.values(allProposals)
+        .filter((p) => p.status === "pending")
+        .sort((a, b) => b.id - a.id),
+    [allProposals],
+  );
+  const [skills, setSkills] = useState<SkillStatus[]>([]);
+  const [busy, setBusy] = useState(false);
   const teach = useStore((s) => s.teach);
   const drafts = useMemo(
     () =>
@@ -66,7 +109,11 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
   useEffect(() => {
     api<MemoryFile[]>("/memory/tree").then(setFiles);
     api<Commit[]>("/memory/log?limit=50").then(setLog);
+    api<SkillStatus[]>("/skills").then(setSkills, () => setSkills([]));
   }, [version]);
+  useEffect(() => {
+    void loadProposals().catch(() => {});
+  }, []);
 
   const openFile = useCallback(
     (path: string) => {
@@ -154,6 +201,58 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
   };
 
   const exists = sel.kind === "file" && files.some((f) => f.path === sel.path);
+  const proposal = sel.kind === "proposal" ? allProposals[sel.id] : undefined;
+  const skillName = sel.kind === "file" ? /^skills\/([^/]+)\.md$/.exec(sel.path)?.[1] : undefined;
+  const skill = skills.find((s) => s.name === skillName);
+  const troubled = skill ? new Set([...skill.failed, ...skill.takeovers]).size : 0;
+
+  const tidy = async () => {
+    setBusy(true);
+    try {
+      const p = await api<Proposal | null>("/proposals/tidy", { body: {} });
+      if (p) {
+        putProposal(p);
+        setSel({ kind: "proposal", id: p.id });
+      } else toast("Nothing to tidy");
+    } catch (err) {
+      toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot");
+    }
+    setBusy(false);
+  };
+  const fixSkill = async (name: string) => {
+    setBusy(true);
+    try {
+      const p = await api<Proposal | null>(`/skills/${name}/fix`, { body: {} });
+      if (p) {
+        putProposal(p);
+        setSel({ kind: "proposal", id: p.id });
+      } else toast("No fix found in what went wrong");
+    } catch (err) {
+      toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot");
+    }
+    setBusy(false);
+  };
+  const recordAgain = async (name: string) => {
+    try {
+      await startTeach(name);
+      navigate("/live");
+    } catch (err) {
+      toast(err instanceof ApiError ? err.message : "Couldn't start recording");
+    }
+  };
+  const answer = async (p: Proposal, how: "apply" | "dismiss") => {
+    try {
+      const r = await api<{ proposal: Proposal } | Proposal>(`/proposals/${p.id}/${how}`, {
+        body: {},
+      });
+      putProposal("proposal" in r ? r.proposal : r);
+      toast(how === "apply" ? "Applied" : "Dismissed");
+      if (how === "apply") bumpMemory();
+      setSel({ kind: "file", path: p.changes[0]?.path ?? "INDEX.md" });
+    } catch (err) {
+      toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot");
+    }
+  };
 
   return (
     <section className="view">
@@ -184,6 +283,29 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
             <Icon name="plus" />
             New file
           </button>
+          <button type="button" disabled={busy} onClick={tidy}>
+            <Icon name="zap" />
+            {busy ? "Thinking…" : "Tidy up"}
+          </button>
+          {pending.length > 0 && (
+            <>
+              <div className="folder">
+                <Icon name="zap" />
+                To look over
+              </div>
+              {pending.map((p) => (
+                <button
+                  type="button"
+                  key={p.id}
+                  className={sel.kind === "proposal" && sel.id === p.id ? "active" : ""}
+                  onClick={() => setSel({ kind: "proposal", id: p.id })}
+                >
+                  <Icon name="file" />
+                  {p.title}
+                </button>
+              ))}
+            </>
+          )}
           {drafts.length > 0 && (
             <>
               <div className="folder">
@@ -202,7 +324,30 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
 
         <div className="editor">
           <div className="editor-bar">
-            {sel.kind === "diff" ? (
+            {sel.kind === "proposal" ? (
+              <>
+                <span className="path">{proposal?.title ?? "Proposal"}</span>
+                <span className="spacer" />
+                {proposal?.status === "pending" && (
+                  <>
+                    <button
+                      type="button"
+                      className="btn sm"
+                      onClick={() => answer(proposal, "dismiss")}
+                    >
+                      Dismiss
+                    </button>
+                    <button
+                      type="button"
+                      className="btn sm accent"
+                      onClick={() => answer(proposal, "apply")}
+                    >
+                      Apply
+                    </button>
+                  </>
+                )}
+              </>
+            ) : sel.kind === "diff" ? (
               <>
                 <span className="path">{sel.commit.sha.slice(0, 7)}</span>
                 <span className="muted">
@@ -236,7 +381,33 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
               </>
             )}
           </div>
-          {sel.kind === "diff" ? (
+          {sel.kind === "file" && skill && troubled > 0 && (
+            <div className="skill-trouble">
+              <span>
+                {troubled} of its {skill.runs} task{skill.runs === 1 ? "" : "s"} since it last
+                changed {troubled === 1 ? "" : "each "}failed or needed you.
+              </span>
+              <span className="spacer" />
+              <button
+                type="button"
+                className="btn sm"
+                disabled={busy}
+                onClick={() => fixSkill(skill.name)}
+              >
+                Suggest a fix
+              </button>
+              <button type="button" className="btn sm" onClick={() => recordAgain(skill.name)}>
+                Record again
+              </button>
+            </div>
+          )}
+          {sel.kind === "proposal" ? (
+            proposal ? (
+              <ProposalView p={proposal} />
+            ) : (
+              <div className="empty">This proposal is gone.</div>
+            )
+          ) : sel.kind === "diff" ? (
             <div style={{ padding: "16px 20px" }}>
               <DiffView diff={diff} />
             </div>

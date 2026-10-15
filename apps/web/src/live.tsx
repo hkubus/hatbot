@@ -301,7 +301,7 @@ export function LiveView({ taskId }: { taskId?: number }) {
             Take over
           </button>
           {!task && (
-            <button type="button" className="btn" onClick={() => run(startTeach)}>
+            <button type="button" className="btn" onClick={() => run(() => startTeach())}>
               <Icon name="teach" />
               Teach a skill
             </button>

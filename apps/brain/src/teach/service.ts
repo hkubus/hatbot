@@ -158,8 +158,11 @@ export class Teach {
     if (session) this.d.events.emit({ type: "teach.updated", session });
   }
 
-  /** Takes control of the desktop for you and starts recording what you do. */
-  async start(): Promise<TeachSession> {
+  /**
+   * Takes control of the desktop for you and starts recording what you do. `replaces`: the skill this
+   * records again, whose name the draft keeps.
+   */
+  async start(replaces?: string): Promise<TeachSession> {
     const { desktop, lane, archive } = this.d;
     if (this.rec) throw new TeachError("Already recording.", 409);
     if (!desktop.agent.configured || !desktop.get().online)
@@ -174,10 +177,10 @@ export class Teach {
       throw new TeachError("The desktop isn't answering.", 503);
     }
     const id = this.d.db
-      .query<{ id: number }, [string]>(
-        "INSERT INTO teach_sessions (status, started_at) VALUES ('recording', ?) RETURNING id",
+      .query<{ id: number }, [string, string | null]>(
+        "INSERT INTO teach_sessions (status, started_at, name) VALUES ('recording', ?, ?) RETURNING id",
       )
-      .get(this.now())?.id as number;
+      .get(this.now(), replaces ?? null)?.id as number;
     const recorder = new Recorder({
       clock: this.clock,
       secretField: async () => {
@@ -298,7 +301,12 @@ export class Teach {
         throw new Error("The model stopped before the skill was finished.");
       this.update(
         id,
-        { status: "draft", draft: text, name: nameOf(text, `skill-${id}`), error: null },
+        {
+          status: "draft",
+          draft: text,
+          name: this.row(id)?.name ?? nameOf(text, `skill-${id}`),
+          error: null,
+        },
         "drafting",
       );
     } catch (err) {

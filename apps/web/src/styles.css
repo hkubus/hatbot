@@ -3758,3 +3758,32 @@ mark {
     box-shadow: 0 0 0 3px transparent;
   }
 }
+
+/* Memory proposals */
+.proposal-reason {
+  margin: 0 0 14px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.proposal-file {
+  margin-bottom: 18px;
+}
+.proposal-file .path {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.skill-trouble {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 20px;
+  font-size: 13px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border, rgba(127, 127, 127, 0.2));
+}
+.skill-trouble .spacer {
+  flex: 1;
+}

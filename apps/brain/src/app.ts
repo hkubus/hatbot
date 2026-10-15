@@ -10,6 +10,7 @@ import { desktopRoutes } from "./routes/desktop";
 import { heartbeatRoutes } from "./routes/heartbeat";
 import { memoryRoutes } from "./routes/memory";
 import { pluginRoutes } from "./routes/plugins";
+import { proposalRoutes } from "./routes/proposals";
 import { hookRoutes, scheduleRoutes } from "./routes/schedules";
 import { searchRoutes } from "./routes/search";
 import { streamRoutes } from "./routes/stream";
@@ -47,6 +48,7 @@ export function createApp(deps: Deps) {
   app.route("/", watcherRoutes);
   app.route("/", searchRoutes);
   app.route("/", heartbeatRoutes);
+  app.route("/", proposalRoutes);
 
   app.notFound((c) => c.json({ error: "not found" }, 404));
   app.onError((err, c) => {

@@ -1,4 +1,4 @@
-import { SaveSkill } from "@hatbot/shared";
+import { SaveSkill, SKILL_NAME } from "@hatbot/shared";
 import { Hono } from "hono";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware";
@@ -21,7 +21,15 @@ export const teachRoutes = new Hono<AppEnv>()
     throw err;
   })
   .get("/teach", (c) => c.json(c.var.teach.current()))
-  .post("/teach/start", async (c) => c.json(await c.var.teach.start()))
+  // replaces: a skill to record again; the draft keeps its name.
+  .post("/teach/start", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { replaces?: unknown };
+    const replaces =
+      typeof body.replaces === "string" && SKILL_NAME.test(body.replaces)
+        ? body.replaces
+        : undefined;
+    return c.json(await c.var.teach.start(replaces));
+  })
   .post("/teach/stop", async (c) => c.json(await c.var.teach.stop()))
   .get("/teach/:id", (c) => {
     const session = c.var.teach.get(id(c.req.param("id")));

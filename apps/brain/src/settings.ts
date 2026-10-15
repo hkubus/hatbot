@@ -29,6 +29,8 @@ export const Settings = z.object({
     botId: z.string().regex(/^[a-z][a-z0-9-]{0,30}$/),
     instructions: z.string().trim().min(1).max(4000),
   }),
+  /** A tidy-up of memory proposed weekly, with the report. */
+  memoryTidy: z.boolean(),
   weeklyReport: z.object({
     enabled: z.boolean(),
     weekday: z.number().int().min(0).max(6),
@@ -54,6 +56,7 @@ export const DEFAULT_SETTINGS: Settings = {
     instructions:
       "Tell me about anything that needs me: a service down for more than a moment, failed backups, tasks that keep failing, approvals I missed. If a service is down and a restart is likely to fix it, restart it once and check it's back. Don't change configuration or delete anything. Leave alone what fixes itself or that I'd already know about.",
   },
+  memoryTidy: false,
   weeklyReport: { enabled: true, weekday: 1, hour: 9 },
 };
 

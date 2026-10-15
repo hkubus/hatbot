@@ -20,11 +20,15 @@ export async function api<T>(
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
     credentials: "same-origin",
   });
-  const data = await res.json().catch(() => ({}));
+  // 204: nothing to answer, e.g. no tidy-up to propose.
+  const data = res.status === 204 ? null : await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401 && !path.startsWith("/auth/"))
       window.dispatchEvent(new Event("hatbot:unauthorized"));
-    throw new ApiError(res.status, (data as { error?: string }).error ?? `HTTP ${res.status}`);
+    throw new ApiError(
+      res.status,
+      (data as { error?: string } | null)?.error ?? `HTTP ${res.status}`,
+    );
   }
   return data as T;
 }

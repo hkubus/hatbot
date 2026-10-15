@@ -88,7 +88,12 @@ export class Skills {
   }
 
   /** Writes a skill and lists it in INDEX.md, in one commit. */
-  async save(name: string, content: string, author: Author): Promise<string | null> {
+  async save(
+    name: string,
+    content: string,
+    author: Author,
+    message = `Add skill ${name}`,
+  ): Promise<string | null> {
     const others = this.list().filter((s) => s.name !== name);
     const skills = [...others, { name, description: describeSkill(content) }].sort((a, b) =>
       a.name.localeCompare(b.name),
@@ -102,7 +107,7 @@ export class Skills {
         { path: "INDEX.md", content: withSkillsSection(index, skills) },
       ],
       author,
-      `Add skill ${name}`,
+      message,
     );
     await this.refresh();
     return sha;

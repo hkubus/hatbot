@@ -16,6 +16,7 @@ import { openDb } from "../src/db";
 import { Desktop } from "../src/desktop/service";
 import { EventBus, type HatbotEvent } from "../src/events";
 import { Heartbeat } from "../src/heartbeat";
+import { Proposals } from "../src/memory/proposals";
 import { MemoryStore } from "../src/memory/store";
 import { LinkingNotifier, type Notification, type Notifier } from "../src/notify";
 import { codePlugin } from "../src/plugins/code";
@@ -159,6 +160,17 @@ export async function testApp(
     publicUrl: ORIGIN,
     clock,
   });
+  const proposals = new Proposals({
+    db,
+    events,
+    settings,
+    spend,
+    model: taskModel,
+    memory,
+    skills,
+    tasks,
+    clock,
+  });
   const report = new WeeklyReport({
     db,
     settings,
@@ -224,6 +236,7 @@ export async function testApp(
     watchers,
     heartbeat,
     report,
+    proposals,
     plugins,
     teach,
     checks,
@@ -266,6 +279,7 @@ export async function testApp(
     watchers,
     heartbeat,
     report,
+    proposals,
     plugins,
     skills,
     teach,

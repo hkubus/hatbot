@@ -62,6 +62,13 @@ export class FakeModel implements ModelClient {
   async create(params: CreateParams) {
     this.creates.push(structuredClone(params));
     const reply = this.onCreate?.(params) ?? this.summaries.shift() ?? "summary";
+    // A forced tool call: the reply is its input, as JSON.
+    if (params.tool_choice?.type === "tool")
+      return message(
+        params.model,
+        [toolUse(params.tool_choice.name, JSON.parse(reply))],
+        "tool_use",
+      );
     return message(params.model, [text(reply)], "end_turn");
   }
 }

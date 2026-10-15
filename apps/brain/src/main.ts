@@ -15,6 +15,7 @@ import { HttpDesktopAgent } from "./desktop/client";
 import { Desktop } from "./desktop/service";
 import { EventBus } from "./events";
 import { Heartbeat } from "./heartbeat";
+import { Proposals } from "./memory/proposals";
 import { MemoryStore } from "./memory/store";
 import { LinkingNotifier, NtfyNotifier } from "./notify";
 import { PLUGINS } from "./plugins";
@@ -123,6 +124,7 @@ const heartbeat = new Heartbeat({
   bots,
   publicUrl: config.publicUrl,
 });
+const proposals = new Proposals({ db, events, settings, spend, model, memory, skills, tasks });
 const report = new WeeklyReport({
   db,
   settings,
@@ -159,6 +161,7 @@ void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {
     watchers.tick();
     heartbeat.tick();
     report.tick();
+    proposals.tick();
   }, 10_000);
 });
 const proxmox = new Proxmox();
@@ -207,6 +210,7 @@ const app = createApp({
   watchers,
   heartbeat,
   report,
+  proposals,
   plugins,
   teach,
   checks,

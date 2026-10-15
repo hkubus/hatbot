@@ -10,6 +10,7 @@ import type { Db } from "./db";
 import type { Desktop } from "./desktop/service";
 import type { EventBus } from "./events";
 import type { Heartbeat } from "./heartbeat";
+import type { Proposals } from "./memory/proposals";
 import type { MemoryStore } from "./memory/store";
 import type { Plugins } from "./plugins/registry";
 import type { Proxmox } from "./proxmox";
@@ -47,6 +48,7 @@ export type Deps = {
   watchers: Watchers;
   heartbeat: Heartbeat;
   report: WeeklyReport;
+  proposals: Proposals;
   plugins: Plugins;
   teach: Teach;
   checks: Checks;

@@ -83,6 +83,29 @@ export class MemoryStore {
     return this.writeAll([{ path, content }], author, message);
   }
 
+  /** Writes and deletes (`content` null) files in one commit. */
+  change(
+    files: { path: string; content: string | null }[],
+    author: Author,
+    message: string,
+  ): Promise<string | null> {
+    return this.serial(async () => {
+      for (const f of files) {
+        const { rel, abs } = this.resolve(f.path, { markdown: true });
+        if (f.content === null) {
+          if (!(await this.exists(rel))) continue;
+          await rm(abs);
+          await this.git(["add", "-A", "--", rel]);
+        } else {
+          await mkdir(dirname(abs), { recursive: true });
+          await writeFile(abs, f.content.endsWith("\n") ? f.content : `${f.content}\n`);
+          await this.git(["add", "--", rel]);
+        }
+      }
+      return this.commitAs(author, message);
+    });
+  }
+
   /** Writes several files in one commit. */
   writeAll(
     files: { path: string; content: string }[],

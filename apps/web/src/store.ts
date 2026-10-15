@@ -8,6 +8,7 @@ import {
   type Episode,
   type HatbotEvent,
   type PluginInfo,
+  type Proposal,
   type Schedule,
   type Task,
   type TaskStep,
@@ -51,6 +52,8 @@ type State = {
   triggers: Record<number, Trigger | null>;
   watchers: Record<number, Watcher | null>;
   plugins: Record<string, PluginInfo>;
+  /** Memory changes waiting for you, and ones you've answered this session. */
+  proposals: Record<number, Proposal>;
   /** Teach-by-showing: the recording in progress and drafts, by id. */
   teach: Record<number, TeachSession>;
   /** Your bots, deleted ones too once seen: old messages still name them. */
@@ -89,6 +92,7 @@ let state: State = {
   triggers: {},
   watchers: {},
   plugins: {},
+  proposals: {},
   teach: {},
   bots: {},
   botIds: [],
@@ -375,6 +379,12 @@ export async function savePlugin(id: string, patch: { enabled?: boolean; config?
   return p;
 }
 
+export const putProposal = (p: Proposal) => set({ proposals: { ...state.proposals, [p.id]: p } });
+export async function loadProposals() {
+  const list = await api<Proposal[]>("/proposals?status=pending");
+  set({ proposals: { ...state.proposals, ...Object.fromEntries(list.map((p) => [p.id, p])) } });
+}
+
 export const putSchedule = (s: Schedule) => set({ schedules: { ...state.schedules, [s.id]: s } });
 export const putTrigger = (t: Trigger) => set({ triggers: { ...state.triggers, [t.id]: t } });
 export const putWatcher = (w: Watcher) => set({ watchers: { ...state.watchers, [w.id]: w } });
@@ -436,8 +446,9 @@ export async function handback() {
 const putTeach = (s: TeachSession) => set({ teach: { ...state.teach, [s.id]: s } });
 
 /** Takes the desktop for you and starts recording. */
-export async function startTeach() {
-  putTeach(await api<TeachSession>("/teach/start", { body: {} }));
+/** `replaces`: a skill to record again; the draft keeps its name. */
+export async function startTeach(replaces?: string) {
+  putTeach(await api<TeachSession>("/teach/start", { body: replaces ? { replaces } : {} }));
   // Your input only reaches the desktop once the live view knows you have control.
   set({ desktop: await api<DesktopState>("/desktop/status") });
 }
@@ -560,6 +571,8 @@ function apply(e: HatbotEvent) {
     }
     case "spend.updated":
       return set({ todayUsd: e.todayUsd, monthUsd: e.monthUsd });
+    case "proposal.updated":
+      return putProposal(e.proposal);
     case "memory.committed":
       if (state.botIds.some((id) => botName(state, id) === e.author)) toast(`Memory: ${e.message}`);
       return set({ memoryVersion: state.memoryVersion + 1 });
