@@ -21,6 +21,7 @@ struct ChatView: View {
   @State private var router = OpenRoute()
   private var name: String { store.chatName(store.currentChat) }
   @State private var farFromBottom = false
+  static let readingWidth: CGFloat = 720
   @State private var nearBottom = true
 
   /// What the list shows: times, folds, and the messages that aren't folded away.
@@ -161,6 +162,9 @@ struct ChatView: View {
         .padding(.vertical, 12)
         // So a search hit can be scrolled to by its row's id.
         .scrollTargetLayout()
+        // A column you can read across on an iPad or a Mac.
+        .frame(maxWidth: Self.readingWidth)
+        .frame(maxWidth: .infinity)
       }
       .scrollPosition($position)
       .defaultScrollAnchor(.bottom)
@@ -426,6 +430,8 @@ private struct Composer: View {
         .buttonBorderShape(.circle)
         .tint(.brand)
         .disabled(!canSend)
+        // With a keyboard, Return makes a new line and Command-Return sends.
+        .keyboardShortcut(.return, modifiers: .command)
         .accessibilityLabel("Send")
       }
       .glassGroup(spacing: 8)
