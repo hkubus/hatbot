@@ -35,11 +35,12 @@ test("a message gets a streamed reply, stored and searchable", async () => {
   expect(t.events.at(-1)).toMatchObject({ type: "message.done", status: "done" });
 
   const req = t.model.requests[0];
-  // Haiku 5.5 by default: no server-side fallback, and no progress-note display.
+  // Haiku 5.5 by default: no server-side fallback, and its thinking summarized, not progress notes.
   expect(req?.model).toBe("claude-haiku-5-5");
   expect(req?.fallbacks).toBeUndefined();
   expect(req?.thinking).toEqual({
     type: "adaptive",
+    display: "summarized",
     block_binding: { prefix_mismatch_behavior: "drop_block" },
   });
   expect(req?.tools?.some((x) => "name" in x && x.name === "ask_opus")).toBe(true);
@@ -407,6 +408,20 @@ test("on Haiku the chat can ask Opus once per reply; the answer goes in as is", 
   expect(
     t.events.some((e) => e.type === "message.progress" && e.text.includes("Asking Opus")),
   ).toBe(true);
+});
+
+test("asking Opus past the spending limit stops the reply at the limit", async () => {
+  const model = new FakeModel([
+    { content: [toolUse("ask_opus", { question: "Prove it", context: "" })] },
+  ]);
+  const t = await testApp(model);
+  t.settings.update({ limits: { taskUsd: 1, dailyUsd: 0.1, monthlyUsd: 200 } });
+  await t.thread.post("a hard one").done;
+  expect(model.requests).toHaveLength(1);
+  const reply = t.thread.list().at(-1);
+  expect(reply?.status).toBe("error");
+  expect(reply?.text).toStartWith("_Stopped:");
+  expect(reply?.text).not.toContain("went wrong");
 });
 
 test("on Opus the chat has no ask_opus, keeps its fallback, and a switch starts a new episode", async () => {

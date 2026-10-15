@@ -1629,10 +1629,10 @@ export class Thread {
             tools,
             // If a replayed thinking block fails the conversation check anyway, lose that reasoning
             // rather than the reply.
-            // Haiku 5.5 writes no progress notes between tools, so it gets the default display.
+            // Haiku 5.5 writes no progress notes between tools; its thinking shows summarized.
             thinking: {
               type: "adaptive",
-              ...(onHaiku ? {} : { display: "updates" as const }),
+              display: onHaiku ? "summarized" : "updates",
               block_binding: { prefix_mismatch_behavior: "drop_block" },
             },
             output_config: { effort: chatEffort },
@@ -1802,6 +1802,8 @@ export class Thread {
         return abort.signal.reason === STOPPED
           ? { ...finish("done", "_Stopped._"), stopped: true }
           : finish("error", "_Paused. Resume to continue._");
+      // ask_opus checks its own cost.
+      if (err instanceof BudgetError) return finish("error", `_Stopped: ${err.message}_`);
       console.error("chat turn failed", err);
       return finish(
         "error",
