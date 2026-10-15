@@ -1,5 +1,5 @@
 // Search for the app: chats (full text), tasks, memory files, and schedules, triggers and watchers.
-import { MATCH_END, MATCH_START, type SearchResults, type Task } from "@hatbot/shared";
+import { MATCH_END, MATCH_START, type SearchResults } from "@hatbot/shared";
 import type { Db } from "./db";
 import type { MemoryStore } from "./memory/store";
 import type { Tasks } from "./tasks/service";
@@ -53,14 +53,7 @@ export async function search(
         }))
     : [];
   const pattern = like(q);
-  const tasks = d.db
-    .query<{ id: number }, [string, string, string, number]>(
-      `SELECT id FROM tasks WHERE title LIKE ? ESCAPE '\\' OR goal LIKE ? ESCAPE '\\'
-       OR coalesce(summary, '') LIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT ?`,
-    )
-    .all(pattern, pattern, pattern, LIMIT)
-    .map((r) => d.tasks.get(r.id))
-    .filter((t): t is Task => t !== null);
+  const tasks = d.tasks.list({ like: pattern, limit: LIMIT });
   const routines = d.db
     .query<{ kind: "schedule" | "trigger" | "watcher"; id: number; name: string }, string[]>(
       `SELECT 'schedule' AS kind, id, name FROM schedules WHERE name LIKE ?1 ESCAPE '\\' OR prompt LIKE ?1 ESCAPE '\\'

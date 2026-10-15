@@ -26,6 +26,7 @@ import { WeeklyReport } from "./report";
 import { Schedules } from "./schedules";
 import { SettingsStore } from "./settings";
 import { Spend } from "./spend";
+import { Storage } from "./storage";
 import { Tasks } from "./tasks/service";
 import { Teach } from "./teach/service";
 import { Skills } from "./teach/skills";
@@ -47,8 +48,9 @@ await skills.refresh();
 skills.watch(events);
 const model = new AnthropicModelClient();
 const archive = new Archive(config.archiveDir);
+const storage = new Storage({ db, archive });
 const attachments = new Attachments({ db, archive, events });
-const desktop = new Desktop(new HttpDesktopAgent(), events);
+const desktop = new Desktop(new HttpDesktopAgent(), events, db);
 const plugins = new Plugins([...PLUGINS, codePlugin({ desktop: desktop.agent, attachments })], {
   db,
   events,
@@ -113,6 +115,7 @@ const watchers = new Watchers({
 });
 const heartbeat = new Heartbeat({
   db,
+  events,
   settings,
   spend,
   model,
@@ -124,7 +127,18 @@ const heartbeat = new Heartbeat({
   bots,
   publicUrl: config.publicUrl,
 });
-const proposals = new Proposals({ db, events, settings, spend, model, memory, skills, tasks });
+const proposals = new Proposals({
+  db,
+  events,
+  settings,
+  spend,
+  model,
+  memory,
+  skills,
+  tasks,
+  notifier,
+  publicUrl: config.publicUrl,
+});
 const report = new WeeklyReport({
   db,
   settings,
@@ -132,6 +146,7 @@ const report = new WeeklyReport({
   notifier,
   bots,
   memory,
+  storage,
   publicUrl: config.publicUrl,
 });
 chats.attach({
@@ -162,6 +177,7 @@ void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {
     heartbeat.tick();
     report.tick();
     proposals.tick();
+    storage.tick();
   }, 10_000);
 });
 const proxmox = new Proxmox();
@@ -174,6 +190,7 @@ const checks = new Checks({
   model,
   memory,
   archive,
+  storage,
   desktop,
   plugins,
   approvals,
@@ -219,6 +236,8 @@ const web = webHandler(config.webDir);
 const server = Bun.serve({
   hostname: config.host,
   port: config.port,
+  // Attachments are at most 25 MB; a little over for the multipart framing.
+  maxRequestBodySize: 26 * 1024 * 1024,
   fetch: (req, srv) =>
     new URL(req.url).pathname.startsWith("/api/") ? app.fetch(req, srv) : web(req),
   websocket,

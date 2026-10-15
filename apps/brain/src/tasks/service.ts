@@ -172,10 +172,16 @@ export class Tasks {
       triggerId?: number;
       watcherId?: number;
       limit?: number;
+      /** Only tasks older than this one: the next page. */
+      before?: number;
+      botId?: string;
+      origin?: string;
+      /** A LIKE pattern, backslash-escaped, for the title, goal or summary: Search. */
+      like?: string;
     } = {},
   ): Task[] {
     const where: string[] = [];
-    const args: number[] = [];
+    const args: (number | string)[] = [];
     if (opts.status === "active")
       where.push(`t.status IN (${ACTIVE.map((s) => `'${s}'`).join(", ")})`);
     if (opts.status === "done")
@@ -193,8 +199,26 @@ export class Tasks {
       where.push("t.watcher_id = ? AND t.parent_id IS NULL");
       args.push(opts.watcherId);
     }
+    if (opts.before !== undefined) {
+      where.push("t.id < ?");
+      args.push(opts.before);
+    }
+    if (opts.botId !== undefined) {
+      where.push("t.bot_id = ?");
+      args.push(opts.botId);
+    }
+    if (opts.origin !== undefined) {
+      where.push("t.origin = ?");
+      args.push(opts.origin);
+    }
+    if (opts.like !== undefined) {
+      where.push(
+        "(t.title LIKE ? ESCAPE '\\' OR t.goal LIKE ? ESCAPE '\\' OR coalesce(t.summary, '') LIKE ? ESCAPE '\\')",
+      );
+      args.push(opts.like, opts.like, opts.like);
+    }
     return this.d.db
-      .query<Row, number[]>(
+      .query<Row, (number | string)[]>(
         `${SELECT} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY t.id DESC LIMIT ?`,
       )
       .all(...args, opts.limit ?? 50)
@@ -211,7 +235,12 @@ export class Tasks {
   }
 
   step(taskId: number, stepId: number): TaskStep | null {
-    return this.steps(taskId).find((s) => s.id === stepId) ?? null;
+    return this.d.db
+      .query<TaskStep, [number, number]>(
+        `SELECT id, task_id AS taskId, kind, name, detail, screenshot, url, created_at AS createdAt
+         FROM task_steps WHERE id = ? AND task_id = ?`,
+      )
+      .get(stepId, taskId);
   }
 
   /**

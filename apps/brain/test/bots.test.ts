@@ -144,8 +144,28 @@ test("a bot's tasks report in its chat, and deleting it hands its schedules to H
   expect(chefChat.list().map((m) => [m.kind, m.botId])).toEqual([["task", "chef"]]);
   expect(t.thread.list()).toEqual([]);
 
+  t.agent.pages.set("https://menu.example/", "soup");
+  const watcher = await t.watchers.create(
+    {
+      name: "Menu",
+      source: { kind: "page", url: "https://menu.example/" },
+      condition: { when: "changed" },
+      prompt: "",
+      everyMinutes: 60,
+      once: false,
+      enabled: true,
+      botId: "chef",
+    },
+    "owner",
+  );
+  const before = t.events.length;
   expect((await t.call("DELETE", "/bots/chef", undefined, { cookie })).status).toBe(200);
   expect(t.schedules.get(schedule.id)?.botId).toBe("hatbot");
+  expect(t.watchers.get(watcher.id)?.botId).toBe("hatbot");
+  // Their pages hear that they moved.
+  const moved = t.events.slice(before).map((e) => e.type);
+  expect(moved).toContain("schedule.updated");
+  expect(moved).toContain("watcher.updated");
   const chats = (await (
     await t.call("GET", "/conversations", undefined, { cookie })
   ).json()) as Conversation[];

@@ -1,4 +1,5 @@
 // The memory repo (PLAN.md §7.2): markdown files in git. Every write is a commit.
+import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, normalize, sep } from "node:path";
@@ -17,6 +18,26 @@ export type Commit = {
 export type SearchHit = { path: string; line: number; text: string };
 
 export class MemoryError extends Error {}
+
+/** A file changed since it was read: what it is now. */
+export class MemoryConflict extends MemoryError {
+  constructor(
+    readonly sha: string,
+    readonly content: string,
+  ) {
+    super("changed");
+  }
+}
+
+/** Git's blob id for this content, as `git hash-object` gives it; "" for no file. */
+export function blobSha(content: string | null): string {
+  if (content === null) return "";
+  const bytes = Buffer.from(content, "utf8");
+  return createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+}
+
+/** Lines per file Search shows, the best first. */
+const LINES_PER_FILE = 3;
 
 export class MemoryStore {
   private queue: Promise<unknown> = Promise.resolve();
@@ -89,21 +110,47 @@ export class MemoryStore {
     author: Author,
     message: string,
   ): Promise<string | null> {
+    return this.serial(() => this.apply(files, author, message));
+  }
+
+  /**
+   * Reads, then writes, with no other write in between: `fn` reads what it needs (null for a file
+   * that doesn't exist) and returns the files to write or delete, or null to change nothing.
+   */
+  edit(
+    fn: (
+      read: (path: string) => Promise<string | null>,
+    ) => Promise<{ path: string; content: string | null }[] | null>,
+    author: Author,
+    message: string,
+  ): Promise<string | null> {
     return this.serial(async () => {
-      for (const f of files) {
-        const { rel, abs } = this.resolve(f.path, { markdown: true });
-        if (f.content === null) {
-          if (!(await this.exists(rel))) continue;
-          await rm(abs);
-          await this.git(["add", "-A", "--", rel]);
-        } else {
-          await mkdir(dirname(abs), { recursive: true });
-          await writeFile(abs, f.content.endsWith("\n") ? f.content : `${f.content}\n`);
-          await this.git(["add", "--", rel]);
-        }
-      }
-      return this.commitAs(author, message);
+      const read = async (path: string) =>
+        (await this.exists(path)) ? await this.read(path) : null;
+      const files = await fn(read);
+      return files ? this.apply(files, author, message) : null;
     });
+  }
+
+  private async apply(
+    files: { path: string; content: string | null }[],
+    author: Author,
+    message: string,
+  ) {
+    // Every path checked before anything is written.
+    const resolved = files.map((f) => ({ ...this.resolve(f.path, { markdown: true }), ...f }));
+    for (const { rel, abs, content } of resolved) {
+      if (content === null) {
+        if (!(await this.exists(rel))) continue;
+        await rm(abs);
+        await this.git(["add", "-A", "--", rel]);
+      } else {
+        await mkdir(dirname(abs), { recursive: true });
+        await writeFile(abs, content.endsWith("\n") ? content : `${content}\n`);
+        await this.git(["add", "--", rel]);
+      }
+    }
+    return this.commitAs(author, message);
   }
 
   /** Writes several files in one commit. */
@@ -112,15 +159,50 @@ export class MemoryStore {
     author: Author,
     message: string,
   ): Promise<string | null> {
-    return this.serial(async () => {
-      const resolved = files.map((f) => ({ ...this.resolve(f.path, { markdown: true }), ...f }));
-      for (const { rel, abs, content } of resolved) {
-        await mkdir(dirname(abs), { recursive: true });
-        await writeFile(abs, content.endsWith("\n") ? content : `${content}\n`);
-        await this.git(["add", "--", rel]);
-      }
-      return this.commitAs(author, message);
-    });
+    return this.serial(() => this.apply(files, author, message));
+  }
+
+  /**
+   * Reads a file, changes it with `fn`, and writes it back, with no other write in between. `fn` gets
+   * null for a file that doesn't exist yet, and returns null to leave it as it is. Returns the commit.
+   */
+  update(
+    path: string,
+    fn: (current: string | null) => string | null | Promise<string | null>,
+    author: Author,
+    message: string,
+  ): Promise<string | null> {
+    return this.edit(
+      async (read) => {
+        const next = await fn(await read(path));
+        return next === null ? null : [{ path, content: next }];
+      },
+      author,
+      message,
+    );
+  }
+
+  /**
+   * Writes a file unless it changed since it was read as `baseSha` ("" if it didn't exist then).
+   * Throws MemoryConflict with what it is now.
+   */
+  writeIf(
+    path: string,
+    content: string,
+    baseSha: string,
+    author: Author,
+    message: string,
+  ): Promise<string | null> {
+    return this.update(
+      path,
+      (current) => {
+        const sha = blobSha(current);
+        if (sha !== baseSha) throw new MemoryConflict(sha, current ?? "");
+        return content;
+      },
+      author,
+      message,
+    );
   }
 
   delete(path: string, author: Author, message: string): Promise<string | null> {
@@ -133,21 +215,50 @@ export class MemoryStore {
     });
   }
 
+  /**
+   * Files with every word somewhere in them, the ones with the most matching lines first, and in each
+   * the lines with the most of the words.
+   */
   async search(query: string, limit = 50): Promise<SearchHit[]> {
-    const res = await this.git(["grep", "-n", "-I", "-i", "-F", "-e", query, "--", "."], {
-      allowFail: true,
-    });
-    return res.stdout
-      .split("\n")
-      .filter(Boolean)
-      .slice(0, limit)
-      .map((line) => {
-        const m = /^(.*?):(\d+):(.*)$/.exec(line);
-        return m
-          ? { path: m[1] as string, line: Number(m[2]), text: (m[3] as string).slice(0, 300) }
-          : null;
-      })
-      .filter((h): h is SearchHit => h !== null);
+    const words = [...new Set(query.toLowerCase().split(/\s+/).filter(Boolean))].slice(0, 10);
+    if (!words.length) return [];
+    const res = await this.git(
+      [
+        "grep",
+        "-n",
+        "-I",
+        "-i",
+        "-F",
+        "--all-match",
+        ...words.flatMap((w) => ["-e", w]),
+        "--",
+        ".",
+      ],
+      { allowFail: true },
+    );
+    const files = new Map<string, { hit: SearchHit; words: number }[]>();
+    for (const line of res.stdout.split("\n")) {
+      const m = /^(.*?):(\d+):(.*)$/.exec(line);
+      if (!m) continue;
+      const text = m[3] as string;
+      const lower = text.toLowerCase();
+      const hit = { path: m[1] as string, line: Number(m[2]), text: text.slice(0, 300) };
+      const found = words.filter((w) => lower.includes(w)).length;
+      const list = files.get(hit.path) ?? [];
+      list.push({ hit, words: found });
+      files.set(hit.path, list);
+    }
+    return [...files.values()]
+      .sort(
+        (a, b) => b.length - a.length || (a[0]?.hit.path ?? "").localeCompare(b[0]?.hit.path ?? ""),
+      )
+      .flatMap((lines) =>
+        lines
+          .sort((a, b) => b.words - a.words || a.hit.line - b.hit.line)
+          .slice(0, LINES_PER_FILE)
+          .map((l) => l.hit),
+      )
+      .slice(0, limit);
   }
 
   /** Files changed outside Hatbot and not committed, e.g. edited by hand on the brain. */
@@ -159,8 +270,10 @@ export class MemoryStore {
       .map((l) => l.slice(3));
   }
 
-  async log(limit = 50, path?: string): Promise<Commit[]> {
-    const args = ["log", `-n${limit}`, "--format=%x1e%H%x1f%an%x1f%aI%x1f%s", "--name-only"];
+  /** Newest first; `skip` that many for the next page. */
+  async log(limit = 50, path?: string, skip = 0): Promise<Commit[]> {
+    const args = ["log", `-n${limit}`, `--skip=${skip}`, "--format=%x1e%H%x1f%an%x1f%aI%x1f%s"];
+    args.push("--name-only");
     if (path) args.push("--", this.resolve(path).rel);
     const res = await this.git(args, { allowFail: true });
     return res.stdout

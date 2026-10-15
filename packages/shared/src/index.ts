@@ -60,7 +60,23 @@ export const SeenMessages = z.object({ ids: z.array(z.number().int().positive())
 export const PutMemoryFile = z.object({
   content: z.string().max(1_000_000),
   message: z.string().max(200).optional(),
+  /**
+   * The `sha` GET /memory/file gave ("" for a new file). If the file has changed since, the write is
+   * refused with 409 `{ error: "changed", sha, content }`: what it is now.
+   */
+  baseSha: z
+    .string()
+    .regex(/^([0-9a-f]{40})?$/)
+    .optional(),
 });
+
+/** GET /memory/file. */
+export type MemoryFileContent = {
+  path: string;
+  content: string;
+  /** Git's blob id of `content`; send it back as `baseSha`. */
+  sha: string;
+};
 
 export type ThreadMessage = {
   id: number;
@@ -289,7 +305,11 @@ export type HatbotEvent =
   | { type: "bot.updated"; bot: Bot }
   | { type: "bot.deleted"; id: string }
   | { type: "conversation.updated"; conversation: Conversation }
-  | { type: "conversation.deleted"; id: number };
+  | { type: "conversation.deleted"; id: number }
+  /** After PUT /settings: clients refetch or take these. */
+  | { type: "settings.updated"; settings: AppSettings }
+  /** After each heartbeat run: clients refetch GET /heartbeat. */
+  | { type: "heartbeat.updated" };
 
 /** The first bot. It can't be deleted, and /thread is its chat. */
 export const HATBOT_ID = "hatbot";
@@ -489,6 +509,8 @@ export type SpendSummary = {
 export type SpendHour = SpendWindow & { hour: string };
 export type SpendDay = { date: string; usd: number };
 export type SpendByModel = { model: string; usd: number };
+/** GET /spend/by-purpose: what the money went on, the most first. */
+export type SpendByPurpose = { purpose: string; costUsd: number };
 
 export type AppSettings = {
   limits: Limits;
@@ -539,6 +561,17 @@ export type HeartbeatInfo = {
   /** The new things it found. */
   found: string[];
   action: "nothing" | "notify" | "task" | null;
+  note: string;
+  taskId: number | null;
+  /** The last 20 looks that found something, newest first. */
+  recent: HeartbeatRun[];
+};
+
+/** A look that found something. */
+export type HeartbeatRun = {
+  at: string;
+  found: string[];
+  action: "nothing" | "notify" | "task";
   note: string;
   taskId: number | null;
 };

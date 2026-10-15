@@ -26,7 +26,8 @@ export class DesktopError extends Error {
 /** What the brain needs from the desktop; tests substitute a fake. */
 export interface DesktopAgent {
   readonly configured: boolean;
-  status(): Promise<AgentStatus>;
+  /** `deep`: also grabs a frame and asks Chromium's DevTools, for Check everything. */
+  status(deep?: boolean): Promise<AgentStatus>;
   screenshot(): Promise<Uint8Array>;
   zoom(region: number[]): Promise<Uint8Array>;
   action(a: AgentAction): Promise<AgentActionResult>;
@@ -108,8 +109,14 @@ export class HttpDesktopAgent implements DesktopAgent {
     return res;
   }
 
-  async status() {
-    return (await (await this.req("GET", "/health", undefined, 3000)).json()) as AgentStatus;
+  async status(deep = false) {
+    const res = await this.req(
+      "GET",
+      deep ? "/health?deep=1" : "/health",
+      undefined,
+      deep ? 15_000 : 3000,
+    );
+    return (await res.json()) as AgentStatus;
   }
   async screenshot() {
     return (await this.req("POST", "/screenshot")).bytes();

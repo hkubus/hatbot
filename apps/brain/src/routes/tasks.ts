@@ -18,6 +18,11 @@ export const taskRoutes = new Hono<AppEnv>()
         scheduleId: z.coerce.number().int().optional(),
         triggerId: z.coerce.number().int().optional(),
         watcherId: z.coerce.number().int().optional(),
+        // Pages: newest first, then before= the last id, until a page is short.
+        before: z.coerce.number().int().optional(),
+        limit: z.coerce.number().int().min(1).max(200).default(50),
+        botId: z.string().max(40).optional(),
+        origin: z.string().max(40).optional(),
       }),
     ),
     (c) => c.json(c.var.tasks.list(c.req.valid("query"))),
@@ -77,8 +82,18 @@ export const approvalRoutes = new Hono<AppEnv>()
   })
   .use("/approvals", requireAuth)
   .use("/approvals/*", requireAuth)
-  .get("/approvals", query(z.object({ pending: z.enum(["1", "0"]).optional() })), (c) =>
-    c.json(c.var.approvals.list(c.req.valid("query").pending === "1")),
+  .get(
+    "/approvals",
+    query(
+      z.object({
+        pending: z.enum(["1", "0"]).optional(),
+        before: z.coerce.number().int().optional(),
+      }),
+    ),
+    (c) => {
+      const { pending, before } = c.req.valid("query");
+      return c.json(c.var.approvals.list(pending === "1", before));
+    },
   )
   .get("/approvals/:id", (c) => {
     const approval = c.var.approvals.get(Number(c.req.param("id")));

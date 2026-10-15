@@ -1,7 +1,12 @@
 // A small MCP server over stdio for the MCP plugin's tests.
+
+import { existsSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+
+// A server that isn't up yet: it won't start until this file exists.
+if (process.env.MCP_WAIT_FOR && !existsSync(process.env.MCP_WAIT_FOR)) process.exit(1);
 
 const server = new McpServer({ name: "fixture", version: "1.0.0" });
 server.registerTool(

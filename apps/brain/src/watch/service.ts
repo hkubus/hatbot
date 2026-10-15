@@ -14,7 +14,7 @@ import {
 } from "@hatbot/shared";
 import type { z } from "zod";
 import type { Chats } from "../agent/chats";
-import type { Bots } from "../bots";
+import { type Bots, liveBot } from "../bots";
 import type { Db } from "../db";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import type { EventBus } from "../events";
@@ -387,7 +387,8 @@ export class Watchers {
   }
 
   /** It counted: you're told, or its bot works on it. */
-  private fire(w: Watcher, previous: string | null, value: string, untrusted: boolean) {
+  private fire(watcher: Watcher, previous: string | null, value: string, untrusted: boolean) {
+    const w = { ...watcher, botId: liveBot(this.d.db, watcher.botId) };
     const change =
       previous === null
         ? `Now: ${value}`

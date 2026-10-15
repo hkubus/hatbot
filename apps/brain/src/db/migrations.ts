@@ -492,4 +492,19 @@ export const migrations: string[] = [
   );
   CREATE INDEX proposals_status ON proposals (status, id);
   `,
+  /* 26: indexes for per-task and per-run lookups; webhook deliveries already seen */ `
+  CREATE INDEX IF NOT EXISTS spend_ledger_task ON spend_ledger (task_id);
+  CREATE INDEX IF NOT EXISTS messages_task ON messages (task_id);
+  CREATE INDEX IF NOT EXISTS messages_episode ON messages (episode_id);
+  CREATE INDEX IF NOT EXISTS tasks_schedule ON tasks (schedule_id);
+  CREATE INDEX IF NOT EXISTS tasks_trigger ON tasks (trigger_id);
+  CREATE INDEX IF NOT EXISTS tasks_skill ON tasks (skill);
+  CREATE INDEX IF NOT EXISTS tasks_parent ON tasks (parent_id);
+  -- A signed delivery's MAC or delivery id, so a replay is refused across restarts; kept 30 days.
+  CREATE TABLE hook_deliveries (
+    key TEXT PRIMARY KEY,
+    seen_at TEXT NOT NULL
+  );
+  CREATE INDEX hook_deliveries_seen ON hook_deliveries (seen_at);
+  `,
 ];

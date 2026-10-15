@@ -6,6 +6,7 @@ import type { Db } from "./db";
 import type { MemoryStore } from "./memory/store";
 import type { Notifier } from "./notify";
 import type { SettingsStore } from "./settings";
+import { type Storage, storageLine } from "./storage";
 
 const LAST_KEY = "report:last";
 const WEEK = 7 * 86400_000;
@@ -17,6 +18,7 @@ export type ReportDeps = {
   notifier: Notifier;
   bots: Bots;
   memory: MemoryStore;
+  storage: Storage;
   publicUrl: string;
   clock?: () => number;
 };
@@ -146,6 +148,8 @@ export class WeeklyReport {
     if (counted) lines.push(`- Watchers saw ${plural(counted, "change")} that counted.`);
     if (failing.length) lines.push(`- Watchers that can't read their page: ${failing.join(", ")}.`);
     if (commits) lines.push(`- Memory: ${plural(commits, "change")}.`);
+    const storage = await this.d.storage.measure().catch(() => null);
+    if (storage) lines.push(`- Storage: ${storageLine(storage)}`);
     const line = [
       `${usd(total)} spent`,
       `${plural(ran, "task")}${count("failed") ? ` (${count("failed")} failed)` : ""}`,

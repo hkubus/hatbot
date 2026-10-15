@@ -1,5 +1,6 @@
 // Who controls the desktop: Hatbot, or you after Take over (PLAN.md §10.5).
 import type { DesktopState } from "@hatbot/shared";
+import type { Db } from "../db";
 import type { EventBus } from "../events";
 import type { DesktopAgent } from "./client";
 
@@ -17,7 +18,15 @@ export class Desktop {
   constructor(
     readonly agent: DesktopAgent,
     private events: EventBus,
-  ) {}
+    /** Where your control is kept, so a brain restart doesn't hand the desktop back. */
+    private db?: Db,
+  ) {
+    const kept = db
+      ?.query<{ value: string }, []>("SELECT value FROM settings WHERE key = 'desktop_control'")
+      .get();
+    // A request isn't kept: a restart ends the task that asked.
+    if (kept?.value === "owner") this.state.control = "owner";
+  }
 
   get(): DesktopState {
     return { ...this.state };
@@ -26,6 +35,12 @@ export class Desktop {
   private set(patch: Partial<DesktopState>) {
     const next = { ...this.state, ...patch };
     if (JSON.stringify(next) === JSON.stringify(this.state)) return;
+    if (next.control !== this.state.control)
+      this.db
+        ?.query(
+          "INSERT INTO settings (key, value) VALUES ('desktop_control', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        )
+        .run(next.control);
     this.state = next;
     this.events.emit({ type: "desktop.state", state: this.get() });
   }
