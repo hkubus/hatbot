@@ -72,6 +72,7 @@ export async function screenSize(): Promise<{ width: number; height: number }> {
   return { width: w, height: h };
 }
 
+/** One frame. x11grab waits a frame interval before grabbing; at its default 30 fps that's most of the time. */
 async function grab(args: string[]): Promise<Uint8Array> {
   const { out, err, code } = await spawn([
     "ffmpeg",
@@ -79,6 +80,8 @@ async function grab(args: string[]): Promise<Uint8Array> {
     "error",
     "-f",
     "x11grab",
+    "-framerate",
+    "1000",
     ...args,
   ]);
   if (code !== 0 || !out.length)
