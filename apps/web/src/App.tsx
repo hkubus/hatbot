@@ -193,6 +193,30 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     return disconnect;
   }, [toast]);
 
+  // Cmd/Ctrl-K: Search. Escape: closes the chat switcher, else the live panel.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        if (location.pathname === "/search")
+          document.querySelector<HTMLInputElement>(".search-box input")?.focus();
+        else navigate("/search");
+        return;
+      }
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      // Escape in a field, or typed on the desktop in the live view, is theirs.
+      const t = e.target as HTMLElement | null;
+      if (t?.closest("input, textarea, select, canvas, [contenteditable]")) return;
+      if (chatMenu) setChatMenu(false);
+      else if (insp) {
+        localStorage.setItem("hatbot:insp", "0");
+        setInsp(false);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [chatMenu, insp]);
+
   const cycleTheme = () => {
     const order: Theme[] = ["system", "light", "dark"];
     setTheme(order[(order.indexOf(theme) + 1) % 3] as Theme);

@@ -821,6 +821,10 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
   };
   // A kept draft can be several lines; sized once, on opening.
   useLayoutEffect(resize, []);
+  // Opening a chat puts you in its composer; not on a phone, where that would open the keyboard.
+  useEffect(() => {
+    if (!touchScreen()) textarea.current?.focus({ preventScroll: true });
+  }, []);
 
   const attach = (list: FileList | File[]) => {
     for (const file of Array.from(list).slice(0, 10)) {
@@ -1018,6 +1022,20 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
                 return picked.choose();
               }
               if (e.key === "Escape") return setMenuClosed(true);
+            }
+            // Up in an empty composer brings back what you last sent, to send again or fix.
+            if (e.key === "ArrowUp" && !draft && !e.nativeEvent.isComposing) {
+              const last = getState().messages.findLast((m) => m.role === "user" && m.text);
+              if (last) {
+                e.preventDefault();
+                setDraft(last.text);
+                requestAnimationFrame(() => {
+                  resize();
+                  const ta = textarea.current;
+                  ta?.setSelectionRange(ta.value.length, ta.value.length);
+                });
+              }
+              return;
             }
             if (e.key === "Escape" && canStop) {
               e.preventDefault();
