@@ -25,7 +25,29 @@ enum MDBlock: Equatable, Sendable {
   case rule
 }
 
+/// A value in an NSCache, which keeps objects.
+final class CacheBox<T: Sendable>: @unchecked Sendable {
+  let value: T
+  init(_ value: T) { self.value = value }
+}
+
 enum Markdown {
+  /// Parsed blocks by text: the chat redraws messages it has parsed already as you scroll.
+  nonisolated(unsafe) private static let cache: NSCache<NSString, CacheBox<[MDBlock]>> = {
+    let c = NSCache<NSString, CacheBox<[MDBlock]>>()
+    c.countLimit = 400
+    return c
+  }()
+
+  /// `parse`, remembered.
+  static func cached(_ source: String) -> [MDBlock] {
+    let key = NSString(string: source)
+    if let hit = cache.object(forKey: key) { return hit.value }
+    let blocks = parse(source)
+    cache.setObject(CacheBox(blocks), forKey: key)
+    return blocks
+  }
+
   static func parse(_ source: String) -> [MDBlock] {
     let lines = source.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
     var blocks: [MDBlock] = []

@@ -172,6 +172,13 @@ final class MarkdownTests: XCTestCase {
     XCTAssertEqual(
       Markdown.parse("Look:\n```\nstill typing"), [.paragraph("Look:"), .code(language: nil, code: "still typing")])
   }
+
+  func testCachedBlocksAreTheParsedOnes() {
+    let md = "# Hi\n\n- one\n- two"
+    XCTAssertEqual(Markdown.cached(md), Markdown.parse(md))
+    XCTAssertEqual(Markdown.cached(md), Markdown.parse(md))
+    XCTAssertEqual(Markdown.cached("other"), [.paragraph("other")])
+  }
 }
 
 // Not a @MainActor class: Linux XCTest can't run those.

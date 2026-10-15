@@ -740,7 +740,7 @@ private struct StreamingReply: View {
   let dots: Bool
 
   var body: some View {
-    if !reply.text.isEmpty { MarkdownText(text: reply.text) }
+    if !reply.text.isEmpty { MarkdownText(text: reply.text, streaming: true) }
     if reply.text.isEmpty && dots { TypingDots() }
     if let note = Format.lastLine(reply.progress) {
       Text(note).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
