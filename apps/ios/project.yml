@@ -57,6 +57,7 @@ targets:
         com.apple.security.application-groups: [group.ovh.gaycats.hatbot]
     dependencies:
       - target: HatbotShare
+      - target: HatbotWidgets
   # The share sheet's Hatbot. It's a second App ID in SideStore.
   HatbotShare:
     type: app-extension
@@ -91,6 +92,34 @@ targets:
               NSExtensionActivationSupportsFileWithMaxCount: 10
     entitlements:
       path: Share/HatbotShare.entitlements
+      properties:
+        com.apple.security.application-groups: [group.ovh.gaycats.hatbot]
+  # The home-screen widget and the Pause all control. A third App ID in SideStore.
+  HatbotWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Widgets
+      - path: Hatbot/Core
+      - path: Hatbot/App/AppGroup.swift
+      - path: Hatbot/App/KeychainVault.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ovh.gaycats.hatbot.widgets
+        # Swift 5, like the share extension: WidgetKit's callbacks predate strict concurrency.
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Hatbot
+    info:
+      path: Widgets/Info.plist
+      properties:
+        CFBundleDisplayName: Hatbot
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: Widgets/HatbotWidgets.entitlements
       properties:
         com.apple.security.application-groups: [group.ovh.gaycats.hatbot]
   HatbotCoreTests:

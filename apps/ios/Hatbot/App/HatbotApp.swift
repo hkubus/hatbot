@@ -3,6 +3,7 @@
 // and quick actions and Spotlight results open theirs (App/Extras.swift).
 import CoreSpotlight
 import SwiftUI
+import WidgetKit
 
 @main
 struct HatbotApp: App {
@@ -70,7 +71,11 @@ struct MainView: View {
     }
     // The count on the app icon, while the app's been open: there's no push to change it after.
     .task { await Badge.allow() }
-    .onChange(of: store.needsYou, initial: true) { _, n in Task { await Badge.show(n) } }
+    .onChange(of: store.needsYou, initial: true) { _, n in
+      Task { await Badge.show(n) }
+      WidgetCenter.shared.reloadTimelines(ofKind: "ovh.gaycats.hatbot.status")
+    }
+    .onChange(of: store.paused) { ControlCenter.shared.reloadControls(ofKind: "ovh.gaycats.hatbot.pause") }
     // What Spotlight finds, a little after launch.
     .task {
       try? await Task.sleep(for: .seconds(5))
