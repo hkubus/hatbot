@@ -80,8 +80,46 @@ final class AppStore {
   /// Messages in an incognito conversation: they're never unread.
   @ObservationIgnored private var incognitoIds = Set<Int>()
 
-  init(api: API) {
+  /// Where what was last seen is kept; nil keeps nothing.
+  @ObservationIgnored let cache: DiskCache?
+
+  init(api: API, cache: DiskCache? = nil) {
     self.api = api
+    self.cache = cache
+    restore()
+  }
+
+  /// What the app saw last time, until the brain answers.
+  private func restore() {
+    guard let cache, let chats = cache.chats() else { return }
+    for b in chats.bots { bots[b.id] = b }
+    botIds = chats.bots.map(\.id)
+    conversations = chats.conversations
+    if chats.conversations.contains(where: { $0.id == chats.conversationId }) { conversationId = chats.conversationId }
+    if let page = cache.page(conversationId) {
+      messages = page.messages
+      hasEarlier = page.hasEarlier
+      for e in page.episodes { episodes[e.id] = e }
+    }
+  }
+
+  /// Keeps the open chat's latest page, and the bots and chats, for next time. Never incognito.
+  func persist() {
+    guard let cache else { return }
+    if !conversations.isEmpty {
+      cache.save(
+        DiskCache.Chats(
+          bots: botIds.compactMap { bots[$0] }, conversations: conversations, conversationId: conversationId))
+    }
+    guard !incognito, !messages.isEmpty else { return }
+    // Finished messages only: one still streaming would come back half written.
+    let page = Array(messages.filter { $0.status != .streaming }.suffix(Self.page))
+    let ids = Set(page.compactMap(\.episodeId))
+    cache.save(
+      DiskCache.Page(
+        messages: page, episodes: ids.compactMap { episodes[$0] },
+        hasEarlier: hasEarlier || page.count < messages.count),
+      for: conversationId)
   }
 
   /// Approvals waiting for you, plus a takeover request.
@@ -102,6 +140,7 @@ final class AppStore {
   }
 
   func disconnect() {
+    persist()
     stream?.stop()
     connected = false
     unreachableCheck?.cancel()
@@ -333,6 +372,7 @@ final class AppStore {
     guard wasIncognito == incognito, shown == conversationId else { return }
     (messages, hasEarlier) = ThreadMerge.merge(messages, hasEarlier: hasEarlier, latest: list, page: Self.page)
     syncReplies(list)
+    persist()
   }
 
   /// Into incognito, or out of it, which deletes its conversation.
@@ -350,10 +390,16 @@ final class AppStore {
     guard id != conversationId else { return }
     let left = chatPath
     let wasIncognito = incognito
+    persist()
     conversationId = id
     incognito = false
     messages = []
     hasEarlier = false
+    if let page = cache?.page(id) {
+      messages = page.messages
+      hasEarlier = page.hasEarlier
+      for e in page.episodes { episodes[e.id] = e }
+    }
     if wasIncognito { let _: Empty? = try? await api.delete("\(left)/incognito") }
     try? await loadThread()
   }
@@ -368,6 +414,7 @@ final class AppStore {
     for b in list { bots[b.id] = b }
     botIds = list.map(\.id)
     conversations = chats
+    persist()
   }
 
   /// The chats' unread counts, soon: news comes in bursts.

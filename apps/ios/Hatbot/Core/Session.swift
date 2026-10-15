@@ -21,13 +21,15 @@ final class Session {
 
   @ObservationIgnored private let vault: TokenVault
   @ObservationIgnored private let defaults: UserDefaults
+  @ObservationIgnored private let cache: DiskCache?
 
-  init(vault: TokenVault, defaults: UserDefaults = .standard) {
+  init(vault: TokenVault, defaults: UserDefaults = .standard, cacheDir: URL? = nil) {
     self.vault = vault
     self.defaults = defaults
+    cache = cacheDir.map(DiskCache.init(dir:))
     server = defaults.string(forKey: Self.serverKey) ?? ""
     if let url = API.serverURL(from: server), let token = vault.load() {
-      store = AppStore(api: makeAPI(url, token: token))
+      store = AppStore(api: makeAPI(url, token: token), cache: cache)
     }
   }
 
@@ -54,7 +56,9 @@ final class Session {
     vault.save(token)
     server = url.absoluteString
     defaults.set(server, forKey: Self.serverKey)
-    store = AppStore(api: makeAPI(url, token: token))
+    // What another brain, or another you, showed before isn't yours to see.
+    cache?.clear()
+    store = AppStore(api: makeAPI(url, token: token), cache: cache)
   }
 
   /// Ends the token on the brain too, when it's reachable.
@@ -70,6 +74,7 @@ final class Session {
     store?.disconnect()
     store = nil
     vault.clear()
+    cache?.clear()
   }
 
   private func makeAPI(_ url: URL, token: String) -> API {

@@ -9,7 +9,7 @@ struct HatbotApp: App {
   init() {
     let vault = KeychainVault()
     AppGroup.migrate(vault: vault)
-    _session = State(initialValue: Session(vault: vault, defaults: AppGroup.defaults))
+    _session = State(initialValue: Session(vault: vault, defaults: AppGroup.defaults, cacheDir: AppGroup.cacheDir))
   }
 
   var body: some Scene {

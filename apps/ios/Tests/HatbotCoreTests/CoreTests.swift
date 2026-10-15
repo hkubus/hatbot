@@ -618,6 +618,43 @@ final class LookingAfterThingsTests: XCTestCase {
   }
 }
 
+final class DiskCacheTests: XCTestCase {
+  func testAStoreShowsWhatWasLastSeenUntilTheBrainAnswers() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let cache = DiskCache(dir: dir)
+    let bot = Bot(id: "hatbot", name: "Hatbot", instructions: "", createdAt: "2026-10-15T10:00:00.000Z")
+    let chat = Conversation(id: 2, kind: .direct, botIds: ["hatbot"], unread: 0)
+    let done = ThreadMessage(id: 5, role: .assistant, kind: .text, text: "Hi", status: .done, createdAt: "2026-10-15T10:00:00.000Z")
+    let writing = ThreadMessage(
+      id: 6, role: .assistant, kind: .text, text: "Wri", status: .streaming, createdAt: "2026-10-15T10:00:01.000Z")
+    let api = API(server: URL(string: "https://hatbot.test")!, token: "t")
+
+    await MainActor.run {
+      let store = AppStore(api: api, cache: cache)
+      store.bots = ["hatbot": bot]
+      store.botIds = ["hatbot"]
+      store.conversations = [chat]
+      store.messages = [done, writing]
+      store.persist()
+    }
+    // Written off the main thread.
+    for _ in 0..<50 where cache.page(1) == nil || cache.chats() == nil {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+
+    await MainActor.run {
+      let store = AppStore(api: api, cache: cache)
+      XCTAssertEqual(store.conversations, [chat])
+      XCTAssertEqual(store.bots["hatbot"]?.name, "Hatbot")
+      // Not the one still being written.
+      XCTAssertEqual(store.messages.map(\.id), [5])
+    }
+    cache.clear()
+    XCTAssertNil(cache.chats())
+  }
+}
+
 final class PlainTextTests: XCTestCase {
   func testPlainTextHasNoMarkdown() {
     let md = "# Done\n\nI **fixed** the `nginx` config, see [the docs](https://x.y) and _this_.\n\n- one\n- two\n\n1. first"
