@@ -61,7 +61,7 @@ Wants=network-online.target
 
 [Service]
 User=desk
-ExecStart=/usr/bin/Xvnc :1 -geometry 1280x800 -depth 24 -rfbport 5901 -interface $DESKTOP_IP -rfbauth /home/desk/.vnc/passwd -SecurityTypes VncAuth -AlwaysShared -AcceptSetDesktopSize=0 -nolisten tcp
+ExecStart=/usr/bin/Xvnc :1 -geometry 1280x800 -depth 24 -rfbport 5901 -interface $DESKTOP_IP -rfbauth /home/desk/.vnc/passwd -SecurityTypes VncAuth -AlwaysShared -AcceptSetDesktopSize=0 -nolisten tcp -nolisten local
 Restart=always
 RestartSec=2
 

@@ -69,11 +69,48 @@ ProtectHome=yes
 WantedBy=multi-user.target
 EOF
 
+# The shell's DynamicUser (UIDs 61184-65519) gets no TCP on loopback or this container's own address:
+# Chromium's DevTools port (127.0.0.1:9222) has no authentication and would hand over the browser's
+# logins. systemd's IPAddressDeny= below needs BPF, which an unprivileged container may not have, so
+# nftables does it. Loaded after nftables.service, whose 'flush ruleset' drops it, and again on its restarts.
+install -d -m 750 /etc/hatbot-desktop
+cat >/etc/hatbot-desktop/shell.nft <<'EOF'
+#!/usr/sbin/nft -f
+# Managed by hatbot infra/desktop-deploy.sh.
+table inet hatbot_shell
+delete table inet hatbot_shell
+
+table inet hatbot_shell {
+  chain output {
+    type filter hook output priority filter; policy accept;
+    oif lo meta skuid 61184-65519 meta l4proto tcp counter reject with tcp reset
+  }
+}
+EOF
+# No ExecStop: stopping it must not open loopback up.
+cat >/etc/systemd/system/hatbot-shell-firewall.service <<'EOF'
+[Unit]
+Description=Hatbot: keep the desktop shell off loopback (Chromium's DevTools)
+After=nftables.service
+PartOf=nftables.service
+Before=hatbot-desktop-shell.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/hatbot-desktop/shell.nft
+
+[Install]
+WantedBy=multi-user.target nftables.service
+EOF
+
 # The desktop's shell (desktop_shell): its own throwaway user, a home in /var/lib/hatbot-shell, no /home
 # (the browser profile), no screen, no secrets. desktop-agent reaches it on a Unix socket.
 cat >/etc/systemd/system/hatbot-desktop-shell.service <<EOF
 [Unit]
 Description=Hatbot desktop shell: commands from desktop tasks, kept away from the browser profile
+Requires=hatbot-shell-firewall.service
+After=hatbot-shell-firewall.service
 
 [Service]
 DynamicUser=yes
@@ -92,6 +129,7 @@ ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=localhost $DESKTOP_IP
 TasksMax=256
 MemoryMax=1G
 
@@ -144,6 +182,16 @@ if [[ -e /home/desk/.config/autostart/hatbot-chromium.desktop ]]; then
   sleep 2
 fi
 
+# Xvnc's abstract socket (@/tmp/.X11-unix/X1) is shared by everything in the container's network
+# namespace, so the shell could reach the screen through it; its PrivateTmp already hides the file
+# socket, which desktop-agent, the session and Chromium use. Provisions before this lack -nolisten local.
+xvnc=/etc/systemd/system/hatbot-xvnc.service
+restart_x=0
+if [[ -f $xvnc ]] && ! grep -q -- '-nolisten local' "$xvnc"; then
+  sed -i 's/ -nolisten tcp$/ -nolisten tcp -nolisten local/' "$xvnc"
+  restart_x=1
+fi
+
 # Updates from the brain. Only deploy.sh runs install the installer, so an update can't change it.
 if [[ $(realpath "$0") != "$SELF" ]]; then
   install -m 755 "$0" "$SELF.new"
@@ -170,6 +218,9 @@ ExecStart=$SELF $STATE/update.tar
 EOF
 
 systemctl daemon-reload
+systemctl enable -q hatbot-shell-firewall
+systemctl restart hatbot-shell-firewall
+if ((restart_x)); then systemctl restart hatbot-xvnc; fi
 systemctl enable -q hatbot-desktop-agent hatbot-desktop-shell
 systemctl enable -q --now hatbot-chromium
 systemctl enable -q --now hatbot-desktop-agent-update.path

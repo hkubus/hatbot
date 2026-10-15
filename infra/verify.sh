@@ -88,6 +88,27 @@ expect "Chromium is running (sandbox works in the container)" \
   pct exec "$DESKTOP_ID" -- pgrep -u desk -f chrome-profile
 expect "Chromium's CDP answers on the desktop's localhost only" \
   pct exec "$DESKTOP_ID" -- curl -fsS -m 5 -o /dev/null http://127.0.0.1:9222/json/version
+# shell_exec COMMAND -> the JSON answer of the desktop's shell (desktop_shell), which runs it as its own user.
+shell_exec() {
+  pct exec "$DESKTOP_ID" -- curl -sS -m 20 --unix-socket /run/hatbot-shell/shell.sock \
+    -H 'content-type: application/json' --data-binary @- http://shell/exec 2>/dev/null <<<"{\"command\": \"$1\", \"timeoutS\": 8}"
+}
+if pct exec "$DESKTOP_ID" -- test -S /run/hatbot-shell/shell.sock; then
+  for probe in "Chromium's DevTools (127.0.0.1:9222)|exec 3<>/dev/tcp/127.0.0.1/9222" \
+    "desktop-agent ($DESKTOP_IP:7070)|exec 3<>/dev/tcp/$DESKTOP_IP/7070" \
+    "the screen (:1)|DISPLAY=:1 xdotool getdisplaygeometry"; do
+    out=$(shell_exec "${probe#*|}")
+    if [[ -z $out ]]; then
+      result FAIL "the desktop shell answers" "no reply on /run/hatbot-shell/shell.sock"
+    elif grep -q '"exitCode":0' <<<"$out"; then
+      result FAIL "the desktop shell can't reach ${probe%%|*}" "it did; run deploy.sh"
+    else
+      result OK "the desktop shell can't reach ${probe%%|*}"
+    fi
+  done
+else
+  printf '   %sskip%s  desktop shell (not running; deploy.sh installs it)\n' "$yel" "$rst"
+fi
 if pct exec "$BRAIN_ID" -- grep -qs '^NTFY_URL=http' /etc/hatbot/ntfy.env; then
   # shellcheck disable=SC2016 # expands inside the brain
   expect "the brain reaches your ntfy server" pct exec "$BRAIN_ID" -- sh -c \
