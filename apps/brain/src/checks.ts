@@ -172,7 +172,11 @@ export class Checks {
           if (p.state !== "ready")
             return p.state === "starting"
               ? warn("Still starting.")
-              : fail(p.message ?? "It isn't ready.");
+              : fail(
+                  `${p.message ?? "It isn't ready."}${p.state === "error" ? " Hatbot keeps trying to start it." : ""}`,
+                );
+          // Ready, with a part down (an MCP server): tried again by itself.
+          if (p.message) return warn(`Partly down: ${p.message}`);
           if (!p.testable) return ok("Ready.");
           return ok(await d.plugins.test(p.id));
         },

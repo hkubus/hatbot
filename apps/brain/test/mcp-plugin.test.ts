@@ -112,6 +112,9 @@ test("a server that was down at the start comes back later, with its tools", asy
   expect(info.state).toBe("ready");
   expect(info.message).toContain("late:");
   expect(t.plugins.tools().some((x) => x.name.startsWith("mcp_late_"))).toBe(false);
+  // Check everything says so.
+  const report = await t.checks.run();
+  expect(report.results.find((r) => r.id === "plugin.mcp")).toMatchObject({ state: "warn" });
   writeFileSync(marker, "");
   await waitFor(() => t.plugins.tools().some((x) => x.name === "mcp_late_echo"), 10_000);
   expect(t.plugins.get("mcp")?.message).toBeNull();
