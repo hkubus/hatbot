@@ -677,7 +677,15 @@ private struct MessageRow: View, Equatable {
           .opacity(unread ? 1 : 0)
           .animation(.easeOut(duration: 1), value: unread)
       }
-      .onScrollVisibilityChange(threshold: 0.5) { onScreen = $0 }
+      // Half of it on screen; or, for one too long for that, filling most of the screen or its end in view.
+      .onGeometryChange(for: Bool.self) { geo in
+        guard let screen = geo.bounds(of: .scrollView) else { return false }
+        let me = CGRect(origin: .zero, size: geo.size)
+        let shown = me.intersection(screen)
+        guard !shown.isNull, shown.height > 0 else { return false }
+        return shown.height >= me.height * 0.5 || shown.height >= screen.height * 0.6
+          || (me.maxY > screen.minY && me.maxY <= screen.maxY)
+      } action: { onScreen = $0 }
       // On screen for a moment, with the app in front: seen.
       .task(id: unread && onScreen && scenePhase == .active) {
         guard unread && onScreen && scenePhase == .active else { return }
