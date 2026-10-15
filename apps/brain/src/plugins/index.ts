@@ -1,5 +1,6 @@
 // Every plugin that ships with Hatbot (PLAN.md §4.5). You switch them on in Settings.
 import { forgejoPlugin } from "./forgejo";
+import { githubPlugin } from "./github";
 import { homeassistantPlugin } from "./homeassistant";
 import { mcpPlugin } from "./mcp";
 import { pbsPlugin } from "./pbs";
@@ -15,5 +16,6 @@ export const PLUGINS: Plugin[] = [
   homeassistantPlugin,
   uptimeKumaPlugin,
   forgejoPlugin,
+  githubPlugin,
   mcpPlugin,
 ];

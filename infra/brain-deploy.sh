@@ -58,6 +58,7 @@ EnvironmentFile=-/etc/hatbot/proxmox.env
 EnvironmentFile=-/etc/hatbot/desktop.env
 EnvironmentFile=-/etc/hatbot/ntfy.env
 EnvironmentFile=-/etc/hatbot/forgejo.env
+EnvironmentFile=-/etc/hatbot/github.env
 EnvironmentFile=-/etc/hatbot/mcp.env
 EnvironmentFile=-/etc/hatbot/pbs.env
 EnvironmentFile=-/etc/hatbot/homeassistant.env
