@@ -7,9 +7,9 @@ struct AskResult: Decodable, Sendable {
   var replies: [ThreadMessage]
   var finished: Bool
 
-  /// What Siri says: the replies, or that the answer will be in the chat.
+  /// What Siri says: the replies without their Markdown, or that the answer will be in the chat.
   var answer: String {
-    let text = replies.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n\n")
+    let text = replies.map { Markdown.plain($0.text) }.filter { !$0.isEmpty }.joined(separator: "\n\n")
     if !finished { return text.isEmpty ? "Hatbot is still on it. The answer will be in the chat." : text }
     return text.isEmpty ? "Hatbot didn't answer." : text
   }

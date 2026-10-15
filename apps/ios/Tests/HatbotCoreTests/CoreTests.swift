@@ -581,7 +581,7 @@ final class LookingAfterThingsTests: XCTestCase {
     let m = #"{"id":%d,"role":"%@","kind":"text","text":"%@","status":"done","createdAt":"2026-10-15T08:00:00Z"}"#
     let json = """
       {"message":\(String(format: m, 1, "user", "Warm?")),
-       "replies":[\(String(format: m, 2, "assistant", "21 degrees."))],"finished":true}
+       "replies":[\(String(format: m, 2, "assistant", "**21** degrees."))],"finished":true}
       """
     let r = try JSONDecoder().decode(AskResult.self, from: Data(json.utf8))
     XCTAssertEqual(r.answer, "21 degrees.")
