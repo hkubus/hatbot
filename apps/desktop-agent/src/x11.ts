@@ -182,6 +182,9 @@ const REPEATS = {
   triple_click: 3,
 } as const;
 const WHEEL = { up: "4", down: "5", left: "6", right: "7" } as const;
+/** Live view frame rates: while the owner has control, and while they (or nobody) only watch. */
+export const LIVE_FPS_CONTROL = 15;
+export const LIVE_FPS_WATCHING = 5;
 /** Longer text than this is typed fast, in chunks this long; the brain's timeout for `type` assumes it. */
 const HUMAN_TYPING_CHARS = 200;
 
@@ -354,25 +357,39 @@ async function actInner(
 }
 
 /**
- * The live view: one ffmpeg reading the display as MJPEG while anyone watches. Frames go to every subscriber.
- * ffmpeg's mpjpeg output frames each JPEG with a Content-length header.
+ * The live view: one ffmpeg reading the display as MJPEG while anyone watches. Frames go to every subscriber,
+ * except one that's the same as the last (an idle screen sends nothing). ffmpeg's mpjpeg output frames
+ * each JPEG with a Content-length header.
  */
 export class LiveCapture {
   private proc: ReturnType<typeof Bun.spawn> | null = null;
   private subscribers = new Set<(frame: Uint8Array) => void>();
+  private last: Uint8Array | null = null;
 
   constructor(
     private size: { width: number; height: number },
-    private fps = 15,
+    private fps = LIVE_FPS_WATCHING,
   ) {}
 
   subscribe(fn: (frame: Uint8Array) => void): () => void {
     this.subscribers.add(fn);
     if (!this.proc) this.start();
+    // A new watcher of a screen that isn't changing would otherwise wait for the next change.
+    else if (this.last) fn(this.last);
     return () => {
       this.subscribers.delete(fn);
       if (!this.subscribers.size) this.stop();
     };
+  }
+
+  /** Smoother while the owner has control, lighter while they only watch. */
+  setFps(fps: number) {
+    if (fps === this.fps) return;
+    this.fps = fps;
+    if (this.proc) {
+      this.stop();
+      this.start();
+    }
   }
 
   private start() {
@@ -406,6 +423,7 @@ export class LiveCapture {
   private stop() {
     this.proc?.kill();
     this.proc = null;
+    if (!this.subscribers.size) this.last = null;
   }
 
   private async read(proc: ReturnType<typeof Bun.spawn>) {
@@ -420,6 +438,8 @@ export class LiveCapture {
         const frame = takeFrame(buf);
         if (!frame) break;
         buf = buf.slice(frame.end);
+        if (this.last && Buffer.from(frame.jpeg).equals(this.last)) continue;
+        this.last = frame.jpeg;
         for (const fn of this.subscribers) fn(frame.jpeg);
       }
     }

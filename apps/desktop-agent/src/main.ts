@@ -15,7 +15,17 @@ import { FetchError, fetchPage } from "./fetch";
 import { browserKey } from "./keys";
 import { runningProfile, useProfile } from "./profile";
 import { SHELL_SOCKET } from "./shell";
-import { ActionError, act, LiveCapture, screenSize, screenshot, xdotool, zoom } from "./x11";
+import {
+  ActionError,
+  act,
+  LIVE_FPS_CONTROL,
+  LIVE_FPS_WATCHING,
+  LiveCapture,
+  screenSize,
+  screenshot,
+  xdotool,
+  zoom,
+} from "./x11";
 
 const token = process.env.DESKTOP_AGENT_TOKEN ?? "";
 if (token.length < 32) throw new Error("DESKTOP_AGENT_TOKEN is missing or too short");
@@ -109,7 +119,7 @@ async function liveInput(m: LiveInput) {
   }
 }
 
-const server = Bun.serve<{ off?: () => void }>({
+const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
   hostname: host,
   port: Number(port),
   async fetch(req, srv) {
@@ -239,9 +249,11 @@ const server = Bun.serve<{ off?: () => void }>({
         }
         case "POST /lock":
           locked = true;
+          live.setFps(LIVE_FPS_CONTROL);
           return json(health());
         case "POST /unlock":
           locked = false;
+          live.setFps(LIVE_FPS_WATCHING);
           return json(health());
         case "GET /live":
           if (srv.upgrade(req, { data: {} })) return undefined;
@@ -260,8 +272,19 @@ const server = Bun.serve<{ off?: () => void }>({
     // Frames out as binary JPEG; live input in as JSON text.
     open(ws) {
       ws.data.off = live.subscribe((frame) => {
-        if (ws.getBufferedAmount() < LIVE_BUFFER_BYTES) ws.sendBinary(frame);
+        // A frame skipped here goes out once the socket drains: an unchanging screen sends no more.
+        if (ws.getBufferedAmount() < LIVE_BUFFER_BYTES) {
+          ws.data.behind = undefined;
+          ws.sendBinary(frame);
+        } else ws.data.behind = frame;
       });
+    },
+    drain(ws) {
+      const frame = ws.data.behind;
+      if (frame && ws.getBufferedAmount() < LIVE_BUFFER_BYTES) {
+        ws.data.behind = undefined;
+        ws.sendBinary(frame);
+      }
     },
     message(_ws, msg) {
       if (typeof msg !== "string") return;
