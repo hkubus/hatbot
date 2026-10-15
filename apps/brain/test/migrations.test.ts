@@ -87,3 +87,19 @@ test("migration 24 rebuilds tasks for watchers and keeps their rows and links", 
   db.exec(`INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at)
     VALUES ('c', 'g', '', 'heartbeat', 'background', 'm', 'running', 1, '${now}')`);
 });
+
+test("migration 26 indexes per-task lookups, and they're used", () => {
+  const db = at(25);
+  migrate(db);
+  const plan = (sql: string) =>
+    db
+      .query<{ detail: string }, []>(`EXPLAIN QUERY PLAN ${sql}`)
+      .all()
+      .map((r) => r.detail)
+      .join(" ");
+  expect(plan("SELECT * FROM spend_ledger WHERE task_id = 1")).toContain("spend_ledger_task");
+  expect(plan("SELECT * FROM messages WHERE task_id = 1")).toContain("messages_task");
+  expect(plan("SELECT * FROM tasks WHERE schedule_id = 1")).toContain("tasks_schedule");
+  expect(plan("SELECT * FROM tasks WHERE parent_id = 1")).toContain("tasks_parent");
+  expect(db.query("SELECT count(*) AS n FROM hook_deliveries").get()).toEqual({ n: 0 });
+});
