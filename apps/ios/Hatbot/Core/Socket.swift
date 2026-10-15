@@ -16,6 +16,8 @@ final class Socket {
   var onOpen: (_ reconnected: Bool) -> Void = { _ in }
   var onMessage: (Message) -> Void = { _ in }
   var onClose: () -> Void = {}
+  /// The brain turned the token away at the handshake; the socket stops.
+  var onUnauthorized: () -> Void = {}
 
   private let make: () -> URLSessionWebSocketTask
   private let maxDelay: Double
@@ -89,6 +91,12 @@ final class Socket {
       ws.cancel(with: .goingAway, reason: nil)
       if open { onClose() }
       if Task.isCancelled { break }
+      if !open, (ws.response as? HTTPURLResponse)?.statusCode == 401 {
+        loop = nil
+        self.ws = nil
+        onUnauthorized()
+        break
+      }
       let delay = min(maxDelay, pow(2, Double(retry)))
       retry += 1
       try? await Task.sleep(for: .seconds(delay))

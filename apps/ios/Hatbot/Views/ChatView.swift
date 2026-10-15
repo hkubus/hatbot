@@ -166,7 +166,11 @@ struct ChatView: View {
       }
       .scrollDismissesKeyboard(.interactively)
       .edgeBar(.top) {
-        if store.paused { PausedBanner() }
+        VStack(spacing: 0) {
+          if store.unreachable { UnreachableBanner() }
+          if store.paused { PausedBanner() }
+        }
+        .animation(.snappy, value: store.unreachable)
       }
       .edgeBar(.bottom) { composer }
       .navigationTitle(store.incognito ? "Incognito" : name)
@@ -459,6 +463,23 @@ struct PausedBanner: View {
     .glassSurface(in: .capsule)
     .padding(.horizontal, 12)
     .padding(.vertical, 6)
+  }
+}
+
+/// The event stream has been down for a few seconds.
+struct UnreachableBanner: View {
+  var body: some View {
+    HStack {
+      Label("Can't reach Hatbot.", systemImage: "wifi.slash")
+      Spacer()
+    }
+    .font(.subheadline)
+    .padding(.horizontal, 16)
+    .padding(.vertical, 10)
+    .glassSurface(in: .capsule)
+    .padding(.horizontal, 12)
+    .padding(.vertical, 6)
+    .transition(.move(edge: .top).combined(with: .opacity))
   }
 }
 

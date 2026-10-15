@@ -35,6 +35,11 @@ final class API: Sendable {
     self.onUnauthorized = onUnauthorized
   }
 
+  /// The brain no longer takes the token, as told some other way than a JSON call (the event stream's handshake).
+  func unauthorized() {
+    onUnauthorized()
+  }
+
   /// "https://host/" or "host" → https://host; a pasted ".../api/v1" is dropped. Plain http only when typed.
   static func serverURL(from input: String) -> URL? {
     var s = input.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -26,6 +26,9 @@ final class AppStore {
   var todayUsd: Double?
   var monthUsd: Double?
   var connected = false
+  /// The event stream has been down a few seconds while the app is in front.
+  var unreachable = false
+  @ObservationIgnored private var unreachableCheck: Task<Void, Never>?
   var tasks: [Int: AgentTask] = [:]
   /// Steps of the tasks that have been opened or shown in the chat.
   var steps: [Int: [TaskStep]] = [:]
@@ -78,11 +81,24 @@ final class AppStore {
   func connect() {
     if stream == nil { stream = makeStream() }
     stream?.start()
+    noticeIfDown()
   }
 
   func disconnect() {
     stream?.stop()
     connected = false
+    unreachableCheck?.cancel()
+    unreachable = false
+  }
+
+  /// "Can't reach Hatbot." only after a few seconds: a reconnect is usually quicker.
+  private func noticeIfDown() {
+    unreachableCheck?.cancel()
+    unreachableCheck = Task { [weak self] in
+      try? await Task.sleep(for: .seconds(4))
+      guard let self, !Task.isCancelled, !self.connected, self.stream?.running == true else { return }
+      self.unreachable = true
+    }
   }
 
   private func makeStream() -> Socket {
@@ -91,6 +107,8 @@ final class AppStore {
     socket.onOpen = { [weak self] reconnected in
       guard let self else { return }
       self.connected = true
+      self.unreachableCheck?.cancel()
+      self.unreachable = false
       Task {
         if reconnected { try? await self.loadThread() }
         try? await self.loadLive()
@@ -102,7 +120,11 @@ final class AppStore {
       else { return }
       self?.apply(event)
     }
-    socket.onClose = { [weak self] in self?.connected = false }
+    socket.onClose = { [weak self] in
+      self?.connected = false
+      self?.noticeIfDown()
+    }
+    socket.onUnauthorized = { api.unauthorized() }
     return socket
   }
 
@@ -529,7 +551,9 @@ final class AppStore {
   /// The live view's socket: JPEG frames out, your input in while you have control.
   func liveSocket() -> Socket {
     let api = self.api
-    return Socket(maxDelay: 15) { api.webSocket("/desktop/live") }
+    let socket = Socket(maxDelay: 15) { api.webSocket("/desktop/live") }
+    socket.onUnauthorized = { api.unauthorized() }
+    return socket
   }
 
   // MARK: Schedules and triggers
