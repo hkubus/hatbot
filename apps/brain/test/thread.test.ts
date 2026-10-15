@@ -395,6 +395,8 @@ test("on Haiku the chat can ask Opus once per reply; the answer goes in as is", 
   );
   const results = JSON.stringify(model.requests[2]?.messages.at(-1)?.content);
   expect(results).toContain("shown to the owner as is");
+  // Haiku sees the answer too, so it can follow on from it.
+  expect(results).toContain(JSON.stringify(`<opus_answer>\n${code}\n</opus_answer>`).slice(1, -1));
   expect(JSON.stringify(model.requests[3]?.messages.at(-1)?.content)).toContain(
     "already asked once",
   );

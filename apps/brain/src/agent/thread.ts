@@ -1442,6 +1442,7 @@ export class Thread {
       const price = priceOf(EXPERT_MODEL);
       spend.check(((content.length / 3 + 2000) * price.input + 8000 * price.output) / 1_000_000);
       separate = true;
+      let answer = "";
       const res = await model.stream(
         {
           model: EXPERT_MODEL,
@@ -1453,7 +1454,13 @@ export class Thread {
           output_config: { effort: "high" },
           messages: [{ role: "user", content }],
         },
-        { onText: say, signal: abort.signal },
+        {
+          onText: (delta) => {
+            answer += delta;
+            say(delta);
+          },
+          signal: abort.signal,
+        },
       );
       used.costUsd += spend.recordResponse({
         model: EXPERT_MODEL,
@@ -1466,10 +1473,13 @@ export class Thread {
       events.emit({ type: "message.usage", id: out.id, ...used });
       separate = true;
       if (res.stop_reason === "refusal") return result("Opus declined to answer this.", true);
+      // The answer itself too, so what comes after it can follow on from it.
       return result(
-        res.stop_reason === "max_tokens"
-          ? "Opus's answer was cut off; it's in your reply as far as it got. Tell the owner, briefly."
-          : "Opus's answer is now in your reply, shown to the owner as is. Don't repeat, summarise or rewrite it. Add at most a line if something needs saying; otherwise end your reply.",
+        `${
+          res.stop_reason === "max_tokens"
+            ? "Opus's answer was cut off; it's in your reply as far as it got. Tell the owner, briefly."
+            : "Opus's answer is now in your reply, shown to the owner as is. Don't repeat, summarise or rewrite it. Add at most a line if something needs saying; otherwise end your reply."
+        }\n\n<opus_answer>\n${answer.trim()}\n</opus_answer>`,
       );
     };
 
