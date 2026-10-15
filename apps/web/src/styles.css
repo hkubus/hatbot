@@ -3814,3 +3814,12 @@ mark {
     font-size: 16px !important;
   }
 }
+.load-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 0;
+  color: var(--muted);
+  font-size: 13px;
+}

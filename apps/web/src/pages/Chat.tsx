@@ -24,6 +24,7 @@ import { ApiError, attachmentUrl, upload } from "../api";
 import { Chart, ChartPending } from "../chart";
 import { type DraftFile, draftText, saveDraftText, setDraftFiles, useDraftFiles } from "../drafts";
 import { Icon } from "../icons";
+import { LoadError, loadErrorText } from "../load";
 import { touchScreen } from "../media";
 import { navigate, useRoute } from "../router";
 import {
@@ -518,6 +519,10 @@ export function Chat({ id }: { id: number }) {
   const members = useStore(groupMembers);
   const bots = useStore((s) => s.bots);
   const [error, setError] = useState("");
+  // Until the thread has loaded there's nothing to say about it, not even hello.
+  const [ready, setReady] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [attempt, setAttempt] = useState(0);
   const scroller = useRef<HTMLElement>(null);
   const thread = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -537,10 +542,16 @@ export function Chat({ id }: { id: number }) {
     animateFrom.current = Number.POSITIVE_INFINITY;
     stick.current = true;
     void openConversation(id);
-    loaded.current = loadThread().then(() => {
-      animateFrom.current = (getState().messages.at(-1)?.id ?? 0) + 1;
-    });
-  }, [incognito, id]);
+    setReady(false);
+    setLoadError("");
+    loaded.current = loadThread().then(
+      () => {
+        animateFrom.current = (getState().messages.at(-1)?.id ?? 0) + 1;
+        setReady(true);
+      },
+      (err) => setLoadError(loadErrorText(err)),
+    );
+  }, [incognito, id, attempt]);
 
   // Loads back to the message, opens its conversation if it's folded, and scrolls to it.
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs once per message asked for
@@ -690,7 +701,10 @@ export function Chat({ id }: { id: number }) {
                 Earlier messages
               </button>
             )}
-            {!messages.length && (
+            {loadError && !messages.length && (
+              <LoadError error={loadError} retry={() => setAttempt((n) => n + 1)} />
+            )}
+            {ready && !messages.length && (
               <div className="empty">
                 {incognito
                   ? `${name} can't see earlier conversations here, and this one is deleted when you leave.`

@@ -6,9 +6,10 @@ import {
   type Limits,
   type UpdateInfo,
 } from "@hatbot/shared";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api";
 import { Icon } from "../icons";
+import { LoadError, loadErrorText } from "../load";
 import { navigate } from "../router";
 import { setPaused, useStore } from "../store";
 import { Switch } from "../switch";
@@ -42,11 +43,19 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
   const [newToken, setNewToken] = useState<CreateTokenResponse | null>(null);
   const [theme, setThemeState] = useState<Theme>(getTheme());
   const paused = useStore((s) => s.paused);
+  const [loadError, setLoadError] = useState("");
 
-  useEffect(() => {
-    api<AppSettings>("/settings").then(setSettings);
-    api<ApiToken[]>("/tokens").then(setTokens);
+  const load = useCallback(() => {
+    setLoadError("");
+    Promise.all([api<AppSettings>("/settings"), api<ApiToken[]>("/tokens")]).then(
+      ([s, t]) => {
+        setSettings(s);
+        setTokens(t);
+      },
+      (err) => setLoadError(loadErrorText(err)),
+    );
   }, []);
+  useEffect(load, [load]);
 
   const update = async (patch: Partial<AppSettings>) => {
     try {
@@ -82,7 +91,16 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
     onSignOut();
   };
 
-  if (!settings) return <section className="view" />;
+  if (!settings)
+    return (
+      <section className="view">
+        {loadError && (
+          <div className="page">
+            <LoadError error={loadError} retry={load} />
+          </div>
+        )}
+      </section>
+    );
 
   return (
     <section className="view">

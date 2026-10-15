@@ -1,6 +1,7 @@
 import type { SpendByModel, SpendDay, SpendHour, SpendSummary } from "@hatbot/shared";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { LoadError, loadErrorText } from "../load";
 import { useStore } from "../store";
 import { tokenText } from "../tasks";
 
@@ -191,6 +192,7 @@ export function Spend() {
   const botNames = useStore((s) => s.bots);
   const live = useStore((s) => s.todayUsd);
   const [tick, setTick] = useState(0);
+  const [loadError, setLoadError] = useState("");
 
   // The last minute and hour move on even when nothing new is billed.
   useEffect(() => {
@@ -200,14 +202,26 @@ export function Spend() {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: refresh when a request is billed, and every 30 s
   useEffect(() => {
-    api<SpendSummary>("/spend/summary").then(setSummary);
-    api<SpendHour[]>("/spend/hourly?hours=24").then(setHours);
-    api<SpendDay[]>("/spend/daily?days=30").then(setDays);
-    api<SpendByModel[]>("/spend/by-model?days=30").then(setModels);
-    api<{ botId: string; usd: number }[]>("/spend/by-bot?days=30").then(setByBot);
+    setLoadError("");
+    // A refresh that fails leaves what's showing; only the first load says so.
+    const failed = (err: unknown) => setLoadError(loadErrorText(err));
+    api<SpendSummary>("/spend/summary").then(setSummary, failed);
+    api<SpendHour[]>("/spend/hourly?hours=24").then(setHours, failed);
+    api<SpendDay[]>("/spend/daily?days=30").then(setDays, failed);
+    api<SpendByModel[]>("/spend/by-model?days=30").then(setModels, failed);
+    api<{ botId: string; usd: number }[]>("/spend/by-bot?days=30").then(setByBot, failed);
   }, [live, tick]);
 
-  if (!summary) return <section className="view" />;
+  if (!summary)
+    return (
+      <section className="view">
+        {loadError && (
+          <div className="page">
+            <LoadError error={loadError} retry={() => setTick((n) => n + 1)} />
+          </div>
+        )}
+      </section>
+    );
   const { todayUsd, monthUsd, limits } = summary;
   const mMax = Math.max(0.0001, ...models.map((m) => m.usd));
   const bMax = Math.max(0.0001, ...byBot.map((b) => b.usd));

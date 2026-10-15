@@ -1,8 +1,9 @@
 import { latestNoteOnly, type Task } from "@hatbot/shared";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "../api";
 import { Icon } from "../icons";
 import { LiveView, StepIcon } from "../live";
+import { LoadError, loadErrorText } from "../load";
 import { navigate } from "../router";
 import { cancelTask, loadTask, loadTasks, useStore } from "../store";
 import { ApprovalCard, isActive, Shot, StatusChip, taskLine } from "../tasks";
@@ -25,12 +26,16 @@ const stamp = (iso: string) =>
 export function Tasks() {
   const [filter, setFilter] = useState<"active" | "done">("active");
   const [ids, setIds] = useState<number[] | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const [attempt, setAttempt] = useState(0);
   const tasks = useStore((s) => s.tasks);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Retry loads again
   useEffect(() => {
     setIds(null);
-    loadTasks({ status: filter }).then(setIds, () => setIds([]));
-  }, [filter]);
+    setLoadError("");
+    loadTasks({ status: filter }).then(setIds, (err) => setLoadError(loadErrorText(err)));
+  }, [filter, attempt]);
 
   // Tasks that start or finish while the list is open move between the two lists.
   const shown = Object.values(tasks)
@@ -59,6 +64,7 @@ export function Tasks() {
             </button>
           </div>
         </div>
+        {loadError && <LoadError error={loadError} retry={() => setAttempt((n) => n + 1)} />}
         {ids && !shown.length && (
           <div className="empty">{filter === "active" ? "Nothing running." : "No tasks yet."}</div>
         )}
@@ -177,17 +183,32 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   const approvals = useStore((s) => s.approvals);
   const [watch, setWatch] = useState(live);
   const [missing, setMissing] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [error, setError] = useState("");
   /** The goal being edited to run it again; null when that form is closed. */
   const [again, setAgain] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    loadTask(id).catch(() => setMissing(true));
+  const load = useCallback(() => {
+    setLoadError("");
+    loadTask(id).catch((err) => {
+      if (err instanceof ApiError && err.status === 404) setMissing(true);
+      else setLoadError(loadErrorText(err));
+    });
   }, [id]);
+  useEffect(load, [load]);
 
   if (missing) return <div className="empty">This task doesn't exist.</div>;
-  if (!task) return <section className="view" />;
+  if (!task)
+    return (
+      <section className="view">
+        {loadError && (
+          <div className="page narrow">
+            <LoadError error={loadError} retry={load} />
+          </div>
+        )}
+      </section>
+    );
 
   const active = isActive(task);
   const pending = Object.values(approvals).filter((a) => a.taskId === id && a.status === "pending");
