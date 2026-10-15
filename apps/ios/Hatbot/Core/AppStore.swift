@@ -20,6 +20,9 @@ final class AppStore {
   var usage: [Int: ReplyUsage] = [:]
   var hasEarlier = false
   @ObservationIgnored private var loadingEarlier = false
+  /// An earlier page is going in above.
+  private(set) var prepending = false
+  @ObservationIgnored private var settling: Task<Void, Never>?
   /// Hatbot's messages sent or edited since you last saw them.
   var unread: [Int] = []
   var paused = false
@@ -271,8 +274,7 @@ final class AppStore {
     try? await loadEpisodes(list)
     // Switched while it loaded: the other conversation's load wins.
     guard wasIncognito == incognito, shown == conversationId else { return }
-    messages = list
-    hasEarlier = list.count == Self.page
+    (messages, hasEarlier) = ThreadMerge.merge(messages, hasEarlier: hasEarlier, latest: list, page: Self.page)
   }
 
   /// Into incognito, or out of it, which deletes its conversation.
@@ -417,11 +419,24 @@ final class AppStore {
   func loadEarlier() async throws {
     guard let first = messages.first, !loadingEarlier else { return }
     loadingEarlier = true
-    defer { loadingEarlier = false }
+    prepending = true
+    defer {
+      loadingEarlier = false
+      settle()
+    }
     let older: [ThreadMessage] = try await api.get(page(before: first.id))
     try? await loadEpisodes(older)
     messages = older + messages
     hasEarlier = older.count == Self.page
+  }
+
+  /// The earlier page stays "prepending" until it's laid out, so the chat keeps your place under it.
+  private func settle() {
+    settling?.cancel()
+    settling = Task { [weak self] in
+      try? await Task.sleep(for: .milliseconds(500))
+      if !Task.isCancelled { self?.prepending = false }
+    }
   }
 
   /// Deletes a conversation from the chat for good; message.deleted takes it off the screen.

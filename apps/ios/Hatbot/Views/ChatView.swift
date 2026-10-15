@@ -22,6 +22,7 @@ struct ChatView: View {
   @State private var deleting: Int?
   private var name: String { store.chatName(store.currentChat) }
   @State private var farFromBottom = false
+  @State private var nearBottom = true
 
   /// What the list shows: times, folds, and the messages that aren't folded away.
   private enum Row: Identifiable {
@@ -142,11 +143,15 @@ struct ChatView: View {
       }
       .scrollPosition($position)
       .defaultScrollAnchor(.bottom)
-      .defaultScrollAnchor(.bottom, for: .sizeChanges)
-      .onScrollGeometryChange(for: Bool.self) { geo in
-        geo.contentSize.height - geo.visibleRect.maxY > 400
-      } action: { _, far in
-        withAnimation(.snappy) { farFromBottom = far }
+      // A reply streaming in is followed only from the bottom; scrolled up, your place stays. An
+      // earlier page going in above keeps it from the bottom.
+      .defaultScrollAnchor(nearBottom || store.prepending ? .bottom : .top, for: .sizeChanges)
+      .onScrollGeometryChange(for: CGFloat.self) { geo in
+        geo.contentSize.height - geo.visibleRect.maxY
+      } action: { _, distance in
+        if nearBottom != (distance < 60) { nearBottom = distance < 60 }
+        let far = distance > 400
+        if far != farFromBottom { withAnimation(.snappy) { farFromBottom = far } }
       }
       .overlay(alignment: .bottom) {
         if farFromBottom {

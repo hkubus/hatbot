@@ -314,6 +314,26 @@ final class FoldTests: XCTestCase {
       id: id, role: role, kind: .text, text: "message \(id)", status: .done, createdAt: "", episodeId: episode)
   }
 
+  func testMergesTheLatestPageIntoWhatsLoaded() {
+    let ids = { (list: [ThreadMessage]) in list.map(\.id) }
+    // Earlier pages stay; 6 was deleted meanwhile and 9 is new; 10 came by event while it loaded.
+    var r = ThreadMerge.merge(
+      [1, 2, 3, 4, 5, 6, 7, 10].map { m($0, nil) }, hasEarlier: true, latest: [4, 5, 7, 8, 9].map { m($0, nil) },
+      page: 5)
+    XCTAssertEqual(ids(r.messages), [1, 2, 3, 4, 5, 7, 8, 9, 10])
+    XCTAssertTrue(r.hasEarlier)
+    // More than a page came while away: start again from the page.
+    r = ThreadMerge.merge([1, 2].map { m($0, nil) }, hasEarlier: false, latest: [5, 6, 7].map { m($0, nil) }, page: 3)
+    XCTAssertEqual(ids(r.messages), [5, 6, 7])
+    XCTAssertTrue(r.hasEarlier)
+    // A short page is everything.
+    r = ThreadMerge.merge([1, 2, 3].map { m($0, nil) }, hasEarlier: false, latest: [2, 3].map { m($0, nil) }, page: 5)
+    XCTAssertEqual(ids(r.messages), [2, 3])
+    XCTAssertFalse(r.hasEarlier)
+    r = ThreadMerge.merge([], hasEarlier: false, latest: [1].map { m($0, nil) }, page: 5)
+    XCTAssertEqual(ids(r.messages), [1])
+  }
+
   func testFoldsFinishedConversations() {
     let groups = ThreadFolds.groups(
       [m(1, nil), m(2, 1, .user), m(3, 1), m(4, nil), m(5, 2, .user), m(6, 3, .user), m(7, 3)],
