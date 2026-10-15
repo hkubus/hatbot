@@ -49,6 +49,7 @@ import {
   loadThread,
   markSeen,
   openConversation,
+  retryReply,
   sendMessage,
   setPaused,
   useStore,
@@ -159,12 +160,17 @@ function Meta({
   m,
   copy,
   open,
+  retry,
 }: {
   m: ThreadMessage;
   copy?: string;
   open?: { to: string; label: string };
+  /** An errored reply: its bot writes it again. */
+  retry?: () => Promise<unknown>;
 }) {
   const [copied, doCopy] = useCopy();
+  const [retrying, setRetrying] = useState(false);
+  const [retryFailed, setRetryFailed] = useState(false);
   return (
     <div className="meta">
       <span className="time">{time(m.createdAt)}</span>
@@ -179,6 +185,27 @@ function Meta({
             onClick={() => copy && doCopy(copy)}
           >
             <Icon name={copied ? "check" : "copy"} />
+          </button>
+        )}
+        {retry && (
+          <button
+            type="button"
+            className="msg-act"
+            title={retryFailed ? "Couldn't try again" : "Try again"}
+            disabled={retrying}
+            onClick={() => {
+              setRetrying(true);
+              setRetryFailed(false);
+              retry().then(
+                () => setRetrying(false),
+                () => {
+                  setRetrying(false);
+                  setRetryFailed(true);
+                },
+              );
+            }}
+          >
+            <Icon name="undo" />
           </button>
         )}
         {open && (
@@ -269,7 +296,15 @@ function TaskResult({ taskId }: { taskId: number }) {
  * its bot writes the reply again to say what came of it; if it doesn't, the task's result shows in the
  * reply's place. A cancelled task leaves the reply.
  */
-function ReplyMessage({ m, progress }: { m: ThreadMessage; progress?: string }) {
+function ReplyMessage({
+  m,
+  progress,
+  retryable,
+}: {
+  m: ThreadMessage;
+  progress?: string;
+  retryable: boolean;
+}) {
   const task = useStore((s) => (m.taskId ? s.tasks[m.taskId] : undefined));
   const used = useStore((s) => s.usage[m.id]);
   const streaming = m.status === "streaming";
@@ -306,6 +341,7 @@ function ReplyMessage({ m, progress }: { m: ThreadMessage; progress?: string }) 
           m={m}
           copy={replaced ? (ended.summary ?? "") : m.text}
           open={m.taskId ? { to: `/tasks/${m.taskId}`, label: "Open task" } : undefined}
+          retry={retryable && m.status === "error" ? () => retryReply(m) : undefined}
         />
       )}
     </>
@@ -430,10 +466,13 @@ const Message = memo(function Message({
   progress,
   animate,
   unread,
+  retryable = false,
 }: {
   m: ThreadMessage;
   progress?: string;
   animate: boolean;
+  /** The latest reply, errored: it can be tried again. */
+  retryable?: boolean;
   /** Sent or edited since you last saw it. */
   unread: boolean;
 }) {
@@ -461,7 +500,7 @@ const Message = memo(function Message({
   } else if (m.kind === "schedule" && m.scheduleId) {
     inner = <ScheduleMessage m={m} scheduleId={m.scheduleId} />;
   } else {
-    inner = <ReplyMessage m={m} progress={progress} />;
+    inner = <ReplyMessage m={m} progress={progress} retryable={retryable} />;
   }
 
   return (
@@ -678,6 +717,10 @@ export function Chat({ id }: { id: number }) {
     });
   };
 
+  // Only the latest reply can be tried again, and only if it errored.
+  const lastReply = messages.findLast((m) => m.role === "assistant" && m.kind !== "command");
+  const retryableId = lastReply?.status === "error" ? lastReply.id : 0;
+
   let lastDay = "";
   const dayBefore = (m: ThreadMessage) => {
     const day = dayLabel(m.createdAt);
@@ -709,6 +752,7 @@ export function Chat({ id }: { id: number }) {
         progress={progress[m.id]}
         animate={m.id >= animateFrom.current}
         unread={unread.includes(m.id)}
+        retryable={m.id === retryableId}
       />
     </Fragment>
   );

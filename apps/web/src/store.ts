@@ -164,6 +164,11 @@ export async function sendMessage(text: string, attachmentIds: number[] = []) {
     set({ messages: upsert(state.messages, m) });
 }
 
+/** Has an errored reply written again; it's rewritten in place, through the usual events. */
+export async function retryReply(m: ThreadMessage) {
+  await api(`/conversations/${m.conversationId}/messages/${m.id}/retry`, { body: {} });
+}
+
 /** Deletes a conversation from the chat for good; message.deleted takes it off the screen. */
 export async function deleteEpisode(id: number) {
   await api(`/conversations/${state.conversationId}/episodes/${id}`, { method: "DELETE" });
