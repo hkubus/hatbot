@@ -316,3 +316,37 @@ test("a desktop task opens its bot's browser profile", async () => {
   }
   expect(t.agent.profiles).toEqual(["chef", "hatbot"]);
 });
+
+test("cancelling a task that asked another bot cancels the task it asked for", async () => {
+  let release = () => {};
+  const held = new Promise((r) => {
+    release = () => r(null);
+  });
+  const work = new FakeModel([
+    { content: [toolUse("ask_bot", { bot: "Chef", request: "Plan Sunday dinner" })] },
+    {
+      wait: held,
+      content: [toolUse("finish_task", { outcome: "done", summary: "Soup.", notify: false })],
+    },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  chef(t);
+  const parent = t.tasks.createBackgroundTask({
+    title: "Weekend",
+    goal: "Plan the weekend",
+    origin: "webhook",
+    source: "hook",
+    payload: "{}",
+  });
+  if (!parent) throw new Error("no task");
+  for (let i = 0; i < 50 && !t.tasks.list({}).some((x) => x.botId === "chef"); i++)
+    await Bun.sleep(5);
+  const child = t.tasks.list({}).find((x) => x.botId === "chef");
+  if (!child) throw new Error("no child");
+  t.tasks.cancel(parent.id);
+  await Bun.sleep(20);
+  release();
+  await t.tasks.idle();
+  expect(t.tasks.get(parent.id)?.status).toBe("cancelled");
+  expect(t.tasks.get(child.id)?.status).toBe("cancelled");
+});

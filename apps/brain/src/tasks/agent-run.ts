@@ -267,10 +267,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     try {
       ended = await tasks.waitFor(child.id, signal);
     } finally {
-      children.delete(child.id);
       await tasks.pool.acquire(signal);
       slot = true;
     }
+    // Still in `children` if this task is cancelled meanwhile, so it's cancelled with it.
+    children.delete(child.id);
     if (ended.tainted) taint(`Task #${child.id} by ${name}`);
     return result(
       call,
