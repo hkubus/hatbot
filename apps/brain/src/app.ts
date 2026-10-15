@@ -1,6 +1,7 @@
 import { API_PREFIX, type Health } from "@hatbot/shared";
 import { Hono } from "hono";
 import { getConnInfo } from "hono/bun";
+import { HTTPException } from "hono/http-exception";
 import type { AppEnv, Deps } from "./context";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
@@ -52,6 +53,9 @@ export function createApp(deps: Deps) {
 
   app.notFound((c) => c.json({ error: "not found" }, 404));
   app.onError((err, c) => {
+    // Hono's own refusals, such as malformed JSON, keep their status, in the usual shape.
+    if (err instanceof HTTPException)
+      return err.res ?? c.json({ error: err.message || "invalid request" }, err.status);
     console.error(err);
     return c.json({ error: "internal error" }, 500);
   });
