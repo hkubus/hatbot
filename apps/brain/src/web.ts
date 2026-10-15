@@ -4,7 +4,7 @@ import { join, normalize, sep } from "node:path";
 
 const HEADERS = {
   "content-security-policy":
-    "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+    "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   "x-content-type-options": "nosniff",
   "referrer-policy": "no-referrer",
 };
