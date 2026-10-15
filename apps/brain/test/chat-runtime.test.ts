@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import Anthropic from "@anthropic-ai/sdk";
 import { retryable, withRetries } from "../src/agent/model";
+import { Tasks } from "../src/tasks/service";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, testApp, waitFor } from "./helpers";
 
@@ -252,6 +253,37 @@ test("a new conversation doesn't wait long for the last one's summary, which lan
   t.advance(31 * 60_000);
   await t.thread.post("third").done;
   expect(lastUserText(model.requests[2] as never)).toContain("Talked about one");
+});
+
+test("tasks a restart stopped are told in their chat, with one notification", async () => {
+  const run = { title: "Book a table", goal: "Book", success_criteria: "" };
+  const chat = new FakeModel([
+    { content: [toolUse("run_desktop_task", run)] },
+    { content: [text("Started it.")] },
+    { content: [text("The brain restarted before it ran; say if I should try again.")] },
+  ]);
+  const t = await testApp(chat);
+  // The screen is busy, so the task waits in line when the brain goes down.
+  await t.tasks.lane.acquire(-5, new AbortController().signal);
+  await t.thread.post("book a table").done;
+  t.tasks.createBackgroundTask({ title: "Nightly check", goal: "Check", origin: "schedule" });
+  const queued = t.tasks.list({ status: "active" });
+  expect(queued.length).toBeGreaterThanOrEqual(1);
+
+  const restarted = new Tasks(t.tasks.d);
+  for (const q of queued) expect(restarted.get(q.id)?.status).toBe("failed");
+  const sent = t.notifier.sent.length;
+  restarted.recover();
+  await t.thread.idle();
+  const reply = t.thread.list().find((m) => m.role === "assistant" && m.taskId);
+  expect(reply?.text).toContain("restarted before it ran");
+  expect(lastUserText(chat.requests.at(-1) as never)).toContain("the brain restarted");
+  const notes = t.notifier.sent.slice(sent);
+  expect(notes).toHaveLength(1);
+  expect(notes[0]?.message).toContain("Book a table");
+  // Once only.
+  restarted.recover();
+  expect(t.notifier.sent.length).toBe(sent + 1);
 });
 
 test("a background task waiting on a desktop task doesn't hold a slot", async () => {
