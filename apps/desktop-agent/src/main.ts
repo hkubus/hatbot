@@ -274,10 +274,10 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
           return json(await serial(() => browser.inspect(at)));
         }
         case "GET /context":
-          return json(await context(url.searchParams.get("text") === "1"));
+          return json(await context(browser, url.searchParams.get("text") === "1"));
         case "POST /inspect": {
           const { x, y } = (await req.json()) as { x?: number; y?: number };
-          return json(await inspect(x, y));
+          return json(await inspect(browser, x, y));
         }
         case "POST /lock":
           locked = true;

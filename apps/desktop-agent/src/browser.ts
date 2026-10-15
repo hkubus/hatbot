@@ -316,6 +316,7 @@ export class Browser {
   private buttons = 0;
   /** Where the pointer last was in each tab, so the next move starts there. */
   private pointers = new Map<string, Point>();
+  private readying: Promise<void> | null = null;
 
   /** `downloadDir`: where downloads go, named by their guid, so they can be sent on; null leaves Chromium's default. */
   constructor(private downloadDir: string | null = null) {
@@ -340,8 +341,15 @@ export class Browser {
     return this.saved.get(id) ?? null;
   }
 
-  /** Connects (again) when needed, and learns the open tabs. */
-  private async ready() {
+  /** Connects (again) when needed, and learns the open tabs. Calls at the same time share one attempt. */
+  private ready(): Promise<void> {
+    this.readying ??= this.connect().finally(() => {
+      this.readying = null;
+    });
+    return this.readying;
+  }
+
+  private async connect() {
     if (!(await this.cdp.ready())) return;
     this.targets.clear();
     this.sessions.clear();
@@ -1053,6 +1061,23 @@ export class Browser {
     }
     const v = await this.viewport(targetId);
     return { kind: "navigate", url: sanitize(v.url, 4096), title: sanitize(v.title, 300) };
+  }
+
+  /**
+   * The tab on screen, for the computer toolset's /context and /inspect: its URL and title, and what `script`
+   * (one of page.ts's kind, or null for none) returns in Hatbot's isolated world.
+   */
+  async onScreen<T>(
+    script: string | null,
+    arg: unknown = {},
+  ): Promise<{ url: string; title: string; value: T | undefined } | null> {
+    await this.ready();
+    await this.refresh();
+    await this.syncActive();
+    const t = this.active ? this.targets.get(this.active) : undefined;
+    if (!t) return null;
+    const value = script === null ? undefined : await this.run<T>(t.targetId, script, arg);
+    return { url: t.url, title: t.title, value };
   }
 
   /** The open tabs, and what changed since the last report. */
