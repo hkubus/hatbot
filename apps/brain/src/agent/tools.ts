@@ -14,6 +14,7 @@ import { ScheduleError, type Schedules } from "../schedules";
 import type { Tasks } from "../tasks/service";
 import { skillPath } from "../teach/skills";
 import type { Triggers } from "../triggers";
+import { conditionOf, WatchError, type Watchers, watcherLine } from "../watch/service";
 
 export type ToolContext = {
   db: Db;
@@ -27,6 +28,7 @@ export type ToolContext = {
   tasks?: Tasks;
   schedules?: Schedules;
   triggers?: Triggers;
+  watchers?: Watchers;
   /** The chat reply being written; a task it starts shows under it. */
   messageId?: number;
   /** The conversation the reply is in: history search leaves it out, since the model already has it. */
@@ -139,6 +141,49 @@ function authorOf(ctx: ToolContext, path: string) {
 
 /** Why a task the chat starts is tainted, from what the chat had read. */
 const chatTaint = (by: string | null | undefined) => by && `The chat had read: ${by}`;
+
+const watchFields = {
+  selector: z
+    .string()
+    .optional()
+    .describe(
+      'A page: the text of the elements this CSS selector matches, e.g. ".price" or "#stock"',
+    ),
+  path: z
+    .string()
+    .optional()
+    .describe(
+      'JSON (an API, or a tool that answers in JSON): the value at this path, e.g. "items.0.price"',
+    ),
+  pattern: z
+    .string()
+    .optional()
+    .describe(
+      'A regular expression over the text (case-insensitive): its first group is the value, e.g. "Price:\\s*([\\d.,]+)"',
+    ),
+  when: z
+    .enum(["changed", "contains", "missing", "below", "above"])
+    .optional()
+    .describe(
+      'When a new value counts: "changed" (any change; the default), "contains"/"missing" the text, or a number "below"/"above" the value. Only a move into it counts, not every check while it holds',
+    ),
+  text: z.string().optional().describe('For "contains" and "missing"'),
+  value: z.number().optional().describe('For "below" and "above"'),
+  every_minutes: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("How often to look, at least 5; 60 if left out"),
+  once: z.boolean().optional().describe("Switch off after the first time it counts"),
+  prompt: z
+    .string()
+    .max(4000)
+    .optional()
+    .describe(
+      "What to do when it counts, as a background task that's told the old and new value and can't see this conversation. Leave out to just tell the owner",
+    ),
+};
 
 const scheduleWhen = {
   cron: z
@@ -426,6 +471,117 @@ export const TOOLS = [
       schedules?.delete(id) ? `Deleted schedule #${id}.` : `No schedule #${id}.`,
   }),
   def({
+    name: "watch_create",
+    description:
+      "Watch a web page or a plugin's read tool and act only when its value changes the way the owner wants: back in stock, a price below a number, a PR merged, a new release. It's checked on a timer without a model, so it costs nothing until something happens; prefer it to a schedule for \"tell me when…\". Pages are fetched as plain HTML with no JavaScript, from the desktop. Pick one value out with selector, path or pattern: a whole page changes too often. It looks once before it's made and tells you what it saw, or why it couldn't, so you can fix the selector or pattern.",
+    schema: z.object({
+      name: z.string().min(1).max(80).describe('Short name, e.g. "Framework 16 price"'),
+      url: z.string().optional().describe("A page or JSON API to fetch"),
+      tool: z.string().optional().describe("Or a plugin's read tool to call, e.g. forgejo_pull"),
+      tool_input: z.record(z.string(), z.unknown()).optional().describe("The tool's input"),
+      ...watchFields,
+    }),
+    run: async (input, { watchers, tainted, bot }) => {
+      if (!watchers) return "Watchers aren't available.";
+      if (Boolean(input.url) === Boolean(input.tool)) return "Give either url or tool.";
+      const condition = conditionOf(input);
+      if (typeof condition === "string") return condition;
+      try {
+        const w = await watchers.create(
+          {
+            name: input.name,
+            source: {
+              kind: input.url ? "page" : "tool",
+              ...(input.url
+                ? { url: input.url }
+                : { tool: input.tool, input: input.tool_input ?? {} }),
+              ...(input.selector ? { selector: input.selector } : {}),
+              ...(input.path ? { path: input.path } : {}),
+              ...(input.pattern ? { pattern: input.pattern } : {}),
+            },
+            condition,
+            prompt: input.prompt?.trim() ?? "",
+            everyMinutes: Math.max(5, input.every_minutes ?? 60),
+            once: input.once ?? false,
+            enabled: true,
+            botId: bot?.id ?? HATBOT_ID,
+          },
+          "chat",
+          tainted?.() ?? null,
+        );
+        return `Created watcher ${watcherLine(w)}`;
+      } catch (err) {
+        if (err instanceof WatchError) return `Not created: ${err.message}`;
+        throw err;
+      }
+    },
+  }),
+  def({
+    name: "watch_list",
+    description: "List every watcher with what it looks at, what it saw last, and what it does.",
+    schema: z.object({}),
+    run: async (_, { watchers, bot, bots }) =>
+      watchers
+        ?.list()
+        .map((w) => watcherLine(w) + whose(w.botId, bot, bots))
+        .join("\n") || "No watchers.",
+  }),
+  def({
+    name: "watch_update",
+    description:
+      "Change a watcher: what counts, how often it looks, what it does, its name, or turn it on or off. Only the fields you give change.",
+    schema: z.object({
+      id: z.number().int(),
+      name: z.string().min(1).max(80).optional(),
+      enabled: z.boolean().optional(),
+      ...watchFields,
+    }),
+    run: async ({ id, ...input }, { watchers, tainted }) => {
+      const w = watchers?.get(id);
+      if (!watchers || !w) return `No watcher #${id}.`;
+      const condition = input.when ? conditionOf(input) : undefined;
+      if (typeof condition === "string") return condition;
+      const picks = ["selector", "path", "pattern"] as const;
+      const repick = picks.some((k) => input[k] !== undefined);
+      try {
+        const updated = await watchers.update(
+          id,
+          {
+            name: input.name,
+            enabled: input.enabled,
+            condition,
+            prompt: input.prompt?.trim(),
+            everyMinutes: input.every_minutes && Math.max(5, input.every_minutes),
+            once: input.once,
+            source: repick
+              ? {
+                  ...w.source,
+                  // An empty string takes that pick away.
+                  ...Object.fromEntries(
+                    picks
+                      .filter((k) => input[k] !== undefined)
+                      .map((k) => [k, input[k] || undefined]),
+                  ),
+                }
+              : undefined,
+          },
+          { via: "chat", taintedBy: tainted?.() ?? null },
+        );
+        return updated ? `Updated watcher ${watcherLine(updated)}` : `No watcher #${id}.`;
+      } catch (err) {
+        if (err instanceof WatchError) return `Not changed: ${err.message}`;
+        throw err;
+      }
+    },
+  }),
+  def({
+    name: "watch_delete",
+    description: "Delete a watcher. The tasks it started stay in the Tasks list.",
+    schema: z.object({ id: z.number().int() }),
+    run: async ({ id }, { watchers }) =>
+      watchers?.delete(id) ? `Deleted watcher #${id}.` : `No watcher #${id}.`,
+  }),
+  def({
     name: "trigger_list",
     description:
       "List the webhooks and Uptime Kuma alert hooks that start background tasks, with what each run does. The owner creates them in Schedules & Triggers.",
@@ -537,6 +693,7 @@ export const INCOGNITO_TOOLS = [
   "memory_search",
   "schedule_list",
   "trigger_list",
+  "watch_list",
 ];
 
 /** Core tools that only look things up, so several can run at once. */

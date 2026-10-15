@@ -35,6 +35,7 @@ import type { SettingsStore } from "../settings";
 import { BudgetError, priceOf, type Spend, tokenCount, tokensOf } from "../spend";
 import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
+import type { Watchers } from "../watch/service";
 import { type ModelClient, modelErrorText } from "./model";
 import {
   EXPERT_PROMPT,
@@ -127,6 +128,7 @@ export type ThreadDeps = {
   tasks?: Tasks;
   schedules?: Schedules;
   triggers?: Triggers;
+  watchers?: Watchers;
   approvals?: Approvals;
   /** Files in the chat, and the desktop whose sandbox send_file takes them from. */
   attachments?: Attachments;
@@ -231,7 +233,7 @@ export class Thread {
 
   /** A task or schedule card from `botId`. `text` is what search and summaries see. */
   addCard(
-    kind: "task" | "schedule",
+    kind: "task" | "schedule" | "text",
     text: string,
     ref: { taskId?: number; scheduleId?: number },
     botId = this.bot().id,
@@ -323,7 +325,7 @@ export class Thread {
   attach(
     parts: Pick<
       ThreadDeps,
-      "tasks" | "schedules" | "triggers" | "approvals" | "attachments" | "desktop"
+      "tasks" | "schedules" | "triggers" | "watchers" | "approvals" | "attachments" | "desktop"
     >,
   ) {
     Object.assign(this.d, parts);
@@ -1710,6 +1712,10 @@ function toolLabel(name: string, plugins: Plugins): string {
     schedule_delete: "Deleting a schedule",
     trigger_list: "Looking at triggers",
     trigger_update: "Changing a trigger",
+    watch_create: "Setting up a watcher",
+    watch_list: "Looking at watchers",
+    watch_update: "Changing a watcher",
+    watch_delete: "Deleting a watcher",
     run_task: "Starting a task",
     ask_bot: "Asking another bot",
     ask_opus: "Asking Opus",

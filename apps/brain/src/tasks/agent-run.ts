@@ -137,6 +137,8 @@ const STARTED_BY = {
   schedule: (s: string) => `the schedule "${s}"`,
   webhook: (s: string) => `the webhook "${s}"`,
   alert: (s: string) => `an Uptime Kuma alert, through "${s}"`,
+  watch: (s: string) => `the watcher "${s}", whose value changed`,
+  heartbeat: () => "the heartbeat, which found something worth a look",
   chat: () => "the owner, from the chat",
 };
 
@@ -337,6 +339,18 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       if (tainted !== 0) return null;
       return `Standing instructions for the schedule "${task.source ?? ""}":\n${task.goal}`;
     }
+    if (task.origin === "watch") {
+      const tainted = d.db
+        .query<{ tainted: number }, [number]>("SELECT tainted FROM watchers WHERE id = ?")
+        .get(task.watcherId ?? -1)?.tainted;
+      if (tainted !== 0) return null;
+      const head = `Standing instructions for the watcher "${task.source ?? ""}":\n${task.goal}`;
+      return task.tainted
+        ? `${head}\n\nWhat it saw came from outside and isn't trusted, so it isn't shown: it can't choose what to act on.`
+        : `${head}\n\nWhat it saw (trusted):\n${task.payload ?? ""}`;
+    }
+    if (task.origin === "heartbeat")
+      return `The heartbeat's instructions, which the owner turned on:\n${task.goal}`;
     const kind = task.origin === "alert" ? "Uptime Kuma alert" : "webhook";
     const head = `Standing instructions for the ${kind} "${task.source ?? ""}":\n${task.goal}`;
     const trustedEvent =

@@ -6,7 +6,7 @@ import { resultText, Thread, type ThreadDeps } from "./thread";
 
 type Parts = Pick<
   ThreadDeps,
-  "tasks" | "schedules" | "triggers" | "approvals" | "attachments" | "desktop"
+  "tasks" | "schedules" | "triggers" | "watchers" | "approvals" | "attachments" | "desktop"
 >;
 
 type Row = {
@@ -223,6 +223,11 @@ export class Chats {
     ref: { taskId?: number; scheduleId?: number },
   ) {
     return (this.thread(conversationId) ?? this.direct(botId)).addCard(kind, text, ref, botId);
+  }
+
+  /** A line from a bot in its own chat, outside any conversation, e.g. what a watcher saw. */
+  note(botId: string, text: string) {
+    return this.direct(botId).addCard("text", text, {}, botId);
   }
 
   /** A task ended: `botId` tells you in the chat it was started from. */

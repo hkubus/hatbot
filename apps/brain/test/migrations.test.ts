@@ -64,3 +64,26 @@ test("migration 22 puts an ended task's result in the place of the reply that st
     { text: "On it." },
   ]);
 });
+
+test("migration 24 rebuilds tasks for watchers and keeps their rows and links", () => {
+  const db = at(23);
+  const now = "2026-10-01T00:00:00Z";
+  db.exec(`INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at)
+    VALUES ('a', 'g', '', 'chat', 'background', 'm', 'done', 1, '${now}')`);
+  db.exec(`INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, parent_id)
+    VALUES ('b', 'g', '', 'chat', 'screen', 'm', 'done', 1, '${now}', 1)`);
+  db.exec(`INSERT INTO messages (role, text, status, created_at, kind, task_id) VALUES
+    ('assistant', 'On it.', 'done', '${now}', 'text', 1)`);
+
+  migrate(db);
+
+  expect(db.query("SELECT id, parent_id, watcher_id FROM tasks ORDER BY id").all()).toEqual([
+    { id: 1, parent_id: null, watcher_id: null },
+    { id: 2, parent_id: 1, watcher_id: null },
+  ]);
+  expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+  expect(db.query("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
+  // Watchers and the heartbeat start tasks too.
+  db.exec(`INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at)
+    VALUES ('c', 'g', '', 'heartbeat', 'background', 'm', 'running', 1, '${now}')`);
+});

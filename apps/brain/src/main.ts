@@ -28,6 +28,7 @@ import { Teach } from "./teach/service";
 import { Skills } from "./teach/skills";
 import { Triggers } from "./triggers";
 import { Updates } from "./updates";
+import { Watchers } from "./watch/service";
 import { webHandler } from "./web";
 
 const config = loadConfig();
@@ -95,7 +96,27 @@ const teach = new Teach({
 });
 const schedules = new Schedules(db, events, settings, tasks);
 const triggers = new Triggers(db, events, settings, tasks, notifier, config.publicUrl);
-chats.attach({ tasks, schedules, triggers, approvals, attachments, desktop: desktop.agent });
+const watchers = new Watchers({
+  db,
+  events,
+  settings,
+  tasks,
+  chats,
+  notifier,
+  desktop: desktop.agent,
+  plugins,
+  bots,
+  publicUrl: config.publicUrl,
+});
+chats.attach({
+  tasks,
+  schedules,
+  triggers,
+  watchers,
+  approvals,
+  attachments,
+  desktop: desktop.agent,
+});
 // A restart ends an incognito conversation.
 await chats.endIncognito();
 await desktop.setPaused(settings.get().paused);
@@ -107,9 +128,11 @@ setInterval(() => void chats.sweep(), 60_000);
 void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {
   schedules.tick();
   triggers.tick();
+  watchers.tick();
   setInterval(() => {
     schedules.tick();
     triggers.tick();
+    watchers.tick();
   }, 10_000);
 });
 const proxmox = new Proxmox();
@@ -155,6 +178,7 @@ const app = createApp({
   updates,
   schedules,
   triggers,
+  watchers,
   plugins,
   teach,
   checks,

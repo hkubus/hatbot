@@ -29,6 +29,7 @@ import { Teach } from "../src/teach/service";
 import { Skills } from "../src/teach/skills";
 import { Triggers } from "../src/triggers";
 import { Updates } from "../src/updates";
+import { Watchers } from "../src/watch/service";
 import { FakeDesktop } from "./fake-desktop";
 import { FakeModel } from "./fake-model";
 
@@ -129,7 +130,20 @@ export async function testApp(
   tempTeach.push(teach);
   const schedules = new Schedules(db, events, settings, tasks, clock);
   const triggers = new Triggers(db, events, settings, tasks, notifier, ORIGIN, clock);
-  chats.attach({ tasks, schedules, triggers, approvals, attachments, desktop: agent });
+  const watchers = new Watchers({
+    db,
+    events,
+    settings,
+    tasks,
+    chats,
+    notifier,
+    desktop: agent,
+    plugins,
+    bots,
+    publicUrl: ORIGIN,
+    clock,
+  });
+  chats.attach({ tasks, schedules, triggers, watchers, approvals, attachments, desktop: agent });
   const updateDir = tempDir("hatbot-test-update-");
   const updates = new Updates(
     {
@@ -181,6 +195,7 @@ export async function testApp(
     updates,
     schedules,
     triggers,
+    watchers,
     plugins,
     teach,
     checks,
@@ -220,6 +235,7 @@ export async function testApp(
     bots,
     schedules,
     triggers,
+    watchers,
     plugins,
     skills,
     teach,

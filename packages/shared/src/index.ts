@@ -2,12 +2,14 @@
 import { z } from "zod";
 import type { PluginInfo } from "./plugin";
 import type { Schedule, Trigger } from "./schedule";
+import type { Watcher } from "./watch";
 
 export * from "./chart";
 export * from "./checks";
 export * from "./plugin";
 export * from "./schedule";
 export * from "./thread";
+export * from "./watch";
 
 export const API_PREFIX = "/api/v1";
 
@@ -133,12 +135,14 @@ export type Task = {
   title: string;
   goal: string;
   successCriteria: string;
-  origin: "chat" | "schedule" | "webhook" | "alert";
+  origin: "chat" | "schedule" | "webhook" | "alert" | "watch" | "heartbeat";
   lane: "screen" | "background";
   /** The schedule or trigger that started it, by name. */
   source: string | null;
   scheduleId: number | null;
   triggerId: number | null;
+  /** The watcher whose change started it. */
+  watcherId: number | null;
   /** The task that started this one (a desktop task run by a background task). */
   parentId: number | null;
   /** The event that started it, as received; untrusted unless its trigger is trusted. */
@@ -272,6 +276,8 @@ export type HatbotEvent =
   | { type: "schedule.deleted"; id: number }
   | { type: "trigger.updated"; trigger: Trigger }
   | { type: "trigger.deleted"; id: number }
+  | { type: "watcher.updated"; watcher: Watcher }
+  | { type: "watcher.deleted"; id: number }
   | { type: "plugin.updated"; plugin: PluginInfo }
   | { type: "teach.updated"; session: TeachSession }
   | { type: "episode.updated"; episode: Episode }

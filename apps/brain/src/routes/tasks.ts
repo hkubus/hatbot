@@ -15,6 +15,7 @@ export const taskRoutes = new Hono<AppEnv>()
         status: z.enum(["active", "done"]).optional(),
         scheduleId: z.coerce.number().int().optional(),
         triggerId: z.coerce.number().int().optional(),
+        watcherId: z.coerce.number().int().optional(),
       }),
     ),
     (c) => c.json(c.var.tasks.list(c.req.valid("query"))),

@@ -21,6 +21,7 @@ import {
 } from "../store";
 import { Switch } from "../switch";
 import { StatusChip, whenText } from "../tasks";
+import { WatcherEdit, WatcherList } from "./Watchers";
 
 const KIND = { webhook: "Webhook", kuma: "Uptime Kuma" } as const;
 const KUMA_PROMPT =
@@ -30,7 +31,7 @@ const CONFIRM = ["First failure", "2 failures", "3 failures"];
 /** A trigger just made, so its page can show the secret after the route changes to its id. */
 let fresh: TriggerWithSecret | null = null;
 
-const stamp = (iso: string) =>
+export const stamp = (iso: string) =>
   new Date(iso).toLocaleString("en-GB", {
     weekday: "short",
     day: "numeric",
@@ -38,14 +39,15 @@ const stamp = (iso: string) =>
     hour: "2-digit",
     minute: "2-digit",
   });
-const errorText = (err: unknown) =>
+export const errorText = (err: unknown) =>
   err instanceof ApiError ? err.message : "Couldn't reach Hatbot.";
 
-/** The page for /schedules, /schedules/:id, /triggers/:id, and their /new forms. */
+/** The page for /schedules, /schedules/:id, /triggers/:id, /watchers/:id, and their /new forms. */
 export function SchedulesView({ path, params }: { path: string; params: URLSearchParams }) {
-  const m = /^\/(schedules|triggers)\/(new|\d+)$/.exec(path);
+  const m = /^\/(schedules|triggers|watchers)\/(new|\d+)$/.exec(path);
   if (!m) return <List />;
   const id = m[2] === "new" ? null : Number(m[2]);
+  if (m[1] === "watchers") return <WatcherEdit key={path} id={id} />;
   return m[1] === "schedules" ? (
     <ScheduleEdit key={path} id={id} />
   ) : (
@@ -54,7 +56,11 @@ export function SchedulesView({ path, params }: { path: string; params: URLSearc
 }
 
 function List() {
-  const [ids, setIds] = useState<{ schedules: number[]; triggers: number[] } | null>(null);
+  const [ids, setIds] = useState<{
+    schedules: number[];
+    triggers: number[];
+    watchers: number[];
+  } | null>(null);
   const [error, setError] = useState("");
   const schedules = useStore((s) => s.schedules);
   const triggers = useStore((s) => s.triggers);
@@ -83,6 +89,10 @@ function List() {
           <button type="button" className="btn" onClick={() => navigate("/schedules/new")}>
             <Icon name="plus" />
             Schedule
+          </button>
+          <button type="button" className="btn" onClick={() => navigate("/watchers/new")}>
+            <Icon name="plus" />
+            Watcher
           </button>
           <button type="button" className="btn" onClick={() => navigate("/triggers/new")}>
             <Icon name="plus" />
@@ -123,6 +133,7 @@ function List() {
                 )}
               </div>
             </section>
+            <WatcherList onError={setError} />
             <section className="group">
               <h2>Triggers</h2>
               <div className="group-box">
@@ -156,8 +167,12 @@ function List() {
   );
 }
 
-/** The runs a schedule or trigger started. */
-function Runs({ filter }: { filter: { scheduleId: number } | { triggerId: number } }) {
+/** The runs a schedule, trigger or watcher started. */
+export function Runs({
+  filter,
+}: {
+  filter: { scheduleId: number } | { triggerId: number } | { watcherId: number };
+}) {
   const [ids, setIds] = useState<number[] | null>(null);
   const tasks = useStore((s) => s.tasks);
   const key = JSON.stringify(filter);
@@ -172,7 +187,9 @@ function Runs({ filter }: { filter: { scheduleId: number } | { triggerId: number
         !t.parentId &&
         ("scheduleId" in filter
           ? t.scheduleId === filter.scheduleId
-          : t.triggerId === filter.triggerId),
+          : "watcherId" in filter
+            ? t.watcherId === filter.watcherId
+            : t.triggerId === filter.triggerId),
     )
     .sort((a, b) => b.id - a.id)
     .slice(0, 20);
@@ -698,7 +715,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
 }
 
 /** Which bot runs it: its prompt, plugins and memory. Only when there's more than one. */
-function BotPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+export function BotPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
   const ids = useStore((s) => s.botIds);
   const bots = useStore((s) => s.bots);
   if (ids.length < 2 && value === HATBOT_ID) return null;

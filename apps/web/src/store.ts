@@ -14,6 +14,7 @@ import {
   type TeachSession,
   type ThreadMessage,
   type Trigger,
+  type Watcher,
 } from "@hatbot/shared";
 import { useSyncExternalStore } from "react";
 import { ApiError, api } from "./api";
@@ -48,6 +49,7 @@ type State = {
   /** null: deleted, or never existed. */
   schedules: Record<number, Schedule | null>;
   triggers: Record<number, Trigger | null>;
+  watchers: Record<number, Watcher | null>;
   plugins: Record<string, PluginInfo>;
   /** Teach-by-showing: the recording in progress and drafts, by id. */
   teach: Record<number, TeachSession>;
@@ -85,6 +87,7 @@ let state: State = {
   desktop: null,
   schedules: {},
   triggers: {},
+  watchers: {},
   plugins: {},
   teach: {},
   bots: {},
@@ -312,7 +315,12 @@ export function ensureApproval(id: number) {
 }
 
 export async function loadTasks(
-  filter: { status?: "active" | "done"; scheduleId?: number; triggerId?: number } = {},
+  filter: {
+    status?: "active" | "done";
+    scheduleId?: number;
+    triggerId?: number;
+    watcherId?: number;
+  } = {},
 ) {
   const q = new URLSearchParams(
     Object.entries(filter).flatMap(([k, v]) => (v === undefined ? [] : [[k, String(v)]])),
@@ -325,15 +333,21 @@ export async function loadTasks(
 }
 
 export async function loadSchedules() {
-  const [schedules, triggers] = await Promise.all([
+  const [schedules, triggers, watchers] = await Promise.all([
     api<Schedule[]>("/schedules"),
     api<Trigger[]>("/triggers"),
+    api<Watcher[]>("/watchers"),
   ]);
   set({
     schedules: { ...state.schedules, ...Object.fromEntries(schedules.map((s) => [s.id, s])) },
     triggers: { ...state.triggers, ...Object.fromEntries(triggers.map((t) => [t.id, t])) },
+    watchers: { ...state.watchers, ...Object.fromEntries(watchers.map((w) => [w.id, w])) },
   });
-  return { schedules: schedules.map((s) => s.id), triggers: triggers.map((t) => t.id) };
+  return {
+    schedules: schedules.map((s) => s.id),
+    triggers: triggers.map((t) => t.id),
+    watchers: watchers.map((w) => w.id),
+  };
 }
 
 export function ensureSchedule(id: number) {
@@ -363,6 +377,7 @@ export async function savePlugin(id: string, patch: { enabled?: boolean; config?
 
 export const putSchedule = (s: Schedule) => set({ schedules: { ...state.schedules, [s.id]: s } });
 export const putTrigger = (t: Trigger) => set({ triggers: { ...state.triggers, [t.id]: t } });
+export const putWatcher = (w: Watcher) => set({ watchers: { ...state.watchers, [w.id]: w } });
 
 export async function saveSchedule(id: number, patch: Partial<Schedule> & { at?: string }) {
   const s = await api<Schedule>(`/schedules/${id}`, { method: "PATCH", body: patch });
@@ -582,6 +597,10 @@ function apply(e: HatbotEvent) {
       return putTrigger(e.trigger);
     case "trigger.deleted":
       return set({ triggers: { ...state.triggers, [e.id]: null } });
+    case "watcher.updated":
+      return putWatcher(e.watcher);
+    case "watcher.deleted":
+      return set({ watchers: { ...state.watchers, [e.id]: null } });
     case "plugin.updated":
       return set({ plugins: { ...state.plugins, [e.plugin.id]: e.plugin } });
     case "teach.updated":

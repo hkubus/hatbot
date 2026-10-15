@@ -142,6 +142,7 @@ export class Checks {
       { id: "proxmox", name: "Desktop snapshots", run: () => this.snapshots() },
       ...this.desktopChecks(),
       { id: "schedules", name: "Schedules", run: async () => this.schedules() },
+      { id: "watchers", name: "Watchers", run: async () => this.watchers() },
       { id: "approvals", name: "Approvals", run: async () => this.approvals() },
     ];
     for (const p of d.plugins.list().filter((p) => p.enabled))
@@ -382,6 +383,18 @@ export class Checks {
     if (broken.length)
       return warn(`Failed its last three runs: ${broken.join(", ")}. Open it in Schedules.`);
     return ok(count ? `${count} on, none failing.` : "None yet.");
+  }
+
+  private watchers() {
+    const rows = this.d.db
+      .query<{ name: string; errors: number }, []>(
+        "SELECT name, errors FROM watchers WHERE enabled = 1",
+      )
+      .all();
+    const failing = rows.filter((r) => r.errors > 0).map((r) => `"${r.name}"`);
+    if (failing.length)
+      return warn(`Can't read ${failing.join(", ")} right now. Open it in Schedules.`);
+    return ok(rows.length ? `${rows.length} on, all reading.` : "None yet.");
   }
 
   private approvals() {

@@ -67,6 +67,7 @@ type Row = {
   source: string | null;
   schedule_id: number | null;
   trigger_id: number | null;
+  watcher_id: number | null;
   parent_id: number | null;
   payload: string | null;
   model: string;
@@ -102,6 +103,7 @@ const toTask = (r: Row): Task => ({
   source: r.source,
   scheduleId: r.schedule_id,
   triggerId: r.trigger_id,
+  watcherId: r.watcher_id,
   parentId: r.parent_id,
   payload: r.payload,
   model: r.model,
@@ -168,6 +170,7 @@ export class Tasks {
       status?: "active" | "done";
       scheduleId?: number;
       triggerId?: number;
+      watcherId?: number;
       limit?: number;
     } = {},
   ): Task[] {
@@ -185,6 +188,10 @@ export class Tasks {
     if (opts.triggerId !== undefined) {
       where.push("t.trigger_id = ? AND t.parent_id IS NULL");
       args.push(opts.triggerId);
+    }
+    if (opts.watcherId !== undefined) {
+      where.push("t.watcher_id = ? AND t.parent_id IS NULL");
+      args.push(opts.watcherId);
     }
     return this.d.db
       .query<Row, number[]>(
@@ -244,6 +251,7 @@ export class Tasks {
       source: p?.source ?? null,
       schedule_id: p?.scheduleId ?? null,
       trigger_id: p?.triggerId ?? null,
+      watcher_id: p?.watcherId ?? null,
     });
     if (!p && !(input.message && this.d.chats.attachTask(input.message, id)))
       this.d.chats.addCard(conversationId, botId, "task", `Task #${id}: ${input.title}`, {
@@ -288,6 +296,7 @@ export class Tasks {
     source?: string;
     scheduleId?: number;
     triggerId?: number;
+    watcherId?: number;
     runKey?: string;
     /** The event that started it. Untrusted unless `trusted`: the task starts tainted. */
     payload?: string;
@@ -333,6 +342,7 @@ export class Tasks {
       source: input.source ?? null,
       schedule_id: input.scheduleId ?? null,
       trigger_id: input.triggerId ?? null,
+      watcher_id: input.watcherId ?? null,
       run_key: input.runKey ?? null,
       payload: input.payload ?? null,
       request: input.request ?? null,

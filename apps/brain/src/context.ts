@@ -19,6 +19,7 @@ import type { Tasks } from "./tasks/service";
 import type { Teach } from "./teach/service";
 import type { Triggers } from "./triggers";
 import type { Updates } from "./updates";
+import type { Watchers } from "./watch/service";
 
 export type Deps = {
   config: Config;
@@ -41,6 +42,7 @@ export type Deps = {
   updates: Updates;
   schedules: Schedules;
   triggers: Triggers;
+  watchers: Watchers;
   plugins: Plugins;
   teach: Teach;
   checks: Checks;

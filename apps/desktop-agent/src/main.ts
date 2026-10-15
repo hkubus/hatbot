@@ -7,6 +7,7 @@ import type {
   AgentStatus,
   BrowserCall,
   BrowserInspect,
+  FetchResult,
   LiveInput,
 } from "@hatbot/shared/desktop";
 import { Browser, BrowserError } from "./browser";
@@ -32,7 +33,9 @@ const version = (() => {
 const stateDir = process.env.STATE_DIRECTORY;
 const MAX_UPDATE_BYTES = 10 * 1024 * 1024;
 /** Endpoints added since the first deploy; the brain's checks say when the desktop is behind. */
-const FEATURES = ["profiles", "exec", "files"];
+const FEATURES = ["profiles", "exec", "files", "fetch"];
+/** Pages a watcher fetches are cut here. */
+const MAX_FETCH_CHARS = 2 * 1024 * 1024;
 
 const size = await screenSize();
 const live = new LiveCapture(size);
@@ -164,6 +167,35 @@ const server = Bun.serve<{ off?: () => void }>({
             status: res.status,
             headers: { "content-type": "application/json" },
           });
+        }
+        case "POST /fetch": {
+          // For watchers: the desktop's firewall lets it reach only the internet, so the brain fetches
+          // pages from here instead of from the LAN. Not serialised: it doesn't touch the screen.
+          const { url: target } = (await req.json()) as { url: string };
+          if (!/^https?:\/\//.test(target ?? ""))
+            return json({ error: "Only http and https." }, 400);
+          let res: Response;
+          try {
+            res = await fetch(target, {
+              redirect: "follow",
+              signal: AbortSignal.timeout(20_000),
+              headers: {
+                "user-agent":
+                  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36",
+                accept: "text/html,application/json;q=0.9,*/*;q=0.8",
+                "accept-language": "en-GB,en;q=0.9",
+              },
+            });
+          } catch (err) {
+            return json({ error: `Couldn't fetch it: ${(err as Error).message}` }, 502);
+          }
+          const body = await res.text();
+          return json({
+            status: res.status,
+            url: res.url || target,
+            contentType: res.headers.get("content-type") ?? "",
+            body: body.slice(0, MAX_FETCH_CHARS),
+          } satisfies FetchResult);
         }
         case "GET /download": {
           const d = browser.download(url.searchParams.get("id") ?? "");

@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { migrations } from "./migrations";
+import { migrations, REBUILD } from "./migrations";
 
 export type Db = Database;
 
@@ -25,10 +25,21 @@ export function migrate(db: Db) {
     .get();
   const current = row?.v ?? 0;
   for (let v = current + 1; v <= migrations.length; v++) {
-    db.transaction(() => {
-      db.exec(migrations[v - 1] as string);
-      db.query("INSERT INTO schema_migrations (version) VALUES (?)").run(v);
-    })();
+    const sql = migrations[v - 1] as string;
+    // A table other tables point at is rebuilt with foreign keys off, as SQLite's docs say; they
+    // can't be switched inside a transaction.
+    const rebuild = sql.includes(REBUILD);
+    if (rebuild) db.exec("PRAGMA foreign_keys = OFF");
+    try {
+      db.transaction(() => {
+        db.exec(sql);
+        if (rebuild && db.query("PRAGMA foreign_key_check").get())
+          throw new Error(`migration ${v} broke a foreign key`);
+        db.query("INSERT INTO schema_migrations (version) VALUES (?)").run(v);
+      })();
+    } finally {
+      if (rebuild) db.exec("PRAGMA foreign_keys = ON");
+    }
   }
 }
 

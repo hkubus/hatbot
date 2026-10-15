@@ -22,6 +22,16 @@ export const COMPUTER_MEMBERS = [
 ] as const;
 export type ComputerMember = (typeof COMPUTER_MEMBERS)[number];
 
+/** POST /fetch: a GET from the desktop, which reaches only the internet (watchers). */
+export type FetchResult = {
+  status: number;
+  /** Where it ended up, after redirects. */
+  url: string;
+  contentType: string;
+  /** As text, cut at 2 MB. */
+  body: string;
+};
+
 /** POST /action. `screenshot` and `zoom` have their own endpoints, which return an image. */
 export type AgentAction = {
   name: Exclude<ComputerMember, "screenshot" | "zoom">;

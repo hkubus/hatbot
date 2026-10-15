@@ -9,6 +9,7 @@ import type {
   BrowserInspect,
   BrowserResult,
   BrowserState,
+  FetchResult,
   ShellResult,
 } from "@hatbot/shared/desktop";
 
@@ -39,6 +40,8 @@ export interface DesktopAgent {
   getFile(path: string): Promise<Uint8Array>;
   /** A browser download that finished, by the id the model saw (dl-3). */
   getDownload(id: string): Promise<{ name: string; bytes: Uint8Array }>;
+  /** A GET from the desktop, which reaches only the internet. */
+  fetch(url: string): Promise<FetchResult>;
   /** One browser toolset member, run on Chromium over CDP. */
   browser(call: BrowserCall): Promise<BrowserResult>;
   browserState(): Promise<BrowserState>;
@@ -135,6 +138,15 @@ export class HttpDesktopAgent implements DesktopAgent {
       name: decodeURIComponent(res.headers.get("x-filename") ?? "download"),
       bytes: await res.bytes(),
     };
+  }
+  async fetch(url: string) {
+    try {
+      return (await (await this.req("POST", "/fetch", { url }, 30_000)).json()) as FetchResult;
+    } catch (err) {
+      if (err instanceof DesktopError && err.status === 404)
+        throw new DesktopError("desktop-agent is too old to fetch pages; run Update.", 404);
+      throw err;
+    }
   }
   async browser(call: BrowserCall) {
     // `wait` and page loads may take up to 30 s.

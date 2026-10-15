@@ -1,3 +1,6 @@
+/** Marks a migration that rebuilds a table: it runs with foreign keys off (db/index.ts). */
+export const REBUILD = "-- rebuilds a table";
+
 // Append only. Each entry runs once, in order, inside a transaction.
 export const migrations: string[] = [
   /* 1: auth, settings */ `
@@ -387,5 +390,91 @@ export const migrations: string[] = [
   `,
   /* 23: files a task hands the bot in the chat */ `
   ALTER TABLE attachments ADD COLUMN for_chat INTEGER NOT NULL DEFAULT 0;
+  `,
+  /* 24: watchers, which look at a page or a plugin's value and wake a bot only when it changes */ `
+  ${REBUILD}
+  CREATE TABLE watchers (
+    id INTEGER PRIMARY KEY,
+    bot_id TEXT NOT NULL DEFAULT 'hatbot',
+    name TEXT NOT NULL,
+    -- JSON: where the value comes from and how it's picked out (WatchSource).
+    source TEXT NOT NULL,
+    -- JSON: when a new value counts (WatchCondition).
+    condition TEXT NOT NULL,
+    -- What a bot does when it counts; empty: you're only told.
+    prompt TEXT NOT NULL DEFAULT '',
+    every_minutes INTEGER NOT NULL,
+    -- Switches itself off after the first time it counts.
+    once INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_via TEXT NOT NULL CHECK (created_via IN ('chat', 'owner')),
+    tainted INTEGER NOT NULL DEFAULT 0,
+    tainted_by TEXT,
+    created_at TEXT NOT NULL,
+    next_check_at TEXT,
+    last_checked_at TEXT,
+    last_value TEXT,
+    last_changed_at TEXT,
+    last_fired_at TEXT,
+    last_error TEXT,
+    -- Failed checks in a row; you're told once when it reaches five.
+    errors INTEGER NOT NULL DEFAULT 0
+  );
+  -- Each value it saw that differed from the one before.
+  CREATE TABLE watcher_values (
+    id INTEGER PRIMARY KEY,
+    watcher_id INTEGER NOT NULL REFERENCES watchers(id) ON DELETE CASCADE,
+    value TEXT NOT NULL,
+    fired INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX watcher_values_watcher ON watcher_values (watcher_id, id);
+
+  -- tasks again: origin loses its CHECK, so watchers and the heartbeat can start tasks.
+  CREATE TABLE tasks_new (
+    id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    goal TEXT NOT NULL,
+    success_criteria TEXT NOT NULL DEFAULT '',
+    origin TEXT NOT NULL,
+    lane TEXT NOT NULL CHECK (lane IN ('screen', 'background')),
+    model TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'waiting_approval', 'waiting_takeover', 'done', 'failed', 'cancelled')),
+    tainted INTEGER NOT NULL DEFAULT 0,
+    injection_suspected INTEGER NOT NULL DEFAULT 0,
+    budget_usd REAL NOT NULL,
+    summary TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ')),
+    started_at TEXT,
+    finished_at TEXT,
+    reported_at TEXT,
+    schedule_id INTEGER REFERENCES schedules(id) ON DELETE SET NULL,
+    trigger_id INTEGER REFERENCES triggers(id) ON DELETE SET NULL,
+    parent_id INTEGER REFERENCES tasks(id),
+    source TEXT,
+    run_key TEXT,
+    payload TEXT,
+    effort TEXT CHECK (effort IN ('low', 'medium', 'high')),
+    skill TEXT,
+    request TEXT,
+    tainted_by TEXT,
+    bot_id TEXT NOT NULL DEFAULT 'hatbot',
+    conversation_id INTEGER REFERENCES conversations(id),
+    requested_by TEXT,
+    watcher_id INTEGER REFERENCES watchers(id) ON DELETE SET NULL
+  );
+  INSERT INTO tasks_new (id, title, goal, success_criteria, origin, lane, model, status, tainted,
+    injection_suspected, budget_usd, summary, created_at, started_at, finished_at, reported_at,
+    schedule_id, trigger_id, parent_id, source, run_key, payload, effort, skill, request, tainted_by,
+    bot_id, conversation_id, requested_by)
+  SELECT id, title, goal, success_criteria, origin, lane, model, status, tainted,
+    injection_suspected, budget_usd, summary, created_at, started_at, finished_at, reported_at,
+    schedule_id, trigger_id, parent_id, source, run_key, payload, effort, skill, request, tainted_by,
+    bot_id, conversation_id, requested_by FROM tasks;
+  DROP TABLE tasks;
+  ALTER TABLE tasks_new RENAME TO tasks;
+  CREATE INDEX tasks_status ON tasks (status);
+  CREATE INDEX tasks_run_key ON tasks (run_key, status);
+  CREATE INDEX tasks_watcher ON tasks (watcher_id);
   `,
 ];

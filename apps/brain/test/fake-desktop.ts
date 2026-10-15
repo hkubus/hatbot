@@ -7,6 +7,7 @@ import type {
   BrowserInspect,
   BrowserResult,
   BrowserState,
+  FetchResult,
   ShellResult,
 } from "@hatbot/shared/desktop";
 import { type DesktopAgent, DesktopError } from "../src/desktop/client";
@@ -91,6 +92,23 @@ export class FakeDesktop implements DesktopAgent {
       return { kind: "navigate", url: this.page.url ?? "", title: this.page.title ?? "" };
     if (call.name === "read_page") return { kind: "text", text: '- button "Send" [ref_1]' };
     return { kind: "none" };
+  }
+  /** Pages by address, for watchers. */
+  pages = new Map<string, string | Partial<FetchResult>>();
+  fetched: string[] = [];
+  async fetch(url: string): Promise<FetchResult> {
+    this.fetched.push(url);
+    const p = this.pages.get(url);
+    if (p === undefined) throw new DesktopError("Couldn't fetch it: no such page", 502);
+    const r = typeof p === "string" ? { body: p } : p;
+    const body = r.body ?? "";
+    return {
+      status: 200,
+      url,
+      contentType: body.trimStart().startsWith("{") ? "application/json" : "text/html",
+      ...r,
+      body,
+    };
   }
   async browserState(): Promise<BrowserState> {
     return {

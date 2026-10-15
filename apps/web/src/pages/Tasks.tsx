@@ -107,6 +107,9 @@ function From({ task }: { task: Task }) {
   const name = task.source ?? "";
   if (task.origin === "schedule")
     return task.scheduleId ? go(`/schedules/${task.scheduleId}`, name) : name;
+  if (task.origin === "watch")
+    return task.watcherId ? go(`/watchers/${task.watcherId}`, name) : name;
+  if (task.origin === "heartbeat") return <>Heartbeat</>;
   return task.triggerId ? go(`/triggers/${task.triggerId}`, name) : name;
 }
 

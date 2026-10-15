@@ -42,7 +42,7 @@ const VIEWS = [
 
 const viewOf = (path: string) =>
   VIEWS.find((v) =>
-    path.startsWith("/triggers/")
+    path.startsWith("/triggers/") || path.startsWith("/watchers/")
       ? v.path === "/schedules"
       : v.path === "/"
         ? path === "/" ||
