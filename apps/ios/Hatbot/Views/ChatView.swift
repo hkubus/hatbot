@@ -6,8 +6,9 @@ import SwiftUI
 import UIKit
 
 struct ChatView: View {
+  /// Kept in MainView, like the other sections', so it survives going to another section and back.
+  @Binding var path: [Route]
   @Environment(AppStore.self) private var store
-  @State private var path: [Route] = []
   @State private var error: String?
   @State private var position = ScrollPosition(edge: .bottom)
   @State private var loaded = false
@@ -249,10 +250,14 @@ struct ChatView: View {
         unfolded = []
       }
       .task {
-        do {
-          try await store.loadThread()
-        } catch {
-          self.error = message(for: error)
+        // Coming back to a chat that's loaded and live: the events kept it current. Otherwise the latest
+        // page is merged in.
+        if store.messages.isEmpty || !store.connected {
+          do {
+            try await store.loadThread()
+          } catch {
+            self.error = message(for: error)
+          }
         }
         loaded = true
       }
@@ -278,6 +283,20 @@ struct ChatView: View {
   }
 }
 
+/// Each chat's draft and files, kept while you're elsewhere in the app.
+@MainActor
+@Observable
+final class Drafts {
+  /// Saved only when you leave a chat, so typing doesn't go through here.
+  @ObservationIgnored var texts: [String: String] = [:]
+  var files: [String: [ComposerFile]] = [:]
+
+  func update(_ key: String, _ id: UUID, _ change: (inout ComposerFile) -> Void) {
+    guard let i = files[key]?.firstIndex(where: { $0.id == id }) else { return }
+    change(&files[key]![i])
+  }
+}
+
 /// Pushes a page on the chat's navigation stack, from a message's menu. A class, so the messages see the
 /// same one on every redraw.
 @MainActor
@@ -297,12 +316,21 @@ private struct Composer: View {
   @Binding var error: String?
   let sent: () -> Void
   @Environment(AppStore.self) private var store
+  @Environment(Drafts.self) private var drafts
+  /// The draft as you type; kept in `drafts` when you leave the chat or switch to another.
   @State private var draft = ""
-  @State private var files: [ComposerFile] = []
   @State private var photos: [PhotosPickerItem] = []
   @State private var pickingPhotos = false
   @State private var pickingFiles = false
   @State private var sending = false
+
+  /// Whose draft and files these are: each chat has its own, and its incognito conversation another.
+  private var key: String { "\(store.conversationId)\(store.incognito ? "i" : "")" }
+
+  private var files: [ComposerFile] {
+    get { drafts.files[key] ?? [] }
+    nonmutating set { drafts.files[key] = newValue }
+  }
 
   private var uploading: Bool { files.contains { $0.attachment == nil && $0.error == nil } }
 
@@ -315,13 +343,15 @@ private struct Composer: View {
   /// Adds a file to the composer and uploads it straight away.
   private func attach(_ data: Data, name: String, mediaType: String, preview: UIImage? = nil) {
     let f = ComposerFile(name: name, preview: preview)
+    let key = key
     files.append(f)
     Task {
+      // The chat it was attached in, even if you've gone to another meanwhile.
       do {
         let a = try await store.upload(data, name: name, mediaType: mediaType)
-        if let i = files.firstIndex(where: { $0.id == f.id }) { files[i].attachment = a }
+        drafts.update(key, f.id) { $0.attachment = a }
       } catch {
-        if let i = files.firstIndex(where: { $0.id == f.id }) { files[i].error = message(for: error) }
+        drafts.update(key, f.id) { $0.error = message(for: error) }
         self.error = message(for: error)
       }
     }
@@ -387,6 +417,12 @@ private struct Composer: View {
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
     .photosPicker(isPresented: $pickingPhotos, selection: $photos, maxSelectionCount: 10, matching: .images)
+    .onAppear { draft = drafts.texts[key] ?? "" }
+    .onDisappear { drafts.texts[key] = draft }
+    .onChange(of: key) { old, new in
+      drafts.texts[old] = draft
+      draft = drafts.texts[new] ?? ""
+    }
     .onChange(of: photos) { _, picked in
       guard !picked.isEmpty else { return }
       photos = []
@@ -494,6 +530,7 @@ private struct Composer: View {
     error = nil
     // Cleared before it's sent, and put back if sending fails.
     draft = ""
+    drafts.texts[key] = nil
     if command == nil { files = [] }
     sent()
     Task {

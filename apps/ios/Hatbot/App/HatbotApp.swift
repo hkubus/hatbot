@@ -32,7 +32,9 @@ struct MainView: View {
   @Environment(\.scenePhase) private var phase
   @State private var tab = AppTab.chat
   @State private var sidebar = false
+  @State private var chatPath: [Route] = []
   @State private var tasksPath: [Route] = []
+  @State private var drafts = Drafts()
   @State private var settingsPath: [Route] = []
 
   var body: some View {
@@ -47,12 +49,13 @@ struct MainView: View {
     }
     .onOpenURL(perform: open)
     .overlay(alignment: .top) { Toast() }
+    .environment(drafts)
   }
 
   @ViewBuilder
   private var section: some View {
     switch tab {
-    case .chat: ChatView()
+    case .chat: ChatView(path: $chatPath)
     case .search:
       SearchView { id in
         tab = .chat
