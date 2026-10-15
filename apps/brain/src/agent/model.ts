@@ -16,6 +16,8 @@ export type StreamHandlers = {
   onThinking?: (delta: string) => void;
   /** A tool the API runs itself, like web search, once its input is complete. */
   onServerTool?: (name: string, input: Record<string, unknown>) => void;
+  /** The stream failed partway and is tried again: what it streamed so far is void. */
+  onRetry?: () => void;
   signal?: AbortSignal;
 };
 

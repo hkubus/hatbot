@@ -6,6 +6,11 @@ export type Scripted = {
   content: Block[];
   stop_reason?: Anthropic.Beta.BetaStopReason;
   model?: string;
+  /** The response waits for this, as a slow model would. */
+  wait?: Promise<unknown>;
+  usage?: Partial<Anthropic.Beta.BetaUsage>;
+  /** Streamed first, then dropped: the stream failed there and was tried again. */
+  failedWith?: string;
 };
 
 const usage = (over: Partial<Anthropic.Beta.BetaUsage> = {}) =>
@@ -49,6 +54,12 @@ export class FakeModel implements ModelClient {
     const next = this.script.shift();
     if (!next) throw new Error("FakeModel: no scripted response left");
     if (h.signal?.aborted) throw h.signal.reason;
+    if (next.failedWith !== undefined) {
+      h.onText?.(next.failedWith);
+      h.onRetry?.();
+    }
+    if (next.wait) await next.wait;
+    if (h.signal?.aborted) throw h.signal.reason;
     for (const b of next.content) {
       if (b.type === "text") h.onText?.(b.text);
       if (b.type === "server_tool_use") h.onServerTool?.(b.name, b.input);
@@ -56,7 +67,7 @@ export class FakeModel implements ModelClient {
     const stop =
       next.stop_reason ??
       (next.content.some((b) => b.type === "tool_use") ? "tool_use" : "end_turn");
-    return message(next.model ?? params.model, next.content, stop);
+    return message(next.model ?? params.model, next.content, stop, next.usage);
   }
 
   async create(params: CreateParams) {
@@ -77,6 +88,7 @@ function message(
   model: string,
   content: Block[],
   stop: Anthropic.Beta.BetaStopReason,
+  over?: Partial<Anthropic.Beta.BetaUsage>,
 ): Anthropic.Beta.BetaMessage {
   return {
     id: "msg_fake",
@@ -86,6 +98,6 @@ function message(
     content,
     stop_reason: stop,
     stop_sequence: null,
-    usage: usage(),
+    usage: usage(over),
   } as unknown as Anthropic.Beta.BetaMessage;
 }

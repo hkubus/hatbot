@@ -62,6 +62,7 @@ import {
 export const EXPERT_MODEL = "claude-opus-5-5";
 export const SUMMARY_MODEL = "claude-haiku-5-5";
 const EPISODE_IDLE_MS = 30 * 60_000;
+const MAX_SUMMARY_TRIES = 3;
 const RECENT_MESSAGES = 10;
 const MAX_STEPS = 25;
 const MAX_TURN_MS = 10 * 60_000;
@@ -159,6 +160,8 @@ export class Thread {
   private summarizing = new Map<number, Promise<void>>();
   /** Summaries and deletions take turns: each rewrites the running summary from the last one. */
   private summaryTurn: Promise<unknown> = Promise.resolve();
+  /** Summaries that failed, by episode, so the sweep gives up on one after a few tries. */
+  private summaryFailures = new Map<number, number>();
   private current: AbortController | null = null;
   /** The reply in progress is in the incognito conversation. */
   private currentIncognito = false;
@@ -490,8 +493,17 @@ export class Thread {
     const filed = this.d.db
       .query("UPDATE messages SET episode_id = ? WHERE id = ?")
       .run(episodeId, message.id).changes;
-    if (filed) this.d.events.emit({ type: "message.created", message: { ...message, episodeId } });
-    return filed > 0;
+    if (!filed) return false;
+    // A message is activity: the sweep mustn't fold up the conversation it just went into.
+    this.touch(episodeId);
+    this.d.events.emit({ type: "message.created", message: { ...message, episodeId } });
+    return true;
+  }
+
+  private touch(episodeId: number) {
+    this.d.db
+      .query("UPDATE episodes SET last_activity_at = ? WHERE id = ?")
+      .run(this.now(), episodeId);
   }
 
   /** What came of a command, as a line in the chat. You just did it, so it's already seen. */
@@ -538,7 +550,7 @@ export class Thread {
 
   /** /new, /task and /remember, in turn with replies. */
   private async command(c: ChatCommand, message: ThreadMessage, bot: Bot) {
-    const { db, tasks, memory, events, settings } = this.d;
+    const { tasks, memory, events, settings } = this.d;
     const incognito = !!message.incognito;
     // A new incognito conversation: the one before it is gone, /new included.
     if (incognito && c.name === "new") return this.deleteIncognito();
@@ -548,7 +560,6 @@ export class Thread {
       incognito,
     );
     if (!this.file(message, episode.id)) return;
-    db.query("UPDATE episodes SET last_activity_at = ? WHERE id = ?").run(this.now(), episode.id);
     if (incognito)
       return void this.commandNote(
         `/${c.name} doesn't work in incognito; it would outlast the conversation.`,
@@ -836,16 +847,30 @@ export class Thread {
       !(this.current && this.currentIncognito)
     )
       await this.deleteIncognito();
-    const last = this.d.db
+    // A reply in progress, or one waiting for your approval, keeps its conversation open however long.
+    if (this.current && !this.currentIncognito) return;
+    const idle = this.d.db
       .query<{ id: number; last_activity_at: string }, [number]>(
-        "SELECT id, last_activity_at FROM episodes WHERE conversation_id = ? AND summarized = 0 AND incognito = 0 ORDER BY id DESC LIMIT 1",
+        "SELECT id, last_activity_at FROM episodes WHERE conversation_id = ? AND summarized = 0 AND incognito = 0 ORDER BY id",
       )
-      .get(this.conversationId);
-    if (!last || this.clock() - Date.parse(last.last_activity_at) < EPISODE_IDLE_MS) return;
-    try {
-      await this.summarize(last.id);
-    } catch (err) {
-      console.error("thread summary failed; trying again later", err);
+      .all(this.conversationId)
+      .filter((e) => this.clock() - Date.parse(e.last_activity_at) >= EPISODE_IDLE_MS);
+    for (const e of idle) {
+      try {
+        await this.summarize(e.id);
+        this.summaryFailures.delete(e.id);
+      } catch (err) {
+        const failures = (this.summaryFailures.get(e.id) ?? 0) + 1;
+        this.summaryFailures.set(e.id, failures);
+        if (failures < MAX_SUMMARY_TRIES) {
+          console.error("thread summary failed; trying again later", err);
+          continue;
+        }
+        // Not every minute for ever: it folds up without a summary.
+        console.error(`thread summary failed ${failures} times; giving up on episode ${e.id}`, err);
+        this.summaryFailures.delete(e.id);
+        this.markSummarized(e.id);
+      }
     }
   }
 
@@ -1076,8 +1101,12 @@ export class Thread {
           .run(summary, this.conversationId);
         if (recap)
           this.d.db.query("UPDATE episodes SET recap = ? WHERE id = ?").run(recap, episodeId);
-      }
+      } else throw new Error(`no summary for episode ${episodeId} (${res.stop_reason})`);
     }
+    this.markSummarized(episodeId);
+  }
+
+  private markSummarized(episodeId: number) {
     this.d.db.query("UPDATE episodes SET summarized = 1 WHERE id = ?").run(episodeId);
     const [episode] = this.episodes([episodeId]);
     if (episode) this.d.events.emit({ type: "episode.updated", episode });
@@ -1332,6 +1361,7 @@ export class Thread {
     const out = rewrite
       ? this.rewriteMessage(rewrite)
       : this.insertMessage("assistant", "", "streaming", episode.id, [], null, incognito, bot.id);
+    this.touch(episode.id);
     let text = "";
     let separate = false;
     /** Charts in the reply that don't draw, while the model writes them again, out of view. */
@@ -1360,7 +1390,7 @@ export class Thread {
         say(note);
       }
       db.query("UPDATE messages SET text = ?, status = ? WHERE id = ?").run(text, status, out.id);
-      db.query("UPDATE episodes SET last_activity_at = ? WHERE id = ?").run(this.now(), episode.id);
+      this.touch(episode.id);
       events.emit({ type: "message.done", id: out.id, text, status });
       if (rewrite) {
         const editedAt = this.now();
