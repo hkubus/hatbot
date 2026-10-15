@@ -478,6 +478,18 @@ final class AppStore {
     hasEarlier = older.count == Self.page
   }
 
+  /// Loads earlier pages until message `id` is in the chat, for a search hit; whether it is.
+  func reveal(_ id: Int) async -> Bool {
+    if messages.isEmpty { try? await loadThread() }
+    for _ in 0..<40 {
+      if messages.contains(where: { $0.id == id }) { return true }
+      guard hasEarlier, let first = messages.first?.id, id < first else { return false }
+      while loadingEarlier { try? await Task.sleep(for: .milliseconds(100)) }
+      do { try await loadEarlier() } catch { return false }
+    }
+    return messages.contains { $0.id == id }
+  }
+
   /// The earlier page stays "prepending" until it's laid out, so the chat keeps your place under it.
   private func settle() {
     settling?.cancel()

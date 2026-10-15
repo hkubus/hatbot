@@ -8,6 +8,8 @@ import UIKit
 struct ChatView: View {
   /// Kept in MainView, like the other sections', so it survives going to another section and back.
   @Binding var path: [Route]
+  /// A message to scroll to, from Search: earlier pages load until it's there.
+  @Binding var focus: Int?
   @Environment(AppStore.self) private var store
   @State private var error: String?
   @State private var position = ScrollPosition(edge: .bottom)
@@ -157,6 +159,8 @@ struct ChatView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
+        // So a search hit can be scrolled to by its row's id.
+        .scrollTargetLayout()
       }
       .scrollPosition($position)
       .defaultScrollAnchor(.bottom)
@@ -248,6 +252,18 @@ struct ChatView: View {
       .onChange(of: store.conversationId) {
         path = []
         unfolded = []
+      }
+      .task(id: focus) {
+        guard let id = focus else { return }
+        defer { focus = nil }
+        guard await store.reveal(id), let m = store.messages.first(where: { $0.id == id }) else {
+          error = "That message isn't in this chat any more."
+          return
+        }
+        if let e = m.episodeId { unfolded.insert(e) }
+        // Once its row is in the list.
+        try? await Task.sleep(for: .milliseconds(150))
+        withAnimation { position.scrollTo(id: "m\(id)", anchor: .center) }
       }
       .task {
         // Coming back to a chat that's loaded and live: the events kept it current. Otherwise the latest

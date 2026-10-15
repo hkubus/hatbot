@@ -4,8 +4,8 @@ import SwiftUI
 
 /// Chats, tasks, memory and what runs on its own, from one box. A message opens its chat.
 struct SearchView: View {
-  /// Opens a chat by conversation id.
-  let openChat: (Int) -> Void
+  /// Opens a chat by conversation id, at a message.
+  let openMessage: (_ conversationId: Int, _ messageId: Int) -> Void
   @Environment(AppStore.self) private var store
   @State private var query = ""
   @State private var results: SearchResults?
@@ -23,7 +23,7 @@ struct SearchView: View {
             Section("Messages") {
               ForEach(r.messages) { m in
                 Button {
-                  openChat(m.conversationId)
+                  openMessage(m.conversationId, m.id)
                 } label: {
                   VStack(alignment: .leading, spacing: 3) {
                     Text("\(m.botId.map { store.botName($0) } ?? "You"), \(m.createdAt.stampText)")

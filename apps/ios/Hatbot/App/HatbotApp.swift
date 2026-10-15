@@ -35,6 +35,8 @@ struct MainView: View {
   @State private var chatPath: [Route] = []
   @State private var tasksPath: [Route] = []
   @State private var drafts = Drafts()
+  /// A message to show in the chat, from Search.
+  @State private var focus: Int?
   @State private var settingsPath: [Route] = []
 
   var body: some View {
@@ -55,12 +57,16 @@ struct MainView: View {
   @ViewBuilder
   private var section: some View {
     switch tab {
-    case .chat: ChatView(path: $chatPath)
+    case .chat: ChatView(path: $chatPath, focus: $focus)
     case .search:
-      SearchView { id in
+      SearchView { conversationId, messageId in
         tab = .chat
-        if store.conversations.contains(where: { $0.id == id }) {
-          Task { await store.openConversation(id) }
+        Task {
+          if store.incognito { await store.setIncognito(false) }
+          if store.conversations.contains(where: { $0.id == conversationId }) {
+            await store.openConversation(conversationId)
+          }
+          focus = messageId
         }
       }
     case .tasks: TasksView(path: $tasksPath)
