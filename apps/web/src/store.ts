@@ -540,11 +540,11 @@ function apply(e: HatbotEvent) {
   }
   // Everything else lands after the deltas that came before it.
   flushDeltas();
-  // TODO(shared): in HatbotEvent once packages/shared has them (contract #2).
-  const type = (e as { type: string }).type;
-  if (type === "settings.updated") return set({ settingsVersion: state.settingsVersion + 1 });
-  if (type === "heartbeat.updated") return set({ heartbeatVersion: state.heartbeatVersion + 1 });
   switch (e.type) {
+    case "settings.updated":
+      return set({ settingsVersion: state.settingsVersion + 1 });
+    case "heartbeat.updated":
+      return set({ heartbeatVersion: state.heartbeatVersion + 1 });
     case "message.created":
       if (e.message.incognito) incognitoIds.add(e.message.id);
       if (e.message.role === "assistant") refreshConversations();

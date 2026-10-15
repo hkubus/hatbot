@@ -16,12 +16,9 @@ const DID: Record<string, string> = {
   task: "Started a task",
 };
 
-// TODO(shared): HeartbeatInfo gains this in @hatbot/shared; use it from there after the merge.
-type Recent = { at: string; found: string[]; action: string };
-
 export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [info, setInfo] = useState<(HeartbeatInfo & { recent?: Recent[] }) | null>(null);
+  const [info, setInfo] = useState<HeartbeatInfo | null>(null);
   const [instructions, setInstructions] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -47,7 +44,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
   }, [settingsVersion, attempt]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: refetch after each heartbeat
   useEffect(() => {
-    api<HeartbeatInfo & { recent?: Recent[] }>("/heartbeat").then(setInfo, () => {});
+    api<HeartbeatInfo>("/heartbeat").then(setInfo, () => {});
   }, [heartbeatVersion]);
 
   if (!settings)
@@ -80,7 +77,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
     setError("");
     try {
       const ran = await api<HeartbeatInfo>("/heartbeat/run", { body: {} });
-      setInfo((old) => ({ ...ran, recent: old?.recent }));
+      setInfo(ran);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
     }

@@ -1,4 +1,4 @@
-import type { SpendByModel, SpendDay, SpendHour, SpendSummary } from "@hatbot/shared";
+import type { SpendByModel, SpendDay, SpendByPurpose, SpendHour, SpendSummary } from "@hatbot/shared";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { LoadError, loadErrorText } from "../load";
@@ -205,8 +205,7 @@ export function Spend() {
   const [hours, setHours] = useState<SpendHour[]>([]);
   const [models, setModels] = useState<SpendByModel[]>([]);
   const [byBot, setByBot] = useState<{ botId: string; usd: number }[]>([]);
-  // TODO(shared): SpendByPurpose from @hatbot/shared once it's there.
-  const [byPurpose, setByPurpose] = useState<{ purpose: string; costUsd: number }[]>([]);
+  const [byPurpose, setByPurpose] = useState<SpendByPurpose[]>([]);
   const botNames = useStore((s) => s.bots);
   const live = useStore((s) => s.todayUsd);
   // New limits.
