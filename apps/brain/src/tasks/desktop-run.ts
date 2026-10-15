@@ -1,4 +1,5 @@
 // run_desktop_task: the computer- and browser-use subloop (PLAN.md §5.5, §5.6, §6.1).
+import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
   BetaAbstractBrowserToolset20260801,
@@ -12,13 +13,13 @@ import type { AgentElement, BrowserState, ComputerMember } from "@hatbot/shared/
 import { z } from "zod";
 import { modelErrorText } from "../agent/model";
 import { DESKTOP_PROMPT } from "../agent/prompt";
-import { screenPage } from "../agent/screening";
+import { type Screening, screenPage } from "../agent/screening";
 import { localStamp } from "../agent/thread";
 import { type Outcome, ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import { destructive } from "../plugins/ssh/policy";
-import { BudgetError, priceOf } from "../spend";
+import { BudgetError, estimateTokens, priceOf } from "../spend";
 import { skillPath } from "../teach/skills";
 import { checkFor, consequential } from "./policy";
 import { DesktopSendToChat, SEND_TO_CHAT_DESCRIPTION, sendToChat } from "./send-to-chat";
@@ -255,23 +256,8 @@ const describe = (name: string, input: Record<string, unknown>): string => {
 
 /** Rough upper estimate before a request: text by length, images at their typical size. */
 function estimateCost(messages: Anthropic.Beta.BetaMessageParam[], model: string): number {
-  let chars = 0;
-  let images = 0;
-  const walk = (v: unknown) => {
-    if (Array.isArray(v)) v.forEach(walk);
-    else if (v && typeof v === "object") {
-      const o = v as Record<string, unknown>;
-      if (o.type === "image") images++;
-      else
-        for (const [k, x] of Object.entries(o)) {
-          if (typeof x !== "string") walk(x);
-          else if (k !== "data") chars += x.length;
-        }
-    }
-  };
-  walk(messages);
   const p = priceOf(model);
-  const tokens = chars / 3.5 + images * 1600 + 3000;
+  const tokens = estimateTokens(messages) + 3000;
   return (tokens * p.input * 0.3 + 1500 * p.output) / 1_000_000;
 }
 
@@ -324,6 +310,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     release();
     tasks.setStatus(id, "waiting_approval");
     const out = await fn();
+    // Approved or answered: what it waits for now is the screen.
+    tasks.setStatus(id, "queued");
     await acquire();
     return out;
   };
@@ -429,7 +417,12 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     tasks.setStatus(id, "running");
   };
 
-  /** Logs page changes and screens each new page for prompt injection. */
+  /** Verdicts by page, so a page seen again isn't screened again. */
+  const verdicts = new Map<string, Screening>();
+  /** Pages being screened while the model reads them; their verdicts come before its next actions. */
+  let screening: Promise<{ verdict: Screening; host: string; url: string }>[] = [];
+
+  /** Logs page changes and starts screening each new page for prompt injection. */
   const observePage = async () => {
     const ctx = await agent.context(false).catch(() => null);
     const url = ctx?.url?.split("#")[0] ?? null;
@@ -440,32 +433,52 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     tasks.addStep(id, { kind: "page", name: ctx?.title || url, detail: "", url });
     const host = new URL(url).host;
     if (trustedHosts.has(host)) return;
-    try {
-      const page = await agent.context(true);
-      const verdict = await screenPage(d.model, d.spend, id, {
-        url,
-        title: page.title,
-        text: page.text ?? "",
-      });
-      if (!verdict.suspected) return;
-      tasks.mark(id, "injection_suspected");
-      tasks.addStep(id, {
-        kind: "note",
-        name: "Possible prompt injection",
-        detail: verdict.excerpt,
-        url,
-      });
+    const page = await agent.context(true).catch((err) => {
+      if (signal.aborted) throw err;
+      console.error(`task ${id}: couldn't read the page to screen it`, err);
+      return null;
+    });
+    if (!page) return;
+    const text = page.text ?? "";
+    const key = createHash("sha256").update(`${url}\n${text}`).digest("hex");
+    const known = verdicts.get(key);
+    // Never rejects: it may be left unread when the task stops first.
+    const verdict = known
+      ? Promise.resolve(known)
+      : screenPage(d.model, d.spend, id, { url, title: page.title, text }).then((v) => {
+          if (!v.failed) verdicts.set(key, v);
+          return v;
+        });
+    screening.push(verdict.then((v) => ({ verdict: v, host, url })));
+  };
+
+  /** Applies the verdicts on the pages the model just read: a suspected one asks you to go on. */
+  const screened = async () => {
+    const pending = screening;
+    screening = [];
+    for (const { verdict, host, url } of await Promise.all(pending)) {
+      if (!verdict.suspected || trustedHosts.has(host)) continue;
+      if (verdict.failed)
+        tasks.addStep(id, { kind: "note", name: "Couldn't check the page", detail: "", url });
+      else {
+        tasks.mark(id, "injection_suspected");
+        tasks.addStep(id, {
+          kind: "note",
+          name: "Possible prompt injection",
+          detail: verdict.excerpt,
+          url,
+        });
+      }
       const { outcome } = await askApproval({
         kind: "injection_warning",
         summary: `Keep going on ${host}?`,
-        reason: `This page may contain instructions aimed at Hatbot: "${verdict.excerpt}"`,
+        reason: verdict.failed
+          ? "Hatbot couldn't check this page for instructions aimed at it."
+          : `This page may contain instructions aimed at Hatbot: "${verdict.excerpt}"`,
       });
       if (outcome !== "approved")
         throw new Stop("cancelled", `Stopped on ${host}: the page may contain a prompt injection.`);
       trustedHosts.add(host);
-    } catch (err) {
-      if (err instanceof Stop || signal.aborted) throw err;
-      console.error(`task ${id}: page screening failed`, err);
     }
   };
 
@@ -663,6 +676,11 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         ? `<skill name="${task.skill}">\n${(await d.memory.read(skillPath(task.skill))).trim()}\n</skill>\n\n`
         : "";
     await acquire();
+    // Tabs an earlier task left open would be in this one's way, and in its context.
+    await d.desktop.agent.resetBrowser().catch((err) => {
+      if (signal.aborted) throw err;
+      console.error(`task ${id}: couldn't close the old tabs`, err);
+    });
     const first = await look(
       "Start",
       `${skill}<task>\n${task.goal}\nDone when: ${task.successCriteria || "the goal is met"}\n</task>\nStarted ${localStamp(new Date(tasks.clock()))}, the owner's local time.`,
@@ -698,7 +716,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           model: task.model,
           max_tokens: 16000,
           betas: BETAS,
-          system: [{ type: "text", text: system }],
+          // Tools and system end here, the same for each of this bot's tasks, so they share the entry; the
+          // top-level breakpoint follows the conversation. Two of the four breakpoints allowed.
+          system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
           cache_control: { type: "ephemeral" },
           tools: [computer.toJSON(), browser.toJSON(), ...CUSTOM_TOOLS],
           thinking: UPDATES_MODELS.has(task.model)
@@ -732,6 +752,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         taskId: id,
       });
       record("assistant", res.content);
+      // The model read the pages while Haiku screened them; nothing it asks for runs before the verdict.
+      await screened();
       for (const b of res.content) {
         const note = b.type === "text" ? b.text : b.type === "thinking" ? b.thinking : "";
         if (note.trim())

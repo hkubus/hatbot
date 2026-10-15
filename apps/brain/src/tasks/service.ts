@@ -133,6 +133,7 @@ const ACTIVE: typeof ACTIVE_TASK_STATUSES = [
   "waiting_takeover",
 ];
 const FINAL: TaskStatus[] = ["done", "failed", "cancelled"];
+const RESTARTED = "Stopped: the brain restarted.";
 
 export class Tasks {
   readonly lane = new ScreenLane();
@@ -144,20 +145,51 @@ export class Tasks {
   private wakers = new Map<number, () => void>();
   private runs = new Set<Promise<void>>();
   readonly clock: () => number;
+  /** Tasks the last run of the brain left in flight, until `recover` reports them. */
+  private interrupted: number[];
 
   constructor(readonly d: TasksDeps) {
     this.clock = d.clock ?? Date.now;
     // A restart ends every task that was in flight; their runs can't be resumed.
+    this.interrupted = d.db
+      .query<{ id: number }, TaskStatus[]>(
+        `SELECT id FROM tasks WHERE status IN (${ACTIVE.map(() => "?").join(", ")}) ORDER BY id`,
+      )
+      .all(...ACTIVE)
+      .map((r) => r.id);
     d.db
       .query(
-        `UPDATE tasks SET status = 'failed', summary = coalesce(summary, 'Stopped: the brain restarted.'),
+        `UPDATE tasks SET status = 'failed', summary = coalesce(summary, ?),
          finished_at = ? WHERE status IN (${ACTIVE.map(() => "?").join(", ")})`,
       )
-      .run(this.now(), ...ACTIVE);
+      .run(RESTARTED, this.now(), ...ACTIVE);
   }
 
   now() {
     return new Date(this.clock()).toISOString();
+  }
+
+  /**
+   * Once the chats are up after a restart: the tasks it stopped end like failed ones, each where it
+   * was started, and one notification lists them. Each can be run again from its page.
+   */
+  recover() {
+    const stopped = this.interrupted.flatMap((id) => this.get(id) ?? []);
+    this.interrupted = [];
+    for (const t of stopped)
+      this.finish(t.id, "failed", t.summary ?? RESTARTED, true, { ntfy: false });
+    const shown = stopped.filter((t) => !t.parentId);
+    if (!shown.length) return;
+    const list = shown.map((t) => `#${t.id} ${t.title}`).join("\n");
+    void this.d.notifier.send({
+      title: `The brain restarted: ${shown.length > 1 ? `${shown.length} tasks` : "a task"} stopped`,
+      message: `${list}\nRun ${shown.length > 1 ? "them" : "it"} again from Tasks.`.slice(0, 1000),
+      priority: 4,
+      click:
+        shown.length > 1
+          ? `${this.d.config.publicUrl}/tasks`
+          : `${this.d.config.publicUrl}/tasks/${shown[0]?.id}`,
+    });
   }
 
   get(id: number): Task | null {
@@ -712,7 +744,13 @@ export class Tasks {
    * write that reply again, to say what came of it. A background task's card is added now; with
    * `notify` false (a routine result), a finished one gets neither card nor notification.
    */
-  finish(id: number, status: "done" | "failed" | "cancelled", summary: string, notify = true) {
+  finish(
+    id: number,
+    status: "done" | "failed" | "cancelled",
+    summary: string,
+    notify = true,
+    { ntfy = true } = {},
+  ) {
     this.d.db
       .query("UPDATE tasks SET status = ?, summary = ?, finished_at = ? WHERE id = ?")
       .run(status, summary, this.now(), id);
@@ -742,7 +780,7 @@ export class Tasks {
     else if (tell && task.lane === "background")
       this.d.chats.addCard(conversationId, reporter, "task", text, { taskId: id });
     this.emit(id);
-    if (!tell) return;
+    if (!tell || !ntfy) return;
     void this.d.notifier.send({
       title: this.titled(task, `${word}: ${task.title}`),
       message: summary || word,

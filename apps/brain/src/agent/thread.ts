@@ -32,7 +32,7 @@ import {
 } from "../plugins/registry";
 import type { Schedules } from "../schedules";
 import type { SettingsStore } from "../settings";
-import { BudgetError, priceOf, type Spend, tokenCount, tokensOf } from "../spend";
+import { BudgetError, estimateTokens, priceOf, type Spend, tokenCount, tokensOf } from "../spend";
 import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
 import type { Watchers } from "../watch/service";
@@ -48,13 +48,13 @@ import {
 } from "./prompt";
 import { mayReview, safeToRun } from "./review";
 import {
+  CHAT_WEB_TOOLS,
   INCOGNITO_TOOLS,
   inBatches,
   LOOKUP_TOOLS,
   runTool,
   TOOL_PARAMS,
   toolParam,
-  WEB_TOOLS,
   webReads,
 } from "./tools";
 
@@ -62,6 +62,9 @@ import {
 export const EXPERT_MODEL = "claude-opus-5-5";
 export const SUMMARY_MODEL = "claude-haiku-5-5";
 const EPISODE_IDLE_MS = 30 * 60_000;
+const MAX_SUMMARY_TRIES = 3;
+/** A conversation whose last request was this long carries on in a new one. */
+const LONG_EPISODE_TOKENS = 90_000;
 const RECENT_MESSAGES = 10;
 const MAX_STEPS = 25;
 const MAX_TURN_MS = 10 * 60_000;
@@ -84,6 +87,7 @@ const BETAS: Anthropic.Beta.AnthropicBeta[] = [
   "server-side-fallback-2026-07-01",
   "thinking-display-updates-2026-08-18",
   "thinking-binding-controls-2026-08-01",
+  "mid-conversation-output-config-2026-07-01",
 ];
 /**
  * What an episode's thinking blocks are bound to: the system prompt, the tools and the model. The API
@@ -120,6 +124,9 @@ const ASK_OPUS = toolParam({
 
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 type Turn = Anthropic.Beta.BetaMessageParam;
+type Effort = NonNullable<Anthropic.Beta.BetaOutputConfig["effort"]>;
+/** Stored among a bot's turns where its chat effort was set: not a turn itself. */
+type EffortMark = { effort: Effort };
 /** How a reply ended: its text, for the @names that bring other bots in. */
 type Said = { text: string; status: "done" | "error"; stopped?: boolean };
 
@@ -157,8 +164,12 @@ export class Thread {
   private chain: Promise<void> = Promise.resolve();
   /** Summaries being written, so the sweep and a new message don't write one twice. */
   private summarizing = new Map<number, Promise<void>>();
+  /** How long a new conversation waits for the one before it to be summarized. */
+  summaryWaitMs = 3000;
   /** Summaries and deletions take turns: each rewrites the running summary from the last one. */
   private summaryTurn: Promise<unknown> = Promise.resolve();
+  /** Summaries that failed, by episode, so the sweep gives up on one after a few tries. */
+  private summaryFailures = new Map<number, number>();
   private current: AbortController | null = null;
   /** The reply in progress is in the incognito conversation. */
   private currentIncognito = false;
@@ -490,8 +501,17 @@ export class Thread {
     const filed = this.d.db
       .query("UPDATE messages SET episode_id = ? WHERE id = ?")
       .run(episodeId, message.id).changes;
-    if (filed) this.d.events.emit({ type: "message.created", message: { ...message, episodeId } });
-    return filed > 0;
+    if (!filed) return false;
+    // A message is activity: the sweep mustn't fold up the conversation it just went into.
+    this.touch(episodeId);
+    this.d.events.emit({ type: "message.created", message: { ...message, episodeId } });
+    return true;
+  }
+
+  private touch(episodeId: number) {
+    this.d.db
+      .query("UPDATE episodes SET last_activity_at = ? WHERE id = ?")
+      .run(this.now(), episodeId);
   }
 
   /** What came of a command, as a line in the chat. You just did it, so it's already seen. */
@@ -538,7 +558,7 @@ export class Thread {
 
   /** /new, /task and /remember, in turn with replies. */
   private async command(c: ChatCommand, message: ThreadMessage, bot: Bot) {
-    const { db, tasks, memory, events, settings } = this.d;
+    const { tasks, memory, events, settings } = this.d;
     const incognito = !!message.incognito;
     // A new incognito conversation: the one before it is gone, /new included.
     if (incognito && c.name === "new") return this.deleteIncognito();
@@ -548,7 +568,6 @@ export class Thread {
       incognito,
     );
     if (!this.file(message, episode.id)) return;
-    db.query("UPDATE episodes SET last_activity_at = ? WHERE id = ?").run(this.now(), episode.id);
     if (incognito)
       return void this.commandNote(
         `/${c.name} doesn't work in incognito; it would outlast the conversation.`,
@@ -623,7 +642,7 @@ export class Thread {
         .filter((t) => others.length || t.name !== "ask_bot"),
       ...(onHaiku ? [ASK_OPUS] : []),
       ...pluginTools.map(toolParam),
-      ...WEB_TOOLS,
+      ...CHAT_WEB_TOOLS,
     ];
     return {
       system,
@@ -725,15 +744,52 @@ export class Thread {
       .run(episodeId, botId, role, JSON.stringify(content), this.now());
   }
 
-  /** A bot's own API conversation in the episode: in a group, each bot keeps its own. */
-  private loadTurns(episodeId: number, botId: string): Turn[] {
+  /**
+   * A bot's own API conversation in the episode: in a group, each bot keeps its own. `files`: the
+   * reply's files, read once; older turns hold the bytes themselves. `effort`: the episode's first,
+   * for the request; a later change is a message where it was made, so the cache stays.
+   */
+  private async loadTurns(
+    episodeId: number,
+    botId: string,
+    files?: Map<number, BlockParam[]>,
+  ): Promise<{ turns: Turn[]; effort: Effort | null }> {
+    let effort: Effort | null = null;
     const turns = this.d.db
       .query<{ role: "user" | "assistant"; content: string }, [number, string]>(
         "SELECT role, content FROM episode_turns WHERE episode_id = ? AND bot_id = ? ORDER BY id",
       )
       .all(episodeId, botId)
-      .map((r) => ({ role: r.role, content: JSON.parse(r.content) }));
-    return answered(turns);
+      .flatMap((r): Turn[] => {
+        const content = JSON.parse(r.content);
+        if (Array.isArray(content)) return [{ role: r.role, content }];
+        const set = (content as EffortMark).effort;
+        if (effort === null) {
+          effort = set;
+          return [];
+        }
+        return [{ role: "system", content: [], output_config: { effort: set } }];
+      });
+    const all = answered(turns);
+    return {
+      turns: this.d.attachments ? await this.d.attachments.expand(all, files) : all,
+      effort,
+    };
+  }
+
+  /** The effort the bot's next reply in the episode runs at, set where it changed. */
+  private setEffort(episodeId: number, botId: string, effort: Effort) {
+    const last = this.d.db
+      .query<{ content: string }, [number, string]>(
+        "SELECT content FROM episode_turns WHERE episode_id = ? AND bot_id = ? AND substr(content, 1, 1) = '{' ORDER BY id DESC LIMIT 1",
+      )
+      .get(episodeId, botId);
+    if (last && (JSON.parse(last.content) as EffortMark).effort === effort) return;
+    this.d.db
+      .query(
+        "INSERT INTO episode_turns (episode_id, bot_id, role, content, created_at) VALUES (?, ?, 'user', ?, ?)",
+      )
+      .run(episodeId, botId, JSON.stringify({ effort } satisfies EffortMark), this.now());
   }
 
   /** Whether the model has seen the episode yet: any bot, or with `botId` that one. */
@@ -754,7 +810,8 @@ export class Thread {
     prefix: string,
     fresh = false,
     incognito = false,
-  ): Promise<{ id: number; isNew: boolean; fresh: boolean }> {
+  ): Promise<{ id: number; isNew: boolean; fresh: boolean; long?: boolean }> {
+    let long = false;
     const last = this.d.db
       .query<
         {
@@ -772,14 +829,18 @@ export class Thread {
     const open = last && this.clock() - Date.parse(last.last_activity_at) < EPISODE_IDLE_MS;
     if (last && open && (!fresh || last.fresh)) {
       const untouched = !this.hasTurns(last.id);
-      if (last.prefix === prefix && (!fresh || untouched))
+      // Past this, every reply rereads a long prompt (and Haiku bills all of it at 5x past 100k);
+      // the summary and the last few messages carry it into a new one.
+      long = !untouched && this.promptTokens(last.id) > LONG_EPISODE_TOKENS;
+      if (last.prefix === prefix && (!fresh || untouched) && !long)
         return { id: last.id, isNew: untouched, fresh: !!last.fresh };
       // Nothing in it is bound to the old prompt yet; a second /new is the same new conversation.
       if (untouched) {
         this.d.db.query("UPDATE episodes SET prefix = ? WHERE id = ?").run(prefix, last.id);
         return { id: last.id, isNew: true, fresh: !!last.fresh };
       }
-      if (!fresh)
+      if (long) console.log(`episode ${last.id}: it got long; starting a new episode`);
+      else if (!fresh)
         console.log(`episode ${last.id}: the prompt or tools changed; starting a new episode`);
     }
     // An incognito conversation that went idle ends; one whose prompt changed carries on in a new episode.
@@ -789,7 +850,7 @@ export class Thread {
         console.error("thread summary failed; keeping the previous one", err),
       );
       // /new opens right away; the first reply in it waits for the summary instead.
-      if (!fresh) await summary;
+      if (!fresh) await this.awhile(summary);
     }
     const row = this.d.db
       .query<{ id: number }, [number, string, string, string, number, number]>(
@@ -797,7 +858,19 @@ export class Thread {
       )
       .get(this.conversationId, this.now(), this.now(), prefix, fresh ? 1 : 0, incognito ? 1 : 0);
     if (!row) throw new Error("episode insert failed");
-    return { id: row.id, isNew: true, fresh };
+    return { id: row.id, isNew: true, fresh, long };
+  }
+
+  /** How long the episode's last chat request was, in prompt tokens. */
+  private promptTokens(episodeId: number): number {
+    return (
+      this.d.db
+        .query<{ tokens: number }, [number]>(
+          `SELECT input_tokens + cache_read_tokens + cache_write_5m_tokens + cache_write_1h_tokens AS tokens
+           FROM spend_ledger WHERE episode_id = ? AND purpose = 'thread' ORDER BY id DESC LIMIT 1`,
+        )
+        .get(episodeId)?.tokens ?? 0
+    );
   }
 
   private threadSummary(): string {
@@ -836,16 +909,30 @@ export class Thread {
       !(this.current && this.currentIncognito)
     )
       await this.deleteIncognito();
-    const last = this.d.db
+    // A reply in progress, or one waiting for your approval, keeps its conversation open however long.
+    if (this.current && !this.currentIncognito) return;
+    const idle = this.d.db
       .query<{ id: number; last_activity_at: string }, [number]>(
-        "SELECT id, last_activity_at FROM episodes WHERE conversation_id = ? AND summarized = 0 AND incognito = 0 ORDER BY id DESC LIMIT 1",
+        "SELECT id, last_activity_at FROM episodes WHERE conversation_id = ? AND summarized = 0 AND incognito = 0 ORDER BY id",
       )
-      .get(this.conversationId);
-    if (!last || this.clock() - Date.parse(last.last_activity_at) < EPISODE_IDLE_MS) return;
-    try {
-      await this.summarize(last.id);
-    } catch (err) {
-      console.error("thread summary failed; trying again later", err);
+      .all(this.conversationId)
+      .filter((e) => this.clock() - Date.parse(e.last_activity_at) >= EPISODE_IDLE_MS);
+    for (const e of idle) {
+      try {
+        await this.summarize(e.id);
+        this.summaryFailures.delete(e.id);
+      } catch (err) {
+        const failures = (this.summaryFailures.get(e.id) ?? 0) + 1;
+        this.summaryFailures.set(e.id, failures);
+        if (failures < MAX_SUMMARY_TRIES) {
+          console.error("thread summary failed; trying again later", err);
+          continue;
+        }
+        // Not every minute for ever: it folds up without a summary.
+        console.error(`thread summary failed ${failures} times; giving up on episode ${e.id}`, err);
+        this.summaryFailures.delete(e.id);
+        this.markSummarized(e.id);
+      }
     }
   }
 
@@ -885,6 +972,19 @@ export class Thread {
     // Out of the write-ahead log too, not only the database file.
     db.query("PRAGMA wal_checkpoint(TRUNCATE)").get();
     this.d.events.emit({ type: "message.deleted", ids });
+  }
+
+  /**
+   * Waits for a summary, but not long: one that's slow lands in the background, in time for the
+   * conversation after, and this one starts from the summary before it.
+   */
+  private async awhile(summary: Promise<unknown>) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cap = new Promise((r) => {
+      timer = setTimeout(r, this.summaryWaitMs);
+    });
+    await Promise.race([summary, cap]);
+    clearTimeout(timer);
   }
 
   /** Folds a finished episode into the rolling thread summary with Haiku, and writes its recap. */
@@ -1076,8 +1176,12 @@ export class Thread {
           .run(summary, this.conversationId);
         if (recap)
           this.d.db.query("UPDATE episodes SET recap = ? WHERE id = ?").run(recap, episodeId);
-      }
+      } else throw new Error(`no summary for episode ${episodeId} (${res.stop_reason})`);
     }
+    this.markSummarized(episodeId);
+  }
+
+  private markSummarized(episodeId: number) {
     this.d.db.query("UPDATE episodes SET summarized = 1 WHERE id = ?").run(episodeId);
     const [episode] = this.episodes([episodeId]);
     if (episode) this.d.events.emit({ type: "episode.updated", episode });
@@ -1163,6 +1267,50 @@ export class Thread {
     return done;
   }
 
+  /**
+   * Writes a reply that failed again, in place, from the turns it had: no new message of yours. Null
+   * when it can't be: see `retryable`.
+   */
+  retry(messageId: number): Promise<void> | null {
+    if (this.current || !this.retryable(messageId)) return null;
+    const done = this.chain.then(async () => {
+      // Something may have come first in the queue.
+      const again = this.retryable(messageId);
+      const bot = again && this.d.bots.get(again.botId ?? HATBOT_ID);
+      if (again && bot) await this.reply(null, bot, null, again);
+    });
+    this.chain = done.catch((err) => console.error("thread turn failed", err));
+    return done;
+  }
+
+  /**
+   * A reply that can be written again: it failed, nothing was said after it, and its episode is the
+   * one still going, so its turns are where the next request picks up.
+   */
+  private retryable(messageId: number): ThreadMessage | null {
+    const { db } = this.d;
+    const row = db
+      .query<MessageRow, [number, number]>(
+        `SELECT ${MESSAGE_COLUMNS} FROM messages WHERE id = ? AND conversation_id = ?`,
+      )
+      .get(messageId, this.conversationId);
+    if (row?.role !== "assistant" || row.kind !== "text" || row.status !== "error") return null;
+    if (row.episodeId === null) return null;
+    const later = db
+      .query<unknown, [number, number, number]>(
+        `SELECT 1 FROM messages WHERE conversation_id = ? AND incognito = ? AND id > ?
+         AND (role = 'user' OR kind = 'text') LIMIT 1`,
+      )
+      .get(this.conversationId, row.incognito, messageId);
+    const episode = db
+      .query<{ id: number; summarized: number }, [number, number]>(
+        "SELECT id, summarized FROM episodes WHERE conversation_id = ? AND incognito = ? ORDER BY id DESC LIMIT 1",
+      )
+      .get(this.conversationId, row.incognito);
+    if (later || episode?.id !== row.episodeId || episode.summarized) return null;
+    return messageOf(row);
+  }
+
   /** The reply that started one of these tasks, the latest: what a bot telling you about them rewrites. */
   private taskReply(tasks: { id: number }[]): ThreadMessage | null {
     if (!tasks.length) return null;
@@ -1175,7 +1323,7 @@ export class Thread {
     return row ? messageOf(row) : null;
   }
 
-  /** Writes a task's reply again: emptied, and shown as being written. */
+  /** Writes a reply again: emptied, and shown as being written. */
   private rewriteMessage(m: ThreadMessage): ThreadMessage {
     this.d.db.query("UPDATE messages SET text = '', status = 'streaming' WHERE id = ?").run(m.id);
     this.d.events.emit({ type: "message.rewrite", id: m.id });
@@ -1210,11 +1358,17 @@ export class Thread {
     user: ThreadMessage | null,
     bot: Bot,
     group: { nudged: boolean; round: ThreadMessage | null } | null = null,
+    again: ThreadMessage | null = null,
   ): Promise<Said | undefined> {
     const { db, events, spend, model, plugins } = this.d;
-    const incognito = !!user?.incognito;
+    const incognito = !!(user ?? again)?.incognito;
     // Told already, with a message of yours that came first.
-    if (!user && !group?.nudged && !this.d.tasks?.hasUnreported(this.conversationId, bot.id))
+    if (
+      !user &&
+      !again &&
+      !group?.nudged &&
+      !this.d.tasks?.hasUnreported(this.conversationId, bot.id)
+    )
       return;
     const userId = user?.id ?? Number.MAX_SAFE_INTEGER;
     const { system, pluginTools, chatModel, chatEffort, onHaiku, tools, prefix } = this.turnSetup(
@@ -1223,115 +1377,128 @@ export class Thread {
     );
     const offered = new Set(tools.map((t) => ("name" in t ? t.name : "")));
     // A group's episode is bound to every bot's prefix.
-    const episode = await this.episodeFor(
-      group ? this.prefixFor(bot, incognito) : prefix,
-      false,
-      incognito,
-    );
+    const episode = again
+      ? { id: again.episodeId as number, isNew: false, fresh: false, long: false }
+      : await this.episodeFor(group ? this.prefixFor(bot, incognito) : prefix, false, incognito);
     if (user && !this.file(user, episode.id)) return;
 
-    const userBlocks: BlockParam[] = [];
-    // In a group each bot has its own turns: one new to the episode opens it with the context, up to
-    // the message the bots are answering, and gets what came after in <group_messages>.
-    const firstTurn = group ? !this.hasTurns(episode.id, bot.id) : episode.isNew;
-    const contextBefore = group ? (group.round?.id ?? userId) : userId;
-    const spoke = group
-      ? firstTurn
-        ? contextBefore - 1
-        : (db
-            .query<{ id: number | null }, [number, string]>(
-              "SELECT max(id) AS id FROM messages WHERE episode_id = ? AND bot_id = ? AND role = 'assistant' AND kind = 'text'",
-            )
-            .get(episode.id, bot.id)?.id ?? contextBefore - 1)
-      : 0;
-    if (firstTurn) {
-      // The summary a /new left running is part of the context.
-      await Promise.allSettled(this.summarizing.values());
-      userBlocks.push({
-        type: "text",
-        text: await this.episodeContext(bot, contextBefore, episode.id, episode.fresh, incognito),
-      });
-      // /new and incognito leave what came before, and what it had read, behind.
-      if (episode.isNew && !episode.fresh && !incognito) this.inheritTaint(episode.id, userId);
+    let ended: Task[] = [];
+    let rewrite: ThreadMessage | null = null;
+    if (again) {
+      // The turns it had are there to run again; after a reply the model ended, it needs a word.
+      const { turns } = await this.loadTurns(episode.id, bot.id, new Map());
+      if (turns.at(-1)?.role === "assistant")
+        this.appendTurn(episode.id, bot.id, "user", [
+          {
+            type: "text",
+            text: "(No message from the owner: they asked you to try that reply again.)",
+          },
+        ]);
     } else {
-      const commands = this.commandsSince(episode.id, userId);
-      if (commands)
+      const userBlocks: BlockParam[] = [];
+      // In a group each bot has its own turns: one new to the episode opens it with the context, up to
+      // the message the bots are answering, and gets what came after in <group_messages>.
+      const firstTurn = group ? !this.hasTurns(episode.id, bot.id) : episode.isNew;
+      const contextBefore = group ? (group.round?.id ?? userId) : userId;
+      const spoke = group
+        ? firstTurn
+          ? contextBefore - 1
+          : (db
+              .query<{ id: number | null }, [number, string]>(
+                "SELECT max(id) AS id FROM messages WHERE episode_id = ? AND bot_id = ? AND role = 'assistant' AND kind = 'text'",
+              )
+              .get(episode.id, bot.id)?.id ?? contextBefore - 1)
+        : 0;
+      if (firstTurn) {
+        // The summary a /new left running is part of the context.
+        await this.awhile(Promise.allSettled(this.summarizing.values()));
         userBlocks.push({
           type: "text",
-          text: `<owner_commands>\nCommands the owner ran since their last message; ${bot.name}'s lines are what the app answered.\n${commands}\n</owner_commands>`,
+          text: await this.episodeContext(bot, contextBefore, episode.id, episode.fresh, incognito),
         });
+        // /new and incognito leave what came before, and what it had read, behind.
+        if (episode.isNew && !episode.fresh && !incognito) this.inheritTaint(episode.id, userId);
+      } else {
+        const commands = this.commandsSince(episode.id, userId);
+        if (commands)
+          userBlocks.push({
+            type: "text",
+            text: `<owner_commands>\nCommands the owner ran since their last message; ${bot.name}'s lines are what the app answered.\n${commands}\n</owner_commands>`,
+          });
+      }
+      // An untrusted MCP server's tool descriptions are in the prompt now.
+      const foreign = untrustedDefinitions(pluginTools);
+      if (foreign) this.taint(episode.id, foreign);
+      // Task news waits for the conversation that's kept.
+      ended = incognito ? [] : (this.d.tasks?.takeUnreported(this.conversationId, bot.id) ?? []);
+      // What tainted tasks report carries what they read.
+      const tainted = ended.find((t) => t.tainted);
+      if (tainted) this.taint(episode.id, `Task #${tainted.id} "${tainted.title}"`);
+      if (ended.length) {
+        const files = this.d.attachments?.ofTasks(ended.map((t) => t.id)) ?? [];
+        const named = (list: typeof files) => list.map((a) => `#${a.id} "${a.name}"`).join(", ");
+        const lines = ended.map((t) => {
+          const sent = files.filter((a) => a.taskId === t.id && !a.forChat);
+          const handed = files.filter((a) => a.taskId === t.id && a.forChat);
+          return [
+            `Task #${t.id} "${t.title}"${t.botId === bot.id ? "" : ` (by ${this.d.bots.nameOf(t.botId)}, which you asked)`} ${t.status}: ${t.summary ?? ""}`,
+            ...(sent.length ? [`Files it sent the owner, shown with it: ${named(sent)}.`] : []),
+            ...(handed.length ? [`Files it handed you, below: ${named(handed)}.`] : []),
+          ].join("\n");
+        });
+        userBlocks.push({
+          type: "text",
+          text: `<task_updates>\n${lines.join("\n")}\n</task_updates>`,
+        });
+        // Data a task handed over for this reply, e.g. a series to draw. What it holds came from the task.
+        const handed = files.filter((a) => a.forChat);
+        if (handed.length && this.d.attachments)
+          userBlocks.push(...this.d.attachments.refs(handed));
+      }
+      // Telling you about a task shown under its reply: that reply is written again, not a new one.
+      rewrite = !user && !group?.nudged ? this.taskReply(ended) : null;
+      const taskNews = `[${localStamp(new Date(this.clock()))}]\n(No message from the owner: a task they started from the chat ended. ${
+        rewrite
+          ? "What you write now replaces your reply that started it, and it's all the owner sees of how it went. Tell them what came of it, briefly, with what you know from this conversation."
+          : "Tell them what came of it, briefly, with what you know from this conversation. Don't repeat what they can already see."
+      })`;
+      if (group) {
+        const since = this.groupSince(bot, spoke);
+        userBlocks.push({
+          type: "text",
+          text:
+            [
+              ...(since ? [`<group_messages>\n${since}\n</group_messages>`] : []),
+              ...(user
+                ? []
+                : [
+                    group.nudged
+                      ? `(Your turn, ${bot.name}: you were mentioned above. Answer your part.)`
+                      : taskNews,
+                  ]),
+            ].join("\n\n") || taskNews,
+        });
+      } else
+        userBlocks.push({
+          type: "text",
+          text: user
+            ? `[${localStamp(new Date(user.createdAt))}]\n${user.text || "(no text, only files)"}`
+            : taskNews,
+        });
+      // Your files: what's in them was written by whoever made them, so they're untrusted (PLAN.md §6.1).
+      if (user?.attachments?.length && this.d.attachments) {
+        userBlocks.push(...this.d.attachments.refs(user.attachments));
+        this.taint(episode.id, `Attached file "${user.attachments[0]?.name}"`);
+      }
+      this.setEffort(episode.id, bot.id, chatEffort);
+      this.appendTurn(episode.id, bot.id, "user", userBlocks);
     }
-    // An untrusted MCP server's tool descriptions are in the prompt now.
-    const foreign = untrustedDefinitions(pluginTools);
-    if (foreign) this.taint(episode.id, foreign);
-    // Task news waits for the conversation that's kept.
-    const ended = incognito
-      ? []
-      : (this.d.tasks?.takeUnreported(this.conversationId, bot.id) ?? []);
-    // What tainted tasks report carries what they read.
-    const tainted = ended.find((t) => t.tainted);
-    if (tainted) this.taint(episode.id, `Task #${tainted.id} "${tainted.title}"`);
-    if (ended.length) {
-      const files = this.d.attachments?.ofTasks(ended.map((t) => t.id)) ?? [];
-      const named = (list: typeof files) => list.map((a) => `#${a.id} "${a.name}"`).join(", ");
-      const lines = ended.map((t) => {
-        const sent = files.filter((a) => a.taskId === t.id && !a.forChat);
-        const handed = files.filter((a) => a.taskId === t.id && a.forChat);
-        return [
-          `Task #${t.id} "${t.title}"${t.botId === bot.id ? "" : ` (by ${this.d.bots.nameOf(t.botId)}, which you asked)`} ${t.status}: ${t.summary ?? ""}`,
-          ...(sent.length ? [`Files it sent the owner, shown with it: ${named(sent)}.`] : []),
-          ...(handed.length ? [`Files it handed you, below: ${named(handed)}.`] : []),
-        ].join("\n");
-      });
-      userBlocks.push({
-        type: "text",
-        text: `<task_updates>\n${lines.join("\n")}\n</task_updates>`,
-      });
-      // Data a task handed over for this reply, e.g. a series to draw. What it holds came from the task.
-      const handed = files.filter((a) => a.forChat);
-      if (handed.length && this.d.attachments)
-        userBlocks.push(...(await this.d.attachments.blocks(handed)));
-    }
-    // Telling you about a task shown under its reply: that reply is written again, not a new one.
-    const rewrite = !user && !group?.nudged ? this.taskReply(ended) : null;
-    const taskNews = `[${localStamp(new Date(this.clock()))}]\n(No message from the owner: a task they started from the chat ended. ${
-      rewrite
-        ? "What you write now replaces your reply that started it, and it's all the owner sees of how it went. Tell them what came of it, briefly, with what you know from this conversation."
-        : "Tell them what came of it, briefly, with what you know from this conversation. Don't repeat what they can already see."
-    })`;
-    if (group) {
-      const since = this.groupSince(bot, spoke);
-      userBlocks.push({
-        type: "text",
-        text:
-          [
-            ...(since ? [`<group_messages>\n${since}\n</group_messages>`] : []),
-            ...(user
-              ? []
-              : [
-                  group.nudged
-                    ? `(Your turn, ${bot.name}: you were mentioned above. Answer your part.)`
-                    : taskNews,
-                ]),
-          ].join("\n\n") || taskNews,
-      });
-    } else
-      userBlocks.push({
-        type: "text",
-        text: user
-          ? `[${localStamp(new Date(user.createdAt))}]\n${user.text || "(no text, only files)"}`
-          : taskNews,
-      });
-    // Your files: what's in them was written by whoever made them, so they're untrusted (PLAN.md §6.1).
-    if (user?.attachments?.length && this.d.attachments) {
-      userBlocks.push(...(await this.d.attachments.blocks(user.attachments)));
-      this.taint(episode.id, `Attached file "${user.attachments[0]?.name}"`);
-    }
-    this.appendTurn(episode.id, bot.id, "user", userBlocks);
 
-    const out = rewrite
-      ? this.rewriteMessage(rewrite)
-      : this.insertMessage("assistant", "", "streaming", episode.id, [], null, incognito, bot.id);
+    const out =
+      (rewrite ?? again)
+        ? this.rewriteMessage((rewrite ?? again) as ThreadMessage)
+        : this.insertMessage("assistant", "", "streaming", episode.id, [], null, incognito, bot.id);
+    this.touch(episode.id);
     let text = "";
     let separate = false;
     /** Charts in the reply that don't draw, while the model writes them again, out of view. */
@@ -1355,12 +1522,17 @@ export class Thread {
       events.emit({ type: "message.delta", id: out.id, text: delta });
     };
     const finish = (status: "done" | "error", note?: string): Said => {
+      // A chart being fixed is out of view; the reply ends with what's shown.
+      chartFix = null;
+      // A task's reply that came to nothing still says how the task went.
+      const task = rewrite && ended.find((t) => t.id === rewrite?.taskId);
+      if (task && !text.trim()) say(resultText(task));
       if (note) {
         separate = true;
         say(note);
       }
       db.query("UPDATE messages SET text = ?, status = ? WHERE id = ?").run(text, status, out.id);
-      db.query("UPDATE episodes SET last_activity_at = ? WHERE id = ?").run(this.now(), episode.id);
+      this.touch(episode.id);
       events.emit({ type: "message.done", id: out.id, text, status });
       if (rewrite) {
         const editedAt = this.now();
@@ -1368,6 +1540,21 @@ export class Thread {
         events.emit({ type: "message.edited", id: out.id, editedAt });
       }
       return { text, status };
+    };
+
+    /**
+     * Where a model call's text starts. Its result puts the reply back there when the stream fails
+     * partway and is tried again: the apps drop the message's text and get it again up to there.
+     */
+    const checkpoint = () => {
+      const at = { text, separate, fix: chartFix?.text };
+      return () => {
+        text = at.text;
+        separate = at.separate;
+        if (chartFix && at.fix !== undefined) chartFix.text = at.fix;
+        events.emit({ type: "message.rewrite", id: out.id });
+        if (text) events.emit({ type: "message.delta", id: out.id, text });
+      };
     };
 
     let askedOpus = false;
@@ -1388,6 +1575,8 @@ export class Thread {
       const price = priceOf(EXPERT_MODEL);
       spend.check(((content.length / 3 + 2000) * price.input + 8000 * price.output) / 1_000_000);
       separate = true;
+      let answer = "";
+      const restore = checkpoint();
       const res = await model.stream(
         {
           model: EXPERT_MODEL,
@@ -1399,7 +1588,17 @@ export class Thread {
           output_config: { effort: "high" },
           messages: [{ role: "user", content }],
         },
-        { onText: say, signal: abort.signal },
+        {
+          onText: (delta) => {
+            answer += delta;
+            say(delta);
+          },
+          onRetry: () => {
+            answer = "";
+            restore();
+          },
+          signal: abort.signal,
+        },
       );
       used.costUsd += spend.recordResponse({
         model: EXPERT_MODEL,
@@ -1412,13 +1611,18 @@ export class Thread {
       events.emit({ type: "message.usage", id: out.id, ...used });
       separate = true;
       if (res.stop_reason === "refusal") return result("Opus declined to answer this.", true);
+      // The answer itself too, so what comes after it can follow on from it.
       return result(
-        res.stop_reason === "max_tokens"
-          ? "Opus's answer was cut off; it's in your reply as far as it got. Tell the owner, briefly."
-          : "Opus's answer is now in your reply, shown to the owner as is. Don't repeat, summarise or rewrite it. Add at most a line if something needs saying; otherwise end your reply.",
+        `${
+          res.stop_reason === "max_tokens"
+            ? "Opus's answer was cut off; it's in your reply as far as it got. Tell the owner, briefly."
+            : "Opus's answer is now in your reply, shown to the owner as is. Don't repeat, summarise or rewrite it. Add at most a line if something needs saying; otherwise end your reply."
+        }\n\n<opus_answer>\n${answer.trim()}\n</opus_answer>`,
       );
     };
 
+    if (episode.long) progress("The conversation got long; carrying on in a new one");
+    const files = new Map<number, BlockParam[]>();
     const started = this.clock();
     let waited = 0;
     let commands = 0;
@@ -1433,7 +1637,7 @@ export class Thread {
           return finish("error", "_Stopped: this reply hit its step or time limit._");
         }
 
-        const messages = this.loadTurns(episode.id, bot.id);
+        const { turns: messages, effort } = await this.loadTurns(episode.id, bot.id, files);
         try {
           spend.check(estimateCost(messages, chatModel));
         } catch (err) {
@@ -1461,13 +1665,13 @@ export class Thread {
             tools,
             // If a replayed thinking block fails the conversation check anyway, lose that reasoning
             // rather than the reply.
-            // Haiku 5.5 writes no progress notes between tools, so it gets the default display.
+            // Haiku 5.5 writes no progress notes between tools; its thinking shows summarized.
             thinking: {
               type: "adaptive",
-              ...(onHaiku ? {} : { display: "updates" as const }),
+              display: onHaiku ? "summarized" : "updates",
               block_binding: { prefix_mismatch_behavior: "drop_block" },
             },
-            output_config: { effort: chatEffort },
+            output_config: { effort: effort ?? chatEffort },
             messages,
           },
           {
@@ -1479,6 +1683,7 @@ export class Thread {
               else if (name === "web_fetch")
                 progress(`Reading ${String(input.url ?? "a web page")}`);
             },
+            onRetry: checkpoint(),
             signal: abort.signal,
           },
         );
@@ -1633,6 +1838,8 @@ export class Thread {
         return abort.signal.reason === STOPPED
           ? { ...finish("done", "_Stopped._"), stopped: true }
           : finish("error", "_Paused. Resume to continue._");
+      // ask_opus checks its own cost.
+      if (err instanceof BudgetError) return finish("error", `_Stopped: ${err.message}_`);
       console.error("chat turn failed", err);
       return finish(
         "error",
@@ -1776,7 +1983,7 @@ export function activity(label: string, input: unknown): string {
 /** Rough upper estimate before a request: cached prefix at read price, plus room for a reply. */
 function estimateCost(messages: Turn[], model: string): number {
   const p = priceOf(model);
-  const tokens = JSON.stringify(messages).length / 3 + 4000;
+  const tokens = estimateTokens(messages) + 4000;
   return (tokens * p.input * 0.25 + 2000 * p.output) / 1_000_000;
 }
 

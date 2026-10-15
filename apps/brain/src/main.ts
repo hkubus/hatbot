@@ -160,6 +160,8 @@ chats.attach({
 });
 // A restart ends an incognito conversation.
 await chats.endIncognito();
+// Tasks the restart stopped, told where they were started.
+tasks.recover();
 await desktop.setPaused(settings.get().paused);
 await desktop.refresh();
 setInterval(() => void desktop.refresh(), 30_000);

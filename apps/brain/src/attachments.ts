@@ -8,6 +8,12 @@ import type { Db } from "./db";
 import { type DesktopAgent, DesktopError } from "./desktop/client";
 import type { EventBus } from "./events";
 
+type BlockParam = Anthropic.Beta.BetaContentBlockParam;
+/** A file in a stored turn, by id (see Attachments.refs). Never sent to the API as is. */
+const ATTACHMENT_REF = "hatbot_attachment";
+const isRef = (b: unknown): b is { type: typeof ATTACHMENT_REF; id: number } =>
+  (b as { type?: string }).type === ATTACHMENT_REF;
+
 /** The most one file may be. */
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 /** The API's limit for an image, and a PDF's share of a request. */
@@ -234,6 +240,46 @@ export class Attachments {
    * What the model gets for your files: images and PDFs as themselves, text inline, and for anything
    * else a line saying how to reach it.
    */
+  /**
+   * What a stored turn keeps for your files: their ids, not their bytes. `expand` turns them back
+   * into blocks for each request, the same every time, so the prompt cache still matches.
+   */
+  refs(list: Attachment[]): BlockParam[] {
+    return list.map((a) => ({ type: ATTACHMENT_REF, id: a.id }) as unknown as BlockParam);
+  }
+
+  /** Turns with their file references made into what the model reads. `cache` lasts a reply. */
+  async expand(
+    turns: Anthropic.Beta.BetaMessageParam[],
+    cache = new Map<number, BlockParam[]>(),
+  ): Promise<Anthropic.Beta.BetaMessageParam[]> {
+    const out: Anthropic.Beta.BetaMessageParam[] = [];
+    for (const turn of turns) {
+      if (typeof turn.content === "string" || !turn.content.some(isRef)) {
+        out.push(turn);
+        continue;
+      }
+      const content: BlockParam[] = [];
+      for (const b of turn.content as unknown[]) {
+        if (!isRef(b)) {
+          content.push(b as BlockParam);
+          continue;
+        }
+        let blocks = cache.get(b.id);
+        if (!blocks) {
+          const a = this.get(b.id);
+          blocks = a
+            ? await this.blocks([a])
+            : [{ type: "text", text: `Attachment #${b.id}: deleted.` }];
+          cache.set(b.id, blocks);
+        }
+        content.push(...blocks);
+      }
+      out.push({ ...turn, content });
+    }
+    return out;
+  }
+
   async blocks(list: Attachment[]): Promise<Anthropic.Beta.BetaContentBlockParam[]> {
     const out: Anthropic.Beta.BetaContentBlockParam[] = [];
     for (const a of list) {

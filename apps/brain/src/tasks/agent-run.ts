@@ -25,7 +25,7 @@ import { type Outcome, ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import type { CallContext, PluginTool, Verdict } from "../plugins/plugin";
 import { describeCall, runPluginTool, untrustedDefinitions, verdictFor } from "../plugins/registry";
-import { BudgetError, priceOf } from "../spend";
+import { BudgetError, estimateTokens, priceOf } from "../spend";
 import { Stop, UPDATES_MODELS } from "./desktop-run";
 import { SEND_TO_CHAT_DESCRIPTION, SendToChat, sendToChat } from "./send-to-chat";
 import type { Tasks } from "./service";
@@ -33,7 +33,10 @@ import type { Tasks } from "./service";
 const MAX_STEPS = 30;
 /** Code work (effort medium or high) reads and writes more. */
 const MAX_CODE_STEPS = 80;
-const BETAS: Anthropic.Beta.AnthropicBeta[] = ["thinking-display-updates-2026-08-18"];
+const BETAS: Anthropic.Beta.AnthropicBeta[] = [
+  "thinking-display-updates-2026-08-18",
+  "context-management-2025-06-27",
+];
 /** The chat's tools a background task gets. Schedules and triggers stay with the chat. */
 const SHARED_TOOLS = [
   "memory_list",
@@ -129,7 +132,7 @@ const CORE_TOOLS: Anthropic.Beta.BetaTool[] = [
 /** Rough upper estimate before a request: cached prefix at read price, plus room for a reply. */
 function estimateCost(messages: Anthropic.Beta.BetaMessageParam[], model: string): number {
   const p = priceOf(model);
-  const tokens = JSON.stringify(messages).length / 3 + 4000;
+  const tokens = estimateTokens(messages) + 4000;
   return (tokens * p.input * 0.3 + 2000 * p.output) / 1_000_000;
 }
 
@@ -215,7 +218,17 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       detail: "",
       url: `/tasks/${child.id}`,
     });
-    const ended = await tasks.waitFor(child.id, signal);
+    // Waiting on the screen doesn't hold a slot other tasks could use.
+    tasks.pool.release();
+    slot = false;
+    let ended: Task;
+    try {
+      ended = await tasks.waitFor(child.id, signal);
+    } finally {
+      await tasks.pool.acquire(signal);
+      slot = true;
+    }
+    // Still in `children` if this task is cancelled meanwhile, so it's cancelled with it.
     children.delete(child.id);
     // Its summary is made from web pages (PLAN.md §6.1).
     taint(`Desktop task #${child.id}`);
@@ -522,7 +535,9 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           // Code work writes whole files into tool calls.
           max_tokens: task.effort ? 32000 : 16000,
           betas: BETAS,
-          system: [{ type: "text", text: system }],
+          // Tools and system end here, the same for each of this bot's tasks, so they share the entry; the
+          // top-level breakpoint follows the conversation. Two of the four breakpoints allowed.
+          system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
           cache_control: { type: "ephemeral" },
           tools,
           thinking: UPDATES_MODELS.has(task.model)
@@ -530,6 +545,19 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
             : { type: "adaptive" },
           // The chat's dial unless the task asked for more: the same kind of work, without a screen.
           output_config: { effort: task.effort ?? d.settings.get().chatEffort },
+          // Old tool results are cleared on the server once the prompt passes 70k, below the 100k
+          // where Haiku 5.5 bills the whole request at 5x.
+          context_management: {
+            edits: [
+              {
+                type: "clear_tool_uses_20250919",
+                trigger: { type: "input_tokens", value: 70_000 },
+                keep: { type: "tool_uses", value: 6 },
+                clear_at_least: { type: "input_tokens", value: 20_000 },
+                exclude_tools: ["finish_task"],
+              },
+            ],
+          },
           messages,
         },
         {

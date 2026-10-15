@@ -53,6 +53,8 @@ export interface DesktopAgent {
    * desktop has the one shared profile.
    */
   useProfile(botId: string): Promise<boolean>;
+  /** Closes the tabs earlier tasks left open, down to one blank tab. False on an older desktop-agent. */
+  resetBrowser(): Promise<boolean>;
   lock(): Promise<void>;
   unlock(): Promise<void>;
   /** WebSocket URL and headers for the live view. */
@@ -182,6 +184,15 @@ export class HttpDesktopAgent implements DesktopAgent {
       return ((await res.json()) as { profile: string | null }).profile !== null;
     } catch (err) {
       // An older desktop-agent: one profile for every bot.
+      if (err instanceof DesktopError && err.status === 404) return false;
+      throw err;
+    }
+  }
+  async resetBrowser() {
+    try {
+      await this.req("POST", "/browser/reset");
+      return true;
+    } catch (err) {
       if (err instanceof DesktopError && err.status === 404) return false;
       throw err;
     }

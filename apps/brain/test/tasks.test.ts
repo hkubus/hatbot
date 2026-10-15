@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { type Approval, latestNoteOnly, type Task, type TaskStep } from "@hatbot/shared";
 import { inBatches } from "../src/agent/tools";
+import { HttpDesktopAgent } from "../src/desktop/client";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
 
@@ -126,6 +127,24 @@ test("a consequential click is held back until confirm_intent is approved", asyn
   expect(t.tasks.get(task.id)?.status).toBe("done");
 });
 
+test("an approved desktop task waiting for the screen shows as queued", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("confirm_intent", { kind: "send", summary: "Send the email" })] },
+    finish("Sent."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = startTask(t, "Send the email");
+  const approval = await pending(t);
+  expect(t.tasks.get(task.id)?.status).toBe("waiting_approval");
+  // Another task has the screen meanwhile.
+  await t.tasks.lane.acquire(-5, new AbortController().signal);
+  t.approvals.decide(approval.id, "approve", "web");
+  await waitFor(() => t.tasks.get(task.id)?.status === "queued");
+  t.tasks.lane.release(-5);
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)?.status).toBe("done");
+});
+
 test("a denied approval tells the model not to do it", async () => {
   const work = new FakeModel([
     { content: [toolUse("confirm_intent", { kind: "send", summary: "Send the email" })] },
@@ -201,6 +220,93 @@ test("a page that looks like a prompt injection stops the task unless you approv
   expect(t.tasks.get(task.id)?.injectionSuspected).toBe(true);
   // The page text went to Haiku JSON-encoded.
   expect(JSON.stringify(work.creates[0]?.messages)).toContain("page_json");
+});
+
+test("a page is screened while the model reads it, its verdict before the actions, once per page", async () => {
+  const work = new FakeModel([
+    { content: [computer("screenshot")] },
+    { content: [computer("screenshot")] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const a = { url: "https://a.example/", title: "A", text: "Page A" };
+  const b = { url: "https://b.example/", title: "B", text: "Page B" };
+  t.agent.page = a;
+  const pages = [a, b, a];
+  const stream = work.stream.bind(work);
+  work.stream = async (p, h) => {
+    const res = await stream(p, h);
+    t.agent.page = pages[work.requests.length] ?? a;
+    return res;
+  };
+  // Haiku can't give a verdict on A: the first request is out, and its screenshot waits for you.
+  work.onCreate = (p) => (JSON.stringify(p.messages).includes("Page A") ? "not JSON" : undefined);
+  const task = startTask(t);
+  const approval = await pending(t);
+  expect(approval.reason).toContain("couldn't check this page");
+  expect(work.requests).toHaveLength(1);
+  expect(t.agent.actions).toHaveLength(0);
+  expect(work.creates[0]?.output_config?.format?.type).toBe("json_schema");
+  t.approvals.decide(approval.id, "approve", "web");
+  work.onCreate = () => '{"suspected": false, "excerpt": ""}';
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)?.status).toBe("done");
+  expect(t.tasks.get(task.id)?.injectionSuspected).toBe(false);
+  // A, then B; A again was trusted once you said to go on.
+  expect(work.creates).toHaveLength(2);
+});
+
+test("a desktop task starts with the old tabs closed, on a desktop-agent old or new", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel([finish()]));
+  startTask(t);
+  await t.tasks.idle();
+  expect(t.agent.resets).toBe(1);
+
+  let status = 200;
+  const paths: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    fetch: (req) => {
+      paths.push(`${req.method} ${new URL(req.url).pathname}`);
+      return new Response("{}", { status });
+    },
+  });
+  try {
+    const client = new HttpDesktopAgent(`http://127.0.0.1:${server.port}`, "token");
+    expect(await client.resetBrowser()).toBe(true);
+    status = 404;
+    expect(await client.resetBrowser()).toBe(false);
+    status = 500;
+    await expect(client.resetBrowser()).rejects.toThrow();
+    expect(paths[0]).toBe("POST /browser/reset");
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("a page seen again isn't screened again", async () => {
+  const work = new FakeModel([
+    { content: [computer("screenshot")] },
+    { content: [computer("screenshot")] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const a = { url: "https://a.example/", title: "A", text: "Page A" };
+  const b = { url: "https://a.example/b", title: "B", text: "Page B" };
+  t.agent.page = a;
+  const pages = [a, b, a];
+  const stream = work.stream.bind(work);
+  work.stream = async (p, h) => {
+    const res = await stream(p, h);
+    t.agent.page = pages[work.requests.length] ?? a;
+    return res;
+  };
+  startTask(t);
+  await t.tasks.idle();
+  expect(work.creates.map((c) => JSON.stringify(c.messages).includes("Page A"))).toEqual([
+    true,
+    false,
+  ]);
 });
 
 test("Pause all cancels running tasks and locks the desktop", async () => {
