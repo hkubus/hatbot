@@ -3,9 +3,10 @@
 // failing or needing you.
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Proposal, SkillStatus } from "@hatbot/shared";
-import type { ModelClient } from "../agent/model";
+import { type ModelClient, modelErrorText } from "../agent/model";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
+import type { Notifier } from "../notify";
 import { lastDue } from "../report";
 import type { SettingsStore } from "../settings";
 import type { Spend } from "../spend";
@@ -36,6 +37,8 @@ export type ProposalsDeps = {
   memory: MemoryStore;
   skills: Skills;
   tasks: Tasks;
+  notifier: Notifier;
+  publicUrl: string;
   clock?: () => number;
 };
 
@@ -108,6 +111,8 @@ const SKILL_PROMPT = `You fix Hatbot's skills: Markdown procedures that its desk
 export class Proposals {
   private clock: () => number;
   private tidying = false;
+  /** Skills whose fix is being written. */
+  private fixing = new Set<string>();
 
   constructor(private d: ProposalsDeps) {
     this.clock = d.clock ?? Date.now;
@@ -146,7 +151,52 @@ export class Proposals {
         "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
       )
       .run(TIDY_KEY, this.now());
-    void this.tidy().catch((err) => console.error("memory tidy failed", err));
+    void this.tidy().catch((err) => this.failed("The weekly tidy-up of memory failed", err));
+  }
+
+  /**
+   * A tidy-up you asked for, in the background: it arrives as a proposal.updated event. You're told
+   * through a notification if it fails or finds nothing to change.
+   */
+  startTidy() {
+    if (this.tidying) throw new ProposalError("A tidy-up is already being written.", 409);
+    void this.tidy().then(
+      (p) => {
+        if (!p) this.tell("Memory is tidy", "The tidy-up found nothing worth changing.");
+      },
+      (err) => this.failed("The tidy-up of memory failed", err),
+    );
+  }
+
+  /** A fix for a skill, in the background, as startTidy. Throws at once if there's nothing to fix. */
+  async startFix(name: string) {
+    if (this.fixing.has(name)) throw new ProposalError("A fix is already being written.", 409);
+    const ids = await this.troubled(name);
+    this.fixing.add(name);
+    void this.fixSkill(name, ids)
+      .then(
+        (p) => {
+          if (!p)
+            this.tell(`No fix for ${name}`, "Its tasks didn't show what to change in the skill.");
+        },
+        (err) => this.failed(`The fix for ${name} failed`, err),
+      )
+      .finally(() => this.fixing.delete(name));
+  }
+
+  private failed(title: string, err: unknown) {
+    console.error(`${title}:`, err);
+    const why = err instanceof ProposalError ? err.message : `It stopped: ${modelErrorText(err)}.`;
+    this.tell(title, why);
+  }
+
+  private tell(title: string, message: string) {
+    void this.d.notifier.send({
+      title,
+      message,
+      priority: 3,
+      click: `${this.d.publicUrl}/memory`,
+    });
   }
 
   /** Asks the model for a tidy-up of memory. null: it found nothing to change. */
@@ -179,8 +229,8 @@ export class Proposals {
     }
   }
 
-  /** Asks the model for a fix to a skill, from the tasks that failed or needed you. */
-  async fixSkill(name: string): Promise<Proposal | null> {
+  /** The latest tasks following a skill that failed or needed you; throws if there are none. */
+  private async troubled(name: string): Promise<number[]> {
     const status = (await this.skillStatus()).find((s) => s.name === name);
     if (!status) throw new ProposalError(`No skill called ${name}.`, 404);
     const ids = [...new Set([...status.failed, ...status.takeovers])]
@@ -188,6 +238,12 @@ export class Proposals {
       .slice(0, 3);
     if (!ids.length)
       throw new ProposalError("None of its tasks failed or needed you since it last changed.", 409);
+    return ids;
+  }
+
+  /** Asks the model for a fix to a skill, from the tasks that failed or needed you. */
+  async fixSkill(name: string, troubled?: number[]): Promise<Proposal | null> {
+    const ids = troubled ?? (await this.troubled(name));
     const content = await this.d.memory.read(skillPath(name));
     const timelines = ids.map((id) => {
       const t = this.d.tasks.get(id);

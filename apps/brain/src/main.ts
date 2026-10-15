@@ -127,7 +127,18 @@ const heartbeat = new Heartbeat({
   bots,
   publicUrl: config.publicUrl,
 });
-const proposals = new Proposals({ db, events, settings, spend, model, memory, skills, tasks });
+const proposals = new Proposals({
+  db,
+  events,
+  settings,
+  spend,
+  model,
+  memory,
+  skills,
+  tasks,
+  notifier,
+  publicUrl: config.publicUrl,
+});
 const report = new WeeklyReport({
   db,
   settings,

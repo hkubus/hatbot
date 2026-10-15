@@ -172,6 +172,8 @@ export async function testApp(
     memory,
     skills,
     tasks,
+    notifier,
+    publicUrl: ORIGIN,
     clock,
   });
   const report = new WeeklyReport({
