@@ -1,11 +1,12 @@
 import { latestNoteOnly, type Task } from "@hatbot/shared";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, api } from "../api";
 import { Icon } from "../icons";
+import { Link } from "../link";
 import { LiveView, StepIcon } from "../live";
 import { LoadError, loadErrorText } from "../load";
 import { navigate } from "../router";
-import { cancelTask, loadTask, loadTasks, useStore } from "../store";
+import { cancelTask, HATBOT_CHAT, loadTask, loadTasks, useStore } from "../store";
 import { ApprovalCard, isActive, Shot, StatusChip, taskLine } from "../tasks";
 import { AssistantBody } from "./Chat";
 
@@ -23,19 +24,54 @@ const stamp = (iso: string) =>
     ? time(iso)
     : `${when(iso)}, ${time(iso)}`;
 
+/** A page of finished tasks; the list pages back from the oldest shown. */
+const TASK_PAGE = 50;
+
 export function Tasks() {
   const [filter, setFilter] = useState<"active" | "done">("active");
   const [ids, setIds] = useState<number[] | null>(null);
+  const [hasOlder, setHasOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [attempt, setAttempt] = useState(0);
   const tasks = useStore((s) => s.tasks);
+  const approvals = useStore((s) => s.approvals);
+  const request = useStore((s) => s.desktop?.request ?? null);
+  const waiting = useMemo(
+    () =>
+      Object.values(approvals)
+        .filter((a) => a.status === "pending")
+        .sort((a, b) => a.id - b.id),
+    [approvals],
+  );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retry loads again
   useEffect(() => {
     setIds(null);
+    setHasOlder(false);
     setLoadError("");
-    loadTasks({ status: filter }).then(setIds, (err) => setLoadError(loadErrorText(err)));
+    loadTasks({ status: filter, limit: TASK_PAGE }).then(
+      (list) => {
+        setIds(list);
+        setHasOlder(list.length === TASK_PAGE);
+      },
+      (err) => setLoadError(loadErrorText(err)),
+    );
   }, [filter, attempt]);
+
+  const older = async () => {
+    const before = ids?.length ? Math.min(...ids) : undefined;
+    if (!before) return;
+    setLoadingOlder(true);
+    try {
+      const list = await loadTasks({ status: filter, before, limit: TASK_PAGE });
+      setIds((s) => [...(s ?? []), ...list]);
+      setHasOlder(list.length === TASK_PAGE);
+    } catch (err) {
+      setLoadError(loadErrorText(err));
+    }
+    setLoadingOlder(false);
+  };
 
   // Tasks that start or finish while the list is open move between the two lists.
   const shown = Object.values(tasks)
@@ -46,6 +82,39 @@ export function Tasks() {
   return (
     <section className="view">
       <div className="page">
+        {(waiting.length > 0 || request) && (
+          <section className="group">
+            <h2>Waiting for you</h2>
+            <div className="group-box">
+              {request && (
+                <Link className="row row-link" to={`/tasks/${request.taskId}?live=1`}>
+                  <div className="txt">
+                    <b>Take over the desktop</b>
+                  </div>
+                  <span className="val">{request.reason}</span>
+                </Link>
+              )}
+              {waiting.map((a) => (
+                <Link
+                  key={a.id}
+                  className="row row-link"
+                  to={
+                    a.taskId
+                      ? `/tasks/${a.taskId}`
+                      : a.conversationId && a.conversationId !== HATBOT_CHAT
+                        ? `/chat/${a.conversationId}`
+                        : "/"
+                  }
+                >
+                  <div className="txt">
+                    <b>Can I go ahead? {a.summary}</b>
+                  </div>
+                  <Icon name="chevron" />
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
         <div className="page-head">
           <div className="seg">
             <button
@@ -81,9 +150,12 @@ export function Tasks() {
               </thead>
               <tbody>
                 {shown.map((t) => (
-                  <tr key={t.id} onClick={() => navigate(`/tasks/${t.id}`)}>
+                  <tr key={t.id} className="link-row">
                     <td className="wrap">
-                      <span className="task-title">{t.title}</span>
+                      {/* The link covers the whole row. */}
+                      <Link className="task-title" to={`/tasks/${t.id}`}>
+                        {t.title}
+                      </Link>
                     </td>
                     <td>
                       <StatusChip status={t.status} />
@@ -95,6 +167,16 @@ export function Tasks() {
               </tbody>
             </table>
           </div>
+        )}
+        {filter === "done" && hasOlder && !loadError && (
+          <button
+            type="button"
+            className="btn sm ghost load-earlier"
+            disabled={loadingOlder}
+            onClick={older}
+          >
+            Older
+          </button>
         )}
       </div>
     </section>

@@ -322,6 +322,9 @@ export function ensureApproval(id: number) {
 export async function loadTasks(
   filter: {
     status?: "active" | "done";
+    /** Paging: only tasks older than this one, at most `limit`. */
+    before?: number;
+    limit?: number;
     scheduleId?: number;
     triggerId?: number;
     watcherId?: number;

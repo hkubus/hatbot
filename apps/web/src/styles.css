@@ -3823,3 +3823,34 @@ mark {
   color: var(--muted);
   font-size: 13px;
 }
+
+/* Rows that are links: the whole row is the link's target. */
+.row-link,
+.link-row a {
+  color: inherit;
+  text-decoration: none;
+}
+.row-link:hover {
+  background: rgba(127, 127, 127, 0.06);
+}
+.row-link .val {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.link-row {
+  position: relative;
+}
+.link-row a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+.link-row a:focus-visible {
+  outline: none;
+}
+.link-row:has(a:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: -2px;
+}
