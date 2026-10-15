@@ -38,6 +38,7 @@ import {
   loadEarlier,
   loadThread,
   markSeen,
+  openConversation,
   sendMessage,
   setPaused,
   useStore,
@@ -495,7 +496,8 @@ function Fold({
   );
 }
 
-export function Chat() {
+/** `id`: the chat to show. It's opened here, before loading, so a message asked for is looked for in it. */
+export function Chat({ id }: { id: number }) {
   const messages = useStore((s) => s.messages);
   const episodes = useStore((s) => s.episodes);
   const approvals = useStore((s) => s.approvals);
@@ -512,7 +514,6 @@ export function Chat() {
   const hasEarlier = useStore((s) => s.hasEarlier);
   const paused = useStore((s) => s.paused);
   const incognito = useStore((s) => s.incognito);
-  const conversationId = useStore((s) => s.conversationId);
   const name = useStore((s) => chatName(s, currentChat(s)));
   const members = useStore(groupMembers);
   const bots = useStore((s) => s.bots);
@@ -530,15 +531,16 @@ export function Chat() {
     stick.current = true;
   }, []);
 
-  // Switching chats, or to or from incognito, loads the other conversation in the store.
+  // Opening the chat, or going to or from incognito, loads its conversation in the store.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset the animation on each switch
   useEffect(() => {
     animateFrom.current = Number.POSITIVE_INFINITY;
     stick.current = true;
+    void openConversation(id);
     loaded.current = loadThread().then(() => {
       animateFrom.current = (getState().messages.at(-1)?.id ?? 0) + 1;
     });
-  }, [incognito, conversationId]);
+  }, [incognito, id]);
 
   // Loads back to the message, opens its conversation if it's folded, and scrolls to it.
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs once per message asked for
@@ -739,8 +741,8 @@ export function Chat() {
           </div>
         )}
         <Composer
-          key={`${conversationId}${incognito ? ":incognito" : ""}`}
-          chat={`${conversationId}${incognito ? ":incognito" : ""}`}
+          key={`${id}${incognito ? ":incognito" : ""}`}
+          chat={`${id}${incognito ? ":incognito" : ""}`}
           onSend={onSend}
         />
       </div>

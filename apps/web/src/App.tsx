@@ -26,7 +26,6 @@ import {
   HATBOT_CHAT,
   needsYou,
   onToast,
-  openConversation,
   reconnectNow,
   setIncognito,
   useStore,
@@ -134,10 +133,6 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: closes on every navigation
   useEffect(() => setChatMenu(false), [path]);
-  // The chat in the address is the one showing.
-  useEffect(() => {
-    if (chatId) void openConversation(chatId);
-  }, [chatId]);
   // One that's gone, e.g. a deleted bot's: back to Hatbot's.
   useEffect(() => {
     if (chatId && chats.length && !chats.some((c) => c.id === chatId)) navigate("/", true);
@@ -365,7 +360,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               )}
             </div>
           )}
-          {chatId > 0 && <Chat key={chatId} />}
+          {chatId > 0 && <Chat key={chatId} id={chatId} />}
           {botPage && <BotPage key={botPage} id={botPage} toast={toast} />}
           {groupPage && <GroupPage key={groupPage} id={groupPage} toast={toast} />}
           {view.path === "/tasks" &&
