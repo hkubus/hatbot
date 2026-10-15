@@ -159,8 +159,10 @@ export class MemoryStore {
       .map((l) => l.slice(3));
   }
 
-  async log(limit = 50, path?: string): Promise<Commit[]> {
-    const args = ["log", `-n${limit}`, "--format=%x1e%H%x1f%an%x1f%aI%x1f%s", "--name-only"];
+  /** Newest first; `skip` that many for the next page. */
+  async log(limit = 50, path?: string, skip = 0): Promise<Commit[]> {
+    const args = ["log", `-n${limit}`, `--skip=${skip}`, "--format=%x1e%H%x1f%an%x1f%aI%x1f%s"];
+    args.push("--name-only");
     if (path) args.push("--", this.resolve(path).rel);
     const res = await this.git(args, { allowFail: true });
     return res.stdout

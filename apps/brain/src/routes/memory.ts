@@ -49,11 +49,12 @@ export const memoryRoutes = new Hono<AppEnv>()
       z.object({
         path: z.string().optional(),
         limit: z.coerce.number().int().min(1).max(500).optional(),
+        skip: z.coerce.number().int().min(0).optional(),
       }),
     ),
     async (c) => {
-      const { path, limit } = c.req.valid("query");
-      return c.json(await c.var.memory.log(limit, path));
+      const { path, limit, skip } = c.req.valid("query");
+      return c.json(await c.var.memory.log(limit, path, skip));
     },
   )
   .get("/memory/diff/:sha", async (c) =>

@@ -172,10 +172,14 @@ export class Tasks {
       triggerId?: number;
       watcherId?: number;
       limit?: number;
+      /** Only tasks older than this one: the next page. */
+      before?: number;
+      botId?: string;
+      origin?: string;
     } = {},
   ): Task[] {
     const where: string[] = [];
-    const args: number[] = [];
+    const args: (number | string)[] = [];
     if (opts.status === "active")
       where.push(`t.status IN (${ACTIVE.map((s) => `'${s}'`).join(", ")})`);
     if (opts.status === "done")
@@ -193,8 +197,20 @@ export class Tasks {
       where.push("t.watcher_id = ? AND t.parent_id IS NULL");
       args.push(opts.watcherId);
     }
+    if (opts.before !== undefined) {
+      where.push("t.id < ?");
+      args.push(opts.before);
+    }
+    if (opts.botId !== undefined) {
+      where.push("t.bot_id = ?");
+      args.push(opts.botId);
+    }
+    if (opts.origin !== undefined) {
+      where.push("t.origin = ?");
+      args.push(opts.origin);
+    }
     return this.d.db
-      .query<Row, number[]>(
+      .query<Row, (number | string)[]>(
         `${SELECT} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY t.id DESC LIMIT ?`,
       )
       .all(...args, opts.limit ?? 50)

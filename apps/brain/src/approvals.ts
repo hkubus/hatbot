@@ -111,12 +111,17 @@ export class Approvals {
     return r ? toApproval(r) : null;
   }
 
-  list(pendingOnly: boolean): Approval[] {
+  /** Newest first, 100 at a time; `before`: the next page, older than that id. */
+  list(pendingOnly: boolean, before?: number): Approval[] {
+    const where = [
+      ...(pendingOnly ? ["a.status = 'pending'"] : []),
+      ...(before !== undefined ? ["a.id < ?"] : []),
+    ];
     return this.db
-      .query<Row, []>(
-        `${SELECT} ${pendingOnly ? "WHERE a.status = 'pending'" : ""} ORDER BY a.id DESC LIMIT 100`,
+      .query<Row, number[]>(
+        `${SELECT} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY a.id DESC LIMIT 100`,
       )
-      .all()
+      .all(...(before !== undefined ? [before] : []))
       .map(toApproval);
   }
 
