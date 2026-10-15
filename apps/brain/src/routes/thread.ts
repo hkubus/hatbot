@@ -175,7 +175,7 @@ function post(c: Ctx, t: Thread) {
 }
 
 /** How long /ask waits for the reply before it answers with what's there. */
-export const ASK_WAIT_MS = 50_000;
+export const ASK_WAIT_MS = 25_000;
 
 async function ask(c: Ctx, t: Thread) {
   const { text, attachmentIds, incognito } = c.req.valid("json" as never) as z.infer<
