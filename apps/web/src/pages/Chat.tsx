@@ -24,6 +24,7 @@ import { ApiError, attachmentUrl, upload } from "../api";
 import { Chart, ChartPending } from "../chart";
 import { type DraftFile, draftText, saveDraftText, setDraftFiles, useDraftFiles } from "../drafts";
 import { Icon } from "../icons";
+import { touchScreen } from "../media";
 import { navigate, useRoute } from "../router";
 import {
   botName,
@@ -416,9 +417,6 @@ function Files({ list }: { list: Attachment[] }) {
 type Option = { key: string; label: React.ReactNode; desc: string; choose: () => void };
 
 let draftKey = 0;
-
-/** A touch screen with no hover: a phone or tablet, where the keyboard has no Shift-Enter. */
-const touchScreen = () => matchMedia("(hover: none)").matches;
 
 // Memoized: while a reply streams only its own message redraws, not the whole thread's markdown.
 const Message = memo(function Message({

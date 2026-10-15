@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { ApiError, api } from "./api";
 import { BotMark, Icon, type IconName } from "./icons";
 import { LiveView } from "./live";
+import { useMedia } from "./media";
 import { BotPage } from "./pages/Bot";
 import { Chat } from "./pages/Chat";
 import { GroupPage } from "./pages/Group";
@@ -121,6 +122,8 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
   const [insp, setInsp] = useState(() => localStorage.getItem("hatbot:insp") === "1");
   const view = viewOf(path);
+  // The side panel is hidden on a phone; it isn't drawn either, or its live view would stream unseen.
+  const wide = useMedia("(min-width: 900px)");
   const taskId = /^\/tasks\/(\d+)$/.exec(path)?.[1];
   const teachId = /^\/memory\/teach\/(\d+)$/.exec(path)?.[1];
   const approvalId = Number(params.get("approval"));
@@ -396,7 +399,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           )}
         </main>
 
-        {insp && view.path !== "/live" && (
+        {insp && wide && view.path !== "/live" && (
           <aside className="inspector">
             <div className="insp-head">
               <h2>Live</h2>

@@ -74,18 +74,34 @@ function useFrames(canvas: React.RefObject<HTMLCanvasElement | null>) {
         else void draw(e.data);
       };
       ws.onclose = () => {
-        // A socket closed by an earlier mount mustn't clear the one that replaced it.
-        if (socket.current === ws) socket.current = null;
+        // Closed on purpose (hidden, unmounted) or replaced by another mount's: nothing to retry.
+        if (socket.current !== ws) return;
+        socket.current = null;
         if (stopped) return;
         setConn("offline");
         timer = setTimeout(open, Math.min(15_000, 1000 * 2 ** retry++));
       };
     };
-    open();
+    const close = () => {
+      clearTimeout(timer);
+      const ws = socket.current;
+      socket.current = null;
+      ws?.close();
+    };
+    // No frames for a tab nobody's looking at; back on when it's visible again.
+    const onVisibility = () => {
+      if (document.hidden) return close();
+      if (socket.current || stopped) return;
+      retry = 0;
+      setConn("connecting");
+      open();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    if (!document.hidden) open();
     return () => {
       stopped = true;
-      clearTimeout(timer);
-      socket.current?.close();
+      document.removeEventListener("visibilitychange", onVisibility);
+      close();
     };
   }, [canvas]);
 
@@ -102,6 +118,8 @@ function Screen({ control }: { control: boolean }) {
   const keyboard = useRef<HTMLInputElement>(null);
   const { conn, send } = useFrames(canvas);
   const lastMove = useRef(0);
+  // Wheel events come by the dozen; they're added up and sent every 100 ms.
+  const wheel = useRef<{ dx: number; dy: number; x: number; y: number } | null>(null);
 
   const point = (e: { clientX: number; clientY: number }) => {
     const c = canvas.current;
@@ -136,8 +154,20 @@ function Screen({ control }: { control: boolean }) {
           const button = BUTTONS[e.button];
           if (button) send({ t: "button", button, down: false, ...point(e) });
         },
-        onWheel: (e: React.WheelEvent) =>
-          send({ t: "wheel", dx: e.deltaX, dy: e.deltaY, ...point(e) }),
+        onWheel: (e: React.WheelEvent) => {
+          const at = point(e);
+          const w = wheel.current;
+          if (w) {
+            Object.assign(w, { dx: w.dx + e.deltaX, dy: w.dy + e.deltaY, ...at });
+            return;
+          }
+          wheel.current = { dx: e.deltaX, dy: e.deltaY, ...at };
+          setTimeout(() => {
+            const sum = wheel.current;
+            wheel.current = null;
+            if (sum) send({ t: "wheel", ...sum });
+          }, 100);
+        },
         onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
         onKeyDown: (e: React.KeyboardEvent) => {
           if (e.nativeEvent.isComposing) return;
