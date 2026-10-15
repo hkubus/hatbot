@@ -48,7 +48,7 @@ skills.watch(events);
 const model = new AnthropicModelClient();
 const archive = new Archive(config.archiveDir);
 const attachments = new Attachments({ db, archive, events });
-const desktop = new Desktop(new HttpDesktopAgent(), events);
+const desktop = new Desktop(new HttpDesktopAgent(), events, db);
 const plugins = new Plugins([...PLUGINS, codePlugin({ desktop: desktop.agent, attachments })], {
   db,
   events,

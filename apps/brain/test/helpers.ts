@@ -84,7 +84,7 @@ export async function testApp(
   const archive = new Archive(tempDir("hatbot-test-archive-"), clock);
   const attachments = new Attachments({ db, archive, events }, clock);
   const agent = new FakeDesktop();
-  const desktop = new Desktop(agent, events);
+  const desktop = new Desktop(agent, events, db);
   const plugins = new Plugins([...pluginList, codePlugin({ desktop: agent, attachments })], {
     db,
     events,
