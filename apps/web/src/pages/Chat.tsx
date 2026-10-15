@@ -465,8 +465,12 @@ const Message = memo(function Message({
   }
 
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: a tap only reveals the buttons, which are reachable by keyboard anyway
-    <div className={cls} data-id={m.id} onClick={() => setTapped((v) => !v)}>
+    // biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: on a touch screen a tap only reveals the buttons, which are reachable by keyboard anyway
+    <div
+      className={cls}
+      data-id={m.id}
+      onClick={touchScreen() ? () => setTapped((v) => !v) : undefined}
+    >
       {inner}
     </div>
   );
