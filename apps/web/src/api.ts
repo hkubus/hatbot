@@ -4,6 +4,8 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** The whole answer, for errors that say more, like a 409's current version. */
+    readonly data: unknown = null,
   ) {
     super(message);
   }
@@ -28,19 +30,21 @@ export async function api<T>(
     throw new ApiError(
       res.status,
       (data as { error?: string } | null)?.error ?? `HTTP ${res.status}`,
+      data,
     );
   }
   return data as T;
 }
 
 /** Uploads a file for your next message. */
-export async function upload(file: File): Promise<Attachment> {
+export async function upload(file: File, signal?: AbortSignal): Promise<Attachment> {
   const form = new FormData();
   form.append("file", file);
   const res = await fetch(`${API_PREFIX}/attachments`, {
     method: "POST",
     body: form,
     credentials: "same-origin",
+    signal,
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok)

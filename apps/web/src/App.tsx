@@ -1,18 +1,22 @@
 import type { Approval, Conversation, Me } from "@hatbot/shared";
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { api } from "./api";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { ApiError, api } from "./api";
 import { BotMark, Icon, type IconName } from "./icons";
 import { LiveView } from "./live";
+import { useMedia } from "./media";
 import { BotPage } from "./pages/Bot";
 import { Chat } from "./pages/Chat";
 import { GroupPage } from "./pages/Group";
 import { Login, Setup } from "./pages/Login";
-import { Memory } from "./pages/Memory";
-import { SchedulesView } from "./pages/Schedules";
 import { Search } from "./pages/Search";
-import { Settings } from "./pages/Settings";
-import { SkillDraft } from "./pages/SkillDraft";
-import { Spend } from "./pages/Spend";
 import { TaskDetail, Tasks } from "./pages/Tasks";
 import { navigate, useRoute } from "./router";
 import {
@@ -25,11 +29,22 @@ import {
   HATBOT_CHAT,
   needsYou,
   onToast,
-  openConversation,
+  reconnectNow,
   setIncognito,
   useStore,
 } from "./store";
 import { getTheme, setTheme, type Theme } from "./theme";
+
+// Pages you open now and then load when first opened; chat and tasks come with the app.
+const Memory = lazy(() => import("./pages/Memory").then((m) => ({ default: m.Memory })));
+const SchedulesView = lazy(() =>
+  import("./pages/Schedules").then((m) => ({ default: m.SchedulesView })),
+);
+const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m.Settings })));
+const SkillDraft = lazy(() =>
+  import("./pages/SkillDraft").then((m) => ({ default: m.SkillDraft })),
+);
+const Spend = lazy(() => import("./pages/Spend").then((m) => ({ default: m.Spend })));
 
 const VIEWS = [
   { path: "/", title: "Chat", icon: "chat", phone: true },
@@ -66,8 +81,15 @@ function useTheme(): Theme {
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
+  const [unreachable, setUnreachable] = useState(false);
+  // Only a 401 means you're signed out; anything else is the brain or the network being down.
   const refresh = useCallback(() => {
-    api<Me>("/auth/me").then(setMe, () => setMe({ setupDone: true, authenticated: false }));
+    setUnreachable(false);
+    api<Me>("/auth/me").then(setMe, (err) => {
+      if (err instanceof ApiError && err.status === 401)
+        setMe({ setupDone: true, authenticated: false });
+      else setUnreachable(true);
+    });
   }, []);
 
   useEffect(() => {
@@ -77,6 +99,15 @@ export function App() {
     return () => window.removeEventListener("hatbot:unauthorized", onUnauthorized);
   }, [refresh]);
 
+  if (!me && unreachable)
+    return (
+      <div className="unreachable">
+        Can't reach Hatbot.
+        <button type="button" className="btn sm" onClick={refresh}>
+          Retry
+        </button>
+      </div>
+    );
   if (!me) return null;
   if (!me.setupDone) return <Setup onDone={refresh} />;
   if (!me.authenticated) return <Login onDone={refresh} />;
@@ -93,9 +124,38 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const chat = useStore(currentChat);
   const title = useStore((s) => chatName(s, currentChat(s)));
   const [chatMenu, setChatMenu] = useState(false);
+  const chatMenuEl = useRef<HTMLDivElement>(null);
+  const chatSwitch = useRef<HTMLButtonElement>(null);
+  // The phone's chat switcher closes on Escape and on a tap anywhere else.
+  useEffect(() => {
+    if (!chatMenu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setChatMenu(false);
+    };
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (!chatMenuEl.current?.contains(t) && !chatSwitch.current?.contains(t)) setChatMenu(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onDown);
+    };
+  }, [chatMenu]);
+  const connected = useStore((s) => s.connected);
+  // A blip while reconnecting isn't worth a banner.
+  const [down, setDown] = useState(false);
+  useEffect(() => {
+    if (connected) return setDown(false);
+    const t = setTimeout(() => setDown(true), 4000);
+    return () => clearTimeout(t);
+  }, [connected]);
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
   const [insp, setInsp] = useState(() => localStorage.getItem("hatbot:insp") === "1");
   const view = viewOf(path);
+  // The side panel is hidden on a phone; it isn't drawn either, or its live view would stream unseen.
+  const wide = useMedia("(min-width: 900px)");
   const taskId = /^\/tasks\/(\d+)$/.exec(path)?.[1];
   const teachId = /^\/memory\/teach\/(\d+)$/.exec(path)?.[1];
   const approvalId = Number(params.get("approval"));
@@ -106,10 +166,6 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: closes on every navigation
   useEffect(() => setChatMenu(false), [path]);
-  // The chat in the address is the one showing.
-  useEffect(() => {
-    if (chatId) void openConversation(chatId);
-  }, [chatId]);
   // One that's gone, e.g. a deleted bot's: back to Hatbot's.
   useEffect(() => {
     if (chatId && chats.length && !chats.some((c) => c.id === chatId)) navigate("/", true);
@@ -136,6 +192,41 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     connect();
     return disconnect;
   }, [toast]);
+
+  // What's waiting shows in the tab's title, and on the app's icon where the system has badges.
+  useEffect(() => {
+    const n = unread + pending;
+    document.title = n ? `(${n}) Hatbot` : "Hatbot";
+    const nav = navigator as Navigator & {
+      setAppBadge?: (n: number) => Promise<void>;
+      clearAppBadge?: () => Promise<void>;
+    };
+    void (n ? nav.setAppBadge?.(n) : nav.clearAppBadge?.())?.catch(() => {});
+  }, [unread, pending]);
+
+  // Cmd/Ctrl-K: Search. Escape: closes the chat switcher, else the live panel.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        if (location.pathname === "/search")
+          document.querySelector<HTMLInputElement>(".search-box input")?.focus();
+        else navigate("/search");
+        return;
+      }
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      // Escape in a field, or typed on the desktop in the live view, is theirs.
+      const t = e.target as HTMLElement | null;
+      if (t?.closest("input, textarea, select, canvas, [contenteditable]")) return;
+      if (chatMenu) setChatMenu(false);
+      else if (insp) {
+        localStorage.setItem("hatbot:insp", "0");
+        setInsp(false);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [chatMenu, insp]);
 
   const cycleTheme = () => {
     const order: Theme[] = ["system", "light", "dark"];
@@ -222,8 +313,10 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               <>
                 <h1 className="hide-phone">{incognito ? `${title} · Incognito` : title}</h1>
                 <button
+                  ref={chatSwitch}
                   type="button"
                   className="chat-switch show-phone-inline"
+                  aria-expanded={chatMenu}
                   onClick={() => setChatMenu((v) => !v)}
                 >
                   <h1>{incognito ? `${title} · Incognito` : title}</h1>
@@ -290,8 +383,17 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               <Icon name={theme === "light" ? "sun" : theme === "dark" ? "moon" : "auto"} />
             </button>
           </header>
+          {down && (
+            <div className="paused-banner offline-banner">
+              Can't reach Hatbot.
+              <span style={{ flex: 1 }} />
+              <button type="button" className="btn sm" onClick={reconnectNow}>
+                Retry
+              </button>
+            </div>
+          )}
           {chatMenu && chatId > 0 && (
-            <div className="chat-menu">
+            <div className="chat-menu" ref={chatMenuEl}>
               {chats.map((c) => (
                 <button
                   type="button"
@@ -328,7 +430,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               )}
             </div>
           )}
-          {chatId > 0 && <Chat key={chatId} />}
+          {chatId > 0 && <Chat key={chatId} id={chatId} />}
           {botPage && <BotPage key={botPage} id={botPage} toast={toast} />}
           {groupPage && <GroupPage key={groupPage} id={groupPage} toast={toast} />}
           {view.path === "/tasks" &&
@@ -344,25 +446,27 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               </div>
             </section>
           )}
-          {view.path === "/schedules" && <SchedulesView path={path} params={params} />}
-          {view.path === "/memory" &&
-            (teachId ? (
-              <SkillDraft key={teachId} id={Number(teachId)} toast={toast} />
-            ) : (
-              <Memory
-                key={params.get("path") ?? ""}
-                toast={toast}
-                open={params.get("path") ?? ""}
-              />
-            ))}
-          {view.path === "/spend" && <Spend />}
+          <Suspense fallback={<section className="view" />}>
+            {view.path === "/schedules" && <SchedulesView path={path} params={params} />}
+            {view.path === "/memory" &&
+              (teachId ? (
+                <SkillDraft key={teachId} id={Number(teachId)} toast={toast} />
+              ) : (
+                <Memory
+                  key={params.get("path") ?? ""}
+                  toast={toast}
+                  open={params.get("path") ?? ""}
+                />
+              ))}
+            {view.path === "/spend" && <Spend />}
+            {view.path === "/settings" && (
+              <Settings path={path} toast={toast} onSignOut={onSignOut} />
+            )}
+          </Suspense>
           {view.path === "/search" && <Search query={params.get("q") ?? ""} />}
-          {view.path === "/settings" && (
-            <Settings path={path} toast={toast} onSignOut={onSignOut} />
-          )}
         </main>
 
-        {insp && view.path !== "/live" && (
+        {insp && wide && view.path !== "/live" && (
           <aside className="inspector">
             <div className="insp-head">
               <h2>Live</h2>

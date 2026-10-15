@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, api } from "../api";
 import { lineDiff } from "../diff";
 import { Icon } from "../icons";
-import { navigate } from "../router";
+import { navigate, setLeaveGuard } from "../router";
 import { bumpMemory, loadProposals, putProposal, startTeach, useStore } from "../store";
 
 type Selection =
@@ -101,9 +101,25 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
   const [sel, setSel] = useState<Selection>({ kind: "file", path: open || "INDEX.md" });
   const [content, setContent] = useState("");
   const [saved, setSaved] = useState("");
+  /** The version your edit started from; "" for a new file. */
+  const [baseSha, setBaseSha] = useState("");
+  /** Someone else saved the file while you were editing it. */
+  const [conflict, setConflict] = useState<{ sha: string; content: string } | null>(null);
   const [diff, setDiff] = useState("");
 
   const dirty = sel.kind === "file" && content !== saved;
+
+  // Leaving with unsaved changes asks first: the sidebar, Back, closing the tab.
+  useEffect(() => {
+    if (!dirty) return;
+    const off = setLeaveGuard(() => confirm("Leave without saving your changes?"));
+    const onUnload = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", onUnload);
+    return () => {
+      off();
+      window.removeEventListener("beforeunload", onUnload);
+    };
+  }, [dirty]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reload when memory changes anywhere
   useEffect(() => {
@@ -118,6 +134,7 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
   const openFile = useCallback(
     (path: string) => {
       if (dirty && !confirm("Discard your unsaved changes?")) return;
+      setConflict(null);
       setSel({ kind: "file", path });
     },
     [dirty],
@@ -126,14 +143,16 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
   // biome-ignore lint/correctness/useExhaustiveDependencies: reload the open file when memory changes, unless you're editing it
   useEffect(() => {
     if (sel.kind !== "file" || dirty) return;
-    api<{ content: string }>(`/memory/file?path=${enc(sel.path)}`).then(
+    api<{ content: string; sha: string }>(`/memory/file?path=${enc(sel.path)}`).then(
       (r) => {
         setContent(r.content);
         setSaved(r.content);
+        setBaseSha(r.sha ?? "");
       },
       () => {
         setContent("");
         setSaved("");
+        setBaseSha("");
       },
     );
   }, [sel, version]);
@@ -152,19 +171,33 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
     return [...g].sort(([a], [b]) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b)));
   }, [files]);
 
-  const save = async () => {
+  /** `over`: the version to replace, after you've chosen to overwrite one saved meanwhile. */
+  const save = async (over = baseSha) => {
     if (sel.kind !== "file") return;
     try {
       const r = await api<{ sha: string | null }>(`/memory/file?path=${enc(sel.path)}`, {
         method: "PUT",
-        body: { content, message: `Edit ${sel.path}` },
+        body: { content, message: `Edit ${sel.path}`, baseSha: over },
       });
+      setConflict(null);
       setSaved(content);
       toast(r.sha ? `Saved (${r.sha.slice(0, 7)})` : "No changes");
       bumpMemory();
     } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        const now = err.data as { sha: string; content: string };
+        return setConflict({ sha: now.sha, content: now.content });
+      }
       toast(err instanceof ApiError ? err.message : "Couldn't save");
     }
+  };
+  // Your edit goes; the file as it's now saved comes in.
+  const takeTheirs = () => {
+    if (!conflict) return;
+    setContent(conflict.content);
+    setSaved(conflict.content);
+    setBaseSha(conflict.sha);
+    setConflict(null);
   };
 
   const newFile = () => {
@@ -172,6 +205,8 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
     if (!path) return;
     const p = path.endsWith(".md") ? path : `${path}.md`;
     setSel({ kind: "file", path: p });
+    setBaseSha("");
+    setConflict(null);
     const title = p.split("/").pop()?.replace(/\.md$/, "").replace(/-/g, " ") ?? "";
     setContent(`# ${title.charAt(0).toUpperCase()}${title.slice(1)}\n`);
     setSaved("");
@@ -209,8 +244,10 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
   const tidy = async () => {
     setBusy(true);
     try {
-      const p = await api<Proposal | null>("/proposals/tidy", { body: {} });
-      if (p) {
+      // It's worked out in the background now; the proposal arrives as an event.
+      const p = await api<Proposal | { started: true } | null>("/proposals/tidy", { body: {} });
+      if (p && "started" in p) toast("Tidying up. It shows under To look over when it's ready");
+      else if (p) {
         putProposal(p);
         setSel({ kind: "proposal", id: p.id });
       } else toast("Nothing to tidy");
@@ -222,8 +259,12 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
   const fixSkill = async (name: string) => {
     setBusy(true);
     try {
-      const p = await api<Proposal | null>(`/skills/${name}/fix`, { body: {} });
-      if (p) {
+      const p = await api<Proposal | { started: true } | null>(`/skills/${name}/fix`, {
+        body: {},
+      });
+      if (p && "started" in p)
+        toast("Looking for a fix. It shows under To look over when it's ready");
+      else if (p) {
         putProposal(p);
         setSel({ kind: "proposal", id: p.id });
       } else toast("No fix found in what went wrong");
@@ -375,12 +416,29 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
                     Delete
                   </button>
                 )}
-                <button type="button" className="btn sm accent" disabled={!dirty} onClick={save}>
+                <button
+                  type="button"
+                  className="btn sm accent"
+                  disabled={!dirty || !!conflict}
+                  onClick={() => save()}
+                >
                   Save
                 </button>
               </>
             )}
           </div>
+          {sel.kind === "file" && conflict && (
+            <div className="skill-trouble">
+              <span>Changed while you were editing.</span>
+              <span className="spacer" />
+              <button type="button" className="btn sm" onClick={takeTheirs}>
+                Reload
+              </button>
+              <button type="button" className="btn sm" onClick={() => save(conflict.sha)}>
+                Overwrite
+              </button>
+            </div>
+          )}
           {sel.kind === "file" && skill && troubled > 0 && (
             <div className="skill-trouble">
               <span>
@@ -420,7 +478,7 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
               onKeyDown={(e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === "s") {
                   e.preventDefault();
-                  if (dirty) void save();
+                  if (dirty && !conflict) void save();
                 }
               }}
             />
