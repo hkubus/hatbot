@@ -60,7 +60,23 @@ export const SeenMessages = z.object({ ids: z.array(z.number().int().positive())
 export const PutMemoryFile = z.object({
   content: z.string().max(1_000_000),
   message: z.string().max(200).optional(),
+  /**
+   * The `sha` GET /memory/file gave ("" for a new file). If the file has changed since, the write is
+   * refused with 409 `{ error: "changed", sha, content }`: what it is now.
+   */
+  baseSha: z
+    .string()
+    .regex(/^([0-9a-f]{40})?$/)
+    .optional(),
 });
+
+/** GET /memory/file. */
+export type MemoryFileContent = {
+  path: string;
+  content: string;
+  /** Git's blob id of `content`; send it back as `baseSha`. */
+  sha: string;
+};
 
 export type ThreadMessage = {
   id: number;

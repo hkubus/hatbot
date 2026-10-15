@@ -3,7 +3,7 @@
 import { SKILL_NAME } from "@hatbot/shared";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
-import type { Author, MemoryStore } from "../memory/store";
+import { type Author, blobSha, MemoryConflict, type MemoryStore } from "../memory/store";
 
 export type SkillInfo = { name: string; description: string };
 
@@ -87,25 +87,34 @@ export class Skills {
     return found;
   }
 
-  /** Writes a skill and lists it in INDEX.md, in one commit. */
+  /**
+   * Writes a skill and lists it in INDEX.md, in one commit. With `before`, only if the skill is still
+   * that (null: it doesn't exist); otherwise MemoryConflict.
+   */
   async save(
     name: string,
     content: string,
     author: Author,
     message = `Add skill ${name}`,
+    before?: string | null,
   ): Promise<string | null> {
     const others = this.list().filter((s) => s.name !== name);
     const skills = [...others, { name, description: describeSkill(content) }].sort((a, b) =>
       a.name.localeCompare(b.name),
     );
-    const index = (await this.memory.exists("INDEX.md"))
-      ? await this.memory.read("INDEX.md")
-      : "# Memory index\n";
-    const sha = await this.memory.writeAll(
-      [
-        { path: skillPath(name), content },
-        { path: "INDEX.md", content: withSkillsSection(index, skills) },
-      ],
+    // INDEX.md is read and written with no other write in between, so nothing in it is lost.
+    const sha = await this.memory.edit(
+      async (read) => {
+        if (before !== undefined) {
+          const now = await read(skillPath(name));
+          if (now !== before) throw new MemoryConflict(blobSha(now), now ?? "");
+        }
+        const index = (await read("INDEX.md")) ?? "# Memory index\n";
+        return [
+          { path: skillPath(name), content },
+          { path: "INDEX.md", content: withSkillsSection(index, skills) },
+        ];
+      },
       author,
       message,
     );

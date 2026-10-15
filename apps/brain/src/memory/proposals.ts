@@ -11,7 +11,7 @@ import type { SettingsStore } from "../settings";
 import type { Spend } from "../spend";
 import type { Tasks } from "../tasks/service";
 import { type Skills, skillPath } from "../teach/skills";
-import type { MemoryStore } from "./store";
+import { MemoryConflict, type MemoryStore } from "./store";
 
 export const PROPOSAL_MODEL = "claude-opus-5-5";
 const TIDY_KEY = "tidy:last";
@@ -216,30 +216,41 @@ export class Proposals {
     const p = this.get(id);
     if (!p) throw new ProposalError("No such proposal.", 404);
     if (p.status !== "pending") throw new ProposalError(`It's already ${p.status}.`, 409);
-    for (const c of p.changes) {
-      const now = (await this.d.memory.exists(c.path)) ? await this.d.memory.read(c.path) : null;
-      if (now !== c.before) {
-        this.resolve(id, "stale");
-        throw new ProposalError(
-          `${c.path} changed since this was proposed. Ask for a new one.`,
-          409,
+    const owner = this.d.settings.get().owner;
+    // Each file is checked and written with no other write in between.
+    let changed: string | null = null;
+    let sha: string | null = null;
+    try {
+      if (p.kind === "skill" && p.skill) {
+        changed = p.changes[0]?.path ?? null;
+        const fix = `Fix skill ${p.skill}: ${p.title}`;
+        sha = await this.d.skills.save(
+          p.skill,
+          p.changes[0]?.after ?? "",
+          owner,
+          fix,
+          p.changes[0]?.before ?? null,
+        );
+      } else {
+        sha = await this.d.memory.edit(
+          async (read) => {
+            for (const c of p.changes) {
+              changed = c.path;
+              const now = await read(c.path);
+              if (now !== c.before) throw new MemoryConflict("", now ?? "");
+            }
+            return p.changes.map((c) => ({ path: c.path, content: c.after }));
+          },
+          owner,
+          `Tidy: ${p.title}`,
         );
       }
-    }
-    const owner = this.d.settings.get().owner;
-    let sha: string | null;
-    if (p.kind === "skill" && p.skill) {
-      sha = await this.d.skills.save(
-        p.skill,
-        p.changes[0]?.after ?? "",
-        owner,
-        `Fix skill ${p.skill}: ${p.title}`,
-      );
-    } else {
-      sha = await this.d.memory.change(
-        p.changes.map((c) => ({ path: c.path, content: c.after })),
-        owner,
-        `Tidy: ${p.title}`,
+    } catch (err) {
+      if (!(err instanceof MemoryConflict)) throw err;
+      this.resolve(id, "stale");
+      throw new ProposalError(
+        `${changed ?? "A file"} changed since this was proposed. Ask for a new one.`,
+        409,
       );
     }
     if (sha)
