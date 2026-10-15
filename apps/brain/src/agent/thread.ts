@@ -32,7 +32,7 @@ import {
 } from "../plugins/registry";
 import type { Schedules } from "../schedules";
 import type { SettingsStore } from "../settings";
-import { BudgetError, priceOf, type Spend, tokenCount, tokensOf } from "../spend";
+import { BudgetError, estimateTokens, priceOf, type Spend, tokenCount, tokensOf } from "../spend";
 import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
 import type { Watchers } from "../watch/service";
@@ -737,14 +737,20 @@ export class Thread {
   }
 
   /** A bot's own API conversation in the episode: in a group, each bot keeps its own. */
-  private loadTurns(episodeId: number, botId: string): Turn[] {
+  /** `files`: the reply's files, read once. Older turns hold the bytes themselves. */
+  private async loadTurns(
+    episodeId: number,
+    botId: string,
+    files?: Map<number, BlockParam[]>,
+  ): Promise<Turn[]> {
     const turns = this.d.db
       .query<{ role: "user" | "assistant"; content: string }, [number, string]>(
         "SELECT role, content FROM episode_turns WHERE episode_id = ? AND bot_id = ? ORDER BY id",
       )
       .all(episodeId, botId)
       .map((r) => ({ role: r.role, content: JSON.parse(r.content) }));
-    return answered(turns);
+    const all = answered(turns);
+    return this.d.attachments ? this.d.attachments.expand(all, files) : all;
   }
 
   /** Whether the model has seen the episode yet: any bot, or with `botId` that one. */
@@ -1318,8 +1324,7 @@ export class Thread {
       });
       // Data a task handed over for this reply, e.g. a series to draw. What it holds came from the task.
       const handed = files.filter((a) => a.forChat);
-      if (handed.length && this.d.attachments)
-        userBlocks.push(...(await this.d.attachments.blocks(handed)));
+      if (handed.length && this.d.attachments) userBlocks.push(...this.d.attachments.refs(handed));
     }
     // Telling you about a task shown under its reply: that reply is written again, not a new one.
     const rewrite = !user && !group?.nudged ? this.taskReply(ended) : null;
@@ -1353,7 +1358,7 @@ export class Thread {
       });
     // Your files: what's in them was written by whoever made them, so they're untrusted (PLAN.md §6.1).
     if (user?.attachments?.length && this.d.attachments) {
-      userBlocks.push(...(await this.d.attachments.blocks(user.attachments)));
+      userBlocks.push(...this.d.attachments.refs(user.attachments));
       this.taint(episode.id, `Attached file "${user.attachments[0]?.name}"`);
     }
     this.appendTurn(episode.id, bot.id, "user", userBlocks);
@@ -1449,6 +1454,7 @@ export class Thread {
       );
     };
 
+    const files = new Map<number, BlockParam[]>();
     const started = this.clock();
     let waited = 0;
     let commands = 0;
@@ -1463,7 +1469,7 @@ export class Thread {
           return finish("error", "_Stopped: this reply hit its step or time limit._");
         }
 
-        const messages = this.loadTurns(episode.id, bot.id);
+        const messages = await this.loadTurns(episode.id, bot.id, files);
         try {
           spend.check(estimateCost(messages, chatModel));
         } catch (err) {
@@ -1806,7 +1812,7 @@ export function activity(label: string, input: unknown): string {
 /** Rough upper estimate before a request: cached prefix at read price, plus room for a reply. */
 function estimateCost(messages: Turn[], model: string): number {
   const p = priceOf(model);
-  const tokens = JSON.stringify(messages).length / 3 + 4000;
+  const tokens = estimateTokens(messages) + 4000;
   return (tokens * p.input * 0.25 + 2000 * p.output) / 1_000_000;
 }
 

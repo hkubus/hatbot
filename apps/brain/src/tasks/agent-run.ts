@@ -25,7 +25,7 @@ import { type Outcome, ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import type { CallContext, PluginTool, Verdict } from "../plugins/plugin";
 import { describeCall, runPluginTool, untrustedDefinitions, verdictFor } from "../plugins/registry";
-import { BudgetError, priceOf } from "../spend";
+import { BudgetError, estimateTokens, priceOf } from "../spend";
 import { Stop, UPDATES_MODELS } from "./desktop-run";
 import { SEND_TO_CHAT_DESCRIPTION, SendToChat, sendToChat } from "./send-to-chat";
 import type { Tasks } from "./service";
@@ -129,7 +129,7 @@ const CORE_TOOLS: Anthropic.Beta.BetaTool[] = [
 /** Rough upper estimate before a request: cached prefix at read price, plus room for a reply. */
 function estimateCost(messages: Anthropic.Beta.BetaMessageParam[], model: string): number {
   const p = priceOf(model);
-  const tokens = JSON.stringify(messages).length / 3 + 4000;
+  const tokens = estimateTokens(messages) + 4000;
   return (tokens * p.input * 0.3 + 2000 * p.output) / 1_000_000;
 }
 

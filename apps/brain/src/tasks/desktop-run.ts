@@ -18,7 +18,7 @@ import { type Outcome, ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import { destructive } from "../plugins/ssh/policy";
-import { BudgetError, priceOf } from "../spend";
+import { BudgetError, estimateTokens, priceOf } from "../spend";
 import { skillPath } from "../teach/skills";
 import { checkFor, consequential } from "./policy";
 import { DesktopSendToChat, SEND_TO_CHAT_DESCRIPTION, sendToChat } from "./send-to-chat";
@@ -255,23 +255,8 @@ const describe = (name: string, input: Record<string, unknown>): string => {
 
 /** Rough upper estimate before a request: text by length, images at their typical size. */
 function estimateCost(messages: Anthropic.Beta.BetaMessageParam[], model: string): number {
-  let chars = 0;
-  let images = 0;
-  const walk = (v: unknown) => {
-    if (Array.isArray(v)) v.forEach(walk);
-    else if (v && typeof v === "object") {
-      const o = v as Record<string, unknown>;
-      if (o.type === "image") images++;
-      else
-        for (const [k, x] of Object.entries(o)) {
-          if (typeof x !== "string") walk(x);
-          else if (k !== "data") chars += x.length;
-        }
-    }
-  };
-  walk(messages);
   const p = priceOf(model);
-  const tokens = chars / 3.5 + images * 1600 + 3000;
+  const tokens = estimateTokens(messages) + 3000;
   return (tokens * p.input * 0.3 + 1500 * p.output) / 1_000_000;
 }
 

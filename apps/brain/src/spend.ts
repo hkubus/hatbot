@@ -77,6 +77,39 @@ export function costOf(model: string, t: Tokens): number {
   );
 }
 
+/**
+ * Rough prompt tokens in a conversation, for the estimate before a request: text by length, images at
+ * their typical size, PDFs by their size. Base64 bytes don't count as text.
+ */
+export function estimateTokens(messages: unknown): number {
+  let chars = 0;
+  let images = 0;
+  let pdfTokens = 0;
+  const walk = (v: unknown) => {
+    if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      if (o.type === "image") {
+        images++;
+        return;
+      }
+      const source = o.source as { type?: string; data?: unknown } | undefined;
+      if (o.type === "document" && source?.type === "base64") {
+        // A page or two per 100 KB; about 1,500 tokens a page.
+        const kb = (String(source.data ?? "").length * 0.75) / 1024;
+        pdfTokens += Math.max(1500, kb * 25);
+        return;
+      }
+      for (const [k, x] of Object.entries(o)) {
+        if (typeof x !== "string") walk(x);
+        else if (!(k === "data" && o.type === "base64") && k !== "signature") chars += x.length;
+      }
+    }
+  };
+  walk(messages);
+  return chars / 3.5 + images * 1600 + pdfTokens;
+}
+
 export class BudgetError extends Error {
   constructor(
     readonly limit: "task" | "daily" | "monthly",

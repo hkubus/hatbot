@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Attachment, ThreadMessage } from "@hatbot/shared";
 import type { CallContext } from "../src/plugins/plugin";
+import { estimateTokens } from "../src/spend";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { ORIGIN, setUpOwner, type TestApp, testApp } from "./helpers";
 
@@ -59,6 +60,54 @@ test("you upload a photo, send it with a message, and the model sees it; it tain
   expect(again.status).toBe(202);
   await t.thread.idle();
   expect(t.thread.list().find((m) => m.text === "hi")?.attachments).toBeUndefined();
+
+  // The turn keeps the file's id, not its bytes; each request has the bytes, the same each time.
+  const b64 = Buffer.from(PNG).toString("base64");
+  const stored = t.db
+    .query<{ content: string }, []>("SELECT content FROM episode_turns ORDER BY id LIMIT 1")
+    .get()?.content;
+  expect(stored).not.toContain(b64);
+  expect(stored).toContain(`"id":${a.id}`);
+  const image = { type: "image", source: { type: "base64", media_type: "image/png", data: b64 } };
+  expect(chat.requests[0]?.messages[0]?.content).toContainEqual(image as never);
+  expect(chat.requests[1]?.messages[0]?.content).toContainEqual(image as never);
+});
+
+test("turns stored with the bytes themselves still go out as they are", async () => {
+  const chat = new FakeModel([{ content: [text("one")] }, { content: [text("two")] }]);
+  const t = await testApp(chat);
+  await t.thread.post("first").done;
+  const image = {
+    type: "image",
+    source: { type: "base64", media_type: "image/png", data: "AAAA" },
+  };
+  t.db
+    .query("UPDATE episode_turns SET content = ? WHERE id = 1")
+    .run(JSON.stringify([{ type: "text", text: "old" }, image]));
+  await t.thread.post("second").done;
+  expect(chat.requests[1]?.messages[0]?.content).toContainEqual(image as never);
+});
+
+test("the estimate before a request counts images and PDFs by size, not their base64", () => {
+  const mb = "A".repeat(1024 * 1024);
+  const tokens = estimateTokens([
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "x".repeat(350) },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: mb } },
+        { type: "document", source: { type: "base64", media_type: "application/pdf", data: mb } },
+        {
+          type: "document",
+          source: { type: "text", media_type: "text/plain", data: "y".repeat(700) },
+        },
+      ],
+    },
+  ]);
+  // 100 + 200 of text, an image, and a 768 KB PDF.
+  const expected = 300 + 1600 + 768 * 25;
+  expect(tokens).toBeGreaterThan(expected);
+  expect(tokens).toBeLessThan(expected + 50);
 });
 
 test("downloads: images inline, anything else as a file, never sniffed", async () => {
