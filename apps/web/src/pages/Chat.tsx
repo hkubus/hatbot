@@ -526,6 +526,8 @@ export function Chat({ id }: { id: number }) {
   const scroller = useRef<HTMLElement>(null);
   const thread = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  // Scrolled well up: an arrow above the composer goes back down.
+  const [far, setFar] = useState(false);
   // Only messages that arrive after the first paint animate in.
   const animateFrom = useRef<number>(Number.POSITIVE_INFINITY);
   const loaded = useRef<Promise<void>>(Promise.resolve());
@@ -627,7 +629,16 @@ export function Chat({ id }: { id: number }) {
 
   const onScroll = () => {
     const el = scroller.current;
-    if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (!el) return;
+    const below = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stick.current = below < 80;
+    setFar(below > Math.max(400, el.clientHeight));
+  };
+  const toBottom = () => {
+    const el = scroller.current;
+    if (!el) return;
+    stick.current = true;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   };
 
   const earlier = async () => {
@@ -742,6 +753,11 @@ export function Chat({ id }: { id: number }) {
         </div>
       </section>
       <div className="composer-wrap">
+        {far && (
+          <button type="button" className="to-bottom" title="Latest messages" onClick={toBottom}>
+            <Icon name="down" />
+          </button>
+        )}
         {pending.length > 0 && (
           <div className="approval-tray">
             {pending.map((a) => (
@@ -793,6 +809,9 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const textarea = useRef<HTMLTextAreaElement>(null);
+  // While a reply streams, an empty composer's button stops it.
+  const replying = useStore((s) => s.messages.some((m) => m.status === "streaming"));
+  const canStop = replying && !draft.trim() && !files.length;
 
   const resize = () => {
     const ta = textarea.current;
@@ -1000,6 +1019,10 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
               }
               if (e.key === "Escape") return setMenuClosed(true);
             }
+            if (e.key === "Escape" && canStop) {
+              e.preventDefault();
+              return void send("/stop");
+            }
             // On a phone's keyboard Enter is a new line; the button sends.
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !touchScreen()) {
               e.preventDefault();
@@ -1007,15 +1030,27 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
             }
           }}
         />
-        <button
-          type="button"
-          className="icon-btn send"
-          title="Send"
-          disabled={(!draft.trim() && !ready.length) || sending || uploading}
-          onClick={() => send()}
-        >
-          <Icon name="up" />
-        </button>
+        {canStop ? (
+          <button
+            type="button"
+            className="icon-btn send"
+            title="Stop"
+            disabled={sending}
+            onClick={() => send("/stop")}
+          >
+            <Icon name="stop" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="icon-btn send"
+            title="Send"
+            disabled={(!draft.trim() && !ready.length) || sending || uploading}
+            onClick={() => send()}
+          >
+            <Icon name="up" />
+          </button>
+        )}
       </div>
     </>
   );

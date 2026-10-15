@@ -3008,3 +3008,25 @@ mark {
   outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
   outline-offset: -2px;
 }
+
+/* Back to the latest messages, when you've scrolled well up. */
+.composer-wrap {
+  position: relative;
+}
+.to-bottom {
+  position: absolute;
+  top: -36px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 0.5px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text-2);
+}
+.to-bottom:hover {
+  color: var(--text);
+}
