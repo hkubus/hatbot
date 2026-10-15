@@ -9,7 +9,7 @@ import type {
   BrowserInspect,
   LiveInput,
 } from "@hatbot/shared/desktop";
-import { Browser, BrowserError } from "./browser";
+import { Browser, BrowserError, devToolsUp } from "./browser";
 import { context, inspect } from "./cdp";
 import { FetchError, fetchPage } from "./fetch";
 import { browserKey } from "./keys";
@@ -19,6 +19,7 @@ import { SHELL_SOCKET } from "./shell";
 import {
   ActionError,
   act,
+  displayUp,
   LIVE_FPS_CONTROL,
   LIVE_FPS_WATCHING,
   LiveCapture,
@@ -44,7 +45,7 @@ const version = (() => {
 const stateDir = process.env.STATE_DIRECTORY;
 const MAX_UPDATE_BYTES = 10 * 1024 * 1024;
 /** Endpoints added since the first deploy; the brain's checks say when the desktop is behind. */
-const FEATURES = ["profiles", "exec", "files", "fetch"];
+const FEATURES = ["profiles", "exec", "files", "fetch", "deep-health"];
 
 const size = await screenSize();
 const live = new LiveCapture(size);
@@ -72,6 +73,24 @@ const health = (): AgentStatus => ({
   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   features: FEATURES,
 });
+/** GET /health?deep=1: plain health, plus whether the screen can be grabbed and DevTools and the shell answer. */
+type DeepHealth = Omit<AgentStatus, "ok"> & {
+  ok: boolean;
+  x: boolean;
+  cdp: boolean;
+  shell: boolean;
+};
+async function deepHealth(): Promise<DeepHealth> {
+  const shellUp = fetch("http://shell/", {
+    unix: SHELL_SOCKET,
+    signal: AbortSignal.timeout(2000),
+  } as RequestInit).then(
+    () => true,
+    () => false,
+  );
+  const [x, cdp, shell] = await Promise.all([displayUp(), devToolsUp(), shellUp]);
+  return { ...health(), ok: x && cdp, x, cdp, shell };
+}
 const image = (bytes: Uint8Array) =>
   new Response(bytes, { headers: { "content-type": "image/webp", "cache-control": "no-store" } });
 
@@ -132,7 +151,7 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
     try {
       switch (route) {
         case "GET /health":
-          return json(health());
+          return json(url.searchParams.get("deep") === "1" ? await deepHealth() : health());
         case "POST /update": {
           // A new copy of this app from the brain's updater (the Update button in Settings).
           // hatbot-desktop-agent-update.path picks it up and installs it as root, then restarts us.

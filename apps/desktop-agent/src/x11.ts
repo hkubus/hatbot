@@ -89,6 +89,37 @@ async function grab(args: string[]): Promise<Uint8Array> {
   return out;
 }
 
+/** Whether one frame can be grabbed, for GET /health?deep=1. */
+export async function displayUp(): Promise<boolean> {
+  try {
+    const { out, code } = await spawn(
+      [
+        "ffmpeg",
+        "-loglevel",
+        "error",
+        "-f",
+        "x11grab",
+        "-framerate",
+        "1000",
+        "-video_size",
+        "1x1",
+        "-i",
+        display,
+        "-frames:v",
+        "1",
+        "-f",
+        "rawvideo",
+        "-",
+      ],
+      0,
+      3000,
+    );
+    return code === 0 && out.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 // Lossless WebP: exact pixels for the model, and about a third of PNG's size in the archive.
 const WEBP = [
   "-frames:v",

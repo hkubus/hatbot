@@ -228,14 +228,23 @@ systemctl restart hatbot-desktop-shell hatbot-desktop-agent
 
 # shellcheck source=/dev/null
 token=$(. /etc/hatbot-desktop/secrets.env && printf '%s' "$DESKTOP_AGENT_TOKEN")
-for _ in $(seq 1 20); do
-  if printf 'Authorization: Bearer %s\n' "$token" |
-    curl -fsS -m 2 -o /dev/null -H @- "http://$DESKTOP_IP:7070/health" 2>/dev/null; then
+# The deep check grabs a frame and asks Chromium's DevTools. desktop-agent waits for the display before it
+# answers, so a restarted Xvnc takes a few seconds.
+health=''
+for _ in $(seq 1 60); do
+  health=$(printf 'Authorization: Bearer %s\n' "$token" |
+    curl -fsS -m 5 -H @- "http://$DESKTOP_IP:7070/health?deep=1" 2>/dev/null || true)
+  if grep -q '"ok":true' <<<"$health"; then
     say "desktop-agent is up"
     exit 0
   fi
   sleep 0.5
 done
+# Chromium not answering isn't desktop-agent's fault; keep the new version.
+if grep -q '"x":true' <<<"$health"; then
+  say "desktop-agent is up, but Chromium's DevTools isn't answering (journalctl -u hatbot-chromium)"
+  exit 0
+fi
 journalctl -u hatbot-desktop-agent -n 30 --no-pager >&2 || true
 if [[ -d $DIR.old ]]; then
   echo "desktop-agent didn't come up; going back to the previous version" >&2
