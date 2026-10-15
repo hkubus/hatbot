@@ -33,17 +33,31 @@ struct KeychainVault: TokenVault {
     return SecItemCopyMatching(q as CFDictionary, nil) == errSecSuccess
   }
 
+  /// Changed in place, or added if it isn't there, so the share extension never finds it missing.
   func save(_ token: String) {
-    clear()
-    var q = query
-    q[kSecValueData as String] = Data(token.utf8)
-    q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-    if let accessGroup { q[kSecAttrAccessGroup as String] = accessGroup }
-    if SecItemAdd(q as CFDictionary, nil) != errSecSuccess && accessGroup != nil {
-      // Signed without the group after all: keep it to the app.
-      q[kSecAttrAccessGroup as String] = nil
-      SecItemAdd(q as CFDictionary, nil)
+    let attributes: [String: Any] = [
+      kSecValueData as String: Data(token.utf8),
+      kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+    ]
+    if let accessGroup {
+      var q = query
+      q[kSecAttrAccessGroup as String] = accessGroup
+      if upsert(q, attributes) {
+        // One the app kept to itself before the group gets the same token, so either one read is right.
+        SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        return
+      }
     }
+    // No group, or signed without it after all: keep it to the app.
+    upsert(query, attributes)
+  }
+
+  @discardableResult
+  private func upsert(_ q: [String: Any], _ attributes: [String: Any]) -> Bool {
+    let status = SecItemUpdate(q as CFDictionary, attributes as CFDictionary)
+    if status == errSecSuccess { return true }
+    guard status == errSecItemNotFound else { return false }
+    return SecItemAdd(q.merging(attributes) { _, new in new } as CFDictionary, nil) == errSecSuccess
   }
 
   /// Deletes it from every access group this app can reach.

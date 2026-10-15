@@ -13,6 +13,15 @@ enum AppGroup {
     return candidates.first { FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil }
   }()
 
+  /// Where the app keeps what it last saw (DiskCache): the group's caches, or the app's own.
+  static var cacheDir: URL? {
+    let root =
+      id.flatMap { FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) }?
+      .appendingPathComponent("Library/Caches", isDirectory: true)
+      ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+    return root?.appendingPathComponent("Hatbot", isDirectory: true)
+  }
+
   /// Defaults both see; the app's own when there's no group.
   static var defaults: UserDefaults {
     id.flatMap { UserDefaults(suiteName: $0) } ?? .standard

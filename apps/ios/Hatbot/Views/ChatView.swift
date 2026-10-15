@@ -6,25 +6,26 @@ import SwiftUI
 import UIKit
 
 struct ChatView: View {
+  /// Kept in MainView, like the other sections', so it survives going to another section and back.
+  @Binding var path: [Route]
+  /// A message to scroll to, from Search: earlier pages load until it's there.
+  @Binding var focus: Int?
   @Environment(AppStore.self) private var store
-  @State private var path: [Route] = []
-  @State private var draft = ""
-  @State private var files: [ComposerFile] = []
-  @State private var photos: [PhotosPickerItem] = []
-  @State private var pickingPhotos = false
-  @State private var pickingFiles = false
-  @State private var sending = false
   @State private var error: String?
   @State private var position = ScrollPosition(edge: .bottom)
   @State private var loaded = false
   @State private var unfolded = Set<Int>()
   /// The folded conversation you asked to delete, waiting for you to confirm.
   @State private var deleting: Int?
+  @State private var rowCache = RowCache()
+  @State private var router = OpenRoute()
   private var name: String { store.chatName(store.currentChat) }
   @State private var farFromBottom = false
+  static let readingWidth: CGFloat = 720
+  @State private var nearBottom = true
 
   /// What the list shows: times, folds, and the messages that aren't folded away.
-  private enum Row: Identifiable {
+  fileprivate enum Row: Identifiable {
     case time(String, before: Int)
     case fold(ThreadGroup)
     /// `joined`: it follows a message from the same sender; `tail`: it's the last of them.
@@ -39,31 +40,49 @@ struct ChatView: View {
     }
   }
 
+  /// The rows, worked out again only when what they're made of changes, not on every redraw.
+  fileprivate final class RowCache {
+    struct Key: Equatable {
+      var messages: [ThreadMessage]
+      var episodes: [Int: Episode]
+      var unfolded: Set<Int>
+      var unread: [Int]
+    }
+
+    var key: Key?
+    var rows: [Row] = []
+  }
+
   private var rows: [Row] {
+    let key = RowCache.Key(messages: store.messages, episodes: store.episodes, unfolded: unfolded, unread: store.unread)
+    if rowCache.key == key { return rowCache.rows }
     var rows: [Row] = []
     var previous: ThreadMessage?
     func add(_ m: ThreadMessage, as row: Row) {
-      if let time = pause(m, after: previous) { rows.append(.time(time, before: m.id)) }
+      if let time = Self.pause(m, after: previous) { rows.append(.time(time, before: m.id)) }
       previous = m
       rows.append(row)
     }
     func add(_ m: ThreadMessage) { add(m, as: .message(m)) }
-    for g in ThreadFolds.groups(store.messages, episodes: store.episodes) {
+    let unread = Set(key.unread)
+    for g in ThreadFolds.groups(key.messages, episodes: key.episodes) {
       guard g.fold != nil, let id = g.episodeId else {
         for m in g.messages { add(m) }
         continue
       }
       add(g.messages[0], as: .fold(g))
       // A message you haven't seen stays in view.
-      let shown = unfolded.contains(id) ? g.messages : g.messages.filter { store.unread.contains($0.id) }
+      let shown = unfolded.contains(id) ? g.messages : g.messages.filter { unread.contains($0.id) }
       for m in shown { add(m) }
     }
-    return grouped(rows)
+    rowCache.key = key
+    rowCache.rows = Self.grouped(rows)
+    return rowCache.rows
   }
 
   /// Runs of messages from the same sender sit close together, with a tail on the last. In a group
   /// each bot is a sender of its own.
-  private func grouped(_ rows: [Row]) -> [Row] {
+  private static func grouped(_ rows: [Row]) -> [Row] {
     func sender(_ row: Row?) -> String? {
       if case let .message(m, _, _)? = row, !m.isNote { key(m) } else { nil }
     }
@@ -102,6 +121,7 @@ struct ChatView: View {
             .multilineTextAlignment(.center)
             .padding(.top, 40)
           }
+          let group = members != nil
           ForEach(rows) { row in
             switch row {
             case let .time(time, _):
@@ -123,7 +143,7 @@ struct ChatView: View {
               .padding(.top, 10)
             case let .message(m, joined, tail):
               // In a group, the bot's name above each run of its messages.
-              let named = members != nil && !joined && m.role == .assistant && !m.isNote
+              let named = group && !joined && m.role == .assistant && !m.isNote
               if named {
                 Text(store.botName(m.botId))
                   .font(.caption.weight(.semibold))
@@ -132,21 +152,31 @@ struct ChatView: View {
                   .padding(.leading, 14)
                   .padding(.top, 10)
               }
-              MessageRow(m: m, tail: tail, open: { path.append($0) })
+              MessageRow(m: m, tail: tail)
+                .equatable()
                 .padding(.top, joined || named ? 2 : 10)
             }
           }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
+        // So a search hit can be scrolled to by its row's id.
+        .scrollTargetLayout()
+        // A column you can read across on an iPad or a Mac.
+        .frame(maxWidth: Self.readingWidth)
+        .frame(maxWidth: .infinity)
       }
       .scrollPosition($position)
       .defaultScrollAnchor(.bottom)
-      .defaultScrollAnchor(.bottom, for: .sizeChanges)
-      .onScrollGeometryChange(for: Bool.self) { geo in
-        geo.contentSize.height - geo.visibleRect.maxY > 400
-      } action: { _, far in
-        withAnimation(.snappy) { farFromBottom = far }
+      // A reply streaming in is followed only from the bottom; scrolled up, your place stays. An
+      // earlier page going in above keeps it from the bottom.
+      .defaultScrollAnchor(nearBottom || store.prepending ? .bottom : .top, for: .sizeChanges)
+      .onScrollGeometryChange(for: CGFloat.self) { geo in
+        geo.contentSize.height - geo.visibleRect.maxY
+      } action: { _, distance in
+        if nearBottom != (distance < 60) { nearBottom = distance < 60 }
+        let far = distance > 400
+        if far != farFromBottom { withAnimation(.snappy) { farFromBottom = far } }
       }
       .overlay(alignment: .bottom) {
         if farFromBottom {
@@ -166,9 +196,17 @@ struct ChatView: View {
       }
       .scrollDismissesKeyboard(.interactively)
       .edgeBar(.top) {
-        if store.paused { PausedBanner() }
+        VStack(spacing: 0) {
+          if store.unreachable { UnreachableBanner() }
+          if store.paused { PausedBanner() }
+        }
+        .animation(.snappy, value: store.unreachable)
       }
-      .edgeBar(.bottom) { composer }
+      .edgeBar(.bottom) {
+        Composer(name: name, members: members, error: $error) {
+          withAnimation { position.scrollTo(edge: .bottom) }
+        }
+      }
       .navigationTitle(store.incognito ? "Incognito" : name)
       .sidebarButton()
       .toolbar {
@@ -213,15 +251,33 @@ struct ChatView: View {
         }
       }
       .routes()
+      .environment(\.openRoute, router)
+      .onAppear { router.open = { route in path.append(route) } }
       .onChange(of: store.conversationId) {
         path = []
         unfolded = []
       }
+      .task(id: focus) {
+        guard let id = focus else { return }
+        defer { focus = nil }
+        guard await store.reveal(id), let m = store.messages.first(where: { $0.id == id }) else {
+          error = "That message isn't in this chat any more."
+          return
+        }
+        if let e = m.episodeId { unfolded.insert(e) }
+        // Once its row is in the list.
+        try? await Task.sleep(for: .milliseconds(150))
+        withAnimation { position.scrollTo(id: "m\(id)", anchor: .center) }
+      }
       .task {
-        do {
-          try await store.loadThread()
-        } catch {
-          self.error = message(for: error)
+        // Coming back to a chat that's loaded and live: the events kept it current. Otherwise the latest
+        // page is merged in.
+        if store.messages.isEmpty || !store.connected {
+          do {
+            try await store.loadThread()
+          } catch {
+            self.error = message(for: error)
+          }
         }
         loaded = true
       }
@@ -229,9 +285,9 @@ struct ChatView: View {
   }
 
   /// "Today 14:05", like Messages, when a message comes an hour or more after the one before.
-  private func pause(_ m: ThreadMessage, after previous: ThreadMessage?) -> String? {
-    guard let date = Format.date(m.createdAt) else { return nil }
-    if let prev = Format.date(previous?.createdAt), date.timeIntervalSince(prev) < 3600 { return nil }
+  private static func pause(_ m: ThreadMessage, after previous: ThreadMessage?) -> String? {
+    guard let date = m.date else { return nil }
+    if let prev = previous?.date, date.timeIntervalSince(prev) < 3600 { return nil }
     let time = date.formatted(date: .omitted, time: .shortened)
     let calendar = Calendar.current
     if calendar.isDateInToday(date) { return "Today \(time)" }
@@ -245,6 +301,56 @@ struct ChatView: View {
       : date.formatted(.dateTime.day().month(.abbreviated).year())
     return "\(day) at \(time)"
   }
+}
+
+/// Each chat's draft and files, kept while you're elsewhere in the app.
+@MainActor
+@Observable
+final class Drafts {
+  /// Saved only when you leave a chat, so typing doesn't go through here.
+  @ObservationIgnored var texts: [String: String] = [:]
+  var files: [String: [ComposerFile]] = [:]
+
+  func update(_ key: String, _ id: UUID, _ change: (inout ComposerFile) -> Void) {
+    guard let i = files[key]?.firstIndex(where: { $0.id == id }) else { return }
+    change(&files[key]![i])
+  }
+}
+
+/// Pushes a page on the chat's navigation stack, from a message's menu. A class, so the messages see the
+/// same one on every redraw.
+@MainActor
+final class OpenRoute {
+  var open: (Route) -> Void = { _ in }
+}
+
+extension EnvironmentValues {
+  @Entry var openRoute: OpenRoute?
+}
+
+/// The approval waiting for you, then the files, the "@" and "/" suggestions and the field. Your draft
+/// lives here, so typing redraws only the composer.
+private struct Composer: View {
+  let name: String
+  let members: [Bot]?
+  @Binding var error: String?
+  let sent: () -> Void
+  @Environment(AppStore.self) private var store
+  @Environment(Drafts.self) private var drafts
+  /// The draft as you type; kept in `drafts` when you leave the chat or switch to another.
+  @State private var draft = ""
+  @State private var photos: [PhotosPickerItem] = []
+  @State private var pickingPhotos = false
+  @State private var pickingFiles = false
+  @State private var sending = false
+
+  /// Whose draft and files these are: each chat has its own, and its incognito conversation another.
+  private var key: String { "\(store.conversationId)\(store.incognito ? "i" : "")" }
+
+  private var files: [ComposerFile] {
+    get { drafts.files[key] ?? [] }
+    nonmutating set { drafts.files[key] = newValue }
+  }
 
   private var uploading: Bool { files.contains { $0.attachment == nil && $0.error == nil } }
 
@@ -257,19 +363,21 @@ struct ChatView: View {
   /// Adds a file to the composer and uploads it straight away.
   private func attach(_ data: Data, name: String, mediaType: String, preview: UIImage? = nil) {
     let f = ComposerFile(name: name, preview: preview)
+    let key = key
     files.append(f)
     Task {
+      // The chat it was attached in, even if you've gone to another meanwhile.
       do {
         let a = try await store.upload(data, name: name, mediaType: mediaType)
-        if let i = files.firstIndex(where: { $0.id == f.id }) { files[i].attachment = a }
+        drafts.update(key, f.id) { $0.attachment = a }
       } catch {
-        if let i = files.firstIndex(where: { $0.id == f.id }) { files[i].error = message(for: error) }
+        drafts.update(key, f.id) { $0.error = message(for: error) }
         self.error = message(for: error)
       }
     }
   }
 
-  private var composer: some View {
+  var body: some View {
     VStack(spacing: 6) {
       // The oldest approval waiting for you; the next shows once you've answered it.
       if let a = store.pendingApprovals.first {
@@ -322,6 +430,8 @@ struct ChatView: View {
         .buttonBorderShape(.circle)
         .tint(.brand)
         .disabled(!canSend)
+        // With a keyboard, Return makes a new line and Command-Return sends.
+        .keyboardShortcut(.return, modifiers: .command)
         .accessibilityLabel("Send")
       }
       .glassGroup(spacing: 8)
@@ -329,14 +439,21 @@ struct ChatView: View {
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
     .photosPicker(isPresented: $pickingPhotos, selection: $photos, maxSelectionCount: 10, matching: .images)
+    // A tap as it goes.
+    .sensoryFeedback(.impact(weight: .light), trigger: sending) { _, sending in sending }
+    .onAppear { draft = drafts.texts[key] ?? "" }
+    .onDisappear { drafts.texts[key] = draft }
+    .onChange(of: key) { old, new in
+      drafts.texts[old] = draft
+      draft = drafts.texts[new] ?? ""
+    }
     .onChange(of: photos) { _, picked in
       guard !picked.isEmpty else { return }
       photos = []
       Task {
         for (i, item) in picked.enumerated() {
-          guard let data = try? await item.loadTransferable(type: Data.self),
-            let photo = PickedFile.photo(data, index: files.count + i + 1)
-          else {
+          let index = files.count + i + 1
+          guard let photo = await Self.load(item, index: index) else {
             error = "Couldn't read that photo."
             continue
           }
@@ -346,14 +463,29 @@ struct ChatView: View {
     }
     .fileImporter(isPresented: $pickingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
       guard case let .success(urls) = result else { return }
-      for url in urls.prefix(10) {
-        guard let f = PickedFile.file(url) else {
-          error = "Couldn't read \(url.lastPathComponent)."
-          continue
+      Task {
+        for url in urls.prefix(10) {
+          guard let f = await Task.detached(operation: { PickedFile.file(url) }).value else {
+            error = "Couldn't read \(url.lastPathComponent)."
+            continue
+          }
+          attach(f.data, name: f.name, mediaType: f.mediaType)
         }
-        attach(f.data, name: f.name, mediaType: f.mediaType)
       }
     }
+  }
+
+  /// A picked photo, scaled from its file off the main thread; as data if the library won't give a file.
+  private static func load(_ item: PhotosPickerItem, index: Int) async -> PickedFile.Photo? {
+    if let file = try? await item.loadTransferable(type: PickedPhoto.self) {
+      let url = file.url
+      return await Task.detached {
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        return PickedFile.photo(at: url, index: index)
+      }.value
+    }
+    guard let data = try? await item.loadTransferable(type: Data.self) else { return nil }
+    return await Task.detached { PickedFile.photo(data, index: index) }.value
   }
 
   private var commands: [ChatCommand] { ChatCommand.matching(draft, incognito: store.incognito) }
@@ -422,8 +554,9 @@ struct ChatView: View {
     error = nil
     // Cleared before it's sent, and put back if sending fails.
     draft = ""
+    drafts.texts[key] = nil
     if command == nil { files = [] }
-    withAnimation { position.scrollTo(edge: .bottom) }
+    sent()
     Task {
       // The keyboard can commit an autocorrection into the field just after it's cleared.
       try? await Task.sleep(for: .milliseconds(80))
@@ -462,6 +595,23 @@ struct PausedBanner: View {
   }
 }
 
+/// The event stream has been down for a few seconds.
+struct UnreachableBanner: View {
+  var body: some View {
+    HStack {
+      Label("Can't reach Hatbot.", systemImage: "wifi.slash")
+      Spacer()
+    }
+    .font(.subheadline)
+    .padding(.horizontal, 16)
+    .padding(.vertical, 10)
+    .glassSurface(in: .capsule)
+    .padding(.horizontal, 12)
+    .padding(.vertical, 6)
+    .transition(.move(edge: .top).combined(with: .opacity))
+  }
+}
+
 /// A finished conversation, folded up under its recap; a tap opens it in place.
 private struct FoldRow: View {
   let group: ThreadGroup
@@ -477,7 +627,7 @@ private struct FoldRow: View {
         Text(group.fold ?? "")
           .multilineTextAlignment(.leading)
           .frame(maxWidth: .infinity, alignment: .leading)
-        Text(group.messages[0].createdAt.timeText).font(.caption2)
+        Text(group.messages[0].date?.formatted(date: .omitted, time: .shortened) ?? "").font(.caption2)
       }
       .font(.subheadline)
       .foregroundStyle(.secondary)
@@ -491,11 +641,13 @@ private struct FoldRow: View {
 
 // MARK: Messages
 
-private struct MessageRow: View {
+/// Equatable on what it's given, so a redraw of the chat skips the messages that didn't change; what it
+/// reads from the store still redraws it.
+private struct MessageRow: View, Equatable {
   let m: ThreadMessage
   /// The last of a run from the same sender, so its bubble has a tail.
   let tail: Bool
-  let open: (Route) -> Void
+  @Environment(\.openRoute) private var router
   @Environment(AppStore.self) private var store
   @Environment(\.scenePhase) private var scenePhase
   @State private var onScreen = false
@@ -520,6 +672,7 @@ private struct MessageRow: View {
             .background(Color.userBubble, in: shape)
             .contentShape(.contextMenuPreview, shape)
             .contextMenu { copyButton(m.text) }
+            .modifier(Spoken(label: "You", text: m.text))
         }
       }
       .padding(.leading, 56)
@@ -533,6 +686,7 @@ private struct MessageRow: View {
           .background(Color.botBubble, in: shape)
           .contentShape(.contextMenuPreview, shape)
           .contextMenu { menu }
+          .modifier(Spoken(label: store.botName(m.botId) + (unread ? ", unread" : ""), text: spokenText))
         // Like Messages' "Edited": the task's result changed this message after it was sent.
         if m.status != .streaming, let editedAt {
           Text("Edited \(editedAt.timeText)")
@@ -549,7 +703,15 @@ private struct MessageRow: View {
           .opacity(unread ? 1 : 0)
           .animation(.easeOut(duration: 1), value: unread)
       }
-      .onScrollVisibilityChange(threshold: 0.5) { onScreen = $0 }
+      // Half of it on screen; or, for one too long for that, filling most of the screen or its end in view.
+      .onGeometryChange(for: Bool.self) { geo in
+        guard let screen = geo.bounds(of: .scrollView) else { return false }
+        let me = CGRect(origin: .zero, size: geo.size)
+        let shown = me.intersection(screen)
+        guard !shown.isNull, shown.height > 0 else { return false }
+        return shown.height >= me.height * 0.5 || shown.height >= screen.height * 0.6
+          || (me.maxY > screen.minY && me.maxY <= screen.maxY)
+      } action: { onScreen = $0 }
       // On screen for a moment, with the app in front: seen.
       .task(id: unread && onScreen && scenePhase == .active) {
         guard unread && onScreen && scenePhase == .active else { return }
@@ -567,6 +729,13 @@ private struct MessageRow: View {
     default: ReplyMessage(m: m)
     }
     if let list = m.attachments, !list.isEmpty { MessageFiles(list: list, alignment: .leading) }
+  }
+
+  /// A plain reply, read as one: Markdown left out, and not word by word as it streams. Others, with
+  /// tasks, schedules or approvals to act on, keep their parts.
+  private var spokenText: String? {
+    guard m.kind == .text || m.kind == .command, m.taskId == nil else { return nil }
+    return m.status == .streaming ? "Writing" : Markdown.plain(m.text)
   }
 
   /// When a task's result changed the message after it was sent. A brain from before doesn't say: then a
@@ -600,6 +769,21 @@ private struct MessageRow: View {
         copyButton(task.map { ReplyMessage.showsResult(m, $0) } == true ? result ?? "" : m.text)
       }
       if let taskId = m.taskId { openButton(taskId) }
+      if m.status == .error && m.role == .assistant {
+        Button("Try again", systemImage: "arrow.clockwise") { retry() }
+      }
+    }
+  }
+
+  private func retry() {
+    Task {
+      do {
+        try await store.retry(m.id)
+      } catch let e as APIError where e.status == 409 {
+        store.toast = "Only the latest reply can be tried again."
+      } catch {
+        store.toast = message(for: error)
+      }
     }
   }
 
@@ -610,6 +794,10 @@ private struct MessageRow: View {
   private func openButton(_ taskId: Int) -> some View {
     Button("Open task", systemImage: "chevron.right") { open(.task(taskId)) }
   }
+
+  private func open(_ route: Route) { router?.open(route) }
+
+  nonisolated static func == (a: Self, b: Self) -> Bool { a.m == b.m && a.tail == b.tail }
 }
 
 /// A reply, with the task it started (if any) working under it. Once the task finishes or fails, its bot
@@ -638,20 +826,36 @@ private struct ReplyMessage: View {
         MarkdownText(text: m.text)
       }
     } else {
-      if !m.text.isEmpty { MarkdownText(text: m.text) }
-      if m.status == .streaming && m.text.isEmpty && (m.taskId == nil || ended) { TypingDots() }
-      if m.status == .streaming, let note = Format.lastLine(store.progress[m.id]) {
-        Text(note).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
-      }
-      if m.status == .streaming, let used = store.usage[m.id] {
-        Text("\(Format.tokens(used.tokens)) tokens · \(String(format: "$%.3f", used.costUsd))")
-          .font(.footnote.monospacedDigit())
-          .foregroundStyle(.secondary)
+      if m.status == .streaming, let reply = store.reply(m.id) {
+        StreamingReply(reply: reply, dots: m.taskId == nil || ended)
+      } else {
+        if !m.text.isEmpty { MarkdownText(text: m.text) }
+        if m.status == .streaming && m.text.isEmpty && (m.taskId == nil || ended) { TypingDots() }
       }
       if !ended, let taskId = m.taskId {
         if !m.text.isEmpty, let task, !task.isActive { Divider() }
         TaskResult(taskId: taskId)
       }
+    }
+  }
+}
+
+/// A reply as it's written. Each delta changes only `reply`, so only this redraws.
+private struct StreamingReply: View {
+  let reply: LiveReply
+  /// Working dots until the first words, unless its task's dots show instead.
+  let dots: Bool
+
+  var body: some View {
+    if !reply.text.isEmpty { MarkdownText(text: reply.text, streaming: true) }
+    if reply.text.isEmpty && dots { TypingDots() }
+    if let note = Format.lastLine(reply.progress) {
+      Text(note).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+    }
+    if let used = reply.usage {
+      Text("\(Format.tokens(used.tokens)) tokens · \(String(format: "$%.3f", used.costUsd))")
+        .font(.footnote.monospacedDigit())
+        .foregroundStyle(.secondary)
     }
   }
 }
@@ -733,6 +937,22 @@ private struct TaskMessage: View {
   }
 }
 
+/// For VoiceOver, a bubble is one element: who it's from, then what it says. With no `text`, its parts
+/// stay their own, under who it's from.
+private struct Spoken: ViewModifier {
+  let label: String
+  let text: String?
+
+  @ViewBuilder
+  func body(content: Content) -> some View {
+    if let text {
+      content.accessibilityElement(children: .combine).accessibilityLabel(label).accessibilityValue(text)
+    } else {
+      content.accessibilityElement(children: .contain).accessibilityLabel(label)
+    }
+  }
+}
+
 /// What Hatbot wants to do and why, the page it read, a screenshot, then Deny and Approve.
 struct ApprovalBody: View {
   let approval: Approval
@@ -740,6 +960,7 @@ struct ApprovalBody: View {
   @State private var busy = false
   @State private var error: String?
   @State private var note = ""
+  @State private var decided: Decision?
 
   var body: some View {
     let a = approval
@@ -770,6 +991,13 @@ struct ApprovalBody: View {
     }
     .controlSize(.small)
     .disabled(busy)
+    .sensoryFeedback(trigger: decided) { _, decided in
+      switch decided {
+      case .approve: .success
+      case .deny: .warning
+      case nil: nil
+      }
+    }
   }
 
   private func decide(_ decision: Decision) {
@@ -778,6 +1006,7 @@ struct ApprovalBody: View {
     Task {
       do {
         try await store.decide(approval.id, decision, note: note)
+        decided = decision
       } catch {
         self.error = message(for: error)
         busy = false

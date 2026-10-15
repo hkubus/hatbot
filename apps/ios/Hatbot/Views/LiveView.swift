@@ -1,6 +1,8 @@
 // The desktop's live view (PLAN.md §10.5): JPEG frames over a WebSocket. Watch-only until you take
 // over; then a tap clicks, a drag drags, a long press right-clicks, two fingers scroll, and the
-// Keyboard button types.
+// Keyboard button types. Pinching zooms in, and moving the pinch moves around; watching, one finger
+// moves around a zoomed screen and a double tap zooms back out. On its tab in landscape the screen
+// takes the whole height, with the controls beside it.
 import SwiftUI
 import UIKit
 
@@ -66,16 +68,59 @@ struct LiveView: View {
   var taskId: Int?
   /// The task on the screen and its latest steps, under the view.
   var showsTask = true
+  /// On its own tab: in landscape the screen takes the whole height and the bars go.
+  var fullScreen = false
   @Environment(AppStore.self) private var store
   @Environment(\.scenePhase) private var phase
+  @Environment(\.verticalSizeClass) private var vertical
   @State private var feed = LiveFeed()
   @State private var typing = false
   @State private var error: String?
+  @State private var zoom = Zoom()
+
+  private var landscape: Bool { fullScreen && vertical == .compact }
 
   var body: some View {
+    let control = store.desktop?.control == .owner
+    Group {
+      if landscape {
+        HStack(alignment: .top, spacing: 12) {
+          screen(control: control, online: store.desktop?.online ?? true)
+            // The scroll view's height, less the padding.
+            .containerRelativeFrame(.vertical) { height, _ in max(height - 24, 100) }
+          VStack(alignment: .leading, spacing: 12) {
+            controls(control: control)
+            Spacer(minLength: 0)
+          }
+          .frame(width: 220)
+        }
+        .padding(12)
+      } else {
+        VStack(alignment: .leading, spacing: 12) {
+          controls(control: control, screen: true)
+        }
+        .padding()
+      }
+    }
+    .toolbar(landscape ? .hidden : .automatic, for: .navigationBar)
+    .statusBarHidden(landscape)
+    .onAppear { feed.start(store) }
+    .onDisappear { feed.stop() }
+    .onChange(of: phase) { _, phase in
+      if phase == .active { feed.start(store) } else if phase == .background { feed.stop() }
+    }
+    .onChange(of: control) { _, control in if !control { typing = false } }
+    // Taking over and handing back.
+    .sensoryFeedback(.impact(weight: .medium), trigger: control)
+    // The screen changes size.
+    .onChange(of: landscape) { zoom = Zoom() }
+  }
+
+  /// The banner, the buttons and the task; with `screen`, the screen goes between the banner and the buttons.
+  @ViewBuilder
+  private func controls(control: Bool, screen showsScreen: Bool = false) -> some View {
     let desktop = store.desktop
-    let control = desktop?.control == .owner
-    VStack(alignment: .leading, spacing: 12) {
+    Group {
       if control {
         banner(icon: "hand.raised.fill", text: "You're in control. Hatbot is paused.") {
           Button("Hand back") { run { try await store.handback() } }.glassButton(prominent: true)
@@ -86,7 +131,7 @@ struct LiveView: View {
         }
       }
 
-      screen(control: control, online: desktop?.online ?? true)
+      if showsScreen { screen(control: control, online: desktop?.online ?? true) }
 
       HStack {
         if control {
@@ -106,13 +151,6 @@ struct LiveView: View {
       }
       if showsTask, let id = activeTaskId { ScreenTask(taskId: id) }
     }
-    .padding()
-    .onAppear { feed.start(store) }
-    .onDisappear { feed.stop() }
-    .onChange(of: phase) { _, phase in
-      if phase == .active { feed.start(store) } else if phase == .background { feed.stop() }
-    }
-    .onChange(of: control) { _, control in if !control { typing = false } }
   }
 
   private var activeTaskId: Int? {
@@ -133,16 +171,18 @@ struct LiveView: View {
     return ZStack {
       Rectangle().fill(Color.black)
       if let frame = feed.frame, online {
-        Image(uiImage: frame).resizable().interpolation(.medium).aspectRatio(contentMode: .fit)
+        Image(uiImage: frame).resizable().interpolation(zoom.scale > 1 ? .high : .medium)
+          .aspectRatio(contentMode: .fit)
+          .scaleEffect(zoom.scale, anchor: .topLeading)
+          .offset(x: zoom.offset.x, y: zoom.offset.y)
       }
       if !online || feed.conn != .live {
         Text(!online || feed.conn == .offline ? "The desktop isn't answering." : "Connecting…")
           .font(.subheadline)
           .foregroundStyle(.white.opacity(0.8))
       }
-      if control {
-        TouchSurface(desktopSize: size, send: { feed.send($0) })
-      }
+      // Watching, it only zooms and moves around.
+      TouchSurface(desktopSize: size, control: control, zoom: zoom, setZoom: { zoom = $0 }, send: { feed.send($0) })
     }
     .aspectRatio(size.width / size.height, contentMode: .fit)
     .clipShape(.rect(cornerRadius: 10))
@@ -198,26 +238,47 @@ private struct ScreenTask: View {
 /// Turns touches on the screen into the desktop's pointer events, in desktop pixels.
 private struct TouchSurface: UIViewRepresentable {
   let desktopSize: CGSize
+  /// You're in control: touches go to the desktop. Otherwise they only zoom and move around.
+  let control: Bool
+  let zoom: Zoom
+  let setZoom: @MainActor (Zoom) -> Void
   let send: @MainActor (LiveInput) -> Void
 
   func makeUIView(context: Context) -> UIView {
     let view = UIView()
     view.backgroundColor = .clear
     let c = context.coordinator
-    view.addGestureRecognizer(UITapGestureRecognizer(target: c, action: #selector(Coordinator.tap)))
+    let tap = UITapGestureRecognizer(target: c, action: #selector(Coordinator.tap))
+    let doubleTap = UITapGestureRecognizer(target: c, action: #selector(Coordinator.doubleTap))
+    doubleTap.numberOfTapsRequired = 2
     let long = UILongPressGestureRecognizer(target: c, action: #selector(Coordinator.longPress))
-    view.addGestureRecognizer(long)
     let pan = UIPanGestureRecognizer(target: c, action: #selector(Coordinator.pan))
     pan.maximumNumberOfTouches = 1
-    view.addGestureRecognizer(pan)
     let scroll = UIPanGestureRecognizer(target: c, action: #selector(Coordinator.scroll))
     scroll.minimumNumberOfTouches = 2
-    view.addGestureRecognizer(scroll)
+    let pinch = UIPinchGestureRecognizer(target: c, action: #selector(Coordinator.pinch))
+    for g in [tap, doubleTap, long, pan, scroll, pinch] as [UIGestureRecognizer] {
+      view.addGestureRecognizer(g)
+    }
+    c.recognizers = (tap, doubleTap, long, pan, scroll)
+    update(c)
     return view
   }
 
   func updateUIView(_ view: UIView, context: Context) {
-    context.coordinator.parent = self
+    update(context.coordinator)
+  }
+
+  private func update(_ c: Coordinator) {
+    c.parent = self
+    if !c.pinching { c.zoom = zoom }
+    guard let r = c.recognizers else { return }
+    r.tap.isEnabled = control
+    r.long.isEnabled = control
+    r.scroll.isEnabled = control
+    r.doubleTap.isEnabled = !control
+    // Watching an unzoomed screen, a drag scrolls the page.
+    r.pan.isEnabled = control || zoom.scale > 1
   }
 
   func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
@@ -225,14 +286,24 @@ private struct TouchSurface: UIViewRepresentable {
   @MainActor
   final class Coordinator: NSObject {
     var parent: TouchSurface
+    var recognizers: (
+      tap: UIGestureRecognizer, doubleTap: UIGestureRecognizer, long: UIGestureRecognizer,
+      pan: UIGestureRecognizer, scroll: UIGestureRecognizer
+    )?
+    /// The zoom as the gestures see it; it's ahead of the view's while a pinch goes on.
+    var zoom = Zoom()
+    private(set) var pinching = false
     private var lastMove = Date.distantPast
     private var lastScroll = CGPoint.zero
+    private var lastPinch = CGPoint.zero
+    private var lastPan = CGPoint.zero
 
     init(parent: TouchSurface) { self.parent = parent }
 
+    /// Where a touch is on the desktop, in its pixels, through the zoom.
     private func point(_ g: UIGestureRecognizer) -> (x: Double, y: Double) {
       guard let view = g.view, view.bounds.width > 0, view.bounds.height > 0 else { return (0, 0) }
-      let p = g.location(in: view)
+      let p = zoom.unzoomed(g.location(in: view))
       let x = min(max(p.x / view.bounds.width, 0), 1) * parent.desktopSize.width
       let y = min(max(p.y / view.bounds.height, 0), 1) * parent.desktopSize.height
       return (x.rounded(), y.rounded())
@@ -252,7 +323,35 @@ private struct TouchSurface: UIViewRepresentable {
       if g.state == .began { click(g, button: 3) }
     }
 
+    @objc func doubleTap(_ g: UITapGestureRecognizer) {
+      guard let view = g.view else { return }
+      let p = g.location(in: view)
+      zoom = zoom.scale > 1 ? Zoom() : zoom.zoomed(by: 2.5, at: p, in: view.bounds.size)
+      parent.setZoom(zoom)
+    }
+
+    @objc func pinch(_ g: UIPinchGestureRecognizer) {
+      guard let view = g.view else { return }
+      let p = g.location(in: view)
+      switch g.state {
+      case .began:
+        pinching = true
+        lastPinch = p
+      case .changed:
+        // Two fingers can pinch and move together; lifting one jumps the middle, so that's skipped.
+        let pan = g.numberOfTouches < 2 ? .zero : CGPoint(x: p.x - lastPinch.x, y: p.y - lastPinch.y)
+        zoom = zoom.zoomed(by: g.scale, at: p, pan: pan, in: view.bounds.size)
+        g.scale = 1
+        lastPinch = p
+        parent.setZoom(zoom)
+      default:
+        pinching = false
+        parent.setZoom(zoom)
+      }
+    }
+
     @objc func pan(_ g: UIPanGestureRecognizer) {
+      guard parent.control else { return move(g) }
       let (x, y) = point(g)
       switch g.state {
       case .began:
@@ -265,6 +364,16 @@ private struct TouchSurface: UIViewRepresentable {
       default:
         parent.send(.button(1, down: false, x: x, y: y))
       }
+    }
+
+    /// Watching: moves around the zoomed screen.
+    private func move(_ g: UIPanGestureRecognizer) {
+      guard let view = g.view else { return }
+      let t = g.translation(in: view)
+      if g.state == .began { lastPan = .zero }
+      zoom = zoom.moved(by: CGPoint(x: t.x - lastPan.x, y: t.y - lastPan.y), in: view.bounds.size)
+      lastPan = t
+      parent.setZoom(zoom)
     }
 
     @objc func scroll(_ g: UIPanGestureRecognizer) {

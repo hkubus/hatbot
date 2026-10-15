@@ -22,10 +22,11 @@ xcodebuild build \
 
 mkdir -p build/Payload
 cp -R build/derived/Build/Products/Release-iphoneos/Hatbot.app build/Payload/
-# Ad-hoc signed with the entitlements, the extension first: SideStore reads the App Group from them
-# and re-signs both with your Apple ID.
+# Ad-hoc signed with the entitlements, the extensions first: SideStore reads the App Group from them
+# and re-signs all three with your Apple ID.
 app=build/Payload/Hatbot.app
 codesign --force --sign - --entitlements Share/HatbotShare.entitlements "$app/PlugIns/HatbotShare.appex"
+codesign --force --sign - --entitlements Widgets/HatbotWidgets.entitlements "$app/PlugIns/HatbotWidgets.appex"
 codesign --force --sign - --entitlements Hatbot/Hatbot.entitlements "$app"
 (cd build && zip -qry Hatbot.ipa Payload)
 echo "Built $(pwd)/build/Hatbot.ipa"

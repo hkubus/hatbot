@@ -10,6 +10,11 @@ struct LoginView: View {
   @State private var error: String?
   @FocusState private var field: Field?
 
+  /// What the token is called in Signed-in devices: "iPhone (Hatbot iOS) 15 Oct 2026".
+  static var deviceName: String {
+    "\(UIDevice.current.model) (Hatbot iOS) \(Date().formatted(.dateTime.day().month(.abbreviated).year()))"
+  }
+
   private enum Field { case server, password, code }
 
   var body: some View {
@@ -65,7 +70,7 @@ struct LoginView: View {
     error = nil
     Task {
       do {
-        try await session.signIn(password: password, code: code, device: UIDevice.current.model)
+        try await session.signIn(password: password, code: code, device: Self.deviceName)
       } catch {
         self.error = message(for: error)
         code = ""

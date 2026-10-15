@@ -16,11 +16,16 @@ final class Socket {
   var onOpen: (_ reconnected: Bool) -> Void = { _ in }
   var onMessage: (Message) -> Void = { _ in }
   var onClose: () -> Void = {}
+  /// The brain turned the token away at the handshake; the socket stops.
+  var onUnauthorized: () -> Void = {}
 
   private let make: () -> URLSessionWebSocketTask
   private let maxDelay: Double
   private var ws: URLSessionWebSocketTask?
   private var loop: Task<Void, Never>?
+  /// Kept across stop and start: opening again after the app was in the background is a reconnect,
+  /// so what was missed meanwhile gets loaded.
+  private var everOpened = false
 
   init(maxDelay: Double = 30, make: @escaping () -> URLSessionWebSocketTask) {
     self.make = make
@@ -45,9 +50,14 @@ final class Socket {
     ws?.send(.string(text)) { _ in }
   }
 
+  /// Whether this open is a reconnect.
+  func opened() -> Bool {
+    defer { everOpened = true }
+    return everOpened
+  }
+
   private func run() async {
     var retry = 0
-    var everOpened = false
     while !Task.isCancelled {
       let ws = make()
       self.ws = ws
@@ -68,8 +78,7 @@ final class Socket {
           if !open {
             open = true
             retry = 0
-            onOpen(everOpened)
-            everOpened = true
+            onOpen(opened())
           }
           switch message {
           case let .string(text): onMessage(.text(text))
@@ -82,6 +91,12 @@ final class Socket {
       ws.cancel(with: .goingAway, reason: nil)
       if open { onClose() }
       if Task.isCancelled { break }
+      if !open, (ws.response as? HTTPURLResponse)?.statusCode == 401 {
+        loop = nil
+        self.ws = nil
+        onUnauthorized()
+        break
+      }
       let delay = min(maxDelay, pow(2, Double(retry)))
       retry += 1
       try? await Task.sleep(for: .seconds(delay))

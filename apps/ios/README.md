@@ -10,6 +10,7 @@ API with a bearer token. Notifications still come from the ntfy app.
   Schedules & Triggers, Watchers, Check everything and the Heartbeat open from Settings. Siri and
   Shortcuts actions are in `Hatbot/App/Intents.swift`.
 - `Share`: the share extension. It sends what you share, with a note, to Hatbot's chat.
+- `Widgets`: the home-screen widget (today's spend and what needs you) and the Pause all control.
 - `project.yml`: the Xcode project, generated with [XcodeGen](https://github.com/yonaskolb/XcodeGen).
 
 ## Install with SideStore
@@ -57,8 +58,8 @@ Settings → API tokens on the web, and signing out of the app deletes it.
 
 Shortcuts has three Hatbot actions, and Siri knows them without setup:
 
-- **Ask Hatbot** ("Ask Hatbot"): sends the question to Hatbot's chat and answers with the reply. It
-  waits up to 50 seconds; a longer answer is in the chat.
+- **Ask Hatbot** ("Ask Hatbot"): sends the question to Hatbot's chat, or another bot's or a group's,
+  and answers with the reply. It waits up to 25 seconds; a longer answer is in the chat.
 - **Give Hatbot a Task** ("Give Hatbot a task"): starts a background task, like `/task` in the chat.
 - **Send to Hatbot**: text and files into the chat. Photos go up as JPEG.
 
@@ -67,11 +68,16 @@ the token from the App Group the app shares with it (`group.ovh.gaycats.hatbot`;
 team ID to the name), so open the app once after updating. If the share sheet says to sign in, the
 group wasn't set up by the install; the rest of the app works without it.
 
-The extension is a second App ID: with a free Apple ID SideStore has 10 App IDs a week, so Hatbot
-takes 2 of them.
+The share extension and the widgets are App IDs of their own: with a free Apple ID SideStore has 10
+App IDs a week, so Hatbot takes 3 of them.
+
+The widget, small or medium, shows today's spend against the daily limit (and the month's, medium)
+and how many things need you; iOS refreshes it about every 15 minutes, and the app when they change.
+**Pause Hatbot** in Control Center pauses all, or resumes.
 
 ## Links
 
 `hatbot://tasks/<id>` opens a task, `hatbot://approvals/<id>` the task an approval belongs to, and
 `hatbot://schedules/<id>` and `hatbot://triggers/<id>` their pages. Notifications use them when
-Settings → Notifications says this app.
+Settings → Notifications says this app. `hatbot://new`, `hatbot://live` and `hatbot://tasks` are the
+home-screen quick actions, and `hatbot://memory/<path>` opens a memory file, as Spotlight does.

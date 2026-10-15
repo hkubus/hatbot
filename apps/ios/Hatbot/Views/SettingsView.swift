@@ -31,6 +31,8 @@ struct SettingsView: View {
             LabeledContent(
               "Last minute", value: "\(String(format: "$%.3f", minute.usd)) · \(Format.tokens(minute.tokens)) tokens")
           }
+          NavigationLink("Spend by hour, day, model and bot", value: Route.spend)
+          NavigationLink("Limits", value: Route.limits)
         }
         Section {
           NavigationLink("Schedules & Triggers", value: Route.schedules)
@@ -125,6 +127,7 @@ struct SettingsView: View {
         }
         Section {
           LabeledContent("Server", value: store.api.server.host() ?? store.api.server.absoluteString)
+          NavigationLink("Signed-in devices", value: Route.devices)
           Button("Sign out", role: .destructive) { confirmSignOut = true }
         }
       }
@@ -138,6 +141,7 @@ struct SettingsView: View {
       }
       .task { await load() }
       .refreshable { await load() }
+      .onChange(of: store.settingsVersion) { Task { await load() } }
       .routes()
     }
   }

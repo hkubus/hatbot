@@ -1,6 +1,10 @@
 import Foundation
 import XCTest
 
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
+
 // The core is its own module in Package.swift and part of the app in Xcode.
 #if canImport(HatbotCore)
   @testable import HatbotCore
@@ -168,6 +172,13 @@ final class MarkdownTests: XCTestCase {
     XCTAssertEqual(
       Markdown.parse("Look:\n```\nstill typing"), [.paragraph("Look:"), .code(language: nil, code: "still typing")])
   }
+
+  func testCachedBlocksAreTheParsedOnes() {
+    let md = "# Hi\n\n- one\n- two"
+    XCTAssertEqual(Markdown.cached(md), Markdown.parse(md))
+    XCTAssertEqual(Markdown.cached(md), Markdown.parse(md))
+    XCTAssertEqual(Markdown.cached("other"), [.paragraph("other")])
+  }
 }
 
 // Not a @MainActor class: Linux XCTest can't run those.
@@ -184,6 +195,16 @@ final class StoreTests: XCTestCase {
     await MainActor.run { Self.countsWhatNeedsYou() }
   }
 
+  func testOpeningAgainAfterStoppingIsAReconnect() async {
+    await MainActor.run {
+      let socket = Socket { URLSession.shared.webSocketTask(with: URL(string: "wss://h.example")!) }
+      XCTAssertFalse(socket.opened())
+      // In the background the stream stops; back in front it starts again.
+      socket.stop()
+      XCTAssertTrue(socket.opened())
+    }
+  }
+
   @MainActor private static func appliesStreamingEvents() {
     let store = store()
     let m = ThreadMessage(
@@ -192,12 +213,14 @@ final class StoreTests: XCTestCase {
     store.apply(.messageDelta(id: 7, text: "Hel"))
     store.apply(.messageDelta(id: 7, text: "lo"))
     store.apply(.messageProgress(id: 7, text: "thinking"))
-    XCTAssertEqual(store.messages.first?.text, "Hello")
-    XCTAssertEqual(store.progress[7], "thinking")
+    // The deltas go to the live reply, not the message list.
+    XCTAssertEqual(store.reply(7)?.text, "Hello")
+    XCTAssertEqual(store.messages.first.map(store.text), "Hello")
+    XCTAssertEqual(store.reply(7)?.progress, "thinking")
     store.apply(.messageDone(id: 7, text: "Hello.", status: .done))
     XCTAssertEqual(store.messages.first?.text, "Hello.")
     XCTAssertEqual(store.messages.first?.status, .done)
-    XCTAssertNil(store.progress[7])
+    XCTAssertNil(store.reply(7))
   }
 
   @MainActor private static func countsWhatNeedsYou() {
@@ -256,8 +279,14 @@ final class ScheduleAndMemoryTests: XCTestCase {
     XCTAssertEqual(link("hatbot://approvals/5"), .approval(5))
     XCTAssertEqual(link("hatbot://schedules/2"), .schedule(2))
     XCTAssertEqual(link("hatbot://triggers/3"), .trigger(3))
-    XCTAssertNil(link("hatbot://memory/1"))
+    XCTAssertEqual(link("hatbot://memory/notes/my%20servers.md"), .memory("notes/my servers.md"))
+    XCTAssertEqual(link("hatbot://new"), .newMessage)
+    XCTAssertEqual(link("hatbot://live"), .live)
+    XCTAssertEqual(link("hatbot://tasks"), .tasks)
+    XCTAssertNil(link("hatbot://memory"))
+    XCTAssertNil(link("hatbot://approvals"))
     XCTAssertNil(link("hatbot://tasks/1/2"))
+    for l in [AppLink.memory("notes/my servers.md"), .task(4), .newMessage] { XCTAssertEqual(AppLink(url: l.url), l) }
     XCTAssertNil(link("https://tasks/1"))
   }
 
@@ -298,6 +327,26 @@ final class FoldTests: XCTestCase {
   private func m(_ id: Int, _ episode: Int?, _ role: ThreadMessage.Role = .assistant) -> ThreadMessage {
     ThreadMessage(
       id: id, role: role, kind: .text, text: "message \(id)", status: .done, createdAt: "", episodeId: episode)
+  }
+
+  func testMergesTheLatestPageIntoWhatsLoaded() {
+    let ids = { (list: [ThreadMessage]) in list.map(\.id) }
+    // Earlier pages stay; 6 was deleted meanwhile and 9 is new; 10 came by event while it loaded.
+    var r = ThreadMerge.merge(
+      [1, 2, 3, 4, 5, 6, 7, 10].map { m($0, nil) }, hasEarlier: true, latest: [4, 5, 7, 8, 9].map { m($0, nil) },
+      page: 5)
+    XCTAssertEqual(ids(r.messages), [1, 2, 3, 4, 5, 7, 8, 9, 10])
+    XCTAssertTrue(r.hasEarlier)
+    // More than a page came while away: start again from the page.
+    r = ThreadMerge.merge([1, 2].map { m($0, nil) }, hasEarlier: false, latest: [5, 6, 7].map { m($0, nil) }, page: 3)
+    XCTAssertEqual(ids(r.messages), [5, 6, 7])
+    XCTAssertTrue(r.hasEarlier)
+    // A short page is everything.
+    r = ThreadMerge.merge([1, 2, 3].map { m($0, nil) }, hasEarlier: false, latest: [2, 3].map { m($0, nil) }, page: 5)
+    XCTAssertEqual(ids(r.messages), [2, 3])
+    XCTAssertFalse(r.hasEarlier)
+    r = ThreadMerge.merge([], hasEarlier: false, latest: [1].map { m($0, nil) }, page: 5)
+    XCTAssertEqual(ids(r.messages), [1])
   }
 
   func testFoldsFinishedConversations() {
@@ -489,6 +538,28 @@ final class IncognitoTests: XCTestCase {
 }
 
 final class LookingAfterThingsTests: XCTestCase {
+  func testAskingForAProposalStartsItOrAnswersWithIt() throws {
+    let started = try JSONDecoder().decode(ProposalStarted.self, from: Data(#"{"started":true}"#.utf8))
+    XCTAssertTrue(started.started)
+    XCTAssertNil(started.proposal)
+    let old = try JSONDecoder().decode(
+      ProposalStarted.self,
+      from: Data(
+        #"{"id":3,"kind":"tidy","title":"T","reason":"R","changes":[],"status":"pending","createdAt":"t"}"#.utf8))
+    XCTAssertFalse(old.started)
+    XCTAssertEqual(old.proposal?.id, 3)
+    let nothing = try JSONDecoder().decode(ProposalStarted.self, from: Data("{}".utf8))
+    XCTAssertNil(nothing.proposal)
+    XCTAssertFalse(nothing.started)
+    let event = try JSONDecoder().decode(
+      HatbotEvent.self,
+      from: Data(
+        #"{"type":"proposal.updated","proposal":{"id":4,"kind":"skill","title":"T","reason":"R","changes":[],"skill":"s","status":"pending","createdAt":"t"}}"#
+          .utf8))
+    guard case let .proposalUpdated(p) = event else { return XCTFail("not a proposal") }
+    XCTAssertEqual(p.skill, "s")
+  }
+
   func testDiffsProposalsLikeTheWeb() {
     let before = "# Home\na\nb\nc\nd\ne\nf\nRouter: old\n"
     let after = "# Home\na\nb\nc\nd\ne\nf\nRouter: new\nAlso\n"
@@ -516,7 +587,7 @@ final class LookingAfterThingsTests: XCTestCase {
     let m = #"{"id":%d,"role":"%@","kind":"text","text":"%@","status":"done","createdAt":"2026-10-15T08:00:00Z"}"#
     let json = """
       {"message":\(String(format: m, 1, "user", "Warm?")),
-       "replies":[\(String(format: m, 2, "assistant", "21 degrees."))],"finished":true}
+       "replies":[\(String(format: m, 2, "assistant", "**21** degrees."))],"finished":true}
       """
     let r = try JSONDecoder().decode(AskResult.self, from: Data(json.utf8))
     XCTAssertEqual(r.answer, "21 degrees.")
@@ -550,5 +621,118 @@ final class LookingAfterThingsTests: XCTestCase {
 
     let task = #"{"id":1,"title":"t","goal":"g","successCriteria":"","origin":"watch","lane":"background","model":"m","status":"done","tainted":false,"injectionSuspected":false,"costUsd":0,"steps":0,"createdAt":"2026-10-15T08:00:00Z"}"#
     XCTAssertEqual(try JSONDecoder().decode(AgentTask.self, from: Data(task.utf8)).origin, .watch)
+  }
+}
+
+final class DiskCacheTests: XCTestCase {
+  func testAStoreShowsWhatWasLastSeenUntilTheBrainAnswers() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let cache = DiskCache(dir: dir)
+    let bot = Bot(id: "hatbot", name: "Hatbot", instructions: "", createdAt: "2026-10-15T10:00:00.000Z")
+    let chat = Conversation(id: 2, kind: .direct, botIds: ["hatbot"], unread: 0)
+    let done = ThreadMessage(id: 5, role: .assistant, kind: .text, text: "Hi", status: .done, createdAt: "2026-10-15T10:00:00.000Z")
+    let writing = ThreadMessage(
+      id: 6, role: .assistant, kind: .text, text: "Wri", status: .streaming, createdAt: "2026-10-15T10:00:01.000Z")
+    let api = API(server: URL(string: "https://hatbot.test")!, token: "t")
+
+    await MainActor.run {
+      let store = AppStore(api: api, cache: cache)
+      store.bots = ["hatbot": bot]
+      store.botIds = ["hatbot"]
+      store.conversations = [chat]
+      store.messages = [done, writing]
+      store.persist()
+    }
+    // Written off the main thread.
+    for _ in 0..<50 where cache.page(1) == nil || cache.chats() == nil {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+
+    await MainActor.run {
+      let store = AppStore(api: api, cache: cache)
+      XCTAssertEqual(store.conversations, [chat])
+      XCTAssertEqual(store.bots["hatbot"]?.name, "Hatbot")
+      // Not the one still being written.
+      XCTAssertEqual(store.messages.map(\.id), [5])
+    }
+    cache.clear()
+    XCTAssertNil(cache.chats())
+  }
+}
+
+final class PlainTextTests: XCTestCase {
+  func testPlainTextHasNoMarkdown() {
+    let md = "# Done\n\nI **fixed** the `nginx` config, see [the docs](https://x.y) and _this_.\n\n- one\n- two\n\n1. first"
+    XCTAssertEqual(
+      Markdown.plain(md), "Done\n\nI fixed the nginx config, see the docs and this.\n\none\ntwo\n\n1. first")
+    XCTAssertEqual(Markdown.inline("snake_case_name and 2*3*4"), "snake_case_name and 2*3*4")
+  }
+}
+
+final class SpendTests: XCTestCase {
+  func testSpendChartsAreBarsAndRankings() throws {
+    let hours = [SpendHour(hour: "2026-10-15T13:00:00.000Z", usd: 0.5, tokens: 10)]
+    let hourly = try XCTUnwrap(SpendCharts.hourly(hours, timeZone: TimeZone(identifier: "UTC")!))
+    XCTAssertEqual(hourly.x, ["13:00"])
+    XCTAssertEqual(hourly.unit, "$")
+    XCTAssertEqual(SpendCharts.daily([SpendDay(date: "2026-10-05", usd: 1)])?.x, ["5 Oct"])
+    let models = try XCTUnwrap(
+      SpendCharts.byModel([
+        SpendByModel(model: "claude-haiku-5-5", usd: 1), SpendByModel(model: "claude-opus-5-5", usd: 3),
+        SpendByModel(model: "claude-sonnet-5", usd: 0),
+      ]))
+    XCTAssertTrue(models.horizontal)
+    XCTAssertEqual(models.x, ["Opus 5.5", "Haiku 5.5"])
+    XCTAssertEqual(models.series[0].data, [3, 1])
+    XCTAssertEqual(SpendCharts.byPurpose([SpendByPurpose(purpose: "thread", costUsd: 2)])?.x, ["Chat"])
+    XCTAssertNil(SpendCharts.byBot([], names: [:]))
+    let tokens = #"[{"id":3,"name":"iPhone (Hatbot iOS) 15 Oct 2026","createdAt":"2026-10-15T10:00:00.000Z","lastUsedAt":null}]"#
+    XCTAssertEqual(try JSONDecoder().decode([ApiToken].self, from: Data(tokens.utf8)).first?.id, 3)
+  }
+
+  func testHeartbeatRunsAndRefetchEventsDecode() throws {
+    let info = #"""
+      {"at":"2026-10-15T10:00:00.000Z","found":[],"action":"nothing","note":"","taskId":null,
+       "recent":[{"at":"2026-10-15T09:00:00.000Z","found":["Kuma: nas down"],"action":"task"}]}
+      """#
+    let hb = try JSONDecoder().decode(HeartbeatInfo.self, from: Data(info.utf8))
+    XCTAssertEqual(hb.recent?.first?.found, ["Kuma: nas down"])
+    XCTAssertEqual(hb.recent?.first?.action, .task)
+    let old = #"{"at":null,"found":[],"note":""}"#
+    XCTAssertNil(try JSONDecoder().decode(HeartbeatInfo.self, from: Data(old.utf8)).recent)
+    for (json, settings) in [(#"{"type":"settings.updated","settings":{}}"#, true), (#"{"type":"heartbeat.updated"}"#, false)] {
+      switch try JSONDecoder().decode(HatbotEvent.self, from: Data(json.utf8)) {
+      case .settingsUpdated: XCTAssertTrue(settings)
+      case .heartbeatUpdated: XCTAssertFalse(settings)
+      default: XCTFail(json)
+      }
+    }
+  }
+
+  func testWatcherEventsDecode() throws {
+    let deleted = #"{"type":"watcher.deleted","id":4}"#
+    guard case .watcherDeleted(4) = try JSONDecoder().decode(HatbotEvent.self, from: Data(deleted.utf8)) else {
+      return XCTFail("not a deleted watcher")
+    }
+  }
+}
+
+final class ZoomTests: XCTestCase {
+  func testZoomingKeepsThePointUnderTheFingersAndTheScreenCovered() {
+    let size = CGSize(width: 400, height: 250)
+    let z = Zoom().zoomed(by: 2, at: CGPoint(x: 100, y: 50), in: size)
+    XCTAssertEqual(z.scale, 2)
+    let p = z.unzoomed(CGPoint(x: 100, y: 50))
+    XCTAssertEqual(p.x, 100, accuracy: 0.001)
+    XCTAssertEqual(p.y, 50, accuracy: 0.001)
+    // Moved past the edge, it stops at it.
+    let moved = z.moved(by: CGPoint(x: 1000, y: -1000), in: size)
+    XCTAssertEqual(moved.offset.x, 0)
+    XCTAssertEqual(moved.offset.y, -250)
+    XCTAssertEqual(moved.unzoomed(CGPoint(x: 400, y: 250)).x, 200, accuracy: 0.001)
+    // Out past 1, it's back to the whole screen.
+    XCTAssertEqual(z.zoomed(by: 0.1, at: .zero, in: size), Zoom())
+    XCTAssertEqual(Zoom().zoomed(by: 100, at: .zero, in: size).scale, Zoom.most)
   }
 }

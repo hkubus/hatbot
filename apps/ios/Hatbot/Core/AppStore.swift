@@ -3,6 +3,17 @@
 import Foundation
 import Observation
 
+/// A reply as it's written: its text, latest progress note and what it has used so far.
+@MainActor
+@Observable
+final class LiveReply {
+  var text: String
+  var progress = ""
+  var usage: ReplyUsage?
+
+  init(text: String) { self.text = text }
+}
+
 @MainActor
 @Observable
 final class AppStore {
@@ -14,18 +25,22 @@ final class AppStore {
   var messages: [ThreadMessage] = []
   /// The conversations the loaded messages belong to, for their recaps.
   var episodes: [Int: Episode] = [:]
-  /// Latest progress note per streaming reply.
-  var progress: [Int: String] = [:]
-  /// What each streaming reply has used so far.
-  var usage: [Int: ReplyUsage] = [:]
+  /// The replies being written, each in its own object: a delta then redraws only its bubble, not the chat.
+  @ObservationIgnored private var replies: [Int: LiveReply] = [:]
   var hasEarlier = false
   @ObservationIgnored private var loadingEarlier = false
+  /// An earlier page is going in above.
+  private(set) var prepending = false
+  @ObservationIgnored private var settling: Task<Void, Never>?
   /// Hatbot's messages sent or edited since you last saw them.
   var unread: [Int] = []
   var paused = false
   var todayUsd: Double?
   var monthUsd: Double?
   var connected = false
+  /// The event stream has been down a few seconds while the app is in front.
+  var unreachable = false
+  @ObservationIgnored private var unreachableCheck: Task<Void, Never>?
   var tasks: [Int: AgentTask] = [:]
   /// Steps of the tasks that have been opened or shown in the chat.
   var steps: [Int: [TaskStep]] = [:]
@@ -40,6 +55,16 @@ final class AppStore {
   var deletedTriggers: Set<Int> = []
   /// Bumped when memory changes, so open memory views reload.
   var memoryVersion = 0
+  /// Proposed memory changes, as loaded and as proposal.updated tells.
+  var proposals: [Int: Proposal] = [:]
+  /// Bumped by settings.updated and heartbeat.updated, so open views refetch.
+  var settingsVersion = 0
+  var heartbeatVersion = 0
+  /// Watchers as loaded and as watcher.updated tells; `watchersLoaded` once the list has come.
+  var watchers: [Int: Watcher] = [:]
+  var watchersLoaded = false
+  /// Deleted while the app was open, so an open watcher says it's gone.
+  var deletedWatchers = Set<Int>()
   /// A short note to show briefly, like a memory commit.
   var toast: String?
   /// The chat that's showing: a bot's own, or a group. Hatbot's own is the first.
@@ -58,8 +83,46 @@ final class AppStore {
   /// Messages in an incognito conversation: they're never unread.
   @ObservationIgnored private var incognitoIds = Set<Int>()
 
-  init(api: API) {
+  /// Where what was last seen is kept; nil keeps nothing.
+  @ObservationIgnored let cache: DiskCache?
+
+  init(api: API, cache: DiskCache? = nil) {
     self.api = api
+    self.cache = cache
+    restore()
+  }
+
+  /// What the app saw last time, until the brain answers.
+  private func restore() {
+    guard let cache, let chats = cache.chats() else { return }
+    for b in chats.bots { bots[b.id] = b }
+    botIds = chats.bots.map(\.id)
+    conversations = chats.conversations
+    if chats.conversations.contains(where: { $0.id == chats.conversationId }) { conversationId = chats.conversationId }
+    if let page = cache.page(conversationId) {
+      messages = page.messages
+      hasEarlier = page.hasEarlier
+      for e in page.episodes { episodes[e.id] = e }
+    }
+  }
+
+  /// Keeps the open chat's latest page, and the bots and chats, for next time. Never incognito.
+  func persist() {
+    guard let cache else { return }
+    if !conversations.isEmpty {
+      cache.save(
+        DiskCache.Chats(
+          bots: botIds.compactMap { bots[$0] }, conversations: conversations, conversationId: conversationId))
+    }
+    guard !incognito, !messages.isEmpty else { return }
+    // Finished messages only: one still streaming would come back half written.
+    let page = Array(messages.filter { $0.status != .streaming }.suffix(Self.page))
+    let ids = Set(page.compactMap(\.episodeId))
+    cache.save(
+      DiskCache.Page(
+        messages: page, episodes: ids.compactMap { episodes[$0] },
+        hasEarlier: hasEarlier || page.count < messages.count),
+      for: conversationId)
   }
 
   /// Approvals waiting for you, plus a takeover request.
@@ -76,11 +139,25 @@ final class AppStore {
   func connect() {
     if stream == nil { stream = makeStream() }
     stream?.start()
+    noticeIfDown()
   }
 
   func disconnect() {
+    persist()
     stream?.stop()
     connected = false
+    unreachableCheck?.cancel()
+    unreachable = false
+  }
+
+  /// "Can't reach Hatbot." only after a few seconds: a reconnect is usually quicker.
+  private func noticeIfDown() {
+    unreachableCheck?.cancel()
+    unreachableCheck = Task { [weak self] in
+      try? await Task.sleep(for: .seconds(4))
+      guard let self, !Task.isCancelled, !self.connected, self.stream?.running == true else { return }
+      self.unreachable = true
+    }
   }
 
   private func makeStream() -> Socket {
@@ -89,6 +166,8 @@ final class AppStore {
     socket.onOpen = { [weak self] reconnected in
       guard let self else { return }
       self.connected = true
+      self.unreachableCheck?.cancel()
+      self.unreachable = false
       Task {
         if reconnected { try? await self.loadThread() }
         try? await self.loadLive()
@@ -100,7 +179,11 @@ final class AppStore {
       else { return }
       self?.apply(event)
     }
-    socket.onClose = { [weak self] in self?.connected = false }
+    socket.onClose = { [weak self] in
+      self?.connected = false
+      self?.noticeIfDown()
+    }
+    socket.onUnauthorized = { api.unauthorized() }
     return socket
   }
 
@@ -110,7 +193,10 @@ final class AppStore {
       if m.isIncognito { incognitoIds.insert(m.id) }
       if m.role == .assistant { refreshConversations() }
       // Only the conversation that's showing.
-      if m.isIncognito == incognito && (m.conversationId ?? 1) == conversationId { upsert(m) }
+      if m.isIncognito == incognito && (m.conversationId ?? 1) == conversationId {
+        if m.status == .streaming && replies[m.id] == nil { replies[m.id] = LiveReply(text: m.text) }
+        upsert(m)
+      }
       // What came of your own command arrives already seen.
       if m.role == .assistant && m.status != .streaming && m.seenAt == nil { addUnread(m.id) }
     case let .messageEdited(id, editedAt):
@@ -120,6 +206,7 @@ final class AppStore {
     case let .messageRewrite(id):
       // Its task ended: its bot is writing it again.
       if let i = messages.firstIndex(where: { $0.id == id }) {
+        replies[id] = LiveReply(text: "")
         messages[i].text = ""
         messages[i].status = .streaming
       }
@@ -128,23 +215,23 @@ final class AppStore {
       unread.removeAll { ids.contains($0) }
       refreshConversations()
     case let .messageDeleted(ids):
+      for id in ids { replies[id] = nil }
       messages.removeAll { ids.contains($0.id) }
       unread.removeAll { ids.contains($0) }
     case let .messageDelta(id, text):
-      if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].text += text }
+      if let r = live(id) { r.text += text }
     case let .messageProgress(id, text):
-      progress[id] = String(((progress[id] ?? "") + text).suffix(400))
+      if let r = live(id) { r.progress = String((r.progress + text).suffix(400)) }
     case let .messageTask(id, taskId):
       if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].taskId = taskId }
     case let .messageUsage(id, used):
-      usage[id] = used
+      live(id)?.usage = used
     case let .messageAttachment(id, a):
       if let i = messages.firstIndex(where: { $0.id == id }), !(messages[i].attachments ?? []).contains(where: { $0.id == a.id }) {
         messages[i].attachments = (messages[i].attachments ?? []) + [a]
       }
     case let .messageDone(id, text, status):
-      progress[id] = nil
-      usage[id] = nil
+      replies[id] = nil
       if let i = messages.firstIndex(where: { $0.id == id }) {
         messages[i].text = text
         messages[i].status = status
@@ -196,6 +283,17 @@ final class AppStore {
       put(c)
     case let .conversationDeleted(id):
       conversations.removeAll { $0.id == id }
+    case let .proposalUpdated(p):
+      proposals[p.id] = p
+    case let .watcherUpdated(w):
+      watchers[w.id] = w
+    case .settingsUpdated:
+      settingsVersion += 1
+    case .heartbeatUpdated:
+      heartbeatVersion += 1
+    case let .watcherDeleted(id):
+      watchers[id] = nil
+      deletedWatchers.insert(id)
     case .unknown:
       break
     }
@@ -214,6 +312,40 @@ final class AppStore {
       messages.append(m)
       messages.sort { $0.id < $1.id }
     }
+  }
+
+  /// The reply being written, for its bubble.
+  func reply(_ id: Int) -> LiveReply? { replies[id] }
+
+  /// A message's text as it is now: a streaming reply's is in its live reply.
+  func text(_ m: ThreadMessage) -> String {
+    m.status == .streaming ? replies[m.id]?.text ?? m.text : m.text
+  }
+
+  /// The live reply for a streaming message. One made here, for a message loaded mid-reply, goes in with
+  /// a change to the message, so its bubble notices.
+  private func live(_ id: Int) -> LiveReply? {
+    if let r = replies[id] { return r }
+    guard let i = messages.firstIndex(where: { $0.id == id }), messages[i].status == .streaming else { return nil }
+    let r = LiveReply(text: messages[i].text)
+    replies[id] = r
+    messages[i].text = r.text
+    return r
+  }
+
+  /// After loading the latest page: its streaming replies start again from the text the brain sent.
+  private func syncReplies(_ page: [ThreadMessage]) {
+    for m in page {
+      if m.status != .streaming {
+        replies[m.id] = nil
+      } else if let r = replies[m.id] {
+        r.text = m.text
+      } else {
+        replies[m.id] = LiveReply(text: m.text)
+      }
+    }
+    let shown = Set(messages.map(\.id))
+    for id in replies.keys where !shown.contains(id) { replies[id] = nil }
   }
 
   private func addUnread(_ id: Int) {
@@ -245,8 +377,9 @@ final class AppStore {
     try? await loadEpisodes(list)
     // Switched while it loaded: the other conversation's load wins.
     guard wasIncognito == incognito, shown == conversationId else { return }
-    messages = list
-    hasEarlier = list.count == Self.page
+    (messages, hasEarlier) = ThreadMerge.merge(messages, hasEarlier: hasEarlier, latest: list, page: Self.page)
+    syncReplies(list)
+    persist()
   }
 
   /// Into incognito, or out of it, which deletes its conversation.
@@ -264,10 +397,16 @@ final class AppStore {
     guard id != conversationId else { return }
     let left = chatPath
     let wasIncognito = incognito
+    persist()
     conversationId = id
     incognito = false
     messages = []
     hasEarlier = false
+    if let page = cache?.page(id) {
+      messages = page.messages
+      hasEarlier = page.hasEarlier
+      for e in page.episodes { episodes[e.id] = e }
+    }
     if wasIncognito { let _: Empty? = try? await api.delete("\(left)/incognito") }
     try? await loadThread()
   }
@@ -282,6 +421,7 @@ final class AppStore {
     for b in list { bots[b.id] = b }
     botIds = list.map(\.id)
     conversations = chats
+    persist()
   }
 
   /// The chats' unread counts, soon: news comes in bursts.
@@ -391,11 +531,41 @@ final class AppStore {
   func loadEarlier() async throws {
     guard let first = messages.first, !loadingEarlier else { return }
     loadingEarlier = true
-    defer { loadingEarlier = false }
+    prepending = true
+    defer {
+      loadingEarlier = false
+      settle()
+    }
     let older: [ThreadMessage] = try await api.get(page(before: first.id))
     try? await loadEpisodes(older)
     messages = older + messages
     hasEarlier = older.count == Self.page
+  }
+
+  /// Loads earlier pages until message `id` is in the chat, for a search hit; whether it is.
+  func reveal(_ id: Int) async -> Bool {
+    if messages.isEmpty { try? await loadThread() }
+    for _ in 0..<40 {
+      if messages.contains(where: { $0.id == id }) { return true }
+      guard hasEarlier, let first = messages.first?.id, id < first else { return false }
+      while loadingEarlier { try? await Task.sleep(for: .milliseconds(100)) }
+      do { try await loadEarlier() } catch { return false }
+    }
+    return messages.contains { $0.id == id }
+  }
+
+  /// The earlier page stays "prepending" until it's laid out, so the chat keeps your place under it.
+  private func settle() {
+    settling?.cancel()
+    settling = Task { [weak self] in
+      try? await Task.sleep(for: .milliseconds(500))
+      if !Task.isCancelled { self?.prepending = false }
+    }
+  }
+
+  /// Writes an errored reply again: message.rewrite, then its deltas, follow. Only the latest one can be.
+  func retry(_ messageId: Int) async throws {
+    let _: Empty = try await api.post("\(chatPath)/messages/\(messageId)/retry", body: Empty())
   }
 
   /// Deletes a conversation from the chat for good; message.deleted takes it off the screen.
@@ -525,7 +695,9 @@ final class AppStore {
   /// The live view's socket: JPEG frames out, your input in while you have control.
   func liveSocket() -> Socket {
     let api = self.api
-    return Socket(maxDelay: 15) { api.webSocket("/desktop/live") }
+    let socket = Socket(maxDelay: 15) { api.webSocket("/desktop/live") }
+    socket.onUnauthorized = { api.unauthorized() }
+    return socket
   }
 
   // MARK: Schedules and triggers
