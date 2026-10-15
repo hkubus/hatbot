@@ -489,7 +489,43 @@ export const onToast = (fn: Toast) => {
   toast = fn;
 };
 
+/** `fn` over the showing messages; the same list when it changes none, so nothing re-renders. */
+function patchMessages(fn: (m: ThreadMessage) => ThreadMessage): ThreadMessage[] {
+  let changed = false;
+  const next = state.messages.map((m) => {
+    const n = fn(m);
+    if (n !== m) changed = true;
+    return n;
+  });
+  return changed ? next : state.messages;
+}
+const patchMessage = (id: number, fn: (m: ThreadMessage) => ThreadMessage) =>
+  patchMessages((m) => (m.id === id ? fn(m) : m));
+
+// A reply streams in many small deltas: they're added up and shown once per frame.
+const deltas = new Map<number, string>();
+let deltaFrame = 0;
+function flushDeltas() {
+  if (deltaFrame) cancelAnimationFrame(deltaFrame);
+  deltaFrame = 0;
+  if (!deltas.size) return;
+  const added = new Map(deltas);
+  deltas.clear();
+  const messages = patchMessages((m) => {
+    const d = added.get(m.id);
+    return d === undefined ? m : { ...m, text: m.text + d };
+  });
+  if (messages !== state.messages) set({ messages });
+}
+
 function apply(e: HatbotEvent) {
+  if (e.type === "message.delta") {
+    deltas.set(e.id, (deltas.get(e.id) ?? "") + e.text);
+    if (!deltaFrame) deltaFrame = requestAnimationFrame(flushDeltas);
+    return;
+  }
+  // Everything else lands after the deltas that came before it.
+  flushDeltas();
   switch (e.type) {
     case "message.created":
       if (e.message.incognito) incognitoIds.add(e.message.id);
@@ -510,33 +546,27 @@ function apply(e: HatbotEvent) {
     case "message.edited":
       refreshConversations();
       return set({
-        messages: state.messages.map((m) => (m.id === e.id ? { ...m, editedAt: e.editedAt } : m)),
+        messages: patchMessage(e.id, (m) => ({ ...m, editedAt: e.editedAt })),
         unread: addUnread(e.id),
       });
     case "message.rewrite":
       // Its task ended: its bot is writing it again.
       return set({
-        messages: state.messages.map((m) =>
-          m.id === e.id ? { ...m, text: "", status: "streaming" } : m,
-        ),
+        messages: patchMessage(e.id, (m) => ({ ...m, text: "", status: "streaming" })),
       });
     case "message.seen":
       refreshConversations();
       return set({
-        messages: state.messages.map((m) =>
-          e.ids.includes(m.id) ? { ...m, seenAt: e.seenAt } : m,
-        ),
+        messages: patchMessages((m) => (e.ids.includes(m.id) ? { ...m, seenAt: e.seenAt } : m)),
         unread: state.unread.filter((id) => !e.ids.includes(id)),
       });
     case "message.deleted":
       refreshConversations();
       return set({
-        messages: state.messages.filter((m) => !e.ids.includes(m.id)),
+        messages: state.messages.some((m) => e.ids.includes(m.id))
+          ? state.messages.filter((m) => !e.ids.includes(m.id))
+          : state.messages,
         unread: state.unread.filter((id) => !e.ids.includes(id)),
-      });
-    case "message.delta":
-      return set({
-        messages: state.messages.map((m) => (m.id === e.id ? { ...m, text: m.text + e.text } : m)),
       });
     case "message.progress": {
       const text = ((state.progress[e.id] ?? "") + e.text).slice(-400);
@@ -544,15 +574,15 @@ function apply(e: HatbotEvent) {
     }
     case "message.attachment":
       return set({
-        messages: state.messages.map((m) =>
-          m.id === e.id && !m.attachments?.some((a) => a.id === e.attachment.id)
-            ? { ...m, attachments: [...(m.attachments ?? []), e.attachment] }
-            : m,
+        messages: patchMessage(e.id, (m) =>
+          m.attachments?.some((a) => a.id === e.attachment.id)
+            ? m
+            : { ...m, attachments: [...(m.attachments ?? []), e.attachment] },
         ),
       });
     case "message.task":
       return set({
-        messages: state.messages.map((m) => (m.id === e.id ? { ...m, taskId: e.taskId } : m)),
+        messages: patchMessage(e.id, (m) => ({ ...m, taskId: e.taskId })),
       });
     case "message.usage":
       return set({ usage: { ...state.usage, [e.id]: { tokens: e.tokens, costUsd: e.costUsd } } });
@@ -564,9 +594,7 @@ function apply(e: HatbotEvent) {
         progress,
         usage,
         unread: addUnread(e.id),
-        messages: state.messages.map((m) =>
-          m.id === e.id ? { ...m, text: e.text, status: e.status } : m,
-        ),
+        messages: patchMessage(e.id, (m) => ({ ...m, text: e.text, status: e.status })),
       });
     }
     case "spend.updated":

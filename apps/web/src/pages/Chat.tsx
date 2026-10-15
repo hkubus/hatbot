@@ -10,6 +10,7 @@ import {
   createContext,
   Fragment,
   memo,
+  useCallback,
   useContext,
   useEffect,
   useLayoutEffect,
@@ -120,6 +121,8 @@ const MD_COMPONENTS: Components = {
   },
 };
 
+const REMARK = [remarkGfm];
+
 export const AssistantBody = memo(function AssistantBody({
   text,
   streaming = false,
@@ -130,7 +133,7 @@ export const AssistantBody = memo(function AssistantBody({
   return (
     <div className="md">
       <Streaming.Provider value={streaming}>
-        <Markdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
+        <Markdown remarkPlugins={REMARK} components={MD_COMPONENTS}>
           {text}
         </Markdown>
       </Streaming.Provider>
@@ -421,7 +424,8 @@ type Draft = {
 };
 let draftKey = 0;
 
-function Message({
+// Memoized: while a reply streams only its own message redraws, not the whole thread's markdown.
+const Message = memo(function Message({
   m,
   progress,
   animate,
@@ -466,7 +470,7 @@ function Message({
       {inner}
     </div>
   );
-}
+});
 
 /** A finished conversation, folded up under its recap. */
 function Fold({
@@ -516,22 +520,10 @@ export function Chat() {
   const incognito = useStore((s) => s.incognito);
   const conversationId = useStore((s) => s.conversationId);
   const name = useStore((s) => chatName(s, currentChat(s)));
-  // A group's bots, for the names above their messages and @ in the composer.
-  const members = useStore((s) => {
-    const c = currentChat(s);
-    return c?.kind === "group" ? c.botIds : null;
-  });
+  const members = useStore(groupMembers);
   const bots = useStore((s) => s.bots);
-  const [draft, setDraft] = useState("");
-  // The command list under "/…": which one is picked, and whether Escape closed it.
-  const [pick, setPick] = useState(0);
-  const [menuClosed, setMenuClosed] = useState(false);
-  const [files, setFiles] = useState<Draft[]>([]);
-  const picker = useRef<HTMLInputElement>(null);
-  const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const scroller = useRef<HTMLElement>(null);
-  const textarea = useRef<HTMLTextAreaElement>(null);
   const thread = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   // Only messages that arrive after the first paint animate in.
@@ -540,6 +532,9 @@ export function Chat() {
   // A message to show, from search: ?message=<id>.
   const { path, params } = useRoute();
   const target = Number(params.get("message")) || 0;
+  const onSend = useCallback(() => {
+    stick.current = true;
+  }, []);
 
   // Switching chats, or to or from incognito, loads the other conversation in the store.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset the animation on each switch
@@ -636,109 +631,6 @@ export function Chat() {
     requestAnimationFrame(() => {
       if (el) el.scrollTop = el.scrollHeight - before;
     });
-  };
-
-  const resize = () => {
-    const ta = textarea.current;
-    if (!ta) return;
-    ta.style.height = "auto";
-    ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
-  };
-
-  const attach = (list: FileList | File[]) => {
-    for (const file of Array.from(list).slice(0, 10)) {
-      const key = ++draftKey;
-      const preview = PICTURES.includes(file.type) ? URL.createObjectURL(file) : undefined;
-      setFiles((f) => [...f, { key, name: file.name, preview }]);
-      upload(file).then(
-        (attachment) => setFiles((f) => f.map((d) => (d.key === key ? { ...d, attachment } : d))),
-        (err) =>
-          setFiles((f) =>
-            f.map((d) =>
-              d.key === key
-                ? { ...d, error: err instanceof ApiError ? err.message : "Couldn't upload." }
-                : d,
-            ),
-          ),
-      );
-    }
-  };
-  const unattach = (key: number) =>
-    setFiles((f) => {
-      const d = f.find((x) => x.key === key);
-      if (d?.preview) URL.revokeObjectURL(d.preview);
-      return f.filter((x) => x.key !== key);
-    });
-  const uploading = files.some((d) => !d.attachment && !d.error);
-  const ready = files.filter((d) => d.attachment);
-
-  // Incognito keeps nothing, so commands that would outlast it aren't offered.
-  const commands = menuClosed
-    ? []
-    : matchingCommands(draft).filter((c) => !incognito || c.name === "new" || c.name === "stop");
-  // One that needs more goes in the composer for you to finish; the rest run at once.
-  const choose = (c: (typeof commands)[number]) => {
-    if (c.args.startsWith("<")) {
-      setDraft(`/${c.name} `);
-      textarea.current?.focus();
-    } else void send(`/${c.name}`);
-  };
-  // In a group, "@" at the end offers its bots.
-  const at = members && !menuClosed ? /(?:^|\s)@([^\s@]*)$/.exec(draft) : null;
-  const typed = at?.[1]?.toLowerCase() ?? "";
-  const mentionable = at
-    ? (members ?? []).filter(
-        (id) => id.startsWith(typed) || botName(getState(), id).toLowerCase().startsWith(typed),
-      )
-    : [];
-  const options: Option[] = mentionable.length
-    ? mentionable.map((id) => ({
-        key: id,
-        label: `@${bots[id]?.name ?? id}`,
-        desc: bots[id]?.instructions.split("\n")[0] ?? "",
-        choose: () => {
-          setDraft(`${draft.slice(0, draft.length - typed.length - 1)}@${bots[id]?.name ?? id} `);
-          textarea.current?.focus();
-        },
-      }))
-    : commands.map((c) => ({
-        key: c.name,
-        label: (
-          <>
-            /{c.name}
-            {c.args && <span className="args"> {c.args}</span>}
-          </>
-        ),
-        desc: c.description,
-        choose: () => choose(c),
-      }));
-  const picked = options[Math.min(pick, options.length - 1)];
-
-  const send = async (command?: string) => {
-    const text = (command ?? draft).trim();
-    if ((!text && !ready.length) || sending || uploading) return;
-    setSending(true);
-    setError("");
-    stick.current = true;
-    // Clear it right away; it comes back if the send fails.
-    const sent = files;
-    setDraft("");
-    setFiles([]);
-    requestAnimationFrame(resize);
-    try {
-      await sendMessage(
-        text,
-        ready.map((d) => (d.attachment as Attachment).id),
-      );
-      for (const d of sent) if (d.preview) URL.revokeObjectURL(d.preview);
-    } catch {
-      setFiles((f) => (f.length ? f : sent));
-      setDraft((d) => d || text);
-      requestAnimationFrame(resize);
-      setError("Couldn't send. Check your connection and try again.");
-    } finally {
-      setSending(false);
-    }
   };
 
   let lastDay = "";
@@ -852,108 +744,245 @@ export function Chat() {
             {error}
           </div>
         )}
-        {options.length > 0 && (
-          <div className="command-menu" role="listbox">
-            {options.map((o) => (
-              <button
-                key={o.key}
-                type="button"
-                role="option"
-                aria-selected={o === picked}
-                className={o === picked ? "on" : ""}
-                // Keeps the focus in the composer.
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={o.choose}
-              >
-                <span className="name">{o.label}</span>
-                <span className="desc">{o.desc}</span>
-              </button>
-            ))}
-          </div>
-        )}
-        {files.length > 0 && (
-          <div className="composer-files">
-            {files.map((d) => (
-              <span
-                key={d.key}
-                className={`composer-file ${d.attachment ? "" : "loading"} ${d.error ? "failed" : ""}`}
-                title={d.error ?? d.name}
-              >
-                {d.preview ? <img src={d.preview} alt="" /> : <Icon name="file" />}
-                {!d.preview && <span className="name">{d.name}</span>}
-                <button type="button" title="Remove" onClick={() => unattach(d.key)}>
-                  <Icon name="x" />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-        <div className="composer">
-          <input
-            ref={picker}
-            type="file"
-            multiple
-            hidden
-            onChange={(e) => {
-              if (e.target.files) attach(e.target.files);
-              e.target.value = "";
-            }}
-          />
-          <button
-            type="button"
-            className="icon-btn"
-            title="Attach files"
-            onClick={() => picker.current?.click()}
-          >
-            <Icon name="clip" />
-          </button>
-          <textarea
-            ref={textarea}
-            rows={1}
-            placeholder={incognito ? `Message ${name} incognito…` : `Message ${name}…`}
-            value={draft}
-            onChange={(e) => {
-              setDraft(e.target.value);
-              setPick(0);
-              setMenuClosed(false);
-              resize();
-            }}
-            onPaste={(e) => {
-              if (e.clipboardData.files.length) {
-                e.preventDefault();
-                attach(e.clipboardData.files);
-              }
-            }}
-            onKeyDown={(e) => {
-              if (picked && !e.nativeEvent.isComposing) {
-                const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
-                if (step) {
-                  e.preventDefault();
-                  const i = options.indexOf(picked);
-                  return setPick((i + step + options.length) % options.length);
-                }
-                if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
-                  e.preventDefault();
-                  return picked.choose();
-                }
-                if (e.key === "Escape") return setMenuClosed(true);
-              }
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-          />
-          <button
-            type="button"
-            className="icon-btn send"
-            title="Send"
-            disabled={(!draft.trim() && !ready.length) || sending || uploading}
-            onClick={() => send()}
-          >
-            <Icon name="up" />
-          </button>
+        <Composer onSend={onSend} />
+      </div>
+    </>
+  );
+}
+
+/** A group's bots, for the names above their messages and @ in the composer. */
+const groupMembers = (s: ReturnType<typeof getState>) => {
+  const c = currentChat(s);
+  return c?.kind === "group" ? c.botIds : null;
+};
+
+/** What you're writing, its files and the menu over it; apart from the thread, so typing redraws only this. */
+function Composer({ onSend }: { onSend: () => void }) {
+  const incognito = useStore((s) => s.incognito);
+  const name = useStore((s) => chatName(s, currentChat(s)));
+  const members = useStore(groupMembers);
+  const bots = useStore((s) => s.bots);
+  const [draft, setDraft] = useState("");
+  // The command list under "/…": which one is picked, and whether Escape closed it.
+  const [pick, setPick] = useState(0);
+  const [menuClosed, setMenuClosed] = useState(false);
+  const [files, setFiles] = useState<Draft[]>([]);
+  const picker = useRef<HTMLInputElement>(null);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const textarea = useRef<HTMLTextAreaElement>(null);
+
+  const resize = () => {
+    const ta = textarea.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
+  };
+
+  const attach = (list: FileList | File[]) => {
+    for (const file of Array.from(list).slice(0, 10)) {
+      const key = ++draftKey;
+      const preview = PICTURES.includes(file.type) ? URL.createObjectURL(file) : undefined;
+      setFiles((f) => [...f, { key, name: file.name, preview }]);
+      upload(file).then(
+        (attachment) => setFiles((f) => f.map((d) => (d.key === key ? { ...d, attachment } : d))),
+        (err) =>
+          setFiles((f) =>
+            f.map((d) =>
+              d.key === key
+                ? { ...d, error: err instanceof ApiError ? err.message : "Couldn't upload." }
+                : d,
+            ),
+          ),
+      );
+    }
+  };
+  const unattach = (key: number) =>
+    setFiles((f) => {
+      const d = f.find((x) => x.key === key);
+      if (d?.preview) URL.revokeObjectURL(d.preview);
+      return f.filter((x) => x.key !== key);
+    });
+  const uploading = files.some((d) => !d.attachment && !d.error);
+  const ready = files.filter((d) => d.attachment);
+
+  // Incognito keeps nothing, so commands that would outlast it aren't offered.
+  const commands = menuClosed
+    ? []
+    : matchingCommands(draft).filter((c) => !incognito || c.name === "new" || c.name === "stop");
+  // One that needs more goes in the composer for you to finish; the rest run at once.
+  const choose = (c: (typeof commands)[number]) => {
+    if (c.args.startsWith("<")) {
+      setDraft(`/${c.name} `);
+      textarea.current?.focus();
+    } else void send(`/${c.name}`);
+  };
+  // In a group, "@" at the end offers its bots.
+  const at = members && !menuClosed ? /(?:^|\s)@([^\s@]*)$/.exec(draft) : null;
+  const typed = at?.[1]?.toLowerCase() ?? "";
+  const mentionable = at
+    ? (members ?? []).filter(
+        (id) => id.startsWith(typed) || botName(getState(), id).toLowerCase().startsWith(typed),
+      )
+    : [];
+  const options: Option[] = mentionable.length
+    ? mentionable.map((id) => ({
+        key: id,
+        label: `@${bots[id]?.name ?? id}`,
+        desc: bots[id]?.instructions.split("\n")[0] ?? "",
+        choose: () => {
+          setDraft(`${draft.slice(0, draft.length - typed.length - 1)}@${bots[id]?.name ?? id} `);
+          textarea.current?.focus();
+        },
+      }))
+    : commands.map((c) => ({
+        key: c.name,
+        label: (
+          <>
+            /{c.name}
+            {c.args && <span className="args"> {c.args}</span>}
+          </>
+        ),
+        desc: c.description,
+        choose: () => choose(c),
+      }));
+  const picked = options[Math.min(pick, options.length - 1)];
+
+  const send = async (command?: string) => {
+    const text = (command ?? draft).trim();
+    if ((!text && !ready.length) || sending || uploading) return;
+    setSending(true);
+    setError("");
+    onSend();
+    // Clear it right away; it comes back if the send fails.
+    const sent = files;
+    setDraft("");
+    setFiles([]);
+    requestAnimationFrame(resize);
+    try {
+      await sendMessage(
+        text,
+        ready.map((d) => (d.attachment as Attachment).id),
+      );
+      for (const d of sent) if (d.preview) URL.revokeObjectURL(d.preview);
+    } catch {
+      setFiles((f) => (f.length ? f : sent));
+      setDraft((d) => d || text);
+      requestAnimationFrame(resize);
+      setError("Couldn't send. Check your connection and try again.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <>
+      {error && (
+        <div className="form-error" style={{ maxWidth: 760, margin: "0 auto 6px" }}>
+          {error}
         </div>
+      )}
+      {options.length > 0 && (
+        <div className="command-menu" role="listbox">
+          {options.map((o) => (
+            <button
+              key={o.key}
+              type="button"
+              role="option"
+              aria-selected={o === picked}
+              className={o === picked ? "on" : ""}
+              // Keeps the focus in the composer.
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={o.choose}
+            >
+              <span className="name">{o.label}</span>
+              <span className="desc">{o.desc}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {files.length > 0 && (
+        <div className="composer-files">
+          {files.map((d) => (
+            <span
+              key={d.key}
+              className={`composer-file ${d.attachment ? "" : "loading"} ${d.error ? "failed" : ""}`}
+              title={d.error ?? d.name}
+            >
+              {d.preview ? <img src={d.preview} alt="" /> : <Icon name="file" />}
+              {!d.preview && <span className="name">{d.name}</span>}
+              <button type="button" title="Remove" onClick={() => unattach(d.key)}>
+                <Icon name="x" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="composer">
+        <input
+          ref={picker}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            if (e.target.files) attach(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        <button
+          type="button"
+          className="icon-btn"
+          title="Attach files"
+          onClick={() => picker.current?.click()}
+        >
+          <Icon name="clip" />
+        </button>
+        <textarea
+          ref={textarea}
+          rows={1}
+          placeholder={incognito ? `Message ${name} incognito…` : `Message ${name}…`}
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setPick(0);
+            setMenuClosed(false);
+            resize();
+          }}
+          onPaste={(e) => {
+            if (e.clipboardData.files.length) {
+              e.preventDefault();
+              attach(e.clipboardData.files);
+            }
+          }}
+          onKeyDown={(e) => {
+            if (picked && !e.nativeEvent.isComposing) {
+              const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+              if (step) {
+                e.preventDefault();
+                const i = options.indexOf(picked);
+                return setPick((i + step + options.length) % options.length);
+              }
+              if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
+                e.preventDefault();
+                return picked.choose();
+              }
+              if (e.key === "Escape") return setMenuClosed(true);
+            }
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              void send();
+            }
+          }}
+        />
+        <button
+          type="button"
+          className="icon-btn send"
+          title="Send"
+          disabled={(!draft.trim() && !ready.length) || sending || uploading}
+          onClick={() => send()}
+        >
+          <Icon name="up" />
+        </button>
       </div>
     </>
   );
