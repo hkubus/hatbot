@@ -7,6 +7,7 @@ import { authRoutes } from "./routes/auth";
 import { botRoutes } from "./routes/bots";
 import { checkRoutes } from "./routes/checks";
 import { desktopRoutes } from "./routes/desktop";
+import { heartbeatRoutes } from "./routes/heartbeat";
 import { memoryRoutes } from "./routes/memory";
 import { pluginRoutes } from "./routes/plugins";
 import { hookRoutes, scheduleRoutes } from "./routes/schedules";
@@ -45,6 +46,7 @@ export function createApp(deps: Deps) {
   app.route("/", checkRoutes);
   app.route("/", watcherRoutes);
   app.route("/", searchRoutes);
+  app.route("/", heartbeatRoutes);
 
   app.notFound((c) => c.json({ error: "not found" }, 404));
   app.onError((err, c) => {

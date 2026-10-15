@@ -1,9 +1,10 @@
-import type {
-  ApiToken,
-  AppSettings,
-  CreateTokenResponse,
-  Limits,
-  UpdateInfo,
+import {
+  type ApiToken,
+  type AppSettings,
+  type CreateTokenResponse,
+  describeEvery,
+  type Limits,
+  type UpdateInfo,
 } from "@hatbot/shared";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api";
@@ -13,7 +14,10 @@ import { setPaused, useStore } from "../store";
 import { Switch } from "../switch";
 import { getTheme, setTheme, type Theme } from "../theme";
 import { Checks } from "./Checks";
+import { HeartbeatPage } from "./Heartbeat";
 import { PluginPage, PluginsGroup } from "./Plugins";
+
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export function Settings({
   path,
@@ -27,6 +31,7 @@ export function Settings({
   const plugin = /^\/settings\/plugins\/([a-z0-9]+)$/.exec(path)?.[1];
   if (plugin) return <PluginPage key={plugin} id={plugin} toast={toast} />;
   if (path === "/settings/checks") return <Checks />;
+  if (path === "/settings/heartbeat") return <HeartbeatPage toast={toast} />;
   return <SettingsHome toast={toast} onSignOut={onSignOut} />;
 }
 
@@ -212,6 +217,85 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
                 <option value="claude-opus-5-5">Opus 5.5</option>
               </select>
             </div>
+          </div>
+        </section>
+
+        <section className="group">
+          <h2>Looking after things</h2>
+          <div className="group-box">
+            <button
+              type="button"
+              className="row link"
+              onClick={() => navigate("/settings/heartbeat")}
+            >
+              <div className="txt">
+                <b>Heartbeat</b>
+              </div>
+              <span className="val">
+                {settings.heartbeat.enabled
+                  ? describeEvery(settings.heartbeat.everyMinutes)
+                  : "Off"}
+              </span>
+              <Icon name="chevron" className="chev" />
+            </button>
+            <div className="row">
+              <div className="txt">
+                <b>Weekly report</b>
+              </div>
+              <Switch
+                on={settings.weeklyReport.enabled}
+                onChange={(enabled) =>
+                  update({ weeklyReport: { ...settings.weeklyReport, enabled } })
+                }
+              />
+            </div>
+            {settings.weeklyReport.enabled && (
+              <div className="row">
+                <div className="txt">
+                  <b>Sent on</b>
+                </div>
+                <select
+                  value={settings.weeklyReport.weekday}
+                  onChange={(e) =>
+                    update({
+                      weeklyReport: { ...settings.weeklyReport, weekday: Number(e.target.value) },
+                    })
+                  }
+                >
+                  {WEEKDAYS.map((d, i) => (
+                    <option key={d} value={i}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={settings.weeklyReport.hour}
+                  onChange={(e) =>
+                    update({
+                      weeklyReport: { ...settings.weeklyReport, hour: Number(e.target.value) },
+                    })
+                  }
+                >
+                  {Array.from({ length: 24 }, (_, h) => (
+                    <option key={h} value={h}>
+                      {String(h).padStart(2, "0")}:00
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="btn sm"
+                  onClick={() =>
+                    api("/report/send", { body: {} }).then(
+                      () => toast("Sent to Hatbot's chat"),
+                      () => toast("Couldn't send"),
+                    )
+                  }
+                >
+                  Send now
+                </button>
+              </div>
+            )}
           </div>
         </section>
 

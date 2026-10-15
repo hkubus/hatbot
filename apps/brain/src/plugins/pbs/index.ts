@@ -240,6 +240,28 @@ export const pbsPlugin = definePlugin({
         const list = await get<Usage[]>("/status/datastore-usage");
         return `Connected; it sees ${list.length} datastore${list.length === 1 ? "" : "s"}.`;
       },
+      // Failed tasks of the last day, and datastores nearly full.
+      signals: async () => {
+        const since = Math.floor(Date.now() / 1000) - 86400;
+        const [failed, usage] = await Promise.all([
+          get<PbsTask[]>(`/nodes/localhost/tasks?errors=1&limit=20&since=${since}`),
+          get<Usage[]>("/status/datastore-usage"),
+        ]);
+        return [
+          ...failed
+            .filter((t) => t.endtime && t.starttime >= since)
+            .map((t) => ({
+              key: t.upid,
+              text: `Backup server: ${t.worker_type}${t.worker_id ? ` ${t.worker_id}` : ""} at ${stamp(t.starttime)} failed: ${t.status ?? "unknown"}`,
+            })),
+          ...usage
+            .filter((u) => u.total && u.used && u.used / u.total > 0.9)
+            .map((u) => ({
+              key: `full:${u.store}`,
+              text: `Backup server: datastore ${u.store} is ${Math.round(((u.used ?? 0) / (u.total ?? 1)) * 100)}% full (${gib(u.avail)} left)`,
+            })),
+        ];
+      },
     });
   },
 });

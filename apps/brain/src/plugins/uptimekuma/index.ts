@@ -256,6 +256,10 @@ export const uptimeKumaPlugin = definePlugin({
         const down = all.filter((m) => statusOf(m) === "down").length;
         return `Sees ${all.length} monitors, ${down ? `${down} down` : "none down"}.`;
       },
+      signals: async () =>
+        (await monitors())
+          .filter((m) => statusOf(m) === "down")
+          .map((m) => ({ key: `down:${m.name}`, text: `Uptime Kuma: ${line(m)}` })),
     });
   },
 });

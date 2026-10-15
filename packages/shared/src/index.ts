@@ -475,4 +475,38 @@ export type AppSettings = {
   desktopModel: "claude-opus-5-5" | "claude-haiku-5-5";
   /** The model background tasks (SSH, Proxmox, code work) run on. */
   taskModel: "claude-haiku-5-5" | "claude-opus-5-5";
+  heartbeat: HeartbeatSettings;
+  weeklyReport: WeeklyReportSettings;
+};
+
+/**
+ * Every few minutes Hatbot looks over what went wrong without the model (failed tasks, expired
+ * approvals, watchers and plugins that can't be read, monitors down, backups failing, spend). Only
+ * something new goes to Haiku, which tells you, starts a task, or lets it be.
+ */
+export type HeartbeatSettings = {
+  enabled: boolean;
+  everyMinutes: number;
+  /** The bot whose chat hears it and that runs its tasks. */
+  botId: string;
+  /** What you want done, for Haiku's choice and the task it starts. */
+  instructions: string;
+};
+
+/** A summary of the week, made without the model, in Hatbot's chat and as a notification. */
+export type WeeklyReportSettings = {
+  enabled: boolean;
+  /** 0 is Sunday. */
+  weekday: number;
+  hour: number;
+};
+
+/** The heartbeat's last look, for Settings. */
+export type HeartbeatInfo = {
+  at: string | null;
+  /** The new things it found. */
+  found: string[];
+  action: "nothing" | "notify" | "task" | null;
+  note: string;
+  taskId: number | null;
 };

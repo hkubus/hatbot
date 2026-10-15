@@ -11,6 +11,7 @@ import {
   PluginError,
   type PluginFiles,
   type PluginInstance,
+  type PluginSignal,
   type PluginTool,
   type Verdict,
 } from "./plugin";
@@ -111,6 +112,34 @@ export class Plugins {
     if (s.state !== "ready" || !s.instance) throw new PluginError(`${s.plugin.name} isn't ready.`);
     if (!s.instance.test) throw new PluginError(`${s.plugin.name} has no test.`);
     return s.instance.test();
+  }
+
+  /** What the ready plugins find wrong now, for the heartbeat. One that can't be asked says so. */
+  async signals(): Promise<PluginSignal[]> {
+    const found = await Promise.all(
+      [...this.slots.values()]
+        .filter((s) => s.enabled && s.state === "ready" && s.instance?.signals)
+        .map(async (s) => {
+          try {
+            const list = await Promise.race([
+              s.instance?.signals?.() ?? Promise.resolve([]),
+              Bun.sleep(30_000).then(() => {
+                throw new PluginError("it didn't answer in 30 seconds");
+              }),
+            ]);
+            return list.map((x) => ({ key: `${s.plugin.id}:${x.key}`, text: x.text }));
+          } catch (err) {
+            const why = err instanceof Error ? err.message : String(err);
+            return [
+              {
+                key: `${s.plugin.id}:unreachable`,
+                text: `${s.plugin.name} couldn't be checked: ${why}`,
+              },
+            ];
+          }
+        }),
+    );
+    return found.flat();
   }
 
   /** A call from the plugin's settings form. Works while it's starting up or needs setup, too. */

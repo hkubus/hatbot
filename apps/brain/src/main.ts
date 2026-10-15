@@ -14,12 +14,14 @@ import { openDb } from "./db";
 import { HttpDesktopAgent } from "./desktop/client";
 import { Desktop } from "./desktop/service";
 import { EventBus } from "./events";
+import { Heartbeat } from "./heartbeat";
 import { MemoryStore } from "./memory/store";
 import { LinkingNotifier, NtfyNotifier } from "./notify";
 import { PLUGINS } from "./plugins";
 import { codePlugin } from "./plugins/code";
 import { Plugins } from "./plugins/registry";
 import { Proxmox } from "./proxmox";
+import { WeeklyReport } from "./report";
 import { Schedules } from "./schedules";
 import { SettingsStore } from "./settings";
 import { Spend } from "./spend";
@@ -108,6 +110,28 @@ const watchers = new Watchers({
   bots,
   publicUrl: config.publicUrl,
 });
+const heartbeat = new Heartbeat({
+  db,
+  settings,
+  spend,
+  model,
+  tasks,
+  chats,
+  notifier,
+  plugins,
+  desktop,
+  bots,
+  publicUrl: config.publicUrl,
+});
+const report = new WeeklyReport({
+  db,
+  settings,
+  chats,
+  notifier,
+  bots,
+  memory,
+  publicUrl: config.publicUrl,
+});
 chats.attach({
   tasks,
   schedules,
@@ -133,6 +157,8 @@ void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {
     schedules.tick();
     triggers.tick();
     watchers.tick();
+    heartbeat.tick();
+    report.tick();
   }, 10_000);
 });
 const proxmox = new Proxmox();
@@ -179,6 +205,8 @@ const app = createApp({
   schedules,
   triggers,
   watchers,
+  heartbeat,
+  report,
   plugins,
   teach,
   checks,

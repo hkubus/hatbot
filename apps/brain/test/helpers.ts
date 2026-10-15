@@ -15,12 +15,14 @@ import { loadConfig } from "../src/config";
 import { openDb } from "../src/db";
 import { Desktop } from "../src/desktop/service";
 import { EventBus, type HatbotEvent } from "../src/events";
+import { Heartbeat } from "../src/heartbeat";
 import { MemoryStore } from "../src/memory/store";
 import { LinkingNotifier, type Notification, type Notifier } from "../src/notify";
 import { codePlugin } from "../src/plugins/code";
 import type { Plugin } from "../src/plugins/plugin";
 import { Plugins } from "../src/plugins/registry";
 import { Proxmox } from "../src/proxmox";
+import { WeeklyReport } from "../src/report";
 import { Schedules } from "../src/schedules";
 import { SettingsStore } from "../src/settings";
 import { Spend } from "../src/spend";
@@ -143,6 +145,30 @@ export async function testApp(
     publicUrl: ORIGIN,
     clock,
   });
+  const heartbeat = new Heartbeat({
+    db,
+    settings,
+    spend,
+    model: taskModel,
+    tasks,
+    chats,
+    notifier,
+    plugins,
+    desktop,
+    bots,
+    publicUrl: ORIGIN,
+    clock,
+  });
+  const report = new WeeklyReport({
+    db,
+    settings,
+    chats,
+    notifier,
+    bots,
+    memory,
+    publicUrl: ORIGIN,
+    clock,
+  });
   chats.attach({ tasks, schedules, triggers, watchers, approvals, attachments, desktop: agent });
   const updateDir = tempDir("hatbot-test-update-");
   const updates = new Updates(
@@ -196,6 +222,8 @@ export async function testApp(
     schedules,
     triggers,
     watchers,
+    heartbeat,
+    report,
     plugins,
     teach,
     checks,
@@ -236,6 +264,8 @@ export async function testApp(
     schedules,
     triggers,
     watchers,
+    heartbeat,
+    report,
     plugins,
     skills,
     teach,

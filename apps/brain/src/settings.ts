@@ -23,6 +23,17 @@ export const Settings = z.object({
   desktopModel: z.enum(["claude-opus-5-5", "claude-haiku-5-5"]),
   /** The model background tasks run on (SSH, Proxmox, code work: anything without a screen). */
   taskModel: z.enum(["claude-haiku-5-5", "claude-opus-5-5"]),
+  heartbeat: z.object({
+    enabled: z.boolean(),
+    everyMinutes: z.number().int().min(5).max(1440),
+    botId: z.string().regex(/^[a-z][a-z0-9-]{0,30}$/),
+    instructions: z.string().trim().min(1).max(4000),
+  }),
+  weeklyReport: z.object({
+    enabled: z.boolean(),
+    weekday: z.number().int().min(0).max(6),
+    hour: z.number().int().min(0).max(23),
+  }),
 });
 export type Settings = z.infer<typeof Settings>;
 
@@ -36,6 +47,14 @@ export const DEFAULT_SETTINGS: Settings = {
   notificationsOpen: "web",
   desktopModel: "claude-opus-5-5",
   taskModel: "claude-haiku-5-5",
+  heartbeat: {
+    enabled: false,
+    everyMinutes: 30,
+    botId: "hatbot",
+    instructions:
+      "Tell me about anything that needs me: a service down for more than a moment, failed backups, tasks that keep failing, approvals I missed. If a service is down and a restart is likely to fix it, restart it once and check it's back. Don't change configuration or delete anything. Leave alone what fixes itself or that I'd already know about.",
+  },
+  weeklyReport: { enabled: true, weekday: 1, hour: 9 },
 };
 
 export class SettingsStore {
