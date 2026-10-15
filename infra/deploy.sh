@@ -152,8 +152,12 @@ else
     else
       warn "the brain can't read $git_branch from $git_url; saving it anyway"
     fi
-    printf 'HATBOT_GIT_URL=%q\nHATBOT_GIT_BRANCH=%q\nHATBOT_GIT_USER=%q\nHATBOT_GIT_TOKEN=%q\n' \
-      "$git_url" "$git_branch" "$git_user" "$git_token" | push_secret "$BRAIN_ID" /etc/hatbot/update.env
+    {
+      printf 'HATBOT_GIT_URL=%q\nHATBOT_GIT_BRANCH=%q\nHATBOT_GIT_USER=%q\nHATBOT_GIT_TOKEN=%q\n' \
+        "$git_url" "$git_branch" "$git_user" "$git_token"
+      # Kept from the file this replaces: commit signature checks (README.md).
+      pct exec "$BRAIN_ID" -- sh -c 'grep -s "^HATBOT_UPDATE_SIGNERS=" /etc/hatbot/update.env || true'
+    } | push_secret "$BRAIN_ID" /etc/hatbot/update.env
     unset git_token
   elif [[ -n $git_url ]]; then
     warn "only https repositories are supported; skipping updates"

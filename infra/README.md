@@ -71,6 +71,17 @@ After that, **Settings → Updates → Update** pulls the branch and deploys it:
 - It doesn't touch the host. If a commit changes host-side scripts (`host-setup.sh`, `deploy.sh`, `desktop-deploy.sh` and so on), Settings says so; run `deploy.sh` on the host for those.
 - Logs: `/var/lib/hatbot-update/last.log` on the brain, and `journalctl -u hatbot-desktop-agent-update` on the desktop.
 
+### Signed commits only (optional)
+
+An update runs the new commit's `brain-deploy.sh` as root on the brain, so whoever can push to the branch can run code there. To deploy only commits you signed with an SSH key, put the key in an allowed signers file on the brain and point `update.env` at it:
+
+```sh
+pct exec <brain> -- sh -c 'echo "you@example.com namespaces=\"git\" ssh-ed25519 AAAA…" > /etc/hatbot/allowed_signers'
+pct exec <brain> -- sh -c 'echo HATBOT_UPDATE_SIGNERS=/etc/hatbot/allowed_signers >> /etc/hatbot/update.env'
+```
+
+Sign your commits (`git config gpg.format ssh`, `git config user.signingkey ~/.ssh/id_ed25519.pub`, `git config commit.gpgsign true`). From then on an update whose newest commit fails `git verify-commit` stops before deploying anything, and Settings says why. The check is in `hatbot-update` itself, so it starts working after the next update (or deploy) installs this version of it. `deploy.sh` keeps the line when it rewrites `update.env`.
+
 ## Commands in your containers (optional)
 
 Proxmox's API can't run commands inside containers, so Hatbot does it over SSH through the host. On the host:

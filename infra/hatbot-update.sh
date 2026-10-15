@@ -65,6 +65,14 @@ if [[ $from == "$to" ]]; then
   exit 0
 fi
 
+# This runs the fetched commit's brain-deploy.sh as root. With HATBOT_UPDATE_SIGNERS (an ssh
+# allowed_signers file) set in update.env, only a commit signed by one of its keys is deployed.
+if [[ -n ${HATBOT_UPDATE_SIGNERS:-} ]]; then
+  [[ -r $HATBOT_UPDATE_SIGNERS ]] || fail "can't read HATBOT_UPDATE_SIGNERS ($HATBOT_UPDATE_SIGNERS)"
+  git -C "$REPO" -c gpg.ssh.allowedSignersFile="$HATBOT_UPDATE_SIGNERS" verify-commit "$to" ||
+    fail "${to:0:7} isn't signed by a key in $HATBOT_UPDATE_SIGNERS, so it wasn't deployed"
+fi
+
 # Host-side scripts only change through deploy.sh or host-setup.sh on the Proxmox host.
 if [[ -n $from ]] && git -C "$REPO" cat-file -e "$from^{commit}" 2>/dev/null; then
   changed=$(git -C "$REPO" diff --name-only "$from" "$to" -- infra \
