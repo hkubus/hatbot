@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import Anthropic from "@anthropic-ai/sdk";
 import { retryable, withRetries } from "../src/agent/model";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { testApp, waitFor } from "./helpers";
+import { setUpOwner, testApp, waitFor } from "./helpers";
 
 const lastUserText = (req: { messages: { role: string; content: unknown }[] }) =>
   JSON.stringify(req.messages.at(-1)?.content);
@@ -174,4 +174,54 @@ test("a reply whose stream is tried again drops what it had streamed", async () 
     .slice(at)
     .flatMap((e) => (e.type === "message.delta" && e.id === reply?.id ? [e.text] : []));
   expect(after.join("")).toBe("The whole answer.");
+});
+
+test("a reply that failed is written again in place, from the turns it had", async () => {
+  const model = new FakeModel([]);
+  const t = await testApp(model);
+  const { cookie } = await setUpOwner(t);
+  await t.thread.post("what's 2+2?").done;
+  const failed = t.thread.list().find((m) => m.role === "assistant");
+  expect(failed?.status).toBe("error");
+
+  model.script.push({ content: [text("4.")] });
+  const res = await t.call("POST", `/thread/messages/${failed?.id}/retry`, undefined, { cookie });
+  expect(res.status).toBe(202);
+  await t.thread.idle();
+  const after = t.thread.list();
+  expect(after.filter((m) => m.role === "user")).toHaveLength(1);
+  expect(after.filter((m) => m.role === "assistant")).toEqual([
+    expect.objectContaining({ id: failed?.id, text: "4.", status: "done", editedAt: null }),
+  ]);
+  // The same request again: the owner's message once, nothing added.
+  expect(model.requests).toHaveLength(2);
+  expect(model.requests[1]?.messages).toEqual(model.requests[0]?.messages as never);
+  expect(t.events.some((e) => e.type === "message.rewrite" && e.id === failed?.id)).toBe(true);
+
+  // Done now, so not again.
+  const twice = await t.call("POST", `/thread/messages/${failed?.id}/retry`, undefined, { cookie });
+  expect(twice.status).toBe(409);
+});
+
+test("only the latest reply that failed can be tried again", async () => {
+  const model = new FakeModel([]);
+  const t = await testApp(model);
+  const { cookie } = await setUpOwner(t);
+  await t.thread.post("one").done;
+  const first = t.thread.list().find((m) => m.role === "assistant");
+  model.script.push({ content: [text("Two.")], stop_reason: "max_tokens" });
+  await t.thread.post("two").done;
+  const second = t.thread.list().filter((m) => m.role === "assistant")[1];
+  expect([first?.status, second?.status]).toEqual(["error", "error"]);
+  const old = await t.call("POST", `/thread/messages/${first?.id}/retry`, undefined, { cookie });
+  expect(old.status).toBe(409);
+  const user = t.thread.list()[0];
+  expect(t.thread.retry(user?.id as number)).toBeNull();
+
+  // The model ended that one itself; it's asked to try again.
+  model.script.push({ content: [text("Two, in full.")] });
+  expect(t.thread.retry(second?.id as number)).not.toBeNull();
+  await t.thread.idle();
+  expect(lastUserText(model.requests.at(-1) as never)).toContain("try that reply again");
+  expect(t.thread.list().at(-1)).toMatchObject({ id: second?.id, text: "Two, in full." });
 });

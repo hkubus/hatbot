@@ -100,6 +100,9 @@ export const threadRoutes = new Hono<AppEnv>()
   )
   .post("/thread/messages", json(PostMessage), (c) => post(c, c.var.chats.hatbot()))
   .post("/conversations/:id/messages", json(PostMessage), (c) => withThread(c, (t) => post(c, t)))
+  // A reply that failed, written again in place from where it was.
+  .post("/thread/messages/:messageId/retry", (c) => retry(c, c.var.chats.hatbot()))
+  .post("/conversations/:id/messages/:messageId/retry", (c) => withThread(c, (t) => retry(c, t)))
   // Shortcuts and Siri: posts like /thread/messages, then waits a while for the answer.
   .post("/thread/ask", json(PostMessage), (c) => ask(c, c.var.chats.hatbot()))
   .post("/conversations/:id/ask", json(PostMessage), (c) => withThread(c, (t) => ask(c, t)))
@@ -137,6 +140,13 @@ function withThread(c: Ctx, f: (t: Thread) => Response | Promise<Response>) {
   const id = Number(c.req.param("id"));
   const thread = Number.isInteger(id) ? c.var.chats.thread(id) : null;
   return thread ? f(thread) : c.json({ error: "not found" }, 404);
+}
+
+function retry(c: Ctx, t: Thread) {
+  const id = Number(c.req.param("messageId"));
+  if (!Number.isInteger(id) || !t.retry(id))
+    return c.json({ error: "Only the latest reply, when it failed, can be tried again." }, 409);
+  return c.json({ ok: true }, 202);
 }
 
 function listMessages(c: Ctx, t: Thread) {

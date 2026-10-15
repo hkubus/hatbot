@@ -1217,6 +1217,50 @@ export class Thread {
     return done;
   }
 
+  /**
+   * Writes a reply that failed again, in place, from the turns it had: no new message of yours. Null
+   * when it can't be: see `retryable`.
+   */
+  retry(messageId: number): Promise<void> | null {
+    if (this.current || !this.retryable(messageId)) return null;
+    const done = this.chain.then(async () => {
+      // Something may have come first in the queue.
+      const again = this.retryable(messageId);
+      const bot = again && this.d.bots.get(again.botId ?? HATBOT_ID);
+      if (again && bot) await this.reply(null, bot, null, again);
+    });
+    this.chain = done.catch((err) => console.error("thread turn failed", err));
+    return done;
+  }
+
+  /**
+   * A reply that can be written again: it failed, nothing was said after it, and its episode is the
+   * one still going, so its turns are where the next request picks up.
+   */
+  private retryable(messageId: number): ThreadMessage | null {
+    const { db } = this.d;
+    const row = db
+      .query<MessageRow, [number, number]>(
+        `SELECT ${MESSAGE_COLUMNS} FROM messages WHERE id = ? AND conversation_id = ?`,
+      )
+      .get(messageId, this.conversationId);
+    if (row?.role !== "assistant" || row.kind !== "text" || row.status !== "error") return null;
+    if (row.episodeId === null) return null;
+    const later = db
+      .query<unknown, [number, number, number]>(
+        `SELECT 1 FROM messages WHERE conversation_id = ? AND incognito = ? AND id > ?
+         AND (role = 'user' OR kind = 'text') LIMIT 1`,
+      )
+      .get(this.conversationId, row.incognito, messageId);
+    const episode = db
+      .query<{ id: number; summarized: number }, [number, number]>(
+        "SELECT id, summarized FROM episodes WHERE conversation_id = ? AND incognito = ? ORDER BY id DESC LIMIT 1",
+      )
+      .get(this.conversationId, row.incognito);
+    if (later || episode?.id !== row.episodeId || episode.summarized) return null;
+    return messageOf(row);
+  }
+
   /** The reply that started one of these tasks, the latest: what a bot telling you about them rewrites. */
   private taskReply(tasks: { id: number }[]): ThreadMessage | null {
     if (!tasks.length) return null;
@@ -1229,7 +1273,7 @@ export class Thread {
     return row ? messageOf(row) : null;
   }
 
-  /** Writes a task's reply again: emptied, and shown as being written. */
+  /** Writes a reply again: emptied, and shown as being written. */
   private rewriteMessage(m: ThreadMessage): ThreadMessage {
     this.d.db.query("UPDATE messages SET text = '', status = 'streaming' WHERE id = ?").run(m.id);
     this.d.events.emit({ type: "message.rewrite", id: m.id });
@@ -1264,11 +1308,17 @@ export class Thread {
     user: ThreadMessage | null,
     bot: Bot,
     group: { nudged: boolean; round: ThreadMessage | null } | null = null,
+    again: ThreadMessage | null = null,
   ): Promise<Said | undefined> {
     const { db, events, spend, model, plugins } = this.d;
-    const incognito = !!user?.incognito;
+    const incognito = !!(user ?? again)?.incognito;
     // Told already, with a message of yours that came first.
-    if (!user && !group?.nudged && !this.d.tasks?.hasUnreported(this.conversationId, bot.id))
+    if (
+      !user &&
+      !again &&
+      !group?.nudged &&
+      !this.d.tasks?.hasUnreported(this.conversationId, bot.id)
+    )
       return;
     const userId = user?.id ?? Number.MAX_SAFE_INTEGER;
     const { system, pluginTools, chatModel, chatEffort, onHaiku, tools, prefix } = this.turnSetup(
@@ -1277,114 +1327,126 @@ export class Thread {
     );
     const offered = new Set(tools.map((t) => ("name" in t ? t.name : "")));
     // A group's episode is bound to every bot's prefix.
-    const episode = await this.episodeFor(
-      group ? this.prefixFor(bot, incognito) : prefix,
-      false,
-      incognito,
-    );
+    const episode = again
+      ? { id: again.episodeId as number, isNew: false, fresh: false, long: false }
+      : await this.episodeFor(group ? this.prefixFor(bot, incognito) : prefix, false, incognito);
     if (user && !this.file(user, episode.id)) return;
 
-    const userBlocks: BlockParam[] = [];
-    // In a group each bot has its own turns: one new to the episode opens it with the context, up to
-    // the message the bots are answering, and gets what came after in <group_messages>.
-    const firstTurn = group ? !this.hasTurns(episode.id, bot.id) : episode.isNew;
-    const contextBefore = group ? (group.round?.id ?? userId) : userId;
-    const spoke = group
-      ? firstTurn
-        ? contextBefore - 1
-        : (db
-            .query<{ id: number | null }, [number, string]>(
-              "SELECT max(id) AS id FROM messages WHERE episode_id = ? AND bot_id = ? AND role = 'assistant' AND kind = 'text'",
-            )
-            .get(episode.id, bot.id)?.id ?? contextBefore - 1)
-      : 0;
-    if (firstTurn) {
-      // The summary a /new left running is part of the context.
-      await Promise.allSettled(this.summarizing.values());
-      userBlocks.push({
-        type: "text",
-        text: await this.episodeContext(bot, contextBefore, episode.id, episode.fresh, incognito),
-      });
-      // /new and incognito leave what came before, and what it had read, behind.
-      if (episode.isNew && !episode.fresh && !incognito) this.inheritTaint(episode.id, userId);
+    let ended: Task[] = [];
+    let rewrite: ThreadMessage | null = null;
+    if (again) {
+      // The turns it had are there to run again; after a reply the model ended, it needs a word.
+      const turns = await this.loadTurns(episode.id, bot.id, new Map());
+      if (turns.at(-1)?.role === "assistant")
+        this.appendTurn(episode.id, bot.id, "user", [
+          {
+            type: "text",
+            text: "(No message from the owner: they asked you to try that reply again.)",
+          },
+        ]);
     } else {
-      const commands = this.commandsSince(episode.id, userId);
-      if (commands)
+      const userBlocks: BlockParam[] = [];
+      // In a group each bot has its own turns: one new to the episode opens it with the context, up to
+      // the message the bots are answering, and gets what came after in <group_messages>.
+      const firstTurn = group ? !this.hasTurns(episode.id, bot.id) : episode.isNew;
+      const contextBefore = group ? (group.round?.id ?? userId) : userId;
+      const spoke = group
+        ? firstTurn
+          ? contextBefore - 1
+          : (db
+              .query<{ id: number | null }, [number, string]>(
+                "SELECT max(id) AS id FROM messages WHERE episode_id = ? AND bot_id = ? AND role = 'assistant' AND kind = 'text'",
+              )
+              .get(episode.id, bot.id)?.id ?? contextBefore - 1)
+        : 0;
+      if (firstTurn) {
+        // The summary a /new left running is part of the context.
+        await Promise.allSettled(this.summarizing.values());
         userBlocks.push({
           type: "text",
-          text: `<owner_commands>\nCommands the owner ran since their last message; ${bot.name}'s lines are what the app answered.\n${commands}\n</owner_commands>`,
+          text: await this.episodeContext(bot, contextBefore, episode.id, episode.fresh, incognito),
         });
+        // /new and incognito leave what came before, and what it had read, behind.
+        if (episode.isNew && !episode.fresh && !incognito) this.inheritTaint(episode.id, userId);
+      } else {
+        const commands = this.commandsSince(episode.id, userId);
+        if (commands)
+          userBlocks.push({
+            type: "text",
+            text: `<owner_commands>\nCommands the owner ran since their last message; ${bot.name}'s lines are what the app answered.\n${commands}\n</owner_commands>`,
+          });
+      }
+      // An untrusted MCP server's tool descriptions are in the prompt now.
+      const foreign = untrustedDefinitions(pluginTools);
+      if (foreign) this.taint(episode.id, foreign);
+      // Task news waits for the conversation that's kept.
+      ended = incognito ? [] : (this.d.tasks?.takeUnreported(this.conversationId, bot.id) ?? []);
+      // What tainted tasks report carries what they read.
+      const tainted = ended.find((t) => t.tainted);
+      if (tainted) this.taint(episode.id, `Task #${tainted.id} "${tainted.title}"`);
+      if (ended.length) {
+        const files = this.d.attachments?.ofTasks(ended.map((t) => t.id)) ?? [];
+        const named = (list: typeof files) => list.map((a) => `#${a.id} "${a.name}"`).join(", ");
+        const lines = ended.map((t) => {
+          const sent = files.filter((a) => a.taskId === t.id && !a.forChat);
+          const handed = files.filter((a) => a.taskId === t.id && a.forChat);
+          return [
+            `Task #${t.id} "${t.title}"${t.botId === bot.id ? "" : ` (by ${this.d.bots.nameOf(t.botId)}, which you asked)`} ${t.status}: ${t.summary ?? ""}`,
+            ...(sent.length ? [`Files it sent the owner, shown with it: ${named(sent)}.`] : []),
+            ...(handed.length ? [`Files it handed you, below: ${named(handed)}.`] : []),
+          ].join("\n");
+        });
+        userBlocks.push({
+          type: "text",
+          text: `<task_updates>\n${lines.join("\n")}\n</task_updates>`,
+        });
+        // Data a task handed over for this reply, e.g. a series to draw. What it holds came from the task.
+        const handed = files.filter((a) => a.forChat);
+        if (handed.length && this.d.attachments)
+          userBlocks.push(...this.d.attachments.refs(handed));
+      }
+      // Telling you about a task shown under its reply: that reply is written again, not a new one.
+      rewrite = !user && !group?.nudged ? this.taskReply(ended) : null;
+      const taskNews = `[${localStamp(new Date(this.clock()))}]\n(No message from the owner: a task they started from the chat ended. ${
+        rewrite
+          ? "What you write now replaces your reply that started it, and it's all the owner sees of how it went. Tell them what came of it, briefly, with what you know from this conversation."
+          : "Tell them what came of it, briefly, with what you know from this conversation. Don't repeat what they can already see."
+      })`;
+      if (group) {
+        const since = this.groupSince(bot, spoke);
+        userBlocks.push({
+          type: "text",
+          text:
+            [
+              ...(since ? [`<group_messages>\n${since}\n</group_messages>`] : []),
+              ...(user
+                ? []
+                : [
+                    group.nudged
+                      ? `(Your turn, ${bot.name}: you were mentioned above. Answer your part.)`
+                      : taskNews,
+                  ]),
+            ].join("\n\n") || taskNews,
+        });
+      } else
+        userBlocks.push({
+          type: "text",
+          text: user
+            ? `[${localStamp(new Date(user.createdAt))}]\n${user.text || "(no text, only files)"}`
+            : taskNews,
+        });
+      // Your files: what's in them was written by whoever made them, so they're untrusted (PLAN.md §6.1).
+      if (user?.attachments?.length && this.d.attachments) {
+        userBlocks.push(...this.d.attachments.refs(user.attachments));
+        this.taint(episode.id, `Attached file "${user.attachments[0]?.name}"`);
+      }
+      this.appendTurn(episode.id, bot.id, "user", userBlocks);
     }
-    // An untrusted MCP server's tool descriptions are in the prompt now.
-    const foreign = untrustedDefinitions(pluginTools);
-    if (foreign) this.taint(episode.id, foreign);
-    // Task news waits for the conversation that's kept.
-    const ended = incognito
-      ? []
-      : (this.d.tasks?.takeUnreported(this.conversationId, bot.id) ?? []);
-    // What tainted tasks report carries what they read.
-    const tainted = ended.find((t) => t.tainted);
-    if (tainted) this.taint(episode.id, `Task #${tainted.id} "${tainted.title}"`);
-    if (ended.length) {
-      const files = this.d.attachments?.ofTasks(ended.map((t) => t.id)) ?? [];
-      const named = (list: typeof files) => list.map((a) => `#${a.id} "${a.name}"`).join(", ");
-      const lines = ended.map((t) => {
-        const sent = files.filter((a) => a.taskId === t.id && !a.forChat);
-        const handed = files.filter((a) => a.taskId === t.id && a.forChat);
-        return [
-          `Task #${t.id} "${t.title}"${t.botId === bot.id ? "" : ` (by ${this.d.bots.nameOf(t.botId)}, which you asked)`} ${t.status}: ${t.summary ?? ""}`,
-          ...(sent.length ? [`Files it sent the owner, shown with it: ${named(sent)}.`] : []),
-          ...(handed.length ? [`Files it handed you, below: ${named(handed)}.`] : []),
-        ].join("\n");
-      });
-      userBlocks.push({
-        type: "text",
-        text: `<task_updates>\n${lines.join("\n")}\n</task_updates>`,
-      });
-      // Data a task handed over for this reply, e.g. a series to draw. What it holds came from the task.
-      const handed = files.filter((a) => a.forChat);
-      if (handed.length && this.d.attachments) userBlocks.push(...this.d.attachments.refs(handed));
-    }
-    // Telling you about a task shown under its reply: that reply is written again, not a new one.
-    const rewrite = !user && !group?.nudged ? this.taskReply(ended) : null;
-    const taskNews = `[${localStamp(new Date(this.clock()))}]\n(No message from the owner: a task they started from the chat ended. ${
-      rewrite
-        ? "What you write now replaces your reply that started it, and it's all the owner sees of how it went. Tell them what came of it, briefly, with what you know from this conversation."
-        : "Tell them what came of it, briefly, with what you know from this conversation. Don't repeat what they can already see."
-    })`;
-    if (group) {
-      const since = this.groupSince(bot, spoke);
-      userBlocks.push({
-        type: "text",
-        text:
-          [
-            ...(since ? [`<group_messages>\n${since}\n</group_messages>`] : []),
-            ...(user
-              ? []
-              : [
-                  group.nudged
-                    ? `(Your turn, ${bot.name}: you were mentioned above. Answer your part.)`
-                    : taskNews,
-                ]),
-          ].join("\n\n") || taskNews,
-      });
-    } else
-      userBlocks.push({
-        type: "text",
-        text: user
-          ? `[${localStamp(new Date(user.createdAt))}]\n${user.text || "(no text, only files)"}`
-          : taskNews,
-      });
-    // Your files: what's in them was written by whoever made them, so they're untrusted (PLAN.md §6.1).
-    if (user?.attachments?.length && this.d.attachments) {
-      userBlocks.push(...this.d.attachments.refs(user.attachments));
-      this.taint(episode.id, `Attached file "${user.attachments[0]?.name}"`);
-    }
-    this.appendTurn(episode.id, bot.id, "user", userBlocks);
 
-    const out = rewrite
-      ? this.rewriteMessage(rewrite)
-      : this.insertMessage("assistant", "", "streaming", episode.id, [], null, incognito, bot.id);
+    const out =
+      (rewrite ?? again)
+        ? this.rewriteMessage((rewrite ?? again) as ThreadMessage)
+        : this.insertMessage("assistant", "", "streaming", episode.id, [], null, incognito, bot.id);
     this.touch(episode.id);
     let text = "";
     let separate = false;
