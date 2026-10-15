@@ -1,6 +1,10 @@
 import Foundation
 import XCTest
 
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
+
 // The core is its own module in Package.swift and part of the app in Xcode.
 #if canImport(HatbotCore)
   @testable import HatbotCore
@@ -182,6 +186,16 @@ final class StoreTests: XCTestCase {
 
   func testCountsWhatNeedsYou() async {
     await MainActor.run { Self.countsWhatNeedsYou() }
+  }
+
+  func testOpeningAgainAfterStoppingIsAReconnect() async {
+    await MainActor.run {
+      let socket = Socket { URLSession.shared.webSocketTask(with: URL(string: "wss://h.example")!) }
+      XCTAssertFalse(socket.opened())
+      // In the background the stream stops; back in front it starts again.
+      socket.stop()
+      XCTAssertTrue(socket.opened())
+    }
   }
 
   @MainActor private static func appliesStreamingEvents() {
