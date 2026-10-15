@@ -218,7 +218,17 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       detail: "",
       url: `/tasks/${child.id}`,
     });
-    const ended = await tasks.waitFor(child.id, signal);
+    // Waiting on the screen doesn't hold a slot other tasks could use.
+    tasks.pool.release();
+    slot = false;
+    let ended: Task;
+    try {
+      ended = await tasks.waitFor(child.id, signal);
+    } finally {
+      await tasks.pool.acquire(signal);
+      slot = true;
+    }
+    // Still in `children` if this task is cancelled meanwhile, so it's cancelled with it.
     children.delete(child.id);
     // Its summary is made from web pages (PLAN.md §6.1).
     taint(`Desktop task #${child.id}`);

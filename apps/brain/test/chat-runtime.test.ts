@@ -226,6 +226,31 @@ test("only the latest reply that failed can be tried again", async () => {
   expect(t.thread.list().at(-1)).toMatchObject({ id: second?.id, text: "Two, in full." });
 });
 
+test("a background task waiting on a desktop task doesn't hold a slot", async () => {
+  let release = () => {};
+  const screen = new Promise<void>((r) => {
+    release = r;
+  });
+  const run = { title: "Look", goal: "Open example.com", success_criteria: "" };
+  const work = new FakeModel([
+    { content: [toolUse("run_desktop_task", run)] },
+    {
+      content: [toolUse("finish_task", { outcome: "done", summary: "It's up." })],
+      wait: screen,
+    },
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Checked.", notify: false })] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.tasks.createBackgroundTask({ title: "Check", goal: "Check", origin: "schedule" });
+  await waitFor(() => work.requests.length === 2);
+  const active = () => (t.tasks.pool as unknown as { active: number }).active;
+  expect(active()).toBe(0);
+  release();
+  await t.tasks.idle();
+  expect(active()).toBe(0);
+  expect(work.requests).toHaveLength(3);
+});
+
 test("a task's reply that fails as it's written again still says how the task went", async () => {
   const run = { title: "Check", goal: "Open example.com", success_criteria: "" };
   const chat = new FakeModel([
