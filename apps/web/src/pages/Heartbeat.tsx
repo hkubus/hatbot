@@ -64,11 +64,6 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
             Look now
           </button>
         </div>
-        <p className="muted">
-          Every few minutes Hatbot looks over failed tasks, missed approvals, watchers and plugins
-          that can't be read, monitors that are down, failing backups and spend, without the model.
-          Only something new goes to Haiku, which tells you, starts a task, or lets it be.
-        </p>
         <div className="panel form">
           <div className="form-row">
             <span className="label">On</span>

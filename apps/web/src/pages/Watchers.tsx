@@ -428,7 +428,6 @@ export function WatcherEdit({ id }: { id: number | null }) {
               placeholder="Price:\s*([\d.,]+)"
               onChange={(e) => set({ pattern: e.target.value })}
             />
-            <span className="muted hint">A regular expression; its first group is the value.</span>
           </label>
           <div className="form-actions">
             <button type="button" className="btn sm" disabled={busy || !ready} onClick={tryIt}>

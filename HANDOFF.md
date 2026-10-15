@@ -91,7 +91,7 @@ The owner asked for all of these at once. PLAN §15 describes them.
 - **Plugin signals** for the heartbeat: Uptime Kuma (monitors down) and PBS (failed tasks, full datastores). A plugin adds one with `signals()` on its instance.
 - **GitHub:** a commit of many files is one commit through the git tree API (the contents API makes one per file). Tested only against a stand-in server.
 - **iOS:** Search in the drawer; Watchers, Check everything and Heartbeat under Settings, with the weekly report and memory tidy-up switches; proposals and skills that went wrong in Memory; Run again on an ended task. App Intents (Ask Hatbot, Give Hatbot a Task, Send to Hatbot) and a share extension. The token moved into the App Group's Keychain access group on first launch, so the extension can read it; `build-ipa.sh` signs both ad hoc with their entitlements, since SideStore reads the App Group from them, and the SideStore source lists the entitlement. **Unchecked:** none of the iOS views, the intents or the extension have been compiled (only syntax-checked); the first CI run is the real check. If SideStore refuses the App Group, take `entitlements` and the extension out of `project.yml`; the app works without them.
-- **Checked:** brain tests, `tsc -b`, Biome, the iOS core's 37 tests. The web pages were built but not looked at in a browser.
+- **Checked:** brain tests, `tsc -b`, Biome, the iOS core's 37 tests, and the web pages (Search, watchers, Check everything, Heartbeat, Settings, a proposal) in headless Chromium against a dev brain.
 
 ## 4. Later (not v1, don't start without the owner)
 - **After v1** (PLAN §11): email via Proton Bridge, an open-source release.
