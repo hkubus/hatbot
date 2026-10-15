@@ -172,7 +172,7 @@ Integrations are plugins: Proxmox, Proxmox Backup Server, SSH, Home Assistant, U
 - **Live view**: the `/desktop/live` frames. During takeover a tap clicks, a drag drags, a long press right-clicks, two fingers scroll, and a Keyboard button types.
 - **Build**: `project.yml` (XcodeGen) → `build-ipa.sh` makes an unsigned IPA; SideStore signs it with your Apple ID. The GitHub mirror's iOS workflow builds it on macOS for every change and, on `main`, publishes it with a SideStore source at `https://hkubus.github.io/hatbot/source.json`, so SideStore installs and updates it. `Hatbot/Core` is also a Swift package, tested with `swift test` (on Linux too).
 - **Links**: `hatbot://tasks/<id>` and `hatbot://approvals/<id>`.
-- **Siri and Shortcuts**: App Intents in the app: Ask Hatbot (`POST /thread/ask`, which waits up to 50 seconds for the reply), Give Hatbot a Task (`/task`), Send to Hatbot (text and files).
+- **Siri and Shortcuts**: App Intents in the app: Ask Hatbot (`POST /thread/ask`, which waits up to 25 seconds for the reply), Give Hatbot a Task (`/task`), Send to Hatbot (text and files).
 - **Share sheet**: the `HatbotShare` extension sends text, links, photos and files with a note to Hatbot's chat. The app keeps the token in the App Group's Keychain access group (`group.ovh.gaycats.hatbot`, renamed by SideStore with the team ID) and the address in the group's defaults. It's a second App ID in SideStore.
 
 ---
@@ -355,19 +355,19 @@ journal/YYYY-MM.md  ← notable events, short
 ---
 
 ## 8. API (for web and the iOS app)
-REST + JSON under `/api/v1`. One WebSocket at `/api/v1/stream` for events. A generated OpenAPI spec lives in `packages/shared`.
+REST + JSON under `/api/v1`. One WebSocket at `/api/v1/stream` for events. The types live in `packages/shared`. A 400 is `{error, field?}`, naming zod's first issue.
 
 | Area | Endpoints |
 |---|---|
 | Auth | `POST /auth/login` (password + TOTP) → session cookie (web) or bearer token (apps) · `POST /auth/logout` (ends the session, or the bearer token it's called with) · `GET/POST/DELETE /tokens` |
-| Thread | `GET /thread/messages?before=` · `POST /thread/messages` (streams the reply over WS) · `POST /thread/ask` (waits for the reply, for Siri) · `GET /thread/episodes?ids=` (recaps) |
-| Tasks | `GET /tasks?status=` · `GET /tasks/:id` (+ steps) · `POST /tasks/:id/cancel` · `POST /tasks/:id/rerun` `{goal?}` · `GET /tasks/:id/screens/:stepId` (a raised budget is an approval) |
+| Thread | `GET /thread/messages?before=` · `POST /thread/messages` (streams the reply over WS) · `POST /thread/ask` (waits up to 25 s for the reply, for Siri) · `POST /thread/messages/:id/retry` and `/conversations/:id/messages/:id/retry` (an errored latest reply, written again in place) · `GET /thread/episodes?ids=` (recaps) |
+| Tasks | `GET /tasks?status=&before=&limit=&botId=&origin=` · `GET /tasks/:id` (+ steps) · `POST /tasks/:id/cancel` · `POST /tasks/:id/rerun` `{goal?}` · `GET /tasks/:id/screens/:stepId` (a raised budget is an approval) |
 | Approvals | `GET /approvals?pending` · `POST /approvals/:id` `{decision}` · `POST /approvals/:id/token-decision` (ntfy) |
 | Desktop | `GET /desktop/status` · `POST /desktop/takeover` · `POST /desktop/handback` · `WS /desktop/live` (frames + input) · `GET /desktop/snapshots` · `POST /desktop/rollback` |
 | Schedules/triggers | CRUD at `/schedules`, `/triggers` · `POST /schedules/:id/run` · `POST /triggers/:id/secret` (a new secret, shown once) · `GET /tasks?scheduleId=&triggerId=` |
 | Hooks | `POST /hooks/:id` (HMAC) · `POST/GET /hooks/kuma/:id?token=` |
-| Memory | `GET /memory/tree` · `GET/PUT /memory/file?path=` · `GET /memory/log` · `GET /memory/diff/:sha` · `POST /memory/revert/:sha` |
-| Spend | `GET /spend/summary` (today, month, last hour and minute, with tokens) · `GET /spend/hourly?hours=24` · `GET /spend/daily?days=30` |
+| Memory | `GET /memory/tree` · `GET/PUT /memory/file?path=` (GET gives the blob `sha`; PUT with `baseSha` answers 409 if it changed) · `GET /memory/log?skip=` · `GET /memory/diff/:sha` · `POST /memory/revert/:sha` |
+| Spend | `GET /spend/summary` (today, month, last hour and minute, with tokens) · `GET /spend/hourly?hours=24` · `GET /spend/daily?days=30` · `GET /spend/by-model` · `GET /spend/by-bot` · `GET /spend/by-purpose?days=30` |
 | Teach | `GET /teach` (recording + drafts) · `POST /teach/start` · `POST /teach/stop` → draft skill · `GET /teach/:id` · `POST /teach/:id/draft` (again) · `POST /teach/:id/save` `{name, content, replace?}` · `DELETE /teach/:id` |
 | Admin | `POST /pause-all` · `POST /resume` · `GET/PUT /settings` · `GET/POST /update` |
 | Plugins | `GET /plugins` · `GET/PATCH /plugins/:id` `{enabled?, config?}` · `POST /plugins/:id/test` |
@@ -376,7 +376,7 @@ REST + JSON under `/api/v1`. One WebSocket at `/api/v1/stream` for events. A gen
 | Proposals | `GET /proposals?status=` · `POST /proposals/tidy` · `POST /proposals/:id/apply` · `POST /proposals/:id/dismiss` · `GET /skills` · `POST /skills/:name/fix` |
 | Search | `GET /search?q=` (messages, tasks, memory, schedules, triggers and watchers) |
 
-**WS events**: `message.created`, `message.delta`, `message.progress`, `message.done`, `task.updated`, `task.step`, `task.progress`, `approval.created`, `approval.resolved`, `desktop.state`, `spend.updated`, `memory.committed`, `paused`, `schedule.updated`, `schedule.deleted`, `trigger.updated`, `trigger.deleted`, `plugin.updated`, `watcher.updated`, `watcher.deleted`, `proposal.updated`.
+**WS events**: `message.created`, `message.delta`, `message.progress`, `message.done`, `task.updated`, `task.step`, `task.progress`, `approval.created`, `approval.resolved`, `desktop.state`, `spend.updated`, `memory.committed`, `paused`, `schedule.updated`, `schedule.deleted`, `trigger.updated`, `trigger.deleted`, `plugin.updated`, `watcher.updated`, `watcher.deleted`, `proposal.updated`, `settings.updated`, `heartbeat.updated`.
 
 ---
 
