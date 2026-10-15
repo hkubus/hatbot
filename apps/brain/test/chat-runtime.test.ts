@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import Anthropic from "@anthropic-ai/sdk";
 import { retryable, withRetries } from "../src/agent/model";
+import type { BudgetError } from "../src/spend";
 import { Tasks } from "../src/tasks/service";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, testApp, waitFor } from "./helpers";
@@ -315,6 +316,40 @@ test("an effort change mid-conversation is a message where it was made, so the c
   await t.thread.post("fourth").done;
   expect(model.requests[3]?.output_config).toEqual({ effort: "medium" });
   expect(model.requests[3]?.messages.some((m) => m.role === "system")).toBe(false);
+});
+
+test("the spending check reads today, the month and the task's spend", async () => {
+  const t = await testApp();
+  t.settings.update({ limits: { taskUsd: 1, dailyUsd: 2, monthlyUsd: 3 } });
+  const task = t.tasks.createBackgroundTask({ title: "Check", goal: "Check", origin: "schedule" });
+  await t.tasks.idle();
+  const id = (task as { id: number }).id;
+  const spent = (usd: number, taskId?: number) =>
+    t.spend.record({
+      model: "claude-haiku-5-5",
+      purpose: "task",
+      usage: { input_tokens: 0, output_tokens: 0 },
+      taskId,
+      extraUsd: usd,
+    });
+  const stop = (estimate: number, withTask = false) => {
+    try {
+      t.spend.check(estimate, withTask ? { id, limitUsd: 1 } : undefined);
+      return null;
+    } catch (err) {
+      return (err as BudgetError).limit;
+    }
+  };
+  // Two days ago this month, for the task; then today, for none.
+  spent(0.9, id);
+  t.advance(2 * 86_400_000);
+  spent(1.5);
+  expect(stop(0.05, true)).toBeNull();
+  expect(stop(0.2, true)).toBe("task");
+  expect(stop(0.6)).toBe("daily");
+  t.settings.update({ limits: { taskUsd: 1, dailyUsd: 10, monthlyUsd: 3 } });
+  expect(stop(0.5)).toBeNull();
+  expect(stop(0.7)).toBe("monthly");
 });
 
 test("a background task waiting on a desktop task doesn't hold a slot", async () => {

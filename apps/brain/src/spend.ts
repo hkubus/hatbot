@@ -276,8 +276,27 @@ export class Spend {
 
   /** Throws BudgetError if a request estimated at `estimateUsd` would cross a limit. */
   check(estimateUsd: number, task?: { id: number; limitUsd: number }) {
-    const { todayUsd, monthUsd, limits } = this.summary();
-    if (task && this.taskSpend(task.id) + estimateUsd > task.limitUsd) {
+    const now = this.clock();
+    const limits = this.settings.get().limits;
+    // Before every model request: today, the month and the task in one read of the ledger.
+    const row = this.db
+      .query<
+        { today: number | null; month: number | null; task: number | null },
+        [string, number, string]
+      >(
+        `SELECT sum(CASE WHEN created_at >= ?1 THEN cost_usd END) AS today,
+         sum(CASE WHEN created_at >= ?3 THEN cost_usd END) AS month,
+         sum(CASE WHEN task_id = ?2 THEN cost_usd END) AS task
+         FROM spend_ledger WHERE created_at >= ?3 OR task_id = ?2`,
+      )
+      .get(
+        startOfLocalDay(now).toISOString(),
+        task?.id ?? -1,
+        startOfLocalMonth(now).toISOString(),
+      );
+    const todayUsd = row?.today ?? 0;
+    const monthUsd = row?.month ?? 0;
+    if (task && (row?.task ?? 0) + estimateUsd > task.limitUsd) {
       throw new BudgetError("task", `This task would go over its $${task.limitUsd} limit.`);
     }
     if (todayUsd + estimateUsd > limits.dailyUsd) {
