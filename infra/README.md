@@ -43,6 +43,8 @@ Scripts that set up Hatbot on the Proxmox host (PLAN.md §9).
 
 Re-running `host-setup.sh` is safe. It finds the containers by name and skips what already exists.
 
+If your router forwards ports to the LAN (the web app's reverse proxy, say), the desktop could come back in through your public address. Block it with `HATBOT_PUBLIC_IPS="203.0.113.7"` (space-separated, IPv4) in `/etc/hatbot/host.env` and re-run `host-setup.sh`. `verify.sh` fails if the desktop can reach the web app's public URL.
+
 ## Deploy the app
 
 Run this on the host for the first install, and whenever the host-side scripts change. It deploys the last commit of the checkout in CT 124:

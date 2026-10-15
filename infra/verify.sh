@@ -77,6 +77,20 @@ expect "desktop reaches the internet (https://deb.debian.org)" \
 blocked "desktop can't reach the Proxmox host" "$HOST_LAN_IP" 8006 22
 blocked "desktop can't reach the LAN gateway" "$LAN_GW" 443 80 53 22
 blocked "desktop can't open connections to the brain" "$BRAIN_IP" 8080 22
+# The web app's public URL usually leads back into the LAN (a port forward on your router); the desktop
+# must not get there. HATBOT_PUBLIC_IPS in host.env blocks those addresses.
+# shellcheck disable=SC2016 # expands inside the brain
+public_url=$(pct exec "$BRAIN_ID" -- sh -c '. /etc/hatbot/brain.env 2>/dev/null && printf %s "$HATBOT_PUBLIC_URL"' 2>/dev/null)
+if [[ -n $public_url ]]; then
+  if pct exec "$DESKTOP_ID" -- curl -sS -m 6 -o /dev/null "$public_url" 2>/dev/null; then
+    result FAIL "desktop can't reach the web app at $public_url" \
+      "it did; add your public IP to HATBOT_PUBLIC_IPS in /etc/hatbot/host.env and re-run host-setup.sh"
+  else
+    result OK "desktop can't reach the web app at $public_url"
+  fi
+else
+  printf '   %sskip%s  desktop and the web app (no public URL yet; deploy.sh asks for it)\n' "$yel" "$rst"
+fi
 expect "desktop has no IPv6 route out" sh -c "! pct exec $DESKTOP_ID -- ip -6 route show default | grep -q ."
 
 step "Brain ↔ desktop"
