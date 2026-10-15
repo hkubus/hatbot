@@ -1,6 +1,6 @@
 import type { Approval, Conversation, Me } from "@hatbot/shared";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { api } from "./api";
+import { ApiError, api } from "./api";
 import { BotMark, Icon, type IconName } from "./icons";
 import { LiveView } from "./live";
 import { BotPage } from "./pages/Bot";
@@ -66,8 +66,15 @@ function useTheme(): Theme {
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
+  const [unreachable, setUnreachable] = useState(false);
+  // Only a 401 means you're signed out; anything else is the brain or the network being down.
   const refresh = useCallback(() => {
-    api<Me>("/auth/me").then(setMe, () => setMe({ setupDone: true, authenticated: false }));
+    setUnreachable(false);
+    api<Me>("/auth/me").then(setMe, (err) => {
+      if (err instanceof ApiError && err.status === 401)
+        setMe({ setupDone: true, authenticated: false });
+      else setUnreachable(true);
+    });
   }, []);
 
   useEffect(() => {
@@ -77,6 +84,15 @@ export function App() {
     return () => window.removeEventListener("hatbot:unauthorized", onUnauthorized);
   }, [refresh]);
 
+  if (!me && unreachable)
+    return (
+      <div className="unreachable">
+        Can't reach Hatbot.
+        <button type="button" className="btn sm" onClick={refresh}>
+          Retry
+        </button>
+      </div>
+    );
   if (!me) return null;
   if (!me.setupDone) return <Setup onDone={refresh} />;
   if (!me.authenticated) return <Login onDone={refresh} />;

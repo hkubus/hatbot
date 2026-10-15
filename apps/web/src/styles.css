@@ -3787,3 +3787,16 @@ mark {
 .skill-trouble .spacer {
   flex: 1;
 }
+
+/* The brain or the network is down before anything has loaded. */
+.unreachable {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--bg);
+  color: var(--text-2);
+  font-size: 14px;
+}
