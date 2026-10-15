@@ -63,7 +63,7 @@ Each deploy is a new release in `/var/lib/hatbot/releases` inside the brain, and
 
 ## Update from Settings
 
-After that, **Settings → Updates → Update** pulls the branch and deploys it: desktop-agent first, then the brain, each with the same health check and rollback as `deploy.sh`. The page reloads on the new version.
+After that, **Settings → Updates → Update** pulls the branch and deploys it: the brain first, then desktop-agent, each with the same health check and rollback as `deploy.sh`. If the brain goes back to its old version, the desktop isn't touched. The page reloads on the new version.
 
 - The brain only writes `/var/lib/hatbot/update-request`. `hatbot-update.path` runs `hatbot-update` as root, which reads the git token from `/etc/hatbot/update.env` (root only), so the brain service never holds it.
 - desktop-agent receives its new code over its own API; a root service on the desktop (`hatbot-desktop-agent-update.path`) installs it. The first `deploy.sh` run after this feature sets that up.

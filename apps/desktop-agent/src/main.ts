@@ -1,5 +1,5 @@
 // desktop-agent: runs on the desktop, takes orders only from the brain (PLAN.md §4.2).
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
@@ -41,6 +41,20 @@ const version = (() => {
     return undefined;
   }
 })();
+/**
+ * The sha256 of the installed desktop-deploy.sh. Updates from the brain don't replace it (only deploy.sh
+ * does), so the brain compares it with its own copy's to tell when deploy.sh must be run again.
+ */
+const installer = (() => {
+  try {
+    const bytes = readFileSync(
+      process.env.HATBOT_INSTALLER ?? "/usr/local/sbin/hatbot-desktop-agent-deploy",
+    );
+    return createHash("sha256").update(bytes).digest("hex");
+  } catch {
+    return undefined;
+  }
+})();
 /** Set by systemd's StateDirectory=; an archive dropped here is installed by a root service. */
 const stateDir = process.env.STATE_DIRECTORY;
 const MAX_UPDATE_BYTES = 10 * 1024 * 1024;
@@ -74,7 +88,8 @@ const authorized = (req: Request) => {
   return got.length === want.length && timingSafeEqual(got, want);
 };
 const json = (body: unknown, status = 200) => Response.json(body, { status });
-const health = (): AgentStatus => ({
+// `installer` is local until it joins AgentStatus in packages/shared.
+const health = (): AgentStatus & { installer?: string } => ({
   ok: true,
   ...size,
   locked,
@@ -82,6 +97,7 @@ const health = (): AgentStatus => ({
   profile: runningProfile(),
   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   features: FEATURES,
+  installer,
 });
 /** GET /health?deep=1: plain health, plus whether the screen can be grabbed and DevTools and the shell answer. */
 type DeepHealth = Omit<AgentStatus, "ok"> & {
