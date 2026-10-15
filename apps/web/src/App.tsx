@@ -1,5 +1,13 @@
 import type { Approval, Conversation, Me } from "@hatbot/shared";
-import { lazy, Suspense, useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { ApiError, api } from "./api";
 import { BotMark, Icon, type IconName } from "./icons";
 import { LiveView } from "./live";
@@ -116,6 +124,25 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const chat = useStore(currentChat);
   const title = useStore((s) => chatName(s, currentChat(s)));
   const [chatMenu, setChatMenu] = useState(false);
+  const chatMenuEl = useRef<HTMLDivElement>(null);
+  const chatSwitch = useRef<HTMLButtonElement>(null);
+  // The phone's chat switcher closes on Escape and on a tap anywhere else.
+  useEffect(() => {
+    if (!chatMenu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setChatMenu(false);
+    };
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (!chatMenuEl.current?.contains(t) && !chatSwitch.current?.contains(t)) setChatMenu(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onDown);
+    };
+  }, [chatMenu]);
   const connected = useStore((s) => s.connected);
   // A blip while reconnecting isn't worth a banner.
   const [down, setDown] = useState(false);
@@ -251,8 +278,10 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               <>
                 <h1 className="hide-phone">{incognito ? `${title} · Incognito` : title}</h1>
                 <button
+                  ref={chatSwitch}
                   type="button"
                   className="chat-switch show-phone-inline"
+                  aria-expanded={chatMenu}
                   onClick={() => setChatMenu((v) => !v)}
                 >
                   <h1>{incognito ? `${title} · Incognito` : title}</h1>
@@ -329,7 +358,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
             </div>
           )}
           {chatMenu && chatId > 0 && (
-            <div className="chat-menu">
+            <div className="chat-menu" ref={chatMenuEl}>
               {chats.map((c) => (
                 <button
                   type="button"

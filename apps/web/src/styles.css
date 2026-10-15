@@ -3700,10 +3700,9 @@ pre.payload {
   padding: 4px;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--line);
+  border: 0.5px solid var(--line-strong);
   border-radius: 12px;
   background: var(--surface);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
 }
 .chat-menu button {
   display: flex;
@@ -3793,13 +3792,14 @@ mark {
   animation: msg-found 2.4s ease-out;
   border-radius: 10px;
 }
+/* A tint that fades, not a ring. */
 @keyframes msg-found {
   0%,
   40% {
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent);
+    background: var(--accent-soft);
   }
   100% {
-    box-shadow: 0 0 0 3px transparent;
+    background: transparent;
   }
 }
 
