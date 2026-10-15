@@ -28,9 +28,11 @@ export const adminRoutes = new Hono<AppEnv>()
     (c) => c.json(c.var.spend.byModel(c.req.valid("query").days)),
   )
   .get("/settings", (c) => c.json(c.var.settings.get()))
-  .put("/settings", json(Settings.omit({ paused: true }).partial()), (c) =>
-    c.json(c.var.settings.update(c.req.valid("json"))),
-  )
+  .put("/settings", json(Settings.omit({ paused: true }).partial()), (c) => {
+    const settings = c.var.settings.update(c.req.valid("json"));
+    c.var.events.emit({ type: "settings.updated", settings });
+    return c.json(settings);
+  })
   // Kill switch (PLAN.md §6.5). Resume is a separate, deliberate call.
   .post("/pause-all", (c) => {
     c.var.settings.update({ paused: true });

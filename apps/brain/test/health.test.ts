@@ -12,6 +12,17 @@ test("unknown routes are 404", async () => {
   expect((await (await testApp()).call("GET", "/nope")).status).toBe(404);
 });
 
+test("saving settings tells every client", async () => {
+  const t = await testApp();
+  const { cookie } = await setUpOwner(t);
+  const res = await t.call("PUT", "/settings", { memoryTidy: true }, { cookie });
+  expect(res.status).toBe(200);
+  expect(t.events.at(-1)).toMatchObject({
+    type: "settings.updated",
+    settings: { memoryTidy: true },
+  });
+});
+
 test("a malformed body is 400, and a wrong field says which, in every route group", async () => {
   const t = await testApp();
   const { cookie } = await setUpOwner(t);

@@ -7,6 +7,7 @@ import {
   type Trigger,
   type TriggerWithSecret,
 } from "@hatbot/shared";
+import { liveBot } from "./bots";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
 import type { Notifier } from "./notify";
@@ -232,7 +233,7 @@ export class Triggers {
       origin: "webhook",
       source: t.name,
       triggerId: t.id,
-      botId: t.botId,
+      botId: liveBot(this.db, t.botId),
       runKey: `trigger:${t.id}`,
       payload: pretty(body),
       trusted: t.trusted,
@@ -345,7 +346,7 @@ export class Triggers {
       origin: "alert",
       source: t.name,
       triggerId: t.id,
-      botId: t.botId,
+      botId: liveBot(this.db, t.botId),
       runKey,
       payload,
       trusted: true,

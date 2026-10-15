@@ -34,6 +34,9 @@ const toBot = (r: Row): Bot => ({
 
 export class BotError extends Error {}
 
+/** What a deleted bot's schedules, triggers and watchers were: they're Hatbot's now. */
+export type Moved = { schedules: number[]; triggers: number[]; watchers: number[] };
+
 /** A bot's id from its name: "Home lab" → "home-lab". */
 export function slugOf(name: string): string {
   const slug = name
@@ -145,20 +148,31 @@ export class Bots {
   }
 
   /**
-   * Deletes a bot. Its chat, tasks and memory folder stay; its schedules and triggers go to Hatbot, so
-   * they keep running. Hatbot can't be deleted.
+   * Deletes a bot. Its chat, tasks and memory folder stay; its schedules, triggers and watchers go to
+   * Hatbot, so they keep running. Hatbot can't be deleted. Null if there's no such bot; otherwise the
+   * ids of what moved, so their pages can be told.
    */
-  delete(id: string): boolean {
+  delete(id: string): Moved | null {
     if (id === HATBOT_ID) throw new BotError("Hatbot can't be deleted.");
-    if (!this.active(id)) return false;
+    if (!this.active(id)) return null;
     const now = new Date(this.clock()).toISOString();
-    this.db.transaction(() => {
+    const move = (table: "schedules" | "triggers" | "watchers") =>
+      this.db
+        .query<{ id: number }, [string, string]>(
+          `UPDATE ${table} SET bot_id = ? WHERE bot_id = ? RETURNING id`,
+        )
+        .all(HATBOT_ID, id)
+        .map((r) => r.id);
+    const moved = this.db.transaction(() => {
       this.db.query("UPDATE bots SET deleted_at = ? WHERE id = ?").run(now, id);
-      this.db.query("UPDATE schedules SET bot_id = ? WHERE bot_id = ?").run(HATBOT_ID, id);
-      this.db.query("UPDATE triggers SET bot_id = ? WHERE bot_id = ?").run(HATBOT_ID, id);
+      return {
+        schedules: move("schedules"),
+        triggers: move("triggers"),
+        watchers: move("watchers"),
+      };
     })();
     this.events.emit({ type: "bot.deleted", id });
-    return true;
+    return moved;
   }
 
   /** The first colour no bot has, so a new one stands apart; once they're all taken, the least used. */
@@ -173,6 +187,13 @@ export class Bots {
     this.events.emit({ type: "bot.updated", bot });
     return bot;
   }
+}
+
+/** The bot that runs something of `id`'s: Hatbot instead of one that's been deleted. */
+export function liveBot(db: Db, id: string): string {
+  if (id === HATBOT_ID) return id;
+  const r = db.query("SELECT 1 FROM bots WHERE id = ? AND deleted_at IS NULL").get(id);
+  return r ? id : HATBOT_ID;
 }
 
 /** Its own memory folder. Hatbot's notes are the shared memory itself, as they always were. */

@@ -289,7 +289,11 @@ export type HatbotEvent =
   | { type: "bot.updated"; bot: Bot }
   | { type: "bot.deleted"; id: string }
   | { type: "conversation.updated"; conversation: Conversation }
-  | { type: "conversation.deleted"; id: number };
+  | { type: "conversation.deleted"; id: number }
+  /** After PUT /settings: clients refetch or take these. */
+  | { type: "settings.updated"; settings: AppSettings }
+  /** After each heartbeat run: clients refetch GET /heartbeat. */
+  | { type: "heartbeat.updated" };
 
 /** The first bot. It can't be deleted, and /thread is its chat. */
 export const HATBOT_ID = "hatbot";
