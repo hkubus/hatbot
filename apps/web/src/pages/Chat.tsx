@@ -19,10 +19,19 @@ import {
 } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ApiError, attachmentUrl, upload } from "../api";
+import { ApiError, attachmentUrl } from "../api";
 import { Chart, ChartPending } from "../chart";
 import { parseChart } from "../chartspec";
-import { type DraftFile, draftText, saveDraftText, setDraftFiles, useDraftFiles } from "../drafts";
+import {
+  attachFiles,
+  type DraftFile,
+  draftText,
+  PICTURES,
+  removeFile,
+  saveDraftText,
+  setDraftFiles,
+  useDraftFiles,
+} from "../drafts";
 import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
 import { touchScreen } from "../media";
@@ -380,9 +389,6 @@ function ScheduleMessage({ m, scheduleId }: { m: ThreadMessage; scheduleId: numb
   );
 }
 
-/** Types the page shows as pictures; the rest are links. */
-const PICTURES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
-
 /** A message's files: pictures you can open, the rest to open or save. */
 function Files({ list }: { list: Attachment[] }) {
   return (
@@ -417,8 +423,6 @@ function Files({ list }: { list: Attachment[] }) {
 
 /** A line in the menu over the composer: a command, or in a group a bot to @mention. */
 type Option = { key: string; label: React.ReactNode; desc: string; choose: () => void };
-
-let draftKey = 0;
 
 // Memoized: while a reply streams only its own message redraws, not the whole thread's markdown.
 const Message = memo(function Message({
@@ -537,6 +541,25 @@ export function Chat({ id }: { id: number }) {
   const onSend = useCallback(() => {
     stick.current = true;
   }, []);
+  const chatKey = `${id}${incognito ? ":incognito" : ""}`;
+  // Files dropped anywhere on the chat go into the composer.
+  const [dropping, setDropping] = useState(false);
+  const drop = {
+    onDragOver: (e: React.DragEvent) => {
+      if (!e.dataTransfer.types.includes("Files")) return;
+      e.preventDefault();
+      setDropping(true);
+    },
+    onDragLeave: (e: React.DragEvent) => {
+      if (!e.currentTarget.contains(e.relatedTarget as HTMLElement | null)) setDropping(false);
+    },
+    onDrop: (e: React.DragEvent) => {
+      if (!e.dataTransfer.files.length) return;
+      e.preventDefault();
+      setDropping(false);
+      attachFiles(chatKey, e.dataTransfer.files);
+    },
+  };
 
   // Opening the chat, or going to or from incognito, loads its conversation in the store.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset the animation on each switch
@@ -694,7 +717,12 @@ export function Chat({ id }: { id: number }) {
 
   return (
     <>
-      <section className="view" ref={scroller} onScroll={onScroll}>
+      <section
+        className={`view ${dropping ? "dropping" : ""}`}
+        ref={scroller}
+        onScroll={onScroll}
+        {...drop}
+      >
         <div className="chat-scroll">
           {paused && (
             <div className="paused-banner">
@@ -752,7 +780,7 @@ export function Chat({ id }: { id: number }) {
           </div>
         </div>
       </section>
-      <div className="composer-wrap">
+      <div className="composer-wrap" {...drop}>
         {far && (
           <button type="button" className="to-bottom" title="Latest messages" onClick={toBottom}>
             <Icon name="down" />
@@ -770,11 +798,7 @@ export function Chat({ id }: { id: number }) {
             {error}
           </div>
         )}
-        <Composer
-          key={`${id}${incognito ? ":incognito" : ""}`}
-          chat={`${id}${incognito ? ":incognito" : ""}`}
-          onSend={onSend}
-        />
+        <Composer key={chatKey} chat={chatKey} onSend={onSend} />
       </div>
     </>
   );
@@ -826,30 +850,8 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
     if (!touchScreen()) textarea.current?.focus({ preventScroll: true });
   }, []);
 
-  const attach = (list: FileList | File[]) => {
-    for (const file of Array.from(list).slice(0, 10)) {
-      const key = ++draftKey;
-      const preview = PICTURES.includes(file.type) ? URL.createObjectURL(file) : undefined;
-      setFiles((f) => [...f, { key, name: file.name, preview }]);
-      upload(file).then(
-        (attachment) => setFiles((f) => f.map((d) => (d.key === key ? { ...d, attachment } : d))),
-        (err) =>
-          setFiles((f) =>
-            f.map((d) =>
-              d.key === key
-                ? { ...d, error: err instanceof ApiError ? err.message : "Couldn't upload." }
-                : d,
-            ),
-          ),
-      );
-    }
-  };
-  const unattach = (key: number) =>
-    setFiles((f) => {
-      const d = f.find((x) => x.key === key);
-      if (d?.preview) URL.revokeObjectURL(d.preview);
-      return f.filter((x) => x.key !== key);
-    });
+  const attach = (list: FileList | File[]) => attachFiles(chat, list);
+  const unattach = (key: number) => removeFile(chat, key);
   const uploading = files.some((d) => !d.attachment && !d.error);
   const ready = files.filter((d) => d.attachment);
 

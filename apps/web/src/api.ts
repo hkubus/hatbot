@@ -37,13 +37,14 @@ export async function api<T>(
 }
 
 /** Uploads a file for your next message. */
-export async function upload(file: File): Promise<Attachment> {
+export async function upload(file: File, signal?: AbortSignal): Promise<Attachment> {
   const form = new FormData();
   form.append("file", file);
   const res = await fetch(`${API_PREFIX}/attachments`, {
     method: "POST",
     body: form,
     credentials: "same-origin",
+    signal,
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok)

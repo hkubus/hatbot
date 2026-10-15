@@ -3030,3 +3030,8 @@ mark {
 .to-bottom:hover {
   color: var(--text);
 }
+
+/* Files dragged over the chat: they'll go into the composer. */
+.view.dropping {
+  background: var(--accent-soft);
+}
