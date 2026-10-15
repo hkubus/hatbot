@@ -1,5 +1,5 @@
 import type { Approval, Conversation, Me } from "@hatbot/shared";
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { ApiError, api } from "./api";
 import { BotMark, Icon, type IconName } from "./icons";
 import { LiveView } from "./live";
@@ -8,12 +8,7 @@ import { BotPage } from "./pages/Bot";
 import { Chat } from "./pages/Chat";
 import { GroupPage } from "./pages/Group";
 import { Login, Setup } from "./pages/Login";
-import { Memory } from "./pages/Memory";
-import { SchedulesView } from "./pages/Schedules";
 import { Search } from "./pages/Search";
-import { Settings } from "./pages/Settings";
-import { SkillDraft } from "./pages/SkillDraft";
-import { Spend } from "./pages/Spend";
 import { TaskDetail, Tasks } from "./pages/Tasks";
 import { navigate, useRoute } from "./router";
 import {
@@ -31,6 +26,17 @@ import {
   useStore,
 } from "./store";
 import { getTheme, setTheme, type Theme } from "./theme";
+
+// Pages you open now and then load when first opened; chat and tasks come with the app.
+const Memory = lazy(() => import("./pages/Memory").then((m) => ({ default: m.Memory })));
+const SchedulesView = lazy(() =>
+  import("./pages/Schedules").then((m) => ({ default: m.SchedulesView })),
+);
+const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m.Settings })));
+const SkillDraft = lazy(() =>
+  import("./pages/SkillDraft").then((m) => ({ default: m.SkillDraft })),
+);
+const Spend = lazy(() => import("./pages/Spend").then((m) => ({ default: m.Spend })));
 
 const VIEWS = [
   { path: "/", title: "Chat", icon: "chat", phone: true },
@@ -376,22 +382,24 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               </div>
             </section>
           )}
-          {view.path === "/schedules" && <SchedulesView path={path} params={params} />}
-          {view.path === "/memory" &&
-            (teachId ? (
-              <SkillDraft key={teachId} id={Number(teachId)} toast={toast} />
-            ) : (
-              <Memory
-                key={params.get("path") ?? ""}
-                toast={toast}
-                open={params.get("path") ?? ""}
-              />
-            ))}
-          {view.path === "/spend" && <Spend />}
+          <Suspense fallback={<section className="view" />}>
+            {view.path === "/schedules" && <SchedulesView path={path} params={params} />}
+            {view.path === "/memory" &&
+              (teachId ? (
+                <SkillDraft key={teachId} id={Number(teachId)} toast={toast} />
+              ) : (
+                <Memory
+                  key={params.get("path") ?? ""}
+                  toast={toast}
+                  open={params.get("path") ?? ""}
+                />
+              ))}
+            {view.path === "/spend" && <Spend />}
+            {view.path === "/settings" && (
+              <Settings path={path} toast={toast} onSignOut={onSignOut} />
+            )}
+          </Suspense>
           {view.path === "/search" && <Search query={params.get("q") ?? ""} />}
-          {view.path === "/settings" && (
-            <Settings path={path} toast={toast} onSignOut={onSignOut} />
-          )}
         </main>
 
         {insp && wide && view.path !== "/live" && (

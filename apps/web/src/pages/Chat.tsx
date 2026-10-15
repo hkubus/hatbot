@@ -2,7 +2,6 @@ import {
   type Approval,
   type Attachment,
   matchingCommands,
-  parseChart,
   type ThreadMessage,
   threadGroups,
 } from "@hatbot/shared";
@@ -22,6 +21,7 @@ import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ApiError, attachmentUrl, upload } from "../api";
 import { Chart, ChartPending } from "../chart";
+import { parseChart } from "../chartspec";
 import { type DraftFile, draftText, saveDraftText, setDraftFiles, useDraftFiles } from "../drafts";
 import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
