@@ -56,6 +56,7 @@ say "Display services"
 cat >/etc/systemd/system/hatbot-xvnc.service <<EOF
 [Unit]
 Description=Hatbot desktop: Xvnc :1 (1280x800), reachable only on $DESKTOP_IP
+StartLimitIntervalSec=0
 After=network-online.target
 Wants=network-online.target
 
@@ -71,6 +72,7 @@ EOF
 cat >/etc/systemd/system/hatbot-session.service <<'EOF'
 [Unit]
 Description=Hatbot desktop: XFCE session on :1
+StartLimitIntervalSec=0
 Requires=hatbot-xvnc.service
 After=hatbot-xvnc.service
 

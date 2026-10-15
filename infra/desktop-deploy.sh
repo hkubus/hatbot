@@ -48,6 +48,8 @@ mv "$DIR.new" "$DIR"
 cat >/etc/systemd/system/hatbot-desktop-agent.service <<EOF
 [Unit]
 Description=Hatbot desktop-agent: screenshots and input for the brain, on $DESKTOP_IP:7070
+# Restart=always means always: no giving up after five quick failures.
+StartLimitIntervalSec=0
 Requires=hatbot-xvnc.service
 After=hatbot-session.service
 
@@ -109,6 +111,7 @@ EOF
 cat >/etc/systemd/system/hatbot-desktop-shell.service <<EOF
 [Unit]
 Description=Hatbot desktop shell: commands from desktop tasks, kept away from the browser profile
+StartLimitIntervalSec=0
 Requires=hatbot-shell-firewall.service
 After=hatbot-shell-firewall.service
 
@@ -157,6 +160,7 @@ chmod 755 /usr/local/bin/hatbot-chromium
 cat >/etc/systemd/system/hatbot-chromium.service <<'EOF'
 [Unit]
 Description=Hatbot desktop: Chromium, on the profile of the bot using it
+StartLimitIntervalSec=0
 Requires=hatbot-xvnc.service
 After=hatbot-session.service
 

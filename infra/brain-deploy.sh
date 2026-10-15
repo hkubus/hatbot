@@ -45,6 +45,8 @@ cat >/etc/systemd/system/hatbot-brain.service <<'EOF'
 Description=Hatbot brain
 After=network-online.target
 Wants=network-online.target
+# Keep restarting however often it fails, 2 s apart, instead of giving up after five.
+StartLimitIntervalSec=0
 
 [Service]
 User=hatbot
@@ -65,6 +67,7 @@ EnvironmentFile=-/etc/hatbot/homeassistant.env
 EnvironmentFile=-/etc/hatbot/uptimekuma.env
 ExecStart=/usr/local/bin/bun src/main.ts
 Restart=on-failure
+RestartSec=2
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict

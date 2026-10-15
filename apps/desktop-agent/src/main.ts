@@ -47,7 +47,17 @@ const MAX_UPDATE_BYTES = 10 * 1024 * 1024;
 /** Endpoints added since the first deploy; the brain's checks say when the desktop is behind. */
 const FEATURES = ["profiles", "exec", "files", "fetch", "deep-health"];
 
-const size = await screenSize();
+// The display may still be starting (Xvnc restarting, say): wait for it rather than exit and be restarted.
+const size = await (async () => {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await screenSize();
+    } catch (err) {
+      if (attempt === 0) console.error(`waiting for the display: ${(err as Error).message}`);
+      await Bun.sleep(Math.min(5000, 500 * (attempt + 1)));
+    }
+  }
+})();
 const live = new LiveCapture(size);
 // Downloads land where desktop-agent can read them (it can't see /home), to be sent on to the owner.
 const downloadDir = stateDir ? join(stateDir, "downloads") : null;
