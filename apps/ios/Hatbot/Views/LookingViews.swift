@@ -114,8 +114,12 @@ private struct Snippet: View {
 
 struct WatchersView: View {
   @Environment(AppStore.self) private var store
-  @State private var watchers: [Watcher]?
   @State private var error: String?
+
+  /// As loaded, then kept up to date by the event stream.
+  private var watchers: [Watcher]? {
+    store.watchersLoaded ? store.watchers.values.sorted { $0.id < $1.id } : nil
+  }
 
   var body: some View {
     List {
@@ -147,7 +151,7 @@ struct WatchersView: View {
 
   private func load() async {
     do {
-      watchers = try await store.loadWatchers()
+      try await store.loadWatchers()
       error = nil
     } catch {
       self.error = message(for: error)
@@ -161,9 +165,12 @@ struct WatcherDetailView: View {
   let id: Int
   @Environment(AppStore.self) private var store
   @Environment(\.dismiss) private var dismiss
-  @State private var watcher: Watcher?
   @State private var values: [WatcherValue] = []
-  @State private var missing = false
+  @State private var notFound = false
+
+  /// Kept up to date by the event stream.
+  private var watcher: Watcher? { store.watchers[id] }
+  private var missing: Bool { notFound || store.deletedWatchers.contains(id) }
   @State private var busy = false
   @State private var confirmDelete = false
   @State private var error: String?
@@ -181,6 +188,10 @@ struct WatcherDetailView: View {
     .navigationTitle(watcher?.name ?? "Watcher")
     .navigationBarTitleDisplayMode(.inline)
     .task(id: id) { await load() }
+    // It looked again: what it saw has another value.
+    .onChange(of: watcher?.lastCheckedAt) { _, checked in
+      if checked != nil { Task { values = (try? await store.watcherValues(id)) ?? values } }
+    }
   }
 
   private func content(_ w: Watcher) -> some View {
@@ -191,7 +202,7 @@ struct WatcherDetailView: View {
           "On",
           isOn: Binding(
             get: { w.enabled },
-            set: { on in Task { await act { watcher = try await store.setWatcherEnabled(id, on) } } }))
+            set: { on in Task { await act { _ = try await store.setWatcherEnabled(id, on) } } }))
         LabeledContent(w.source.kind == .page ? "Page" : "Tool", value: w.source.text)
         if let s = w.source.selector { LabeledContent("Selector", value: s) }
         if let p = w.source.path { LabeledContent("Path", value: p) }
@@ -217,7 +228,7 @@ struct WatcherDetailView: View {
           Task {
             busy = true
             await act {
-              watcher = try await store.checkWatcher(id)
+              _ = try await store.checkWatcher(id)
               values = try await store.watcherValues(id)
             }
             busy = false
@@ -257,9 +268,10 @@ struct WatcherDetailView: View {
     do {
       async let w = store.loadWatcher(id)
       async let v = store.watcherValues(id)
-      (watcher, values) = try await (w, v)
+      _ = try await w
+      values = try await v
     } catch let e as APIError where e.status == 404 {
-      missing = true
+      notFound = true
     } catch {
       self.error = message(for: error)
     }
@@ -279,10 +291,25 @@ struct ChecksView: View {
   @State private var report: CheckReport?
   @State private var running = false
   @State private var error: String?
+  /// The last test approval, kept up to date by the event stream.
+  @State private var approvalId: Int?
+  @State private var sending = false
 
   var body: some View {
     List {
       if let error { Text(error).foregroundStyle(.red) }
+      Section("From your phone") {
+        HStack {
+          VStack(alignment: .leading, spacing: 3) {
+            Text("Test approval")
+            if let a = approvalId.flatMap({ store.approvals[$0] }) {
+              Text(answer(a)).font(.footnote).foregroundStyle(.secondary)
+            }
+          }
+          Spacer()
+          Button("Send") { Task { await sendApproval() } }.disabled(sending)
+        }
+      }
       if let report {
         Section {
           ForEach(report.results) { r in
@@ -313,8 +340,33 @@ struct ChecksView: View {
       }
     }
     .task {
-      do { report = try await store.loadChecks() } catch { self.error = message(for: error) }
+      do {
+        let info = try await store.loadChecks()
+        report = info.report
+        approvalId = info.approval?.id
+      } catch { self.error = message(for: error) }
     }
+  }
+
+  private func answer(_ a: Approval) -> String {
+    var text =
+      switch a.status {
+      case .pending: "Waiting for your answer"
+      case .approved: "Approved"
+      case .denied: "Denied"
+      case .expired: "Expired"
+      case .cancelled: "Replaced"
+      }
+    if a.decidedVia == "ntfy" { text += " from the notification" }
+    if let at = a.decidedAt { text += ", \(at.stampText)" }
+    return text
+  }
+
+  private func sendApproval() async {
+    sending = true
+    error = nil
+    do { approvalId = try await store.sendTestApproval().id } catch { self.error = message(for: error) }
+    sending = false
   }
 
   private func run() async {

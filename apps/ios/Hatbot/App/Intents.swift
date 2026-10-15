@@ -1,5 +1,5 @@
-// Siri and Shortcuts (App Intents): ask Hatbot and hear its answer, give it a task, or send it text and
-// files. They run in the app, as you, through Hatbot's own chat.
+// Siri and Shortcuts (App Intents): ask Hatbot, or another bot or group, and hear the answer, give
+// Hatbot a task, or send it text and files. They run in the app, as you, through the chats.
 import AppIntents
 import Foundation
 import UniformTypeIdentifiers
@@ -16,18 +16,61 @@ private struct Post: Encodable {
   var attachmentIds: [Int] = []
 }
 
+/// A chat to ask in: a bot's own, or a group.
+struct ChatEntity: AppEntity {
+  static let typeDisplayRepresentation: TypeDisplayRepresentation = "Chat"
+  static let defaultQuery = ChatQuery()
+
+  let id: Int
+  let name: String
+
+  var displayRepresentation: DisplayRepresentation { DisplayRepresentation(title: "\(name)") }
+}
+
+struct ChatQuery: EntityQuery {
+  func entities(for identifiers: [Int]) async throws -> [ChatEntity] {
+    try await Self.all().filter { identifiers.contains($0.id) }
+  }
+
+  func suggestedEntities() async throws -> [ChatEntity] {
+    try await Self.all()
+  }
+
+  /// Your chats, named as in the app. A brain from before bots has none.
+  static func all() async throws -> [ChatEntity] {
+    let api = try signedIn()
+    let bots: [Bot] = try await api.get("/bots")
+    let chats: [Conversation] = try await api.get("/conversations")
+    let names = Dictionary(bots.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
+    return chats.map { c in
+      let name =
+        c.kind == .group
+        ? c.title ?? c.botIds.compactMap { names[$0] }.joined(separator: ", ")
+        : names[c.botIds.first ?? ""] ?? "Hatbot"
+      return ChatEntity(id: c.id, name: name)
+    }
+  }
+}
+
 struct AskHatbotIntent: AppIntent {
   static let title: LocalizedStringResource = "Ask Hatbot"
-  static let description = IntentDescription("Asks Hatbot in its chat and answers with its reply.")
+  static let description = IntentDescription(
+    "Asks Hatbot, or another bot or a group, in its chat and answers with the reply.")
 
   @Parameter(title: "Question", inputOptions: String.IntentInputOptions(multiline: true))
   var question: String
 
-  static var parameterSummary: some ParameterSummary { Summary("Ask Hatbot \(\.$question)") }
+  /// None: Hatbot's own chat.
+  @Parameter(title: "Chat")
+  var chat: ChatEntity?
+
+  static var parameterSummary: some ParameterSummary {
+    Summary("Ask \(\.$chat) \(\.$question)")
+  }
 
   func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
-    let r: AskResult = try await signedIn().post(
-      "/thread/ask", body: Post(text: question), timeout: API.askTimeout)
+    let path = chat.map { "/conversations/\($0.id)/ask" } ?? "/thread/ask"
+    let r: AskResult = try await signedIn().post(path, body: Post(text: question), timeout: API.askTimeout)
     return .result(value: r.answer, dialog: IntentDialog(stringLiteral: r.answer))
   }
 }

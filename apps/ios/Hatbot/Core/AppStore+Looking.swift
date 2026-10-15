@@ -9,12 +9,22 @@ extension AppStore {
 
   // MARK: Watchers
 
+  @discardableResult
   func loadWatchers() async throws -> [Watcher] {
-    try await api.get("/watchers")
+    let list: [Watcher] = try await api.get("/watchers")
+    watchers = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+    watchersLoaded = true
+    return list
   }
 
+  @discardableResult
   func loadWatcher(_ id: Int) async throws -> Watcher {
-    try await api.get("/watchers/\(id)")
+    keep(try await api.get("/watchers/\(id)"))
+  }
+
+  private func keep(_ w: Watcher) -> Watcher {
+    watchers[w.id] = w
+    return w
   }
 
   func watcherValues(_ id: Int) async throws -> [WatcherValue] {
@@ -23,23 +33,26 @@ extension AppStore {
 
   func setWatcherEnabled(_ id: Int, _ on: Bool) async throws -> Watcher {
     struct Body: Encodable { let enabled: Bool }
-    return try await api.patch("/watchers/\(id)", body: Body(enabled: on))
+    return keep(try await api.patch("/watchers/\(id)", body: Body(enabled: on)))
   }
 
   /// Looks now; the watcher as it is after.
   func checkWatcher(_ id: Int) async throws -> Watcher {
-    try await api.post("/watchers/\(id)/check", body: Empty())
+    keep(try await api.post("/watchers/\(id)/check", body: Empty()))
   }
 
   func deleteWatcher(_ id: Int) async throws {
     let _: Empty = try await api.delete("/watchers/\(id)")
+    watchers[id] = nil
+    deletedWatchers.insert(id)
   }
 
   // MARK: Check everything
 
-  func loadChecks() async throws -> CheckReport? {
+  func loadChecks() async throws -> ChecksInfo {
     let info: ChecksInfo = try await api.get("/checks")
-    return info.report
+    if let a = info.approval { approvals[a.id] = a }
+    return info
   }
 
   func runChecks() async throws -> CheckReport {

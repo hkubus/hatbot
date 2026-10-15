@@ -618,6 +618,35 @@ final class LookingAfterThingsTests: XCTestCase {
   }
 }
 
+final class SpendTests: XCTestCase {
+  func testSpendChartsAreBarsAndRankings() throws {
+    let hours = [SpendHour(hour: "2026-10-15T13:00:00.000Z", usd: 0.5, tokens: 10)]
+    let hourly = try XCTUnwrap(SpendCharts.hourly(hours, timeZone: TimeZone(identifier: "UTC")!))
+    XCTAssertEqual(hourly.x, ["13:00"])
+    XCTAssertEqual(hourly.unit, "$")
+    XCTAssertEqual(SpendCharts.daily([SpendDay(date: "2026-10-05", usd: 1)])?.x, ["5 Oct"])
+    let models = try XCTUnwrap(
+      SpendCharts.byModel([
+        SpendByModel(model: "claude-haiku-5-5", usd: 1), SpendByModel(model: "claude-opus-5-5", usd: 3),
+        SpendByModel(model: "claude-sonnet-5", usd: 0),
+      ]))
+    XCTAssertTrue(models.horizontal)
+    XCTAssertEqual(models.x, ["Opus 5.5", "Haiku 5.5"])
+    XCTAssertEqual(models.series[0].data, [3, 1])
+    XCTAssertEqual(SpendCharts.byPurpose([SpendByPurpose(purpose: "thread", costUsd: 2)])?.x, ["Chat"])
+    XCTAssertNil(SpendCharts.byBot([], names: [:]))
+    let tokens = #"[{"id":3,"name":"iPhone (Hatbot iOS) 15 Oct 2026","createdAt":"2026-10-15T10:00:00.000Z","lastUsedAt":null}]"#
+    XCTAssertEqual(try JSONDecoder().decode([ApiToken].self, from: Data(tokens.utf8)).first?.id, 3)
+  }
+
+  func testWatcherEventsDecode() throws {
+    let deleted = #"{"type":"watcher.deleted","id":4}"#
+    guard case .watcherDeleted(4) = try JSONDecoder().decode(HatbotEvent.self, from: Data(deleted.utf8)) else {
+      return XCTFail("not a deleted watcher")
+    }
+  }
+}
+
 final class ZoomTests: XCTestCase {
   func testZoomingKeepsThePointUnderTheFingersAndTheScreenCovered() {
     let size = CGSize(width: 400, height: 250)

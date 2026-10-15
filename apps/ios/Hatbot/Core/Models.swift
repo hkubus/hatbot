@@ -601,12 +601,14 @@ enum HatbotEvent: Decodable, Sendable {
   case conversationUpdated(Conversation)
   case conversationDeleted(id: Int)
   case proposalUpdated(Proposal)
+  case watcherUpdated(Watcher)
+  case watcherDeleted(id: Int)
   case unknown(String)
 
   private enum Key: String, CodingKey {
     case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused, tokens, costUsd
     case task, step, approval, state, schedule, trigger, episode, editedAt, ids, seenAt, attachment
-    case bot, conversation, proposal
+    case bot, conversation, proposal, watcher
   }
 
   init(from decoder: Decoder) throws {
@@ -665,6 +667,8 @@ enum HatbotEvent: Decodable, Sendable {
       self = .conversationUpdated(try c.decode(Conversation.self, forKey: .conversation))
     case "conversation.deleted": self = .conversationDeleted(id: try c.decode(Int.self, forKey: .id))
     case "proposal.updated": self = .proposalUpdated(try c.decode(Proposal.self, forKey: .proposal))
+    case "watcher.updated": self = .watcherUpdated(try c.decode(Watcher.self, forKey: .watcher))
+    case "watcher.deleted": self = .watcherDeleted(id: try c.decode(Int.self, forKey: .id))
     default: self = .unknown(type)
     }
   }

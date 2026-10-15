@@ -57,6 +57,11 @@ final class AppStore {
   var memoryVersion = 0
   /// Proposed memory changes, as loaded and as proposal.updated tells.
   var proposals: [Int: Proposal] = [:]
+  /// Watchers as loaded and as watcher.updated tells; `watchersLoaded` once the list has come.
+  var watchers: [Int: Watcher] = [:]
+  var watchersLoaded = false
+  /// Deleted while the app was open, so an open watcher says it's gone.
+  var deletedWatchers = Set<Int>()
   /// A short note to show briefly, like a memory commit.
   var toast: String?
   /// The chat that's showing: a bot's own, or a group. Hatbot's own is the first.
@@ -238,6 +243,11 @@ final class AppStore {
       conversations.removeAll { $0.id == id }
     case let .proposalUpdated(p):
       proposals[p.id] = p
+    case let .watcherUpdated(w):
+      watchers[w.id] = w
+    case let .watcherDeleted(id):
+      watchers[id] = nil
+      deletedWatchers.insert(id)
     case .unknown:
       break
     }

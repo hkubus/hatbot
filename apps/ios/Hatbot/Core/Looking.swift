@@ -102,6 +102,8 @@ struct CheckReport: Codable, Equatable, Sendable {
 
 struct ChecksInfo: Decodable, Sendable {
   var report: CheckReport?
+  /// The last test approval; missing on brains from before it.
+  var approval: Approval?
 }
 
 /// A tidy-up of memory or a fix to a skill, shown as a diff to apply or dismiss.
