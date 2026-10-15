@@ -417,6 +417,9 @@ type Option = { key: string; label: React.ReactNode; desc: string; choose: () =>
 
 let draftKey = 0;
 
+/** A touch screen with no hover: a phone or tablet, where the keyboard has no Shift-Enter. */
+const touchScreen = () => matchMedia("(hover: none)").matches;
+
 // Memoized: while a reply streams only its own message redraws, not the whole thread's markdown.
 const Message = memo(function Message({
   m,
@@ -983,7 +986,8 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
               }
               if (e.key === "Escape") return setMenuClosed(true);
             }
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            // On a phone's keyboard Enter is a new line; the button sends.
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !touchScreen()) {
               e.preventDefault();
               void send();
             }

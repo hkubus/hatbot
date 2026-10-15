@@ -3805,3 +3805,12 @@ mark {
   width: calc(100% - 32px);
   margin: 10px auto 0;
 }
+
+/* iOS zooms the page into any field under 16px when it's focused. */
+@media (max-width: 899px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
