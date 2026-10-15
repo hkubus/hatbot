@@ -244,8 +244,10 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
   const tidy = async () => {
     setBusy(true);
     try {
-      const p = await api<Proposal | null>("/proposals/tidy", { body: {} });
-      if (p) {
+      // It's worked out in the background now; the proposal arrives as an event.
+      const p = await api<Proposal | { started: true } | null>("/proposals/tidy", { body: {} });
+      if (p && "started" in p) toast("Tidying up. It shows under To look over when it's ready");
+      else if (p) {
         putProposal(p);
         setSel({ kind: "proposal", id: p.id });
       } else toast("Nothing to tidy");
@@ -257,8 +259,12 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
   const fixSkill = async (name: string) => {
     setBusy(true);
     try {
-      const p = await api<Proposal | null>(`/skills/${name}/fix`, { body: {} });
-      if (p) {
+      const p = await api<Proposal | { started: true } | null>(`/skills/${name}/fix`, {
+        body: {},
+      });
+      if (p && "started" in p)
+        toast("Looking for a fix. It shows under To look over when it's ready");
+      else if (p) {
         putProposal(p);
         setSel({ kind: "proposal", id: p.id });
       } else toast("No fix found in what went wrong");
