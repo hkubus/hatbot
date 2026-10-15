@@ -1424,6 +1424,21 @@ export class Thread {
       return { text, status };
     };
 
+    /**
+     * Where a model call's text starts. Its result puts the reply back there when the stream fails
+     * partway and is tried again: the apps drop the message's text and get it again up to there.
+     */
+    const checkpoint = () => {
+      const at = { text, separate, fix: chartFix?.text };
+      return () => {
+        text = at.text;
+        separate = at.separate;
+        if (chartFix && at.fix !== undefined) chartFix.text = at.fix;
+        events.emit({ type: "message.rewrite", id: out.id });
+        if (text) events.emit({ type: "message.delta", id: out.id, text });
+      };
+    };
+
     let askedOpus = false;
     /** ask_opus: one Opus 5.5 call, its answer streamed into this reply as is. */
     const askOpus = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
@@ -1443,6 +1458,7 @@ export class Thread {
       spend.check(((content.length / 3 + 2000) * price.input + 8000 * price.output) / 1_000_000);
       separate = true;
       let answer = "";
+      const restore = checkpoint();
       const res = await model.stream(
         {
           model: EXPERT_MODEL,
@@ -1458,6 +1474,10 @@ export class Thread {
           onText: (delta) => {
             answer += delta;
             say(delta);
+          },
+          onRetry: () => {
+            answer = "";
+            restore();
           },
           signal: abort.signal,
         },
@@ -1545,6 +1565,7 @@ export class Thread {
               else if (name === "web_fetch")
                 progress(`Reading ${String(input.url ?? "a web page")}`);
             },
+            onRetry: checkpoint(),
             signal: abort.signal,
           },
         );

@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import Anthropic from "@anthropic-ai/sdk";
+import { retryable, withRetries } from "../src/agent/model";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { testApp, waitFor } from "./helpers";
 
@@ -120,4 +122,56 @@ test("tasks cache their tools and system apart from the conversation, within fou
     expect(breakpoints(req)).toBeLessThanOrEqual(4);
   }
   expect(work.requests).toHaveLength(2);
+});
+
+test("a stream that fails partway is tried again; one the owner stopped isn't", async () => {
+  const overloaded = new Anthropic.APIError(
+    undefined,
+    { type: "error", error: { type: "overloaded_error", message: "Overloaded" } },
+    undefined,
+    undefined,
+    "overloaded_error",
+  );
+  expect(retryable(overloaded)).toBe(true);
+  expect(retryable(new Anthropic.APIConnectionError({ message: "reset" }))).toBe(true);
+  expect(retryable(new Anthropic.APIUserAbortError())).toBe(false);
+  expect(retryable(new Anthropic.APIError(400, undefined, "bad", undefined))).toBe(false);
+
+  let tries = 0;
+  let retries = 0;
+  const flaky = () => {
+    tries++;
+    if (tries < 3) throw overloaded;
+    return Promise.resolve("ok");
+  };
+  expect(await withRetries(flaky, { onRetry: () => retries++ }, [0, 0])).toBe("ok");
+  expect([tries, retries]).toEqual([3, 2]);
+
+  tries = 0;
+  const always = () => {
+    tries++;
+    return Promise.reject(overloaded);
+  };
+  await expect(withRetries(always, {}, [0, 0])).rejects.toBe(overloaded);
+  expect(tries).toBe(3);
+
+  tries = 0;
+  const stopped = new AbortController();
+  stopped.abort();
+  await expect(withRetries(always, { signal: stopped.signal }, [0, 0])).rejects.toBe(overloaded);
+  expect(tries).toBe(1);
+});
+
+test("a reply whose stream is tried again drops what it had streamed", async () => {
+  const model = new FakeModel([{ content: [text("The whole answer.")], failedWith: "The who" }]);
+  const t = await testApp(model);
+  await t.thread.post("hi").done;
+  const reply = t.thread.list().find((m) => m.role === "assistant");
+  expect(reply?.text).toBe("The whole answer.");
+  const at = t.events.findIndex((e) => e.type === "message.rewrite" && e.id === reply?.id);
+  expect(at).toBeGreaterThan(-1);
+  const after = t.events
+    .slice(at)
+    .flatMap((e) => (e.type === "message.delta" && e.id === reply?.id ? [e.text] : []));
+  expect(after.join("")).toBe("The whole answer.");
 });

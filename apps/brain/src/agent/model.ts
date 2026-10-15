@@ -37,7 +37,11 @@ export class AnthropicModelClient implements ModelClient {
     this.client = new Anthropic(apiKey ? { apiKey } : {});
   }
 
-  async stream(params: Omit<StreamParams, "stream">, handlers: StreamHandlers) {
+  stream(params: Omit<StreamParams, "stream">, handlers: StreamHandlers) {
+    return withRetries(() => this.streamOnce(params, handlers), handlers);
+  }
+
+  private async streamOnce(params: Omit<StreamParams, "stream">, handlers: StreamHandlers) {
     const stream = this.client.beta.messages.stream(params, { signal: handlers.signal });
     /** Server tool calls by block index, with their input so far. */
     const server = new Map<number, { name: string; json: string }>();
@@ -65,6 +69,55 @@ export class AnthropicModelClient implements ModelClient {
 
   create(params: CreateParams) {
     return this.client.beta.messages.create(params);
+  }
+}
+
+/** Waits before each try after the first. */
+const RETRY_DELAYS_MS = [1000, 4000];
+const RETRYABLE_TYPES = ["overloaded_error", "api_error", "timeout_error"];
+const NETWORK_CODES = ["ECONNRESET", "ETIMEDOUT", "EPIPE", "ECONNREFUSED", "UND_ERR_SOCKET"];
+
+/**
+ * Whether trying the same request again may work: the API overloaded or failing, or the connection
+ * dropped. The SDK retries these itself only before the stream starts; after, an error event or a
+ * cut connection ends it.
+ */
+export function retryable(err: unknown): boolean {
+  if (err instanceof Anthropic.APIUserAbortError) return false;
+  if (err instanceof Anthropic.APIConnectionError) return true;
+  if (err instanceof Anthropic.APIError)
+    return (
+      RETRYABLE_TYPES.includes(err.type ?? "") ||
+      (err.status !== undefined && (err.status >= 500 || err.status === 429))
+    );
+  const e = err as { code?: string; message?: string; name?: string } | null;
+  if (e?.name === "AbortError") return false;
+  return (
+    NETWORK_CODES.includes(e?.code ?? "") ||
+    (e?.name === "TypeError" && /terminated|fetch failed|socket/i.test(e.message ?? ""))
+  );
+}
+
+/**
+ * Runs a streamed request, trying it again up to twice when it fails partway. `onRetry` tells the
+ * caller to drop what that attempt streamed.
+ */
+export async function withRetries<T>(
+  attempt: () => Promise<T>,
+  handlers: Pick<StreamHandlers, "onRetry" | "signal">,
+  delays = RETRY_DELAYS_MS,
+): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await attempt();
+    } catch (err) {
+      const wait = delays[i];
+      if (wait === undefined || handlers.signal?.aborted || !retryable(err)) throw err;
+      console.warn(`model stream failed (${modelErrorText(err)}); trying again in ${wait} ms`);
+      handlers.onRetry?.();
+      await new Promise((r) => setTimeout(r, wait));
+      handlers.signal?.throwIfAborted();
+    }
   }
 }
 
