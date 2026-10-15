@@ -225,3 +225,22 @@ test("only the latest reply that failed can be tried again", async () => {
   expect(lastUserText(model.requests.at(-1) as never)).toContain("try that reply again");
   expect(t.thread.list().at(-1)).toMatchObject({ id: second?.id, text: "Two, in full." });
 });
+
+test("a task's reply that fails as it's written again still says how the task went", async () => {
+  const run = { title: "Check", goal: "Open example.com", success_criteria: "" };
+  const chat = new FakeModel([
+    { content: [toolUse("run_desktop_task", run)] },
+    { content: [text("Started it.")] },
+  ]);
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Example.com is up." })] },
+  ]);
+  const t = await testApp(chat, work);
+  await t.thread.post("check example.com").done;
+  await t.tasks.idle();
+  await t.thread.idle();
+  const reply = t.thread.list().find((m) => m.role === "assistant" && m.taskId);
+  expect(reply?.status).toBe("error");
+  expect(reply?.text).toStartWith("Example.com is up.");
+  expect(reply?.text).toContain("Something went wrong");
+});

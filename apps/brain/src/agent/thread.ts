@@ -1471,6 +1471,11 @@ export class Thread {
       events.emit({ type: "message.delta", id: out.id, text: delta });
     };
     const finish = (status: "done" | "error", note?: string): Said => {
+      // A chart being fixed is out of view; the reply ends with what's shown.
+      chartFix = null;
+      // A task's reply that came to nothing still says how the task went.
+      const task = rewrite && ended.find((t) => t.id === rewrite?.taskId);
+      if (task && !text.trim()) say(resultText(task));
       if (note) {
         separate = true;
         say(note);
