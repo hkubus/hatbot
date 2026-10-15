@@ -7,23 +7,64 @@ export class ActionError extends Error {}
 
 const display = process.env.DISPLAY ?? ":1";
 
-async function run(cmd: string[], stdin?: string): Promise<string> {
+/** Every xdotool and ffmpeg gets this long, plus what it's asked to spend, before it's killed. */
+const DEADLINE_MS = 10_000;
+
+/** Runs `cmd` and kills it at the deadline, so one hung process can't hold up the input queue. */
+export async function spawn(cmd: string[], extraMs = 0, base = DEADLINE_MS) {
   const p = Bun.spawn(cmd, {
-    stdin: stdin === undefined ? "ignore" : new TextEncoder().encode(stdin),
+    stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
     env: { ...process.env, DISPLAY: display },
   });
-  const [out, err, code] = await Promise.all([
-    new Response(p.stdout).text(),
-    new Response(p.stderr).text(),
-    p.exited,
-  ]);
-  if (code !== 0) throw new Error(`${cmd[0]} exited ${code}: ${err.trim().slice(0, 300)}`);
-  return out;
+  const limit = base + extraMs;
+  let killed = false;
+  const timer = setTimeout(() => {
+    killed = true;
+    p.kill("SIGKILL");
+  }, limit);
+  try {
+    const [out, err, code] = await Promise.all([
+      new Response(p.stdout).bytes(),
+      new Response(p.stderr).text(),
+      p.exited,
+    ]);
+    if (killed) throw new Error(`${cmd[0]} didn't finish in ${Math.round(limit / 1000)} s`);
+    return { out, err, code };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
-export const xdotool = (...args: string[]) => run(["xdotool", ...args]);
+async function run(cmd: string[], extraMs = 0): Promise<string> {
+  const { out, err, code } = await spawn(cmd, extraMs);
+  if (code !== 0) throw new Error(`${cmd[0]} exited ${code}: ${err.trim().slice(0, 300)}`);
+  return new TextDecoder().decode(out);
+}
+
+/** About how long xdotool's own sleeps and delays take for these arguments, in ms. */
+export function pacing(args: string[]): number {
+  let ms = 0;
+  args.forEach((a, i) => {
+    const n = Number(args[i + 1]) || 0;
+    if (a === "sleep") ms += n * 1000;
+    else if (a === "--delay") {
+      // Our calls put it after --repeat (key, click), or before "--" and the text (type).
+      const times =
+        args[i - 2] === "--repeat"
+          ? Number(args[i - 1])
+          : args[i + 2] === "--"
+            ? (args[i + 3] ?? "").length
+            : 1;
+      ms += n * (times || 1);
+    }
+  });
+  return ms;
+}
+
+// Half again on top: xdotool's delays come on top of its own round trips to the X server.
+export const xdotool = (...args: string[]) => run(["xdotool", ...args], pacing(args) * 1.5);
 
 export async function screenSize(): Promise<{ width: number; height: number }> {
   const [w, h] = (await xdotool("getdisplaygeometry")).trim().split(/\s+/).map(Number);
@@ -32,14 +73,13 @@ export async function screenSize(): Promise<{ width: number; height: number }> {
 }
 
 async function grab(args: string[]): Promise<Uint8Array> {
-  const p = Bun.spawn(["ffmpeg", "-loglevel", "error", "-f", "x11grab", ...args], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [out, err, code] = await Promise.all([
-    new Response(p.stdout).bytes(),
-    new Response(p.stderr).text(),
-    p.exited,
+  const { out, err, code } = await spawn([
+    "ffmpeg",
+    "-loglevel",
+    "error",
+    "-f",
+    "x11grab",
+    ...args,
   ]);
   if (code !== 0 || !out.length)
     throw new Error(`ffmpeg exited ${code}: ${err.trim().slice(0, 300)}`);
