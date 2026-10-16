@@ -220,7 +220,7 @@ struct TaskStep: Codable, Identifiable, Equatable, Sendable {
   var createdAt: String
 
   /// The model's own notes; yours on approvals are named "Your note".
-  var isModelNote: Bool { kind == .note && name != "Your note" }
+  var isModelNote: Bool { kind == .note && name == "Note" }
 }
 
 extension [TaskStep] {
@@ -529,6 +529,8 @@ struct AppSettings: Codable, Equatable, Sendable {
   var notificationsOpen: Opens?
   /// The model that drives desktop tasks; missing on brains from before the setting.
   var desktopModel: DesktopModel?
+  /// A desktop task Haiku fails at carries on once on Opus; missing on older brains.
+  var desktopEscalate: Bool?
   /// The model background tasks run on; missing on brains from before the setting.
   var taskModel: TaskModel?
   /// The chat's model; missing on brains from before the setting.

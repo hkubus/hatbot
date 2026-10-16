@@ -33,6 +33,10 @@ export function lastDue(now: number, weekday: number, hour: number): number {
 }
 
 const usd = (n: number) => `$${n.toFixed(2)}`;
+const MODEL_NAMES: Record<string, string> = {
+  "claude-haiku-5-5": "Haiku 5.5",
+  "claude-opus-5-5": "Opus 5.5",
+};
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 export class WeeklyReport {
@@ -108,6 +112,17 @@ export class WeeklyReport {
          ORDER BY id DESC LIMIT 5`,
       )
       .all(since);
+    // By the model each started on, desktop tasks that background tasks started included.
+    const desktop = db
+      .query<{ model: string; done: number; failed: number; rescued: number }, [string]>(
+        `SELECT coalesce(escalated_from, model) AS model,
+         sum(status = 'done' AND escalated_from IS NULL) AS done,
+         sum(status = 'failed' OR escalated_from IS NOT NULL) AS failed,
+         sum(status = 'done' AND escalated_from IS NOT NULL) AS rescued
+         FROM tasks WHERE lane = 'screen' AND created_at >= ? GROUP BY 1 ORDER BY 1`,
+      )
+      .all(since)
+      .filter((r) => r.done || r.failed);
     const approvals = db
       .query<{ status: string; n: number }, [string]>(
         "SELECT status, count(*) AS n FROM approvals WHERE created_at >= ? GROUP BY status",
@@ -141,6 +156,10 @@ export class WeeklyReport {
         : "- No tasks.",
     );
     for (const t of failed) lines.push(`  - Failed: [${t.title}](/tasks/${t.id})`);
+    for (const r of desktop)
+      lines.push(
+        `- Desktop on ${MODEL_NAMES[r.model] ?? r.model}: ${r.done} done, ${r.failed} failed${r.rescued ? `, ${r.rescued} of them then done on Opus` : ""}.`,
+      );
     if (answered || expired)
       lines.push(
         `- ${plural(answered, "approval")} answered${expired ? `, ${expired} expired unanswered` : ""}.`,

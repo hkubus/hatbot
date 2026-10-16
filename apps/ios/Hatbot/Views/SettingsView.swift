@@ -92,8 +92,17 @@ struct SettingsView: View {
           if let model = settings.desktopModel {
             Section("Desktop") {
               Picker("Model for desktop tasks", selection: desktopModel(model)) {
+                Text("Haiku 5.5").tag(AppSettings.DesktopModel.haiku)
                 Text("Opus 5.5").tag(AppSettings.DesktopModel.opus)
-                Text("Haiku 5.5 (cheaper, less tested)").tag(AppSettings.DesktopModel.haiku)
+              }
+              if model == .haiku, let escalate = settings.desktopEscalate {
+                Toggle(
+                  "Try again on Opus when Haiku fails",
+                  isOn: Binding(
+                    get: { escalate },
+                    set: { on in
+                      Task { await act { self.settings = try await store.setDesktopEscalate(on) } }
+                    }))
               }
             }
           }

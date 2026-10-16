@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { type Approval, latestNoteOnly, type Task, type TaskStep } from "@hatbot/shared";
 import { inBatches } from "../src/agent/tools";
 import { HttpDesktopAgent } from "../src/desktop/client";
+import { limits } from "../src/tasks/desktop-run";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
 
@@ -52,9 +53,9 @@ test("chat starts a desktop task that runs, archives screenshots and reports bac
   expect(t.agent.actions.map((a) => a.name)).toEqual(["left_click"]);
   expect(task?.costUsd).toBeGreaterThan(0);
 
-  // The request uses Opus with the computer toolset, and results echo toolset_name.
+  // The request uses Haiku with the computer toolset, and results echo toolset_name.
   const req = work.requests[1];
-  expect(req?.model).toBe("claude-opus-5-5");
+  expect(req?.model).toBe("claude-haiku-5-5");
   expect(req?.tools?.[0]).toMatchObject({ type: "computer_toolset_20260801" });
   expect(req?.context_management?.edits?.[0]?.type).toBe("clear_tool_uses_20250919");
   const results = req?.messages.at(-1)?.content as { toolset_name?: string; content: unknown }[];
@@ -325,7 +326,10 @@ test("Pause all cancels running tasks and locks the desktop", async () => {
 test("hitting the task limit asks to raise it", async () => {
   const work = new FakeModel([{ content: [computer("screenshot")] }, finish()]);
   const t = await testApp(new FakeModel(), work);
-  t.settings.update({ limits: { taskUsd: 0.02, dailyUsd: 10, monthlyUsd: 200 } });
+  t.settings.update({
+    limits: { taskUsd: 0.02, dailyUsd: 10, monthlyUsd: 200 },
+    desktopModel: "claude-opus-5-5",
+  });
   const task = startTask(t);
   const approval = await pending(t);
   expect(approval.kind).toBe("budget");
@@ -406,6 +410,8 @@ test("desktop_shell runs commands as text; destructive ones ask first", async ()
 test("desktop tasks run on the model Settings choose; each keeps the one it started with", async () => {
   const work = new FakeModel([finish("On Opus."), finish("On Haiku.")]);
   const t = await testApp(new FakeModel(), work);
+  expect(t.settings.get().desktopModel).toBe("claude-haiku-5-5");
+  t.settings.update({ desktopModel: "claude-opus-5-5" });
   const first = startTask(t, "One");
   await t.tasks.idle();
   t.settings.update({ desktopModel: "claude-haiku-5-5" });
@@ -532,8 +538,14 @@ test("changes on different things run at once; on the same thing, in order", asy
 test("a task's timeline keeps only the model's latest note, and all of yours", () => {
   const step = (id: number, kind: TaskStep["kind"], name = "Note") =>
     ({ id, kind, name }) as TaskStep;
-  const steps = [step(1, "note"), step(2, "action"), step(3, "note", "Your note"), step(4, "note")];
-  expect(latestNoteOnly(steps).map((s) => s.id)).toEqual([2, 3, 4]);
+  const steps = [
+    step(1, "note"),
+    step(2, "action"),
+    step(3, "note", "Your note"),
+    step(4, "note", "Trying again on Opus"),
+    step(5, "note"),
+  ];
+  expect(latestNoteOnly(steps).map((s) => s.id)).toEqual([2, 3, 4, 5]);
 });
 
 test("a task waits without a slot, wakes on an event, and can notify before it ends", async () => {
@@ -647,4 +659,135 @@ test("an ended task runs again with its goal as you edited it, still tainted", a
   expect((await t.call("POST", `/tasks/${again.id}/rerun`, {}, { cookie })).status).toBe(409);
   await waitFor(() => t.tasks.get(again.id)?.finishedAt);
   expect(JSON.stringify(work.requests[1]?.messages)).toContain("Deploy main again");
+});
+
+const SCREENING = '{"suspected": false, "excerpt": ""}';
+
+test("a Haiku desktop task out of steps carries on, once, on Opus, with Haiku's account", async () => {
+  const shot = { content: [computer("screenshot")] };
+  const work = new FakeModel([shot, shot, shot, finish("Booked on Opus.")]);
+  work.onCreate = (p) =>
+    JSON.stringify(p.messages).includes("You were stopped")
+      ? "I opened the booking page, but the date picker didn't take a click."
+      : SCREENING;
+  const t = await testApp(new FakeModel(), work);
+  limits.maxSteps = 3;
+  try {
+    const task = startTask(t);
+    await t.tasks.idle();
+    const ended = t.tasks.get(task.id);
+    expect(ended?.status).toBe("done");
+    expect(ended?.summary).toBe("Booked on Opus.");
+    expect(ended?.model).toBe("claude-opus-5-5");
+    expect(work.requests.map((r) => r.model)).toEqual([
+      "claude-haiku-5-5",
+      "claude-haiku-5-5",
+      "claude-haiku-5-5",
+      "claude-opus-5-5",
+    ]);
+    // Haiku was asked what it tried on its own conversation, and Opus starts afresh with it.
+    const asked = work.creates.find((c) => JSON.stringify(c.messages).includes("You were stopped"));
+    expect(asked?.model).toBe("claude-haiku-5-5");
+    const opus = JSON.stringify(work.requests[3]?.messages);
+    expect(work.requests[3]?.messages.length).toBe(1);
+    expect(opus).toContain("<earlier_attempt>");
+    expect(opus).toContain("Stopped after 3 steps without finishing.");
+    expect(opus).toContain("the date picker didn't take a click");
+    expect(t.tasks.steps(task.id).some((s) => s.name === "Trying again on Opus")).toBe(true);
+    // One task: no second card, and one notification.
+    expect(t.notifier.sent.filter((n) => n.title.includes("Book a table")).length).toBe(1);
+  } finally {
+    limits.maxSteps = 80;
+  }
+});
+
+test("a Haiku desktop task that gives up carries on on Opus with what it said", async () => {
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("finish_task", { outcome: "failed", summary: "The search never loaded results." }),
+      ],
+    },
+    finish("Found it on Opus."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = startTask(t);
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)).toMatchObject({ status: "done", model: "claude-opus-5-5" });
+  expect(JSON.stringify(work.requests[1]?.messages)).toContain("The search never loaded results.");
+  // Its own summary is its account: Haiku isn't asked again.
+  expect(work.creates.some((c) => JSON.stringify(c.messages).includes("You were stopped"))).toBe(
+    false,
+  );
+});
+
+test("blocked, budget, cancelled and switched-off desktop tasks don't carry on on Opus", async () => {
+  // Blocked on a login: Opus can't get past it either.
+  const blocked = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "blocked", summary: "It needs a login." })] },
+  ]);
+  const t1 = await testApp(new FakeModel(), blocked);
+  const a = startTask(t1);
+  await t1.tasks.idle();
+  expect(t1.tasks.get(a.id)).toMatchObject({ status: "failed", model: "claude-haiku-5-5" });
+  expect(blocked.requests.length).toBe(1);
+
+  // Today's limit is spent.
+  const broke = new FakeModel([]);
+  const t2 = await testApp(new FakeModel(), broke);
+  t2.settings.update({ limits: { taskUsd: 3, dailyUsd: 0.0001, monthlyUsd: 200 } });
+  const b = startTask(t2);
+  await t2.tasks.idle();
+  expect(t2.tasks.get(b.id)?.summary).toStartWith("Stopped: Today's");
+  expect(broke.requests.length).toBe(0);
+
+  // Cancelled while it runs.
+  let release = () => {};
+  const held = new FakeModel([
+    { content: [computer("screenshot")], wait: new Promise<void>((r) => (release = r)) },
+  ]);
+  const t3 = await testApp(new FakeModel(), held);
+  const c = startTask(t3);
+  await waitFor(() => held.requests.length);
+  t3.tasks.cancel(c.id);
+  release();
+  await t3.tasks.idle();
+  expect(t3.tasks.get(c.id)).toMatchObject({ status: "cancelled", model: "claude-haiku-5-5" });
+
+  // Switched off in Settings.
+  const off = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "failed", summary: "No luck." })] },
+  ]);
+  const t4 = await testApp(new FakeModel(), off);
+  t4.settings.update({ desktopEscalate: false });
+  const d = startTask(t4);
+  await t4.tasks.idle();
+  expect(t4.tasks.get(d.id)).toMatchObject({ status: "failed", summary: "No luck." });
+  expect(off.requests.length).toBe(1);
+});
+
+test("the weekly report counts desktop tasks by the model they started on", async () => {
+  const t = await testApp();
+  const add = (
+    model: string,
+    status: string,
+    from: string | null = null,
+    parent: number | null = null,
+  ) =>
+    t.db
+      .query(
+        `INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, escalated_from, parent_id)
+         VALUES ('d', 'g', '', 'chat', 'screen', ?, ?, 1, '2026-10-08T00:00:00Z', ?, ?)`,
+      )
+      .run(model, status, from, parent);
+  add("claude-haiku-5-5", "done");
+  add("claude-haiku-5-5", "done");
+  add("claude-haiku-5-5", "failed");
+  add("claude-opus-5-5", "done", "claude-haiku-5-5");
+  add("claude-opus-5-5", "failed", "claude-haiku-5-5");
+  add("claude-opus-5-5", "done", null, 1);
+  add("claude-haiku-5-5", "cancelled");
+  const { text } = await t.report.make();
+  expect(text).toContain("- Desktop on Haiku 5.5: 2 done, 3 failed, 1 of them then done on Opus.");
+  expect(text).toContain("- Desktop on Opus 5.5: 1 done, 0 failed.");
 });

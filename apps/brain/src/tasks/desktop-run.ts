@@ -11,7 +11,7 @@ import type { BetaBrowserMemberInput } from "@anthropic-ai/sdk/resources/beta";
 import type { ApprovalKind } from "@hatbot/shared";
 import type { AgentElement, BrowserState, ComputerMember } from "@hatbot/shared/desktop";
 import { z } from "zod";
-import { modelErrorText } from "../agent/model";
+import { modelErrorText, type StreamParams } from "../agent/model";
 import { DESKTOP_PROMPT } from "../agent/prompt";
 import { type Screening, screenPage } from "../agent/screening";
 import { localStamp } from "../agent/thread";
@@ -28,7 +28,13 @@ import type { Tasks } from "./service";
 
 /** Models whose between-tool progress notes (`display: "updates"`) are documented. */
 export const UPDATES_MODELS = new Set(["claude-opus-5-5"]);
-const MAX_STEPS = 80;
+/** A desktop task Haiku gives up on carries on, once, on Opus (PLAN.md §5.4). */
+const FIRST_MODEL = "claude-haiku-5-5";
+const ESCALATE_TO = "claude-opus-5-5";
+/** Steps per attempt; tests lower it. */
+export const limits = { maxSteps: 80 };
+/** A failure Opus may get past, where the model is asked what it tried. */
+const ASK = { account: null };
 const MAX_ACTIVE_MS = 30 * 60_000;
 const TAKEOVER_TIMEOUT_MS = 24 * 3600_000;
 const BETAS: Anthropic.Beta.AnthropicBeta[] = [
@@ -152,12 +158,17 @@ const RECORD_TOOL: Anthropic.Beta.BetaTool = {
 /** How a send the gate let through is confirmed: the text leaving the box. Tests shorten it. */
 export const sendConfirm = { tries: 6, everyMs: 500 };
 
-/** Ends the run from inside a helper. `notify` false: a routine result nobody needs to hear about. */
+/**
+ * Ends the run from inside a helper. `notify` false: a routine result nobody needs to hear about.
+ * `escalate`: a failure a stronger model might get past (out of steps or time, refused, cut off, or it
+ * gave up), with the model's own account of what it tried when it gave one.
+ */
 export class Stop extends Error {
   constructor(
     readonly status: "done" | "failed" | "cancelled",
     readonly summary: string,
     readonly notify = true,
+    readonly escalate: false | { account: string | null } = false,
   ) {
     super(summary);
   }
@@ -290,6 +301,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   const task = tasks.get(id);
   if (!task) return;
   const agent = d.desktop.agent;
+  /** Haiku's, until it fails and Opus carries on. */
+  let model = task.model;
 
   let holding = false;
   let activeMs = 0;
@@ -776,34 +789,56 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   // Its bot's name; the desktop model needs no role or memory.
   const system = promptFor(DESKTOP_PROMPT, { ...tasks.botOf(task), instructions: "" }, []);
 
-  try {
-    // The owner saved it (PLAN.md §5.4), so it's trusted like the task itself.
-    const skill =
-      task.skill && (await d.memory.exists(skillPath(task.skill)))
-        ? `<skill name="${task.skill}">\n${(await d.memory.read(skillPath(task.skill))).trim()}\n</skill>\n\n`
-        : "";
-    await acquire();
-    // Tabs an earlier task left open would be in this one's way, and in its context.
-    await d.desktop.agent.resetBrowser().catch((err) => {
-      if (signal.aborted) throw err;
-      console.error(`task ${id}: couldn't close the old tabs`, err);
-    });
+  const request = (msgs: Anthropic.Beta.BetaMessageParam[]): Omit<StreamParams, "stream"> => ({
+    model,
+    max_tokens: 16000,
+    betas: BETAS,
+    // Tools and system end here, the same for each of this bot's tasks, so they share the entry; the
+    // top-level breakpoint follows the conversation. Two of the four breakpoints allowed.
+    system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+    cache_control: { type: "ephemeral" },
+    tools: [computer.toJSON(), browser.toJSON(), ...CUSTOM_TOOLS, ...(gate ? [RECORD_TOOL] : [])],
+    thinking: UPDATES_MODELS.has(model)
+      ? { type: "adaptive", display: "updates" }
+      : { type: "adaptive" },
+    output_config: { effort: "medium" },
+    // Old screenshots are cleared on the server; clearing them here would break cached reasoning.
+    context_management: {
+      edits: [
+        {
+          type: "clear_tool_uses_20250919",
+          trigger: { type: "input_tokens", value: 80_000 },
+          keep: { type: "tool_uses", value: 8 },
+          clear_at_least: { type: "input_tokens", value: 30_000 },
+          exclude_tools: ["confirm_intent", "request_takeover", "finish_task"],
+        },
+      ],
+    },
+    messages: msgs,
+  });
+
+  /** One model's go at the task. It ends by throwing: Stop, or why it couldn't go on. */
+  const attempt = async (label: string, brief: string): Promise<never> => {
     const first = await look(
-      "Start",
-      `${skill}<task>\n${task.goal}\nDone when: ${task.successCriteria || "the goal is met"}\n</task>\nStarted ${localStamp(new Date(tasks.clock()))}, the owner's local time.`,
+      label,
+      `${brief}\nStarted ${localStamp(new Date(tasks.clock()))}, the owner's local time.`,
     );
     await observePage();
     record("user", first);
 
     for (let step = 0; ; step++) {
       if (signal.aborted) throw signal.reason;
-      if (step >= MAX_STEPS)
-        throw new Stop("failed", `Stopped after ${MAX_STEPS} steps without finishing.`);
-      if (activeMs + (holding ? tasks.clock() - since : 0) > MAX_ACTIVE_MS) {
-        throw new Stop("failed", "Stopped: it ran for 30 minutes without finishing.");
-      }
+      if (step >= limits.maxSteps)
+        throw new Stop(
+          "failed",
+          `Stopped after ${limits.maxSteps} steps without finishing.`,
+          true,
+          ASK,
+        );
+      if (activeMs + (holding ? tasks.clock() - since : 0) > MAX_ACTIVE_MS)
+        throw new Stop("failed", "Stopped: it ran for 30 minutes without finishing.", true, ASK);
       try {
-        d.spend.check(estimateCost(messages, task.model), { id, limitUsd: tasks.budget(id) });
+        d.spend.check(estimateCost(messages, model), { id, limitUsd: tasks.budget(id) });
       } catch (err) {
         if (!(err instanceof BudgetError)) throw err;
         if (err.limit !== "task") throw new Stop("failed", `Stopped: ${err.message}`);
@@ -818,47 +853,13 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         continue;
       }
 
-      const res = await d.model.stream(
-        {
-          model: task.model,
-          max_tokens: 16000,
-          betas: BETAS,
-          // Tools and system end here, the same for each of this bot's tasks, so they share the entry; the
-          // top-level breakpoint follows the conversation. Two of the four breakpoints allowed.
-          system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
-          cache_control: { type: "ephemeral" },
-          tools: [
-            computer.toJSON(),
-            browser.toJSON(),
-            ...CUSTOM_TOOLS,
-            ...(gate ? [RECORD_TOOL] : []),
-          ],
-          thinking: UPDATES_MODELS.has(task.model)
-            ? { type: "adaptive", display: "updates" }
-            : { type: "adaptive" },
-          output_config: { effort: "medium" },
-          // Old screenshots are cleared on the server; clearing them here would break cached reasoning.
-          context_management: {
-            edits: [
-              {
-                type: "clear_tool_uses_20250919",
-                trigger: { type: "input_tokens", value: 80_000 },
-                keep: { type: "tool_uses", value: 8 },
-                clear_at_least: { type: "input_tokens", value: 30_000 },
-                exclude_tools: ["confirm_intent", "request_takeover", "finish_task"],
-              },
-            ],
-          },
-          messages,
-        },
-        {
-          onText: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
-          onThinking: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
-          signal,
-        },
-      );
+      const res = await d.model.stream(request(messages), {
+        onText: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
+        onThinking: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
+        signal,
+      });
       d.spend.recordResponse({
-        model: task.model,
+        model,
         purpose: "task",
         usage: res.usage,
         taskId: id,
@@ -873,14 +874,16 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       }
 
       if (res.stop_reason === "refusal")
-        throw new Stop("failed", "The model declined to carry on with this task.");
+        throw new Stop("failed", "The model declined to carry on with this task.", true, {
+          account: "",
+        });
       if (res.stop_reason === "pause_turn") continue;
       const calls = res.content.filter(
         (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use",
       );
       if (!calls.length) {
         if (res.stop_reason === "max_tokens")
-          throw new Stop("failed", "Stopped: a reply was cut off.");
+          throw new Stop("failed", "Stopped: a reply was cut off.", true, ASK);
         const text = res.content
           .map((b) => (b.type === "text" ? b.text : ""))
           .join("")
@@ -940,10 +943,90 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       }
       if (finished) {
         const prefix = finished.outcome === "blocked" ? "Blocked: " : "";
-        throw new Stop(finished.outcome === "done" ? "done" : "failed", prefix + finished.summary);
+        // Blocked is a login or captcha: Opus can't get past it either.
+        throw new Stop(
+          finished.outcome === "done" ? "done" : "failed",
+          prefix + finished.summary,
+          true,
+          finished.outcome === "failed" && { account: "" },
+        );
       }
       await observePage();
       record("user", results);
+    }
+  };
+
+  /** Whether a failed attempt carries on on Opus: Haiku's, once, unless Settings say not to. */
+  const escalates = () =>
+    model === FIRST_MODEL && d.settings.get().desktopEscalate && !signal.aborted;
+
+  /** The model's account of what it tried, for the one carrying on; empty if it can't give one. */
+  const accountOf = async (why: string): Promise<string> => {
+    const ask: BlockParam = {
+      type: "text",
+      text: `You were stopped: ${why} Another model carries on from here, with the desktop as it is now. Don't use any tools. In under 150 words, tell it what you tried, what worked and what didn't, and where things stand.`,
+    };
+    const last = messages.at(-1);
+    // The same request as the run's, so it reads from the cache.
+    const asked: Anthropic.Beta.BetaMessageParam[] =
+      last?.role === "user"
+        ? [
+            ...messages.slice(0, -1),
+            { role: "user", content: [...(last.content as BlockParam[]), ask] },
+          ]
+        : [...messages, { role: "user", content: [ask] }];
+    try {
+      d.spend.check(estimateCost(asked, model), { id, limitUsd: tasks.budget(id) });
+      const res = await d.model.create({ ...request(asked), max_tokens: 4000 });
+      d.spend.recordResponse({ model, purpose: "task", usage: res.usage, taskId: id });
+      return res.content
+        .map((b) => (b.type === "text" ? b.text : ""))
+        .join("")
+        .trim()
+        .slice(0, 2000);
+    } catch (err) {
+      if (signal.aborted) throw err;
+      console.error(`task ${id}: no account of the first attempt`, err);
+      return "";
+    }
+  };
+
+  try {
+    // The owner saved it (PLAN.md §5.4), so it's trusted like the task itself.
+    const skill =
+      task.skill && (await d.memory.exists(skillPath(task.skill)))
+        ? `<skill name="${task.skill}">\n${(await d.memory.read(skillPath(task.skill))).trim()}\n</skill>\n\n`
+        : "";
+    await acquire();
+    // Tabs an earlier task left open would be in this one's way, and in its context.
+    await d.desktop.agent.resetBrowser().catch((err) => {
+      if (signal.aborted) throw err;
+      console.error(`task ${id}: couldn't close the old tabs`, err);
+    });
+    const brief = `${skill}<task>\n${task.goal}\nDone when: ${task.successCriteria || "the goal is met"}\n</task>`;
+    try {
+      await attempt("Start", brief);
+    } catch (err) {
+      if (!(err instanceof Stop && err.escalate) || !escalates()) throw err;
+      // The same task carries on: its card, its parent's wait and its approvals stay as they are.
+      const account = err.escalate.account ?? (await accountOf(err.summary));
+      tasks.addStep(id, {
+        kind: "note",
+        name: "Trying again on Opus",
+        detail: `Haiku stopped: ${err.summary}`,
+        url: lastUrl,
+      });
+      model = ESCALATE_TO;
+      tasks.setModel(id, model, FIRST_MODEL);
+      messages.length = 0;
+      screening = [];
+      armed = false;
+      activeMs = 0;
+      since = tasks.clock();
+      await attempt(
+        "Start on Opus",
+        `${brief}\n<earlier_attempt>\nAnother model tried this first and stopped: ${err.summary}${account ? `\nWhat it said it tried:\n${account}` : ""}\nThe desktop is as it left it.\n</earlier_attempt>`,
+      );
     }
   } catch (err) {
     if (err instanceof Stop) tasks.finish(id, err.status, err.summary);

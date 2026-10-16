@@ -941,6 +941,11 @@ final class AppStore {
     return try await api.put("/settings", body: Body(desktopModel: model))
   }
 
+  func setDesktopEscalate(_ on: Bool) async throws -> AppSettings {
+    struct Body: Encodable { let desktopEscalate: Bool }
+    return try await api.put("/settings", body: Body(desktopEscalate: on))
+  }
+
   func setTaskModel(_ model: AppSettings.TaskModel) async throws -> AppSettings {
     struct Body: Encodable { let taskModel: AppSettings.TaskModel }
     return try await api.put("/settings", body: Body(taskModel: model))

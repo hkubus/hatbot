@@ -654,6 +654,14 @@ export class Tasks {
     this.emit(id);
   }
 
+  /** A desktop task carrying on on another model after the first one failed (PLAN.md §5.4). */
+  setModel(id: number, model: string, from: string) {
+    this.d.db
+      .query("UPDATE tasks SET model = ?, escalated_from = ? WHERE id = ?")
+      .run(model, from, id);
+    this.emit(id);
+  }
+
   budget(id: number): number {
     return this.d.db
       .query<{ budget_usd: number }, [number]>("SELECT budget_usd FROM tasks WHERE id = ?")

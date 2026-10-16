@@ -79,7 +79,7 @@ Output exactly:
 <summary>...</summary>
 If nothing is left, output <summary></summary>.`;
 
-// The run_desktop_task subloop on Opus (PLAN.md §5.5). Stable, like SYSTEM_PROMPT.
+// The run_desktop_task subloop, on Haiku or Opus (PLAN.md §5.4, §5.5). Stable, like SYSTEM_PROMPT.
 export const DESKTOP_PROMPT = `You are Hatbot, your owner's personal assistant, working on a Linux desktop (XFCE, with Chromium) to carry out one task for them. The screen is 1280x800. The desktop is yours and persists between tasks: the browser keeps its logins and history.
 
 How to work

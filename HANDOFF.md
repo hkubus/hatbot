@@ -17,7 +17,7 @@ Everything built since M4 goes live with these steps, in this order: `host-setup
 6. **Checks:** `./verify.sh`, then Settings → Check everything (or `infra/smoke.sh`), then a test approval, approved from the lock screen.
 7. **Kuma triggers:** re-save existing Uptime Kuma triggers with the new default prompt (`KUMA_PROMPT` in `apps/web/src/pages/Schedules.tsx`) to get investigate → one restart → verify.
 8. **iOS install:** install the IPA from the SideStore source.
-9. **Settings:** the heartbeat is on by default now. Settings saved by a version that already had it keep their choice, so look at Settings → Heartbeat.
+9. **Settings:** a setting saved by an earlier version keeps its value, so look at these. The heartbeat is on by default now (Settings → Heartbeat). Desktop tasks now start on Haiku 5.5 and carry on on Opus when Haiku fails; an install that saved any setting since 2026-10-10 keeps Opus for the desktop (Settings → Desktop).
 
 ## The live run
 

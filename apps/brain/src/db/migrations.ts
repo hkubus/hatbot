@@ -571,4 +571,7 @@ export const migrations: string[] = [
   CREATE INDEX negotiation_tasks_message ON negotiation_tasks (message_id);
   ALTER TABLE messages ADD COLUMN negotiation_id INTEGER REFERENCES negotiations(id) ON DELETE SET NULL;
   `,
+  /* 28: the model a desktop task started on, when it carried on on another (PLAN.md §5.4) */ `
+  ALTER TABLE tasks ADD COLUMN escalated_from TEXT;
+  `,
 ];

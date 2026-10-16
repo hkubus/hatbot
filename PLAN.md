@@ -44,7 +44,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 | Network | Both guests on the LAN at `192.168.55.<VMID+100>`. The host filters the desktop's bridge port: internet only, LAN and host blocked, only the brain can reach it |
 | Provisioning | A setup script you review and run once on the host; Hatbot then uses a **scoped Proxmox API token** |
 | Model provider | Claude only |
-| Models | **Opus 5.5** at low effort is the brain (chat, planning, tools), at medium it drives the desktop and writes code · **Haiku 5.5** handles triage, summaries and injection screening · no Sonnet or Fable (§5.4) |
+| Models | **Haiku 5.5** by default for chat, background tasks and the desktop (each can be switched to Opus in Settings), and for triage, summaries and injection screening · **Opus 5.5** for `ask_opus`, desktop tasks Haiku fails, and teach-by-showing · no Sonnet or Fable (§5.4) |
 | Agent loop | **Custom loop on the raw Messages API**, with no Agent SDK. Same model quality; we own context, caching and cost |
 | Tools | Built-in TypeScript tools; integrations (Proxmox, SSH, Forgejo, MCP) are **plugins** that ship with Hatbot and are switched on in Settings (§4.5) |
 | Billing | API key funded by **Max 20x's included $200/mo API credits**; stop when they run out |
@@ -220,17 +220,19 @@ build context (system + memory index + task)  →  call model (stream)
 | Job | Model | Notes |
 |---|---|---|
 | Chat, planning, non-screen tools | `claude-haiku-5-5` by default, or `claude-opus-5-5` (Settings → Chat); effort `low` (Settings: low or medium) | On Haiku the chat has `ask_opus`: one Opus 5.5 call (effort `high`, no tools) per reply at most, for code, debugging and multi-step reasoning, its answer streamed into the reply as is. Haiku has no server-side fallback, so a refusal ends the reply with a note. Changing the model or effort starts a new episode or drops the cache, so heavier work runs as a task instead |
-| Desktop driving (`run_desktop_task`) | `claude-opus-5-5`, effort `medium`; Settings → Desktop can switch new tasks to `claude-haiku-5-5` | Native `computer_toolset_20260801` plus `browser_toolset_20260801` for web pages. Best screenshot reading. Haiku 5.5 supports the toolset too; its tasks run without `display: "updates"`, which isn't documented for it |
-| Schedules and triggers (background tasks) | `claude-opus-5-5`, the chat's effort | Same kind of work as chat, without a screen (§5.6) |
+| Desktop driving (`run_desktop_task`) | `claude-haiku-5-5`, effort `medium`; when Haiku fails, the same task carries on once on `claude-opus-5-5` (Settings → Desktop: the model, and "Try again on Opus when Haiku fails", on by default) | Native `computer_toolset_20260801` plus `browser_toolset_20260801` for web pages. Haiku is cheap but fails more (72% on OSWorld); Opus reads screenshots best. Haiku's tasks run without `display: "updates"`, which isn't documented for it. See "Desktop escalation" below |
+| Schedules and triggers (background tasks) | `claude-haiku-5-5` by default, or `claude-opus-5-5` (Settings → Tasks); the chat's effort | Same kind of work as chat, without a screen (§5.6) |
 | Injection screening, thread summaries, alert triage | `claude-haiku-5-5`, effort `low` | $0.10/$0.50 per 1M tokens up to 100k-token prompts, 5x above (whole request). Thinks by default |
-| Writing code (`forge_*`, `ssh_exec` work, M4) | `claude-opus-5-5`, effort `medium`; `high` when you ask or after a failed attempt | Runs as a task with its own card, spend limit and timeline, like desktop tasks |
+| Writing code (`forge_*`, `ssh_exec` work, M4) | the background tasks' model, effort `medium`; `high` when you ask or after a failed attempt | Runs as a task with its own card, spend limit and timeline, like desktop tasks |
 | Teach-by-showing skill writing | `claude-opus-5-5` | Infrequent |
 
 Chat requests opt into server-side fallback (`fallbacks: "default"`): if the model refuses, the API retries on a fallback model, and the spend ledger bills each model that ran at its own rates.
 
 Why these (Artificial Analysis Intelligence Index, score and cost per index task, October 2026): Haiku 5.5 medium–max 34–43 at $0.05–0.21; Opus 5.5 medium 51 at $1.34, high 54 at $1.82, xhigh 56 at $3.46, max 58 at $5.98; Sonnet 5.5 low/medium 36/41 at $0.41/0.48, high 47 at $0.88, max 56 at $5.5–7.7. Every Sonnet setting is beaten on score or price by Haiku 5.5 or Opus 5.5. Opus low (42 at $0.55) loses to Haiku max on the index, but chat turns are short and tool-driven: a big model with little thinking answers faster and judges better, and cache reads cost the same as Sonnet's. Fable 5.1 and Opus xhigh/max cost 2–4x for a few points; not used.
 
-Later, run a small test on real tasks to see whether Haiku 5.5 (72% on OSWorld) can drive the desktop well enough to save money. Check tool versions and model IDs against the live docs at implementation time.
+**Desktop escalation** (decided 2026-10-16): a Haiku desktop task that runs out of steps (80) or time (30 minutes), is refused, is cut off, or finishes as failed on its own carries on once on Opus, in the same task: its card, its timeline, its parent's wait and its spend limit stay. Haiku is first asked, on its own cached conversation, what it tried; Opus starts afresh with the task, that account and why Haiku stopped, on the desktop as Haiku left it (`escalated_from` on the task, migration 28). Budget stops, cancellations, takeovers nobody answered and "Blocked: …" endings (a login or captcha) don't carry on, since Opus can't get past them either. The weekly report has a line per model a desktop task started on: done, failed, and how many of Haiku's failures Opus then finished.
+
+Check tool versions and model IDs against the live docs at implementation time.
 
 ### 5.5 Built-in tools (brain)
 | Tool | Lane | Default policy |

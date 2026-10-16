@@ -348,10 +348,21 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
                   update({ desktopModel: e.target.value as AppSettings["desktopModel"] })
                 }
               >
+                <option value="claude-haiku-5-5">Haiku 5.5</option>
                 <option value="claude-opus-5-5">Opus 5.5</option>
-                <option value="claude-haiku-5-5">Haiku 5.5 (cheaper, less tested)</option>
               </select>
             </div>
+            {settings.desktopModel === "claude-haiku-5-5" && (
+              <div className="row">
+                <div className="txt">
+                  <b>Try again on Opus when Haiku fails</b>
+                </div>
+                <Switch
+                  on={settings.desktopEscalate}
+                  onChange={(desktopEscalate) => update({ desktopEscalate })}
+                />
+              </div>
+            )}
           </div>
         </section>
 
