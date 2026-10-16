@@ -36,7 +36,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 | Area | Decision |
 |---|---|
 | Product shape | Personal agent first; teams later |
-| Audience | You first. The repository is public; a licence isn't chosen yet. **No copyleft dependencies**: `bun run licenses` fails CI on one, with only build tools that ship nothing allowed by name (Vite's `lightningcss`, MPL-2.0) |
+| Audience | You first. The repository is public, under the MIT licence. **No copyleft dependencies**: `bun run licenses` fails CI on one, with only build tools that ship nothing allowed by name (Vite's `lightningcss`, MPL-2.0) |
 | Hosting | Self-hosted only, on the Proxmox host `192.168.55.113` (i3-12100F, ~16 GiB RAM, no GPU) |
 | Isolation | **Brain** and **desktop** are separate guests |
 | Brain guest | New dedicated unprivileged LXC |
@@ -560,7 +560,7 @@ Each milestone ends with a working, demo-able system.
 - **Done when**: you can chat, approve and take over from the app on your phone.
 
 ### After v1
-Email via Proton Bridge · open-source release: choose a licence (the install guide in `README.md` and the licence check are done).
+Email via Proton Bridge.
 
 **Not planned** (the owner's call, 2026-10-16): messengers (Signal, Telegram, Matrix); being reachable only through Hatbot's own web and iOS app is fine. Email and calendar wait for after v1.
 

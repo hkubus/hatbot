@@ -3,7 +3,7 @@
 Written 2026-10-10. `PLAN.md` is the source of truth; this file says where things stand and what to build next.
 Delete it, or fold it into `PLAN.md`, once the work below is done.
 
-**The gaps pass** (2026-10-16) is done, apart from the live run below, which is the owner's, and the licence, which the owner picks: MIT or Apache-2.0 (PLAN §11). Its larger fixes: code tasks check themselves through the repo's CI, desktop tasks start on Haiku and carry on on Opus, memory search ranks, a tainted chat's or task's writes to skills and INDEX.md wait as proposals, the last $1 of each limit is kept for alerts, watchers can run a page's scripts, and an install guide and a licence check in CI.
+**The gaps pass** (2026-10-16) is done, apart from the live run below, which is the owner's. Hatbot is MIT-licensed (`LICENSE`). Its larger fixes: code tasks check themselves through the repo's CI, desktop tasks start on Haiku and carry on on Opus, memory search ranks, a tainted chat's or task's writes to skills and INDEX.md wait as proposals, the last $1 of each limit is kept for alerts, watchers can run a page's scripts, and an install guide and a licence check in CI.
 
 ## Deploy checklist
 
@@ -164,7 +164,7 @@ PLAN §16: Haggler haggles with a seller inside a mandate you approve. §16.7 sa
 - **Fixed on the way:** a restart used to cancel every pending approval, so a redeploy would have abandoned each negotiation waiting for its mandate. Mandates now outlast a restart.
 
 ## 4. Later (not v1, don't start without the owner)
-- **After v1** (PLAN §11): email via Proton Bridge, an open-source release.
+- **After v1** (PLAN §11): email via Proton Bridge.
 - **Negotiation** (PLAN §16): N1 and N2 are built (above). N3 onwards wait for the owner, and Scout's part needs a handoff in Scout's own repo.
 
 ## Things the owner should know when testing M4
