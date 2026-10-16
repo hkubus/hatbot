@@ -3,6 +3,8 @@
 Written 2026-10-10. `PLAN.md` is the source of truth; this file says where things stand and what to build next.
 Delete it, or fold it into `PLAN.md`, once the work below is done.
 
+**Next: `GAPS.md`** (2026-10-16) is the plan for the next pass: small fixes and one deploy checklist, the owner's live run, then the larger fixes. Start there.
+
 ## Where things stand
 
 - **Built:** M0–M5, the iOS app, more than one bot (§14) and looking after things (§15). M4 onwards is built and committed but not yet deployed or tried live.
