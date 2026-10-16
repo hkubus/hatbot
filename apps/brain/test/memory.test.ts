@@ -1,17 +1,20 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type Db, openDb } from "../src/db";
 import { blobSha, HATBOT, MemoryConflict, MemoryError, MemoryStore } from "../src/memory/store";
 import { setUpOwner, testApp } from "./helpers";
 
 const YOU = { name: "You", email: "owner@local" };
 let dir: string;
+let db: Db;
 let mem: MemoryStore;
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "hatbot-mem-"));
-  mem = new MemoryStore(dir);
+  db = openDb(":memory:");
+  mem = new MemoryStore(dir, db);
   await mem.init();
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
@@ -113,7 +116,46 @@ test("the memory API sends the sha and answers 409 with what the file is now", a
   });
 });
 
-test("search wants every word, in any line of a file, and ranks files by how much they match", async () => {
+test("search ranks sections by how well they match, finding words in any form", async () => {
+  await mem.write(
+    "homelab/scout.md",
+    "# Scout\nScout runs on CT 130.\n\n## Backups\nPBS backs it up nightly.",
+    HATBOT,
+    "a",
+  );
+  await mem.write("homelab/nas.md", "# NAS\nThe NAS is a Synology and runs Docker.", HATBOT, "b");
+  // Not every word has to be there, and the section with more of them comes first.
+  expect(await mem.search("what runs scout")).toEqual([
+    { path: "homelab/scout.md", line: 2, text: "Scout runs on CT 130." },
+    { path: "homelab/nas.md", line: 2, text: "The NAS is a Synology and runs Docker." },
+  ]);
+  // Stemmed, and the last word is a prefix: "backing" finds "backs", "nightl" finds "nightly".
+  expect(await mem.search("backing up nightl")).toEqual([
+    { path: "homelab/scout.md", line: 5, text: "PBS backs it up nightly." },
+  ]);
+  expect(await mem.search("   ")).toEqual([]);
+});
+
+test("the search index follows every write, delete and revert, and hand edits at startup", async () => {
+  const find = async (q: string) => (await mem.search(q)).map((h) => h.path);
+  await mem.write("pets.md", "Mia is a cat", YOU, "pets");
+  expect(await find("cat")).toEqual(["pets.md"]);
+  await mem.write("pets.md", "Mia is a dog", YOU, "pets");
+  expect(await find("cat")).toEqual([]);
+  expect(await find("dog")).toEqual(["pets.md"]);
+  const deleted = (await mem.delete("pets.md", YOU, "forget")) as string;
+  expect(await find("dog")).toEqual([]);
+  await mem.revert(deleted, YOU);
+  expect(await find("dog")).toEqual(["pets.md"]);
+
+  // Edited by hand outside Hatbot, then the brain starts.
+  writeFileSync(join(dir, "hand.md"), "Typed on the brain directly\n");
+  expect(await find("directly")).toEqual([]);
+  await new MemoryStore(dir, db).init();
+  expect(await find("directly")).toEqual(["hand.md"]);
+});
+
+test("without the index, or when it fails, search wants every word, in any line of a file", async () => {
   await mem.write("homelab/backups.md", "PBS backs up nightly\nThe NAS keeps backups", HATBOT, "a");
   await mem.write("homelab/nas.md", "The NAS is a Synology", HATBOT, "b");
   await mem.write(
@@ -122,9 +164,13 @@ test("search wants every word, in any line of a file, and ranks files by how muc
     HATBOT,
     "c",
   );
-  const hits = await mem.search("nas backups");
+  const grep = new MemoryStore(dir);
+  const hits = await grep.search("nas backups");
   expect([...new Set(hits.map((h) => h.path))]).toEqual(["people/anna.md", "homelab/backups.md"]);
   // The line with both words comes first in its file.
   expect(hits[0]).toMatchObject({ path: "people/anna.md", line: 2 });
-  expect(await mem.search("   ")).toEqual([]);
+  expect(await grep.search("   ")).toEqual([]);
+
+  db.run("DROP TABLE memory_fts");
+  expect(await mem.search("nas backups")).toEqual(hits);
 });

@@ -6,11 +6,14 @@ import type { Tasks } from "./tasks/service";
 
 const LIMIT = 30;
 
-/** Words for FTS5, each quoted; the last one also matches as a prefix, so results come while typing. */
-export function ftsQuery(query: string): string | null {
+/**
+ * Words for FTS5, each quoted; the last one also matches as a prefix, so results come while typing.
+ * All of them must match, or with `join` " OR ", any.
+ */
+export function ftsQuery(query: string, join = " "): string | null {
   const terms = query.match(/[\p{L}\p{N}_]+/gu) ?? [];
   if (!terms.length) return null;
-  return terms.map((t, i) => `"${t}"${i === terms.length - 1 ? "*" : ""}`).join(" ");
+  return terms.map((t, i) => `"${t}"${i === terms.length - 1 ? "*" : ""}`).join(join);
 }
 
 /** For LIKE: % and _ match themselves. */

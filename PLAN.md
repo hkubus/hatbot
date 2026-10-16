@@ -335,7 +335,7 @@ How it's enforced:
 ## 7. Data
 
 ### 7.1 SQLite (SSD, WAL)
-`messages` (thread; FTS5 index), `episodes`, `tasks`, `task_steps` (tool calls, results metadata, screenshot refs), `approvals`, `schedules`, `triggers`, `spend_ledger`, `sessions` (auth), `api_tokens`, `settings` (including each plugin's switch and settings), `skills_index`.
+`messages` (thread; FTS5 index), `memory_fts` (memory files by section, for search), `episodes`, `tasks`, `task_steps` (tool calls, results metadata, screenshot refs), `approvals`, `schedules`, `triggers`, `spend_ledger`, `sessions` (auth), `api_tokens`, `settings` (including each plugin's switch and settings), `skills_index`.
 
 ### 7.2 Memory repo (`/var/lib/hatbot/memory`, git, SSD)
 ```
@@ -349,6 +349,7 @@ journal/YYYY-MM.md  ← notable events, short
 ```
 - **Commits**: every write is a commit authored `Hatbot <hatbot@local>`, with a message that names the task. Your edits from the UI are committed as you.
 - **UI**: lists commits, shows diffs, and reverts a commit with one click.
+- **Search** (`memory_search` and the app's search box): FTS5 over each file's sections, split at headings, with Porter stemming. Any of the words may match, the best-ranked (bm25) section first, shown as its line with the most matches. Every commit reindexes the files it changed; startup reindexes everything, which picks up hand edits. If the index fails, search falls back to `git grep` for lines with every word. No meaning-based search: Anthropic has no embedding API, and a local model on a host without a GPU isn't worth it at this size.
 - **Not pushed to any remote.** Backed up by PBS.
 
 ### 7.3 Archive (`/archive`, HDD pool mount)

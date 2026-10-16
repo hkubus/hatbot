@@ -254,7 +254,8 @@ export const TOOLS = [
   }),
   def({
     name: "memory_search",
-    description: "Search your memory repo for a phrase (case-insensitive). Returns matching lines.",
+    description:
+      "Search your memory by words, in any form (runs finds run). The best-matching sections first, each as file:line: excerpt.",
     schema: z.object({ query: z.string().min(1) }),
     run: async ({ query }, { memory }) =>
       (await memory.search(query)).map((h) => `${h.path}:${h.line}: ${h.text}`).join("\n") ||

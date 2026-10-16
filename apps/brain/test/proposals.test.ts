@@ -45,11 +45,15 @@ test("a tidy-up is proposed as a diff, and applied as you in one commit", async 
     ["home.md", true, true],
   ]);
   expect(t.taskModel.creates.at(-1)?.model).toBe("claude-opus-5-5");
+  const found = async () => [...new Set((await t.memory.search("router")).map((h) => h.path))];
+  expect(await found()).toEqual(expect.arrayContaining(["home.md", "network.md"]));
 
   const applied = await t.call("POST", `/proposals/${p.id}/apply`, undefined, { cookie });
   expect(applied.status).toBe(200);
   expect(await t.memory.exists("network.md")).toBe(false);
   expect(await t.memory.read("home.md")).toContain("also the network notes");
+  // Search follows it.
+  expect(await found()).toEqual(["home.md"]);
   const [last] = await t.memory.log(1);
   expect(last).toMatchObject({ author: "You", message: "Tidy: Merge the router notes" });
   expect((await t.call("POST", `/proposals/${p.id}/apply`, undefined, { cookie })).status).toBe(

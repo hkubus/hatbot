@@ -574,4 +574,7 @@ export const migrations: string[] = [
   /* 28: the model a desktop task started on, when it carried on on another (PLAN.md §5.4) */ `
   ALTER TABLE tasks ADD COLUMN escalated_from TEXT;
   `,
+  /* 29: memory files by section, for ranked search; refilled at startup and on every commit */ `
+  CREATE VIRTUAL TABLE memory_fts USING fts5(path UNINDEXED, line UNINDEXED, text, tokenize='porter unicode61');
+  `,
 ];
