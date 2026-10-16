@@ -11,6 +11,7 @@ import { inWorker } from "./db/worker";
 import { DesktopError } from "./desktop/client";
 import type { Desktop } from "./desktop/service";
 import type { MemoryStore } from "./memory/store";
+import type { DeadManPing } from "./ping";
 import type { Plugins } from "./plugins/registry";
 import type { Proxmox } from "./proxmox";
 import type { SettingsStore } from "./settings";
@@ -45,6 +46,8 @@ export type ChecksDeps = {
   updates: Updates;
   /** Your ntfy server; null when it isn't set up. */
   ntfy: { configured: boolean; health(): Promise<void> } | null;
+  /** The dead-man ping; absent in tests that don't need it. */
+  ping?: Pick<DeadManPing, "configured" | "lastPing">;
   /** False when ANTHROPIC_API_KEY is missing. */
   apiKeySet?: boolean;
   /** The brain's time zone; the desktop's should match it. */
@@ -158,6 +161,7 @@ export class Checks {
       { id: "spend", name: "Spending", run: async () => this.spending() },
       { id: "updates", name: "Last update", run: async () => this.lastUpdate() },
       { id: "notifications", name: "Notifications", run: () => this.notifications() },
+      { id: "ping", name: "Dead-man ping", run: async () => this.ping() },
       { id: "proxmox", name: "Desktop snapshots", run: () => this.snapshots() },
       ...this.desktopChecks(),
       { id: "schedules", name: "Schedules", run: async () => this.schedules() },
@@ -273,6 +277,19 @@ export class Checks {
       return warn("NTFY_URL isn't set, so approvals and results only show in the app.");
     await ntfy.health();
     return ok("Your ntfy server answers. Send a test approval to try the buttons.");
+  }
+
+  private ping() {
+    const p = this.d.ping;
+    if (!p?.configured) return skip("HATBOT_PING_URL isn't set.");
+    const last = p.lastPing();
+    if (!last) return warn("No ping has gone out yet.");
+    const at = new Date(last.at).toLocaleTimeString("en-GB");
+    if (last.error) return fail(`The ping at ${at} failed: ${last.error}`);
+    if (last.status === "down") return fail(`At ${at} the monitor was told: ${last.msg}`);
+    if (this.clock() - Date.parse(last.at) > 3 * 60_000)
+      return warn(`The last ping was at ${at}; they've stopped. Restart the brain.`);
+    return ok(`The monitor took the last one, at ${at}.`);
   }
 
   private async snapshots() {

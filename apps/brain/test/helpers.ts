@@ -20,6 +20,7 @@ import { Proposals } from "../src/memory/proposals";
 import { MemoryStore } from "../src/memory/store";
 import { Negotiations } from "../src/negotiate/service";
 import { LinkingNotifier, type Notification, type Notifier } from "../src/notify";
+import { DeadManPing } from "../src/ping";
 import { codePlugin } from "../src/plugins/code";
 import type { Plugin } from "../src/plugins/plugin";
 import { Plugins } from "../src/plugins/registry";
@@ -223,6 +224,7 @@ export async function testApp(
   );
   const proxmox = new Proxmox(proxmoxEnv);
   proxmox.pollMs = 5;
+  const ping = new DeadManPing({ db, clock });
   const checks = new Checks({
     db,
     config,
@@ -238,6 +240,7 @@ export async function testApp(
     proxmox,
     updates,
     ntfy: null,
+    ping,
     fetch: async (url) =>
       url === `${ORIGIN}/api/v1/health`
         ? Response.json({ ok: true })
@@ -317,6 +320,7 @@ export async function testApp(
     skills,
     teach,
     checks,
+    ping,
     storage,
     updateDir,
     events: seen,

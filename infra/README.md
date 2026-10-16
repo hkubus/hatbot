@@ -121,6 +121,20 @@ systemctl restart hatbot-brain'
 
 The brain's unit loads these env files from the first deploy after they were added; redeploy the brain once for `pbs.env`, `homeassistant.env` and `uptimekuma.env`.
 
+## When the brain itself is down
+
+Check everything and the heartbeat run inside the brain, so they can't tell you it's down. Instead the brain pings a monitor outside it once a minute, and the monitor tells you when the pings stop. In Uptime Kuma:
+
+1. **Notification:** Settings → Notifications → Setup Notification, type **ntfy**, with your ntfy server, topic and token. It must go to ntfy directly, not to Hatbot's Kuma trigger, because Hatbot is what's down.
+2. **Monitor:** Add New Monitor, type **Push**, heartbeat interval **60** seconds, retries **2**, with that notification on. Copy its push URL.
+3. **The brain:** put the URL in `/etc/hatbot/secrets.env` and restart:
+
+   ```sh
+   pct exec <brain> -- sh -c 'echo "HATBOT_PING_URL=https://kuma.example/api/push/…?status=up&msg=OK&ping=" >> /etc/hatbot/secrets.env; systemctl restart hatbot-brain'
+   ```
+
+The brain sends `status=up` while its database answers and `status=down` with the error when it doesn't, and keeps pinging while paused. Treat the URL as a secret: whoever has it can say "up" for the brain. Settings → Check everything shows the last ping. Any other dead-man service that takes a GET with `status` and `msg` works too.
+
 ## Settings
 
 Set any of these as environment variables, or answer the prompts. Defaults are in the top of `host-setup.sh`.

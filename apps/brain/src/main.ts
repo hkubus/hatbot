@@ -19,6 +19,7 @@ import { Proposals } from "./memory/proposals";
 import { MemoryStore } from "./memory/store";
 import { Negotiations } from "./negotiate/service";
 import { LinkingNotifier, NtfyNotifier } from "./notify";
+import { DeadManPing } from "./ping";
 import { PLUGINS } from "./plugins";
 import { codePlugin } from "./plugins/code";
 import { Plugins } from "./plugins/registry";
@@ -183,12 +184,14 @@ setInterval(() => void desktop.refresh(), 30_000);
 setInterval(() => approvals.expireDue(), 60_000);
 setInterval(() => negotiations.due(), 60_000);
 setInterval(() => void chats.sweep(), 60_000);
+const ping = new DeadManPing({ db, url: process.env.HATBOT_PING_URL });
 // Runs missed while the brain was down start once plugins are up, so they get their tools.
 void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {
   schedules.tick();
   triggers.tick();
   watchers.tick();
   setInterval(() => {
+    ping.tick();
     schedules.tick();
     triggers.tick();
     watchers.tick();
@@ -215,6 +218,7 @@ const checks = new Checks({
   proxmox,
   updates,
   ntfy,
+  ping,
   apiKeySet: Boolean(process.env.ANTHROPIC_API_KEY),
 });
 const loginLimits = {
