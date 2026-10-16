@@ -18,6 +18,7 @@ Everything built since M4 goes live with these steps, in this order: `host-setup
 7. **Kuma triggers:** re-save existing Uptime Kuma triggers with the new default prompt (`KUMA_PROMPT` in `apps/web/src/pages/Schedules.tsx`) to get investigate → one restart → verify.
 8. **iOS install:** install the IPA from the SideStore source. The bundle prefix is now one setting (`BUNDLE_PREFIX` in `apps/ios/project.yml`, `com.example` there); the iOS workflow keeps `ovh.gaycats` unless the repository variable `BUNDLE_PREFIX` says otherwise, so the installed app stays the same app.
 9. **Settings:** a setting saved by an earlier version keeps its value, so look at these. The heartbeat is on by default now (Settings → Heartbeat). Desktop tasks now start on Haiku 5.5 and carry on on Opus when Haiku fails; an install that saved any setting since 2026-10-10 keeps Opus for the desktop (Settings → Desktop). The last $1 of the daily and monthly limits is now kept for alerts (Settings → Spending limits → Kept for alerts).
+10. **Negotiation**, once you have a marketplace account: the steps under "Negotiation, N1 and N2" below.
 
 ## The live run
 
@@ -29,12 +30,19 @@ Acceptance tests for parts that have never run live. The owner runs them; write 
 4. **OVH invoice:** teach it once on the desktop, save the skill, then run it as a task. Passes when the PDF arrives through `send_file`. Note which model drove it and whether it needed a takeover. *Not run yet.*
 5. **Share sheet:** share a Safari link with "summarize". Passes when the summary appears in chat. *Not run yet.*
 6. **Also try:** a desktop task that needs a login (takeover both ways), two bots in a group, an incognito chat, `/task` and `/remember`, and Run again on an ended task. *Not run yet.*
+7. **Negotiation:** with Haggler logged in to OLX, ask it to haggle for a cheap listing you'd actually buy. It passes when:
+   - the mandate card arrives;
+   - approving it sends the opening message on its own;
+   - the message shows in OLX's conversation, and on the negotiation's page with no note under it (an unconfirmed send says the message box didn't clear);
+   - when the seller holds out above the limit, an answer from Haggler that goes past it asks you instead of sending.
+
+   Until N3, Haggler reads replies only when asked: "check the seller's reply". *Not run yet.*
 
 ## Where things stand
 
-- **Built:** M0–M5, the iOS app, more than one bot (§14) and looking after things (§15). M4 onwards is built and committed but not yet deployed or tried live.
+- **Built:** M0–M5, the iOS app, more than one bot (§14), looking after things (§15) and negotiation's N1 and N2 (§16). M4 onwards is built and committed but not yet deployed or tried live.
 - **Not yet tried live** (the owner does these): the M2 lock-screen approval, the M3 morning schedule, Forgejo webhook and Kuma alert, all of M4 and M5, the first iOS install from SideStore, and everything from the gaps pass. The renderer was tried only with Playwright's Chromium here, not Debian's on the desktop.
-- **Checks:** 444 tests (brain, desktop-agent and web) and 52 iOS core tests pass, Biome and `tsc -b` are clean, and `bun run licenses` passes.
+- **Checks:** 445 tests (brain, desktop-agent and web) and 52 iOS core tests pass, Biome and `tsc -b` are clean, and `bun run licenses` passes.
 
 ## How to work here
 
@@ -130,9 +138,34 @@ The owner asked for performance work, mostly on the network, with each change me
 - **iOS:** a reconnect loads everything side by side (0.17 s instead of 1.2 s at 150 ms a request); seen messages go in one post; task rows load in one request, one by one from a brain without `ids=`.
 - **For the owner to decide:** desktop tasks send every screenshot again, as base64, with each step: a 30-screenshot task uploads about 56 MB in all. The Files API would upload each once and refer to it by id. It costs a round trip per screenshot and keeps screenshots at Anthropic until they're deleted.
 
+## Negotiation, N1 and N2 (built 2026-10-16, not tried live)
+PLAN §16: Haggler haggles with a seller inside a mandate you approve. §16.7 says how it's built, and §16.8 has Haggler's instructions to paste. Nothing could be tried live without a marketplace account; it's tested against a stand-in desktop-agent and a stand-in Scout.
+- **Built:**
+  - **Records:** migration 27 (wants, negotiations, their messages).
+  - **Tools:** the negotiate tools (`apps/brain/src/negotiate/`). The appraisal falls back to `scout_watch_analytics` until Scout has `scout_price_reference` and `scout_comparables`.
+  - **The mandate approval:** a note on it changes the numbers.
+  - **`negotiate_send`:** its policy is checked in code, with pace limits and quiet hours.
+  - **Claims:** what Haggler has told each seller is kept.
+  - **The exact-text gate:** the Send click goes through only with the approved text, in the negotiation's conversation, once.
+  - **Web:** the line under the reply, the negotiation's page, open negotiations on Tasks, and mandates among what needs you.
+- **Not built:** N3 onwards: inbox polling, follow-ups, scam screening, several sellers and the declines, and selling. Also the playbook skill from N1, which needs the account. Scout's part (§16.4) is for Scout's own repo; the shapes the brain reads are in §16.7.
+- **To do, in order:**
+  1. **Deploy** (checklist step 3). It runs migration 27 and installs a desktop-agent whose inspect reports the tab's address and the text in its text boxes. With an older desktop-agent, nothing is sent.
+  2. **Scout:** Settings → Plugins → MCP. Add Scout as an HTTP server at `http://<scout>:3001/mcp`, with `Authorization: Bearer ${SCOUT_TOKEN}` and `SCOUT_TOKEN` (one of Scout's `SCOUT_API_TOKENS`) in `mcp.env`.
+     - Set these to **Chat:** `scout_search`, `scout_listings`, `scout_listing_detail` and `scout_watch_analytics`, plus `scout_price_reference` and `scout_comparables` once they exist.
+     - Set `scout_record_outcome` to **Allow** once it exists, if Scout should learn final prices.
+     - Scout limits `/mcp` to 30 requests a minute.
+  3. **Haggler:** make the bot (New bot) with the MCP plugin as its only plugin, and paste §16.8 as its instructions.
+     - Any bot with Scout gets the negotiate tools. Hatbot too, if it has the MCP plugin.
+     - The MCP plugin is allowed as a whole, so Haggler also gets any other MCP server you've added.
+  4. **Account:** log in to the marketplace in Haggler's own browser profile. Ask Haggler to open olx.pl and take over when it asks you to log in.
+  5. **Time zone:** quiet hours (22:00–08:00) go by the brain's clock. Check that the brain's container is on your time zone.
+  6. **The live run:** item 7 above.
+- **Fixed on the way:** a restart used to cancel every pending approval, so a redeploy would have abandoned each negotiation waiting for its mandate. Mandates now outlast a restart.
+
 ## 4. Later (not v1, don't start without the owner)
 - **After v1** (PLAN §11): email via Proton Bridge, an open-source release.
-- **Negotiation** (PLAN §16): planned 2026-10-16, not started. N1 first. Scout's part needs a handoff in Scout's own repo.
+- **Negotiation** (PLAN §16): N1 and N2 are built (above). N3 onwards wait for the owner, and Scout's part needs a handoff in Scout's own repo.
 
 ## Things the owner should know when testing M4
 - **Plugin pages:** Settings → Plugins was never looked at in a browser, only checked through the API and typecheck.

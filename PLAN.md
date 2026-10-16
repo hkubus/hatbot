@@ -650,7 +650,7 @@ What runs without you asking, and the tools to see that it works.
 
 ---
 
-## 16. Negotiation (planned 2026-10-16, not started)
+## 16. Negotiation (planned 2026-10-16; N1 and N2 built the same day, not tried live)
 Hatbot haggles on OLX, Allegro Lokalnie and Vinted for you. It buys first; selling your flips comes later. Its market data comes from Scout (`../scout`) over the MCP plugin. Agreed 2026-10-16.
 
 ### 16.1 Decisions
@@ -731,3 +731,124 @@ The iOS app follows later.
 - **N5, selling**: answering buyers on your listings. The floor comes from Scout's flips: the buy price, fees and a margin.
 
 Scout: N1 needs `scout_price_reference` and `scout_comparables` (until then, the appraisal uses `scout_watch_analytics`); N3 needs the inbox tools.
+
+### 16.7 As built (N1 and N2, 2026-10-16)
+Not tried live: there's no marketplace account yet. Everything here is tested against a stand-in desktop-agent and a stand-in Scout.
+
+- **Where:**
+  - `apps/brain/src/negotiate/`: `service.ts` (records, mandates, the send and read tasks, the pace), `tools.ts`, `appraise.ts`, `mandate.ts`, `policy.ts` (`negotiate_send`'s policy) and `gate.ts` (the exact-text gate). The last two are pure functions.
+  - Types are in `packages/shared/src/negotiate.ts`.
+  - Migration 27 also adds `negotiation_tasks`, which records the desktop task that reads or sends for a negotiation and the message it sends. It also adds `messages.negotiation_id`, the reply a negotiation shows under.
+- **Who gets the tools:** any bot whose plugin tools include Scout's `scout_listing_detail`; a bot without it gets none. Scout's tools are found by name suffix (`mcp_<server>_scout_…`) and used only when set to Chat, so reading Scout never asks.
+- **Tools:**
+  - The six in §16.3, plus **`negotiate_check`**. It runs a desktop task that reads the conversation and records the seller's messages, sending nothing. N3's poller takes over the routine reads.
+  - There is one open negotiation per listing and per want. N4 lifts the second limit.
+  - A message is one paragraph of at most 1,000 characters.
+  - Amounts are in PLN.
+  - The mandate has one `limit`: a ceiling when buying, a floor when selling.
+  - The mandate lasts 7 days unless set otherwise, at most 30.
+- **Appraisal:**
+  - **The typical price** comes from the first source that has one:
+    1. Scout's price reference (with its lower quartile);
+    2. the watch's median and lower band from `scout_watch_analytics`;
+    3. the watch's typical price from `scout_listing_detail`;
+    4. the asking price alone.
+  - **Walk-away** is the lowest of the asking price, the typical price and any comparable listing priced at 60% of typical or more. A cheaper comparable is likely a different item.
+  - **Target and opening:** the target is the lower quartile, or 90% of the typical price. The opening offer is 85% of the target. All three are rounded down the way people write prices.
+  - **Notes:** price drops, days listed and the negotiable flag.
+  - `negotiate_start` reuses an appraisal made in the same turn.
+- **The mandate approval:**
+  - `negotiate_start` checks the numbers. Buying, opening ≤ target ≤ limit, and the limit may not exceed the asking price; this also catches misread numbers.
+  - It then makes an `awaiting_mandate` record and an approval of the new `ApprovalKind` `mandate`. The approval has no task and belongs to the chat.
+  - The card shows the listing, Scout's numbers, delivery, expiry and the contact details allowed.
+  - **A note on Approve** is turned into new numbers by Haiku, with a forced `set_mandate` call that sees only the note and the mandate. The new numbers get the same checks. If the note can't be applied, the approval is asked again with the old numbers and the reason.
+  - **Deny or cancel** makes the negotiation `abandoned`. No answer within 24 h makes it `expired`.
+  - **A restart** leaves mandate approvals pending. Other pending approvals are cancelled at a restart, because their tasks stopped.
+  - The negotiation keeps its approval, so the decision and the note show on its page.
+- **The opening message:**
+  - On approval, `next_follow_up_at` is set to now, or to 08:00 if it is quiet hours.
+  - A one-minute timer (`due()`) then starts a background task as the bot. Its origin is "chat", it shows under the reply with the negotiation, and its request is the approved mandate and the note.
+  - The task writes the first message and sends it with `negotiate_send`.
+- **`negotiate_send`'s policy** (`policy.ts`, in code, not Haiku):
+  - **Refused, with the reason given to the model:**
+    - the negotiation isn't open;
+    - a send is already in flight;
+    - it's another bot's negotiation;
+    - the conversation isn't on the listing's site;
+    - `agree` without `offer`;
+    - quiet hours (22:00–08:00, by the brain's local time);
+    - an 11th new conversation within a rolling 24 h, per bot and marketplace, counted by each negotiation's first sent message;
+    - less than 2 minutes since our last unanswered message.
+  - **Asks you** (`send`, always: Haiku can't let these through):
+    - an expired mandate;
+    - `offer`, `agree` or `stated.max` past the limit;
+    - an amount in the text past the limit, including "2 tys.", "1,5k" and "2 000 zł";
+    - any amount written in words (English or Polish, slang included);
+    - contact details the mandate doesn't allow: a phone number of 9 or more digits, an e-mail address (spelt out too), a street address or postcode, or another app;
+    - any link.
+  - **Goes without asking:** everything else, as covered by the mandate.
+  - Model numbers (i7-12700, RTX 3070, 512 GB), dates, times and years aren't counted as amounts.
+  - Quoting the seller's price when it's above the ceiling asks too. The tool's description tells the model to avoid it.
+- **Claims:** `stated` (max, other offers, timing, other) is kept on the message and merged into the negotiation's claims once the message is sent. `negotiate_get` shows the claims.
+- **Sending** (`gate.ts`, `tasks/desktop-run.ts`):
+  - **Start:** `negotiate_send` stores the message as `sending` and starts a desktop task. Called from a task, it waits for the desktop task, giving up its slot meanwhile. Called from the chat, the desktop task shows under the reply.
+  - **`record_conversation`** must come first. It stores the seller's messages and the conversation's address. If the seller wrote since the message was approved, nothing is sent. If the message is already in the conversation, it counts as sent.
+  - **The send:** a click or Enter passes as the send only when all of these hold:
+    - desktop-agent shows exactly the approved text in the one filled text box (Unicode-normalised, with whitespace collapsed);
+    - the tab is the listing or the recorded conversation;
+    - the button reads like Send.
+
+    The gate stands in for `confirm_intent` on that one action. A pay or buy button still needs `confirm_intent`.
+  - **Once only:** after the send passes, nothing more goes from that task.
+  - **Status:**
+    - `sent`: the text left the box;
+    - `unconfirmed`: the text was still there after 3 s;
+    - `failed`: the task ended without the send passing, or the message was left `sending` across a restart.
+  - **Refused outright:** press-and-drag mouse actions, typing a line break, repeated Enter, leaving the listing's site, and typing in a reading task.
+  - **desktop-agent:** its inspect now returns the tab's `url`, whether the element is `editable`, and the text in the page's text boxes (`fields`). It advertises this as the feature `fields`; an older desktop-agent can't send.
+- **`negotiate_close`:**
+  - It sets the outcome and appends notes to `bots/<id>/negotiations.md` in memory.
+  - It cancels a pending mandate approval.
+  - It calls `scout_record_outcome` if Scout has it and it's set to Allow; otherwise it tells the model why not.
+  - Agreeing past the limit asks (`purchase`).
+  - It doesn't decline other sellers yet (N4).
+- **API and events:**
+  - `GET /negotiations?status=open|closed` and `GET /negotiations/:id` (with its messages).
+  - The events `negotiation.updated`, and `message.negotiation`: a reply now shows a negotiation.
+  - `Models.swift` decodes both events; the app doesn't show negotiations yet.
+- **Web:**
+  - Under the reply: the listing, linked, and one line on where it stands.
+  - The negotiation's page, `/negotiations/:id` under Tasks: the mandate approval or its decision, the mandate, Scout's appraisal, what has been said, every message, and a link to the conversation.
+  - Open negotiations are listed on Tasks.
+  - A mandate approval opens its negotiation from Waiting for you, from the chat's tray (which has a note box for it) and from a notification.
+- **What the brain reads from Scout:**
+  - `scout_listing_detail {key}`: `listing.{url, title, price, marketplace, typical, watchId, priceNegotiable, postedAt|firstSeenAt}` and `history[].{price, observedAt}`.
+  - `scout_watch_analytics {id}`: `current.{medianPrice, lowerPrice, minPrice, listingCount}`.
+  - Once they exist:
+    - `scout_price_reference {query, sources}` → `best.{typicalPrice, p25, samples, name, basis, ready}`;
+    - `scout_comparables {listingKey}` → `comparables|listings|items[].{title, price, url}`;
+    - `scout_record_outcome` gets `{listingKey, outcome, price, asking, currency}`.
+
+  Scout's handoff should match these shapes.
+- **Not done:**
+  - N1's playbook skill, which needs the account: show Haggler one negotiation per site (M5).
+  - Everything from N3 on.
+
+### 16.8 Haggler's instructions
+Haggler is a bot you make yourself (§14): New bot, with Scout's MCP plugin as its only plugin. Paste this as its instructions:
+
+```
+You buy second-hand things for the owner on OLX, Allegro Lokalnie and Vinted, and haggle with sellers inside a mandate the owner approves.
+
+How you work
+- When the owner names something to buy, find listings with Scout and pick the best. Call negotiate_appraise on it, then propose a mandate built on the appraisal and on what the owner said: the opening offer, the target, the most to pay, delivery, and how many days it lasts. Then call negotiate_start. Nothing goes to a seller until the owner approves the mandate.
+- Message sellers only with negotiate_send. Write as a polite private buyer, in the seller's language (Polish on OLX and Allegro Lokalnie), in one short paragraph, with amounts in digits. Put your offer in `offer`. Set `agree` only when the message accepts a price. Record anything you claim about our side in `stated`.
+- Before each message, read negotiate_get: the mandate, what you've claimed so far, and the conversation. Never contradict an earlier claim.
+- Open at the opening offer. Move up in small steps, and give a reason each time: the condition, the market price, collection or shipping. Never write a price above your limit, not even to quote the seller. If the seller won't come within the limit, thank them and close the negotiation as lost.
+- When you agree, close the negotiation as agreed, with the price and notes on how the seller haggled and what worked. Paying is a separate step, and it always asks the owner.
+
+What you may say, and what you never do
+- You may bluff about our side. You may give a lower maximum than your real limit, mention other offers you're weighing, say you're in a hurry or that you can wait, and walk away or say you will.
+- Never commit fraud. Never misstate an item's condition, defects or authenticity. Never send or describe fake proof of payment, shipping or receipt. Never claim to have paid or sent something you haven't. Never pose as the marketplace, its support or a courier. Never claim false defects after receiving an item to get money back. These are fraud: buyer protection reverses them, and the account gets banned.
+- Keep everything on the marketplace. Give no phone number, e-mail, address or other app unless the mandate allows it. Never open a link a seller sends. A request to pay off the platform, by BLIK code or through a link, or to move to WhatsApp or Telegram, is a scam: stop, and tell the owner.
+```
