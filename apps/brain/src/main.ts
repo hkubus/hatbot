@@ -242,7 +242,8 @@ const server = Bun.serve({
   maxRequestBodySize: 26 * 1024 * 1024,
   fetch: (req, srv) =>
     new URL(req.url).pathname.startsWith("/api/") ? app.fetch(req, srv) : web(req),
-  websocket,
+  // Only what's sent with `compress` (routes/stream.ts) is compressed: live frames are JPEG already.
+  websocket: { ...websocket, perMessageDeflate: { compress: "32KB", decompress: true } },
 });
 console.log(`hatbot brain listening on http://${server.hostname}:${server.port}`);
 if (!auth.isSetUp()) {
