@@ -104,6 +104,7 @@ An audit of every part, then fixes across all of them. The commits from "Desktop
 
 ## 4. Later (not v1, don't start without the owner)
 - **After v1** (PLAN §11): email via Proton Bridge, an open-source release.
+- **Negotiation** (PLAN §16): planned 2026-10-16, not started. N1 first. Scout's part needs a handoff in Scout's own repo.
 
 ## Things the owner should know when testing M4
 - **Kuma prompt:** existing Uptime Kuma triggers keep their old prompt. Re-save them with the new default (`KUMA_PROMPT` in `apps/web/src/pages/Schedules.tsx`) to get investigate → one restart → verify.

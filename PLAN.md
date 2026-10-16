@@ -636,3 +636,87 @@ What runs without you asking, and the tools to see that it works.
 - **Weekly report** (`apps/brain/src/report.ts`, on by default, Monday 09:00): spend by bot, tasks done and failed, approvals, watchers, memory commits. In Hatbot's chat and as a notification, made without the model.
 - **Proposals** (`apps/brain/src/memory/proposals.ts`, migration 25): Opus proposes a tidy-up of memory (weekly when switched on, or Tidy up in Memory) and fixes to skills whose tasks failed or needed you since they last changed. Each is a diff per file; Apply commits it as you, Dismiss drops it, and a proposal goes stale if memory changed under it.
 
+
+---
+
+## 16. Negotiation (planned 2026-10-16, not started)
+Hatbot haggles on OLX, Allegro Lokalnie and Vinted for you. It buys first; selling your flips comes later. Its market data comes from Scout (`../scout`) over the MCP plugin. Agreed 2026-10-16.
+
+### 16.1 Decisions
+| Area | Decision |
+|---|---|
+| Who | A bot, **Haggler** (§14). It has its own browser profile, logged in to a separate marketplace account (you make it later), and its own memory folder for the playbook and notes on sellers. Scout is its only plugin |
+| Mandate | You approve one **mandate** per negotiation. It covers the listing, the opening offer, the target, the ceiling (a floor when selling), delivery terms and when it expires. Inside it, Hatbot sends and agrees on its own; outside it, it asks. Paying always asks (§6.1) |
+| Untrusted content | Seller messages are untrusted, as before. The mandate stands in for the approval §6.1 would ask for, but only for `negotiate_send` within the mandate, checked in code rather than by Haiku. Every other outward action in the task still follows §6.1 |
+| Agreeing | Within the mandate, Hatbot agrees on its own (your choice, 2026-10-16) |
+| One deal per want | Talking to several sellers about one thing at once is fine. The first agreement locks the want, and the other sellers get a decline |
+| Tactics | It doesn't have to be honest about our side (your choice, 2026-10-16). It may state a lower "max" than the ceiling, mention other offers, claim urgency or walk away. **Never**: misstating an item's condition, defects or authenticity when selling; fake proof of payment, shipping or receipt; claiming to have paid or sent; posing as the marketplace or a courier; reporting false defects after receiving an item to get money back. Those are fraud: buyer protection reverses them, and they get the account banned |
+| Consistency | What Hatbot has told each seller (its stated max, other offers, timing) is kept on the negotiation, so it doesn't contradict itself |
+| Pace | At most 10 new conversations per account per day, sends at a person's pace, nothing between 22:00 and 08:00 |
+| Scams | Haiku also screens seller messages for marketplace scams: payment or courier links, BLIK codes or card details, moving to WhatsApp or Telegram, pressure to pay off the platform. A suspected scam pauses the negotiation and tells you. The desktop never opens a link from a seller |
+| Transport | Hatbot reads the inbox through Scout (cheap, frequent, read-only). At first, sending is a desktop task in Haggler's browser; Scout could take over sending later |
+
+### 16.2 Data (migration 27)
+- **`wants`**: what you're after ("RTX 3070, working, ≤ 1,400 zł"), quantity, status, bot.
+- **`negotiations`**:
+  - the want, and the listing key (`<Marketplace>:<listingId>`, as Scout gives it);
+  - role (`buy` or `sell`) and the mandate (JSON);
+  - the conversation's URL and id, and the claims made so far;
+  - the next follow-up time and the bot;
+  - status: `awaiting_mandate → open → agreed | lost | abandoned | expired`, then `paid` and `received`.
+- **`negotiation_messages`**: direction, text, offer amount, time, and the marketplace's message id, which dedupes inbox reads.
+
+### 16.3 Tools
+These live in the core, in `apps/brain/src/negotiate/`, like watchers. They are not a plugin, because they start tasks and drive the desktop. They call Scout's tools by name through the MCP plugin, as watchers call plugin tools.
+- **`negotiate_appraise(listing)`** (read): gathers Scout's price reference and comparables, plus the listing's price history, days listed and negotiable flag. It returns an opening offer, a target and a walk-away price, with the listings each rests on.
+- **`negotiate_start(listing, mandate, want?)`**: makes the record and asks you to approve the mandate. The card shows the listing, the appraisal and the mandate; a steering note (§6.2) can change the numbers.
+- **`negotiate_list`** / **`negotiate_get`** (read).
+- **`negotiate_send(negotiation, text, offer?, agree?, stated?)`**: the only way out. `stated` records what this message claims about our side. The policy, in code:
+  - `offer` is within the mandate (at or under the ceiling when buying, at or over the floor when selling), and `agree` only at a price within it;
+  - only the negotiation's own conversation;
+  - no phone number, address, e-mail or other app unless the mandate allows it;
+  - an amount in `text` outside the mandate asks, so the cap can't be dodged by writing the number out;
+  - the pace limits;
+  - anything else asks, as in §6.2.
+
+  It then runs a desktop task that may send exactly this text in this conversation. The brain lets the Send click through only while the composer holds that text and the tab shows that conversation.
+- **`negotiate_close(negotiation, outcome, price?)`**:
+  - ends the negotiation;
+  - writes notes on the seller, and on what worked, to the bot's memory;
+  - sends the outcome to Scout;
+  - on `agreed`, declines the want's other open negotiations.
+
+  Paying comes after this: a desktop task goes as far as the checkout and asks (`payment`, always).
+- **Waking**:
+  - A poller without the model reads `scout_inbox` every 10 minutes while any negotiation is open.
+  - A new seller message is stored and screened, then starts a short background task for that negotiation with its record (mandate, claims, messages). Nothing waits in a long task for days; `wait` stops at 240 minutes anyway.
+  - When the follow-up time passes without a reply, a task starts too, to nudge the seller or give up.
+
+### 16.4 Scout's part
+This goes in Scout's own repo, as a handoff there. Read tools, all `readOnlyHint`:
+- **`scout_price_reference`**: P0-4 in Scout's `HAT_DEALS_HANDOFF.md`, never built. That handoff was written for the old `hat` and is otherwise stale.
+- **`scout_comparables(listingKey)`**: live alternatives for the same item. They are the fallback, and honest leverage.
+- **`scout_listing_detail`** gains days listed, price drops, relists, the seller's other listings and the negotiable flag. It also gains `live: true` (P1-3), to check the listing before an offer and before paying.
+- **`scout_inbox(marketplace, since?)`** and **`scout_conversation(id)`**, through Scout's stored marketplace sessions.
+
+And one write tool:
+- **`scout_record_outcome`**: the final price. It is kept apart from Scout's asking-price statistics, as flips are, and comes back as a figure of its own ("you pay about 84% of asking for GPUs on OLX").
+
+A later option is `scout_send_message`, if sending from the desktop turns out to be too slow.
+
+### 16.5 UI
+A negotiation shows the way a task does:
+- a card under the reply that started it, with the listing, the mandate, the last message and the state;
+- its messages on its own page;
+- mandate approvals and scam stops among what needs you.
+
+The iOS app follows later.
+
+### 16.6 Milestones
+- **N1, by hand**: the Haggler bot; a playbook skill (show it one negotiation per site, M5); wants, negotiations and their tools; every send asks. Done when one OLX negotiation runs end to end with you approving each send.
+- **N2, mandates**: the mandate approval, `negotiate_send`'s policy, claims and pace limits. Done when a negotiation runs inside its mandate without asking.
+- **N3, waking**: Scout's inbox tools, the poller, follow-ups and scam screening. Done when a seller's reply gets an answer within 15 minutes, with nobody in the chat.
+- **N4, several sellers**: wants with several negotiations, the lock and the declines.
+- **N5, selling**: answering buyers on your listings. The floor comes from Scout's flips: the buy price, fees and a margin.
+
+Scout: N1 needs `scout_price_reference` and `scout_comparables` (until then, the appraisal uses `scout_watch_analytics`); N3 needs the inbox tools.
