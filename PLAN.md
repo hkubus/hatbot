@@ -7,7 +7,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 - **No vendor cloud.** It runs on your hardware.
 - **Predictable cost.** Spending limits are enforced.
 
-> Status: design agreed 2026-10-09. M0–M4 are built (M4 not yet deployed or tried live); the iOS app is built and awaiting its first install. M5 is next. The clickable UI prototype lives in [`prototype/`](prototype/).
+> Status: design agreed 2026-10-09. M0–M5, the iOS app, more than one bot (§14) and looking after things (§15) are built. M4 onwards is not yet deployed or tried live, and the iOS app awaits its first install. Next is the owner's deploy and live run (`HANDOFF.md`). The clickable UI prototype lives in [`prototype/`](prototype/).
 
 ---
 
@@ -21,11 +21,12 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 - **Teach-by-showing**: you demo a task on the desktop, and Hatbot turns it into a reusable skill.
 - **Memory**: a git-tracked markdown folder that Hatbot edits and you can read, diff and revert.
 - A native **iOS app** (SwiftUI, sideloaded with SideStore) for chat, tasks, approvals and the live view (§4.7).
+- **More than one bot**, each with its own role, chat, memory folder and browser profile, handing work to each other (§14).
+- **Looking after things**: a heartbeat that looks for problems and acts on them with your instructions, watchers, Check everything and a weekly report (§15).
 
 ### v1 is not
 - Email or calendar. You use Proton Mail and no calendar; this can come later via Proton Bridge.
-- Open-ended goals ("grow my newsletter"), or a proactive heartbeat that wakes up and decides on its own what to do.
-- More than one agent. It's planned for after v1 (§14).
+- Open-ended goals ("grow my newsletter"). The heartbeat follows your instructions about problems it finds; it doesn't set goals of its own.
 - Multiple users. It's single-operator by design.
 
 ---
@@ -312,7 +313,8 @@ How it's enforced:
 ### 6.3 Spending
 - **Price table**: per-model prices live in config. Cost = `usage` × price, recorded per request, task and day.
 - **Before each request**: estimate the input cost. Refuse if it would exceed the per-task ($3), daily ($10) or monthly ($200) limit.
-- **When a limit is hit**: the task pauses as `waiting_budget` and you're notified. You can raise a single task's limit from its card.
+- **A task's own limit**: the task asks to spend one more per-task limit ($3), as an approval. Approve and it carries on; deny, or no answer in 24h, and it fails ("Stopped at its spending limit.").
+- **The daily or monthly limit**: the task fails at once with "Stopped: Today's $10 limit would be exceeded." (or the month's), and a chat reply stops with the same line. Nothing more runs until the limit resets or you raise it in Settings.
 - **Credits**: the Max 20x API credits are the only funding source, so the provider stops requests at $0 as a backstop.
 
 ### 6.4 Isolation
@@ -552,7 +554,7 @@ Each milestone ends with a working, demo-able system.
 - **Done when**: you can chat, approve and take over from the app on your phone.
 
 ### After v1
-Email via Proton Bridge · more than one agent (§14) · a heartbeat that acts on its own (§15) · open-source release (choose a licence, docs, one-command installer).
+Email via Proton Bridge · open-source release (choose a licence, docs, one-command installer).
 
 ---
 
