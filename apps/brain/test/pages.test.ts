@@ -25,6 +25,9 @@ test("tasks, approvals and memory history come a page at a time", async () => {
   expect((await get<Task[]>("/tasks?origin=schedule")).map((x) => x.id)).toEqual([6, 4, 2]);
   expect((await get<Task[]>("/tasks?botId=chef")).map((x) => x.id)).toEqual([7]);
   expect((await t.call("GET", "/tasks?limit=500", undefined, { cookie })).status).toBe(400);
+  // A chat's task cards come in one request, whatever their age.
+  expect((await get<Task[]>("/tasks?ids=1,6,99&limit=1")).map((x) => x.id)).toEqual([6, 1]);
+  expect((await t.call("GET", "/tasks?ids=1,x", undefined, { cookie })).status).toBe(400);
   // Search finds them in one query.
   expect(t.tasks.list({ like: "%t1%" }).map((x) => x.id)).toEqual([1]);
 

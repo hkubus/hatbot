@@ -23,9 +23,18 @@ export const taskRoutes = new Hono<AppEnv>()
         limit: z.coerce.number().int().min(1).max(200).default(50),
         botId: z.string().max(40).optional(),
         origin: z.string().max(40).optional(),
+        // A chat's task cards in one go: ids=3,5,8.
+        ids: z
+          .string()
+          .regex(/^\d+(,\d+){0,199}$/)
+          .transform((s) => s.split(",").map(Number))
+          .optional(),
       }),
     ),
-    (c) => c.json(c.var.tasks.list(c.req.valid("query"))),
+    (c) => {
+      const q = c.req.valid("query");
+      return c.json(c.var.tasks.list(q.ids ? { ...q, limit: q.ids.length } : q));
+    },
   )
   .get("/tasks/:id", (c) => {
     const taskId = Number(c.req.param("id"));

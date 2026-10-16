@@ -210,6 +210,8 @@ export class Tasks {
       origin?: string;
       /** A LIKE pattern, backslash-escaped, for the title, goal or summary: Search. */
       like?: string;
+      /** Just these: a chat's task cards. */
+      ids?: number[];
     } = {},
   ): Task[] {
     const where: string[] = [];
@@ -248,6 +250,10 @@ export class Tasks {
         "(t.title LIKE ? ESCAPE '\\' OR t.goal LIKE ? ESCAPE '\\' OR coalesce(t.summary, '') LIKE ? ESCAPE '\\')",
       );
       args.push(opts.like, opts.like, opts.like);
+    }
+    if (opts.ids !== undefined) {
+      where.push(`t.id IN (${opts.ids.map(() => "?").join(", ")})`);
+      args.push(...opts.ids);
     }
     return this.d.db
       .query<Row, (number | string)[]>(
