@@ -8,7 +8,7 @@ import { Icon } from "./icons";
 import { navigate } from "./router";
 import {
   discardTeach,
-  ensureTask,
+  ensureSteps,
   handback,
   recording,
   startTeach,
@@ -291,7 +291,7 @@ export function LiveView({ taskId }: { taskId?: number }) {
   const teach = useStore(recording);
   const [error, setError] = useState("");
   useEffect(() => {
-    if (activeId) ensureTask(activeId);
+    if (activeId) ensureSteps(activeId);
   }, [activeId]);
 
   const control = desktop?.control === "owner";

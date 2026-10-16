@@ -313,12 +313,29 @@ export async function loadTask(id: number) {
 }
 
 const requested = new Set<string>();
-/** Loads a task or approval the first time something shows it. */
+let wanted: number[] = [];
+/** Loads a task or approval the first time something shows it. A chat's task cards come in one request. */
 export function ensureTask(id: number) {
-  if (state.tasks[id] && state.steps[id]) return;
-  if (requested.has(`t${id}`)) return;
+  if (state.tasks[id] || requested.has(`t${id}`)) return;
   requested.add(`t${id}`);
-  loadTask(id).catch(() => requested.delete(`t${id}`));
+  if (!wanted.length) queueMicrotask(loadWanted);
+  wanted.push(id);
+}
+function loadWanted() {
+  const ids = wanted;
+  wanted = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    const some = ids.slice(i, i + 200);
+    loadTasks({ ids: some }).catch(() => {
+      for (const id of some) requested.delete(`t${id}`);
+    });
+  }
+}
+/** A task with its steps, for the live view. */
+export function ensureSteps(id: number) {
+  if (state.steps[id] || requested.has(`st${id}`)) return;
+  requested.add(`st${id}`);
+  loadTask(id).catch(() => requested.delete(`st${id}`));
 }
 export function ensureApproval(id: number) {
   if (state.approvals[id] || requested.has(`a${id}`)) return;
@@ -338,6 +355,8 @@ export async function loadTasks(
     scheduleId?: number;
     triggerId?: number;
     watcherId?: number;
+    /** Just these, whatever their age. */
+    ids?: number[];
   } = {},
 ) {
   const q = new URLSearchParams(
@@ -694,8 +713,8 @@ async function refreshThread() {
 
 /** What may have changed while the stream was down. */
 async function catchUp() {
+  // The chats come with loadLive's bots.
   void refreshThread().catch(() => {});
-  refreshConversations();
   void api<SpendSummary>("/spend/summary").then(
     (s) => set({ todayUsd: s.todayUsd, monthUsd: s.monthUsd }),
     () => {},
@@ -703,10 +722,12 @@ async function catchUp() {
   if (Object.keys(state.schedules).length || Object.keys(state.watchers).length)
     void loadSchedules().catch(() => {});
   const active = await loadTasks({ status: "active" }).catch(() => null);
-  // Ones we thought running that aren't any more ended while we were away.
-  if (active)
-    for (const t of Object.values(state.tasks))
-      if (t.finishedAt === null && !active.includes(t.id)) void loadTask(t.id).catch(() => {});
+  // Ones we thought running that aren't any more ended while we were away. loadLive reloads those
+  // with steps.
+  const ended = Object.values(state.tasks)
+    .filter((t) => t.finishedAt === null && !active?.includes(t.id) && !state.steps[t.id])
+    .map((t) => t.id);
+  if (active && ended.length) void loadTasks({ ids: ended }).catch(() => {});
 }
 
 let socket: WebSocket | null = null;
