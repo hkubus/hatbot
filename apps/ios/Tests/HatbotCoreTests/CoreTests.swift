@@ -736,3 +736,93 @@ final class ZoomTests: XCTestCase {
     XCTAssertEqual(Zoom().zoomed(by: 100, at: .zero, in: size).scale, Zoom.most)
   }
 }
+
+/// Answers from a table after a delay, like a phone's round trip to the brain.
+final class SlowBrain: URLProtocol, @unchecked Sendable {
+  static let delay: TimeInterval = 0.15
+  nonisolated(unsafe) static var routes: [String: String] = [:]
+  private static let lock = NSLock()
+  nonisolated(unsafe) private static var paths: [String] = []
+
+  static var requested: [String] { lock.withLock { paths } }
+  static func reset() { lock.withLock { paths = [] } }
+
+  override class func canInit(with request: URLRequest) -> Bool { true }
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+  override func startLoading() {
+    let url = request.url!
+    let path = url.path.replacingOccurrences(of: API.prefix, with: "") + (url.query.map { "?\($0)" } ?? "")
+    Self.lock.withLock { Self.paths.append("\(request.httpMethod ?? "GET") \(path)") }
+    let body = Self.routes[path]
+    DispatchQueue.global().asyncAfter(deadline: .now() + Self.delay) { [self] in
+      let res = HTTPURLResponse(
+        url: url, statusCode: body == nil ? 404 : 200, httpVersion: "HTTP/1.1",
+        headerFields: ["Content-Type": "application/json"])!
+      client?.urlProtocol(self, didReceive: res, cacheStoragePolicy: .notAllowed)
+      client?.urlProtocol(self, didLoad: Data((body ?? #"{"error":"not found"}"#).utf8))
+      client?.urlProtocolDidFinishLoading(self)
+    }
+  }
+
+  override func stopLoading() {}
+
+  static func session() -> URLSession {
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [SlowBrain.self]
+    return URLSession(configuration: config)
+  }
+}
+
+final class NetworkTests: XCTestCase {
+  private static func task(_ id: Int) -> String {
+    #"{"id":\#(id),"title":"t","goal":"g","successCriteria":"","origin":"chat","lane":"background","model":"m","status":"running","tainted":false,"injectionSuspected":false,"costUsd":0,"steps":0,"createdAt":"2026-10-15T08:00:00Z"}"#
+  }
+
+  @MainActor private static func store() throws -> AppStore {
+    SlowBrain.routes = [
+      "/bots": "[]",
+      "/conversations": "[]",
+      "/approvals?pending=1": "[]",
+      "/thread/unread": "[3]",
+    ]
+    for id in 1...3 { SlowBrain.routes["/tasks/\(id)"] = #"{"task":\#(task(id)),"steps":[]}"# }
+    SlowBrain.reset()
+    let store = AppStore(api: API(server: URL(string: "https://h.example")!, token: "t", session: SlowBrain.session()))
+    // Three running tasks the chat has shown: a reconnect brings them up to date.
+    for id in 1...3 {
+      store.tasks[id] = try JSONDecoder().decode(AgentTask.self, from: Data(task(id).utf8))
+      store.steps[id] = []
+    }
+    return store
+  }
+
+  /// What a reconnect loads, side by side: about one round trip, not one per request.
+  func testAReconnectLoadsEverythingAtOnce() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    let start = Date()
+    try await store.loadLive()
+    let took = Date().timeIntervalSince(start)
+    let requested = SlowBrain.requested
+    print("loadLive: \(requested.count) requests in \(Int(took * 1000)) ms at \(Int(SlowBrain.delay * 1000)) ms each")
+    XCTAssertEqual(requested.count, 8)
+    XCTAssertLessThan(took, SlowBrain.delay * 3)
+    let unread = await MainActor.run { store.unread }
+    XCTAssertEqual(unread, [3])
+  }
+
+  /// Rows that come into view together are one request.
+  func testSeenMessagesGoTogether() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    SlowBrain.routes["/thread/seen"] = #"{"ok":true}"#
+    try await store.loadLive()
+    await MainActor.run {
+      store.unread = [10, 11, 12, 13]
+      SlowBrain.reset()
+      for id in [10, 11, 12] { store.markSeen([id]) }
+      XCTAssertEqual(store.unread, [13])
+    }
+    try await Task.sleep(for: .milliseconds(600))
+    XCTAssertEqual(SlowBrain.requested, ["POST /thread/seen"])
+  }
+}

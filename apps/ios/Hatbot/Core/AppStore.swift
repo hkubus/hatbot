@@ -76,6 +76,11 @@ final class AppStore {
   /// Your chats: each bot's own, then groups. Empty on brains from before bots.
   var conversations: [Conversation] = []
   @ObservationIgnored private var refreshing = false
+  /// News came while the chats were loading: load them once more after.
+  @ObservationIgnored private var refreshAgain = false
+  /// Seen messages not yet told to the brain, sent together.
+  @ObservationIgnored private var seenQueue: [Int] = []
+  @ObservationIgnored private var seenFlush: Task<Void, Never>?
 
   @ObservationIgnored let api: API
   @ObservationIgnored private var requested = Set<String>()
@@ -168,9 +173,11 @@ final class AppStore {
       self.connected = true
       self.unreachableCheck?.cancel()
       self.unreachable = false
+      // Side by side: neither waits on the other.
       Task {
+        async let live: Void? = try? self.loadLive()
         if reconnected { try? await self.loadThread() }
-        try? await self.loadLive()
+        _ = await live
       }
     }
     socket.onMessage = { [weak self] message in
@@ -355,12 +362,29 @@ final class AppStore {
   }
 
   /// You've seen these messages: they stop counting as unread here and on your other devices.
+  /// Rows that come into view together are told in one request.
   func markSeen(_ ids: [Int]) {
     let seen = ids.filter { unread.contains($0) }
     guard !seen.isEmpty else { return }
     unread.removeAll { seen.contains($0) }
+    seenQueue += seen
+    guard seenFlush == nil else { return }
+    seenFlush = Task { [weak self] in
+      try? await Task.sleep(for: .milliseconds(200))
+      await self?.flushSeen()
+    }
+  }
+
+  private func flushSeen() async {
+    let ids = seenQueue
+    seenQueue = []
+    seenFlush = nil
     struct Body: Encodable { let ids: [Int] }
-    Task { let _: Empty? = try? await api.post("/thread/seen", body: Body(ids: seen)) }
+    // The brain takes up to 200 at a time.
+    for start in stride(from: 0, to: ids.count, by: 200) {
+      let chunk = Array(ids[start..<min(start + 200, ids.count)])
+      let _: Empty? = try? await api.post("/thread/seen", body: Body(ids: chunk))
+    }
   }
 
   /// The chat's API path; a brain from before bots has only the one, /thread.
@@ -415,23 +439,31 @@ final class AppStore {
 
   /// Bots and chats. A brain from before bots answers 404, and the app keeps to /thread.
   func loadBots() async {
-    guard let list: [Bot] = try? await api.get("/bots"),
-      let chats: [Conversation] = try? await api.get("/conversations")
-    else { return }
+    async let botsLoad: [Bot]? = try? api.get("/bots")
+    async let chatsLoad: [Conversation]? = try? api.get("/conversations")
+    guard let list = await botsLoad, let chats = await chatsLoad else { return }
     for b in list { bots[b.id] = b }
     botIds = list.map(\.id)
     conversations = chats
     persist()
   }
 
-  /// The chats' unread counts, soon: news comes in bursts.
+  /// The chats' unread counts, soon: news comes in bursts. One load at a time, so an older answer
+  /// can't land after a newer one; news meanwhile loads them once more.
   private func refreshConversations() {
-    guard !refreshing, !conversations.isEmpty else { return }
+    guard !conversations.isEmpty else { return }
+    guard !refreshing else {
+      refreshAgain = true
+      return
+    }
     refreshing = true
     Task {
-      try? await Task.sleep(for: .milliseconds(300))
+      repeat {
+        refreshAgain = false
+        try? await Task.sleep(for: .milliseconds(300))
+        if let chats: [Conversation] = try? await api.get("/conversations") { conversations = chats }
+      } while refreshAgain
       refreshing = false
-      if let chats: [Conversation] = try? await api.get("/conversations") { conversations = chats }
     }
   }
 
@@ -650,21 +682,28 @@ final class AppStore {
   }
 
   /// Pending approvals and the desktop; anything we thought pending but the brain doesn't list was decided meanwhile.
+  /// All at once: none of these waits on another.
   func loadLive() async throws {
-    await loadBots()
-    let pending: [Approval] = try await api.get("/approvals?pending=1")
-    let state: DesktopState? = try? await api.get("/desktop/status")
+    let api = self.api
+    let active = tasks.values.filter { steps[$0.id] != nil && $0.isActive }.map(\.id)
+    async let chats: Void = loadBots()
+    async let approvalsLoad: [Approval] = api.get("/approvals?pending=1")
+    async let stateLoad: DesktopState? = try? api.get("/desktop/status")
+    // A brain from before unread answers 404.
+    async let unreadLoad: [Int]? = try? api.get("/thread/unread")
+    async let taskLoads: Void = withTaskGroup(of: Void.self) { group in
+      for id in active { group.addTask { try? await self.loadTask(id) } }
+    }
+    let pending = try await approvalsLoad
+    let state = await stateLoad
     for a in approvals.values where a.status == .pending {
       requested.remove("a\(a.id)")
       if !pending.contains(where: { $0.id == a.id }) { approvals[a.id] = nil }
     }
     for a in pending { approvals[a.id] = a }
     desktop = state
-    // A brain from before unread answers 404.
-    if let list: [Int] = try? await api.get("/thread/unread") { unread = list }
-    for t in tasks.values where steps[t.id] != nil && t.isActive {
-      try? await loadTask(t.id)
-    }
+    if let list = await unreadLoad { unread = list }
+    _ = await (chats, taskLoads)
   }
 
   func decide(_ id: Int, _ decision: Decision, note: String = "") async throws {
