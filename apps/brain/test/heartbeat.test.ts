@@ -122,8 +122,10 @@ test("a failed task wakes Haiku, which can start a tainted heartbeat task", asyn
   expect(t.taskModel.creates.at(-1)?.model).toBe("claude-haiku-5-5");
 });
 
-test("it runs only when it's on and due", async () => {
+test("it's on by default, and runs only when it's on and due", async () => {
   const t = await testApp();
+  expect(t.settings.get().heartbeat.enabled).toBe(true);
+  t.settings.update({ heartbeat: { ...t.settings.get().heartbeat, enabled: false } });
   t.heartbeat.tick();
   await Bun.sleep(5);
   expect(t.heartbeat.info().at).toBeNull();

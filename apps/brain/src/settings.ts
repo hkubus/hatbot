@@ -50,7 +50,7 @@ export const DEFAULT_SETTINGS: Settings = {
   desktopModel: "claude-opus-5-5",
   taskModel: "claude-haiku-5-5",
   heartbeat: {
-    enabled: false,
+    enabled: true,
     everyMinutes: 30,
     botId: "hatbot",
     instructions:

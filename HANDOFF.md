@@ -88,7 +88,7 @@ These came out of the M4 security review.
 
 ## Looking after things, GitHub, Siri and sharing (built 2026-10-15, not tried live)
 The owner asked for all of these at once. PLAN §15 describes them.
-- **Brain:** Check everything (Settings, `infra/smoke.sh`), watchers (`watch_*` in the chat), search, Run again, the heartbeat (off by default), the weekly report (on, Monday 09:00), memory tidy-ups and skill fixes as proposals (the weekly tidy-up is off by default), the GitHub plugin, and `POST /thread/ask` for Siri.
+- **Brain:** Check everything (Settings, `infra/smoke.sh`), watchers (`watch_*` in the chat), search, Run again, the heartbeat (on by default since 2026-10-16), the weekly report (on, Monday 09:00), memory tidy-ups and skill fixes as proposals (the weekly tidy-up is off by default), the GitHub plugin, and `POST /thread/ask` for Siri.
 - **To set up:** redeploy the brain (migrations 24 and 25). **Redeploy desktop-agent:** watchers fetch pages through its new `/fetch`, and Check everything reads its new health fields. For GitHub, create `/etc/hatbot/github.env` with `GITHUB_TOKEN` (`infra/README.md`) and run `infra/brain-deploy.sh` once so the unit loads it.
 - **Plugin signals** for the heartbeat: Uptime Kuma (monitors down) and PBS (failed tasks, full datastores). A plugin adds one with `signals()` on its instance.
 - **GitHub:** a commit of many files is one commit through the git tree API (the contents API makes one per file). Tested only against a stand-in server.
