@@ -220,6 +220,8 @@ export type ApprovalKind =
   | "account_security"
   | "injection_warning"
   | "budget"
+  /** A negotiation's mandate (PLAN.md §16.1): what the bot may do on its own with one seller. */
+  | "mandate"
   | "other";
 
 export type Approval = {

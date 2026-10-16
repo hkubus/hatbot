@@ -341,7 +341,7 @@ export class Tasks {
   }
 
   /** The chat a task reports to. */
-  private conversationOf(id: number | undefined): number | null {
+  conversationOf(id: number | undefined): number | null {
     if (id === undefined) return null;
     return (
       this.d.db

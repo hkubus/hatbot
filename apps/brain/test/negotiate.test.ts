@@ -237,7 +237,7 @@ test("Scout's tools must be set to Chat; one that asks isn't used", async () => 
   await t.plugins.stopAll();
 });
 
-test("negotiate_start shows under the reply without asking; every negotiate_send asks (N1)", async () => {
+test("negotiate_start asks for the mandate; once approved, the negotiation runs inside it without asking", async () => {
   const chat = new FakeModel([
     { content: [toolUse("negotiate_appraise", { listing: "OLX:1001" })] },
     {
@@ -251,33 +251,93 @@ test("negotiate_start shows under the reply without asking; every negotiate_send
       ],
     },
     { content: [toolUse("negotiate_send", { negotiation: 1, text: TEXT, offer: 1060 })] },
-    { content: [text("You said no, so nothing went.")] },
+    { content: [text("It waits for your approval.")] },
+    { content: [text("Sent the opening offer.")] },
   ]);
-  const t = await testApp(chat, new FakeModel(), {}, [mcpPlugin], {});
+  const work = new FakeModel([
+    // The opening task, a background task under the reply.
+    { content: [toolUse("negotiate_get", { negotiation: 1 })] },
+    {
+      content: [
+        toolUse("negotiate_send", {
+          negotiation: 1,
+          text: TEXT,
+          offer: 1060,
+          stated: { max: 1200, timing: "picking up this week" },
+        }),
+      ],
+    },
+    // Its desktop task.
+    { content: [toolUse("record_conversation", { messages: [] })] },
+    { content: [computer("type", { text: TEXT })] },
+    { content: [computer("left_click", { coordinate: [300, 500] })] },
+    finish(),
+    // The opening task again.
+    {
+      content: [
+        toolUse("finish_task", { outcome: "done", summary: "Offered 1060 zł.", notify: false }),
+      ],
+    },
+  ]);
+  const t = await testApp(chat, work, {}, [mcpPlugin], {});
   const scout = await withScout(t, false);
+  messageBox(t);
   t.thread.post("Haggle for OLX:1001, up to 1400");
-  const approval = await waitFor(() => t.approvals.list(true)[0]);
-  expect(approval.kind).toBe("send");
-  expect(approval.summary).toContain(`"${TEXT}"`);
-  expect(approval.summary).toContain("offer 1,060 zł");
-  expect(approval.reason).toContain("Every message to a seller asks you first");
+  await t.thread.idle();
 
+  // The chat doesn't wait: the mandate waits among what needs you.
+  const approval = t.approvals.list(true)[0];
+  expect(approval?.kind).toBe("mandate");
+  expect(approval?.taskId).toBeNull();
+  expect(approval?.conversationId).toBe(t.thread.conversationId);
+  expect(approval?.summary).toBe(
+    "Negotiate for Karta graficzna RTX 3070 8GB: open at 1,060 zł, aim for 1,250 zł, pay at most 1,400 zł",
+  );
+  expect(approval?.reason).toContain("Asking 1,500 zł.");
+  expect(approval?.reason).toContain("walk away above 1,400 zł");
+  expect(approval?.reason).toContain("Inside this, Hatbot sends and agrees on its own");
+  // Nothing went before it was approved.
+  expect(results(chat, 3)).toContain("waits for the owner to approve its mandate");
   // The appraisal was made once: negotiate_start used it.
   expect(scout.calls()).toEqual(["scout_listing_detail", "scout_watch_analytics"]);
   const n = t.negotiations.get(1);
-  expect(n?.status).toBe("open");
+  expect(n?.status).toBe("awaiting_mandate");
+  expect(n?.approvalId).toBe(approval?.id as number);
   expect(n?.want).toBe("an RTX 3070 for the media PC");
   expect(n?.mandate).toMatchObject({ opening: 1060, target: 1250, limit: 1400, allow: [] });
   expect(n?.mandate.expiresAt).toBe("2026-10-16T12:00:00.000Z");
   expect(n?.appraisal?.walkAway).toBe(1400);
-  expect(t.thread.list().find((m) => m.negotiationId === 1)?.role).toBe("assistant");
+  const reply = t.thread.list().find((m) => m.negotiationId === 1);
+  expect(reply?.role).toBe("assistant");
   expect(t.events.some((e) => e.type === "negotiation.updated")).toBe(true);
 
-  t.approvals.decide(approval.id, "deny", "web");
+  t.approvals.decide(approval?.id as number, "approve", "web");
+  await waitFor(() => t.negotiations.get(1)?.status === "open");
+  await t.tasks.idle();
   await t.thread.idle();
-  expect(results(chat, 3)).toContain("The owner denied this");
-  expect(t.negotiations.messages(1)).toEqual([]);
-  expect(t.tasks.list().length).toBe(0);
+
+  // The opening task ran under the reply, sent through its desktop task, and nothing else asked.
+  const opening = t.tasks.get(1);
+  expect(opening?.title).toBe("Open negotiation #1: Karta graficzna RTX 3070 8GB");
+  expect(opening?.status).toBe("done");
+  expect(t.thread.list().find((m) => m.id === reply?.id)?.taskId).toBe(1);
+  expect(t.tasks.get(2)?.parentId).toBe(1);
+  expect(t.approvals.list(false).map((a) => a.kind)).toEqual(["mandate"]);
+  // The opening task waited for its desktop task and heard how it went.
+  expect(JSON.stringify(work.requests[6]?.messages.at(-1))).toContain("Sent.");
+  const [m] = t.negotiations.messages(1);
+  expect(m).toMatchObject({ status: "sent", offer: 1060, stated: { max: 1200 } });
+  // What it claimed is kept, so later messages keep to it.
+  expect(t.negotiations.get(1)?.claims).toEqual({
+    max: 1200,
+    otherOffers: null,
+    timing: "picking up this week",
+    other: [],
+  });
+  const get = await named(negotiateTools(t), "negotiate_get").run({ negotiation: 1 }, call());
+  expect(get).toContain(
+    "What you've told the seller: your stated max 1,200 zł; timing: picking up this week.",
+  );
 
   // A second negotiation on the same listing isn't started.
   const again = await runPluginTool(
@@ -289,16 +349,167 @@ test("negotiate_start shows under the reply without asking; every negotiate_send
     call(),
   );
   expect(again.content).toContain("already open on this listing");
-  // Numbers out of order aren't a mandate.
-  const bad = await runPluginTool(
-    named(negotiateTools(t), "negotiate_start"),
-    {
-      listing: "OLX:1001",
-      mandate: { opening: 1300, target: 1250, limit: 1400, delivery: "OLX delivery" },
-    },
-    call(),
+  await t.plugins.stopAll();
+});
+
+test("a mandate's numbers must make sense", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
+  await withScout(t, false);
+  const start = named(negotiateTools(t), "negotiate_start");
+  const tryIt = (mandate: Record<string, unknown>) =>
+    runPluginTool(start, { listing: "OLX:1001", mandate: { delivery: "OLX", ...mandate } }, call());
+  expect((await tryIt({ opening: 1300, target: 1250, limit: 1400 })).content).toContain(
+    "opening ≤ target ≤ limit",
   );
-  expect(bad.content).toContain("opening ≤ target ≤ limit");
+  expect((await tryIt({ opening: 1100, target: 1250, limit: 1600 })).content).toContain(
+    "above the asking price",
+  );
+  expect(t.negotiations.list()).toEqual([]);
+  await t.plugins.stopAll();
+});
+
+test("a note on the mandate changes its numbers; one Haiku can't apply asks again; no or no answer ends it", async () => {
+  const work = new FakeModel();
+  const notes: string[] = [];
+  work.onCreate = (p) => {
+    if (p.tool_choice?.type !== "tool" || p.tool_choice.name !== "set_mandate")
+      return '{"suspected": false, "excerpt": ""}';
+    notes.push(String(p.messages[0]?.content));
+    return notes.length === 1
+      ? '{"opening": 1000, "target": 1150, "limit": 1300, "delivery": "OLX delivery with buyer protection", "expires_in_days": 7, "allow": []}'
+      : '{"opening": 1000, "target": 1150, "limit": 13000, "delivery": "OLX delivery", "expires_in_days": 7, "allow": []}';
+  };
+  const t = await testApp(new FakeModel(), work);
+  const ask = (n: Negotiation) => {
+    t.negotiations.update(n.id, { status: "awaiting_mandate" });
+    return t.negotiations.askMandate(t.negotiations.get(n.id) as Negotiation);
+  };
+  // The opening task, once the first is approved.
+  work.script.push({
+    content: [toolUse("finish_task", { outcome: "done", summary: "Later.", notify: false })],
+  });
+  const first = openNegotiation(t);
+
+  const a = ask(first);
+  t.approvals.decide(a.id, "approve", "web", "Max 1300, not more.");
+  await waitFor(() => t.negotiations.get(first.id)?.status === "open");
+  expect(t.negotiations.get(first.id)?.mandate).toMatchObject({
+    opening: 1000,
+    target: 1150,
+    limit: 1300,
+    expiresAt: MANDATE.expiresAt,
+  });
+  // Haiku read the note and the mandate, and nothing from the seller.
+  expect(notes[0]).toContain("Max 1300, not more.");
+  expect(notes[0]).toContain('"limit":1400');
+
+  const second = openNegotiation(t);
+  t.db.query("UPDATE negotiations SET listing_key = 'OLX:1002' WHERE id = ?").run(second.id);
+  const b = ask(second);
+  t.approvals.decide(b.id, "approve", "web", "Max 13000");
+  const again = await waitFor(() =>
+    t.approvals.list(true).find((x) => x.kind === "mandate" && x.id !== b.id),
+  );
+  expect(again.reason).toContain(
+    "Your note couldn't be applied (The limit (13,000 zł) is above the asking price",
+  );
+  expect(t.negotiations.get(second.id)).toMatchObject({
+    status: "awaiting_mandate",
+    approvalId: again.id,
+  });
+  expect(t.negotiations.get(second.id)?.mandate.limit).toBe(1400);
+
+  t.approvals.decide(again.id, "deny", "web");
+  await waitFor(() => t.negotiations.get(second.id)?.status === "abandoned");
+  expect(t.negotiations.get(second.id)?.closedAt).toBeTruthy();
+
+  const third = openNegotiation(t);
+  const c = ask(third);
+  t.advance(25 * 3600_000);
+  t.approvals.expireDue();
+  await waitFor(() => t.negotiations.get(third.id)?.status === "expired");
+  expect(t.approvals.get(c.id)?.status).toBe("expired");
+  await t.tasks.idle();
+});
+
+test("approved during quiet hours, the opening message waits for the morning", async () => {
+  const t = await testApp();
+  const n = openNegotiation(t);
+  t.negotiations.update(n.id, { status: "awaiting_mandate" });
+  const a = t.negotiations.askMandate(t.negotiations.get(n.id) as Negotiation);
+  const local = new Date(Date.parse("2026-10-09T12:00:00Z"));
+  // To 23:00 local, whatever the machine's time zone.
+  t.advance(((23 - local.getHours() + 24) % 24) * 3600_000 - local.getMinutes() * 60_000);
+  t.approvals.decide(a.id, "approve", "web");
+  await waitFor(() => t.negotiations.get(n.id)?.status === "open");
+  const at = new Date(t.negotiations.get(n.id)?.nextFollowUpAt as string);
+  expect(at.getHours()).toBe(8);
+  expect(at.getMinutes()).toBe(0);
+  expect(t.tasks.list().length).toBe(0);
+  t.advance(9 * 3600_000);
+  t.taskModel.script.push({
+    content: [toolUse("finish_task", { outcome: "done", summary: "Later.", notify: false })],
+  });
+  t.negotiations.due();
+  expect(t.tasks.list()[0]?.title).toContain("Open negotiation #1");
+  expect(t.negotiations.get(n.id)?.nextFollowUpAt).toBeNull();
+  await t.tasks.idle();
+});
+
+test("the policy reads the pace from the record: ten new conversations a day, two minutes between messages", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
+  await withScout(t, false);
+  const send = named(negotiateTools(t), "negotiate_send");
+  const input = (n: Negotiation) =>
+    send.schema.parse({ negotiation: n.id, text: "Dzień dobry, dam 1100 zł.", offer: 1100 });
+  const sent = (n: Negotiation, minutesAgo: number) =>
+    t.db
+      .query(
+        `INSERT INTO negotiation_messages (negotiation_id, direction, text, status, created_at, sent_at)
+         VALUES (?, 'out', 'Dzień dobry', 'sent', ?, ?)`,
+      )
+      .run(
+        n.id,
+        ...Array(2).fill(
+          new Date(Date.parse("2026-10-09T12:00:00Z") - minutesAgo * 60_000).toISOString(),
+        ),
+      );
+  const started: Negotiation[] = [];
+  for (let i = 0; i < 10; i++) {
+    const n = openNegotiation(t);
+    sent(n, 60 * (i + 1));
+    started.push(n);
+  }
+  // One from yesterday doesn't count, nor one on another marketplace.
+  const old = openNegotiation(t);
+  sent(old, 25 * 60);
+  const vinted = openNegotiation(t);
+  t.db.query("UPDATE negotiations SET listing_key = 'Vinted:77' WHERE id = ?").run(vinted.id);
+  sent(vinted, 30);
+
+  const fresh = openNegotiation(t);
+  expect(t.negotiations.facts(fresh)).toMatchObject({ starts: true, startedToday: 10 });
+  expect(verdictFor(send, input(fresh), call(), true)).toMatchObject({ action: "block" });
+  // An old conversation still gets its answer, once the seller wrote and two minutes passed.
+  const [first] = started as [Negotiation];
+  expect(verdictFor(send, input(first), call(), true)).toMatchObject({ action: "allow" });
+  sent(first, 1);
+  expect(verdictFor(send, input(first), call(), true)).toMatchObject({ action: "block" });
+  t.db
+    .query(
+      "INSERT INTO negotiation_messages (negotiation_id, direction, text, status, created_at) VALUES (?, 'in', 'Ok?', 'received', ?)",
+    )
+    .run(first.id, "2026-10-09T12:00:00.000Z");
+  expect(verdictFor(send, input(first), call(), true)).toMatchObject({ action: "allow" });
+  // Another bot's negotiation isn't this bot's to send in.
+  t.db.query("UPDATE negotiations SET bot_id = 'other' WHERE id = ?").run(first.id);
+  expect(verdictFor(send, input(first), call(), true)).toMatchObject({
+    action: "block",
+    why: `There's no negotiation #${first.id}.`,
+  });
+  // Tomorrow, the oldest have rolled off.
+  t.advance(12 * 3600_000);
+  expect(t.negotiations.facts(fresh).startedToday).toBeLessThan(10);
   await t.plugins.stopAll();
 });
 
@@ -321,6 +532,15 @@ test("closing writes the bot's notes; agreeing outside the mandate asks", async 
   expect(notes).toContain("agreed at 1300 PLN; asking 1500, opened 1060, aimed 1250, limit 1400.");
   expect(notes).toContain("Took 1300 after two rounds.");
   expect(verdictFor(close, within, call(), true)).toMatchObject({ action: "block" });
+
+  // Closing one that waits for its mandate withdraws the approval.
+  const waiting = openNegotiation(t);
+  t.db.query("UPDATE negotiations SET listing_key = 'OLX:1003' WHERE id = ?").run(waiting.id);
+  t.negotiations.update(waiting.id, { status: "awaiting_mandate" });
+  const a = t.negotiations.askMandate(t.negotiations.get(waiting.id) as Negotiation);
+  await runPluginTool(close, { negotiation: waiting.id, outcome: "abandoned" }, call());
+  expect(t.approvals.get(a.id)?.status).toBe("cancelled");
+  expect(t.negotiations.get(waiting.id)?.status).toBe("abandoned");
   await t.plugins.stopAll();
 });
 

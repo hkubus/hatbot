@@ -1,10 +1,12 @@
 // The negotiate tools (PLAN.md §16.3). They're core tools shaped as plugin tools, so the chat and tasks
 // gate them the way they gate any plugin's: read ones run, and writes go through their policy.
-import { type Bot, MANDATE_CONTACTS, type Mandate, type Negotiation } from "@hatbot/shared";
+import type { Bot, Negotiation, Stated } from "@hatbot/shared";
 import { z } from "zod";
 import { askAlways, block, covered, PluginError, type PluginTool, tool } from "../plugins/plugin";
 import { appraisalText, appraise, type ListingFacts, listingFacts, parseKey } from "./appraise";
-import { collapse, sameHost } from "./gate";
+import { collapse } from "./gate";
+import { MandateInput, mandateProblem, toMandate } from "./mandate";
+import { type SendInput, sendPolicy } from "./policy";
 import { MAX_TEXT, type Negotiations } from "./service";
 
 const ListingKey = z
@@ -56,43 +58,41 @@ function negotiationText(neg: Negotiations, n: Negotiation): string {
   return `${head.join("\n")}\n\nMessages:\n${messages.length ? messages.join("\n") : "(none yet)"}`;
 }
 
-/** Why nothing can be sent in `n` now, whatever the message; null when something may. */
-export function cantSend(neg: Negotiations, n: Negotiation): string | null {
-  if (n.status === "awaiting_mandate")
-    return `Negotiation #${n.id} waits for the owner to approve its mandate.`;
-  if (n.status !== "open") return `Negotiation #${n.id} is ${n.status}.`;
-  const flying = neg.inFlight(n.id);
-  if (flying)
-    return `A message in negotiation #${n.id} is being sent already${flying.taskId ? ` (desktop task #${flying.taskId})` : ""}. Wait for it.`;
-  if (n.conversationUrl && !sameHost(n.conversationUrl, n.listingUrl))
-    return `The recorded conversation isn't on the listing's site.`;
-  return null;
-}
+/** What negotiate_send claims about our side, as the record keeps it. */
+const StatedInput = z
+  .object({
+    max: z.number().positive().optional().describe("The most you tell the seller you'd pay"),
+    other_offers: z.string().trim().max(200).optional().describe("Other offers you mention"),
+    timing: z.string().trim().max(200).optional().describe("Urgency or timing you claim"),
+    other: z.string().trim().max(300).optional().describe("Anything else you claim about our side"),
+  })
+  .optional()
+  .describe(
+    "What this message claims about our side (bluffs included), so later messages don't contradict it",
+  );
 
-/** The mandate negotiate_start asks for, as the model gives it. */
-const MandateInput = z.object({
-  opening: z.number().positive().describe("The first offer"),
-  target: z.number().positive().describe("What to aim for"),
-  limit: z.number().positive().describe("The most to pay: the ceiling"),
-  delivery: z
-    .string()
-    .trim()
-    .min(1)
-    .max(300)
-    .describe('Delivery terms, e.g. "OLX delivery with buyer protection"'),
-  expires_in_days: z.number().int().min(1).max(30).default(7),
-  allow: z
-    .array(z.enum(MANDATE_CONTACTS))
-    .default([])
-    .describe("Contact details messages may carry; none unless the owner said so"),
-});
-
-/** A mandate's numbers in order: opening ≤ target ≤ limit when buying. Null when they are. */
-export function mandateProblem(m: Pick<Mandate, "opening" | "target" | "limit">): string | null {
-  if (!(m.opening <= m.target && m.target <= m.limit))
-    return "The opening offer, target and limit must go up in that order: opening ≤ target ≤ limit.";
-  return null;
-}
+const toSend = (i: {
+  text: string;
+  offer?: number;
+  agree: boolean;
+  stated?: z.infer<typeof StatedInput>;
+}): SendInput => {
+  const s = i.stated;
+  const stated: Stated | null = s
+    ? {
+        ...(s.max !== undefined ? { max: s.max } : {}),
+        ...(s.other_offers ? { otherOffers: s.other_offers } : {}),
+        ...(s.timing ? { timing: s.timing } : {}),
+        ...(s.other ? { other: s.other } : {}),
+      }
+    : null;
+  return {
+    text: collapse(i.text),
+    offer: i.offer ?? null,
+    agree: i.agree,
+    stated: stated && Object.keys(stated).length ? stated : null,
+  };
+};
 
 export function negotiateTools(
   neg: Negotiations,
@@ -124,7 +124,7 @@ export function negotiateTools(
     tool({
       name: "negotiate_start",
       description:
-        "Start negotiating for a listing, inside a mandate: the opening offer, the target, the most you'd pay, delivery terms and how long it lasts. Use negotiate_appraise first and base the numbers on it and on what the owner said. It makes the negotiation's record, which shows under your reply; then send the first message with negotiate_send.",
+        "Start negotiating for a listing, inside a mandate: the opening offer, the target, the most you'd pay, delivery terms and how long it lasts. Use negotiate_appraise first and base the numbers on it and on what the owner said. It makes the negotiation's record, which shows under your reply, and asks the owner to approve the mandate. Once they do, a task sends the opening message on its own; don't send anything before.",
       schema: z.object({
         listing: ListingKey,
         mandate: MandateInput,
@@ -139,16 +139,16 @@ export function negotiateTools(
       commands: () => 0,
       describe: (i) =>
         `Negotiate for ${i.listing}: open at ${zl(i.mandate.opening)}, aim for ${zl(i.mandate.target)}, at most ${zl(i.mandate.limit)}`,
-      // It only makes a record: nothing goes to the seller without its own approval.
-      policy: () => covered("It only makes a record; every message asks"),
+      // It only makes a record and asks the owner to approve its mandate.
+      policy: () => covered("It only makes a record; you approve its mandate"),
       run: async (i, call) => {
-        const problem = mandateProblem(i.mandate);
-        if (problem) throw new PluginError(problem);
         const r =
           appraised.get(i.listing) ??
           (await appraise(available, i.listing, call.signal, now()).catch(() => null));
         const listing: ListingFacts =
           r?.listing ?? (await listingFacts(available, i.listing, call.signal));
+        const problem = mandateProblem(i.mandate, "buy", listing.asking);
+        if (problem) throw new PluginError(problem);
         const wantId = neg.wantFor(bot, i.want, listing.title);
         const busy = neg.busy(listing.key, wantId);
         if (busy)
@@ -157,26 +157,19 @@ export function negotiateTools(
               ? `Negotiation #${busy.id} is already open on this listing.`
               : `Want #${wantId} has negotiation #${busy.id} open; one at a time for now.`,
           );
-        const mandate: Mandate = {
-          currency: r?.appraisal.currency ?? "PLN",
-          opening: i.mandate.opening,
-          target: i.mandate.target,
-          limit: i.mandate.limit,
-          delivery: i.mandate.delivery,
-          expiresAt: new Date(neg.clock() + i.mandate.expires_in_days * 86_400_000).toISOString(),
-          allow: [...new Set(i.mandate.allow)],
-        };
         const n = neg.create({
           bot,
           wantId,
           listing,
-          mandate,
+          mandate: toMandate(i.mandate, r?.appraisal.currency ?? "PLN", neg.clock()),
           appraisal: r?.appraisal ?? null,
-          status: "open",
-          conversationId: where.conversationId,
+          status: "awaiting_mandate",
+          conversationId:
+            where.conversationId ?? (call.task ? neg.d.tasks.conversationOf(call.task.id) : null),
           messageId: call.messageId,
         });
-        return `Negotiation #${n.id} is open, for want #${wantId}. Every message to the seller asks the owner first. Send the first one with negotiate_send.`;
+        neg.askMandate(n);
+        return `Negotiation #${n.id} is made, for want #${wantId}, and waits for the owner to approve its mandate. Once they do, a task sends the opening message; until then nothing goes to the seller. Don't call negotiate_send for it now.`;
       },
     }),
 
@@ -213,7 +206,7 @@ export function negotiateTools(
 
     tool({
       name: "negotiate_send",
-      description: `The only way to message a seller: a desktop task types exactly this text into the negotiation's conversation and sends it, and nothing else. Put the price you offer in \`offer\`; set \`agree\` only when this message accepts a price, with that price in \`offer\`. One paragraph, at most ${MAX_TEXT} characters. Never misstate the item, claim to have paid or sent anything, or pose as the marketplace or a courier.`,
+      description: `The only way to message a seller: a desktop task types exactly this text into the negotiation's conversation and sends it, and nothing else. Put the price you offer in \`offer\`; set \`agree\` only when this message accepts a price, with that price in \`offer\`; put what it claims about our side in \`stated\`. Inside the mandate it goes on its own; an amount, offer or stated max past the limit, contact details the mandate doesn't allow, a link or an amount in words ask the owner. So write amounts in digits and don't repeat a price past your limit, even the seller's. Nothing goes between 22:00 and 08:00. One paragraph, at most ${MAX_TEXT} characters. You may bluff about our side (a lower max, other offers, urgency, walking away); never misstate the item, claim to have paid or sent anything, fake proof, or pose as the marketplace or a courier.`,
       schema: z.object({
         negotiation: Id,
         text: z
@@ -227,6 +220,7 @@ export function negotiateTools(
           .boolean()
           .default(false)
           .describe("This message accepts a price (put it in offer)"),
+        stated: StatedInput,
       }),
       access: "write",
       untrusted: true,
@@ -234,24 +228,19 @@ export function negotiateTools(
       describe: (i) =>
         `Message the seller in negotiation #${i.negotiation}${i.offer !== undefined ? ` (${i.agree ? "agree to" : "offer"} ${zl(i.offer)})` : ""}: "${collapse(i.text)}"`,
       target: (i) => `negotiation:${i.negotiation}`,
+      // In code, not by Haiku (PLAN.md §16.1): the mandate stands in for the approval.
       policy: (i) => {
         const n = neg.get(i.negotiation);
         if (!n || n.botId !== bot.id) return block(`There's no negotiation #${i.negotiation}.`);
-        const why = cantSend(neg, n);
-        if (why) return block(why);
-        if (i.agree && i.offer === undefined) return block("Put the price you agree to in offer.");
-        return askAlways("Every message to a seller asks you first for now.", "send");
+        return sendPolicy(n, toSend(i), neg.facts(n));
       },
       run: async (i, call) => {
         const n = neg.mine(bot, i.negotiation);
-        const why = cantSend(neg, n);
-        if (why) throw new PluginError(why);
+        // Again, since an approval may have taken hours: quiet hours and the pace still hold.
+        const v = sendPolicy(n, toSend(i), neg.facts(n));
+        if (v.action === "block") throw new PluginError(v.why);
         await neg.desktopReady();
-        return neg.send(
-          n,
-          { text: i.text, offer: i.offer ?? null, agree: i.agree, stated: null },
-          call,
-        );
+        return neg.send(n, toSend(i), call);
       },
     }),
 

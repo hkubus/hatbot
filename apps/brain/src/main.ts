@@ -159,6 +159,8 @@ const negotiations = new Negotiations({
   bots,
   memory,
   desktop,
+  model,
+  spend,
 });
 tasks.negotiations = negotiations;
 chats.attach({
@@ -179,6 +181,7 @@ await desktop.setPaused(settings.get().paused);
 await desktop.refresh();
 setInterval(() => void desktop.refresh(), 30_000);
 setInterval(() => approvals.expireDue(), 60_000);
+setInterval(() => negotiations.due(), 60_000);
 setInterval(() => void chats.sweep(), 60_000);
 // Runs missed while the brain was down start once plugins are up, so they get their tools.
 void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {

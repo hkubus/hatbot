@@ -3,6 +3,7 @@
 // through the MCP plugin, as watchers call plugin tools.
 import {
   type Appraisal,
+  type Approval,
   type Bot,
   type Claims,
   type Mandate,
@@ -15,6 +16,7 @@ import {
   type Task,
 } from "@hatbot/shared";
 import type { Chats } from "../agent/chats";
+import type { ModelClient } from "../agent/model";
 import type { Approvals } from "../approvals";
 import { type Bots, botFolder } from "../bots";
 import type { Db } from "../db";
@@ -23,9 +25,12 @@ import type { EventBus } from "../events";
 import type { MemoryStore } from "../memory/store";
 import { type CallContext, PluginError, type PluginTool } from "../plugins/plugin";
 import { runPluginTool, verdictFor } from "../plugins/registry";
+import type { Spend } from "../spend";
 import type { Tasks } from "../tasks/service";
 import { type ListingFacts, parseKey, scoutTool } from "./appraise";
 import { collapse, type SendGate, sameAddress, sameHost } from "./gate";
+import { applyNote, mandateReason, mandateSummary } from "./mandate";
+import { QUIET_HOURS, type SendFacts } from "./policy";
 import { negotiateTools } from "./tools";
 
 export type NegotiationsDeps = {
@@ -37,6 +42,9 @@ export type NegotiationsDeps = {
   bots: Bots;
   memory: MemoryStore;
   desktop: Desktop;
+  /** Haiku, for a note on a mandate. */
+  model: ModelClient;
+  spend: Spend;
   clock?: () => number;
 };
 
@@ -126,6 +134,10 @@ export class Negotiations {
       .run();
     d.events.on((e) => {
       if (e.type === "task.updated" && FINAL_TASK.includes(e.task.status)) this.taskEnded(e.task);
+      if (e.type === "approval.resolved" && e.approval.kind === "mandate")
+        void this.mandateDecided(e.approval).catch((err) =>
+          console.error(`mandate approval ${e.approval.id} failed`, err),
+        );
     });
   }
 
@@ -341,6 +353,165 @@ export class Negotiations {
       )
       .get(id);
     return r?.task_id ?? null;
+  }
+
+  /** What negotiate_send's policy reads besides the negotiation: the clock and the pace so far. */
+  facts(n: Negotiation): SendFacts {
+    const now = this.clock();
+    const sent = "m.direction = 'out' AND m.status IN ('sending', 'sent', 'unconfirmed')";
+    const starts = !this.d.db
+      .query<{ id: number }, [number]>(
+        `SELECT m.id FROM negotiation_messages m WHERE m.negotiation_id = ? AND ${sent} LIMIT 1`,
+      )
+      .get(n.id);
+    // The account is the bot's login on the marketplace: conversations it started there in 24 hours.
+    const startedToday =
+      this.d.db
+        .query<{ c: number }, [string, string, string]>(
+          `SELECT COUNT(*) AS c FROM (
+             SELECT MIN(m.created_at) AS first FROM negotiation_messages m
+             JOIN negotiations n ON n.id = m.negotiation_id
+             WHERE ${sent} AND n.bot_id = ?
+               AND substr(n.listing_key, 1, instr(n.listing_key, ':') - 1) = ?
+             GROUP BY m.negotiation_id
+           ) WHERE first >= ?`,
+        )
+        .get(
+          n.botId,
+          parseKey(n.listingKey)?.marketplace ?? "",
+          new Date(now - 86_400_000).toISOString(),
+        )?.c ?? 0;
+    const last = this.d.db
+      .query<{ id: number; at: string }, [number]>(
+        `SELECT m.id, coalesce(m.sent_at, m.created_at) AS at FROM negotiation_messages m
+         WHERE m.negotiation_id = ? AND m.direction = 'out' AND m.status IN ('sent', 'unconfirmed')
+         ORDER BY m.id DESC LIMIT 1`,
+      )
+      .get(n.id);
+    const answered =
+      last &&
+      this.d.db
+        .query<{ id: number }, [number, number]>(
+          "SELECT id FROM negotiation_messages WHERE negotiation_id = ? AND direction = 'in' AND id > ? LIMIT 1",
+        )
+        .get(n.id, last.id);
+    return {
+      now,
+      hour: new Date(now).getHours(),
+      inFlight: this.inFlight(n.id) !== null,
+      starts,
+      startedToday,
+      unansweredSince: last && !answered ? Date.parse(last.at) : null,
+    };
+  }
+
+  /** Asks the owner to approve the negotiation's mandate (PLAN.md §16.1); `before` says why again. */
+  askMandate(n: Negotiation, before?: string): Approval {
+    const reason = mandateReason(n, this.d.bots.nameOf(n.botId));
+    const approval = this.d.approvals.create({
+      taskId: null,
+      botId: n.botId,
+      conversationId: n.conversationId ?? undefined,
+      kind: "mandate",
+      summary: mandateSummary(n),
+      reason: before ? `${before}\n\n${reason}` : reason,
+    });
+    this.update(n.id, { approval_id: approval.id });
+    return approval;
+  }
+
+  /**
+   * The owner decided on a mandate. Approved: the negotiation opens, with the note's numbers if it had
+   * one, and a task sends the opening message. Denied or cancelled: abandoned. Unanswered: expired.
+   */
+  async mandateDecided(a: Approval) {
+    const r = this.d.db
+      .query<Row, [number]>(`${SELECT} WHERE n.approval_id = ? AND n.status = 'awaiting_mandate'`)
+      .get(a.id);
+    if (!r) return;
+    const n = this.toNegotiation(r);
+    if (a.status === "pending") return;
+    if (a.status !== "approved") {
+      this.update(n.id, {
+        status: a.status === "expired" ? "expired" : "abandoned",
+        closed_at: this.now(),
+      });
+      return;
+    }
+    let mandate = n.mandate;
+    if (a.note) {
+      const applied = await applyNote(this.d, n, a.note, this.clock());
+      if ("error" in applied) {
+        this.askMandate(
+          n,
+          `Your note couldn't be applied (${applied.error}), so the mandate is as it was. Your note: ${a.note}`,
+        );
+        return;
+      }
+      mandate = applied.mandate;
+    }
+    this.update(n.id, {
+      status: "open",
+      mandate: JSON.stringify(mandate),
+      next_follow_up_at: this.nextSendAt(),
+    });
+    this.due();
+  }
+
+  /** Now, or the end of quiet hours if it's within them. */
+  private nextSendAt(): string {
+    const now = new Date(this.clock());
+    const h = now.getHours();
+    if (h < QUIET_HOURS.from && h >= QUIET_HOURS.to) return now.toISOString();
+    const at = new Date(now);
+    if (h >= QUIET_HOURS.from) at.setDate(at.getDate() + 1);
+    at.setHours(QUIET_HOURS.to, 0, 0, 0);
+    return at.toISOString();
+  }
+
+  /**
+   * Every minute: decisions on mandates the brain missed, and opening messages that are due. Nothing
+   * else wakes a negotiation until N3's inbox poller.
+   */
+  due() {
+    const waiting = this.d.db
+      .query<{ approval_id: number }, []>(
+        "SELECT approval_id FROM negotiations WHERE status = 'awaiting_mandate' AND approval_id IS NOT NULL",
+      )
+      .all();
+    for (const w of waiting) {
+      const a = this.d.approvals.get(w.approval_id);
+      if (a && a.status !== "pending") void this.mandateDecided(a);
+    }
+    const ready = this.d.db
+      .query<Row, [string]>(
+        `${SELECT} WHERE n.status = 'open' AND n.next_follow_up_at IS NOT NULL AND n.next_follow_up_at <= ?`,
+      )
+      .all(this.now());
+    for (const r of ready) {
+      const n = this.toNegotiation(r);
+      this.update(n.id, { next_follow_up_at: null });
+      if (this.facts(n).starts) this.startOpening(n);
+    }
+  }
+
+  /** The background task that writes and sends the opening message, under the reply that started it. */
+  private startOpening(n: Negotiation) {
+    const approval = n.approvalId ? this.d.approvals.get(n.approvalId) : null;
+    const note = approval?.note ?? null;
+    const card = this.d.db
+      .query<{ id: number }, [number]>("SELECT id FROM messages WHERE negotiation_id = ? LIMIT 1")
+      .get(n.id)?.id;
+    this.d.tasks.createBackgroundTask({
+      title: `Open negotiation #${n.id}: ${n.title}`.slice(0, 80),
+      goal: openingGoal(n, note),
+      origin: "chat",
+      botId: n.botId,
+      conversationId: n.conversationId ?? undefined,
+      message: card,
+      runKey: `negotiation:${n.id}`,
+      request: `The owner approved the mandate for negotiation #${n.id}: ${mandateSummary(n)}.${note ? `\nTheir note on it: ${note}` : ""}`,
+    });
   }
 
   /** Throws unless the desktop can run the exact-text check: an older desktop-agent can't. */
@@ -600,6 +771,15 @@ export class Negotiations {
 
   private setStatus(messageId: number, status: NegotiationMessage["status"]) {
     const sent = status === "sent" || status === "unconfirmed";
+    const before = this.message(messageId);
+    // What it claimed stands once it may have gone: later messages keep to it.
+    if (sent && before?.status === "sending" && before.stated) {
+      const n = this.get(before.negotiationId);
+      if (n)
+        this.d.db
+          .query("UPDATE negotiations SET claims = ? WHERE id = ?")
+          .run(JSON.stringify(mergeClaims(n.claims, before.stated)), n.id);
+    }
     this.d.db
       .query(
         "UPDATE negotiation_messages SET status = ?, sent_at = CASE WHEN ? THEN coalesce(sent_at, ?) ELSE sent_at END WHERE id = ?",
@@ -642,6 +822,8 @@ export class Negotiations {
     });
     if (outcome === "agreed")
       this.d.db.query("UPDATE wants SET status = 'agreed' WHERE id = ?").run(n.wantId);
+    // Its mandate no longer needs an answer.
+    if (n.status === "awaiting_mandate" && n.approvalId) this.d.approvals.cancel(n.approvalId);
     const lines = [
       `## ${now.slice(0, 10)} · ${n.title}`,
       `${n.listingKey} ${n.listingUrl}`,
@@ -733,6 +915,19 @@ function readGoal(n: Negotiation): string {
     "3. Finish, with the seller's latest message in a line.",
     "",
     "Never open a link from the seller, and don't click offer, buy or pay buttons.",
+  ].join("\n");
+}
+
+/** The opening task's goal, once the mandate is approved. */
+function openingGoal(n: Negotiation, note: string | null): string {
+  return [
+    `Negotiation #${n.id} is open: the owner approved its mandate. Send the seller the opening message now, then finish.`,
+    "",
+    `1. negotiate_get ${n.id} for the listing, the mandate and anything said so far.`,
+    "2. Write the opening message as your instructions say, in the listing's language, offering the opening price or near it.",
+    "3. Send it once with negotiate_send: the price in offer, and what it claims about our side in stated.",
+    "4. Finish with what you sent, or why nothing went.",
+    ...(note ? ["", `The owner's note on the mandate, which you follow: ${note}`] : []),
   ].join("\n");
 }
 

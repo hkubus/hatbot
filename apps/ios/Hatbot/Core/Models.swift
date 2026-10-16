@@ -244,6 +244,8 @@ struct Approval: Codable, Identifiable, Equatable, Sendable {
 
   let id: Int
   var taskId: Int?
+  /// ApprovalKind: send, purchase, payment, mandate (a negotiation's, PLAN.md §16.1) and the rest. A
+  /// String, so a kind this app doesn't know still shows.
   var kind: String
   var summary: String
   var reason: String

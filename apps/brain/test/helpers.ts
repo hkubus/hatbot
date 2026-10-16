@@ -197,6 +197,8 @@ export async function testApp(
     bots,
     memory,
     desktop,
+    model: taskModel,
+    spend,
     clock,
   });
   tasks.negotiations = negotiations;

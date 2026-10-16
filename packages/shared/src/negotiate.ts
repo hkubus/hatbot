@@ -99,7 +99,7 @@ export type Negotiation = {
   claims: Claims;
   status: NegotiationStatus;
   agreedPrice: number | null;
-  /** The mandate approval, while it waits. */
+  /** Its mandate approval: pending while it waits, then the decision and your note. */
   approvalId: number | null;
   /** The chat it was started from. */
   conversationId: number | null;
