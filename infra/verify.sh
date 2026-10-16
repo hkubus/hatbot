@@ -123,6 +123,20 @@ if pct exec "$DESKTOP_ID" -- test -S /run/hatbot-shell/shell.sock; then
 else
   printf '   %sskip%s  desktop shell (not running; deploy.sh installs it)\n' "$yel" "$rst"
 fi
+# The renderer's Chromium loads whatever a page asks for; only the loopback rule keeps it off DevTools.
+if pct exec "$DESKTOP_ID" -- test -S /run/hatbot-render/render.sock; then
+  # shellcheck disable=SC2016 # expands inside the desktop
+  uid=$(pct exec "$DESKTOP_ID" -- sh -c 'ps -o uid= -p "$(systemctl show -P MainPID hatbot-render)"' 2>/dev/null | tr -d ' ')
+  if [[ $uid =~ ^[0-9]+$ ]] && ((uid >= 61184 && uid <= 65519)); then
+    result OK "the renderer runs as a user the loopback rule covers (uid $uid)"
+  else
+    result FAIL "the renderer runs as a user the loopback rule covers" "uid ${uid:-unknown}"
+  fi
+  expect "the renderer runs a page's scripts" sh -c "pct exec $DESKTOP_ID -- curl -sS -m 30 -X POST \
+    --unix-socket /run/hatbot-render/render.sock http://render/check | grep -q '\"ok\":true'"
+else
+  printf '   %sskip%s  renderer (not running; deploy.sh installs it)\n' "$yel" "$rst"
+fi
 if pct exec "$BRAIN_ID" -- grep -qs '^NTFY_URL=http' /etc/hatbot/ntfy.env; then
   # shellcheck disable=SC2016 # expands inside the brain
   expect "the brain reaches your ntfy server" pct exec "$BRAIN_ID" -- sh -c \

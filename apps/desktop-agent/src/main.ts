@@ -15,6 +15,7 @@ import { FetchError, fetchPage } from "./fetch";
 import { browserKey } from "./keys";
 import { LiveQueue } from "./livequeue";
 import { runningProfile, useProfile } from "./profile";
+import { RENDER_SOCKET } from "./render";
 import { SHELL_SOCKET } from "./shell";
 import {
   ActionError,
@@ -68,6 +69,7 @@ const FEATURES = [
   "browser-reset",
   // inspect reports the tab's address and its text boxes, for the exact-text send check.
   "fields",
+  "render",
 ];
 
 // The display may still be starting (Xvnc restarting, say): wait for it rather than exit and be restarted.
@@ -245,6 +247,29 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
             if (err instanceof FetchError) return json({ error: err.message }, err.status);
             throw err;
           }
+        }
+        case "POST /render":
+        case "POST /render/check": {
+          // For watchers that run a page's scripts: hatbot-render, one page at a time, so a render may
+          // wait behind a few others. Not serialised with input: its Chromium isn't the one on screen.
+          let res: Response;
+          try {
+            res = await fetch(`http://render/${url.pathname === "/render" ? "render" : "check"}`, {
+              method: "POST",
+              unix: RENDER_SOCKET,
+              headers: { "content-type": "application/json" },
+              body: await req.text(),
+              signal: AbortSignal.timeout(110_000),
+            } as RequestInit);
+          } catch (err) {
+            if ((err as Error).name === "TimeoutError")
+              return json({ error: "The renderer didn't answer in time." }, 504);
+            return json({ error: "The renderer isn't running (deploy.sh sets it up)." }, 503);
+          }
+          return new Response(res.body, {
+            status: res.status,
+            headers: { "content-type": "application/json" },
+          });
         }
         case "GET /download": {
           const d = browser.download(url.searchParams.get("id") ?? "");

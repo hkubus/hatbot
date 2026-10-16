@@ -32,6 +32,15 @@ export type FetchResult = {
   body: string;
 };
 
+/** POST /render: a page after its scripts ran, in a headless Chromium on the desktop (watchers). */
+export type RenderResult = {
+  /**
+   * The page as HTML, cut at 2 MB. Chromium doesn't say the HTTP status, so a site's own error page
+   * comes back like any other.
+   */
+  html: string;
+};
+
 /** POST /action. `screenshot` and `zoom` have their own endpoints, which return an image. */
 export type AgentAction = {
   name: Exclude<ComputerMember, "screenshot" | "zoom">;
