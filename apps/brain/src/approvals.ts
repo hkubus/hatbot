@@ -84,9 +84,10 @@ export class Approvals {
     private bots?: Bots,
   ) {
     this.key = this.signingKey();
-    // Nothing waits on approvals from before a restart: their tasks were stopped.
+    // Nothing waits on approvals from before a restart: their tasks were stopped. A mandate waits for
+    // no task: its negotiation takes the answer whenever it comes (PLAN.md §16.1).
     db.query(
-      "UPDATE approvals SET status = 'cancelled', decided_at = ? WHERE status = 'pending'",
+      "UPDATE approvals SET status = 'cancelled', decided_at = ? WHERE status = 'pending' AND kind != 'mandate'",
     ).run(this.now());
   }
 

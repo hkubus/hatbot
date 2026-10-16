@@ -6,12 +6,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Mandate, Negotiation } from "@hatbot/shared";
 import type { AgentElement } from "@hatbot/shared/desktop";
+import { Approvals } from "../src/approvals";
+import { EventBus } from "../src/events";
 import { mcpPlugin } from "../src/plugins/mcp";
 import type { CallContext, PluginTool } from "../src/plugins/plugin";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { sendConfirm } from "../src/tasks/desktop-run";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
-import { type TestApp, testApp, waitFor } from "./helpers";
+import { ORIGIN, type TestApp, testApp, waitFor } from "./helpers";
 
 sendConfirm.everyMs = 1;
 
@@ -430,6 +432,25 @@ test("a note on the mandate changes its numbers; one Haiku can't apply asks agai
   await waitFor(() => t.negotiations.get(third.id)?.status === "expired");
   expect(t.approvals.get(c.id)?.status).toBe("expired");
   await t.tasks.idle();
+});
+
+test("a mandate waiting for you outlasts a restart; a task's approval doesn't", async () => {
+  const t = await testApp();
+  const n = openNegotiation(t);
+  t.negotiations.update(n.id, { status: "awaiting_mandate" });
+  const mandate = t.negotiations.askMandate(t.negotiations.get(n.id) as Negotiation);
+  const chat = t.approvals.create({
+    taskId: null,
+    conversationId: 1,
+    kind: "send",
+    summary: "Send it",
+  });
+
+  new Approvals(t.db, new EventBus(), { send: async () => {} }, ORIGIN);
+  expect(t.approvals.get(mandate.id)?.status).toBe("pending");
+  expect(t.approvals.get(chat.id)?.status).toBe("cancelled");
+  t.negotiations.due();
+  expect(t.negotiations.get(n.id)?.status).toBe("awaiting_mandate");
 });
 
 test("approved during quiet hours, the opening message waits for the morning", async () => {
