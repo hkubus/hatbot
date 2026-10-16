@@ -319,6 +319,7 @@ How it's enforced:
 - **Before each request**: estimate the input cost. Refuse if it would exceed the per-task ($3), daily ($10) or monthly ($200) limit.
 - **A task's own limit**: the task asks to spend one more per-task limit ($3), as an approval. Approve and it carries on; deny, or no answer in 24h, and it fails ("Stopped at its spending limit.").
 - **The daily or monthly limit**: the task fails at once with "Stopped: Today's $10 limit would be exceeded." (or the month's), and a chat reply stops with the same line. Nothing more runs until the limit resets or you raise it in Settings.
+- **Kept for alerts** (decided 2026-10-16): the last $1 of the daily and monthly limits (`limits.alertReserveUsd`, Settings → Spending limits) is only for alert and heartbeat tasks, their desktop tasks, and the heartbeat's own look. Everything else stops short of it ("… (its last $1 is kept for alerts)"). So a busy day still leaves room to look into a monitor that goes down. When even that is spent, the alert task fails with "Not investigated: today's limit is spent. The alert: Jellyfin (http://…) is down: timeout", so the notification still says what happened.
 - **Credits**: the Max 20x API credits are the only funding source, so the provider stops requests at $0 as a backstop.
 
 ### 6.4 Isolation

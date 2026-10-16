@@ -501,7 +501,13 @@ export type Commit = {
   files: string[];
 };
 
-export type Limits = { taskUsd: number; dailyUsd: number; monthlyUsd: number };
+export type Limits = {
+  taskUsd: number;
+  dailyUsd: number;
+  monthlyUsd: number;
+  /** The last of the daily and monthly limits, which only alerts and the heartbeat spend. */
+  alertReserveUsd: number;
+};
 /** Spend over a stretch of time: dollars, and tokens of every kind (input, cache, output). */
 export type SpendWindow = { usd: number; tokens: number };
 export type SpendSummary = {

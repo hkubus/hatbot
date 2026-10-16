@@ -86,3 +86,63 @@ test("code tasks get more room than routine ones", async () => {
   expect(work.requests[0]?.max_tokens).toBe(32000);
   expect(work.requests[0]?.output_config?.effort).toBe("high");
 });
+
+test("the last dollar of the day is kept for alerts; past it, you still hear what the alert said", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Restarted.", notify: true })] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const spent = (usd: number) =>
+    t.db
+      .query(
+        `INSERT INTO spend_ledger (created_at, model, purpose, input_tokens, cache_write_5m_tokens, cache_write_1h_tokens, cache_read_tokens, output_tokens, cost_usd, bot_id)
+         VALUES ('2026-10-09T12:00:00.000Z', 'm', 'chat', 0, 0, 0, 0, 0, ?, 'hatbot')`,
+      )
+      .run(usd);
+  const ended = async (task: Task | null) => {
+    await waitFor(() => t.tasks.get(task?.id ?? 0)?.finishedAt);
+    return t.tasks.get(task?.id ?? 0);
+  };
+  const triggerId = t.triggers.create({ name: "Kuma", kind: "kuma", prompt: "Fix it" }).id;
+  const alert = (id: number, name: string, msg: string) =>
+    (
+      t.triggers.receiveKuma(triggerId, {
+        heartbeat: { status: 0, msg },
+        monitor: { id, name, url: `http://${name.toLowerCase()}.lan` },
+      }) as { task: Task }
+    ).task;
+
+  spent(9.5);
+  const chat = t.tasks.createBackgroundTask({ title: "Tidy", goal: "g", origin: "chat" });
+  expect(await ended(chat)).toMatchObject({
+    status: "failed",
+    summary: "Stopped: Today's $10 limit would be exceeded (its last $1 is kept for alerts).",
+  });
+  expect(await ended(alert(3, "Jellyfin", "timeout"))).toMatchObject({ status: "done" });
+
+  spent(0.5);
+  expect(await ended(alert(4, "Immich", "connection refused"))).toMatchObject({
+    status: "failed",
+  });
+  expect(t.notifier.sent.at(-1)).toMatchObject({
+    title: "Failed: Immich is down",
+    message:
+      "Not investigated: today's limit is spent. The alert: Immich (http://immich.lan) is down: connection refused",
+  });
+  expect(work.requests).toHaveLength(1);
+
+  // Limits saved before the reserve existed get it; one limit changes without the others.
+  t.settings.update({ chatEffort: "medium" });
+  t.db
+    .query(
+      "UPDATE settings SET value = json_remove(value, '$.limits.alertReserveUsd') WHERE key = 'app'",
+    )
+    .run();
+  expect(t.settings.get().limits.alertReserveUsd).toBe(1);
+  expect(t.settings.update({ limits: { alertReserveUsd: 0 } }).limits).toEqual({
+    taskUsd: 3,
+    dailyUsd: 10,
+    monthlyUsd: 200,
+    alertReserveUsd: 0,
+  });
+});

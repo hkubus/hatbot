@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
-import { Settings } from "../settings";
+import { SettingsPatch } from "../settings";
 import { json, query } from "./util";
 
 export const adminRoutes = new Hono<AppEnv>()
@@ -33,7 +33,7 @@ export const adminRoutes = new Hono<AppEnv>()
     (c) => c.json(c.var.spend.byPurpose(c.req.valid("query").days)),
   )
   .get("/settings", (c) => c.json(c.var.settings.get()))
-  .put("/settings", json(Settings.omit({ paused: true }).partial()), (c) => {
+  .put("/settings", json(SettingsPatch.omit({ paused: true })), (c) => {
     const settings = c.var.settings.update(c.req.valid("json"));
     c.var.events.emit({ type: "settings.updated", settings });
     return c.json(settings);

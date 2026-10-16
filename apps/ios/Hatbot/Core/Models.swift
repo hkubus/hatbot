@@ -481,6 +481,9 @@ struct Limits: Codable, Equatable, Sendable {
   var taskUsd: Double
   var dailyUsd: Double
   var monthlyUsd: Double
+  /// The last of the daily and monthly limits, which only alerts and the heartbeat spend; nil from
+  /// brains before it.
+  var alertReserveUsd: Double?
 }
 
 struct SpendWindow: Codable, Equatable, Sendable {

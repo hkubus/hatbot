@@ -79,7 +79,9 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
 
   const setLimit = (key: keyof Limits, value: string) => {
     const n = Number(value);
-    if (!settings || !(n > 0) || n === settings.limits[key]) return;
+    // Nothing kept for alerts is allowed; a limit of nothing isn't.
+    const ok = key === "alertReserveUsd" ? n >= 0 : n > 0;
+    if (!settings || !ok || n === settings.limits[key]) return;
     void update({ limits: { ...settings.limits, [key]: n } });
   };
 
@@ -167,6 +169,7 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
                 ["dailyUsd", "Per day"],
                 ["monthlyUsd", "Per month"],
                 ["taskUsd", "Per task"],
+                ["alertReserveUsd", "Kept for alerts"],
               ] as const
             ).map(([key, label]) => (
               <div className="row" key={key}>
@@ -176,7 +179,7 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
                 $
                 <input
                   type="number"
-                  min="0.01"
+                  min={key === "alertReserveUsd" ? "0" : "0.01"}
                   step="0.01"
                   defaultValue={settings.limits[key]}
                   onBlur={(e) => setLimit(key, e.target.value)}

@@ -111,6 +111,9 @@ export function estimateTokens(messages: unknown): number {
   return chars / 3.5 + images * 1600 + pdfTokens;
 }
 
+/** Work that may spend the reserve kept at the end of the limits: alerts, and the heartbeat. */
+export const usesReserve = (origin: string) => origin === "alert" || origin === "heartbeat";
+
 export class BudgetError extends Error {
   constructor(
     readonly limit: "task" | "daily" | "monthly",
@@ -275,8 +278,11 @@ export class Spend {
     return this.sumSince(new Date(0), "AND task_id = ?", taskId);
   }
 
-  /** Throws BudgetError if a request estimated at `estimateUsd` would cross a limit. */
-  check(estimateUsd: number, task?: { id: number; limitUsd: number }) {
+  /**
+   * Throws BudgetError if a request estimated at `estimateUsd` would cross a limit. Only work with
+   * `reserve` may spend the last `alertReserveUsd` of the daily and monthly limits.
+   */
+  check(estimateUsd: number, task?: { id: number; limitUsd: number }, { reserve = false } = {}) {
     const now = this.clock();
     const limits = this.settings.get().limits;
     // Before every model request: today, the month and the task in one read of the ledger.
@@ -300,13 +306,19 @@ export class Spend {
     if (task && (row?.task ?? 0) + estimateUsd > task.limitUsd) {
       throw new BudgetError("task", `This task would go over its $${task.limitUsd} limit.`);
     }
-    if (todayUsd + estimateUsd > limits.dailyUsd) {
-      throw new BudgetError("daily", `Today's $${limits.dailyUsd} limit would be exceeded.`);
+    const kept = reserve ? 0 : limits.alertReserveUsd;
+    const why = (spent: number, limit: number) =>
+      spent + estimateUsd > limit ? "" : ` (its last $${kept} is kept for alerts)`;
+    if (todayUsd + estimateUsd > limits.dailyUsd - kept) {
+      throw new BudgetError(
+        "daily",
+        `Today's $${limits.dailyUsd} limit would be exceeded${why(todayUsd, limits.dailyUsd)}.`,
+      );
     }
-    if (monthUsd + estimateUsd > limits.monthlyUsd) {
+    if (monthUsd + estimateUsd > limits.monthlyUsd - kept) {
       throw new BudgetError(
         "monthly",
-        `This month's $${limits.monthlyUsd} limit would be exceeded.`,
+        `This month's $${limits.monthlyUsd} limit would be exceeded${why(monthUsd, limits.monthlyUsd)}.`,
       );
     }
   }

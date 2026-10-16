@@ -415,7 +415,7 @@ test("asking Opus past the spending limit stops the reply at the limit", async (
     { content: [toolUse("ask_opus", { question: "Prove it", context: "" })] },
   ]);
   const t = await testApp(model);
-  t.settings.update({ limits: { taskUsd: 1, dailyUsd: 0.1, monthlyUsd: 200 } });
+  t.settings.update({ limits: { taskUsd: 1, dailyUsd: 0.1, monthlyUsd: 200, alertReserveUsd: 0 } });
   await t.thread.post("a hard one").done;
   expect(model.requests).toHaveLength(1);
   const reply = t.thread.list().at(-1);

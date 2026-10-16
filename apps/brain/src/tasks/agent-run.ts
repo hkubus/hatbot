@@ -25,7 +25,7 @@ import { type Outcome, ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import type { CallContext, PluginTool, Verdict } from "../plugins/plugin";
 import { describeCall, runPluginTool, untrustedDefinitions, verdictFor } from "../plugins/registry";
-import { BudgetError, estimateTokens, priceOf } from "../spend";
+import { BudgetError, estimateTokens, priceOf, usesReserve } from "../spend";
 import { Stop, UPDATES_MODELS } from "./desktop-run";
 import { SEND_TO_CHAT_DESCRIPTION, SendToChat, sendToChat } from "./send-to-chat";
 import type { Tasks } from "./service";
@@ -144,6 +144,18 @@ const STARTED_BY = {
   heartbeat: () => "the heartbeat, which found something worth a look",
   chat: () => "the owner, from the chat",
 };
+
+/** An alert the limits stopped before anything looked at it: what it said, so you still hear it. */
+function notInvestigated(limit: "daily" | "monthly", payload: string | null): string {
+  let said = (payload ?? "").slice(0, 500);
+  try {
+    const a = JSON.parse(payload ?? "") as Record<string, unknown>;
+    const where = a.url || a.hostname;
+    said = `${a.monitor ?? "A monitor"}${where ? ` (${where})` : ""} is down${a.message ? `: ${a.message}` : "."}`;
+  } catch {}
+  const spent = limit === "daily" ? "today's" : "this month's";
+  return `Not investigated: ${spent} limit is spent. The alert: ${said}`;
+}
 
 export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal): Promise<void> {
   const { d } = tasks;
@@ -551,10 +563,20 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       if (step >= maxSteps)
         throw new Stop("failed", `Stopped after ${maxSteps} steps without finishing.`);
       try {
-        d.spend.check(estimateCost(messages, task.model), { id, limitUsd: tasks.budget(id) });
+        d.spend.check(
+          estimateCost(messages, task.model),
+          { id, limitUsd: tasks.budget(id) },
+          { reserve: usesReserve(task.origin) },
+        );
       } catch (err) {
         if (!(err instanceof BudgetError)) throw err;
-        if (err.limit !== "task") throw new Stop("failed", `Stopped: ${err.message}`);
+        if (err.limit !== "task")
+          throw new Stop(
+            "failed",
+            task.origin === "alert"
+              ? notInvestigated(err.limit, task.payload)
+              : `Stopped: ${err.message}`,
+          );
         await askBudget();
         continue;
       }

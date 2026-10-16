@@ -219,7 +219,7 @@ export class Heartbeat {
   }
 
   private async triage(instructions: string, list: string) {
-    this.d.spend.check(0.01);
+    this.d.spend.check(0.01, undefined, { reserve: true });
     const res = await this.d.model.create({
       model: HEARTBEAT_MODEL,
       max_tokens: 2000,

@@ -20,7 +20,7 @@ import { promptFor } from "../bots";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import { collapse, type GateState, gateCheck, refused, sendsWith } from "../negotiate/gate";
 import { destructive } from "../plugins/ssh/policy";
-import { BudgetError, estimateTokens, priceOf } from "../spend";
+import { BudgetError, estimateTokens, priceOf, usesReserve } from "../spend";
 import { skillPath } from "../teach/skills";
 import { checkFor, consequential } from "./policy";
 import { DesktopSendToChat, SEND_TO_CHAT_DESCRIPTION, sendToChat } from "./send-to-chat";
@@ -838,7 +838,11 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       if (activeMs + (holding ? tasks.clock() - since : 0) > MAX_ACTIVE_MS)
         throw new Stop("failed", "Stopped: it ran for 30 minutes without finishing.", true, ASK);
       try {
-        d.spend.check(estimateCost(messages, model), { id, limitUsd: tasks.budget(id) });
+        d.spend.check(
+          estimateCost(messages, model),
+          { id, limitUsd: tasks.budget(id) },
+          { reserve: usesReserve(task.origin) },
+        );
       } catch (err) {
         if (!(err instanceof BudgetError)) throw err;
         if (err.limit !== "task") throw new Stop("failed", `Stopped: ${err.message}`);
@@ -976,7 +980,11 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           ]
         : [...messages, { role: "user", content: [ask] }];
     try {
-      d.spend.check(estimateCost(asked, model), { id, limitUsd: tasks.budget(id) });
+      d.spend.check(
+        estimateCost(asked, model),
+        { id, limitUsd: tasks.budget(id) },
+        { reserve: usesReserve(task.origin) },
+      );
       const res = await d.model.create({ ...request(asked), max_tokens: 4000 });
       d.spend.recordResponse({ model, purpose: "task", usage: res.usage, taskId: id });
       return res.content

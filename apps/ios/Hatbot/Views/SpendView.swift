@@ -61,6 +61,9 @@ struct LimitsView: View {
           field("Each task", \.taskUsd)
           field("Each day", \.dailyUsd)
           field("Each month", \.monthlyUsd)
+          if limits?.alertReserveUsd != nil {
+            field("Kept for alerts", optional: \.alertReserveUsd)
+          }
         } footer: {
           Text("In dollars. Hatbot stops before going past one.")
         }
@@ -94,16 +97,22 @@ struct LimitsView: View {
 
   private var valid: Bool {
     guard let l = limits else { return false }
-    return l.taskUsd > 0 && l.dailyUsd > 0 && l.monthlyUsd > 0
+    return l.taskUsd > 0 && l.dailyUsd > 0 && l.monthlyUsd > 0 && (l.alertReserveUsd ?? 0) >= 0
   }
 
   private func field(_ label: String, _ key: WritableKeyPath<Limits, Double>) -> some View {
+    field(label, Binding(get: { limits?[keyPath: key] ?? 0 }, set: { limits?[keyPath: key] = $0 }))
+  }
+
+  private func field(_ label: String, optional key: WritableKeyPath<Limits, Double?>) -> some View {
+    field(label, Binding(get: { limits?[keyPath: key] ?? 0 }, set: { limits?[keyPath: key] = $0 }))
+  }
+
+  private func field(_ label: String, _ value: Binding<Double>) -> some View {
     LabeledContent(label) {
       TextField(
         label,
-        value: Binding(
-          get: { limits?[keyPath: key] ?? 0 },
-          set: { limits?[keyPath: key] = $0 }),
+        value: value,
         format: .currency(code: "USD")
       )
       .keyboardType(.decimalPad)

@@ -318,9 +318,9 @@ test("an effort change mid-conversation is a message where it was made, so the c
   expect(model.requests[3]?.messages.some((m) => m.role === "system")).toBe(false);
 });
 
-test("the spending check reads today, the month and the task's spend", async () => {
+test("the spending check reads today, the month and the task's spend, and keeps the reserve", async () => {
   const t = await testApp();
-  t.settings.update({ limits: { taskUsd: 1, dailyUsd: 2, monthlyUsd: 3 } });
+  t.settings.update({ limits: { taskUsd: 1, dailyUsd: 2, monthlyUsd: 3, alertReserveUsd: 0 } });
   const task = t.tasks.createBackgroundTask({ title: "Check", goal: "Check", origin: "schedule" });
   await t.tasks.idle();
   const id = (task as { id: number }).id;
@@ -332,9 +332,9 @@ test("the spending check reads today, the month and the task's spend", async () 
       taskId,
       extraUsd: usd,
     });
-  const stop = (estimate: number, withTask = false) => {
+  const stop = (estimate: number, withTask = false, reserve = false) => {
     try {
-      t.spend.check(estimate, withTask ? { id, limitUsd: 1 } : undefined);
+      t.spend.check(estimate, withTask ? { id, limitUsd: 1 } : undefined, { reserve });
       return null;
     } catch (err) {
       return (err as BudgetError).limit;
@@ -347,9 +347,13 @@ test("the spending check reads today, the month and the task's spend", async () 
   expect(stop(0.05, true)).toBeNull();
   expect(stop(0.2, true)).toBe("task");
   expect(stop(0.6)).toBe("daily");
-  t.settings.update({ limits: { taskUsd: 1, dailyUsd: 10, monthlyUsd: 3 } });
+  t.settings.update({ limits: { dailyUsd: 10 } });
   expect(stop(0.5)).toBeNull();
   expect(stop(0.7)).toBe("monthly");
+  // The last $0.50 of the month is only for alerts and the heartbeat.
+  t.settings.update({ limits: { alertReserveUsd: 0.5 } });
+  expect(stop(0.2)).toBe("monthly");
+  expect(stop(0.5, false, true)).toBeNull();
 });
 
 test("a background task waiting on a desktop task doesn't hold a slot", async () => {
