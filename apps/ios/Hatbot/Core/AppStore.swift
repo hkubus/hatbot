@@ -81,6 +81,8 @@ final class AppStore {
   /// Seen messages not yet told to the brain, sent together.
   @ObservationIgnored private var seenQueue: [Int] = []
   @ObservationIgnored private var seenFlush: Task<Void, Never>?
+  /// Tasks the chat shows that we don't have yet, loaded together.
+  @ObservationIgnored private var wantedTasks: [Int] = []
 
   @ObservationIgnored let api: API
   @ObservationIgnored private var requested = Set<String>()
@@ -637,12 +639,40 @@ final class AppStore {
     steps[id] = res.steps
   }
 
-  /// Loads a task the first time something shows it.
+  /// Loads a task the first time something shows it. The rows that appear together come in one request.
   func ensureTask(_ id: Int) {
-    if tasks[id] != nil && steps[id] != nil { return }
+    if tasks[id] != nil { return }
     guard requested.insert("t\(id)").inserted else { return }
+    wantedTasks.append(id)
+    guard wantedTasks.count == 1 else { return }
+    Task { await loadWantedTasks() }
+  }
+
+  private func loadWantedTasks() async {
+    let ids = wantedTasks
+    wantedTasks = []
+    for start in stride(from: 0, to: ids.count, by: 200) {
+      let some = Array(ids[start..<min(start + 200, ids.count)])
+      do {
+        let list: [AgentTask] = try await api.get("/tasks?ids=\(some.map(String.init).joined(separator: ","))")
+        for t in list { tasks[t.id] = t }
+        // A brain from before ids= sends its newest tasks instead: the rest one at a time.
+        guard list.contains(where: { !some.contains($0.id) }) else { continue }
+        for id in some where tasks[id] == nil {
+          do { try await loadTask(id) } catch { requested.remove("t\(id)") }
+        }
+      } catch {
+        for id in some { requested.remove("t\(id)") }
+      }
+    }
+  }
+
+  /// A task with its steps, for the live view.
+  func ensureSteps(_ id: Int) {
+    if steps[id] != nil { return }
+    guard requested.insert("st\(id)").inserted else { return }
     Task {
-      do { try await loadTask(id) } catch { requested.remove("t\(id)") }
+      do { try await loadTask(id) } catch { requested.remove("st\(id)") }
     }
   }
 

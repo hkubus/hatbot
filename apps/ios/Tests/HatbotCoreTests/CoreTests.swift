@@ -825,4 +825,38 @@ final class NetworkTests: XCTestCase {
     try await Task.sleep(for: .milliseconds(600))
     XCTAssertEqual(SlowBrain.requested, ["POST /thread/seen"])
   }
+
+  /// A chat's task rows: one request for the tasks, without their steps. The live view still loads steps.
+  func testTaskRowsLoadTogether() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    SlowBrain.routes["/tasks?ids=20,21,22"] = "[\(Self.task(20)),\(Self.task(22))]"
+    SlowBrain.routes["/tasks/30"] = #"{"task":\#(Self.task(30)),"steps":[]}"#
+    await MainActor.run {
+      for id in [20, 21, 22, 20, 1] { store.ensureTask(id) }
+      store.ensureSteps(30)
+    }
+    try await Task.sleep(for: .milliseconds(400))
+    XCTAssertEqual(SlowBrain.requested.sorted(), ["GET /tasks/30", "GET /tasks?ids=20,21,22"])
+    await MainActor.run {
+      XCTAssertEqual(store.tasks[22]?.id, 22)
+      XCTAssertNil(store.steps[22])
+      XCTAssertNotNil(store.steps[30])
+    }
+  }
+
+  /// A brain from before ids= sends its newest tasks: the rows it left out load one at a time.
+  func testTaskRowsFromAnOlderBrain() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    SlowBrain.routes["/tasks?ids=2,40"] = "[\(Self.task(99)),\(Self.task(2))]"
+    SlowBrain.routes["/tasks/40"] = #"{"task":\#(Self.task(40)),"steps":[]}"#
+    await MainActor.run {
+      store.tasks[2] = nil
+      store.ensureTask(2)
+      store.ensureTask(40)
+    }
+    try await Task.sleep(for: .milliseconds(600))
+    XCTAssertEqual(SlowBrain.requested, ["GET /tasks?ids=2,40", "GET /tasks/40"])
+    let loaded = await MainActor.run { store.tasks[40]?.id }
+    XCTAssertEqual(loaded, 40)
+  }
 }

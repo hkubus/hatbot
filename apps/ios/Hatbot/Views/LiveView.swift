@@ -231,7 +231,7 @@ private struct ScreenTask: View {
         }
       }
     }
-    .onAppear { store.ensureTask(taskId) }
+    .onAppear { store.ensureSteps(taskId) }
   }
 }
 
