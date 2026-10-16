@@ -2,6 +2,7 @@ import { API_PREFIX, type Health } from "@hatbot/shared";
 import { Hono } from "hono";
 import { getConnInfo } from "hono/bun";
 import { HTTPException } from "hono/http-exception";
+import { compressJson } from "./compress";
 import type { AppEnv, Deps } from "./context";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
@@ -25,6 +26,7 @@ export const VERSION = "0.1.0";
 export function createApp(deps: Deps) {
   const app = new Hono<AppEnv>().basePath(API_PREFIX);
 
+  app.use(compressJson);
   app.use(async (c, next) => {
     for (const [k, v] of Object.entries(deps)) c.set(k as keyof Deps, v as never);
     c.set("clientIp", clientIp(c, deps.config.trustedProxies));
