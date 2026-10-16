@@ -249,7 +249,7 @@ Check tool versions and model IDs against the live docs at implementation time.
 | `ssh_exec(host, cmd)` plugin | bg | Hosts from Settings, as the `hatbot` user; destructive patterns need approval |
 | `ssh_pct_exec(host, guest, cmd)` plugin | bg | Optional: a command in a Proxmox container through a host marked "Proxmox host" (`infra/pct-exec-setup.sh`): root in the container via a sudo-only wrapper that refuses Hatbot's own guests; same rules as `ssh_exec` |
 | `forgejo_*` plugin (read, comment, open PR) | bg | Merge, force-push and delete need approval |
-| `github_*` plugin (the same, on GitHub) | bg | Merging, committing to the default branch and changing workflows ask |
+| `github_*` plugin (the same, on GitHub, plus CI: `github_ci` lists each check with its id, `github_ci_log` reads a failed job's log, **untrusted**) | bg | Merging, committing to the default branch and changing workflows ask. Code work lets the repository's CI check its branch before the pull request: on a failure it reads the log, fixes and pushes, at most 3 rounds, then says the result in the pull request (a draft if it still fails). The sandbox has no Rust or Swift and little RAM, so CI is the build machine |
 | `watch_*` (create/list/update/delete) | bg | Free; a watcher made after untrusted content starts its tasks tainted (§15) |
 | `notify(message, priority)` | bg | Free |
 | `mcp_*` plugin (each server's tools) | bg | Default **ask**; set allow/ask/block per tool |
@@ -560,7 +560,9 @@ Each milestone ends with a working, demo-able system.
 - **Done when**: you can chat, approve and take over from the app on your phone.
 
 ### After v1
-Email via Proton Bridge · open-source release (choose a licence, docs, one-command installer).
+Email via Proton Bridge · open-source release: choose a licence (the install guide in `README.md` and the licence check are done).
+
+**Not planned** (the owner's call, 2026-10-16): messengers (Signal, Telegram, Matrix); being reachable only through Hatbot's own web and iOS app is fine. Email and calendar wait for after v1.
 
 ---
 
@@ -642,7 +644,7 @@ What runs without you asking, and the tools to see that it works.
 - **Run again**: an ended root background task starts anew with its goal as you edit it, keeping its origin, bot, payload and taint.
 - **Heartbeat** (`apps/brain/src/heartbeat.ts`, on by default): every 30 minutes a look, without the model, at failed tasks, expired approvals, watchers and plugins that can't be read, an offline desktop, spend over 80%, and plugin signals (Uptime Kuma monitors down, PBS jobs failed or datastores over 90%). Only something new goes to Haiku, which lets it be, tells you, or starts a task with your instructions. Its tasks start untrusted.
 - **Weekly report** (`apps/brain/src/report.ts`, on by default, Monday 09:00): spend by bot, tasks done and failed, approvals, watchers, memory commits. In Hatbot's chat and as a notification, made without the model.
-- **Proposals** (`apps/brain/src/memory/proposals.ts`, migration 25): Opus proposes a tidy-up of memory (weekly when switched on, or Tidy up in Memory) and fixes to skills whose tasks failed or needed you since they last changed. Each is a diff per file; Apply commits it as you, Dismiss drops it, and a proposal goes stale if memory changed under it.
+- **Proposals** (`apps/brain/src/memory/proposals.ts`, migrations 25 and 30): writes to skills and indexes held from tainted work (§6.1), and Opus proposes a tidy-up of memory (weekly when switched on, or Tidy up in Memory) and fixes to skills whose tasks failed or needed you since they last changed. Each is a diff per file; Apply commits it as you, Dismiss drops it, and a proposal goes stale if memory changed under it.
 
 
 ---
