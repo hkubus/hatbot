@@ -536,7 +536,7 @@ struct ProposalView: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding()
     }
-    .navigationTitle(proposal.kind == .skill ? "Skill fix" : "Tidy-up")
+    .navigationTitle(proposal.kind == .skill ? "Skill fix" : proposal.kind == .write ? "Memory change" : "Tidy-up")
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
       if proposal.status == .pending {

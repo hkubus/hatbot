@@ -52,7 +52,7 @@ Acceptance tests for parts that have never run live. The owner runs them; write 
 
 These came out of the M4 security review.
 
-1. **`memory_write` from a tainted chat or task:** left as it is, by the owner's choice. Memory, skills included, stays trusted on every read. If it ever needs closing, flagging tainted writes to `skills/` would cover most of the risk.
+1. **`memory_write` from a tainted chat or task:** closed 2026-10-16, with the owner's agreement. Writes and deletes to skills and the `INDEX.md` files become `write` proposals (PLAN §6.1); other memory files still commit directly.
 2. **Thread summaries** (Haiku, `agent/thread.ts`) don't carry taint. Left for now: the path from a summary to an unapproved change is long.
 3. **SSH logs and files:** done. `ssh_check logs`/`errors` and `ssh_read_file` are untrusted and taint the task.
 

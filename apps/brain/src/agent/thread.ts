@@ -21,6 +21,7 @@ import { type Bots, botIndex, promptFor } from "../bots";
 import type { Db } from "../db";
 import type { DesktopAgent } from "../desktop/client";
 import type { EventBus } from "../events";
+import type { Proposals } from "../memory/proposals";
 import { MemoryError, type MemoryStore } from "../memory/store";
 import type { Negotiations } from "../negotiate/service";
 import type { CallContext, PluginTool } from "../plugins/plugin";
@@ -139,6 +140,7 @@ export type ThreadDeps = {
   watchers?: Watchers;
   approvals?: Approvals;
   negotiations?: Negotiations;
+  proposals?: Proposals;
   /** Files in the chat, and the desktop whose sandbox send_file takes them from. */
   attachments?: Attachments;
   desktop?: DesktopAgent;
@@ -346,6 +348,7 @@ export class Thread {
       | "attachments"
       | "desktop"
       | "negotiations"
+      | "proposals"
     >,
   ) {
     Object.assign(this.d, parts);

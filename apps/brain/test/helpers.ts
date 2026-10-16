@@ -212,7 +212,9 @@ export async function testApp(
     attachments,
     desktop: agent,
     negotiations,
+    proposals,
   });
+  tasks.attach({ proposals });
   const updateDir = tempDir("hatbot-test-update-");
   const updates = new Updates(
     {

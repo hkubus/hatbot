@@ -7,6 +7,7 @@ import { type Bots, botFolder } from "../bots";
 import type { Db } from "../db";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import type { EventBus } from "../events";
+import type { Proposals } from "../memory/proposals";
 import { HATBOT, MemoryError, type MemoryStore } from "../memory/store";
 import { NEGOTIATE_TOOL_NAMES } from "../negotiate/names";
 import type { PluginTool } from "../plugins/plugin";
@@ -44,8 +45,10 @@ export type ToolContext = {
   plugins?: Plugins;
   /** The plugin tools this reply was offered, with negotiation's; all of the plugins' without it. */
   pluginTools?: PluginTool[];
+  /** Where writes to skills and indexes go while the conversation or task is tainted. */
+  proposals?: Proposals;
   /**
-   * What untrusted content the conversation first read, or null; tasks it starts begin tainted
+   * What untrusted content the conversation or task first read, or null; tasks it starts begin tainted
    * (PLAN.md §6.1).
    */
   tainted?: () => string | null;
@@ -142,6 +145,33 @@ function authorOf(ctx: ToolContext, path: string) {
   return ctx.bots?.author(id) ?? HATBOT;
 }
 
+/** Files every later chat and task reads and trusts: skills, and the memory indexes. */
+const TRUSTED_FILE = /^(skills\/.+|INDEX\.md|bots\/[^/]+\/INDEX\.md)$/;
+
+/**
+ * A write (or, content null, a delete) to a trusted file after reading untrusted content becomes a
+ * proposal you apply, so injected text can't make itself trusted (PLAN.md §6.1). The tool's reply,
+ * or null to write it directly.
+ */
+async function held(
+  ctx: ToolContext,
+  path: string,
+  content: string | null,
+  reason: string,
+): Promise<string | null> {
+  const by = ctx.tainted?.();
+  const { rel } = ctx.memory.resolve(path);
+  if (!by || !TRUSTED_FILE.test(rel)) return null;
+  if (!ctx.proposals)
+    throw new MemoryError(`${rel} can't be changed after reading untrusted content.`);
+  const p = await ctx.proposals.hold(rel, content, reason, by);
+  if (!p)
+    return content === null
+      ? `Nothing to delete: ${rel} doesn't exist.`
+      : "No change: the file already had this content.";
+  return "Saved as a proposal; the owner applies it. After reading untrusted content, changes to skills and INDEX.md wait for them.";
+}
+
 /** Why a task the chat starts is tainted, from what the chat had read. */
 const chatTaint = (by: string | null | undefined) => by && `The chat had read: ${by}`;
 
@@ -234,6 +264,8 @@ export const TOOLS = [
     }),
     run: async ({ path, content, reason }, ctx) => {
       const author = authorOf(ctx, path);
+      const proposed = await held(ctx, path, content, reason);
+      if (proposed) return proposed;
       const sha = await ctx.memory.write(path, content, author, reason);
       if (!sha) return "No change: the file already had this content.";
       ctx.events.emit({ type: "memory.committed", sha, message: reason, author: author.name });
@@ -246,6 +278,8 @@ export const TOOLS = [
     schema: z.object({ path: z.string(), reason: z.string().describe("Short commit message") }),
     run: async ({ path, reason }, ctx) => {
       const author = authorOf(ctx, path);
+      const proposed = await held(ctx, path, null, reason);
+      if (proposed) return proposed;
       const sha = await ctx.memory.delete(path, author, reason);
       if (sha)
         ctx.events.emit({ type: "memory.committed", sha, message: reason, author: author.name });

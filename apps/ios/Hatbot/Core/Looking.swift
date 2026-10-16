@@ -106,10 +106,11 @@ struct ChecksInfo: Decodable, Sendable {
   var approval: Approval?
 }
 
-/// A tidy-up of memory or a fix to a skill, shown as a diff to apply or dismiss.
+/// A tidy-up of memory, a fix to a skill, or a write to a skill or index from work that had read
+/// untrusted content, shown as a diff to apply or dismiss.
 struct Proposal: Codable, Identifiable, Hashable, Sendable {
   enum Kind: String, LenientEnum {
-    case tidy, skill
+    case tidy, skill, write
     static let fallback = Kind.tidy
   }
 

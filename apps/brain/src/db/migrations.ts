@@ -577,4 +577,23 @@ export const migrations: string[] = [
   /* 29: memory files by section, for ranked search; refilled at startup and on every commit */ `
   CREATE VIRTUAL TABLE memory_fts USING fts5(path UNINDEXED, line UNINDEXED, text, tokenize='porter unicode61');
   `,
+  /* 30: proposals of a third kind: writes to skills and indexes from tainted work (PLAN.md §6.1) */ `
+  ${REBUILD}
+  CREATE TABLE proposals_new (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('tidy', 'skill', 'write')),
+    title TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    -- [{path, before, after}]: null before is a new file, null after deletes it.
+    changes TEXT NOT NULL,
+    skill TEXT,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'applied', 'dismissed', 'stale')),
+    created_at TEXT NOT NULL,
+    resolved_at TEXT
+  );
+  INSERT INTO proposals_new SELECT * FROM proposals;
+  DROP TABLE proposals;
+  ALTER TABLE proposals_new RENAME TO proposals;
+  CREATE INDEX proposals_status ON proposals (status, id);
+  `,
 ];

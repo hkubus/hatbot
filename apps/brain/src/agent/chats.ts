@@ -14,6 +14,7 @@ type Parts = Pick<
   | "attachments"
   | "desktop"
   | "negotiations"
+  | "proposals"
 >;
 
 type Row = {

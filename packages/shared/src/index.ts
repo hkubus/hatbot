@@ -468,10 +468,10 @@ export type UpdateInfo = {
 
 export type MemoryFile = { path: string; size: number };
 
-/** A change to memory for you to look over: a tidy-up, or a fix to a skill. */
+/** A change to memory for you to look over: a tidy-up, a fix to a skill, or a held write (PLAN.md §6.1). */
 export type Proposal = {
   id: number;
-  kind: "tidy" | "skill";
+  kind: "tidy" | "skill" | "write";
   title: string;
   reason: string;
   /** null before: a new file; null after: deleted. */
