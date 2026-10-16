@@ -402,6 +402,23 @@ export class Checks {
         }),
       },
       {
+        id: "desktop.render",
+        name: "Page scripts",
+        run: ifUp(async () => {
+          if (!(await status).features?.includes("render"))
+            return warn("desktop-agent is too old to run a page's scripts. Run Update.");
+          try {
+            await agent.renderCheck();
+            return ok("Watchers can run a page's scripts.");
+          } catch (err) {
+            if (err instanceof DesktopError && err.status === 503)
+              return fail("The renderer isn't running. Run infra/deploy.sh once on the host.");
+            if (err instanceof DesktopError) return fail(err.message);
+            throw err;
+          }
+        }),
+      },
+      {
         id: "desktop.browser",
         name: "Desktop browser",
         run: ifUp(async () => {

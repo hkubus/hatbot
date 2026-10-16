@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Approval, CheckReport, ChecksInfo } from "@hatbot/shared";
+import { DesktopError } from "../src/desktop/client";
 import { setUpOwner, testApp } from "./helpers";
 
 const byId = (r: CheckReport) => Object.fromEntries(r.results.map((c) => [c.id, c]));
@@ -11,7 +12,7 @@ test("Check everything tries each part and keeps the report", async () => {
     version: "abc1234",
     profile: "hatbot",
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    features: ["profiles", "exec", "files", "fields"],
+    features: ["profiles", "exec", "files", "fields", "render"],
   };
   const res = await t.call("POST", "/checks", undefined, { cookie });
   expect(res.status).toBe(200);
@@ -23,6 +24,7 @@ test("Check everything tries each part and keeps the report", async () => {
   expect(checks.desktop?.state).toBe("ok");
   expect(checks["desktop.profiles"]?.state).toBe("ok");
   expect(checks["desktop.shell"]?.state).toBe("ok");
+  expect(checks["desktop.render"]?.state).toBe("ok");
   expect(checks["desktop.browser"]?.detail).toContain("https://example.com/");
   expect(checks["public-url"]?.state).toBe("ok");
   // Not set up in tests: said plainly, not failed.
@@ -53,6 +55,8 @@ test("an old desktop, a shared profile and a broken schedule are flagged", async
   expect(checks.desktop?.detail).toContain("older than the brain");
   expect(checks["desktop.profiles"]?.state).toBe("warn");
   expect(checks["desktop.timezone"]?.detail).toContain("Pacific/Chatham");
+  expect(checks["desktop.render"]).toMatchObject({ state: "warn" });
+  expect(checks["desktop.render"]?.detail).toContain("too old");
   expect(checks.schedules?.detail).toContain('"Stock check"');
 
   // The deep health check: Chromium's DevTools down.
@@ -60,6 +64,21 @@ test("an old desktop, a shared profile and a broken schedule are flagged", async
   const again = byId(await t.checks.run());
   expect(again.desktop).toMatchObject({ state: "fail" });
   expect(again.desktop?.detail).toContain("DevTools");
+});
+
+test("the renderer is tried with a page of the desktop's own", async () => {
+  const t = await testApp();
+  t.agent.health = { features: ["profiles", "exec", "files", "render"] };
+  t.agent.renderError = new DesktopError("The renderer isn't running (deploy.sh sets it up).", 503);
+  expect(byId(await t.checks.run())["desktop.render"]).toMatchObject({
+    state: "fail",
+    detail: "The renderer isn't running. Run infra/deploy.sh once on the host.",
+  });
+  t.agent.renderError = new DesktopError("Chromium failed: No usable sandbox!", 500);
+  expect(byId(await t.checks.run())["desktop.render"]).toMatchObject({
+    state: "fail",
+    detail: "Chromium failed: No usable sandbox!",
+  });
 });
 
 test("a test approval goes out, and its answer shows", async () => {

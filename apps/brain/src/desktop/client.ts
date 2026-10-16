@@ -10,6 +10,7 @@ import type {
   BrowserResult,
   BrowserState,
   FetchResult,
+  RenderResult,
   ShellResult,
 } from "@hatbot/shared/desktop";
 
@@ -43,6 +44,10 @@ export interface DesktopAgent {
   getDownload(id: string): Promise<{ name: string; bytes: Uint8Array }>;
   /** A GET from the desktop, which reaches only the internet. */
   fetch(url: string): Promise<FetchResult>;
+  /** The page after its scripts ran, in a headless Chromium on the desktop that isn't the bots'. */
+  render(url: string): Promise<RenderResult>;
+  /** Renders a page of the desktop's own whose script writes its text. Throws when that fails. */
+  renderCheck(): Promise<void>;
   /** One browser toolset member, run on Chromium over CDP. */
   browser(call: BrowserCall): Promise<BrowserResult>;
   browserState(): Promise<BrowserState>;
@@ -167,6 +172,22 @@ export class HttpDesktopAgent implements DesktopAgent {
         throw new DesktopError("desktop-agent is too old to fetch pages; run Update.", 404);
       throw err;
     }
+  }
+  async render(url: string) {
+    // The desktop renders one page at a time, so this one may wait behind a few others.
+    try {
+      return (await (await this.req("POST", "/render", { url }, 120_000)).json()) as RenderResult;
+    } catch (err) {
+      if (err instanceof DesktopError && err.status === 404)
+        throw new DesktopError(
+          "desktop-agent is too old to run a page's scripts; run Update.",
+          404,
+        );
+      throw err;
+    }
+  }
+  async renderCheck() {
+    await this.req("POST", "/render/check", {}, 30_000);
   }
   async browser(call: BrowserCall) {
     // `wait` and page loads may take up to 30 s.

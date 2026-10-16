@@ -8,6 +8,11 @@ export type WatchSource = {
   kind: "page" | "tool";
   /** page: the address. */
   url?: string;
+  /**
+   * page: loaded in a headless Chromium on the desktop, so what its scripts write is there. Slower and
+   * heavier than a plain fetch: such a watcher looks every MIN_RENDER_WATCH_MINUTES at most.
+   */
+  render?: boolean;
   /** tool: its name, e.g. forgejo_pull, and what it's called with. */
   tool?: string;
   input?: Record<string, unknown>;
@@ -64,11 +69,18 @@ export type WatchPreview = { ok: true; value: string } | { ok: false; error: str
 
 /** Watchers look at most this often, in minutes. */
 export const MIN_WATCH_MINUTES = 5;
+/** Watchers that run a page's scripts look at most this often: each look is a Chromium on the desktop. */
+export const MIN_RENDER_WATCH_MINUTES = 15;
+
+/** How often a watcher on this source may look, at most, in minutes. */
+export const minWatchMinutes = (s: Pick<WatchSource, "kind" | "render">) =>
+  s.kind === "page" && s.render ? MIN_RENDER_WATCH_MINUTES : MIN_WATCH_MINUTES;
 
 export const WatchSourceInput = z
   .object({
     kind: z.enum(["page", "tool"]),
     url: z.string().trim().url().max(2000).optional(),
+    render: z.boolean().optional(),
     tool: z.string().trim().min(1).max(64).optional(),
     input: z.record(z.string(), z.unknown()).optional(),
     selector: z.string().trim().min(1).max(300).optional(),

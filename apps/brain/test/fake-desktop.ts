@@ -119,6 +119,20 @@ export class FakeDesktop implements DesktopAgent {
       body,
     };
   }
+  /** Pages as they are once their scripts ran, by address. */
+  rendered = new Map<string, string>();
+  renders: string[] = [];
+  /** What the renderer's check throws; null when it works. */
+  renderError: DesktopError | null = null;
+  async render(url: string) {
+    this.renders.push(url);
+    const html = this.rendered.get(url);
+    if (html === undefined) throw new DesktopError("Couldn't load it: ERR_NAME_NOT_RESOLVED.", 502);
+    return { html };
+  }
+  async renderCheck() {
+    if (this.renderError) throw this.renderError;
+  }
   async browserState(): Promise<BrowserState> {
     return {
       tabs: [

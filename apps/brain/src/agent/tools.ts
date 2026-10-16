@@ -1,6 +1,14 @@
 // Built-in tools for the chat thread (PLAN.md §5.5): memory, history search, desktop tasks, schedules.
 import type Anthropic from "@anthropic-ai/sdk";
-import { type Bot, describeCron, HATBOT_ID, type Schedule, SKILL_NAME } from "@hatbot/shared";
+import {
+  type Bot,
+  describeCron,
+  HATBOT_ID,
+  minWatchMinutes,
+  type Schedule,
+  SKILL_NAME,
+  type WatchSource,
+} from "@hatbot/shared";
 import { z } from "zod";
 import type { Attachments } from "../attachments";
 import { type Bots, botFolder } from "../bots";
@@ -176,6 +184,12 @@ async function held(
 const chatTaint = (by: string | null | undefined) => by && `The chat had read: ${by}`;
 
 const watchFields = {
+  render: z
+    .boolean()
+    .optional()
+    .describe(
+      'A page: load it in a headless browser on the desktop and run its scripts first, for a page that fills in with JavaScript (empty or "Loading…" without). Slower: such a watcher looks every 15 minutes at most. Sites with bot protection block it too',
+    ),
   selector: z
     .string()
     .optional()
@@ -207,7 +221,7 @@ const watchFields = {
     .int()
     .positive()
     .optional()
-    .describe("How often to look, at least 5; 60 if left out"),
+    .describe("How often to look, at least 5 (15 with render); 60 if left out"),
   once: z.boolean().optional().describe("Switch off after the first time it counts"),
   prompt: z
     .string()
@@ -511,7 +525,7 @@ export const TOOLS = [
   def({
     name: "watch_create",
     description:
-      "Watch a web page or a plugin's read tool and act only when its value changes the way the owner wants: back in stock, a price below a number, a PR merged, a new release. It's checked on a timer without a model, so it costs nothing until something happens; prefer it to a schedule for \"tell me when…\". Pages are fetched as plain HTML with no JavaScript, from the desktop. Pick one value out with selector, path or pattern: a whole page changes too often. It looks once before it's made and tells you what it saw, or why it couldn't, so you can fix the selector or pattern.",
+      "Watch a web page or a plugin's read tool and act only when its value changes the way the owner wants: back in stock, a price below a number, a PR merged, a new release. It's checked on a timer without a model, so it costs nothing until something happens; prefer it to a schedule for \"tell me when…\". Pages are fetched from the desktop as plain HTML without running their scripts; set render for a page that fills in with JavaScript. Neither gets past bot protection (a challenge page, a captcha). Pick one value out with selector, path or pattern: a whole page changes too often. It looks once before it's made and tells you what it saw, or why it couldn't, so you can fix the selector or pattern.",
     schema: z.object({
       name: z.string().min(1).max(80).describe('Short name, e.g. "Framework 16 price"'),
       url: z.string().optional().describe("A page or JSON API to fetch"),
@@ -524,22 +538,23 @@ export const TOOLS = [
       if (Boolean(input.url) === Boolean(input.tool)) return "Give either url or tool.";
       const condition = conditionOf(input);
       if (typeof condition === "string") return condition;
+      const source: WatchSource = {
+        kind: input.url ? "page" : "tool",
+        ...(input.url
+          ? { url: input.url, ...(input.render ? { render: true } : {}) }
+          : { tool: input.tool, input: input.tool_input ?? {} }),
+        ...(input.selector ? { selector: input.selector } : {}),
+        ...(input.path ? { path: input.path } : {}),
+        ...(input.pattern ? { pattern: input.pattern } : {}),
+      };
       try {
         const w = await watchers.create(
           {
             name: input.name,
-            source: {
-              kind: input.url ? "page" : "tool",
-              ...(input.url
-                ? { url: input.url }
-                : { tool: input.tool, input: input.tool_input ?? {} }),
-              ...(input.selector ? { selector: input.selector } : {}),
-              ...(input.path ? { path: input.path } : {}),
-              ...(input.pattern ? { pattern: input.pattern } : {}),
-            },
+            source,
             condition,
             prompt: input.prompt?.trim() ?? "",
-            everyMinutes: Math.max(5, input.every_minutes ?? 60),
+            everyMinutes: Math.max(minWatchMinutes(source), input.every_minutes ?? 60),
             once: input.once ?? false,
             enabled: true,
             botId: bot?.id ?? HATBOT_ID,
@@ -567,7 +582,7 @@ export const TOOLS = [
   def({
     name: "watch_update",
     description:
-      "Change a watcher: what counts, how often it looks, what it does, its name, or turn it on or off. Only the fields you give change.",
+      "Change a watcher: what counts, how often it looks, whether it runs the page's scripts, what it does, its name, or turn it on or off. Only the fields you give change.",
     schema: z.object({
       id: z.number().int(),
       name: z.string().min(1).max(80).optional(),
@@ -579,8 +594,23 @@ export const TOOLS = [
       if (!watchers || !w) return `No watcher #${id}.`;
       const condition = input.when ? conditionOf(input) : undefined;
       if (typeof condition === "string") return condition;
+      if (input.render !== undefined && w.source.kind !== "page")
+        return "Only a page has scripts to run; this watcher calls a tool.";
       const picks = ["selector", "path", "pattern"] as const;
-      const repick = picks.some((k) => input[k] !== undefined);
+      const source: WatchSource | undefined =
+        picks.some((k) => input[k] !== undefined) || input.render !== undefined
+          ? {
+              ...w.source,
+              // An empty string takes that pick away.
+              ...Object.fromEntries(
+                picks.filter((k) => input[k] !== undefined).map((k) => [k, input[k] || undefined]),
+              ),
+              ...(input.render !== undefined ? { render: input.render || undefined } : {}),
+            }
+          : undefined;
+      // Running the page's scripts looks less often, so a shorter time is raised to that.
+      const min = minWatchMinutes(source ?? w.source);
+      const every = input.every_minutes ?? (w.everyMinutes < min ? min : undefined);
       try {
         const updated = await watchers.update(
           id,
@@ -589,19 +619,9 @@ export const TOOLS = [
             enabled: input.enabled,
             condition,
             prompt: input.prompt?.trim(),
-            everyMinutes: input.every_minutes && Math.max(5, input.every_minutes),
+            everyMinutes: every === undefined ? undefined : Math.max(min, every),
             once: input.once,
-            source: repick
-              ? {
-                  ...w.source,
-                  // An empty string takes that pick away.
-                  ...Object.fromEntries(
-                    picks
-                      .filter((k) => input[k] !== undefined)
-                      .map((k) => [k, input[k] || undefined]),
-                  ),
-                }
-              : undefined,
+            source,
           },
           { via: "chat", taintedBy: tainted?.() ?? null },
         );
