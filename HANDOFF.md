@@ -9,7 +9,7 @@ Delete it, or fold it into `PLAN.md`, once the work below is done.
 
 - **Built:** M0–M5, the iOS app, more than one bot (§14) and looking after things (§15). M4 onwards is built and committed but not yet deployed or tried live.
 - **Not yet tried live** (the owner does these): the M2 lock-screen approval, the M3 morning schedule, Forgejo webhook and Kuma alert, all of M4 and M5, and the first iOS install from SideStore.
-- **Checks:** 328 tests (brain, desktop-agent and web) and 47 iOS core tests pass, and Biome and `tsc -b` are clean.
+- **Checks:** 354 tests (brain, desktop-agent and web) and 51 iOS core tests pass, and Biome and `tsc -b` are clean.
 
 ## How to work here
 
@@ -103,6 +103,14 @@ An audit of every part, then fixes across all of them. The commits from "Desktop
 - **Web:** streaming redraws once a frame; only a 401 signs you out; fast reconnects that merge the thread; drafts per chat; phone composer; the live view streams only when visible; Tasks lists what needs you and pages back; memory conflicts; lazy pages and no zod (636 → 440 kB); Inter split by script, Noto with Cyrillic and Greek; the duplicated CSS folded; scroll-to-bottom, Stop, Cmd-K; title and icon badge; drag and drop; a service worker for the app shell.
 - **iOS:** reload after the background; per-request timeouts; a revoked token signs out; streaming, typing and Markdown performance; ImageIO photos (share extension memory); drafts per chat; search opens the message; landscape Live with pinch zoom; Spend charts, limits, devices, test approval; Try again; haptics; VoiceOver; iPad sidebar; an on-device cache; quick actions, Spotlight, icon badge. **Widget and Pause all control** are one commit ("iOS: a home-screen widget…"), a third App ID in SideStore: revert it alone if the build or SideStore refuses it. None of the SwiftUI was compiled here.
 - **To set up:** redeploy the brain (migration 26). **Run `infra/deploy.sh` once from the host** for the desktop's unit changes (the Update button uses the old installer), re-run `host-setup.sh` for the new firewall ranges, then `verify.sh`. A new IPA from CI.
+
+## The network pass (built 2026-10-16, not tried live)
+The owner asked for performance work, mostly on the network, with each change measured. The commits from "Brain: compressed JSON answers…" onwards.
+- **Brain:** JSON answers of 1 KB or more go out compressed (`compress.ts`: brotli 5, else gzip). A 50-message chat page goes from 71 to 25 kB. The web app's files go out as the `.br` and `.gz` copies the Vite build writes, with ETags and 304s; a first load is 0.7 MB instead of 1.1 MB. The event stream joins streamed text for up to 50 ms and is compressed (permessage-deflate) where the client offers it: browsers do; URLSession, as far as I know, doesn't. One reply went from 361 frames and 24.7 kB to 184 frames and 7.7 kB. `GET /tasks?ids=` lists just those tasks. A live viewer that fell behind gets the newest frame once it catches up; before, a still desktop could leave it on an old one.
+- **Web:** one live socket per tab, however many screens show it. A chat's task cards load in one request without their steps: a chat with 12 cards makes 9 requests instead of 20. A reconnect loads the chats and ended tasks once. Spend refreshes at most every 10 s while a task bills (46 requests a minute instead of 192).
+- **iOS:** a reconnect loads everything side by side (0.17 s instead of 1.2 s at 150 ms a request); seen messages go in one post; task rows load in one request, one by one from a brain without `ids=`.
+- **For the owner to decide:** desktop tasks send every screenshot again, as base64, with each step: a 30-screenshot task uploads about 56 MB in all. The Files API would upload each once and refer to it by id. It costs a round trip per screenshot and keeps screenshots at Anthropic until they're deleted.
+- **To set up:** redeploy the brain; the deploy's web build writes the compressed copies. Then a new IPA from CI.
 
 ## 4. Later (not v1, don't start without the owner)
 - **After v1** (PLAN §11): email via Proton Bridge, an open-source release.
