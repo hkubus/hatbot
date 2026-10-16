@@ -14,6 +14,20 @@ const seen: {
 }[] = [];
 let server: ReturnType<typeof Bun.serve>;
 
+// Job logs as GitHub writes them: a timestamp on each line, colour codes, ##[error] where a step failed.
+const stamp = (i: number) => `2026-10-16T02:${String(i % 60).padStart(2, "0")}:00.1234567Z `;
+const failedLog = [
+  `\uFEFF${stamp(0)}##[group]Run bun test`,
+  ...Array.from(
+    { length: 600 },
+    (_, i) => `${stamp(i)}\x1b[32m(pass)\x1b[0m test number ${i}, which took a little while`,
+  ),
+  `${stamp(1)}error: expect(received).toBe(expected)`,
+  `${stamp(2)}##[error]Process completed with exit code 1.`,
+  ...Array.from({ length: 300 }, (_, i) => `${stamp(i)}Post job cleanup, line ${i}`),
+].join("\n");
+const passedLog = Array.from({ length: 4000 }, (_, i) => `${stamp(i)}line ${i}`).join("\n");
+
 const issue = (n: number, extra = {}) => ({
   number: n,
   title: `Issue ${n}`,
@@ -107,6 +121,7 @@ beforeAll(() => {
         return json({
           check_runs: [
             {
+              id: 501,
               name: "test",
               status: "completed",
               conclusion: "failure",
@@ -120,6 +135,16 @@ beforeAll(() => {
           state: "success",
           statuses: [{ context: "deploy", state: "success", description: null, target_url: null }],
         });
+      // Logs are a redirect to a short-lived link elsewhere; here it's this server, so a followed
+      // redirect would keep the token.
+      const job = path.match(/^\/repos\/hkubus\/hatbot\/actions\/jobs\/(\d+)\/logs$/)?.[1];
+      if (job)
+        return new Response(null, {
+          status: 302,
+          headers: { location: `http://127.0.0.1:${server.port}/blob/${job}?sig=s` },
+        });
+      if (path === "/blob/501") return new Response(failedLog);
+      if (path === "/blob/502") return new Response(passedLog);
       return json(
         { message: "Validation Failed", errors: [{ message: "Reference does not exist" }] },
         422,
@@ -190,10 +215,40 @@ test("reads issues as untrusted, pull requests with files, reviews, diff and com
     "# Hi\n",
   );
   const ci = await gh("github_ci").run({ repo: "hkubus/hatbot", ref: "main" }, call);
-  expect(ci).toBe("test: failure (2 tests failed) https://ci/1\ndeploy: success");
+  expect(ci).toBe("test (id 501): failure (2 tests failed) https://ci/1\ndeploy: success");
   await expect(gh("github_issue").run({ repo: "hkubus/nope", number: 1 }, call)).rejects.toThrow(
     "GitHub said 422: Validation Failed: Reference does not exist",
   );
+});
+
+test("reads a CI job's log around its first error, untrusted, without sending the token to the link", async () => {
+  const { gh } = await started();
+  seen.length = 0;
+  const repo = "hkubus/hatbot";
+  const r = await runPluginTool(gh("github_ci_log"), { repo, job_id: 501 }, call);
+  expect(r.untrusted).toBe(true);
+  expect(r.content).toStartWith('<tool_output tool="github_ci_log" trusted="false">');
+  expect(seen.map((s) => [s.path, s.auth])).toEqual([
+    ["/repos/hkubus/hatbot/actions/jobs/501/logs", "Bearer tok"],
+    ["/blob/501?sig=s", null],
+  ]);
+
+  const log = await gh("github_ci_log").run({ repo, job_id: 501 }, call);
+  expect(log).toStartWith("The log up to its first error and a little after:\n…\n");
+  expect(log).toContain(
+    "(pass) test number 599, which took a little while\nerror: expect(received).toBe(expected)\n##[error]Process completed with exit code 1.\nPost job cleanup, line 0\n",
+  );
+  expect(log).not.toContain("test number 0,");
+  expect(log).not.toContain("\x1b");
+  expect(log).not.toMatch(/\d{4}-\d\d-\d\dT/);
+  expect(log).toEndWith("\n…");
+  expect(log.length).toBeLessThan(20_100);
+
+  const end = await gh("github_ci_log").run({ repo, job_id: 502 }, call);
+  expect(end).toStartWith("No error is marked in the log. Its end:\n…\n");
+  expect(end).toEndWith("\nline 3998\nline 3999");
+  expect(end).not.toContain("\nline 0\n");
+  expect(end.length).toBeLessThan(20_100);
 });
 
 test("commits many files as one commit on a new branch, and won't delete what isn't there", async () => {
