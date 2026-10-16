@@ -3,7 +3,7 @@
 Written 2026-10-10. `PLAN.md` is the source of truth; this file says where things stand and what to build next.
 Delete it, or fold it into `PLAN.md`, once the work below is done.
 
-**Next: `GAPS.md`** (2026-10-16) is the plan for the next pass: small fixes and one deploy checklist, the owner's live run, then the larger fixes. Start there.
+**The gaps pass** (2026-10-16) is done, apart from the live run below, which is the owner's, and the licence, which the owner picks: MIT or Apache-2.0 (PLAN §11). Its larger fixes: code tasks check themselves through the repo's CI, desktop tasks start on Haiku and carry on on Opus, memory search ranks, a tainted chat's or task's writes to skills and INDEX.md wait as proposals, the last $1 of each limit is kept for alerts, watchers can run a page's scripts, and an install guide and a licence check in CI.
 
 ## Deploy checklist
 
@@ -11,12 +11,12 @@ Everything built since M4 goes live with these steps, in this order: `host-setup
 
 1. **iOS build:** push `main`. The GitHub mirror's CI builds the iOS app for the first time, since no SwiftUI has been compiled yet; fix the compile errors from its log. If SideStore refuses the App Group, the widget's App ID or the share extension, see "iOS" below for what to take out.
 2. **Host setup:** copy `infra/` to the host (`infra/README.md`, "Run it"). If your router forwards ports, set `HATBOT_PUBLIC_IPS` in `/etc/hatbot/host.env`. Run `./host-setup.sh` again: it loads the new firewall ranges, and its provision scripts bring the fonts, Python and the sandbox's tools.
-3. **Deploy:** `./deploy.sh 124:/root/hatbot`. It runs the brain's migrations up to the latest and installs the desktop's units: `hatbot-chromium` (a browser profile per bot), the shell, `/fetch` and `/files`.
+3. **Deploy:** `./deploy.sh 124:/root/hatbot`. It runs the brain's migrations up to the latest and installs the desktop's units: `hatbot-chromium` (a browser profile per bot), the shell, the renderer (`hatbot-render`, for watchers that run a page's scripts), `/fetch` and `/files`.
 4. **Env files:** one for each plugin you want (`github.env`, `forgejo.env`, `pbs.env`, `homeassistant.env`, `uptimekuma.env`, `mcp.env`; `infra/README.md`, "Plugins"), and `HATBOT_PING_URL` in `secrets.env` with its Uptime Kuma Push monitor ("When the brain itself is down"). Then restart the brain.
 5. **Optional:** `./pct-exec-setup.sh` on the host, then add the host in Settings → Plugins → SSH with "Proxmox host" on.
-6. **Checks:** `./verify.sh`, then Settings → Check everything (or `infra/smoke.sh`), then a test approval, approved from the lock screen.
+6. **Checks:** `./verify.sh` (it now checks that the renderer runs as a user the loopback rule covers, renders a page, and that only desktop-agent's user reaches the shell's and the renderer's sockets), then Settings → Check everything (or `infra/smoke.sh`), then a test approval, approved from the lock screen.
 7. **Kuma triggers:** re-save existing Uptime Kuma triggers with the new default prompt (`KUMA_PROMPT` in `apps/web/src/pages/Schedules.tsx`) to get investigate → one restart → verify.
-8. **iOS install:** install the IPA from the SideStore source.
+8. **iOS install:** install the IPA from the SideStore source. The bundle prefix is now one setting (`BUNDLE_PREFIX` in `apps/ios/project.yml`, `com.example` there); the iOS workflow keeps `ovh.gaycats` unless the repository variable `BUNDLE_PREFIX` says otherwise, so the installed app stays the same app.
 9. **Settings:** a setting saved by an earlier version keeps its value, so look at these. The heartbeat is on by default now (Settings → Heartbeat). Desktop tasks now start on Haiku 5.5 and carry on on Opus when Haiku fails; an install that saved any setting since 2026-10-10 keeps Opus for the desktop (Settings → Desktop). The last $1 of the daily and monthly limits is now kept for alerts (Settings → Spending limits → Kept for alerts).
 
 ## The live run
@@ -33,8 +33,8 @@ Acceptance tests for parts that have never run live. The owner runs them; write 
 ## Where things stand
 
 - **Built:** M0–M5, the iOS app, more than one bot (§14) and looking after things (§15). M4 onwards is built and committed but not yet deployed or tried live.
-- **Not yet tried live** (the owner does these): the M2 lock-screen approval, the M3 morning schedule, Forgejo webhook and Kuma alert, all of M4 and M5, and the first iOS install from SideStore.
-- **Checks:** 354 tests (brain, desktop-agent and web) and 51 iOS core tests pass, and Biome and `tsc -b` are clean.
+- **Not yet tried live** (the owner does these): the M2 lock-screen approval, the M3 morning schedule, Forgejo webhook and Kuma alert, all of M4 and M5, the first iOS install from SideStore, and everything from the gaps pass. The renderer was tried only with Playwright's Chromium here, not Debian's on the desktop.
+- **Checks:** 444 tests (brain, desktop-agent and web) and 52 iOS core tests pass, Biome and `tsc -b` are clean, and `bun run licenses` passes.
 
 ## How to work here
 
@@ -46,7 +46,7 @@ Acceptance tests for parts that have never run live. The owner runs them; write 
 - **UI style:** no decorative clutter, meaning no status dots, subtext, kickers or meta chips.
 - **Shared types:** they live in `packages/shared`. The iOS app mirrors the ones it uses in `apps/ios/Hatbot/Core/Models.swift`, so change both together. The iOS decoder tolerates unknown events and enum values.
 - **Swift on Linux:** the toolchain is in `/opt/swift61` (reinstall it if it's gone; no Docker here). `swift test -Xswiftc -use-ld=lld --scratch-path /tmp/hbswiftbuild` in `apps/ios` tests `Hatbot/Core`; `swiftc -parse` checks the views' syntax. SwiftUI can't be type-checked on Linux; CI on the GitHub mirror builds the app.
-- **Licences:** no copyleft dependencies (PLAN §2), not even MPL. That's why the live view is our own MJPEG stream and not noVNC (MPL).
+- **Licences:** no copyleft dependencies (PLAN §2), not even MPL. That's why the live view is our own MJPEG stream and not noVNC (MPL). `bun run licenses` (`scripts/licenses.ts`, in CI) lists every installed package's licence and fails on anything not permissive. Its one exception is lightningcss (MPL-2.0), which Vite itself depends on to minify CSS at build time; none of it is in the build.
 
 ## 1. Trust-tracking gaps (PLAN §6.1): decided 2026-10-10
 
