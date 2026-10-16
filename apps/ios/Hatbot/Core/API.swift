@@ -75,8 +75,8 @@ final class API: Sendable {
     try await call(path, method: "PUT", body: body)
   }
 
-  func patch<T: Decodable, B: Encodable>(_ path: String, body: B) async throws -> T {
-    try await call(path, method: "PATCH", body: body)
+  func patch<T: Decodable, B: Encodable>(_ path: String, body: B, timeout: TimeInterval? = nil) async throws -> T {
+    try await call(path, method: "PATCH", body: body, timeout: timeout)
   }
 
   @discardableResult
@@ -139,6 +139,8 @@ final class API: Sendable {
   static let askTimeout: TimeInterval = 40
   /// Check everything tries each part, some of them slowly.
   static let checksTimeout: TimeInterval = 120
+  /// A watcher that runs a page's scripts may wait behind others on the desktop, up to 2 minutes.
+  static let watcherTimeout: TimeInterval = 130
 
   private func request(_ path: String, method: String) -> URLRequest {
     var req = URLRequest(url: url(path))

@@ -608,6 +608,18 @@ final class LookingAfterThingsTests: XCTestCase {
     XCTAssertEqual(watcher.source.text, "https://shop.test/gpu")
     XCTAssertEqual(Watcher.every(90), "Every 90 minutes")
     XCTAssertEqual(Watcher.every(120), "Every 2 hours")
+    XCTAssertNil(watcher.source.render)
+    let rendered = w.replacingOccurrences(of: #""selector""#, with: #""render":true,"selector""#)
+    XCTAssertEqual(try JSONDecoder().decode(Watcher.self, from: Data(rendered.utf8)).source.render, true)
+    // Running its scripts slows a watcher that looked more often; off leaves no render in the source.
+    var often = watcher
+    often.everyMinutes = 5
+    XCTAssertEqual(
+      often.render(true),
+      .init(source: .init(kind: .page, url: "https://shop.test/gpu", render: true, selector: ".price"), everyMinutes: 15))
+    XCTAssertNil(watcher.render(true).everyMinutes)
+    let off = String(decoding: try JSONEncoder().encode(watcher.render(false)), as: UTF8.self)
+    XCTAssertFalse(off.contains("render") || off.contains("everyMinutes"))
 
     let s = #"""
       {"limits":{"dailyUsd":5,"monthlyUsd":50,"taskUsd":1},"chatEffort":"low","owner":{"name":"K","email":"k@x"},

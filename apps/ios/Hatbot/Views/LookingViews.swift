@@ -172,6 +172,8 @@ struct WatcherDetailView: View {
   private var watcher: Watcher? { store.watchers[id] }
   private var missing: Bool { notFound || store.deletedWatchers.contains(id) }
   @State private var busy = false
+  /// Running the page's scripts, as switched, until the brain has read the page that way.
+  @State private var render: Bool?
   @State private var confirmDelete = false
   @State private var error: String?
 
@@ -204,6 +206,20 @@ struct WatcherDetailView: View {
             get: { w.enabled },
             set: { on in Task { await act { _ = try await store.setWatcherEnabled(id, on) } } }))
         LabeledContent(w.source.kind == .page ? "Page" : "Tool", value: w.source.text)
+        if w.source.kind == .page {
+          Toggle(
+            "Run the page's scripts",
+            isOn: Binding(
+              get: { render ?? (w.source.render == true) },
+              set: { on in
+                render = on
+                Task {
+                  await act { _ = try await store.setWatcherRender(id, on) }
+                  render = nil
+                }
+              }))
+          .disabled(render != nil)
+        }
         if let s = w.source.selector { LabeledContent("Selector", value: s) }
         if let p = w.source.path { LabeledContent("Path", value: p) }
         if let p = w.source.pattern { LabeledContent("Pattern", value: p) }

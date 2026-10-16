@@ -36,9 +36,15 @@ extension AppStore {
     return keep(try await api.patch("/watchers/\(id)", body: Body(enabled: on)))
   }
 
+  /// The brain reads the page again before it saves this.
+  func setWatcherRender(_ id: Int, _ on: Bool) async throws -> Watcher {
+    guard let w = watchers[id] else { throw APIError(status: 404, message: "This watcher doesn't exist.") }
+    return keep(try await api.patch("/watchers/\(id)", body: w.render(on), timeout: API.watcherTimeout))
+  }
+
   /// Looks now; the watcher as it is after.
   func checkWatcher(_ id: Int) async throws -> Watcher {
-    keep(try await api.post("/watchers/\(id)/check", body: Empty()))
+    keep(try await api.post("/watchers/\(id)/check", body: Empty(), timeout: API.watcherTimeout))
   }
 
   func deleteWatcher(_ id: Int) async throws {

@@ -13,6 +13,8 @@ struct Watcher: Codable, Identifiable, Equatable, Sendable {
 
     var kind: Kind
     var url: String?
+    /// A page loaded in a headless Chromium on the desktop, so what its scripts write is there.
+    var render: Bool?
     var tool: String?
     var selector: String?
     var path: String?
@@ -64,6 +66,22 @@ struct Watcher: Codable, Identifiable, Equatable, Sendable {
   var lastError: String?
   var errors: Int
   var lastTaskId: Int?
+
+  /// Watchers that run a page's scripts look at most this often, in minutes.
+  static let minRenderMinutes = 15
+
+  /// What turns running the page's scripts on or off. One that looked more often slows down.
+  struct RenderChange: Encodable, Equatable, Sendable {
+    var source: Source
+    var everyMinutes: Int?
+  }
+
+  func render(_ on: Bool) -> RenderChange {
+    var s = source
+    s.render = on ? true : nil
+    let slower = on && everyMinutes < Self.minRenderMinutes
+    return RenderChange(source: s, everyMinutes: slower ? Self.minRenderMinutes : nil)
+  }
 
   /// "Every hour", "Every 15 minutes", "Every 2 days".
   static func every(_ minutes: Int) -> String {
