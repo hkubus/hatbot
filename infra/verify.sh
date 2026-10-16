@@ -110,7 +110,8 @@ shell_exec() {
 if pct exec "$DESKTOP_ID" -- test -S /run/hatbot-shell/shell.sock; then
   for probe in "Chromium's DevTools (127.0.0.1:9222)|exec 3<>/dev/tcp/127.0.0.1/9222" \
     "desktop-agent ($DESKTOP_IP:7070)|exec 3<>/dev/tcp/$DESKTOP_IP/7070" \
-    "the screen (:1)|DISPLAY=:1 xdotool getdisplaygeometry"; do
+    "the screen (:1)|DISPLAY=:1 xdotool getdisplaygeometry" \
+    "the renderer's socket|cd /run/hatbot-render"; do
     out=$(shell_exec "${probe#*|}")
     if [[ -z $out ]]; then
       result FAIL "the desktop shell answers" "no reply on /run/hatbot-shell/shell.sock"
@@ -120,6 +121,9 @@ if pct exec "$DESKTOP_ID" -- test -S /run/hatbot-shell/shell.sock; then
       result OK "the desktop shell can't reach ${probe%%|*}"
     fi
   done
+  # shellcheck disable=SC2016 # expands inside the desktop
+  expect "only desktop-agent's user reaches the shell's socket" \
+    pct exec "$DESKTOP_ID" -- sh -c '[ "$(stat -c "%a %G" /run/hatbot-shell)" = "750 desk" ]'
 else
   printf '   %sskip%s  desktop shell (not running; deploy.sh installs it)\n' "$yel" "$rst"
 fi
@@ -134,6 +138,9 @@ if pct exec "$DESKTOP_ID" -- test -S /run/hatbot-render/render.sock; then
   fi
   expect "the renderer runs a page's scripts" sh -c "pct exec $DESKTOP_ID -- curl -sS -m 30 -X POST \
     --unix-socket /run/hatbot-render/render.sock http://render/check | grep -q '\"ok\":true'"
+  # shellcheck disable=SC2016 # expands inside the desktop
+  expect "only desktop-agent's user reaches the renderer's socket" \
+    pct exec "$DESKTOP_ID" -- sh -c '[ "$(stat -c "%a %G" /run/hatbot-render)" = "750 desk" ]'
 else
   printf '   %sskip%s  renderer (not running; deploy.sh installs it)\n' "$yel" "$rst"
 fi

@@ -108,7 +108,9 @@ WantedBy=multi-user.target nftables.service
 EOF
 
 # The desktop's shell (desktop_shell): its own throwaway user, a home in /var/lib/hatbot-shell, no /home
-# (the browser profile), no screen, no secrets. desktop-agent reaches it on a Unix socket.
+# (the browser profile), no screen, no secrets. desktop-agent reaches it on a Unix socket, in a directory
+# only desk may enter, so the renderer can't. systemd sets the directory's group back to the unit's own
+# when ExecStart runs, so desk gets it after.
 cat >/etc/systemd/system/hatbot-desktop-shell.service <<EOF
 [Unit]
 Description=Hatbot desktop shell: commands from desktop tasks, kept away from the browser profile
@@ -120,10 +122,11 @@ After=hatbot-shell-firewall.service
 DynamicUser=yes
 StateDirectory=hatbot-shell
 RuntimeDirectory=hatbot-shell
-RuntimeDirectoryMode=0755
+RuntimeDirectoryMode=0750
 Environment=HOME=/var/lib/hatbot-shell
 WorkingDirectory=/var/lib/hatbot-shell
 ExecStart=/usr/local/bin/bun $DIR/src/shell.ts
+ExecStartPost=+/usr/bin/chgrp desk /run/hatbot-shell
 Restart=always
 RestartSec=2
 ProtectHome=yes
@@ -146,9 +149,9 @@ EOF
 
 # The renderer, for watchers that run a page's scripts (src/render.ts): a headless Chromium per page, with
 # a throwaway profile, as its own throwaway user like the shell. No /home (the bots' profiles), no screen,
-# no DevTools port, nothing of the shell's. Chromium's own sandbox works under it. getifaddrs, which it
-# uses to know the desktop's addresses, needs netlink. The desktop has 1.5 GB and the bots' Chromium has
-# no cap, so this one does.
+# no DevTools port, and a socket only desk reaches, like the shell's. Chromium's own sandbox works under
+# it. getifaddrs, which it uses to know the desktop's addresses, needs netlink. The desktop has 1.5 GB and
+# the bots' Chromium has no cap, so this one does.
 cat >/etc/systemd/system/hatbot-render.service <<EOF
 [Unit]
 Description=Hatbot renderer: pages for watchers, in a headless Chromium of its own
@@ -159,9 +162,10 @@ After=hatbot-shell-firewall.service
 [Service]
 DynamicUser=yes
 RuntimeDirectory=hatbot-render
-RuntimeDirectoryMode=0755
+RuntimeDirectoryMode=0750
 Environment=HOME=/tmp
 ExecStart=/usr/local/bin/bun $DIR/src/render.ts
+ExecStartPost=+/usr/bin/chgrp desk /run/hatbot-render
 Restart=always
 RestartSec=2
 ProtectHome=yes
@@ -170,7 +174,6 @@ PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-InaccessiblePaths=-/run/hatbot-shell
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 IPAddressDeny=localhost $DESKTOP_IP
 TasksMax=512
