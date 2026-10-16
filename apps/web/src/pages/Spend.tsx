@@ -205,6 +205,23 @@ function SpendCard({ title, points, limit }: { title: string; points: Point[]; l
   );
 }
 
+/** The value, changing at most every `ms`: the latest one once the time is up. */
+function useThrottled<T>(value: T, ms: number): T {
+  const [out, setOut] = useState(value);
+  const last = useRef(0);
+  useEffect(() => {
+    const t = setTimeout(
+      () => {
+        last.current = Date.now();
+        setOut(value);
+      },
+      Math.max(0, last.current + ms - Date.now()),
+    );
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return out;
+}
+
 export function Spend() {
   const [summary, setSummary] = useState<SpendSummary | null>(null);
   const [days, setDays] = useState<SpendDay[]>([]);
@@ -216,7 +233,10 @@ export function Spend() {
   const live = useStore((s) => s.todayUsd);
   // New limits.
   const settingsVersion = useStore((s) => s.settingsVersion);
+  // A desktop task bills every step.
+  const billed = useThrottled(live, 10_000);
   const [tick, setTick] = useState(0);
+  const [attempt, setAttempt] = useState(0);
   const [loadError, setLoadError] = useState("");
 
   // The last minute and hour move on even when nothing new is billed.
@@ -225,13 +245,17 @@ export function Spend() {
     return () => clearInterval(t);
   }, []);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh when a request is billed or limits change, and every 30 s
-  useEffect(() => {
-    setLoadError("");
-    // A refresh that fails leaves what's showing; only the first load says so.
-    const failed = (err: unknown) => setLoadError(loadErrorText(err));
+  // A refresh that fails leaves what's showing; only the first load says so.
+  const failed = (err: unknown) => setLoadError(loadErrorText(err));
+  const loadNow = () => {
     api<SpendSummary>("/spend/summary").then(setSummary, failed);
     api<SpendHour[]>("/spend/hourly?hours=24").then(setHours, failed);
+  };
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh when a request is billed or limits change
+  useEffect(() => {
+    setLoadError("");
+    loadNow();
     api<SpendDay[]>("/spend/daily?days=30").then(setDays, failed);
     api<SpendByModel[]>("/spend/by-model?days=30").then(setModels, failed);
     api<{ botId: string; usd: number }[]>("/spend/by-bot?days=30").then(setByBot, failed);
@@ -240,14 +264,19 @@ export function Spend() {
       setByPurpose,
       () => {},
     );
-  }, [live, tick, settingsVersion]);
+  }, [billed, attempt, settingsVersion]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: every 30 s
+  useEffect(() => {
+    if (tick) loadNow();
+  }, [tick]);
 
   if (!summary)
     return (
       <section className="view">
         {loadError && (
           <div className="page">
-            <LoadError error={loadError} retry={() => setTick((n) => n + 1)} />
+            <LoadError error={loadError} retry={() => setAttempt((n) => n + 1)} />
           </div>
         )}
       </section>
