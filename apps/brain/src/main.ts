@@ -17,6 +17,7 @@ import { EventBus } from "./events";
 import { Heartbeat } from "./heartbeat";
 import { Proposals } from "./memory/proposals";
 import { MemoryStore } from "./memory/store";
+import { Negotiations } from "./negotiate/service";
 import { LinkingNotifier, NtfyNotifier } from "./notify";
 import { PLUGINS } from "./plugins";
 import { codePlugin } from "./plugins/code";
@@ -149,6 +150,17 @@ const report = new WeeklyReport({
   storage,
   publicUrl: config.publicUrl,
 });
+const negotiations = new Negotiations({
+  db,
+  events,
+  tasks,
+  approvals,
+  chats,
+  bots,
+  memory,
+  desktop,
+});
+tasks.negotiations = negotiations;
 chats.attach({
   tasks,
   schedules,
@@ -157,6 +169,7 @@ chats.attach({
   approvals,
   attachments,
   desktop: desktop.agent,
+  negotiations,
 });
 // A restart ends an incognito conversation.
 await chats.endIncognito();
@@ -233,6 +246,7 @@ const app = createApp({
   plugins,
   teach,
   checks,
+  negotiations,
 });
 const web = webHandler(config.webDir);
 const server = Bun.serve({

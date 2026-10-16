@@ -11,6 +11,7 @@ import { checkRoutes } from "./routes/checks";
 import { desktopRoutes } from "./routes/desktop";
 import { heartbeatRoutes } from "./routes/heartbeat";
 import { memoryRoutes } from "./routes/memory";
+import { negotiationRoutes } from "./routes/negotiations";
 import { pluginRoutes } from "./routes/plugins";
 import { proposalRoutes } from "./routes/proposals";
 import { hookRoutes, scheduleRoutes } from "./routes/schedules";
@@ -48,6 +49,7 @@ export function createApp(deps: Deps) {
   app.route("/", pluginRoutes);
   app.route("/", teachRoutes);
   app.route("/", checkRoutes);
+  app.route("/", negotiationRoutes);
   app.route("/", watcherRoutes);
   app.route("/", searchRoutes);
   app.route("/", heartbeatRoutes);

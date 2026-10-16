@@ -11,7 +11,7 @@ test("Check everything tries each part and keeps the report", async () => {
     version: "abc1234",
     profile: "hatbot",
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    features: ["profiles", "exec", "files"],
+    features: ["profiles", "exec", "files", "fields"],
   };
   const res = await t.call("POST", "/checks", undefined, { cookie });
   expect(res.status).toBe(200);

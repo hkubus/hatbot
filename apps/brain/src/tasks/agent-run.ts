@@ -160,8 +160,12 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   let notified = 0;
   // Fixed for the whole run: the tool list is part of the prompt cache.
   // A bot gets only the plugins it may use.
+  const own = d.plugins.tools(bot.plugins);
   const pluginTools = new Map<string, PluginTool>(
-    d.plugins.tools(bot.plugins).map((t) => [t.name, t]),
+    [...own, ...(tasks.negotiations?.tools(bot, own, { conversationId: null }) ?? [])].map((t) => [
+      t.name,
+      t,
+    ]),
   );
   const others = d.bots.list().filter((b) => b.id !== bot.id);
   const tools = [
@@ -197,6 +201,30 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     content,
     ...(isError ? { is_error: true } : {}),
   });
+
+  /** Waits for a task this one started, without holding a slot; it's cancelled with this one. */
+  const waitForChild = async (childId: number): Promise<Task> => {
+    const child = tasks.get(childId);
+    children.add(childId);
+    tasks.addStep(id, {
+      kind: "task",
+      name: child?.title ?? `Task #${childId}`,
+      detail: "",
+      url: `/tasks/${childId}`,
+    });
+    tasks.pool.release();
+    slot = false;
+    let ended: Task;
+    try {
+      ended = await tasks.waitFor(childId, signal);
+    } finally {
+      await tasks.pool.acquire(signal);
+      slot = true;
+    }
+    // Still in `children` if this task is cancelled meanwhile, so it's cancelled with it.
+    children.delete(childId);
+    return ended;
+  };
 
   const desktopTask = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
     const p = DesktopTaskInput.safeParse(call.input);
@@ -428,6 +456,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         ? (name, bytes) =>
             attachments.save({ bytes, name, mediaType: "", from: "hatbot", taskId: id })
         : undefined,
+      waitForTask: (childId) => waitForChild(childId),
     };
     const what = describeCall(t, call.input);
     const verdict = verdictFor(t, call.input, cc);

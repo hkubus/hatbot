@@ -73,6 +73,16 @@ export type AgentElement = {
   submitLabel?: string;
   /** The focused element takes a password, a one-time code or card details, or can't be seen into (a frame). */
   secret?: boolean;
+  /** The tab's address. With the "fields" feature. */
+  url?: string;
+  /** It's somewhere to type: a text box, text area or editable region. With the "fields" feature. */
+  editable?: boolean;
+  /**
+   * What the visible text boxes hold, whitespace collapsed, empty ones left out: the form's when the
+   * element is in one that has any, otherwise the page's. For the exact-text send check (PLAN.md §16.3).
+   * With the "fields" feature.
+   */
+  fields?: string[];
 };
 
 /** POST /exec: a command run by the desktop's shell, which can't see the browser profile or the screen. */

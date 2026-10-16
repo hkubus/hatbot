@@ -18,6 +18,7 @@ import { EventBus, type HatbotEvent } from "../src/events";
 import { Heartbeat } from "../src/heartbeat";
 import { Proposals } from "../src/memory/proposals";
 import { MemoryStore } from "../src/memory/store";
+import { Negotiations } from "../src/negotiate/service";
 import { LinkingNotifier, type Notification, type Notifier } from "../src/notify";
 import { codePlugin } from "../src/plugins/code";
 import type { Plugin } from "../src/plugins/plugin";
@@ -187,7 +188,28 @@ export async function testApp(
     publicUrl: ORIGIN,
     clock,
   });
-  chats.attach({ tasks, schedules, triggers, watchers, approvals, attachments, desktop: agent });
+  const negotiations = new Negotiations({
+    db,
+    events,
+    tasks,
+    approvals,
+    chats,
+    bots,
+    memory,
+    desktop,
+    clock,
+  });
+  tasks.negotiations = negotiations;
+  chats.attach({
+    tasks,
+    schedules,
+    triggers,
+    watchers,
+    approvals,
+    attachments,
+    desktop: agent,
+    negotiations,
+  });
   const updateDir = tempDir("hatbot-test-update-");
   const updates = new Updates(
     {
@@ -247,6 +269,7 @@ export async function testApp(
     plugins,
     teach,
     checks,
+    negotiations,
   });
 
   const call = (
@@ -284,6 +307,7 @@ export async function testApp(
     schedules,
     triggers,
     watchers,
+    negotiations,
     heartbeat,
     report,
     proposals,

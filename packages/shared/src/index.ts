@@ -1,11 +1,13 @@
 // API types shared by the brain, the web app and the future iOS app (PLAN.md §4.4).
 import { z } from "zod";
+import type { Negotiation } from "./negotiate";
 import type { PluginInfo } from "./plugin";
 import type { Schedule, Trigger } from "./schedule";
 import type { Watcher } from "./watch";
 
 export * from "./chart";
 export * from "./checks";
+export * from "./negotiate";
 export * from "./plugin";
 export * from "./schedule";
 export * from "./search";
@@ -95,6 +97,8 @@ export type ThreadMessage = {
   createdAt: string;
   taskId: number | null;
   scheduleId: number | null;
+  /** A negotiation this reply started shows under it (PLAN.md §16.5). */
+  negotiationId: number | null;
   /** The conversation it belongs to; cards from background tasks have none. */
   episodeId: number | null;
   /** When a task's result changed it after it was sent. */
@@ -299,6 +303,7 @@ export type HatbotEvent =
   | { type: "trigger.deleted"; id: number }
   | { type: "watcher.updated"; watcher: Watcher }
   | { type: "watcher.deleted"; id: number }
+  | { type: "negotiation.updated"; negotiation: Negotiation }
   | { type: "plugin.updated"; plugin: PluginInfo }
   | { type: "teach.updated"; session: TeachSession }
   | { type: "episode.updated"; episode: Episode }

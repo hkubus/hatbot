@@ -22,6 +22,8 @@ export class FakeDesktop implements DesktopAgent {
   locked = false;
   page: AgentContext = { url: "https://example.com/", title: "Example", text: "Hello" };
   element: AgentElement | null = null;
+  /** Called after each action and browser call, e.g. to change `element` as a page would. */
+  afterAction: ((name: string, input: Record<string, unknown>) => void) | null = null;
   commands: string[] = [];
   /** The bots whose browser profile was asked for, in order. */
   profiles: string[] = [];
@@ -55,6 +57,7 @@ export class FakeDesktop implements DesktopAgent {
   async action(a: AgentAction) {
     if (this.locked) throw new DesktopError("The owner has control of the desktop.", 423);
     this.actions.push(a);
+    this.afterAction?.(a.name, a.input);
     return a.name === "cursor_position" ? { x: 10, y: 20 } : {};
   }
   async context(withText = false) {
@@ -89,6 +92,7 @@ export class FakeDesktop implements DesktopAgent {
   async browser(call: BrowserCall): Promise<BrowserResult> {
     if (this.locked) throw new DesktopError("The owner has control of the desktop.", 423);
     this.browserCalls.push(call);
+    this.afterAction?.(call.name, call.input);
     if (call.name === "screenshot") {
       this.screenshots++;
       return { kind: "image", data: "UklGRg==", mediaType: "image/webp" };

@@ -507,4 +507,68 @@ export const migrations: string[] = [
   );
   CREATE INDEX hook_deliveries_seen ON hook_deliveries (seen_at);
   `,
+  /* 27: negotiation (PLAN.md §16): wants, negotiations and their messages */ `
+  CREATE TABLE wants (
+    id INTEGER PRIMARY KEY,
+    bot_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'agreed', 'dropped')),
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE negotiations (
+    id INTEGER PRIMARY KEY,
+    want_id INTEGER NOT NULL REFERENCES wants(id),
+    bot_id TEXT NOT NULL,
+    -- The chat it was started from, where its card is.
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    role TEXT NOT NULL CHECK (role IN ('buy', 'sell')),
+    -- <Marketplace>:<listingId>, as Scout gives it.
+    listing_key TEXT NOT NULL,
+    listing_url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    asking REAL,
+    -- {currency, opening, target, limit, delivery, expiresAt, allow}
+    mandate TEXT NOT NULL,
+    appraisal TEXT,
+    conversation_url TEXT,
+    conversation_ref TEXT,
+    -- {max, otherOffers, timing, other}: what it has told the seller about our side.
+    claims TEXT NOT NULL DEFAULT '{"max":null,"otherOffers":null,"timing":null,"other":[]}',
+    status TEXT NOT NULL CHECK (status IN ('awaiting_mandate', 'open', 'agreed', 'lost', 'abandoned', 'expired', 'paid', 'received')),
+    agreed_price REAL,
+    approval_id INTEGER REFERENCES approvals(id),
+    next_follow_up_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    closed_at TEXT
+  );
+  CREATE INDEX negotiations_want ON negotiations (want_id);
+  CREATE INDEX negotiations_status ON negotiations (status);
+  CREATE TABLE negotiation_messages (
+    id INTEGER PRIMARY KEY,
+    negotiation_id INTEGER NOT NULL REFERENCES negotiations(id) ON DELETE CASCADE,
+    direction TEXT NOT NULL CHECK (direction IN ('in', 'out')),
+    text TEXT NOT NULL,
+    offer REAL,
+    agree INTEGER NOT NULL DEFAULT 0,
+    stated TEXT,
+    status TEXT NOT NULL CHECK (status IN ('sending', 'sent', 'unconfirmed', 'failed', 'received')),
+    -- The marketplace's id for it, once an inbox read gives one (N3): dedupes reads.
+    market_id TEXT,
+    created_at TEXT NOT NULL,
+    sent_at TEXT
+  );
+  CREATE INDEX negotiation_messages_negotiation ON negotiation_messages (negotiation_id, id);
+  CREATE UNIQUE INDEX negotiation_messages_market ON negotiation_messages (negotiation_id, market_id)
+    WHERE market_id IS NOT NULL;
+  -- The desktop tasks that read a negotiation's conversation, or send one message in it (message_id).
+  CREATE TABLE negotiation_tasks (
+    task_id INTEGER PRIMARY KEY REFERENCES tasks(id),
+    negotiation_id INTEGER NOT NULL REFERENCES negotiations(id) ON DELETE CASCADE,
+    message_id INTEGER REFERENCES negotiation_messages(id)
+  );
+  CREATE INDEX negotiation_tasks_message ON negotiation_tasks (message_id);
+  ALTER TABLE messages ADD COLUMN negotiation_id INTEGER REFERENCES negotiations(id) ON DELETE SET NULL;
+  `,
 ];

@@ -303,7 +303,7 @@ final class AppStore {
     case let .watcherDeleted(id):
       watchers[id] = nil
       deletedWatchers.insert(id)
-    case .unknown:
+    case .negotiationUpdated, .unknown:
       break
     }
   }

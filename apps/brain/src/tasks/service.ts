@@ -19,6 +19,7 @@ import type { Db } from "../db";
 import type { Desktop } from "../desktop/service";
 import type { EventBus } from "../events";
 import type { MemoryStore } from "../memory/store";
+import type { Negotiations } from "../negotiate/service";
 import type { Notifier } from "../notify";
 import type { Plugins } from "../plugins/registry";
 import type { SettingsStore } from "../settings";
@@ -138,6 +139,8 @@ const RESTARTED = "Stopped: the brain restarted.";
 export class Tasks {
   readonly lane = new ScreenLane();
   readonly pool = new Pool(BACKGROUND_SLOTS);
+  /** Set once it exists: negotiation's tools, and the send gate on its desktop tasks (PLAN.md §16). */
+  negotiations?: Negotiations;
   private running = new Map<number, AbortController>();
   /** Events for running tasks, delivered with their next tool results. */
   private inbox = new Map<number, string[]>();
@@ -299,6 +302,8 @@ export class Tasks {
     botId?: string;
     /** The chat it reports to; the bot's own by default. */
     conversationId?: number;
+    /** Called with its id before it starts, e.g. to record what it's for. */
+    created?: (id: number) => void;
   }): Task {
     const p = input.parent;
     const botId = input.botId ?? p?.botId ?? HATBOT_ID;
@@ -324,6 +329,7 @@ export class Tasks {
       this.d.chats.addCard(conversationId, botId, "task", `Task #${id}: ${input.title}`, {
         taskId: id,
       });
+    input.created?.(id);
     this.emit(id);
     this.start(id);
     return this.get(id) as Task;

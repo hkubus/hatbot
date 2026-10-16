@@ -22,6 +22,7 @@ import type { Db } from "../db";
 import type { DesktopAgent } from "../desktop/client";
 import type { EventBus } from "../events";
 import { MemoryError, type MemoryStore } from "../memory/store";
+import type { Negotiations } from "../negotiate/service";
 import type { CallContext, PluginTool } from "../plugins/plugin";
 import {
   describeCall,
@@ -73,7 +74,7 @@ const MAX_CHAT_COMMANDS = 2;
 /** Why a reply was cut off: /stop, rather than Pause all. */
 const STOPPED = "stopped";
 export const MESSAGE_COLUMNS =
-  "id, role, conversation_id AS conversationId, bot_id AS botId, kind, text, status, created_at AS createdAt, task_id AS taskId, schedule_id AS scheduleId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt, incognito";
+  "id, role, conversation_id AS conversationId, bot_id AS botId, kind, text, status, created_at AS createdAt, task_id AS taskId, schedule_id AS scheduleId, negotiation_id AS negotiationId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt, incognito";
 export type MessageRow = Omit<ThreadMessage, "incognito"> & { incognito: number };
 /** A message as the app gets it: `incognito` only on the ones that are. */
 export const messageOf = ({ incognito, ...m }: MessageRow): ThreadMessage =>
@@ -137,6 +138,7 @@ export type ThreadDeps = {
   triggers?: Triggers;
   watchers?: Watchers;
   approvals?: Approvals;
+  negotiations?: Negotiations;
   /** Files in the chat, and the desktop whose sandbox send_file takes them from. */
   attachments?: Attachments;
   desktop?: DesktopAgent;
@@ -336,7 +338,14 @@ export class Thread {
   attach(
     parts: Pick<
       ThreadDeps,
-      "tasks" | "schedules" | "triggers" | "watchers" | "approvals" | "attachments" | "desktop"
+      | "tasks"
+      | "schedules"
+      | "triggers"
+      | "watchers"
+      | "approvals"
+      | "attachments"
+      | "desktop"
+      | "negotiations"
     >,
   ) {
     Object.assign(this.d, parts);
@@ -420,6 +429,7 @@ export class Thread {
     const cc: CallContext = {
       task: null,
       signal,
+      messageId,
       sendFile: attachments
         ? (name, bytes) =>
             attachments.save({ bytes, name, mediaType: "", from: "hatbot", messageId })
@@ -623,7 +633,7 @@ export class Thread {
    * history search.
    */
   private turnSetup(bot: Bot, incognito = false) {
-    const { settings, plugins, bots } = this.d;
+    const { settings, plugins, bots, negotiations } = this.d;
     // Fixed for the turn; a plugin switched on or off shows from the next one. A bot only gets its own.
     const guidance = plugins.guidance(bot.plugins);
     const others = bots.list().filter((b) => b.id !== bot.id);
@@ -637,7 +647,12 @@ export class Thread {
       : promptFor(SYSTEM_PROMPT, bot, others);
     const base = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
     const system = incognito ? `${base}\n\n${INCOGNITO_PROMPT}` : base;
-    const pluginTools = plugins.tools(bot.plugins).filter((t) => !incognito || t.access === "read");
+    const own = plugins.tools(bot.plugins);
+    // Negotiation's tools come with Scout's (PLAN.md §16.3).
+    const pluginTools = [
+      ...own,
+      ...(negotiations?.tools(bot, own, { conversationId: this.conversationId }) ?? []),
+    ].filter((t) => !incognito || t.access === "read");
     // Fixed for the reply; a change starts a new episode, since thinking blocks are bound to the model.
     const chatModel = bot.chatModel ?? settings.get().chatModel;
     const onHaiku = chatModel === "claude-haiku-5-5";
@@ -1794,6 +1809,7 @@ export class Thread {
             {
               ...this.d,
               bot,
+              pluginTools,
               conversationId: this.conversationId,
               messageId: out.id,
               episodeId: episode.id,

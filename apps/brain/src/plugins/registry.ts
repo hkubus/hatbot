@@ -385,7 +385,7 @@ export function describeCall(t: PluginTool, input: unknown): string {
 /**
  * Whether a call may run: the tool's own policy, made stricter by the untrusted-content rule. Once a
  * task or a conversation has read untrusted content, every write needs your approval (PLAN.md §6.1),
- * unless Haiku's review lets it through.
+ * unless Haiku's review lets it through, or the tool's policy says an approval you gave covers it.
  */
 export function verdictFor(
   t: PluginTool,
@@ -398,7 +398,7 @@ export function verdictFor(
   // Bad input fails in runPluginTool, before anything runs.
   if (!parsed.success) return allow();
   const own = t.policy ? t.policy(parsed.data, call) : allow();
-  if (own.action !== "allow") return own;
+  if (own.action !== "allow" || own.covered) return own;
   if (tainted)
     return {
       action: "ask",

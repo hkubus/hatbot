@@ -4,6 +4,27 @@
 // Each is a function expression; browser.ts calls it with one JSON argument.
 
 /** Shared by the scripts below: element references, roles, names and visibility. */
+/**
+ * The text boxes a click or Enter could send, for the brain's exact-text check (PLAN.md §16.3): what each
+ * visible one holds, whitespace collapsed, in the element's form when that has any, otherwise in its page.
+ * A box inside another (an editable region in a role=textbox) counts once.
+ */
+export const FIELDS = `
+  const TEXT_BOX = 'textarea, input:not([type]), input[type=text], input[type=search], input[type=email], input[type=tel], input[type=url], input[type=number], [contenteditable=""], [contenteditable=true], [contenteditable=plaintext-only], [role=textbox]';
+  const isTextBox = (e) => !!e && e.nodeType === 1 && (e.matches(TEXT_BOX) || e.isContentEditable);
+  const shownBox = (e) => e.getClientRects().length > 0
+    && (e.ownerDocument.defaultView || window).getComputedStyle(e).visibility !== 'hidden';
+  const boxValue = (e) => String((e.matches('input, textarea') ? e.value : e.innerText) || '')
+    .replace(/\\s+/g, ' ').trim().slice(0, 4000);
+  const fieldsFor = (el) => {
+    const all = (root) => [...root.querySelectorAll(TEXT_BOX)].filter(shownBox);
+    const form = el.closest('form');
+    const inForm = form ? all(form) : [];
+    const boxes = inForm.length ? inForm : all(el.ownerDocument);
+    return boxes.filter((b) => !boxes.some((o) => o !== b && o.contains(b))).map(boxValue).filter(Boolean);
+  };
+`;
+
 const COMMON = `
   const H = (globalThis.__hatbot ||= { byRef: new Map(), byEl: new WeakMap() });
   const refOf = (el, o) => {
@@ -153,6 +174,7 @@ const COMMON = `
     if (el.tagName === 'SLOT') return el.assignedElements();
     return el.shadowRoot ? [...el.shadowRoot.children] : [...el.children];
   };
+  ${FIELDS}
   const elementInfo = (el) => {
     if (!el || el === el.ownerDocument.body) return null;
     const c = el.closest('button, a, input, select, textarea, label, summary, [role=button], [role=link], [role=menuitem], [onclick]');
@@ -161,7 +183,7 @@ const COMMON = `
     const form = el.closest('form');
     const out = { tag: el.tagName.toLowerCase(), role: el.getAttribute('role'), type: el.getAttribute('type'),
       label: el.tagName === 'INPUT' && !['submit', 'button'].includes(el.type) ? (el.placeholder || el.name || '') : t(el),
-      inForm: !!form };
+      inForm: !!form, url: location.href, editable: isTextBox(el), fields: fieldsFor(el) };
     if (form) {
       const submit = form.querySelector('button[type=submit], input[type=submit], button:not([type])');
       if (submit) out.submitLabel = t(submit);

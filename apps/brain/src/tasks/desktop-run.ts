@@ -18,6 +18,7 @@ import { localStamp } from "../agent/thread";
 import { type Outcome, ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
+import { collapse, type GateState, gateCheck, refused, sendsWith } from "../negotiate/gate";
 import { destructive } from "../plugins/ssh/policy";
 import { BudgetError, estimateTokens, priceOf } from "../spend";
 import { skillPath } from "../teach/skills";
@@ -81,6 +82,17 @@ const SendFile = z
     name: z.string().max(200).optional().describe("The name the owner sees, if not the file's own"),
   })
   .refine((v) => !!v.download_id !== !!v.path, "Give either download_id or path.");
+const RecordConversation = z.object({
+  messages: z
+    .array(
+      z.object({
+        from: z.enum(["seller", "us"]),
+        text: z.string().max(4000),
+      }),
+    )
+    .max(100)
+    .describe("The conversation's messages, oldest first, each copied exactly"),
+});
 const FinishTask = z.object({
   outcome: z.enum(["done", "failed", "blocked"]),
   summary: z.string().min(1).max(2000).describe("What you did and the result, for the owner"),
@@ -127,6 +139,18 @@ const CUSTOM_TOOLS: Anthropic.Beta.BetaTool[] = [
   input_schema: z.toJSONSchema(t.schema) as Anthropic.Beta.BetaTool.InputSchema,
   eager_input_streaming: true,
 }));
+
+/** Only in a negotiation's desktop tasks (PLAN.md §16.3). */
+const RECORD_TOOL: Anthropic.Beta.BetaTool = {
+  name: "record_conversation",
+  description:
+    "Record the conversation with the seller as it is on screen now: every message, oldest first, who wrote it (the seller, or us: this account) and its text, copied exactly. Call it once the conversation is open, before sending anything, and again after. It says what to do next.",
+  input_schema: z.toJSONSchema(RecordConversation) as Anthropic.Beta.BetaTool.InputSchema,
+  eager_input_streaming: true,
+};
+
+/** How a send the gate let through is confirmed: the text leaving the box. Tests shorten it. */
+export const sendConfirm = { tries: 6, everyMs: 500 };
 
 /** Ends the run from inside a helper. `notify` false: a routine result nobody needs to hear about. */
 export class Stop extends Error {
@@ -274,6 +298,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   let lastUrl: string | null = null;
   /** An approved confirm_intent covers the next consequential action. */
   let armed = false;
+  /** A negotiation's task: it may send one approved message, or only read (PLAN.md §16.3). */
+  const gate = tasks.negotiations?.gateFor(id) ?? null;
+  const gateState: GateState = { recorded: false, sent: false, stopped: null };
   const sources = new Set<string>();
   const trustedHosts = new Set<string>();
   const messages: Anthropic.Beta.BetaMessageParam[] = [];
@@ -511,7 +538,15 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         ),
       );
     }
-    const check = checkFor(call.name, input);
+    const no = gate && refused(gate, call.name, input);
+    if (no) {
+      tasks.addStep(id, { kind: "note", name: "Held back", detail: no, url: lastUrl });
+      return textResult(call, `Not run: ${no}`, true);
+    }
+    const check = gate ? sendsWith(call.name, input) : checkFor(call.name, input);
+    /** Looks again at what the check looked at, to see whether a send left the text box. */
+    let inspectAgain: (() => Promise<AgentElement | null>) | null = null;
+    let sending = false;
     if (check) {
       let el: AgentElement | null;
       if (isBrowser) {
@@ -521,16 +556,27 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         const at =
           check === "enter" ? {} : t?.type === "ref" ? { ref: t.ref } : { x: t?.x, y: t?.y };
         const tab = typeof input.tab_id === "string" ? { tab_id: input.tab_id } : {};
-        el = await agent.browserInspect({ ...at, ...tab }).catch(() => null);
+        inspectAgain = () => agent.browserInspect({ ...at, ...tab }).catch(() => null);
       } else {
         let point = input.coordinate as number[] | undefined;
         if (check === "click" && !point) {
           const r = await agent.action({ name: "cursor_position", input: {} });
           point = [r.x ?? 0, r.y ?? 0];
         }
-        el = await agent.inspect(point?.[0], point?.[1]).catch(() => null);
+        inspectAgain = () => agent.inspect(point?.[0], point?.[1]).catch(() => null);
       }
-      const label = consequential(check, el);
+      el = await inspectAgain();
+      let label = consequential(check, el);
+      if (gate) {
+        const g = gateCheck(gate, gateState, check, el, label);
+        if (g.action === "hold") {
+          tasks.addStep(id, { kind: "note", name: "Held back", detail: g.why, url: lastUrl });
+          return textResult(call, `Not run: ${g.why}`, true);
+        }
+        // The send itself, or a click into a text box: neither needs confirm_intent.
+        if (g.action !== "usual") label = null;
+        sending = g.action === "send";
+      }
       if (label && !armed) {
         tasks.addStep(id, {
           kind: "note",
@@ -553,16 +599,77 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       url: lastUrl,
     });
     pendingStepId = step.id;
+    let r: ToolResult;
     try {
-      return await (isBrowser ? browser : computer).toolResult(call);
+      r = await (isBrowser ? browser : computer).toolResult(call);
     } finally {
       pendingStepId = undefined;
     }
+    if (sending && inspectAgain) {
+      // One message, once: whether it went or not, nothing more goes from this task.
+      gateState.sent = true;
+      const went = await sentFrom(inspectAgain);
+      tasks.negotiations?.sendPassed(id, went);
+      const note = went
+        ? "The message went: the text box is empty now. Call record_conversation, then finish."
+        : "Send was clicked, but the text is still in the box, so it may not have gone. Don't try again: call record_conversation, then finish.";
+      tasks.addStep(id, {
+        kind: "note",
+        name: went ? "Sent the approved message" : "Not sure the message went",
+        detail: collapse(gate?.text ?? ""),
+        url: lastUrl,
+      });
+      const content = r.content ?? [];
+      r = {
+        ...r,
+        content:
+          typeof content === "string"
+            ? `${content}\n\n${note}`
+            : [...content, { type: "text", text: note }],
+      };
+    }
+    return r;
+  };
+
+  /** Whether the approved text has left the text boxes, looking a few times as the page catches up. */
+  const sentFrom = async (inspectAgain: () => Promise<AgentElement | null>): Promise<boolean> => {
+    const text = collapse(gate?.text ?? "");
+    for (let i = 0; i < sendConfirm.tries; i++) {
+      await Bun.sleep(sendConfirm.everyMs);
+      const el = (await inspectAgain()) ?? (await agent.inspect().catch(() => null));
+      if (el?.fields && !el.fields.map(collapse).includes(text)) return true;
+    }
+    return false;
+  };
+
+  /** record_conversation: the brain stores what the seller wrote, and says whether the send may go. */
+  const recordConversation = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> => {
+    const p = RecordConversation.safeParse(call.input);
+    if (!p.success) return textResult(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+    if (!gate || !tasks.negotiations)
+      return textResult(call, "This task has no negotiation.", true);
+    const tab = await agent.context(false).catch(() => null);
+    const r = tasks.negotiations.record(id, tab?.url ?? null, p.data.messages, gateState);
+    gateState.recorded = true;
+    if (r.stale || r.alreadySent) gateState.stopped = r.text;
+    tasks.addStep(id, {
+      kind: "action",
+      name: "record_conversation",
+      detail: r.text,
+      url: lastUrl,
+    });
+    return textResult(call, r.text);
   };
 
   const confirmIntent = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> => {
     const p = ConfirmIntent.safeParse(call.input);
     if (!p.success) return textResult(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+    if (gate?.mode === "read")
+      return textResult(
+        call,
+        "Not asked: this task only reads the conversation. Record it and finish.",
+        true,
+      );
     const bytes = await agent.screenshot();
     const step = tasks.addStep(id, {
       kind: "screenshot",
@@ -720,7 +827,12 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           // top-level breakpoint follows the conversation. Two of the four breakpoints allowed.
           system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
           cache_control: { type: "ephemeral" },
-          tools: [computer.toJSON(), browser.toJSON(), ...CUSTOM_TOOLS],
+          tools: [
+            computer.toJSON(),
+            browser.toJSON(),
+            ...CUSTOM_TOOLS,
+            ...(gate ? [RECORD_TOOL] : []),
+          ],
           thinking: UPDATES_MODELS.has(task.model)
             ? { type: "adaptive", display: "updates" }
             : { type: "adaptive" },
@@ -802,6 +914,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           results.push(await shellCall(call));
         } else if (call.name === "send_file") {
           results.push(await sendFile(call));
+        } else if (call.name === "record_conversation" && gate) {
+          results.push(await recordConversation(call));
         } else if (call.name === "send_to_chat") {
           const p = DesktopSendToChat.safeParse(call.input);
           if (!p.success)

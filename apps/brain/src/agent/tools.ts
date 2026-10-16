@@ -8,6 +8,7 @@ import type { Db } from "../db";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import type { EventBus } from "../events";
 import { HATBOT, MemoryError, type MemoryStore } from "../memory/store";
+import { NEGOTIATE_TOOL_NAMES } from "../negotiate/names";
 import type { PluginTool } from "../plugins/plugin";
 import { describeCall, type Plugins, runPluginTool } from "../plugins/registry";
 import { ScheduleError, type Schedules } from "../schedules";
@@ -41,6 +42,8 @@ export type ToolContext = {
   /** Adds a schedule's card to the thread. */
   scheduleCard?: (s: Schedule) => void;
   plugins?: Plugins;
+  /** The plugin tools this reply was offered, with negotiation's; all of the plugins' without it. */
+  pluginTools?: PluginTool[];
   /**
    * What untrusted content the conversation first read, or null; tasks it starts begin tainted
    * (PLAN.md §6.1).
@@ -656,7 +659,8 @@ export async function runTool(
     TOOLS.find((t) => t.name === name) ??
     TOOLS.find((t) => t.name.toLowerCase() === name.toLowerCase());
   if (!tool) {
-    const plugin = ctx.plugins?.tools().find((t) => t.name === name);
+    const offered = ctx.pluginTools ?? ctx.plugins?.tools() ?? [];
+    const plugin = offered.find((t) => t.name === name);
     if (plugin?.access === "write") {
       if (!ctx.gated) return { content: `${name} can't run here.`, isError: true };
       return ctx.gated(plugin, input, signal);
@@ -666,7 +670,7 @@ export async function runTool(
       if (r.untrusted) ctx.taint?.(describeCall(plugin, input));
       return r;
     }
-    const names = [...TOOLS, ...(ctx.plugins?.tools() ?? [])].map((t) => t.name);
+    const names = [...TOOLS, ...offered].map((t) => t.name);
     return { content: `Unknown tool "${name}". Available: ${names.join(", ")}`, isError: true };
   }
   const parsed = tool.schema.safeParse(input);
@@ -736,6 +740,8 @@ export const CORE_TOOL_NAMES = [
   "finish_task",
   "confirm_intent",
   "request_takeover",
+  "record_conversation",
+  ...NEGOTIATE_TOOL_NAMES,
 ];
 
 /**

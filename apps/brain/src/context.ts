@@ -12,6 +12,7 @@ import type { EventBus } from "./events";
 import type { Heartbeat } from "./heartbeat";
 import type { Proposals } from "./memory/proposals";
 import type { MemoryStore } from "./memory/store";
+import type { Negotiations } from "./negotiate/service";
 import type { Plugins } from "./plugins/registry";
 import type { Proxmox } from "./proxmox";
 import type { WeeklyReport } from "./report";
@@ -52,6 +53,7 @@ export type Deps = {
   plugins: Plugins;
   teach: Teach;
   checks: Checks;
+  negotiations: Negotiations;
 };
 
 export type AppEnv = {

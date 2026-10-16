@@ -6,7 +6,14 @@ import { resultText, Thread, type ThreadDeps } from "./thread";
 
 type Parts = Pick<
   ThreadDeps,
-  "tasks" | "schedules" | "triggers" | "watchers" | "approvals" | "attachments" | "desktop"
+  | "tasks"
+  | "schedules"
+  | "triggers"
+  | "watchers"
+  | "approvals"
+  | "attachments"
+  | "desktop"
+  | "negotiations"
 >;
 
 type Row = {

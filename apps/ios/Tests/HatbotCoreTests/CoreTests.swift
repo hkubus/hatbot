@@ -716,6 +716,24 @@ final class SpendTests: XCTestCase {
       return XCTFail("not a deleted watcher")
     }
   }
+
+  func testNegotiationsDecode() throws {
+    let updated = #"""
+      {"type":"negotiation.updated","negotiation":{"id":3,"botId":"haggler","wantId":1,"want":"RTX 3070",
+      "role":"buy","listingKey":"OLX:1001","listingUrl":"https://www.olx.pl/d/oferta/x-ID1001.html",
+      "title":"RTX 3070","asking":1500,"mandate":{"currency":"PLN","opening":1060,"target":1250,"limit":1400,
+      "delivery":"OLX","expiresAt":"2026-10-16T12:00:00Z","allow":[]},"appraisal":null,"conversationUrl":null,
+      "claims":{"max":null,"otherOffers":null,"timing":null,"other":[]},"status":"open","agreedPrice":null,
+      "approvalId":null,"conversationId":2,"nextFollowUpAt":null,"lastMessage":null,
+      "createdAt":"2026-10-09T12:00:00Z","updatedAt":"2026-10-09T12:00:00Z","closedAt":null}}
+      """#
+    guard case let .negotiationUpdated(n) = try JSONDecoder().decode(HatbotEvent.self, from: Data(updated.utf8))
+    else { return XCTFail("not a negotiation") }
+    XCTAssertEqual(n.id, 3)
+    XCTAssertEqual(n.status, "open")
+    let message = #"{"id":9,"role":"assistant","kind":"text","text":"On it.","status":"done","createdAt":"2026-10-09T12:00:00Z","negotiationId":3}"#
+    XCTAssertEqual(try JSONDecoder().decode(ThreadMessage.self, from: Data(message.utf8)).negotiationId, 3)
+  }
 }
 
 final class ZoomTests: XCTestCase {

@@ -59,7 +59,16 @@ const installer = (() => {
 const stateDir = process.env.STATE_DIRECTORY;
 const MAX_UPDATE_BYTES = 10 * 1024 * 1024;
 /** Endpoints added since the first deploy; the brain's checks say when the desktop is behind. */
-const FEATURES = ["profiles", "exec", "files", "fetch", "deep-health", "browser-reset"];
+const FEATURES = [
+  "profiles",
+  "exec",
+  "files",
+  "fetch",
+  "deep-health",
+  "browser-reset",
+  // inspect reports the tab's address and its text boxes, for the exact-text send check.
+  "fields",
+];
 
 // The display may still be starting (Xvnc restarting, say): wait for it rather than exit and be restarted.
 const size = await (async () => {

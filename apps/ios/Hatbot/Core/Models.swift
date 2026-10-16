@@ -50,6 +50,8 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   private(set) var date: Date?
   var taskId: Int?
   var scheduleId: Int?
+  /// The negotiation it started, shown under it; missing on brains from before negotiations.
+  var negotiationId: Int?
   /// The conversation it belongs to; cards from background tasks have none.
   var episodeId: Int?
   /// When a task's result changed it after it was sent; missing on brains from before.
@@ -72,13 +74,14 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case id, role, kind, text, status, createdAt, taskId, scheduleId, episodeId, editedAt, seenAt, attachments
-    case incognito, conversationId, botId
+    case incognito, conversationId, botId, negotiationId
   }
 
   init(
     id: Int, role: Role, kind: Kind, text: String, status: Status, createdAt: String, taskId: Int? = nil,
     scheduleId: Int? = nil, episodeId: Int? = nil, editedAt: String? = nil, seenAt: String? = nil,
-    attachments: [Attachment]? = nil, incognito: Bool? = nil, conversationId: Int? = nil, botId: String? = nil
+    attachments: [Attachment]? = nil, incognito: Bool? = nil, conversationId: Int? = nil, botId: String? = nil,
+    negotiationId: Int? = nil
   ) {
     self.id = id
     self.role = role
@@ -96,6 +99,7 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
     self.incognito = incognito
     self.conversationId = conversationId
     self.botId = botId
+    self.negotiationId = negotiationId
   }
 
   init(from decoder: Decoder) throws {
@@ -115,7 +119,8 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
       attachments: c.decodeIfPresent([Attachment].self, forKey: .attachments),
       incognito: c.decodeIfPresent(Bool.self, forKey: .incognito),
       conversationId: c.decodeIfPresent(Int.self, forKey: .conversationId),
-      botId: c.decodeIfPresent(String.self, forKey: .botId))
+      botId: c.decodeIfPresent(String.self, forKey: .botId),
+      negotiationId: c.decodeIfPresent(Int.self, forKey: .negotiationId))
   }
 }
 
@@ -568,6 +573,19 @@ struct AppSettings: Codable, Equatable, Sendable {
   }
 }
 
+/// A negotiation with a seller (Negotiation in packages/shared/src/negotiate.ts). The app doesn't show
+/// negotiations yet, so only their outline; the rest of the brain's JSON is ignored.
+struct Negotiation: Decodable, Identifiable, Equatable, Sendable {
+  let id: Int
+  var botId: String
+  var title: String
+  var listingUrl: String
+  /// awaiting_mandate, open, agreed, lost, abandoned or expired.
+  var status: String
+  var agreedPrice: Double?
+  var approvalId: Int?
+}
+
 /// Live events on /api/v1/stream. Events this app doesn't know decode to `.unknown`.
 enum HatbotEvent: Decodable, Sendable {
   case messageCreated(ThreadMessage)
@@ -607,12 +625,13 @@ enum HatbotEvent: Decodable, Sendable {
   /// The heartbeat looked again.
   case heartbeatUpdated
   case watcherDeleted(id: Int)
+  case negotiationUpdated(Negotiation)
   case unknown(String)
 
   private enum Key: String, CodingKey {
     case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused, tokens, costUsd
     case task, step, approval, state, schedule, trigger, episode, editedAt, ids, seenAt, attachment
-    case bot, conversation, proposal, watcher
+    case bot, conversation, proposal, watcher, negotiation
   }
 
   init(from decoder: Decoder) throws {
@@ -675,6 +694,8 @@ enum HatbotEvent: Decodable, Sendable {
     case "settings.updated": self = .settingsUpdated
     case "heartbeat.updated": self = .heartbeatUpdated
     case "watcher.deleted": self = .watcherDeleted(id: try c.decode(Int.self, forKey: .id))
+    case "negotiation.updated":
+      self = .negotiationUpdated(try c.decode(Negotiation.self, forKey: .negotiation))
     default: self = .unknown(type)
     }
   }

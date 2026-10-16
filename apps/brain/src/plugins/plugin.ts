@@ -1,7 +1,7 @@
 // Plugins (PLAN.md §4.5): integrations like Proxmox, SSH, Forgejo and MCP. Each one ships with Hatbot,
 // is switched on in Settings, and contributes tools. The core decides who gets a tool and when it needs
 // your approval; a plugin only says what its tools do.
-import type { ApprovalKind, Attachment } from "@hatbot/shared";
+import type { ApprovalKind, Attachment, Task } from "@hatbot/shared";
 import type { z } from "zod";
 import type { Attachments } from "../attachments";
 import type { Db } from "../db";
@@ -9,7 +9,11 @@ import type { DesktopAgent } from "../desktop/client";
 
 /** Whether a call may run. The core takes the strictest of this and the untrusted-content rule (§6.1). */
 export type Verdict =
-  | { action: "allow" }
+  /**
+   * `covered`: an approval you already gave stands in for the one the untrusted-content rule would ask
+   * for, e.g. a negotiation's mandate (PLAN.md §16.1). It says which, for the timeline.
+   */
+  | { action: "allow"; covered?: string }
   /**
    * `tainted`: only the untrusted-content rule asks. `always`: the owner said to always ask about this,
    * so Haiku's review can't let it through (PLAN.md §6.1).
@@ -18,6 +22,8 @@ export type Verdict =
   | { action: "block"; why: string };
 
 export const allow = (): Verdict => ({ action: "allow" });
+/** Allowed even after untrusted content: `why` names the approval that covers it. */
+export const covered = (why: string): Verdict => ({ action: "allow", covered: why });
 export const ask = (why: string, kind?: ApprovalKind): Verdict => ({ action: "ask", why, kind });
 /** Asks the owner every time: Haiku's review never lets it through. */
 export const askAlways = (why: string, kind?: ApprovalKind): Verdict => ({
@@ -34,6 +40,10 @@ export type CallContext = {
   signal: AbortSignal;
   /** Puts a file in the chat for the owner: on the reply or the task making the call. */
   sendFile?: (name: string, bytes: Uint8Array) => Promise<Attachment>;
+  /** From the chat: the reply being written, which work the call starts shows under. */
+  messageId?: number;
+  /** From a task: waits for a task the call started, without holding the task's slot meanwhile. */
+  waitForTask?: (taskId: number) => Promise<Task>;
 };
 
 export type PluginTool<I = unknown> = {
