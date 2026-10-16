@@ -5,6 +5,31 @@ Delete it, or fold it into `PLAN.md`, once the work below is done.
 
 **Next: `GAPS.md`** (2026-10-16) is the plan for the next pass: small fixes and one deploy checklist, the owner's live run, then the larger fixes. Start there.
 
+## Deploy checklist
+
+Everything built since M4 goes live with these steps, in this order: `host-setup.sh` runs the provision scripts, so it comes before `deploy.sh`. The Update button in Settings only updates the app; new desktop units and firewall rules need the host scripts.
+
+1. **iOS build:** push `main`. The GitHub mirror's CI builds the iOS app for the first time, since no SwiftUI has been compiled yet; fix the compile errors from its log. If SideStore refuses the App Group, the widget's App ID or the share extension, see "iOS" below for what to take out.
+2. **Host setup:** copy `infra/` to the host (`infra/README.md`, "Run it"). If your router forwards ports, set `HATBOT_PUBLIC_IPS` in `/etc/hatbot/host.env`. Run `./host-setup.sh` again: it loads the new firewall ranges, and its provision scripts bring the fonts, Python and the sandbox's tools.
+3. **Deploy:** `./deploy.sh 124:/root/hatbot`. It runs the brain's migrations up to the latest and installs the desktop's units: `hatbot-chromium` (a browser profile per bot), the shell, `/fetch` and `/files`.
+4. **Env files:** one for each plugin you want (`github.env`, `forgejo.env`, `pbs.env`, `homeassistant.env`, `uptimekuma.env`, `mcp.env`; `infra/README.md`, "Plugins"), and `HATBOT_PING_URL` in `secrets.env` with its Uptime Kuma Push monitor ("When the brain itself is down"). Then restart the brain.
+5. **Optional:** `./pct-exec-setup.sh` on the host, then add the host in Settings → Plugins → SSH with "Proxmox host" on.
+6. **Checks:** `./verify.sh`, then Settings → Check everything (or `infra/smoke.sh`), then a test approval, approved from the lock screen.
+7. **Kuma triggers:** re-save existing Uptime Kuma triggers with the new default prompt (`KUMA_PROMPT` in `apps/web/src/pages/Schedules.tsx`) to get investigate → one restart → verify.
+8. **iOS install:** install the IPA from the SideStore source.
+9. **Settings:** the heartbeat is on by default now. Settings saved by a version that already had it keep their choice, so look at Settings → Heartbeat.
+
+## The live run
+
+Acceptance tests for parts that have never run live. The owner runs them; write each result here: passed, or what broke and the commit that fixed it.
+
+1. **Forgejo alert:** a Kuma monitor on `git.gaycats.ovh` that notifies Hatbot's Kuma trigger; stop Forgejo. Passes when Hatbot reads the service over SSH, restarts it once, checks it's back, and reports in chat and on ntfy. *Not run yet.*
+2. **netlog chart:** add the host that runs `/root/netlog` (CT 124) as an SSH host. Ask Hatbot to copy `loss.csv` and chart the last 7 days' loss for each target. Passes when the chart arrives as a file. Then make it a Monday schedule. *Not run yet.*
+3. **CI watcher:** a watcher on `github_ci` for `hkubus/hatbot` `main`, condition "contains failure". Passes when a failing run sends a notification. *Not run yet.*
+4. **OVH invoice:** teach it once on the desktop, save the skill, then run it as a task. Passes when the PDF arrives through `send_file`. Note which model drove it and whether it needed a takeover. *Not run yet.*
+5. **Share sheet:** share a Safari link with "summarize". Passes when the summary appears in chat. *Not run yet.*
+6. **Also try:** a desktop task that needs a login (takeover both ways), two bots in a group, an incognito chat, `/task` and `/remember`, and Run again on an ended task. *Not run yet.*
+
 ## Where things stand
 
 - **Built:** M0–M5, the iOS app, more than one bot (§14) and looking after things (§15). M4 onwards is built and committed but not yet deployed or tried live.
@@ -34,51 +59,47 @@ These came out of the M4 security review.
 ## 2. M5 — Teach-by-showing (built, not tried live)
 
 - **Brain:** `apps/brain/src/teach/` (recorder, skills index, service) and `routes/teach.ts`. Live input is recorded from `routes/desktop.ts` while a recording runs; the recording holds the screen lane. The draft is one Opus call (`purpose: "teach"` in the ledger) and stays in `teach_sessions` until the owner saves it.
-- **Secrets:** desktop-agent's `inspect()` now reports `secret` (password, one-time-code, card fields, frames). Typing there, or where nothing focused can be seen, is only counted. **desktop-agent needs redeploying** for the `secret` flag; an old agent still has `type === "password"` checked.
+- **Secrets:** desktop-agent's `inspect()` reports `secret` (password, one-time-code, card fields, frames). Typing there, or where nothing focused can be seen, is only counted. An older desktop-agent only checks `type === "password"`.
 - **Use:** background tasks get a `<skills>` list; `run_desktop_task` takes `skill`, and the desktop model gets the file's steps in `<skill>`. Chat sees skills through INDEX.md's Skills section.
 - **Decided:** no recording dot; a plain "Recording. Show Hatbot how." banner.
 - **Not done:** the iOS app has no teach mode. Handing back from the app ends a recording without a skill.
 
-## 3. iOS app — remaining items (PLAN §11, "iOS app")
-- **Built, not yet compiled by CI:** the Memory tab (files, read and edit, history, diff, revert), Schedules & Triggers under Settings (schedules made and edited here; triggers edited, switched, re-keyed and deleted, but made on the web), and Settings → Notifications (web or app). SwiftUI can't be type-checked on Linux, so the first CI run on the GitHub mirror is the real check.
+## 3. iOS
+- **Built, not yet compiled by CI:** everything in SwiftUI, including the Memory tab, Schedules & Triggers under Settings (triggers are made on the web), Settings → Notifications, App Intents, the share extension, the widget and the Pause all control. SwiftUI can't be type-checked on Linux, so the first CI run on the GitHub mirror is the real check.
+- **If SideStore refuses them:** the App Group, `entitlements` and the share extension come out of `project.yml` (the app works without them). The widget and Pause all control are one commit ("iOS: a home-screen widget…"), a third App ID: revert it alone.
 - **Optional:** Settings → Plugins and teach mode aren't in the app. The plan doesn't ask for them.
 
-## Desktop shell (built 2026-10-10, not deployed)
-- `desktop_shell` in desktop tasks runs commands through `hatbot-desktop-shell` (`apps/desktop-agent/src/shell.ts`), relayed by desktop-agent's `POST /exec`. The owner chose to add it for experiments.
-- **Run `infra/deploy.sh` once** for the desktop: updates from the Settings button use the installed copy of `desktop-deploy.sh`, which doesn't know the new unit. Until then the tool answers that the shell isn't running.
+## Desktop shell (built 2026-10-10)
+- `desktop_shell` in desktop tasks runs commands through `hatbot-desktop-shell` (`apps/desktop-agent/src/shell.ts`), relayed by desktop-agent's `POST /exec`. The owner chose to add it for experiments. Until `deploy.sh` installs the unit, the tool answers that the shell isn't running.
 
-## Commands in containers (built 2026-10-11, not set up)
-- `ssh_pct_exec` in the SSH plugin, for hosts marked "Proxmox host". The owner runs `infra/pct-exec-setup.sh` on the Proxmox host, then adds it in Settings → Plugins → SSH. The wrapper's `pct exec` path is only tested on the real host.
+## Commands in containers (built 2026-10-11)
+- `ssh_pct_exec` in the SSH plugin, for hosts marked "Proxmox host" (checklist step 5). The wrapper's `pct exec` path is only tested on the real host.
 
 ## Web, homelab plugins, browser input (built 2026-10-12, not tried live)
 - **Web search and fetch** are Anthropic's server tools, the basic versions (`WEB_TOOLS` in `apps/brain/src/agent/tools.ts`) on both models. The dynamic-filtering versions would save tokens on Opus but bring a code container into every conversation. What they read taints the conversation or task. Each search is billed at $0.01 in the spend ledger.
-- **Plugins:** Proxmox Backup Server, Home Assistant and Uptime Kuma, tested only against stand-in servers. Their env files are in `infra/README.md`. Redeploy the brain once so its unit loads them.
+- **Plugins:** Proxmox Backup Server, Home Assistant and Uptime Kuma, tested only against stand-in servers.
 - **Task tools:** `wait` gives up the slot and wakes early on an event; `notify_owner` sends at most 5 notifications per task.
-- **Browser input** (`apps/desktop-agent/src/human.ts`): curved pointer paths, held clicks, a person's typing pace. Re-run `infra/desktop-provision.sh` for the extra fonts. Still a tell: WebGL renders in software (no GPU in the container). The container's timezone should match the owner's.
+- **Browser input** (`apps/desktop-agent/src/human.ts`): curved pointer paths, held clicks, a person's typing pace. Still a tell: WebGL renders in software (no GPU in the container). The container's timezone should match the owner's.
 - **Captchas:** the desktop model clicks a plain checkbox once; image and puzzle challenges go to the owner.
 
 ## Attachments and code (built 2026-10-12, not tried live)
 - **Both ways:** the owner uploads with `POST /attachments` and then posts the ids with the message. The model gets these directly: images up to 5 MB, PDFs up to 20 MB, and text up to 400 KB. Anything else is reached through `code_run`. Attached files taint the conversation. Hatbot sends files back with `send_file`, from the sandbox or from a desktop task's browser download (saved in desktop-agent's state dir). A task's files show on the messages that show the task. Files live in the archive under `files/` and are limited to 25 MB.
 - **Code:** the Code plugin (`apps/brain/src/plugins/code/`) is off until it's switched on in Settings → Plugins. `code_run` runs as the desktop shell user and goes through the usual write gating. Commands that fetch from the network make it untrusted.
-- **To set up:** re-run `infra/desktop-provision.sh` (Python, numpy, pandas, matplotlib, poppler, jq and more), redeploy desktop-agent (`/files` and `/download`), and redeploy the brain (migration 17).
-- **Unchecked:** the web composer was never looked at in a browser. The iOS views were only syntax-checked.
+- **Unchecked:** the web composer was never looked at in a browser.
 
 ## Chat commands (built 2026-10-13, not tried live)
 - `/new`, `/stop [task]`, `/task <what>` and `/remember <fact>` run in the brain without the model (`Thread.post` in `apps/brain/src/agent/thread.ts`; the list is `CHAT_COMMANDS` in `packages/shared`, mirrored in `apps/ios/Hatbot/Core/Thread.swift`). An unknown `/word` is an ordinary message.
 - `/new` starts a `fresh` episode (migration 18): no recent messages and no taint carried over, only the running summary. `/task` runs your words as an untainted background task. `/remember` appends to the Notes section of INDEX.md, as the owner. The model hears about commands in `<owner_commands>` with your next message.
-- **To set up:** redeploy the brain (migration 18). The web composer was checked in headless Chromium; the iOS views were only syntax-checked.
 
 ## Incognito (built 2026-10-13, not tried live)
 - The chat toolbar's incognito button (web and iOS) switches to a conversation apart from the thread. `incognito: true` on `POST /thread/messages`; `GET /thread/messages?incognito=1` lists it; `DELETE /thread/incognito` ends it. The owner chose these rules:
   - **No history:** no summary, no earlier messages, no `search_history`, no task news. It isn't summarized, unread or in the search index.
   - **Memory read-only, lookups only:** memory reads, schedule and trigger lists, plugins' read tools, web search, `ask_opus`. No writes, tasks or schedules; `/task` and `/remember` answer that they don't work there.
   - **Deleted** (messages, files, model turns) when you leave, after 30 idle minutes, on `/new`, or when the brain restarts. Spend stays in the ledger without it. `secure_delete` and a WAL checkpoint keep the text out of the database files; a PBS backup taken while one is open still has it.
-- **To set up:** redeploy the brain (migration 19). The web view was checked in headless Chromium; the iOS views were only syntax-checked.
 
 ## More than one bot (built 2026-10-14, not tried live)
 - PLAN §14, milestones B1–B5: bots with their own role, chat, memory folder (`bots/<id>/`), plugins, model and browser profile; `ask_bot` hand-offs, at most 3 deep; group chats of 2–6 bots, where `@name` picks who answers and at most 4 bot replies follow each message. Spend limits stay global. §14.5 says how it's built.
-- **To set up:** redeploy the brain (migration 20 moves the thread into conversation 1, Hatbot's chat). **Run `infra/deploy.sh` once** for the desktop: it installs `hatbot-chromium.service`, which replaces the autostart Chromium, and the per-bot profiles need it. An update from the Settings button uses the old installer; until the full deploy, every bot shares the one browser profile.
-- **Checked:** the web views in headless Chromium (chat list, bot and group pages, the schedule's "Runs as", @ autocomplete, sender names). The iOS views were only syntax-checked.
+- Migration 20 moves the thread into conversation 1, Hatbot's chat. Until `deploy.sh` installs `hatbot-chromium.service`, every bot shares one browser profile.
 - **Not tried:** two bots answering in a group with the real model, and per-bot profiles on the real desktop.
 
 ## Copying files (built 2026-10-14, not tried live)
@@ -89,10 +110,9 @@ These came out of the M4 security review.
 ## Looking after things, GitHub, Siri and sharing (built 2026-10-15, not tried live)
 The owner asked for all of these at once. PLAN §15 describes them.
 - **Brain:** Check everything (Settings, `infra/smoke.sh`), watchers (`watch_*` in the chat), search, Run again, the heartbeat (on by default since 2026-10-16), the weekly report (on, Monday 09:00), memory tidy-ups and skill fixes as proposals (the weekly tidy-up is off by default), the GitHub plugin, and `POST /thread/ask` for Siri.
-- **To set up:** redeploy the brain (migrations 24 and 25). **Redeploy desktop-agent:** watchers fetch pages through its new `/fetch`, and Check everything reads its new health fields. For GitHub, create `/etc/hatbot/github.env` with `GITHUB_TOKEN` (`infra/README.md`) and run `infra/brain-deploy.sh` once so the unit loads it.
 - **Plugin signals** for the heartbeat: Uptime Kuma (monitors down) and PBS (failed tasks, full datastores). A plugin adds one with `signals()` on its instance.
 - **GitHub:** a commit of many files is one commit through the git tree API (the contents API makes one per file). Tested only against a stand-in server.
-- **iOS:** Search in the drawer; Watchers, Check everything and Heartbeat under Settings, with the weekly report and memory tidy-up switches; proposals and skills that went wrong in Memory; Run again on an ended task. App Intents (Ask Hatbot, Give Hatbot a Task, Send to Hatbot) and a share extension. The token moved into the App Group's Keychain access group on first launch, so the extension can read it; `build-ipa.sh` signs both ad hoc with their entitlements, since SideStore reads the App Group from them, and the SideStore source lists the entitlement. **Unchecked:** none of the iOS views, the intents or the extension have been compiled (only syntax-checked); the first CI run is the real check. If SideStore refuses the App Group, take `entitlements` and the extension out of `project.yml`; the app works without them.
+- **iOS:** Search in the drawer; Watchers, Check everything and Heartbeat under Settings, with the weekly report and memory tidy-up switches; proposals and skills that went wrong in Memory; Run again on an ended task. App Intents (Ask Hatbot, Give Hatbot a Task, Send to Hatbot) and a share extension. The token moved into the App Group's Keychain access group on first launch, so the extension can read it; `build-ipa.sh` signs both ad hoc with their entitlements, since SideStore reads the App Group from them, and the SideStore source lists the entitlement.
 - **Checked:** brain tests, `tsc -b`, Biome, the iOS core's 37 tests, and the web pages (Search, watchers, Check everything, Heartbeat, Settings, a proposal) in headless Chromium against a dev brain.
 
 ## The improvement pass (built 2026-10-15, not tried live)
@@ -101,8 +121,7 @@ An audit of every part, then fixes across all of them. The commits from "Desktop
 - **Agent runtime:** no summary while a reply runs or waits; files kept by reference, not base64 in turns; a new episode past 90k tokens and tool results cleared past 70k in tasks; tasks cache their system prompt; `ask_opus`'s answer in Haiku's context; mid-stream retries; Try again on an errored reply; a background task gives its slot up while its desktop task runs; at most 3 s waiting for the last summary; page screening in parallel, once per page, asking when it fails; tasks stopped by a restart are told in their chats with one notification (not re-queued); effort changes keep the cache (beta `mid-conversation-output-config-2026-07-01`).
 - **Brain services:** migration 26 (indexes, webhook deliveries seen, kept 30 days); takeover survives a restart; a deleted bot's watchers go to Hatbot; plugins in error restart on a backoff; the heartbeat keeps its last 20 finds; paging on tasks, approvals and memory history; storage sizes and growth in Check everything and the weekly report; a nightly `VACUUM INTO` copy in `<archive>/db/` (7 kept); memory writes that read first go through the write queue, edits on an older copy get a 409, search wants every word; hook bodies capped at 256 KB; spend by purpose; tidy-up and skill fixes answer 202 and arrive as `proposal.updated`.
 - **Web:** streaming redraws once a frame; only a 401 signs you out; fast reconnects that merge the thread; drafts per chat; phone composer; the live view streams only when visible; Tasks lists what needs you and pages back; memory conflicts; lazy pages and no zod (636 → 440 kB); Inter split by script, Noto with Cyrillic and Greek; the duplicated CSS folded; scroll-to-bottom, Stop, Cmd-K; title and icon badge; drag and drop; a service worker for the app shell.
-- **iOS:** reload after the background; per-request timeouts; a revoked token signs out; streaming, typing and Markdown performance; ImageIO photos (share extension memory); drafts per chat; search opens the message; landscape Live with pinch zoom; Spend charts, limits, devices, test approval; Try again; haptics; VoiceOver; iPad sidebar; an on-device cache; quick actions, Spotlight, icon badge. **Widget and Pause all control** are one commit ("iOS: a home-screen widget…"), a third App ID in SideStore: revert it alone if the build or SideStore refuses it. None of the SwiftUI was compiled here.
-- **To set up:** redeploy the brain (migration 26). **Run `infra/deploy.sh` once from the host** for the desktop's unit changes (the Update button uses the old installer), re-run `host-setup.sh` for the new firewall ranges, then `verify.sh`. A new IPA from CI.
+- **iOS:** reload after the background; per-request timeouts; a revoked token signs out; streaming, typing and Markdown performance; ImageIO photos (share extension memory); drafts per chat; search opens the message; landscape Live with pinch zoom; Spend charts, limits, devices, test approval; Try again; haptics; VoiceOver; iPad sidebar; an on-device cache; quick actions, Spotlight, icon badge.
 
 ## The network pass (built 2026-10-16, not tried live)
 The owner asked for performance work, mostly on the network, with each change measured. The commits from "Brain: compressed JSON answers…" onwards.
@@ -110,13 +129,10 @@ The owner asked for performance work, mostly on the network, with each change me
 - **Web:** one live socket per tab, however many screens show it. A chat's task cards load in one request without their steps: a chat with 12 cards makes 9 requests instead of 20. A reconnect loads the chats and ended tasks once. Spend refreshes at most every 10 s while a task bills (46 requests a minute instead of 192).
 - **iOS:** a reconnect loads everything side by side (0.17 s instead of 1.2 s at 150 ms a request); seen messages go in one post; task rows load in one request, one by one from a brain without `ids=`.
 - **For the owner to decide:** desktop tasks send every screenshot again, as base64, with each step: a 30-screenshot task uploads about 56 MB in all. The Files API would upload each once and refer to it by id. It costs a round trip per screenshot and keeps screenshots at Anthropic until they're deleted.
-- **To set up:** redeploy the brain; the deploy's web build writes the compressed copies. Then a new IPA from CI.
 
 ## 4. Later (not v1, don't start without the owner)
 - **After v1** (PLAN §11): email via Proton Bridge, an open-source release.
 - **Negotiation** (PLAN §16): planned 2026-10-16, not started. N1 first. Scout's part needs a handoff in Scout's own repo.
 
 ## Things the owner should know when testing M4
-- **Kuma prompt:** existing Uptime Kuma triggers keep their old prompt. Re-save them with the new default (`KUMA_PROMPT` in `apps/web/src/pages/Schedules.tsx`) to get investigate → one restart → verify.
 - **Plugin pages:** Settings → Plugins was never looked at in a browser, only checked through the API and typecheck.
-- **Secrets:** they go in `/etc/hatbot/forgejo.env` and `/etc/hatbot/mcp.env`; `infra/brain-deploy.sh` wires them in.
