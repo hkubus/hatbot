@@ -314,11 +314,12 @@ export class Negotiations {
 
   /** Shows a negotiation under a chat reply, as a task shows. */
   private attach(messageId: number, negotiationId: number) {
-    this.d.db
+    const done = this.d.db
       .query(
         "UPDATE messages SET negotiation_id = ? WHERE id = ? AND negotiation_id IS NULL AND kind IN ('text', 'command')",
       )
-      .run(negotiationId, messageId);
+      .run(negotiationId, messageId).changes;
+    if (done) this.d.events.emit({ type: "message.negotiation", id: messageId, negotiationId });
   }
 
   /** An open negotiation already on this listing, or on this want, which N4's several sellers allow. */

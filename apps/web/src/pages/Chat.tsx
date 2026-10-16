@@ -35,6 +35,7 @@ import {
 import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
 import { touchScreen } from "../media";
+import { negotiationText } from "../negotiations";
 import { navigate, useRoute } from "../router";
 import {
   botName,
@@ -42,19 +43,21 @@ import {
   currentChat,
   decideApproval,
   deleteEpisode,
+  ensureNegotiation,
   ensureSchedule,
   ensureTask,
   getState,
   loadEarlier,
   loadThread,
   markSeen,
+  negotiationOf,
   openConversation,
   retryReply,
   sendMessage,
   setPaused,
   useStore,
 } from "../store";
-import { isActive, Shot, taskLine, tokenText, whenText } from "../tasks";
+import { isActive, MANDATE_NOTE, Shot, taskLine, tokenText, whenText } from "../tasks";
 
 /** How long an unread message stays on screen before it counts as seen. */
 const SEEN_AFTER_MS = 1500;
@@ -291,6 +294,23 @@ function TaskResult({ taskId }: { taskId: number }) {
   return <div className="muted resolved">Cancelled.</div>;
 }
 
+/** A negotiation under the reply that started it: the listing, and where it stands. */
+function NegotiationResult({ id }: { id: number }) {
+  const n = useStore((s) => s.negotiations[id]);
+  useEffect(() => ensureNegotiation(id), [id]);
+  if (!n) return null;
+  return (
+    <div className="md">
+      <p>
+        <a href={n.listingUrl} target="_blank" rel="noreferrer noopener">
+          <b>{n.title}</b>
+        </a>
+        : {negotiationText(n)}
+      </p>
+    </div>
+  );
+}
+
 /**
  * Hatbot's reply, with the task it started (if any) working under it. Once the task finishes or fails,
  * its bot writes the reply again to say what came of it; if it doesn't, the task's result shows in the
@@ -332,6 +352,7 @@ function ReplyMessage({
             {tokenText(used.tokens)} tokens · ${used.costUsd.toFixed(3)}
           </div>
         )}
+        {m.negotiationId && <NegotiationResult id={m.negotiationId} />}
         {ended && !finished && m.text && <hr className="result-rule" />}
         {m.taskId && !finished && <TaskResult taskId={m.taskId} />}
         {m.attachments?.length ? <Files list={m.attachments} /> : null}
@@ -340,7 +361,13 @@ function ReplyMessage({
         <Meta
           m={m}
           copy={replaced ? (ended.summary ?? "") : m.text}
-          open={m.taskId ? { to: `/tasks/${m.taskId}`, label: "Open task" } : undefined}
+          open={
+            m.negotiationId
+              ? { to: `/negotiations/${m.negotiationId}`, label: "Open negotiation" }
+              : m.taskId
+                ? { to: `/tasks/${m.taskId}`, label: "Open task" }
+                : undefined
+          }
           retry={retryable && m.status === "error" ? () => retryReply(m) : undefined}
         />
       )}
@@ -348,15 +375,21 @@ function ReplyMessage({
   );
 }
 
-/** An approval waiting for you, above the composer, with Approve and Deny under it. */
+/**
+ * An approval waiting for you, above the composer, with Approve and Deny under it. A negotiation's
+ * mandate takes a note here too: it can change the numbers.
+ */
 function PendingApproval({ a }: { a: Approval }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+  const mandate = a.kind === "mandate";
+  const negotiation = useStore((s) => (mandate ? negotiationOf(s, a.id) : undefined));
   const decide = async (decision: "approve" | "deny") => {
     setBusy(true);
     setError("");
     try {
-      await decideApproval(a.id, decision);
+      await decideApproval(a.id, decision, note);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
       setBusy(false);
@@ -364,7 +397,8 @@ function PendingApproval({ a }: { a: Approval }) {
   };
   const text = [
     `**Can I go ahead?** ${a.summary}`,
-    a.reason,
+    // Its lines stay lines.
+    a.reason.replace(/\n/g, "  \n"),
     a.sources.length ? `_After reading ${a.sources.join(", ")}_` : "",
   ]
     .filter(Boolean)
@@ -375,6 +409,16 @@ function PendingApproval({ a }: { a: Approval }) {
       {a.taskId && a.screenshotStepId && (
         <Shot taskId={a.taskId} stepId={a.screenshotStepId} alt="The screen before this step" />
       )}
+      {mandate && (
+        <textarea
+          className="field approval-note"
+          rows={2}
+          maxLength={4000}
+          value={note}
+          placeholder={MANDATE_NOTE}
+          onChange={(e) => setNote(e.target.value)}
+        />
+      )}
       {error && <div className="form-error">{error}</div>}
       <div className="msg-buttons">
         {a.taskId && (
@@ -384,6 +428,15 @@ function PendingApproval({ a }: { a: Approval }) {
             onClick={() => navigate(`/tasks/${a.taskId}`)}
           >
             Open task
+          </button>
+        )}
+        {negotiation && (
+          <button
+            type="button"
+            className="btn sm ghost"
+            onClick={() => navigate(`/negotiations/${negotiation.id}`)}
+          >
+            Open negotiation
           </button>
         )}
         <span className="spacer" />

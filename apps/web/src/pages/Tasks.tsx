@@ -1,12 +1,21 @@
-import { latestNoteOnly, type Task } from "@hatbot/shared";
+import { latestNoteOnly, OPEN_NEGOTIATION_STATUSES, type Task } from "@hatbot/shared";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, api } from "../api";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LiveView, StepIcon } from "../live";
 import { LoadError, loadErrorText } from "../load";
+import { NegotiationChip } from "../negotiations";
 import { navigate } from "../router";
-import { cancelTask, HATBOT_CHAT, loadTask, loadTasks, useStore } from "../store";
+import {
+  cancelTask,
+  HATBOT_CHAT,
+  loadNegotiations,
+  loadTask,
+  loadTasks,
+  negotiationOf,
+  useStore,
+} from "../store";
 import { ApprovalCard, isActive, Shot, StatusChip, taskLine } from "../tasks";
 import { AssistantBody } from "./Chat";
 
@@ -37,6 +46,7 @@ export function Tasks() {
   const tasks = useStore((s) => s.tasks);
   const approvals = useStore((s) => s.approvals);
   const request = useStore((s) => s.desktop?.request ?? null);
+  const negotiations = useStore((s) => s.negotiations);
   const waiting = useMemo(
     () =>
       Object.values(approvals)
@@ -44,6 +54,14 @@ export function Tasks() {
         .sort((a, b) => a.id - b.id),
     [approvals],
   );
+  const talking = useMemo(
+    () =>
+      Object.values(negotiations)
+        .filter((n) => OPEN_NEGOTIATION_STATUSES.includes(n.status))
+        .sort((a, b) => b.id - a.id),
+    [negotiations],
+  );
+  useEffect(() => void loadNegotiations().catch(() => {}), []);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retry loads again
   useEffect(() => {
@@ -94,21 +112,42 @@ export function Tasks() {
                   <span className="val">{request.reason}</span>
                 </Link>
               )}
-              {waiting.map((a) => (
-                <Link
-                  key={a.id}
-                  className="row row-link"
-                  to={
-                    a.taskId
-                      ? `/tasks/${a.taskId}`
-                      : a.conversationId && a.conversationId !== HATBOT_CHAT
-                        ? `/chat/${a.conversationId}`
-                        : "/"
-                  }
-                >
+              {waiting.map((a) => {
+                const n = a.kind === "mandate" ? negotiationOf({ negotiations }, a.id) : undefined;
+                return (
+                  <Link
+                    key={a.id}
+                    className="row row-link"
+                    to={
+                      a.taskId
+                        ? `/tasks/${a.taskId}`
+                        : n
+                          ? `/negotiations/${n.id}`
+                          : a.conversationId && a.conversationId !== HATBOT_CHAT
+                            ? `/chat/${a.conversationId}`
+                            : "/"
+                    }
+                  >
+                    <div className="txt">
+                      <b>Can I go ahead? {a.summary}</b>
+                    </div>
+                    <Icon name="chevron" />
+                  </Link>
+                );
+              })}
+            </div>
+          </section>
+        )}
+        {talking.length > 0 && (
+          <section className="group">
+            <h2>Negotiations</h2>
+            <div className="group-box">
+              {talking.map((n) => (
+                <Link key={n.id} className="row row-link" to={`/negotiations/${n.id}`}>
                   <div className="txt">
-                    <b>Can I go ahead? {a.summary}</b>
+                    <b>{n.title}</b>
                   </div>
+                  <NegotiationChip status={n.status} />
                   <Icon name="chevron" />
                 </Link>
               ))}

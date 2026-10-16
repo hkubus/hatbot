@@ -278,6 +278,8 @@ export type HatbotEvent =
   | { type: "message.done"; id: number; text: string; status: "done" | "error" }
   /** A task now shows under this reply. */
   | { type: "message.task"; id: number; taskId: number }
+  /** A negotiation now shows under this reply (PLAN.md §16.5). */
+  | { type: "message.negotiation"; id: number; negotiationId: number }
   /** A task's result changed this message. */
   | { type: "message.edited"; id: number; editedAt: string }
   /** The task shown under this reply ended: its bot is writing the reply again, to say what came of it. */

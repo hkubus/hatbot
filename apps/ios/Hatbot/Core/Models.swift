@@ -600,6 +600,8 @@ enum HatbotEvent: Decodable, Sendable {
   case messageProgress(id: Int, text: String)
   case messageDone(id: Int, text: String, status: ThreadMessage.Status)
   case messageTask(id: Int, taskId: Int)
+  /// A negotiation now shows under this reply.
+  case messageNegotiation(id: Int, negotiationId: Int)
   case messageEdited(id: Int, editedAt: String)
   case messageRewrite(id: Int)
   case messageSeen(ids: [Int], seenAt: String)
@@ -638,7 +640,7 @@ enum HatbotEvent: Decodable, Sendable {
   private enum Key: String, CodingKey {
     case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused, tokens, costUsd
     case task, step, approval, state, schedule, trigger, episode, editedAt, ids, seenAt, attachment
-    case bot, conversation, proposal, watcher, negotiation
+    case bot, conversation, proposal, watcher, negotiation, negotiationId
   }
 
   init(from decoder: Decoder) throws {
@@ -657,6 +659,9 @@ enum HatbotEvent: Decodable, Sendable {
         status: try c.decode(ThreadMessage.Status.self, forKey: .status))
     case "message.task":
       self = .messageTask(id: try c.decode(Int.self, forKey: .id), taskId: try c.decode(Int.self, forKey: .taskId))
+    case "message.negotiation":
+      self = .messageNegotiation(
+        id: try c.decode(Int.self, forKey: .id), negotiationId: try c.decode(Int.self, forKey: .negotiationId))
     case "message.edited":
       self = .messageEdited(id: try c.decode(Int.self, forKey: .id), editedAt: try c.decode(String.self, forKey: .editedAt))
     case "message.rewrite": self = .messageRewrite(id: try c.decode(Int.self, forKey: .id))

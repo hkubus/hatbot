@@ -745,6 +745,10 @@ final class SpendTests: XCTestCase {
     XCTAssertEqual(n.status, "open")
     let message = #"{"id":9,"role":"assistant","kind":"text","text":"On it.","status":"done","createdAt":"2026-10-09T12:00:00Z","negotiationId":3}"#
     XCTAssertEqual(try JSONDecoder().decode(ThreadMessage.self, from: Data(message.utf8)).negotiationId, 3)
+    let shown = #"{"type":"message.negotiation","id":9,"negotiationId":3}"#
+    guard case .messageNegotiation(9, 3) = try JSONDecoder().decode(HatbotEvent.self, from: Data(shown.utf8)) else {
+      return XCTFail("not a message's negotiation")
+    }
     let mandate = #"""
       {"id":5,"botId":"haggler","taskId":null,"conversationId":2,"kind":"mandate",
       "summary":"Negotiate for RTX 3070: open at 1,060 zł, aim for 1,250 zł, pay at most 1,400 zł","reason":"",

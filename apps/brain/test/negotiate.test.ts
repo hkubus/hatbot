@@ -311,6 +311,11 @@ test("negotiate_start asks for the mandate; once approved, the negotiation runs 
   expect(n?.appraisal?.walkAway).toBe(1400);
   const reply = t.thread.list().find((m) => m.negotiationId === 1);
   expect(reply?.role).toBe("assistant");
+  expect(t.events).toContainEqual({
+    type: "message.negotiation",
+    id: reply?.id as number,
+    negotiationId: 1,
+  });
   expect(t.events.some((e) => e.type === "negotiation.updated")).toBe(true);
 
   t.approvals.decide(approval?.id as number, "approve", "web");

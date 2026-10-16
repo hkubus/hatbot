@@ -2263,6 +2263,7 @@ html[data-theme="dark"] .seg button.active {
 }
 .approval-text p {
   margin: 0;
+  white-space: pre-line;
   font-size: 13px;
   line-height: 1.45;
 }
@@ -2563,6 +2564,9 @@ pre.payload {
 }
 .pending-approval .spacer {
   flex: 1;
+}
+.pending-approval .approval-note {
+  margin-top: 0;
 }
 
 /* Files on messages and in the composer. */
@@ -3034,4 +3038,9 @@ mark {
 /* Files dragged over the chat: they'll go into the composer. */
 .view.dropping {
   background: var(--accent-soft);
+}
+
+/* A negotiation's messages: time, then who wrote what. */
+.tl-step.no-icon {
+  grid-template-columns: 42px minmax(0, 1fr);
 }

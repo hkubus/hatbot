@@ -68,6 +68,9 @@ export function taskLine(t: Task, progress?: string): string {
   }
 }
 
+/** A negotiation's mandate takes a note too: it can change the numbers. */
+export const MANDATE_NOTE = "Change the numbers, or tell it how to go about it";
+
 /** Approvals whose answer can carry a note to the task: the task carries on afterwards. */
 export const takesNote = (a: Approval) => a.kind !== "budget" && a.kind !== "injection_warning";
 
@@ -141,7 +144,9 @@ export function ApprovalCard({
             rows={2}
             maxLength={4000}
             value={note}
-            placeholder="Tell it what to do instead, or how to go ahead"
+            placeholder={
+              a.kind === "mandate" ? MANDATE_NOTE : "Tell it what to do instead, or how to go ahead"
+            }
             onChange={(e) => setNote(e.target.value)}
           />
         )}

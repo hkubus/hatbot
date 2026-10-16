@@ -27,7 +27,9 @@ import {
   ensureApproval,
   getState,
   HATBOT_CHAT,
+  loadNegotiations,
   needsYou,
+  negotiationOf,
   onToast,
   reconnectNow,
   setIncognito,
@@ -36,6 +38,9 @@ import {
 import { getTheme, setTheme, type Theme } from "./theme";
 
 // Pages you open now and then load when first opened; chat and tasks come with the app.
+const NegotiationPage = lazy(() =>
+  import("./pages/Negotiation").then((m) => ({ default: m.NegotiationPage })),
+);
 const Memory = lazy(() => import("./pages/Memory").then((m) => ({ default: m.Memory })));
 const SchedulesView = lazy(() =>
   import("./pages/Schedules").then((m) => ({ default: m.SchedulesView })),
@@ -61,12 +66,14 @@ const viewOf = (path: string) =>
   VIEWS.find((v) =>
     path.startsWith("/triggers/") || path.startsWith("/watchers/")
       ? v.path === "/schedules"
-      : v.path === "/"
-        ? path === "/" ||
-          path.startsWith("/chat/") ||
-          path.startsWith("/bots/") ||
-          path.startsWith("/groups/")
-        : path === v.path || path.startsWith(`${v.path}/`),
+      : path.startsWith("/negotiations/")
+        ? v.path === "/tasks"
+        : v.path === "/"
+          ? path === "/" ||
+            path.startsWith("/chat/") ||
+            path.startsWith("/bots/") ||
+            path.startsWith("/groups/")
+          : path === v.path || path.startsWith(`${v.path}/`),
   ) ?? VIEWS[0];
 
 /** Hatbot's chat is the app's front page. */
@@ -157,6 +164,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   // The side panel is hidden on a phone; it isn't drawn either, or its live view would stream unseen.
   const wide = useMedia("(min-width: 900px)");
   const taskId = /^\/tasks\/(\d+)$/.exec(path)?.[1];
+  const negotiationId = /^\/negotiations\/(\d+)$/.exec(path)?.[1];
   const teachId = /^\/memory\/teach\/(\d+)$/.exec(path)?.[1];
   const approvalId = Number(params.get("approval"));
   const botPage = /^\/bots\/([a-z0-9-]+)$/.exec(path)?.[1];
@@ -176,7 +184,13 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     if (!approvalId) return;
     ensureApproval(approvalId);
     api<Approval>(`/approvals/${approvalId}`).then(
-      (a) => navigate(a.taskId ? `/tasks/${a.taskId}` : "/", true),
+      async (a) => {
+        if (a.taskId) return navigate(`/tasks/${a.taskId}`, true);
+        // A mandate: on its negotiation's page.
+        if (a.kind === "mandate") await loadNegotiations().catch(() => {});
+        const n = negotiationOf(getState(), a.id);
+        navigate(n ? `/negotiations/${n.id}` : "/", true);
+      },
       () => navigate("/", true),
     );
   }, [approvalId]);
@@ -434,6 +448,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           {botPage && <BotPage key={botPage} id={botPage} toast={toast} />}
           {groupPage && <GroupPage key={groupPage} id={groupPage} toast={toast} />}
           {view.path === "/tasks" &&
+            !negotiationId &&
             (taskId ? (
               <TaskDetail key={taskId} id={Number(taskId)} live={params.get("live") === "1"} />
             ) : (
@@ -447,6 +462,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
             </section>
           )}
           <Suspense fallback={<section className="view" />}>
+            {negotiationId && <NegotiationPage key={negotiationId} id={Number(negotiationId)} />}
             {view.path === "/schedules" && <SchedulesView path={path} params={params} />}
             {view.path === "/memory" &&
               (teachId ? (

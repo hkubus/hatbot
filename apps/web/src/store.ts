@@ -7,6 +7,9 @@ import {
   type DesktopState,
   type Episode,
   type HatbotEvent,
+  type Negotiation,
+  type NegotiationDetail,
+  type NegotiationMessage,
   type PluginInfo,
   type Proposal,
   type Schedule,
@@ -55,6 +58,10 @@ type State = {
   schedules: Record<number, Schedule | null>;
   triggers: Record<number, Trigger | null>;
   watchers: Record<number, Watcher | null>;
+  /** Negotiations with sellers (PLAN.md §16): the open ones, and any a chat or page has shown. */
+  negotiations: Record<number, Negotiation>;
+  /** The messages of negotiations whose page has been opened. */
+  negotiationMessages: Record<number, NegotiationMessage[]>;
   plugins: Record<string, PluginInfo>;
   /** Memory changes waiting for you, and ones you've answered this session. */
   proposals: Record<number, Proposal>;
@@ -97,6 +104,8 @@ let state: State = {
   schedules: {},
   triggers: {},
   watchers: {},
+  negotiations: {},
+  negotiationMessages: {},
   plugins: {},
   proposals: {},
   teach: {},
@@ -422,6 +431,34 @@ export const putSchedule = (s: Schedule) => set({ schedules: { ...state.schedule
 export const putTrigger = (t: Trigger) => set({ triggers: { ...state.triggers, [t.id]: t } });
 export const putWatcher = (w: Watcher) => set({ watchers: { ...state.watchers, [w.id]: w } });
 
+const putNegotiation = (n: Negotiation) =>
+  set({ negotiations: { ...state.negotiations, [n.id]: n } });
+/** A negotiation with its messages, for its page. */
+export async function loadNegotiation(id: number) {
+  const d = await api<NegotiationDetail>(`/negotiations/${id}`);
+  set({
+    negotiations: { ...state.negotiations, [id]: d.negotiation },
+    negotiationMessages: { ...state.negotiationMessages, [id]: d.messages },
+  });
+}
+/** Loads a negotiation the first time a chat shows it. */
+export function ensureNegotiation(id: number) {
+  if (state.negotiations[id] || requested.has(`n${id}`)) return;
+  requested.add(`n${id}`);
+  loadNegotiation(id).catch(() => requested.delete(`n${id}`));
+}
+/** The open negotiations: the Tasks page lists them. */
+export async function loadNegotiations() {
+  const list = await api<Negotiation[]>("/negotiations?status=open");
+  set({
+    negotiations: { ...state.negotiations, ...Object.fromEntries(list.map((n) => [n.id, n])) },
+  });
+  return list.map((n) => n.id);
+}
+/** The negotiation a mandate approval is for. */
+export const negotiationOf = (s: Pick<State, "negotiations">, approvalId: number) =>
+  Object.values(s.negotiations).find((n) => n.approvalId === approvalId);
+
 export async function saveSchedule(id: number, patch: Partial<Schedule> & { at?: string }) {
   const s = await api<Schedule>(`/schedules/${id}`, { method: "PATCH", body: patch });
   putSchedule(s);
@@ -435,6 +472,8 @@ async function loadLive() {
     api<DesktopState>("/desktop/status").catch(() => null),
     api<{ recording: TeachSession | null; drafts: TeachSession[] }>("/teach").catch(() => null),
     api<number[]>("/thread/unread").catch(() => null),
+    // Mandate approvals link to their negotiations.
+    loadNegotiations().catch(() => null),
   ]);
   if (unread) set({ unread });
   const approvals = { ...state.approvals };
@@ -621,6 +660,10 @@ function apply(e: HatbotEvent) {
       return set({
         messages: patchMessage(e.id, (m) => ({ ...m, taskId: e.taskId })),
       });
+    case "message.negotiation":
+      return set({
+        messages: patchMessage(e.id, (m) => ({ ...m, negotiationId: e.negotiationId })),
+      });
     case "message.usage":
       return set({ usage: { ...state.usage, [e.id]: { tokens: e.tokens, costUsd: e.costUsd } } });
     case "message.done": {
@@ -679,6 +722,11 @@ function apply(e: HatbotEvent) {
       return putWatcher(e.watcher);
     case "watcher.deleted":
       return set({ watchers: { ...state.watchers, [e.id]: null } });
+    case "negotiation.updated":
+      // An open page shows every message, which the event doesn't carry.
+      if (state.negotiationMessages[e.negotiation.id])
+        void loadNegotiation(e.negotiation.id).catch(() => {});
+      return putNegotiation(e.negotiation);
     case "plugin.updated":
       return set({ plugins: { ...state.plugins, [e.plugin.id]: e.plugin } });
     case "teach.updated":

@@ -233,6 +233,8 @@ final class AppStore {
       if let r = live(id) { r.progress = String((r.progress + text).suffix(400)) }
     case let .messageTask(id, taskId):
       if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].taskId = taskId }
+    case let .messageNegotiation(id, negotiationId):
+      if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].negotiationId = negotiationId }
     case let .messageUsage(id, used):
       live(id)?.usage = used
     case let .messageAttachment(id, a):
