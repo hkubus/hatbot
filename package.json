@@ -9,6 +9,7 @@
   "scripts": {
     "check": "biome check .",
     "format": "biome format --write .",
+    "licenses": "bun scripts/licenses.ts",
     "test": "bun test",
     "typecheck": "tsc -b"
   },

@@ -102,7 +102,7 @@ Integrations are plugins you switch on in the web app, under **Settings → Plug
 
 ```sh
 pct exec <brain> -- sh -c 'install -m 640 -g hatbot /dev/stdin /etc/hatbot/forgejo.env <<EOF
-FORGEJO_URL=https://git.gaycats.ovh
+FORGEJO_URL=https://git.example.com
 FORGEJO_TOKEN=…
 EOF
 systemctl restart hatbot-brain'

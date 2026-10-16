@@ -1,6 +1,7 @@
 """Prints the SideStore (AltStore) source for one IPA: python3 sidestore-source.py <ipa>.
 
-Reads VERSION, BUILD and BASE_URL (where the IPA and icon.png are served) from the environment.
+Reads VERSION, BUILD, BASE_URL (where the IPA and icon.png are served) and BUNDLE_PREFIX (as in
+project.yml) from the environment.
 """
 
 import json
@@ -15,19 +16,20 @@ url = f"{base}/{os.path.basename(ipa)}"
 size = os.path.getsize(ipa)
 date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 about = "Your self-hosted Hatbot: chat, tasks, approvals and the live desktop."
+prefix = os.environ.get("BUNDLE_PREFIX") or "com.example"
 
 print(
     json.dumps(
         {
             "name": "Hatbot",
-            "identifier": "ovh.gaycats.hatbot.source",
+            "identifier": f"{prefix}.hatbot.source",
             "sourceURL": f"{base}/source.json",
             "iconURL": f"{base}/icon.png",
             "tintColor": "E8820C",
             "apps": [
                 {
                     "name": "Hatbot",
-                    "bundleIdentifier": "ovh.gaycats.hatbot",
+                    "bundleIdentifier": f"{prefix}.hatbot",
                     "developerName": "kubus",
                     "localizedDescription": about,
                     "iconURL": f"{base}/icon.png",

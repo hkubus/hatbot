@@ -9,7 +9,7 @@ export type Config = {
   archiveDir: string;
   /** Built web app to serve on the same origin. */
   webDir: string;
-  /** Public origin, e.g. https://hatbot.gaycats.ovh. Cookie-authenticated writes must come from it. */
+  /** Public origin, e.g. https://hatbot.example.com. Cookie-authenticated writes must come from it. */
   publicUrl: string;
   /** Peers whose X-Forwarded-For is trusted (your reverse proxy). */
   trustedProxies: string[];

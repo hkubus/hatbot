@@ -589,6 +589,6 @@ cat <<EOF
    Next:
    1. Check isolation and permissions:   $HERE/verify.sh
    2. Install the app:   $HERE/deploy.sh <CTID>:<path to the hatbot checkout>   (see README.md)
-   3. Reverse proxy:  hatbot.gaycats.ovh → http://$BRAIN_IP:8080 (with WebSockets)
+   3. Reverse proxy:  your domain (e.g. hatbot.example.com) → http://$BRAIN_IP:8080 (with WebSockets)
    4. Before M4: add the brain's SSH key (/var/lib/hatbot/.ssh/id_ed25519.pub) to a "hatbot" user on hosts it may manage.
 EOF

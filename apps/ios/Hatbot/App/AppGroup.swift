@@ -1,11 +1,13 @@
 // The App Group the app shares with its share extension: the brain's address in shared defaults, and
 // the token in a Keychain access group of the same name. SideStore renames the group to
-// "group.ovh.gaycats.hatbot.<team id>", so the name is worked out on the device.
+// "group.<bundle prefix>.hatbot.<team id>", so the name is worked out on the device.
 import Foundation
 import Security
 
 enum AppGroup {
-  static let base = "group.ovh.gaycats.hatbot"
+  /// The reverse domain the app is named under: project.yml's BUNDLE_PREFIX, through Info.plist.
+  static let prefix = Bundle.main.object(forInfoDictionaryKey: "HatbotBundlePrefix") as? String ?? "com.example"
+  static let base = "group.\(prefix).hatbot"
 
   /// The group as signed, or nil when there is none (then the app keeps things to itself).
   static let id: String? = {
@@ -71,4 +73,10 @@ extension AppGroup {
     else { return nil }
     return API(server: url, token: token)
   }
+}
+
+/// The widget's and the control's kinds; the app reloads them when what they show changes.
+enum WidgetKinds {
+  static let status = "\(AppGroup.prefix).hatbot.status"
+  static let pause = "\(AppGroup.prefix).hatbot.pause"
 }

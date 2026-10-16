@@ -13,11 +13,6 @@ struct HatbotWidgets: WidgetBundle {
   }
 }
 
-enum WidgetKinds {
-  static let status = "ovh.gaycats.hatbot.status"
-  static let pause = "ovh.gaycats.hatbot.pause"
-}
-
 struct StatusEntry: TimelineEntry {
   var date = Date()
   var signedIn = true

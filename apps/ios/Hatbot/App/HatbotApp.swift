@@ -73,9 +73,9 @@ struct MainView: View {
     .task { await Badge.allow() }
     .onChange(of: store.needsYou, initial: true) { _, n in
       Task { await Badge.show(n) }
-      WidgetCenter.shared.reloadTimelines(ofKind: "ovh.gaycats.hatbot.status")
+      WidgetCenter.shared.reloadTimelines(ofKind: WidgetKinds.status)
     }
-    .onChange(of: store.paused) { ControlCenter.shared.reloadControls(ofKind: "ovh.gaycats.hatbot.pause") }
+    .onChange(of: store.paused) { ControlCenter.shared.reloadControls(ofKind: WidgetKinds.pause) }
     // What Spotlight finds, a little after launch.
     .task {
       try? await Task.sleep(for: .seconds(5))

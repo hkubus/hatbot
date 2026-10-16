@@ -36,7 +36,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 | Area | Decision |
 |---|---|
 | Product shape | Personal agent first; teams later |
-| Audience | You first, open-source later (private now, licence chosen at release, **no copyleft dependencies**) |
+| Audience | You first. The repository is public; a licence isn't chosen yet. **No copyleft dependencies**: `bun run licenses` fails CI on one, with only build tools that ship nothing allowed by name (Vite's `lightningcss`, MPL-2.0) |
 | Hosting | Self-hosted only, on the Proxmox host `192.168.55.113` (i3-12100F, ~16 GiB RAM, no GPU) |
 | Isolation | **Brain** and **desktop** are separate guests |
 | Brain guest | New dedicated unprivileged LXC |
@@ -174,7 +174,7 @@ Integrations are plugins: Proxmox, Proxmox Backup Server, SSH, Home Assistant, U
 - **Build**: `project.yml` (XcodeGen) → `build-ipa.sh` makes an unsigned IPA; SideStore signs it with your Apple ID. The GitHub mirror's iOS workflow builds it on macOS for every change and, on `main`, publishes it with a SideStore source at `https://hkubus.github.io/hatbot/source.json`, so SideStore installs and updates it. `Hatbot/Core` is also a Swift package, tested with `swift test` (on Linux too).
 - **Links**: `hatbot://tasks/<id>` and `hatbot://approvals/<id>`.
 - **Siri and Shortcuts**: App Intents in the app: Ask Hatbot (`POST /thread/ask`, which waits up to 25 seconds for the reply), Give Hatbot a Task (`/task`), Send to Hatbot (text and files).
-- **Share sheet**: the `HatbotShare` extension sends text, links, photos and files with a note to Hatbot's chat. The app keeps the token in the App Group's Keychain access group (`group.ovh.gaycats.hatbot`, renamed by SideStore with the team ID) and the address in the group's defaults. It's a second App ID in SideStore.
+- **Share sheet**: the `HatbotShare` extension sends text, links, photos and files with a note to Hatbot's chat. The app keeps the token in the App Group's Keychain access group (`group.<prefix>.hatbot`, from `project.yml`'s `BUNDLE_PREFIX`, renamed by SideStore with the team ID) and the address in the group's defaults. It's a second App ID in SideStore.
 
 ---
 

@@ -18,6 +18,11 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # The bundle prefix the installed app has: changing it makes it a different app in SideStore. A fork
+  # sets its own as the repository variable BUNDLE_PREFIX.
+  BUNDLE_PREFIX: ${{ vars.BUNDLE_PREFIX || 'ovh.gaycats' }}
+
 jobs:
   build:
     # The newest stable Xcode and iOS SDK, so the app gets the current system look (Liquid Glass).
