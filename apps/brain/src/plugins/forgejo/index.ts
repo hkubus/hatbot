@@ -37,8 +37,8 @@ type Content = {
   path: string;
   sha: string;
   size: number;
-  content?: string;
-  encoding?: string;
+  content?: string | null;
+  encoding?: string | null;
 };
 
 export const forgejoPlugin = definePlugin({
@@ -256,7 +256,10 @@ export const forgejoPlugin = definePlugin({
                   `${e.type === "dir" ? `${e.name}/` : e.name}${e.type === "file" ? ` (${e.size} B)` : ""}`,
               )
               .join("\n");
-          if (c.type !== "file" || c.content === undefined) return `${c.path} is a ${c.type}.`;
+          if (c.type !== "file") return `${c.path} is a ${c.type}.`;
+          // Past its blob size limit Forgejo sends content: null.
+          if (c.content == null)
+            return `${c.path} is too big to read through the API (${c.size} B).`;
           return Buffer.from(c.content, "base64").toString("utf8");
         },
       }),

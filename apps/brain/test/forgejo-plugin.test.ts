@@ -91,6 +91,16 @@ beforeAll(() => {
           size: 6,
           content: Buffer.from("# Hi\n").toString("base64"),
         });
+      if (path === "/repos/kubus/hatbot/contents/disk.img")
+        return json({
+          type: "file",
+          name: "disk.img",
+          path: "disk.img",
+          sha: "sha-img",
+          size: 50_000_000,
+          content: null,
+          encoding: null,
+        });
       if (path === "/repos/kubus/hatbot/contents/new.md")
         return json({ message: "not found" }, 404);
       if (path === "/repos/kubus/hatbot/contents/link")
@@ -162,6 +172,10 @@ test("reads issues as untrusted, pull requests with files, diff and comments, fi
 
   expect(await fj("forgejo_file").run({ repo: "kubus/hatbot", path: "README.md" }, call)).toBe(
     "# Hi\n",
+  );
+  // Past its size limit Forgejo leaves the content out.
+  expect(await fj("forgejo_file").run({ repo: "kubus/hatbot", path: "disk.img" }, call)).toBe(
+    "disk.img is too big to read through the API (50000000 B).",
   );
   expect(await fj("forgejo_ci").run({ repo: "kubus/hatbot", ref: "main" }, call)).toContain(
     "ci/test: failure (2 tests failed)",
