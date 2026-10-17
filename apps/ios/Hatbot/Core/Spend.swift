@@ -97,6 +97,8 @@ extension ChartSpec {
 enum SpendCharts {
   static let modelNames = [
     "claude-opus-5-5": "Opus 5.5",
+    "claude-opus-5": "Opus 5",
+    "claude-opus-4-8": "Opus 4.8",
     "claude-sonnet-5-5": "Sonnet 5.5",
     "claude-sonnet-5": "Sonnet 5",
     "claude-haiku-5-5": "Haiku 5.5",
