@@ -310,7 +310,16 @@ function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
   const progress = useStore((s) => s.taskProgress[taskId]);
   const control = useStore((s) => s.desktop?.control);
   useEffect(() => ensureTask(taskId), [taskId]);
-  if (!task) return null;
+  // Until it loads (it's fetched again after a reconnect if it failed), the card's own line.
+  if (!task)
+    return (
+      <>
+        <div className="body">
+          <div className="muted card-pending">{m.text || `Task #${taskId}`}</div>
+        </div>
+        <Meta m={m} open={{ to: `/tasks/${taskId}`, label: "Open task" }} />
+      </>
+    );
   const active = isActive(task);
   let text: string;
   let result = "";
@@ -349,7 +358,7 @@ function TaskResult({ taskId }: { taskId: number }) {
   const progress = useStore((s) => s.taskProgress[taskId]);
   const control = useStore((s) => s.desktop?.control);
   useEffect(() => ensureTask(taskId), [taskId]);
-  if (!task) return null;
+  if (!task) return <div className="muted card-pending">Task #{taskId}</div>;
   if (isActive(task)) {
     const note =
       control === "owner" && task.status === "running"
@@ -488,7 +497,15 @@ function TrayApproval({ a }: { a: Approval }) {
 function ScheduleMessage({ m, scheduleId }: { m: ThreadMessage; scheduleId: number }) {
   const s = useStore((st) => st.schedules[scheduleId]);
   useEffect(() => ensureSchedule(scheduleId), [scheduleId]);
-  if (s === undefined) return null;
+  if (s === undefined)
+    return (
+      <>
+        <div className="body">
+          <div className="muted card-pending">{m.text}</div>
+        </div>
+        <Meta m={m} open={{ to: `/schedules/${scheduleId}`, label: "Open schedule" }} />
+      </>
+    );
   const text = s
     ? `Scheduled **${s.name}**: ${whenText(s).replace(/^\w/, (c) => c.toLowerCase())}.`
     : "Made a schedule that's since been deleted.";

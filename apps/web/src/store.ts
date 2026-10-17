@@ -155,23 +155,63 @@ async function loadEpisodes(messages: ThreadMessage[]) {
 const page = (before?: number) =>
   `/conversations/${state.conversationId}/messages?limit=${PAGE}${before ? `&before=${before}` : ""}${state.incognito ? "&incognito=1" : ""}`;
 
-export async function loadThread() {
-  const { incognito, conversationId } = state;
-  const messages = await api<ThreadMessage[]>(page());
-  await loadEpisodes(messages).catch(() => {});
-  // Switched while it loaded: the other conversation's load wins.
-  if (incognito !== state.incognito || conversationId !== state.conversationId) return;
-  set({ messages, hasEarlier: messages.length === PAGE });
+// Message events that come while a page of messages loads: the page was read before them, so they're
+// put onto it again, or a reply that finished meanwhile would stay streaming.
+const missed = new Set<HatbotEvent[]>();
+
+/** A page of the showing chat's messages, and the message events that came while it loaded. */
+async function messagesPage(before?: number) {
+  const events: HatbotEvent[] = [];
+  missed.add(events);
+  try {
+    const list = await api<ThreadMessage[]>(page(before));
+    await loadEpisodes(list).catch(() => {});
+    return { list, events };
+  } finally {
+    missed.delete(events);
+  }
 }
 
-export async function loadEarlier() {
-  const first = state.messages[0];
-  if (!first) return;
-  const { conversationId } = state;
-  const older = await api<ThreadMessage[]>(page(first.id));
-  await loadEpisodes(older).catch(() => {});
-  if (conversationId !== state.conversationId) return;
-  set({ messages: [...older, ...state.messages], hasEarlier: older.length === PAGE });
+/** A page with the events that came while it loaded. Deltas still waiting for a frame are among them. */
+function caughtUp(list: ThreadMessage[], events: HatbotEvent[]) {
+  flushDeltas();
+  return events.reduce(onMessages, list);
+}
+
+/** A chat has been shown: the stream's first open catches its thread up too. */
+let threadShown = false;
+
+export async function loadThread() {
+  threadShown = true;
+  const { incognito, conversationId } = state;
+  const { list, events } = await messagesPage();
+  // Switched while it loaded: the other conversation's load wins.
+  if (incognito !== state.incognito || conversationId !== state.conversationId) return;
+  set({ messages: caughtUp(list, events), hasEarlier: list.length === PAGE });
+}
+
+let earlier: Promise<void> | null = null;
+/** The page before the first message showing. Asked for again while it loads, it's the same load. */
+export function loadEarlier(): Promise<void> {
+  earlier ??= (async () => {
+    const first = state.messages[0];
+    if (!first) return;
+    const { incognito, conversationId } = state;
+    const { list, events } = await messagesPage(first.id);
+    // Switched, to incognito too, or loaded again from the bottom: it doesn't go on the top any more.
+    if (
+      incognito !== state.incognito ||
+      conversationId !== state.conversationId ||
+      state.messages[0]?.id !== first.id
+    )
+      return;
+    const have = new Set(state.messages.map((m) => m.id));
+    const older = caughtUp(list, events).filter((m) => !have.has(m.id));
+    set({ messages: [...older, ...state.messages], hasEarlier: list.length === PAGE });
+  })().finally(() => {
+    earlier = null;
+  });
+  return earlier;
 }
 
 export async function sendMessage(text: string, attachmentIds: number[] = []) {
@@ -433,6 +473,18 @@ export async function loadProposals() {
   const list = await api<Proposal[]>("/proposals?status=pending");
   set({ proposals: { ...state.proposals, ...Object.fromEntries(list.map((p) => [p.id, p])) } });
 }
+/** After a reconnect: the latest ones as they are now, and ones answered elsewhere aren't pending. */
+async function refreshProposals() {
+  const [pending, latest] = await Promise.all([
+    api<Proposal[]>("/proposals?status=pending"),
+    api<Proposal[]>("/proposals"),
+  ]);
+  const proposals = Object.fromEntries(
+    Object.entries(state.proposals).filter(([, p]) => p.status !== "pending"),
+  );
+  for (const p of [...latest, ...pending]) proposals[p.id] = p;
+  set({ proposals });
+}
 
 export const putSchedule = (s: Schedule) => set({ schedules: { ...state.schedules, [s.id]: s } });
 export const putTrigger = (t: Trigger) => set({ triggers: { ...state.triggers, [t.id]: t } });
@@ -568,18 +620,65 @@ export const onToast = (fn: Toast) => {
   toast = fn;
 };
 
-/** `fn` over the showing messages; the same list when it changes none, so nothing re-renders. */
-function patchMessages(fn: (m: ThreadMessage) => ThreadMessage): ThreadMessage[] {
+/** `fn` over the messages; the same list when it changes none, so nothing re-renders. */
+function patchMessages(
+  fn: (m: ThreadMessage) => ThreadMessage,
+  list = state.messages,
+): ThreadMessage[] {
   let changed = false;
-  const next = state.messages.map((m) => {
+  const next = list.map((m) => {
     const n = fn(m);
     if (n !== m) changed = true;
     return n;
   });
-  return changed ? next : state.messages;
+  return changed ? next : list;
 }
-const patchMessage = (id: number, fn: (m: ThreadMessage) => ThreadMessage) =>
-  patchMessages((m) => (m.id === id ? fn(m) : m));
+
+/** What a message event does to the showing chat's messages: the same list when nothing. */
+function onMessages(list: ThreadMessage[], e: HatbotEvent): ThreadMessage[] {
+  const patch = (id: number, fn: (m: ThreadMessage) => ThreadMessage) =>
+    patchMessages((m) => (m.id === id ? fn(m) : m), list);
+  switch (e.type) {
+    case "message.created":
+      // Only the conversation that's showing.
+      return !!e.message.incognito === state.incognito &&
+        e.message.conversationId === state.conversationId
+        ? upsert(list, e.message)
+        : list;
+    case "message.delta":
+      return patch(e.id, (m) => ({ ...m, text: m.text + e.text }));
+    case "message.edited":
+      return patch(e.id, (m) => ({ ...m, editedAt: e.editedAt }));
+    case "message.rewrite":
+      // Its task ended: its bot is writing it again.
+      return patch(e.id, (m) => ({ ...m, text: "", status: "streaming" }));
+    case "message.seen":
+      return patchMessages((m) => (e.ids.includes(m.id) ? { ...m, seenAt: e.seenAt } : m), list);
+    case "message.deleted":
+      return list.some((m) => e.ids.includes(m.id))
+        ? list.filter((m) => !e.ids.includes(m.id))
+        : list;
+    case "message.attachment":
+      return patch(e.id, (m) =>
+        m.attachments?.some((a) => a.id === e.attachment.id)
+          ? m
+          : { ...m, attachments: [...(m.attachments ?? []), e.attachment] },
+      );
+    case "message.task":
+      return patch(e.id, (m) => ({ ...m, taskId: e.taskId }));
+    case "message.negotiation":
+      return patch(e.id, (m) => ({ ...m, negotiationId: e.negotiationId }));
+    case "message.done":
+      return patch(e.id, (m) => ({
+        ...m,
+        text: e.text,
+        status: e.status,
+        ...(e.sources ? { sources: e.sources } : {}),
+      }));
+    default:
+      return list;
+  }
+}
 
 // A reply streams in many small deltas: they're added up and shown once per frame.
 const deltas = new Map<number, string>();
@@ -598,6 +697,7 @@ function flushDeltas() {
 }
 
 function apply(e: HatbotEvent) {
+  if (e.type.startsWith("message.")) for (const events of missed) events.push(e);
   if (e.type === "message.delta") {
     deltas.set(e.id, (deltas.get(e.id) ?? "") + e.text);
     if (!deltaFrame) deltaFrame = requestAnimationFrame(flushDeltas);
@@ -614,12 +714,7 @@ function apply(e: HatbotEvent) {
       if (e.message.incognito) incognitoIds.add(e.message.id);
       if (e.message.role === "assistant") refreshConversations();
       return set({
-        // Only the conversation that's showing.
-        messages:
-          !!e.message.incognito === state.incognito &&
-          e.message.conversationId === state.conversationId
-            ? upsert(state.messages, e.message)
-            : state.messages,
+        messages: onMessages(state.messages, e),
         unread:
           // What came of your own command arrives already seen.
           e.message.role === "assistant" && e.message.status !== "streaming" && !e.message.seenAt
@@ -628,49 +723,23 @@ function apply(e: HatbotEvent) {
       });
     case "message.edited":
       refreshConversations();
-      return set({
-        messages: patchMessage(e.id, (m) => ({ ...m, editedAt: e.editedAt })),
-        unread: addUnread(e.id),
-      });
-    case "message.rewrite":
-      // Its task ended: its bot is writing it again.
-      return set({
-        messages: patchMessage(e.id, (m) => ({ ...m, text: "", status: "streaming" })),
-      });
+      return set({ messages: onMessages(state.messages, e), unread: addUnread(e.id) });
     case "message.seen":
-      refreshConversations();
-      return set({
-        messages: patchMessages((m) => (e.ids.includes(m.id) ? { ...m, seenAt: e.seenAt } : m)),
-        unread: state.unread.filter((id) => !e.ids.includes(id)),
-      });
     case "message.deleted":
       refreshConversations();
       return set({
-        messages: state.messages.some((m) => e.ids.includes(m.id))
-          ? state.messages.filter((m) => !e.ids.includes(m.id))
-          : state.messages,
+        messages: onMessages(state.messages, e),
         unread: state.unread.filter((id) => !e.ids.includes(id)),
       });
     case "message.progress": {
       const text = ((state.progress[e.id] ?? "") + e.text).slice(-400);
       return set({ progress: { ...state.progress, [e.id]: text } });
     }
+    case "message.rewrite":
     case "message.attachment":
-      return set({
-        messages: patchMessage(e.id, (m) =>
-          m.attachments?.some((a) => a.id === e.attachment.id)
-            ? m
-            : { ...m, attachments: [...(m.attachments ?? []), e.attachment] },
-        ),
-      });
     case "message.task":
-      return set({
-        messages: patchMessage(e.id, (m) => ({ ...m, taskId: e.taskId })),
-      });
     case "message.negotiation":
-      return set({
-        messages: patchMessage(e.id, (m) => ({ ...m, negotiationId: e.negotiationId })),
-      });
+      return set({ messages: onMessages(state.messages, e) });
     case "message.usage":
       return set({ usage: { ...state.usage, [e.id]: { tokens: e.tokens, costUsd: e.costUsd } } });
     case "message.done": {
@@ -681,12 +750,7 @@ function apply(e: HatbotEvent) {
         progress,
         usage,
         unread: addUnread(e.id),
-        messages: patchMessage(e.id, (m) => ({
-          ...m,
-          text: e.text,
-          status: e.status,
-          ...(e.sources ? { sources: e.sources } : {}),
-        })),
+        messages: onMessages(state.messages, e),
       });
     }
     case "spend.updated":
@@ -760,27 +824,50 @@ function apply(e: HatbotEvent) {
 /** The latest page again, merged into what's loaded: earlier pages stay, so the view doesn't jump. */
 async function refreshThread() {
   const { incognito, conversationId } = state;
-  const latest = await api<ThreadMessage[]>(page());
-  await loadEpisodes(latest).catch(() => {});
+  const { list: latest, events } = await messagesPage();
   if (incognito !== state.incognito || conversationId !== state.conversationId) return;
+  flushDeltas();
   const first = latest[0];
   const last = state.messages.at(-1);
   // The whole conversation, or a full page past everything loaded (a gap): it starts again from here.
   if (!first || latest.length < PAGE || !last || last.id < first.id)
-    return set({ messages: latest, hasEarlier: latest.length === PAGE });
-  set({ messages: [...state.messages.filter((m) => m.id < first.id), ...latest] });
+    return set({ messages: caughtUp(latest, events), hasEarlier: latest.length === PAGE });
+  const earlier = state.messages.filter((m) => m.id < first.id);
+  set({ messages: [...earlier, ...caughtUp(latest, events)] });
 }
 
-/** What may have changed while the stream was down. */
-async function catchUp() {
+/**
+ * What may have changed while the stream was down, or, on the first open, between the first loads and
+ * the stream's start. `reconnected`: pages showing settings, memory or the heartbeat load them again.
+ */
+async function catchUp(reconnected: boolean) {
   // The chats come with loadLive's bots.
-  void refreshThread().catch(() => {});
+  if (reconnected || threadShown) void refreshThread().catch(() => {});
   void api<SpendSummary>("/spend/summary").then(
     (s) => set({ todayUsd: s.todayUsd, monthUsd: s.monthUsd }),
     () => {},
   );
-  if (Object.keys(state.schedules).length || Object.keys(state.watchers).length)
+  if (
+    Object.keys(state.schedules).length ||
+    Object.keys(state.triggers).length ||
+    Object.keys(state.watchers).length
+  )
     void loadSchedules().catch(() => {});
+  // A card in the chat whose one fetch failed tries again.
+  for (const m of state.messages) {
+    if (m.taskId) ensureTask(m.taskId);
+    if (m.scheduleId) ensureSchedule(m.scheduleId);
+    if (m.negotiationId) ensureNegotiation(m.negotiationId);
+  }
+  if (reconnected) {
+    set({
+      settingsVersion: state.settingsVersion + 1,
+      heartbeatVersion: state.heartbeatVersion + 1,
+      memoryVersion: state.memoryVersion + 1,
+    });
+    if (Object.keys(state.proposals).length) void refreshProposals().catch(() => {});
+    if (Object.keys(state.plugins).length) void loadPlugins().catch(() => {});
+  }
   const active = await loadTasks({ status: "active" }).catch(() => null);
   // Ones we thought running that aren't any more ended while we were away. loadLive reloads those
   // with steps.
@@ -818,7 +905,7 @@ export function connect() {
   // A socket that's been replaced (StrictMode opens two) says nothing more.
   ws.onopen = () => {
     if (ws !== socket) return;
-    if (opened) void catchUp();
+    void catchUp(opened);
     opened = true;
     void loadLive().catch(() => {});
     retry = 0;

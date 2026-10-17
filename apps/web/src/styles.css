@@ -2511,6 +2511,14 @@ pre.payload {
   font-family: var(--font-text);
   font-size: 13px;
 }
+/* A card whose task or schedule hasn't loaded: its one line. */
+.msg .card-pending {
+  font-family: var(--font-text);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .task-approvals {
   display: grid;
   gap: 2px;
