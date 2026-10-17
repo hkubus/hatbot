@@ -53,7 +53,10 @@ export type Received =
   | { status: "started"; task: Task }
   | {
       status: "skipped";
-      /** recent: on the timeline of the monitor's last task; limit: the trigger's tasks for the day. */
+      /**
+       * recent: on the timeline of the monitor's last task, and a down starts a task once the hour is
+       * over if the monitor is still down; limit: the trigger's tasks for the day.
+       */
       reason: "paused" | "running" | "disabled" | "duplicate" | "ignored" | "recent" | "limit";
     }
   /** A down alert waiting for the monitor's next checks before it starts a task. */
@@ -322,31 +325,47 @@ export class Triggers {
     const waiting = this.db
       .query<{ due_at: string }, [string]>("SELECT due_at FROM kuma_waiting WHERE run_key = ?")
       .get(runKey);
-    if (waiting) return { status: "waiting", until: waiting.due_at };
-    const again = this.again(runKey, `${name} is down again`, message);
-    if (again) return again;
-    const alert = {
-      monitor: name,
-      type: monitor.type,
-      url: monitor.url,
-      hostname: monitor.hostname,
-      status: "down",
-      message,
-      time: hb.time,
-    };
+    if (waiting && waiting.due_at > this.now()) return { status: "waiting", until: waiting.due_at };
+    const alert = JSON.stringify(
+      {
+        monitor: name,
+        type: monitor.type,
+        url: monitor.url,
+        hostname: monitor.hostname,
+        status: "down",
+        message,
+        time: hb.time,
+      },
+      null,
+      2,
+    );
+    let wait = 0;
     if (t.confirmChecks > 0) {
       const raw = Number(monitor.interval);
       const interval = Number.isFinite(raw) && raw > 0 ? raw : KUMA_INTERVAL_S.fallback;
       const each = Math.min(KUMA_INTERVAL_S.max, Math.max(KUMA_INTERVAL_S.min, interval));
-      const until = new Date(this.clock() + t.confirmChecks * each * 1000 + KUMA_SLACK_MS);
-      this.db
-        .query(
-          "INSERT INTO kuma_waiting (run_key, trigger_id, due_at, name, alert) VALUES (?, ?, ?, ?, ?)",
-        )
-        .run(runKey, t.id, until.toISOString(), name, JSON.stringify(alert, null, 2));
-      return { status: "waiting", until: until.toISOString() };
+      wait = t.confirmChecks * each * 1000 + KUMA_SLACK_MS;
     }
-    return this.startAlert(t, runKey, name, JSON.stringify(alert, null, 2));
+    const again = this.again(runKey, `${name} is down again`, message, { t, name, alert, wait });
+    if (again) return again;
+    if (wait > 0) {
+      const until = new Date(this.clock() + wait).toISOString();
+      this.wait(t, runKey, until, name, alert);
+      return { status: "waiting", until };
+    }
+    // A wait that's over is this alert's now.
+    if (waiting) this.db.query("DELETE FROM kuma_waiting WHERE run_key = ?").run(runKey);
+    return this.startAlert(t, runKey, name, alert);
+  }
+
+  private wait(t: Trigger, runKey: string, until: string, name: string, alert: string) {
+    this.db
+      .query(
+        `INSERT INTO kuma_waiting (run_key, trigger_id, due_at, name, alert) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (run_key) DO UPDATE SET trigger_id = excluded.trigger_id,
+           due_at = excluded.due_at, name = excluded.name, alert = excluded.alert`,
+      )
+      .run(runKey, t.id, until, name, alert);
   }
 
   /** Starts the alerts whose wait is over: their monitor didn't come back up. The brain calls it often. */
@@ -370,17 +389,38 @@ export class Triggers {
 
   /**
    * A monitor's news soon after its last alert task ended: on that task's timeline, rather than a new
-   * task each time a flapping monitor goes down. Null when there's no such task.
+   * task each time a flapping monitor goes down. Kuma says nothing more while a monitor stays down, so
+   * a down waits for the hour to be over and then starts a task, unless the monitor came back up; you're
+   * told once. Null when there's no such task.
    */
-  private again(runKey: string, what: string, message: string): Received | null {
+  private again(
+    runKey: string,
+    what: string,
+    message: string,
+    down?: { t: Trigger; name: string; alert: string; wait: number },
+  ): Received | null {
     const cutoff = new Date(this.clock() - ALERT_COOLDOWN_MS).toISOString();
     const last = this.db
-      .query<{ id: number }, [string, string]>(
-        "SELECT id FROM tasks WHERE run_key = ? AND finished_at > ? ORDER BY id DESC LIMIT 1",
+      .query<{ id: number; finished_at: string }, [string, string]>(
+        "SELECT id, finished_at FROM tasks WHERE run_key = ? AND finished_at > ? ORDER BY id DESC LIMIT 1",
       )
       .get(runKey, cutoff);
     if (!last) return null;
+    const told = down && this.tasks.steps(last.id).some((s) => s.name === what);
     this.tasks.addStep(last.id, { kind: "note", name: what, detail: message, url: null });
+    if (!down) return { status: "skipped", reason: "recent" };
+    const due = Math.max(
+      Date.parse(last.finished_at) + ALERT_COOLDOWN_MS,
+      this.clock() + down.wait,
+    );
+    this.wait(down.t, runKey, new Date(due).toISOString(), down.name, down.alert);
+    if (!told)
+      void this.notifier.send({
+        title: what.slice(0, 120),
+        message: `It went down again after task #${last.id} ended. If it's still down in ${Math.ceil((due - this.clock()) / 60_000)} minutes, a new task looks into it.`,
+        priority: 3,
+        click: `${this.publicUrl}/tasks/${last.id}`,
+      });
     return { status: "skipped", reason: "recent" };
   }
 
@@ -414,7 +454,12 @@ export class Triggers {
   }
 
   private startAlert(t: Trigger, runKey: string, name: string, payload: string): Received {
-    const again = this.again(runKey, `${name} is down again`, "");
+    const again = this.again(runKey, `${name} is down again`, alertParts(payload)?.message ?? "", {
+      t,
+      name,
+      alert: payload,
+      wait: 0,
+    });
     if (again) return again;
     const limited = this.limited(t);
     if (limited) return limited;
