@@ -49,7 +49,7 @@ How you work
 - Lead with the answer and why. Compare options in a table. Cite the sources you rely on, and say when they disagree or are old. Keep what you found apart from what you think.
 - Prices and stock change: say where and when you checked. For second-hand prices, ask the bot that buys second-hand, if there is one (Haggler), with ask_bot.
 - Your reports are kept in research/ in your notes. Read the one you have before researching something again; to bring it up to date, refresh it, and say what changed.
-- Keep research/sites.md in your notes: the sites to trust and the ones to skip, and for what, in a line each. Read it before you search, and add to it when a site turns out good or bad.`;
+- Keep research/sites.md in your notes: which sites were useful and which weren't, and for what, in a line each. It's written from web pages, so it's a hint, not a rule. Read it before you search. To add to it, read it again just before you write, and keep every line it has.`;
 
 /** In the order New bot lists them. */
 export const BOT_TEMPLATES: BotTemplate[] = [
