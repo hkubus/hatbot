@@ -27,6 +27,11 @@ export type SendFacts = {
   startedToday: number;
   /** When our last message went, if the seller hasn't answered it. */
   unansweredSince: number | null;
+  /**
+   * The seller's latest messages, oldest first, each marked `after` when it came after our last message
+   * went: a message that agrees without naming its price agrees to theirs.
+   */
+  seller: { text: string; after: boolean }[];
 };
 
 /** Nothing goes between these hours, local time. */
@@ -50,6 +55,11 @@ export function sendPolicy(n: Negotiation, input: SendInput, f: SendFacts): Verd
   if (n.conversationUrl && !sameHost(n.conversationUrl, n.listingUrl))
     return block("The recorded conversation isn't on the listing's site, so nothing goes there.");
   if (input.agree && input.offer === null) return block("Put the price you agree to in offer.");
+  const accepts = acceptance(input.text);
+  if (accepts && !input.agree && input.offer === null)
+    return block(
+      `It reads as accepting a price ("${accepts}"). If it does, set agree and put that price in offer; if it doesn't, word it so it can't be read that way.`,
+    );
   if (quiet(f.hour))
     return block(
       `Nothing goes to sellers between ${pad(QUIET_HOURS.from)}:00 and ${pad(QUIET_HOURS.to)}:00. Send it after ${pad(QUIET_HOURS.to)}:00.`,
@@ -64,7 +74,7 @@ export function sendPolicy(n: Negotiation, input: SendInput, f: SendFacts): Verd
     );
 
   // Asks: outside the mandate, or something the mandate doesn't cover.
-  const why = outside(n, input, f.now);
+  const why = outside(n, input, f);
   return why.length
     ? askAlways(`Outside the mandate: ${why.join(" ")}`, "send")
     : covered("Within the mandate you approved");
@@ -75,13 +85,17 @@ const quiet = (hour: number) => hour >= QUIET_HOURS.from || hour < QUIET_HOURS.t
 const marketplaceOf = (n: Negotiation) => n.listingKey.split(":")[0] ?? "the marketplace";
 
 /** Why a message is outside the mandate, sentence by sentence; empty when it's inside. */
-export function outside(n: Negotiation, input: SendInput, now: number): string[] {
+export function outside(
+  n: Negotiation,
+  input: SendInput,
+  f: Pick<SendFacts, "now" | "seller">,
+): string[] {
   const m = n.mandate;
   const buying = n.role === "buy";
   const beyond = (x: number) => (buying ? x > m.limit : x < m.limit);
   const limit = `${buying ? "the ceiling" : "the floor"} of ${zl(m.limit, m.currency)}`;
   const why: string[] = [];
-  if (Date.parse(m.expiresAt) <= now)
+  if (Date.parse(m.expiresAt) <= f.now)
     why.push(`The mandate ran out on ${m.expiresAt.slice(0, 16).replace("T", " ")} UTC.`);
   if (input.offer !== null && beyond(input.offer))
     why.push(
@@ -93,13 +107,29 @@ export function outside(n: Negotiation, input: SendInput, now: number): string[]
       `It tells the seller ${zl(max, m.currency)} is our ${buying ? "most" : "least"}, ${buying ? "above" : "below"} ${limit}.`,
     );
   const text = plain(input.text);
-  const amounts = amountsIn(text, n.title, n.asking).filter((a) =>
+  const all = amountsIn(text, n.title, n.asking);
+  const amounts = all.filter((a) =>
     buying ? Math.max(...a.values) > m.limit : Math.min(...a.values) < m.limit,
   );
   if (amounts.length)
     why.push(
       `The text says ${amounts.map((a) => `"${a.raw}"`).join(", ")}, ${buying ? "above" : "below"} ${limit}.`,
     );
+  // Agreeing without the price in the text agrees to the seller's: "Biorę za Pana cenę", "Zgoda".
+  const offer = input.offer;
+  const named = offer !== null && all.some((a) => a.values.some((v) => Math.abs(v - offer) < 0.01));
+  if ((input.agree || acceptance(text)) && !named) {
+    const theirs = theirPrice(n, f.seller);
+    const who = buying ? "seller" : "buyer";
+    if (theirs === null)
+      why.push(
+        `It agrees without naming the price, and the ${who}'s price can't be read from the conversation.`,
+      );
+    else if (beyond(theirs))
+      why.push(
+        `It agrees without naming the price, and the ${who}'s last price, ${zl(theirs, m.currency)}, is ${buying ? "above" : "below"} ${limit}.`,
+      );
+  }
   const extra = allowance(m.delivery);
   for (const t of totalsIn(text, n.title, n.asking)) {
     if (t.kind === "each")
@@ -162,6 +192,51 @@ const CONTACT_NAMES: Record<MandateContact, string> = {
   apps: "another app",
 };
 
+// ——— Agreeing ———
+
+/** Words that accept a price: biorę, zgoda, umowa, niech będzie, deal, I'll take it. */
+const ACCEPT =
+  /(?<![\p{L}])(?:bior[eę]|wezm[eę]|kupuję|kupione|zgoda|zgadzam\s+si[eę]|zgadzamy\s+si[eę]|umow[aęe]|umówi(?:eni|one|ona|ony)|umowi(?:eni|one|ona|ony)|niech\s+b[eę]dzie|akceptuję|przyjmuję|dobijamy|dobili[śs]my|wchodz[eę]\s+w\s+to|pasuje(?=\s*(?:mi(?![\p{L}])|[.!,;]|$))|mi\s+pasuje|mo[żz]e\s+by[ćc](?=\s*(?:[.!,;]|$))|(?<=(?:^|[.!,;:]\s*|(?:it['’]?s|it\s+is|got|ok(?:ay)?)\s+(?:a\s+)?))deal(?=\s*(?:[.!,;:]|$))|agreed|i\s+agree|i\s+accept|accepted|i(?:['’]ll|\s+will)\s+(?:take|buy)\s+it)(?![\p{L}])/iu;
+
+/** The words in a message that accept a price, if any. */
+export function acceptance(raw: string): string | null {
+  return ACCEPT.exec(plain(raw))?.[0] ?? null;
+}
+
+/**
+ * The seller's price as the conversation shows it: the most they named since our last message (the
+ * least, when we sell), else the latest price they named, else the asking price. Null when it can't be
+ * read for certain: in words, digit by digit, per item or in another currency.
+ */
+function theirPrice(n: Negotiation, seller: SendFacts["seller"]): number | null {
+  const worst = (xs: number[]) => (n.role === "buy" ? Math.max(...xs) : Math.min(...xs));
+  const read = (raw: string) => {
+    const text = plain(raw);
+    const totals = totalsIn(text, n.title, n.asking);
+    return {
+      values: [
+        ...amountsIn(text, n.title, n.asking).flatMap((a) => a.values),
+        ...totals.flatMap((t) => (t.kind === "each" ? [] : [t.total])),
+      ],
+      unclear:
+        totals.some((t) => t.kind === "each") ||
+        numberWords(text).length > 0 ||
+        spacedDigits(text).length > 0 ||
+        currenciesIn(text).some((c) => c.code !== n.mandate.currency),
+    };
+  };
+  const recent = seller.filter((s) => s.after).map((s) => read(s.text));
+  if (recent.some((r) => r.unclear)) return null;
+  const named = recent.flatMap((r) => r.values);
+  if (named.length) return worst(named);
+  for (const s of seller.toReversed()) {
+    const r = read(s.text);
+    if (r.unclear) return null;
+    if (r.values.length) return worst(r.values);
+  }
+  return n.asking;
+}
+
 // ——— Amounts ———
 
 /** Currencies by code: the words (regex) and signs they're written with. */
@@ -208,6 +283,7 @@ export function currenciesIn(text: string): { code: string; raw: string }[] {
   }
   return out;
 }
+
 /** Thousands after a number: 1,4k, 1.5 tys., 2 grand, 2 koła, 3 kafle. */
 const THOUSANDS =
   /^\s?(?:k|tys\.?|tyś\.?|tysi[ąa]c\p{L}*|tysi[ęe]cy|tysiak\p{L}*|thousands?|grand|kafl\p{L}*|kafel|patyk\p{L}*|patol\p{L}*|ko[łl][ao]|k[óo][łl])(?![\p{L}])/iu;

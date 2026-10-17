@@ -67,6 +67,7 @@ const facts = (over: Partial<SendFacts> = {}): SendFacts => ({
   starts: false,
   startedToday: 0,
   unansweredSince: null,
+  seller: [],
   ...over,
 });
 const msg = (text: string, over: Partial<SendInput> = {}): SendInput => ({
@@ -126,7 +127,7 @@ describe("an offer above the ceiling, or below the floor when selling, asks", ()
     expect(verdict("Mogę zejść do 1000 zł.", { offer: 1000 }, selling()).action).toBe("allow");
     expect(verdict("Najniżej 1 150 zł.", { offer: 1150 }, selling()).action).toBe("allow");
     // Selling, an amount in the text below the floor asks too.
-    expect(why(verdict("Niech będzie 900 zł.", {}, selling()))).toContain('"900"');
+    expect(why(verdict("Mogę 900 zł.", {}, selling()))).toContain('"900"');
   });
 
   test("a stated max above the ceiling asks", () => {
@@ -164,6 +165,106 @@ describe("agree outside the mandate", () => {
   test("a low offer with the real figure in the text asks", () => {
     const v = verdict("Dam 1100... albo dobra, 1600 zł i biorę.", { offer: 1100, agree: true });
     expect(why(v)).toContain('The text says "1600"');
+  });
+});
+
+describe("agreeing in words agrees to the seller's price, so that's what's checked", () => {
+  const said = (...texts: [string, boolean][]) =>
+    facts({ seller: texts.map(([text, after]) => ({ text, after })) });
+
+  test.each([
+    "Ok, biorę.",
+    "Ok, biore.",
+    "Wezmę.",
+    "Deal.",
+    "Niech będzie.",
+    "Zgoda, umowa.",
+    "Biorę za Pana cenę.",
+    "Pasuje mi.",
+    "Może być.",
+    "Jesteśmy umówieni.",
+    "I'll take it.",
+    "Agreed, see you then.",
+  ])("without agree or an offer, it can't go: %s", (text) => {
+    const v = verdict(text);
+    expect(v.action).toBe("block");
+    expect(why(v)).toContain("It reads as accepting a price");
+  });
+
+  test("questions and conditions aren't agreeing", () => {
+    for (const text of [
+      "Czy pasuje do płyty B550?",
+      "Pasuje Panu jutro?",
+      "Może być problem z wysyłką?",
+      "Is it a good deal?",
+    ])
+      expect(verdict(text).action).not.toBe("block");
+    expect(verdict("Biorę, jeśli zejdzie Pan do 1100.", { offer: 1100 }).action).toBe("allow");
+  });
+
+  test("agreeing with no price in the text asks when the seller's price is past the ceiling", () => {
+    // The model claims 1,100 zł, but "biorę" takes the seller's 1,500.
+    const v = verdict(
+      "Ok, biorę.",
+      { agree: true, offer: 1100 },
+      negotiation(),
+      said(["Dzień dobry, ostatecznie 1500 zł.", true]),
+    );
+    expect(v.action).toBe("ask");
+    expect(why(v)).toContain("the seller's last price, 1,500 zł, is above the ceiling of 1,400 zł");
+    // Nothing from the seller: the asking price, 1,500 zł.
+    expect(why(verdict("Biorę za Pana cenę.", { agree: true, offer: 1100 }))).toContain("1,500 zł");
+    // The most they named since our last message counts, and their sums too.
+    for (const text of ["1300 to za mało, 1450 ostatecznie.", "1350 + 100 za wysyłkę."])
+      expect(
+        verdict("Zgoda.", { agree: true, offer: 1300 }, negotiation(), said([text, true])).action,
+      ).toBe("ask");
+    // Agreeing in words with a price that isn't the offer: still the seller's price.
+    expect(why(verdict("Zgoda, wysyłka 20 zł mi pasuje.", { offer: 1100 }))).toContain(
+      "agrees without naming the price",
+    );
+  });
+
+  test("it goes when the seller's price is inside the mandate, or the text names ours", () => {
+    expect(
+      verdict(
+        "Ok, biorę.",
+        { agree: true, offer: 1300 },
+        negotiation(),
+        said(["Mogę zejść do 1300.", true]),
+      ).action,
+    ).toBe("allow");
+    // No new price since our last message: their latest one before it.
+    expect(
+      verdict(
+        "Zgoda.",
+        { agree: true, offer: 1350 },
+        negotiation(),
+        said(["Cena 1350, nie mniej.", false], ["Nie zejdę niżej.", true]),
+      ).action,
+    ).toBe("allow");
+    expect(
+      verdict("Deal.", { agree: true, offer: 1200 }, negotiation(), said(["I can do 1200.", true]))
+        .action,
+    ).toBe("allow");
+    expect(verdict("Biorę za 1300 zł.", { agree: true, offer: 1300 }).action).toBe("allow");
+  });
+
+  test("a seller's price that can't be read asks", () => {
+    for (const text of ["Dwa koła i jest Pana.", "Po 700 za sztukę.", "300 EUR.", "1 3 0 0"])
+      expect(
+        why(verdict("Zgoda.", { agree: true, offer: 1300 }, negotiation(), said([text, true]))),
+      ).toContain("the seller's price can't be read");
+  });
+
+  test("selling, the buyer's price below the floor asks", () => {
+    const v = verdict(
+      "Zgoda.",
+      { agree: true, offer: 1000 },
+      selling(),
+      said(["Dam 900 i odbieram dziś.", true]),
+    );
+    expect(why(v)).toContain("the buyer's last price, 900 zł, is below the floor of 1,000 zł");
   });
 });
 
