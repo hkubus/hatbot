@@ -311,10 +311,12 @@ describe("login", () => {
     expect(((await tokens.json()) as { name: string }[]).map((x) => x.name)).toEqual(["iPhone"]);
   });
 
-  test("logout ends the session", async () => {
+  test("logout ends the session, and the browser drops its cached files", async () => {
     const t = await testApp();
     const { cookie } = await setUpOwner(t);
-    expect((await t.call("POST", "/auth/logout", {}, { cookie })).status).toBe(200);
+    const res = await t.call("POST", "/auth/logout", {}, { cookie });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("clear-site-data")).toBe('"cache"');
     expect((await t.call("GET", "/tokens", undefined, { cookie })).status).toBe(401);
   });
 

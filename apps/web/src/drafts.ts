@@ -96,6 +96,24 @@ export function attachFiles(chat: string, list: FileList | File[]) {
   }
 }
 
+/** Forgets every chat's draft, for signing out: its text, and files still uploading or waiting. */
+export function clearDrafts() {
+  memoryText.clear();
+  try {
+    const keys = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i));
+    for (const key of keys) if (key?.startsWith("hatbot:draft:")) localStorage.removeItem(key);
+  } catch {
+    // Blocked storage kept nothing.
+  }
+  for (const list of files.values())
+    for (const d of list) {
+      d.abort?.abort();
+      if (d.preview) URL.revokeObjectURL(d.preview);
+    }
+  files.clear();
+  for (const l of listeners) l();
+}
+
 /** Takes a file off a chat's draft, stopping its upload if it's still going. */
 export function removeFile(chat: string, key: number) {
   setDraftFiles(chat, (f) => {

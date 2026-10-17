@@ -8,6 +8,7 @@ import {
 } from "@hatbot/shared";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api";
+import { clearDrafts } from "../drafts";
 import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
 import { navigate } from "../router";
@@ -104,6 +105,7 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
 
   const signOut = async () => {
     await api("/auth/logout", { body: {} }).catch(() => {});
+    clearDrafts();
     onSignOut();
   };
 

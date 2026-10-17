@@ -102,6 +102,8 @@ export const authRoutes = new Hono<AppEnv>()
     const cookie = getCookie(c, SESSION_COOKIE);
     if (cookie) c.var.auth.deleteSession(cookie);
     deleteCookie(c, SESSION_COOKIE, { path: "/" });
+    // The browser's copies of attachments and screenshots go too.
+    c.header("Clear-Site-Data", '"cache"');
     return c.json({ ok: true });
   })
 
