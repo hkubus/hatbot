@@ -502,6 +502,28 @@ export class Thread {
       .run(what, episodeId);
   }
 
+  /**
+   * A plugin tool the reply was offered, as it is now: the definitions sent stay fixed for the reply,
+   * but a call runs on the plugin's current instance and policy. Why not, when the plugin was switched
+   * off or taken from the bot since the reply began, or now describes the tool differently.
+   */
+  private livePlugin(bot: Bot, offered: PluginTool, incognito: boolean): PluginTool | string {
+    const { plugins, bots } = this.d;
+    // Negotiation's tools aren't a plugin's.
+    if (!plugins.pluginOf(offered.name)) return offered;
+    const now = plugins
+      .tools((bots.get(bot.id) ?? bot).plugins)
+      .find((t) => t.name === offered.name);
+    if (!now)
+      return `Not run: ${offered.name} isn't available any more. Its plugin was switched off, or taken from ${bot.name}, during this reply.`;
+    if (JSON.stringify(toolParam(now)) !== JSON.stringify(toolParam(offered)))
+      return `Not run: ${offered.name} has changed during this reply.`;
+    // Incognito changes nothing.
+    if (incognito && now.access !== "read")
+      return `Not run: ${offered.name} changes things now, and this conversation only looks.`;
+    return now;
+  }
+
   /** The episode's screener, made on first use. */
   private screenerFor(episodeId: number): Screener {
     let screener = this.screeners.get(episodeId);
@@ -622,14 +644,15 @@ export class Thread {
               : "The owner wrote again instead of answering, so this didn't run. Don't try it another way; end your reply briefly.";
           return { content, isError: true };
         }
-        // What was approved was the plugin as it was: one switched off or restarted meanwhile mustn't run.
-        const live = this.d.plugins.tools((this.d.bots.get(bot.id) ?? bot).plugins);
-        if (this.d.plugins.pluginOf(t.name) && !live.includes(t))
-          return {
-            content: `Not run: ${t.name}'s plugin was switched off or restarted while this waited for approval.`,
-            isError: true,
-          };
       }
+      // What was reviewed or approved was the plugin as it was: one switched off or restarted
+      // meanwhile mustn't run.
+      const live = this.d.plugins.tools((this.d.bots.get(bot.id) ?? bot).plugins);
+      if (this.d.plugins.pluginOf(t.name) && !live.includes(t))
+        return {
+          content: `Not run: ${t.name}'s plugin was switched off or restarted while this was checked or waited for approval.`,
+          isError: true,
+        };
     }
     progress(activity(t.label ?? `Using ${t.name}`, input));
     const r = await runPluginTool(t, input, cc);
@@ -2188,6 +2211,7 @@ export class Thread {
                 return this.suspected(episode.id) !== null;
               },
               ownerSaid: () => this.ownerSaid(episode.id),
+              livePlugin: (t) => this.livePlugin(bot, t, incognito),
               gated: async (t, input, signal) => {
                 // The sandbox is scratch space; only commands on the homelab and accounts count.
                 if (plugins.pluginOf(t.name)?.id !== "code") {

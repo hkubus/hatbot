@@ -75,6 +75,8 @@ export type ToolContext = {
   suspected?: () => Promise<boolean>;
   /** Your own latest messages in this conversation, for a task's approval check. */
   ownerSaid?: () => string;
+  /** A plugin tool as it is now, for a call: the reply's may be from before a change; a string says why not. */
+  livePlugin?: (t: PluginTool) => PluginTool | string;
   /** Runs a plugin tool that changes something, after its checks and your approval if it needs one. */
   gated?: (
     t: PluginTool,
@@ -975,7 +977,9 @@ export async function runTool(
     TOOLS.find((t) => t.name.toLowerCase() === name.toLowerCase());
   if (!tool) {
     const offered = ctx.pluginTools ?? ctx.plugins?.tools() ?? [];
-    const plugin = offered.find((t) => t.name === name);
+    const found = offered.find((t) => t.name === name);
+    const plugin = found && ctx.livePlugin ? ctx.livePlugin(found) : found;
+    if (typeof plugin === "string") return { content: plugin, isError: true };
     if (plugin?.access === "write") {
       if (!ctx.gated) return { content: `${name} can't run here.`, isError: true };
       return ctx.gated(plugin, input, signal);

@@ -605,16 +605,17 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
               : "The owner denied this. Don't try it another way.",
             true,
           );
-        // What was approved was the plugin as it was: one restarted meanwhile may act differently.
-        const after = current(t.name);
-        if (typeof after === "string") return result(call, after, true);
-        if (after !== t && d.plugins.pluginOf(t.name))
-          return result(
-            call,
-            `Not run: ${t.name}'s plugin restarted while this waited for approval. Call it again if it's still needed.`,
-            true,
-          );
       }
+      // What was reviewed or approved was the plugin as it was: one switched off or restarted
+      // meanwhile may act differently.
+      const after = current(t.name);
+      if (typeof after === "string") return result(call, after, true);
+      if (after !== t && d.plugins.pluginOf(t.name))
+        return result(
+          call,
+          `Not run: ${t.name}'s plugin restarted while this was checked or waited for approval. Call it again if it's still needed.`,
+          true,
+        );
     }
     tasks.addStep(id, { kind: "action", name: t.name, detail: what, url: null });
     const r = await runPluginTool(t, call.input, cc);
