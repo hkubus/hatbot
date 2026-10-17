@@ -1,9 +1,10 @@
 // negotiate_send's policy (PLAN.md §16.3), in code rather than by Haiku: inside the mandate a message
 // goes without asking; outside it, it asks; the pace limits hold either way. Pure, so it can be tested
-// case by case.
+// case by case. What it can't read for certain, such as an amount in words, asks too: it never sends on a
+// guess.
 import type { MandateContact, Negotiation, Stated } from "@hatbot/shared";
 import { askAlways, block, covered, type Verdict } from "../plugins/plugin";
-import { sameHost } from "./gate";
+import { collapse, sameHost } from "./gate";
 
 /** What one negotiate_send would send. */
 export type SendInput = {
@@ -91,21 +92,27 @@ export function outside(n: Negotiation, input: SendInput, now: number): string[]
     why.push(
       `It tells the seller ${zl(max, m.currency)} is our ${buying ? "most" : "least"}, ${buying ? "above" : "below"} ${limit}.`,
     );
-  const amounts = amountsIn(input.text, n.title).filter((a) =>
+  const text = plain(input.text);
+  const amounts = amountsIn(text, n.title).filter((a) =>
     buying ? Math.max(...a.values) > m.limit : Math.min(...a.values) < m.limit,
   );
   if (amounts.length)
     why.push(
       `The text says ${amounts.map((a) => `"${a.raw}"`).join(", ")}, ${buying ? "above" : "below"} ${limit}.`,
     );
-  const words = numberWords(input.text);
+  const words = numberWords(text);
   if (words.length)
     why.push(
       `The text writes an amount in words (${words.map((w) => `"${w}"`).join(", ")}), which can't be checked against the mandate.`,
     );
-  const contacts = contactsIn(input.text).filter((c) => !m.allow.includes(c.kind));
+  const spaced = spacedDigits(text);
+  if (spaced.length)
+    why.push(
+      `The text spells a number out digit by digit ("${spaced[0]}"), which can't be checked against the mandate.`,
+    );
+  const contacts = contactsIn(text).filter((c) => !m.allow.includes(c.kind));
   for (const c of contacts) why.push(`It carries ${CONTACT_NAMES[c.kind]} ("${c.raw}").`);
-  const links = linksIn(input.text);
+  const links = linksIn(text);
   if (links.length) why.push(`It carries a link ("${links[0]}").`);
   return why;
 }
@@ -121,17 +128,20 @@ const CONTACT_NAMES: Record<MandateContact, string> = {
 
 /** Currency next to a number: it's money, whatever else it looks like. */
 const CURRENCY = /^\s?(?:zł|zl|złotych|złote|złoty|pln|eur|euro|€|\$|usd)(?![\p{L}])/iu;
-const CURRENCY_BEFORE = /(?:pln|eur|€|\$|usd)\s?$/iu;
-/** Thousands after a number: 1,4k, 1.5 tys., 2 grand. */
+const CURRENCY_BEFORE = /(?:(?<![\p{L}])(?:zł|zl|pln|eur)|€|\$|usd)\s?$/iu;
+/** Thousands after a number: 1,4k, 1.5 tys., 2 grand, 2 koła, 3 kafle. */
 const THOUSANDS =
-  /^\s?(?:k|tys\.?|tyś\.?|tysiąc|tysiące|tysięcy|tysiaca|tysiace|tysiecy|grand|kafli|kafle|patyki|patyków)(?![\p{L}])/iu;
+  /^\s?(?:k|tys\.?|tyś\.?|tysi[ąa]c\p{L}*|tysi[ęe]cy|tysiak\p{L}*|thousands?|grand|kafl\p{L}*|kafel|patyk\p{L}*|patol\p{L}*|ko[łl][ao]|k[óo][łl])(?![\p{L}])/iu;
+/** Hundreds after a number: 15 stów, 14 stówek, 12 setek, fourteen hundred. */
+const HUNDREDS = /^\s?(?:st[óo]w\p{L}*|stow[aeky]\p{L}*|setk\p{L}*|setek|hundreds?)(?![\p{L}])/iu;
 /**
  * What a number counts when this word follows it: not money. No one-letter units: "2000 w gotówce" is
  * money, not watts.
  */
 const UNIT =
   /^\s?(?:%|procent\p{L}*|gb|tb|mb|kb|mhz|ghz|hz|mah|wh|cm|mm|km|kg|ml|cali|cale|cal|szt\.?|sztuk\p{L}*|dni|dzień|dnia|godz\.?|godzin\p{L}*|minut\p{L}*|sek\.?|tyg\.?|tygodni\p{L}*|mies\.?|miesi\p{L}*|lat|lata|fps|rpm|gen\.?|generacji|rdzeni\p{L}*|bit|bitów|days?|hours?|weeks?|months?|years?|pcs|pieces?|inch\p{L}*)(?![\p{L}\p{N}])/iu;
-const YEAR_BEFORE = /(?:^|[^\p{L}])(?:w|z|od|rok|roku|rocznik|in|from|since|year)\s$/iu;
+/** A year after these words. Not w, z or od on their own: "w 2000" is as likely money as a year. */
+const YEAR_BEFORE = /(?:^|[^\p{L}])(?:rok|roku|rocznik|in|from|since|year)\s$/iu;
 const YEAR_AFTER = /^\s?(?:r\.|r(?![\p{L}])|rok|roku)/iu;
 
 /** Dates and times, blanked before numbers are read: their digits aren't amounts or phone numbers. */
@@ -139,6 +149,39 @@ const blankDates = (text: string) =>
   text
     .replace(/(?<!\d)\d{1,2}[./-]\d{1,2}[./-]\d{2,4}(?!\d)/g, (x) => " ".repeat(x.length))
     .replace(/(?<!\d)\d{1,2}:\d{2}(?!\d)/g, (x) => " ".repeat(x.length));
+
+/** A decimal digit's value in any script: Unicode keeps each script's 0–9 together and in order. */
+function digitValue(d: string): number {
+  let cp = d.codePointAt(0) ?? 0;
+  let n = 0;
+  while (/\p{Nd}/u.test(String.fromCodePoint(cp - 1))) {
+    cp--;
+    n++;
+  }
+  return n % 10;
+}
+
+/** Latin, Cyrillic and Greek letters that pass for 0 and 1 inside a number: 15OO, l500. */
+const LOOK_ALIKE = /(?<![\p{L}\p{N}])[\dOoОоΟοlIІіӀӏ]*\d[\dOoОоΟοlIІіӀӏ]*(?![\p{L}\p{N}])/gu;
+
+/**
+ * A message as the policy reads it: as the gate compares it (NFKC, no invisible characters), with every
+ * script's digits as 0–9, and O or l among a number's digits read as 0 or 1.
+ */
+export function plain(text: string): string {
+  return collapse(text)
+    .replace(/\p{Nd}/gu, (d) => (d >= "0" && d <= "9" ? d : String(digitValue(d))))
+    .replace(/٫/g, ".")
+    .replace(/٬/g, ",")
+    .replace(LOOK_ALIKE, (w) => w.replace(/[OoОоΟο]/g, "0").replace(/[lIІіӀӏ]/g, "1"));
+}
+
+/** Digits written one by one, "1 5 0 0": not something to read as a number on a guess. */
+export function spacedDigits(text: string): string[] {
+  return [...blankDates(plain(text)).matchAll(/(?<!\d)\d(?:[ .\-_·*]\d(?!\d)){2,}/g)].map(
+    (m) => m[0],
+  );
+}
 
 /** A number written in the text, with every value its separators could mean. */
 export type Amount = { raw: string; values: number[] };
@@ -156,7 +199,7 @@ export function amountsIn(text: string, title: string): Amount[] {
     words.slice(1).flatMap((w, i) => (/^\d+$/.test(w) ? [`${words[i]?.toLowerCase()} ${w}`] : [])),
   );
   const caps = new Set(words.filter((w) => w.length >= 2 && /^\p{Lu}+$/u.test(w)));
-  let s = blankDates(text);
+  let s = blankDates(plain(text));
   for (const p of phonesIn(s)) s = s.replace(p, " ".repeat(p.length));
 
   const out: Amount[] = [];
@@ -168,7 +211,8 @@ export function amountsIn(text: string, title: string): Amount[] {
     // i7-12700, RX-580: after a hyphen glued to a model's letters.
     if (/(?<![\p{L}\p{N}])\p{L}[\p{L}\p{N}]*-$/u.test(before)) return;
     const money = CURRENCY.test(after) || CURRENCY_BEFORE.test(before);
-    const thousands = THOUSANDS.exec(after)?.[0] ?? null;
+    const thousands = THOUSANDS.exec(after)?.[0] ?? HUNDREDS.exec(after)?.[0] ?? null;
+    const scale = thousands === null ? 1 : HUNDREDS.test(thousands) ? 100 : 1000;
     if (/^\p{L}/u.test(after) && !money && thousands === null) return;
     if (!money && thousands === null) {
       if (UNIT.test(after)) return;
@@ -186,16 +230,16 @@ export function amountsIn(text: string, title: string): Amount[] {
     }
     out.push({
       raw: raw + (thousands ?? ""),
-      values: values.map((v) => (thousands !== null ? v * 1000 : v)),
+      values: values.map((v) => Math.round(v * scale * 100) / 100),
     });
   };
 
-  // Digits joined by . , ' or a thin space, or by a space before exactly three more: 1 400, 1.400,50.
-  const re = /\d+(?:(?:[.,'\u202f]|[\u00a0 ](?=\d{3}(?!\d)))\d+)*/g;
+  // Digits joined by . , ' \u2019 ` _ \u00b7, or by a space before exactly three more: 1 400, 1.400,50, 1\u2019500.
+  const re = /\d+(?:(?:[.,'\u2019`\u00b4_\u00b7]|[ ](?=\d{3}(?!\d)))\d+)*/g;
   for (let m = re.exec(s); m; m = re.exec(s)) {
     const raw = m[0];
-    const groups = raw.split(/[.,'\u00a0\u202f ]/);
-    const seps = raw.match(/[.,'\u00a0\u202f ]/g) ?? [];
+    const groups = raw.split(/[.,'\u2019`\u00b4_\u00b7 ]/);
+    const seps = raw.match(/[.,'\u2019`\u00b4_\u00b7 ]/g) ?? [];
     const values = readings(groups, seps);
     if (values.length) {
       judge(raw, m.index, values, groups.length);
@@ -240,10 +284,11 @@ function readings(groups: string[], seps: string[]): number[] {
 
 /** Amounts written out in words, in English or Polish, slang included. */
 const NUMBER_WORDS =
-  /(?<![\p{L}])(?:hundreds?|thousands?|grand|tysiąc\p{L}*|tysiac\p{L}*|tysięcy|tysiecy|tys\.?(?![\p{L}])|patyk\p{L}*|kafel\p{L}*|kafl\p{L}*|stów\p{L}*|stow[aeyk]\p{L}*|stówk\p{L}*|sto|dwieście|dwiescie|trzysta|czterysta|pięćset|piecset|sześćset|szescset|siedemset|osiemset|dziewięćset|dziewiecset|dych\p{L}*)(?![\p{L}])/giu;
+  /(?<![\p{L}])(?:hundreds?|thousands?|grand|tysiąc\p{L}*|tysiac\p{L}*|tysięcy|tysiecy|tysiak\p{L}*|tys\.?(?![\p{L}])|patyk\p{L}*|patol\p{L}*|kafel\p{L}*|kafl\p{L}*|stów\p{L}*|stow[aeyk]\p{L}*|stówk\p{L}*|setk\p{L}*|setek|sto|dwieście|dwiescie|trzysta|czterysta|pięćset|piecset|pi[ńn]cet\p{L}*|piencet|sześćset|szescset|siedemset|osiemset|dziewięćset|dziewiecset|dych\p{L}*|dysz\p{L}*|(?:p[óo][łl]tor\p{L}*|p[óo][łl]|jed(?:en|na|no)|dwa|dwie|trzy|cztery|pi[ęe][ćc]|kilka|par[ęe])\s+(?:ko[łl][ao]|k[óo][łl]))(?![\p{L}])/giu;
 
 /** Number words not right after digits: "1,5 tys." is read as a number, "półtora tysiąca" isn't. */
-export function numberWords(text: string): string[] {
+export function numberWords(raw: string): string[] {
+  const text = plain(raw);
   const out: string[] = [];
   for (const m of text.matchAll(NUMBER_WORDS)) {
     const before = text.slice(0, m.index);

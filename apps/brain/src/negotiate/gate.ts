@@ -33,9 +33,16 @@ export type GateCheck =
   | { action: "usual" }
   | { action: "hold"; why: string };
 
-/** Text as the gate compares it: Unicode-normalised, invisible characters dropped, whitespace collapsed. */
+/**
+ * Text as the gate compares it and the policy reads it: NFKC (fullwidth and other compatibility forms
+ * become plain ones), invisible format characters such as soft hyphens dropped, whitespace collapsed.
+ */
 export const collapse = (s: string) =>
-  s.normalize("NFC").replace(/[​-‍⁠﻿]/g, "").replace(/\s+/g, " ").trim();
+  s
+    .normalize("NFKC")
+    .replace(/\p{Cf}/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
 
 /** A host without "www.", lowercased; null for something that isn't a web address. */
 export function hostOf(url: string): string | null {

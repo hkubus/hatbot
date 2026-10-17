@@ -201,6 +201,57 @@ describe("an amount written in the text, however it's written", () => {
     expect(why(v)).toContain(`"${word}"`);
   });
 
+  test.each([
+    ["Dam 2 koła.", "2 koła"],
+    ["Dam 2 kafle.", "2 kafle"],
+    ["Dam 3 kafel.", "3 kafel"],
+    ["Dam 2 tysiaki.", "2 tysiaki"],
+    ["Dam 1,5 tysiąca.", "1,5 tysiąca"],
+    ["Dam 15 stów.", "15 stów"],
+    ["Dam 15 stówek.", "15 stówek"],
+    ["Dam 15 setek.", "15 setek"],
+    ["I'll pay 15 hundred.", "15 hundred"],
+    ["Dam 2k.", "2k"],
+    ["Zmieszczę się w 2000.", "2000"],
+    ["Dam z 2000, od 2000 nie zejdę.", "2000"],
+    ["Dam zł1500.", "1500"],
+    ["Dam 15OO zł.", "1500"],
+    ["Dam l500.", "1500"],
+    ["Dam I5OO.", "1500"],
+    ["Dam 15ОО (Cyrillic O).", "1500"],
+    ["Dam １５００ zł.", "1500"],
+    ["Dam ١٥٠٠ zł.", "1500"],
+    ["Dam ۱۵۰۰ zł.", "1500"],
+    ["Dam १५०० zł.", "1500"],
+    ["Dam 1­500 zł.", "1500"],
+    ["Dam 1​500 zł.", "1500"],
+    ["Dam 1 500 zł.", "1 500"],
+    ["Dam 1’500 zł.", "1’500"],
+  ])("slang, look-alike and other scripts' digits: %s", (text, raw) => {
+    const v = verdict(text, { offer: 1100 });
+    expect(v.action).toBe("ask");
+    expect(why(v)).toContain(`"${raw}"`);
+  });
+
+  test.each([
+    ["Dam dwa koła.", "dwa koła"],
+    ["Dam półtora koła.", "półtora koła"],
+    ["Dam półtora tysiaca.", "tysiaca"],
+    ["Dam pińcet.", "pińcet"],
+    ["Dam tysiaka.", "tysiaka"],
+    ["Dam dwie dyszki.", "dyszki"],
+  ])("slang in words asks: %s", (text, word) => {
+    const v = verdict(text, { offer: 1100 });
+    expect(why(v)).toContain("in words");
+    expect(why(v)).toContain(`"${word}"`);
+  });
+
+  test("digits written one by one ask", () => {
+    for (const text of ["Dam 1 5 0 0 zł.", "Dam 1-5-0-0.", "Dam 1.5.0.0"])
+      expect(why(verdict(text, { offer: 1100 }))).toContain("digit by digit");
+    expect(verdict("Dam 1 100 zł.", { offer: 1100 }).action).toBe("allow");
+  });
+
   test("every reading of the separators counts", () => {
     expect(amountsIn("1.500", "")).toEqual([{ raw: "1.500", values: [1500, 1.5] }]);
     expect(amountsIn("1,4k", "")).toEqual([{ raw: "1,4k", values: [1400] }]);

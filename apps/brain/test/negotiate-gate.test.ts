@@ -153,4 +153,7 @@ test("addresses match by host, path and the query they need", () => {
   expect(onConversation("https://www.olx.pl/chat?ad=1001abc", gate)).toBe(true);
   expect(onConversation("https://www.olx.pl/chat?ad=1001abcd", gate)).toBe(false);
   expect(collapse(" a \n b​ ")).toBe("a b");
+  // Fullwidth digits, soft hyphens and direction marks compare as what they show.
+  expect(collapse("Dam １­５００‎ zł")).toBe("Dam 1500 zł");
+  expect(collapse("Dam 1 500")).toBe(collapse("Dam 1 500"));
 });
