@@ -210,6 +210,7 @@ export class Checks {
     const url = this.d.config.publicUrl;
     if (/^https?:\/\/(localhost|127\.|\[::1\])/.test(url))
       return skip("HATBOT_PUBLIC_URL is a local address.");
+    const asked = this.clock();
     let res: Response;
     try {
       res = await (this.d.fetch ?? fetch)(`${url}/api/v1/health`, {
@@ -221,10 +222,11 @@ export class Checks {
       );
     }
     if (!res.ok) return fail(`${url}/api/v1/health answered ${res.status}.`);
+    // Passed on since it asked: its own request, through your proxy.
     const proxy = this.d.auth?.untrustedProxy;
-    if (proxy)
+    if (proxy && proxy.at >= asked)
       return warn(
-        `${url} reaches the brain through ${proxy}, which isn't in HATBOT_TRUSTED_PROXIES, so sign-in limits count everyone as one address. Add it to /etc/hatbot/brain.env.`,
+        `${url} reaches the brain through ${proxy.ip}, which isn't in HATBOT_TRUSTED_PROXIES, so sign-in limits count everyone as one address. Add it to /etc/hatbot/brain.env.`,
       );
     return ok(`${url} reaches the brain.`);
   }

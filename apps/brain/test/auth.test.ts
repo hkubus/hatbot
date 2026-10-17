@@ -324,13 +324,20 @@ describe("login", () => {
       { headers: { "x-forwarded-for": "5.6.7.8" } },
       via("192.168.1.10"),
     );
-    expect(t.auth.untrustedProxy).toBe("192.168.1.10");
-    const report = (await (await t.call("POST", "/checks", undefined, { cookie })).json()) as {
-      results: { id: string; state: string; detail: string }[];
+    expect(t.auth.untrustedProxy?.ip).toBe("192.168.1.10");
+    const check = async () => {
+      const report = (await (await t.call("POST", "/checks", undefined, { cookie })).json()) as {
+        results: { id: string; state: string; detail: string }[];
+      };
+      return report.results.find((r) => r.id === "public-url");
     };
-    const check = report.results.find((r) => r.id === "public-url");
-    expect(check?.state).toBe("warn");
-    expect(check?.detail).toContain("192.168.1.10, which isn't in HATBOT_TRUSTED_PROXIES");
+    // The clock stands still, so that request stands for the check's own, through the proxy.
+    const now = await check();
+    expect(now?.state).toBe("warn");
+    expect(now?.detail).toContain("192.168.1.10, which isn't in HATBOT_TRUSTED_PROXIES");
+    // One from before: anyone on your network can send the header, and it doesn't warn for good.
+    t.advance(1000);
+    expect((await check())?.state).toBe("ok");
   });
 
   test("app login returns a bearer token", async () => {

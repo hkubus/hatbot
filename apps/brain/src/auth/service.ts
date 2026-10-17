@@ -28,10 +28,12 @@ export class AuthService {
   private pendingSecret: string | null = null;
   private deviceKey: Buffer | null = null;
   /**
-   * A private address that passed on X-Forwarded-For without being in HATBOT_TRUSTED_PROXIES: your
-   * reverse proxy, most likely, which makes every sign-in count as coming from one address.
+   * The last private address that passed on X-Forwarded-For without being in HATBOT_TRUSTED_PROXIES,
+   * and when: your reverse proxy, most likely, which makes every sign-in count as coming from one
+   * address. Anyone on your network can send the header too, so Check everything only goes by its own
+   * request through the public address.
    */
-  untrustedProxy: string | null = null;
+  untrustedProxy: { ip: string; at: number } | null = null;
   /** Live sockets, by the session or token that opened them, to close when it ends. */
   private sockets = new Map<string, Set<() => void>>();
   /** A new authenticator secret waiting for its first code, and who asked for it. */
@@ -41,6 +43,15 @@ export class AuthService {
     private db: Db,
     private clock: () => number = Date.now,
   ) {}
+
+  /** A request `ip` passed on, though it isn't a trusted proxy. */
+  forwardedBy(ip: string) {
+    if (this.untrustedProxy?.ip !== ip)
+      console.warn(
+        `${ip} forwards requests but isn't in HATBOT_TRUSTED_PROXIES, so sign-in limits count every client as ${ip}`,
+      );
+    this.untrustedProxy = { ip, at: this.clock() };
+  }
 
   isSetUp(): boolean {
     return this.db.query("SELECT 1 FROM owner WHERE id = 1").get() !== null;
