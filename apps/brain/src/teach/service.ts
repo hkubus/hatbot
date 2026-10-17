@@ -10,13 +10,12 @@ import type { EventBus } from "../events";
 import type { SettingsStore } from "../settings";
 import { BudgetError, priceOf, type Spend } from "../spend";
 import type { ScreenLane } from "../tasks/lane";
-import { describeSteps, Recorder, type RecStep } from "./recorder";
+import { describeSteps, OffPage, PAGE_POLL_MS, Recorder, type RecStep } from "./recorder";
 import { type Skills, skillPath } from "./skills";
 
 export const TEACH_MODEL = "claude-opus-5-5";
 /** Holds the screen lane while you record, so no task starts on the desktop. */
 const TEACH_LANE = -2;
-const PAGE_POLL_MS = 1500;
 /** Screenshots sent with the recording, spread across it. */
 const MAX_SCREENS = 16;
 /** Roughly what a 1280x800 screenshot costs in input tokens. */
@@ -194,17 +193,22 @@ export class Teach {
       clock: this.clock,
       secretField: async () => {
         const el = await desktop.agent.inspect();
-        // Nothing focused in the browser, or the keyboard is elsewhere (the address bar, another
-        // window): the typing went somewhere CDP can't see.
-        if (!el || el.pageFocus === false) throw new Error("no focused element");
-        return Boolean(el.secret) || el.type === "password" || el.tag === "iframe";
+        // No page on screen, or the keyboard is elsewhere (the address bar, another window): the typing
+        // went somewhere CDP can't see.
+        if (!el || el.pageFocus === false) throw new OffPage("the keyboard isn't on a page");
+        return {
+          secret: Boolean(el.secret) || el.type === "password" || el.tag === "iframe",
+          url: el.url ?? null,
+        };
       },
       screen: async () => {
         const [bytes, page] = await Promise.all([
           desktop.agent.screenshot(),
+          // A page that can't say whether it shows a secret may show one. An older desktop-agent that
+          // doesn't say at all is taken at its word.
           desktop.agent.context(false, true).catch(() => null),
         ]);
-        return page?.secretShown ? null : bytes;
+        return page && !page.secretShown ? { bytes, url: page.url } : null;
       },
       save: (label, bytes) => archive.saveScreen(`teach-${id}`, label, bytes),
     });
@@ -225,6 +229,11 @@ export class Teach {
   /** Your input from the live view, while you have control. */
   input(m: Parameters<Recorder["input"]>[0]) {
     this.rec?.recorder.input(m);
+  }
+
+  /** A live view that sent input closed: desktop-agent let go of the keys it held, and its key ups are lost. */
+  viewerGone() {
+    this.rec?.recorder.keysUp();
   }
 
   /** Ends the recording, hands the desktop back, and leaves the steps behind. */

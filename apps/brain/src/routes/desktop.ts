@@ -46,6 +46,7 @@ export const desktopRoutes = new Hono<AppEnv>()
       let behind: ArrayBuffer | null = null;
       let waiting: ReturnType<typeof setTimeout> | undefined;
       let forget: (() => void) | undefined;
+      let sent = false;
       return {
         onOpen(_, ws) {
           // Signing out or revoking the token ends the live view too.
@@ -82,12 +83,14 @@ export const desktopRoutes = new Hono<AppEnv>()
           if (validInput(m) && upstream?.readyState === WebSocket.OPEN) {
             upstream.send(JSON.stringify(m));
             teach.input(m);
+            sent = true;
           }
         },
         onClose() {
           clearTimeout(waiting);
           upstream?.close();
           forget?.();
+          if (sent) teach.viewerGone();
         },
       };
     }),
