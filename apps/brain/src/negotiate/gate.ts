@@ -101,9 +101,9 @@ const SEND_LIKE =
 /** A send verb first, folded: "Wyślij wiadomość do sprzedającego", "Send a message". */
 const SEND_VERB =
   /^(?:send|reply|wyslij|odpowiedz|odeslij|poslat|odeslat|odpovedet)(?![\p{L}\p{N}])/u;
-/** Words that make a send something else: an offer, a price, a payment or an order. */
+/** Words that make a send something else: an offer, a price, money or a payment. */
 const NOT_A_MESSAGE =
-  /(?<![\p{L}\p{N}])(?:offer|ofert|propozycj|nabid|price|cen[aeyu]?(?![\p{L}])|platb|przelew|blik|faktur|invoice|deposit|zaliczk)/u;
+  /(?<![\p{L}\p{N}])(?:offer|ofert|propozycj|nabid|price|cen[aeyu]?(?![\p{L}])|money|pieni|kwot|penize|castk|platb|przelew|blik|faktur|invoice|deposit|zaliczk)/u;
 
 /** A label that sends the message, and nothing else with it. */
 export function sendLabel(label: string): boolean {

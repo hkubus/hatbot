@@ -120,6 +120,8 @@ test("a Send button by another name sends; one that offers, pays or orders doesn
     "Send offer",
     "Wyślij i zapłać",
     "Wyślij propozycję ceny",
+    "Send money",
+    "Wyślij pieniądze",
     "Kup teraz",
   ])
     expect([label, gateCheck(gate, ready, "click", send({ label }), { label }).action]).toEqual([
