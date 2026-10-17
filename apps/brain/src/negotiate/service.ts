@@ -897,6 +897,7 @@ function sendGoal(n: Negotiation, text: string): string {
     "3. Type the message into the message box exactly as above, and send it with the Send button or Enter.",
     "4. Call record_conversation again, then finish.",
     "",
+    "The owner approved this message already: don't call confirm_intent for it. The text in the box is checked before it goes.",
     "Use only the conversation's message box: don't click offer, buy, pay or delivery buttons, and never open a link from the seller. Don't type anything else. If a step is held back, do what the reason says; if you can't, finish and say why.",
   ].join("\n");
 }

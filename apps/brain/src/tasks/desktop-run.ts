@@ -683,6 +683,16 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         "Not asked: this task only reads the conversation. Record it and finish.",
         true,
       );
+    // The message was approved with its mandate, and the gate checks the box before it goes. Nothing
+    // else is for this task to do, so nothing is asked and nothing is armed.
+    if (gate)
+      return textResult(
+        call,
+        p.data.kind === "send"
+          ? "Not needed: the message is approved already, and the text in the box is checked before it goes. Type it exactly and send it with the Send button or Enter."
+          : "Not asked: this task only sends the approved message. Don't click offer, buy, pay or delivery buttons; if one is in the way, finish and say why.",
+        p.data.kind !== "send",
+      );
     const bytes = await agent.screenshot();
     const step = tasks.addStep(id, {
       kind: "screenshot",

@@ -269,9 +269,11 @@ test("negotiate_start asks for the mandate; once approved, the negotiation runs 
         }),
       ],
     },
-    // Its desktop task.
+    // Its desktop task. The desktop prompt says to confirm a send; the message is approved already.
     { content: [toolUse("record_conversation", { messages: [] })] },
     { content: [computer("type", { text: TEXT })] },
+    { content: [toolUse("confirm_intent", { kind: "send", summary: "Send the offer" })] },
+    { content: [toolUse("confirm_intent", { kind: "purchase", summary: "Buy it now" })] },
     { content: [computer("left_click", { coordinate: [300, 500] })] },
     finish(),
     // The opening task again.
@@ -330,8 +332,14 @@ test("negotiate_start asks for the mandate; once approved, the negotiation runs 
   expect(t.thread.list().find((m) => m.id === reply?.id)?.taskId).toBe(1);
   expect(t.tasks.get(2)?.parentId).toBe(1);
   expect(t.approvals.list(false).map((a) => a.kind)).toEqual(["mandate"]);
+  // confirm_intent didn't ask: the send needs none, and nothing else is the task's to do.
+  expect(results(work, 5)).toContain("Not needed: the message is approved already");
+  expect(results(work, 6)).toContain("this task only sends the approved message");
+  expect(JSON.stringify(work.requests[2]?.messages[0])).toContain(
+    "don't call confirm_intent for it",
+  );
   // The opening task waited for its desktop task and heard how it went.
-  expect(JSON.stringify(work.requests[6]?.messages.at(-1))).toContain("Sent.");
+  expect(JSON.stringify(work.requests[8]?.messages.at(-1))).toContain("Sent.");
   const [m] = t.negotiations.messages(1);
   expect(m).toMatchObject({ status: "sent", offer: 1060, stated: { max: 1200 } });
   // What it claimed is kept, so later messages keep to it.
