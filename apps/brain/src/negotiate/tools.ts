@@ -163,7 +163,7 @@ export function negotiateTools(
           bot,
           wantId,
           listing,
-          mandate: toMandate(i.mandate, r?.appraisal.currency ?? "PLN", neg.clock()),
+          mandate: toMandate(i.mandate, r?.appraisal.currency ?? listing.currency, neg.clock()),
           appraisal: r?.appraisal ?? null,
           status: "awaiting_mandate",
           conversationId:
@@ -208,7 +208,7 @@ export function negotiateTools(
 
     tool({
       name: "negotiate_send",
-      description: `The only way to message a seller: a desktop task types exactly this text into the negotiation's conversation and sends it, and nothing else. Put the price you offer in \`offer\`; set \`agree\` only when this message accepts a price, with that price in \`offer\`; put what it claims about our side in \`stated\`. Inside the mandate it goes on its own; an amount, offer or stated max past the limit, contact details the mandate doesn't allow, a link or an amount in words ask the owner. So write amounts in digits and don't repeat a price past your limit, even the seller's. Nothing goes between 22:00 and 08:00. One paragraph, at most ${MAX_TEXT} characters. You may bluff about our side (a lower max, other offers, urgency, walking away); never misstate the item, claim to have paid or sent anything, fake proof, or pose as the marketplace or a courier.`,
+      description: `The only way to message a seller: a desktop task types exactly this text into the negotiation's conversation and sends it, and nothing else. Put the price you offer in \`offer\`; set \`agree\` when this message accepts a price (biorę, zgoda, deal), with that price in \`offer\` and in the text; put what it claims about our side in \`stated\`. Inside the mandate it goes on its own. These ask the owner: an amount, a total, an offer or a stated max past the limit, agreeing to a seller's price past it, another currency, a way to pay or a delivery the mandate's terms don't name, saying something was paid or sent, contact details the mandate doesn't allow, a link, and an amount in words. So write amounts in digits, name the price you agree to, and don't repeat a price past your limit, even the seller's. Nothing goes between 22:00 and 08:00. One paragraph, at most ${MAX_TEXT} characters. You may bluff about our side (a lower max, other offers, urgency, walking away); never misstate the item, claim to have paid or sent anything, fake proof, or pose as the marketplace or a courier.`,
       schema: z.object({
         negotiation: Id,
         text: z

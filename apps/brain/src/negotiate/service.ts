@@ -404,6 +404,14 @@ export class Negotiations {
           "SELECT id FROM negotiation_messages WHERE negotiation_id = ? AND direction = 'in' AND id > ? LIMIT 1",
         )
         .get(n.id, last.id);
+    const seller = this.d.db
+      .query<{ text: string; after: number }, [number, number]>(
+        `SELECT text, id > ? AS after FROM negotiation_messages
+         WHERE negotiation_id = ? AND direction = 'in' ORDER BY id DESC LIMIT 20`,
+      )
+      .all(last?.id ?? 0, n.id)
+      .reverse()
+      .map((r) => ({ text: r.text, after: r.after === 1 }));
     return {
       now,
       hour: new Date(now).getHours(),
@@ -411,6 +419,7 @@ export class Negotiations {
       starts,
       startedToday,
       unansweredSince: last && !answered ? Date.parse(last.at) : null,
+      seller,
     };
   }
 

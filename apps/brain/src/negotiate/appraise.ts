@@ -11,6 +11,8 @@ export type ListingFacts = {
   title: string;
   url: string;
   asking: number | null;
+  /** The asking price's currency: Scout's, or PLN when it doesn't say. */
+  currency: string;
   /** Scout's typical price for the watch it was found by, if any. */
   typical: number | null;
   watchId: string | null;
@@ -20,8 +22,6 @@ export type ListingFacts = {
   /** Its price over time, oldest first. */
   history: { price: number; at: string }[];
 };
-
-const CURRENCY = "PLN";
 
 /** A Scout tool among a bot's tools, by name suffix: mcp_<server>_scout_listing_detail. */
 export const scoutTool = (tools: PluginTool[], name: string) =>
@@ -39,6 +39,11 @@ const num = (v: unknown): number | null =>
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
 const obj = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+/** A currency as a code: "zł" is PLN, and PLN when Scout doesn't say. */
+const currencyOf = (c: string | null) => {
+  const code = (c ?? "PLN").trim().toUpperCase();
+  return code === "ZŁ" || code === "ZL" ? "PLN" : code;
+};
 
 /** Calls a Scout tool and reads its JSON. It must only read: set to Chat in Settings. */
 async function call(
@@ -88,6 +93,7 @@ export async function listingFacts(
     title: str(l.title) ?? str(obj(d.descriptionSnapshot).title) ?? key,
     url,
     asking: num(l.price) ?? num(obj(d.descriptionSnapshot).price),
+    currency: currencyOf(str(l.currency) ?? str(obj(d.descriptionSnapshot).currency)),
     typical: num(l.typical),
     watchId: str(l.watchId),
     negotiable: typeof l.priceNegotiable === "boolean" ? l.priceNegotiable : null,
@@ -103,7 +109,8 @@ export function roundPrice(x: number, dir: "down" | "near" = "near"): number {
   return Math.max(step, f(x / step) * step);
 }
 
-const zl = (n: number) => `${Math.round(n).toLocaleString("en-GB")} zł`;
+const zl = (n: number, currency = "PLN") =>
+  `${Math.round(n).toLocaleString("en-GB")} ${currency === "PLN" ? "zł" : currency}`;
 
 /**
  * Appraises a listing for buying. It prefers Scout's price reference and comparables; until Scout has
@@ -217,7 +224,9 @@ export async function appraise(
   const first = listing.history[0];
   const last = listing.history.at(-1);
   if (first && last && last.price < first.price)
-    notes.push(`the price dropped from ${zl(first.price)} to ${zl(last.price)}`);
+    notes.push(
+      `the price dropped from ${zl(first.price, listing.currency)} to ${zl(last.price, listing.currency)}`,
+    );
   if (listing.listedAt) {
     const days = Math.floor((now.getTime() - Date.parse(listing.listedAt)) / 86_400_000);
     if (days >= 0) notes.push(`listed ${days} day${days === 1 ? "" : "s"} ago`);
@@ -228,7 +237,7 @@ export async function appraise(
   return {
     listing,
     appraisal: {
-      currency: CURRENCY,
+      currency: listing.currency,
       asking,
       opening,
       target,
@@ -244,12 +253,13 @@ export async function appraise(
 export function appraisalText(l: ListingFacts, a: Appraisal): string {
   const lines = [
     `${l.title} (${l.key}) ${l.url}`,
-    `Asking ${a.asking !== null ? zl(a.asking) : "unknown"}.`,
-    `Open at ${zl(a.opening)}, aim for ${zl(a.target)}, walk away above ${zl(a.walkAway)}.`,
+    `Asking ${a.asking !== null ? zl(a.asking, a.currency) : "unknown"}.`,
+    `Open at ${zl(a.opening, a.currency)}, aim for ${zl(a.target, a.currency)}, walk away above ${zl(a.walkAway, a.currency)}.`,
     `Basis: ${a.basis}`,
     "Rests on:",
     ...a.sources.map(
-      (s) => `- ${s.label}: ${s.price !== null ? zl(s.price) : "?"}${s.url ? ` ${s.url}` : ""}`,
+      (s) =>
+        `- ${s.label}: ${s.price !== null ? zl(s.price, a.currency) : "?"}${s.url ? ` ${s.url}` : ""}`,
     ),
   ];
   return lines.join("\n");

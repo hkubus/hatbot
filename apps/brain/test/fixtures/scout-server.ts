@@ -23,6 +23,15 @@ const LISTINGS: Record<string, Record<string, unknown>> = {
     priceNegotiable: true,
     postedAt: "2026-10-01T10:00:00Z",
   },
+  // A cross-border listing, priced in euro.
+  "Vinted:2002": {
+    title: "Kurtka Patagonia M",
+    marketplace: "Vinted",
+    price: 300,
+    currency: "EUR",
+    url: "https://www.vinted.pl/items/2002-kurtka-patagonia",
+    postedAt: "2026-10-01T10:00:00Z",
+  },
 };
 
 const server = new McpServer({ name: "scout", version: "1.0.0" });

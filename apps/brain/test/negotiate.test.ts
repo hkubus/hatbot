@@ -91,6 +91,7 @@ function openNegotiation(t: TestApp, over: Partial<Negotiation> = {}): Negotiati
       title: "Karta graficzna RTX 3070 8GB",
       url: LISTING_URL,
       asking: 1500,
+      currency: "PLN",
       typical: null,
       watchId: null,
       negotiable: true,
@@ -204,6 +205,30 @@ test("the appraisal uses Scout's price reference and comparables once they're th
     "scout_price_reference",
     "scout_comparables",
   ]);
+  await t.plugins.stopAll();
+});
+
+test("the appraisal is in the listing's currency when Scout gives one", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
+  await withScout(t, false);
+  const out = await named(negotiateTools(t), "negotiate_appraise").run(
+    { listing: "Vinted:2002" },
+    call(),
+  );
+  expect(out).toContain("Asking 300 EUR.");
+  expect(out).toContain("walk away above 300 EUR.");
+  expect(out).not.toContain("zł");
+  // The mandate is in euro too, so negotiate_send checks euro amounts against it.
+  const started = await runPluginTool(
+    named(negotiateTools(t), "negotiate_start"),
+    {
+      listing: "Vinted:2002",
+      mandate: { opening: 220, target: 260, limit: 290, delivery: "Vinted shipping" },
+    },
+    call(),
+  );
+  expect(started.isError).toBe(false);
+  expect(t.negotiations.list()[0]?.mandate.currency).toBe("EUR");
   await t.plugins.stopAll();
 });
 
@@ -671,6 +696,45 @@ test("the policy reads the pace from the record: ten new conversations a day, tw
   // Tomorrow, the oldest have rolled off.
   t.advance(12 * 3600_000);
   expect(t.negotiations.facts(fresh).startedToday).toBeLessThan(10);
+  await t.plugins.stopAll();
+});
+
+test("an agreement with no price in it is checked against the seller's price on record", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
+  await withScout(t, false);
+  const send = named(negotiateTools(t), "negotiate_send");
+  const n = openNegotiation(t);
+  const message = (direction: "in" | "out", text: string) =>
+    t.db
+      .query(
+        `INSERT INTO negotiation_messages (negotiation_id, direction, text, status, created_at, sent_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        n.id,
+        direction,
+        text,
+        direction === "in" ? "received" : "sent",
+        "2026-10-09T11:00:00.000Z",
+        direction === "in" ? null : "2026-10-09T11:00:00.000Z",
+      );
+  const agree = send.schema.parse({
+    negotiation: n.id,
+    text: "Ok, biorę.",
+    agree: true,
+    offer: 1100,
+  });
+  // Nothing from the seller yet: it agrees to the asking price, 1,500 zł.
+  expect(verdictFor(send, agree, call(), true)).toMatchObject({ action: "ask" });
+  message("in", "Mogę zejść do 1350.");
+  message("out", "Dam 1100.");
+  expect(t.negotiations.facts(n).seller).toEqual([{ text: "Mogę zejść do 1350.", after: false }]);
+  expect(verdictFor(send, agree, call(), true)).toMatchObject({ action: "allow" });
+  message("in", "Nie, 1450 to minimum.");
+  expect(verdictFor(send, agree, call(), true)).toMatchObject({ action: "ask" });
+  // Saying "biorę" without agree can't go at all.
+  const unflagged = send.schema.parse({ negotiation: n.id, text: "Ok, biorę." });
+  expect(verdictFor(send, unflagged, call(), true)).toMatchObject({ action: "block" });
   await t.plugins.stopAll();
 });
 
