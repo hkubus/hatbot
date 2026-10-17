@@ -2,7 +2,7 @@
 // a gate on a switch, or a script or an integration's scene that opens one. Every change to them
 // always asks first.
 import { useState } from "react";
-import { ApiError } from "../api";
+import { errorText } from "../api";
 import { useLeaveGuard } from "../confirm";
 import type { PluginSettingsProps } from ".";
 
@@ -29,7 +29,7 @@ export function HomeAssistantSettings({ config, save }: PluginSettingsProps<Conf
     try {
       await save({ access: ids });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Couldn't save");
+      setError(errorText(err, "Couldn't save"));
     }
     setBusy(false);
   };

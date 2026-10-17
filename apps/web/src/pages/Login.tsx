@@ -1,6 +1,6 @@
 import type { SetupStartResponse } from "@hatbot/shared";
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { ApiError, api } from "../api";
+import { ApiError, api, errorText } from "../api";
 import { Icon } from "../icons";
 import { backspace, pasted, slots, typed } from "../otp";
 
@@ -49,8 +49,6 @@ export function OtpInput({ value, onChange }: { value: string; onChange: (v: str
   );
 }
 
-const message = (err: unknown) => (err instanceof ApiError ? err.message : "Couldn't reach Hatbot");
-
 export function Login({ onDone }: { onDone: () => void }) {
   const [password, setPassword] = useState("");
   const [totp, setTotp] = useState("");
@@ -65,7 +63,7 @@ export function Login({ onDone }: { onDone: () => void }) {
       await api("/auth/login", { body: { password, totp } });
       onDone();
     } catch (err) {
-      setError(message(err));
+      setError(errorText(err, "Couldn't reach Hatbot"));
       setTotp("");
     } finally {
       setBusy(false);
@@ -166,7 +164,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
       setError(
         err instanceof ApiError && err.status === 403
           ? "That setup code isn't right."
-          : message(err),
+          : errorText(err, "Couldn't reach Hatbot"),
       );
     }
   };
@@ -182,7 +180,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
       setError(
         err instanceof ApiError && err.status === 403
           ? "That code didn't match. Try the next one."
-          : message(err),
+          : errorText(err, "Couldn't reach Hatbot"),
       );
       setTotp("");
     }

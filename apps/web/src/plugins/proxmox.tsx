@@ -1,6 +1,6 @@
 // Proxmox's settings: guests where every change asks first (power, and commands and files over SSH).
 import { useState } from "react";
-import { ApiError } from "../api";
+import { errorText } from "../api";
 import { useLeaveGuard } from "../confirm";
 import type { PluginSettingsProps } from ".";
 
@@ -24,7 +24,7 @@ export function ProxmoxSettings({ config, save }: PluginSettingsProps<Config>) {
     try {
       await save({ careful: ids });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Couldn't save");
+      setError(errorText(err, "Couldn't save"));
     }
     setBusy(false);
   };

@@ -8,7 +8,7 @@ import {
   type TaskStatus,
 } from "@hatbot/shared";
 import { useEffect, useState } from "react";
-import { ApiError } from "./api";
+import { errorText } from "./api";
 import { plainText } from "./format";
 import { Icon } from "./icons";
 import { navigate } from "./router";
@@ -171,7 +171,7 @@ export function PendingApproval({
     try {
       await decideApproval(a.id, decision, note);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
+      setError(errorText(err));
       setBusy(false);
     }
   };

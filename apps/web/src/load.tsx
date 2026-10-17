@@ -1,8 +1,7 @@
-import { ApiError } from "./api";
+import { errorText } from "./api";
 
 /** What went wrong loading something, in a few words. */
-export const loadErrorText = (err: unknown) =>
-  err instanceof ApiError ? err.message : "Can't reach Hatbot.";
+export const loadErrorText = (err: unknown) => errorText(err, "Can't reach Hatbot.");
 
 /** A page or list that didn't load: one plain line with Retry. */
 export function LoadError({ error, retry }: { error: string; retry: () => void }) {

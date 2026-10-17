@@ -2,7 +2,7 @@
 // stay in memory while the app is open, uploads carrying on while you're in another chat.
 import type { Attachment } from "@hatbot/shared";
 import { useSyncExternalStore } from "react";
-import { ApiError, upload } from "./api";
+import { errorText, upload } from "./api";
 
 /** Types the page shows as pictures; the rest are links. */
 export const PICTURES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
@@ -91,7 +91,7 @@ export function attachFiles(chat: string, list: FileList | File[]) {
       (err) => {
         if (abort.signal.aborted) return;
         put({
-          error: err instanceof ApiError ? err.message : "Couldn't upload.",
+          error: errorText(err, "Couldn't upload."),
           abort: undefined,
           sent: undefined,
         });

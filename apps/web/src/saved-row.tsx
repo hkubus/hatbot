@@ -1,7 +1,7 @@
 // A Settings row whose field saves when you leave it. It shows the saved value, and a value that
 // can't be saved is never silently kept on screen: it says why and the saved value comes back.
 import { type InputHTMLAttributes, type ReactNode, useEffect, useRef, useState } from "react";
-import { ApiError } from "./api";
+import { errorText } from "./api";
 
 export type Parsed<T> = { value: T } | { error: string };
 
@@ -59,7 +59,7 @@ export function SavedRow<T extends string | number>({
     try {
       await save(r.value);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Couldn't save.");
+      setError(errorText(err, "Couldn't save."));
       setText(String(saved));
     }
   };

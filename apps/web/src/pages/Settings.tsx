@@ -6,7 +6,7 @@ import {
   type UpdateInfo,
 } from "@hatbot/shared";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, api } from "../api";
+import { api, errorText } from "../api";
 import { ask, askText } from "../confirm";
 import { clearDrafts } from "../drafts";
 import { Icon } from "../icons";
@@ -80,9 +80,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
     toast("Saved");
   };
   const update = (patch: Partial<AppSettings>) =>
-    put(patch).catch((err) =>
-      toast(err instanceof ApiError ? err.message : "Couldn't save", "error"),
-    );
+    put(patch).catch((err) => toast(errorText(err, "Couldn't save"), "error"));
 
   const [tokenError, setTokenError] = useState("");
   const [pauseError, setPauseError] = useState("");
@@ -99,7 +97,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
       setNewToken(t);
       setTokens(await api<ApiToken[]>("/tokens"));
     } catch (err) {
-      setTokenError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
+      setTokenError(errorText(err));
     }
   };
 
@@ -113,7 +111,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
       await api(`/tokens/${t.id}`, { method: "DELETE" });
       setTokens(await api<ApiToken[]>("/tokens"));
     } catch (err) {
-      setTokenError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
+      setTokenError(errorText(err));
     }
   };
 
@@ -123,7 +121,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
       await setPaused(!paused);
       toast(paused ? "Resumed" : "All activity paused");
     } catch (err) {
-      setPauseError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
+      setPauseError(errorText(err));
     }
   };
 
@@ -553,7 +551,7 @@ function RollbackRow({ toast }: { toast: Toast }) {
       },
       (err) => {
         setSnaps([]);
-        setError(err instanceof ApiError ? err.message : "Couldn't reach Proxmox");
+        setError(errorText(err, "Couldn't reach Proxmox"));
       },
     );
   }, []);
@@ -574,7 +572,7 @@ function RollbackRow({ toast }: { toast: Toast }) {
       await api("/desktop/rollback", { body: { name: snap.name } });
       toast("Desktop rolled back");
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Couldn't roll back", "error");
+      toast(errorText(err, "Couldn't roll back"), "error");
     } finally {
       setBusy(false);
     }
@@ -675,7 +673,7 @@ function UpdateGroup({ toast }: { toast: Toast }) {
     } catch (err) {
       watching.current = null;
       setBusy(false);
-      setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot");
+      setError(errorText(err, "Couldn't reach Hatbot"));
     }
   };
   const step = info.status?.state === "running" ? info.status.step : "Starting";

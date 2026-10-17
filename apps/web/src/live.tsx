@@ -3,7 +3,7 @@
 import { API_PREFIX, latestNoteOnly, type TaskStep } from "@hatbot/shared";
 import type { LiveInput } from "@hatbot/shared/desktop";
 import { useEffect, useRef, useState } from "react";
-import { ApiError } from "./api";
+import { errorText } from "./api";
 import { ask } from "./confirm";
 import { plainText } from "./format";
 import { Held } from "./held";
@@ -322,7 +322,7 @@ export function LiveView({ taskId }: { taskId?: number }) {
   const control = desktop?.control === "owner";
   const run = (fn: () => Promise<void>) => {
     setError("");
-    fn().catch((err) => setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot."));
+    fn().catch((err) => setError(errorText(err)));
   };
   // Before control goes back: after it, the brain no longer passes your input on.
   const giveBack = (fn: () => Promise<void>) =>

@@ -1,7 +1,7 @@
 // A bot's page (PLAN.md §14): its name, role, model and plugins. "new" makes one, from a template or not.
 import { BOT_COLORS, BOT_ICONS, BOT_TEMPLATES, type Bot, HATBOT_ID } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
-import { ApiError } from "../api";
+import { errorText } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm, toggled, useStoredForm } from "../form";
 import { BotMark, Icon } from "../icons";
@@ -30,9 +30,6 @@ const EMPTY: Form = {
   chatEffort: null,
   plugins: null,
 };
-
-const errorText = (err: unknown) =>
-  err instanceof ApiError ? err.message : "Couldn't reach Hatbot.";
 
 const formOf = (b: Form): Form => ({
   name: b.name,

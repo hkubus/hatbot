@@ -1,13 +1,10 @@
 // Settings → Check everything: tries each part Hatbot depends on, and a test approval for the phone.
 import type { Approval, CheckReport, CheckState, ChecksInfo } from "@hatbot/shared";
 import { useEffect, useState } from "react";
-import { ApiError, api } from "../api";
+import { api, errorText } from "../api";
 import { Icon } from "../icons";
 import { navigate } from "../router";
 import { useStore } from "../store";
-
-const errorText = (err: unknown) =>
-  err instanceof ApiError ? err.message : "Couldn't reach Hatbot.";
 
 const CHIP: Record<CheckState, { label: string; className: string }> = {
   ok: { label: "OK", className: "chip ok" },

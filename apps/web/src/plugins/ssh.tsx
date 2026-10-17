@@ -1,6 +1,6 @@
 // SSH's settings: the brain's public key to install, the hosts Hatbot may reach, and their pinned keys.
 import { useEffect, useState } from "react";
-import { ApiError } from "../api";
+import { errorText } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { Icon } from "../icons";
 import { Switch } from "../switch";
@@ -25,8 +25,6 @@ const blank = (): Host => ({
   careful: false,
   proxmox: false,
 });
-const errorText = (err: unknown) =>
-  err instanceof ApiError ? err.message : "Couldn't reach Hatbot.";
 
 export function SshSettings({ config, save, action, running }: PluginSettingsProps<Config>) {
   const [hosts, setHosts] = useState<Host[]>(config.hosts);

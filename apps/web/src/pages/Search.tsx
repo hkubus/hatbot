@@ -1,16 +1,15 @@
 // Search: chats, tasks, memory, and schedules, triggers and watchers, as you type.
 import { MATCH_END, MATCH_START, type SearchResults } from "@hatbot/shared";
 import { Fragment, useEffect, useRef, useState } from "react";
-import { ApiError, api } from "../api";
+import { api, errorText } from "../api";
 import { plainText } from "../format";
 import { Icon } from "../icons";
 import { navigate } from "../router";
-import { botName, chatName, getState, HATBOT_CHAT, useStore } from "../store";
+import { botName, chatName, chatPath, getState, useStore } from "../store";
 import { StatusChip } from "../tasks";
 
 const ROUTINE = { schedule: "/schedules", trigger: "/triggers", watcher: "/watchers" } as const;
 
-const chatPath = (id: number) => (id === HATBOT_CHAT ? "/" : `/chat/${id}`);
 const day = (iso: string) =>
   new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
@@ -59,7 +58,7 @@ export function Search({ query }: { query: string }) {
           // An answer to what you typed before arrives late: the newer one wins.
           if (r.query === latest.current) setResults(r);
         },
-        (err) => setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot."),
+        (err) => setError(errorText(err)),
       );
     }, 200);
     return () => clearTimeout(timer);

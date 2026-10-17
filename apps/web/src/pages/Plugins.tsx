@@ -2,16 +2,13 @@
 // settings and Test button.
 import type { PluginInfo } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, api } from "../api";
+import { api, errorText } from "../api";
 import { NoForm } from "../form";
 import { Icon } from "../icons";
 import { PLUGIN_SETTINGS } from "../plugins";
 import { navigate } from "../router";
 import { loadPlugins, savePlugin, useStore } from "../store";
 import { Switch } from "../switch";
-
-const errorText = (err: unknown) =>
-  err instanceof ApiError ? err.message : "Couldn't reach Hatbot.";
 
 const STATE: Record<PluginInfo["state"], string> = {
   off: "Off",

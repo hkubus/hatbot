@@ -11,14 +11,14 @@ import {
   type WatchSource,
 } from "@hatbot/shared";
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, errorText } from "../api";
+import { BotPicker, Runs, stamp, useListed } from "../automations";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm, useStoredForm } from "../form";
 import { Icon } from "../icons";
 import { navigate } from "../router";
 import { loadPlugins, putWatcher, useStore } from "../store";
 import { Switch } from "../switch";
-import { BotPicker, errorText, Runs, stamp, useListed } from "./Schedules";
 
 const EVERY = [5, 15, 30, 60, 180, 360, 720, 1440];
 const WHEN: { when: WatchCondition["when"]; label: string }[] = [
