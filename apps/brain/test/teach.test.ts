@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import type { TeachSession } from "@hatbot/shared";
 import type { LiveInput } from "@hatbot/shared/desktop";
 import { TEACH_PROMPT } from "../src/agent/prompt";
+import { HATBOT } from "../src/memory/store";
 import { describeSteps, Recorder } from "../src/teach/recorder";
 import { describeSkill, withSkillsSection } from "../src/teach/skills";
 import { FakeModel, text, toolUse } from "./fake-model";
@@ -156,6 +157,35 @@ test("INDEX.md keeps one Skills section, in place", () => {
   expect(describeSkill("# Water plants\n\n## When to use\n- Every Sunday.\n")).toBe(
     "Every Sunday.",
   );
+});
+
+test("INDEX.md's Skills section follows the files in skills/, however they changed", async () => {
+  const t = await testApp();
+  // Written as a plain file, and the skills list never heard of it.
+  await t.memory.write(
+    "skills/pay-rent.md",
+    "---\ndescription: Pay the rent\n---\n# Pay rent\n",
+    HATBOT,
+    "Add",
+  );
+  expect(t.skills.list()).toEqual([]);
+  await t.skills.save("order-pizza", "---\ndescription: Order pizza\n---\n# Order pizza\n", HATBOT);
+  const index = await t.memory.read("INDEX.md");
+  expect(index).toContain(
+    "## Skills\n\n- skills/order-pizza.md: Order pizza\n- skills/pay-rent.md: Pay the rent\n",
+  );
+
+  // Deleted as a plain file: the next refresh takes it out, in a commit of its own.
+  await t.memory.delete("skills/pay-rent.md", HATBOT, "Remove");
+  await t.skills.refresh();
+  expect(await t.memory.read("INDEX.md")).not.toContain("pay-rent");
+  const [last] = await t.memory.log(1);
+  expect(last).toMatchObject({ message: "List the skills in INDEX.md", files: ["INDEX.md"] });
+  expect(t.events.some((e) => e.type === "memory.committed" && e.sha === last?.sha)).toBe(true);
+  await waitFor(async () => (await t.memory.log(1))[0]?.sha === last?.sha);
+  // When it lists them already: no commit.
+  await t.skills.refresh();
+  expect((await t.memory.log(1))[0]?.sha).toBe(last?.sha);
 });
 
 /** A test app whose task model writes SKILL when asked to draft. */
