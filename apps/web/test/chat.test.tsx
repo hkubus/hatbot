@@ -3,10 +3,43 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { installDom, settle } from "./dom";
 
 installDom();
-const { AssistantBody, appPath, Composer, dayLabel, fileDrops, follows } = await import(
+const { AssistantBody, appPath, Composer, dayLabel, fileDrops, follows, spoken } = await import(
   "../src/pages/Chat"
 );
 const drafts = await import("../src/drafts");
+
+test("the composer says it has a menu, and which line in it is picked", () => {
+  const html = (draft: string) => {
+    drafts.saveDraftText("7", draft);
+    return renderToStaticMarkup(<Composer chat="7" onSend={() => {}} />);
+  };
+  const open = html("/");
+  const box = /<textarea[^>]*>/.exec(open)?.[0] ?? "";
+  expect(box).toContain('role="combobox"');
+  expect(box).toContain('aria-expanded="true"');
+  expect(box).toContain('aria-autocomplete="list"');
+  const menu = /aria-controls="([^"]+)"/.exec(box)?.[1];
+  const picked = /aria-activedescendant="([^"]+)"/.exec(box)?.[1];
+  expect(open).toContain(`role="listbox" id="${menu}"`);
+  expect(open).toMatch(
+    new RegExp(`id="${picked}"[^>]*role="option"[^>]*tabindex="-1"[^>]*aria-selected="true"`),
+  );
+  const closed = /<textarea[^>]*>/.exec(html("hello"))?.[0] ?? "";
+  expect(closed).toContain('aria-expanded="false"');
+  expect(closed).not.toContain("aria-activedescendant");
+  drafts.saveDraftText("7", "");
+});
+
+test("a finished reply is said without Markdown's marks", () => {
+  const reply = { text: "**Done.** The `backup` ran:\n\n# Result\n\n- ok" } as Parameters<
+    typeof spoken
+  >[0];
+  expect(spoken(reply, "Sysadmin")).toBe("Sysadmin: Done. The backup ran: Result - ok");
+  expect(spoken({ ...reply, text: "x".repeat(500) }, "Hatbot")).toHaveLength(
+    "Hatbot: ".length + 400,
+  );
+  expect(spoken({ ...reply, text: "" }, "Hatbot")).toBe("");
+});
 
 /** The upload's other end, driven by the test. */
 class FakeXhr {

@@ -14,6 +14,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -878,6 +879,11 @@ export function Chat({ id }: { id: number }) {
   // Only the latest reply can be tried again, and only if it errored.
   const lastReply = messages.findLast((m) => m.role === "assistant" && m.kind !== "command");
   const retryableId = lastReply?.status === "error" ? lastReply.id : 0;
+  // A screen reader hears each new reply once it's finished, not every streamed word.
+  const said =
+    lastReply && lastReply.status !== "streaming" && lastReply.id >= animateFrom.current
+      ? spoken(lastReply, botName(getState(), lastReply.botId))
+      : "";
 
   let lastDay = "";
   const now = new Date();
@@ -1018,8 +1024,21 @@ export function Chat({ id }: { id: number }) {
         )}
         <Composer key={chatKey} chat={chatKey} onSend={onSend} />
       </div>
+      <div className="sr-only" aria-live="polite">
+        {said}
+      </div>
     </>
   );
+}
+
+/** A reply as a screen reader says it: who, then its text without Markdown's marks, cut short. */
+export function spoken(m: ThreadMessage, name: string): string {
+  const text = m.text
+    .replace(/[*_`#>|~]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return "";
+  return `${name}: ${text.length > 400 ? `${text.slice(0, 399)}…` : text}`;
 }
 
 /** A group's bots, for the names above their messages and @ in the composer. */
@@ -1057,6 +1076,7 @@ export function Composer({ chat, onSend }: { chat: string; onSend: () => void })
   const [sending, setSending] = useState(false);
   // A send whose answer never came: the same message sent again keeps its id, so it's posted once.
   const unsure = useRef<{ what: string; clientId: string } | null>(null);
+  const menuId = useId();
   const [error, setError] = useState("");
   const textarea = useRef<HTMLTextAreaElement>(null);
   // While a reply streams, an empty composer's button stops it.
@@ -1172,12 +1192,15 @@ export function Composer({ chat, onSend }: { chat: string; onSend: () => void })
         </div>
       )}
       {options.length > 0 && (
-        <div className="command-menu" role="listbox">
+        <div className="command-menu" role="listbox" id={menuId} aria-label="Suggestions">
           {options.map((o) => (
             <button
               key={o.key}
+              id={`${menuId}-${o.key}`}
               type="button"
               role="option"
+              // The composer keeps the focus and says which is picked.
+              tabIndex={-1}
               aria-selected={o === picked}
               className={o === picked ? "on" : ""}
               // Keeps the focus in the composer.
@@ -1238,6 +1261,13 @@ export function Composer({ chat, onSend }: { chat: string; onSend: () => void })
         <textarea
           ref={textarea}
           rows={1}
+          // The menu over it: commands after "/", a group's bots after "@".
+          role="combobox"
+          aria-label={`Message ${name}`}
+          aria-autocomplete="list"
+          aria-expanded={options.length > 0}
+          aria-controls={options.length > 0 ? menuId : undefined}
+          aria-activedescendant={picked ? `${menuId}-${picked.key}` : undefined}
           placeholder={incognito ? `Message ${name} incognito…` : `Message ${name}…`}
           value={draft}
           onChange={(e) => {

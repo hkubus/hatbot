@@ -994,6 +994,11 @@ html[data-theme="dark"] .seg button.active {
   background: var(--surface);
   border: 0.5px solid var(--line-strong);
 }
+/* The box itself shows where the focus is: its field has no outline of its own. */
+.composer:has(textarea:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 1px;
+}
 .composer textarea {
   flex: 1;
   font-family: var(--font-text);
