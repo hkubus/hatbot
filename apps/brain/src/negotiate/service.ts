@@ -30,7 +30,7 @@ import type { Tasks } from "../tasks/service";
 import { type ListingFacts, parseKey, scoutTool } from "./appraise";
 import { collapse, type SendGate, sameAddress, sameHost } from "./gate";
 import { applyNote, mandateReason, mandateSummary, mandateTerms } from "./mandate";
-import { QUIET_HOURS, type SendFacts } from "./policy";
+import { QUIET_HOURS, type SendFacts, type SendInput } from "./policy";
 import { negotiateTools } from "./tools";
 
 export type NegotiationsDeps = {
@@ -121,6 +121,8 @@ export const MAX_TEXT = 1000;
 
 export class Negotiations {
   readonly clock: () => number;
+  /** Mandate approvals whose decision is being applied now. */
+  private applying = new Set<number>();
 
   constructor(readonly d: NegotiationsDeps) {
     this.clock = d.clock ?? Date.now;
@@ -426,12 +428,23 @@ export class Negotiations {
    * one, and a task sends the opening message. Denied or cancelled: abandoned. Unanswered: expired.
    */
   async mandateDecided(a: Approval) {
+    if (this.applying.has(a.id)) return;
     const r = this.d.db
       .query<Row, [number]>(`${SELECT} WHERE n.approval_id = ? AND n.status = 'awaiting_mandate'`)
       .get(a.id);
     if (!r) return;
     const n = this.toNegotiation(r);
     if (a.status === "pending") return;
+    // The event and the minute tick can both bring it while Haiku applies the note.
+    this.applying.add(a.id);
+    try {
+      await this.applyDecision(n, a);
+    } finally {
+      this.applying.delete(a.id);
+    }
+  }
+
+  private async applyDecision(n: Negotiation, a: Approval) {
     if (a.status !== "approved") {
       this.update(n.id, {
         status: a.status === "expired" ? "expired" : "abandoned",
@@ -541,24 +554,13 @@ export class Negotiations {
    */
   async send(
     n: Negotiation,
-    input: { text: string; offer: number | null; agree: boolean; stated: Stated | null },
+    input: SendInput,
     call: CallContext,
+    /** A message claimed for it already. */
+    claimed: number | null = null,
   ): Promise<string> {
     const text = collapse(input.text);
-    const msg = this.d.db
-      .query<{ id: number }, (string | number | null)[]>(
-        `INSERT INTO negotiation_messages (negotiation_id, direction, text, offer, agree, stated, status, created_at)
-         VALUES (?, 'out', ?, ?, ?, ?, 'sending', ?) RETURNING id`,
-      )
-      .get(
-        n.id,
-        text,
-        input.offer,
-        input.agree ? 1 : 0,
-        input.stated ? JSON.stringify(input.stated) : null,
-        this.now(),
-      )?.id;
-    if (!msg) throw new Error("message insert failed");
+    const msg = claimed ?? this.claimSend(n, input);
     const task = this.desktopTask(n, call, {
       title: `Message the seller: ${n.title}`.slice(0, 80),
       goal: sendGoal(n, text),
@@ -570,6 +572,33 @@ export class Negotiations {
       return `Sending it in desktop task #${task.id}, which shows under your reply. You'll hear how it went.`;
     const ended = await call.waitForTask(task.id);
     return this.sendOutcome(n.id, msg, ended);
+  }
+
+  /**
+   * Records a message as being sent, which blocks a second send in the negotiation from here on: call it
+   * right after the policy, before anything waits.
+   */
+  claimSend(n: Negotiation, input: SendInput): number {
+    const msg = this.d.db
+      .query<{ id: number }, (string | number | null)[]>(
+        `INSERT INTO negotiation_messages (negotiation_id, direction, text, offer, agree, stated, status, created_at)
+         VALUES (?, 'out', ?, ?, ?, ?, 'sending', ?) RETURNING id`,
+      )
+      .get(
+        n.id,
+        collapse(input.text),
+        input.offer,
+        input.agree ? 1 : 0,
+        input.stated ? JSON.stringify(input.stated) : null,
+        this.now(),
+      )?.id;
+    if (!msg) throw new Error("message insert failed");
+    return msg;
+  }
+
+  /** A claimed message that never got as far as its task. */
+  dropSend(messageId: number) {
+    this.setStatus(messageId, "failed");
   }
 
   /** Starts the desktop task that reads the conversation and records the seller's messages. */

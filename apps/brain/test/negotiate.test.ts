@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Mandate, Negotiation, NegotiationDetail } from "@hatbot/shared";
+import type { Approval, Mandate, Negotiation, NegotiationDetail } from "@hatbot/shared";
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { Approvals } from "../src/approvals";
 import { EventBus } from "../src/events";
@@ -454,6 +454,65 @@ test("a note on the mandate changes its numbers; one Haiku can't apply asks agai
   await t.tasks.idle();
 });
 
+test("a mandate approval with a note is applied once, however often it's seen", async () => {
+  const work = new FakeModel();
+  let asked = 0;
+  work.onCreate = (p) => {
+    if (p.tool_choice?.type !== "tool") return '{"suspected": false, "excerpt": ""}';
+    asked++;
+    return '{"opening": 1000, "target": 1150, "limit": 1300, "delivery": "OLX delivery with buyer protection", "expires_in_days": 7, "allow": []}';
+  };
+  work.script.push({
+    content: [toolUse("finish_task", { outcome: "done", summary: "Later.", notify: false })],
+  });
+  const t = await testApp(new FakeModel(), work);
+  const n = openNegotiation(t);
+  t.negotiations.update(n.id, { status: "awaiting_mandate" });
+  const a = t.negotiations.askMandate(t.negotiations.get(n.id) as Negotiation);
+  t.approvals.decide(a.id, "approve", "web", "Max 1300.");
+  // The minute tick sees it too while Haiku is still applying the note.
+  t.negotiations.due();
+  await t.negotiations.mandateDecided(t.approvals.get(a.id) as Approval);
+  await waitFor(() => t.negotiations.get(n.id)?.status === "open");
+  await t.tasks.idle();
+  expect(asked).toBe(1);
+  expect(t.tasks.list()).toHaveLength(1);
+  expect(t.approvals.list(true)).toEqual([]);
+});
+
+test("two sends at once: the second is blocked; one the desktop can't take is marked failed", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
+  await withScout(t, false);
+  messageBox(t);
+  const n = openNegotiation(t);
+  // Another task has the screen, so neither send's task runs.
+  await t.tasks.lane.acquire(-5, new AbortController().signal);
+  const send = named(negotiateTools(t), "negotiate_send");
+  const input = send.schema.parse({ negotiation: n.id, text: TEXT, offer: 1060 });
+  const both = await Promise.all([
+    runPluginTool(send, input, call()),
+    runPluginTool(send, input, call()),
+  ]);
+  expect(both.map((r) => r.isError)).toEqual([false, true]);
+  expect(both[1]?.content).toContain("is being sent already");
+  expect(t.negotiations.messages(n.id).map((m) => m.status)).toEqual(["sending"]);
+  await t.negotiations.close(t.bots.hatbot().id, n, "abandoned", null, null);
+  t.tasks.lane.release(-5);
+  await t.tasks.idle();
+
+  const m = openNegotiation(t);
+  t.agent.health = { features: ["profiles", "exec", "files"] };
+  const old = await runPluginTool(
+    send,
+    send.schema.parse({ negotiation: m.id, text: TEXT, offer: 1060 }),
+    call(),
+  );
+  expect(old.content).toContain("run Update first");
+  expect(t.negotiations.messages(m.id).map((x) => x.status)).toEqual(["failed"]);
+  expect(t.negotiations.inFlight(m.id)).toBeNull();
+  await t.plugins.stopAll();
+});
+
 test("a mandate waiting for you outlasts a restart; a task's approval doesn't", async () => {
   const t = await testApp();
   const n = openNegotiation(t);
@@ -574,11 +633,16 @@ test("closing writes the bot's notes; agreeing outside the mandate asks", async 
   expect(notes).toContain("Took 1300 after two rounds.");
   expect(verdictFor(close, within, call(), true)).toMatchObject({ action: "block" });
 
-  // Closing one that waits for its mandate withdraws the approval.
+  // Closing one that waits for its mandate withdraws the approval; nothing can be agreed yet.
   const waiting = openNegotiation(t);
   t.db.query("UPDATE negotiations SET listing_key = 'OLX:1003' WHERE id = ?").run(waiting.id);
   t.negotiations.update(waiting.id, { status: "awaiting_mandate" });
   const a = t.negotiations.askMandate(t.negotiations.get(waiting.id) as Negotiation);
+  const early = close.schema.parse({ negotiation: waiting.id, outcome: "agreed", price: 1100 });
+  expect(verdictFor(close, early, call(), true)).toMatchObject({
+    action: "block",
+    why: "Its mandate isn't approved yet, so nothing can have been agreed. Close it as lost or abandoned.",
+  });
   await runPluginTool(close, { negotiation: waiting.id, outcome: "abandoned" }, call());
   expect(t.approvals.get(a.id)?.status).toBe("cancelled");
   expect(t.negotiations.get(waiting.id)?.status).toBe("abandoned");

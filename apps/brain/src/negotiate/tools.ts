@@ -236,11 +236,19 @@ export function negotiateTools(
       },
       run: async (i, call) => {
         const n = neg.mine(bot, i.negotiation);
+        const input = toSend(i);
         // Again, since an approval may have taken hours: quiet hours and the pace still hold.
-        const v = sendPolicy(n, toSend(i), neg.facts(n));
+        const v = sendPolicy(n, input, neg.facts(n));
         if (v.action === "block") throw new PluginError(v.why);
-        await neg.desktopReady();
-        return neg.send(n, toSend(i), call);
+        // In flight from here, before anything waits, so a second send at once is blocked.
+        const msg = neg.claimSend(n, input);
+        try {
+          await neg.desktopReady();
+        } catch (err) {
+          neg.dropSend(msg);
+          throw err;
+        }
+        return neg.send(n, input, call, msg);
       },
     }),
 
@@ -258,9 +266,10 @@ export function negotiateTools(
       policy: () => covered("It only reads the conversation"),
       run: async ({ negotiation }, call) => {
         const n = neg.mine(bot, negotiation);
+        await neg.desktopReady();
+        // After the wait, so the check and the task's record go together.
         const busy = neg.checking(n.id) ?? neg.inFlight(n.id)?.taskId;
         if (busy) throw new PluginError(`Desktop task #${busy} is in that conversation already.`);
-        await neg.desktopReady();
         return neg.check(n, call);
       },
     }),
@@ -285,6 +294,10 @@ export function negotiateTools(
         if (!n || n.botId !== bot.id) return block(`There's no negotiation #${i.negotiation}.`);
         if (n.status !== "open" && n.status !== "awaiting_mandate")
           return block(`Negotiation #${n.id} is ${n.status} already.`);
+        if (n.status === "awaiting_mandate" && i.outcome === "agreed")
+          return block(
+            "Its mandate isn't approved yet, so nothing can have been agreed. Close it as lost or abandoned.",
+          );
         if (i.outcome !== "agreed") return covered("Ending it sends nothing");
         if (i.price === undefined) return block("Give the agreed price.");
         const outside = n.role === "buy" ? i.price > n.mandate.limit : i.price < n.mandate.limit;
