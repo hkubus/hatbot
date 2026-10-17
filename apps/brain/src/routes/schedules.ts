@@ -189,7 +189,7 @@ export const hookRoutes = new Hono<AppEnv>()
       id(c),
       new TextDecoder().decode(bytes),
       check.replay,
-      check.key,
+      check.keys,
     );
     console.log(
       `${hook}: ${r.status === "started" ? `started task #${r.task.id}` : `skipped (${r.status === "skipped" ? r.reason : r.status})`}`,

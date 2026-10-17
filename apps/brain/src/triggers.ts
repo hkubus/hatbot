@@ -222,11 +222,13 @@ export class Triggers {
       want = mac(body);
     }
     if (!sig || !same(sig.toLowerCase(), want)) return { ok: false as const };
-    // A forge's delivery id names the delivery, so two with the same body are both run; without one,
-    // the same signed body again is the replay.
+    // The same signed body again is a replay. A forge's delivery id isn't signed, so it can't make a
+    // body new; it also catches a forge sending one delivery again. Real events differ in their own
+    // ids and times, so two never share a body.
     const delivery = DELIVERY_HEADERS.map(header).find(Boolean);
-    const key = delivery ? `${id}:delivery:${delivery.slice(0, 200)}` : `${id}:mac:${want}`;
-    return { ok: true as const, replay: this.seen(key), key };
+    const keys = [`${id}:mac:${want}`];
+    if (delivery) keys.push(`${id}:delivery:${delivery.slice(0, 200)}`);
+    return { ok: true as const, replay: keys.some((k) => this.seen(k)), keys };
   }
 
   /** Uptime Kuma can't sign; it sends `Authorization: Bearer <secret>` from its Additional Headers. */
@@ -240,12 +242,12 @@ export class Triggers {
    * A verified generic webhook: starts its run with the body as the payload. Only a delivery that
    * started one is remembered as seen, so one skipped while paused or off can be delivered again.
    */
-  receiveWebhook(id: number, body: string, replay: boolean, key?: string): Received {
+  receiveWebhook(id: number, body: string, replay: boolean, keys: string[] = []): Received {
     const t = this.get(id);
     if (!t) return { status: "skipped", reason: "disabled" };
     if (replay) return { status: "skipped", reason: "duplicate" };
     const r = this.startWebhook(t, body);
-    if (r.status === "started" && key) this.remember(key);
+    if (r.status === "started") for (const key of keys) this.remember(key);
     return r;
   }
 
