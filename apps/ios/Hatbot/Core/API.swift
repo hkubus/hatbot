@@ -8,6 +8,8 @@ import Foundation
 struct APIError: LocalizedError, Sendable {
   let status: Int
   let message: String
+  /// The answer's body, for errors that say more than a message (a memory conflict's newer copy).
+  var body = Data()
   var errorDescription: String? { message }
 }
 
@@ -189,6 +191,6 @@ final class API: Sendable {
     guard !(200..<300).contains(http.statusCode) else { return }
     if http.statusCode == 401 && !path.hasPrefix("/auth/") { onUnauthorized() }
     let message = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
-    throw APIError(status: http.statusCode, message: message ?? "HTTP \(http.statusCode)")
+    throw APIError(status: http.statusCode, message: message ?? "HTTP \(http.statusCode)", body: data)
   }
 }

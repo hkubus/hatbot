@@ -929,11 +929,21 @@ final class SlowBrain: URLProtocol, @unchecked Sendable {
   nonisolated(unsafe) static var routes: [String: String] = [:]
   /// Paths that answer more slowly than `delay`.
   nonisolated(unsafe) static var slower: [String: TimeInterval] = [:]
+  /// Paths that answer with another status than 200.
+  nonisolated(unsafe) static var statuses: [String: Int] = [:]
   private static let lock = NSLock()
   nonisolated(unsafe) private static var paths: [String] = []
+  nonisolated(unsafe) private static var bodies: [String: Data] = [:]
 
   static var requested: [String] { lock.withLock { paths } }
-  static func reset() { lock.withLock { paths = [] } }
+  /// The last body sent to a path.
+  static func sent(_ path: String) -> Data? { lock.withLock { bodies[path] } }
+  static func reset() {
+    lock.withLock {
+      paths = []
+      bodies = [:]
+    }
+  }
 
   override class func canInit(with request: URLRequest) -> Bool { true }
   override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -941,11 +951,16 @@ final class SlowBrain: URLProtocol, @unchecked Sendable {
   override func startLoading() {
     let url = request.url!
     let path = url.path.replacingOccurrences(of: API.prefix, with: "") + (url.query.map { "?\($0)" } ?? "")
-    Self.lock.withLock { Self.paths.append("\(request.httpMethod ?? "GET") \(path)") }
+    let sent = Self.body(of: request)
+    Self.lock.withLock {
+      Self.paths.append("\(request.httpMethod ?? "GET") \(path)")
+      if let sent { Self.bodies[path] = sent }
+    }
     let body = Self.routes[path]
+    let status = body == nil ? 404 : Self.statuses[path] ?? 200
     DispatchQueue.global().asyncAfter(deadline: .now() + (Self.slower[path] ?? Self.delay)) { [self] in
       let res = HTTPURLResponse(
-        url: url, statusCode: body == nil ? 404 : 200, httpVersion: "HTTP/1.1",
+        url: url, statusCode: status, httpVersion: "HTTP/1.1",
         headerFields: ["Content-Type": "application/json"])!
       client?.urlProtocol(self, didReceive: res, cacheStoragePolicy: .notAllowed)
       client?.urlProtocol(self, didLoad: Data((body ?? #"{"error":"not found"}"#).utf8))
@@ -954,6 +969,22 @@ final class SlowBrain: URLProtocol, @unchecked Sendable {
   }
 
   override func stopLoading() {}
+
+  /// What was sent: URLSession hands a protocol the body as a stream.
+  private static func body(of request: URLRequest) -> Data? {
+    if let data = request.httpBody { return data }
+    guard let stream = request.httpBodyStream else { return nil }
+    stream.open()
+    defer { stream.close() }
+    var data = Data()
+    var buffer = [UInt8](repeating: 0, count: 4096)
+    while true {
+      let n = stream.read(&buffer, maxLength: buffer.count)
+      if n <= 0 { break }
+      data.append(buffer, count: n)
+    }
+    return data
+  }
 
   static func session() -> URLSession {
     let config = URLSessionConfiguration.ephemeral
@@ -1078,6 +1109,40 @@ final class NetworkTests: XCTestCase {
     try await earlier
     let ids = await MainActor.run { store.messages.map(\.id) }
     XCTAssertEqual(ids, [70])
+  }
+
+  /// A save goes on top of the version that was read; one saved meanwhile comes back as a conflict
+  /// with the newer copy, and nothing is written.
+  func testMemorySavesSayWhichVersionTheyEdit() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    let file = "/memory/file?path=notes/servers.md"
+    SlowBrain.routes[file] = #"{"path":"notes/servers.md","content":"nas\n","sha":"aaa"}"#
+    let read = try await store.memoryFile("notes/servers.md")
+    XCTAssertEqual(read.content, "nas\n")
+    XCTAssertEqual(read.sha, "aaa")
+
+    SlowBrain.routes[file] = #"{"sha":"c0ffee"}"#
+    let commit = try await store.saveMemoryFile("notes/servers.md", content: "nas\npve\n", baseSha: read.sha)
+    XCTAssertEqual(commit, "c0ffee")
+    var sent = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(SlowBrain.sent(file))) as? [String: Any])
+    XCTAssertEqual(sent["baseSha"] as? String, "aaa")
+    XCTAssertEqual(sent["content"] as? String, "nas\npve\n")
+
+    // Changed elsewhere since: refused, with what it is now.
+    SlowBrain.routes[file] = #"{"error":"changed","sha":"bbb","content":"nas\nkuma\n"}"#
+    SlowBrain.statuses[file] = 409
+    defer { SlowBrain.statuses = [:] }
+    do {
+      try await store.saveMemoryFile("notes/servers.md", content: "mine\n", baseSha: "aaa")
+      XCTFail("saved over a newer copy")
+    } catch let c as AppStore.MemoryConflict {
+      XCTAssertEqual(c, AppStore.MemoryConflict(sha: "bbb", content: "nas\nkuma\n"))
+    }
+    // A new file says there should be none yet.
+    _ = try? await store.saveMemoryFile("notes/new.md", content: "x", baseSha: "")
+    sent = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: XCTUnwrap(SlowBrain.sent("/memory/file?path=notes/new.md"))) as? [String: Any])
+    XCTAssertEqual(sent["baseSha"] as? String, "")
   }
 
   /// The group you're in, deleted elsewhere: the chat goes back to Hatbot's own.

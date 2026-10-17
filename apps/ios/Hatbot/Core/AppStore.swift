@@ -878,22 +878,43 @@ final class AppStore {
     try await api.get("/memory/tree")
   }
 
-  func memoryFile(_ path: String) async throws -> String {
-    struct File: Decodable { let content: String }
-    let f: File = try await api.get("/memory/file?path=\(API.query(path))")
-    return f.content
+  /// A memory file, and which version of it this is.
+  struct MemoryFileContent: Decodable, Sendable {
+    let content: String
+    /// What to save on top of; missing on brains from before conflict checks.
+    let sha: String?
   }
 
-  /// Saves a file as you; returns the commit, or nil if nothing changed.
+  func memoryFile(_ path: String) async throws -> MemoryFileContent {
+    try await api.get("/memory/file?path=\(API.query(path))")
+  }
+
+  /// A save refused because the file changed since it was read (or, for a new one, is already there):
+  /// what it is now.
+  struct MemoryConflict: Error, Decodable, Equatable, Sendable {
+    let sha: String
+    let content: String
+  }
+
+  /// Saves a file as you, on top of the version `baseSha` names ("" for a new file; nil saves over
+  /// whatever is there). Returns the commit, or nil if nothing changed; throws MemoryConflict when it
+  /// changed meanwhile, and writes nothing.
   @discardableResult
-  func saveMemoryFile(_ path: String, content: String) async throws -> String? {
+  func saveMemoryFile(_ path: String, content: String, baseSha: String?) async throws -> String? {
     struct Body: Encodable {
       let content: String
       let message: String
+      let baseSha: String?
     }
     struct Saved: Decodable { let sha: String? }
-    let r: Saved = try await api.put(
-      "/memory/file?path=\(API.query(path))", body: Body(content: content, message: "Edit \(path)"))
+    let r: Saved
+    do {
+      r = try await api.put(
+        "/memory/file?path=\(API.query(path))", body: Body(content: content, message: "Edit \(path)", baseSha: baseSha))
+    } catch let e as APIError where e.status == 409 {
+      if let now = try? JSONDecoder().decode(MemoryConflict.self, from: e.body) { throw now }
+      throw e
+    }
     memoryVersion += 1
     return r.sha
   }
