@@ -96,7 +96,17 @@ final class ModelTests: XCTestCase {
     XCTAssertEqual(API.serverURL(from: "hatbot.example.com")?.absoluteString, "https://hatbot.example.com")
     XCTAssertEqual(API.serverURL(from: " https://h.example/api/v1/ ")?.absoluteString, "https://h.example")
     XCTAssertEqual(API.serverURL(from: "https://192.168.55.230:8443")?.absoluteString, "https://192.168.55.230:8443")
+    XCTAssertEqual(API.serverURL(from: "HTTPS://hatbot.example.com")?.absoluteString, "https://hatbot.example.com")
+    XCTAssertEqual(API.serverURL(from: "Https://h.example:8443/")?.absoluteString, "https://h.example:8443")
     XCTAssertNil(API.serverURL(from: ""))
+  }
+
+  /// The token goes with the sockets' handshake too.
+  func testSocketsAreAlwaysWSS() {
+    for server in ["https://h.example", "HTTPS://h.example"] {
+      let url = API(server: URL(string: server)!, token: "t").webSocket("/stream").originalRequest?.url
+      XCTAssertEqual(url?.absoluteString, "wss://h.example/api/v1/stream", server)
+    }
   }
 
   /// The token goes with every request, so never over plain http, typed or saved by an older app.
