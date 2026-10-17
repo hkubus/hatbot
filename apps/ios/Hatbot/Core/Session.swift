@@ -92,7 +92,11 @@ final class Session {
 
   private func makeAPI(_ url: URL, token: String) -> API {
     API(server: url, token: token, session: urlSession) { [weak self] in
-      Task { @MainActor in self?.forget() }
+      Task { @MainActor in
+        // Only while it's still this token's session: a late answer to an older one mustn't sign you out.
+        guard let self, self.store?.api.token == token else { return }
+        self.forget()
+      }
     }
   }
 }

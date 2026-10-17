@@ -788,6 +788,32 @@ final class DiskCacheTests: XCTestCase {
     try await Task.sleep(for: .milliseconds(200))
     XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
   }
+
+  /// A 401 that answers a request the old token made, after you've signed in again, leaves you signed in.
+  func testALate401FromTheOldTokenDoesntSignYouOut() async throws {
+    SlowBrain.routes = [
+      "/auth/me": #"{"setupDone":true,"authenticated":false}"#,
+      "/auth/login": #"{"token":"new"}"#,
+    ]
+    let vault = MemoryVault("old")
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+    defaults.set("https://h.example", forKey: Session.serverKey)
+    let session = await MainActor.run { Session(vault: vault, defaults: defaults, urlSession: SlowBrain.session()) }
+    let old = try await MainActor.run { try XCTUnwrap(session.store?.api) }
+    try await session.signIn(password: "p", code: "123456", device: "test")
+    XCTAssertEqual(vault.load(), "new")
+    old.unauthorized()
+    try await Task.sleep(for: .milliseconds(50))
+    let kept = await MainActor.run { session.store?.api.token }
+    XCTAssertEqual(kept, "new")
+    XCTAssertEqual(vault.load(), "new")
+    // The new token's own 401 still does.
+    await MainActor.run { session.store?.api.unauthorized() }
+    try await Task.sleep(for: .milliseconds(50))
+    let gone = await MainActor.run { session.store == nil }
+    XCTAssertTrue(gone)
+    XCTAssertNil(vault.load())
+  }
 }
 
 final class PlainTextTests: XCTestCase {
