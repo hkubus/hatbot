@@ -66,6 +66,11 @@ const Server = z.object({
   enabled: z.boolean().default(true),
   /** Per tool; tools not listed are "ask", or "always" when they look like they pay or buy. */
   tools: z.record(z.string(), Mode).default({}),
+  /**
+   * Per tool, the definition the owner read and accepted (definitionHash): an untrusted server's
+   * tool doesn't taint what it's offered in until its name, description or schema change.
+   */
+  accepted: z.record(z.string(), z.string()).default({}),
 });
 type Server = z.infer<typeof Server>;
 
@@ -154,6 +159,14 @@ export function problemOf(t: Record<string, unknown>): string | null {
   if (isObject(t.execution) && t.execution.taskSupport === "required")
     return "It only runs as a long-running MCP task, which Hatbot doesn't support.";
   return null;
+}
+
+/** A short hash of a tool's name, description and input schema: what accepting it pins. */
+export function definitionHash(t: Pick<Listed, "name" | "description" | "inputSchema">): string {
+  return createHash("sha256")
+    .update(JSON.stringify([t.name, t.description ?? "", t.inputSchema]))
+    .digest("hex")
+    .slice(0, 16);
 }
 
 /** The schema as the API wants it: no $schema or $id. */
@@ -293,6 +306,7 @@ export const mcpPlugin = definePlugin({
         return { t, name, mode, problem };
       });
     };
+    const accepted = (c: Conn, t: Listed) => c.server.accepted[t.name] === definitionHash(t);
     const toolsOf = (c: Conn): PluginTool[] =>
       checked(c)
         .filter(({ mode, problem }) => mode !== "off" && !problem)
@@ -303,7 +317,7 @@ export const mcpPlugin = definePlugin({
             description: `${(t.description ?? t.name).slice(0, 1000)} (from the MCP server "${c.server.name}")`,
             access: mode === "chat" ? "read" : "write",
             untrusted: !c.server.trusted,
-            untrustedDefinition: !c.server.trusted,
+            untrustedDefinition: !c.server.trusted && !accepted(c, t),
             label: `Using ${c.server.name}`,
             schema: z.record(z.string(), z.unknown()),
             jsonSchema: { type: "object", properties: {}, ...withoutMeta(t.inputSchema) },
@@ -397,11 +411,14 @@ export const mcpPlugin = definePlugin({
           name: s.name,
           state: !s.enabled ? "off" : c?.client ? "connected" : "failed",
           error: c?.error ?? null,
+          // What the model would read of each tool, so the owner can accept it knowingly.
           tools: (c ? checked(c) : []).map(({ t, mode, problem }) => ({
             name: t.name,
-            description: (t.description ?? "").slice(0, 300),
+            description: (t.description ?? "").slice(0, 1000),
+            schema: JSON.stringify(withoutMeta(t.inputSchema), null, 2),
             mode,
             problem,
+            hash: definitionHash(t),
           })),
         };
       });

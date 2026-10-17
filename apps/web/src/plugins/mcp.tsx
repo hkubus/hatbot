@@ -16,14 +16,26 @@ type Server = {
   trusted: boolean;
   enabled: boolean;
   tools: Record<string, Mode>;
+  /** Per tool, the hash of the definition the owner accepted. */
+  accepted: Record<string, string>;
 };
 type Config = { servers: Server[] };
 type Status = {
   name: string;
   state: "connected" | "failed" | "off";
   error: string | null;
-  /** problem: why it can't be offered, e.g. a schema Claude's API wouldn't take. */
-  tools: { name: string; description: string; mode: Mode; problem: string | null }[];
+  /**
+   * What the model reads of each tool (description, schema), and its hash. problem: why it can't be
+   * offered, e.g. a schema Claude's API wouldn't take.
+   */
+  tools: {
+    name: string;
+    description: string;
+    schema: string;
+    mode: Mode;
+    problem: string | null;
+    hash: string;
+  }[];
 };
 
 const MODES: [Mode, string][] = [
@@ -43,6 +55,7 @@ const blank = (): Server => ({
   trusted: false,
   enabled: true,
   tools: {},
+  accepted: {},
 });
 const errorText = (err: unknown) =>
   err instanceof ApiError ? err.message : "Couldn't reach Hatbot.";
@@ -115,6 +128,16 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
     <>
       {servers.map((s, i) => {
         const st = status[s.name];
+        // Offered tools of an untrusted server whose definitions the owner hasn't accepted as they are.
+        const pending =
+          st && !s.trusted
+            ? st.tools.filter(
+                (t) =>
+                  !t.problem &&
+                  (s.tools[t.name] ?? t.mode) !== "off" &&
+                  s.accepted[t.name] !== t.hash,
+              )
+            : [];
         return (
           <div className="panel form" key={s.key}>
             <div className="form-row">
@@ -202,6 +225,29 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
               <span className="label">On</span>
               <Switch on={s.enabled} onChange={(enabled) => set(i, { enabled })} />
             </div>
+            {pending.length > 0 && (
+              <div className="form-row">
+                <span className="hint">
+                  {pending.length === 1 ? "A tool's description isn't" : "Tool descriptions aren't"}{" "}
+                  accepted yet, or changed since. Until you read and accept them, every chat and
+                  task they're offered in counts as having read untrusted content.
+                </span>
+                <button
+                  type="button"
+                  className="btn sm"
+                  onClick={() =>
+                    set(i, {
+                      accepted: {
+                        ...s.accepted,
+                        ...Object.fromEntries(pending.map((t) => [t.name, t.hash])),
+                      },
+                    })
+                  }
+                >
+                  Accept
+                </button>
+              </div>
+            )}
             {st && st.tools.length > 0 && (
               <div className="group-box">
                 {st.tools.map((t) => (
@@ -209,6 +255,13 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
                     <div className="txt">
                       <b className="mono">{t.name}</b>
                       {t.problem && <span>{t.problem}</span>}
+                      {t.description && <span>{t.description}</span>}
+                      <details>
+                        <summary className="hint">Inputs</summary>
+                        <pre className="mono hint" style={{ whiteSpace: "pre-wrap", margin: 0 }}>
+                          {t.schema}
+                        </pre>
+                      </details>
                     </div>
                     <select
                       value={s.tools[t.name] ?? t.mode}

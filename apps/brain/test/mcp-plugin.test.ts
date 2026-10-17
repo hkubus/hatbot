@@ -9,7 +9,7 @@ import { z } from "zod";
 import { mayReview } from "../src/agent/review";
 import { mcpPlugin, moneyKind, toolName, unsent } from "../src/plugins/mcp";
 import { type CallContext, definePlugin, PluginError, ready, tool } from "../src/plugins/plugin";
-import { runPluginTool, verdictFor } from "../src/plugins/registry";
+import { runPluginTool, untrustedDefinitions, verdictFor } from "../src/plugins/registry";
 import { FakeModel, toolUse } from "./fake-model";
 import { testApp, waitFor } from "./helpers";
 
@@ -357,6 +357,50 @@ test("long tool names are cut to 64 characters, uniquely", () => {
   expect(a.length).toBe(64);
   expect(a).not.toBe(b);
   expect(toolName("srv", "get.issue")).toBe("mcp_srv_get_issue");
+});
+
+test("tool descriptions the owner accepted don't taint, until they change; their output still does", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "done", summary: "ok", notify: false })] },
+  ]);
+  const { t } = await started(fixture, work);
+  const status = (await t.plugins.action("mcp", "status", {})) as {
+    tools: { name: string; description: string; schema: string; hash: string }[];
+  }[];
+  const listed = status[0]?.tools ?? [];
+  // What the owner reads before accepting: the description and the input schema.
+  expect(listed[0]).toMatchObject({ name: "echo", description: "Echo text back" });
+  expect(JSON.parse(listed[0]?.schema ?? "{}")).toMatchObject({ properties: { text: {} } });
+  const accepted = Object.fromEntries(listed.map((x) => [x.name, x.hash]));
+  await t.plugins.update("mcp", { config: { servers: [{ ...fixture, accepted }] } });
+  expect(untrustedDefinitions(t.plugins.tools())).toBeNull();
+  const task = t.tasks.createBackgroundTask({
+    title: "Routine",
+    goal: "Nothing",
+    origin: "schedule",
+    source: "s",
+    runKey: "s:3",
+  }) as Task;
+  await waitFor(() => t.tasks.get(task.id)?.finishedAt, 5000);
+  expect(t.tasks.get(task.id)?.tainted).toBe(false);
+  const echo = t.plugins.tools().find((x) => x.name === "mcp_fix_echo");
+  if (!echo) throw new Error("no echo");
+  expect((await runPluginTool(echo, { text: "hi" }, call)).untrusted).toBe(true);
+
+  // One whose definition changed since (here: a different hash) taints again.
+  await t.plugins.update("mcp", {
+    config: { servers: [{ ...fixture, accepted: { ...accepted, echo: "0123456789abcdef" } }] },
+  });
+  expect(
+    t.plugins
+      .tools()
+      .filter((x) => x.untrustedDefinition)
+      .map((x) => x.name),
+  ).toEqual(["mcp_fix_echo"]);
+  expect(untrustedDefinitions(t.plugins.tools())).toBe(
+    "Tool descriptions from untrusted MCP servers, not accepted in Settings (fix)",
+  );
+  await t.plugins.stopAll();
 });
 
 test("an untrusted server's tool descriptions taint every task offered them", async () => {

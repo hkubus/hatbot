@@ -374,13 +374,16 @@ export async function runPluginTool(
   return { content: label(out), isError: false, untrusted };
 }
 
-/** What taints a prompt that has these tools in it, or null: untrusted MCP servers' descriptions. */
+/**
+ * What taints a prompt that has these tools in it, or null: descriptions from untrusted MCP servers
+ * that the owner hasn't accepted, or that changed since.
+ */
 export function untrustedDefinitions(tools: PluginTool[]): string | null {
   const servers = new Set(
     tools.filter((t) => t.untrustedDefinition).map((t) => t.name.split("_")[1]),
   );
   return servers.size
-    ? `Tool descriptions from untrusted MCP servers (${[...servers].join(", ")})`
+    ? `Tool descriptions from untrusted MCP servers, not accepted in Settings (${[...servers].join(", ")})`
     : null;
 }
 
