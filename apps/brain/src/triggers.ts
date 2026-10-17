@@ -294,6 +294,8 @@ export class Triggers {
     const message = hb.msg || body.msg || "";
     // More news while a task looks into it: on its timeline, and told to the task.
     const update = (taskId: number, what: string) => {
+      // On its timeline the message is what the task has read, before it gets to its inbox.
+      if (message) this.tasks.taint(taskId, alertMessageSource(name));
       this.tasks.addStep(taskId, {
         kind: "note",
         name: `${name} ${what}`,
@@ -309,7 +311,7 @@ export class Triggers {
       if (this.db.query("DELETE FROM kuma_waiting WHERE run_key = ?").run(runKey).changes)
         console.log(`kuma: ${name} came back up in time; dropped its alert`);
       if (active) update(active.id, "is back up");
-      else this.again(runKey, `${name} is back up`, message);
+      else this.again(runKey, `${name} is back up`, message, name);
       return { status: "skipped", reason: "ignored" };
     }
     if (hb.status !== 0) return { status: "skipped", reason: "ignored" };
@@ -323,7 +325,7 @@ export class Triggers {
       .query<{ due_at: string }, [string]>("SELECT due_at FROM kuma_waiting WHERE run_key = ?")
       .get(runKey);
     if (waiting) return { status: "waiting", until: waiting.due_at };
-    const again = this.again(runKey, `${name} is down again`, message);
+    const again = this.again(runKey, `${name} is down again`, message, name);
     if (again) return again;
     const alert = {
       monitor: name,
@@ -372,7 +374,7 @@ export class Triggers {
    * A monitor's news soon after its last alert task ended: on that task's timeline, rather than a new
    * task each time a flapping monitor goes down. Null when there's no such task.
    */
-  private again(runKey: string, what: string, message: string): Received | null {
+  private again(runKey: string, what: string, message: string, monitor: string): Received | null {
     const cutoff = new Date(this.clock() - ALERT_COOLDOWN_MS).toISOString();
     const last = this.db
       .query<{ id: number }, [string, string]>(
@@ -380,6 +382,8 @@ export class Triggers {
       )
       .get(runKey, cutoff);
     if (!last) return null;
+    // Whoever reads the task now reads the message too.
+    if (message) this.tasks.taint(last.id, alertMessageSource(monitor));
     this.tasks.addStep(last.id, { kind: "note", name: what, detail: message, url: null });
     return { status: "skipped", reason: "recent" };
   }
@@ -414,7 +418,7 @@ export class Triggers {
   }
 
   private startAlert(t: Trigger, runKey: string, name: string, payload: string): Received {
-    const again = this.again(runKey, `${name} is down again`, "");
+    const again = this.again(runKey, `${name} is down again`, "", name);
     if (again) return again;
     const limited = this.limited(t);
     if (limited) return limited;

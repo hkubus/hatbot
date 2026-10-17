@@ -14,6 +14,7 @@ import {
 } from "@hatbot/shared";
 import type { z } from "zod";
 import type { Chats } from "../agent/chats";
+import { tagJson } from "../agent/untrusted";
 import { type Bots, liveBot } from "../bots";
 import type { Db } from "../db";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
@@ -557,6 +558,19 @@ export class Watchers {
     return { value: await pick(out, json, source), untrusted };
   }
 
+  /**
+   * Whether what it saw came from untrusted content (PLAN.md §6.1): a page, a tool whose output is, or
+   * a watcher the chat wrote after reading some.
+   */
+  sawUntrusted(w: Watcher): boolean {
+    if (w.source.kind === "page" || w.tainted) return true;
+    const bot = this.d.bots.get(w.botId) ?? this.d.bots.hatbot();
+    const t = this.d.plugins.tools(bot.plugins).find((x) => x.name === w.source.tool);
+    const input = t?.schema.safeParse(w.source.input ?? {});
+    if (!t || !input?.success) return true;
+    return typeof t.untrusted === "function" ? t.untrusted(input.data) : Boolean(t.untrusted);
+  }
+
   private changed(id: number) {
     const watcher = this.get(id);
     if (watcher) this.d.events.emit({ type: "watcher.updated", watcher });
@@ -564,8 +578,8 @@ export class Watchers {
   }
 }
 
-/** A watcher in a line or two, for the chat's tools. */
-export function watcherLine(w: Watcher): string {
+/** A watcher in a line or two, for the chat's tools. What an untrusted source said is quoted as data. */
+export function watcherLine(w: Watcher, untrusted = false): string {
   const where =
     w.source.kind === "page"
       ? w.source.url
@@ -578,7 +592,7 @@ export function watcherLine(w: Watcher): string {
   ].filter(Boolean);
   return [
     `#${w.id} "${w.name}": ${where}${picks.length ? ` (${picks.join(", ")})` : ""}; when it ${describeCondition(w.condition).toLowerCase()}; every ${w.everyMinutes} min${w.once ? ", once" : ""}${w.enabled ? "" : "; off"}`,
-    `  Now: ${w.lastError ? `failing: ${w.lastError}` : w.lastValue === null ? "not checked yet" : short(w.lastValue, 200)}${w.lastFiredAt ? `; last counted ${w.lastFiredAt.slice(0, 16).replace("T", " ")} UTC` : ""}`,
+    `  Now: ${w.lastError ? `failing: ${w.lastError}` : w.lastValue === null ? "not checked yet" : untrusted ? `<value trusted="false">${tagJson(short(w.lastValue, 200))}</value>` : short(w.lastValue, 200)}${w.lastFiredAt ? `; last counted ${w.lastFiredAt.slice(0, 16).replace("T", " ")} UTC` : ""}`,
     `  ${w.prompt ? `Does: ${w.prompt}` : "Tells the owner."}`,
   ].join("\n");
 }

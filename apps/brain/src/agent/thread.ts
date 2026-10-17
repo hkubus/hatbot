@@ -457,13 +457,18 @@ export class Thread {
     if (suspected) this.markSuspected(episodeId, suspected);
   }
 
-  /** Which of these messages are notes with untrusted text in them, and what it came from. */
+  /**
+   * Which of these messages have untrusted text in them, and what it came from: notes, and what shows
+   * a tainted task's result (its card, or the reply it ended).
+   */
   private untrustedNotes(ids: number[]): Map<number, string> {
     if (!ids.length) return new Map();
     const rows = this.d.db
       .query<{ id: number; tainted_by: string }, number[]>(
-        `SELECT id, tainted_by FROM messages WHERE id IN (${ids.map(() => "?").join(", ")})
-         AND tainted_by IS NOT NULL`,
+        `SELECT m.id, coalesce(m.tainted_by, 'Task #' || t.id || ' "' || t.title || '"') AS tainted_by
+         FROM messages m LEFT JOIN tasks t ON t.id = m.task_id AND t.tainted = 1
+         WHERE m.id IN (${ids.map(() => "?").join(", ")})
+         AND (m.tainted_by IS NOT NULL OR t.id IS NOT NULL)`,
       )
       .all(...ids);
     return new Map(rows.map((r) => [r.id, r.tainted_by]));
@@ -829,18 +834,20 @@ export class Thread {
 
   /** In a group: what was said since `bot` last spoke, by you and the other bots. */
   private groupSince(bot: Bot, after: number): string {
-    return this.d.db
+    const rows = this.d.db
       .query<
-        { role: string; bot_id: string | null; text: string; created_at: string },
+        { id: number; role: string; bot_id: string | null; text: string; created_at: string },
         [number, number, string]
       >(
-        `SELECT role, bot_id, text, created_at FROM messages WHERE conversation_id = ? AND id > ?
+        `SELECT id, role, bot_id, text, created_at FROM messages WHERE conversation_id = ? AND id > ?
          AND incognito = 0 AND status != 'streaming' AND (role = 'user' OR bot_id != ?)
          ORDER BY id DESC LIMIT ${RECENT_MESSAGES * 3}`,
       )
       .all(this.conversationId, after, bot.id)
-      .reverse()
-      .map((m) => this.transcript(m))
+      .reverse();
+    const untrusted = this.untrustedNotes(rows.map((m) => m.id));
+    return rows
+      .map((m) => this.transcript({ ...m, tainted_by: untrusted.get(m.id) ?? null }))
       .join("\n");
   }
 
@@ -2217,6 +2224,8 @@ export class Thread {
                   `Schedule "${sc.name}": ${sc.cron ? describeCron(sc.cron) : `once at ${sc.runAt}`}. ${sc.prompt}`,
                   { scheduleId: sc.id },
                   bot.id,
+                  // Its prompt was written after reading untrusted content.
+                  this.tainted(episode.id),
                 ),
             },
             abort.signal,

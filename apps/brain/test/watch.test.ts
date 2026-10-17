@@ -396,7 +396,10 @@ test("the chat makes a watcher from what it saw first", async () => {
   });
   const result = JSON.stringify(chat.requests[1]?.messages.at(-1));
   expect(result).toContain("Created watcher #");
-  expect(result).toContain("Now: 2.3");
+  // What a page said is quoted, as data.
+  expect(JSON.parse(result).content[0].content).toContain(
+    'Now: <value trusted="false">"2.3"</value>',
+  );
 });
 
 test("watch_update changes only the picks it's given", async () => {
