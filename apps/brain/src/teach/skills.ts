@@ -3,7 +3,7 @@
 import { SKILL_NAME } from "@hatbot/shared";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
-import { type Author, blobSha, MemoryConflict, type MemoryStore } from "../memory/store";
+import { type Author, blobSha, HATBOT, MemoryConflict, type MemoryStore } from "../memory/store";
 
 export type SkillInfo = { name: string; description: string };
 
@@ -46,7 +46,24 @@ export function withSkillsSection(index: string, skills: SkillInfo[]): string {
     .trim()}\n`;
 }
 
+/** The Skills section's lines, to tell whether two indexes list the same skills. */
+function sectionOf(index: string): string {
+  const lines = index.split("\n");
+  const start = lines.findIndex((l) => l.trim() === SECTION);
+  if (start < 0) return "";
+  const end = lines.findIndex((l, i) => i > start && /^#{1,2}\s/.test(l));
+  return lines
+    .slice(start, end < 0 ? undefined : end)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+const byName = (a: SkillInfo, b: SkillInfo) => a.name.localeCompare(b.name);
+
 export class Skills {
+  private events?: EventBus;
+
   constructor(
     private db: Db,
     readonly memory: MemoryStore,
@@ -55,10 +72,23 @@ export class Skills {
 
   /** Keeps the index current as memory changes. */
   watch(events: EventBus) {
+    this.events = events;
     events.on((e) => {
       if (e.type === "memory.committed")
         void this.refresh().catch((err) => console.error("skills refresh failed", err));
     });
+  }
+
+  /** The skills in skills/, as `read` finds the files. */
+  private async scan(read: (path: string) => Promise<string | null>): Promise<SkillInfo[]> {
+    const found: SkillInfo[] = [];
+    for (const f of await this.memory.tree()) {
+      const name = /^skills\/([^/]+)\.md$/.exec(f.path)?.[1];
+      if (!name || !SKILL_NAME.test(name)) continue;
+      const content = await read(f.path);
+      if (content !== null) found.push({ name, description: describeSkill(content) });
+    }
+    return found.sort(byName);
   }
 
   /** The skills index, for task prompts. */
@@ -68,14 +98,28 @@ export class Skills {
       .all();
   }
 
-  /** Reads skills/ into the index. Run at start and after memory commits (Hatbot and you edit files too). */
+  /**
+   * Reads skills/ into the index, and into INDEX.md's Skills section when that lists something else
+   * (a skill written or deleted as a plain file, a tidy-up). Run at start and after memory commits
+   * (Hatbot and you edit files too).
+   */
   async refresh(): Promise<SkillInfo[]> {
-    const found: SkillInfo[] = [];
-    for (const f of await this.memory.tree()) {
-      const name = /^skills\/([^/]+)\.md$/.exec(f.path)?.[1];
-      if (!name || !SKILL_NAME.test(name)) continue;
-      found.push({ name, description: describeSkill(await this.memory.read(f.path)) });
-    }
+    let found: SkillInfo[] = [];
+    const message = "List the skills in INDEX.md";
+    const sha = await this.memory.edit(
+      async (read) => {
+        found = await this.scan(read);
+        const index = await read("INDEX.md");
+        if (index === null && !found.length) return null;
+        const current = index ?? "# Memory index\n";
+        const next = withSkillsSection(current, found);
+        if (index !== null && sectionOf(current) === sectionOf(next)) return null;
+        return [{ path: "INDEX.md", content: next }];
+      },
+      HATBOT,
+      message,
+    );
+    if (sha) this.events?.emit({ type: "memory.committed", sha, message, author: HATBOT.name });
     const now = new Date(this.clock()).toISOString();
     this.db.transaction(() => {
       this.db.query("DELETE FROM skills_index").run();
@@ -98,17 +142,16 @@ export class Skills {
     message = `Add skill ${name}`,
     before?: string | null,
   ): Promise<string | null> {
-    const others = this.list().filter((s) => s.name !== name);
-    const skills = [...others, { name, description: describeSkill(content) }].sort((a, b) =>
-      a.name.localeCompare(b.name),
-    );
-    // INDEX.md is read and written with no other write in between, so nothing in it is lost.
+    // INDEX.md is read and written with no other write in between, so nothing in it is lost, and its
+    // list is made from the skill files as they are then.
     const sha = await this.memory.edit(
       async (read) => {
         if (before !== undefined) {
           const now = await read(skillPath(name));
           if (now !== before) throw new MemoryConflict(blobSha(now), now ?? "");
         }
+        const others = (await this.scan(read)).filter((s) => s.name !== name);
+        const skills = [...others, { name, description: describeSkill(content) }].sort(byName);
         const index = (await read("INDEX.md")) ?? "# Memory index\n";
         return [
           { path: skillPath(name), content },

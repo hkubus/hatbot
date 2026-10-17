@@ -187,7 +187,11 @@ test("a webhook body over 256 KB is refused before it's all read, with or withou
 });
 
 test("a signed webhook starts an untrusted background task; bad or replayed ones don't", async () => {
-  const work = new FakeModel([finish("Nothing to do.", false), finish("Second.", false)]);
+  const work = new FakeModel(
+    ["Nothing to do.", "Second.", "Third.", "Fourth.", "Fifth.", "Sixth."].map((s) =>
+      finish(s, false),
+    ),
+  );
   const t = await testApp(new FakeModel(), work);
   const call = await owner(t);
   const created = (await (
@@ -257,15 +261,34 @@ test("a signed webhook starts an untrusted background task; bad or replayed ones
       (h) => ({ "x-hub-signature-256": `sha256=${hmac(created.secret, b)}`, ...headers })[h],
       new TextEncoder().encode(b),
     );
-  expect(verify(other, {})).toEqual({ ok: true, replay: true });
-  expect(verify('{"n":1}', { "x-github-delivery": "d-1" })).toEqual({ ok: true, replay: false });
-  expect(verify('{"n":2}', { "x-github-delivery": "d-1" })).toEqual({ ok: true, replay: true });
+  expect(verify(other, {})).toMatchObject({ ok: true, replay: true });
+  expect(verify(other, { "x-github-delivery": "d-0" })).toMatchObject({ ok: true, replay: false });
 
-  // Off: accepted but not run.
+  // A forge's delivery id names the delivery: the same body in two deliveries runs twice, and the
+  // same delivery again doesn't, whatever its body.
+  const forge = (b: string, delivery: string) =>
+    hook(
+      {
+        "x-hub-signature-256": `sha256=${hmac(created.secret, b)}`,
+        "x-forgejo-delivery": delivery,
+      },
+      b,
+    );
+  const ping = JSON.stringify({ zen: "Keep it simple." });
+  expect((await forge(ping, "d-1")).status).toBe(202);
+  await t.tasks.idle();
+  expect((await forge(ping, "d-2")).status).toBe(202);
+  await t.tasks.idle();
+  expect(await (await forge('{"n":2}', "d-1")).json()).toMatchObject({ skipped: "duplicate" });
+
+  // Off: accepted but not run, and not remembered, so it can be delivered again once it's on.
   await call("PATCH", `/triggers/${created.id}`, { enabled: false });
   const third = JSON.stringify({ n: 3 });
-  const off = await hook({ "x-hatbot-signature": sign(created.secret, third, now) }, third);
+  const off = await forge(third, "d-3");
   expect(await off.json()).toMatchObject({ skipped: "disabled" });
+  await call("PATCH", `/triggers/${created.id}`, { enabled: true });
+  expect((await forge(third, "d-3")).status).toBe(202);
+  await t.tasks.idle();
 
   // A new secret replaces the old one.
   const rotated = (await (
@@ -276,6 +299,27 @@ test("a signed webhook starts an untrusted background task; bad or replayed ones
   expect(
     (await hook({ "x-hatbot-signature": sign(created.secret, fourth, now) }, fourth)).status,
   ).toBe(401);
+
+  // Trying a replay doesn't move the end of its block: 30 days after it ran, it runs again.
+  const redeliver = (b: string, delivery: string) =>
+    hook(
+      {
+        "x-hub-signature-256": `sha256=${hmac(rotated.secret, b)}`,
+        "x-forgejo-delivery": delivery,
+      },
+      b,
+    );
+  const seenAt = () =>
+    t.db
+      .query("SELECT seen_at FROM hook_deliveries WHERE key = ?")
+      .get(`${created.id}:delivery:d-1`);
+  const before = seenAt();
+  t.advance(20 * 24 * 3600_000);
+  expect(await (await redeliver(ping, "d-1")).json()).toMatchObject({ skipped: "duplicate" });
+  expect(seenAt()).toEqual(before);
+  t.advance(11 * 24 * 3600_000);
+  expect((await redeliver(ping, "d-1")).status).toBe(202);
+  await t.tasks.idle();
 });
 
 test("Uptime Kuma: down starts a trusted alert task per monitor; later events go on its timeline", async () => {

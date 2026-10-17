@@ -1,6 +1,6 @@
 // The memory repo (PLAN.md §7.2): markdown files in git. Every write is a commit.
 import { createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, normalize, sep } from "node:path";
 import type { Db } from "../db";
@@ -94,6 +94,13 @@ export class MemoryStore {
   /** Creates the repo if it doesn't exist (the brain's provisioning normally does this). */
   async init() {
     mkdirSync(this.dir, { recursive: true });
+    // A git killed mid-write (a crash, a full disk) leaves its lock, and every write after fails on
+    // it. The brain is the only writer, so one there at start is stale.
+    const lock = join(this.dir, ".git", "index.lock");
+    if (existsSync(lock)) {
+      console.warn(`memory: removed a stale ${lock}`);
+      await rm(lock, { force: true });
+    }
     if ((await this.git(["rev-parse", "--is-inside-work-tree"], { allowFail: true })).code !== 0) {
       await this.git(["init", "-q", "-b", "main"]);
       await writeFile(join(this.dir, "INDEX.md"), "# Memory index\n");
@@ -215,18 +222,39 @@ export class MemoryStore {
   ) {
     // Every path checked before anything is written.
     const resolved = files.map((f) => ({ ...this.resolve(f.path, { markdown: true }), ...f }));
-    for (const { rel, abs, content } of resolved) {
-      if (content === null) {
-        if (!(await this.exists(rel))) continue;
-        await rm(abs);
-        await this.git(["add", "-A", "--", rel]);
-      } else {
-        await mkdir(dirname(abs), { recursive: true });
-        await writeFile(abs, content.endsWith("\n") ? content : `${content}\n`);
-        await this.git(["add", "--", rel]);
+    const touched: string[] = [];
+    try {
+      for (const { rel, abs, content } of resolved) {
+        if (content === null) {
+          if (!(await this.exists(rel))) continue;
+          touched.push(rel);
+          await rm(abs);
+          await this.git(["add", "-A", "--", rel]);
+        } else {
+          touched.push(rel);
+          await mkdir(dirname(abs), { recursive: true });
+          await writeFile(abs, content.endsWith("\n") ? content : `${content}\n`);
+          await this.git(["add", "--", rel]);
+        }
       }
+      return await this.commitAs(author, message, touched);
+    } catch (err) {
+      await this.restore(touched);
+      throw err;
     }
-    return this.commitAs(author, message);
+  }
+
+  /**
+   * After a change that failed partway: the files it touched as the last commit has them, and none
+   * of it staged, so the next commit doesn't carry half of it.
+   */
+  private async restore(paths: string[]) {
+    for (const rel of paths) {
+      await this.git(["reset", "-q", "--", rel], { allowFail: true });
+      if ((await this.git(["cat-file", "-e", `HEAD:${rel}`], { allowFail: true })).code === 0)
+        await this.git(["checkout", "-q", "HEAD", "--", rel], { allowFail: true });
+      else await rm(join(this.dir, rel), { force: true });
+    }
   }
 
   /** Writes several files in one commit. */
@@ -285,9 +313,14 @@ export class MemoryStore {
     return this.serial(async () => {
       const { rel, abs } = this.resolve(path);
       if (!(await this.exists(rel))) throw new MemoryError(`not found: ${path}`);
-      await rm(abs);
-      await this.git(["add", "-A", "--", rel]);
-      return this.commitAs(author, message);
+      try {
+        await rm(abs);
+        await this.git(["add", "-A", "--", rel]);
+        return await this.commitAs(author, message, [rel]);
+      } catch (err) {
+        await this.restore([rel]);
+        throw err;
+      }
     });
   }
 
@@ -400,24 +433,47 @@ export class MemoryStore {
   revert(sha: string, author: Author): Promise<string | null> {
     this.checkSha(sha);
     return this.serial(async () => {
+      const files = await this.changedIn(sha);
+      // Edits not committed (by hand, on the brain) to a file it touches would block it or be lost.
+      const dirty = files.length
+        ? (await this.git(["status", "--porcelain", "--", ...files])).stdout
+            .split("\n")
+            .filter(Boolean)
+            .map((l) => l.slice(3))
+        : [];
+      if (dirty.length)
+        throw new MemoryError(`can't revert: ${dirty[0]} has changes that aren't committed`);
       const res = await this.git(["revert", "--no-commit", sha], { allowFail: true });
       if (res.code !== 0) {
         await this.git(["revert", "--abort"], { allowFail: true });
         throw new MemoryError("can't revert: later changes touch the same lines");
       }
       const subject = (await this.git(["log", "-1", "--format=%s", sha])).stdout.trim();
-      return this.commitAs(author, `Revert "${subject}"`);
+      return this.commitAs(author, `Revert "${subject}"`, files);
     });
+  }
+
+  /** The files a commit changed. */
+  private async changedIn(sha: string): Promise<string[]> {
+    const res = await this.git(["diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha]);
+    return res.stdout.split("\n").filter(Boolean);
   }
 
   private checkSha(sha: string) {
     if (!/^[0-9a-f]{7,40}$/.test(sha)) throw new MemoryError("invalid commit");
   }
 
-  private async commitAs(author: Author, message: string): Promise<string | null> {
-    if ((await this.git(["diff", "--cached", "--quiet"], { allowFail: true })).code === 0)
+  /** Commits what's staged; with `paths`, only those, so nothing else staged is swept in. */
+  private async commitAs(
+    author: Author,
+    message: string,
+    paths?: string[],
+  ): Promise<string | null> {
+    if (paths && !paths.length) return null;
+    const only = paths ? ["--", ...paths] : [];
+    if ((await this.git(["diff", "--cached", "--quiet", ...only], { allowFail: true })).code === 0)
       return null;
-    await this.git(["commit", "-q", "-m", message], {
+    await this.git(["commit", "-q", "-m", message, ...only], {
       env: {
         GIT_AUTHOR_NAME: author.name,
         GIT_AUTHOR_EMAIL: author.email,
@@ -428,15 +484,7 @@ export class MemoryStore {
     const sha = (await this.git(["rev-parse", "HEAD"])).stdout.trim();
     if (this.db) {
       // The commit stands even if the index can't follow; search falls back to grep if it's broken.
-      const changed = await this.git([
-        "diff-tree",
-        "--no-commit-id",
-        "--name-only",
-        "-r",
-        "--root",
-        sha,
-      ]);
-      await this.index(changed.stdout.split("\n").filter(Boolean)).catch((err) =>
+      await this.index(await this.changedIn(sha)).catch((err) =>
         console.error("memory index update failed", err),
       );
     }

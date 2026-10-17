@@ -145,7 +145,7 @@ const ACTIVE: typeof ACTIVE_TASK_STATUSES = [
   "waiting_takeover",
 ];
 const FINAL: TaskStatus[] = ["done", "failed", "cancelled"];
-const RESTARTED = "Stopped: the brain restarted.";
+export const RESTARTED = "Stopped: the brain restarted.";
 const errorText = (err: unknown) =>
   err instanceof Error ? err.message.slice(0, 200) : "unknown error";
 /** ntfy takes up to 4,096 bytes of message; a summary with long links is cut, whole on the task. */

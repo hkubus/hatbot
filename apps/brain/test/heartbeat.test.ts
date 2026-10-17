@@ -1,13 +1,14 @@
 import { expect, test } from "bun:test";
 import { z } from "zod";
 import { definePlugin, ready } from "../src/plugins/plugin";
+import { RESTARTED } from "../src/tasks/service";
 import { FakeModel, toolUse } from "./fake-model";
 import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
 
 /** A plugin whose monitors are down while `down` has them. */
-function kuma(down: string[]) {
+function kuma(down: string[], id = "kuma") {
   return definePlugin({
-    id: "kuma",
+    id,
     name: "Kuma",
     description: "",
     config: z.object({}),
@@ -64,32 +65,109 @@ test("the heartbeat tells you once about something new, and again only after it 
   expect(t.events.filter((e) => e.type === "heartbeat.updated")).toHaveLength(4);
 });
 
-test("after a long time off, the heartbeat only looks at the last two intervals", async () => {
+/** A finished top-level task, as a schedule's run would leave it. */
+function ran(
+  t: TestApp,
+  title: string,
+  runKey: string | null,
+  status: "done" | "failed",
+  finished: string,
+  summary: string | null = null,
+) {
+  t.db
+    .query(
+      `INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, finished_at, run_key, summary)
+       VALUES (?, 'g', '', 'schedule', 'background', 'm', ?, 1, ?, ?, ?, ?)`,
+    )
+    .run(title, status, finished, finished, runKey, summary);
+}
+
+test("a monitor whose Kuma alert has a task on it, or waits, isn't told again", async () => {
+  const down = ["Jellyfin", "Plex", "Forgejo"];
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("finish_task", { outcome: "done", summary: "Restarted it.", notify: true }),
+      ],
+    },
+  ]);
+  const t = await testApp(new FakeModel(), work, {}, [kuma(down, "uptimekuma")]);
+  await t.plugins.update("uptimekuma", { enabled: true });
+  await on(t);
+  const alert = (name: string, id: number) => ({
+    heartbeat: { status: 0, msg: "timeout" },
+    monitor: { id, name },
+  });
+  const now = t.triggers.create({ name: "Kuma", kind: "kuma", prompt: "Look into it." });
+  const started = t.triggers.receiveKuma(now.id, alert("Jellyfin", 1));
+  if (started.status !== "started") throw new Error(started.status);
+  await waitFor(() => t.tasks.get(started.task.id)?.finishedAt);
+  const later = t.triggers.create({
+    name: "Kuma, after two checks",
+    kind: "kuma",
+    prompt: "Look into it.",
+    confirmChecks: 2,
+  });
+  expect(t.triggers.receiveKuma(later.id, alert("Plex", 2)).status).toBe("waiting");
+
+  t.taskModel.onCreate = () => '{"action": "notify", "message": "Forgejo is down."}';
+  expect((await t.heartbeat.run()).found).toEqual(["Forgejo is down"]);
+  // Hours later, all three still down: nothing new.
+  t.advance(3 * 3600_000);
+  expect((await t.heartbeat.run()).action).toBe("nothing");
+  expect(t.notifier.sent.filter((n) => n.title === "Heartbeat")).toHaveLength(1);
+});
+
+test("after a long time off, the heartbeat only tells what's recent", async () => {
   const t = await testApp();
   await on(t);
   t.taskModel.onCreate = () => '{"action": "nothing", "message": ""}';
-  const failed = (title: string, finished: string) =>
-    t.db
-      .query(
-        `INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, finished_at)
-         VALUES (?, 'g', '', 'schedule', 'background', 'm', 'failed', 1, ?, ?)`,
-      )
-      .run(title, finished, finished);
-  failed("Old", "2026-10-09T10:00:00.000Z");
-  failed("Recent", "2026-10-09T11:30:00.000Z");
+  for (const m of ["00", "01", "02"])
+    ran(t, "Old", "schedule:1", "failed", `2026-10-09T10:${m}:00.000Z`);
+  for (const m of ["00", "15", "30"])
+    ran(t, "Recent", "schedule:2", "failed", `2026-10-09T11:${m}:00.000Z`);
   await t.heartbeat.run();
   t.advance(3 * 24 * 3600_000);
-  failed("Days ago", "2026-10-10T12:00:00.000Z");
-  failed("Just now", new Date(Date.parse("2026-10-12T11:50:00Z")).toISOString());
+  // Still failing: told already. Another that kept failing while the heartbeat was off, last just now.
+  ran(t, "Recent", "schedule:2", "failed", "2026-10-10T12:00:00.000Z");
+  ran(t, "Nightly", "schedule:3", "failed", "2026-10-10T12:00:00.000Z");
+  ran(t, "Nightly", "schedule:3", "failed", "2026-10-11T12:00:00.000Z");
+  ran(t, "Nightly", "schedule:3", "failed", "2026-10-12T11:50:00.000Z");
   const later = await t.heartbeat.run();
-  expect(later.found).toEqual(['Task #4 "Just now" failed']);
+  expect(later.found).toEqual(['"Nightly" has failed 3 times in a row; the last, task #10']);
   expect(t.heartbeat.info().recent.map((r) => r.found)).toEqual([
-    ['Task #4 "Just now" failed'],
-    ['Task #2 "Recent" failed'],
+    ['"Nightly" has failed 3 times in a row; the last, task #10'],
+    ['"Recent" has failed 3 times in a row; the last, task #6'],
   ]);
 });
 
-test("a failed task wakes Haiku, which can start a tainted heartbeat task", async () => {
+test("a failure you were told about isn't told again; runs that keep failing are", async () => {
+  const t = await testApp();
+  await on(t);
+  t.taskModel.onCreate = () => '{"action": "notify", "message": "The backup keeps failing."}';
+  // One failure, one the restart stopped, and a streak a success broke: each was told when it ended.
+  ran(t, "Chat task", null, "failed", "2026-10-09T11:40:00.000Z", "No route.");
+  ran(t, "Backup", "schedule:1", "failed", "2026-10-09T11:41:00.000Z", RESTARTED);
+  ran(t, "Backup", "schedule:1", "failed", "2026-10-09T11:42:00.000Z");
+  ran(t, "Backup", "schedule:1", "done", "2026-10-09T11:43:00.000Z");
+  ran(t, "Backup", "schedule:1", "failed", "2026-10-09T11:44:00.000Z");
+  ran(t, "Backup", "schedule:1", "failed", "2026-10-09T11:45:00.000Z");
+  expect((await t.heartbeat.run()).action).toBe("nothing");
+  expect(t.taskModel.creates).toHaveLength(0);
+  // A third in a row is news, once.
+  t.advance(30 * 60_000);
+  ran(t, "Backup", "schedule:1", "failed", "2026-10-09T12:10:00.000Z", "No space left");
+  const info = await t.heartbeat.run();
+  expect(info.found).toEqual([
+    '"Backup" has failed 3 times in a row; the last, task #7: No space left',
+  ]);
+  t.advance(30 * 60_000);
+  ran(t, "Backup", "schedule:1", "failed", "2026-10-09T12:40:00.000Z", "No space left");
+  expect((await t.heartbeat.run()).action).toBe("nothing");
+  expect(t.notifier.sent.filter((n) => n.title === "Heartbeat")).toHaveLength(1);
+});
+
+test("runs that keep failing wake Haiku, which can start a tainted heartbeat task", async () => {
   const work = new FakeModel([
     { content: [toolUse("finish_task", { outcome: "done", summary: "Looked.", notify: false })] },
   ]);
@@ -98,16 +176,15 @@ test("a failed task wakes Haiku, which can start a tainted heartbeat task", asyn
   await on(t);
   t.taskModel.onCreate = () =>
     '{"action": "task", "title": "Why the backup failed", "message": "Check the backup task."}';
-  t.db
-    .query(
-      `INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, finished_at, summary)
-       VALUES ('Nightly backup', 'g', '', 'schedule', 'background', 'm', 'failed', 1, ?, ?, 'No space left')`,
-    )
-    .run(new Date(Date.now()).toISOString(), "2026-10-09T12:00:00.000Z");
+  for (const m of ["50", "55"])
+    ran(t, "Nightly backup", "schedule:1", "failed", `2026-10-09T11:${m}:00.000Z`);
+  ran(t, "Nightly backup", "schedule:1", "failed", "2026-10-09T12:00:00.000Z", "No space left");
 
   const res = await t.call("POST", "/heartbeat/run", undefined, { cookie });
   const info = (await res.json()) as { action: string; taskId: number; found: string[] };
-  expect(info.found).toEqual(['Task #1 "Nightly backup" failed: No space left']);
+  expect(info.found).toEqual([
+    '"Nightly backup" has failed 3 times in a row; the last, task #3: No space left',
+  ]);
   expect(info.action).toBe("task");
   const task = t.tasks.get(info.taskId);
   expect(task).toMatchObject({
@@ -192,4 +269,35 @@ test("the weekly report sums up the week without the model, once, when it's due"
   t.report.tick();
   await Bun.sleep(5);
   expect(t.notifier.sent).toHaveLength(1);
+});
+
+test("a weekly report that fails is logged and tried again later, not on every tick", async () => {
+  const t = await testApp();
+  const local = new Date(Date.parse("2026-10-09T12:00:00Z"));
+  t.settings.update({
+    weeklyReport: { enabled: true, weekday: local.getDay(), hour: local.getHours() },
+  });
+  let tries = 0;
+  t.memory.log = async () => {
+    tries++;
+    throw new Error("disk full");
+  };
+  const logged: unknown[][] = [];
+  const log = console.error;
+  console.error = (...args: unknown[]) => logged.push(args);
+  try {
+    t.report.tick();
+    await Bun.sleep(5);
+    t.report.tick();
+    await Bun.sleep(5);
+    expect(tries).toBe(1);
+    expect(t.notifier.sent).toHaveLength(0);
+    t.advance(61 * 60_000);
+    t.report.tick();
+    await Bun.sleep(5);
+  } finally {
+    console.error = log;
+  }
+  expect(tries).toBe(2);
+  expect(logged.map((l) => l[0])).toEqual(["weekly report failed", "weekly report failed"]);
 });

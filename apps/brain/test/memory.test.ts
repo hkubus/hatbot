@@ -60,6 +60,52 @@ test("diff and revert", async () => {
   expect((await mem.log(1))[0]?.message).toBe('Revert "change drink"');
 });
 
+test("a write of several files that fails partway leaves nothing behind for the next commit", async () => {
+  await mem.write("notes.md", "# Notes\nold", YOU, "notes");
+  // The third can't be written: notes.md is a file, not a folder.
+  const failing = mem.writeAll(
+    [
+      { path: "fresh.md", content: "fresh" },
+      { path: "notes.md", content: "# Notes\nnew" },
+      { path: "notes.md/oops.md", content: "x" },
+    ],
+    HATBOT,
+    "half",
+  );
+  await expect(failing).rejects.toThrow();
+  expect(await mem.exists("fresh.md")).toBe(false);
+  expect(await mem.read("notes.md")).toBe("# Notes\nold\n");
+  expect(await mem.uncommitted()).toEqual([]);
+  await mem.write("other.md", "other", HATBOT, "other");
+  const [last] = await mem.log(1);
+  expect(last).toMatchObject({ message: "other", files: ["other.md"] });
+  // Something else staged, by hand, isn't swept into Hatbot's commits either.
+  writeFileSync(join(dir, "hand.md"), "by hand\n");
+  Bun.spawnSync(["git", "add", "hand.md"], { cwd: dir });
+  await mem.write("other.md", "other again", HATBOT, "again");
+  expect((await mem.log(1))[0]?.files).toEqual(["other.md"]);
+});
+
+test("a stale index.lock is cleared at start, and a revert names a file edited by hand", async () => {
+  const sha = (await mem.write("prefs.md", "tea", YOU, "prefs")) as string;
+  // A git killed mid-write left its lock behind.
+  writeFileSync(join(dir, ".git", "index.lock"), "");
+  const log = console.warn;
+  console.warn = () => {};
+  try {
+    const again = new MemoryStore(dir, db);
+    await again.init();
+    expect(await again.write("prefs.md", "coffee", YOU, "coffee")).not.toBeNull();
+  } finally {
+    console.warn = log;
+  }
+  writeFileSync(join(dir, "prefs.md"), "green tea\n");
+  await expect(mem.revert(sha, YOU)).rejects.toThrow(
+    "can't revert: prefs.md has changes that aren't committed",
+  );
+  expect(await mem.read("prefs.md")).toBe("green tea\n");
+});
+
 test("refuses paths outside the repo, into .git, or non-markdown writes", async () => {
   for (const p of ["../x.md", "/etc/passwd", ".git/config", "a/../../x.md", ""]) {
     expect(() => mem.resolve(p)).toThrow(MemoryError);

@@ -33,6 +33,11 @@ const PARALLEL = 4;
 const TELL_AFTER_ERRORS = 5;
 /** Values kept per watcher. */
 const KEEP_VALUES = 500;
+/** Times a watcher may count in a day; more and it's switched off, as a page that changes on every look. */
+const MAX_FIRES_PER_DAY = 12;
+/** From this many failed checks in a row, each wait doubles, up to BACKOFF_MAX_MINUTES. */
+const BACKOFF_AFTER_ERRORS = 3;
+const BACKOFF_MAX_MINUTES = 6 * 60;
 
 export type WatchersDeps = {
   db: Db;
@@ -249,12 +254,15 @@ export class Watchers {
       : sourceChanged || (enabled && !w.enabled) || every !== w.everyMinutes
         ? this.now()
         : w.nextCheckAt;
+    // Switched on again, or looking somewhere new: what it counted before doesn't hold it back.
+    const recount = sourceChanged || (enabled && !w.enabled);
     this.d.db
       .query(
         `UPDATE watchers SET name = ?, bot_id = ?, source = ?, condition = ?, prompt = ?, every_minutes = ?, once = ?,
          enabled = ?, tainted = ?, tainted_by = ?, next_check_at = ?,
          last_value = CASE WHEN ? THEN NULL ELSE last_value END, errors = CASE WHEN ? THEN 0 ELSE errors END,
-         last_error = CASE WHEN ? THEN NULL ELSE last_error END WHERE id = ?`,
+         last_error = CASE WHEN ? THEN NULL ELSE last_error END,
+         counting_since = CASE WHEN ? THEN ? ELSE counting_since END WHERE id = ?`,
       )
       .run(
         patch.name ?? w.name,
@@ -271,7 +279,9 @@ export class Watchers {
         // A new source starts from its own first value.
         sourceChanged ? 1 : 0,
         sourceChanged ? 1 : 0,
-        sourceChanged ? 1 : 0,
+        recount ? 1 : 0,
+        recount ? 1 : 0,
+        this.now(),
         id,
       );
     // Like a new watcher, that look is its first value.
@@ -313,7 +323,8 @@ export class Watchers {
       .all(this.now())
       .map(toWatcher)
       .filter((w) => !this.checking.has(w.id));
-    for (const w of due.slice(0, Math.max(0, PARALLEL - this.checking.size))) void this.check(w);
+    for (const w of due.slice(0, Math.max(0, PARALLEL - this.checking.size)))
+      void this.check(w).catch((err) => console.error(`watcher ${w.id}: check failed`, err));
   }
 
   /** Waits for the checks in flight (tests). */
@@ -345,9 +356,23 @@ export class Watchers {
 
   private failed(w: Watcher, error: string) {
     const errors = w.errors + 1;
-    this.d.db
-      .query("UPDATE watchers SET last_checked_at = ?, last_error = ?, errors = ? WHERE id = ?")
-      .run(this.now(), error, errors, w.id);
+    // One that keeps failing looks less often: each wait twice the last, up to six hours.
+    const every = Math.max(minWatchMinutes(w.source), w.everyMinutes);
+    const wait =
+      errors < BACKOFF_AFTER_ERRORS
+        ? every
+        : Math.max(
+            every,
+            Math.min(BACKOFF_MAX_MINUTES, every * 2 ** (errors - BACKOFF_AFTER_ERRORS + 1)),
+          );
+    const updated = this.d.db
+      .query(
+        `UPDATE watchers SET last_checked_at = ?, last_error = ?, errors = ?,
+         next_check_at = CASE WHEN enabled = 1 THEN ? ELSE next_check_at END WHERE id = ?`,
+      )
+      .run(this.now(), error, errors, this.after(wait), w.id).changes;
+    // Deleted while it was being read.
+    if (!updated) return;
     this.changed(w.id);
     if (errors === TELL_AFTER_ERRORS)
       void this.d.notifier.send({
@@ -359,7 +384,10 @@ export class Watchers {
   }
 
   /** A value it found: kept if it's new, and acted on if it counts. */
-  private async saw(w: Watcher, value: string, untrusted: boolean) {
+  private async saw(seen: Watcher, value: string, untrusted: boolean) {
+    // As it is now: it may have been deleted, or given a new source, while its page was read.
+    const w = this.get(seen.id);
+    if (!w || saved(w.source) !== saved(seen.source)) return;
     const previous = w.lastValue;
     const fired = counts(w.condition, previous, value);
     const now = this.now();
@@ -396,8 +424,37 @@ export class Watchers {
         off ? 1 : 0,
         w.id,
       );
+    if (fired && this.firedToday(w.id) > MAX_FIRES_PER_DAY) return this.tooOften(w);
     this.changed(w.id);
     if (fired) this.fire(w, previous, value, untrusted);
+  }
+
+  /** Times it counted in the last 24 hours, since it was last switched on or given a new source. */
+  private firedToday(id: number): number {
+    return (
+      this.d.db
+        .query<{ n: number }, [number, string]>(
+          `SELECT count(*) AS n FROM watcher_values v JOIN watchers w ON w.id = v.watcher_id
+           WHERE v.watcher_id = ? AND v.fired = 1 AND v.created_at > ?
+           AND v.created_at >= coalesce(w.counting_since, '')`,
+        )
+        .get(id, new Date(this.clock() - 86400_000).toISOString())?.n ?? 0
+    );
+  }
+
+  /** Counted more often than anyone wants to hear: switched off, and you're told once. */
+  private tooOften(w: Watcher) {
+    const why = `It counted more than ${MAX_FIRES_PER_DAY} times in a day, so it was switched off.`;
+    this.d.db
+      .query("UPDATE watchers SET enabled = 0, next_check_at = NULL, last_error = ? WHERE id = ?")
+      .run(why, w.id);
+    this.changed(w.id);
+    void this.d.notifier.send({
+      title: this.titled(w, `${w.name} is off`),
+      message: `${why} Narrow what it looks at, then switch it back on.`,
+      priority: 3,
+      click: `${this.d.publicUrl}/watchers/${w.id}`,
+    });
   }
 
   /** It counted: you're told, or its bot works on it. */

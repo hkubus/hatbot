@@ -370,6 +370,31 @@ test("search_history finds older conversations, not the one you're in", async ()
   expect(result).not.toContain("what was my");
 });
 
+test("search_history finds any of the words, in any form, and shows local times", async () => {
+  const model = new FakeModel([
+    { content: [text("Noted.")] },
+    { content: [toolUse("search_history", { query: "renaming backup storage" })] },
+    { content: [text("Found it.")] },
+  ]);
+  const t = await testApp(model);
+  await t.thread.post("I renamed the backups share to vault").done;
+  t.advance(31 * 60_000);
+  await t.thread.post("what did I call that share?").done;
+  const result = JSON.stringify(model.requests[2]?.messages.at(-1)?.content);
+  const row = t.db
+    .query<{ created_at: string }, []>(
+      "SELECT created_at FROM messages WHERE text LIKE 'I renamed%'",
+    )
+    .get();
+  const stamp = new Date(row?.created_at ?? "").toLocaleString("en-GB", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+  expect(result).toContain(
+    `<message from=\\"Owner\\" at=\\"${stamp}\\">I renamed the backups share to vault</message>`,
+  );
+});
+
 test("Haiku 5.5 bills the whole request at the long-prompt price past 100k prompt tokens", () => {
   const short = costOf("claude-haiku-5-5", {
     input: 100_000,

@@ -16,7 +16,9 @@ test("values are picked by selector, path, pattern, or the page's text", async (
   const html = page(
     `<div class="price">€1.299,<b>00</b></div><div class="price">€99</div><p>In&nbsp;stock &amp; ready</p><img class="price">`,
   );
-  expect(await pick(html, "text/html", { kind: "page", selector: ".price" })).toBe("€1.299,00 €99");
+  expect(await pick(html, "text/html", { kind: "page", selector: ".price" })).toBe(
+    "€1.299,00\n€99",
+  );
   expect(await pick(html, "text/html", { kind: "page" })).toBe("€1.299, 00 €99 In stock & ready");
   expect(await pick(html, "text/html", { kind: "page", pattern: "in\\s+(stock)" })).toBe("stock");
   expect(
@@ -40,6 +42,31 @@ test("a page without a full address says what to write", () => {
   expect(r.error?.issues[0]?.message).toBe("Use a full address starting with https://");
 });
 
+test("a pattern that backtracks without end is stopped, and the brain keeps answering", async () => {
+  // Catastrophic backtracking: on the main thread this would take far longer than the test.
+  const body = `${"a".repeat(40)}!`;
+  let ticks = 0;
+  const timer = setInterval(() => ticks++, 10);
+  const started = performance.now();
+  try {
+    await expect(
+      pick(body, "text/plain", { kind: "page", pattern: "^(a+)+$" }, 300),
+    ).rejects.toThrow('The pattern "^(a+)+$" took too long');
+  } finally {
+    clearInterval(timer);
+  }
+  expect(performance.now() - started).toBeLessThan(3000);
+  expect(ticks).toBeGreaterThan(5);
+  // A plain one still answers, and sees only the first 200,000 characters.
+  const long = `${"x".repeat(200_000)}price 42`;
+  await expect(pick(long, "text/plain", { kind: "page", pattern: "price (\\d+)" })).rejects.toThrow(
+    "matched nothing",
+  );
+  expect(await pick("price 42", "text/plain", { kind: "page", pattern: "price (\\d+)" })).toBe(
+    "42",
+  );
+});
+
 test("numbers are read in either style, and only a move into the condition counts", () => {
   expect(numberIn("€1.299,00")).toBe(1299);
   expect(numberIn("$1,299.00")).toBe(1299);
@@ -47,6 +74,25 @@ test("numbers are read in either style, and only a move into the condition count
   expect(numberIn("12,5 °C")).toBe(12.5);
   expect(numberIn("-3.5")).toBe(-3.5);
   expect(numberIn("none")).toBeNaN();
+  // Polish prices.
+  expect(numberIn("1 299,99 zł")).toBe(1299.99);
+  expect(numberIn("1\u00a0299,99\u00a0zł")).toBe(1299.99);
+  expect(numberIn("1.299 zł")).toBe(1299);
+  expect(numberIn("1 299 zł")).toBe(1299);
+  expect(numberIn("Cena: 12 499,00 PLN")).toBe(12499);
+  expect(numberIn("2 599 złotych")).toBe(2599);
+  expect(numberIn("0,99 zł")).toBe(0.99);
+  // A badge or a model number before the price doesn't win.
+  expect(numberIn("-20% 1 299 zł")).toBe(1299);
+  expect(numberIn("Taniej o 15 % 849,00 zł")).toBe(849);
+  expect(numberIn("Laptop 16 GB 3 999 zł")).toBe(3999);
+  // Neighbouring prices aren't read as one number.
+  expect(numberIn("1 299 zł 1 499 zł")).toBe(1299);
+  expect(numberIn("299\n999")).toBe(299);
+  // Without a currency a lone dot is still a decimal point, and a dash after a word isn't a minus.
+  expect(numberIn("1.299")).toBe(1.299);
+  expect(numberIn("−3,5 °C")).toBe(-3.5);
+  expect(numberIn("A-4 paper, 500 sheets")).toBe(4);
 
   const below = { when: "below", value: 1000 } as const;
   expect(counts(below, null, "€999")).toBe(true);
@@ -59,6 +105,24 @@ test("numbers are read in either style, and only a move into the condition count
   expect(counts({ when: "changed" }, null, "a")).toBe(false);
   expect(counts({ when: "changed" }, "a", "b")).toBe(true);
   expect(counts({ when: "changed" }, "a", "a")).toBe(false);
+  // Only the spacing between elements: not a change.
+  expect(counts({ when: "changed" }, "€10 €12", "€10\n€12")).toBe(false);
+});
+
+test("each price a selector matches is read on its own", async () => {
+  const html = page(
+    `<span class="badge">-20%</span><span class="price">299</span><span class="price">999</span>`,
+  );
+  const value = await pick(html, "text/html", { kind: "page", selector: ".price" });
+  expect(value).toBe("299\n999");
+  expect(numberIn(value)).toBe(299);
+  const shop = await pick(
+    page(`<div class="product"><span>-20%</span> <b>1 299,99 zł</b> <s>1 624,99 zł</s></div>`),
+    "text/html",
+    { kind: "page", selector: ".product" },
+  );
+  expect(numberIn(shop)).toBe(1299.99);
+  expect(counts({ when: "below", value: 1300 }, "1 499,99 zł", shop)).toBe(true);
 });
 
 test("a watcher without a prompt tells you in the chat and by notification, then waits", async () => {
@@ -184,11 +248,19 @@ test("a page that can't be read isn't made, and failing checks are told once", a
     })
   ).json()) as Watcher;
   t.agent.pages.set(url, page(`<p>moved</p>`));
+  // From the third failure in a row, each wait is twice the last.
+  const waits: number[] = [];
+  const gap = () => {
+    const x = t.watchers.get(w.id);
+    return Date.parse(x?.nextCheckAt ?? "") - Date.parse(x?.lastCheckedAt ?? "");
+  };
   for (let i = 0; i < 6; i++) {
-    t.advance(5 * 60_000);
+    t.advance(gap());
     t.watchers.tick();
     await t.watchers.idle();
+    waits.push(gap() / 60_000);
   }
+  expect(waits).toEqual([5, 5, 10, 20, 40, 80]);
   expect(t.watchers.get(w.id)).toMatchObject({ errors: 6, lastValue: "5" });
   expect(t.watchers.get(w.id)?.lastError).toContain("matched nothing");
   expect(t.notifier.sent.map((n) => n.title)).toEqual(["Can't check X"]);
@@ -199,6 +271,101 @@ test("a page that can't be read isn't made, and failing checks are told once", a
 
   expect((await api("DELETE", `/watchers/${w.id}`)).status).toBe(200);
   expect(t.watchers.list()).toHaveLength(0);
+});
+
+test("a watcher that counts more than 12 times in a day is switched off, and you're told once", async () => {
+  const t = await testApp();
+  const api = await owner(t);
+  const url = "https://news.example/";
+  t.agent.pages.set(url, page(`<p>Updated 0 minutes ago</p>`));
+  const w = (await (
+    await api("POST", "/watchers", { name: "News", source: { kind: "page", url }, everyMinutes: 5 })
+  ).json()) as Watcher;
+  // A page that changes on every look.
+  for (let i = 1; i <= 14; i++) {
+    t.agent.pages.set(url, page(`<p>Updated ${i * 5} minutes ago</p>`));
+    t.advance(5 * 60_000);
+    t.watchers.tick();
+    await t.watchers.idle();
+  }
+  const off = t.watchers.get(w.id);
+  expect(off).toMatchObject({
+    enabled: false,
+    nextCheckAt: null,
+    lastValue: "Updated 65 minutes ago",
+  });
+  expect(off?.lastError).toContain("more than 12 times in a day");
+  const titles = () => t.notifier.sent.map((n) => n.title);
+  expect(titles().filter((x) => x === "News")).toHaveLength(12);
+  expect(titles().filter((x) => x === "News is off")).toHaveLength(1);
+  // Only 13 looks: the 14th found it off.
+  expect(t.agent.fetched).toHaveLength(14);
+
+  // Switched back on, it counts from then.
+  expect((await api("PATCH", `/watchers/${w.id}`, { enabled: true })).status).toBe(200);
+  expect(t.watchers.get(w.id)?.lastError).toBeNull();
+  t.agent.pages.set(url, page(`<p>Updated 70 minutes ago</p>`));
+  t.watchers.tick();
+  await t.watchers.idle();
+  expect(t.watchers.get(w.id)?.enabled).toBe(true);
+  expect(titles().filter((x) => x === "News")).toHaveLength(13);
+});
+
+test("a watcher deleted while its page is read is let go, and the checks carry on", async () => {
+  const t = await testApp();
+  const api = await owner(t);
+  const url = "https://shop.example/gone";
+  t.agent.pages.set(url, page(`<p class="price">€10</p>`));
+  const make = async (name: string) =>
+    (await (
+      await api("POST", "/watchers", {
+        name,
+        source: { kind: "page", url, selector: ".price" },
+        everyMinutes: 5,
+      })
+    ).json()) as Watcher;
+  const a = await make("A");
+  const b = await make("B");
+  // The owner deletes A while the desktop reads its page, the first time with a new value, then
+  // while a read fails.
+  const fetch = t.agent.fetch.bind(t.agent);
+  t.agent.fetch = async (u) => {
+    const r = await fetch(u);
+    t.watchers.delete(a.id);
+    return r;
+  };
+  t.agent.pages.set(url, page(`<p class="price">€9</p>`));
+  t.advance(5 * 60_000);
+  const logged: unknown[][] = [];
+  const log = console.error;
+  console.error = (...args: unknown[]) => logged.push(args);
+  try {
+    t.watchers.tick();
+    await t.watchers.idle();
+  } finally {
+    console.error = log;
+  }
+  expect(logged).toEqual([]);
+  expect(t.watchers.get(a.id)).toBeNull();
+  expect(
+    t.db.query("SELECT count(*) AS n FROM watcher_values WHERE watcher_id = ?").get(a.id),
+  ).toEqual({ n: 0 });
+  // The other one carried on.
+  expect(t.watchers.get(b.id)?.lastValue).toBe("€9");
+
+  const c = await make("C");
+  t.agent.fetch = async (u) => {
+    t.watchers.delete(c.id);
+    return fetch(u);
+  };
+  t.agent.pages.set(url, page(`<p>moved</p>`));
+  for (let i = 0; i < 6; i++) {
+    t.advance(60 * 60_000);
+    t.watchers.tick();
+    await t.watchers.idle();
+  }
+  expect(t.watchers.get(c.id)).toBeNull();
+  expect(t.notifier.sent.map((n) => n.title)).not.toContain("Can't check C");
 });
 
 test("the chat makes a watcher from what it saw first", async () => {

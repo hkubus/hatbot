@@ -637,4 +637,12 @@ export const migrations: string[] = [
     SELECT 'attachments', coalesce((SELECT max(id) FROM attachments), 0) + 1000
     WHERE EXISTS (SELECT 1 FROM messages);
   `,
+  /* 35: a watcher that counts too often in a day is switched off; switching it on starts the count again */ `
+  ALTER TABLE watchers ADD COLUMN counting_since TEXT;
+  `,
+  /* 36: chat search finds words in any form ("runs" finds "run"); incognito stays out of it */ `
+  DROP TABLE messages_fts;
+  CREATE VIRTUAL TABLE messages_fts USING fts5(text, content='messages', content_rowid='id', tokenize='porter unicode61');
+  INSERT INTO messages_fts (rowid, text) SELECT id, text FROM messages WHERE incognito = 0;
+  `,
 ];
