@@ -11,7 +11,7 @@ import { localStamp } from "../agent/thread";
 import { containerOf, serverToolWaiting, toolParam, webReads, webTools } from "../agent/tools";
 import { botFolder, slugWords } from "../bots";
 import { MemoryConflict } from "../memory/store";
-import { BudgetError, estimateTokens, priceOf } from "../spend";
+import { BudgetError, estimateTokens, requestCeiling } from "../spend";
 import { refreshing } from "./research-goal";
 import type { Tasks } from "./service";
 
@@ -23,12 +23,12 @@ export const RESEARCH_TOKENS = 250_000;
 export const RESEARCH_BETA: Anthropic.Beta.AnthropicBeta = "task-budgets-2026-03-13";
 const MAX_PARTS = 5;
 const MAX_WORKER_STEPS = 12;
+const WORKER_TOKENS = 16000;
 /** Searches and fetches each of a helper's requests may make, and the most of a page it reads. */
 const HELPER_USES = 5;
 const HELPER_PAGE_TOKENS = 10_000;
-/** About what a search's results add to the prompt, and its fee. */
+/** About what a search's results add to the prompt. */
 const SEARCH_RESULT_TOKENS = 3_000;
-const SEARCH_USD = 0.01;
 
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 
@@ -248,6 +248,8 @@ export type ResearchRun = {
   taint: (source: string) => void;
   /** The lead's conversation so far: where the links a brief may name come from. */
   messages: Anthropic.Beta.BetaMessageParam[];
+  /** What the lead's next request may cost: the helpers leave room for it, to write the report. */
+  reserveUsd: number;
 };
 
 const LINK = /https?:\/\/[^\s"'`<>\\)\]}]+/gi;
@@ -295,15 +297,17 @@ function linksIn(brief: string): string[] {
 
 /**
  * A helper's next request at most: its prompt, all that its searches and fetches may add within the
- * request, a reply, and the searches' fees. Past 100k tokens Haiku 5.5 bills the whole request at 5x.
+ * request, all of its max_tokens, and the searches' fees. Past 100k tokens Haiku 5.5 bills the whole
+ * request at 5x.
  */
-const estimate = (messages: Anthropic.Beta.BetaMessageParam[]) => {
-  const base = priceOf(WORKER_MODEL);
-  const tokens =
-    estimateTokens(messages) + 4000 + HELPER_USES * (HELPER_PAGE_TOKENS + SEARCH_RESULT_TOKENS);
-  const p = base.longPrompt && tokens > base.longPrompt.above ? base.longPrompt : base;
-  return (tokens * p.input + 8000 * p.output) / 1_000_000 + HELPER_USES * SEARCH_USD;
-};
+const estimate = (messages: Anthropic.Beta.BetaMessageParam[]) =>
+  requestCeiling(WORKER_MODEL, {
+    prompt:
+      estimateTokens(messages) + 4000 + HELPER_USES * (HELPER_PAGE_TOKENS + SEARCH_RESULT_TOKENS),
+    write: "5m",
+    maxTokens: WORKER_TOKENS,
+    webSearches: HELPER_USES,
+  });
 
 /** A helper's findings, why it stopped short if it did, and what it read, as `plain` text. */
 type HelperReport = Findings & { note?: string; read: string };
@@ -311,15 +315,11 @@ type HelperReport = Findings & { note?: string; read: string };
 const REPORT_NOW: Anthropic.Beta.BetaToolChoiceTool = { type: "tool", name: "report_findings" };
 
 /**
- * One helper: Haiku with the web, until it reports. Spend is the task's, within its limit; `held` is
- * what the other helpers' requests in flight may cost. Its last step, and one the limit leaves room
- * for only, must report what it has.
+ * One helper: Haiku with the web, until it reports. Spend is the task's, within its limit, leaving room
+ * for the lead's next request. Its last step, and one the limit leaves room for only, must report what
+ * it has.
  */
-async function runWorker(
-  run: ResearchRun,
-  part: z.infer<typeof Part>,
-  held: { usd: number },
-): Promise<HelperReport> {
+async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<HelperReport> {
   const { tasks, task, signal } = run;
   const { d } = tasks;
   const texts: string[] = [];
@@ -344,26 +344,28 @@ async function runWorker(
     if (signal.aborted) throw signal.reason;
     const cost = estimate(messages);
     const limit = { id: task.id, limitUsd: tasks.budget(task.id) };
+    // The checks count the other helpers' requests in flight, which Spend holds.
     try {
-      d.spend.check(cost + held.usd, limit);
+      d.spend.check(cost + run.reserveUsd, limit);
     } catch (err) {
       if (err instanceof BudgetError) return stopped(`Stopped: ${err.message}`);
       throw err;
     }
     try {
-      d.spend.check(2 * cost + held.usd, limit);
+      d.spend.check(2 * cost + run.reserveUsd, limit);
     } catch (err) {
       if (!(err instanceof BudgetError)) throw err;
       mustReport = true;
     }
     const force = !paused && (mustReport || step >= MAX_WORKER_STEPS - 1);
-    held.usd += cost;
+    // Held against every limit until it's recorded, so the chat and other tasks count it too.
+    const release = d.spend.hold(cost, limit);
     let res: Anthropic.Beta.BetaMessage;
     try {
       res = await d.model.stream(
         {
           model: WORKER_MODEL,
-          max_tokens: 16000,
+          max_tokens: WORKER_TOKENS,
           system: [
             { type: "text", text: RESEARCH_WORKER_PROMPT, cache_control: { type: "ephemeral" } },
           ],
@@ -398,7 +400,7 @@ async function runWorker(
         },
       );
     } finally {
-      held.usd -= cost;
+      release();
     }
     d.spend.recordResponse({
       model: WORKER_MODEL,
@@ -495,11 +497,9 @@ export async function investigate(
       detail: `Asked a helper: ${part.topic}`,
       url: null,
     });
-  // The helpers check the limit at once: each counts what the others' requests in flight may cost.
-  const held = { usd: 0 };
   const results = await Promise.all(
     parts.map((part) =>
-      runWorker(run, part, held).catch((err) => {
+      runWorker(run, part).catch((err) => {
         if (run.signal.aborted) throw err;
         console.error(`research task ${run.task.id}: a helper failed`, err);
         return {
