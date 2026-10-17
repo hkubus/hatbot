@@ -4,6 +4,7 @@
 // runs on the brain as the hatbot user, so prefer HTTP servers that run elsewhere for anything you
 // didn't write.
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import {
@@ -107,23 +108,48 @@ type Conn = {
   error: string | null;
 };
 
-/** ${NAME} from the brain's environment, or an error naming what's missing. */
-function expand(values: Record<string, string>, env: Record<string, string | undefined>) {
+/** The file systemd loads the MCP servers' secrets from; HATBOT_MCP_ENV_FILE elsewhere. */
+const SECRETS_FILE = "/etc/hatbot/mcp.env";
+
+/**
+ * The names a secrets file sets. Only these may be used, so a server can't be given the brain's own.
+ * Null when it's there but Hatbot can't read it.
+ */
+export function secretNames(file: string): Set<string> | null {
+  let text = "";
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (err) {
+    if ((err as { code?: string }).code !== "ENOENT") return null;
+  }
+  const names = text
+    .split("\n")
+    .map((line) => /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line)?.[1]);
+  return new Set(names.filter((n): n is string => Boolean(n)));
+}
+
+/** ${NAME} from the brain's environment, when the secrets file sets it, or an error naming what's missing. */
+function expand(
+  values: Record<string, string>,
+  env: Record<string, string | undefined>,
+  secrets: { file: string; names: Set<string> | null },
+) {
   const missing: string[] = [];
   const out = Object.fromEntries(
     Object.entries(values).map(([k, v]) => [
       k,
       v.replace(/\$\{([A-Z0-9_]+)\}/g, (_, name: string) => {
-        const value = env[name];
+        const value = secrets.names?.has(name) ? env[name] : undefined;
         if (value === undefined) missing.push(name);
         return value ?? "";
       }),
     ]),
   );
-  if (missing.length)
+  if (missing.length && !secrets.names)
     throw new PluginError(
-      `${missing.join(", ")} isn't set in the brain's environment (/etc/hatbot/mcp.env).`,
+      `Hatbot can't read ${secrets.file} to find ${missing.join(", ")}: make it root:hatbot, mode 640.`,
     );
+  if (missing.length) throw new PluginError(`${missing.join(", ")} isn't set in ${secrets.file}.`);
   return out;
 }
 
@@ -220,6 +246,8 @@ export const mcpPlugin = definePlugin({
     /** Set by stop: a call still in flight mustn't reconnect and leave a process behind. */
     let stopped = false;
     const reconnecting = new Map<Conn, Promise<void>>();
+    const file = env.HATBOT_MCP_ENV_FILE || SECRETS_FILE;
+    const secrets = { file, names: secretNames(file) };
 
     /** Reconnects once for every call that failed at the same time. */
     const reconnect = (c: Conn) => {
@@ -241,12 +269,12 @@ export const mcpPlugin = definePlugin({
         const transport =
           s.transport === "http"
             ? new StreamableHTTPClientTransport(new URL(s.url as string), {
-                requestInit: { headers: expand(s.headers, env) },
+                requestInit: { headers: expand(s.headers, env, secrets) },
               })
             : new StdioClientTransport({
                 command: s.command as string,
                 args: s.args,
-                env: expand(s.env, env),
+                env: expand(s.env, env, secrets),
                 stderr: "inherit",
               });
         await client.connect(transport, { timeout: CONNECT_TIMEOUT_MS });

@@ -28,6 +28,8 @@ id hatbot >/dev/null 2>&1 ||
 install -d -o hatbot -g hatbot -m 750 /var/lib/hatbot /var/lib/hatbot/app /var/lib/hatbot/memory
 install -d -o hatbot -g hatbot -m 750 /archive /archive/screens /archive/transcripts
 install -d -o root -g hatbot -m 750 /etc/hatbot
+# MCP servers' secrets: the brain reads the names here, and hands a server only those.
+[[ -e /etc/hatbot/mcp.env ]] || install -o root -g hatbot -m 640 /dev/null /etc/hatbot/mcp.env
 find /etc/hatbot -maxdepth 1 -name '*.env' -exec chown root:hatbot {} + -exec chmod 640 {} +
 
 say "Memory repo (/var/lib/hatbot/memory, never pushed anywhere)"

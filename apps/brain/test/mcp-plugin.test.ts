@@ -7,7 +7,7 @@ import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamable
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { mayReview } from "../src/agent/review";
-import { mcpPlugin, moneyKind, toolName, unsent } from "../src/plugins/mcp";
+import { mcpPlugin, moneyKind, secretNames, toolName, unsent } from "../src/plugins/mcp";
 import { type CallContext, definePlugin, PluginError, ready, tool } from "../src/plugins/plugin";
 import { runPluginTool, untrustedDefinitions, verdictFor } from "../src/plugins/registry";
 import { FakeModel, toolUse } from "./fake-model";
@@ -23,10 +23,23 @@ const fixture = {
 };
 const call: CallContext = { task: { id: 1, tainted: false }, signal: new AbortController().signal };
 
+/** The brain's environment for the plugin, with an mcp.env that sets these. */
+function brainEnv(secrets: Record<string, string>, more: Record<string, string> = {}) {
+  const file = join(mkdtempSync(join(tmpdir(), "hatbot-mcp-")), "mcp.env");
+  writeFileSync(
+    file,
+    `# MCP secrets\n${Object.entries(secrets)
+      .map(([k, v]) => `${k}=${v}`)
+      .join("\n")}\n`,
+  );
+  return { ...secrets, ...more, HATBOT_MCP_ENV_FILE: file };
+}
+
 async function started(server: Record<string, unknown> = fixture, model = new FakeModel()) {
   // The brain's own environment holds its secrets; a stdio server must not inherit them.
   process.env.HATBOT_TEST_SECRET = "sk-must-not-leak";
-  const t = await testApp(new FakeModel(), model, {}, [mcpPlugin], { MCP_GREETING: "hello" });
+  const env = brainEnv({ MCP_GREETING: "hello" }, { ANTHROPIC_API_KEY: "sk-brain" });
+  const t = await testApp(new FakeModel(), model, {}, [mcpPlugin], env);
   const info = await t.plugins.update("mcp", { enabled: true, config: { servers: [server] } });
   return { t, info };
 }
@@ -247,16 +260,39 @@ test("a server that won't start is reported, and a missing secret says which", a
   expect(info.message).toContain("fix:");
   // biome-ignore lint/suspicious/noTemplateCurlyInString: the plugin's own placeholder syntax
   const r = await started({ ...fixture, env: { X: "${MCP_NOPE}" } });
-  expect(r.info.message).toContain("MCP_NOPE isn't set");
+  expect(r.info.message).toContain("MCP_NOPE isn't set in ");
   await t.plugins.stopAll();
   await r.t.plugins.stopAll();
 });
 
+test("placeholders name only what mcp.env sets, not the brain's other secrets", async () => {
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: the plugin's own placeholder syntax
+  const { t, info } = await started({ ...fixture, env: { KEY: "${ANTHROPIC_API_KEY}" } });
+  expect(info.message).toMatch(/^fix: ANTHROPIC_API_KEY isn't set in \/.+\/mcp\.env\.$/);
+  await t.plugins.stopAll();
+});
+
+test("the names a secrets file sets", () => {
+  const file = join(mkdtempSync(join(tmpdir(), "hatbot-mcp-")), "mcp.env");
+  writeFileSync(
+    file,
+    "# comment\nSCOUT_TOKEN=abc\nexport OTHER = x\n  SPACED=1\nnot a line\n=bad\n",
+  );
+  expect([...(secretNames(file) ?? [])]).toEqual(["SCOUT_TOKEN", "OTHER", "SPACED"]);
+  expect(secretNames(join(file, "..", "missing"))?.size).toBe(0);
+  // There, but not readable (here: a directory): said so, not taken as empty.
+  expect(secretNames(join(file, ".."))).toBeNull();
+});
+
 test("a server that was down at the start comes back later, with its tools", async () => {
   const marker = join(mkdtempSync(join(tmpdir(), "hatbot-mcp-")), "up");
-  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {
-    MCP_GREETING: "hi",
-  });
+  const t = await testApp(
+    new FakeModel(),
+    new FakeModel(),
+    {},
+    [mcpPlugin],
+    brainEnv({ MCP_GREETING: "hi" }),
+  );
   t.plugins.retryMs = [50];
   const late = { ...fixture, name: "late", env: { ...fixture.env, MCP_WAIT_FOR: marker } };
   const info = await t.plugins.update("mcp", {
