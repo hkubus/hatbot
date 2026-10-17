@@ -1007,38 +1007,23 @@ final class AppStore {
     try await api.get("/settings")
   }
 
-  func setChatEffort(_ effort: AppSettings.Effort) async throws -> AppSettings {
-    struct Body: Encodable { let chatEffort: AppSettings.Effort }
-    return try await api.put("/settings", body: Body(chatEffort: effort))
+  /// Settings to change; the ones left nil aren't sent, and stay as they are.
+  struct SettingsChange: Encodable, Sendable {
+    var limits: Limits?
+    var chatEffort: AppSettings.Effort?
+    var notificationsOpen: AppSettings.Opens?
+    var desktopModel: AppSettings.DesktopModel?
+    var desktopEscalate: Bool?
+    var taskModel: AppSettings.TaskModel?
+    var chatModel: AppSettings.ChatModel?
+    var reviewChanges: Bool?
+    var heartbeat: AppSettings.Heartbeat?
+    var weeklyReport: AppSettings.WeeklyReport?
+    var memoryTidy: Bool?
   }
 
-  func setReviewChanges(_ on: Bool) async throws -> AppSettings {
-    struct Body: Encodable { let reviewChanges: Bool }
-    return try await api.put("/settings", body: Body(reviewChanges: on))
-  }
-
-  func setChatModel(_ model: AppSettings.ChatModel) async throws -> AppSettings {
-    struct Body: Encodable { let chatModel: AppSettings.ChatModel }
-    return try await api.put("/settings", body: Body(chatModel: model))
-  }
-
-  func setDesktopModel(_ model: AppSettings.DesktopModel) async throws -> AppSettings {
-    struct Body: Encodable { let desktopModel: AppSettings.DesktopModel }
-    return try await api.put("/settings", body: Body(desktopModel: model))
-  }
-
-  func setDesktopEscalate(_ on: Bool) async throws -> AppSettings {
-    struct Body: Encodable { let desktopEscalate: Bool }
-    return try await api.put("/settings", body: Body(desktopEscalate: on))
-  }
-
-  func setTaskModel(_ model: AppSettings.TaskModel) async throws -> AppSettings {
-    struct Body: Encodable { let taskModel: AppSettings.TaskModel }
-    return try await api.put("/settings", body: Body(taskModel: model))
-  }
-
-  func setNotificationsOpen(_ opens: AppSettings.Opens) async throws -> AppSettings {
-    struct Body: Encodable { let notificationsOpen: AppSettings.Opens }
-    return try await api.put("/settings", body: Body(notificationsOpen: opens))
+  /// All the settings, as saved.
+  func saveSettings(_ change: SettingsChange) async throws -> AppSettings {
+    try await api.put("/settings", body: change)
   }
 }

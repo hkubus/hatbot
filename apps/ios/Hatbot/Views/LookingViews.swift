@@ -513,7 +513,7 @@ struct HeartbeatView: View {
     Task {
       do {
         error = nil
-        settings = try await store.setHeartbeat(s).heartbeat
+        settings = try await store.saveSettings(.init(heartbeat: s)).heartbeat
       } catch {
         self.error = message(for: error)
       }

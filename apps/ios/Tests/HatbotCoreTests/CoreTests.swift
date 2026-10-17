@@ -613,6 +613,15 @@ final class FoldTests: XCTestCase {
     XCTAssertFalse(json.contains("\"icon\""))
   }
 
+  /// A settings change sends only what changed: the brain keeps the rest as it is.
+  func testASettingsChangeSendsOnlyWhatChanged() throws {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = .sortedKeys
+    let change = AppStore.SettingsChange(chatModel: .opus, memoryTidy: false)
+    XCTAssertEqual(
+      String(decoding: try encoder.encode(change), as: UTF8.self), #"{"chatModel":"claude-opus-5-5","memoryTidy":false}"#)
+  }
+
   /// A model or effort from a newer brain stays itself, and saving the bot or setting sends it back so.
   func testKeepsModelsAndEffortsItDoesntKnow() throws {
     let json = #"""

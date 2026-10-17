@@ -57,11 +57,6 @@ extension AppStore {
       hourly: hourly, daily: daily, byModel: byModel, byBot: byBot ?? [], byPurpose: byPurpose ?? [])
   }
 
-  func setLimits(_ limits: Limits) async throws -> AppSettings {
-    struct Body: Encodable { let limits: Limits }
-    return try await api.put("/settings", body: Body(limits: limits))
-  }
-
   func loadTokens() async throws -> [ApiToken] {
     try await api.get("/tokens")
   }

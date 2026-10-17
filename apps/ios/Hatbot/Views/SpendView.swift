@@ -131,7 +131,7 @@ struct LimitsView: View {
     saving = true
     error = nil
     do {
-      saved = try await store.setLimits(limits).limits
+      saved = try await store.saveSettings(.init(limits: limits)).limits
       dismiss()
     } catch {
       self.error = message(for: error)
