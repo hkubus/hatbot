@@ -149,7 +149,7 @@ export function PendingApproval({
   a: Approval;
   /** Buttons to where it came from: its task, or its negotiation. */
   links?: React.ReactNode;
-  /** The chat's tray: why it asks, the screenshot and the note wait behind More. */
+  /** The chat's tray: the screenshot, the note and (unless it warns) why it asks wait behind More. */
   compact?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
@@ -160,7 +160,10 @@ export function PendingApproval({
     a.taskId && a.screenshotStepId ? (
       <Shot taskId={a.taskId} stepId={a.screenshotStepId} alt="The screen before this step" />
     ) : null;
-  const folds = compact && (a.reason || shot || takesNote(a));
+  // When something it read may be steering the bot, why it asks is the warning, so it never folds.
+  const warns = a.kind === "injection_warning" || a.sources.length > 0;
+  const why = more || warns;
+  const folds = compact && ((a.reason && !warns) || shot || takesNote(a));
 
   const decide = async (decision: "approve" | "deny") => {
     setBusy(true);
@@ -178,7 +181,7 @@ export function PendingApproval({
       <div className={more && shot ? "thumb-wrap" : undefined}>
         <div className="approval-text">
           <p className="approval-what">{a.summary}</p>
-          {more && a.reason && <p>{a.reason}</p>}
+          {why && a.reason && <p>{a.reason}</p>}
           {a.sources.length > 0 && <p className="muted">After reading {a.sources.join(", ")}</p>}
         </div>
         {more && shot}
