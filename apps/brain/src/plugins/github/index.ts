@@ -4,12 +4,10 @@
 // collaborator to the repos it should work on.
 import { posix } from "node:path";
 import { z } from "zod";
+import { Branch, Path, Ref, Repo as RepoOf, runsInCi, sameBranch } from "../forge";
 import { allow, ask, definePlugin, needsSetup, PluginError, ready, tool } from "../plugin";
 
-const Repo = z
-  .string()
-  .regex(/^[\w.-]+\/[\w.-]+$/, "owner/name")
-  .describe('The repository as owner/name, e.g. "hkubus/hatbot"');
+const Repo = RepoOf("hkubus/hatbot");
 const Num = z.number().int().positive().describe("The issue or pull request number");
 
 type User = { login: string };
@@ -341,8 +339,8 @@ export const githubPlugin = definePlugin({
         label: "Reading code",
         schema: z.object({
           repo: Repo,
-          path: z.string().max(500).default(""),
-          ref: z.string().max(200).optional(),
+          path: Path.default(""),
+          ref: Ref.optional(),
         }),
         describe: ({ repo, path }) => `Read ${repo}/${path}`,
         run: async ({ repo, path, ref }) => {
@@ -370,7 +368,7 @@ export const githubPlugin = definePlugin({
         label: "Checking CI",
         schema: z.object({
           repo: Repo,
-          ref: z.string().max(200).describe("Branch, tag or commit"),
+          ref: Ref.describe("Branch, tag or commit"),
         }),
         describe: ({ repo, ref }) => `Checked CI of ${repo}@${ref}`,
         run: async ({ repo, ref }) => {
@@ -484,20 +482,15 @@ export const githubPlugin = definePlugin({
         access: "write",
         schema: z.object({
           repo: Repo,
-          branch: z
-            .string()
-            .max(200)
-            .describe("The branch to commit to, or to start new_branch from"),
-          new_branch: z
-            .string()
-            .regex(/^[\w./-]{1,200}$/)
-            .optional()
-            .describe('A new branch for the commit, e.g. "hatbot/fix-ci"'),
+          branch: Branch.describe("The branch to commit to, or to start new_branch from"),
+          new_branch: Branch.optional().describe(
+            'A new branch for the commit, e.g. "hatbot/fix-ci"',
+          ),
           message: z.string().min(1).max(2000),
           files: z
             .array(
               z.object({
-                path: z.string().min(1).max(500),
+                path: Path.min(1),
                 content: z
                   .string()
                   .max(1_000_000)
@@ -511,13 +504,13 @@ export const githubPlugin = definePlugin({
         describe: ({ repo, branch, new_branch, files }) =>
           `Commit ${files.length} file${files.length === 1 ? "" : "s"} to ${repo}@${new_branch ?? branch}`,
         policy: ({ repo, branch, new_branch, files }) => {
-          // Git cleans paths before writing, so check them the same way.
-          const clean = (p: string) => posix.normalize(`/${p}`).toLowerCase();
-          if (files.some((f) => /^\/\.github\/workflows\//.test(clean(f.path))))
-            return ask("It changes CI workflows, which run with the repository's secrets.");
+          if (files.some((f) => runsInCi(f.path)))
+            return ask(
+              "It changes CI workflows or the actions they use, which run with the repository's secrets.",
+            );
           if (new_branch) return allow();
           const main = defaults.get(repo);
-          if (!main || branch === main)
+          if (!main || sameBranch(branch, main))
             return ask(`It commits straight to ${branch}${main ? ", the default branch" : ""}.`);
           return allow();
         },

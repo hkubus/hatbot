@@ -262,7 +262,7 @@ test("commits many files as one commit on a new branch, and won't delete what is
       message: "Docs",
       files: [
         { path: "docs/new.md", content: "new" },
-        { path: "./README.md", content: null },
+        { path: "/README.md", content: null },
       ],
     },
     call,
@@ -325,10 +325,17 @@ test("policy: new branches run, the default branch, workflows and merges ask", a
     action: "ask",
     why: "It commits straight to main, the default branch.",
   });
+  expect(v("github_commit_files", { repo, branch: "Main", message: "m", files })).toMatchObject({
+    action: "ask",
+  });
   for (const path of [
     ".github/workflows/ci.yml",
-    "./.GitHub//workflows/x.yml",
-    "a/../.github/workflows/x",
+    ".GitHub//workflows/x.yml",
+    "/.github/workflows/x.yml",
+    // Workflows run the actions they use, with the same secrets.
+    ".github/actions/setup/action.yml",
+    ".github/actions/setup/run.sh",
+    "tools/lint/action.yaml",
   ])
     expect(
       v("github_commit_files", {
@@ -358,4 +365,40 @@ test("policy: new branches run, the default branch, workflows and merges ask", a
     call,
   );
   expect(pr.untrusted).toBe(true);
+});
+
+test("branches git wouldn't take, and . or .. in names and paths, are refused before anything is sent", async () => {
+  const { gh } = await started();
+  const repo = "hkubus/hatbot";
+  const files = [{ path: "a.md", content: "x" }];
+  seen.length = 0;
+  const refused = async (name: string, input: Record<string, unknown>) => {
+    const r = await runPluginTool(gh(name), input, call);
+    expect(r.isError, JSON.stringify(input)).toBe(true);
+    expect(r.content).toStartWith("Invalid input");
+  };
+  // "main/" would land on main, past the default-branch check.
+  for (const branch of ["main/", "", "/main", "a//b", "a..b", "x.lock", "refs/heads/main", "-x"])
+    await refused("github_commit_files", { repo, branch, message: "m", files });
+  await refused("github_commit_files", {
+    repo,
+    branch: "main",
+    new_branch: "hatbot/../main",
+    message: "m",
+    files,
+  });
+  for (const path of ["a/../.github/workflows/x", "./README.md", "../../x"])
+    await refused("github_commit_files", {
+      repo,
+      branch: "main",
+      new_branch: "hatbot/x",
+      message: "m",
+      files: [{ path, content: "x" }],
+    });
+  // Each of these would leave the repository's endpoints once the URL is resolved.
+  await refused("github_file", { repo, path: "../../../../user/keys" });
+  await refused("github_file", { repo: "../..", path: "user" });
+  await refused("github_ci", { repo, ref: ".." });
+  await refused("github_issues", { repo: "../.." });
+  expect(seen).toEqual([]);
 });

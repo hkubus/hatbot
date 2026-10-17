@@ -247,8 +247,11 @@ test("files off the default branch are untrusted; workflow paths can't dodge the
 
   for (const path of [
     ".forgejo//workflows/x.yml",
-    "./.github/workflows/x.yml",
-    "a/../.Gitea/workflows/x.yml",
+    "/.github/workflows/x.yml",
+    ".Gitea/workflows/x.yml",
+    ".forgejo/actions/setup/action.yml",
+    ".gitea/actions/build/run.sh",
+    "ci/action.yaml",
   ])
     expect(
       verdictFor(
@@ -264,4 +267,34 @@ test("files off the default branch are untrusted; workflow paths can't dodge the
       ).action,
       path,
     ).toBe("ask");
+});
+
+test("an empty branch, branches git wouldn't take, and . or .. in names and paths are refused", async () => {
+  const { fj } = await started();
+  const repo = "kubus/hatbot";
+  const files = [{ path: "a.md", content: "x" }];
+  seen.length = 0;
+  const refused = async (name: string, input: Record<string, unknown>) => {
+    const r = await runPluginTool(fj(name), input, call);
+    expect(r.isError, JSON.stringify(input)).toBe(true);
+    expect(r.content).toStartWith("Invalid input");
+  };
+  // Forgejo commits an empty branch to the default branch.
+  for (const branch of ["", "main/", "a..b", "refs/heads/main"])
+    await refused("forgejo_commit_files", { repo, branch, message: "m", files });
+  await refused("forgejo_commit_files", {
+    repo,
+    branch: "main",
+    new_branch: "hatbot/x",
+    message: "m",
+    files: [{ path: "../../../user", content: null }],
+  });
+  await refused("forgejo_file", { repo, path: "../../../../user/keys" });
+  await refused("forgejo_ci", { repo, ref: ".." });
+  await refused("forgejo_issue", { repo: "kubus/..", number: 1 });
+  expect(seen).toEqual([]);
+  expect(
+    verdictFor(fj("forgejo_commit_files"), { repo, branch: "MAIN", message: "m", files }, call)
+      .action,
+  ).toBe("ask");
 });
