@@ -59,7 +59,7 @@ import {
   SYSTEM_PROMPT,
 } from "./prompt";
 import { mayReview, safeToRun } from "./review";
-import { type Readable, Screener, type Screening } from "./screening";
+import { type Readable, Screener } from "./screening";
 import {
   addSources,
   CHAT_WEB_TOOLS,
@@ -407,12 +407,18 @@ export class Thread {
 
   /**
    * The episode has read untrusted content, `by`: tasks and schedules it makes from here on start
-   * tainted. The first `by` is kept.
+   * tainted. The first `by` is kept. `carried`: it came with the summary or the messages before, and
+   * wasn't read here. Only what an episode read itself taints the running summary, so deleting that
+   * episode clears it (PLAN.md §6.1).
    */
-  private taint(episodeId: number, by: string) {
+  private taint(episodeId: number, by: string, carried = false) {
     this.d.db
-      .query("UPDATE episodes SET tainted = 1, tainted_by = coalesce(tainted_by, ?) WHERE id = ?")
-      .run(by, episodeId);
+      .query(
+        `UPDATE episodes SET tainted = 1, tainted_by = coalesce(tainted_by, ?1),
+         read_untrusted = CASE WHEN ?2 THEN read_untrusted ELSE coalesce(read_untrusted, ?1) END
+         WHERE id = ?3`,
+      )
+      .run(by, carried ? 1 : 0, episodeId);
   }
 
   /**
@@ -423,42 +429,22 @@ export class Thread {
     const recent = this.list(beforeMessageId, RECENT_MESSAGES).map((m) => m.id);
     if (!recent.length) return;
     const from = this.d.db
-      .query<
-        {
-          episode: string | null;
-          note: string | null;
-          task_id: number | null;
-          title: string | null;
-        },
-        number[]
-      >(
-        `SELECT CASE WHEN e.tainted = 1 THEN coalesce(e.tainted_by, '') END AS episode,
-           m.tainted_by AS note, t.id AS task_id, t.title
+      .query<{ taint: string | null; suspected: string | null }, number[]>(
+        `SELECT coalesce(m.tainted_by,
+           CASE WHEN e.tainted = 1 THEN coalesce(e.tainted_by, 'Untrusted content') END,
+           CASE WHEN t.tainted = 1 THEN 'Task #' || t.id || ' "' || t.title || '"' END) AS taint,
+           e.injection_suspected AS suspected
          FROM messages m
          LEFT JOIN episodes e ON e.id = m.episode_id
          LEFT JOIN tasks t ON t.id = m.task_id
-         WHERE m.id IN (${recent.map(() => "?").join(", ")})
-         AND (e.tainted = 1 OR t.tainted = 1 OR m.tainted_by IS NOT NULL)
-         ORDER BY m.id LIMIT 1`,
+         WHERE m.id IN (${recent.map(() => "?").join(", ")}) ORDER BY m.id`,
       )
-      .get(...recent);
-    if (from)
-      this.taint(
-        episodeId,
-        from.note ??
-          (from.episode !== null
-            ? from.episode || "Untrusted content"
-            : `Task #${from.task_id} "${from.title}"`),
-      );
+      .all(...recent);
+    const taint = from.find((m) => m.taint)?.taint;
+    if (taint) this.taint(episodeId, taint, true);
     // What the earlier conversation was suspected of reading comes along with the messages.
-    const suspected = this.d.db
-      .query<{ s: string }, number[]>(
-        `SELECT e.injection_suspected AS s FROM messages m JOIN episodes e ON e.id = m.episode_id
-         WHERE m.id IN (${recent.map(() => "?").join(", ")}) AND e.injection_suspected IS NOT NULL
-         ORDER BY m.id LIMIT 1`,
-      )
-      .get(...recent)?.s;
-    if (suspected) this.markSuspected(episodeId, suspected);
+    const suspected = from.find((m) => m.suspected)?.suspected;
+    if (suspected) this.suspect(episodeId, suspected);
   }
 
   /**
@@ -490,20 +476,19 @@ export class Thread {
       .join("\n\n");
   }
 
-  /** Something the episode read may be a prompt injection, or Haiku couldn't tell: the first kept. */
-  private suspect(episodeId: number, source: string, verdict: Screening) {
-    this.markSuspected(
-      episodeId,
-      verdict.failed ? `${source}, which couldn't be checked` : `${source}: "${verdict.excerpt}"`,
-    );
-  }
-
-  private markSuspected(episodeId: number, what: string) {
+  /**
+   * Something the episode read may be a prompt injection, `what`: the first kept. `own`: Haiku found
+   * it in what the episode read itself, so the running summary carries it on. A check that failed
+   * doesn't: the episode had the text itself, but the summary was told to keep no requests from it.
+   */
+  private suspect(episodeId: number, what: string, own = false) {
     this.d.db
       .query(
-        "UPDATE episodes SET injection_suspected = coalesce(injection_suspected, ?) WHERE id = ?",
+        `UPDATE episodes SET injection_suspected = coalesce(injection_suspected, ?1),
+         read_suspected = CASE WHEN ?2 THEN coalesce(read_suspected, ?1) ELSE read_suspected END
+         WHERE id = ?3`,
       )
-      .run(what, episodeId);
+      .run(what, own ? 1 : 0, episodeId);
   }
 
   /**
@@ -534,32 +519,29 @@ export class Thread {
     if (!screener) {
       for (const [id, other] of this.screeners) if (other.idle) this.screeners.delete(id);
       screener = new Screener(this.d, { episodeId }, (source, verdict) =>
-        this.suspect(episodeId, source, verdict),
+        verdict.failed
+          ? this.suspect(episodeId, `${source}, which couldn't be checked`)
+          : this.suspect(episodeId, `${source}: "${verdict.excerpt}"`, true),
       );
       this.screeners.set(episodeId, screener);
     }
     return screener;
   }
 
-  /** What the episode read that may be a prompt injection, or null. */
-  private suspected(episodeId: number): string | null {
-    return (
-      this.d.db
-        .query<{ s: string | null }, [number]>(
-          "SELECT injection_suspected AS s FROM episodes WHERE id = ?",
-        )
-        .get(episodeId)?.s ?? null
-    );
-  }
-
-  /** What the episode first read that was untrusted, or null. */
-  private tainted(episodeId: number): string | null {
+  /**
+   * What the episode first read that was untrusted, and what it read that may be a prompt injection,
+   * or null: its own reads and what it carried over.
+   */
+  private trust(episodeId: number): { tainted: string | null; suspected: string | null } {
     const e = this.d.db
-      .query<{ tainted: number; tainted_by: string | null }, [number]>(
-        "SELECT tainted, tainted_by FROM episodes WHERE id = ?",
+      .query<{ tainted: number; by: string | null; suspected: string | null }, [number]>(
+        "SELECT tainted, tainted_by AS by, injection_suspected AS suspected FROM episodes WHERE id = ?",
       )
       .get(episodeId);
-    return e?.tainted ? (e.tainted_by ?? "Untrusted content") : null;
+    return {
+      tainted: e?.tainted ? (e.by ?? "Untrusted content") : null,
+      suspected: e?.suspected ?? null,
+    };
   }
 
   /**
@@ -578,8 +560,7 @@ export class Thread {
     screen?: (source: string, text: string) => void,
   ): Promise<{ content: string; isError: boolean }> {
     const { approvals, settings, attachments } = this.d;
-    const taintedBy = this.tainted(episodeId);
-    const suspected = this.suspected(episodeId);
+    const { tainted: taintedBy, suspected } = this.trust(episodeId);
     const cc: CallContext = {
       task: null,
       signal,
@@ -1097,32 +1078,20 @@ export class Thread {
   }
 
   /**
-   * What the running summary drew on that was untrusted, or null: it was written from every summarized
-   * conversation, so one that had read untrusted content taints it until that one is deleted.
+   * What the running summary drew on that was untrusted, and what may be a prompt injection, or null.
+   * It was written from every summarized conversation, so one that read untrusted content itself
+   * taints it until that one is deleted; what a conversation only carried over doesn't.
    */
-  private summaryTaint(): string | null {
-    if (!this.threadSummary()) return null;
-    const e = this.d.db
-      .query<{ tainted_by: string | null }, [number]>(
-        `SELECT tainted_by FROM episodes WHERE conversation_id = ? AND incognito = 0 AND summarized = 1
-         AND tainted = 1 ORDER BY id LIMIT 1`,
+  private summaryTrust(): { tainted: string | null; suspected: string | null } {
+    if (!this.threadSummary()) return { tainted: null, suspected: null };
+    const first = (column: string) =>
+      `(SELECT 'The summary of earlier conversations, which drew on: ' || ${column} FROM episodes
+        WHERE conversation_id = ?1 AND summarized = 1 AND ${column} IS NOT NULL ORDER BY id LIMIT 1)`;
+    return this.d.db
+      .query<{ tainted: string | null; suspected: string | null }, [number]>(
+        `SELECT ${first("read_untrusted")} AS tainted, ${first("read_suspected")} AS suspected`,
       )
-      .get(this.conversationId);
-    return e
-      ? `The summary of earlier conversations, which drew on: ${e.tainted_by ?? "untrusted content"}`
-      : null;
-  }
-
-  /** What a conversation the running summary drew on was suspected of reading, or null. */
-  private summarySuspicion(): string | null {
-    if (!this.threadSummary()) return null;
-    const e = this.d.db
-      .query<{ s: string }, [number]>(
-        `SELECT injection_suspected AS s FROM episodes WHERE conversation_id = ? AND incognito = 0
-         AND summarized = 1 AND injection_suspected IS NOT NULL ORDER BY id LIMIT 1`,
-      )
-      .get(this.conversationId);
-    return e ? `The summary of earlier conversations, which drew on: ${e.s}` : null;
+      .get(this.conversationId) as { tainted: string | null; suspected: string | null };
   }
 
   private threadSummary(): string {
@@ -1494,7 +1463,7 @@ export class Thread {
         ? []
         : [
             // One written from conversations that read untrusted content is data, like what they read.
-            this.summaryTaint()
+            this.summaryTrust().tainted
               ? untrustedBlock("summary_of_earlier_conversations", this.threadSummary())
               : `<summary_of_earlier_conversations>\n${this.threadSummary() || "(none yet)"}\n</summary_of_earlier_conversations>`,
           ]),
@@ -1720,10 +1689,9 @@ export class Thread {
           // /new leaves the messages before, and what they had read, behind.
           if (!episode.fresh) this.inheritTaint(episode.id, userId);
           // The running summary carries on what the conversations folded into it read.
-          const carried = this.summaryTaint();
-          if (carried) this.taint(episode.id, carried);
-          const suspicion = this.summarySuspicion();
-          if (suspicion) this.markSuspected(episode.id, suspicion);
+          const summary = this.summaryTrust();
+          if (summary.tainted) this.taint(episode.id, summary.tainted, true);
+          if (summary.suspected) this.suspect(episode.id, summary.suspected);
         }
       } else {
         const commands = this.commandsSince(episode.id, userId);
@@ -2222,14 +2190,14 @@ export class Thread {
               conversationId: this.conversationId,
               messageId: out.id,
               episodeId: episode.id,
-              tainted: () => this.tainted(episode.id),
+              tainted: () => this.trust(episode.id).tainted,
               taint: (by: string, text?: string) => {
                 this.taint(episode.id, by);
                 if (text !== undefined) screen(by, text);
               },
               suspected: async () => {
                 await screener?.settled();
-                return this.suspected(episode.id) !== null;
+                return this.trust(episode.id).suspected !== null;
               },
               ownerSaid: () => this.ownerSaid(episode.id),
               livePlugin: (t) => this.livePlugin(bot, t, incognito),
@@ -2270,7 +2238,7 @@ export class Thread {
                   { scheduleId: sc.id },
                   bot.id,
                   // Its prompt was written after reading untrusted content.
-                  this.tainted(episode.id),
+                  this.trust(episode.id).tainted,
                 ),
             },
             abort.signal,

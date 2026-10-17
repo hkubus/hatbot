@@ -730,7 +730,11 @@ test("/new starts a conversation that carries nothing over, and folds the last o
   );
   const t = await testApp(model);
   await t.thread.post("first").done;
-  t.db.query("UPDATE episodes SET tainted = 1, tainted_by = 'https://example.com'").run();
+  t.db
+    .query(
+      "UPDATE episodes SET tainted = 1, tainted_by = 'https://example.com', read_untrusted = 'https://example.com'",
+    )
+    .run();
   t.advance(60_000);
   await t.thread.post("/new").done;
   // A second /new is the same new conversation.
