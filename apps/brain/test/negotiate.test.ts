@@ -734,7 +734,7 @@ test("the policy reads the pace from the record: ten new conversations a day, tw
   await t.plugins.stopAll();
 });
 
-test("an agreement with no price in it is checked against the seller's price on record", async () => {
+test("an agreement names its price and is checked against the seller's price on record", async () => {
   const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
   await withScout(t, false);
   const send = named(negotiateTools(t), "negotiate_send");
@@ -753,20 +753,24 @@ test("an agreement with no price in it is checked against the seller's price on 
         "2026-10-09T11:00:00.000Z",
         direction === "in" ? null : "2026-10-09T11:00:00.000Z",
       );
-  const agree = send.schema.parse({
-    negotiation: n.id,
-    text: "Ok, biorę.",
-    agree: true,
-    offer: 1100,
-  });
+  const agree = (text: string) =>
+    send.schema.parse({ negotiation: n.id, text, agree: true, offer: 1350 });
   // Nothing from the seller yet: it agrees to the asking price, 1,500 zł.
-  expect(verdictFor(send, agree, call(), true)).toMatchObject({ action: "ask" });
+  expect(verdictFor(send, agree("Ok, biorę za 1350 zł."), call(), true)).toMatchObject({
+    action: "ask",
+  });
   message("in", "Mogę zejść do 1350.");
   message("out", "Dam 1100.");
   expect(t.negotiations.facts(n).seller).toEqual([{ text: "Mogę zejść do 1350.", after: false }]);
-  expect(verdictFor(send, agree, call(), true)).toMatchObject({ action: "allow" });
+  expect(verdictFor(send, agree("Ok, biorę za 1350 zł."), call(), true)).toMatchObject({
+    action: "allow",
+  });
+  // A bare yes names no price, so it asks whatever the seller's message seems to say.
+  expect(verdictFor(send, agree("Ok, biorę."), call(), true)).toMatchObject({ action: "ask" });
   message("in", "Nie, 1450 to minimum.");
-  expect(verdictFor(send, agree, call(), true)).toMatchObject({ action: "ask" });
+  expect(verdictFor(send, agree("Ok, biorę za 1350 zł."), call(), true)).toMatchObject({
+    action: "ask",
+  });
   // Saying "biorę" without agree can't go at all.
   const unflagged = send.schema.parse({ negotiation: n.id, text: "Ok, biorę." });
   expect(verdictFor(send, unflagged, call(), true)).toMatchObject({ action: "block" });

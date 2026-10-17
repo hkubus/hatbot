@@ -164,20 +164,45 @@ export function outside(
       );
   }
 
-  // The other side's price. A message that reads as agreeing agrees to it. While it's past the limit, or
-  // can't be read, only a message that names a price of ours inside the mandate goes, whatever its words.
+  const relative = relativeIn(text);
+  if (relative.length)
+    why.push(
+      `It sets an amount by another one or leaves part of it open (${quoted(relative)}), so what it comes to can't be checked against the mandate.`,
+    );
+  if (r.found.length && SEVERAL_ITEMS.test(text))
+    why.push(
+      `It's about more than one item ("${SEVERAL_ITEMS.exec(text)?.[0]}"), and the mandate covers this listing only.`,
+    );
+
+  // The other side's price. A message that reads as agreeing agrees to it, so it must name the price it
+  // agrees to: a number read from the seller's message is never trusted for a bare "Zgoda". While their
+  // price is past the limit, or can't be read, nothing that reads as agreeing goes, and only a message
+  // that names a price of ours inside the mandate goes at all, whatever its words.
   const theirs = theirPrice(n, f.seller);
-  if (theirs === null || beyond(theirs)) {
+  const pastTheirs = theirs === null || beyond(theirs);
+  const sized = (v: number) => !beyond(v) && v >= priceFloor(m);
+  const named = r.found.some((a) => a.values.some(sized));
+  const offer = input.offer;
+  const namesOffer =
+    offer !== null &&
+    sized(offer) &&
+    r.found.some((a) => a.values.some((v) => Math.abs(v - offer) < 0.01));
+  const agreeing =
+    input.agree ||
+    acceptance(text) !== null ||
+    AGREES.test(text) ||
+    AFFIRMATIVE_ONLY.test(text) ||
+    (pastTheirs && AFFIRMATIVE_OPENING.test(text));
+  if (agreeing && !namesOffer)
+    why.push(
+      "It reads as agreeing but doesn't name the price it agrees to, inside the mandate, in both the text and offer.",
+    );
+  if (pastTheirs) {
     const who = buying ? "seller" : "buyer";
     const said =
       theirs === null
         ? `the ${who}'s price can't be read from the conversation`
         : `the ${who}'s last price, ${money(theirs)}, is ${past} ${limit}`;
-    const agreeing = input.agree || acceptance(text) !== null || THEIR_PRICE.test(text);
-    // A price, not a shipping fee: buying, at least half the opening offer.
-    const named = r.found.some((a) =>
-      a.values.some((v) => !beyond(v) && (!buying || v >= Math.min(m.opening, m.limit) / 2)),
-    );
     if (agreeing) why.push(`It reads as agreeing, and ${said}.`);
     else if (!named)
       why.push(
@@ -202,7 +227,7 @@ export function outside(
       why.push(
         `It brings up a way to pay that the mandate's terms don't name: ${p.name} ("${p.raw}").`,
       );
-  const pickup = PICKUP.exec(text)?.[0];
+  const pickup = PICKUP.exec(inPerson(text))?.[0];
   if (pickup && !terms.pickup)
     why.push(
       `It brings up picking up or meeting in person ("${pickup}"), which the delivery terms ("${m.delivery}") don't allow.`,
@@ -212,7 +237,7 @@ export function outside(
     why.push(
       `It brings up shipping ("${shipping}"), which the delivery terms ("${m.delivery}") don't include.`,
     );
-  const paid = PAID.exec(text)?.[0];
+  const paid = PAID.exec(text.replace(SENT_NOT_PAID, " "))?.[0];
   if (paid) why.push(`It says something was paid or sent ("${paid}").`);
   const contacts = contactsIn(text).filter((c) => !m.allow.includes(c.kind));
   for (const c of contacts) why.push(`It carries ${CONTACT_NAMES[c.kind]} ("${c.raw}").`);
@@ -351,11 +376,20 @@ const ACCEPT =
 
 /**
  * Words that agree to the other side's price without being a plain yes: "za Pana cenę", "tyle, ile Pan
- * chce", "your asking price", "odpowiada mi". The accusative only: "Pana cena jest za wysoka" refuses.
- * They don't stop a message as ACCEPT does: they're checked against the seller's price.
+ * chce", "your asking price", "odpowiada mi", "idę na to". The accusative only: "Pana cena jest za
+ * wysoka" refuses. They don't stop a message as ACCEPT does: they're checked like an agreement.
  */
-const THEIR_PRICE =
-  /(?<![\p{L}])(?:mi\s+odpowiada|odpowiada\s+mi|(?:pana|pani|pa[ńn]sk\p{L}*|pa[ńn]stwa|tw[oó]j\p{L}*|tw[aą])\s+(?:cen[eę]|propozycj[eę]|ofert[eę]|kwot[eę])|tyle\s*,?\s+ile|ile\s+(?:pan|pani|pa[ńn]stwo)\s+\p{L}+|(?:pay|take|accept|meet|at|for)\s+your\s+(?:asking\s+)?(?:price|offer)|asking\s+price|full\s+price|pe[łl]n[aąe]\s+cen[eęy]|cen[eęy]\s+(?:wywo[łl]awcz\p{L}*|z\s+og[łl]oszenia|katalogow\p{L}*))(?![\p{L}])/iu;
+const AGREES =
+  /(?<![\p{L}])(?:mi\s+odpowiada|odpowiada\s+mi|id[ęe]\s+na\s+to|przystaj[ęe]|przekona[łl]\p{L}*\s+mnie|rezerwuj[ęe]|za[łl]atwione|mo[żz]e\s+by[ćc]\s+i\s+tak|czemu\s+nie|why\s+not|you\s+win|got\s+(?:yourself\s+)?a\s+deal|i(?:['’]ll|\s+will)\s+(?:buy|take\s+(?:the|this|that|your))|works\s+for\s+me|let['’]?s\s+do\s+it|count\s+me\s+in|sold|(?:pana|pani|your)\s+(?:warunki|terms)|cena\s+jest\s+w\s+porz[ąa]dku|price\s+is\s+(?:fine|ok|okay|good|right)|(?:pana|pani|pa[ńn]sk\p{L}*|pa[ńn]stwa|tw[oó]j\p{L}*|tw[aą])\s+(?:cen[eę]|propozycj[eę]|ofert[eę]|kwot[eę])|tyle\s*,?\s+(?:ile|co)|ile\s+(?:pan|pani|pa[ńn]stwo)\s+\p{L}+|(?:pay|take|accept|meet|at|for)\s+your\s+(?:asking\s+)?(?:price|offer)|what\s+you(?:['’]re|\s+are)?\s+ask\p{L}*|asking\s+price|full\s+price|pe[łl]n[aąe]\s+cen[eęy]|cen[eęy]\s+(?:wywo[łl]awcz\p{L}*|z\s+og[łl]oszenia|katalogow\p{L}*))(?![\p{L}])/iu;
+
+/** A message of nothing but yes: "Ok.", "Tak!", "Dobrze, poproszę", "Sure, sounds good". */
+const AFFIRMATIVE_ONLY =
+  /^[\s.,!…-]*(?:(?:ok(?:ay|ej|i)?|tak|dobrze|dobra|jasne|pewnie|spoko|super|[śs]wietnie|git|zgoda|fine|sure|yes|yeah|yep|great|perfect|alright|cool|deal|sold|w\s+porz[ąa]dku|no\s+to|to|poprosz[ęe]|please|sounds\s+good|that\s+works|w\s+takim\s+razie|then)[\s.,!…-]*)+$/iu;
+/** A message that opens with yes: after a price past the limit, it reads as taking it. */
+const AFFIRMATIVE_OPENING =
+  /^\s*(?:ok(?:ay|ej|i)?|tak|dobrze|dobra|jasne|pewnie|spoko|super|[śs]wietnie|git|zgoda|fine|sure|yes|yeah|yep|great|perfect|alright|all\s+right|cool|sold|deal|w\s+porz[ąa]dku|czemu\s+nie|why\s+not)(?![\p{L}])/iu;
+/** The least that's a price rather than a fee or a count: half the opening offer, or of the limit. */
+const priceFloor = (m: Negotiation["mandate"]) => Math.min(m.opening, m.limit) / 2;
 
 /** The words in a message that accept a price, if any. */
 export function acceptance(raw: string): string | null {
@@ -373,13 +407,18 @@ function theirPrice(n: Negotiation, seller: SendFacts["seller"]): number | null 
   const reading = (raw: string) => {
     const r = read(raw, n.title, n.asking);
     const t = combine(r);
+    const text = plain(raw);
     return {
+      // A price, not a shipping fee, a time or "o 100 zł". "Cena bez zmian" is the asking price.
       values: [
         ...r.found.flatMap((a) => a.values),
         ...t.sums.map((x) => x.total),
         ...t.products.map((x) => x.total),
-      ],
+        ...(FIRM.test(text) && n.asking !== null ? [n.asking] : []),
+      ].filter((v) => v >= priceFloor(n.mandate)),
       unclear:
+        relativeIn(text).length > 0 ||
+        SEVERAL_ITEMS.test(text) ||
         t.each.length > 0 ||
         r.unclear.length > 0 ||
         oddNumbers(raw) ||
@@ -399,6 +438,40 @@ function theirPrice(n: Negotiation, seller: SendFacts["seller"]): number | null 
   return n.asking;
 }
 
+/** A seller holding to the listing's price without naming it: "cena bez zmian", "price as listed". */
+const FIRM =
+  /(?<![\p{L}])(?:cen\p{L}*\s+(?:jak\s+w\s+og[łl]oszeniu|z\s+og[łl]oszenia|bez\s+zmian|ostateczn\p{L}*|sztywn\p{L}*|nie\s+podlega\p{L}*|aktualn\p{L}*)|nie\s+negocjuj\p{L}*|bez\s+negocjacji|nie\s+zejd[ęe]|nie\s+opuszcz\p{L}*|price\s+(?:as\s+listed|stays|is\s+firm|is\s+final|is\s+fixed)|asking\s+price|full\s+price|not\s+negotiable|no\s+negotiation)(?![\p{L}])/iu;
+
+/** More than one item: the mandate is for this listing, one item, at one price. */
+const SEVERAL_ITEMS =
+  /(?<![\p{L}])(?:obie|oba|obydw\p{L}*|both|w\s+parze|tylko\s+razem|as\s+a\s+pair|(?:wszystkie|all)\s+(?:trzy|cztery|three|four|of\s+them|karty|sztuki|cards)|drug[aąi]\s+(?:kart\p{L}*|sztuk\p{L}*|egzemplarz\p{L}*)|second\s+(?:card|one|item))(?![\p{L}])/iu;
+
+/** Words that make a payment go with something more, without an amount: the rest, the difference. */
+const REMAINDER =
+  /(?<![\p{L}])(?:reszt[aęy]|r[óo][żz]nic[aęy]|brakuj[ąa]c\p{L}*\s+kwot\p{L}*|the\s+(?:rest|difference|remainder|balance))(?![\p{L}])/iu;
+const PAY_VERB =
+  /(?<![\p{L}])(?:dop[łl]ac\p{L}*|dop[łl]at\p{L}*|zap[łl]ac\p{L}*|p[łl]ac\p{L}*|oddam|odda[ćc]|dam|dorzuc\p{L}*|przelej\p{L}*|przela\p{L}*|wy[śs]l[ęe]|pay\p{L}*|send)(?![\p{L}])/iu;
+/** Amounts set by another one: 50%, 23% VAT, o 100 zł, 500 więcej, 2 x tyle, pół ceny, do Pana ceny. */
+const RELATIVE: RegExp[] = [
+  // Any share but 100%, which is a manner of speaking ("sprawna w 100%").
+  /(?<![\d.,])(?!100(?![\d.,]))\d+(?:[.,]\d+)?\s?(?:%|procent\p{L}*|percent)/giu,
+  /(?<![\p{L}])(?:netto|(?:\+|plus)\s*vat)(?![\p{L}])/giu,
+  /\d+(?:[.,]\d+)?\s*(?:zł|zl|pln|złotych)?\s+(?:wi[ęe]cej|mniej|taniej|dro[żz]ej|extra|more|less|cheaper|off)(?![\p{L}])/giu,
+  /(?<![\p{L}])(?:zej[śs][ćc]|zejd\p{L}*|opu[śs]ci\p{L}*|opuszcz\p{L}*|obni[żz]\p{L}*|podnie[śs]\p{L}*|podnios\p{L}*|podbi\p{L}*|zwi[ęe]ksz\p{L}*|spu[śs]ci\p{L}*|dorzuc\p{L}*|do[łl]o[żz]\p{L}*)\s+(?:o\s+)?\d+/giu,
+  /(?<![\p{L}])(?:(?:\d+|dwa|trzy|two|three)\s*(?:x|×|razy|times)\s+(?:tyle|that|as\s+much)|podw[óo]jnie|potr[óo]jnie|pay\s+double|double\s+(?:the|your|that|it|what)|triple\s+(?:the|your|that|it)|o\s+po[łl]ow[ęe]|(?:p[óo][łl]|po[łl]ow[ęe]|po[łl]owa)\s+ceny|half\s+(?:the\s+)?price|half\s+of\s+(?:the|your|what))(?![\p{L}])/giu,
+  /(?<![\p{L}])(?:(?:do|ponad|od)\s+(?:pana|pani|pa[ńn]sk\p{L}*|twoj\p{L}*|pa[ńn]stwa)\s+cen\p{L}*|(?:on\s+top\s+of|over|above|more\s+than)\s+(?:your|the)\s+(?:asking\s+)?price|(?:pana|pani|your)\s+(?:cen\p{L}*|price)\s+(?:plus|\+))(?![\p{L}])/giu,
+  /(?<![\p{L}])(?:(?:to|tyle)\s+samo\s+(?:za|jeszcze)|za\s+tyle\s+samo|the\s+same\s+(?:again|for|amount))(?![\p{L}])/giu,
+  /(?<![\p{L}])(?:miesi[ęe]cznie|co\s+miesi[ąa]c|monthly|per\s+month|tygodniowo|co\s+tydzie[ńn]|weekly|na\s+raty|w\s+ratach|installments?)(?![\p{L}])/giu,
+];
+
+/** Amounts that depend on another or leave part of the total open: they can't be checked. */
+function relativeIn(text: string): string[] {
+  const out = RELATIVE.flatMap((re) => [...text.matchAll(re)].map((m) => m[0]));
+  const rest = REMAINDER.exec(text)?.[0];
+  if (rest && PAY_VERB.test(text)) out.push(rest);
+  return out;
+}
+
 // ——— Amounts ———
 
 /** Currencies by code: the words (regex) and signs they're written with. */
@@ -409,7 +482,8 @@ const MONEY: { code: string; words: string; signs?: string }[] = [
   // Euro RTV AGD is a shop, where receipts come from.
   {
     code: "EUR",
-    words: "eur|euro(?!\\s*(?:rtv|agd|net))|euros\\p{L}*|euras\\p{L}*|eurak\\p{L}*|ojro|евро",
+    words:
+      "eur|euro(?!\\s*(?:rtv|agd|net))|euros\\p{L}*|euras\\p{L}*|eurak\\p{L}*|ojro|jewr\\p{L}*|ejro|e[łl]ro|евро",
     signs: "€",
   },
   {
@@ -417,7 +491,11 @@ const MONEY: { code: string; words: string; signs?: string }[] = [
     words: "usd|dolar\\p{L}*|dollar\\p{L}*|dolc\\p{L}*|dolec|baks\\p{L}*|bucks?",
     signs: "\\$",
   },
-  { code: "GBP", words: "gbp|funt\\p{L}*|funciak\\p{L}*|pounds?|quid", signs: "£" },
+  {
+    code: "GBP",
+    words: "gbp|funt\\p{L}*|funciak\\p{L}*|pounds?|quid|sterling\\p{L}*|szterling\\p{L}*",
+    signs: "£",
+  },
   { code: "CZK", words: "czk|kč|korun\\p{L}*" },
   { code: "CHF", words: "chf|frank(?:i|a|ów|ach|ami)?|francs?" },
   { code: "UAH", words: "uah|hrywn\\p{L}*|hrywien", signs: "₴" },
@@ -435,6 +513,7 @@ const MONEY_AFTER: { code: string; words: string }[] = [
   { code: "kr", words: "kr" },
   { code: "HUF", words: "ft" },
   { code: "RON", words: "lei|lej" },
+  { code: "CHF", words: "fr" },
 ];
 /**
  * ISO 4217 codes in capitals: anywhere for these, which no word or model name is spelt like (sek is
@@ -484,24 +563,40 @@ export function currenciesIn(text: string): { code: string; raw: string }[] {
   return out;
 }
 
-/** Thousands after a number: 1,4k, 1.5 tys., 2 grand, 2 koła, 3 kafle. */
+/** Thousands after a number: 1,4k, 1.5 tys., 2 grand, 2 koła, 3 kafle, 1,5 kawałka. */
 const THOUSANDS =
-  /^\s?(?:k|tys\.?|tyś\.?|tysi\p{L}*|tysiak\p{L}*|thousands?|grand|kafl\p{L}*|kafel|patyk\p{L}*|patol\p{L}*|ko[łl][ao]|k[óo][łl])(?![\p{L}])/iu;
+  /^\s?(?:k|tys\.?|tyś\.?|ty[śs]k\p{L}*|tysi\p{L}*|tysiak\p{L}*|thousands?|grand|kawa[łl]\p{L}*|kafl\p{L}*|kafel|patyk\p{L}*|patol\p{L}*|ko[łl][ao]|k[óo][łl])(?![\p{L}])/iu;
 /** Hundreds after a number: 15 stów, 14 stówek, 12 setek, fourteen hundred. */
-const HUNDREDS = /^\s?(?:st[óo]w\p{L}*|stow[aeky]\p{L}*|setk\p{L}*|setek|hundreds?)(?![\p{L}])/iu;
+const HUNDREDS =
+  /^\s?(?:st[óo]w\p{L}*|stow[aeky]\p{L}*|setk\p{L}*|setek|stuz[łl]ot[óo]w\p{L}*|hundreds?)(?![\p{L}])/iu;
+/** Five hundreds after a number: 3 pięćsetki. */
+const FIVE_HUNDREDS =
+  /^\s?(?:pi[ęe][ćc]setk\p{L}*|pi[ęe][ćc]setek|pi[ęe][ćc]setz[łl]ot\p{L}*)(?![\p{L}])/iu;
 /** Millions after a number: 1,5 bańki, 2 mln, 1kk. */
 const MILLIONS =
   /^\s?(?:kk|mln|mio|milion\p{L}*|million\p{L}*|ba[ńn]k\p{L}*|ba[ńn]i[ae]?|baniek)(?![\p{L}])/iu;
+/** Each scale a number can be followed by, and what it multiplies by. */
+const SCALES: [RegExp, number][] = [
+  [MILLIONS, 1_000_000],
+  [THOUSANDS, 1000],
+  [FIVE_HUNDREDS, 500],
+  [HUNDREDS, 100],
+];
+
 /**
  * What a number counts when this word follows it: not money. No one-letter units: "2000 w gotówce" is
  * money, not watts.
  */
 const UNIT =
-  /^\s?(?:%|procent\p{L}*|gb|tb|mb|kb|mhz|ghz|hz|mah|wh|cm|mm|km|kg|ml|cali|cale|cal|szt\.?|sztuk\p{L}*|dni|dzień|dnia|godz\.?|godzin\p{L}*|minut\p{L}*|sek\.?|tyg\.?|tygodni\p{L}*|mies\.?|miesi\p{L}*|rok|roku|lat|lata|fps|rpm|gen\.?|generacji|rdzeni\p{L}*|bit|bitów|days?|hours?|weeks?|months?|years?|pcs|pieces?|inch\p{L}*)(?![\p{L}\p{N}])/iu;
+  /^\s?(?:%|procent\p{L}*|gb|tb|mb|kb|mhz|ghz|hz|mah|wh|cm|mm|km|kg|ml|cali|cale|cal|szt\.?|sztuk\p{L}*|dni|dzień|dnia|godz\.?|godzin\p{L}*|minut\p{L}*|sek\.?|tyg\.?|tygodni\p{L}*|mies\.?|miesi\p{L}*|rok|roku|lat|lata|h|fps|rpm|gen\.?|generacji|rdzeni\p{L}*|bit|bitów|days?|hours?|weeks?|months?|years?|pcs|pieces?|inch\p{L}*)(?![\p{L}\p{N}])/iu;
 /** A model's letters glued after its number: 3070ti, 6700xt, 2x8GB, 2nd. Anything else glued on asks. */
 const MODEL_SUFFIX = /^(?:ti|xt|xtx|super|x(?=\d)|st|nd|rd|th|nm)(?![\p{L}])/iu;
+/** A unit or a model's letters after a number: 8 GB, 3070ti, 5600X. */
+const unitAfter = (after: string) =>
+  UNIT.test(after) || MODEL_SUFFIX.test(after) || /^(?:X|XT|XTX|X3D)(?!\p{L})/u.test(after);
 /** A year after these words. Not w, z, od, in or from on their own: "w 2000" is as likely money. */
-const YEAR_BEFORE = /(?:^|[^\p{L}])(?:rok|roku|rocznik|since|year)\s$/iu;
+const YEAR_BEFORE =
+  /(?:^|[^\p{L}])(?:rok|roku|rocznik|since|year|(?:gwarancj\p{L}*|warranty)\s+(?:do|until|till|to)|stycz\p{L}*|lut\p{L}*|marc\p{L}*|marzec|kwie\p{L}*|maj[a]?|czerw\p{L}*|lip\p{L}*|sierp\p{L}*|wrze[śs]\p{L}*|pa[źz]dziernik\p{L}*|listopad\p{L}*|grud\p{L}*|january|february|march|april|may|june|july|august|september|october|november|december)\s$/iu;
 const YEAR_AFTER = /^\s?(?:r\.|r(?![\p{L}])|rok|roku)/iu;
 
 /**
@@ -567,6 +662,7 @@ function read(text: string, title: string, asking: number | null): Reading {
         : [];
     }),
   );
+  const titleNumbers = new Set([...models].map((m) => m.split(" ")[1] ?? ""));
   const pre = clean(text);
   const unclear: Unclear[] = lookAlikes(pre).map((raw) => ({ raw, spaced: false }));
   let s = blankDates(plain(text));
@@ -596,20 +692,36 @@ function read(text: string, title: string, asking: number | null): Reading {
           (glued.length <= 2 && values.every((v) => v < 1000)))
       )
         return;
-      // i7-12700, RX-580: after a hyphen glued to a model's letters.
+      // i7-12700, RX-580: after a hyphen glued to a model's letters. Not "oferta-1500" or "PLN-1500".
       const hyphened = /(?<![\p{L}\p{N}])(\p{L}[\p{L}\p{N}]*)-$/u.exec(before)?.[1];
-      if (hyphened && !priceWord(hyphened)) return;
+      if (
+        hyphened &&
+        !priceWord(hyphened) &&
+        (modelLike(hyphened) || /\d/.test(hyphened)) &&
+        !CURRENCY_BEFORE.test(hyphened)
+      )
+        return;
     }
-    const scaled =
-      MILLIONS.exec(after)?.[0] ?? THOUSANDS.exec(after)?.[0] ?? HUNDREDS.exec(after)?.[0] ?? null;
-    const scale =
-      scaled === null ? 1 : MILLIONS.test(scaled) ? 1_000_000 : HUNDREDS.test(scaled) ? 100 : 1000;
+    const scaling = SCALES.find(([re]) => re.test(after));
+    const scaled = scaling ? (scaling[0].exec(after)?.[0] ?? null) : null;
+    const scale = scaling?.[1] ?? 1;
+    // 4K: a resolution, "w 4K", "4K gaming".
+    if (
+      scale === 1000 &&
+      /^[248]$/.test(raw) &&
+      /^K/.test(after) &&
+      (/(?:^|[^\p{L}])(?:w|in)\s$/iu.test(before) ||
+        /^K\s*(?:gaming|ultra|hdr|monitor|tv|@|60|120|144)/iu.test(after))
+    )
+      return;
     if (!money && scaled === null) {
-      if (UNIT.test(after) || MODEL_SUFFIX.test(after)) return;
+      if (unitAfter(after)) return;
       // 1080p: a resolution.
       if (/^p(?![\p{L}])/u.test(after) && /^(?:480|720|1080|1440|2160)$/.test(raw)) return;
       const word = /(\p{L}+)[\s-]$/u.exec(before)?.[1];
       if (word && !asked && !priceWord(word) && models.has(`${word.toLowerCase()} ${raw}`)) return;
+      // "zwykła 3070": the title's model number on its own, not after a price word.
+      if (!asked && !priceWord(lastWord(before)) && titleNumbers.has(raw)) return;
       const year = Number(raw);
       if (
         !asked &&
@@ -621,13 +733,17 @@ function read(text: string, title: string, asking: number | null): Reading {
       )
         return;
       // 1500i, 1.5kzł, 650W: letters glued on that aren't a unit, a currency or a model's: an amount,
-      // and one that can't be read for certain.
+      // and one that can't be read for certain. Not 3D or 3x, too small to matter.
       const glued = /^\p{L}+/u.exec(after)?.[0];
-      if (glued) unclear.push({ raw: raw + glued, spaced: false });
+      if (glued && values.some((v) => v >= 10)) unclear.push({ raw: raw + glued, spaced: false });
     }
+    // "Mogę 1,5": a price in thousands without the k. Not "9,99 zł" or "1,5 tys.", which say what they are.
+    const thousandsToo = !money && scaled === null && /^\d[.,]\d$/.test(raw);
     out.push({
       raw: raw + (scaled ?? ""),
-      values: values.map((v) => Math.round(v * scale * 100) / 100),
+      values: [...values, ...(thousandsToo ? values.map((v) => v * 1000) : [])].map(
+        (v) => Math.round(v * scale * 100) / 100,
+      ),
       index,
       end: index + raw.length + (scaled?.length ?? 0),
       money,
@@ -644,11 +760,7 @@ function read(text: string, title: string, asking: number | null): Reading {
       const cut = (sp.index ?? 0) + (sp[1]?.length ?? 0);
       const next = s.slice(at + cut + 1 + (sp[2]?.length ?? 0));
       const word = /(\p{L}+)[\s-]$/u.exec(s.slice(0, at + (sp.index ?? 0)))?.[1];
-      if (
-        UNIT.test(next) ||
-        MODEL_SUFFIX.test(next) ||
-        (word && models.has(`${word.toLowerCase()} ${sp[1]}`))
-      ) {
+      if (unitAfter(next) || (word && models.has(`${word.toLowerCase()} ${sp[1]}`))) {
         runs.push({ run: m[0].slice(start, cut), at: at + start });
         start = cut + 1;
       }
@@ -724,11 +836,14 @@ const MULTIPLY =
   /(?<![\d.,])(\d+(?:[.,]\d+)*)\s*(?:(?:zł|zl|pln|złotych)\.?\s*)?(?:x|×|\*|razy(?:\s+po)?|times|szt\.?(?:\s+po)?|sztuk\p{L}*(?:\s+po)?|pcs\.?|pieces?)\s*(?:po\s+|à\s*|@\s*)?(\d+(?:[.,]\d+)*)/giu;
 /** After an amount: it's the price of each item, so the total depends on how many. */
 const EACH =
-  /^\s?(?:(?:zł|zl|pln|złotych)\.?\s?)?(?:za\s+(?:1\s*)?(?:sztuk[eęi]|szt\.?|każd\p{L}*|jedn\p{L}*|egzemplarz\p{L}*)|\/\s?1?\s?szt\.?|każd[aey]|each|apiece|a\s+piece|per\s+(?:item|piece|unit|one|each|card))(?![\p{L}])/iu;
+  /^\s?(?:(?:zł|zl|pln|złotych)\.?\s?)?(?:za\s+(?:1\s*)?(?:sztuk[eęi]|szt\.?|każd\p{L}*|jedn\p{L}*|egzemplarz\p{L}*|egz\.?)|od\s+(?:sztuki|egzemplarza|karty)|\/\s?1?\s?(?:szt\.?|sztuk[aęi])|każd[aey]|each|apiece|a\s+piece|(?:per|for)\s+(?:item|piece|unit|one|each|card))(?![\p{L}])/iu;
+/** After an amount, when the message counts items: "1000 zł za kartę" is then a price each. */
+const EACH_IF_COUNTED =
+  /^\s?(?:(?:zł|zl|pln|złotych)\.?\s?)?(?:za|per|for\s+(?:the|a|each))\s+(?:kart\p{L}*|cards?|sztuk\p{L}*)/iu;
 
 /** More than one item, so "po 750" is a price each. */
 const SEVERAL =
-  /(?<![\p{L}])(?:obie|oba|obydw\p{L}*|dwie|dwa|trzy|cztery|kilka|both|two|three|four|several)(?![\p{L}])/iu;
+  /(?<![\p{L}])(?:obie|oba|obydw\p{L}*|dwie|dwa|trzy|cztery|kilka|wszystk\p{L}*|both|two|three|four|several|all|pair|parze)(?![\p{L}])/iu;
 /** A count of items in digits: "3, po 500", "2 raty", "3 szt.". */
 const COUNT =
   /(?<![\d.,])[2-9]\d?\s*(?:,|szt\p{L}*|sztuk\p{L}*|rat\p{L}*|egz\p{L}*|pcs|pieces?|items?|x(?![\p{L}]))/iu;
@@ -797,7 +912,11 @@ function combine(r: Reading): { sums: Spanned[]; products: Spanned[]; each: Span
   for (const a of found)
     if (
       EACH.test(s.slice(a.end)) ||
-      (/(?<![\p{L}])po\s$/iu.test(s.slice(0, a.index)) && (a.money || counts))
+      (counts && EACH_IF_COUNTED.test(s.slice(a.end))) ||
+      (/(?<![\p{L}])(?:po|każd[aey]\s+(?:za|po)|each(?:\s+one)?(?:\s+(?:for|at))?)\s$/iu.test(
+        s.slice(0, a.index),
+      ) &&
+        (a.money || counts))
     )
       each.push({
         raw: quote(a.index, a.end),
@@ -995,22 +1114,29 @@ export function numberWords(raw: string): string[] {
 
 /** Ways to pay. Bringing one up asks unless the mandate's delivery terms name it. */
 const PAYMENTS: { name: string; re: RegExp }[] = [
-  { name: "BLIK", re: /(?<![\p{L}])(?:blik\p{L}*|na\s+telefon)/iu },
+  {
+    name: "BLIK",
+    re: /(?<![\p{L}])(?:blik\p{L}*|na\s+(?:m[óo]j\s+|pana\s+|pani\s+|tw[óo]j\s+)?(?:numer\s+)?telefon\p{L}*|na\s+(?:pana|pani|tw[óo]j|m[óo]j)\s+numer|to\s+(?:your|my)\s+(?:phone\s+)?number)/iu,
+  },
   {
     name: "a bank transfer",
     re: /(?<![\p{L}])(?:przelew\p{L}*|przela[ćcłl]\p{L}*|przelej\p{L}*|przelej[eę]|kont[aou]?|koncie|kontem|rachun\p{L}*|wp[łl]at\p{L}*|wp[łl]ac\p{L}*|iban|transfer(?:s|y|u|em|ed|ring)?|wire|przekaz\p{L}*\s+(?:pocztow\p{L}*|pieni\p{L}*))(?![\p{L}])/iu,
   },
-  { name: "cash", re: /(?<![\p{L}])(?:got[óo]wk\p{L}*|got[óo]wce|cash)(?![\p{L}])/iu },
+  {
+    // Paying when it's handed over or arrives is cash, whatever it's called.
+    name: "cash",
+    re: /(?<![\p{L}])(?:got[óo]wk\p{L}*|got[óo]wce|cash|(?:zap[łl]ac\p{L}*|p[łl]ac\p{L}*|p[łl]atno\p{L}*|pay\p{L}*)\s+(?:\p{L}+\s+)?(?:po\s+otrzymaniu|przy\s+odbiorze|na\s+miejscu|do\s+r[ęe]ki|z\s+r[ęe]ki\s+do\s+r[ęe]ki|on\s+(?:arrival|delivery|pickup|collection)|in\s+person))(?![\p{L}])/iu,
+  },
   { name: "cash on delivery", re: /(?<![\p{L}])pobrani\p{L}*/iu },
-  { name: "PayPal", re: /(?<![\p{L}])pay\s?pal\p{L}*/iu },
-  { name: "Revolut", re: /(?<![\p{L}])revolut\p{L}*/iu },
+  { name: "PayPal", re: /(?<![\p{L}])(?:pay[\s-]?pal\p{L}*|pej[\s-]?pal\p{L}*)/iu },
+  { name: "Revolut", re: /(?<![\p{L}])re[wv]olut\p{L}*/iu },
   {
     name: "crypto",
     re: /(?<![\p{L}])(?:krypto\p{L}*|crypto\p{L}*|bitcoin\p{L}*|btc|usdt|usdc|ethereum|monero|xmr|ltc|litecoin\p{L}*|doge\p{L}*)(?![\p{L}])/iu,
   },
   {
     name: "a money transfer service",
-    re: /(?<![\p{L}])(?:western\s+union|moneygram\p{L}*|skrill\p{L}*|payoneer\p{L}*|wise|zelle|venmo|cash\s?app|google\s?pay|apple\s?pay|g\s?pay)(?![\p{L}])/iu,
+    re: /(?<![\p{L}])(?:western\s+union|moneygram\p{L}*|skrill\p{L}*|allegro\s+pay\p{L}*|payoneer\p{L}*|wise|zelle|venmo|cash\s?app|google\s?pay|apple\s?pay|g\s?pay)(?![\p{L}])/iu,
   },
   {
     name: "a gift card",
@@ -1041,13 +1167,41 @@ export function paymentsIn(raw: string): { name: string; raw: string }[] {
 
 /** Picking up or meeting in person. */
 const PICKUP =
-  /(?<![\p{L}])(?:odbi[óo]r\p{L}*|odbier\p{L}*|odebra\p{L}*|osobi[śs]cie|spotka\p{L}*|podjad\p{L}*|podjech\p{L}*|przyjad\p{L}*|przyjech\p{L}*|wpa[śs][ćc]|wpadn\p{L}*|przyj[śs][ćc]|przyjd[eę]|przyjdziemy|podej[śs][ćc]|podejd[eę]|zgarn\p{L}*|dojad[eę]|dojecha[ćc]|dojedziemy|zabior[eę]|zabra[ćc]|zabierzemy|pick(?:\s+\p{L}+)?(?:\s|-)?up|collect\p{L}*|in\s+person|meet\p{L}*|come\s+(?:by|over|round|and\s+get)|swing\s+by|drop\s+by|stop\s+by|grab\s+it)(?![\p{L}])/iu;
+  /(?<![\p{L}])(?:odbi[óo]r\p{L}*|odbier\p{L}*|odebra\p{L}*|osobi[śs]cie|spotka\p{L}*|podjad\p{L}*|podjech\p{L}*|przyjad\p{L}*|przyjech\p{L}*|wpa[śs][ćc]|wpadn\p{L}*|przyj[śs][ćc]|przyjd[eę]|przyjdziemy|podej[śs][ćc]|podejd[eę]|zgarn\p{L}*|dojad[eę]|dojecha[ćc]|dojedziemy|zabior[eę]|zabra[ćc]|zabierzemy|pick(?:\s+\p{L}+)?(?:\s|-)?up|collect\p{L}*|in\s+person|meet\p{L}*|podskocz\p{L}*|skocz[ęe]\s+po|pojad[ęe]\s+do|b[ęe]d[ęe]\s+u\s+(?:pana|pani|ciebie|was|pa[ńn]stwa)|u\s+(?:pana|pani|ciebie|pa[ńn]stwa)(?=\s*[?.!,]|\s*$)|z\s+r[ęe]ki\s+do\s+r[ęe]ki|come\s+(?:by|over|round|(?:and\s+)?get)|swing\s+by|drop\s+by|stop\s+by|grab\s+it|drive\s+over|hand\s*over|hand\s+it\s+over|(?:at|to)\s+your\s+(?:place|house|home))(?![\p{L}])/iu;
+/** "Spotkajmy się w połowie", "meet in the middle": haggling, not meeting. */
+const MIDDLE =
+  /(?<![\p{L}])(?:spotka\p{L}*\s+(?:si[ęe]\s+)?(?:w\s+po[łl]owie|po[śs]rodku|na\s+[śs]rodku)|meet\s+(?:you\s+)?(?:in\s+the\s+middle|halfway|half\s+way))(?![\p{L}])/giu;
+/** A parcel or a locker in the sentence: "odbiorę w paczkomacie" collects a parcel. */
+const PARCEL =
+  /(?<![\p{L}])(?:paczk\p{L}*|paczkomat\p{L}*|przesy[łl]k\p{L}*|parcel\p{L}*|locker\p{L}*|kurier\p{L}*|courier\p{L}*)(?![\p{L}])/iu;
+/** Coming in person, whatever else the sentence says. */
+const IN_PERSON =
+  /(?<![\p{L}])(?:osobi[śs]cie|osobist\p{L}*|in\s+person|spotka\p{L}*|meet\p{L}*|podjad\p{L}*|podjech\p{L}*|przyjad\p{L}*|przyjech\p{L}*|u\s+(?:pana|pani|ciebie|pa[ńn]stwa))(?![\p{L}])/iu;
+const COLLECT =
+  /(?<![\p{L}])(?:odbi[óo]r\p{L}*|odbier\p{L}*|odebra\p{L}*|collect\p{L}*|pick(?:\s+\p{L}+)?(?:\s|-)?up)(?![\p{L}])/giu;
+
+/** The text with what only sounds like coming in person blanked: haggling, collecting a parcel. */
+function inPerson(text: string): string {
+  return text
+    .replace(MIDDLE, " ")
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) =>
+      PARCEL.test(sentence) && !IN_PERSON.test(sentence)
+        ? sentence.replace(COLLECT, " ")
+        : sentence,
+    )
+    .join(" ");
+}
 /** Sending it by post or courier. */
 const SHIPPING =
   /(?<![\p{L}])(?:wysy[łl]k\p{L}*|przesy[łl]k\p{L}*|kurier\p{L}*|paczkomat\p{L}*|paczk\p{L}*|inpost\p{L}*|dpd|dhl|gls|poczt\p{L}*|dostaw\p{L}*|wys[łl]a[ćc]|wy[śs]l\p{L}*|wysy[łl]a\p{L}*|prze[śs]l\p{L}*|przes[łl]a[ćc]|nada[ćc]|nadani\p{L}*|ship\p{L}*|deliver\p{L}*|courier\p{L}*|parcel\p{L}*|postage|post\s+it|send\s+it)(?![\p{L}])/iu;
 /** Saying something was paid or sent: only the owner can say that. */
 const PAID =
-  /(?<![\p{L}])(?:(?:za|o|w|do|prze)?p[łl]aci[łl](?:em|am|[ae][śs]my|y[śs]my)|prze[łl]a[łl](?:em|am|[ae][śs]my)|wys[łl]a[łl](?:em|am|[ae][śs]my)|przes[łl]a[łl](?:em|am|[ae][śs]my)|nada[łl](?:em|am|[ae][śs]my)|(?:za|o|w)p[łl]acon\p{L}*|przelan[eaoy]|wys[łl]an[eaoy]|przes[łl]an[eaoy]|nadan[eaoy]|(?:kasa|kas[eę]|pieni[ąa]dze|[śs]rodki|p[łl]atno[śs][ćc]|wp[łl]ata|przelew|money|funds|payment|transfer)\s+(?:\p{L}+\s+)?(?:posz[łl]\p{L}*|poszed[łl]|wys[łl]an\p{L}*|wykonan\p{L}*|zrobion\p{L}*|zlecon\p{L}*|zrealizowan\p{L}*|zaksi[ęe]gowan\p{L}*|dotar[łl]\p{L}*|sent|done|made|complete\p{L}*|gone\s+through|went\s+through|on\s+(?:the|its)\s+way)|zrobi[łl](?:em|am)\s+przelew|uregulowa[łl]\p{L}*|pu[śs]ci[łl]\p{L}*|i(?:['’]ve|\s+have)?\s+(?:already\s+)?(?:paid|sent|transferred|wired|shipped|posted)|sent\s+(?:you|it|the\s+money|the\s+payment)|payment\s+(?:is\s+|has\s+been\s+|was\s+)?(?:sent|made|done|complete\p{L}*)|already\s+paid|(?<=^|[.!?]\s{0,3})paid)(?![\p{L}])/iu;
+  /(?<![\p{L}])(?:(?:za|o|w|do|prze)?p[łl]aci[łl](?:em|am|[ae][śs]my|y[śs]my)|prze[łl]a[łl](?:em|am|[ae][śs]my)|wys[łl]a[łl](?:em|am|[ae][śs]my)|przes[łl]a[łl](?:em|am|[ae][śs]my)|nada[łl](?:em|am|[ae][śs]my)|(?<!(?:zostanie|zostan[ąa]|b[ęe]dzie|b[ęe]d[ąa]|by[ćc]|kiedy|czy)\s+)(?:(?:za|o|w)p[łl]acon\p{L}*|przelan[eaoy]|wys[łl]an[eaoy]|przes[łl]an[eaoy]|nadan[eaoy])|dokona[łl]\p{L}*\s+(?:\p{L}+\s+)?(?:p[łl]atno|zap[łl]at|przelew|wp[łl]at)\p{L}*|kupi[łl](?:em|am)\s+(?:ju[żz]|przez)|completed\s+(?:the\s+)?payment|payment\s+completed|(?:kasa|pieni[ąa]dze|[śs]rodki|money|funds)\s+(?:s[ąa]|jest|is|are)\s+(?:ju[żz]\s+|already\s+)?(?:u\s+(?:pana|pani|ciebie)|with\s+you|in\s+your\s+account|na\s+(?:pana|pani|twoim)\s+koncie)|(?:kasa|kas[eę]|pieni[ąa]dze|[śs]rodki|p[łl]atno[śs][ćc]|zap[łl]ata|wp[łl]ata|przelew|money|funds|payment|transfer)\s+(?:\p{L}+\s+)?(?:posz[łl]\p{L}*|poszed[łl]|wys[łl]an\p{L}*|wykonan\p{L}*|zrobion\p{L}*|zlecon\p{L}*|zrealizowan\p{L}*|zaksi[ęe]gowan\p{L}*|dotar[łl]\p{L}*|sent|done|made|complete\p{L}*|gone\s+through|went\s+through|on\s+(?:the|its)\s+way)|zrobi[łl](?:em|am)\s+przelew|uregulowa[łl]\p{L}*|pu[śs]ci[łl]\p{L}*|i(?:['’]ve|\s+have)?\s+(?:already\s+)?(?:paid|sent|transferred|wired|shipped|posted)|sent\s+(?:you|it|the\s+money|the\s+payment)|payment\s+(?:is\s+|has\s+been\s+|was\s+)?(?:sent|made|done|complete\p{L}*)|already\s+paid|(?<=^|[.!?]\s{0,3})paid)(?![\p{L}])/iu;
+
+/** Sending an offer or a photo isn't a claim that something was paid or sent. */
+const SENT_NOT_PAID =
+  /(?<![\p{L}])(?:wys[łl]a|przes[łl]a|sent)\p{L}*\s+(?:panu\s+|pani\s+|you\s+|ci\s+)?(?:an?\s+|moj\p{L}*\s+|my\s+)?(?:propozycj|ofert|offer|wiadomo|zdj[ęe]|pytani|message|photo|question)\p{L}*/giu;
 
 // ——— Contacts and links ———
 
@@ -1056,9 +1210,18 @@ const PAID =
  * are: 600 700 800, +48 600-700-800, 600 | 100 | 200, 600, 100, 200.
  */
 export function phonesIn(text: string): string[] {
-  return [...text.matchAll(/(?:\+|00)?\d(?:[^\p{L}\d]{0,3}\d){8,}/gu)]
+  const digits = [...text.matchAll(/(?:\+|00)?\d(?:[^\p{L}\d]{0,3}\d){8,}/gu)]
     .map((m) => m[0])
     .filter((p) => p.replace(/\D/g, "").length <= 15);
+  // 600 i 100 i 200, 600 ... 100 ... 200: three groups of three with a few words between, no money.
+  const spread = [
+    ...text.matchAll(
+      /(?<![\d.,])\d{3}(?![\d.,]\d|\d)(?:[^\d]{1,15}?(?<![\d.,])\d{3}(?![\d.,]\d|\d)){2}/gu,
+    ),
+  ]
+    .map((m) => m[0])
+    .filter((p) => !CURRENCY_BEFORE.test(p) && !/zł|zl|pln|€|\$/iu.test(p));
+  return [...digits, ...spread];
 }
 
 /** E-mail providers, as people name them when they spell an address out. */
@@ -1075,6 +1238,9 @@ const EMAIL_HOST = new RegExp(
   `(?<![\\p{L}\\p{N}])(?:${PROVIDERS})\\s*(?:[,]|\\s|kropka|dot)\\s*(?:com|pl|net|eu|me)(?![\\p{L}])`,
   "giu",
 );
+/** An address told by its provider: "jankowalski88 na wp", "jan na interii". */
+const EMAIL_AT_PROVIDER =
+  /[\p{L}\p{N}._-]{3,}\s+na\s+(?:wp|interi\p{L}*|onec\p{L}*|onet\p{L}*|gmail\p{L}*|o2|outlook\p{L}*|yahoo|hotmail\p{L}*|poczcie)(?![\p{L}])/iu;
 /** Asking to move to e-mail without an address: "napisz na maila". */
 const EMAIL_WORD =
   /(?<![\p{L}])(?:e-?mail\p{L}*|mail[aeu]|mailem|mejl\p{L}*|g\s?mail\p{L}*)(?![\p{L}])/iu;
@@ -1113,6 +1279,12 @@ const ADDRESS: { re: RegExp; street?: number; city?: number }[] = [
     street: 1,
     city: 2,
   },
+  // Puławska 12 w Warszawie; w Warszawie, Puławska 12.
+  { re: /(\p{Lu}\p{Ll}+)\s+\d{1,3}[a-zA-Z]?\s+w\s+\p{Lu}\p{Ll}{2,}/gu, street: 1 },
+  {
+    re: /(?<![\p{L}])w\s+\p{Lu}\p{Ll}{2,}\s*,\s+(\p{Lu}\p{Ll}+)\s+\d{1,3}[a-zA-Z]?(?![\d.,:])/gu,
+    street: 1,
+  },
   // na Długiej 10, przy Kasprowicza 5.
   {
     re: /(?<![\p{L}])(?:na|przy)\s+(\p{Lu}\p{Ll}+)\s+\d{1,4}[a-zA-Z]?(?![\p{N}/.,:]|\s*(?:zł|zl|pln|k|tys)(?![\p{L}]))/gu,
@@ -1120,9 +1292,10 @@ const ADDRESS: { re: RegExp; street?: number; city?: number }[] = [
   },
 ];
 const APPS =
-  /(?<![\p{L}])(?:whats\s?app\p{L}*|wh?ats?\s?up|[łlw]h?[ao](?:ts|c|s)ap+\p{L}*|wa\.me|telegram\p{L}*|t\.me|signal\p{L}*|viber\p{L}*|messenger\p{L}*|facebook\p{L}*|fb\.com|fejs\p{L}*|instagram\p{L}*|insta\p{L}*|snapchat\p{L}*|wechat|discord\p{L}*|skype\p{L}*|threema|sms\p{L}*|esem\p{L}*|imessage)(?![\p{L}])/iu;
+  /(?<![\p{L}])(?:whats\s?app\p{L}*|wh?ats?\s?up|[łlw]h?[ao](?:ts|c|s)ap+\p{L}*|wa\.me|telegram\p{L}*|t\.me|signal\p{L}*|viber\p{L}*|messenger\p{L}*|facebook\p{L}*|fb\.com|fejs\p{L}*|instagram\p{L}*|insta\p{L}*|snap\p{L}*|whatsik\p{L}*|whats-app\p{L}*|wechat|discord\p{L}*|skype\p{L}*|threema|sms\p{L}*|esem\p{L}*|imessage)(?![\p{L}])/iu;
 /** WA, TG, FB, IG: on their own, not in Wa-wa or a domain. */
-const APP_SHORT = /(?<![\p{L}\p{N}.@-])(?:wa|tg|fb|ig|snap)(?![\p{L}\p{N}-])/iu;
+const APP_SHORT =
+  /(?<![\p{L}\p{N}.@-])(?:wa|tg|fb|ig|snap)(?![\p{L}\p{N}-])|(?<![\p{L}])na\s+tele(?![\p{L}])/iu;
 
 /** Contact details in a message, by the kind the mandate can allow. */
 export function contactsIn(raw: string): { kind: MandateContact; raw: string }[] {
@@ -1130,7 +1303,7 @@ export function contactsIn(raw: string): { kind: MandateContact; raw: string }[]
   const out: { kind: MandateContact; raw: string }[] = [];
   const phone = phonesIn(blankDates(text))[0];
   if (phone) out.push({ kind: "phone", raw: phone.trim() });
-  const email = [EMAIL, EMAIL_SPELT, EMAIL_HOST, EMAIL_WORD]
+  const email = [EMAIL, EMAIL_SPELT, EMAIL_HOST, EMAIL_AT_PROVIDER, EMAIL_WORD]
     .map((re) => text.match(re)?.[0])
     .find(Boolean);
   if (email) out.push({ kind: "email", raw: email });
@@ -1170,6 +1343,8 @@ const undefang = (s: string) =>
           ? `${host}.${tld}`
           : all,
     )
+    // olx-dostawa,pl/abc: a comma for the dot, before a path.
+    .replace(new RegExp(`([\\p{L}\\p{N}-]+)\\s?,\\s?(${TLDS})(?=[/:])`, "giu"), "$1.$2")
     // evil .co: a space before a dot and none after isn't how a sentence ends.
     .replace(/([\p{L}\p{N}-]+)\s+\.(?=(?:\p{L}{2,24}|xn--[a-z0-9-]+)(?![\p{L}\p{N}-]))/giu, "$1.")
     .replace(/h(?:tt|xx|\*\*)p(s?)\s*(?:\[:\]|\(:\)|:)?\s*\/\//giu, "http$1://");

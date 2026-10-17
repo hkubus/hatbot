@@ -231,10 +231,10 @@ describe("agreeing in words agrees to the seller's price, so that's what's check
     );
   });
 
-  test("it goes when the seller's price is inside the mandate, or the text names ours", () => {
+  test("an agreement goes when it names its price and the seller's is inside the mandate", () => {
     expect(
       verdict(
-        "Ok, biorę.",
+        "Ok, biorę za 1300 zł.",
         { agree: true, offer: 1300 },
         negotiation(),
         said(["Mogę zejść do 1300.", true]),
@@ -243,17 +243,34 @@ describe("agreeing in words agrees to the seller's price, so that's what's check
     // No new price since our last message: their latest one before it.
     expect(
       verdict(
-        "Zgoda.",
+        "Zgoda, 1350 zł.",
         { agree: true, offer: 1350 },
         negotiation(),
-        said(["Cena 1350, nie mniej.", false], ["Nie zejdę niżej.", true]),
+        said(["Cena 1350, nie mniej.", false], ["Dobrze, to jak?", true]),
       ).action,
     ).toBe("allow");
     expect(
-      verdict("Deal.", { agree: true, offer: 1200 }, negotiation(), said(["I can do 1200.", true]))
-        .action,
+      verdict(
+        "Deal at 1200.",
+        { agree: true, offer: 1200 },
+        negotiation(),
+        said(["I can do 1200.", true]),
+      ).action,
     ).toBe("allow");
     expect(verdict("Biorę za 1300 zł.", { agree: true, offer: 1300 }).action).toBe("allow");
+  });
+
+  test("an agreement that doesn't name its price asks, whatever the seller's message seems to say", () => {
+    // A number read from the seller isn't trusted for a bare yes: here it's the price they refused.
+    for (const [text, seller] of [
+      ["Zgoda.", "Za 1000 nie sprzedam."],
+      ["Ok, biorę.", "Mogę zejść do 1300."],
+      ["Deal.", "I can do 1200."],
+      ["Ok.", "Cena bez zmian, wysyłka 15 zł."],
+    ] as const)
+      expect(
+        why(verdict(text, { agree: true, offer: 1000 }, negotiation(), said([seller, true]))),
+      ).toContain("doesn't name the price it agrees to");
   });
 
   test("a seller's price that can't be read asks", () => {
@@ -443,7 +460,7 @@ describe("amounts that add up or multiply past the ceiling ask, though each is u
     expect(why(verdict("Dam 1100 albo 1300 z wysyłką.", { offer: 1100 }))).toContain(
       "adds up to 2,400 zł",
     );
-    expect(verdict("Dam 1100 albo 200 mniej.", { offer: 1100 }).action).toBe("allow");
+    expect(verdict("Dam 1100 albo 200.", { offer: 1100 }).action).toBe("allow");
   });
 
   test("only shipping the terms put on top counts, up to a tenth of the limit", () => {
@@ -829,6 +846,10 @@ describe("ordinary haggling goes on its own (N1)", () => {
         ["Szkoda. W takim razie zostaję przy 1250 zł.", { offer: 1250 }],
         ["Czy karta ma oryginalne pudełko? Moja oferta to 1200 zł.", { offer: 1200 }],
         ["Pana cena jest dla mnie za wysoka, mogę dać 1200 zł.", { offer: 1200 }],
+        ["Spotkajmy się w połowie: 1350 zł?", { offer: 1350 }],
+        ["Can we meet in the middle at 1,300 PLN?", { offer: 1300 }],
+        ["Wysłałem Panu propozycję 1200 zł przez OLX.", { offer: 1200 }],
+        ["I've sent you an offer of 1,200 PLN through OLX.", { offer: 1200 }],
         ["Niestety za tyle nie kupię. Mogę dać 1200 zł.", { offer: 1200 }],
       ],
     },
@@ -857,6 +878,18 @@ describe("ordinary haggling goes on its own (N1)", () => {
         ["Czy karta była używana do kopania kryptowalut? Czy kopała ETH?"],
         ["Was it ever used for crypto mining?"],
         ["Czy temperatury pod obciążeniem nie przekraczają 75°C?"],
+        ["Czy karta ma jeszcze gwarancję do 2027?"],
+        ["Gwarancja jest do marca 2027?"],
+        ["Czy to zwykła 3070 czy 3070 Ti?"],
+        ["Jak sobie radzi w 4K?"],
+        ["How does it handle 4K gaming?"],
+        ["Czy wystarczy do Ryzen 5 5600X?"],
+        ["Ile ma godzin pracy, ok. 2000 h?"],
+        ["Czy paczkę odbiorę w paczkomacie przy domu?"],
+        ["Proszę o wysyłkę do paczkomatu, odbiorę w poniedziałek."],
+        ["Kiedy mogę spodziewać się odbioru paczki?"],
+        ["I'll collect it from the parcel locker on Monday."],
+        ["Proszę dać znać, kiedy paczka zostanie nadana."],
       ],
     },
     {
@@ -902,6 +935,45 @@ describe("ordinary haggling goes on its own (N1)", () => {
         covered: "Within the mandate you approved",
       });
     });
+});
+
+describe("a number in the seller's message that isn't their price doesn't let a bare yes go", () => {
+  const sellers = [
+    "Za 1000 nie sprzedam.",
+    "Pana 1000 zł to za mało, cena bez zmian.",
+    "1000? Nie ma szans.",
+    "No way, 1000 is too low.",
+    "Cena bez zmian, wysyłka 15 zł.",
+    "Cena z ogłoszenia, nie negocjuję. Paczkomat 13,99 zł.",
+    "Nie zejdę z ceny. Mogę wysłać jutro po 16.",
+    "Cena ostateczna. Karta ma 3 wentylatory.",
+    "Mam jeszcze 2 inne oferty, cena bez zmian.",
+    "Mogę zejść o 100 zł i to wszystko.",
+    "Taniej nie będzie, max mogę opuścić 50 zł.",
+    "Dołoży Pan 200 zł i karta jest Pana.",
+    "Za 1000 nie, ale 500 więcej i jest Pana.",
+    "Najniżej 1,5",
+    "Sprzedaję tylko w parze, po 1000.",
+  ];
+  const n = negotiation({
+    asking: 1500,
+    mandate: { ...negotiation().mandate, opening: 900, target: 1000, limit: 1100 },
+  });
+  for (const seller of sellers)
+    test.each(["Zgoda", "Ok, biorę", "Dobrze, umowa stoi.", "Ok."])(`${seller} / %s`, (text) => {
+      const f = facts({ seller: [{ text: seller, after: true }] });
+      expect(sendPolicy(n, msg(text, { agree: true, offer: 1000 }), f).action).toBe("ask");
+      expect(sendPolicy(n, msg("Ok.", {}), f).action).not.toBe("allow");
+    });
+  test("a retraction without a number takes back the old price", () => {
+    const f = facts({
+      seller: [
+        { text: "Mogę zejść do 1000 zł.", after: false },
+        { text: "Jednak zmieniłem zdanie, cena jak w ogłoszeniu.", after: true },
+      ],
+    });
+    expect(why(sendPolicy(n, msg("Czy karta ma pudełko?"), f))).toContain("1,500 zł");
+  });
 });
 
 describe("every known way around the check asks", () => {
@@ -995,13 +1067,43 @@ describe("every known way around the check asks", () => {
       n: negotiation(),
       f: sellerSaid("Najniżej 1600"),
       says: "names no price of ours inside the mandate",
+      rows: [["Paczkomat 13 zł ok?"], ["Czy karta ma pudełko?"], ["Dziękuję, do usłyszenia"]],
+    },
+    {
+      what: "a plain yes while the seller is past the ceiling",
+      n: negotiation(),
+      f: sellerSaid("Najniżej 1600"),
+      says: "It reads as agreeing",
+      rows: [["Ok."], ["Tak"], ["Super, to do zobaczenia"], ["Sounds good"], ["Dobrze, poproszę."]],
+    },
+    {
+      what: "accepting the seller's price in other words, beside a price of ours",
+      n: tight(),
+      f: sellerSaid("Najniżej 1500 zł"),
+      says: "It reads as agreeing",
       rows: [
-        ["Ok."],
-        ["Tak"],
-        ["Super, to do zobaczenia"],
-        ["Sounds good"],
-        ["Paczkomat 13 zł ok?"],
-        ["Czy karta ma pudełko?"],
+        ["Dobrze, idę na to. Moje 1000 zł było za nisko.", { offer: 1000 }],
+        ["Ok, czemu nie. 1000 zł to była moja pierwsza propozycja.", { offer: 1000 }],
+        ["Ok, poproszę w takim razie. 1000 zł to było za mało.", { offer: 1000 }],
+        ["Przekonał mnie Pan, 1000 zł to było za mało.", { offer: 1000 }],
+        ["Zapłacę tyle, co Pan chce, a nie 1000 zł.", { offer: 1000 }],
+        ["Przystaję na Pana warunki, 1000 zł było za nisko.", { offer: 1000 }],
+        ["Ta cena jest w porządku, proszę wystawić. 1000 zł nieaktualne.", { offer: 1000 }],
+        ["Rezerwuję, 1000 zł to była pomyłka.", { offer: 1000 }],
+        ["Załatwione, 1000 zł nieaktualne.", { offer: 1000 }],
+        ["Spoko, może być i tak. 1000 zł było za mało.", { offer: 1000 }],
+        ["OK, sold. My 1000 was too low.", { offer: 1000 }],
+        ["Fine, you win. 1000 was too low.", { offer: 1000 }],
+        ["You've got yourself a deal, forget my 1000.", { offer: 1000 }],
+        ["I'll buy. 1000 was too low.", { offer: 1000 }],
+        ["I'll take the card, 1000 was too low.", { offer: 1000 }],
+        ["I'll pay what you're asking, not 1000.", { offer: 1000 }],
+        ["That works for me, 1000 was too low.", { offer: 1000 }],
+        ["Let's do it, forget the 1000.", { offer: 1000 }],
+        ["Count me in, 1000 was too low.", { offer: 1000 }],
+        ["Dobrze, idę na to. Czy mój zasilacz 650 W wystarczy?"],
+        ["Ok, the price is fine. Does a 650 W PSU suffice?"],
+        ["Dobra, dam 1,5. Moje 1000 było za nisko.", { offer: 1000 }],
       ],
     },
     {
@@ -1027,6 +1129,204 @@ describe("every known way around the check asks", () => {
       }),
       says: "the seller's price can't be read",
       rows: [["Zgoda", { agree: true, offer: 1000 }]],
+    },
+    {
+      what: "paying part now and the rest later",
+      n: tight(),
+      f: sellerSaid("Najniżej 1500 zł"),
+      says: "leaves part of it open",
+      rows: [
+        ["Dam 1000 zł, a różnicę dopłacę za tydzień.", { offer: 1000 }],
+        ["Dam 1000 zł, a brakującą kwotę dopłacę za tydzień.", { offer: 1000 }],
+        ["Dam 1000 zł i resztę po sprawdzeniu karty.", { offer: 1000 }],
+        ["I'll pay 1000 now and the rest next week.", { offer: 1000 }],
+      ],
+    },
+    {
+      what: "a price in thousands without the k",
+      n: tight(),
+      f: inside,
+      rows: [
+        ["Mogę dać 1,5, jeśli wyśle Pan dziś.", { offer: 1000 }],
+        ["Dam 1.5 i zamykamy temat", { offer: 1000 }],
+        ["Mogę 1,4.", { offer: 1000 }],
+      ],
+    },
+    {
+      what: "an amount set by another one",
+      n: tight(),
+      f: inside,
+      says: "sets an amount by another one",
+      rows: [
+        ["Zapłacę o 500 zł więcej niż Pan chce"],
+        ["Dołożę 500 zł do Pana ceny"],
+        ["Zapłacę Pana cenę plus 500 zł na wysyłkę"],
+        ["Zapłacę 2 razy tyle"],
+        ["Zapłacę 2 x tyle"],
+        ["Zapłacę podwójnie"],
+        ["I'll pay double what you ask"],
+        ["I'll pay 50% more"],
+        ["Zapłacę 150% Pana ceny"],
+        ["Zapłacę o połowę więcej"],
+        ["Dam 1000 zł plus 50% po sprawdzeniu karty", { offer: 1000 }],
+        ["Mogę dać 1100 zł netto, wystawi Pan fakturę VAT?", { offer: 1100 }],
+        ["Dam 1100 zł + 23% VAT", { offer: 1100 }],
+        ["Dam 1000 zł i to samo za zasilacz", { offer: 1000 }],
+        ["Dam 1000 zł, zasilacz też za tyle samo", { offer: 1000 }],
+        ["Dam 900 zł teraz i 100 zł miesięcznie przez 6 miesięcy", { offer: 900 }],
+      ],
+    },
+    {
+      what: "more than one item, priced each",
+      n: tight(),
+      f: inside,
+      rows: [
+        ["Biorę obie karty, 1000 zł za kartę", { agree: true, offer: 1000 }],
+        ["Biorę obie karty, 1000 zł od sztuki", { agree: true, offer: 1000 }],
+        ["Biorę obie karty, 1000 zł/sztuka", { agree: true, offer: 1000 }],
+        ["Biorę obie karty, 1000 zł za egz.", { agree: true, offer: 1000 }],
+        ["Biorę wszystkie, po 1000", { agree: true, offer: 1000 }],
+        ["Biorę wszystkie trzy, każda za 1000", { agree: true, offer: 1000 }],
+        ["I'll take both, 1000 PLN for each", { agree: true, offer: 1000 }],
+        ["I'll take all three; each one 1000", { agree: true, offer: 1000 }],
+      ],
+    },
+    {
+      what: "paying by phone, on arrival or by hand, and other spellings",
+      n: terms("OLX Przesyłka (wysyłka), płatność przez OLX"),
+      f: inside,
+      says: "a way to pay",
+      rows: [
+        ["Prześlę pieniądze na numer telefonu"],
+        ["Wyślę kasę na Pana numer"],
+        ["I'll send the money to your phone number"],
+        ["Zapłacę po otrzymaniu paczki"],
+        ["I can pay on arrival"],
+        ["Zapłacę na miejscu"],
+        ["Zapłacę do ręki"],
+        ["Mogę zapłacić Pay-Palem"],
+        ["Mogę zapłacić pejpalem"],
+        ["Mogę zapłacić Rewolutem"],
+        ["Mogę zapłacić przez Allegro Pay"],
+      ],
+    },
+    {
+      what: "coming round, in more words",
+      n: terms("OLX delivery"),
+      f: inside,
+      says: "picking up",
+      rows: [
+        ["Mogę podskoczyć po kartę jutro"],
+        ["Skoczę po nią wieczorem"],
+        ["Pojadę do Pana jutro"],
+        ["Będę u Pana o 18"],
+        ["Wymiana z ręki do ręki?"],
+        ["Mogę przetestować kartę u Pana?"],
+        ["I can come get it tomorrow"],
+        ["I'll drive over tonight"],
+        ["Can we do a handover in Warsaw?"],
+        ["I'll be at your place at 6"],
+      ],
+    },
+    {
+      what: "a phone number with words between its groups",
+      n: tight(),
+      f: inside,
+      says: "a phone number",
+      rows: [
+        ["Mój numer: 600 ... 100 ... 200"],
+        ["Mój numer: 600 i 100 i 200"],
+        ["Tel. 600, potem 100, potem 200"],
+      ],
+    },
+    {
+      what: "another app, in more words",
+      n: tight(),
+      f: inside,
+      says: "another app",
+      rows: [
+        ["Dodaj mnie na snapie: jan_k88"],
+        ["Napisz na whatsika"],
+        ["Pisz na Whats-App"],
+        ["Pisz na tele, nick jan_k88"],
+      ],
+    },
+    {
+      what: "an e-mail address by its provider",
+      n: tight(),
+      f: inside,
+      says: "an e-mail address",
+      rows: [["Mail: jankowalski88 na wp"], ["Pisz: jankowalski88 na interii"]],
+    },
+    {
+      what: "an address with the city",
+      n: tight(),
+      f: inside,
+      says: "an address",
+      rows: [["Mój adres to Puławska 12 w Warszawie"], ["Mieszkam w Warszawie, Puławska 12"]],
+    },
+    {
+      what: "saying we've paid, in more words",
+      n: terms("OLX Przesyłka (wysyłka), płatność przez OLX"),
+      f: inside,
+      says: "paid or sent",
+      rows: [
+        ["Dokonałem płatności przez OLX, proszę wysłać"],
+        ["Zapłata poszła, proszę nadać"],
+        ["Kupiłem już przez OLX, proszę nadać"],
+        ["I've completed the payment, please ship"],
+        ["Kasa jest już u Pana"],
+      ],
+    },
+    {
+      what: "more slang, currencies and disguises",
+      n: tight(),
+      f: inside,
+      rows: [
+        ["Dam 1,5 kawałka"],
+        ["Dam 15 stuzłotówek"],
+        ["Dam 3 pięćsetki"],
+        ["Dam 1,5 tyśki"],
+        ["Moja oferta-1500"],
+        ["Dam PLN-1500"],
+        ["I'll pay 1000 in sterling"],
+        ["Dam 1000 Fr."],
+        ["Dam 1000 jewro"],
+        ["Wejdź na olx-dostawa,pl/abc"],
+      ],
+    },
+    {
+      what: "selling: a buyer's price set by the asking price, or for two items",
+      n: selling({ asking: 1300 }),
+      f: sellerSaid("Dam połowę ceny z ogłoszenia."),
+      rows: [
+        ["Zgoda", { agree: true, offer: 1000 }],
+        ["Ok, sprzedam", { agree: true, offer: 1000 }],
+      ],
+    },
+    {
+      what: "selling: a buyer's share of the price",
+      n: selling({ asking: 1300 }),
+      f: sellerSaid("Dam 70% ceny."),
+      rows: [["Zgoda", { agree: true, offer: 1000 }]],
+    },
+    {
+      what: "selling: a buyer's price for two items",
+      n: selling({ asking: 1300 }),
+      f: sellerSaid("Za obie karty dam 1200."),
+      rows: [["Zgoda, 1200 zł.", { agree: true, offer: 1200 }]],
+    },
+    {
+      what: "selling: our price set by the asking price, or for two items",
+      n: selling({ asking: 1300 }),
+      f: sellerSaid("Dam 900 zł."),
+      rows: [
+        ["Mogę zejść o 30%."],
+        ["Oddam za pół ceny."],
+        ["Mogę dać 40% rabatu."],
+        ["Sprzedam za 1000 zł za obie karty.", { offer: 1000 }],
+        ["Sprzedam za 1000 zł, a drugą kartę dorzucę gratis.", { offer: 1000 }],
+      ],
     },
     {
       what: "agreeing to a buyer's price under the floor",
