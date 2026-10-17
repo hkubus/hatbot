@@ -2,6 +2,7 @@
 // settings and Test button.
 import type { PluginInfo } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
+import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { NoForm } from "../form";
 import { Icon } from "../icons";
@@ -67,8 +68,8 @@ export function PluginsGroup() {
 
 export function PluginPage({ id, toast }: { id: string; toast: (t: string) => void }) {
   const p = useStore((s) => s.plugins[id]);
-  const [error, setError] = useState("");
-  const [testing, setTesting] = useState(false);
+  const { error, setError, run } = useAction();
+  const testing = useAction();
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   /** The switch as you just set it, until the brain answers. */
   const [turning, setTurning] = useState<boolean | null>(null);
@@ -84,7 +85,7 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
       () => setLoaded(true),
       (err) => setError(errorText(err)),
     );
-  }, []);
+  }, [setError]);
 
   useEffect(() => {
     if (!p) load();
@@ -102,32 +103,23 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
 
   const Settings = PLUGIN_SETTINGS[p.id];
   const toggle = async (enabled: boolean) => {
-    setError("");
     setResult(null);
     // It flips at once; a failed save flips it back.
     setTurning(enabled);
-    try {
-      await savePlugin(p.id, { enabled });
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setTurning(null);
-    }
+    await run(() => savePlugin(p.id, { enabled }));
+    setTurning(null);
   };
   const save = async (config: unknown) => {
     await savePlugin(p.id, { config });
     toast("Saved");
   };
 
-  const test = async () => {
-    setTesting(true);
+  const test = () => {
     setResult(null);
-    try {
-      setResult(await api<{ ok: boolean; message: string }>(`/plugins/${p.id}/test`, { body: {} }));
-    } catch (err) {
-      setResult({ ok: false, message: errorText(err) });
-    }
-    setTesting(false);
+    void testing.run(
+      async () => setResult(await api<typeof result>(`/plugins/${p.id}/test`, { body: {} })),
+      (err) => setResult({ ok: false, message: errorText(err) }),
+    );
   };
 
   return (
@@ -140,8 +132,8 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
           </button>
           <span className="spacer" />
           {p.testable && p.state === "ready" && (
-            <button type="button" className="btn sm" disabled={testing} onClick={test}>
-              {testing ? "Testing…" : "Test"}
+            <button type="button" className="btn sm" disabled={testing.busy} onClick={test}>
+              {testing.busy ? "Testing…" : "Test"}
             </button>
           )}
         </div>

@@ -1,6 +1,6 @@
 // MCP's settings: servers, and for each of their tools whether Hatbot may use it.
 import { useEffect, useState } from "react";
-import { errorText } from "../api";
+import { useAction } from "../action";
 import { useLeaveGuard } from "../confirm";
 import { Switch } from "../switch";
 import type { PluginSettingsProps } from ".";
@@ -141,8 +141,7 @@ const fromRow = ({ key: _, headersText, argsText, envText, ...s }: Row): Server 
 export function McpSettings({ config, save, action, running }: PluginSettingsProps<Config>) {
   const [servers, setServers] = useState<Row[]>(() => config.servers.map(toRow));
   const [status, setStatus] = useState<Record<string, Status>>({});
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { busy, error, run } = useAction();
 
   useEffect(() => {
     if (!running) return;
@@ -159,16 +158,7 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
     JSON.stringify(config.servers.map((s) => fromRow(toRow(s))));
   useLeaveGuard(changed);
 
-  const submit = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      await save({ servers: servers.map(fromRow) });
-    } catch (err) {
-      setError(errorText(err));
-    }
-    setBusy(false);
-  };
+  const submit = () => run(() => save({ servers: servers.map(fromRow) }));
 
   return (
     <>

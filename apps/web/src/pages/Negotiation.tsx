@@ -1,7 +1,8 @@
 // A negotiation's page (PLAN.md §16.5): its mandate, what's been said, and every message with the seller.
 import { type NegotiationMessage, OPEN_NEGOTIATION_STATUSES } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, api, errorText } from "../api";
+import { useAction } from "../action";
+import { ApiError, api } from "../api";
 import { ask } from "../confirm";
 import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
@@ -29,8 +30,7 @@ export function NegotiationPage({ id }: { id: number }) {
   const bot = useStore((s) => (n ? botName(s, n.botId) : ""));
   const [missing, setMissing] = useState(false);
   const [loadError, setLoadError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const { busy, error, run } = useAction();
 
   const load = useCallback(() => {
     setLoadError("");
@@ -64,15 +64,10 @@ export function NegotiationPage({ id }: { id: number }) {
       !(await ask({ text: "Stop this negotiation? Nothing more goes to the seller.", ok: "Stop" }))
     )
       return;
-    setBusy(true);
-    setError("");
-    try {
+    await run(async () => {
       await api(`/negotiations/${id}/close`, { body: {} });
       await loadNegotiation(id);
-    } catch (err) {
-      setError(errorText(err));
-    }
-    setBusy(false);
+    });
   };
   return (
     <section className="view">

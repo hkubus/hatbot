@@ -1,7 +1,7 @@
 // A bot's page (PLAN.md §14): its name, role, model and plugins. "new" makes one, from a template or not.
 import { BOT_COLORS, BOT_ICONS, BOT_TEMPLATES, type Bot, HATBOT_ID } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
-import { errorText } from "../api";
+import { useAction } from "../action";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm, toggled, useStoredForm } from "../form";
 import { BotMark, Icon } from "../icons";
@@ -60,8 +60,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
     isNew ? start : stored && formOf(stored),
   );
   const [template, setTemplate] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const { busy, error, run } = useAction();
   const release = useLeaveGuard(dirty);
   // The bots again, to tell one that's gone from one not loaded yet.
   const [loaded, setLoaded] = useState(false);
@@ -112,10 +111,8 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
   const isHatbot = id === HATBOT_ID;
   const pluginList = Object.values(plugins).sort((a, b) => a.name.localeCompare(b.name));
 
-  const save = async () => {
-    setBusy(true);
-    setError("");
-    try {
+  const save = () =>
+    run(async () => {
       const body = { ...form, name: form.name.trim() };
       if (isNew) {
         const bot = await createBot(body);
@@ -127,12 +124,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
         saved(form, formOf(await saveBot(id, isHatbot ? { ...body, name: undefined } : body)));
         toast("Saved");
       }
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+    });
   const remove = async () => {
     if (!stored) return;
     if (
@@ -142,13 +134,11 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
       }))
     )
       return;
-    try {
+    await run(async () => {
       await deleteBot(id);
       release();
       navigate("/");
-    } catch (err) {
-      setError(errorText(err));
-    }
+    });
   };
 
   return (

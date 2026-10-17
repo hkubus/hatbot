@@ -1,5 +1,6 @@
 // SSH's settings: the brain's public key to install, the hosts Hatbot may reach, and their pinned keys.
 import { useEffect, useState } from "react";
+import { useAction } from "../action";
 import { errorText } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { Icon } from "../icons";
@@ -30,8 +31,7 @@ export function SshSettings({ config, save, action, running }: PluginSettingsPro
   const [hosts, setHosts] = useState<Host[]>(config.hosts);
   const [publicKey, setPublicKey] = useState("");
   const [keys, setKeys] = useState<Record<string, string | null>>({});
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { busy, error, setError, run } = useAction();
 
   useEffect(() => {
     if (!running) return;
@@ -40,7 +40,7 @@ export function SshSettings({ config, save, action, running }: PluginSettingsPro
       (list) => setKeys(Object.fromEntries(list.map((k) => [k.name, k.key]))),
       () => {},
     );
-  }, [action, running]);
+  }, [action, running, setError]);
 
   const set = (i: number, patch: Partial<Host>) =>
     setHosts(hosts.map((h, j) => (j === i ? { ...h, ...patch } : h)));
@@ -48,18 +48,12 @@ export function SshSettings({ config, save, action, running }: PluginSettingsPro
   useLeaveGuard(changed);
   const complete = hosts.every((h) => h.name.trim() && h.address.trim() && h.user.trim());
 
-  const submit = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      await save({
+  const submit = () =>
+    run(() =>
+      save({
         hosts: hosts.map((h) => ({ ...h, name: h.name.trim(), address: h.address.trim() })),
-      });
-    } catch (err) {
-      setError(errorText(err));
-    }
-    setBusy(false);
-  };
+      }),
+    );
   const forget = async (name: string) => {
     if (
       !(await ask({
@@ -68,12 +62,10 @@ export function SshSettings({ config, save, action, running }: PluginSettingsPro
       }))
     )
       return;
-    try {
+    await run(async () => {
       await action("forget", { name });
       setKeys({ ...keys, [name]: null });
-    } catch (err) {
-      setError(errorText(err));
-    }
+    });
   };
 
   return (

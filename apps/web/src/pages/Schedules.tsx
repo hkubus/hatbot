@@ -8,6 +8,7 @@ import {
   type TriggerWithSecret,
 } from "@hatbot/shared";
 import { useEffect, useState } from "react";
+import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { BotPicker, Runs, stamp, useListed } from "../automations";
 import { ask, useLeaveGuard } from "../confirm";
@@ -181,9 +182,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
   const { form, dirty, set, saved } = useStoredForm(
     id === null ? NEW_SCHEDULE : stored ? scheduleForm(stored) : undefined,
   );
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [starting, setStarting] = useState(false);
+  const { busy, error, run } = useAction();
   const listed = useListed("schedules", id, stored);
   // Deleted elsewhere: there's nothing left to save.
   const edited = dirty && stored !== null;
@@ -205,10 +204,8 @@ function ScheduleEdit({ id }: { id: number | null }) {
   const cron = form.cron.trim();
   const described = form.repeat ? describeCron(cron) : "";
 
-  const save = async () => {
-    setBusy(true);
-    setError("");
-    try {
+  const save = () =>
+    run(async () => {
       if (stored) {
         const s = await saveSchedule(stored.id, {
           name: form.name,
@@ -226,38 +223,26 @@ function ScheduleEdit({ id }: { id: number | null }) {
         release();
         navigate(`/schedules/${s.id}`, true);
       }
-    } catch (err) {
-      setError(errorText(err));
-    }
-    setBusy(false);
-  };
+    });
   const remove = async () => {
     if (
       !stored ||
       !(await ask({ text: `Delete "${stored.name}"? Its past runs stay in Tasks.`, ok: "Delete" }))
     )
       return;
-    try {
+    await run(async () => {
       await api(`/schedules/${stored.id}`, { method: "DELETE" });
       release();
       navigate("/schedules");
-    } catch (err) {
-      setError(errorText(err));
-    }
+    });
   };
   // Runs what's saved: off while you have unsaved changes, and while a run is going.
-  const runNow = async () => {
-    if (!stored) return;
-    setStarting(true);
-    setError("");
-    try {
+  const runNow = () =>
+    run(async () => {
+      if (!stored) return;
       const task = await api<Task>(`/schedules/${stored.id}/run`, { body: {} });
       navigate(`/tasks/${task.id}`);
-    } catch (err) {
-      setError(errorText(err));
-    }
-    setStarting(false);
-  };
+    });
 
   return (
     <section className="view">
@@ -277,7 +262,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
               <button
                 type="button"
                 className="btn sm"
-                disabled={edited || running || starting}
+                disabled={edited || running || busy}
                 title={edited ? "Save your changes first" : running ? "It's running" : undefined}
                 onClick={runNow}
               >
@@ -466,8 +451,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
     fresh = null;
     return t;
   });
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { busy, error, run } = useAction();
   const listed = useListed("triggers", id, stored);
   // Deleted elsewhere: there's nothing left to save.
   const edited = dirty && stored !== null;
@@ -485,10 +469,8 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
 
   const changed = !stored || edited;
 
-  const save = async () => {
-    setBusy(true);
-    setError("");
-    try {
+  const save = () =>
+    run(async () => {
       if (stored) {
         const t = await api<Trigger>(`/triggers/${stored.id}`, {
           method: "PATCH",
@@ -509,11 +491,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
         release();
         navigate(`/triggers/${t.id}`, true);
       }
-    } catch (err) {
-      setError(errorText(err));
-    }
-    setBusy(false);
-  };
+    });
   const rotate = async () => {
     if (
       !stored ||
@@ -523,11 +501,9 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
       }))
     )
       return;
-    try {
-      setSecret(await api<TriggerWithSecret>(`/triggers/${stored.id}/secret`, { body: {} }));
-    } catch (err) {
-      setError(errorText(err));
-    }
+    await run(async () =>
+      setSecret(await api<TriggerWithSecret>(`/triggers/${stored.id}/secret`, { body: {} })),
+    );
   };
   const remove = async () => {
     if (
@@ -535,13 +511,11 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
       !(await ask({ text: `Delete "${stored.name}"? Its past runs stay in Tasks.`, ok: "Delete" }))
     )
       return;
-    try {
+    await run(async () => {
       await api(`/triggers/${stored.id}`, { method: "DELETE" });
       release();
       navigate("/schedules");
-    } catch (err) {
-      setError(errorText(err));
-    }
+    });
   };
 
   return (

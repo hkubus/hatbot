@@ -1,7 +1,8 @@
 // Settings → Heartbeat: a look every few minutes at what went wrong; only news goes to Haiku.
 import { type AppSettings, describeEvery, type HeartbeatInfo } from "@hatbot/shared";
 import { Fragment, useEffect, useRef, useState } from "react";
-import { api, errorText } from "../api";
+import { useAction } from "../action";
+import { api } from "../api";
 import { BotPicker, stamp } from "../automations";
 import { useLeaveGuard } from "../confirm";
 import { plainText } from "../format";
@@ -22,8 +23,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [info, setInfo] = useState<HeartbeatInfo | null>(null);
   const [instructions, setInstructions] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const { busy, error, run } = useAction();
   const [loadError, setLoadError] = useState("");
   const [attempt, setAttempt] = useState(0);
   const settingsVersion = useStore((s) => s.settingsVersion);
@@ -62,9 +62,8 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
       </section>
     );
   const hb = settings.heartbeat;
-  const save = async (patch: Partial<AppSettings["heartbeat"]>) => {
-    setError("");
-    try {
+  const save = (patch: Partial<AppSettings["heartbeat"]>) =>
+    run(async () => {
       const s = await api<AppSettings>("/settings", {
         method: "PUT",
         body: { heartbeat: { ...hb, ...patch } },
@@ -72,21 +71,9 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
       setSettings(s);
       savedInstructions.current = s.heartbeat.instructions;
       toast("Saved");
-    } catch (err) {
-      setError(errorText(err, "Couldn't save"));
-    }
-  };
-  const lookNow = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      const ran = await api<HeartbeatInfo>("/heartbeat/run", { body: {} });
-      setInfo(ran);
-    } catch (err) {
-      setError(errorText(err));
-    }
-    setBusy(false);
-  };
+    });
+  const lookNow = () =>
+    run(async () => setInfo(await api<HeartbeatInfo>("/heartbeat/run", { body: {} })));
 
   return (
     <section className="view">

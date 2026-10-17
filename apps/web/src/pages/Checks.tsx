@@ -1,6 +1,7 @@
 // Settings → Check everything: tries each part Hatbot depends on, and a test approval for the phone.
 import type { Approval, CheckReport, CheckState, ChecksInfo } from "@hatbot/shared";
 import { useEffect, useState } from "react";
+import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { Icon } from "../icons";
 import { navigate } from "../router";
@@ -29,8 +30,7 @@ export function Checks() {
   const [approvalId, setApprovalId] = useState<number | null>(null);
   const live = useStore((s) => (approvalId ? s.approvals[approvalId] : undefined));
   const [approval, setApproval] = useState<Approval | null>(null);
-  const [running, setRunning] = useState(false);
-  const [error, setError] = useState("");
+  const { busy: running, error, setError, run } = useAction();
 
   useEffect(() => {
     api<ChecksInfo>("/checks").then(
@@ -41,18 +41,9 @@ export function Checks() {
       },
       (err) => setError(errorText(err)),
     );
-  }, []);
+  }, [setError]);
 
-  const run = async () => {
-    setRunning(true);
-    setError("");
-    try {
-      setReport(await api<CheckReport>("/checks", { body: {} }));
-    } catch (err) {
-      setError(errorText(err));
-    }
-    setRunning(false);
-  };
+  const check = () => run(async () => setReport(await api<CheckReport>("/checks", { body: {} })));
 
   const tryApproval = async () => {
     setError("");
@@ -77,7 +68,7 @@ export function Checks() {
             Settings
           </button>
           <span className="spacer" />
-          <button type="button" className="btn sm" disabled={running} onClick={run}>
+          <button type="button" className="btn sm" disabled={running} onClick={check}>
             {running ? "Checking…" : report ? "Check again" : "Check everything"}
           </button>
         </div>

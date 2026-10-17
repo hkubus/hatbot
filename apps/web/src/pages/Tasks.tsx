@@ -1,6 +1,7 @@
 import { latestNoteOnly, OPEN_NEGOTIATION_STATUSES, type Task } from "@hatbot/shared";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ApiError, api, errorText } from "../api";
+import { useAction } from "../action";
+import { ApiError, api } from "../api";
 import { ask } from "../confirm";
 import { modelName, plainText, usd } from "../format";
 import { Icon } from "../icons";
@@ -44,7 +45,7 @@ export function Tasks() {
   const [filter, setFilter] = useState<"active" | "done">("active");
   const [ids, setIds] = useState<number[] | null>(null);
   const [hasOlder, setHasOlder] = useState(false);
-  const [loadingOlder, setLoadingOlder] = useState(false);
+  const loadingOlder = useAction();
   const [loadError, setLoadError] = useState("");
   const [attempt, setAttempt] = useState(0);
   const tasks = useStore((s) => s.tasks);
@@ -84,15 +85,14 @@ export function Tasks() {
   const older = async () => {
     const before = ids?.length ? Math.min(...ids) : undefined;
     if (!before) return;
-    setLoadingOlder(true);
-    try {
-      const list = await loadTasks({ status: filter, before, limit: TASK_PAGE });
-      setIds((s) => [...(s ?? []), ...list]);
-      setHasOlder(list.length === TASK_PAGE);
-    } catch (err) {
-      setLoadError(loadErrorText(err));
-    }
-    setLoadingOlder(false);
+    await loadingOlder.run(
+      async () => {
+        const list = await loadTasks({ status: filter, before, limit: TASK_PAGE });
+        setIds((s) => [...(s ?? []), ...list]);
+        setHasOlder(list.length === TASK_PAGE);
+      },
+      (err) => setLoadError(loadErrorText(err)),
+    );
   };
 
   // Tasks that start or finish while the list is open move between the two lists.
@@ -217,7 +217,7 @@ export function Tasks() {
           <button
             type="button"
             className="btn sm ghost load-earlier"
-            disabled={loadingOlder}
+            disabled={loadingOlder.busy}
             onClick={older}
           >
             Older
@@ -334,10 +334,9 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   const [watch, setWatch] = useState(live);
   const [missing, setMissing] = useState(false);
   const [loadError, setLoadError] = useState("");
-  const [error, setError] = useState("");
+  const { busy, error, run } = useAction();
   /** The goal being edited to run it again; null when that form is closed. */
   const [again, setAgain] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
     setLoadError("");
@@ -369,27 +368,17 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   const cancel = async () => {
     if (!(await ask({ text: `Cancel "${task.title}"?`, ok: "Cancel task", cancel: "Keep it" })))
       return;
-    try {
-      await cancelTask(id);
-    } catch (err) {
-      setError(errorText(err));
-    }
+    await run(() => cancelTask(id));
   };
 
-  const rerun = async () => {
-    setBusy(true);
-    setError("");
-    try {
+  const rerun = () =>
+    run(async () => {
       const t = await api<Task>(`/tasks/${id}/rerun`, {
         body: { goal: again === task.goal ? undefined : again },
       });
       setAgain(null);
       navigate(`/tasks/${t.id}`);
-    } catch (err) {
-      setError(errorText(err));
-    }
-    setBusy(false);
-  };
+    });
 
   return (
     <section className="view">

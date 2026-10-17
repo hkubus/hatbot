@@ -11,6 +11,7 @@ import {
   type WatchSource,
 } from "@hatbot/shared";
 import { useEffect, useState } from "react";
+import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { BotPicker, Runs, stamp, useListed } from "../automations";
 import { ask, useLeaveGuard } from "../confirm";
@@ -213,9 +214,8 @@ export function WatcherEdit({ id }: { id: number | null }) {
   /** What went wrong with Try it, shown beside it. */
   const [previewError, setPreviewError] = useState("");
   const [values, setValues] = useState<WatcherValue[]>([]);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [checking, setChecking] = useState(false);
+  const { busy, error, setError, run } = useAction();
+  const checking = useAction();
   const listed = useListed("watchers", id, stored);
   // Deleted elsewhere: there's nothing left to save.
   const edited = dirty && stored !== null;
@@ -267,23 +267,17 @@ export function WatcherEdit({ id }: { id: number | null }) {
     const source = sourceOf(form);
     if (typeof source === "string") return setPreviewError(source);
     setPreviewError("");
-    setBusy(true);
-    try {
-      setPreview(
-        await api<WatchPreview>("/watchers/preview", {
-          body: { source, botId: form.botId },
-        }),
-      );
-    } catch (err) {
-      setPreviewError(errorText(err));
-    }
-    setBusy(false);
+    await run(
+      async () =>
+        setPreview(
+          await api<WatchPreview>("/watchers/preview", { body: { source, botId: form.botId } }),
+        ),
+      (err) => setPreviewError(errorText(err)),
+    );
   };
   const save = async () => {
     if (typeof body === "string") return setError(body);
-    setBusy(true);
-    setError("");
-    try {
+    await run(async () => {
       if (stored) {
         const w = await patchWatcher(stored.id, { ...fields, ...body });
         saved(form, formOf(w));
@@ -293,23 +287,13 @@ export function WatcherEdit({ id }: { id: number | null }) {
         release();
         navigate(`/watchers/${w.id}`, true);
       }
-    } catch (err) {
-      setError(errorText(err));
-    }
-    setBusy(false);
+    });
   };
   // Checks what's saved: off while you have unsaved changes, and while it's checking.
-  const checkNow = async () => {
-    if (!stored) return;
-    setChecking(true);
-    setError("");
-    try {
-      putWatcher(await api<Watcher>(`/watchers/${stored.id}/check`, { body: {} }));
-    } catch (err) {
-      setError(errorText(err));
-    }
-    setChecking(false);
-  };
+  const checkNow = () =>
+    checking.run(async () => {
+      if (stored) putWatcher(await api<Watcher>(`/watchers/${stored.id}/check`, { body: {} }));
+    });
   const remove = async () => {
     if (
       !stored ||
@@ -319,13 +303,11 @@ export function WatcherEdit({ id }: { id: number | null }) {
       }))
     )
       return;
-    try {
+    await run(async () => {
       await api(`/watchers/${stored.id}`, { method: "DELETE" });
       release();
       navigate("/schedules");
-    } catch (err) {
-      setError(errorText(err));
-    }
+    });
   };
 
   return (
@@ -346,11 +328,11 @@ export function WatcherEdit({ id }: { id: number | null }) {
               <button
                 type="button"
                 className="btn sm"
-                disabled={edited || checking}
+                disabled={edited || checking.busy}
                 title={edited ? "Save your changes first" : undefined}
                 onClick={checkNow}
               >
-                {checking ? "Checking…" : "Check now"}
+                {checking.busy ? "Checking…" : "Check now"}
               </button>
               <button type="button" className="btn sm danger-text" onClick={remove}>
                 Delete
@@ -610,7 +592,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
               <dd>{stored.enabled && stored.nextCheckAt ? stamp(stored.nextCheckAt) : "Off"}</dd>
             </dl>
           )}
-          {error && <div className="form-error">{error}</div>}
+          {(error || checking.error) && <div className="form-error">{error || checking.error}</div>}
           <div className="form-actions">
             <button
               type="button"

@@ -1,6 +1,7 @@
 // Settings → Password and sign-ins: a new password or authenticator, and where you're signed in.
 import type { Session, SetupStartResponse, SignedOutOthers } from "@hatbot/shared";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { useAction } from "../action";
 import { ApiError, api, errorText } from "../api";
 import { ask } from "../confirm";
 import { deviceName } from "../device";
@@ -54,15 +55,12 @@ function PasswordForm({ toast, onChanged }: { toast: Toast; onChanged: () => voi
   const [next, setNext] = useState("");
   const [again, setAgain] = useState("");
   const [totp, setTotp] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { busy, error, setError, run } = useAction();
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    setError("");
     if (next !== again) return setError("The new passwords don't match.");
-    setBusy(true);
-    try {
+    await run(async () => {
       const r = await api<SignedOutOthers>("/auth/password", {
         body: { password, totp, newPassword: next },
       });
@@ -71,12 +69,8 @@ function PasswordForm({ toast, onChanged }: { toast: Toast; onChanged: () => voi
       setAgain("");
       toast(changed("Password changed", r.ended));
       onChanged();
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setTotp("");
-      setBusy(false);
-    }
+    });
+    setTotp("");
   };
 
   return (
@@ -134,8 +128,7 @@ function AuthenticatorForm({ toast, onChanged }: { toast: Toast; onChanged: () =
   const [next, setNext] = useState<SetupStartResponse | null>(null);
   const [qr, setQr] = useState("");
   const [code, setCode] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { busy, error, setError, run } = useAction();
 
   useEffect(() => {
     if (!next) return setQr("");
@@ -146,34 +139,22 @@ function AuthenticatorForm({ toast, onChanged }: { toast: Toast; onChanged: () =
 
   const start = async (e: FormEvent) => {
     e.preventDefault();
-    setError("");
-    setBusy(true);
-    try {
+    await run(async () => {
       setNext(await api<SetupStartResponse>("/auth/totp/start", { body: { password, totp } }));
       setPassword("");
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setTotp("");
-      setBusy(false);
-    }
+    });
+    setTotp("");
   };
 
   const finish = async (e: FormEvent) => {
     e.preventDefault();
-    setError("");
-    setBusy(true);
-    try {
+    await run(async () => {
       const r = await api<SignedOutOthers>("/auth/totp", { body: { totp: code } });
       setNext(null);
       toast(changed("Authenticator changed", r.ended));
       onChanged();
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setCode("");
-      setBusy(false);
-    }
+    });
+    setCode("");
   };
 
   if (!next)

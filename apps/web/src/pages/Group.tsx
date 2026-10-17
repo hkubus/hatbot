@@ -1,7 +1,7 @@
 // A group chat's page (PLAN.md §14.4): its name and bots. "new" makes one.
 import { MAX_GROUP_BOTS } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
-import { errorText } from "../api";
+import { useAction } from "../action";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm, toggled, useStoredForm } from "../form";
 import { Icon } from "../icons";
@@ -23,8 +23,7 @@ export function GroupPage({ id, toast }: { id: string; toast: (t: string) => voi
   const { form, base, dirty, set, saved } = useStoredForm<{ title: string; members: string[] }>(
     isNew ? NEW_GROUP : stored && { title: stored.title ?? "", members: stored.botIds },
   );
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const { busy, error, run } = useAction();
   const release = useLeaveGuard(dirty);
   // The chats again, to tell one that's gone from one not loaded yet.
   const [loaded, setLoaded] = useState(false);
@@ -55,10 +54,8 @@ export function GroupPage({ id, toast }: { id: string; toast: (t: string) => voi
   const changed = isNew || dirty;
   const valid = members.length >= 2 && members.length <= MAX_GROUP_BOTS;
 
-  const save = async () => {
-    setBusy(true);
-    setError("");
-    try {
+  const save = () =>
+    run(async () => {
       const body = { title: title.trim(), botIds: members };
       if (isNew) {
         const c = await createGroup(body);
@@ -70,12 +67,7 @@ export function GroupPage({ id, toast }: { id: string; toast: (t: string) => voi
         saved(form, { title: body.title, members });
         toast("Saved");
       }
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+    });
   const remove = async () => {
     if (
       !(await ask({
@@ -84,13 +76,11 @@ export function GroupPage({ id, toast }: { id: string; toast: (t: string) => voi
       }))
     )
       return;
-    try {
+    await run(async () => {
       await deleteGroup(Number(id));
       release();
       navigate("/");
-    } catch (err) {
-      setError(errorText(err));
-    }
+    });
   };
 
   return (

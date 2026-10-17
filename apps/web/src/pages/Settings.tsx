@@ -7,6 +7,7 @@ import {
   type UpdateInfo,
 } from "@hatbot/shared";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { ask, askText } from "../confirm";
 import { clearDrafts } from "../drafts";
@@ -89,8 +90,8 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
   const update = (patch: Partial<AppSettings>) =>
     put(patch).catch((err) => toast(errorText(err, "Couldn't save"), "error"));
 
-  const [tokenError, setTokenError] = useState("");
-  const [pauseError, setPauseError] = useState("");
+  const tokenEdit = useAction();
+  const pausing = useAction();
   const createToken = async () => {
     const name = await askText({
       text: "Name for the new token",
@@ -98,14 +99,10 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
       ok: "Create",
     });
     if (!name) return;
-    setTokenError("");
-    try {
-      const t = await api<CreateTokenResponse>("/tokens", { body: { name } });
-      setNewToken(t);
+    await tokenEdit.run(async () => {
+      setNewToken(await api<CreateTokenResponse>("/tokens", { body: { name } }));
       setTokens(await api<ApiToken[]>("/tokens"));
-    } catch (err) {
-      setTokenError(errorText(err));
-    }
+    });
   };
 
   const revoke = async (t: ApiToken) => {
@@ -113,24 +110,17 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
       !(await ask({ text: `Revoke "${t.name}"? Apps using it will be signed out.`, ok: "Revoke" }))
     )
       return;
-    setTokenError("");
-    try {
+    await tokenEdit.run(async () => {
       await api(`/tokens/${t.id}`, { method: "DELETE" });
       setTokens(await api<ApiToken[]>("/tokens"));
-    } catch (err) {
-      setTokenError(errorText(err));
-    }
+    });
   };
 
-  const pause = async () => {
-    setPauseError("");
-    try {
+  const pause = () =>
+    pausing.run(async () => {
       await setPaused(!paused);
       toast(paused ? "Resumed" : "All activity paused");
-    } catch (err) {
-      setPauseError(errorText(err));
-    }
-  };
+    });
 
   const signOut = async () => {
     await api("/auth/logout", { body: {} }).catch(() => {});
@@ -442,7 +432,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
             <div className="row">
               <div className="txt">
                 <b>API tokens</b>
-                {tokenError && <span className="form-error">{tokenError}</span>}
+                {tokenEdit.error && <span className="form-error">{tokenEdit.error}</span>}
               </div>
               <button type="button" className="btn sm" onClick={createToken}>
                 New token
@@ -490,7 +480,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
             <div className="row">
               <div className="txt">
                 <b>Pause all activity</b>
-                {pauseError && <span className="form-error">{pauseError}</span>}
+                {pausing.error && <span className="form-error">{pausing.error}</span>}
               </div>
               <button type="button" className={`btn sm ${paused ? "" : "danger"}`} onClick={pause}>
                 {paused ? "Resume" : "Pause all"}
@@ -544,7 +534,7 @@ function RollbackRow({ toast }: { toast: Toast }) {
   const [snaps, setSnaps] = useState<Snapshot[] | null>(null);
   const [error, setError] = useState("");
   const [picked, setPicked] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useAction();
 
   useEffect(() => {
     api<{ configured: boolean; snapshots: Snapshot[] }>("/desktop/snapshots").then(
@@ -571,15 +561,13 @@ function RollbackRow({ toast }: { toast: Toast }) {
       }))
     )
       return;
-    setBusy(true);
-    try {
-      await api("/desktop/rollback", { body: { name: snap.name } });
-      toast("Desktop rolled back");
-    } catch (err) {
-      toast(errorText(err, "Couldn't roll back"), "error");
-    } finally {
-      setBusy(false);
-    }
+    await run(
+      async () => {
+        await api("/desktop/rollback", { body: { name: snap.name } });
+        toast("Desktop rolled back");
+      },
+      (err) => toast(errorText(err, "Couldn't roll back"), "error"),
+    );
   };
 
   return (

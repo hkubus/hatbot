@@ -1,5 +1,6 @@
 import type { Commit, MemoryFile, Proposal, SkillStatus } from "@hatbot/shared";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAction } from "../action";
 import { ApiError, api, errorText } from "../api";
 import { ask, askText, useLeaveGuard } from "../confirm";
 import { lineDiff } from "../diff";
@@ -94,7 +95,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
     [allProposals],
   );
   const [skills, setSkills] = useState<SkillStatus[]>([]);
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useAction();
   const teach = useStore((s) => s.teach);
   const drafts = useMemo(
     () =>
@@ -328,9 +329,9 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
   const skill = skills.find((s) => s.name === skillName);
   const troubled = skill ? new Set([...skill.failed, ...skill.takeovers]).size : 0;
 
-  const tidy = async () => {
-    setBusy(true);
-    try {
+  const failed = (err: unknown) => toast(errorText(err, "Couldn't reach Hatbot"), "error");
+  const tidy = () =>
+    run(async () => {
       // It's worked out in the background now; the proposal arrives as an event.
       const p = await api<Proposal | { started: true } | null>("/proposals/tidy", { body: {} });
       if (p && "started" in p)
@@ -339,14 +340,9 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
         putProposal(p);
         void select({ kind: "proposal", id: p.id });
       } else toast("Nothing to tidy", "info");
-    } catch (err) {
-      toast(errorText(err, "Couldn't reach Hatbot"), "error");
-    }
-    setBusy(false);
-  };
-  const fixSkill = async (name: string) => {
-    setBusy(true);
-    try {
+    }, failed);
+  const fixSkill = (name: string) =>
+    run(async () => {
       const p = await api<Proposal | { started: true } | null>(`/skills/${name}/fix`, {
         body: {},
       });
@@ -356,11 +352,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
         putProposal(p);
         void select({ kind: "proposal", id: p.id });
       } else toast("No fix found in what went wrong", "info");
-    } catch (err) {
-      toast(errorText(err, "Couldn't reach Hatbot"), "error");
-    }
-    setBusy(false);
-  };
+    }, failed);
   const recordAgain = async (name: string) => {
     try {
       await startTeach(name);

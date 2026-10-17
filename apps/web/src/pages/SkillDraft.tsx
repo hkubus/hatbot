@@ -1,6 +1,7 @@
 // Teach-by-showing's review step (PLAN.md §10.5): the skill Opus drafted from your recording, to edit and save.
 import { useEffect, useState } from "react";
-import { ApiError, errorText } from "../api";
+import { useAction } from "../action";
+import { ApiError } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { Icon } from "../icons";
 import { navigate } from "../router";
@@ -13,8 +14,7 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
   const [missing, setMissing] = useState(false);
   const [name, setName] = useState("");
   const [content, setContent] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { busy, error, run } = useAction();
 
   useEffect(() => {
     loadTeach(id).catch(() => setMissing(true));
@@ -33,18 +33,6 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
 
   if (missing) return <div className="empty">This recording doesn't exist.</div>;
   if (!session) return <section className="view" />;
-
-  const run = async (fn: () => Promise<void>) => {
-    setError("");
-    setBusy(true);
-    try {
-      await fn();
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const save = () =>
     run(async () => {
