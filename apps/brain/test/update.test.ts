@@ -74,6 +74,25 @@ test("Check everything warns while Update deploys commits nobody signed", async 
   const unsigned = await check();
   expect(unsigned.state).toBe("warn");
   expect(unsigned.detail).toContain("whoever can push to it can run code on the brain");
+  // An update that left a note to do by hand, as one without a desktop always does, says both.
+  write("status.json", {
+    state: "done",
+    step: "Updated",
+    startedAt: "2026-10-09T11:59:00Z",
+    notes: ["The desktop isn't set up; only the brain was updated."],
+  });
+  const both = await check();
+  expect(both.state).toBe("warn");
+  expect(both.detail).toContain("whoever can push to it can run code on the brain");
+  expect(both.detail).toContain(
+    "Still to do by hand after the last update: The desktop isn't set up",
+  );
+  write("status.json", {
+    state: "done",
+    step: "Updated",
+    startedAt: "2026-10-09T11:59:00Z",
+    notes: [],
+  });
   write("source.json", { url: "https://git.example/me/hatbot.git", branch: "main", signed: true });
   expect((await check()).state).toBe("ok");
   // An older brain-deploy.sh doesn't say, which isn't taken for either.

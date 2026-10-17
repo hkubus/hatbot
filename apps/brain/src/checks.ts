@@ -277,13 +277,16 @@ export class Checks {
     if (!info.source) return skip("Updates aren't set up; deploy.sh sets them up.");
     const s = info.status;
     if (s?.state === "failed") return fail(`The last update failed: ${s.error ?? s.step}.`);
-    if (s?.state === "done" && s.notes.length)
-      return warn(`Still to do by hand after the last update: ${s.notes.join(" ")}`);
-    // Update runs the new commit's deploy script as root on the brain.
-    if (info.source.signed === false)
-      return warn(
+    // Update runs the new commit's deploy script as root on the brain. Said along with any notes,
+    // which an install without a desktop has after every update.
+    const warnings = [
+      info.source.signed === false &&
         `Update deploys whatever ${info.source.branch} holds, so whoever can push to it can run code on the brain. Run deploy.sh with HATBOT_GIT_URL set to give it the key you sign commits with.`,
-      );
+      s?.state === "done" &&
+        s.notes.length > 0 &&
+        `Still to do by hand after the last update: ${s.notes.join(" ")}`,
+    ].filter(Boolean);
+    if (warnings.length) return warn(warnings.join(" "));
     if (!s) return ok("No update has run yet.");
     return ok(info.current?.sha ? `Running ${info.current.sha.slice(0, 7)}.` : "Up to date.");
   }
