@@ -37,7 +37,7 @@ import {
   watcherLine,
 } from "../watch/service";
 import type { Readable } from "./screening";
-import { messageTag, tagText, untrustedBlock } from "./untrusted";
+import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE, untrustedBlock } from "./untrusted";
 
 export type ToolContext = {
   db: Db;
@@ -488,8 +488,7 @@ export const TOOLS = [
       const terms = query.match(/[\p{L}\p{N}_]+/gu) ?? [];
       if (!terms.length) return "No searchable words in the query.";
       // Not the conversation you're in: the message asking would otherwise be the best match. Only
-      // the chats this bot is in. What a message drew on: its conversation's or task's untrusted
-      // content, or a note's.
+      // the chats this bot is in.
       const rows = db
         .query<
           {
@@ -501,13 +500,8 @@ export const TOOLS = [
           },
           [string, string, string, number, string]
         >(
-          `SELECT m.role, m.bot_id, m.text, m.created_at,
-             CASE WHEN e.tainted = 1 THEN coalesce(e.tainted_by, 'Untrusted content')
-               WHEN t.tainted = 1 THEN 'Task #' || t.id || ' "' || t.title || '"'
-               ELSE m.tainted_by END AS tainted_by
-           FROM messages_fts f JOIN messages m ON m.id = f.rowid
-           LEFT JOIN episodes e ON e.id = m.episode_id
-           LEFT JOIN tasks t ON t.id = m.task_id
+          `SELECT m.role, m.bot_id, m.text, m.created_at, ${UNTRUSTED_SOURCE} AS tainted_by
+           FROM messages_fts f JOIN messages m ON m.id = f.rowid ${TRUST_JOINS}
            WHERE messages_fts MATCH ? AND m.created_at >= ? AND m.created_at < ?
            AND m.episode_id IS NOT ?
            AND m.conversation_id IN (SELECT conversation_id FROM conversation_bots WHERE bot_id = ?)

@@ -410,6 +410,11 @@ test("search_history taints the search with what the messages it found had read"
   expect(found.content).toContain(
     'trusted="false" source="Read https://evil.example">"The router\'s admin page is at .1."',
   );
+  // The owner's own words stay theirs, and finding only those taints nothing.
+  expect(found.content).toContain(">where is the router's admin page?</message>");
+  tainted.length = 0;
+  await runTool("search_history", { query: "where" }, ctx);
+  expect(tainted).toEqual([]);
 
   // A task searching it is tainted too.
   const work = new FakeModel([
@@ -427,6 +432,24 @@ test("search_history taints the search with what the messages it found had read"
     tainted: true,
     taintedBy: "Read https://evil.example",
   });
+});
+
+test("in the messages a conversation opens with, a tainted one's replies are data; the owner's aren't", async () => {
+  const chat = new FakeModel([
+    { content: [text("The NAS is at .20.")] },
+    { content: [text("Ok.")] },
+  ]);
+  const t = await testApp(chat);
+  await t.thread.post("where is the nas?").done;
+  t.db.query("UPDATE episodes SET tainted = 1, tainted_by = 'Read https://evil.example'").run();
+  t.advance(31 * 60_000);
+  await t.thread.post("thanks").done;
+  const opening = textOf(chat.requests[1]);
+  expect(opening).toContain(">where is the nas?</message>");
+  expect(opening).toContain(
+    'trusted="false" source="Read https://evil.example">"The NAS is at .20."</message>',
+  );
+  expect(episodeTaint(t)).toEqual({ tainted: 1, tainted_by: "Read https://evil.example" });
 });
 
 test("a tainted task's summary reaches the chat labelled as data, and taints it", async () => {

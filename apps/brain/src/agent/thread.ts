@@ -74,7 +74,7 @@ import {
   webReads,
   webTexts,
 } from "./tools";
-import { messageTag, tagText, untrustedBlock } from "./untrusted";
+import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE, untrustedBlock } from "./untrusted";
 
 /** What ask_opus consults when the chat runs on Haiku 5.5. */
 export const EXPERT_MODEL = "claude-opus-5-5";
@@ -426,42 +426,31 @@ export class Thread {
    * episode or a tainted task, or is a note with untrusted text in it (PLAN.md §6.1).
    */
   private inheritTaint(episodeId: number, beforeMessageId: number) {
-    const recent = this.list(beforeMessageId, RECENT_MESSAGES).map((m) => m.id);
-    if (!recent.length) return;
-    const from = this.d.db
-      .query<{ taint: string | null; suspected: string | null }, number[]>(
-        `SELECT coalesce(m.tainted_by,
-           CASE WHEN e.tainted = 1 THEN coalesce(e.tainted_by, 'Untrusted content') END,
-           CASE WHEN t.tainted = 1 THEN 'Task #' || t.id || ' "' || t.title || '"' END) AS taint,
-           e.injection_suspected AS suspected
-         FROM messages m
-         LEFT JOIN episodes e ON e.id = m.episode_id
-         LEFT JOIN tasks t ON t.id = m.task_id
-         WHERE m.id IN (${recent.map(() => "?").join(", ")}) ORDER BY m.id`,
-      )
-      .all(...recent);
-    const taint = from.find((m) => m.taint)?.taint;
-    if (taint) this.taint(episodeId, taint, true);
-    // What the earlier conversation was suspected of reading comes along with the messages.
-    const suspected = from.find((m) => m.suspected)?.suspected;
+    const carried = [
+      ...this.untrusted(this.list(beforeMessageId, RECENT_MESSAGES).map((m) => m.id)).values(),
+    ];
+    if (carried[0]) this.taint(episodeId, carried[0].source, true);
+    // What the earlier conversation was suspected of reading comes along with its messages.
+    const suspected = carried.find((m) => m.suspected)?.suspected;
     if (suspected) this.suspect(episodeId, suspected);
   }
 
   /**
-   * Which of these messages have untrusted text in them, and what it came from: notes, and what shows
-   * a tainted task's result (its card, or the reply it ended).
+   * Which of these messages have untrusted text in them, by id: what it came from (UNTRUSTED_SOURCE),
+   * and what their conversation was suspected of reading.
    */
-  private untrustedNotes(ids: number[]): Map<number, string> {
+  private untrusted(ids: number[]): Map<number, { source: string; suspected: string | null }> {
     if (!ids.length) return new Map();
     const rows = this.d.db
-      .query<{ id: number; tainted_by: string }, number[]>(
-        `SELECT m.id, coalesce(m.tainted_by, 'Task #' || t.id || ' "' || t.title || '"') AS tainted_by
-         FROM messages m LEFT JOIN tasks t ON t.id = m.task_id AND t.tainted = 1
-         WHERE m.id IN (${ids.map(() => "?").join(", ")})
-         AND (m.tainted_by IS NOT NULL OR t.id IS NOT NULL)`,
+      .query<{ id: number; source: string | null; suspected: string | null }, number[]>(
+        `SELECT m.id, ${UNTRUSTED_SOURCE} AS source, e.injection_suspected AS suspected
+         FROM messages m ${TRUST_JOINS}
+         WHERE m.id IN (${ids.map(() => "?").join(", ")}) ORDER BY m.id`,
       )
       .all(...ids);
-    return new Map(rows.map((r) => [r.id, r.tainted_by]));
+    return new Map(
+      rows.flatMap((r) => (r.source ? [[r.id, { source: r.source, suspected: r.suspected }]] : [])),
+    );
   }
 
   /** Your last few messages in this conversation, as you wrote them. */
@@ -853,9 +842,9 @@ export class Thread {
       )
       .all(this.conversationId, after, bot.id)
       .reverse();
-    const untrusted = this.untrustedNotes(rows.map((m) => m.id));
+    const untrusted = this.untrusted(rows.map((m) => m.id));
     return rows
-      .map((m) => this.transcript({ ...m, tainted_by: untrusted.get(m.id) ?? null }))
+      .map((m) => this.transcript({ ...m, tainted_by: untrusted.get(m.id)?.source ?? null }))
       .join("\n");
   }
 
@@ -1444,7 +1433,7 @@ export class Thread {
     const messages = this.list(beforeMessageId, RECENT_MESSAGES, incognito).filter(
       (m) => m.status !== "streaming" && (!fresh || m.episodeId === episodeId),
     );
-    const untrusted = this.untrustedNotes(messages.map((m) => m.id));
+    const untrusted = this.untrusted(messages.map((m) => m.id));
     const recent = messages
       .map((m) =>
         this.transcript({
@@ -1452,7 +1441,7 @@ export class Thread {
           bot_id: m.botId,
           text: m.text,
           created_at: m.createdAt,
-          tainted_by: untrusted.get(m.id) ?? null,
+          tainted_by: untrusted.get(m.id)?.source ?? null,
         }),
       )
       .join("\n");
