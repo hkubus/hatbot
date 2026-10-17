@@ -1145,6 +1145,35 @@ final class NetworkTests: XCTestCase {
     XCTAssertEqual(sent["baseSha"] as? String, "")
   }
 
+  /// A file goes up from disk as the same multipart body as one from memory, and the body file is deleted.
+  func testUploadsAFileFromDisk() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    let file = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).bin")
+    defer { try? FileManager.default.removeItem(at: file) }
+    // Over a megabyte, so it's copied in more than one piece.
+    let bytes = Data((0..<1_500_000).map { UInt8($0 % 251) })
+    try bytes.write(to: file)
+    SlowBrain.routes["/attachments"] =
+      #"{"id":7,"name":"scan \"1\".pdf","mediaType":"application/pdf","size":1500000,"from":"owner","createdAt":"2026-10-15T08:00:00Z"}"#
+    let form = Multipart(name: "scan \"1\".pdf", mediaType: "application/pdf")
+    let written = try form.write(file)
+    let body = try Data(contentsOf: written)
+    try FileManager.default.removeItem(at: written)
+    let text = String(decoding: body.prefix(200), as: UTF8.self)
+    XCTAssertTrue(text.hasPrefix("--\(form.boundary)\r\n"))
+    XCTAssertTrue(text.contains(#"Content-Disposition: form-data; name="file"; filename="scan _1_.pdf""#))
+    XCTAssertTrue(text.contains("Content-Type: application/pdf\r\n\r\n"))
+    XCTAssertEqual(body, form.head + bytes + form.tail)
+    XCTAssertEqual(form.tail, Data("\r\n--\(form.boundary)--\r\n".utf8))
+
+    let uploads = { try FileManager.default.contentsOfDirectory(atPath: NSTemporaryDirectory()).filter { $0.hasPrefix("upload-") } }
+    let before = try uploads()
+    let a: Attachment = try await store.api.upload("/attachments", file: file, name: "scan.pdf", mediaType: "application/pdf")
+    XCTAssertEqual(a.id, 7)
+    XCTAssertEqual(SlowBrain.requested.last, "POST /attachments")
+    XCTAssertEqual(Set(try uploads()), Set(before))
+  }
+
   /// The group you're in, deleted elsewhere: the chat goes back to Hatbot's own.
   func testAGroupDeletedElsewhereCloses() async throws {
     let store = try await MainActor.run { try Self.store() }

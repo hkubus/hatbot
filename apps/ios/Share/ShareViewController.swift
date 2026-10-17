@@ -26,7 +26,7 @@ final class ShareViewController: UIViewController {
 }
 
 /// A file from the share sheet, ready to upload: a photo already scaled, anything else copied to a file
-/// that's read only when it goes up, one at a time.
+/// that goes up from disk, a piece at a time: the extension can't hold a big one in memory.
 struct SharedFile: Identifiable {
   enum Content {
     case data(Data)
@@ -38,13 +38,14 @@ struct SharedFile: Identifiable {
   var name: String
   var mediaType: String
   var preview: UIImage?
+}
 
-  func data() throws -> Data {
-    switch content {
-    case let .data(data): data
-    case let .file(url): try Data(contentsOf: url)
-    }
-  }
+/// What came of a file the share sheet lends.
+private enum Lent {
+  case file(SharedFile)
+  /// Over the brain's 25 MB: not copied, and not sent.
+  case tooBig(String)
+  case unreadable
 }
 
 struct ShareView: View {
@@ -53,6 +54,8 @@ struct ShareView: View {
   let done: (Bool) -> Void
   @State private var draft = ShareDraft()
   @State private var files: [SharedFile] = []
+  /// Files left out for their size.
+  @State private var tooBig: [String] = []
   @State private var loading = true
   @State private var sending = false
   @State private var error: String?
@@ -65,6 +68,14 @@ struct ShareView: View {
           Text("Open Hatbot and sign in first.").foregroundStyle(.secondary)
         }
         if let error { Text(error).foregroundStyle(.red) }
+        if !tooBig.isEmpty {
+          Text(
+            tooBig.count == 1
+              ? "\(tooBig[0]) is over 25 MB, so it's left out."
+              : "\(tooBig.joined(separator: ", ")) are over 25 MB, so they're left out."
+          )
+          .foregroundStyle(.red)
+        }
         Section {
           TextField("Add a note", text: $draft.note, axis: .vertical).lineLimit(2...8)
         }
@@ -104,6 +115,12 @@ struct ShareView: View {
       }
     }
     .task { await load() }
+    // The copies, sent or not.
+    .onDisappear {
+      for f in files {
+        if case let .file(url) = f.content { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+      }
+    }
   }
 
   private func load() async {
@@ -114,21 +131,26 @@ struct ShareView: View {
             SharedFile(content: .data(photo.data), name: photo.name, mediaType: "image/jpeg", preview: photo.preview))
         }
       } else if p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-        if let f = await Self.file(p) { files.append(f) }
+        take(await Self.file(p))
       } else if p.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
         if let url = await Self.url(p) { draft.urls.append(url) }
       } else if p.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
         if let text = await Self.text(p) { draft.texts.append(text) }
       } else if let type = p.registeredTypeIdentifiers.compactMap(UTType.init).first(where: { $0.conforms(to: .data) }) {
         let name = p.suggestedName.map { $0 + (type.preferredFilenameExtension.map { ".\($0)" } ?? "") } ?? "file"
-        if let url = await Self.copy(p, type, name: name) {
-          files.append(
-            SharedFile(content: .file(url), name: name, mediaType: type.preferredMIMEType ?? "application/octet-stream"))
-        }
+        take(await Self.copy(p, type, name: name))
       }
     }
     files = Array(files.prefix(10))
     loading = false
+  }
+
+  private func take(_ lent: Lent) {
+    switch lent {
+    case let .file(f): files.append(f)
+    case let .tooBig(name): tooBig.append(name)
+    case .unreadable: break
+    }
   }
 
   private func send() async {
@@ -138,7 +160,11 @@ struct ShareView: View {
     do {
       var ids: [Int] = []
       for f in files {
-        let a: Attachment = try await api.upload("/attachments", data: try f.data(), name: f.name, mediaType: f.mediaType)
+        let a: Attachment
+        switch f.content {
+        case let .data(data): a = try await api.upload("/attachments", data: data, name: f.name, mediaType: f.mediaType)
+        case let .file(url): a = try await api.upload("/attachments", file: url, name: f.name, mediaType: f.mediaType)
+        }
         ids.append(a.id)
       }
       struct Post: Encodable {
@@ -181,21 +207,28 @@ struct ShareView: View {
   }
 
   /// Anything else as a file of our own, copied while the share sheet lends it.
-  private static func copy(_ p: NSItemProvider, _ type: UTType, name: String) async -> URL? {
+  private static func copy(_ p: NSItemProvider, _ type: UTType, name: String) async -> Lent {
     await withCheckedContinuation { c in
       _ = p.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, _ in
-        c.resume(returning: url.flatMap { PickedFile.copy($0, name: name) })
+        c.resume(returning: lend(url, name: name, mediaType: type.preferredMIMEType ?? "application/octet-stream"))
       }
     }
   }
 
   /// A file from Files or another app.
-  private static func file(_ p: NSItemProvider) async -> SharedFile? {
+  private static func file(_ p: NSItemProvider) async -> Lent {
     await withCheckedContinuation { c in
       _ = p.loadObject(ofClass: URL.self) { url, _ in
-        guard let url, let copy = PickedFile.copy(url) else { return c.resume(returning: nil) }
-        c.resume(returning: SharedFile(content: .file(copy), name: url.lastPathComponent, mediaType: PickedFile.mediaType(url)))
+        c.resume(returning: lend(url, name: url?.lastPathComponent ?? "file", mediaType: url.map(PickedFile.mediaType) ?? ""))
       }
     }
+  }
+
+  /// The size is checked before anything is copied or read.
+  private static func lend(_ url: URL?, name: String, mediaType: String) -> Lent {
+    guard let url else { return .unreadable }
+    if (PickedFile.size(url) ?? 0) > API.maxUpload { return .tooBig(name) }
+    guard let copy = PickedFile.copy(url, name: name) else { return .unreadable }
+    return .file(SharedFile(content: .file(copy), name: name, mediaType: mediaType))
   }
 }

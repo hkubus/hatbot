@@ -71,7 +71,8 @@ Shortcuts has three Hatbot actions, and Siri knows them without setup:
 
 On a locked iPhone they ask you to unlock it first, and so does Pause Hatbot.
 
-**Hatbot** in the share sheet sends text, links, photos and files (up to 10) with a note. It reads
+**Hatbot** in the share sheet sends text, links, photos and files (up to 10, each up to 25 MB) with a
+note; a bigger file is left out, and it says so. It reads
 the token from the App Group the app shares with it (`group.<prefix>.hatbot`; SideStore adds your
 team ID to the name), so open the app once after updating. If the share sheet says to sign in, the
 group wasn't set up by the install; the rest of the app works without it.

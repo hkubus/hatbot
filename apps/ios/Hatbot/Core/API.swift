@@ -16,6 +16,45 @@ struct APIError: LocalizedError, Sendable {
 /// An empty or ignored response body.
 struct Empty: Codable, Sendable {}
 
+/// A file as multipart field "file", as POST /attachments reads it.
+struct Multipart: Sendable {
+  let boundary: String
+  let head: Data
+  let tail: Data
+
+  init(name: String, mediaType: String) {
+    let boundary = "hatbot-\(UUID().uuidString)"
+    let safe = name.replacingOccurrences(of: "\"", with: "_").replacingOccurrences(of: "\r", with: "_")
+      .replacingOccurrences(of: "\n", with: "_")
+    self.boundary = boundary
+    head = Data(
+      ("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(safe)\"\r\n"
+        + "Content-Type: \(mediaType)\r\n\r\n").utf8)
+    tail = Data("\r\n--\(boundary)--\r\n".utf8)
+  }
+
+  /// The whole body in a temporary file, `file` copied in a megabyte at a time.
+  func write(_ file: URL) throws -> URL {
+    let out = FileManager.default.temporaryDirectory.appendingPathComponent("upload-\(UUID().uuidString)")
+    guard FileManager.default.createFile(atPath: out.path, contents: head) else { throw CocoaError(.fileWriteUnknown) }
+    do {
+      let writer = try FileHandle(forWritingTo: out)
+      defer { try? writer.close() }
+      try writer.seekToEnd()
+      let reader = try FileHandle(forReadingFrom: file)
+      defer { try? reader.close() }
+      while let chunk = try reader.read(upToCount: 1 << 20), !chunk.isEmpty {
+        try writer.write(contentsOf: chunk)
+      }
+      try writer.write(contentsOf: tail)
+      return out
+    } catch {
+      try? FileManager.default.removeItem(at: out)
+      throw error
+    }
+  }
+}
+
 final class API: Sendable {
   static let prefix = "/api/v1"
 
@@ -104,23 +143,47 @@ final class API: Sendable {
     return data
   }
 
+  /// The most an attachment may be (MAX_ATTACHMENT_BYTES in apps/brain/src/attachments.ts).
+  static let maxUpload = 25 * 1024 * 1024
+
   /// A file as multipart field "file"; the answer is JSON.
   func upload<T: Decodable>(_ path: String, data: Data, name: String, mediaType: String) async throws -> T {
+    let form = Multipart(name: name, mediaType: mediaType)
+    var body = form.head
+    body.append(data)
+    body.append(form.tail)
+    let req = uploadRequest(path, form)
+    return try await send(path) { try await self.session.upload(for: req, from: body) }
+  }
+
+  /// A file on disk as multipart field "file", read and sent in pieces: the share extension can't hold a
+  /// big one in memory.
+  func upload<T: Decodable>(_ path: String, file: URL, name: String, mediaType: String) async throws -> T {
+    let form = Multipart(name: name, mediaType: mediaType)
+    let body = try form.write(file)
+    defer { try? FileManager.default.removeItem(at: body) }
+    let req = uploadRequest(path, form)
+    return try await send(path) {
+      try await withCheckedThrowingContinuation { c in
+        self.session.uploadTask(with: req, fromFile: body) { data, response, error in
+          guard let response else { return c.resume(throwing: error ?? URLError(.badServerResponse)) }
+          c.resume(returning: (data ?? Data(), response))
+        }.resume()
+      }
+    }
+  }
+
+  private func uploadRequest(_ path: String, _ form: Multipart) -> URLRequest {
     var req = request(path, method: "POST")
     req.timeoutInterval = 120
-    let boundary = "hatbot-\(UUID().uuidString)"
-    req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-    let safe = name.replacingOccurrences(of: "\"", with: "_").replacingOccurrences(of: "\r", with: "_")
-      .replacingOccurrences(of: "\n", with: "_")
-    var body = Data()
-    body.append(Data("--\(boundary)\r\n".utf8))
-    body.append(Data("Content-Disposition: form-data; name=\"file\"; filename=\"\(safe)\"\r\n".utf8))
-    body.append(Data("Content-Type: \(mediaType)\r\n\r\n".utf8))
-    body.append(data)
-    body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+    req.setValue("multipart/form-data; boundary=\(form.boundary)", forHTTPHeaderField: "Content-Type")
+    return req
+  }
+
+  private func send<T: Decodable>(_ path: String, _ transfer: () async throws -> (Data, URLResponse)) async throws -> T {
     let (out, response): (Data, URLResponse)
     do {
-      (out, response) = try await session.upload(for: req, from: body)
+      (out, response) = try await transfer()
     } catch {
       throw APIError(status: 0, message: "Couldn't reach Hatbot.")
     }
