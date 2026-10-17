@@ -762,10 +762,13 @@ describe("tokens", () => {
       { cookie, origin: "https://evil.test" },
     );
     expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: `Open Hatbot at ${ORIGIN} to make changes.` });
   });
 
-  test("needs auth", async () => {
+  test("needs auth, and says so plainly", async () => {
     const t = await testApp();
-    expect((await t.call("GET", "/tokens")).status).toBe(401);
+    const res = await t.call("GET", "/tokens");
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "You're not signed in." });
   });
 });
