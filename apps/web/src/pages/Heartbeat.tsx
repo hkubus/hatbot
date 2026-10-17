@@ -2,6 +2,7 @@
 import { type AppSettings, describeEvery, type HeartbeatInfo } from "@hatbot/shared";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api";
+import { plainText } from "../format";
 import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
 import { navigate } from "../router";
@@ -149,7 +150,9 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
               <dd>{stamp(info.at)}</dd>
               <dt>Found</dt>
               <dd>
-                {info.found.length ? info.found.map((f) => <div key={f}>{f}</div>) : "Nothing new"}
+                {info.found.length
+                  ? info.found.map((f) => <div key={f}>{plainText(f)}</div>)
+                  : "Nothing new"}
               </dd>
               {info.found.length > 0 && info.action && (
                 <>
@@ -166,7 +169,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
                     ) : (
                       DID[info.action]
                     )}
-                    {info.note ? `: ${info.note}` : ""}
+                    {info.note ? `: ${plainText(info.note)}` : ""}
                   </dd>
                 </>
               )}
@@ -182,7 +185,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
                   <dt>{stamp(r.at)}</dt>
                   <dd>
                     {r.found.map((f) => (
-                      <div key={f}>{f}</div>
+                      <div key={f}>{plainText(f)}</div>
                     ))}
                     <div className="muted">{DID[r.action] ?? r.action}</div>
                   </dd>

@@ -1,7 +1,7 @@
 import { latestNoteOnly, OPEN_NEGOTIATION_STATUSES, type Task } from "@hatbot/shared";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, api } from "../api";
-import { modelName, usd } from "../format";
+import { modelName, plainText, usd } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LiveView, StepIcon } from "../live";
@@ -473,7 +473,9 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
                     ) : (
                       <div>{s.detail && s.kind !== "note" ? s.detail : s.name}</div>
                     )}
-                    {s.kind === "note" && s.detail && <div className="muted">{s.detail}</div>}
+                    {s.kind === "note" && s.detail && (
+                      <div className="muted">{plainText(s.detail)}</div>
+                    )}
                     {s.screenshot && <Shot taskId={id} stepId={s.id} alt={s.name} />}
                   </div>
                 </li>

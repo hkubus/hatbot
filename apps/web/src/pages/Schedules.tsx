@@ -9,6 +9,7 @@ import {
 } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
+import { plainText } from "../format";
 import { Icon } from "../icons";
 import { navigate } from "../router";
 import {
@@ -205,7 +206,7 @@ export function Runs({
             <tbody>
               {shown.map((t) => (
                 <tr key={t.id} onClick={() => navigate(`/tasks/${t.id}`)}>
-                  <td className="wrap">{t.summary ?? t.title}</td>
+                  <td className="wrap">{t.summary ? plainText(t.summary) : t.title}</td>
                   <td>
                     <StatusChip status={t.status} />
                   </td>

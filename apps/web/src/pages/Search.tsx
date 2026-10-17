@@ -2,6 +2,7 @@
 import { MATCH_END, MATCH_START, type SearchResults } from "@hatbot/shared";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api";
+import { plainText } from "../format";
 import { Icon } from "../icons";
 import { navigate } from "../router";
 import { botName, chatName, getState, HATBOT_CHAT, useStore } from "../store";
@@ -13,8 +14,9 @@ const chatPath = (id: number) => (id === HATBOT_CHAT ? "/" : `/chat/${id}`);
 const day = (iso: string) =>
   new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
-/** A snippet with its matched words highlighted. */
-function Snippet({ text }: { text: string }) {
+/** A snippet with its matched words highlighted, without its Markdown. */
+function Snippet({ text: markdown }: { text: string }) {
+  const text = plainText(markdown);
   // Keyed by where each piece starts in the text.
   const pieces: { at: number; text: string; hit: boolean }[] = [];
   const re = new RegExp(`${MATCH_START}([^${MATCH_END}]*)${MATCH_END}`, "g");
@@ -147,7 +149,7 @@ export function Search({ query }: { query: string }) {
                     className="row-main"
                     onClick={() => navigate(`/memory?path=${encodeURIComponent(h.path)}`)}
                   >
-                    <div className="txt snippet">{h.text}</div>
+                    <div className="txt snippet">{plainText(h.text)}</div>
                     <span className="val mono">{h.path}</span>
                   </button>
                 </div>

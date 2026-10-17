@@ -4,6 +4,7 @@ import { API_PREFIX, latestNoteOnly, type TaskStep } from "@hatbot/shared";
 import type { LiveInput } from "@hatbot/shared/desktop";
 import { useEffect, useRef, useState } from "react";
 import { ApiError } from "./api";
+import { plainText } from "./format";
 import { Icon } from "./icons";
 import { navigate } from "./router";
 import {
@@ -386,7 +387,9 @@ export function LiveView({ taskId }: { taskId?: number }) {
                   >
                     <span className="t">{time(s.createdAt)}</span>
                     <StepIcon kind={s.kind} />
-                    <span>{s.detail || s.name}</span>
+                    <span>
+                      {s.kind === "note" ? plainText(s.detail || s.name) : s.detail || s.name}
+                    </span>
                   </li>
                 ))}
             </ul>
