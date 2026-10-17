@@ -54,3 +54,28 @@ test("wheel turns are added up, and come before what follows them", async () => 
     { t: "key", key: "a", down: true },
   ]);
 });
+
+test("what's still held down is let go, after what's waiting", async () => {
+  const r = recorder();
+  const q = new LiveQueue(r.run);
+  q.push({ t: "key", key: "Control", down: true });
+  q.push({ t: "key", key: "AltGraph", down: true });
+  q.push({ t: "key", key: "a", down: true });
+  q.push({ t: "key", key: "Shift", down: true });
+  q.push({ t: "key", key: "Shift", down: false });
+  q.push({ t: "button", button: 1, down: true, x: 10, y: 10 });
+  q.push({ t: "move", x: 40, y: 50 });
+  q.release();
+  r.release();
+  await Bun.sleep(10);
+  expect(r.done.slice(-3)).toEqual([
+    { t: "button", button: 1, down: false, x: 40, y: 50 },
+    { t: "key", key: "AltGraph", down: false },
+    { t: "key", key: "Control", down: false },
+  ]);
+  // Nothing is held now, so a second release sends nothing.
+  const sent = r.done.length;
+  q.release();
+  await Bun.sleep(10);
+  expect(r.done.length).toBe(sent);
+});

@@ -111,9 +111,17 @@ test("only the internet, over http and https", async () => {
   expect((await call("/render", { url: "file:///etc/passwd" }, real)).body.error).toBe(
     "Only http and https.",
   );
-  const local = await call("/render", { url: "http://localhost:9222/json/version" }, real);
-  expect(local.status).toBe(400);
-  expect(local.body.error).toContain("local address");
+  for (const url of [
+    "http://localhost:9222/json/version",
+    "http://[::ffff:127.0.0.1]:9222/json/list",
+    "http://[::127.0.0.1]:9222/json/list",
+    "http://0.0.0.0:9222/json/list",
+    "http://2130706433:9222/json/list",
+  ]) {
+    const local = await call("/render", { url }, real);
+    expect(local.status).toBe(400);
+    expect([url, local.body.error]).toEqual([url, expect.stringContaining("local address")]);
+  }
   expect((await call("/render", {}, real)).status).toBe(400);
 });
 

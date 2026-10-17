@@ -69,7 +69,13 @@ export type AgentStatus = {
 };
 
 /** GET /context: the visible Chromium tab. `text` only with ?text=1. */
-export type AgentContext = { url: string | null; title: string | null; text?: string };
+export type AgentContext = {
+  url: string | null;
+  title: string | null;
+  text?: string;
+  /** A password, code or card field on the page holds something: a screenshot may show it. */
+  secretShown?: boolean;
+};
 
 /** POST /inspect: the element under a point, or the focused one, for the click policy (PLAN.md §6.1). */
 export type AgentElement = {
@@ -82,6 +88,8 @@ export type AgentElement = {
   submitLabel?: string;
   /** The focused element takes a password, a one-time code or card details, or can't be seen into (a frame). */
   secret?: boolean;
+  /** For the focused element: whether the page has the keyboard, rather than the address bar or another window. */
+  pageFocus?: boolean;
   /** The tab's address. With the "fields" feature. */
   url?: string;
   /** It's somewhere to type: a text box, text area or editable region. With the "fields" feature. */

@@ -90,7 +90,16 @@ export class Teach {
   constructor(private d: TeachDeps) {
     this.clock = d.clock ?? Date.now;
     // A restart loses a recording in progress (its steps were in memory) and a draft being written.
+    const lost = d.db
+      .query<{ id: number; started_at: string }, []>(
+        "SELECT id, started_at FROM teach_sessions WHERE status = 'recording'",
+      )
+      .all();
     d.db.query("UPDATE teach_sessions SET status = 'discarded' WHERE status = 'recording'").run();
+    for (const r of lost)
+      void d.archive
+        .removeScreens(`teach-${r.id}`, Date.parse(r.started_at), this.clock())
+        .catch((err) => console.error("teach screenshots not removed", err));
     d.db
       .query(
         "UPDATE teach_sessions SET status = 'failed', error = 'Stopped: the brain restarted.' WHERE status = 'drafting'",
@@ -185,12 +194,19 @@ export class Teach {
       clock: this.clock,
       secretField: async () => {
         const el = await desktop.agent.inspect();
-        // Nothing focused in the browser: the typing went somewhere CDP can't see.
-        if (!el) throw new Error("no focused element");
+        // Nothing focused in the browser, or the keyboard is elsewhere (the address bar, another
+        // window): the typing went somewhere CDP can't see.
+        if (!el || el.pageFocus === false) throw new Error("no focused element");
         return Boolean(el.secret) || el.type === "password" || el.tag === "iframe";
       },
-      snap: async (label) =>
-        archive.saveScreen(`teach-${id}`, label, await desktop.agent.screenshot()),
+      screen: async () => {
+        const [bytes, page] = await Promise.all([
+          desktop.agent.screenshot(),
+          desktop.agent.context(false, true).catch(() => null),
+        ]);
+        return page?.secretShown ? null : bytes;
+      },
+      save: (label, bytes) => archive.saveScreen(`teach-${id}`, label, bytes),
     });
     const poll = async () => {
       try {
@@ -336,6 +352,7 @@ export class Teach {
         author: owner.name,
       });
     this.update(id, { status: "saved", name: input.name, draft: input.content }, "draft");
+    await this.forgetScreens(id);
     return { session: this.get(id) as TeachSession, path: skillPath(input.name), sha };
   }
 
@@ -346,7 +363,28 @@ export class Teach {
     if (r.status === "saved") throw new TeachError("This skill is already saved.", 409);
     if (r.status === "recording") await this.endRecording(id);
     this.update(id, { status: "discarded", stopped_at: r.stopped_at ?? this.now() });
+    await this.forgetScreens(id);
     return this.get(id) as TeachSession;
+  }
+
+  /**
+   * Deletes a recording's screenshots, once its skill is saved or it's thrown away: they may show what
+   * you did on a bank's or a shop's pages, and nothing reads them after that.
+   */
+  private async forgetScreens(id: number) {
+    const r = this.row(id);
+    if (!r) return;
+    const steps = JSON.parse(r.events ?? "[]") as RecStep[];
+    if (steps.some((s) => "screen" in s && s.screen)) {
+      for (const s of steps) if ("screen" in s) delete s.screen;
+      this.d.db
+        .query("UPDATE teach_sessions SET events = ? WHERE id = ?")
+        .run(JSON.stringify(steps), id);
+    }
+    const to = r.stopped_at ? Date.parse(r.stopped_at) : this.clock();
+    await this.d.archive
+      .removeScreens(`teach-${id}`, Date.parse(r.started_at), to)
+      .catch((err) => console.error("teach screenshots not removed", err));
   }
 
   /** Stops the page poll; for tests and shutdown. */

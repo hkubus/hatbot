@@ -16,7 +16,7 @@ import { browserKey } from "./keys";
 import { LiveQueue } from "./livequeue";
 import { runningProfile, useProfile } from "./profile";
 import { RENDER_SOCKET } from "./render";
-import { SHELL_SOCKET } from "./shell";
+import { MAX_FILE_BYTES, readUpTo, SHELL_SOCKET } from "./shell";
 import {
   ActionError,
   act,
@@ -59,6 +59,8 @@ const installer = (() => {
 /** Set by systemd's StateDirectory=; an archive dropped here is installed by a root service. */
 const stateDir = process.env.STATE_DIRECTORY;
 const MAX_UPDATE_BYTES = 10 * 1024 * 1024;
+/** A file for the shell is the biggest body; anything past it is refused before it's read. */
+const MAX_BODY_BYTES = MAX_FILE_BYTES + 64 * 1024;
 /** Endpoints added since the first deploy; the brain's checks say when the desktop is behind. */
 const FEATURES = [
   "profiles",
@@ -176,13 +178,16 @@ async function liveInput(m: LiveInput) {
   }
 }
 
-const liveQueue = new LiveQueue((m) => serial(() => liveInput(m)));
+/** Input from the screen side may have switched tabs; the browser asks them again before its next call. */
+const touched = () => browser.screenTouched();
+const liveQueue = new LiveQueue((m) => serial(() => liveInput(m).finally(touched)));
 
-const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
+const server = Bun.serve<{ off?: () => void; behind?: Uint8Array; input?: boolean }>({
   hostname: host,
   port: Number(port),
   // A render, a script or a file copy answers after minutes, not Bun's default 10 seconds.
   idleTimeout: 0,
+  maxRequestBodySize: MAX_BODY_BYTES,
   async fetch(req, srv) {
     const url = new URL(req.url);
     if (!authorized(req)) return json({ error: "unauthorized" }, 401);
@@ -195,9 +200,9 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
           // A new copy of this app from the brain's updater (the Update button in Settings).
           // hatbot-desktop-agent-update.path picks it up and installs it as root, then restarts us.
           if (!stateDir) return json({ error: "updates aren't enabled; run deploy.sh once" }, 501);
-          const bytes = new Uint8Array(await req.arrayBuffer());
-          if (!bytes.length || bytes.length > MAX_UPDATE_BYTES)
-            return json({ error: "expected a tar archive under 10 MB" }, 400);
+          const bytes = await readUpTo(req, MAX_UPDATE_BYTES);
+          if (!bytes?.length)
+            return json({ error: "expected a tar archive under 10 MB" }, bytes ? 400 : 413);
           const tmp = join(stateDir, "update.tar.part");
           writeFileSync(tmp, bytes, { mode: 0o600 });
           renameSync(tmp, join(stateDir, "update.tar"));
@@ -212,7 +217,8 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
         case "POST /action": {
           if (locked) return json({ error: "The owner has control of the desktop." }, 423);
           const { name, input } = (await req.json()) as AgentAction;
-          return json(await serial(() => act(size, name, input ?? {})));
+          // After it, not before: a look at the tabs in the meantime would see them as they were.
+          return json(await serial(() => act(size, name, input ?? {}).finally(touched)));
         }
         case "POST /exec": {
           // Not serialised with input: the shell doesn't touch the screen.
@@ -287,12 +293,15 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
         case "GET /files":
         case "PUT /files": {
           if (locked) return json({ error: "The owner has control of the desktop." }, 423);
+          if (Number(req.headers.get("content-length") ?? 0) > MAX_FILE_BYTES)
+            return json({ error: "The file is too big." }, 413);
           let res: Response;
           try {
+            // Streamed through: the shell counts the bytes as they come and stops past 25 MB.
             res = await fetch(`http://shell/files${url.search}`, {
               method: req.method,
               unix: SHELL_SOCKET,
-              body: req.method === "PUT" ? await req.arrayBuffer() : undefined,
+              body: req.method === "PUT" ? req.body : undefined,
               signal: AbortSignal.timeout(120_000),
             } as RequestInit);
           } catch {
@@ -329,7 +338,13 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
           return json(await serial(() => browser.inspect(at)));
         }
         case "GET /context":
-          return json(await context(browser, url.searchParams.get("text") === "1"));
+          return json(
+            await context(
+              browser,
+              url.searchParams.get("text") === "1",
+              url.searchParams.get("secrets") === "1",
+            ),
+          );
         case "POST /inspect": {
           const { x, y } = (await req.json()) as { x?: number; y?: number };
           return json(await inspect(browser, x, y));
@@ -340,6 +355,8 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
           return json(health());
         case "POST /unlock":
           locked = false;
+          // Whatever the owner's view still held down (it lost focus mid-press, say) is let go.
+          liveQueue.release();
           live.setFps(LIVE_FPS_WATCHING);
           return json(health());
         case "GET /live":
@@ -373,7 +390,7 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
         ws.sendBinary(frame);
       }
     },
-    message(_ws, msg) {
+    message(ws, msg) {
       if (typeof msg !== "string") return;
       let m: LiveInput;
       try {
@@ -381,10 +398,13 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
       } catch {
         return;
       }
+      ws.data.input = true;
       liveQueue.push(m);
     },
     close(ws) {
       ws.data.off?.();
+      // A viewer that sent input went away: nothing it pressed stays held.
+      if (ws.data.input) liveQueue.release();
     },
   },
 });

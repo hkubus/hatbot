@@ -37,6 +37,14 @@ fi
 echo "ffmpeg, xdotool"
 
 say "desktop-agent"
+# An archive from an update was handed in by desktop-agent (desk), and becomes root-owned files here, so
+# it may hold only plain files and directories: no links, devices, set-id or sticky bits, and no paths
+# out of the directory. Then nothing in it gives desk more than desk already has.
+if ! listing=$(tar -tvf "$tmp/agent.tar") || ! names=$(tar -tf "$tmp/agent.tar") ||
+  grep -qvE '^[-d][rwx-]{9} ' <<<"$listing" || grep -qE '^/|(^|/)\.\.(/|$)' <<<"$names"; then
+  echo "the archive holds something besides plain files and directories; not installed" >&2
+  exit 1
+fi
 rm -rf "$DIR.new"
 install -d -m 755 "$DIR.new"
 tar -C "$DIR.new" --no-same-owner --no-same-permissions -xf "$tmp/agent.tar"
@@ -110,7 +118,8 @@ EOF
 # The desktop's shell (desktop_shell): its own throwaway user, a home in /var/lib/hatbot-shell, no /home
 # (the browser profile), no screen, no secrets. desktop-agent reaches it on a Unix socket, in a directory
 # only desk may enter, so the renderer can't. systemd sets the directory's group back to the unit's own
-# when ExecStart runs, so desk gets it after.
+# when ExecStart runs, so desk gets it after. PrivateIPC: the screen grabs' X shared memory (MIT-SHM, which
+# ffmpeg makes readable by every user) is out of its reach, and the renderer's.
 cat >/etc/systemd/system/hatbot-desktop-shell.service <<EOF
 [Unit]
 Description=Hatbot desktop shell: commands from desktop tasks, kept away from the browser profile
@@ -132,6 +141,7 @@ RestartSec=2
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
+PrivateIPC=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
@@ -171,6 +181,7 @@ RestartSec=2
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
+PrivateIPC=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes

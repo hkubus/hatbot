@@ -1,9 +1,13 @@
 import { expect, test } from "bun:test";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import type { TeachSession } from "@hatbot/shared";
 import type { LiveInput } from "@hatbot/shared/desktop";
 import { TEACH_PROMPT } from "../src/agent/prompt";
+import type { EventBus } from "../src/events";
 import { HATBOT } from "../src/memory/store";
 import { describeSteps, Recorder } from "../src/teach/recorder";
+import { Teach } from "../src/teach/service";
 import { describeSkill, withSkillsSection } from "../src/teach/skills";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
@@ -37,16 +41,24 @@ const click = (x: number, y: number): LiveInput[] => [
   { t: "button", button: 1, down: false, x, y },
 ];
 
-function recorder(secret: () => Promise<boolean> = async () => false) {
+function recorder(
+  secret: () => Promise<boolean> = async () => false,
+  screen: () => Promise<Uint8Array | null> = async () => new Uint8Array([1]),
+) {
   let now = 0;
   let shots = 0;
   const r = new Recorder({
     clock: () => now,
     secretField: secret,
-    snap: async (label) => `screens/teach/${++shots}-${label}.webp`,
+    screen,
+    save: async (label) => `screens/teach/${++shots}-${label}.webp`,
   });
   return { r, tick: (ms: number) => (now += ms) };
 }
+
+const keys = (r: Recorder, ...ms: [string, boolean][]) => {
+  for (const [key, down] of ms) r.input({ t: "key", key, down });
+};
 
 test("the recorder merges moves and scrolls, edits typing, and keeps shortcuts", async () => {
   const { r, tick } = recorder();
@@ -121,6 +133,90 @@ test("typing into a secret field, or one that can't be checked, isn't kept", asy
   expect(describeSteps(steps).lines.join("\n")).toContain(
     "typed 8 characters into a password or code field (not recorded)",
   );
+});
+
+test("AltGr and Option type characters, hidden with their field; Alt with a letter is a shortcut", async () => {
+  const { r } = recorder(async () => true);
+  // Linux: AltGr arrives as AltGraph.
+  r.input({ t: "key", key: "AltGraph", down: true });
+  for (const m of typeText("ąę")) r.input(m);
+  r.input({ t: "key", key: "AltGraph", down: false });
+  // Windows: AltGr is Ctrl and Alt together, with or without AltGraph.
+  keys(r, ["Control", true], ["Alt", true]);
+  for (const m of typeText("łś")) r.input(m);
+  keys(r, ["Alt", false], ["Control", false]);
+  keys(r, ["Control", true], ["AltGraph", true]);
+  for (const m of typeText("ó")) r.input(m);
+  keys(r, ["AltGraph", false], ["Control", false]);
+  // A Mac's Option gives the character itself; a dead key only shapes the next one.
+  keys(r, ["Alt", true]);
+  for (const m of typeText("ż")) r.input(m);
+  keys(r, ["Dead", true], ["Alt", false]);
+  for (const m of typeText("x1")) r.input(m);
+  const steps = await r.finish();
+  expect(steps).toEqual([{ t: 0, kind: "text", text: "", hidden: "secret", chars: 8 }]);
+  expect(JSON.stringify(steps)).not.toMatch(/[ąęłśóż]/);
+
+  const plain = recorder();
+  keys(plain.r, ["Alt", true], ["f", true], ["f", false], ["Alt", false]);
+  expect(await plain.r.finish()).toEqual([{ t: 0, kind: "key", key: "alt+f" }]);
+});
+
+test("a stuck modifier doesn't leave a password in clear", async () => {
+  // Ctrl went down, and its up never came: every key is ctrl+something.
+  const { r } = recorder(async () => true);
+  keys(r, ["Control", true]);
+  for (const m of typeText("hunter2")) r.input(m);
+  const steps = await r.finish();
+  expect(steps).toHaveLength(7);
+  expect(steps.every((s) => s.kind === "key" && s.key === "" && s.hidden === "secret")).toBe(true);
+  expect(JSON.stringify(steps)).not.toContain("hunter");
+  expect(describeSteps(steps).lines[0]).toBe(
+    "[0.0s] pressed a key with a modifier in a password or code field (not recorded)",
+  );
+
+  // Outside the page (the address bar), shortcuts are kept.
+  const outside = recorder(async () => {
+    throw new Error("no focused element");
+  });
+  keys(outside.r, ["Control", true], ["l", true], ["l", false], ["Control", false]);
+  expect(await outside.r.finish()).toEqual([{ t: 0, kind: "key", key: "ctrl+l" }]);
+
+  // Between two hidden runs, a character with a modifier is hidden even if its own check said no.
+  const answers = [true, false, true];
+  let n = 0;
+  const between = recorder(async () => answers[n++] ?? false);
+  for (const m of typeText("abc")) between.r.input(m);
+  keys(between.r, ["Meta", true], ["q", true], ["q", false], ["Meta", false]);
+  for (const m of typeText("def")) between.r.input(m);
+  const mixed = await between.r.finish();
+  expect(mixed.map((s) => s.kind === "key" && s.hidden)).toEqual([false, "secret", false]);
+  expect(JSON.stringify(mixed)).not.toContain("super+q");
+});
+
+test("no screenshot is kept after hidden typing on the page, or while a secret field holds something", async () => {
+  let secretShown = false;
+  const { r } = recorder(
+    async () => true,
+    async () => (secretShown ? null : new Uint8Array([1])),
+  );
+  r.page("https://bank.example/pay", "Pay");
+  for (const m of click(10, 10)) r.input(m);
+  for (const m of typeText("4111111111111111")) r.input(m);
+  for (const m of click(20, 20)) r.input(m);
+  for (const m of press("Enter")) r.input(m);
+  // A new title isn't a new page; a new address is.
+  r.page("https://bank.example/pay", "Pay (1)");
+  for (const m of click(30, 30)) r.input(m);
+  r.page("https://bank.example/done", "Done");
+  for (const m of click(40, 40)) r.input(m);
+  secretShown = true;
+  for (const m of click(50, 50)) r.input(m);
+  const steps = await r.finish();
+  const shots = steps.flatMap((s) => (s.kind === "button" && s.down ? [Boolean(s.screen)] : []));
+  expect(shots).toEqual([true, false, false, true, false]);
+  const enter = steps.find((s) => s.kind === "key");
+  expect(enter).toEqual({ t: 0, kind: "key", key: "Enter" });
 });
 
 test("a press and release apart is a drag", () => {
@@ -203,12 +299,25 @@ async function teachApp() {
 
 type Call = (method: string, path: string, body?: unknown) => Response | Promise<Response>;
 
-async function record(t: TestApp, call: Call) {
+/** The recording's screenshots in the archive. */
+function screensOf(t: TestApp, id: number): string[] {
+  const root = join(t.archive.dir, "screens");
+  if (!existsSync(root)) return [];
+  return readdirSync(root, { recursive: true })
+    .map(String)
+    .filter((p) => p.includes(`teach-${id}/`) && p.endsWith(".webp"));
+}
+
+async function record(t: TestApp, call: Call, show?: () => Promise<void>) {
   const res = await call("POST", "/teach/start");
   expect(res.status).toBe(200);
   const session = (await res.json()) as TeachSession;
   expect(session.status).toBe("recording");
   for (const m of click(400, 300)) t.teach.input(m);
+  if (show) {
+    await show();
+    return session;
+  }
   t.agent.element = {
     tag: "input",
     role: null,
@@ -260,11 +369,15 @@ test("record, draft and save a skill: the desktop is yours meanwhile, secrets st
   expect(body).toContain("typed 9 characters into a password or code field");
   expect(body).toContain('typed \\"Dune\\"');
   const content = req?.messages[0]?.content as { type: string }[];
+  // The click before the password; none after it on that page, where it might still show.
   const images = content.filter((b) => b.type === "image");
-  expect(images).toHaveLength(3);
+  expect(images).toHaveLength(1);
+  expect(t.agent.screenshots).toBe(3);
   expect(t.db.query("SELECT purpose FROM spend_ledger").all()).toContainEqual({
     purpose: "teach",
   });
+  const shots = screensOf(t, session.id);
+  expect(shots).toHaveLength(1);
 
   const saved = await call("POST", `/teach/${session.id}/save`, {
     name: "renew-books",
@@ -285,6 +398,67 @@ test("record, draft and save a skill: the desktop is yours meanwhile, secrets st
   expect(
     (await call("POST", `/teach/${session.id}/save`, { name: "x", content: "y" })).status,
   ).toBe(409);
+  // Saved: the screenshots are gone, and nothing points at them.
+  expect(screensOf(t, session.id)).toEqual([]);
+  const row = t.db
+    .query<{ events: string }, [number]>("SELECT events FROM teach_sessions WHERE id = ?")
+    .get(session.id);
+  expect(row?.events).not.toContain("screen");
+});
+
+test("typing while the page hasn't the keyboard isn't kept, nor a screenshot while a secret shows", async () => {
+  const { t, work, call } = await teachApp();
+  const session = await record(t, call, async () => {
+    // A card number the page shows: the click's screenshot isn't kept.
+    t.agent.page = { ...t.agent.page, secretShown: true };
+    for (const m of click(600, 300)) t.teach.input(m);
+    await Bun.sleep(1);
+    t.agent.page = { ...t.agent.page, secretShown: false };
+    // The address bar has the keyboard, though the page's search box still has focus there.
+    t.agent.element = {
+      tag: "input",
+      role: null,
+      type: "text",
+      label: "Search",
+      inForm: true,
+      pageFocus: false,
+    };
+    for (const m of typeText("my-pin-1234")) t.teach.input(m);
+  });
+  await call("POST", "/teach/stop");
+  await waitFor(() => t.teach.get(session.id)?.status === "draft");
+  const body = JSON.stringify(work.creates.find((p) => p.system === TEACH_PROMPT)?.messages);
+  expect(body).toContain("left click at (400, 300) [screenshot 1]");
+  expect(body).toContain("left click at (600, 300)\\n");
+  expect(body).not.toContain("my-pin");
+  expect(body).toContain("typed 11 characters (not recorded: the field couldn't be checked)");
+});
+
+test("discarding a recording deletes its screenshots, a restart's too", async () => {
+  const { t, call } = await teachApp();
+  const first = await record(t, call);
+  expect(screensOf(t, first.id).length).toBeGreaterThan(0);
+  await call("DELETE", `/teach/${first.id}`);
+  expect(screensOf(t, first.id)).toEqual([]);
+
+  const second = await record(t, call);
+  expect(screensOf(t, second.id).length).toBeGreaterThan(0);
+  // A brain that restarts mid-recording.
+  await Bun.sleep(5);
+  t.teach.close();
+  const again = new Teach({
+    db: t.db,
+    events: { on: () => {}, emit: () => {} } as unknown as EventBus,
+    desktop: t.desktop,
+    lane: t.tasks.lane,
+    archive: t.archive,
+    model: new FakeModel(),
+    spend: t.spend,
+    settings: t.settings,
+    skills: t.skills,
+  });
+  await waitFor(() => screensOf(t, second.id).length === 0);
+  expect(again.get(second.id)?.status).toBe("discarded");
 });
 
 test("a skill name that's taken needs replace; bad names are refused", async () => {
