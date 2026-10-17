@@ -1,7 +1,7 @@
 // Schedules (PLAN.md §4.1, §5.6): cron or one-off, stored in SQLite, run in-process as background tasks.
 import { HATBOT_ID, type Schedule } from "@hatbot/shared";
 import { Cron } from "croner";
-import { liveBot } from "./bots";
+import { orphaned } from "./bots";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
 import type { SettingsStore } from "./settings";
@@ -221,13 +221,17 @@ export class Schedules {
   }
 
   private fire(s: Schedule) {
+    if (orphaned(this.db, "schedules", s.id, s.botId)) {
+      this.changed(s.id);
+      return null;
+    }
     const task = this.tasks.createBackgroundTask({
       title: s.name,
       goal: s.prompt,
       origin: "schedule",
       source: s.name,
       scheduleId: s.id,
-      botId: liveBot(this.db, s.botId),
+      botId: s.botId,
       runKey: `schedule:${s.id}`,
       taintedBy: s.tainted
         ? `Its schedule, which the chat wrote after reading: ${s.taintedBy ?? "untrusted content"}`

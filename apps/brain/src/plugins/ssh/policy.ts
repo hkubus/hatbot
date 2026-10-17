@@ -35,22 +35,23 @@ const RULES: Rule[] = [
   { re: /\b(lvremove|vgremove|pvremove|lvreduce)\b/, why: "removes LVM storage", kind: "delete" },
   { re: /\btruncate\b/, why: "truncates files", kind: "delete" },
   {
-    re: /\bfind\b[^|;&\n]*\s(-delete\b|-exec(dir)?\s+(sudo\s+)?(rm|shred|unlink)\b)/,
+    re: /\bfind\b[^|;&\n]*\s(-delete\b|-exec(dir)?\s+(sudo\s+)?(\S*\/)?(rm|shred|unlink)\b)/,
     why: "deletes the files it finds",
     kind: "delete",
   },
   { re: /\bxargs\b[^|;&\n]*\b(rm|shred|unlink|rmdir)\b/, why: "deletes files", kind: "delete" },
   {
-    re: /\brsync\b[^|;&\n]*\s--(delete|remove-source-files)/,
+    re: /\brsync\b[^|;&\n]*\s--(del\b|delete|remove-source-files)/,
     why: "deletes files with rsync",
     kind: "delete",
   },
   {
-    re: /\b(pct|qm)\s+(destroy|stop|shutdown|rollback|delsnapshot)\b/,
+    re: /\b(pct|qm)\s+(destroy|stop|shutdown|rollback|delsnapshot|reset|suspend)\b/,
     why: "destroys or stops a guest",
     kind: "delete",
   },
   { re: /\bpvesh\s+delete\b/, why: "deletes something in Proxmox", kind: "delete" },
+  { re: /\bpvesm\s+(free|remove)\b/, why: "deletes Proxmox storage", kind: "delete" },
   {
     re: /\bpvesh\s+(create|set)\b[^|;&\n]*\/status\/(stop|shutdown|suspend|reboot)\b/,
     why: "stops or reboots a guest",
@@ -63,14 +64,18 @@ const RULES: Rule[] = [
   // proxmox_power reboots a guest with the brain, the desktop and careful guests checked.
   { re: /\b(pct|qm)\s+reboot\b/, why: "reboots a guest" },
   { re: REBOOT, why: "reboots the host", host: true },
-  { re: /\bsystemctl\s+(\S+\s+)*(stop|disable|mask|kill)\b/, why: "stops or disables a service" },
   {
-    re: /\b(docker(-compose)?|podman)\s+(compose\s+)?(rm|rmi|down|kill|prune|system\s+prune|volume\s+(rm|prune)|network\s+rm|image\s+prune|container\s+(prune|rm|kill))\b/,
+    re: /\bsystemctl\s+(\S+\s+)*(stop|disable|mask|kill)\b|\bservice\s+\S+\s+stop\b|\binit\.d\/\S+\s+stop\b/,
+    why: "stops or disables a service",
+  },
+  // Options can come first: docker compose -f app.yml down -v, docker -H … rm -f web.
+  {
+    re: /\b(docker|podman)(-compose)?\b[^|;&\n]*\s(rm|rmi|down|kill|prune)\b/,
     why: "removes Docker containers, images or volumes",
     kind: "delete",
   },
   {
-    re: /\b(docker(-compose)?|podman)\s+(compose\s+|container\s+)?(stop|pause)\b/,
+    re: /\b(docker|podman)(-compose)?\b[^|;&\n]*\s(stop|pause)\b/,
     why: "stops Docker containers",
   },
   {
@@ -167,6 +172,15 @@ const STATUS: Record<string, string[] | null> = {
   zpool: ["list", "status"],
   zfs: ["list"],
 };
+/**
+ * Options that may come before a status command's subcommand: ones that take no value, so the word
+ * after them is the subcommand. Any other option there could make its value pass for one
+ * (systemctl -p is-active status nginx) or read elsewhere (ip -b FILE, docker -H HOST).
+ */
+const FLAGS: Record<string, string[]> = {
+  ip: ["-br", "-brief", "-4", "-6", "-s", "-stats", "-d", "-details", "-o", "-oneline", "-c"],
+  systemctl: ["--no-pager", "--plain", "--no-legend", "--all", "-a", "--failed", "-q", "--full"],
+};
 /** Filters a status command may pipe into, and how many operands each may have (grep's pattern). */
 const FILTERS: Record<string, number> = { head: 0, tail: 0, wc: 0, sort: 0, uniq: 0, grep: 1 };
 
@@ -192,9 +206,14 @@ export function statusOnly(command: string): boolean {
 
 function isStatus(words: string[]): boolean {
   const [prog = "", ...args] = words;
-  const subs = STATUS[prog.split("/").pop() ?? ""];
+  const name = prog.split("/").pop() ?? "";
+  const subs = STATUS[name];
   if (subs === undefined) return false;
-  return subs === null || subs.includes(args.find((a) => !a.startsWith("-")) ?? "");
+  if (subs === null) return true;
+  const at = args.findIndex((a) => !a.startsWith("-"));
+  const before = at < 0 ? args : args.slice(0, at);
+  if (!before.every((a) => FLAGS[name]?.includes(a))) return false;
+  return subs.includes(at < 0 ? "" : (args[at] ?? ""));
 }
 
 function isFilter(words: string[]): boolean {
@@ -227,8 +246,9 @@ function plain(words: string[]): string[] {
 
 /**
  * A shell line's plain commands as words, grouped into pipelines; null when it does more than run
- * plain commands (substitutions, input from files, subshells, groups, here-documents). Output
- * redirections are dropped: they change where output goes, not what it says.
+ * plain commands with literal words (substitutions, variables, globs, input from files, subshells,
+ * groups, here-documents). Output redirections to a plain file are dropped: they change where
+ * output goes, not what it says.
  */
 function pipelines(line: string): string[][][] | null {
   const out: string[][][] = [[[]]];
@@ -237,7 +257,10 @@ function pipelines(line: string): string[][][] | null {
     if (word !== null) out.at(-1)?.at(-1)?.push(word);
     word = null;
   };
-  /** Skips a redirection's target: the fd it copies (2>&1), or a file. */
+  /**
+   * Skips a redirection's target: the fd it copies (2>&1), or a file. -1 for anything but a plain
+   * file name: >(cmd) and >$(cmd) run a command.
+   */
   const target = (i: number): number => {
     let j = i;
     if (line[j + 1] === ">") j++;
@@ -247,8 +270,9 @@ function pipelines(line: string): string[][][] | null {
       return j;
     }
     while (/[ \t]/.test(line[j + 1] ?? "")) j++;
+    const from = j + 1;
     while (j + 1 < line.length && !/[\s;&|]/.test(line[j + 1] ?? "")) j++;
-    return j;
+    return /[()$`<>'"\\*?[{]/.test(line.slice(from, j + 1)) ? -1 : j;
   };
   for (let i = 0; i < line.length; i++) {
     const c = line[i] ?? "";
@@ -262,7 +286,8 @@ function pipelines(line: string): string[][][] | null {
       let w = "";
       for (; j < line.length && line[j] !== '"'; j++) {
         if (line[j] === "\\") j++;
-        else if (line[j] === "`" || (line[j] === "$" && line[j + 1] === "(")) return null;
+        else if (line[j] === "`" || (line[j] === "$" && /[\w{(@*#?$!-]/.test(line[j + 1] ?? "")))
+          return null;
         w += line[j] ?? "";
       }
       if (j >= line.length) return null;
@@ -276,9 +301,11 @@ function pipelines(line: string): string[][][] | null {
       if (word !== null && /^\d+$/.test(word)) word = null;
       else end();
       i = target(i);
+      if (i < 0) return null;
     } else if (c === "&" && line[i + 1] === ">") {
       end();
       i = target(i + 1);
+      if (i < 0) return null;
     } else if (c === "|" && line[i + 1] !== "|") {
       end();
       out.at(-1)?.push([]);
@@ -286,7 +313,8 @@ function pipelines(line: string): string[][][] | null {
       end();
       if ((c === "|" || c === "&") && line[i + 1] === c) i++;
       out.push([[]]);
-    } else if ("`<(){}#".includes(c)) return null;
+      // A glob lists files' names, and a variable prints what it holds.
+    } else if ("`<(){}#$*?[".includes(c)) return null;
     else if (/\s/.test(c)) end();
     else word = (word ?? "") + c;
   }

@@ -354,9 +354,9 @@ export async function runPluginTool(
     const content = `Invalid input: ${z.prettifyError(parsed.error)}`;
     return { content, isError: true, untrusted: false, text: content };
   }
-  const untrusted =
-    typeof t.untrusted === "function" ? t.untrusted(parsed.data) : Boolean(t.untrusted);
-  const label = (text: string) =>
+  const untrustedOf = (output?: string) =>
+    typeof t.untrusted === "function" ? t.untrusted(parsed.data, output) : Boolean(t.untrusted);
+  const label = (text: string, untrusted: boolean) =>
     untrusted ? untrustedBlock("tool_output", text, { tool: t.name }) : text;
   let out: string;
   try {
@@ -364,15 +364,23 @@ export async function runPluginTool(
   } catch (err) {
     if (call.signal.aborted) throw err;
     // An untrusted source's error message is untrusted too.
-    if (err instanceof PluginError)
-      return { content: label(err.message), isError: true, untrusted, text: err.message };
+    if (err instanceof PluginError) {
+      const untrusted = untrustedOf();
+      return {
+        content: label(err.message, untrusted),
+        isError: true,
+        untrusted,
+        text: err.message,
+      };
+    }
     console.error(`tool ${t.name} failed`, err);
     const content = "The tool failed with an internal error.";
     return { content, isError: true, untrusted: false, text: content };
   }
+  const untrusted = untrustedOf(out);
   if (out.length > MAX_OUTPUT_CHARS)
     out = `${out.slice(0, MAX_OUTPUT_CHARS)}\n… (cut; ${out.length} characters in all)`;
-  return { content: label(out), isError: false, untrusted, text: out };
+  return { content: label(out, untrusted), isError: false, untrusted, text: out };
 }
 
 /**
@@ -417,6 +425,7 @@ export function verdictFor(
       action: "ask",
       why: `This ${call.task ? "task" : "conversation"} has read untrusted content, so changes need your approval.`,
       tainted: true,
+      ...(t.kind ? { kind: t.kind } : {}),
     };
   return own;
 }

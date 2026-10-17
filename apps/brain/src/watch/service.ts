@@ -4,6 +4,7 @@ import {
   type CreateWatcher,
   describeCondition,
   HATBOT_ID,
+  MAX_WATCH_MINUTES,
   minWatchMinutes,
   type UpdateWatcher,
   type WatchCondition,
@@ -14,7 +15,8 @@ import {
 } from "@hatbot/shared";
 import type { z } from "zod";
 import type { Chats } from "../agent/chats";
-import { type Bots, liveBot } from "../bots";
+import { tagJson } from "../agent/untrusted";
+import { type Bots, orphaned } from "../bots";
 import type { Db } from "../db";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import type { EventBus } from "../events";
@@ -112,6 +114,8 @@ const saved = (s: WatchSource) => JSON.stringify({ ...s, render: s.render || und
 
 /** Throws when a watcher would look more often than its source allows. */
 function oftenEnough(source: WatchSource, everyMinutes: number) {
+  if (everyMinutes > MAX_WATCH_MINUTES)
+    throw new WatchError("A watcher looks at least once a week.");
   const min = minWatchMinutes(source);
   if (everyMinutes < min)
     throw new WatchError(
@@ -338,6 +342,10 @@ export class Watchers {
 
   private async check(w: Watcher) {
     if (this.checking.has(w.id)) return;
+    if (orphaned(this.d.db, "watchers", w.id, w.botId)) {
+      this.changed(w.id);
+      return;
+    }
     this.checking.add(w.id);
     try {
       // The next check counts from this one, so an outage doesn't queue up a check per missed time.
@@ -462,8 +470,11 @@ export class Watchers {
   }
 
   /** It counted: you're told, or its bot works on it. */
-  private fire(watcher: Watcher, previous: string | null, value: string, untrusted: boolean) {
-    const w = { ...watcher, botId: liveBot(this.d.db, watcher.botId) };
+  private fire(w: Watcher, previous: string | null, value: string, untrusted: boolean) {
+    if (orphaned(this.d.db, "watchers", w.id, w.botId)) {
+      this.changed(w.id);
+      return;
+    }
     const change =
       previous === null
         ? `Now: ${value}`
@@ -561,6 +572,19 @@ export class Watchers {
     return { value: await pick(out, json, source), untrusted };
   }
 
+  /**
+   * Whether what it saw came from untrusted content (PLAN.md §6.1): a page, a tool whose output is, or
+   * a watcher the chat wrote after reading some.
+   */
+  sawUntrusted(w: Watcher): boolean {
+    if (w.source.kind === "page" || w.tainted) return true;
+    const bot = this.d.bots.get(w.botId) ?? this.d.bots.hatbot();
+    const t = this.d.plugins.tools(bot.plugins).find((x) => x.name === w.source.tool);
+    const input = t?.schema.safeParse(w.source.input ?? {});
+    if (!t || !input?.success) return true;
+    return typeof t.untrusted === "function" ? t.untrusted(input.data) : Boolean(t.untrusted);
+  }
+
   private changed(id: number) {
     const watcher = this.get(id);
     if (watcher) this.d.events.emit({ type: "watcher.updated", watcher });
@@ -568,23 +592,25 @@ export class Watchers {
   }
 }
 
-/** A watcher in a line or two, for the chat's tools. */
-export function watcherLine(w: Watcher): string {
-  const where =
-    w.source.kind === "page"
-      ? w.source.url
-      : `${w.source.tool} ${JSON.stringify(w.source.input ?? {})}`;
-  const picks = [
-    w.source.kind === "page" && w.source.render && "runs its scripts",
-    w.source.selector && `selector ${w.source.selector}`,
-    w.source.path && `path ${w.source.path}`,
-    w.source.pattern && `pattern /${w.source.pattern}/`,
-  ].filter(Boolean);
+/** A watcher in a line or two, for the chat's tools. What an untrusted source said is quoted as data. */
+export function watcherLine(w: Watcher, untrusted = false): string {
   return [
-    `#${w.id} "${w.name}": ${where}${picks.length ? ` (${picks.join(", ")})` : ""}; when it ${describeCondition(w.condition).toLowerCase()}; every ${w.everyMinutes} min${w.once ? ", once" : ""}${w.enabled ? "" : "; off"}`,
-    `  Now: ${w.lastError ? `failing: ${w.lastError}` : w.lastValue === null ? "not checked yet" : short(w.lastValue, 200)}${w.lastFiredAt ? `; last counted ${w.lastFiredAt.slice(0, 16).replace("T", " ")} UTC` : ""}`,
+    `#${w.id} "${w.name}": ${describeLook(w.source)}; when it ${describeCondition(w.condition).toLowerCase()}; every ${w.everyMinutes} min${w.once ? ", once" : ""}${w.enabled ? "" : "; off"}`,
+    `  Now: ${w.lastError ? `failing: ${w.lastError}` : w.lastValue === null ? "not checked yet" : untrusted ? `<value trusted="false">${tagJson(short(w.lastValue, 200))}</value>` : short(w.lastValue, 200)}${w.lastFiredAt ? `; last counted ${w.lastFiredAt.slice(0, 16).replace("T", " ")} UTC` : ""}`,
     `  ${w.prompt ? `Does: ${w.prompt}` : "Tells the owner."}`,
   ].join("\n");
+}
+
+/** What a watcher looks at, and what it picks out of it. */
+export function describeLook(s: WatchSource): string {
+  const where = s.kind === "page" ? s.url : `${s.tool} ${JSON.stringify(s.input ?? {})}`;
+  const picks = [
+    s.kind === "page" && s.render && "runs its scripts",
+    s.selector && `selector ${s.selector}`,
+    s.path && `path ${s.path}`,
+    s.pattern && `pattern /${s.pattern}/`,
+  ].filter(Boolean);
+  return `${where}${picks.length ? ` (${picks.join(", ")})` : ""}`;
 }
 
 /** Its condition, from the chat tools' flat fields. */

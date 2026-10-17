@@ -38,4 +38,7 @@ struct ShareDraft: Equatable, Sendable {
   }
 
   var isEmpty: Bool { text.isEmpty && shared.isEmpty }
+
+  /// How many files go with it: a message takes 10 attachments, and the shared text is one of them.
+  var fileRoom: Int { shared.isEmpty ? 10 : 9 }
 }

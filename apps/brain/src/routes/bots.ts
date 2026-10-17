@@ -1,4 +1,4 @@
-import { BOT_TEMPLATES, CreateBot, UpdateBot } from "@hatbot/shared";
+import { BOT_TEMPLATES, CreateBot, HATBOT_ID, UpdateBot } from "@hatbot/shared";
 import { Hono } from "hono";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware";
@@ -40,9 +40,16 @@ export const botRoutes = new Hono<AppEnv>()
   })
   .delete("/bots/:id", (c) => {
     try {
-      const moved = c.var.bots.delete(c.req.param("id"));
+      const id = c.req.param("id");
+      const moved = c.var.bots.delete(id);
       if (!moved) return c.json({ error: "That's gone." }, 404);
-      const { events, schedules, triggers, watchers } = c.var;
+      const { events, schedules, triggers, watchers, settings, chats } = c.var;
+      // Its reply in progress stops: it mustn't make more as a bot that's gone.
+      chats.abortBot(id);
+      // A heartbeat that ran as it is switched off, as its automations are.
+      const { heartbeat } = settings.get();
+      if (heartbeat.botId === id)
+        settings.update({ heartbeat: { ...heartbeat, enabled: false, botId: HATBOT_ID } });
       for (const id of moved.schedules) {
         const schedule = schedules.get(id);
         if (schedule) events.emit({ type: "schedule.updated", schedule });

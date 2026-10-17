@@ -175,16 +175,10 @@ export class Bots {
     if (id === HATBOT_ID) throw new BotError("Hatbot can't be deleted.");
     if (!this.active(id)) return null;
     const now = new Date(this.clock()).toISOString();
-    // Turning one back on works out when it's next due.
-    const off = {
-      schedules: "enabled = 0, next_run_at = NULL",
-      triggers: "enabled = 0",
-      watchers: "enabled = 0, next_check_at = NULL",
-    };
-    const move = (table: keyof typeof off) =>
+    const move = (table: keyof typeof OFF) =>
       this.db
         .query<{ id: number }, [string, string]>(
-          `UPDATE ${table} SET bot_id = ?, ${off[table]} WHERE bot_id = ? RETURNING id`,
+          `UPDATE ${table} SET bot_id = ?, ${OFF[table]} WHERE bot_id = ? RETURNING id`,
         )
         .all(HATBOT_ID, id)
         .map((r) => r.id);
@@ -214,11 +208,24 @@ export class Bots {
   }
 }
 
-/** The bot that runs something of `id`'s: Hatbot instead of one that's been deleted. */
-export function liveBot(db: Db, id: string): string {
-  if (id === HATBOT_ID) return id;
-  const r = db.query("SELECT 1 FROM bots WHERE id = ? AND deleted_at IS NULL").get(id);
-  return r ? id : HATBOT_ID;
+/** Switched off, as a deleted bot's automations go to Hatbot. Turning one back on works out when it's next due. */
+const OFF = {
+  schedules: "enabled = 0, next_run_at = NULL",
+  triggers: "enabled = 0",
+  watchers: "enabled = 0, next_check_at = NULL",
+};
+
+/**
+ * Whether an automation is a deleted bot's: one delete didn't move, made by the bot's reply as it was
+ * deleted. It goes to Hatbot switched off as the others did, and doesn't run: Hatbot may have plugins
+ * the bot didn't.
+ */
+export function orphaned(db: Db, table: keyof typeof OFF, id: number, botId: string): boolean {
+  if (botId === HATBOT_ID) return false;
+  if (db.query("SELECT 1 FROM bots WHERE id = ? AND deleted_at IS NULL").get(botId)) return false;
+  db.query(`UPDATE ${table} SET bot_id = ?, ${OFF[table]} WHERE id = ?`).run(HATBOT_ID, id);
+  console.log(`${table} ${id}: its bot ${botId} was deleted; moved to Hatbot, switched off`);
+  return true;
 }
 
 /** Its own memory folder. Hatbot's notes are the shared memory itself, as they always were. */

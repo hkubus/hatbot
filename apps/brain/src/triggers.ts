@@ -7,7 +7,7 @@ import {
   type Trigger,
   type TriggerWithSecret,
 } from "@hatbot/shared";
-import { liveBot } from "./bots";
+import { orphaned } from "./bots";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
 import type { Notifier } from "./notify";
@@ -261,7 +261,7 @@ export class Triggers {
       origin: "webhook",
       source: t.name,
       triggerId: t.id,
-      botId: liveBot(this.db, t.botId),
+      botId: t.botId,
       runKey: `trigger:${t.id}`,
       payload: pretty(body),
       trusted: t.trusted,
@@ -299,6 +299,8 @@ export class Triggers {
     const message = hb.msg || body.msg || "";
     // More news while a task looks into it: on its timeline, and told to the task.
     const update = (taskId: number, what: string) => {
+      // On its timeline the message is what the task has read, before it gets to its inbox.
+      if (message) this.tasks.taint(taskId, alertMessageSource(name));
       this.tasks.addStep(taskId, {
         kind: "note",
         name: `${name} ${what}`,
@@ -314,7 +316,7 @@ export class Triggers {
       if (this.db.query("DELETE FROM kuma_waiting WHERE run_key = ?").run(runKey).changes)
         console.log(`kuma: ${name} came back up in time; dropped its alert`);
       if (active) update(active.id, "is back up");
-      else this.again(runKey, `${name} is back up`, message);
+      else this.again(runKey, `${name} is back up`, message, name);
       return { status: "skipped", reason: "ignored" };
     }
     if (hb.status !== 0) return { status: "skipped", reason: "ignored" };
@@ -348,7 +350,12 @@ export class Triggers {
       const each = Math.min(KUMA_INTERVAL_S.max, Math.max(KUMA_INTERVAL_S.min, interval));
       wait = t.confirmChecks * each * 1000 + KUMA_SLACK_MS;
     }
-    const again = this.again(runKey, `${name} is down again`, message, { t, name, alert, wait });
+    const again = this.again(runKey, `${name} is down again`, message, name, {
+      t,
+      name,
+      alert,
+      wait,
+    });
     if (again) return again;
     if (wait > 0) {
       const until = new Date(this.clock() + wait).toISOString();
@@ -399,6 +406,7 @@ export class Triggers {
     runKey: string,
     what: string,
     message: string,
+    monitor: string,
     down?: { t: Trigger; name: string; alert: string; wait: number },
   ): Received | null {
     const cutoff = new Date(this.clock() - ALERT_COOLDOWN_MS).toISOString();
@@ -408,6 +416,8 @@ export class Triggers {
       )
       .get(runKey, cutoff);
     if (!last) return null;
+    // Whoever reads the task now reads the message too.
+    if (message) this.tasks.taint(last.id, alertMessageSource(monitor));
     const told = down && this.tasks.steps(last.id).some((s) => s.name === what);
     this.tasks.addStep(last.id, { kind: "note", name: what, detail: message, url: null });
     if (!down) return { status: "skipped", reason: "recent" };
@@ -456,12 +466,18 @@ export class Triggers {
   }
 
   private startAlert(t: Trigger, runKey: string, name: string, payload: string): Received {
-    const again = this.again(runKey, `${name} is down again`, alertParts(payload)?.message ?? "", {
-      t,
+    const again = this.again(
+      runKey,
+      `${name} is down again`,
+      alertParts(payload)?.message ?? "",
       name,
-      alert: payload,
-      wait: 0,
-    });
+      {
+        t,
+        name,
+        alert: payload,
+        wait: 0,
+      },
+    );
     if (again) return again;
     const limited = this.limited(t);
     if (limited) return limited;
@@ -471,7 +487,7 @@ export class Triggers {
       origin: "alert",
       source: t.name,
       triggerId: t.id,
-      botId: liveBot(this.db, t.botId),
+      botId: t.botId,
       runKey,
       payload,
       // Kuma's own fields are trusted; its message often quotes the service's response.
@@ -485,6 +501,11 @@ export class Triggers {
 
   private blocked(t: Trigger): Received | null {
     if (!t.enabled) return { status: "skipped", reason: "disabled" };
+    if (orphaned(this.db, "triggers", t.id, t.botId)) {
+      const trigger = this.get(t.id);
+      if (trigger) this.events.emit({ type: "trigger.updated", trigger });
+      return { status: "skipped", reason: "disabled" };
+    }
     if (this.settings.get().paused) return { status: "skipped", reason: "paused" };
     return null;
   }

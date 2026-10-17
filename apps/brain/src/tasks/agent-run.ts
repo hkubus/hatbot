@@ -392,6 +392,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
     const refused = research && refusedLinks(run, found.sources, p.data.request, "the bot");
     if (refused) return result(call, refused, true);
+    // What this task read is screened first: a suspicion goes with the request.
+    await screener.settled();
     const child = tasks.askBot({
       from: bot,
       to: p.data.bot,
@@ -400,9 +402,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       taintedBy: task.tainted
         ? `Task #${id}, which asked: ${task.taintedBy ?? "untrusted content"}`
         : null,
-      ownerSaid: tasks.requestOf(id) ?? undefined,
+      // The request is this bot's words: the other bot's review gets the owner's words this task had.
+      ownerSaid: withNotes(ownerWords()) ?? undefined,
     });
     if (typeof child === "string") return result(call, child, true);
+    if (tasks.get(id)?.injectionSuspected) tasks.mark(child.id, "injection_suspected");
     const name = d.bots.nameOf(child.botId);
     children.add(child.id);
     tasks.addStep(id, {
@@ -518,6 +522,13 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       : `${head}\n\nThe event that started this task came from outside and isn't trusted, so it isn't shown: it can't choose what to act on.`;
   };
 
+  /**
+   * Your words behind this task. A task another bot asked for has only the words that bot's task had:
+   * its goal is that bot's request, and standingWords() would present it as yours.
+   */
+  const ownerWords = (): string | null =>
+    task.origin === "chat" || task.requestedBy ? tasks.requestOf(id) : standingWords();
+
   /** Your words for the approval checks, with the notes you gave on this task's approvals. */
   const withNotes = (words: string | null): string | null =>
     notes.length
@@ -544,7 +555,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       d,
       { taskId: id },
       {
-        ownerSaid: withNotes(task.origin === "chat" ? tasks.requestOf(id) : standingWords()),
+        ownerSaid: withNotes(ownerWords()),
         goal: task.goal,
         sources: [...sources],
       },
@@ -607,16 +618,17 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
               : "The owner denied this. Don't try it another way.",
             true,
           );
-        // What was approved was the plugin as it was: one restarted meanwhile may act differently.
-        const after = current(t.name);
-        if (typeof after === "string") return result(call, after, true);
-        if (after !== t && d.plugins.pluginOf(t.name))
-          return result(
-            call,
-            `Not run: ${t.name}'s plugin restarted while this waited for approval. Call it again if it's still needed.`,
-            true,
-          );
       }
+      // What was reviewed or approved was the plugin as it was: one switched off or restarted
+      // meanwhile may act differently.
+      const after = current(t.name);
+      if (typeof after === "string") return result(call, after, true);
+      if (after !== t && d.plugins.pluginOf(t.name))
+        return result(
+          call,
+          `Not run: ${t.name}'s plugin restarted while this was checked or waited for approval. Call it again if it's still needed.`,
+          true,
+        );
     }
     tasks.addStep(id, { kind: "action", name: t.name, detail: what, url: null });
     const r = await runPluginTool(t, call.input, cc);
@@ -658,6 +670,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const skills = d.skills.prompt();
     const source = task.source ?? "";
     const alert = task.origin === "alert" && task.payload ? alertParts(task.payload) : null;
+    // What started it is screened like what it reads: an alert's message, or an untrusted event.
+    if (alert?.message)
+      screener.add(alertMessageSource(String(JSON.parse(alert.alert).monitor)), alert.message);
+    else if (task.tainted && task.payload)
+      screener.add(task.taintedBy ?? "What started it", task.payload);
     const payload = alert
       ? alertEvent(alert, tagJson)
       : task.payload

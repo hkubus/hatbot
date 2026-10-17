@@ -6,6 +6,8 @@ import { Switch } from "../switch";
 import type { PluginSettingsProps } from ".";
 
 type Mode = "chat" | "allow" | "ask" | "always" | "off";
+/** What a tool's calls are: money and accounts always ask, and never in the chat. */
+type Kind = "payment" | "purchase" | "account_security" | "none";
 type Server = {
   name: string;
   transport: "http" | "stdio";
@@ -19,6 +21,10 @@ type Server = {
   tools: Record<string, Mode>;
   /** Per tool, the hash of the definition the owner accepted. */
   accepted: Record<string, string>;
+  /** Per tool, the hash of the definition its Chat or Allow mode was chosen for. */
+  pinned: Record<string, string>;
+  /** Per tool, what its calls are, when the owner set it. */
+  kinds: Record<string, Kind>;
 };
 type Config = { servers: Server[] };
 type Status = {
@@ -36,8 +42,11 @@ type Status = {
     mode: Mode;
     problem: string | null;
     hash: string;
+    /** What its name and description suggest it does, if it moves money. */
+    guess: "payment" | "purchase" | null;
   }[];
 };
+type Tool = Status["tools"][number];
 
 const MODES: [Mode, string][] = [
   ["off", "Off"],
@@ -46,6 +55,41 @@ const MODES: [Mode, string][] = [
   ["allow", "Allow"],
   ["chat", "Chat, no asking"],
 ];
+const KINDS: [Kind, string][] = [
+  ["none", "Other changes"],
+  ["payment", "Pays or moves money"],
+  ["purchase", "Buys or orders"],
+  ["account_security", "Changes accounts or keys"],
+];
+
+/** What a tool's calls are, as the form has it: the owner's say, or the brain's guess. */
+export const kindIn = (s: Server, t: Tool): Kind => s.kinds[t.name] ?? t.guess ?? "none";
+/** A Chat or Allow mode chosen for another definition of the tool than the one there now. */
+export const lapsedIn = (s: Server, t: Tool) => {
+  const set = s.tools[t.name];
+  return (set === "chat" || set === "allow") && (s.pinned[t.name] ?? s.accepted[t.name]) !== t.hash;
+};
+/** The mode the brain would use with the form's settings, as the brain works it out. */
+export function modeIn(s: Server, t: Tool): Mode {
+  const money = kindIn(s, t) !== "none";
+  const mode = (lapsedIn(s, t) ? undefined : s.tools[t.name]) ?? (money ? "always" : "ask");
+  if (money && mode === "ask") return "always";
+  if (money && mode === "chat") return "allow";
+  return mode;
+}
+/** Choosing a mode: Chat and Allow are kept for the definition as it is now. */
+export function withMode(s: Server, t: Tool, mode: Mode): Partial<Server> {
+  const { [t.name]: _, ...pinned } = s.pinned;
+  return {
+    tools: { ...s.tools, [t.name]: mode },
+    pinned: mode === "chat" || mode === "allow" ? { ...pinned, [t.name]: t.hash } : pinned,
+  };
+}
+/** Choosing a kind: the guess needs no entry. */
+export function withKind(s: Server, t: Tool, kind: Kind): Partial<Server> {
+  const { [t.name]: _, ...kinds } = s.kinds;
+  return { kinds: kind === (t.guess ?? "none") ? kinds : { ...kinds, [t.name]: kind } };
+}
 const blank = (): Server => ({
   name: "",
   transport: "http",
@@ -57,6 +101,8 @@ const blank = (): Server => ({
   enabled: true,
   tools: {},
   accepted: {},
+  pinned: {},
+  kinds: {},
 });
 const errorText = (err: unknown) =>
   err instanceof ApiError ? err.message : "Couldn't reach Hatbot.";
@@ -134,10 +180,7 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
         const pending =
           st && !s.trusted
             ? st.tools.filter(
-                (t) =>
-                  !t.problem &&
-                  (s.tools[t.name] ?? t.mode) !== "off" &&
-                  s.accepted[t.name] !== t.hash,
+                (t) => !t.problem && modeIn(s, t) !== "off" && s.accepted[t.name] !== t.hash,
               )
             : [];
         return (
@@ -266,6 +309,13 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
                     <div className="txt">
                       <b className="mono">{t.name}</b>
                       {t.problem && <span>{t.problem}</span>}
+                      {lapsedIn(s, t) && (
+                        <span>
+                          It changed since you chose{" "}
+                          {s.tools[t.name] === "chat" ? "Chat, no asking" : "Allow"}, so it asks
+                          until you choose again.
+                        </span>
+                      )}
                       {t.description && <span>{t.description}</span>}
                       <details>
                         <summary className="hint">Inputs</summary>
@@ -275,13 +325,24 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
                       </details>
                     </div>
                     <select
-                      aria-label={`Mode for ${t.name}`}
-                      value={s.tools[t.name] ?? t.mode}
-                      onChange={(e) =>
-                        set(i, { tools: { ...s.tools, [t.name]: e.target.value as Mode } })
-                      }
+                      aria-label={`What ${t.name} does`}
+                      value={kindIn(s, t)}
+                      onChange={(e) => set(i, withKind(s, t, e.target.value as Kind))}
                     >
-                      {MODES.map(([m, label]) => (
+                      {KINDS.map(([k, label]) => (
+                        <option key={k} value={k}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      aria-label={`When ${t.name} asks`}
+                      value={modeIn(s, t)}
+                      onChange={(e) => set(i, withMode(s, t, e.target.value as Mode))}
+                    >
+                      {MODES.filter(
+                        ([m]) => kindIn(s, t) === "none" || (m !== "ask" && m !== "chat"),
+                      ).map(([m, label]) => (
                         <option key={m} value={m}>
                           {label}
                         </option>

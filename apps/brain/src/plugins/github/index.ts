@@ -181,6 +181,8 @@ export const githubPlugin = definePlugin({
       branch.split("/").filter(Boolean).map(encodeURIComponent).join("/");
     /** Default branches, so policy can tell a commit to main from one to a new branch. */
     const defaults = new Map<string, string>();
+    /** Repositories whose default branch holds only what was merged there: not forks or mirrors. */
+    const own = new Set<string>();
     const repos = async () => {
       const list = await api<
         {
@@ -188,20 +190,26 @@ export const githubPlugin = definePlugin({
           default_branch: string;
           description: string | null;
           private: boolean;
+          fork?: boolean;
+          mirror_url?: string | null;
           permissions?: { push: boolean };
         }[]
       >("GET", "/user/repos?per_page=100&sort=updated");
-      for (const r of list) defaults.set(r.full_name, r.default_branch);
+      for (const r of list) {
+        defaults.set(r.full_name, r.default_branch);
+        if (r.fork || r.mirror_url) own.delete(r.full_name);
+        else own.add(r.full_name);
+      }
       return list;
     };
     /**
      * Whether what's read at this ref may hold anyone's text: anything but the default branch of a
      * repository the bot account can see, which holds what was merged there. A stranger's repository,
-     * or one whose default branch isn't known yet, counts too.
+     * a fork or a mirror (upstream's code), or one whose default branch isn't known yet, counts too.
      */
     const offDefault = (repo: string, ref?: string) => {
       const main = defaults.get(repo);
-      return !main || (ref !== undefined && ref !== main);
+      return !main || !own.has(repo) || (ref !== undefined && ref !== main);
     };
 
     // The pull request list has no comment count.
@@ -363,7 +371,7 @@ export const githubPlugin = definePlugin({
       tool({
         name: "github_file",
         description:
-          "Read a file from a repository, or list a directory (path empty for the top). ref is a branch, tag or commit; the default branch if left out. Anything but the default branch may hold other people's code: untrusted.",
+          "Read a file from a repository, or list a directory (path empty for the top). ref is a branch, tag or commit; the default branch if left out. Trusted only on the default branch of a repository your bot account can see that isn't a fork or a mirror; other branches and other people's repositories are untrusted.",
         access: "read",
         untrusted: ({ repo, ref }) => offDefault(repo, ref),
         label: "Reading code",
@@ -540,10 +548,17 @@ export const githubPlugin = definePlugin({
             return ask(
               "It changes CI workflows or the actions they use, which run with the repository's secrets.",
             );
-          if (new_branch) return allow();
           const main = defaults.get(repo);
-          if (!main || sameBranch(branch, main))
-            return ask(`It commits straight to ${branch}${main ? ", the default branch" : ""}.`);
+          // A new branch named as the one it starts from, or as the default branch, isn't new.
+          if (
+            new_branch &&
+            !sameBranch(new_branch, branch) &&
+            !(main && sameBranch(new_branch, main))
+          )
+            return allow();
+          const to = new_branch ?? branch;
+          if (!main || sameBranch(to, main))
+            return ask(`It commits straight to ${to}${main ? ", the default branch" : ""}.`);
           return allow();
         },
         run: async ({ repo, branch, new_branch, message, files }) => {
@@ -588,10 +603,10 @@ export const githubPlugin = definePlugin({
               throw new PluginError(`${f.path} doesn't exist on ${branch}.`);
             if (e?.type === "tree") throw new PluginError(`${f.path} is a folder on ${branch}.`);
             if (e?.type === "commit")
-              throw new PluginError(`${f.path} is a submodule; Hatbot doesn't change those.`);
+              throw new PluginError(`${f.path} is a submodule; you can't change those here.`);
             if (e?.mode === "120000" && f.content !== null)
               throw new PluginError(
-                `${f.path} is a symbolic link; Hatbot doesn't write over those.`,
+                `${f.path} is a symbolic link; you can't write over those here.`,
               );
           });
           const tree = await api<{ sha: string }>("POST", `${p}/git/trees`, {

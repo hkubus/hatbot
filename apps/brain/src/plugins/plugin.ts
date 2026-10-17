@@ -58,8 +58,11 @@ export type PluginTool<I = unknown> = {
    * write: changes something; only tasks get it, and its policy applies.
    */
   access: "read" | "write";
-  /** Its output is untrusted content (PLAN.md §6.1), e.g. issue text written by strangers. */
-  untrusted?: boolean | ((input: I) => boolean);
+  /**
+   * Its output is untrusted content (PLAN.md §6.1), e.g. issue text written by strangers. `output`:
+   * what the call returned, once it has; without it, whether its output may be.
+   */
+  untrusted?: boolean | ((input: I, output?: string) => boolean);
   /**
    * Its description and schema were written by someone else (an MCP server you haven't trusted):
    * whatever is offered it starts tainted, because that text is in the prompt.
@@ -74,6 +77,11 @@ export type PluginTool<I = unknown> = {
    * once when each acts on a different thing; ones on the same thing keep their order.
    */
   target?: (input: I) => string;
+  /**
+   * Write tools that pay, buy or change accounts: what approving any call of it is, also when only
+   * the untrusted-content rule asks, so Haiku's review never answers for it.
+   */
+  kind?: ApprovalKind;
   /** How many commands a write runs, for the chat's limit: a shell loop is many. Without it, one. */
   commands?: (input: I) => number;
   /** Write tools: allow, ask you first, or refuse. Without one, a write is allowed. */

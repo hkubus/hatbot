@@ -59,7 +59,7 @@ import {
   SYSTEM_PROMPT,
 } from "./prompt";
 import { mayReview, safeToRun } from "./review";
-import { Screener, type Screening } from "./screening";
+import { type Readable, Screener, type Screening } from "./screening";
 import {
   addSources,
   CHAT_WEB_TOOLS,
@@ -203,6 +203,8 @@ export class Thread {
   /** Summaries that failed, by episode, so the sweep gives up on one after a few tries. */
   private summaryFailures = new Map<number, number>();
   private current: AbortController | null = null;
+  /** The bot writing the reply in progress. */
+  private currentBot: string | null = null;
   /** The reply in progress is in the incognito conversation. */
   private currentIncognito = false;
   /** The approval the reply in progress waits for; your next message cancels it. */
@@ -211,6 +213,11 @@ export class Thread {
   private live = new Map<number, string>();
   /** When each bot's last chat request was sent, and in which episode: its cache entry's hour runs from then. */
   private sentAt = new Map<string, { episodeId: number; at: number }>();
+  /**
+   * What each episode read, being screened (PLAN.md §6.1). Kept across replies: a verdict the last
+   * reply didn't wait for still holds back a change the next one makes.
+   */
+  private screeners = new Map<number, Screener>();
   private clock: () => number;
 
   constructor(
@@ -443,15 +450,29 @@ export class Thread {
             ? from.episode || "Untrusted content"
             : `Task #${from.task_id} "${from.title}"`),
       );
+    // What the earlier conversation was suspected of reading comes along with the messages.
+    const suspected = this.d.db
+      .query<{ s: string }, number[]>(
+        `SELECT e.injection_suspected AS s FROM messages m JOIN episodes e ON e.id = m.episode_id
+         WHERE m.id IN (${recent.map(() => "?").join(", ")}) AND e.injection_suspected IS NOT NULL
+         ORDER BY m.id LIMIT 1`,
+      )
+      .get(...recent)?.s;
+    if (suspected) this.markSuspected(episodeId, suspected);
   }
 
-  /** Which of these messages are notes with untrusted text in them, and what it came from. */
+  /**
+   * Which of these messages have untrusted text in them, and what it came from: notes, and what shows
+   * a tainted task's result (its card, or the reply it ended).
+   */
   private untrustedNotes(ids: number[]): Map<number, string> {
     if (!ids.length) return new Map();
     const rows = this.d.db
       .query<{ id: number; tainted_by: string }, number[]>(
-        `SELECT id, tainted_by FROM messages WHERE id IN (${ids.map(() => "?").join(", ")})
-         AND tainted_by IS NOT NULL`,
+        `SELECT m.id, coalesce(m.tainted_by, 'Task #' || t.id || ' "' || t.title || '"') AS tainted_by
+         FROM messages m LEFT JOIN tasks t ON t.id = m.task_id AND t.tainted = 1
+         WHERE m.id IN (${ids.map(() => "?").join(", ")})
+         AND (m.tainted_by IS NOT NULL OR t.id IS NOT NULL)`,
       )
       .all(...ids);
     return new Map(rows.map((r) => [r.id, r.tainted_by]));
@@ -471,14 +492,53 @@ export class Thread {
 
   /** Something the episode read may be a prompt injection, or Haiku couldn't tell: the first kept. */
   private suspect(episodeId: number, source: string, verdict: Screening) {
-    const what = verdict.failed
-      ? `${source}, which couldn't be checked`
-      : `${source}: "${verdict.excerpt}"`;
+    this.markSuspected(
+      episodeId,
+      verdict.failed ? `${source}, which couldn't be checked` : `${source}: "${verdict.excerpt}"`,
+    );
+  }
+
+  private markSuspected(episodeId: number, what: string) {
     this.d.db
       .query(
         "UPDATE episodes SET injection_suspected = coalesce(injection_suspected, ?) WHERE id = ?",
       )
       .run(what, episodeId);
+  }
+
+  /**
+   * A plugin tool the reply was offered, as it is now: the definitions sent stay fixed for the reply,
+   * but a call runs on the plugin's current instance and policy. Why not, when the plugin was switched
+   * off or taken from the bot since the reply began, or now describes the tool differently.
+   */
+  private livePlugin(bot: Bot, offered: PluginTool, incognito: boolean): PluginTool | string {
+    const { plugins, bots } = this.d;
+    // Negotiation's tools aren't a plugin's.
+    if (!plugins.pluginOf(offered.name)) return offered;
+    const now = plugins
+      .tools((bots.get(bot.id) ?? bot).plugins)
+      .find((t) => t.name === offered.name);
+    if (!now)
+      return `Not run: ${offered.name} isn't available any more. Its plugin was switched off, or taken from ${bot.name}, during this reply.`;
+    if (JSON.stringify(toolParam(now)) !== JSON.stringify(toolParam(offered)))
+      return `Not run: ${offered.name} has changed during this reply.`;
+    // Incognito changes nothing.
+    if (incognito && now.access !== "read")
+      return `Not run: ${offered.name} changes things now, and this conversation only looks.`;
+    return now;
+  }
+
+  /** The episode's screener, made on first use. */
+  private screenerFor(episodeId: number): Screener {
+    let screener = this.screeners.get(episodeId);
+    if (!screener) {
+      for (const [id, other] of this.screeners) if (other.idle) this.screeners.delete(id);
+      screener = new Screener(this.d, { episodeId }, (source, verdict) =>
+        this.suspect(episodeId, source, verdict),
+      );
+      this.screeners.set(episodeId, screener);
+    }
+    return screener;
   }
 
   /** What the episode read that may be a prompt injection, or null. */
@@ -588,14 +648,15 @@ export class Thread {
               : "The owner wrote again instead of answering, so this didn't run. Don't try it another way; end your reply briefly.";
           return { content, isError: true };
         }
-        // What was approved was the plugin as it was: one switched off or restarted meanwhile mustn't run.
-        const live = this.d.plugins.tools((this.d.bots.get(bot.id) ?? bot).plugins);
-        if (this.d.plugins.pluginOf(t.name) && !live.includes(t))
-          return {
-            content: `Not run: ${t.name}'s plugin was switched off or restarted while this waited for approval.`,
-            isError: true,
-          };
       }
+      // What was reviewed or approved was the plugin as it was: one switched off or restarted
+      // meanwhile mustn't run.
+      const live = this.d.plugins.tools((this.d.bots.get(bot.id) ?? bot).plugins);
+      if (this.d.plugins.pluginOf(t.name) && !live.includes(t))
+        return {
+          content: `Not run: ${t.name}'s plugin was switched off or restarted while this was checked or waited for approval.`,
+          isError: true,
+        };
     }
     progress(activity(t.label ?? `Using ${t.name}`, input));
     const r = await runPluginTool(t, input, cc);
@@ -606,9 +667,9 @@ export class Thread {
     return { content: note ? `${r.content}\n\n${ownerNote(note)}` : r.content, isError: r.isError };
   }
 
-  /** Pause all: stops the reply in progress. */
-  abortCurrent() {
-    this.current?.abort();
+  /** Pause all: stops the reply in progress; with `botId`, only that bot's. */
+  abortCurrent(botId?: string) {
+    if (botId === undefined || botId === this.currentBot) this.current?.abort();
   }
 
   /**
@@ -800,18 +861,20 @@ export class Thread {
 
   /** In a group: what was said since `bot` last spoke, by you and the other bots. */
   private groupSince(bot: Bot, after: number): string {
-    return this.d.db
+    const rows = this.d.db
       .query<
-        { role: string; bot_id: string | null; text: string; created_at: string },
+        { id: number; role: string; bot_id: string | null; text: string; created_at: string },
         [number, number, string]
       >(
-        `SELECT role, bot_id, text, created_at FROM messages WHERE conversation_id = ? AND id > ?
+        `SELECT id, role, bot_id, text, created_at FROM messages WHERE conversation_id = ? AND id > ?
          AND incognito = 0 AND status != 'streaming' AND (role = 'user' OR bot_id != ?)
          ORDER BY id DESC LIMIT ${RECENT_MESSAGES * 3}`,
       )
       .all(this.conversationId, after, bot.id)
-      .reverse()
-      .map((m) => this.transcript(m))
+      .reverse();
+    const untrusted = this.untrustedNotes(rows.map((m) => m.id));
+    return rows
+      .map((m) => this.transcript({ ...m, tainted_by: untrusted.get(m.id) ?? null }))
       .join("\n");
   }
 
@@ -1048,6 +1111,18 @@ export class Thread {
     return e
       ? `The summary of earlier conversations, which drew on: ${e.tainted_by ?? "untrusted content"}`
       : null;
+  }
+
+  /** What a conversation the running summary drew on was suspected of reading, or null. */
+  private summarySuspicion(): string | null {
+    if (!this.threadSummary()) return null;
+    const e = this.d.db
+      .query<{ s: string }, [number]>(
+        `SELECT injection_suspected AS s FROM episodes WHERE conversation_id = ? AND incognito = 0
+         AND summarized = 1 AND injection_suspected IS NOT NULL ORDER BY id LIMIT 1`,
+      )
+      .get(this.conversationId);
+    return e ? `The summary of earlier conversations, which drew on: ${e.s}` : null;
   }
 
   private threadSummary(): string {
@@ -1639,11 +1714,17 @@ export class Thread {
           type: "text",
           text: await this.episodeContext(bot, contextBefore, episode.id, episode.fresh, incognito),
         });
-        // /new and incognito leave the messages before, and what they had read, behind.
-        if (episode.isNew && !episode.fresh && !incognito) this.inheritTaint(episode.id, userId);
-        // The running summary carries on what the conversations folded into it read.
-        const carried = incognito ? null : this.summaryTaint();
-        if (carried) this.taint(episode.id, carried);
+        if (episode.isNew && !incognito) {
+          // What the earlier conversations read is screened before it's carried on.
+          await Promise.allSettled([...this.screeners.values()].map((s) => s.settled()));
+          // /new leaves the messages before, and what they had read, behind.
+          if (!episode.fresh) this.inheritTaint(episode.id, userId);
+          // The running summary carries on what the conversations folded into it read.
+          const carried = this.summaryTaint();
+          if (carried) this.taint(episode.id, carried);
+          const suspicion = this.summarySuspicion();
+          if (suspicion) this.markSuspected(episode.id, suspicion);
+        }
       } else {
         const commands = this.commandsSince(episode.id, userId);
         if (commands)
@@ -1712,6 +1793,15 @@ export class Thread {
       if (user?.attachments?.length && this.d.attachments) {
         userBlocks.push(...this.d.attachments.refs(user.attachments));
         this.taint(episode.id, `Attached file "${user.attachments[0]?.name}"`);
+        // And screened, as what the model reads of them.
+        if (!incognito)
+          for (const a of user.attachments)
+            for (const b of await this.d.attachments.blocks([a]))
+              if (b.type === "document" && (b.source.type === "text" || b.source.type === "base64"))
+                this.screenerFor(episode.id).add(
+                  `Attached file "${a.name}"`,
+                  b.source.type === "text" ? b.source.data : { pdf: b.source.data },
+                );
       }
       // A system message follows a user turn; with nothing else to say, the note is that turn.
       if (note && !userBlocks.length) {
@@ -1914,13 +2004,10 @@ export class Thread {
     const abort = new AbortController();
     // What the reply reads from outside, screened for prompt injection while it goes on (PLAN.md
     // §6.1). Incognito can't change anything, so there's nothing to screen for.
-    const screener = incognito
-      ? null
-      : new Screener(this.d, { episodeId: episode.id }, (source, verdict) =>
-          this.suspect(episode.id, source, verdict),
-        );
-    const screen = (source: string, text: string) => screener?.add(source, text);
+    const screener = incognito ? null : this.screenerFor(episode.id);
+    const screen = (source: string, text: Readable) => screener?.add(source, text);
     this.current = abort;
+    this.currentBot = bot.id;
     this.currentIncognito = incognito;
     try {
       for (let step = 0; ; step++) {
@@ -2145,6 +2232,7 @@ export class Thread {
                 return this.suspected(episode.id) !== null;
               },
               ownerSaid: () => this.ownerSaid(episode.id),
+              livePlugin: (t) => this.livePlugin(bot, t, incognito),
               gated: async (t, input, signal) => {
                 // The sandbox is scratch space; only commands on the homelab and accounts count.
                 if (plugins.pluginOf(t.name)?.id !== "code") {
@@ -2181,6 +2269,8 @@ export class Thread {
                   `Schedule "${sc.name}": ${sc.cron ? describeCron(sc.cron) : `once at ${sc.runAt}`}. ${sc.prompt}`,
                   { scheduleId: sc.id },
                   bot.id,
+                  // Its prompt was written after reading untrusted content.
+                  this.tainted(episode.id),
                 ),
             },
             abort.signal,
@@ -2209,6 +2299,7 @@ export class Thread {
       );
     } finally {
       this.current = null;
+      this.currentBot = null;
       this.live.delete(out.id);
       for (const release of holding) release();
     }

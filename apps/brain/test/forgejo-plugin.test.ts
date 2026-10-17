@@ -46,6 +46,21 @@ beforeAll(() => {
             description: "",
             permissions: { push: true },
           },
+          // Strangers' code under the bot's name.
+          {
+            full_name: "kubus/upstream",
+            default_branch: "main",
+            description: "",
+            fork: true,
+            permissions: { push: true },
+          },
+          {
+            full_name: "kubus/mirrored",
+            default_branch: "main",
+            description: "",
+            mirror: true,
+            permissions: { push: true },
+          },
         ]);
       if (path === "/repos/kubus/hatbot") return json({ default_branch: "main" });
       if (path === "/repos/kubus/hatbot/issues" && req.method === "GET") return json([issue(7)]);
@@ -130,7 +145,7 @@ test("without a token it needs setup", async () => {
 
 test("reads issues as untrusted, pull requests with files, diff and comments, files and CI", async () => {
   const { t, fj } = await started();
-  expect(await t.plugins.test("forgejo")).toBe("Signed in as hatbot; it can see 1 repositories.");
+  expect(await t.plugins.test("forgejo")).toBe("Signed in as hatbot; it can see 3 repositories.");
   expect(seen.at(-1)?.auth).toBe("token tok");
 
   const list = await runPluginTool(fj("forgejo_issues"), { repo: "kubus/hatbot" }, call);
@@ -193,7 +208,7 @@ test("commits update existing files by sha and create new ones on a new branch",
       },
       call,
     ),
-  ).rejects.toThrow("link is a symlink; Hatbot doesn't change those.");
+  ).rejects.toThrow("link is a symlink; you can't change those here.");
 });
 
 test("policy: new branches run, the default branch, workflows and merges ask", async () => {
@@ -321,4 +336,27 @@ test("only the default branch of a repository the bot can see is trusted, in fil
   expect(await untrusted("forgejo_file", { repo: "stranger/repo", path: "README.md" })).toBe(true);
   expect(await untrusted("forgejo_ci", { repo: "kubus/hatbot", ref: "main" })).toBe(false);
   expect(await untrusted("forgejo_ci", { repo: "kubus/hatbot", ref: "fix" })).toBe(true);
+  // A fork or a pull mirror holds a stranger's code on its default branch too.
+  for (const other of ["kubus/upstream", "kubus/mirrored"]) {
+    expect(await untrusted("forgejo_file", { repo: other, path: "AGENTS.md" }), other).toBe(true);
+    expect(await untrusted("forgejo_ci", { repo: other, ref: "main" }), other).toBe(true);
+  }
+  expect(fj("forgejo_file").description).toContain("other people's repositories");
+});
+
+test("a new branch named as the branch it starts from commits to that branch, so it asks", async () => {
+  const { fj } = await started();
+  const files = [{ path: "a.md", content: "x" }];
+  const v = (input: Record<string, unknown>) =>
+    verdictFor(
+      fj("forgejo_commit_files"),
+      { repo: "kubus/hatbot", message: "m", files, ...input },
+      call,
+    );
+  expect(v({ branch: "main", new_branch: "main" })).toMatchObject({
+    action: "ask",
+    why: "It commits straight to main, the default branch.",
+  });
+  expect(v({ branch: "fix", new_branch: "Main" }).action).toBe("ask");
+  expect(v({ branch: "main", new_branch: "hatbot/x" }).action).toBe("allow");
 });

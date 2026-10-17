@@ -70,6 +70,23 @@ beforeAll(() => {
             private: false,
             permissions: { push: true },
           },
+          // Strangers' code under the bot's name.
+          {
+            full_name: "hkubus/upstream",
+            default_branch: "main",
+            description: null,
+            private: false,
+            fork: true,
+            permissions: { push: true },
+          },
+          {
+            full_name: "hkubus/mirrored",
+            default_branch: "main",
+            description: null,
+            private: false,
+            mirror_url: "https://example.com/mirrored",
+            permissions: { push: true },
+          },
         ]);
       // The most recently updated hundred are all pull requests; the issue is on the next page.
       if (path === `${r}/issues` && req.method === "GET")
@@ -211,7 +228,7 @@ test("without a token it needs setup", async () => {
 test("reads issues as untrusted, pull requests with files, reviews, diff and comments, files and CI", async () => {
   const { t, gh } = await started();
   expect(await t.plugins.test("github")).toBe(
-    "Signed in as hatbot-bot; it can see 1 repositories.",
+    "Signed in as hatbot-bot; it can see 3 repositories.",
   );
   expect(seen.at(-1)?.auth).toBe("Bearer tok");
 
@@ -386,10 +403,10 @@ test("a commit keeps each file's mode, and won't write over links or submodules"
 
   seen.length = 0;
   await expect(commit([{ path: "link", content: "/etc/passwd" }])).rejects.toThrow(
-    "link is a symbolic link; Hatbot doesn't write over those.",
+    "link is a symbolic link; you can't write over those here.",
   );
   await expect(commit([{ path: "vendor", content: "x" }])).rejects.toThrow(
-    "vendor is a submodule; Hatbot doesn't change those.",
+    "vendor is a submodule; you can't change those here.",
   );
   await expect(commit([{ path: "docs", content: "x" }])).rejects.toThrow(
     "docs is a folder on main.",
@@ -416,6 +433,17 @@ test("policy: new branches run, the default branch, workflows and merges ask", a
   expect(v("github_commit_files", { repo, branch: "Main", message: "m", files })).toMatchObject({
     action: "ask",
   });
+  // A "new" branch that is the branch itself, or the default branch, isn't new.
+  expect(
+    v("github_commit_files", { repo, branch: "main", new_branch: "main", message: "m", files }),
+  ).toMatchObject({ action: "ask", why: "It commits straight to main, the default branch." });
+  expect(
+    v("github_commit_files", { repo, branch: "fix", new_branch: "MAIN", message: "m", files }),
+  ).toMatchObject({ action: "ask" });
+  expect(
+    v("github_commit_files", { repo, branch: "fix", new_branch: "fix", message: "m", files })
+      .action,
+  ).toBe("allow");
   for (const path of [
     ".github/workflows/ci.yml",
     ".GitHub//workflows/x.yml",
@@ -502,4 +530,11 @@ test("only the default branch of a repository the bot can see is trusted, in fil
   // A pull request's branch, or another repository's, can name its jobs anything.
   expect(await untrusted("github_ci", { repo, ref: "fix" })).toBe(true);
   expect(await untrusted("github_ci", { repo: "stranger/repo", ref: "main" })).toBe(true);
+  // A fork or a mirror holds a stranger's code on its default branch too.
+  for (const other of ["hkubus/upstream", "hkubus/mirrored"]) {
+    expect(await untrusted("github_file", { repo: other, path: "AGENTS.md" }), other).toBe(true);
+    expect(await untrusted("github_ci", { repo: other, ref: "main" }), other).toBe(true);
+  }
+  // What the model reads says so.
+  expect(gh("github_file").description).toContain("other people's repositories");
 });
