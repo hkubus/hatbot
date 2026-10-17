@@ -46,6 +46,11 @@ import type { Tasks } from "./service";
 const MAX_STEPS = 30;
 /** Code work (effort medium or high) reads and writes more. */
 const MAX_CODE_STEPS = 80;
+/**
+ * The most a run may take of its own time (the model, its tools and its waits), so a schedule's next
+ * runs aren't held up for ever. Time waiting for the owner, or for tasks it started, doesn't count.
+ */
+const MAX_RUN_MS = 4 * 3600_000;
 const BETAS: Anthropic.Beta.AnthropicBeta[] = [
   "thinking-display-updates-2026-08-18",
   "context-management-2025-06-27",
@@ -183,6 +188,31 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const sources = new Set<string>();
   let slot = false;
   let notified = 0;
+  /** When it got its first slot, and the time since spent waiting for the owner or its own tasks. */
+  let startedAt = 0;
+  let awayMs = 0;
+  /** The run's own time so far: the model, its tools and its waits. */
+  const ownMs = () => tasks.clock() - startedAt - awayMs;
+
+  /**
+   * Runs `fn` without holding a slot, then queues for one again, shown as queued meanwhile. `own`: the
+   * time counts towards the run's limit (the wait tool); waiting for the owner or for a task it started
+   * doesn't, since those have limits of their own.
+   */
+  const withoutSlot = async <T>(fn: () => Promise<T>, own = false): Promise<T> => {
+    const from = tasks.clock();
+    tasks.pool.release();
+    slot = false;
+    try {
+      return await fn();
+    } finally {
+      tasks.setStatus(id, "queued");
+      await tasks.pool.acquire(signal);
+      slot = true;
+      tasks.setStatus(id, "running");
+      if (!own) awayMs += tasks.clock() - from;
+    }
+  };
   // Fixed for the whole run: the tool list is part of the prompt cache.
   // A bot gets only the plugins it may use.
   const own = d.plugins.tools(bot.plugins);
@@ -242,15 +272,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       detail: "",
       url: `/tasks/${childId}`,
     });
-    tasks.pool.release();
-    slot = false;
-    let ended: Task;
-    try {
-      ended = await tasks.waitFor(childId, signal);
-    } finally {
-      await tasks.pool.acquire(signal);
-      slot = true;
-    }
+    const ended = await withoutSlot(() => tasks.waitFor(childId, signal));
     // Still in `children` if this task is cancelled meanwhile, so it's cancelled with it.
     children.delete(childId);
     return ended;
@@ -277,15 +299,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       url: `/tasks/${child.id}`,
     });
     // Waiting on the screen doesn't hold a slot other tasks could use.
-    tasks.pool.release();
-    slot = false;
-    let ended: Task;
-    try {
-      ended = await tasks.waitFor(child.id, signal);
-    } finally {
-      await tasks.pool.acquire(signal);
-      slot = true;
-    }
+    const ended = await withoutSlot(() => tasks.waitFor(child.id, signal));
     // Still in `children` if this task is cancelled meanwhile, so it's cancelled with it.
     children.delete(child.id);
     // Its summary is made from web pages (PLAN.md §6.1).
@@ -319,15 +333,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       url: `/tasks/${child.id}`,
     });
     // Waiting doesn't hold a slot: the bot asked needs one.
-    tasks.pool.release();
-    slot = false;
-    let ended: Task;
-    try {
-      ended = await tasks.waitFor(child.id, signal);
-    } finally {
-      await tasks.pool.acquire(signal);
-      slot = true;
-    }
+    const ended = await withoutSlot(() => tasks.waitFor(child.id, signal));
     // Still in `children` if this task is cancelled meanwhile, so it's cancelled with it.
     children.delete(child.id);
     if (ended.tainted) taint(`Task #${child.id} by ${name}`);
@@ -359,15 +365,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     });
     tasks.setStatus(id, "waiting_approval");
     // Waiting for you doesn't hold a slot other tasks could use.
-    tasks.pool.release();
-    slot = false;
-    let outcome: Outcome;
-    try {
-      outcome = await d.approvals.wait(approval.id, signal);
-    } finally {
-      await tasks.pool.acquire(signal);
-      slot = true;
-    }
+    const outcome: Outcome = await withoutSlot(() => d.approvals.wait(approval.id, signal));
     tasks.addStep(id, {
       kind: "approval",
       name: `Approval ${outcome}`,
@@ -382,7 +380,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       notes.push(`[${localStamp(new Date())}] ${note}`);
       tasks.addStep(id, { kind: "note", name: "Your note", detail: note, url: null });
     }
-    tasks.setStatus(id, "running");
     return { outcome, note };
   };
 
@@ -529,28 +526,23 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const wait = async (call: Anthropic.Beta.BetaToolUseBlock) => {
     const p = Wait.safeParse(call.input);
     if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
-    const { minutes } = p.data;
+    // Not past the run's time limit.
+    const left = Math.max(1, Math.floor((MAX_RUN_MS - ownMs()) / 60_000));
+    const minutes = Math.min(p.data.minutes, left);
     tasks.addStep(id, {
       kind: "action",
       name: "wait",
       detail: `Waiting up to ${minutes} min for ${p.data.for}`,
       url: null,
     });
-    tasks.pool.release();
-    slot = false;
-    let woke: boolean;
-    try {
-      woke = await tasks.nextEvent(id, minutes * 60_000, signal);
-    } finally {
-      await tasks.pool.acquire(signal);
-      slot = true;
-    }
+    const woke = await withoutSlot(() => tasks.nextEvent(id, minutes * 60_000, signal), true);
     return result(call, woke ? "Woke early: an event arrived (below)." : `Waited ${minutes} min.`);
   };
 
   try {
     await tasks.pool.acquire(signal);
     slot = true;
+    startedAt = tasks.clock();
     tasks.setStatus(id, "running");
     // Why it may already be tainted, for its approvals (PLAN.md §6.2).
     if (task.tainted) sources.add(task.taintedBy ?? "What started it");
@@ -588,6 +580,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       const maxSteps = research ? MAX_RESEARCH_STEPS : task.effort ? MAX_CODE_STEPS : MAX_STEPS;
       if (step >= maxSteps)
         throw new Stop("failed", `Stopped after ${maxSteps} steps without finishing.`);
+      if (ownMs() >= MAX_RUN_MS)
+        throw new Stop(
+          "failed",
+          `Stopped: it ran for ${MAX_RUN_MS / 3600_000} hours without finishing.`,
+        );
       try {
         d.spend.check(
           estimateCost(messages, task.model),

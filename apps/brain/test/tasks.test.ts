@@ -898,6 +898,67 @@ test("a desktop client request ends as soon as its task's signal aborts", async 
   }
 });
 
+test("an answered background task waiting for a slot shows as queued, not waiting for approval", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Fine.", notify: false })] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.settings.update({ limits: { taskUsd: 0.001, dailyUsd: 10, monthlyUsd: 200 } });
+  const task = t.tasks.createBackgroundTask({ title: "Check", goal: "Check", origin: "chat" });
+  const approval = await pending(t);
+  expect(t.tasks.get(task?.id ?? 0)?.status).toBe("waiting_approval");
+  // Every slot is taken meanwhile.
+  const signal = AbortSignal.timeout(2000);
+  for (let i = 0; i < t.tasks.pool.size; i++) await t.tasks.pool.acquire(signal);
+  t.approvals.decide(approval.id, "approve", "web");
+  await waitFor(() => t.tasks.get(task?.id ?? 0)?.status === "queued");
+  for (let i = 0; i < t.tasks.pool.size; i++) t.tasks.pool.release();
+  // Each approval adds one task limit; keep approving until it finishes.
+  for (;;) {
+    const next = await waitFor(
+      () => t.approvals.list(true)[0] ?? (t.tasks.get(task?.id ?? 0)?.status === "done" && "done"),
+    );
+    if (next === "done") break;
+    t.approvals.decide((next as Approval).id, "approve", "web");
+  }
+  await t.tasks.idle();
+  expect(t.tasks.get(task?.id ?? 0)?.status).toBe("done");
+});
+
+test("a background run stops after 4 hours of its own time, and waits no longer than that", async () => {
+  let release = () => {};
+  let release2 = () => {};
+  const work = new FakeModel([
+    {
+      content: [toolUse("wait", { minutes: 240, for: "the build" })],
+      wait: new Promise<void>((r) => {
+        release = r;
+      }),
+    },
+    {
+      content: [toolUse("memory_list", {})],
+      wait: new Promise<void>((r) => {
+        release2 = r;
+      }),
+    },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = t.tasks.createBackgroundTask({ title: "Long", goal: "Watch", origin: "schedule" });
+  const id = task?.id ?? 0;
+  await waitFor(() => work.requests.length);
+  t.advance(3.9 * 3600_000);
+  release();
+  const step = await waitFor(() => t.tasks.steps(id).find((s) => s.name === "wait"));
+  expect(step.detail).toBe("Waiting up to 6 min for the build");
+  t.tasks.tell(id, "The build finished.");
+  await waitFor(() => work.requests.length === 2);
+  t.advance(10 * 60_000);
+  release2();
+  await t.tasks.idle();
+  expect(t.tasks.get(id)).toMatchObject({ status: "failed" });
+  expect(t.tasks.get(id)?.summary).toContain("4 hours");
+});
+
 test("a task whose reply hit the context window stops as failed, without running its calls", async () => {
   const work = new FakeModel([
     {
