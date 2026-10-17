@@ -503,6 +503,13 @@ export class Thread {
               : "The owner wrote again instead of answering, so this didn't run. Don't try it another way; end your reply briefly.";
           return { content, isError: true };
         }
+        // What was approved was the plugin as it was: one switched off or restarted meanwhile mustn't run.
+        const live = this.d.plugins.tools((this.d.bots.get(bot.id) ?? bot).plugins);
+        if (this.d.plugins.pluginOf(t.name) && !live.includes(t))
+          return {
+            content: `Not run: ${t.name}'s plugin was switched off or restarted while this waited for approval.`,
+            isError: true,
+          };
       }
     }
     progress(activity(t.label ?? `Using ${t.name}`, input));
