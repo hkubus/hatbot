@@ -65,6 +65,28 @@ test("events that come while the thread loads are put onto what it loaded", asyn
   store.disconnect();
 });
 
+test("text a page read mid-reply already has isn't put onto it again", async () => {
+  const store = await freshStore("loading-mid-reply");
+  store.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  const page = later<ThreadMessage[]>();
+  serve(() => page.promise);
+  const loading = store.loadThread();
+  await settle();
+  // The brain served the reply as far as "Hel"; both deltas came while the page was on its way.
+  socket.emit({ type: "message.delta", id: 2, text: "Hel", at: 0 });
+  socket.emit({ type: "message.delta", id: 2, text: "lo", at: 3 });
+  page.resolve([msg(1), msg(2, { text: "Hel", status: "streaming" })]);
+  await loading;
+  dom.flushFrames();
+  expect(shown(store).at(-1)).toEqual([2, "Hello", "streaming"]);
+  socket.emit({ type: "message.delta", id: 2, text: " there", at: 5 });
+  dom.flushFrames();
+  expect(shown(store).at(-1)).toEqual([2, "Hello there", "streaming"]);
+  store.disconnect();
+});
+
 test("the stream's first open catches the thread up too", async () => {
   const store = await freshStore("first-open");
   // The thread loaded before the stream opened, and the reply finished in between.
