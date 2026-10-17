@@ -1,7 +1,7 @@
 // A group chat's page (PLAN.md §14.4): its name and bots. "new" makes one.
 import { MAX_GROUP_BOTS } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
-import { ApiError } from "../api";
+import { errorText } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm, toggled, useStoredForm } from "../form";
 import { Icon } from "../icons";
@@ -10,8 +10,6 @@ import { navigate } from "../router";
 import { createGroup, deleteGroup, loadBots, saveGroup, useStore } from "../store";
 import { Switch } from "../switch";
 
-const errorText = (err: unknown) =>
-  err instanceof ApiError ? err.message : "Couldn't reach Hatbot.";
 const NEW_GROUP = { title: "", members: [] as string[] };
 
 export function GroupPage({ id, toast }: { id: string; toast: (t: string) => void }) {

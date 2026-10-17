@@ -1,6 +1,6 @@
 import { latestNoteOnly, OPEN_NEGOTIATION_STATUSES, type Task } from "@hatbot/shared";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ApiError, api } from "../api";
+import { ApiError, api, errorText } from "../api";
 import { ask } from "../confirm";
 import { modelName, plainText, usd } from "../format";
 import { Icon } from "../icons";
@@ -13,6 +13,7 @@ import {
   botName,
   cancelTask,
   chatName,
+  chatPath,
   HATBOT_CHAT,
   loadNegotiations,
   loadTask,
@@ -243,7 +244,7 @@ export function From({ task }: { task: Task }) {
   if (task.parentId) return go(`/tasks/${task.parentId}`, `Task #${task.parentId}`);
   if (task.origin === "chat") {
     const id = task.conversationId;
-    return chat && id ? go(id === HATBOT_CHAT ? "/" : `/chat/${id}`, chat) : <>Chat</>;
+    return chat && id ? go(chatPath(id), chat) : <>Chat</>;
   }
   const name = task.source ?? "";
   if (task.origin === "schedule")
@@ -371,7 +372,7 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
     try {
       await cancelTask(id);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
+      setError(errorText(err));
     }
   };
 
@@ -385,7 +386,7 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
       setAgain(null);
       navigate(`/tasks/${t.id}`);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
+      setError(errorText(err));
     }
     setBusy(false);
   };

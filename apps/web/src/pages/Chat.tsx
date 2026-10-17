@@ -22,7 +22,7 @@ import {
 } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ApiError, attachmentUrl } from "../api";
+import { ApiError, attachmentUrl, errorText } from "../api";
 import { Chart, ChartPending } from "../chart";
 import { parseChart } from "../chartspec";
 import { ask } from "../confirm";
@@ -997,9 +997,7 @@ export function Chat({ id }: { id: number }) {
                       )
                         return;
                       setError("");
-                      deleteEpisode(id).catch((err) =>
-                        setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot."),
-                      );
+                      deleteEpisode(id).catch((err) => setError(errorText(err)));
                     }}
                   />
                   {open ? g.messages.map(row) : waiting.map(row)}

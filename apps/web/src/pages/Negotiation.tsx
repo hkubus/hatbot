@@ -1,7 +1,7 @@
 // A negotiation's page (PLAN.md §16.5): its mandate, what's been said, and every message with the seller.
 import { type NegotiationMessage, OPEN_NEGOTIATION_STATUSES } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, api } from "../api";
+import { ApiError, api, errorText } from "../api";
 import { ask } from "../confirm";
 import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
@@ -70,7 +70,7 @@ export function NegotiationPage({ id }: { id: number }) {
       await api(`/negotiations/${id}/close`, { body: {} });
       await loadNegotiation(id);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
+      setError(errorText(err));
     }
     setBusy(false);
   };

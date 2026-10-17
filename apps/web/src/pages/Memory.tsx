@@ -1,6 +1,6 @@
 import type { Commit, MemoryFile, Proposal, SkillStatus } from "@hatbot/shared";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ApiError, api } from "../api";
+import { ApiError, api, errorText } from "../api";
 import { ask, askText, useLeaveGuard } from "../confirm";
 import { lineDiff } from "../diff";
 import { Icon } from "../icons";
@@ -167,7 +167,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
                 older: l.length === PAGE,
               },
         ),
-      (err) => toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot", "error"),
+      (err) => toast(errorText(err, "Couldn't reach Hatbot"), "error"),
     );
   };
 
@@ -182,7 +182,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
             d,
             path,
             err instanceof ApiError && err.status === 400 && err.message.startsWith("not found"),
-            err instanceof ApiError ? err.message : "Couldn't reach Hatbot.",
+            errorText(err),
           ),
         ),
     );
@@ -211,7 +211,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
     if (sel.kind === "diff")
       api<{ diff: string }>(`/memory/diff/${sel.commit.sha}`).then(
         (r) => setDiff(r.diff),
-        (err) => toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot", "error"),
+        (err) => toast(errorText(err, "Couldn't reach Hatbot"), "error"),
       );
   }, [sel, toast]);
 
@@ -244,7 +244,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
         const now = err.data as { sha: string; content: string };
         return setConflict({ sha: now.sha, content: now.content });
       }
-      toast(err instanceof ApiError ? err.message : "Couldn't save", "error");
+      toast(errorText(err, "Couldn't save"), "error");
     }
   };
   // Your edit goes; the file as it's now saved comes in.
@@ -295,7 +295,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
       setSel({ kind: "file", path: "INDEX.md" });
       bumpMemory();
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Couldn't delete", "error");
+      toast(errorText(err, "Couldn't delete"), "error");
     }
   };
 
@@ -309,7 +309,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
       );
       bumpMemory();
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Couldn't revert", "error");
+      toast(errorText(err, "Couldn't revert"), "error");
     }
   };
 
@@ -331,7 +331,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
         void select({ kind: "proposal", id: p.id });
       } else toast("Nothing to tidy", "info");
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot", "error");
+      toast(errorText(err, "Couldn't reach Hatbot"), "error");
     }
     setBusy(false);
   };
@@ -348,7 +348,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
         void select({ kind: "proposal", id: p.id });
       } else toast("No fix found in what went wrong", "info");
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot", "error");
+      toast(errorText(err, "Couldn't reach Hatbot"), "error");
     }
     setBusy(false);
   };
@@ -357,7 +357,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
       await startTeach(name);
       navigate("/live");
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Couldn't start recording", "error");
+      toast(errorText(err, "Couldn't start recording"), "error");
     }
   };
   const answer = async (p: Proposal, how: "apply" | "dismiss") => {
@@ -370,7 +370,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
       if (how === "apply") bumpMemory();
       void select({ kind: "file", path: p.changes[0]?.path ?? "INDEX.md" });
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot", "error");
+      toast(errorText(err, "Couldn't reach Hatbot"), "error");
     }
   };
 

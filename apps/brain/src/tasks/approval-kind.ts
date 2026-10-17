@@ -17,12 +17,9 @@ import {
 const PAYMENT_FIELDS =
   /(?<!\p{L})(card number|numer karty|cvv2?|cvc2?|security code|kod cvv|kod blik|blik code|blik|expiry date|data ważności karty)(?!\p{L})/iu;
 
-/** Buying or paying, in what the model says it's about to do. */
+/** Buying or paying, in what the model says it's about to do: English, Polish and Czech. */
 const PURCHASE_WORDS =
-  /(?<!\p{L})(buy|buying|purchase|purchasing|checkout|check out|pay|paying|payment|place (?:the |an |my )?order|order(?: it)? now|deposit|kup\p{L}*|zamów\p{L}*|zamawia\p{L}*|zapła\p{L}*|opłac\p{L}*|opłać|płać|płac\p{L}*|zaliczk\p{L}*|zadatek)(?!\p{L})/iu;
-
-/** A payment frame's title: Stripe's "Secure payment input frame", PayU's card widget. */
-const PAYMENT_FRAME = /payment|platno|card|kart|stripe|payu|przelewy24|adyen|paypal|blik|checkout/;
+  /(?<!\p{L})(buy|buying|purchase|purchasing|checkout|check out|pay|paying|payment|place (?:the |an |my )?order|order(?: it)? now|deposit|kup\p{L}*|zamów\p{L}*|zamawia\p{L}*|zapła\p{L}*|opłac\p{L}*|opłać|płać|płac\p{L}*|zaliczk\p{L}*|zadatek|koupit|zaplat\p{L}*|objedn(?:at|ej|ejte|[aá]v[aá]m|[aá]vk[au])|dokon[cč]it (?:n[aá]kup|objedn[aá]vk\p{L}*))(?!\p{L})/iu;
 
 const hostOf = (url: string | null) => {
   try {
@@ -32,11 +29,13 @@ const hostOf = (url: string | null) => {
   }
 };
 
-/** A held step that may buy or pay: at checkout, a buy, pay or order label, or a payment frame. */
+/**
+ * A held step that may buy or pay: at checkout, a buy, pay or order label, or in a frame Hatbot couldn't
+ * see into, which may be a payment widget whatever its title says.
+ */
 export function buysOrPays(hold: Hold): boolean {
-  if ("checkout" in hold) return true;
-  if ("label" in hold) return buyingLabel(hold.label);
-  return "frame" in hold && PAYMENT_FRAME.test(fold(hold.frame));
+  if ("checkout" in hold || "frame" in hold) return true;
+  return "label" in hold && buyingLabel(hold.label);
 }
 
 /**

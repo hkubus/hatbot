@@ -1,7 +1,8 @@
 // Settings → Heartbeat: a look every few minutes at what went wrong; only news goes to Haiku.
 import { type AppSettings, describeEvery, type HeartbeatInfo } from "@hatbot/shared";
 import { Fragment, useEffect, useRef, useState } from "react";
-import { ApiError, api } from "../api";
+import { api, errorText } from "../api";
+import { BotPicker, stamp } from "../automations";
 import { useLeaveGuard } from "../confirm";
 import { plainText } from "../format";
 import { Icon } from "../icons";
@@ -9,7 +10,6 @@ import { LoadError, loadErrorText } from "../load";
 import { navigate } from "../router";
 import { useStore } from "../store";
 import { Switch } from "../switch";
-import { BotPicker, stamp } from "./Schedules";
 
 const EVERY = [5, 10, 15, 30, 60, 120, 360];
 const DID: Record<string, string> = {
@@ -73,7 +73,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
       savedInstructions.current = s.heartbeat.instructions;
       toast("Saved");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Couldn't save");
+      setError(errorText(err, "Couldn't save"));
     }
   };
   const lookNow = async () => {
@@ -83,7 +83,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
       const ran = await api<HeartbeatInfo>("/heartbeat/run", { body: {} });
       setInfo(ran);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
+      setError(errorText(err));
     }
     setBusy(false);
   };

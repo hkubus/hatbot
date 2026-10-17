@@ -439,6 +439,58 @@ test("a checkout page, a payment host or the held step raises the kind, whatever
   );
   expect(approvalKind("send", blank, listing, { label: "Wyślij" })).toBe("send");
   expect(approvalKind("other", { summary: "Order it now" }, listing)).toBe("purchase");
+  // A frame Hatbot couldn't see into may pay, whatever its title.
+  for (const frame of ["Klarna", "Google Pay", ""])
+    expect(approvalKind("other", blank, listing, { frame })).toBe("purchase");
+  // Czech, as the gate's labels read it.
+  const product = at("https://www.alza.cz/macbook-air-d123.htm");
+  for (const summary of ["Click Zaplatit", "Klikni na Objednat", "Dokončit nákup"])
+    expect(approvalKind("other", { summary }, product)).toBe("purchase");
+  expect(approvalKind("other", { summary: "Open Moje objednávky" }, product)).toBe("other");
+});
+
+test("a held step in a payment frame, or at checkout, can't be approved from the lock screen", async () => {
+  const page = "https://fundacja.example/wesprzyj";
+  const work = new FakeModel([
+    { content: [computer("left_click", { coordinate: [300, 520] })] },
+    { content: [toolUse("confirm_intent", { kind: "other", summary: "Confirm the form" })] },
+    { content: [computer("left_click", { coordinate: [300, 520] })] },
+    { content: [toolUse("confirm_intent", { kind: "other", summary: "Continue" })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.agent.page = { url: page, title: "Wesprzyj", text: "Wesprzyj nas" };
+  // "Confirm" inside Stripe's frame: the tab's address is an ordinary page.
+  t.agent.element = {
+    tag: "button",
+    role: null,
+    type: "button",
+    label: "Confirm",
+    inForm: false,
+    url: page,
+    frameUrl: "https://js.stripe.com/v3/elements-inner",
+    editable: false,
+    fields: [],
+  };
+  startTask(t, "Fill in the form");
+  const a = await pending(t);
+  expect(a.kind).toBe("payment");
+  expect(a.reason).toContain("Hatbot held: left_click on a checkout page (js.stripe.com)");
+  expect(t.notifier.sent.at(-1)?.actions?.[0]?.label).toBe("Open in Hatbot");
+  expect(t.approvals.decide(a.id, "approve", "ntfy")).toBeNull();
+  // A Czech checkout: "Zaplatit" there asks as a purchase.
+  const checkout = "https://eshop.cz/pokladna";
+  t.agent.page = { url: checkout, title: "Pokladna", text: "Doprava a platba" };
+  t.agent.element = { ...(t.agent.element as AgentElement), label: "Zaplatit", url: checkout };
+  delete t.agent.element.frameUrl;
+  t.approvals.decide(a.id, "deny", "web");
+  const b = await waitFor(() => t.approvals.list(true)[0]);
+  expect(b.kind).toBe("purchase");
+  expect(b.reason).toContain('Hatbot held: left_click on "Zaplatit"');
+  expect(t.notifier.sent.at(-1)?.actions?.[0]?.label).toBe("Open in Hatbot");
+  t.approvals.decide(b.id, "deny", "web");
+  await t.tasks.idle();
+  expect(t.agent.actions.filter((x) => x.name === "left_click")).toHaveLength(0);
 });
 
 test("an approval covers the step it was asked for; one from the lock screen never buys", () => {
@@ -499,6 +551,34 @@ test("a lock-screen approval for a message doesn't buy, and the held step is on 
   t.approvals.decide(second.id, "approve", "web");
   await t.tasks.idle();
   expect(t.agent.actions.filter((a) => a.name === "left_click")).toHaveLength(1);
+});
+
+test("a payment frame on a marketplace stays a payment, with text in a box beside it", async () => {
+  const url = "https://www.olx.pl/d/oferta/rower-CID1-ID77.html";
+  const work = new FakeModel([
+    { content: [computer("left_click", { coordinate: [300, 520] })] },
+    { content: [toolUse("confirm_intent", { kind: "send", summary: "Click Dalej" })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.agent.page = { url, title: "Rower", text: "Rower. 500 zł." };
+  t.agent.element = {
+    tag: "button",
+    role: null,
+    type: "button",
+    label: "Dalej",
+    inForm: false,
+    url,
+    frameUrl: "https://secure.payu.com/front/widget",
+    editable: false,
+    fields: ["Czy aktualne?"],
+  };
+  startTask(t, "Ask about the bike");
+  const a = await pending(t);
+  expect(a.kind).toBe("payment");
+  expect(a.reason).toContain("on a checkout page (secure.payu.com)");
+  t.approvals.decide(a.id, "deny", "web");
+  await t.tasks.idle();
 });
 
 test("a held step the model moved on from isn't what its next approval is for", async () => {

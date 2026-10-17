@@ -219,14 +219,10 @@ const TRUSTED_FILE = /^(skills\/.+|INDEX\.md|bots\/[^/]+\/INDEX\.md|homelab\.md)
 /** Research's reports and notes, in research/ or a bot's own: written from what it read on the web. */
 const RESEARCH_FILE = /^(bots\/[^/]+\/)?research\//;
 
-/** Untrusted text as a JSON string, with nothing in it that can close the tag around it. */
-const untrustedJson = (text: string) =>
-  JSON.stringify(text).replace(/[<>&]/g, (c) => `\\u00${c.charCodeAt(0).toString(16)}`);
-
 /** What research wrote, read back: untrusted, and the reader is tainted by it (PLAN.md §6.1). */
 function researchNotes(ctx: ToolContext, tool: string, path: string, text: string): string {
   ctx.taint?.(`Research notes: ${path}`, text);
-  return `<tool_output tool="${tool}" trusted="false">\n${untrustedJson(text)}\n</tool_output>`;
+  return untrustedBlock("tool_output", text, { tool });
 }
 
 /**

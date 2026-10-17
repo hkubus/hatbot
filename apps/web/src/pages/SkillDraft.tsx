@@ -1,6 +1,6 @@
 // Teach-by-showing's review step (PLAN.md §10.5): the skill Opus drafted from your recording, to edit and save.
 import { useEffect, useState } from "react";
-import { ApiError } from "../api";
+import { ApiError, errorText } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { Icon } from "../icons";
 import { navigate } from "../router";
@@ -40,7 +40,7 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
     try {
       await fn();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
+      setError(errorText(err));
     } finally {
       setBusy(false);
     }

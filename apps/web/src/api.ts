@@ -11,6 +11,13 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * What went wrong, in a sentence for the page: the brain's own words, or `fallback` when it didn't
+ * answer.
+ */
+export const errorText = (err: unknown, fallback = "Couldn't reach Hatbot.") =>
+  err instanceof ApiError ? err.message : fallback;
+
 /** JSON request to the brain. Session cookie auth; 401 sends the app back to the login screen. */
 export async function api<T>(
   path: string,

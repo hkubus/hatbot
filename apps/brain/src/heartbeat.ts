@@ -12,10 +12,12 @@ import type { EventBus } from "./events";
 import type { Notifier } from "./notify";
 import type { Plugins } from "./plugins/registry";
 import type { SettingsStore } from "./settings";
-import type { Spend } from "./spend";
+import { fixedTokens, requestCeiling, type Spend } from "./spend";
 import { RESTARTED, type Tasks } from "./tasks/service";
 
 export const HEARTBEAT_MODEL = "claude-haiku-5-5";
+/** Room for thinking, so it can't crowd out the answer. */
+const TRIAGE_MAX_TOKENS = 4000;
 const STATE_KEY = "heartbeat:state";
 /** Looks that found something, kept for Settings. */
 const KEEP_RUNS = 20;
@@ -319,20 +321,22 @@ export class Heartbeat {
   }
 
   private async triage(instructions: string, list: string) {
-    this.d.spend.check(0.01, undefined, { reserve: true });
+    const content = `The owner's instructions:\n${instructions}\n\n<findings_json>\n${tagJson(list)}\n</findings_json>`;
+    this.d.spend.check(
+      requestCeiling(HEARTBEAT_MODEL, {
+        prompt: fixedTokens(TRIAGE_PROMPT, content),
+        maxTokens: TRIAGE_MAX_TOKENS,
+      }),
+      undefined,
+      { reserve: true },
+    );
     const res = await this.d.model.create({
       model: HEARTBEAT_MODEL,
-      // Room for thinking, so it can't crowd out the answer.
-      max_tokens: 4000,
+      max_tokens: TRIAGE_MAX_TOKENS,
       thinking: { type: "adaptive" },
       output_config: { effort: "low", format: { type: "json_schema", schema: CHOICE } },
       system: TRIAGE_PROMPT,
-      messages: [
-        {
-          role: "user",
-          content: `The owner's instructions:\n${instructions}\n\n<findings_json>\n${tagJson(list)}\n</findings_json>`,
-        },
-      ],
+      messages: [{ role: "user", content }],
     });
     this.d.spend.recordResponse({ model: HEARTBEAT_MODEL, purpose: "heartbeat", usage: res.usage });
     if (res.stop_reason !== "end_turn") throw new Error(`it stopped at ${res.stop_reason}`);

@@ -2,8 +2,8 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { homeassistantPlugin } from "../src/plugins/homeassistant";
 import type { CallContext } from "../src/plugins/plugin";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
-import { FakeModel } from "./fake-model";
-import { testApp } from "./helpers";
+import { FakeModel, toolUse } from "./fake-model";
+import { testApp, waitFor } from "./helpers";
 
 const seen: { method: string; path: string; auth: string | null; body: unknown }[] = [];
 let server: ReturnType<typeof Bun.serve>;
@@ -187,14 +187,16 @@ test("policy: everyday control runs; locks, purges, unknown domains and tainted 
   expect(
     v({ domain: "input_boolean", service: "toggle", entity_id: "input_boolean.guest" }).action,
   ).toBe("allow");
-  // Who can get in always asks; Haiku's review can't let it through.
+  // Who can get in always asks; Haiku's review can't let it through, nor a locked phone.
   expect(v({ domain: "lock", service: "unlock", entity_id: "lock.front_door" })).toMatchObject({
     action: "ask",
     why: "Unlocking or locking changes who can get in.",
+    kind: "access",
     always: true,
   });
   expect(v({ domain: "cover", service: "open_cover", entity_id: "cover.garage" })).toMatchObject({
     action: "ask",
+    kind: "access",
     always: true,
   });
   expect(v({ domain: "homeassistant", service: "restart" })).toMatchObject({ action: "ask" });
@@ -222,6 +224,41 @@ test("policy: everyday control runs; locks, purges, unknown domains and tainted 
       { ...call, task: { id: 1, tainted: true } },
     ),
   ).toMatchObject({ action: "ask", tainted: true });
+});
+
+test("unlocking a door is approved in the app, not from a locked phone's notification", async () => {
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("homeassistant_call_service", {
+          domain: "lock",
+          service: "unlock",
+          entity_id: "lock.front_door",
+        }),
+      ],
+    },
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Asked.", notify: false })] },
+  ]);
+  const t = await testApp(new FakeModel(), work, {}, [homeassistantPlugin], env());
+  await t.plugins.update("homeassistant", { enabled: true });
+  t.tasks.createBackgroundTask({
+    title: "Let the plumber in",
+    goal: "Unlock the front door",
+    origin: "schedule",
+    source: "s",
+    runKey: "s:door",
+  });
+  const a = await waitFor(() => t.approvals.list(true)[0]);
+  expect(a.kind).toBe("access");
+  expect(t.notifier.sent.at(-1)?.actions?.map((b) => b.label)).toEqual([
+    "Open in Hatbot",
+    "Deny",
+    "Pause all",
+  ]);
+  expect(t.approvals.decide(a.id, "approve", "ntfy")).toBeNull();
+  t.approvals.decide(a.id, "deny", "web");
+  await t.tasks.idle();
+  await t.plugins.stopAll();
 });
 
 test("strangers' text in states stays out of trusted output; reading it is untrusted", async () => {
@@ -292,7 +329,7 @@ test("whatever lets someone in waits for the owner: marked entities, scenes, are
     await ha("homeassistant_states").run({}, call);
     const t = ha("homeassistant_call_service");
     const v = (input: unknown) => verdictFor(t, input, call);
-    const always = { action: "ask", always: true } as const;
+    const always = { action: "ask", kind: "access", always: true } as const;
 
     // A gate on a switch, once the owner marks it.
     expect(v({ domain: "switch", service: "turn_on", entity_id: "switch.gate" })).toEqual({
@@ -370,7 +407,7 @@ test("ids are matched as Home Assistant reads them: any case, 'ALL' too", async 
   const { ha } = await started({ access: ["switch.gate"] });
   const t = ha("homeassistant_call_service");
   const v = (input: unknown) => verdictFor(t, input, call);
-  const always = { action: "ask", always: true } as const;
+  const always = { action: "ask", kind: "access", always: true } as const;
   expect(
     v({ domain: "scene", service: "apply", data: { entities: { "Lock.Front_Door": "unlocked" } } }),
   ).toMatchObject(always);
@@ -408,7 +445,7 @@ test("groups are checked by what they hold; an integration's scene asks", async 
     await ha("homeassistant_states").run({}, call);
     const t = ha("homeassistant_call_service");
     const v = (input: unknown) => verdictFor(t, input, call);
-    const always = { action: "ask", always: true } as const;
+    const always = { action: "ask", kind: "access", always: true } as const;
     expect(v({ domain: "switch", service: "turn_on", entity_id: "switch.outdoor" })).toEqual({
       ...always,
       why: "The owner asked to approve every change to switch.gate.",

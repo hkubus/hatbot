@@ -80,6 +80,8 @@ type State = {
 
 /** Hatbot's own chat: the first one, made with the database. */
 export const HATBOT_CHAT = 1;
+/** A chat's address. Hatbot's chat is the app's front page. */
+export const chatPath = (id: number) => (id === HATBOT_CHAT ? "/" : `/chat/${id}`);
 
 /** The chat that's incognito in this tab, so a reload stays incognito in it and only in it. */
 const INCOGNITO_KEY = "hatbot:incognito";

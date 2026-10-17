@@ -381,8 +381,16 @@ export function consequential(press: Press, el: AgentElement | null): Hold | nul
   if (!el || el.tag === "body") return null;
   // Payment and chat widgets live in frames from another address.
   if (el.tag === "iframe" || el.tag === "frame") return { frame: el.label };
+  // In a checkout or payment frame the tab's address doesn't show it, so the hold does, whatever the
+  // label: then it asks as a purchase or payment, and nothing else approved covers it.
+  const framed = checkoutHost(el.frameUrl);
+  const hold = pressed(press, el, framed ?? checkoutHost(el.url));
+  return hold && framed ? { checkout: framed } : hold;
+}
+
+/** Why pressing `el` needs confirm_intent; `checkout`: the checkout or payment page it's on. */
+function pressed(press: Press, el: AgentElement, checkout: string | null): Hold | null {
   const search = el.search === true;
-  const checkout = checkoutHost(el.frameUrl) ?? checkoutHost(el.url);
   // Enter or Space on a button or link presses it, like a click.
   if (!editable(el)) return clicked(el, search, checkout);
   // A click or a space in a text box types; so does shift+Enter in a text area, in chat boxes too.

@@ -1,7 +1,7 @@
 // Settings → Password and sign-ins: a new password or authenticator, and where you're signed in.
 import type { Session, SetupStartResponse, SignedOutOthers } from "@hatbot/shared";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { ApiError, api } from "../api";
+import { ApiError, api, errorText } from "../api";
 import { ask } from "../confirm";
 import { deviceName } from "../device";
 import { Icon } from "../icons";
@@ -10,8 +10,6 @@ import { navigate } from "../router";
 import type { Toast } from "../toast";
 import { AddToAuthenticator, OtpInput } from "./Login";
 
-const errorText = (err: unknown) =>
-  err instanceof ApiError ? err.message : "Couldn't reach Hatbot.";
 const changed = (what: string, ended: number) =>
   ended ? `${what}. Every other browser and app is signed out.` : what;
 const since = (iso: string) =>

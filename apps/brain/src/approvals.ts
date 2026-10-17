@@ -9,8 +9,8 @@ import type { Notifier } from "./notify";
 const TTL_MS = 24 * 3600_000;
 /**
  * Kinds a notification's Approve button may decide, from a locked phone (PLAN.md §6.2). The rest
- * (money, accounts, mandates, budget raises, suspected injections) are approved in the app; a
- * notification offers them "Open in Hatbot" and Deny.
+ * (money, accounts, who can get in, mandates, budget raises, suspected injections) are approved in
+ * the app; a notification offers them "Open in Hatbot" and Deny.
  */
 const NOTIFY_APPROVES: ApprovalKind[] = ["send", "submit_personal_data", "delete", "other"];
 export const approvableFromNotification = (kind: ApprovalKind) => NOTIFY_APPROVES.includes(kind);

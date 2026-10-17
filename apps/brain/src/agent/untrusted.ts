@@ -15,10 +15,22 @@ export function untrustedBlock(
   text: string,
   attrs: Record<string, string> = {},
 ): string {
+  return untrustedFields(tag, tagJson(text), attrs);
+}
+
+/**
+ * Several untrusted values in one block, laid out by the caller (research's findings, say): each
+ * value in `body` must be in tagJson already, so none can close the block or open another.
+ */
+export function untrustedFields(
+  tag: string,
+  body: string,
+  attrs: Record<string, string> = {},
+): string {
   const named = Object.entries(attrs)
     .map(([k, v]) => ` ${k}=${tagJson(v)}`)
     .join("");
-  return `<${tag}${named} trusted="false">\n${tagJson(text)}\n</${tag}>`;
+  return `<${tag}${named} trusted="false">\n${body}\n</${tag}>`;
 }
 
 /** Text between tags that isn't JSON: `&` and `<` escaped, so it can't close its tag or open another. */

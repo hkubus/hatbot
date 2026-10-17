@@ -675,7 +675,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
             if (!isBrowser && w && "focused" in w && (e === null || e.pageFocus === false))
               return { outside: true };
             const h = consequential(check.press, e);
-            if (gate || (h && "label" in h)) return h;
+            // A checkout or frame hold stays one, so it still asks as a purchase or payment.
+            if (gate || (h && ("label" in h || "checkout" in h || "frame" in h))) return h;
             // Outside a negotiation, anything that could message a seller asks first, and says why
             // when no label does (an icon-only Send is also a button with no label).
             const box =

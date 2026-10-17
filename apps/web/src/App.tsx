@@ -21,6 +21,7 @@ import { TaskDetail, Tasks } from "./pages/Tasks";
 import { navigate, useRoute } from "./router";
 import {
   chatName,
+  chatPath,
   connect,
   currentChat,
   disconnect,
@@ -77,9 +78,6 @@ const viewOf = (path: string) =>
             path.startsWith("/groups/")
           : path === v.path || path.startsWith(`${v.path}/`),
   ) ?? VIEWS[0];
-
-/** Hatbot's chat is the app's front page. */
-export const chatPath = (id: number) => (id === HATBOT_CHAT ? "/" : `/chat/${id}`);
 
 function useTheme(): Theme {
   return useSyncExternalStore((l) => {

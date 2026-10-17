@@ -1,6 +1,6 @@
 // MCP's settings: servers, and for each of their tools whether Hatbot may use it.
 import { useEffect, useState } from "react";
-import { ApiError } from "../api";
+import { errorText } from "../api";
 import { useLeaveGuard } from "../confirm";
 import { Switch } from "../switch";
 import type { PluginSettingsProps } from ".";
@@ -104,8 +104,6 @@ const blank = (): Server => ({
   pinned: {},
   kinds: {},
 });
-const errorText = (err: unknown) =>
-  err instanceof ApiError ? err.message : "Couldn't reach Hatbot.";
 const toLines = (r: Record<string, string>) =>
   Object.entries(r)
     .map(([k, v]) => `${k}=${v}`)

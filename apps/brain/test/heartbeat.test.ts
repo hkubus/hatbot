@@ -255,6 +255,25 @@ test("Haiku's triage is schema-checked JSON; anything else tells you plainly", a
   });
 });
 
+test("the triage's spend check is what its request may cost, not a flat amount", async () => {
+  const down = ["Jellyfin"];
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [kuma(down)]);
+  await t.plugins.update("kuma", { enabled: true });
+  await on(t);
+  t.settings.update({ limits: { ...t.settings.get().limits, dailyUsd: 1, alertReserveUsd: 0 } });
+  // Half a cent left today: more than Haiku's triage may cost, less than a flat cent.
+  t.spend.record({
+    model: "claude-haiku-5-5",
+    purpose: "chat",
+    usage: { input_tokens: 0, output_tokens: 0 },
+    extraUsd: 0.995,
+  });
+  t.taskModel.onCreate = () => '{"action": "notify", "message": "Looked."}';
+  // Both looks, at the spend and at the monitor, are the model's.
+  expect((await t.heartbeat.run()).note).toBe("Looked.\nLooked.");
+  expect(t.taskModel.creates).toHaveLength(2);
+});
+
 test("the weekly report sums up the week without the model, once, when it's due", async () => {
   const t = await testApp();
   t.db
