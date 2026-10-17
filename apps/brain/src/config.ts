@@ -21,17 +21,46 @@ export type Config = {
   releaseFile: string;
 };
 
+/** A host as it goes in a URL: an IPv6 address in brackets. */
+export const urlHost = (host: string) => (host.includes(":") ? `[${host}]` : host);
+
+/**
+ * The public address's origin, which is what a browser's Origin header is compared with: lower case,
+ * no default port, no trailing slash. A path can't be honoured, so it's refused.
+ */
+function originOf(raw: string): string {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`HATBOT_PUBLIC_URL isn't an address: ${raw}`);
+  }
+  if (
+    !/^https?:$/.test(url.protocol) ||
+    url.pathname !== "/" ||
+    url.search ||
+    url.hash ||
+    url.username ||
+    url.password
+  )
+    throw new Error(
+      `HATBOT_PUBLIC_URL must be only the scheme and host, like https://hatbot.example.com, not ${raw}`,
+    );
+  return url.origin;
+}
+
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
   const dataDir = env.HATBOT_DATA_DIR ?? join(import.meta.dir, "../../../data");
   return {
-    host: env.HATBOT_HOST ?? "127.0.0.1",
+    // Bun takes an IPv6 address without the brackets a URL needs.
+    host: (env.HATBOT_HOST ?? "127.0.0.1").replace(/^\[(.*)\]$/, "$1"),
     port: Number(env.HATBOT_PORT ?? 8080),
     dataDir,
     dbPath: env.HATBOT_DB ?? join(dataDir, "hatbot.sqlite"),
     memoryDir: env.HATBOT_MEMORY_DIR ?? join(dataDir, "memory"),
     archiveDir: env.HATBOT_ARCHIVE_DIR ?? join(dataDir, "archive"),
     webDir: env.HATBOT_WEB_DIR ?? join(import.meta.dir, "../../web/dist"),
-    publicUrl: (env.HATBOT_PUBLIC_URL ?? "http://localhost:5173").replace(/\/$/, ""),
+    publicUrl: originOf(env.HATBOT_PUBLIC_URL ?? "http://localhost:5173"),
     trustedProxies: (env.HATBOT_TRUSTED_PROXIES ?? "")
       .split(",")
       .map((s) => s.trim())

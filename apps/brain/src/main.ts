@@ -9,7 +9,7 @@ import { Attachments } from "./attachments";
 import { AuthService, FailureLimiter } from "./auth/service";
 import { Bots } from "./bots";
 import { Checks } from "./checks";
-import { loadConfig } from "./config";
+import { loadConfig, urlHost } from "./config";
 import { openDb } from "./db";
 import { HttpDesktopAgent } from "./desktop/client";
 import { Desktop } from "./desktop/service";
@@ -271,6 +271,12 @@ const web = webHandler(config.webDir);
 const server = Bun.serve({
   hostname: config.host,
   port: config.port,
+  // Development mode shows anyone a stack trace for an error.
+  development: false,
+  error(err) {
+    console.error(err);
+    return new Response("Internal error", { status: 500 });
+  },
   // Attachments are at most 25 MB; a little over for the multipart framing.
   maxRequestBodySize: 26 * 1024 * 1024,
   fetch: (req, srv) =>
@@ -278,7 +284,7 @@ const server = Bun.serve({
   // Only what's sent with `compress` (routes/stream.ts) is compressed: live frames are JPEG already.
   websocket: { ...websocket, perMessageDeflate: { compress: "32KB", decompress: true } },
 });
-console.log(`hatbot brain listening on http://${server.hostname}:${server.port}`);
+console.log(`hatbot brain listening on http://${urlHost(config.host)}:${server.port}`);
 if (!auth.isSetUp()) {
   console.log(`First run: open ${config.publicUrl}/setup and enter setup code ${auth.setupCode}`);
 }

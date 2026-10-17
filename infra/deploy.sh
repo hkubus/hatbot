@@ -51,7 +51,8 @@ else
   def_url=${HATBOT_PUBLIC_URL:-}
   def_proxies=${HATBOT_TRUSTED_PROXIES:-}
   url='' proxies=''
-  until [[ ${url:-$def_url} == http*://* ]]; do
+  # Only the scheme and host: the brain compares it with browsers' Origin, and refuses a path.
+  until [[ ${url:-$def_url} =~ ^https?://[^/?#@]+/?$ ]]; do
     read -r -p "   Public URL of the web app, e.g. https://hatbot.example.com${def_url:+ [$def_url]}: " url ||
       die "the web app's public URL is needed"
   done

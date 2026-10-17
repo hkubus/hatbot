@@ -24,7 +24,12 @@ export function webHandler(dir: string): (req: Request) => Response {
         status: 503,
       });
     }
-    const path = decodeURIComponent(new URL(req.url).pathname);
+    let path: string;
+    try {
+      path = decodeURIComponent(new URL(req.url).pathname);
+    } catch {
+      return new Response("Bad request", { status: 400 });
+    }
     const file = normalize(join(root, path));
     const stat = file.startsWith(root) ? statOf(file) : null;
     if (stat?.isFile()) {
