@@ -3,6 +3,10 @@
 import Foundation
 import Observation
 
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
+
 /// Where the token lives: the Keychain on iOS, memory in tests.
 protocol TokenVault: Sendable {
   func load() -> String?
@@ -22,10 +26,12 @@ final class Session {
   @ObservationIgnored private let vault: TokenVault
   @ObservationIgnored private let defaults: UserDefaults
   @ObservationIgnored private let cache: DiskCache?
+  @ObservationIgnored private let urlSession: URLSession
 
-  init(vault: TokenVault, defaults: UserDefaults = .standard, cacheDir: URL? = nil) {
+  init(vault: TokenVault, defaults: UserDefaults = .standard, cacheDir: URL? = nil, urlSession: URLSession = .shared) {
     self.vault = vault
     self.defaults = defaults
+    self.urlSession = urlSession
     cache = cacheDir.map(DiskCache.init(dir:))
     server = defaults.string(forKey: Self.serverKey) ?? ""
     if let url = API.serverURL(from: server), let token = vault.load() {
@@ -35,9 +41,13 @@ final class Session {
 
   func signIn(password: String, code: String, device: String) async throws {
     guard let url = API.serverURL(from: server) else {
+      if API.isPlainHTTP(server) {
+        throw APIError(
+          status: 0, message: "Use your Hatbot's https address. Over http, your password and token would travel unencrypted.")
+      }
       throw APIError(status: 0, message: "Enter your Hatbot's address.")
     }
-    let anonymous = API(server: url, token: nil)
+    let anonymous = API(server: url, token: nil, session: urlSession)
     let me: Me = try await anonymous.get("/auth/me")
     if !me.setupDone {
       throw APIError(status: 0, message: "Finish setting up Hatbot in the web app first.")
@@ -75,11 +85,18 @@ final class Session {
     store = nil
     vault.clear()
     cache?.clear()
+    // Files opened from the chat, and what URLSession kept of attachments and screenshots.
+    try? FileManager.default.removeItem(at: DiskCache.openedFiles)
+    urlSession.configuration.urlCache?.removeAllCachedResponses()
   }
 
   private func makeAPI(_ url: URL, token: String) -> API {
-    API(server: url, token: token) { [weak self] in
-      Task { @MainActor in self?.forget() }
+    API(server: url, token: token, session: urlSession) { [weak self] in
+      Task { @MainActor in
+        // Only while it's still this token's session: a late answer to an older one mustn't sign you out.
+        guard let self, self.store?.api.token == token else { return }
+        self.forget()
+      }
     }
   }
 }

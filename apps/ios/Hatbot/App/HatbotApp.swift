@@ -3,6 +3,7 @@
 // and quick actions and Spotlight results open theirs (App/Extras.swift).
 import CoreSpotlight
 import SwiftUI
+import UIKit
 import WidgetKit
 
 @main
@@ -14,6 +15,7 @@ struct HatbotApp: App {
     let vault = KeychainVault()
     AppGroup.migrate(vault: vault)
     _session = State(initialValue: Session(vault: vault, defaults: AppGroup.defaults, cacheDir: AppGroup.cacheDir))
+    PrivacyCover.shared.start()
   }
 
   var body: some Scene {
@@ -26,10 +28,14 @@ struct HatbotApp: App {
         }
       }
       .environment(session)
+      // Links in replies, sources and task steps: only the kinds that can't start anything else.
+      .environment(\.openURL, OpenURLAction { url in AppLink.opens(url) ? .systemAction : .discarded })
       .tint(.brand)
       .onChange(of: session.store == nil) { _, out in
         if out {
           Spotlight.clear()
+          AttachmentCache.shared.clear()
+          ScreenCache.shared.clear()
           Task { await Badge.show(0) }
         }
       }
@@ -41,6 +47,11 @@ struct MainView: View {
   @Environment(AppStore.self) private var store
   @Environment(\.scenePhase) private var phase
   @State private var tab = AppTab.chat
+  /// The sections opened so far. Each is kept, hidden while another shows, so an edit you were making
+  /// or a secret you were shown is still there when you come back.
+  @State private var opened: Set<AppTab> = [.chat]
+  /// How many of each section's first page show: none while a page is pushed over it.
+  @State private var roots: [AppTab: Int] = [:]
   @State private var sidebar = false
   @State private var chatPath: [Route] = []
   @State private var tasksPath: [Route] = []
@@ -51,7 +62,12 @@ struct MainView: View {
   @State private var memoryPath: [Route] = []
 
   var body: some View {
-    Sidebar(tab: $tab, open: $sidebar) { section }
+    Sidebar(tab: $tab, open: $sidebar, atRoot: roots[tab, default: 0] > 0) { sections }
+    .onChange(of: tab) { _, t in
+      opened.insert(t)
+      // A field in the section you left mustn't keep the keyboard up over this one.
+      UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
     // The event stream runs while the app is in front; iOS would cut it in the background anyway.
     .onChange(of: phase, initial: true) { _, phase in
       if phase == .active {
@@ -87,9 +103,23 @@ struct MainView: View {
     .sensoryFeedback(.warning, trigger: store.needsYou) { old, new in new > old }
   }
 
+  /// The open section in front of the others, which stay as they were.
+  private var sections: some View {
+    ZStack {
+      ForEach(AppTab.allCases.filter { opened.contains($0) || $0 == tab }, id: \.self) { t in
+        section(t)
+          .environment(\.sidebarRoot) { shown in roots[t] = max(0, roots[t, default: 0] + (shown ? 1 : -1)) }
+          .environment(\.sectionShown, t == tab)
+          .opacity(t == tab ? 1 : 0)
+          .allowsHitTesting(t == tab)
+          .accessibilityHidden(t != tab)
+      }
+    }
+  }
+
   @ViewBuilder
-  private var section: some View {
-    switch tab {
+  private func section(_ which: AppTab) -> some View {
+    switch which {
     case .chat: ChatView(path: $chatPath, focus: $focus)
     case .search:
       SearchView { conversationId, messageId in
@@ -174,8 +204,9 @@ private struct Toast: View {
         .padding(.top, 4)
         .transition(.move(edge: .top).combined(with: .opacity))
         .task(id: text) {
-          try? await Task.sleep(for: .seconds(2.8))
-          withAnimation { store.toast = nil }
+          // A newer note ends this wait early; that one then gets its own 2.8 s.
+          do { try await Task.sleep(for: .seconds(2.8)) } catch { return }
+          if store.toast == text { withAnimation { store.toast = nil } }
         }
     }
   }

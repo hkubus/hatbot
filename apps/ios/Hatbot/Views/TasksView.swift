@@ -7,6 +7,8 @@ struct TasksView: View {
   @Environment(AppStore.self) private var store
   @State private var filter = AppStore.TaskFilter.active
   @State private var finishedIds: [Int]?
+  /// Finished tasks go back further than the pages loaded so far.
+  @State private var moreFinished = false
   @State private var error: String?
 
   var body: some View {
@@ -41,6 +43,12 @@ struct TasksView: View {
           ForEach(shown) { t in
             NavigationLink(value: Route.task(t.id)) { TaskRow(task: t) }
           }
+          // Scrolled to the end: the page before.
+          if filter == .done && moreFinished && error == nil {
+            ProgressView()
+              .frame(maxWidth: .infinity)
+              .task(id: finishedIds?.last) { await loadEarlier() }
+          }
         }
       }
       .navigationTitle("Tasks")
@@ -64,8 +72,9 @@ struct TasksView: View {
 
   /// Tasks that start or finish while the list is open move between the two lists.
   private var shown: [AgentTask] {
-    store.tasks.values
-      .filter { filter == .active ? $0.isActive : !$0.isActive && (finishedIds?.contains($0.id) ?? false) }
+    let finished = Set(finishedIds ?? [])
+    return store.tasks.values
+      .filter { filter == .active ? $0.isActive : !$0.isActive && finished.contains($0.id) }
       .sorted { $0.id > $1.id }
   }
 
@@ -73,7 +82,22 @@ struct TasksView: View {
     error = nil
     do {
       let ids = try await store.loadTasks(filter)
-      if filter == .done { finishedIds = ids }
+      if filter == .done {
+        finishedIds = ids
+        moreFinished = ids.count == AppStore.page
+      }
+    } catch {
+      self.error = message(for: error)
+    }
+  }
+
+  private func loadEarlier() async {
+    guard let last = finishedIds?.last else { return }
+    do {
+      let ids = try await store.loadTasks(.done, before: last)
+      let have = Set(finishedIds ?? [])
+      finishedIds = (finishedIds ?? []) + ids.filter { !have.contains($0) }
+      moreFinished = ids.count == AppStore.page
     } catch {
       self.error = message(for: error)
     }
@@ -137,7 +161,8 @@ struct TaskDetailView: View {
       }
       ForEach(pending) { a in
         Section {
-          VStack(alignment: .leading, spacing: 10) { ApprovalBody(approval: a) }.padding(.vertical, 4)
+          VStack(alignment: .leading, spacing: 10) { ApprovalBody(approval: a, linksTask: false) }
+            .padding(.vertical, 4)
         }
       }
       if showLive {

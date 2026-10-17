@@ -137,6 +137,9 @@ struct ChartView: View {
         )
         .foregroundStyle(by: .value("Series", spec.names[p.series]))
         .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+        // VoiceOver reads the point's label, not its index.
+        .accessibilityLabel(spec.x[p.index])
+        .accessibilityValue(spoken(p.series, p.value))
       }
       if let i = selected {
         RuleMark(x: .value("x", i))
@@ -146,9 +149,11 @@ struct ChartView: View {
             position: .top, spacing: 0,
             overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))
           ) { readout(i) }
+          .accessibilityHidden(true)
       }
       ForEach(dots) { p in
         PointMark(x: .value("x", p.index), y: .value("Value", p.value))
+          .accessibilityHidden(true)
           .symbol { dot(p.series) }
           .annotation(position: .trailing, spacing: 4, overflowResolution: .init(x: .padScale, y: .disabled)) {
             // One line gets its last value beside its end.
@@ -189,10 +194,13 @@ struct ChartView: View {
         .position(by: .value("Series", spec.isStacked ? "" : spec.names[b.series]), axis: .horizontal, span: .fixed(group))
         .cornerRadius(b.outer ? 4 : 0)
         .opacity(selected == nil || selected == b.index ? 1 : 0.45)
+        .accessibilityLabel(spec.x[b.index])
+        .accessibilityValue(spoken(b.series, spec.series[b.series].data[b.index] ?? 0))
       }
       RuleMark(y: .value("Value", 0))
         .foregroundStyle(Color.secondary.opacity(0.5))
         .lineStyle(StrokeStyle(lineWidth: 1))
+        .accessibilityHidden(true)
       if let i = selected {
         RuleMark(x: .value("x", String(i)))
           .foregroundStyle(.clear)
@@ -200,6 +208,7 @@ struct ChartView: View {
             position: .top, spacing: 0,
             overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))
           ) { readout(i) }
+          .accessibilityHidden(true)
       }
     }
     // Keys in x order, whichever series has the first value at each.
@@ -240,10 +249,13 @@ struct ChartView: View {
             Text(tip).font(.caption2).monospacedDigit().foregroundStyle(.secondary)
           }
         }
+        .accessibilityLabel(spec.x[b.index])
+        .accessibilityValue(spoken(b.series, spec.series[b.series].data[b.index] ?? 0))
       }
       RuleMark(x: .value("Value", 0))
         .foregroundStyle(Color.secondary.opacity(0.5))
         .lineStyle(StrokeStyle(lineWidth: 1))
+        .accessibilityHidden(true)
       if let i = selected {
         RuleMark(y: .value("x", String(i)))
           .foregroundStyle(.clear)
@@ -251,6 +263,7 @@ struct ChartView: View {
             position: .bottom, spacing: 0,
             overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))
           ) { readout(i) }
+          .accessibilityHidden(true)
       }
     }
     .chartYScale(domain: spec.x.indices.map(String.init))
@@ -280,6 +293,11 @@ struct ChartView: View {
     let fit = max(1, Int(plot / (CGFloat(longest) * 6 + 10)))
     let step = max(1, Int((Double(n) / Double(fit)).rounded(.up)))
     return spec.x.indices.filter { $0 % step == 0 }
+  }
+
+  /// What VoiceOver reads for a value: the value, then its series when there's more than one.
+  private func spoken(_ series: Int, _ value: Double) -> String {
+    single ? spec.format(value) : "\(spec.format(value)), \(spec.names[series])"
   }
 
   /// An 8pt dot with a 2pt ring of the bubble's colour, so it stays clear where lines cross.

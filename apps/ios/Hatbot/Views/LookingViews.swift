@@ -172,6 +172,8 @@ struct WatcherDetailView: View {
   private var watcher: Watcher? { store.watchers[id] }
   private var missing: Bool { notFound || store.deletedWatchers.contains(id) }
   @State private var busy = false
+  /// On or off as switched, until the brain has saved it.
+  @State private var enabled: Bool?
   /// Running the page's scripts, as switched, until the brain has read the page that way.
   @State private var render: Bool?
   @State private var confirmDelete = false
@@ -203,8 +205,14 @@ struct WatcherDetailView: View {
         Toggle(
           "On",
           isOn: Binding(
-            get: { w.enabled },
-            set: { on in Task { await act { _ = try await store.setWatcherEnabled(id, on) } } }))
+            get: { enabled ?? w.enabled },
+            set: { on in
+              enabled = on
+              Task {
+                await act { _ = try await store.setWatcherEnabled(id, on) }
+                enabled = nil
+              }
+            }))
         LabeledContent(w.source.kind == .page ? "Page" : "Tool", value: w.source.text)
         if w.source.kind == .page {
           Toggle(
@@ -432,13 +440,13 @@ struct HeartbeatView: View {
         Section {
           Toggle("On", isOn: s.enabled).onChange(of: s.wrappedValue.enabled) { save() }
           Picker("Every", selection: s.everyMinutes) {
-            ForEach([5, 10, 15, 30, 60, 120, 240], id: \.self) { m in
-              Text(m < 60 ? "\(m) minutes" : m == 60 ? "Hour" : "\(m / 60) hours").tag(m)
+            ForEach(AppSettings.Heartbeat.everyChoices(with: s.wrappedValue.everyMinutes), id: \.self) { m in
+              Text(AppSettings.Heartbeat.every(m)).tag(m)
             }
           }
           .onChange(of: s.wrappedValue.everyMinutes) { save() }
           Picker("Bot", selection: s.botId) {
-            ForEach(store.botIds, id: \.self) { id in Text(store.botName(id)).tag(id) }
+            ForEach(s.wrappedValue.botChoices(store.botIds), id: \.self) { id in Text(store.botName(id)).tag(id) }
           }
           .onChange(of: s.wrappedValue.botId) { save() }
         }
@@ -534,6 +542,8 @@ struct ProposalView: View {
   @Environment(\.dismiss) private var dismiss
   @State private var busy = false
   @State private var error: String?
+  /// Each change's diff, worked out once and off the main thread, not on every redraw.
+  @State private var diffs: [String: [DiffLine]]?
 
   var body: some View {
     ScrollView {
@@ -545,12 +555,18 @@ struct ProposalView: View {
           VStack(alignment: .leading, spacing: 6) {
             Text(c.before == nil ? "\(c.path) (new)" : c.after == nil ? "\(c.path) (deleted)" : c.path)
               .font(.subheadline.weight(.semibold))
-            DiffLines(lines: LineDiff.of(c.before, c.after))
+            if let lines = diffs?[c.path] { DiffLines(lines: lines) } else { ProgressView() }
           }
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding()
+    }
+    .task(id: proposal.id) {
+      let changes = proposal.changes
+      diffs = await Task.detached(priority: .userInitiated) {
+        Dictionary(changes.map { ($0.path, LineDiff.of($0.before, $0.after)) }, uniquingKeysWith: { a, _ in a })
+      }.value
     }
     .navigationTitle(proposal.kind == .skill ? "Skill fix" : proposal.kind == .write ? "Memory change" : "Tidy-up")
     .navigationBarTitleDisplayMode(.inline)

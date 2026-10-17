@@ -204,6 +204,26 @@ struct HeartbeatInfo: Codable, Equatable, Sendable {
   var recent: [Run]?
 }
 
+extension AppSettings.Heartbeat {
+  /// How often it can look, from the Every picker, with the one set now when it's another (on the web,
+  /// say), so the picker has a row for it.
+  static func everyChoices(with current: Int) -> [Int] {
+    let common = [5, 10, 15, 30, 60, 120, 240]
+    return common.contains(current) ? common : (common + [current]).sorted()
+  }
+
+  /// "5 minutes", "Hour", "2 hours", "90 minutes".
+  static func every(_ minutes: Int) -> String {
+    if minutes % 60 == 0 { return minutes == 60 ? "Hour" : "\(minutes / 60) hours" }
+    return minutes == 1 ? "1 minute" : "\(minutes) minutes"
+  }
+
+  /// The bots it can run as, with the one set now when it isn't among them (deleted, or not loaded yet).
+  func botChoices(_ botIds: [String]) -> [String] {
+    botIds.contains(botId) ? botIds : botIds + [botId]
+  }
+}
+
 enum LineDiff {
   /// Lines kept around a change; longer runs of unchanged lines fold into a gap.
   static let context = 2
@@ -217,33 +237,46 @@ enum LineDiff {
       if s.hasSuffix("\n") { s.removeLast() }
       return s.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     }
-    let a = lines(before)
-    let b = lines(after)
+    let whole = (a: lines(before), b: lines(after))
+    // The lines both versions start and end with stay out of the table, so an edit to a long file costs
+    // its changed middle squared, not the whole file's.
+    var head = 0
+    while head < min(whole.a.count, whole.b.count) && whole.a[head] == whole.b[head] { head += 1 }
+    var tail = 0
+    while tail < min(whole.a.count, whole.b.count) - head
+      && whole.a[whole.a.count - 1 - tail] == whole.b[whole.b.count - 1 - tail]
+    {
+      tail += 1
+    }
+    let a = Array(whole.a[head..<(whole.a.count - tail)])
+    let b = Array(whole.b[head..<(whole.b.count - tail)])
+    var all = whole.a[..<head].map { DiffLine(kind: .context, text: " " + $0) }
     if a.count * b.count > 4_000_000 {
-      return a.map { DiffLine(kind: .removed, text: "-" + $0) } + b.map { DiffLine(kind: .added, text: "+" + $0) }
-    }
-    var lcs = Array(repeating: Array(repeating: 0, count: b.count + 1), count: a.count + 1)
-    for i in stride(from: a.count - 1, through: 0, by: -1) {
-      for j in stride(from: b.count - 1, through: 0, by: -1) {
-        lcs[i][j] = a[i] == b[j] ? lcs[i + 1][j + 1] + 1 : max(lcs[i + 1][j], lcs[i][j + 1])
+      all += a.map { DiffLine(kind: .removed, text: "-" + $0) } + b.map { DiffLine(kind: .added, text: "+" + $0) }
+    } else {
+      var lcs = Array(repeating: Array(repeating: 0, count: b.count + 1), count: a.count + 1)
+      for i in stride(from: a.count - 1, through: 0, by: -1) {
+        for j in stride(from: b.count - 1, through: 0, by: -1) {
+          lcs[i][j] = a[i] == b[j] ? lcs[i + 1][j + 1] + 1 : max(lcs[i + 1][j], lcs[i][j + 1])
+        }
+      }
+      var i = 0
+      var j = 0
+      while i < a.count || j < b.count {
+        if i < a.count && j < b.count && a[i] == b[j] {
+          all.append(DiffLine(kind: .context, text: " " + a[i]))
+          i += 1
+          j += 1
+        } else if i < a.count && (j >= b.count || lcs[i + 1][j] >= lcs[i][j + 1]) {
+          all.append(DiffLine(kind: .removed, text: "-" + a[i]))
+          i += 1
+        } else {
+          all.append(DiffLine(kind: .added, text: "+" + b[j]))
+          j += 1
+        }
       }
     }
-    var all: [DiffLine] = []
-    var i = 0
-    var j = 0
-    while i < a.count || j < b.count {
-      if i < a.count && j < b.count && a[i] == b[j] {
-        all.append(DiffLine(kind: .context, text: " " + a[i]))
-        i += 1
-        j += 1
-      } else if i < a.count && (j >= b.count || lcs[i + 1][j] >= lcs[i][j + 1]) {
-        all.append(DiffLine(kind: .removed, text: "-" + a[i]))
-        i += 1
-      } else {
-        all.append(DiffLine(kind: .added, text: "+" + b[j]))
-        j += 1
-      }
-    }
+    all += whole.a[(whole.a.count - tail)...].map { DiffLine(kind: .context, text: " " + $0) }
     var out: [DiffLine] = []
     for (k, l) in all.enumerated() {
       let near = all[max(0, k - context)..<min(all.count, k + context + 1)].contains { $0.kind != .context }

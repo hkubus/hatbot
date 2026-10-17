@@ -36,6 +36,12 @@ enum AppLink: Equatable, Sendable {
     }
   }
 
+  /// Whether a tapped link may open: web pages, mail and the app's own links. A reply that quotes a page
+  /// can carry a shortcuts:, tel: or other app's link, which mustn't run on a tap.
+  static func opens(_ url: URL) -> Bool {
+    ["http", "https", "mailto", "hatbot"].contains(url.scheme?.lowercased() ?? "")
+  }
+
   var url: URL {
     let s =
       switch self {

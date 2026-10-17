@@ -74,6 +74,13 @@ enum PickedFile {
     }
   }
 
+  /// A file's size in bytes, without reading it.
+  static func size(_ url: URL) -> Int? {
+    let scoped = url.startAccessingSecurityScopedResource()
+    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+    return try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
+  }
+
   static func mediaType(_ url: URL) -> String {
     UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
   }

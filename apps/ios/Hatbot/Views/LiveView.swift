@@ -73,12 +73,18 @@ struct LiveView: View {
   @Environment(AppStore.self) private var store
   @Environment(\.scenePhase) private var phase
   @Environment(\.verticalSizeClass) private var vertical
+  @Environment(\.sectionShown) private var sectionShown
   @State private var feed = LiveFeed()
+  /// On screen: not under a page pushed over it.
+  @State private var visible = false
   @State private var typing = false
   @State private var error: String?
   @State private var zoom = Zoom()
 
-  private var landscape: Bool { fullScreen && vertical == .compact }
+  private var landscape: Bool { fullScreen && sectionShown && vertical == .compact }
+  /// Frames come only while you can see them: not under another page, in a hidden section or with the
+  /// app in the background.
+  private var streaming: Bool { visible && sectionShown && phase != .background }
 
   var body: some View {
     let control = store.desktop?.control == .owner
@@ -104,14 +110,14 @@ struct LiveView: View {
     }
     .toolbar(landscape ? .hidden : .automatic, for: .navigationBar)
     .statusBarHidden(landscape)
-    .onAppear { feed.start(store) }
-    .onDisappear { feed.stop() }
-    .onChange(of: phase) { _, phase in
-      if phase == .active { feed.start(store) } else if phase == .background { feed.stop() }
+    .onAppear { visible = true }
+    .onDisappear { visible = false }
+    .onChange(of: streaming, initial: true) { _, on in
+      if on { feed.start(store) } else { feed.stop() }
     }
     .onChange(of: control) { _, control in if !control { typing = false } }
-    // Taking over and handing back.
-    .sensoryFeedback(.impact(weight: .medium), trigger: control)
+    // Taking over and handing back, felt once even when another section keeps a live view too.
+    .sensoryFeedback(.impact(weight: .medium), trigger: control) { _, _ in sectionShown }
     // The screen changes size.
     .onChange(of: landscape) { zoom = Zoom() }
   }

@@ -9,22 +9,30 @@ import UniformTypeIdentifiers
 @MainActor
 final class AttachmentCache {
   static let shared = AttachmentCache()
-  private let images = NSCache<NSString, UIImage>()
+  /// The chat's pictures, at the size the chat shows them (about 2 MB each).
+  private let images = Picture.cache(megabytes: 48)
 
-  func image(_ api: API, id: Int) async throws -> UIImage {
-    let key = "\(api.server.absoluteString)/\(id)" as NSString
+  /// A picture at most `longSide` pixels on its long side. Only the chat's size is kept: one opened full
+  /// screen is decoded for that and let go when it closes.
+  func image(_ api: API, id: Int, longSide: CGFloat, keep: Bool = true) async throws -> UIImage {
+    let key = "\(api.server.absoluteString)/\(id)/\(Int(longSide))" as NSString
     if let hit = images.object(forKey: key) { return hit }
     let data = try await api.data("/attachments/\(id)")
-    guard let image = await Task.detached(operation: { UIImage(data: data)?.preparingForDisplay() }).value else {
+    guard let image = await Task.detached(operation: { Picture.decode(data, longSide: longSide) }).value else {
       throw APIError(status: 0, message: "Not an image")
     }
-    images.setObject(image, forKey: key)
+    if keep { images.setObject(image, forKey: key, cost: Picture.cost(image)) }
     return image
+  }
+
+  /// Signed out.
+  func clear() {
+    images.removeAllObjects()
   }
 
   /// The file saved where Quick Look can open it, under its own name.
   func file(_ api: API, _ a: Attachment) async throws -> URL {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("attachments/\(a.id)", isDirectory: true)
+    let dir = DiskCache.openedFiles.appendingPathComponent("\(a.id)", isDirectory: true)
     let url = dir.appendingPathComponent(a.name.replacingOccurrences(of: "/", with: "_"))
     if FileManager.default.fileExists(atPath: url.path) { return url }
     let data = try await api.data("/attachments/\(a.id)?download")
@@ -50,8 +58,10 @@ struct MessageFiles: View {
 
 /// A picture on a message; a tap opens it full screen.
 private struct PictureFile: View {
+  static let side: CGFloat = 240
   let attachment: Attachment
   @Environment(AppStore.self) private var store
+  @Environment(\.displayScale) private var scale
   @State private var image: UIImage?
   @State private var failed = false
   @State private var full = false
@@ -66,21 +76,34 @@ private struct PictureFile: View {
           .overlay { if failed { Image(systemName: "photo").foregroundStyle(.secondary) } else { ProgressView() } }
       }
     }
-    .frame(maxWidth: 240, maxHeight: 240)
+    .frame(maxWidth: Self.side, maxHeight: Self.side)
     .clipShape(.rect(cornerRadius: 14))
     .contentShape(.rect)
     .onTapGesture { if image != nil { full = true } }
     .fullScreenCover(isPresented: $full) {
-      if let image { ImageViewer(image: image) }
+      if let image { FullPicture(api: store.api, attachment: attachment, small: image) }
     }
     .task(id: attachment.id) {
       do {
-        image = try await AttachmentCache.shared.image(store.api, id: attachment.id)
+        image = try await AttachmentCache.shared.image(store.api, id: attachment.id, longSide: Self.side * scale)
       } catch {
         failed = true
       }
     }
     .accessibilityLabel(attachment.name)
+  }
+}
+
+/// A picture full screen: the chat's copy at once, then one sharp enough to zoom into.
+private struct FullPicture: View {
+  let api: API
+  let attachment: Attachment
+  let small: UIImage
+  @State private var large: UIImage?
+
+  var body: some View {
+    ImageViewer(image: large ?? small, label: attachment.name)
+      .task { large = try? await AttachmentCache.shared.image(api, id: attachment.id, longSide: 3000, keep: false) }
   }
 }
 

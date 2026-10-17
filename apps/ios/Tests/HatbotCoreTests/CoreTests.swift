@@ -63,6 +63,26 @@ final class ModelTests: XCTestCase {
     XCTAssertEqual(obj["down"] as? Bool, true)
   }
 
+  /// A limit is read as it's typed, in the phone's own format, so Save knows about it before Return.
+  func testReadsMoneyAsItsTyped() {
+    let us = Locale(identifier: "en_US")
+    let pl = Locale(identifier: "pl_PL")
+    XCTAssertEqual(Format.amount("5", locale: us), 5)
+    XCTAssertEqual(Format.amount("2.50", locale: us), 2.5)
+    XCTAssertEqual(Format.amount("2.", locale: us), 2)
+    XCTAssertEqual(Format.amount(".5", locale: us), 0.5)
+    XCTAssertEqual(Format.amount("$1,000.00", locale: us), 1000)
+    XCTAssertEqual(Format.amount("2,50", locale: pl), 2.5)
+    XCTAssertEqual(Format.amount("1 000,5", locale: pl), 1000.5)
+    XCTAssertNil(Format.amount("", locale: us))
+    XCTAssertNil(Format.amount(".", locale: us))
+    XCTAssertNil(Format.amount("1.2.3", locale: us))
+    XCTAssertEqual(Format.amountText(2.5, locale: us), "2.5")
+    XCTAssertEqual(Format.amountText(2.5, locale: pl), "2,5")
+    XCTAssertEqual(Format.amountText(1000, locale: us), "1000")
+    XCTAssertEqual(Format.amount(Format.amountText(12.34, locale: pl), locale: pl), 12.34)
+  }
+
   func testParsesBrainDates() {
     XCTAssertNotNil(Format.date("2026-10-10T08:00:00.123Z"))
     XCTAssertNotNil(Format.date("2026-10-10T08:00:00Z"))
@@ -71,9 +91,35 @@ final class ModelTests: XCTestCase {
   func testNormalisesServerAddresses() {
     XCTAssertEqual(API.serverURL(from: "hatbot.example.com")?.absoluteString, "https://hatbot.example.com")
     XCTAssertEqual(API.serverURL(from: " https://h.example/api/v1/ ")?.absoluteString, "https://h.example")
-    XCTAssertEqual(
-      API.serverURL(from: "http://192.168.55.230:8080")?.absoluteString, "http://192.168.55.230:8080")
+    XCTAssertEqual(API.serverURL(from: "https://192.168.55.230:8443")?.absoluteString, "https://192.168.55.230:8443")
     XCTAssertNil(API.serverURL(from: ""))
+  }
+
+  /// The token goes with every request, so never over plain http, typed or saved by an older app.
+  func testRefusesPlainHTTP() async throws {
+    XCTAssertNil(API.serverURL(from: "http://192.168.55.230:8080"))
+    XCTAssertNil(API.serverURL(from: "HTTP://hatbot.example.com"))
+    XCTAssertNil(API.serverURL(from: "ws://hatbot.example.com"))
+    XCTAssertTrue(API.isPlainHTTP(" http://192.168.55.230:8080"))
+    XCTAssertFalse(API.isPlainHTTP("hatbot.example.com"))
+    try await MainActor.run {
+      let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+      defaults.set("http://192.168.55.230:8080", forKey: Session.serverKey)
+      let session = Session(vault: MemoryVault("old"), defaults: defaults)
+      XCTAssertNil(session.store)
+    }
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+    let session = await MainActor.run {
+      let s = Session(vault: MemoryVault(), defaults: defaults)
+      s.server = "http://192.168.55.230:8080"
+      return s
+    }
+    do {
+      try await session.signIn(password: "p", code: "123456", device: "test")
+      XCTFail("signed in over http")
+    } catch let e as APIError {
+      XCTAssertTrue(e.message.contains("https"))
+    }
   }
 }
 
@@ -257,6 +303,29 @@ final class StoreTests: XCTestCase {
 }
 
 final class ScheduleAndMemoryTests: XCTestCase {
+  /// A schedule's page has changes only when you've made some, repeating or not.
+  func testAScheduleUnchangedIsUnchanged() throws {
+    let json = { (when: String) in
+      #"{"id":2,"name":"Morning","\#(when),"prompt":"Brief me","enabled":true,"createdVia":"chat","createdAt":"2026-10-10T08:00:00.000Z"}"#
+    }
+    let repeating = try JSONDecoder().decode(Schedule.self, from: Data(json(#"cron":"0 8 * * *""#).utf8))
+    let first = ScheduleForm(repeating)
+    Thread.sleep(forTimeInterval: 0.01)
+    XCTAssertEqual(ScheduleForm(repeating), first)
+    var edited = first
+    edited.cron = "0 9 * * *"
+    XCTAssertNotEqual(edited, first)
+    edited = first
+    edited.prompt = "Brief me, briefly"
+    XCTAssertNotEqual(edited, first)
+
+    let once = try JSONDecoder().decode(Schedule.self, from: Data(json(#"runAt":"2026-10-20T07:00:00.000Z""#).utf8))
+    XCTAssertEqual(ScheduleForm(once), ScheduleForm(once))
+    var later = ScheduleForm(once)
+    later.at = later.at.addingTimeInterval(3600)
+    XCTAssertNotEqual(later, ScheduleForm(once))
+  }
+
   func testDecodesTriggersAndTheirSecret() throws {
     let json = #"""
       {"type":"trigger.updated","trigger":{"id":3,"name":"Kuma","kind":"kuma","trusted":true,"prompt":"Fix it",
@@ -306,6 +375,19 @@ final class ScheduleAndMemoryTests: XCTestCase {
     XCTAssertNil(link("hatbot://tasks/1/2"))
     for l in [AppLink.memory("notes/my servers.md"), .task(4), .newMessage] { XCTAssertEqual(AppLink(url: l.url), l) }
     XCTAssertNil(link("https://tasks/1"))
+  }
+
+  /// A link in a reply opens only if it can't start something: no shortcut, call or other app.
+  func testOpensOnlySafeLinks() {
+    for s in ["https://pve.proxmox.com/wiki", "http://example.com", "mailto:me@example.com", "hatbot://tasks/3", "HTTPS://A.B"] {
+      XCTAssertTrue(AppLink.opens(URL(string: s)!), s)
+    }
+    for s in [
+      "shortcuts://run-shortcut?name=Wipe", "tel:+48123456789", "sms:123", "facetime:x@y", "file:///etc/hosts",
+      "javascript:alert(1)", "itms-services://?action=download-manifest", "notes", "x-apple-health://",
+    ] {
+      XCTAssertFalse(AppLink.opens(URL(string: s)!), s)
+    }
   }
 
   func testGroupsMemoryFilesByFolder() {
@@ -482,6 +564,26 @@ final class FoldTests: XCTestCase {
     XCTAssertFalse(json.contains("\"icon\""))
   }
 
+  /// A model or effort from a newer brain stays itself, and saving the bot or setting sends it back so.
+  func testKeepsModelsAndEffortsItDoesntKnow() throws {
+    let json = #"""
+      {"id":"coder","name":"Coder","instructions":"","chatModel":"claude-sonnet-6","chatEffort":"high",
+       "plugins":null,"createdAt":"2026-10-14T08:00:00.000Z"}
+      """#
+    let b = try JSONDecoder().decode(Bot.self, from: Data(json.utf8))
+    XCTAssertEqual(b.chatModel?.rawValue, "claude-sonnet-6")
+    XCTAssertEqual(b.chatEffort?.rawValue, "high")
+    XCTAssertFalse(AppSettings.ChatModel.known.contains(b.chatModel!))
+    let change = AppStore.BotChange(
+      name: nil, instructions: "", chatModel: b.chatModel, chatEffort: b.chatEffort, plugins: nil)
+    let sent = String(decoding: try JSONEncoder().encode(change), as: UTF8.self)
+    XCTAssertTrue(sent.contains(#""chatModel":"claude-sonnet-6""#))
+    XCTAssertTrue(sent.contains(#""chatEffort":"high""#))
+    // Known ones are the same values as before.
+    XCTAssertEqual(try JSONDecoder().decode(AppSettings.DesktopModel.self, from: Data(#""claude-haiku-5-5""#.utf8)), .haiku)
+    XCTAssertEqual(String(decoding: try JSONEncoder().encode(AppSettings.TaskModel.opus), as: UTF8.self), #""claude-opus-5-5""#)
+  }
+
   func testDecodesEpisodeEvents() throws {
     let json = #"{"type":"episode.updated","episode":{"id":4,"startedAt":"a","lastActivityAt":"b","recap":"R"}}"#
     guard case let .episodeUpdated(e) = try JSONDecoder().decode(HatbotEvent.self, from: Data(json.utf8)) else {
@@ -602,6 +704,33 @@ final class LookingAfterThingsTests: XCTestCase {
     XCTAssertEqual(LineDiff.of("x\ny\n", nil).map(\.text), ["-x", "-y"])
   }
 
+  /// One line changed in a long file is still one line changed, found quickly: the lines the two
+  /// versions share at the start and end stay out of the table.
+  func testDiffsALongFileByItsChangedMiddle() {
+    let lines = (0..<5000).map { "line \($0)" }
+    var edited = lines
+    edited[2500] = "changed"
+    let start = Date()
+    let diff = LineDiff.of(lines.joined(separator: "\n"), edited.joined(separator: "\n"))
+    XCTAssertLessThan(Date().timeIntervalSince(start), 1)
+    XCTAssertEqual(
+      diff.map(\.text), ["…", " line 2498", " line 2499", "-line 2500", "+changed", " line 2501", " line 2502", "…"])
+    XCTAssertEqual(LineDiff.of("a\nb\n", "a\nb\n").map(\.text), ["…"])
+    XCTAssertEqual(LineDiff.of("a\nb\nc", "a\nc").map(\.text), [" a", "-b", " c"])
+  }
+
+  /// The heartbeat's pickers have a row for what's set now, even when it's not one of theirs.
+  func testHeartbeatPickersKeepAValueSetElsewhere() {
+    XCTAssertEqual(AppSettings.Heartbeat.everyChoices(with: 15), [5, 10, 15, 30, 60, 120, 240])
+    XCTAssertEqual(AppSettings.Heartbeat.everyChoices(with: 20), [5, 10, 15, 20, 30, 60, 120, 240])
+    XCTAssertEqual(AppSettings.Heartbeat.everyChoices(with: 1440).last, 1440)
+    XCTAssertEqual(
+      [5, 60, 90, 120].map(AppSettings.Heartbeat.every), ["5 minutes", "Hour", "90 minutes", "2 hours"])
+    let hb = AppSettings.Heartbeat(enabled: true, everyMinutes: 15, botId: "sysadmin", instructions: "")
+    XCTAssertEqual(hb.botChoices(["hatbot", "sysadmin"]), ["hatbot", "sysadmin"])
+    XCTAssertEqual(hb.botChoices(["hatbot"]), ["hatbot", "sysadmin"])
+  }
+
   func testSplitsSearchSnippetsAtTheMarks() {
     let parts = Search.parts("the \u{02}router\u{03} is at \u{02}.1\u{03}")
     XCTAssertEqual(parts.map(\.text), ["the ", "router", " is at ", ".1"])
@@ -713,6 +842,73 @@ final class DiskCacheTests: XCTestCase {
     }
     cache.clear()
     XCTAssertNil(cache.chats())
+  }
+
+  /// A page still being written when you sign out doesn't come back after the cache is cleared.
+  func testClearingWaitsForWritesOnTheirWay() throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let cache = DiskCache(dir: dir)
+    let m = ThreadMessage(id: 1, role: .user, kind: .text, text: "secret", status: .done, createdAt: "2026-10-15T10:00:00Z")
+    for id in 1...50 { cache.save(DiskCache.Page(messages: [m], episodes: [], hasEarlier: false), for: id) }
+    cache.clear()
+    Thread.sleep(forTimeInterval: 0.3)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
+    XCTAssertNil(cache.page(50))
+  }
+
+  /// Signing out deletes the chat cache and the files opened from the chat, and forgets the token.
+  func testSigningOutLeavesNothingBehind() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let opened = DiskCache.openedFiles.appendingPathComponent("9", isDirectory: true)
+    try FileManager.default.createDirectory(at: opened, withIntermediateDirectories: true)
+    try Data("invoice".utf8).write(to: opened.appendingPathComponent("invoice.pdf"))
+    SlowBrain.routes = ["/auth/logout": "{}"]
+    let vault = MemoryVault("t")
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+    defaults.set("https://h.example", forKey: Session.serverKey)
+    let session = await MainActor.run {
+      let s = Session(vault: vault, defaults: defaults, cacheDir: dir, urlSession: SlowBrain.session())
+      s.store?.messages = [
+        ThreadMessage(id: 1, role: .user, kind: .text, text: "hi", status: .done, createdAt: "2026-10-15T10:00:00Z")
+      ]
+      return s
+    }
+    await session.signOut()
+    let store = await MainActor.run { session.store }
+    XCTAssertNil(store)
+    XCTAssertNil(vault.load())
+    XCTAssertFalse(FileManager.default.fileExists(atPath: DiskCache.openedFiles.path))
+    // The page the store kept as it disconnected is gone too.
+    try await Task.sleep(for: .milliseconds(200))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
+  }
+
+  /// A 401 that answers a request the old token made, after you've signed in again, leaves you signed in.
+  func testALate401FromTheOldTokenDoesntSignYouOut() async throws {
+    SlowBrain.routes = [
+      "/auth/me": #"{"setupDone":true,"authenticated":false}"#,
+      "/auth/login": #"{"token":"new"}"#,
+    ]
+    let vault = MemoryVault("old")
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+    defaults.set("https://h.example", forKey: Session.serverKey)
+    let session = await MainActor.run { Session(vault: vault, defaults: defaults, urlSession: SlowBrain.session()) }
+    let old = try await MainActor.run { try XCTUnwrap(session.store?.api) }
+    try await session.signIn(password: "p", code: "123456", device: "test")
+    XCTAssertEqual(vault.load(), "new")
+    old.unauthorized()
+    try await Task.sleep(for: .milliseconds(50))
+    let kept = await MainActor.run { session.store?.api.token }
+    XCTAssertEqual(kept, "new")
+    XCTAssertEqual(vault.load(), "new")
+    // The new token's own 401 still does.
+    await MainActor.run { session.store?.api.unauthorized() }
+    try await Task.sleep(for: .milliseconds(50))
+    let gone = await MainActor.run { session.store == nil }
+    XCTAssertTrue(gone)
+    XCTAssertNil(vault.load())
   }
 }
 
@@ -827,11 +1023,23 @@ final class ZoomTests: XCTestCase {
 final class SlowBrain: URLProtocol, @unchecked Sendable {
   static let delay: TimeInterval = 0.15
   nonisolated(unsafe) static var routes: [String: String] = [:]
+  /// Paths that answer more slowly than `delay`.
+  nonisolated(unsafe) static var slower: [String: TimeInterval] = [:]
+  /// Paths that answer with another status than 200.
+  nonisolated(unsafe) static var statuses: [String: Int] = [:]
   private static let lock = NSLock()
   nonisolated(unsafe) private static var paths: [String] = []
+  nonisolated(unsafe) private static var bodies: [String: Data] = [:]
 
   static var requested: [String] { lock.withLock { paths } }
-  static func reset() { lock.withLock { paths = [] } }
+  /// The last body sent to a path.
+  static func sent(_ path: String) -> Data? { lock.withLock { bodies[path] } }
+  static func reset() {
+    lock.withLock {
+      paths = []
+      bodies = [:]
+    }
+  }
 
   override class func canInit(with request: URLRequest) -> Bool { true }
   override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -839,11 +1047,16 @@ final class SlowBrain: URLProtocol, @unchecked Sendable {
   override func startLoading() {
     let url = request.url!
     let path = url.path.replacingOccurrences(of: API.prefix, with: "") + (url.query.map { "?\($0)" } ?? "")
-    Self.lock.withLock { Self.paths.append("\(request.httpMethod ?? "GET") \(path)") }
+    let sent = Self.body(of: request)
+    Self.lock.withLock {
+      Self.paths.append("\(request.httpMethod ?? "GET") \(path)")
+      if let sent { Self.bodies[path] = sent }
+    }
     let body = Self.routes[path]
-    DispatchQueue.global().asyncAfter(deadline: .now() + Self.delay) { [self] in
+    let status = body == nil ? 404 : Self.statuses[path] ?? 200
+    DispatchQueue.global().asyncAfter(deadline: .now() + (Self.slower[path] ?? Self.delay)) { [self] in
       let res = HTTPURLResponse(
-        url: url, statusCode: body == nil ? 404 : 200, httpVersion: "HTTP/1.1",
+        url: url, statusCode: status, httpVersion: "HTTP/1.1",
         headerFields: ["Content-Type": "application/json"])!
       client?.urlProtocol(self, didReceive: res, cacheStoragePolicy: .notAllowed)
       client?.urlProtocol(self, didLoad: Data((body ?? #"{"error":"not found"}"#).utf8))
@@ -852,6 +1065,22 @@ final class SlowBrain: URLProtocol, @unchecked Sendable {
   }
 
   override func stopLoading() {}
+
+  /// What was sent: URLSession hands a protocol the body as a stream.
+  private static func body(of request: URLRequest) -> Data? {
+    if let data = request.httpBody { return data }
+    guard let stream = request.httpBodyStream else { return nil }
+    stream.open()
+    defer { stream.close() }
+    var data = Data()
+    var buffer = [UInt8](repeating: 0, count: 4096)
+    while true {
+      let n = stream.read(&buffer, maxLength: buffer.count)
+      if n <= 0 { break }
+      data.append(buffer, count: n)
+    }
+    return data
+  }
 
   static func session() -> URLSession {
     let config = URLSessionConfiguration.ephemeral
@@ -945,4 +1174,141 @@ final class NetworkTests: XCTestCase {
     let loaded = await MainActor.run { store.tasks[40]?.id }
     XCTAssertEqual(loaded, 40)
   }
+
+  private static func message(_ id: Int, in conversation: Int) -> String {
+    #"{"id":\#(id),"role":"assistant","kind":"text","text":"m\#(id)","status":"done","createdAt":"2026-10-15T08:00:00Z","conversationId":\#(conversation)}"#
+  }
+
+  @MainActor private static func twoChats(_ store: AppStore) {
+    store.conversations = [
+      Conversation(id: 1, kind: .direct, botIds: ["hatbot"], unread: 0),
+      Conversation(id: 2, kind: .group, title: "Home", botIds: ["hatbot", "haggler"], unread: 0),
+    ]
+  }
+
+  /// An earlier page that arrives after you've gone to another chat stays out of that one.
+  func testAnEarlierPageForAChatYouLeftIsDropped() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    SlowBrain.routes["/conversations/1/messages?limit=50&before=60"] = "[\(Self.message(5, in: 1))]"
+    SlowBrain.routes["/conversations/2/messages?limit=50"] = "[\(Self.message(70, in: 2))]"
+    // The earlier page answers after the other chat has loaded.
+    SlowBrain.slower = ["/conversations/1/messages?limit=50&before=60": 0.4]
+    defer { SlowBrain.slower = [:] }
+    try await MainActor.run {
+      Self.twoChats(store)
+      store.messages = [try JSONDecoder().decode(ThreadMessage.self, from: Data(Self.message(60, in: 1).utf8))]
+      store.hasEarlier = true
+    }
+    async let earlier: Void = store.loadEarlier()
+    try await Task.sleep(for: .milliseconds(30))
+    await store.openConversation(2)
+    try await earlier
+    let ids = await MainActor.run { store.messages.map(\.id) }
+    XCTAssertEqual(ids, [70])
+  }
+
+  /// A save goes on top of the version that was read; one saved meanwhile comes back as a conflict
+  /// with the newer copy, and nothing is written.
+  func testMemorySavesSayWhichVersionTheyEdit() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    let file = "/memory/file?path=notes/servers.md"
+    SlowBrain.routes[file] = #"{"path":"notes/servers.md","content":"nas\n","sha":"aaa"}"#
+    let read = try await store.memoryFile("notes/servers.md")
+    XCTAssertEqual(read.content, "nas\n")
+    XCTAssertEqual(read.sha, "aaa")
+
+    SlowBrain.routes[file] = #"{"sha":"c0ffee"}"#
+    let commit = try await store.saveMemoryFile("notes/servers.md", content: "nas\npve\n", baseSha: read.sha)
+    XCTAssertEqual(commit, "c0ffee")
+    var sent = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(SlowBrain.sent(file))) as? [String: Any])
+    XCTAssertEqual(sent["baseSha"] as? String, "aaa")
+    XCTAssertEqual(sent["content"] as? String, "nas\npve\n")
+
+    // Changed elsewhere since: refused, with what it is now.
+    SlowBrain.routes[file] = #"{"error":"changed","sha":"bbb","content":"nas\nkuma\n"}"#
+    SlowBrain.statuses[file] = 409
+    defer { SlowBrain.statuses = [:] }
+    do {
+      try await store.saveMemoryFile("notes/servers.md", content: "mine\n", baseSha: "aaa")
+      XCTFail("saved over a newer copy")
+    } catch let c as AppStore.MemoryConflict {
+      XCTAssertEqual(c, AppStore.MemoryConflict(sha: "bbb", content: "nas\nkuma\n"))
+    }
+    // A new file says there should be none yet.
+    _ = try? await store.saveMemoryFile("notes/new.md", content: "x", baseSha: "")
+    sent = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: XCTUnwrap(SlowBrain.sent("/memory/file?path=notes/new.md"))) as? [String: Any])
+    XCTAssertEqual(sent["baseSha"] as? String, "")
+  }
+
+  /// Finished tasks come a page at a time, each from before the last one loaded.
+  func testFinishedTasksLoadPageByPage() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    SlowBrain.routes["/tasks?status=done"] = "[\(Self.task(71)),\(Self.task(70))]"
+    SlowBrain.routes["/tasks?status=done&before=70"] = "[\(Self.task(69))]"
+    let first = try await store.loadTasks(.done)
+    let next = try await store.loadTasks(.done, before: try XCTUnwrap(first.last))
+    XCTAssertEqual(first + next, [71, 70, 69])
+    XCTAssertEqual(SlowBrain.requested.suffix(2), ["GET /tasks?status=done", "GET /tasks?status=done&before=70"])
+  }
+
+  /// A file goes up from disk as the same multipart body as one from memory, and the body file is deleted.
+  func testUploadsAFileFromDisk() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    let file = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).bin")
+    defer { try? FileManager.default.removeItem(at: file) }
+    // Over a megabyte, so it's copied in more than one piece.
+    let bytes = Data((0..<1_500_000).map { UInt8($0 % 251) })
+    try bytes.write(to: file)
+    SlowBrain.routes["/attachments"] =
+      #"{"id":7,"name":"scan \"1\".pdf","mediaType":"application/pdf","size":1500000,"from":"owner","createdAt":"2026-10-15T08:00:00Z"}"#
+    let form = Multipart(name: "scan \"1\".pdf", mediaType: "application/pdf")
+    let written = try form.write(file)
+    let body = try Data(contentsOf: written)
+    try FileManager.default.removeItem(at: written)
+    let text = String(decoding: body.prefix(200), as: UTF8.self)
+    XCTAssertTrue(text.hasPrefix("--\(form.boundary)\r\n"))
+    XCTAssertTrue(text.contains(#"Content-Disposition: form-data; name="file"; filename="scan _1_.pdf""#))
+    XCTAssertTrue(text.contains("Content-Type: application/pdf\r\n\r\n"))
+    XCTAssertEqual(body, form.head + bytes + form.tail)
+    XCTAssertEqual(form.tail, Data("\r\n--\(form.boundary)--\r\n".utf8))
+
+    let uploads = { try FileManager.default.contentsOfDirectory(atPath: NSTemporaryDirectory()).filter { $0.hasPrefix("upload-") } }
+    let before = try uploads()
+    let a: Attachment = try await store.api.upload("/attachments", file: file, name: "scan.pdf", mediaType: "application/pdf")
+    XCTAssertEqual(a.id, 7)
+    XCTAssertEqual(SlowBrain.requested.last, "POST /attachments")
+    XCTAssertEqual(Set(try uploads()), Set(before))
+  }
+
+  /// The group you're in, deleted elsewhere: the chat goes back to Hatbot's own.
+  func testAGroupDeletedElsewhereCloses() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    SlowBrain.routes["/conversations/1/messages?limit=50"] = "[\(Self.message(60, in: 1))]"
+    SlowBrain.routes["/conversations/2/messages?limit=50"] = "[\(Self.message(70, in: 2))]"
+    await MainActor.run { Self.twoChats(store) }
+    await store.openConversation(2)
+    await MainActor.run {
+      XCTAssertEqual(store.messages.map(\.id), [70])
+      store.apply(.conversationDeleted(id: 2))
+      XCTAssertEqual(store.messages, [])
+    }
+    try await Task.sleep(for: .milliseconds(400))
+    let (shown, ids, chats) = await MainActor.run { (store.conversationId, store.messages.map(\.id), store.conversations.map(\.id)) }
+    XCTAssertEqual(shown, 1)
+    XCTAssertEqual(ids, [60])
+    XCTAssertEqual(chats, [1])
+  }
+}
+
+/// The token in memory, where the app keeps it in the Keychain.
+final class MemoryVault: TokenVault, @unchecked Sendable {
+  private let lock = NSLock()
+  private var token: String?
+
+  init(_ token: String? = nil) { self.token = token }
+
+  func load() -> String? { lock.withLock { token } }
+  func save(_ token: String) { lock.withLock { self.token = token } }
+  func clear() { lock.withLock { token = nil } }
 }

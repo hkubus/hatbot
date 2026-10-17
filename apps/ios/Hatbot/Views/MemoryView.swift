@@ -76,7 +76,10 @@ struct MemoryView: View {
           .textInputAutocapitalization(.never)
           .autocorrectionDisabled()
         Button("Create") {
-          if let p = MemoryTree.newPath(newName) { path.append(.memoryFile(p, isNew: true)) }
+          // A file that's already there opens as it is, not as a blank new one over it.
+          if let p = MemoryTree.newPath(newName) {
+            path.append(.memoryFile(p, isNew: !(files ?? []).contains { $0.path == p }))
+          }
         }
         Button("Cancel", role: .cancel) {}
       }
@@ -153,6 +156,10 @@ struct MemoryFileView: View {
   @Environment(AppStore.self) private var store
   @Environment(\.dismiss) private var dismiss
   @State private var content: String?
+  /// The version `content` is, which a save goes on top of: "" for a new file, nil from an older brain.
+  @State private var baseSha: String?
+  /// Saved elsewhere while you edited: the newer copy, until you reload it or overwrite it.
+  @State private var conflict: AppStore.MemoryConflict?
   @State private var draft = ""
   @State private var editing = false
   @State private var saving = false
@@ -162,11 +169,14 @@ struct MemoryFileView: View {
   var body: some View {
     Group {
       if editing {
-        TextEditor(text: $draft)
-          .font(.system(.callout, design: .monospaced))
-          .autocorrectionDisabled()
-          .textInputAutocapitalization(.never)
-          .padding(.horizontal, 12)
+        VStack(spacing: 0) {
+          if let conflict { conflictBar(conflict) }
+          TextEditor(text: $draft)
+            .font(.system(.callout, design: .monospaced))
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
+            .padding(.horizontal, 12)
+        }
       } else if let content {
         ScrollView {
           VStack(alignment: .leading, spacing: 12) {
@@ -189,11 +199,12 @@ struct MemoryFileView: View {
       if editing {
         ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") {
+            conflict = nil
             if isNew && content == nil { dismiss() } else { editing = false }
           }
         }
         ToolbarItem(placement: .confirmationAction) {
-          Button("Save") { Task { await save() } }.disabled(saving || draft == content)
+          Button("Save") { Task { await save() } }.disabled(saving || draft == content || conflict != nil)
         }
       } else if content != nil {
         ToolbarItem {
@@ -227,11 +238,15 @@ struct MemoryFileView: View {
         let title = MemoryTree.name(path).replacingOccurrences(of: ".md", with: "")
           .replacingOccurrences(of: "-", with: " ")
         draft = "# \(title.prefix(1).uppercased() + title.dropFirst())\n"
+        // Saved only if there's still no file there.
+        baseSha = ""
         editing = true
         return
       }
       do {
-        content = try await store.memoryFile(path)
+        let file = try await store.memoryFile(path)
+        content = file.content
+        baseSha = file.sha
         error = nil
       } catch {
         self.error = message(for: error)
@@ -239,14 +254,50 @@ struct MemoryFileView: View {
     }
   }
 
-  private func save() async {
+  /// What changed meanwhile, with Reload (theirs, in place of your edit) and Overwrite (yours over it).
+  private func conflictBar(_ c: AppStore.MemoryConflict) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text(content == nil ? "There's already a file here." : "Changed while you were editing.")
+        .font(.subheadline.weight(.semibold))
+      DisclosureGroup("The saved copy") {
+        ScrollView {
+          Text(c.content)
+            .font(.system(.caption, design: .monospaced))
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxHeight: 200)
+      }
+      .font(.subheadline)
+      HStack {
+        Button("Reload") {
+          content = c.content
+          draft = c.content
+          baseSha = c.sha
+          conflict = nil
+        }
+        Button("Overwrite") { Task { await save(over: c.sha) } }
+      }
+      .buttonStyle(.bordered)
+      .disabled(saving)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(12)
+    .background(.fill.tertiary)
+  }
+
+  /// `over`: the version to replace, once you've chosen to overwrite one saved meanwhile.
+  private func save(over: String? = nil) async {
     saving = true
     defer { saving = false }
     do {
-      let sha = try await store.saveMemoryFile(path, content: draft)
+      let sha = try await store.saveMemoryFile(path, content: draft, baseSha: over ?? baseSha)
       content = draft
+      conflict = nil
       editing = false
       store.toast = sha.map { "Saved (\($0.prefix(7)))" } ?? "No changes"
+    } catch let changed as AppStore.MemoryConflict {
+      conflict = changed
     } catch {
       self.error = message(for: error)
       store.toast = message(for: error)

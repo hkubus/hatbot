@@ -295,6 +295,12 @@ final class AppStore {
       put(c)
     case let .conversationDeleted(id):
       conversations.removeAll { $0.id == id }
+      cache?.forget(id)
+      // The group you're in was deleted elsewhere: back to Hatbot's own chat, keeping none of it.
+      if conversationId == id {
+        messages = []
+        Task { await openConversation(1) }
+      }
     case let .proposalUpdated(p):
       proposals[p.id] = p
     case let .watcherUpdated(w):
@@ -572,6 +578,8 @@ final class AppStore {
 
   func loadEarlier() async throws {
     guard let first = messages.first, !loadingEarlier else { return }
+    let shown = conversationId
+    let wasIncognito = incognito
     loadingEarlier = true
     prepending = true
     defer {
@@ -580,6 +588,8 @@ final class AppStore {
     }
     let older: [ThreadMessage] = try await api.get(page(before: first.id))
     try? await loadEpisodes(older)
+    // Another chat, or in or out of incognito, while it loaded: the page belongs to the one you left.
+    guard shown == conversationId, wasIncognito == incognito, messages.first?.id == first.id else { return }
     messages = older + messages
     hasEarlier = older.count == Self.page
   }
@@ -712,9 +722,11 @@ final class AppStore {
     case active, done
   }
 
-  /// The ids of the tasks in a list, newest first.
-  func loadTasks(_ filter: TaskFilter) async throws -> [Int] {
-    let list: [AgentTask] = try await api.get("/tasks?status=\(filter.rawValue)")
+  /// The ids of a page of the tasks in a list, newest first; `before` a task's id, the page after it.
+  /// A page is `AppStore.page` long; a shorter one is the last.
+  func loadTasks(_ filter: TaskFilter, before: Int? = nil) async throws -> [Int] {
+    let list: [AgentTask] = try await api.get(
+      "/tasks?status=\(filter.rawValue)" + (before.map { "&before=\($0)" } ?? ""))
     for t in list { tasks[t.id] = t }
     return list.map(\.id)
   }
@@ -868,22 +880,43 @@ final class AppStore {
     try await api.get("/memory/tree")
   }
 
-  func memoryFile(_ path: String) async throws -> String {
-    struct File: Decodable { let content: String }
-    let f: File = try await api.get("/memory/file?path=\(API.query(path))")
-    return f.content
+  /// A memory file, and which version of it this is.
+  struct MemoryFileContent: Decodable, Sendable {
+    let content: String
+    /// What to save on top of; missing on brains from before conflict checks.
+    let sha: String?
   }
 
-  /// Saves a file as you; returns the commit, or nil if nothing changed.
+  func memoryFile(_ path: String) async throws -> MemoryFileContent {
+    try await api.get("/memory/file?path=\(API.query(path))")
+  }
+
+  /// A save refused because the file changed since it was read (or, for a new one, is already there):
+  /// what it is now.
+  struct MemoryConflict: Error, Decodable, Equatable, Sendable {
+    let sha: String
+    let content: String
+  }
+
+  /// Saves a file as you, on top of the version `baseSha` names ("" for a new file; nil saves over
+  /// whatever is there). Returns the commit, or nil if nothing changed; throws MemoryConflict when it
+  /// changed meanwhile, and writes nothing.
   @discardableResult
-  func saveMemoryFile(_ path: String, content: String) async throws -> String? {
+  func saveMemoryFile(_ path: String, content: String, baseSha: String?) async throws -> String? {
     struct Body: Encodable {
       let content: String
       let message: String
+      let baseSha: String?
     }
     struct Saved: Decodable { let sha: String? }
-    let r: Saved = try await api.put(
-      "/memory/file?path=\(API.query(path))", body: Body(content: content, message: "Edit \(path)"))
+    let r: Saved
+    do {
+      r = try await api.put(
+        "/memory/file?path=\(API.query(path))", body: Body(content: content, message: "Edit \(path)", baseSha: baseSha))
+    } catch let e as APIError where e.status == 409 {
+      if let now = try? JSONDecoder().decode(MemoryConflict.self, from: e.body) { throw now }
+      throw e
+    }
     memoryVersion += 1
     return r.sha
   }

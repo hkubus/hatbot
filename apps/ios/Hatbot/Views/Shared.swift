@@ -1,4 +1,5 @@
 // Colors, navigation routes and small views the screens share.
+import ImageIO
 import SwiftUI
 import UIKit
 
@@ -6,8 +7,11 @@ extension Color {
   /// Hatbot's amber (PLAN.md §10.2). Blue means "needs you", red destructive, green done.
   static let brand = Color(light: 0xE8820C, dark: 0xFF9F2E)
   static let attention = Color.blue
-  /// Solid, with white text, like Messages' blue; Hatbot's grey is Messages' too.
-  static let userBubble = Color(uiColor: UIColor(hex: 0xE8820C, alpha: 1))
+  /// Solid, with white text, like Messages' blue; Hatbot's grey is Messages' too. A darker amber than
+  /// the brand's, so the white reads at 4.9:1 (the brand's own gives 2.75:1).
+  static let userBubble = Color(uiColor: UIColor(hex: 0xB05A00, alpha: 1))
+  /// Text and glyphs on the brand's amber: 6.1:1, and 8.2:1 on the dark mode amber.
+  static let onBrand = Color(uiColor: UIColor(hex: 0x1D1D1F, alpha: 1))
   static let botBubble = Color(light: 0xE9E9EB, dark: 0x262628)
 
   init(light: UInt32, dark: UInt32, darkOpacity: CGFloat = 1) {
@@ -134,21 +138,54 @@ extension TaskStatus {
   }
 }
 
+/// Pictures decoded at the size they're shown at, not whole: a phone photo decoded whole is 48 MB.
+enum Picture {
+  /// At most `longSide` pixels on its long side, turned upright; a smaller one stays its size.
+  static func decode(_ data: Data, longSide: CGFloat) -> UIImage? {
+    let noCache: [CFString: Any] = [kCGImageSourceShouldCache: false]
+    guard let source = CGImageSourceCreateWithData(data as CFData, noCache as CFDictionary) else { return nil }
+    let options: [CFString: Any] = [
+      kCGImageSourceCreateThumbnailFromImageAlways: true,
+      kCGImageSourceCreateThumbnailWithTransform: true,
+      kCGImageSourceShouldCacheImmediately: true,
+      kCGImageSourceThumbnailMaxPixelSize: Int(longSide),
+    ]
+    return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary).map { UIImage(cgImage: $0) }
+  }
+
+  /// What keeping it costs, in bytes, for a cache's limit.
+  static func cost(_ image: UIImage) -> Int {
+    image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0
+  }
+
+  static func cache(megabytes: Int) -> NSCache<NSString, UIImage> {
+    let c = NSCache<NSString, UIImage>()
+    c.totalCostLimit = megabytes << 20
+    return c
+  }
+}
+
 /// Screenshots need the bearer token, so they don't go through AsyncImage.
 @MainActor
 final class ScreenCache {
   static let shared = ScreenCache()
-  private let cache = NSCache<NSString, UIImage>()
+  /// The desktop's screens, about 6 MB each.
+  private let cache = Picture.cache(megabytes: 40)
 
   func image(_ api: API, taskId: Int, stepId: Int) async throws -> UIImage {
     let key = "\(api.server.absoluteString)/\(taskId)/\(stepId)" as NSString
     if let hit = cache.object(forKey: key) { return hit }
     let data = try await api.data("/tasks/\(taskId)/screens/\(stepId)")
-    guard let image = await Task.detached(operation: { UIImage(data: data)?.preparingForDisplay() }).value else {
+    guard let image = await Task.detached(operation: { Picture.decode(data, longSide: 1920) }).value else {
       throw APIError(status: 0, message: "Not an image")
     }
-    cache.setObject(image, forKey: key)
+    cache.setObject(image, forKey: key, cost: Picture.cost(image))
     return image
+  }
+
+  /// Signed out.
+  func clear() {
+    cache.removeAllObjects()
   }
 }
 
@@ -176,7 +213,7 @@ struct Screenshot: View {
     .contentShape(.rect)
     .onTapGesture { if image != nil { full = true } }
     .fullScreenCover(isPresented: $full) {
-      if let image { ImageViewer(image: image) }
+      if let image { ImageViewer(image: image, label: "Screenshot") }
     }
     .task(id: stepId) {
       do {
@@ -189,56 +226,85 @@ struct Screenshot: View {
   }
 }
 
-/// A screenshot full screen: pinch to zoom, drag to pan, double tap to toggle.
+/// A picture full screen: pinch to zoom where your fingers are, drag to move around a zoomed one,
+/// double tap to zoom in where you tap or back out, and swipe down to close. It zooms like the live
+/// view (Core/Zoom.swift), so it never moves off the screen.
 struct ImageViewer: View {
   let image: UIImage
+  var label = "Picture"
   @Environment(\.dismiss) private var dismiss
-  @State private var scale: CGFloat = 1
-  @State private var offset: CGSize = .zero
-  @GestureState private var pinch: CGFloat = 1
-  @GestureState private var drag: CGSize = .zero
+  @State private var zoom = Zoom()
+  /// The zoom a pinch or a drag started from.
+  @State private var pinchStart: Zoom?
+  @State private var dragStart: Zoom?
+  /// Pulled down, not zoomed in: let go far enough and it closes.
+  @State private var pull: CGFloat = 0
 
   var body: some View {
     NavigationStack {
-      Image(uiImage: image)
-        .resizable()
-        .aspectRatio(contentMode: .fit)
-        .scaleEffect(scale * pinch)
-        .offset(x: offset.width + drag.width, y: offset.height + drag.height)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black)
-        .gesture(
-          MagnifyGesture()
-            .updating($pinch) { value, state, _ in state = value.magnification }
-            .onEnded { value in
-              scale = min(5, max(1, scale * value.magnification))
-              if scale == 1 { offset = .zero }
+      GeometryReader { geo in
+        let size = geo.size
+        ZStack {
+          Image(uiImage: image)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: size.width, height: size.height)
+            .scaleEffect(zoom.scale, anchor: .topLeading)
+            .offset(x: zoom.offset.x, y: zoom.offset.y + pull)
+            .accessibilityLabel(label)
+          // The gestures on what doesn't move, so their points are the screen's.
+          Color.clear
+            .contentShape(.rect)
+            .gesture(pinch(size).simultaneously(with: drag(size)))
+            .onTapGesture(count: 2, coordinateSpace: .local) { p in
+              withAnimation(.snappy) { zoom = zoom.scale > 1 ? Zoom() : zoom.zoomed(by: 2.5, at: p, in: size) }
             }
-            .simultaneously(
-              with: DragGesture()
-                .updating($drag) { value, state, _ in if scale > 1 { state = value.translation } }
-                .onEnded { value in
-                  guard scale > 1 else { return }
-                  offset.width += value.translation.width
-                  offset.height += value.translation.height
-                })
-        )
-        .onTapGesture(count: 2) {
-          withAnimation(.spring) {
-            if scale > 1 {
-              scale = 1
-              offset = .zero
-            } else {
-              scale = 2.5
-            }
-          }
         }
-        .toolbar {
-          ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
-          ToolbarItem(placement: .topBarLeading) {
-            ShareLink(item: Image(uiImage: image), preview: SharePreview("Screenshot", image: Image(uiImage: image)))
-          }
+        .onChange(of: size) { zoom = Zoom() }
+      }
+      .background(Color.black.opacity(1 - min(0.6, abs(pull) / 500)).ignoresSafeArea())
+      .toolbarBackground(.hidden, for: .navigationBar)
+      .toolbar {
+        ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
+        ToolbarItem(placement: .topBarLeading) {
+          ShareLink(item: Image(uiImage: image), preview: SharePreview(label, image: Image(uiImage: image)))
         }
+      }
     }
+    .preferredColorScheme(.dark)
+  }
+
+  private func pinch(_ size: CGSize) -> some Gesture {
+    MagnifyGesture()
+      .onChanged { value in
+        let start = pinchStart ?? zoom
+        pinchStart = start
+        pull = 0
+        zoom = start.zoomed(by: value.magnification, at: value.startLocation, in: size)
+      }
+      .onEnded { _ in pinchStart = nil }
+  }
+
+  /// Moves around a zoomed picture; on one that isn't, pulls it down to close.
+  private func drag(_ size: CGSize) -> some Gesture {
+    DragGesture()
+      .onChanged { value in
+        guard pinchStart == nil else { return }
+        if let start = dragStart ?? (zoom.scale > 1 ? zoom : nil) {
+          dragStart = start
+          zoom = start.moved(by: CGPoint(x: value.translation.width, y: value.translation.height), in: size)
+        } else {
+          pull = max(0, value.translation.height)
+        }
+      }
+      .onEnded { value in
+        defer { dragStart = nil }
+        guard dragStart == nil, pinchStart == nil else { return }
+        if pull > 120 || value.predictedEndTranslation.height > 300 {
+          dismiss()
+        } else {
+          withAnimation(.snappy) { pull = 0 }
+        }
+      }
   }
 }

@@ -133,8 +133,10 @@ struct PausedValue: ControlValueProvider {
   }
 }
 
+/// Only on an unlocked phone, both ways: on a locked one anyone could resume Hatbot, or stop its work.
 struct SetPausedIntent: SetValueIntent {
   static let title: LocalizedStringResource = "Pause Hatbot"
+  static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
   static let description = IntentDescription("Pauses all of Hatbot's work, or resumes it.")
 
   @Parameter(title: "Paused")

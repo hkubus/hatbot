@@ -2,6 +2,7 @@
 // Uptime Kuma triggers are set up on the web, where their URL gets pasted into the sender.
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 struct SchedulesView: View {
   @Environment(AppStore.self) private var store
@@ -83,41 +84,7 @@ struct ScheduleDetailView: View {
   @State private var error: String?
   @State private var started: Int?
 
-  struct Form: Equatable {
-    var name = ""
-    var repeats = true
-    var cron = "0 8 * * *"
-    var at = Date().addingTimeInterval(3600)
-    var prompt = ""
-    var enabled = true
-    var botId = Bot.hatbot
-
-    init() {}
-    init(_ s: Schedule) {
-      name = s.name
-      repeats = s.cron != nil
-      cron = s.cron ?? "0 8 * * *"
-      at = Format.date(s.runAt) ?? Date().addingTimeInterval(3600)
-      prompt = s.prompt
-      enabled = s.enabled
-      botId = s.botId ?? Bot.hatbot
-    }
-
-    var change: AppStore.ScheduleChange {
-      AppStore.ScheduleChange(
-        name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-        prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines),
-        enabled: enabled,
-        cron: repeats ? cron.trimmingCharacters(in: .whitespaces) : nil,
-        at: repeats ? nil : at.formatted(.iso8601),
-        botId: botId)
-    }
-
-    var valid: Bool {
-      !name.trimmingCharacters(in: .whitespaces).isEmpty && !prompt.trimmingCharacters(in: .whitespaces).isEmpty
-        && (!repeats || !cron.trimmingCharacters(in: .whitespaces).isEmpty)
-    }
-  }
+  typealias Form = ScheduleForm
 
   private var stored: Schedule? { id.flatMap { store.schedules[$0] } }
 
@@ -275,6 +242,8 @@ struct TriggerDetailView: View {
   @State private var confirmSecret = false
   @State private var confirmDelete = false
   @State private var error: String?
+  /// What a switch or picker was set to, until the brain has saved it.
+  @State private var setting = AppStore.TriggerChange()
 
   var body: some View {
     Group {
@@ -318,29 +287,29 @@ struct TriggerDetailView: View {
           .font(.footnote)
           let value = t.kind == .kuma ? secret.postURL : secret.secret
           Text(value).font(.footnote.monospaced()).textSelection(.enabled)
-          Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = value }
+          // Kept off your other devices' pasteboards, and only for two minutes.
+          Button("Copy", systemImage: "doc.on.doc") {
+            UIPasteboard.general.setItems(
+              [[UTType.plainText.identifier: value]],
+              options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(120)])
+          }
         } header: {
           Text("New secret")
         }
       }
       Section {
         TextField("Name", text: $name)
-        Toggle("On", isOn: binding(t.enabled) { AppStore.TriggerChange(enabled: $0) })
+        Toggle("On", isOn: saving(t.enabled, \.enabled))
         if store.botIds.count > 1 {
-          Picker(
-            "Runs as",
-            selection: Binding(
-              get: { t.botId ?? Bot.hatbot },
-              set: { new in Task { await act { _ = try await store.saveTrigger(id, AppStore.TriggerChange(botId: new)) } } })
-          ) {
+          Picker("Runs as", selection: saving(t.botId ?? Bot.hatbot, \.botId)) {
             ForEach(store.botIds, id: \.self) { Text(store.botName($0)).tag($0) }
           }
         }
         if t.kind == .webhook {
-          Toggle("Trust its payloads", isOn: binding(t.trusted) { AppStore.TriggerChange(trusted: $0) })
+          Toggle("Trust its payloads", isOn: saving(t.trusted, \.trusted))
         }
         if t.kind == .kuma, let checks = t.confirmChecks {
-          Picker("Start a task after", selection: confirmBinding(checks)) {
+          Picker("Start a task after", selection: saving(checks, \.confirmChecks)) {
             Text("First failure").tag(0)
             Text("2 failures").tag(1)
             Text("3 failures").tag(2)
@@ -401,19 +370,20 @@ struct TriggerDetailView: View {
     }
   }
 
-  /// A switch that saves as soon as it's flipped.
-  private func binding(_ value: Bool, _ change: @escaping (Bool) -> AppStore.TriggerChange) -> Binding<Bool> {
+  /// A switch or picker that saves as soon as it's changed, and shows the change while it saves.
+  private func saving<V: Equatable>(_ value: V, _ key: WritableKeyPath<AppStore.TriggerChange, V?>) -> Binding<V> {
     Binding(
-      get: { value },
-      set: { new in Task { await act { _ = try await store.saveTrigger(id, change(new)) } } })
-  }
-
-  /// Failed checks before a down alert starts a task; saves as soon as it's picked.
-  private func confirmBinding(_ value: Int) -> Binding<Int> {
-    Binding(
-      get: { value },
+      get: { setting[keyPath: key] ?? value },
       set: { new in
-        Task { await act { _ = try await store.saveTrigger(id, AppStore.TriggerChange(confirmChecks: new)) } }
+        setting[keyPath: key] = new
+        var just = AppStore.TriggerChange()
+        just[keyPath: key] = new
+        let change = just
+        Task {
+          await act { _ = try await store.saveTrigger(id, change) }
+          // Saved, or put back: the trigger shows which.
+          if setting[keyPath: key] == new { setting[keyPath: key] = nil }
+        }
       })
   }
 

@@ -23,6 +23,9 @@ struct ChatView: View {
   @State private var farFromBottom = false
   static let readingWidth: CGFloat = 720
   @State private var nearBottom = true
+  /// The round button's glyph box, growing with Dynamic Type like its glyph.
+  @ScaledMetric(relativeTo: .body) private var glyphWidth: CGFloat = 26
+  @ScaledMetric(relativeTo: .body) private var glyphHeight: CGFloat = 30
 
   /// What the list shows: times, folds, and the messages that aren't folded away.
   fileprivate enum Row: Identifiable {
@@ -185,7 +188,7 @@ struct ChatView: View {
           } label: {
             Image(systemName: "arrow.down")
               .font(.body.weight(.semibold))
-              .frame(width: 26, height: 30)
+              .frame(width: glyphWidth, height: glyphHeight)
           }
           .glassButton()
           .buttonBorderShape(.circle)
@@ -343,6 +346,9 @@ private struct Composer: View {
   @State private var pickingPhotos = false
   @State private var pickingFiles = false
   @State private var sending = false
+  /// The round buttons' glyph box, growing with Dynamic Type like their glyphs.
+  @ScaledMetric(relativeTo: .body) private var glyphWidth: CGFloat = 26
+  @ScaledMetric(relativeTo: .body) private var glyphHeight: CGFloat = 30
 
   /// Whose draft and files these are: each chat has its own, and its incognito conversation another.
   private var key: String { "\(store.conversationId)\(store.incognito ? "i" : "")" }
@@ -411,7 +417,7 @@ private struct Composer: View {
         } label: {
           Image(systemName: "paperclip")
             .font(.body.weight(.semibold))
-            .frame(width: 26, height: 30)
+            .frame(width: glyphWidth, height: glyphHeight)
         }
         .glassButton()
         .buttonBorderShape(.circle)
@@ -424,7 +430,8 @@ private struct Composer: View {
         Button { send() } label: {
           Image(systemName: "arrow.up")
             .font(.body.weight(.semibold))
-            .frame(width: 26, height: 30)
+            .foregroundStyle(canSend ? Color.onBrand : .secondary)
+            .frame(width: glyphWidth, height: glyphHeight)
         }
         .glassButton(prominent: true)
         .buttonBorderShape(.circle)
@@ -650,6 +657,8 @@ private struct MessageRow: View, Equatable {
   @Environment(\.openRoute) private var router
   @Environment(AppStore.self) private var store
   @Environment(\.scenePhase) private var scenePhase
+  /// The chat is kept, hidden, while another section shows: nothing in it is seen then.
+  @Environment(\.sectionShown) private var sectionShown
   @State private var onScreen = false
 
   var body: some View {
@@ -712,9 +721,9 @@ private struct MessageRow: View, Equatable {
         return shown.height >= me.height * 0.5 || shown.height >= screen.height * 0.6
           || (me.maxY > screen.minY && me.maxY <= screen.maxY)
       } action: { onScreen = $0 }
-      // On screen for a moment, with the app in front: seen.
-      .task(id: unread && onScreen && scenePhase == .active) {
-        guard unread && onScreen && scenePhase == .active else { return }
+      // On screen for a moment, with the app and the chat in front: seen.
+      .task(id: unread && onScreen && scenePhase == .active && sectionShown) {
+        guard unread && onScreen && scenePhase == .active && sectionShown else { return }
         try? await Task.sleep(for: .seconds(1.5))
         if !Task.isCancelled { store.markSeen([m.id]) }
       }
@@ -957,7 +966,11 @@ private struct Spoken: ViewModifier {
 /// What Hatbot wants to do and why, the page it read, a screenshot, then Deny and Approve.
 struct ApprovalBody: View {
   let approval: Approval
+  /// Off on the task's own page.
+  var linksTask = true
   @Environment(AppStore.self) private var store
+  /// In the chat: the task opens on its stack.
+  @Environment(\.openRoute) private var router
   @State private var busy = false
   @State private var error: String?
   @State private var note = ""
@@ -980,17 +993,23 @@ struct ApprovalBody: View {
         .lineLimit(1...6)
         .textFieldStyle(.roundedBorder)
     }
+    if linksTask, let taskId = a.taskId, let router {
+      Button("Open task") { router.open(.task(taskId)) }
+        .font(.subheadline)
+        .buttonStyle(.borderless)
+    }
     if let error {
       Text(error).font(.footnote).foregroundStyle(.red)
     }
-    HStack {
-      Button("Deny", role: .destructive) { decide(.deny) }
+    // Full-size and well apart, so neither is pressed for the other.
+    HStack(spacing: 16) {
+      Button(role: .destructive) { decide(.deny) } label: { Text("Deny").frame(maxWidth: .infinity) }
         .glassButton()
-      Button("Approve") { decide(.approve) }
+      Button { decide(.approve) } label: { Text("Approve").frame(maxWidth: .infinity) }
         .glassButton(prominent: true)
         .tint(.attention)
     }
-    .controlSize(.small)
+    .controlSize(.large)
     .disabled(busy)
     .sensoryFeedback(trigger: decided) { _, decided in
       switch decided {

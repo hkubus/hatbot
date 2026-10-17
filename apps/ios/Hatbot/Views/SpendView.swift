@@ -1,5 +1,6 @@
 // Settings → Spend in detail (web Spend.tsx), the spending limits, and the signed-in devices.
 import SwiftUI
+import UIKit
 
 struct SpendView: View {
   @Environment(AppStore.self) private var store
@@ -80,6 +81,13 @@ struct LimitsView: View {
         Button("Save") { Task { await save() } }
           .disabled(saving || limits == nil || limits == saved || !valid)
       }
+      // The decimal pad has no Return to put it away.
+      ToolbarItemGroup(placement: .keyboard) {
+        Spacer()
+        Button("Done") {
+          UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        }
+      }
     }
     .task { await load() }
     // Changed elsewhere: shown, unless you're changing them here.
@@ -113,15 +121,7 @@ struct LimitsView: View {
   }
 
   private func field(_ label: String, _ value: Binding<Double>) -> some View {
-    LabeledContent(label) {
-      TextField(
-        label,
-        value: value,
-        format: .currency(code: "USD")
-      )
-      .keyboardType(.decimalPad)
-      .multilineTextAlignment(.trailing)
-    }
+    LabeledContent(label) { MoneyField(label: label, value: value) }
   }
 
   private func save() async {
@@ -135,6 +135,32 @@ struct LimitsView: View {
       self.error = message(for: error)
     }
     saving = false
+  }
+}
+
+/// Dollars, read as they're typed. A field bound to a number takes it only on Return or when it loses
+/// focus, and the decimal pad has no Return, so Save didn't know a new limit had been typed.
+private struct MoneyField: View {
+  let label: String
+  @Binding var value: Double
+  @State private var text = ""
+  @FocusState private var focused: Bool
+
+  var body: some View {
+    HStack(spacing: 2) {
+      Text("$").foregroundStyle(.secondary)
+      TextField(label, text: $text)
+        .keyboardType(.decimalPad)
+        .multilineTextAlignment(.trailing)
+        .focused($focused)
+    }
+    .onAppear { text = Format.amountText(value) }
+    .onChange(of: text) { _, typed in
+      if let amount = Format.amount(typed) { value = amount }
+    }
+    // Loaded or saved meanwhile: shown, unless you're typing.
+    .onChange(of: value) { _, v in if !focused { text = Format.amountText(v) } }
+    .onChange(of: focused) { _, now in if !now { text = Format.amountText(value) } }
   }
 }
 
