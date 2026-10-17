@@ -37,12 +37,13 @@ export function mandateProblem(
   m: Pick<Mandate, "opening" | "target" | "limit">,
   role: "buy" | "sell",
   asking: number | null,
+  currency: string,
 ): string | null {
   if (role === "buy") {
     if (!(m.opening <= m.target && m.target <= m.limit))
       return "The opening offer, target and limit must go up in that order: opening ≤ target ≤ limit.";
     if (asking !== null && m.limit > asking)
-      return `The limit (${zl(m.limit)}) is above the asking price (${zl(asking)}): there's no paying more than asked.`;
+      return `The limit (${zl(m.limit, currency)}) is above the asking price (${zl(asking, currency)}): there's no paying more than asked.`;
   } else if (!(m.opening >= m.target && m.target >= m.limit))
     return "Selling, the opening price, target and floor must come down in that order: opening ≥ target ≥ floor.";
   return null;
@@ -175,7 +176,7 @@ export async function applyNote(
     );
     const parsed = MandateInput.safeParse(call?.input);
     if (!parsed.success) return { error: "Haiku's answer wasn't a mandate" };
-    const problem = mandateProblem(parsed.data, n.role, n.asking);
+    const problem = mandateProblem(parsed.data, n.role, n.asking, n.mandate.currency);
     if (problem) return { error: problem };
     const unchanged = parsed.data.expires_in_days === days;
     const mandate = toMandate(parsed.data, m.currency, now);

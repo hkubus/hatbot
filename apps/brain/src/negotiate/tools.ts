@@ -23,27 +23,29 @@ const zl = (n: number, currency = "PLN") =>
 
 /** A negotiation in a line, for lists. */
 export function negotiationLine(n: Negotiation): string {
-  const price = n.agreedPrice !== null ? `, agreed at ${zl(n.agreedPrice)}` : "";
+  const money = (x: number) => zl(x, n.mandate.currency);
+  const price = n.agreedPrice !== null ? `, agreed at ${money(n.agreedPrice)}` : "";
   const last = n.lastMessage
     ? `; last ${n.lastMessage.direction === "in" ? "from the seller" : "from you"} ${n.lastMessage.createdAt.slice(0, 16).replace("T", " ")}`
     : "";
-  return `#${n.id} ${n.status}${price}: ${n.title} (${n.listingKey}), asking ${n.asking !== null ? zl(n.asking) : "?"}; want #${n.wantId} "${n.want}"${last}`;
+  return `#${n.id} ${n.status}${price}: ${n.title} (${n.listingKey}), asking ${n.asking !== null ? money(n.asking) : "?"}; want #${n.wantId} "${n.want}"${last}`;
 }
 
 /** A negotiation with its mandate, claims and messages, for the model. */
 function negotiationText(neg: Negotiations, n: Negotiation): string {
   const m = n.mandate;
+  const money = (x: number) => zl(x, m.currency);
   const head = [
     negotiationLine(n),
     `Listing: ${n.listingUrl}`,
     `Conversation: ${n.conversationUrl ?? "none recorded yet"}`,
-    `Mandate${n.status === "awaiting_mandate" ? " (waiting for the owner's approval)" : ""}: open at ${zl(m.opening)}, aim for ${zl(m.target)}, ${n.role === "buy" ? "pay at most" : "take at least"} ${zl(m.limit)}; delivery: ${m.delivery}; until ${m.expiresAt.slice(0, 16).replace("T", " ")} UTC; contact details allowed: ${m.allow.length ? m.allow.join(", ") : "none"}.`,
+    `Mandate${n.status === "awaiting_mandate" ? " (waiting for the owner's approval)" : ""}: open at ${money(m.opening)}, aim for ${money(m.target)}, ${n.role === "buy" ? "pay at most" : "take at least"} ${money(m.limit)}; delivery: ${m.delivery}; until ${m.expiresAt.slice(0, 16).replace("T", " ")} UTC; contact details allowed: ${m.allow.length ? m.allow.join(", ") : "none"}.`,
   ];
   const held = neg.held(n);
   if (held) head.push(held);
   const c = n.claims;
   const claims = [
-    c.max !== null ? `your stated max ${zl(c.max)}` : null,
+    c.max !== null ? `your stated max ${money(c.max)}` : null,
     c.otherOffers ? `other offers: ${c.otherOffers}` : null,
     c.timing ? `timing: ${c.timing}` : null,
     ...c.other,
@@ -53,7 +55,7 @@ function negotiationText(neg: Negotiations, n: Negotiation): string {
     const who = x.direction === "in" ? "Seller" : "You";
     const extra =
       x.direction === "out"
-        ? ` [${x.status}${x.offer !== null ? `, offer ${zl(x.offer)}` : ""}${x.agree ? ", agreeing" : ""}]`
+        ? ` [${x.status}${x.offer !== null ? `, offer ${money(x.offer)}` : ""}${x.agree ? ", agreeing" : ""}]`
         : "";
     return `${x.createdAt.slice(0, 16).replace("T", " ")} ${who}${extra}: ${x.text}`;
   });
@@ -139,8 +141,11 @@ export function negotiateTools(
       }),
       access: "write",
       commands: () => 0,
-      describe: (i) =>
-        `Negotiate for ${i.listing}: open at ${zl(i.mandate.opening)}, aim for ${zl(i.mandate.target)}, at most ${zl(i.mandate.limit)}`,
+      describe: (i) => {
+        // The listing's currency, when it was appraised in this turn; it's PLN on most listings.
+        const money = (x: number) => zl(x, appraised.get(i.listing)?.appraisal.currency);
+        return `Negotiate for ${i.listing}: open at ${money(i.mandate.opening)}, aim for ${money(i.mandate.target)}, at most ${money(i.mandate.limit)}`;
+      },
       // It only makes a record and asks the owner to approve its mandate.
       policy: () => covered("It only makes a record; you approve its mandate"),
       run: async (i, call) => {
@@ -149,7 +154,8 @@ export function negotiateTools(
           (await appraise(available, i.listing, call.signal, now()).catch(() => null));
         const listing: ListingFacts =
           r?.listing ?? (await listingFacts(available, i.listing, call.signal));
-        const problem = mandateProblem(i.mandate, "buy", listing.asking);
+        const currency = r?.appraisal.currency ?? listing.currency;
+        const problem = mandateProblem(i.mandate, "buy", listing.asking, currency);
         if (problem) throw new PluginError(problem);
         const wantId = neg.wantFor(bot, i.want, listing.title);
         const busy = neg.busy(listing.key, wantId);
@@ -163,7 +169,7 @@ export function negotiateTools(
           bot,
           wantId,
           listing,
-          mandate: toMandate(i.mandate, r?.appraisal.currency ?? listing.currency, neg.clock()),
+          mandate: toMandate(i.mandate, currency, neg.clock()),
           appraisal: r?.appraisal ?? null,
           status: "awaiting_mandate",
           conversationId:
@@ -228,7 +234,7 @@ export function negotiateTools(
       untrusted: true,
       label: "Messaging the seller",
       describe: (i) =>
-        `Message the seller in negotiation #${i.negotiation}${i.offer !== undefined ? ` (${i.agree ? "agree to" : "offer"} ${zl(i.offer)})` : ""}: "${collapse(i.text)}"`,
+        `Message the seller in negotiation #${i.negotiation}${i.offer !== undefined ? ` (${i.agree ? "agree to" : "offer"} ${zl(i.offer, neg.get(i.negotiation)?.mandate.currency)})` : ""}: "${collapse(i.text)}"`,
       target: (i) => `negotiation:${i.negotiation}`,
       // In code, not by Haiku (PLAN.md §16.1): the mandate stands in for the approval.
       policy: (i) => {
@@ -293,7 +299,7 @@ export function negotiateTools(
       access: "write",
       commands: () => 0,
       describe: (i) =>
-        `Close negotiation #${i.negotiation}: ${i.outcome}${i.price !== undefined ? ` at ${zl(i.price)}` : ""}`,
+        `Close negotiation #${i.negotiation}: ${i.outcome}${i.price !== undefined ? ` at ${zl(i.price, neg.get(i.negotiation)?.mandate.currency)}` : ""}`,
       target: (i) => `negotiation:${i.negotiation}`,
       policy: (i) => {
         const n = neg.get(i.negotiation);
@@ -309,7 +315,7 @@ export function negotiateTools(
         const outside = n.role === "buy" ? i.price > n.mandate.limit : i.price < n.mandate.limit;
         return outside
           ? askAlways(
-              `${zl(i.price)} is outside the mandate (${n.role === "buy" ? "at most" : "at least"} ${zl(n.mandate.limit)}).`,
+              `${zl(i.price, n.mandate.currency)} is outside the mandate (${n.role === "buy" ? "at most" : "at least"} ${zl(n.mandate.limit, n.mandate.currency)}).`,
               "purchase",
             )
           : covered("Within the mandate");

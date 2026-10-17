@@ -240,6 +240,30 @@ test("the appraisal is in the listing's currency when Scout gives one", async ()
   );
   expect(started.isError).toBe(false);
   expect(t.negotiations.list()[0]?.mandate.currency).toBe("EUR");
+  // What the Haggler reads and what the owner's cards say are in euro as well.
+  const id = t.negotiations.list()[0]?.id ?? 0;
+  const tools = negotiateTools(t);
+  const get = await named(tools, "negotiate_get").run({ negotiation: id }, call());
+  expect(get).toContain("open at 220 EUR, aim for 260 EUR, pay at most 290 EUR");
+  expect(get).toContain("asking 300 EUR");
+  expect(get).not.toContain("zł");
+  const send = named(tools, "negotiate_send");
+  expect(send.describe?.(send.schema.parse({ negotiation: id, text: "Hi", offer: 280 }))).toContain(
+    "offer 280 EUR",
+  );
+  const close = named(tools, "negotiate_close");
+  expect(
+    close.describe?.(close.schema.parse({ negotiation: id, outcome: "agreed", price: 280 })),
+  ).toContain("at 280 EUR");
+  const over = await runPluginTool(
+    named(tools, "negotiate_start"),
+    {
+      listing: "Vinted:2002",
+      mandate: { opening: 220, target: 260, limit: 310, delivery: "Vinted shipping" },
+    },
+    call(),
+  );
+  expect(over.content).toContain("The limit (310 EUR) is above the asking price (300 EUR)");
   await t.plugins.stopAll();
 });
 
