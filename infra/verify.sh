@@ -107,6 +107,13 @@ shell_exec() {
   pct exec "$DESKTOP_ID" -- curl -sS -m 20 --unix-socket /run/hatbot-shell/shell.sock \
     -H 'content-type: application/json' --data-binary @- http://shell/exec 2>/dev/null <<<"{\"command\": \"$1\", \"timeoutS\": 8}"
 }
+# own_ipc UNIT -> succeeds if the unit's process has its own IPC namespace (PrivateIPC), apart from desk's
+# services, so the X shared memory that ffmpeg's screen grabs leave readable to everyone isn't there.
+own_ipc() {
+  # shellcheck disable=SC2016 # expands inside the desktop
+  pct exec "$DESKTOP_ID" -- sh -c 'pid=$(systemctl show -P MainPID "$1") && [ "$pid" -gt 0 ] &&
+    [ "$(readlink "/proc/$pid/ns/ipc")" != "$(readlink /proc/1/ns/ipc)" ]' sh "$1"
+}
 if pct exec "$DESKTOP_ID" -- test -S /run/hatbot-shell/shell.sock; then
   for probe in "Chromium's DevTools (127.0.0.1:9222)|exec 3<>/dev/tcp/127.0.0.1/9222" \
     "desktop-agent ($DESKTOP_IP:7070)|exec 3<>/dev/tcp/$DESKTOP_IP/7070" \
@@ -124,6 +131,7 @@ if pct exec "$DESKTOP_ID" -- test -S /run/hatbot-shell/shell.sock; then
   # shellcheck disable=SC2016 # expands inside the desktop
   expect "only desktop-agent's user reaches the shell's socket" \
     pct exec "$DESKTOP_ID" -- sh -c '[ "$(stat -c "%a %G" /run/hatbot-shell)" = "750 desk" ]'
+  expect "the desktop shell can't attach desk's shared memory (the screen grabs)" own_ipc hatbot-desktop-shell
 else
   printf '   %sskip%s  desktop shell (not running; deploy.sh installs it)\n' "$yel" "$rst"
 fi
@@ -141,6 +149,7 @@ if pct exec "$DESKTOP_ID" -- test -S /run/hatbot-render/render.sock; then
   # shellcheck disable=SC2016 # expands inside the desktop
   expect "only desktop-agent's user reaches the renderer's socket" \
     pct exec "$DESKTOP_ID" -- sh -c '[ "$(stat -c "%a %G" /run/hatbot-render)" = "750 desk" ]'
+  expect "the renderer can't attach desk's shared memory (the screen grabs)" own_ipc hatbot-render
 else
   printf '   %sskip%s  renderer (not running; deploy.sh installs it)\n' "$yel" "$rst"
 fi
