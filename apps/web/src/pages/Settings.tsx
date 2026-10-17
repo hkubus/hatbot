@@ -15,7 +15,7 @@ import { navigate } from "../router";
 import { parseLimit, parseName, SavedRow } from "../saved-row";
 import { setPaused, useStore } from "../store";
 import { Switch } from "../switch";
-import { getTheme, setTheme, type Theme } from "../theme";
+import { setTheme, useTheme } from "../theme";
 import type { Toast } from "../toast";
 import { PluginPage, PluginsGroup } from "./Plugins";
 
@@ -53,7 +53,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [tokens, setTokens] = useState<ApiToken[]>([]);
   const [newToken, setNewToken] = useState<CreateTokenResponse | null>(null);
-  const [theme, setThemeState] = useState<Theme>(getTheme());
+  const theme = useTheme();
   const paused = useStore((s) => s.paused);
   const [loadError, setLoadError] = useState("");
   // Saved elsewhere (the app, another tab): shown here too.
@@ -159,10 +159,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
                     key={t}
                     className={theme === t ? "active" : ""}
                     aria-pressed={theme === t}
-                    onClick={() => {
-                      setTheme(t);
-                      setThemeState(t);
-                    }}
+                    onClick={() => setTheme(t)}
                   >
                     {t[0]?.toUpperCase() + t.slice(1)}
                   </button>

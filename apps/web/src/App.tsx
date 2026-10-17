@@ -1,13 +1,5 @@
 import type { Approval, Conversation, Me } from "@hatbot/shared";
-import {
-  lazy,
-  Suspense,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "./api";
 import { BotMark, Icon, type IconName } from "./icons";
 import { LiveView } from "./live";
@@ -37,7 +29,7 @@ import {
   setPaused,
   useStore,
 } from "./store";
-import { getTheme, setTheme, type Theme } from "./theme";
+import { setTheme, type Theme, useTheme } from "./theme";
 import { TOAST_ICON, type Toast, type ToastKind } from "./toast";
 
 // Pages you open now and then load when first opened; chat and tasks come with the app.
@@ -78,13 +70,6 @@ const viewOf = (path: string) =>
             path.startsWith("/groups/")
           : path === v.path || path.startsWith(`${v.path}/`),
   ) ?? VIEWS[0];
-
-function useTheme(): Theme {
-  return useSyncExternalStore((l) => {
-    window.addEventListener("hatbot:theme", l);
-    return () => window.removeEventListener("hatbot:theme", l);
-  }, getTheme);
-}
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
