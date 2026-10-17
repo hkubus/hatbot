@@ -316,6 +316,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   /** A negotiation's task: it may send one approved message, or only read (PLAN.md §16.3). */
   const gate = tasks.negotiations?.gateFor(id) ?? null;
   const gateState: GateState = { recorded: false, sent: false, stopped: null };
+  /** Text was typed or pasted in this task: what's in a box may be ours, not sent. */
+  let typed = false;
   const sources = new Set<string>();
   const trustedHosts = new Set<string>();
   const messages: Anthropic.Beta.BetaMessageParam[] = [];
@@ -558,6 +560,13 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       tasks.addStep(id, { kind: "note", name: "Held back", detail: no, url: lastUrl });
       return textResult(call, `Not run: ${no}`, true);
     }
+    if (
+      call.name === "type" ||
+      call.name === "form_input" ||
+      ((call.name === "key" || call.name === "hold_key") &&
+        /(ctrl|super)\+v|shift\+insert/i.test(String(input.text ?? "")))
+    )
+      typed = true;
     const check = gate ? sendsWith(call.name, input) : checkFor(call.name, input);
     /** Looks again at what the check looked at, to see whether a send left the text box. */
     let inspectAgain: (() => Promise<AgentElement | null>) | null = null;
@@ -628,7 +637,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       // One message, once: whether it went or not, nothing more goes from this task.
       gateState.sent = true;
       const went = await sentFrom(inspectAgain);
-      tasks.negotiations?.sendPassed(id, went);
+      // Where it went: the tab right after, before the model can move it.
+      const tab = went ? await agent.context(false).catch(() => null) : null;
+      tasks.negotiations?.sendPassed(id, went, tab?.url ?? null);
       const note = went
         ? "The message went: the text box is empty now. Call record_conversation, then finish."
         : "Send was clicked, but the text is still in the box, so it may not have gone. Don't try again: call record_conversation, then finish.";
@@ -667,8 +678,14 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     if (!p.success) return textResult(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
     if (!gate || !tasks.negotiations)
       return textResult(call, "This task has no negotiation.", true);
-    const tab = await agent.context(false).catch(() => null);
-    const r = tasks.negotiations.record(id, tab?.url ?? null, p.data.messages, gateState);
+    const tab = await agent.context(true).catch(() => null);
+    const box = await agent.inspect().catch(() => null);
+    const r = tasks.negotiations.record(id, tab?.url ?? null, p.data.messages, {
+      sent: gateState.sent,
+      typed,
+      drafts: box?.fields ?? [],
+      pageText: tab?.text ?? null,
+    });
     gateState.recorded = true;
     if (r.stale || r.alreadySent) gateState.stopped = r.text;
     tasks.addStep(id, {

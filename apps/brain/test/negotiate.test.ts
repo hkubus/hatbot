@@ -920,6 +920,64 @@ test("a message already in the conversation counts as sent; a click that leaves 
   expect(u.tasks.steps(1).map((s) => s.name)).toContain("Not sure the message went");
 });
 
+test("text in the box isn't taken for a sent message, and another conversation's address isn't kept", async () => {
+  // A draft an earlier task left in the box, which the model lists as ours.
+  const leftover = new FakeModel([
+    { content: [toolUse("record_conversation", { messages: [{ from: "us", text: TEXT }] })] },
+    { content: [computer("left_click", { coordinate: [300, 500] })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), leftover);
+  messageBox(t).set([TEXT]);
+  const n = openNegotiation(t);
+  await t.negotiations.send(n, { text: TEXT, offer: 1060, agree: false, stated: null }, call());
+  await t.tasks.idle();
+  expect(results(leftover, 1)).toContain("Now type exactly the approved message");
+  expect(t.agent.actions.filter((a) => a.name === "left_click")).toHaveLength(1);
+  expect(t.negotiations.messages(n.id)[0]?.status).toBe("sent");
+
+  // Text it typed itself, listed as ours before it's sent, when the box can't be seen into.
+  const typed = new FakeModel([
+    { content: [toolUse("record_conversation", { messages: [] })] },
+    { content: [computer("type", { text: TEXT })] },
+    { content: [toolUse("record_conversation", { messages: [{ from: "us", text: TEXT }] })] },
+    { content: [browser("left_click", { target: { type: "ref", ref: "ref_1" } })] },
+    finish(),
+  ]);
+  const u = await testApp(new FakeModel(), typed);
+  messageBox(u);
+  u.agent.inspect = async () => null;
+  const m = openNegotiation(u);
+  await u.negotiations.send(m, { text: TEXT, offer: 1060, agree: false, stated: null }, call());
+  await u.tasks.idle();
+  expect(results(typed, 3)).toContain("Now type exactly the approved message");
+  expect(u.agent.browserCalls.map((c) => c.name)).toEqual(["left_click"]);
+  expect(u.negotiations.messages(m.id)[0]?.status).toBe("sent");
+  // It went from the listing page; the tab right after is the conversation.
+  expect(u.negotiations.get(m.id)?.conversationUrl).toBe(CHAT_URL);
+
+  // A read that lands on another conversation on the site doesn't keep its address.
+  const read = new FakeModel([
+    {
+      content: [
+        toolUse("record_conversation", { messages: [{ from: "seller", text: "Sprzedane." }] }),
+      ],
+    },
+    finish(),
+  ]);
+  const v = await testApp(new FakeModel(), read);
+  messageBox(v, "https://www.olx.pl/myaccount/answers/777");
+  v.agent.page = {
+    url: "https://www.olx.pl/myaccount/answers/777",
+    title: "OLX",
+    text: "Rower górski · Sprzedane.",
+  };
+  const r = openNegotiation(v);
+  await v.negotiations.check(r, call());
+  await v.tasks.idle();
+  expect(v.negotiations.get(r.id)?.conversationUrl).toBeNull();
+});
+
 test("a read-only task records the seller and the conversation, and types and sends nothing", async () => {
   const work = new FakeModel([
     { content: [computer("type", { text: "hello" })] },
@@ -947,6 +1005,8 @@ test("a read-only task records the seller and the conversation, and types and se
   const t = await testApp(new FakeModel(), work);
   const box = messageBox(t, CHAT_URL);
   box.set(["leftover draft"]);
+  // The conversation names the listing, so its address is kept.
+  t.agent.page = { url: CHAT_URL, title: "OLX", text: "Karta graficzna RTX 3070 8GB · 1500 zł" };
   const n = openNegotiation(t);
   const said = await t.negotiations.check(n, call());
   expect(said).toContain("Reading the conversation in desktop task #1");

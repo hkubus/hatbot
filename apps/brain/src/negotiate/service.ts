@@ -108,6 +108,7 @@ const toMessage = (r: MessageRow): NegotiationMessage => ({
 
 /** A message's words as the record compares them: letters and digits only, lowercased. */
 const keyOf = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** What the desktop model read in a conversation, oldest first. */
 export type ConversationReport = { from: "seller" | "us"; text: string }[];
@@ -759,7 +760,15 @@ export class Negotiations {
     taskId: number,
     tabUrl: string | null,
     report: ConversationReport,
-    state: { sent: boolean },
+    state: {
+      sent: boolean;
+      /** Something was typed in this task: the approved text may be a draft in the box. */
+      typed?: boolean;
+      /** What the text boxes hold now. */
+      drafts?: string[];
+      /** The page's text, which may name the listing. */
+      pageText?: string | null;
+    },
   ): Recorded {
     const row = this.taskRow(taskId);
     const n = row && this.get(row.negotiation_id);
@@ -776,6 +785,7 @@ export class Negotiations {
         .map((m) => keyOf(m.text)),
     );
     const lastOurs = report.findLastIndex((m) => m.from === "us");
+    const drafts = new Set((state.drafts ?? []).map(keyOf));
     let added = 0;
     let after = 0;
     let alreadySent = false;
@@ -789,8 +799,13 @@ export class Negotiations {
           outgoing.status !== "sent" &&
           !sentBefore.has(key)
         ) {
-          alreadySent = !state.sent;
-          this.setStatus(outgoing.id, "sent");
+          // The send went through the gate: it shows now.
+          if (state.sent) this.setStatus(outgoing.id, "sent");
+          // An earlier task's send shows, unless it's text typed here, or a draft still in the box.
+          else if (!state.typed && !drafts.has(key)) {
+            alreadySent = true;
+            this.setStatus(outgoing.id, "sent");
+          }
         }
         return;
       }
@@ -808,14 +823,14 @@ export class Negotiations {
       added++;
       if (i > lastOurs) after++;
     });
-    // The conversation's own address, once a message has gone there or a read found it.
+    // The conversation's own address, once a read finds one that names this listing; a send records
+    // where it went in sendPassed.
     const mode = row.message_id ? "send" : "read";
     if (
       tabUrl &&
       !n.conversationUrl &&
-      (mode === "read" || state.sent) &&
-      sameHost(tabUrl, n.listingUrl) &&
-      !sameAddress(tabUrl, n.listingUrl)
+      mode === "read" &&
+      this.conversationFor(n, tabUrl, state.pageText ?? null)
     )
       this.update(n.id, { conversation_url: tabUrl.split("#")[0] ?? tabUrl });
     else this.update(n.id, {});
@@ -857,12 +872,45 @@ export class Negotiations {
   }
 
   /** The gate let the send through: whether the text then left the box. */
-  sendPassed(taskId: number, confirmed: boolean) {
+  /**
+   * The gate let the send through: whether the text then left the box, and the tab's address then,
+   * which is the conversation it went to.
+   */
+  sendPassed(taskId: number, confirmed: boolean, tabUrl: string | null = null) {
     const row = this.taskRow(taskId);
     if (!row?.message_id) return;
     const m = this.message(row.message_id);
     if (m?.status !== "sending") return;
+    const n = this.get(row.negotiation_id);
+    if (
+      confirmed &&
+      tabUrl &&
+      n &&
+      !n.conversationUrl &&
+      sameHost(tabUrl, n.listingUrl) &&
+      !sameAddress(tabUrl, n.listingUrl)
+    )
+      this.d.db
+        .query("UPDATE negotiations SET conversation_url = ? WHERE id = ?")
+        .run(tabUrl.split("#")[0] ?? tabUrl, n.id);
     this.setStatus(row.message_id, confirmed ? "sent" : "unconfirmed");
+  }
+
+  /**
+   * A page a read found is this negotiation's conversation: on the listing's site, not the listing, and
+   * naming the listing, in its address (the listing's id) or on the page (its title).
+   */
+  private conversationFor(n: Negotiation, url: string, pageText: string | null): boolean {
+    if (!sameHost(url, n.listingUrl) || sameAddress(url, n.listingUrl)) return false;
+    const id = parseKey(n.listingKey)?.id ?? "";
+    const where = (() => {
+      const u = new URL(url);
+      return `${u.pathname}${u.search}`;
+    })();
+    if (id.length >= 5 && new RegExp(`[/=-]${escapeRe(id)}(?:[/?&#.-]|$)`, "i").test(where))
+      return true;
+    const title = keyOf(n.title).slice(0, 30);
+    return title.length >= 6 && pageText !== null && keyOf(pageText).includes(title);
   }
 
   private setStatus(messageId: number, status: NegotiationMessage["status"]) {
