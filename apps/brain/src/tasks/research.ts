@@ -37,14 +37,19 @@ const Part = z.object({
 });
 const Investigate = z.object({ parts: z.array(Part).min(1).max(MAX_PARTS) });
 
+// Kept short: the lead keeps every finding for the whole run, five helpers' worth each round.
 const Finding = z.object({
-  claim: z.string().min(1).max(500).describe("What the page says, in your words, with its numbers"),
+  claim: z.string().min(1).max(300).describe("What the page says, in your words, with its numbers"),
   quote: z
     .string()
     .min(1)
-    .max(800)
+    .max(400)
     .describe("The words on the page that support the claim, copied exactly"),
-  url: z.string().min(1).max(2000).describe("The page's URL"),
+  // It becomes a citation link.
+  url: z
+    .url({ protocol: /^https?$/ })
+    .max(2000)
+    .describe("The page's URL"),
   title: z.string().max(200).describe("The page's title"),
   date: z
     .string()
@@ -53,7 +58,7 @@ const Finding = z.object({
     .describe("When the page was published or last updated, if it says"),
 });
 const ReportFindings = z.object({
-  findings: z.array(Finding).max(30),
+  findings: z.array(Finding).max(15),
   gaps: z
     .string()
     .max(1500)
@@ -130,13 +135,28 @@ const folderOf = (bot: { id: string }) => {
 
 type Source = { n: number; url: string; title: string; date?: string };
 
+/** Untrusted text as a JSON string, with nothing in it that can close the tag around it. */
+const untrustedJson = (text: string) =>
+  JSON.stringify(text).replace(/[<>&]/g, (c) => `\\u00${c.charCodeAt(0).toString(16)}`);
+
+const TRACKING = /^(utm_\w+|fbclid|gclid|dclid|msclkid|yclid|igshid|mc_cid|mc_eid)$/i;
+
+/** One page, one source: without its fragment, tracking parameters or a trailing slash. */
+export function pageUrl(url: string): string {
+  const u = new URL(url.trim());
+  u.hash = "";
+  for (const key of [...u.searchParams.keys()]) if (TRACKING.test(key)) u.searchParams.delete(key);
+  if (u.pathname.length > 1) u.pathname = u.pathname.replace(/\/+$/, "");
+  return u.href;
+}
+
 /** Every source the helpers found in one run, numbered as they came, with what was found there. */
 export class ResearchSources {
   readonly list: Source[] = [];
   readonly findings: { n: number; claim: string; quote: string }[] = [];
 
   add(f: z.infer<typeof Finding>): number {
-    const url = f.url.trim();
+    const url = pageUrl(f.url);
     let s = this.list.find((x) => x.url === url);
     if (!s) {
       s = { n: this.list.length + 1, url, title: f.title.trim() || url };
@@ -299,21 +319,22 @@ export async function investigate(
   const blocks = parts.map((part, i) => {
     const r = results[i] as Findings & { note?: string };
     const bySource = new Map<number, string[]>();
+    // What came from the pages is in JSON strings, so it can't close the tags around it.
     for (const f of r.findings) {
       const n = sources.add(f);
       bySource.set(n, [
         ...(bySource.get(n) ?? []),
-        `- ${f.claim}\n  Quote: ${JSON.stringify(f.quote)}`,
+        `- ${untrustedJson(f.claim)}\n  Quote: ${untrustedJson(f.quote)}`,
       ]);
     }
     const found = [...bySource].map(([n, lines]) => {
       const s = sources.get(n) as Source;
-      return `[${n}] ${s.title} (${s.url}${s.date ? `, ${s.date}` : ""})\n${lines.join("\n")}`;
+      return `[${n}] ${untrustedJson(s.title)} ${s.url}${s.date ? ` ${untrustedJson(s.date)}` : ""}\n${lines.join("\n")}`;
     });
     return [
-      `<part topic=${JSON.stringify(part.topic)}>`,
+      `<part topic=${untrustedJson(part.topic)}>`,
       found.length ? found.join("\n") : "No findings.",
-      r.gaps.trim() ? `Gaps: ${r.gaps.trim()}` : "",
+      r.gaps.trim() ? `Gaps: ${untrustedJson(r.gaps.trim())}` : "",
       r.note ?? "",
       "</part>",
     ]
@@ -382,8 +403,8 @@ async function checkNumbers(
       const s = sources.get(n) as Source;
       const found = sources.findings
         .filter((f) => f.n === n)
-        .map((f) => `- ${f.claim}\n  Quote: ${JSON.stringify(f.quote)}`);
-      return `[${n}] ${s.title}\n${found.join("\n")}`;
+        .map((f) => `- ${untrustedJson(f.claim)}\n  Quote: ${untrustedJson(f.quote)}`);
+      return `[${n}] ${untrustedJson(s.title)}\n${found.join("\n")}`;
     })
     .join("\n\n")
     .slice(0, 60_000);
