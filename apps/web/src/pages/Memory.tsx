@@ -148,7 +148,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
         setLog((had) => [...(had ?? []), ...l.filter((c) => !had?.some((x) => x.sha === c.sha))]);
         setOlder(l.length === PAGE);
       },
-      (err) => toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot"),
+      (err) => toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot", "error"),
     );
 
   /** Reads a file into the editor; `quiet` refreshes the one shown without blanking it. */
@@ -191,7 +191,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
     if (sel.kind === "diff")
       api<{ diff: string }>(`/memory/diff/${sel.commit.sha}`).then(
         (r) => setDiff(r.diff),
-        (err) => toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot"),
+        (err) => toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot", "error"),
       );
   }, [sel, toast]);
 

@@ -80,7 +80,9 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
     toast("Saved");
   };
   const update = (patch: Partial<AppSettings>) =>
-    put(patch).catch((err) => toast(err instanceof ApiError ? err.message : "Couldn't save"));
+    put(patch).catch((err) =>
+      toast(err instanceof ApiError ? err.message : "Couldn't save", "error"),
+    );
 
   const [tokenError, setTokenError] = useState("");
   const [pauseError, setPauseError] = useState("");
