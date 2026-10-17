@@ -521,6 +521,8 @@ export type Commit = {
 
 export type Limits = {
   taskUsd: number;
+  /** A research task's starting limit, and what each raise adds. */
+  researchUsd: number;
   dailyUsd: number;
   monthlyUsd: number;
   /** The last of the daily and monthly limits, which only alerts and the heartbeat spend. */

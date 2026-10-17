@@ -150,6 +150,11 @@ test("research runs on Opus at high effort, with helpers, a token budget and its
   // Only tools the request sends are named as kept.
   expect(kept(lead)).toEqual(["finish_research", "investigate"]);
   expect(lead?.betas).toContain("task-budgets-2026-03-13");
+  // Its own limit, and less of a page than other tasks read: the helpers read for it.
+  expect(t.tasks.budget(task.id)).toBe(5);
+  expect(lead?.tools?.find((x) => "name" in x && x.name === "web_fetch")).toMatchObject({
+    max_content_tokens: 10_000,
+  });
   expect(lead?.output_config).toMatchObject({
     effort: "high",
     task_budget: { type: "tokens", total: 250_000 },
@@ -664,7 +669,7 @@ test("a helper near the task's limit reports at once, and five check the limit t
     return { content: [toolUse("report_findings", { findings: [PRICE], gaps: "" })] };
   };
   const t = await testApp(new FakeModel(), work);
-  t.settings.update({ limits: { taskUsd: 1, dailyUsd: 1000, monthlyUsd: 1000 } });
+  t.settings.update({ limits: { researchUsd: 1, dailyUsd: 1000, monthlyUsd: 1000 } });
   const created = t.tasks.createBackgroundTask({
     title: "Price",
     goal: "The DS925+ price.",
@@ -826,7 +831,7 @@ test("research near its spending limit is told to finish, and a denied raise kee
   ]);
   helpers(work);
   const t = await testApp(new FakeModel(), work);
-  t.settings.update({ limits: { taskUsd: 20, dailyUsd: 1000, monthlyUsd: 1000 } });
+  t.settings.update({ limits: { researchUsd: 20, dailyUsd: 1000, monthlyUsd: 1000 } });
   const created = t.tasks.createBackgroundTask({
     title: "Quiet NAS for four drives",
     goal: "Which quiet four-bay NAS?",

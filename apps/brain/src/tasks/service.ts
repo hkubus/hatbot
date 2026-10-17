@@ -438,6 +438,7 @@ export class Tasks {
       request: input.request ?? null,
       tainted: taintedBy ? 1 : 0,
       tainted_by: taintedBy,
+      ...(input.research ? { budget_usd: this.d.settings.get().limits.researchUsd } : {}),
     });
     if (
       input.origin === "chat" &&
@@ -462,7 +463,7 @@ export class Tasks {
     const cols = {
       ...row,
       status: "queued",
-      budget_usd: this.d.settings.get().limits.taskUsd,
+      budget_usd: row.budget_usd ?? this.d.settings.get().limits.taskUsd,
       created_at: this.now(),
     };
     const names = Object.keys(cols);

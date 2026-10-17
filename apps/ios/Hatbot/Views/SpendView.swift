@@ -59,6 +59,9 @@ struct LimitsView: View {
       if limits != nil {
         Section {
           field("Each task", \.taskUsd)
+          if limits?.researchUsd != nil {
+            field("Each research task", optional: \.researchUsd)
+          }
           field("Each day", \.dailyUsd)
           field("Each month", \.monthlyUsd)
           if limits?.alertReserveUsd != nil {
@@ -97,7 +100,8 @@ struct LimitsView: View {
 
   private var valid: Bool {
     guard let l = limits else { return false }
-    return l.taskUsd > 0 && l.dailyUsd > 0 && l.monthlyUsd > 0 && (l.alertReserveUsd ?? 0) >= 0
+    return l.taskUsd > 0 && (l.researchUsd ?? 1) > 0 && l.dailyUsd > 0 && l.monthlyUsd > 0
+      && (l.alertReserveUsd ?? 0) >= 0
   }
 
   private func field(_ label: String, _ key: WritableKeyPath<Limits, Double>) -> some View {

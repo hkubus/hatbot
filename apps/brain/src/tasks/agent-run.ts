@@ -34,6 +34,7 @@ import {
   finishResearch,
   investigate,
   keepUnfinished,
+  LEAD_WEB_TOOLS,
   MAX_RESEARCH_STEPS,
   RESEARCH_BETA,
   RESEARCH_CORE_TOOLS,
@@ -205,7 +206,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     ),
     ...(research ? RESEARCH_TOOLS : []),
     ...[...pluginTools.values()].map(toolParam),
-    ...WEB_TOOLS,
+    ...(research ? LEAD_WEB_TOOLS : WEB_TOOLS),
   ];
   const sent = new Set(tools.flatMap((t) => ("name" in t ? [t.name] : [])));
   /** Results never cleared: a research task's findings are what it cites. Only tools sent. */
@@ -395,7 +396,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
   /** Asks for more money when the task hits its limit (PLAN.md §6.3). */
   const askBudget = async () => {
-    const extra = d.settings.get().limits.taskUsd;
+    const { limits } = d.settings.get();
+    const extra = research ? limits.researchUsd : limits.taskUsd;
     const { outcome } = await askApproval({
       kind: "budget",
       summary: `Let task #${id} spend $${extra} more`,

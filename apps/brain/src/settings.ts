@@ -4,6 +4,8 @@ import type { Db } from "./db";
 export const Settings = z.object({
   limits: z.object({
     taskUsd: z.number().positive(),
+    /** A research task's: Opus and its helpers cost more than most tasks (PLAN.md §17). */
+    researchUsd: z.number().positive(),
     dailyUsd: z.number().positive(),
     monthlyUsd: z.number().positive(),
     /** The last of the daily and monthly limits, which only alerts and the heartbeat spend (PLAN.md §6.3). */
@@ -47,7 +49,7 @@ export const SettingsPatch = Settings.extend({ limits: Settings.shape.limits.par
 export type SettingsPatch = z.infer<typeof SettingsPatch>;
 
 export const DEFAULT_SETTINGS: Settings = {
-  limits: { taskUsd: 3, dailyUsd: 10, monthlyUsd: 200, alertReserveUsd: 1 },
+  limits: { taskUsd: 3, researchUsd: 5, dailyUsd: 10, monthlyUsd: 200, alertReserveUsd: 1 },
   chatEffort: "low",
   chatModel: "claude-haiku-5-5",
   owner: { name: "You", email: "owner@local" },

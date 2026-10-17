@@ -131,6 +131,9 @@ const WORKER_TOOLS: Anthropic.Beta.BetaToolUnion[] = [
   ...webTools({ pageTokens: HELPER_PAGE_TOKENS, uses: HELPER_USES }),
 ];
 
+/** The lead's own web tools: it checks one thing at Opus prices, so it reads less of a page. */
+export const LEAD_WEB_TOOLS = webTools({ pageTokens: 10_000 });
+
 /** The research prompt, with where this bot keeps its reports. */
 export const researchPrompt = (bot: Bot) => RESEARCH_PROMPT.replaceAll("{research}", folderOf(bot));
 

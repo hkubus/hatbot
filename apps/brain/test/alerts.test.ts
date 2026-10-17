@@ -141,6 +141,7 @@ test("the last dollar of the day is kept for alerts; past it, you still hear wha
   expect(t.settings.get().limits.alertReserveUsd).toBe(1);
   expect(t.settings.update({ limits: { alertReserveUsd: 0 } }).limits).toEqual({
     taskUsd: 3,
+    researchUsd: 5,
     dailyUsd: 10,
     monthlyUsd: 200,
     alertReserveUsd: 0,
