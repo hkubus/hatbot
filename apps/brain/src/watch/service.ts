@@ -237,6 +237,8 @@ export class Watchers {
     oftenEnough(source, every);
     const sourceChanged = patch.source && saved(patch.source) !== saved(w.source);
     const first = sourceChanged ? await this.read(source, botId) : null;
+    // Deleted while its new source was read.
+    if (!this.get(id)) return null;
     const enabled = patch.enabled ?? w.enabled;
     // What it does or where it looks: yours to trust again.
     const rewritten = patch.prompt !== undefined || patch.source !== undefined;
@@ -285,7 +287,9 @@ export class Watchers {
         id,
       );
     // Like a new watcher, that look is its first value.
-    if (first) await this.saw(this.get(id) as Watcher, first.value, first.untrusted);
+    const updated = this.get(id);
+    if (!updated) return null;
+    if (first) await this.saw(updated, first.value, first.untrusted);
     return this.changed(id);
   }
 

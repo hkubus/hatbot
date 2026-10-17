@@ -369,6 +369,22 @@ test("a watcher deleted while its page is read is let go, and the checks carry o
   }
   expect(t.watchers.get(c.id)).toBeNull();
   expect(t.notifier.sent.map((n) => n.title)).not.toContain("Can't check C");
+
+  // Deleted while a new source is read for it: it's gone, not an error.
+  t.agent.fetch = fetch;
+  t.agent.pages.set(url, page(`<p class="price">€9</p>`));
+  const d = await make("D");
+  expect(d.id).toBeNumber();
+  t.agent.pages.set("https://shop.example/new", page(`<p class="price">€8</p>`));
+  t.agent.fetch = async (u) => {
+    const r = await fetch(u);
+    t.watchers.delete(d.id);
+    return r;
+  };
+  const moved = await api("PATCH", `/watchers/${d.id}`, {
+    source: { kind: "page", url: "https://shop.example/new", selector: ".price" },
+  });
+  expect(moved.status).toBe(404);
 });
 
 test("the chat makes a watcher from what it saw first", async () => {
