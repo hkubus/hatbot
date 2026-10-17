@@ -232,8 +232,9 @@ export class Checks {
   private async modelCall() {
     if (this.d.settings.get().paused) return skip("Paused.");
     if (this.d.apiKeySet === false) return fail("ANTHROPIC_API_KEY isn't set.");
+    let release = () => {};
     try {
-      this.d.spend.check(0.001);
+      release = this.d.spend.hold(0.001);
       const res = await this.d.model.create({
         model: CHECK_MODEL,
         max_tokens: 16,
@@ -243,6 +244,8 @@ export class Checks {
       return ok("Haiku 5.5 answered.");
     } catch (err) {
       return fail(`The call failed: ${modelErrorText(err)}`);
+    } finally {
+      release();
     }
   }
 

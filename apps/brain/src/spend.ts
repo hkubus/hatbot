@@ -264,8 +264,8 @@ export class Spend {
         t.output,
         cost,
       );
-    const s = this.summary();
-    this.events.emit({ type: "spend.updated", todayUsd: s.todayUsd, monthUsd: s.monthUsd });
+    const { todayUsd, monthUsd } = this.spent();
+    this.events.emit({ type: "spend.updated", todayUsd, monthUsd });
     return cost;
   }
 
@@ -430,7 +430,7 @@ export class Spend {
    * Throws BudgetError if a request estimated at `estimateUsd` would cross a limit, counting what the
    * requests in flight may still cost. A task's limit (`limitUsd`, its tree's) covers the tasks it
    * started and the task that started it. Only work with `reserve` may spend the last
-   * `alertReserveUsd` of the daily and monthly limits.
+   * `alertReserveUsd` of the daily and monthly limits. Returns the task's tree's root, for hold().
    */
   check(estimateUsd: number, task?: { id: number; limitUsd: number }, { reserve = false } = {}) {
     const limits = this.settings.get().limits;
@@ -466,6 +466,7 @@ export class Spend {
         `This month's $${limits.monthlyUsd} limit would be exceeded${why(monthUsd, limits.monthlyUsd)}.`,
       );
     }
+    return tree?.root;
   }
 
   /**
@@ -478,9 +479,9 @@ export class Spend {
     task?: { id: number; limitUsd: number },
     opts?: { reserve?: boolean },
   ): () => void {
-    this.check(estimateUsd, task, opts);
+    const root = this.check(estimateUsd, task, opts);
     const key = Symbol();
-    this.held.set(key, { usd: estimateUsd, root: task ? this.tree(task.id).root : undefined });
+    this.held.set(key, { usd: estimateUsd, root });
     return () => {
       this.held.delete(key);
     };
