@@ -208,11 +208,20 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
   };
 
   useEffect(() => {
-    if (sel.kind === "diff")
-      api<{ diff: string }>(`/memory/diff/${sel.commit.sha}`).then(
-        (r) => setDiff(r.diff),
-        (err) => toast(errorText(err, "Couldn't reach Hatbot"), "error"),
-      );
+    if (sel.kind !== "diff") return;
+    // Only the commit still shown: an earlier one's diff may answer last.
+    let stale = false;
+    api<{ diff: string }>(`/memory/diff/${sel.commit.sha}`).then(
+      (r) => {
+        if (!stale) setDiff(r.diff);
+      },
+      (err) => {
+        if (!stale) toast(errorText(err, "Couldn't reach Hatbot"), "error");
+      },
+    );
+    return () => {
+      stale = true;
+    };
   }, [sel, toast]);
 
   const groups = useMemo(() => {
