@@ -115,7 +115,7 @@ const CORE_TOOLS: Anthropic.Beta.BetaTool[] = [
   toolParam({
     name: "ask_bot",
     description:
-      "Hand part of this task to another of the owner's bots, for work in its line: it does it as its own task, with its own role, memory folder and plugins. This waits until it ends and returns its summary. It can't see this task, so give it everything it needs.",
+      "Hand part of this task to another of the owner's bots when it needs that bot's plugins, logins or notes: it does it as its own task, with its own role, memory folder and plugins. This waits until it ends and returns its summary. It can't see this task, so give it everything it needs.",
     schema: AskBotInput,
   }),
   toolParam({

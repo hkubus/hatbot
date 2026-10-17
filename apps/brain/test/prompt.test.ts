@@ -25,6 +25,11 @@ test("a page that talks to its screener counts as an injection", () => {
   );
 });
 
+test("ask_bot is for work that needs another bot's plugins, logins or notes", () => {
+  const ask = TOOL_PARAMS.find((t) => t.name === "ask_bot");
+  expect(ask?.description).toContain("when it needs that bot's plugins, logins or notes");
+});
+
 test("run_desktop_task is for a real browser, not for running scripts", () => {
   const desktop = TOOL_PARAMS.find((t) => t.name === "run_desktop_task");
   expect(desktop?.description).toContain("anything that needs a real browser");
