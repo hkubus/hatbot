@@ -16,7 +16,7 @@ import { browserKey } from "./keys";
 import { LiveQueue } from "./livequeue";
 import { runningProfile, useProfile } from "./profile";
 import { RENDER_SOCKET } from "./render";
-import { SHELL_SOCKET } from "./shell";
+import { MAX_FILE_BYTES, readUpTo, SHELL_SOCKET } from "./shell";
 import {
   ActionError,
   act,
@@ -59,6 +59,8 @@ const installer = (() => {
 /** Set by systemd's StateDirectory=; an archive dropped here is installed by a root service. */
 const stateDir = process.env.STATE_DIRECTORY;
 const MAX_UPDATE_BYTES = 10 * 1024 * 1024;
+/** A file for the shell is the biggest body; anything past it is refused before it's read. */
+const MAX_BODY_BYTES = MAX_FILE_BYTES + 64 * 1024;
 /** Endpoints added since the first deploy; the brain's checks say when the desktop is behind. */
 const FEATURES = [
   "profiles",
@@ -181,6 +183,7 @@ const liveQueue = new LiveQueue((m) => serial(() => liveInput(m)));
 const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
   hostname: host,
   port: Number(port),
+  maxRequestBodySize: MAX_BODY_BYTES,
   async fetch(req, srv) {
     const url = new URL(req.url);
     if (!authorized(req)) return json({ error: "unauthorized" }, 401);
@@ -193,9 +196,9 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
           // A new copy of this app from the brain's updater (the Update button in Settings).
           // hatbot-desktop-agent-update.path picks it up and installs it as root, then restarts us.
           if (!stateDir) return json({ error: "updates aren't enabled; run deploy.sh once" }, 501);
-          const bytes = new Uint8Array(await req.arrayBuffer());
-          if (!bytes.length || bytes.length > MAX_UPDATE_BYTES)
-            return json({ error: "expected a tar archive under 10 MB" }, 400);
+          const bytes = await readUpTo(req, MAX_UPDATE_BYTES);
+          if (!bytes?.length)
+            return json({ error: "expected a tar archive under 10 MB" }, bytes ? 400 : 413);
           const tmp = join(stateDir, "update.tar.part");
           writeFileSync(tmp, bytes, { mode: 0o600 });
           renameSync(tmp, join(stateDir, "update.tar"));
@@ -285,12 +288,15 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
         case "GET /files":
         case "PUT /files": {
           if (locked) return json({ error: "The owner has control of the desktop." }, 423);
+          if (Number(req.headers.get("content-length") ?? 0) > MAX_FILE_BYTES)
+            return json({ error: "The file is too big." }, 413);
           let res: Response;
           try {
+            // Streamed through: the shell counts the bytes as they come and stops past 25 MB.
             res = await fetch(`http://shell/files${url.search}`, {
               method: req.method,
               unix: SHELL_SOCKET,
-              body: req.method === "PUT" ? await req.arrayBuffer() : undefined,
+              body: req.method === "PUT" ? req.body : undefined,
               signal: AbortSignal.timeout(120_000),
             } as RequestInit);
           } catch {

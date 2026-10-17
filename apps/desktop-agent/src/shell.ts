@@ -3,7 +3,7 @@
 // holds no secrets: it listens on a Unix socket, which web pages can't reach, and desktop-agent relays.
 import { chmodSync, rmSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { ShellResult } from "@hatbot/shared/desktop";
 
 export const SHELL_SOCKET = process.env.HATBOT_SHELL_SOCKET ?? "/run/hatbot-shell/shell.sock";
@@ -62,18 +62,37 @@ export async function run(command: string, timeoutS = 60): Promise<ShellResult> 
   return { exitCode, output: clip(output), timedOut };
 }
 
+/** The body, or null once it's over `max` bytes: what's past that is never read. */
+export async function readUpTo(req: Request, max: number): Promise<Uint8Array | null> {
+  if (Number(req.headers.get("content-length") ?? 0) > max) return null;
+  if (!req.body) return new Uint8Array();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for await (const chunk of req.body) {
+    size += chunk.byteLength;
+    if (size > max) {
+      await req.body.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
 /**
  * A file the brain hands in (PUT) or takes out (GET), relative to the shell's home. It's no boundary:
- * commands can read and write the same files anyway.
+ * commands can read and write the same files anyway. But a path that leaves home is refused.
  */
 export async function file(req: Request, home = process.env.HOME ?? "/tmp"): Promise<Response> {
   const rel = new URL(req.url).searchParams.get("path") ?? "";
   if (!rel || rel.length > 500) return Response.json({ error: "path is missing" }, { status: 400 });
   const path = resolve(home, rel);
+  const inside = relative(resolve(home), path);
+  if (!inside || inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside))
+    return Response.json({ error: `${rel} isn't inside the shell's home.` }, { status: 400 });
   if (req.method === "PUT") {
-    const bytes = new Uint8Array(await req.arrayBuffer());
-    if (bytes.byteLength > MAX_FILE_BYTES)
-      return Response.json({ error: "The file is too big." }, { status: 413 });
+    const bytes = await readUpTo(req, MAX_FILE_BYTES);
+    if (!bytes) return Response.json({ error: "The file is too big." }, { status: 413 });
     await mkdir(dirname(path), { recursive: true });
     await Bun.write(path, bytes);
     return Response.json({ path });
@@ -90,6 +109,8 @@ if (import.meta.main) {
   rmSync(SHELL_SOCKET, { force: true });
   Bun.serve({
     unix: SHELL_SOCKET,
+    // A file going in is the biggest body; anything past it is refused before it's read.
+    maxRequestBodySize: MAX_FILE_BYTES + 64 * 1024,
     async fetch(req) {
       const route = new URL(req.url).pathname;
       if (route === "/files" && (req.method === "GET" || req.method === "PUT")) {
