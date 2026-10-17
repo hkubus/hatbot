@@ -35,7 +35,7 @@ export class AuthService {
   /** Live sockets, by the session or token that opened them, to close when it ends. */
   private sockets = new Map<string, Set<() => void>>();
   /** A new authenticator secret waiting for its first code, and who asked for it. */
-  private totpChange: { secret: string; for: string; until: number } | null = null;
+  private totpChange: { secret: string; for: string; until: number; tries: number } | null = null;
 
   constructor(
     private db: Db,
@@ -96,7 +96,7 @@ export class AuthService {
    */
   startTotpChange(p: Principal): { secret: string; uri: string } {
     const secret = newTotpSecret();
-    this.totpChange = { secret, for: keyOf(p), until: this.clock() + TOTP_CHANGE_MS };
+    this.totpChange = { secret, for: keyOf(p), until: this.clock() + TOTP_CHANGE_MS, tries: 0 };
     return { secret, uri: totpUri(secret) };
   }
 
@@ -104,7 +104,11 @@ export class AuthService {
     const change = this.totpChange;
     if (!change || change.for !== keyOf(p) || change.until < this.clock()) return false;
     const step = verifyTotp(change.secret, code, this.clock());
-    if (step === null) return false;
+    if (step === null) {
+      // Codes can't be guessed at: a few wrong ones and it starts again.
+      if (++change.tries >= 5) this.totpChange = null;
+      return false;
+    }
     this.db
       .query("UPDATE owner SET totp_secret = ?, totp_last_step = ? WHERE id = 1")
       .run(change.secret, step);

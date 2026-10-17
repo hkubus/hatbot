@@ -84,13 +84,13 @@ export function createApp(deps: Deps) {
 }
 
 const TOO_LARGE = "That's too large.";
+/** Requests whose body was cut off by limitBody. */
+const overflowed = new WeakSet<Request>();
 
 /**
  * Refuses a body over `max` bytes: at once by its length, or, sent in chunks, once that much has come.
  * Nothing is read ahead, so a route that checks who you are first still does so before any of it.
  */
-const overflowed = new WeakSet<Request>();
-
 function limitBody(c: Context, next: Next, max: number): Response | Promise<void> {
   const raw = c.req.raw;
   if (!raw.body) return next();

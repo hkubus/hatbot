@@ -512,6 +512,22 @@ describe("your account", () => {
     ).toBe(403);
   });
 
+  test("five wrong codes for a new authenticator drop it", async () => {
+    const { t, secret, password, cookie } = await signedInTwice();
+    const start = await t.call(
+      "POST",
+      "/auth/totp/start",
+      { password, totp: t.code(secret) },
+      { cookie },
+    );
+    const next = (await start.json()) as { secret: string };
+    const right = t.code(next.secret);
+    const wrong = right === "000000" ? "000001" : "000000";
+    for (let i = 0; i < 5; i++)
+      expect((await t.call("POST", "/auth/totp", { totp: wrong }, { cookie })).status).toBe(403);
+    expect((await t.call("POST", "/auth/totp", { totp: right }, { cookie })).status).toBe(403);
+  });
+
   test("you see where you're signed in, and can sign out one or everywhere else", async () => {
     const { t, cookie, otherCookie, token, works } = await signedInTwice();
     const list = (await (
