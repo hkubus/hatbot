@@ -241,9 +241,15 @@ export function checkoutHost(url: string | undefined): string | null {
 
 /**
  * Why an element needs confirm_intent: its label, that it has none to go by (the button itself, or the one
- * beside a text box that Enter would press), or the page it's on.
+ * beside a text box that Enter would press), the page it's on, or that Hatbot can't see it: inside a frame
+ * it couldn't get into (named by its title), or not at all.
  */
-export type Hold = { label: string } | { unlabelled: "button" | "beside" } | { checkout: string };
+export type Hold =
+  | { label: string }
+  | { unlabelled: "button" | "beside" }
+  | { checkout: string }
+  | { frame: string }
+  | { unseen: true };
 
 /** A button that does something, as opposed to a text box, a link or plain text. */
 const buttonLike = (el: AgentElement) =>
@@ -263,8 +269,10 @@ const nameless = (label: string) => !/[\p{L}\p{N}]/u.test(label);
 /** Whether pressing this element needs confirm_intent first, and why. */
 export function consequential(press: Press, el: AgentElement | null): Hold | null {
   if (!el || el.tag === "body") return null;
+  // Payment and chat widgets live in frames from another address.
+  if (el.tag === "iframe" || el.tag === "frame") return { frame: el.label };
   const search = el.search === true;
-  const checkout = checkoutHost(el.url);
+  const checkout = checkoutHost(el.frameUrl) ?? checkoutHost(el.url);
   // Enter or Space on a button or link presses it, like a click.
   if (!editable(el)) return clicked(el, search, checkout);
   // A click or a space in a text box types; so does shift+Enter in a text area, in chat boxes too.
@@ -296,6 +304,17 @@ function clicked(el: AgentElement, search: boolean, checkout: string | null): Ho
   return null;
 }
 
+/** The timeline's words for where a held step was. */
+export function heldWhat(hold: Hold): string {
+  if ("label" in hold) return `on "${hold.label}"`;
+  if ("checkout" in hold) return `on a checkout page (${hold.checkout})`;
+  if ("frame" in hold) return "in an embedded frame";
+  if ("unseen" in hold) return "on something Hatbot couldn't see";
+  return hold.unlabelled === "beside"
+    ? "beside a button with no label"
+    : "on a button with no label";
+}
+
 /** What the model is told when a step is held for confirm_intent. */
 export function heldBack(press: Press, hold: Hold): string {
   const act = press === "click" ? "click" : press === "space" ? "Space" : "Enter";
@@ -305,6 +324,10 @@ export function heldBack(press: Press, hold: Hold): string {
     return `this would ${press === "click" ? "click" : press === "space" ? "press" : "submit with"} "${hold.label}", which looks like a consequential step. If that's the action you mean to take, call confirm_intent first. If this ${act} doesn't send, buy, book or delete anything and the label misled the check, reach the same place another way.${newLine}`;
   if ("checkout" in hold)
     return `this ${act} is on a checkout or payment page (${hold.checkout}), where any button may order or pay, so each one needs the owner. Typing in a field and choosing an option don't. Call confirm_intent first, saying what this ${act} does.`;
+  if ("frame" in hold)
+    return `this ${act} lands in an embedded frame${hold.frame ? ` ("${hold.frame}")` : ""} that Hatbot can't see into, so it can't tell what it does; payment and chat widgets live in frames. If it pays, sends, books or deletes anything, call confirm_intent first. If it doesn't, reach the same place another way.`;
+  if ("unseen" in hold)
+    return `Hatbot couldn't see what this ${act} would act on, so it can't tell whether it's safe. Take a screenshot or read the page again and retry; if it still can't, and this pays, sends, books or deletes anything, call confirm_intent first.`;
   if (hold.unlabelled === "beside")
     return `Enter here could press the button next to this box, which has no label, so Hatbot can't tell whether it sends. If it sends, buys, pays, books or deletes anything, call confirm_intent first.${newLine}`;
   return `this ${act} is on a button with no label, so Hatbot can't tell what it does: it could send or pay as easily as open a menu. If it sends, buys, pays, books or deletes anything, call confirm_intent first. If it doesn't, reach the same place another way: Escape to close something, scrolling, or a labelled control.`;

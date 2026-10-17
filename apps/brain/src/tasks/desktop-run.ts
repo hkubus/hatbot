@@ -22,7 +22,7 @@ import { collapse, type GateState, gateCheck, refused } from "../negotiate/gate"
 import { destructive } from "../plugins/ssh/policy";
 import { BudgetError, estimateTokens, priceOf, usesReserve } from "../spend";
 import { skillPath } from "../teach/skills";
-import { checkFor, consequential, heldBack, type Where } from "./policy";
+import { checkFor, consequential, type Hold, heldBack, heldWhat, type Where } from "./policy";
 import { DesktopSendToChat, SEND_TO_CHAT_DESCRIPTION, sendToChat } from "./send-to-chat";
 import type { Tasks } from "./service";
 
@@ -44,6 +44,8 @@ const BETAS: Anthropic.Beta.AnthropicBeta[] = [
 
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 type ToolResult = Anthropic.Beta.BetaToolResultBlockParam;
+/** What an inspect saw: undefined when the page couldn't be looked at. */
+type Inspected = AgentElement | null | undefined;
 
 const ConfirmIntent = z.object({
   kind: z.enum([
@@ -562,28 +564,39 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       return textResult(call, `Not run: ${check.refuse}`, true);
     }
     /** Looks again at what the check looked at, to see whether a send left the text box. */
-    let inspectAgain: (() => Promise<AgentElement | null>) | null = null;
+    let inspectAgain: (() => Promise<Inspected>) | null = null;
     let sending = false;
     if (check) {
       const tab = typeof input.tab_id === "string" ? { tab_id: input.tab_id } : {};
-      const inspectAt = async (w: Where): Promise<() => Promise<AgentElement | null>> => {
+      const inspectAt = async (w: Where): Promise<() => Promise<Inspected>> => {
         if (isBrowser) {
           const at = "ref" in w ? { ref: w.ref } : "x" in w ? { x: w.x, y: w.y } : {};
-          return () => agent.browserInspect({ ...at, ...tab }).catch(() => null);
+          // The browser toolset always acts on a page: no answer means it couldn't be looked at.
+          return () =>
+            agent.browserInspect({ ...at, ...tab }).then(
+              (e) => e ?? undefined,
+              () => undefined,
+            );
         }
         let point = "x" in w ? [w.x, w.y] : null;
         if ("cursor" in w) {
           const r = await agent.action({ name: "cursor_position", input: {} });
           point = [r.x ?? 0, r.y ?? 0];
         }
-        return () => agent.inspect(point?.[0], point?.[1]).catch(() => null);
+        // Null is somewhere that isn't a page (the browser's own bar); an error, a page that couldn't be read.
+        return () => agent.inspect(point?.[0], point?.[1]).catch(() => undefined);
       };
       // Each end of a drag; one place for everything else.
       const looks = await Promise.all(check.at.map(inspectAt));
       const els = await Promise.all(looks.map((f) => f()));
       inspectAgain = looks[0] ?? null;
       const el = els[0] ?? null;
-      let hold = els.map((e) => consequential(check.press, e)).find((h) => h !== null) ?? null;
+      let hold =
+        els
+          .map((e): Hold | null =>
+            e === undefined ? { unseen: true } : consequential(check.press, e),
+          )
+          .find((h) => h !== null) ?? null;
       if (gate) {
         const label = hold && "label" in hold ? hold.label : null;
         const kind = check.press === "click" || check.press === "space" ? "click" : "enter";
@@ -597,18 +610,10 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         sending = g.action === "send";
       }
       if (hold && !armed) {
-        const what =
-          "label" in hold
-            ? `on "${hold.label}"`
-            : "checkout" in hold
-              ? `on a checkout page (${hold.checkout})`
-              : hold.unlabelled === "beside"
-                ? "beside a button with no label"
-                : "on a button with no label";
         tasks.addStep(id, {
           kind: "note",
           name: "Held back",
-          detail: `${call.name} ${what} needs approval`,
+          detail: `${call.name} ${heldWhat(hold)} needs approval`,
           url: lastUrl,
         });
         return textResult(call, `Not run: ${heldBack(check.press, hold)}`, true);
@@ -655,7 +660,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   };
 
   /** Whether the approved text has left the text boxes, looking a few times as the page catches up. */
-  const sentFrom = async (inspectAgain: () => Promise<AgentElement | null>): Promise<boolean> => {
+  const sentFrom = async (inspectAgain: () => Promise<Inspected>): Promise<boolean> => {
     const text = collapse(gate?.text ?? "");
     for (let i = 0; i < sendConfirm.tries; i++) {
       await Bun.sleep(sendConfirm.everyMs);

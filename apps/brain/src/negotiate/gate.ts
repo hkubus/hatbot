@@ -104,8 +104,8 @@ export function gateCheck(
       action: "hold",
       why: "The desktop is out of date and can't show what's in the text boxes, so nothing is sent. The owner needs to update desktop-agent.",
     };
-  // Clicking into a text box sends nothing; Enter in one may.
-  if (kind === "click" && el.editable) return { action: "pass" };
+  // Clicking into a text box, or on the page itself, sends nothing; Enter in a box may.
+  if (kind === "click" && (el.editable || el.tag === "body")) return { action: "pass" };
   const text = gate.text ? collapse(gate.text) : null;
   const fields = el.fields.map(collapse).filter(Boolean);
   if (!fields.length) return { action: "usual" };
@@ -139,6 +139,8 @@ export function gateCheck(
     };
   if (consequentialLabel && !SEND_LIKE.test(collapse(consequentialLabel)))
     return { action: "usual" };
+  // A frame from another address (a payment widget, say) isn't this page's Send.
+  if (el.tag === "iframe" || el.tag === "frame") return { action: "usual" };
   return { action: "send" };
 }
 

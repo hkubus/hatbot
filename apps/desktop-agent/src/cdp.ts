@@ -2,7 +2,7 @@
 // browser.ts's one DevTools connection, in Hatbot's isolated world, so the page's own scripts can't see or
 // fake the answers.
 import type { AgentContext, AgentElement } from "@hatbot/shared/desktop";
-import type { Browser } from "./browser";
+import { type Browser, ChromiumDown } from "./browser";
 import { ELEMENT } from "./page";
 
 const MAX_TEXT = 20_000;
@@ -26,18 +26,21 @@ const ELEMENT_JS = `(o) => {
   const dpr = window.devicePixelRatio || 1;
   const left = window.screenX + (window.outerWidth - window.innerWidth * dpr) / 2;
   const top = window.screenY + window.outerHeight - window.innerHeight * dpr;
-  let el = o.focused ? document.activeElement
-    : document.elementFromPoint((o.x - left) / dpr, (o.y - top) / dpr);
-  while (o.focused && el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
-  if (!el || el === document.body) return null;
+  const at = o.focused ? focusedAt() : elementAt((o.x - left) / dpr, (o.y - top) / dpr);
+  const el = at.el;
+  if (!el || el === el.ownerDocument.body) return null;
   // Teach mode drops what's typed here. A frame's focus can't be seen from the page, so it counts too.
   const hints = [el.getAttribute('autocomplete'), el.getAttribute('name'), el.id].join(' ');
   const secret = el.tagName === 'IFRAME' || (el.tagName === 'INPUT' && (el.type === 'password'
     || /password|one-time-code|cc-|pass|otp|pin\\b|cvc|cvv|card.?num|secret/i.test(hints)));
-  return { ...elementInfo(el), secret };
+  return leaveFrame({ ...elementInfo(el), secret }, at);
 }`;
 
-/** The element under a screen point, or the focused element when x and y are omitted. */
+/**
+ * The element under a screen point, or the focused element when x and y are omitted, followed into frames.
+ * Null when it's not in a page (the browser's own bar, another window) or Chromium isn't running; a page
+ * that can't be looked at throws, so the brain doesn't take it for nothing there.
+ */
 export async function inspect(
   browser: Browser,
   x?: number,
@@ -45,13 +48,13 @@ export async function inspect(
 ): Promise<AgentElement | null> {
   try {
     const focused = x === undefined || y === undefined;
-    const tab = await browser.onScreen<AgentElement | null>(ELEMENT_JS, {
+    return await browser.screenElement(ELEMENT_JS, {
       x: Math.round(x ?? 0),
       y: Math.round(y ?? 0),
       focused,
     });
-    return tab?.value ?? null;
-  } catch {
-    return null;
+  } catch (err) {
+    if (err instanceof ChromiumDown) return null;
+    throw err;
   }
 }

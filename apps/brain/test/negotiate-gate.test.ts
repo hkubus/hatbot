@@ -109,6 +109,14 @@ test("an unknown element or an old desktop-agent is held", () => {
   expect(JSON.stringify(gateCheck(gate, ready, "click", old, null))).toContain("out of date");
 });
 
+test("a click in a frame isn't the send; a click on the page itself sends nothing", () => {
+  const frame = send({ tag: "iframe", type: null, label: "Płatność" });
+  expect(gateCheck(gate, ready, "click", frame, null)).toEqual({ action: "usual" });
+  expect(gateCheck(gate, ready, "click", send({ tag: "body", type: null }), null)).toEqual({
+    action: "pass",
+  });
+});
+
 test("a read-only task sends nothing", () => {
   const read: SendGate = { ...gate, mode: "read", text: null };
   expect(gateCheck(read, ready, "click", send(), "Wyślij").action).toBe("hold");

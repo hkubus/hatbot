@@ -329,3 +329,16 @@ test("Space or Enter on a focused button or link presses it", () => {
   expect(heldBack("space", { label: "Kup teraz" })).toContain('press "Kup teraz"');
   expect(heldBack("enter", { unlabelled: "beside" })).toContain("shift+Return");
 });
+
+test("a frame Hatbot couldn't enter can't be told apart from a Pay button, so it's held", () => {
+  const frame = button("Secure payment", { tag: "iframe", type: null });
+  expect(consequential("click", frame)).toEqual({ frame: "Secure payment" });
+  expect(consequential("enter", frame)).toEqual({ frame: "Secure payment" });
+  // Followed into a payment gateway's frame, any button there is a checkout's.
+  const inside = button("Dalej", {
+    url: "https://shop.example/koszyk",
+    frameUrl: "https://secure.payu.com/front/widget",
+  });
+  expect(consequential("click", inside)).toEqual({ checkout: "secure.payu.com" });
+  expect(heldBack("click", { frame: "" })).toContain("lands in an embedded frame that");
+});

@@ -101,6 +101,8 @@ export type AgentElement = {
    * chat box's Send, say), "" for one with no name. Enter there may press one. With "gates".
    */
   buttonsAfter?: string[];
+  /** It's inside a frame from another address (a payment widget, say), this one. With "gates". */
+  frameUrl?: string;
 };
 
 /** POST /exec: a command run by the desktop's shell, which can't see the browser profile or the screen. */

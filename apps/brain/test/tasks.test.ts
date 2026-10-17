@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { type Approval, latestNoteOnly, type Task, type TaskStep } from "@hatbot/shared";
 import { inBatches } from "../src/agent/tools";
-import { HttpDesktopAgent } from "../src/desktop/client";
+import { DesktopError, HttpDesktopAgent } from "../src/desktop/client";
 import { limits } from "../src/tasks/desktop-run";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
@@ -489,6 +489,38 @@ test("a consequential browser click is checked by its element reference", async 
   // The batch stops at the held-back click: typing would land in the wrong place.
   expect(results[1]?.is_error).toBe(true);
   expect(results[1]?.content).toBe("Not executed: an earlier action in this turn failed.");
+});
+
+test("a click in a frame Hatbot can't enter, or that it couldn't look at, is held", async () => {
+  const work = new FakeModel([
+    // A PayU widget desktop-agent couldn't get into.
+    { content: [browser("left_click", { target: { type: "coordinate", x: 60, y: 30 } })] },
+    // The browser couldn't say what's at the point.
+    { content: [browser("left_click", { target: { type: "ref", ref: "ref_9" } })] },
+    // The screen's inspect failed on a page.
+    { content: [computer("left_click", { coordinate: [60, 30] })] },
+    // Off the page (the browser's own bar): nothing to check, so it runs.
+    { content: [computer("left_click", { coordinate: [400, 10] })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const frame = { tag: "iframe", role: null, type: null, label: "PayU", inForm: false };
+  const looks: (typeof frame | null)[] = [frame, null];
+  t.agent.browserInspect = async () => looks.shift() ?? null;
+  let screen = 0;
+  t.agent.inspect = async () => {
+    if (screen++ === 0) throw new DesktopError("The page script failed: timed out", 400);
+    return null;
+  };
+  startTask(t, "Pay for the order");
+  await t.tasks.idle();
+
+  const said = (n: number) => JSON.stringify(work.requests[n]?.messages.at(-1)?.content);
+  expect(said(1)).toContain('lands in an embedded frame (\\"PayU\\")');
+  expect(said(2)).toContain("couldn't see what this click would act on");
+  expect(said(3)).toContain("couldn't see what this click would act on");
+  expect(t.agent.browserCalls).toEqual([]);
+  expect(t.agent.actions.map((a) => a.input)).toEqual([{ coordinate: [400, 10] }]);
 });
 
 test("Space, mouse up, a drag, Enter after Tab and Enter in a chat box don't slip past", async () => {

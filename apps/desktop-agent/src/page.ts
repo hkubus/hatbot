@@ -87,20 +87,46 @@ export const ELEMENT = `
     if (editable) out.buttonsAfter = buttonsAfter(el);
     return out;
   };
-  // The deepest element at a viewport point, descending into same-origin iframes.
+  const isFrame = (e) => !!e && (e.tagName === 'IFRAME' || e.tagName === 'FRAME');
+  // The deepest element at a viewport point, through open shadow roots and same-origin frames. At a frame it
+  // can't enter (another origin's), { el: the frame, frame: the point inside it }, for browser.ts to follow.
   const elementAt = (x, y) => {
     let doc = document, ox = 0, oy = 0, el = null;
     for (;;) {
-      const hit = doc.elementFromPoint(x - ox, y - oy);
-      if (!hit) return el;
+      let hit = doc.elementFromPoint(x - ox, y - oy);
+      while (hit && hit.shadowRoot) {
+        const deeper = hit.shadowRoot.elementFromPoint(x - ox, y - oy);
+        if (!deeper || deeper === hit) break;
+        hit = deeper;
+      }
+      if (!hit) return { el };
       el = hit;
-      if (hit.tagName !== 'IFRAME') return el;
-      let inner;
-      try { inner = hit.contentDocument; } catch { return el; }
-      if (!inner) return el;
+      if (!isFrame(hit)) return { el };
       const r = hit.getBoundingClientRect();
-      ox += r.left + hit.clientLeft; oy += r.top + hit.clientTop; doc = inner;
+      const fx = ox + r.left + hit.clientLeft, fy = oy + r.top + hit.clientTop;
+      let inner = null;
+      try { inner = hit.contentDocument; } catch {}
+      if (!inner) return { el, frame: { x: x - fx, y: y - fy } };
+      ox = fx; oy = fy; doc = inner;
     }
+  };
+  // The focused element, through open shadow roots and same-origin frames; at a frame it can't enter, that
+  // frame with { focused: true }.
+  const focusedAt = () => {
+    let el = document.activeElement;
+    for (;;) {
+      while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+      if (!isFrame(el)) return { el };
+      let inner = null;
+      try { inner = el.contentDocument; } catch {}
+      if (!inner) return { el, frame: { focused: true } };
+      el = inner.activeElement;
+    }
+  };
+  // A frame left for browser.ts to follow: it finds the element through this.
+  const leaveFrame = (out, at) => {
+    if (out && at.frame && isFrame(at.el)) { globalThis.__hatbotFrame = at.el; out.frame = at.frame; }
+    return out;
   };
 `;
 
@@ -409,11 +435,19 @@ export const PAGE_TEXT = `(o) => {
 /** The element for the click policy: by ref, at a viewport point, or the focused one. */
 export const INSPECT = `(o) => {
   ${COMMON}
-  if (o.ref) return elementInfo(byRef(o.ref));
-  if (typeof o.x === 'number' && typeof o.y === 'number') return elementInfo(elementAt(o.x, o.y));
-  let el = document.activeElement;
-  while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
-  return elementInfo(el);
+  // Nothing there, or nothing focused, is the page itself; null means it couldn't be looked at (a stale ref).
+  const info = (at) => leaveFrame(elementInfo(at.el) || { tag: 'body', role: null, type: null, label: '',
+    inForm: false, url: location.href, editable: false, fields: fieldsFor(document.body) }, at);
+  if (o.ref) {
+    const el = byRef(o.ref);
+    if (!el) return null;
+    if (!isFrame(el)) return info({ el });
+    // A click on a frame's ref lands in its middle.
+    const r = el.getBoundingClientRect();
+    return info({ el, frame: { x: r.width / 2 - el.clientLeft, y: r.height / 2 - el.clientTop } });
+  }
+  if (typeof o.x === 'number' && typeof o.y === 'number') return info(elementAt(o.x, o.y));
+  return info(focusedAt());
 }`;
 
 export const VIEWPORT = `() => ({ width: innerWidth, height: innerHeight, scrollX, scrollY, url: location.href, title: document.title })`;
