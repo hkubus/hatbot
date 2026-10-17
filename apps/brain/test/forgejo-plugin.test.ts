@@ -298,3 +298,12 @@ test("an empty branch, branches git wouldn't take, and . or .. in names and path
       .action,
   ).toBe("ask");
 });
+
+test("only the default branch of a repository the bot can see is trusted, in files and CI", async () => {
+  const { fj } = await started();
+  const untrusted = async (name: string, input: Record<string, unknown>) =>
+    (await runPluginTool(fj(name), input, call)).untrusted;
+  expect(await untrusted("forgejo_file", { repo: "stranger/repo", path: "README.md" })).toBe(true);
+  expect(await untrusted("forgejo_ci", { repo: "kubus/hatbot", ref: "main" })).toBe(false);
+  expect(await untrusted("forgejo_ci", { repo: "kubus/hatbot", ref: "fix" })).toBe(true);
+});

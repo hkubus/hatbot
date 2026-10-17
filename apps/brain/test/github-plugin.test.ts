@@ -402,3 +402,16 @@ test("branches git wouldn't take, and . or .. in names and paths, are refused be
   await refused("github_issues", { repo: "../.." });
   expect(seen).toEqual([]);
 });
+
+test("only the default branch of a repository the bot can see is trusted, in files and CI", async () => {
+  const { gh } = await started();
+  const repo = "hkubus/hatbot";
+  const untrusted = async (name: string, input: Record<string, unknown>) =>
+    (await runPluginTool(gh(name), input, call)).untrusted;
+  // A stranger's repository, on its default branch too.
+  expect(await untrusted("github_file", { repo: "stranger/repo", path: "README.md" })).toBe(true);
+  expect(await untrusted("github_ci", { repo, ref: "main" })).toBe(false);
+  // A pull request's branch, or another repository's, can name its jobs anything.
+  expect(await untrusted("github_ci", { repo, ref: "fix" })).toBe(true);
+  expect(await untrusted("github_ci", { repo: "stranger/repo", ref: "main" })).toBe(true);
+});

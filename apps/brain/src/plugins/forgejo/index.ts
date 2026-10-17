@@ -96,6 +96,15 @@ export const forgejoPlugin = definePlugin({
       `${repoPath(repo)}/contents/${path.split("/").filter(Boolean).map(encodeURIComponent).join("/")}`;
     /** Default branches, so policy can tell a commit to main from one to a new branch. */
     const defaults = new Map<string, string>();
+    /**
+     * Whether what's read at this ref may hold anyone's text: anything but the default branch of a
+     * repository the bot account can see, which holds what was merged there. A stranger's repository,
+     * or one whose default branch isn't known yet, counts too.
+     */
+    const offDefault = (repo: string, ref?: string) => {
+      const main = defaults.get(repo);
+      return !main || (ref !== undefined && ref !== main);
+    };
     const existing = async (repo: string, path: string, ref: string): Promise<string | null> => {
       try {
         const c = await api<Content | Content[]>(
@@ -217,8 +226,7 @@ export const forgejoPlugin = definePlugin({
         description:
           "Read a file from a repository, or list a directory (path empty for the top). ref is a branch, tag or commit; the default branch if left out. Anything but the default branch may hold other people's code: untrusted.",
         access: "read",
-        // The default branch holds what the owner merged; other refs (pull request branches) may not.
-        untrusted: ({ repo, ref }) => ref !== undefined && ref !== defaults.get(repo),
+        untrusted: ({ repo, ref }) => offDefault(repo, ref),
         label: "Reading code",
         schema: z.object({
           repo: Repo,
@@ -246,6 +254,8 @@ export const forgejoPlugin = definePlugin({
         name: "forgejo_ci",
         description: "The CI status of a branch or commit: each check's state and description.",
         access: "read",
+        // Off the default branch, a pull request from a fork can name its jobs and steps anything.
+        untrusted: ({ repo, ref }) => offDefault(repo, ref),
         label: "Checking CI",
         schema: z.object({
           repo: Repo,

@@ -187,6 +187,15 @@ export const githubPlugin = definePlugin({
       for (const r of list) defaults.set(r.full_name, r.default_branch);
       return list;
     };
+    /**
+     * Whether what's read at this ref may hold anyone's text: anything but the default branch of a
+     * repository the bot account can see, which holds what was merged there. A stranger's repository,
+     * or one whose default branch isn't known yet, counts too.
+     */
+    const offDefault = (repo: string, ref?: string) => {
+      const main = defaults.get(repo);
+      return !main || (ref !== undefined && ref !== main);
+    };
     const exists = async (repo: string, path: string, ref: string) => {
       try {
         const c = await api<Content | Content[]>(
@@ -334,8 +343,7 @@ export const githubPlugin = definePlugin({
         description:
           "Read a file from a repository, or list a directory (path empty for the top). ref is a branch, tag or commit; the default branch if left out. Anything but the default branch may hold other people's code: untrusted.",
         access: "read",
-        // The default branch holds what the owner merged; other refs (pull request branches) may not.
-        untrusted: ({ repo, ref }) => ref !== undefined && ref !== defaults.get(repo),
+        untrusted: ({ repo, ref }) => offDefault(repo, ref),
         label: "Reading code",
         schema: z.object({
           repo: Repo,
@@ -365,6 +373,8 @@ export const githubPlugin = definePlugin({
         description:
           "The CI of a branch or commit: each check run (GitHub Actions and apps) with its id, and each commit status, with its result. A GitHub Actions check's id is its job id, for github_ci_log.",
         access: "read",
+        // Off the default branch, a pull request from a fork can name its jobs and steps anything.
+        untrusted: ({ repo, ref }) => offDefault(repo, ref),
         label: "Checking CI",
         schema: z.object({
           repo: Repo,
