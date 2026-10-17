@@ -125,7 +125,6 @@
   --bot-teal: #30b0c7;
   --bot-green: #34c759;
   --bot-gray: #8e8e93;
-  --radius: 10px;
   --spring: cubic-bezier(0.32, 0.72, 0, 1);
 
   color-scheme: light;
@@ -329,18 +328,7 @@ svg.i {
   font-size: 14px;
   letter-spacing: -0.01em;
 }
-@keyframes pulse {
-  50% {
-    opacity: 0.35;
-  }
-}
 
-.nav-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--muted);
-  padding: 10px 10px 4px;
-}
 .nav {
   display: flex;
   flex-direction: column;
@@ -390,16 +378,6 @@ svg.i {
   color: var(--on-accent);
 }
 
-.mini-meter {
-  display: grid;
-  gap: 5px;
-  font-size: 12px;
-  color: var(--text-2);
-}
-.mini-meter .top {
-  display: flex;
-  justify-content: space-between;
-}
 .meter {
   height: 6px;
   border-radius: 3px;
@@ -784,12 +762,6 @@ html[data-theme="dark"] .seg button.active {
   justify-items: end;
 }
 
-/* ---------- Spend ---------- */
-.chart .bar {
-  /* The hit area behind it takes the pointer, so hovering the bar itself shows its tooltip. */
-  pointer-events: none;
-}
-
 /* ---------- Phone layout ---------- */
 @media (max-width: 899px) {
   .tabbar .badge.unread {
@@ -915,25 +887,6 @@ html[data-theme="dark"] .seg button.active {
 .kv.secrets {
   grid-template-columns: fit-content(70%) minmax(0, 1fr);
 }
-.steps {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 5px;
-  font-size: 12.5px;
-}
-.steps li {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-}
-.steps li svg.i {
-  width: 14px;
-  height: 14px;
-  margin-top: 2px;
-  color: var(--success-text);
-}
 .diff {
   font-family: var(--mono);
   font-size: 12px;
@@ -959,40 +912,6 @@ html[data-theme="dark"] .seg button.active {
   grid-template-columns: 1fr 168px;
   gap: 12px;
   align-items: start;
-}
-.progress {
-  height: 4px;
-  border-radius: 2px;
-  background: var(--surface-3);
-  overflow: hidden;
-  position: relative;
-}
-.progress::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  width: 40%;
-  border-radius: 2px;
-  background: var(--accent);
-  animation: indet 1.4s ease-in-out infinite;
-}
-.progress.done::after {
-  animation: none;
-  width: 100%;
-  background: var(--success);
-}
-.progress.wait::after {
-  animation: none;
-  width: 70%;
-  background: var(--attention);
-}
-@keyframes indet {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(250%);
-  }
 }
 .resolved-line {
   display: flex;
@@ -1115,9 +1034,6 @@ html[data-theme="dark"] .seg button.active {
 .table tbody tr:hover {
   background: rgba(127, 127, 127, 0.06);
 }
-.table tbody tr.sel {
-  background: var(--accent-soft);
-}
 .table .num {
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -1161,28 +1077,6 @@ html[data-theme="dark"] .seg button.active {
 }
 .row:last-child {
   border-bottom: 0;
-}
-.row .ico {
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
-  display: grid;
-  place-items: center;
-  flex: none;
-  background: var(--accent-soft);
-  color: var(--accent-text);
-}
-.row .ico.attn {
-  background: var(--attention-soft);
-  color: var(--attention);
-}
-.row .ico.gray {
-  background: var(--surface-2);
-  color: var(--text-2);
-}
-.row .ico svg.i {
-  width: 15px;
-  height: 15px;
 }
 .row .txt {
   min-width: 0;
@@ -1323,10 +1217,6 @@ html[data-theme="dark"] .seg button.active {
   white-space: pre-wrap;
   outline: none;
   min-height: 220px;
-}
-.editor-text .h {
-  color: var(--accent-text);
-  font-weight: 700;
 }
 .history {
   border-top: 0.5px solid var(--line);
@@ -1655,9 +1545,6 @@ html[data-theme="dark"] .seg button.active {
     padding: 7px 6px;
   }
   .commit .sha {
-    display: none;
-  }
-  .hide-phone-col {
     display: none;
   }
 
@@ -2294,12 +2181,6 @@ html[data-theme="dark"] .seg button.active {
   width: 100%;
   height: auto;
 }
-.task-line {
-  display: grid;
-  gap: 8px;
-  align-content: start;
-  font-size: 12.5px;
-}
 .approval-text {
   display: grid;
   gap: 4px;
@@ -2558,10 +2439,6 @@ pre.payload {
   font-family: var(--font-text);
   font-size: 13px;
 }
-.task-approvals {
-  display: grid;
-  gap: 2px;
-}
 .msg .shot {
   max-width: 280px;
 }
@@ -2713,7 +2590,7 @@ pre.payload {
   opacity: 0.55;
 }
 .composer-file.failed {
-  border-color: var(--danger, #d33);
+  border-color: var(--danger);
 }
 .composer-file button {
   position: absolute;
@@ -2727,7 +2604,7 @@ pre.payload {
   display: grid;
   place-items: center;
   background: var(--surface-3);
-  color: var(--text, inherit);
+  color: var(--text);
   cursor: pointer;
 }
 .composer-file button svg {
@@ -3010,7 +2887,7 @@ mark {
   margin-bottom: 18px;
 }
 .proposal-file .path {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--mono);
   font-size: 12px;
   color: var(--muted);
   margin-bottom: 6px;
@@ -3023,7 +2900,7 @@ mark {
   padding: 10px 20px;
   font-size: 13px;
   background: var(--accent-soft);
-  border-bottom: 1px solid var(--border, rgba(127, 127, 127, 0.2));
+  border-bottom: 0.5px solid var(--line);
 }
 .skill-trouble .spacer {
   flex: 1;
