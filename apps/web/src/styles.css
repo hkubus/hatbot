@@ -1529,6 +1529,10 @@ html[data-theme="dark"] .seg button.active {
   display: flex;
   gap: 6px;
   justify-content: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
 }
 .otp input {
   width: 40px;
@@ -1546,6 +1550,17 @@ html[data-theme="dark"] .seg button.active {
 }
 .login-card .btn {
   height: 34px;
+}
+.login-card a.btn:hover {
+  text-decoration: none;
+}
+.login-card .copyable .btn {
+  height: 24px;
+}
+/* The secret wraps between its groups of four. */
+.login-card .copyable code {
+  word-break: normal;
+  text-align: left;
 }
 
 /* ---------- Toasts ---------- */

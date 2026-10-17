@@ -2,18 +2,24 @@ import type { SetupStartResponse } from "@hatbot/shared";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api";
 import { Icon } from "../icons";
+import { backspace, pasted, slots, typed } from "../otp";
 
+/** Six boxes for a code. `value` is its digits, six when it's complete; "" empties the boxes. */
 function OtpInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const refs = useRef<(HTMLInputElement | null)[]>([]);
-  const digits = Array.from({ length: 6 }, (_, i) => value[i] ?? "");
-  const setAt = (i: number, d: string) => {
-    const next = digits.slice();
-    next[i] = d;
-    onChange(next.join("").slice(0, 6));
+  // Each box holds its own digit, so fixing one never shifts the rest.
+  const [code, setCode] = useState(value);
+  useEffect(() => {
+    if (value === "") setCode("");
+  }, [value]);
+  const apply = (step: { code: string; focus: number }) => {
+    setCode(step.code);
+    onChange(step.code.replace(/\D/g, ""));
+    refs.current[step.focus]?.focus();
   };
   return (
-    <div className="otp">
-      {digits.map((d, i) => (
+    <fieldset className="otp" aria-label="Code from your authenticator">
+      {slots(code).map((d, i) => (
         <input
           // biome-ignore lint/suspicious/noArrayIndexKey: fixed six positions
           key={i}
@@ -24,23 +30,22 @@ function OtpInput({ value, onChange }: { value: string; onChange: (v: string) =>
           autoComplete={i === 0 ? "one-time-code" : "off"}
           aria-label={`Digit ${i + 1}`}
           value={d}
-          onChange={(e) => {
-            const v = e.target.value.replace(/\D/g, "");
-            if (v.length > 1) {
-              // Pasted or autofilled code.
-              onChange(v.slice(0, 6));
-              refs.current[Math.min(5, v.length)]?.focus();
-              return;
-            }
-            setAt(i, v);
-            if (v) refs.current[i + 1]?.focus();
+          onFocus={(e) => e.target.select()}
+          onChange={(e) => apply(typed(code, i, e.target.value))}
+          onPaste={(e) => {
+            e.preventDefault();
+            apply(pasted(code, i, e.clipboardData.getData("text")));
           }}
           onKeyDown={(e) => {
-            if (e.key === "Backspace" && !d) refs.current[i - 1]?.focus();
+            if (e.key === "Backspace" && !d) {
+              e.preventDefault();
+              apply(backspace(code, i));
+            } else if (e.key === "ArrowLeft" && i > 0) refs.current[i - 1]?.focus();
+            else if (e.key === "ArrowRight" && i < 5) refs.current[i + 1]?.focus();
           }}
         />
       ))}
-    </div>
+    </fieldset>
   );
 }
 
@@ -78,6 +83,7 @@ export function Login({ onDone }: { onDone: () => void }) {
           className="field"
           type="password"
           placeholder="Password"
+          aria-label="Password"
           autoComplete="current-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
@@ -132,6 +138,19 @@ export function Setup({ onDone }: { onDone: () => void }) {
     }
   };
 
+  const [copied, setCopied] = useState(false);
+  const copySecret = () => {
+    if (!secret) return;
+    // Without a secure origin there's no clipboard: the secret is selected to copy by hand.
+    const shown = document.querySelector(".login-card code.secret");
+    const select = () => shown && getSelection()?.selectAllChildren(shown);
+    if (!navigator.clipboard) return select();
+    navigator.clipboard.writeText(secret.secret).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }, select);
+  };
+
   const finish = async (e: FormEvent) => {
     e.preventDefault();
     setError("");
@@ -164,6 +183,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
           <input
             className="field"
             placeholder="Setup code"
+            aria-label="Setup code"
             value={code}
             onChange={(e) => setCode(e.target.value)}
           />
@@ -176,15 +196,25 @@ export function Setup({ onDone }: { onDone: () => void }) {
         <form className="login-card" onSubmit={finish}>
           <h2>Set up Hatbot</h2>
           <div className="muted" style={{ fontSize: 12.5 }}>
-            Scan this with your authenticator app.
+            Scan this with your authenticator app, or add it on this device.
           </div>
           {/* biome-ignore lint/security/noDangerouslySetInnerHtml: SVG generated locally by qrcode */}
           <div className="qr" dangerouslySetInnerHTML={{ __html: qr }} />
-          <div className="secret">{secret.secret}</div>
+          {/* On a phone there's nothing to scan: the link opens the authenticator. */}
+          <a className="btn" href={secret.uri}>
+            Add to authenticator
+          </a>
+          <div className="copyable">
+            <code className="secret">{secret.secret.match(/.{1,4}/g)?.join(" ")}</code>
+            <button type="button" className="btn sm ghost" onClick={copySecret}>
+              {copied ? "Copied" : "Copy"}
+            </button>
+          </div>
           <input
             className="field"
             type="password"
             placeholder="Password (12+ characters)"
+            aria-label="Password"
             autoComplete="new-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -193,6 +223,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
             className="field"
             type="password"
             placeholder="Password again"
+            aria-label="Password again"
             autoComplete="new-password"
             value={password2}
             onChange={(e) => setPassword2(e.target.value)}
