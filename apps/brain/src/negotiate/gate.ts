@@ -2,6 +2,7 @@
 // as the send only while the text boxes hold exactly the approved message and the tab is that
 // negotiation's conversation. Pure, so desktop-run and the tests share it.
 import type { AgentElement } from "@hatbot/shared/desktop";
+import { type Combo, combosIn, readCombo } from "@hatbot/shared/keys";
 import { pressOf } from "../tasks/policy";
 
 /** What a negotiation's desktop task may do, from its record. */
@@ -186,12 +187,13 @@ export function refused(
   name: string,
   input: Record<string, unknown>,
 ): string | null {
-  if (name === "left_mouse_down" || name === "left_mouse_up" || name === "left_click_drag")
-    return `${name} isn't available in a negotiation; use left_click.`;
+  // A middle click opens a link in a new tab, and a right click a menu that can; on Linux a middle
+  // click in a box also pastes.
+  if (UNSEEN_MOUSE.has(name)) return `${name} isn't available in a negotiation; use left_click.`;
   const typed = typeof input.text === "string" ? input.text : "";
   if (name === "type" && /[\r\n]/.test(typed))
     return "Type the message without line breaks: it's one paragraph. Send it with the Send button or Enter afterwards.";
-  if (gate.mode === "read" && (name === "type" || name === "form_input"))
+  if (gate.mode === "read" && typesText(name, input))
     return "This task only reads the conversation; it doesn't type anything.";
   if (
     (name === "key" || name === "hold_key") &&
@@ -208,36 +210,77 @@ export function refused(
   )
     return "The message is one paragraph: no new lines. Send it with the Send button or Enter.";
   const stay = `A negotiation stays on ${hostOf(gate.listingUrl)}. Never open a link from the seller.`;
-  if (name === "navigate" && typeof input.url === "string") {
+  if (name === "navigate") {
+    // desktop-agent would open whatever this turns into as text.
+    if (typeof input.url !== "string") return "navigate takes the address as text.";
     const where = input.url.trim();
     // Read as desktop-agent reads it: an address with no scheme is https.
     const url = /^[a-z][a-z0-9+.-]*:/i.test(where) ? where : `https://${where}`;
-    if (!["back", "forward", "reload"].includes(where) && !sameHost(url, gate.listingUrl))
+    if (
+      !["back", "forward", "reload"].includes(where) &&
+      (!sameHost(url, gate.listingUrl) || offSite(url, gate))
+    )
       return stay;
   }
-  // The address bar and new windows are ways to an address navigate would refuse.
+  // The address bar, new tabs and windows, history and the browser's menus are ways to an address
+  // navigate would refuse.
   if (
     (name === "key" || name === "hold_key") &&
-    /(^|\s)((ctrl|control)\+(shift\+)?[ltn]|alt\+d|f6)(\s|$)/i.test(typed)
+    combosIn(typed).some((t) => {
+      const c = readCombo(t);
+      return c !== null && toAddress(c);
+    })
   )
     return `${stay} Use navigate to open a page.`;
   return null;
 }
 
-/** Whether an action puts text in a box: typing, form_input, or a paste. */
-export const typesText = (name: string, input: Record<string, unknown>) =>
-  name === "type" ||
-  name === "form_input" ||
-  ((name === "key" || name === "hold_key") &&
-    typeof input.text === "string" &&
-    /(^|\s)((ctrl|control|super|meta|cmd)\+v|shift\+insert)(\s|$)/i.test(input.text));
+const UNSEEN_MOUSE = new Set([
+  "left_mouse_down",
+  "left_mouse_up",
+  "left_click_drag",
+  "middle_click",
+  "right_click",
+]);
+
+/** F6, ctrl+l, alt+d and the like, with any other modifiers and in any order. */
+function toAddress(c: Combo): boolean {
+  const k = c.key?.toLowerCase() ?? "";
+  if (k === "f6" || k === "f10" || k === "menu") return true;
+  if (c.mods.includes("ctrl") && ["l", "t", "n", "k", "e", "h", "j"].includes(k)) return true;
+  // alt+shift+t and alt+shift+b move to the toolbar and the bookmarks.
+  return c.mods.includes("alt") && ["d", "f", "e", "t", "b", "home"].includes(k);
+}
+
+/** A combination that puts text in a box: a character or Space, alone or with Shift, or a paste. */
+function typedBy(c: Combo): boolean {
+  const k = c.key;
+  if (!k) return false;
+  if ((k === "space" || [...k].length === 1) && c.mods.every((m) => m === "shift")) return true;
+  if (k.toLowerCase() === "v" && (c.mods.includes("ctrl") || c.mods.includes("super"))) return true;
+  return k === "insert" && c.mods.includes("shift") && !c.mods.includes("ctrl");
+}
+
+/** Whether an action puts text in a box: typing, form_input, keys that type, or a paste. */
+export function typesText(name: string, input: Record<string, unknown>): boolean {
+  if (name === "type" || name === "form_input") return true;
+  if ((name !== "key" && name !== "hold_key") || typeof input.text !== "string") return false;
+  return combosIn(input.text).some((t) => {
+    const c = readCombo(t);
+    return c !== null && typedBy(c);
+  });
+}
 
 /** Where a link goes, when that's off the listing's site: another host, or another kind of address. */
 export function offSite(href: string, gate: SendGate): boolean {
   if (/^javascript:/i.test(href)) return false;
   if (!sameHost(href, gate.listingUrl)) return true;
-  // The site's own redirect, to an address in its query.
+  // The site's own redirect, to an address in its query (with or without its scheme).
   for (const v of new URL(href).searchParams.values())
-    if (/^https?:/i.test(v) && !sameHost(v, gate.listingUrl)) return true;
+    if (
+      (/^https?:/i.test(v) || v.startsWith("//")) &&
+      !sameHost(v.startsWith("//") ? `https:${v}` : v, gate.listingUrl)
+    )
+      return true;
   return false;
 }

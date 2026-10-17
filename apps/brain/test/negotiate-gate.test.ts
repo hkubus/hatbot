@@ -184,9 +184,70 @@ test("a read-only task sends nothing", () => {
   expect(refused(read, "form_input", { value: "hello" })).toContain("only reads");
 });
 
+test("the address bar, new tabs and menus are refused under any name, in any order", () => {
+  for (const text of [
+    "shift+F6",
+    "F6",
+    "shift+ctrl+t",
+    "ctrl+shift+n",
+    "alt+shift+t",
+    "alt+shift+b",
+    "Control_L+l",
+    "Control_R+l",
+    "Alt_L+d",
+    "ctrl+k",
+    "ctrl+e",
+    "F10",
+    "alt+f",
+    "Menu",
+    "shift+F10",
+    "a ctrl+L",
+  ])
+    expect([text, refused(gate, "key", { text })]).toEqual([
+      text,
+      expect.stringContaining("Use navigate"),
+    ]);
+  for (const text of ["ctrl+a", "ctrl+c", "Tab", "Escape", "shift+Tab"])
+    expect([text, refused(gate, "key", { text })]).toEqual([text, null]);
+  // The site's own redirect is a way off it too, and navigate needs its address as text.
+  expect(
+    refused(gate, "navigate", { url: "https://www.olx.pl/redirect?url=https://evil.example/pay" }),
+  ).toContain("Never open a link");
+  expect(refused(gate, "navigate", { url: "www.olx.pl/r?u=//evil.example/pay" })).toContain(
+    "Never open a link",
+  );
+  expect(refused(gate, "navigate", { url: ["https://evil.example/pay"] })).toContain("as text");
+  expect(refused(gate, "navigate", {})).toContain("as text");
+});
+
+test("text typed with keys or pasted counts as typing, and a read task does neither", () => {
+  for (const text of [
+    "h e l l o",
+    "shift+a",
+    "space",
+    "ctrl+v",
+    "ctrl+shift+v",
+    "shift+ctrl+v",
+    "Control_L+v",
+    "super+v",
+    "shift+Insert",
+  ])
+    expect([text, typesText("key", { text })]).toEqual([text, true]);
+  for (const text of ["Tab", "ctrl+a", "ctrl+Insert", "alt+v", "Return", "0xff0d"])
+    expect([text, typesText("key", { text })]).toEqual([text, false]);
+  const read: SendGate = { ...gate, mode: "read", text: null };
+  expect(refused(read, "key", { text: "h e l l o" })).toContain("only reads");
+  expect(refused(read, "key", { text: "ctrl+shift+v" })).toContain("only reads");
+  expect(refused(read, "hold_key", { text: "a", duration: 2 })).toContain("only reads");
+  expect(refused(read, "key", { text: "Page_Down" })).toBeNull();
+});
+
 test("actions that could send unseen are refused", () => {
   expect(refused(gate, "left_mouse_down", {})).toContain("left_click");
   expect(refused(gate, "left_click_drag", {})).toContain("left_click");
+  // A middle click opens a link in a new tab, and pastes on Linux; a right click opens a menu.
+  expect(refused(gate, "middle_click", { coordinate: [3, 4] })).toContain("left_click");
+  expect(refused(gate, "right_click", { coordinate: [3, 4] })).toContain("left_click");
   expect(refused(gate, "type", { text: `${TEXT}\n` })).toContain("without line breaks");
   expect(refused(gate, "type", { text: TEXT })).toBeNull();
   expect(refused(gate, "key", { text: "Return", repeat: 2 })).toContain("once");

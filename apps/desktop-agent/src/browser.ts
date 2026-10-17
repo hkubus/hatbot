@@ -255,7 +255,10 @@ function charKey(ch: string): KeyDef {
 }
 
 function keyDef(name: string): KeyDef {
-  if ([...name].length === 1) return charKey(name);
+  if ([...name].length === 1) {
+    if (!/^[\p{L}\p{N}\p{P}\p{S}]$/u.test(name)) throw new BrowserError(`Unknown key "${name}".`);
+    return charKey(name);
+  }
   const lower = name.toLowerCase();
   const named = NAMED_KEYS[KEY_ALIASES[lower] ?? lower];
   if (named) return named;
@@ -275,6 +278,11 @@ function chord(text: string): { mods: (KeyDef & { bit: number })[]; key: KeyDef 
   let key: KeyDef | null = null;
   for (const p of parts) {
     const m = MODIFIER_ALIASES[p.toLowerCase()];
+    // Modifiers first, as on the screen, where xdotool presses them in order.
+    if (m && p.length > 1 && key)
+      throw new BrowserError(
+        `"${text}": put the modifiers first and one key last, like ctrl+shift+t.`,
+      );
     if (m && p.length > 1) mods.push(MODIFIER_KEYS[m] as KeyDef & { bit: number });
     else if (key) throw new BrowserError(`"${text}" names more than one key.`);
     else key = keyDef(p);

@@ -8,6 +8,7 @@ import {
   consequentialLabel,
   fold,
   heldBack,
+  pressOf,
 } from "../src/tasks/policy";
 
 const button = (label: string, over: Partial<AgentElement> = {}): AgentElement => ({
@@ -245,6 +246,53 @@ test("Enter, Space and Tab can't slip past: sequences are refused, single presse
   expect(type("Jan\tKowalski")).toBeNull();
   expect(type("Jan\tul. Polna 5")).toHaveProperty("refuse");
   expect(type("Jan\t\n")).toHaveProperty("refuse");
+});
+
+test("a key Hatbot can't read is refused, so Enter can't go under another name", () => {
+  const key = (text: string) => checkFor("computer", "key", { text });
+  // Keycodes, hex and Unicode keysyms, keypad and line-feed keys xdotool would press as Return or space,
+  // a modifier after the key (xdotool presses it after), and two keys at once.
+  for (const text of [
+    "36",
+    "104",
+    "0xff0d",
+    "0x20",
+    "U0020",
+    "U000D",
+    "KP_Space",
+    "Linefeed",
+    "ISO_Enter",
+    "3270_Enter",
+    "Return+shift",
+    "Return+ctrl",
+    "KP_Enter+a",
+    "space+Tab",
+    "ctrl+a 0xff0d",
+  ])
+    expect([text, key(text)]).toEqual([text, { refuse: expect.stringContaining("can't read") }]);
+  expect(checkFor("computer", "hold_key", { text: "36", duration: 1 })).toHaveProperty("refuse");
+  expect(checkFor("browser", "key", { text: "U0020" })).toHaveProperty("refuse");
+  // Names in any case, X's modifier names, and characters read as they are.
+  expect(key("RETURN")).toEqual({ press: "enter", at: [{ focused: true }] });
+  expect(key("Control_L+Return")).toEqual({ press: "enter", at: [{ focused: true }] });
+  expect(key("Shift_L+Return")).toEqual({ press: "newline", at: [{ focused: true }] });
+  expect(key("ctrl+shift+Return")).toEqual({ press: "enter", at: [{ focused: true }] });
+  expect(key("Next")).toBeNull();
+  expect(key("ctrl++")).toBeNull();
+  expect(key("5")).toBeNull();
+  expect(key("ą")).toBeNull();
+  expect(pressOf("0xff0d")).toBeNull();
+});
+
+test("a middle click is checked where it lands", () => {
+  expect(checkFor("computer", "middle_click", { coordinate: [3, 4] })).toEqual({
+    press: "click",
+    at: [{ x: 3, y: 4 }],
+  });
+  expect(checkFor("browser", "middle_click", { target: { type: "ref", ref: "ref_2" } })).toEqual({
+    press: "click",
+    at: [{ ref: "ref_2" }],
+  });
 });
 
 test("mouse down, up and drags are checked where they land", () => {

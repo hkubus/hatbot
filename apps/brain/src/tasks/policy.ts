@@ -1,5 +1,6 @@
 // Spots consequential clicks and Enter presses on the desktop (PLAN.md §6.1, screen actions).
 import type { AgentElement } from "@hatbot/shared/desktop";
+import { type Combo, combosIn, readCombo } from "@hatbot/shared/keys";
 
 /** Lower case, accents dropped and ł read as l, so "ZAPŁAĆ", "Zapłać" and "Zaplac" match alike. */
 export const fold = (s: string) =>
@@ -132,13 +133,19 @@ export type Press = "click" | "enter" | "newline" | "space";
 /** The elements an action needs checked before it runs, or why it can't run at all. */
 export type Check = { press: Press; at: Where[] } | { refuse: string };
 
-/** What one key combination ("Return", "shift+Return", "space") presses, if anything a check cares about. */
+/** What a read key combination presses, if anything a check cares about. */
+export function pressOfCombo(c: Combo): Press | null {
+  if (c.key === "enter") return c.mods.length === 1 && c.mods[0] === "shift" ? "newline" : "enter";
+  return c.key === "space" ? "space" : null;
+}
+
+/**
+ * What one key combination ("Return", "shift+Return", "space") presses, if anything a check cares about.
+ * Null too for a name readCombo can't read, which checkFor refuses.
+ */
 export function pressOf(combo: string): Press | null {
-  const parts = combo.trim().toLowerCase().split("+");
-  const key = parts.at(-1) ?? "";
-  if (/^(return|enter|kp_enter|iso_enter)$/.test(key))
-    return parts.length === 2 && parts[0] === "shift" ? "newline" : "enter";
-  return key === "space" ? "space" : null;
+  const c = readCombo(combo);
+  return c && pressOfCombo(c);
 }
 
 const coordinate = (v: unknown): Where | null =>
@@ -154,8 +161,10 @@ const target = (v: unknown): Where | null => {
   return null;
 };
 
+// A middle click opens a link in a new tab, or on Linux pastes into a box: checked where it lands too.
 const CLICKS = new Set([
   "left_click",
+  "middle_click",
   "double_click",
   "triple_click",
   "left_mouse_down",
@@ -191,7 +200,13 @@ export function checkFor(
   }
   const text = typeof input.text === "string" ? input.text : "";
   if (name === "key" || name === "hold_key") {
-    const combos = text.trim().split(/\s+/).filter(Boolean);
+    const combos = combosIn(text);
+    // A name Hatbot can't read could be Enter under another name (a keycode, a hex keysym).
+    const unread = combos.find((c) => !readCombo(c));
+    if (unread !== undefined)
+      return {
+        refuse: `Hatbot can't read the key "${unread}", so it can't check what it presses. Use a key's name (Return, Tab, Page_Down, F5) or a character, with modifiers first: ctrl+shift+t.`,
+      };
     const press = combos.map(pressOf).find((p) => p !== null);
     if (!press) return null;
     if (name === "hold_key")
