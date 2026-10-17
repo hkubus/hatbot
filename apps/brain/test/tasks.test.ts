@@ -985,6 +985,23 @@ test("a run that throws while it sets up ends as failed, and its schedule can ru
   expect(t.tasks.get(second?.id ?? 0)).toMatchObject({ status: "done", summary: "Ran." });
 });
 
+test("a Haiku desktop task out of context carries on on Opus without being asked what it tried", async () => {
+  const work = new FakeModel([
+    { content: [computer("screenshot")], stop_reason: "model_context_window_exceeded" },
+    finish("Booked on Opus."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = startTask(t);
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)).toMatchObject({ status: "done", model: "claude-opus-5-5" });
+  // One look at the start of each attempt: the cut-off screenshot call didn't run.
+  expect(t.agent.screenshots).toBe(2);
+  expect(work.creates.some((c) => JSON.stringify(c.messages).includes("You were stopped"))).toBe(
+    false,
+  );
+  expect(JSON.stringify(work.requests[1]?.messages)).toContain("got too long");
+});
+
 test("a task whose reply hit the context window stops as failed, without running its calls", async () => {
   const work = new FakeModel([
     {

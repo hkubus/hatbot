@@ -905,8 +905,11 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         throw new Stop("failed", "The model declined to carry on with this task.", true, {
           account: "",
         });
+      // Asking it what it tried wouldn't fit either; Opus starts afresh without its account.
       if (res.stop_reason === "model_context_window_exceeded")
-        throw new Stop("failed", "Stopped: the task's conversation got too long.", true, ASK);
+        throw new Stop("failed", "Stopped: the task's conversation got too long.", true, {
+          account: "",
+        });
       if (res.stop_reason === "pause_turn") continue;
       const calls = res.content.filter(
         (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use",
