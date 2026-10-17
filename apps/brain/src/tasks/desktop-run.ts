@@ -22,7 +22,7 @@ import { collapse, type GateState, gateCheck, refused, sendsWith } from "../nego
 import { destructive } from "../plugins/ssh/policy";
 import { BudgetError, estimateTokens, priceOf, usesReserve } from "../spend";
 import { skillPath } from "../teach/skills";
-import { checkFor, consequential } from "./policy";
+import { checkFor, consequential, heldBack } from "./policy";
 import { DesktopSendToChat, SEND_TO_CHAT_DESCRIPTION, sendToChat } from "./send-to-chat";
 import type { Tasks } from "./service";
 
@@ -579,31 +579,28 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         inspectAgain = () => agent.inspect(point?.[0], point?.[1]).catch(() => null);
       }
       el = await inspectAgain();
-      let label = consequential(check, el);
+      let hold = consequential(check, el);
       if (gate) {
+        const label = hold && "label" in hold ? hold.label : null;
         const g = gateCheck(gate, gateState, check, el, label);
         if (g.action === "hold") {
           tasks.addStep(id, { kind: "note", name: "Held back", detail: g.why, url: lastUrl });
           return textResult(call, `Not run: ${g.why}`, true);
         }
         // The send itself, or a click into a text box: neither needs confirm_intent.
-        if (g.action !== "usual") label = null;
+        if (g.action !== "usual") hold = null;
         sending = g.action === "send";
       }
-      if (label && !armed) {
+      if (hold && !armed) {
         tasks.addStep(id, {
           kind: "note",
           name: "Held back",
-          detail: `${call.name} on "${label}" needs approval`,
+          detail: `${call.name} ${"label" in hold ? `on "${hold.label}"` : "on a button with no label"} needs approval`,
           url: lastUrl,
         });
-        return textResult(
-          call,
-          `Not run: this would ${check === "click" ? "click" : "submit with"} "${label}", which looks like a consequential step. If that's the action you mean to take, call confirm_intent first. If this ${check === "click" ? "click" : "Enter"} doesn't send, buy, book or delete anything and the label misled the check, reach the same place another way.`,
-          true,
-        );
+        return textResult(call, `Not run: ${heldBack(check, hold)}`, true);
       }
-      if (label) armed = false;
+      if (hold) armed = false;
     }
     const step = tasks.addStep(id, {
       kind: call.name === "screenshot" ? "screenshot" : "action",

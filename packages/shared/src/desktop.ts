@@ -92,6 +92,10 @@ export type AgentElement = {
    * With the "fields" feature.
    */
   fields?: string[];
+  /** It opens or closes part of the page (aria-expanded, aria-pressed, a menu or a tab). With "gates". */
+  toggle?: boolean;
+  /** It's a search box, or in a search or filter form. With "gates". */
+  search?: boolean;
 };
 
 /** POST /exec: a command run by the desktop's shell, which can't see the browser profile or the screen. */

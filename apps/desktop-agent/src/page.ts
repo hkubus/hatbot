@@ -25,6 +25,69 @@ export const FIELDS = `
   };
 `;
 
+/**
+ * What the brain's click and Enter checks look at (PLAN.md §6.1), shared by the browser toolset's inspect
+ * and the screen's (cdp.ts): `elementInfo(el)` for the control at or around `el`.
+ */
+export const ELEMENT = `
+  ${FIELDS}
+  const CONTROL = 'button, a, input, select, textarea, label, summary, [role=button], [role=link], [role=menuitem], [onclick]';
+  const squash = (s) => String(s || '').trim().replace(/\\s+/g, ' ').slice(0, 200);
+  // Its name as a person would read it: aria-labelledby, aria-label, an input's value, its text, its title,
+  // or failing those its icon's (img alt, svg aria-label or title).
+  const nameFor = (e) => {
+    const by = (e.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean)
+      .map((id) => e.ownerDocument.getElementById(id)?.textContent || '').join(' ');
+    const own = squash(by) || squash(e.getAttribute('aria-label')) || (e.tagName === 'INPUT' ? squash(e.value) : '')
+      || squash(e.innerText) || squash(e.getAttribute('title')) || squash(e.getAttribute('alt'));
+    if (own) return own;
+    const icon = e.querySelector('img[alt], [aria-label], [title], svg title');
+    if (!icon) return '';
+    return squash(icon.tagName.toLowerCase() === 'title' ? icon.textContent
+      : icon.getAttribute('alt') || icon.getAttribute('aria-label') || icon.getAttribute('title'));
+  };
+  const TOGGLE_ROLES = ['tab', 'switch', 'checkbox', 'radio', 'option', 'menuitemcheckbox', 'menuitemradio', 'combobox'];
+  const isToggle = (e) => e.hasAttribute('aria-expanded') || e.hasAttribute('aria-pressed')
+    || (e.getAttribute('aria-haspopup') || 'false') !== 'false' || e.tagName === 'SUMMARY' || e.tagName === 'SELECT'
+    || TOGGLE_ROLES.includes(e.getAttribute('role'))
+    || (e.tagName === 'INPUT' && ['checkbox', 'radio'].includes(e.type));
+  // A search box, or a control in a search or filter form: Enter or a click there narrows a list.
+  const isSearch = (e, form) => !!(e.closest('[role=search]')
+    || (e.matches('input[type=search], [role=searchbox], [role=combobox]'))
+    || (form && ((form.getAttribute('method') || '').toLowerCase() === 'get'
+      || form.querySelector('input[type=search], [role=searchbox]'))));
+  const elementInfo = (el) => {
+    if (!el || el === el.ownerDocument.body) return null;
+    const c = el.closest(CONTROL);
+    if (c) el = c;
+    const form = el.closest('form');
+    const out = { tag: el.tagName.toLowerCase(), role: el.getAttribute('role'), type: el.getAttribute('type'),
+      label: el.tagName === 'INPUT' && !['submit', 'button', 'image', 'reset'].includes(el.type) ? (el.placeholder || el.name || '') : nameFor(el),
+      inForm: !!form, url: location.href, editable: isTextBox(el), fields: fieldsFor(el),
+      toggle: isToggle(el), search: isSearch(el, form) };
+    if (form) {
+      const submit = form.querySelector('button[type=submit], input[type=submit], button:not([type])');
+      if (submit) out.submitLabel = nameFor(submit);
+    }
+    return out;
+  };
+  // The deepest element at a viewport point, descending into same-origin iframes.
+  const elementAt = (x, y) => {
+    let doc = document, ox = 0, oy = 0, el = null;
+    for (;;) {
+      const hit = doc.elementFromPoint(x - ox, y - oy);
+      if (!hit) return el;
+      el = hit;
+      if (hit.tagName !== 'IFRAME') return el;
+      let inner;
+      try { inner = hit.contentDocument; } catch { return el; }
+      if (!inner) return el;
+      const r = hit.getBoundingClientRect();
+      ox += r.left + hit.clientLeft; oy += r.top + hit.clientTop; doc = inner;
+    }
+  };
+`;
+
 const COMMON = `
   const H = (globalThis.__hatbot ||= { byRef: new Map(), byEl: new WeakMap() });
   const refOf = (el, o) => {
@@ -174,37 +237,7 @@ const COMMON = `
     if (el.tagName === 'SLOT') return el.assignedElements();
     return el.shadowRoot ? [...el.shadowRoot.children] : [...el.children];
   };
-  ${FIELDS}
-  const elementInfo = (el) => {
-    if (!el || el === el.ownerDocument.body) return null;
-    const c = el.closest('button, a, input, select, textarea, label, summary, [role=button], [role=link], [role=menuitem], [onclick]');
-    if (c) el = c;
-    const t = (e) => clean(e.getAttribute('aria-label') || e.value || e.innerText || e.title || e.alt || '', 200);
-    const form = el.closest('form');
-    const out = { tag: el.tagName.toLowerCase(), role: el.getAttribute('role'), type: el.getAttribute('type'),
-      label: el.tagName === 'INPUT' && !['submit', 'button'].includes(el.type) ? (el.placeholder || el.name || '') : t(el),
-      inForm: !!form, url: location.href, editable: isTextBox(el), fields: fieldsFor(el) };
-    if (form) {
-      const submit = form.querySelector('button[type=submit], input[type=submit], button:not([type])');
-      if (submit) out.submitLabel = t(submit);
-    }
-    return out;
-  };
-  // The deepest element at a viewport point, descending into same-origin iframes.
-  const elementAt = (x, y) => {
-    let doc = document, ox = 0, oy = 0, el = null;
-    for (;;) {
-      const hit = doc.elementFromPoint(x - ox, y - oy);
-      if (!hit) return el;
-      el = hit;
-      if (hit.tagName !== 'IFRAME') return el;
-      let inner;
-      try { inner = hit.contentDocument; } catch { return el; }
-      if (!inner) return el;
-      const r = hit.getBoundingClientRect();
-      ox += r.left + hit.clientLeft; oy += r.top + hit.clientTop; doc = inner;
-    }
-  };
+  ${ELEMENT}
 `;
 
 /**

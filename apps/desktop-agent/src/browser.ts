@@ -49,6 +49,8 @@ type Lifecycle = { seq: number; sessionId: string; name: string; loaderId?: stri
 
 /** One WebSocket to the browser endpoint; tab commands carry their session id (flat mode). */
 class Connection {
+  constructor(private endpoint: string) {}
+
   private ws: WebSocket | null = null;
   private nextId = 1;
   private pending = new Map<number, Pending>();
@@ -67,7 +69,9 @@ class Connection {
   private async open(): Promise<boolean> {
     let url: string;
     try {
-      const res = await fetch(`${CDP}/json/version`, { signal: AbortSignal.timeout(3000) });
+      const res = await fetch(`${this.endpoint}/json/version`, {
+        signal: AbortSignal.timeout(3000),
+      });
       url = ((await res.json()) as { webSocketDebuggerUrl: string }).webSocketDebuggerUrl;
     } catch {
       throw new BrowserError("Chromium isn't running, or isn't answering on its DevTools port.");
@@ -294,7 +298,7 @@ type Target = { type: "coordinate"; x: number; y: number } | { type: "ref"; ref:
 const BUTTONS = { left: 1, right: 2, middle: 4 } as const;
 
 export class Browser {
-  private cdp = new Connection();
+  private cdp: Connection;
   private targets = new Map<string, TargetInfo>();
   private tabIds = new Map<string, string>();
   private nextTab = 1;
@@ -318,8 +322,15 @@ export class Browser {
   private pointers = new Map<string, Point>();
   private readying: Promise<void> | null = null;
 
-  /** `downloadDir`: where downloads go, named by their guid, so they can be sent on; null leaves Chromium's default. */
-  constructor(private downloadDir: string | null = null) {
+  /**
+   * `downloadDir`: where downloads go, named by their guid, so they can be sent on; null leaves Chromium's
+   * default. `endpoint`: its DevTools address, when it isn't $HATBOT_CDP (a test's own Chromium).
+   */
+  constructor(
+    private downloadDir: string | null = null,
+    endpoint = CDP,
+  ) {
+    this.cdp = new Connection(endpoint);
     this.cdp.on((method, p, sessionId) => this.event(method, p, sessionId));
   }
 
