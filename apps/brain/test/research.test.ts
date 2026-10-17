@@ -662,7 +662,7 @@ test("a helper at its step cap reports what it has", async () => {
   expect(task.status).toBe("done");
 });
 
-test("a helper near the task's limit reports at once, and five check the limit together", async () => {
+test("a helper near the task's limit reports at once, and helpers check the limit together", async () => {
   const work = new FakeModel([ONE_PART, finish("Get the DS925+ [1].", "Report [1].")]);
   let step = 0;
   work.route = (p) => {
@@ -689,6 +689,40 @@ test("a helper near the task's limit reports at once, and five check the limit t
     /Spent so far: \$0\.9\d of this task's \$1 limit\./,
   );
   expect(task.status).toBe("done");
+
+  // Two helpers start with room for one step: the second counts the first's request in flight.
+  const work2 = new FakeModel([
+    {
+      content: [
+        toolUse("investigate", {
+          parts: [
+            { topic: "Price", brief: "Find the price." },
+            { topic: "Noise", brief: "Find the noise." },
+          ],
+        }),
+      ],
+      // All but about $0.09 of the $1.
+      usage: { input_tokens: 226_500 },
+    },
+    finish("Get the DS925+ [1].", "Report [1]."),
+  ]);
+  work2.route = (p) =>
+    isHelper(p)
+      ? { content: [toolUse("report_findings", { findings: [PRICE], gaps: "" })] }
+      : undefined;
+  const t2 = await testApp(new FakeModel(), work2);
+  t2.settings.update({ limits: { researchUsd: 1, dailyUsd: 1000, monthlyUsd: 1000 } });
+  const created2 = t2.tasks.createBackgroundTask({
+    title: "Price",
+    goal: "The DS925+ price.",
+    origin: "chat",
+    research: true,
+  });
+  await settle(t2, created2?.id as number);
+  expect(work2.requests.filter(isHelper).map(forced)).toEqual([true]);
+  const findings = resultsIn(work2.requests.filter((r) => !isHelper(r))[1]);
+  expect(findings).toContain('[1] "Synology DS925+ | x-kom"');
+  expect(findings).toContain("No findings.\nStopped: This task would go over its $1 limit.");
 });
 
 test("a helper's report cut off at max_tokens is asked for again, shorter, once", async () => {
