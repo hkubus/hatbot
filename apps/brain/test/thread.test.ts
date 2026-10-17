@@ -413,7 +413,8 @@ test("search_history's dates are local days, like the times it shows", async () 
     expect(await search({ after: "2026-10-17" })).toContain("17 Oct 2026, 00:30");
     expect(await search({ before: "2026-10-17" })).toBe("No matches.");
   } finally {
-    process.env.TZ = tz;
+    // bun test runs in UTC with TZ unset, and unsetting it again doesn't go back.
+    process.env.TZ = tz ?? "UTC";
   }
 });
 
