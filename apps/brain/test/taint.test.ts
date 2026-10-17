@@ -446,3 +446,43 @@ test("a tainted task's summary reaches the chat labelled as data, and taints it"
   expect(count(news, "</summary>")).toBe(1);
   expect(episodeTaint(t)).toEqual({ tainted: 1, tainted_by: 'Task #1 "Prices"' });
 });
+
+test("the running summary of a conversation that read untrusted content taints the ones after", async () => {
+  const search = (query: string) =>
+    [
+      { type: "server_tool_use", id: "s1", name: "web_search", input: { query } },
+      { type: "web_search_tool_result", tool_use_id: "s1", content: [] },
+      text("It came out last week."),
+    ] as unknown as Anthropic.Beta.BetaContentBlock[];
+  const summary = "<recap>Asked about Proxmox.</recap><summary>Proxmox 9.2 is out.</summary>";
+  const chat = new FakeModel(
+    [{ content: search("proxmox 9.2") }, { content: [text("Hi.")] }],
+    [summary],
+  );
+  const t = await testApp(chat);
+  await t.thread.post("when did proxmox 9.2 come out?").done;
+  t.advance(31 * 60_000);
+  // /new leaves the recent messages behind, but not the summary.
+  await t.thread.post("/new").done;
+  await t.thread.post("hi").done;
+  expect(textOf(chat.requests[1])).toContain("Proxmox 9.2 is out.");
+  expect(episodeTaint(t)).toEqual({
+    tainted: 1,
+    tainted_by:
+      'The summary of earlier conversations, which drew on: Searched the web for "proxmox 9.2"',
+  });
+  // The summariser is told what not to carry over.
+  expect(String(chat.creates[0]?.system)).toContain("aren't the person's");
+
+  // A summary of clean conversations taints nothing.
+  const clean = new FakeModel(
+    [{ content: [text("Hello.")] }, { content: [text("Hi.")] }],
+    [summary],
+  );
+  const u = await testApp(clean);
+  await u.thread.post("hello").done;
+  u.advance(31 * 60_000);
+  await u.thread.post("/new").done;
+  await u.thread.post("hi").done;
+  expect(episodeTaint(u)).toEqual({ tainted: 0, tainted_by: null });
+});

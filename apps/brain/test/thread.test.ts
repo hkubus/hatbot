@@ -504,9 +504,10 @@ test("/new starts a conversation that carries nothing over, and folds the last o
       "SELECT tainted, fresh FROM episodes ORDER BY id",
     )
     .all();
+  // The summary it opens with was written from the tainted one, so it carries that on.
   expect(episodes).toEqual([
     { tainted: 1, fresh: 0 },
-    { tainted: 0, fresh: 1 },
+    { tainted: 1, fresh: 1 },
   ]);
   const list = t.thread.list();
   expect(list.map((m) => [m.kind, m.text, m.episodeId])).toEqual([

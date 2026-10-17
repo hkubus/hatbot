@@ -949,6 +949,23 @@ export class Thread {
     );
   }
 
+  /**
+   * What the running summary drew on that was untrusted, or null: it was written from every summarized
+   * conversation, so one that had read untrusted content taints it until that one is deleted.
+   */
+  private summaryTaint(): string | null {
+    if (!this.threadSummary()) return null;
+    const e = this.d.db
+      .query<{ tainted_by: string | null }, [number]>(
+        `SELECT tainted_by FROM episodes WHERE conversation_id = ? AND incognito = 0 AND summarized = 1
+         AND tainted = 1 ORDER BY id LIMIT 1`,
+      )
+      .get(this.conversationId);
+    return e
+      ? `The summary of earlier conversations, which drew on: ${e.tainted_by ?? "untrusted content"}`
+      : null;
+  }
+
   private threadSummary(): string {
     return (
       this.d.db
@@ -1527,6 +1544,9 @@ export class Thread {
         });
         // /new and incognito leave what came before, and what it had read, behind.
         if (episode.isNew && !episode.fresh && !incognito) this.inheritTaint(episode.id, userId);
+        // The running summary carries on what the conversations folded into it read.
+        const carried = incognito ? null : this.summaryTaint();
+        if (carried) this.taint(episode.id, carried);
       } else {
         const commands = this.commandsSince(episode.id, userId);
         if (commands)
