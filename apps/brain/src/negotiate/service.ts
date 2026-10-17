@@ -29,7 +29,7 @@ import type { Spend } from "../spend";
 import type { Tasks } from "../tasks/service";
 import { type ListingFacts, parseKey, scoutTool } from "./appraise";
 import { collapse, type SendGate, sameAddress, sameHost } from "./gate";
-import { applyNote, mandateReason, mandateSummary, mandateTerms } from "./mandate";
+import { applyNote, mandateReason, mandateSummary, mandateTerms, widened } from "./mandate";
 import { QUIET_HOURS, type SendFacts, type SendInput } from "./policy";
 import { negotiateTools } from "./tools";
 
@@ -463,6 +463,16 @@ export class Negotiations {
         return;
       }
       mandate = applied.mandate;
+      // Haiku read the note: anything that gives more room than you approved comes back to you first.
+      const more = widened(n, mandate);
+      if (more.length) {
+        this.update(n.id, { mandate: JSON.stringify(mandate) });
+        this.askMandate(
+          this.get(n.id) as Negotiation,
+          `Your note gives it more room than before. Approve to go ahead with this, or deny to end the negotiation.\n${more.join("\n")}\nYour note: ${a.note}`,
+        );
+        return;
+      }
     }
     this.update(n.id, {
       status: "open",

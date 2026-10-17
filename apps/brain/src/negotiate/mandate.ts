@@ -1,6 +1,6 @@
 // The mandate (PLAN.md §16.1): what Hatbot may do on its own in one negotiation, as the owner approves
 // it. Its approval card, its checks, and a steering note on the card turned into new numbers by Haiku,
-// which reads only the note and the mandate: nothing a seller wrote.
+// which reads only the note, the mandate and the asking price: nothing a seller wrote.
 import type Anthropic from "@anthropic-ai/sdk";
 import { MANDATE_CONTACTS, type Mandate, type Negotiation } from "@hatbot/shared";
 import { z } from "zod";
@@ -73,19 +73,43 @@ export function mandateSummary(n: Negotiation): string {
   return `Negotiate for “${title}”: ${mandateTerms(n)}`;
 }
 
+/** "23 Oct", as the web shows dates. */
+const day = (iso: string) =>
+  new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+
+const contacts = (allow: string[]) => (allow.length ? allow.join(", ") : "none");
+
 /** The mandate approval's detail: the appraisal it rests on and the rest of the mandate. */
 export function mandateReason(n: Negotiation, botName: string): string {
   const m = n.mandate;
   const a = n.appraisal;
   return [
-    `${n.listingKey} ${n.listingUrl}`,
+    n.listingUrl,
     `Asking ${n.asking !== null ? zl(n.asking, m.currency) : "unknown"}.`,
     a
-      ? `Scout: open at ${zl(a.opening, a.currency)}, aim for ${zl(a.target, a.currency)}, walk away above ${zl(a.walkAway, a.currency)}. ${a.basis}`
+      ? `Scout: open at ${zl(a.opening, a.currency)}, aim for ${zl(a.target, a.currency)}, walk away ${n.role === "buy" ? "above" : "below"} ${zl(a.walkAway, a.currency)}. ${a.basis}`
       : "No appraisal from Scout.",
-    `Delivery: ${m.delivery}. Until ${m.expiresAt.slice(0, 10)}. Contact details: ${m.allow.length ? m.allow.join(", ") : "none"}.`,
+    `Delivery: ${m.delivery}. Until ${day(m.expiresAt)}. Contact details: ${contacts(m.allow)}.`,
     `Inside this, ${botName} sends and agrees on its own; outside it, it asks you. A note can change the numbers.`,
   ].join("\n");
+}
+
+/**
+ * What a mandate made from a note allows beyond the one approved, a line each with the old value and
+ * the new: a higher ceiling (or lower floor), other delivery terms, more contact details.
+ */
+export function widened(n: Pick<Negotiation, "mandate" | "role">, after: Mandate): string[] {
+  const b = n.mandate;
+  const buying = n.role === "buy";
+  const out: string[] = [];
+  if (buying ? after.limit > b.limit : after.limit < b.limit)
+    out.push(
+      `${buying ? "Pay at most" : "Take at least"}: ${zl(b.limit, b.currency)} → ${zl(after.limit, after.currency)}`,
+    );
+  if (after.delivery !== b.delivery) out.push(`Delivery: ${b.delivery} → ${after.delivery}`);
+  if (after.allow.some((c) => !b.allow.includes(c)))
+    out.push(`Contact details: ${contacts(b.allow)} → ${contacts(after.allow)}`);
+  return out;
 }
 
 const NOTE_MODEL = "claude-haiku-5-5";
@@ -132,7 +156,7 @@ export async function applyNote(
         {
           role: "user",
           content: [
-            `<listing>\n${n.title} (${n.role === "buy" ? "buying" : "selling"}; asking ${n.asking ?? "unknown"} ${m.currency})\n</listing>`,
+            `<listing>\n${n.role === "buy" ? "Buying" : "Selling"}; asking ${n.asking ?? "unknown"} ${m.currency}\n</listing>`,
             `<mandate>\n${JSON.stringify(current)}\n</mandate>`,
             `<owner_note>\n${note}\n</owner_note>`,
           ].join("\n\n"),

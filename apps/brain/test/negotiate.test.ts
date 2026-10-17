@@ -300,6 +300,9 @@ test("negotiate_start asks for the mandate; once approved, the negotiation runs 
   expect(approval?.reason).toContain("Asking 1,500 zł.");
   expect(approval?.reason).toContain("walk away above 1,400 zł");
   expect(approval?.reason).toContain("Inside this, Hatbot sends and agrees on its own");
+  // Dates and money as the app shows them, and no listing key.
+  expect(approval?.reason).toContain("Until 16 Oct. Contact details: none.");
+  expect(approval?.reason).not.toContain("OLX:1001");
   // Nothing went before it was approved.
   expect(results(chat, 3)).toContain("waits for the owner to approve its mandate");
   // The appraisal was made once: negotiate_start used it.
@@ -421,9 +424,11 @@ test("a note on the mandate changes its numbers; one Haiku can't apply asks agai
     limit: 1300,
     expiresAt: MANDATE.expiresAt,
   });
-  // Haiku read the note and the mandate, and nothing from the seller.
+  // Haiku read the note, the mandate and the asking price, and nothing from the seller.
   expect(notes[0]).toContain("Max 1300, not more.");
   expect(notes[0]).toContain('"limit":1400');
+  expect(notes[0]).toContain("Buying; asking 1500 PLN");
+  expect(notes[0]).not.toContain("Karta graficzna");
 
   const second = openNegotiation(t);
   t.db.query("UPDATE negotiations SET listing_key = 'OLX:1002' WHERE id = ?").run(second.id);
@@ -451,6 +456,46 @@ test("a note on the mandate changes its numbers; one Haiku can't apply asks agai
   t.approvals.expireDue();
   await waitFor(() => t.negotiations.get(third.id)?.status === "expired");
   expect(t.approvals.get(c.id)?.status).toBe("expired");
+  await t.tasks.idle();
+});
+
+test("a note that gives the mandate more room is shown to you again before it takes effect", async () => {
+  const work = new FakeModel();
+  work.onCreate = (p) =>
+    p.tool_choice?.type === "tool"
+      ? '{"opening": 1060, "target": 1300, "limit": 1450, "delivery": "Pickup in Kraków", "expires_in_days": 7, "allow": ["phone"]}'
+      : '{"suspected": false, "excerpt": ""}';
+  work.script.push({
+    content: [toolUse("finish_task", { outcome: "done", summary: "Later.", notify: false })],
+  });
+  const t = await testApp(new FakeModel(), work);
+  const n = openNegotiation(t);
+  t.negotiations.update(n.id, { status: "awaiting_mandate" });
+  const a = t.negotiations.askMandate(t.negotiations.get(n.id) as Negotiation);
+  t.approvals.decide(
+    a.id,
+    "approve",
+    "web",
+    "Go to 1450 if they collect in Kraków; share my phone.",
+  );
+  const again = await waitFor(() => t.approvals.list(true)[0]);
+  expect(again.kind).toBe("mandate");
+  expect(again.summary).toContain("pay at most 1,450 zł");
+  expect(again.reason).toContain(
+    [
+      "Your note gives it more room than before. Approve to go ahead with this, or deny to end the negotiation.",
+      "Pay at most: 1,400 zł → 1,450 zł",
+      "Delivery: OLX delivery with buyer protection → Pickup in Kraków",
+      "Contact details: none → phone",
+      "Your note: Go to 1450 if they collect in Kraków; share my phone.",
+    ].join("\n"),
+  );
+  // Nothing opened meanwhile.
+  expect(t.negotiations.get(n.id)?.status).toBe("awaiting_mandate");
+  expect(t.tasks.list()).toEqual([]);
+  t.approvals.decide(again.id, "approve", "web");
+  await waitFor(() => t.negotiations.get(n.id)?.status === "open");
+  expect(t.negotiations.get(n.id)?.mandate).toMatchObject({ limit: 1450, allow: ["phone"] });
   await t.tasks.idle();
 });
 
