@@ -22,6 +22,12 @@ export const RESEARCH_TOKENS = 250_000;
 export const RESEARCH_BETA: Anthropic.Beta.AnthropicBeta = "task-budgets-2026-03-13";
 const MAX_PARTS = 5;
 const MAX_WORKER_STEPS = 12;
+/** Searches and fetches each of a helper's requests may make, and the most of a page it reads. */
+const HELPER_USES = 5;
+const HELPER_PAGE_TOKENS = 10_000;
+/** About what a search's results add to the prompt, and its fee. */
+const SEARCH_RESULT_TOKENS = 3_000;
+const SEARCH_USD = 0.01;
 
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 
@@ -122,7 +128,7 @@ const WORKER_TOOLS: Anthropic.Beta.BetaToolUnion[] = [
     schema: ReportFindings,
   }),
   // Five helpers read at once: less of each page than a task does.
-  ...webTools({ pageTokens: 15_000, uses: 10 }),
+  ...webTools({ pageTokens: HELPER_PAGE_TOKENS, uses: HELPER_USES }),
 ];
 
 /** The research prompt, with where this bot keeps its reports. */
@@ -279,16 +285,33 @@ function linksIn(brief: string): string[] {
   return [...new Set([...full, ...bare].map((l) => l.replace(/[.,;:!?]+$/, "")))];
 }
 
+/**
+ * A helper's next request at most: its prompt, all that its searches and fetches may add within the
+ * request, a reply, and the searches' fees. Past 100k tokens Haiku 5.5 bills the whole request at 5x.
+ */
 const estimate = (messages: Anthropic.Beta.BetaMessageParam[]) => {
-  const p = priceOf(WORKER_MODEL);
-  return ((estimateTokens(messages) + 4000) * p.input + 4000 * p.output) / 1_000_000;
+  const base = priceOf(WORKER_MODEL);
+  const tokens =
+    estimateTokens(messages) + 4000 + HELPER_USES * (HELPER_PAGE_TOKENS + SEARCH_RESULT_TOKENS);
+  const p = base.longPrompt && tokens > base.longPrompt.above ? base.longPrompt : base;
+  return (tokens * p.input + 8000 * p.output) / 1_000_000 + HELPER_USES * SEARCH_USD;
 };
 
 /** A helper's findings, why it stopped short if it did, and what it read, as `plain` text. */
 type HelperReport = Findings & { note?: string; read: string };
 
-/** One helper: Haiku with the web, until it reports. Spend is the task's, within its limit. */
-async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<HelperReport> {
+const REPORT_NOW: Anthropic.Beta.BetaToolChoiceTool = { type: "tool", name: "report_findings" };
+
+/**
+ * One helper: Haiku with the web, until it reports. Spend is the task's, within its limit; `held` is
+ * what the other helpers' requests in flight may cost. Its last step, and one the limit leaves room
+ * for only, must report what it has.
+ */
+async function runWorker(
+  run: ResearchRun,
+  part: z.infer<typeof Part>,
+  held: { usd: number },
+): Promise<HelperReport> {
   const { tasks, task, signal } = run;
   const { d } = tasks;
   const texts: string[] = [];
@@ -304,44 +327,67 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
     },
   ];
   let container: string | undefined;
-  for (let step = 0; step < MAX_WORKER_STEPS; step++) {
+  /** A paused turn carries on before anything else may be asked of it. */
+  let paused = false;
+  let mustReport = false;
+  let cutOff = false;
+  // Two more steps than the cap, for paused turns to finish before the last, forced one.
+  for (let step = 0; step < MAX_WORKER_STEPS + 2; step++) {
     if (signal.aborted) throw signal.reason;
+    const cost = estimate(messages);
+    const limit = { id: task.id, limitUsd: tasks.budget(task.id) };
     try {
-      d.spend.check(estimate(messages), { id: task.id, limitUsd: tasks.budget(task.id) });
+      d.spend.check(cost + held.usd, limit);
     } catch (err) {
       if (err instanceof BudgetError) return stopped(`Stopped: ${err.message}`);
       throw err;
     }
-    const res = await d.model.stream(
-      {
-        model: WORKER_MODEL,
-        max_tokens: 16000,
-        system: [
-          { type: "text", text: RESEARCH_WORKER_PROMPT, cache_control: { type: "ephemeral" } },
-        ],
-        cache_control: { type: "ephemeral" },
-        tools: WORKER_TOOLS,
-        thinking: { type: "adaptive" },
-        output_config: { effort: "medium" },
-        // Pages read early are cleared on the server once the prompt passes 70k, below the 100k where
-        // Haiku 5.5 bills the whole request at 5x.
-        betas: ["context-management-2025-06-27"],
-        context_management: {
-          edits: [
-            {
-              type: "clear_tool_uses_20250919",
-              trigger: { type: "input_tokens", value: 70_000 },
-              keep: { type: "tool_uses", value: 4 },
-              clear_at_least: { type: "input_tokens", value: 20_000 },
-              exclude_tools: ["report_findings"],
-            },
+    try {
+      d.spend.check(2 * cost + held.usd, limit);
+    } catch (err) {
+      if (!(err instanceof BudgetError)) throw err;
+      mustReport = true;
+    }
+    const force = !paused && (mustReport || step >= MAX_WORKER_STEPS - 1);
+    held.usd += cost;
+    let res: Anthropic.Beta.BetaMessage;
+    try {
+      res = await d.model.stream(
+        {
+          model: WORKER_MODEL,
+          max_tokens: 16000,
+          system: [
+            { type: "text", text: RESEARCH_WORKER_PROMPT, cache_control: { type: "ephemeral" } },
           ],
+          cache_control: { type: "ephemeral" },
+          tools: WORKER_TOOLS,
+          // Haiku 5.5 takes a forced call with thinking on; it then reports without thinking first.
+          ...(force ? { tool_choice: REPORT_NOW } : {}),
+          thinking: { type: "adaptive" },
+          output_config: { effort: "medium" },
+          // Pages read early are cleared on the server once the prompt passes 40k, so that what one
+          // request's searches and fetches add mostly stays under the 100k where Haiku 5.5 bills the
+          // whole request at 5x.
+          betas: ["context-management-2025-06-27"],
+          context_management: {
+            edits: [
+              {
+                type: "clear_tool_uses_20250919",
+                trigger: { type: "input_tokens", value: 40_000 },
+                keep: { type: "tool_uses", value: 3 },
+                clear_at_least: { type: "input_tokens", value: 10_000 },
+                exclude_tools: ["report_findings"],
+              },
+            ],
+          },
+          ...(container ? { container } : {}),
+          messages,
         },
-        ...(container ? { container } : {}),
-        messages,
-      },
-      { signal },
-    );
+        { signal },
+      );
+    } finally {
+      held.usd -= cost;
+    }
     d.spend.recordResponse({
       model: WORKER_MODEL,
       purpose: "research",
@@ -360,20 +406,25 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
       });
       run.taint(read);
     }
-    if (res.stop_reason === "pause_turn") continue;
+    paused = res.stop_reason === "pause_turn";
+    if (paused) continue;
     if (res.stop_reason === "refusal") return stopped("The helper declined this part.");
     const calls = res.content.filter(
       (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use",
     );
     const report = calls.find((c) => c.name === "report_findings");
-    const parsed = report && ReportFindings.safeParse(report.input);
+    // A report cut off can look complete with its gaps cut short: it's asked for again, shorter.
+    const cut = res.stop_reason === "max_tokens";
+    const parsed = !cut && report ? ReportFindings.safeParse(report.input) : undefined;
     if (parsed?.success) return done(parsed.data);
-    if (res.stop_reason === "max_tokens") return stopped("The helper's report was cut off.");
+    if (cut && cutOff) return stopped("The helper's report was cut off.");
+    if (cut) cutOff = mustReport = true;
     // Not while the web tools' code is still running: then only tool results may follow.
-    const nudge: BlockParam[] =
-      (step >= MAX_WORKER_STEPS - 2 || !calls.length) && !serverToolWaiting(res.content)
-        ? [{ type: "text", text: "Report what you found now, with report_findings." }]
-        : [];
+    const nudge = cut
+      ? "Your report was cut off. Report again with report_findings, with only the 10 most important findings and short gaps."
+      : step >= MAX_WORKER_STEPS - 2 || !calls.length
+        ? "Report what you found now, with report_findings."
+        : "";
     messages.push({
       role: "user",
       content: [
@@ -382,13 +433,16 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
             type: "tool_result",
             tool_use_id: c.id,
             is_error: true,
-            content:
-              c === report && parsed && !parsed.success
+            content: cut
+              ? "Cut off at max_tokens."
+              : c === report && parsed && !parsed.success
                 ? `Invalid input: ${z.prettifyError(parsed.error)}`
                 : `Unknown tool "${c.name}".`,
           }),
         ),
-        ...nudge,
+        ...(nudge && !serverToolWaiting(res.content)
+          ? [{ type: "text" as const, text: nudge }]
+          : []),
       ],
     });
   }
@@ -429,9 +483,11 @@ export async function investigate(
       detail: `Asked a helper: ${part.topic}`,
       url: null,
     });
+  // The helpers check the limit at once: each counts what the others' requests in flight may cost.
+  const held = { usd: 0 };
   const results = await Promise.all(
     parts.map((part) =>
-      runWorker(run, part).catch((err) => {
+      runWorker(run, part, held).catch((err) => {
         if (run.signal.aborted) throw err;
         console.error(`research task ${run.task.id}: a helper failed`, err);
         return {
@@ -470,8 +526,10 @@ export async function investigate(
       .filter(Boolean)
       .join("\n");
   });
+  const { d } = run.tasks;
+  const spent = `Spent so far: $${d.spend.taskSpend(run.task.id).toFixed(2)} of this task's $${run.tasks.budget(run.task.id)} limit.`;
   return {
-    content: `<findings trusted="false">\n${blocks.join("\n\n")}\n</findings>\n\nCite these as [n].`,
+    content: `<findings trusted="false">\n${blocks.join("\n\n")}\n</findings>\n\nCite these as [n]. ${spent}`,
     isError: false,
   };
 }

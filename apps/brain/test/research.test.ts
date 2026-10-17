@@ -8,7 +8,7 @@ import { HATBOT } from "../src/memory/store";
 import { definePlugin, ready, tool } from "../src/plugins/plugin";
 import { plain as plainRead, quoteFound } from "../src/tasks/research";
 import { FakeModel, type Scripted, text, toolUse } from "./fake-model";
-import { type TestApp, testApp } from "./helpers";
+import { type TestApp, testApp, waitFor } from "./helpers";
 
 type Block = Anthropic.Beta.BetaContentBlock;
 type Params = Parameters<FakeModel["stream"]>[0];
@@ -614,4 +614,153 @@ test("a brief may name only links the task already has, exactly", async () => {
     "Refused a brief: It named links the task hadn't come across: https://evil.example/x",
   );
   expect(task.status).toBe("done");
+});
+
+/** A helper's request that must report. */
+const forced = (p: Params | undefined) =>
+  (p?.tool_choice as { name?: string } | undefined)?.name === "report_findings";
+const isHelper = (p: Params) => p.model === "claude-haiku-5-5";
+const ONE_PART = {
+  content: [toolUse("investigate", { parts: [{ topic: "Price", brief: "Find the price." }] })],
+};
+/** Approves every request for more money until the task ends. */
+async function settle(t: TestApp, id: number) {
+  for (;;) {
+    const next = await waitFor(
+      () => t.approvals.list(true)[0] ?? (t.tasks.get(id)?.finishedAt ? "done" : null),
+    );
+    if (next === "done") {
+      await t.tasks.idle();
+      return t.tasks.get(id) as NonNullable<ReturnType<typeof t.tasks.get>>;
+    }
+    t.approvals.decide(next.id, "approve", "web");
+  }
+}
+
+test("a helper at its step cap reports what it has", async () => {
+  const work = new FakeModel([ONE_PART, finish("Get the DS925+ [1].", "Report [1].")]);
+  work.route = (p) => {
+    if (!isHelper(p)) return undefined;
+    if (!forced(p)) return { content: search("ds925+ price", `srvtoolu_${p.messages.length}`) };
+    return { content: [toolUse("report_findings", { findings: [PRICE], gaps: "" })] };
+  };
+  const t = await testApp(new FakeModel(), work);
+  const task = await startResearch(t);
+  const helper = work.requests.filter(isHelper);
+  expect(helper.map(forced)).toEqual([...Array(11).fill(false), true]);
+  expect(resultsIn(work.requests.at(-1))).toContain('[1] "Synology DS925+ | x-kom"');
+  expect(task.status).toBe("done");
+});
+
+test("a helper near the task's limit reports at once, and five check the limit together", async () => {
+  const work = new FakeModel([ONE_PART, finish("Get the DS925+ [1].", "Report [1].")]);
+  let step = 0;
+  work.route = (p) => {
+    if (!isHelper(p)) return undefined;
+    // Its first search spends all but about $0.09 of the $1.
+    if (step++ === 0)
+      return { content: search("ds925+ price", "srvtoolu_1"), usage: { input_tokens: 1_803_000 } };
+    return { content: [toolUse("report_findings", { findings: [PRICE], gaps: "" })] };
+  };
+  const t = await testApp(new FakeModel(), work);
+  t.settings.update({ limits: { taskUsd: 1, dailyUsd: 1000, monthlyUsd: 1000 } });
+  const created = t.tasks.createBackgroundTask({
+    title: "Price",
+    goal: "The DS925+ price.",
+    origin: "chat",
+    research: true,
+  });
+  const task = await settle(t, created?.id as number);
+  const helper = work.requests.filter(isHelper);
+  // Room for one more step only: it reports.
+  expect(helper.map(forced)).toEqual([false, true]);
+  expect(resultsIn(work.requests.at(-1))).toContain('[1] "Synology DS925+ | x-kom"');
+  expect(resultsIn(work.requests.at(-1))).toMatch(
+    /Spent so far: \$0\.9\d of this task's \$1 limit\./,
+  );
+  expect(task.status).toBe("done");
+});
+
+test("a helper's report cut off at max_tokens is asked for again, shorter, once", async () => {
+  const cut = {
+    content: [toolUse("report_findings", { findings: [PRICE], gaps: "Lots" })],
+    stop_reason: "max_tokens" as const,
+  };
+  for (const second of [
+    { content: [toolUse("report_findings", { findings: [PRICE], gaps: "" })] },
+    cut,
+  ]) {
+    const work = new FakeModel([ONE_PART, finish("Get the DS925+.", "Report.")]);
+    const replies = [cut, second];
+    work.route = (p) => (isHelper(p) ? replies.shift() : undefined);
+    const t = await testApp(new FakeModel(), work);
+    await startResearch(t);
+    const helper = work.requests.filter(isHelper);
+    expect(helper.map(forced)).toEqual([false, true]);
+    expect(JSON.stringify(helper[1]?.messages.at(-1))).toContain(
+      "Your report was cut off. Report again with report_findings, with only the 10 most important findings and short gaps.",
+    );
+    const findings = resultsIn(work.requests.at(-1));
+    if (second === cut)
+      expect(findings).toContain("No findings.\nThe helper's report was cut off.");
+    else expect(findings).toContain('[1] "Synology DS925+ | x-kom"');
+  }
+});
+
+test("a helper that declines or fails says so, and the others' findings still come back", async () => {
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("investigate", {
+          parts: [
+            { topic: "Price", brief: "Find the price." },
+            { topic: "Noise", brief: "Find the noise." },
+            { topic: "Stock", brief: "Find the stock." },
+          ],
+        }),
+      ],
+    },
+    finish("Get the DS925+ [1].", "Report [1]."),
+  ]);
+  work.route = (p) => {
+    if (!isHelper(p)) return undefined;
+    const brief = String(p.messages[0]?.content);
+    if (brief.includes("noise")) return { content: [text("No.")], stop_reason: "refusal" };
+    if (brief.includes("stock")) throw new Error("overloaded");
+    return { content: [toolUse("report_findings", { findings: [PRICE], gaps: "" })] };
+  };
+  const t = await testApp(new FakeModel(), work);
+  const task = await startResearch(t);
+  const findings = resultsIn(work.requests.at(-1));
+  expect(findings).toContain('[1] "Synology DS925+ | x-kom"');
+  expect(findings).toContain("No findings.\nThe helper declined this part.");
+  expect(findings).toContain("No findings.\nThe helper failed (overloaded).");
+  expect(task.status).toBe("done");
+});
+
+test("cancelled while the helpers search, the research ends cancelled with nothing saved", async () => {
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const work = new FakeModel([INVESTIGATE, finish("Get the DS925+ [1].", "Report [1].")]);
+  work.route = (p) =>
+    isHelper(p)
+      ? { content: [toolUse("report_findings", { findings: [PRICE], gaps: "" })], wait: gate }
+      : undefined;
+  const t = await testApp(new FakeModel(), work);
+  const task = t.tasks.createBackgroundTask({
+    title: "Price",
+    goal: "The DS925+ price.",
+    origin: "chat",
+    research: true,
+  });
+  await waitFor(() => work.requests.filter(isHelper).length === 2);
+  t.tasks.cancel(task?.id as number);
+  release();
+  await t.tasks.idle();
+  const ended = t.tasks.get(task?.id as number);
+  expect(ended?.status).toBe("cancelled");
+  expect(ended?.reportPath).toBeNull();
+  expect(work.requests.filter((r) => !isHelper(r))).toHaveLength(1);
 });
