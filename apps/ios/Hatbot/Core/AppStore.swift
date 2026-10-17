@@ -297,9 +297,7 @@ final class AppStore {
       bots[b.id] = b
       if !botIds.contains(b.id) { botIds.append(b.id) }
     case let .botDeleted(id):
-      botIds.removeAll { $0 == id }
-      // Its own chat goes with it.
-      for c in conversations where c.kind == .direct && c.botIds.first == id { chatGone(c.id) }
+      botGone(id)
       refreshConversations()
     case let .conversationUpdated(c):
       put(c)
@@ -426,7 +424,13 @@ final class AppStore {
     }
   }
 
-  /// A chat deleted elsewhere. If it's the one you're in, back to Hatbot's own chat, keeping none of it.
+  /// A bot deleted, here or elsewhere: its own chat goes with it.
+  private func botGone(_ id: String) {
+    botIds.removeAll { $0 == id }
+    for c in conversations where c.kind == .direct && c.botIds.first == id { chatGone(c.id) }
+  }
+
+  /// A chat deleted, here or elsewhere. If it's the one you're in, back to Hatbot's own chat, keeping none of it.
   private func chatGone(_ id: Int) {
     conversations.removeAll { $0.id == id }
     cache?.forget(id)
@@ -576,9 +580,8 @@ final class AppStore {
 
   func deleteBot(_ id: String) async throws {
     let _: Empty = try await api.delete("/bots/\(id)")
-    botIds.removeAll { $0 == id }
+    botGone(id)
     await loadBots()
-    if !conversations.contains(where: { $0.id == conversationId }) { await openConversation(1) }
   }
 
   /// A group chat's name and bots.
@@ -600,8 +603,7 @@ final class AppStore {
 
   func deleteGroup(_ id: Int) async throws {
     let _: Empty = try await api.delete("/conversations/\(id)")
-    conversations.removeAll { $0.id == id }
-    if conversationId == id { await openConversation(1) }
+    chatGone(id)
   }
 
   private func put(_ c: Conversation) {

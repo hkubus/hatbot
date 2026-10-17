@@ -1205,7 +1205,7 @@ final class NetworkTests: XCTestCase {
     #"{"id":\#(id),"title":"t","goal":"g","successCriteria":"","origin":"chat","lane":"background","model":"m","status":"running","tainted":false,"injectionSuspected":false,"costUsd":0,"steps":0,"createdAt":"2026-10-15T08:00:00Z"}"#
   }
 
-  @MainActor private static func store() throws -> AppStore {
+  @MainActor private static func store(cache: DiskCache? = nil) throws -> AppStore {
     SlowBrain.routes = [
       "/bots": "[]",
       "/conversations": "[]",
@@ -1214,7 +1214,8 @@ final class NetworkTests: XCTestCase {
     ]
     for id in 1...3 { SlowBrain.routes["/tasks/\(id)"] = #"{"task":\#(task(id)),"steps":[]}"# }
     SlowBrain.reset()
-    let store = AppStore(api: API(server: URL(string: "https://h.example")!, token: "t", session: SlowBrain.session()))
+    let store = AppStore(
+      api: API(server: URL(string: "https://h.example")!, token: "t", session: SlowBrain.session()), cache: cache)
     // Three running tasks the chat has shown: a reconnect brings them up to date.
     for id in 1...3 {
       store.tasks[id] = try JSONDecoder().decode(AgentTask.self, from: Data(task(id).utf8))
@@ -1436,6 +1437,25 @@ final class NetworkTests: XCTestCase {
     XCTAssertEqual(chats, [1])
   }
 
+  /// A group you delete takes the page kept of it along, and the chat goes back to Hatbot's own.
+  func testDeletingAGroupForgetsItsPage() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let cache = DiskCache(dir: dir)
+    let store = try await MainActor.run { try Self.store(cache: cache) }
+    SlowBrain.routes["/conversations/1/messages?limit=50"] = "[\(Self.message(60, in: 1))]"
+    SlowBrain.routes["/conversations/2/messages?limit=50"] = "[\(Self.message(70, in: 2))]"
+    SlowBrain.routes["/conversations/2"] = "{}"
+    await MainActor.run { Self.twoChats(store) }
+    await store.openConversation(2)
+    XCTAssertNotNil(cache.page(2))
+    try await store.deleteGroup(2)
+    await waitUntil { store.messages.map(\.id) == [60] }
+    XCTAssertNil(cache.page(2))
+    let shown = await MainActor.run { store.conversationId }
+    XCTAssertEqual(shown, 1)
+  }
+
   /// The bot whose chat you're in, deleted elsewhere: its chat goes too, back to Hatbot's own.
   func testABotDeletedElsewhereClosesItsChat() async throws {
     let store = try await MainActor.run { try Self.store() }
@@ -1459,6 +1479,19 @@ final class NetworkTests: XCTestCase {
     let (shown, ids) = await MainActor.run { (store.conversationId, store.messages.map(\.id)) }
     XCTAssertEqual(shown, 1)
     XCTAssertEqual(ids, [60])
+  }
+}
+
+extension XCTestCase {
+  /// Waits for what the app does in its own time, checking every 10 ms; fails after 2 seconds.
+  func waitUntil(
+    _ condition: @escaping @MainActor @Sendable () -> Bool, file: StaticString = #filePath, line: UInt = #line
+  ) async {
+    for _ in 0..<200 {
+      if await MainActor.run(body: condition) { return }
+      try? await Task.sleep(for: .milliseconds(10))
+    }
+    XCTFail("Still not so after 2 seconds", file: file, line: line)
   }
 }
 
