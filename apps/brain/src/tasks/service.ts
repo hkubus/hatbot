@@ -143,6 +143,8 @@ const ACTIVE: typeof ACTIVE_TASK_STATUSES = [
 ];
 const FINAL: TaskStatus[] = ["done", "failed", "cancelled"];
 const RESTARTED = "Stopped: the brain restarted.";
+const errorText = (err: unknown) =>
+  err instanceof Error ? err.message.slice(0, 200) : "unknown error";
 
 export class Tasks {
   readonly lane = new ScreenLane();
@@ -640,7 +642,18 @@ export class Tasks {
     this.running.set(id, abort);
     const runner = this.get(id)?.lane === "background" ? runAgentTask : runDesktopTask;
     const run = runner(this, id, abort.signal)
-      .catch((err) => console.error(`task ${id} crashed`, err))
+      .catch((err) => {
+        console.error(`task ${id} crashed`, err);
+        // A throw before the run could end it (building its tools or prompt) would leave it queued,
+        // and a queued task holds up its schedule's and trigger's next runs.
+        try {
+          const t = this.get(id);
+          if (t && !FINAL.includes(t.status))
+            this.finish(id, "failed", `Something went wrong starting it (${errorText(err)}).`);
+        } catch (again) {
+          console.error(`task ${id} couldn't be ended`, again);
+        }
+      })
       .finally(() => {
         this.running.delete(id);
         this.inbox.delete(id);

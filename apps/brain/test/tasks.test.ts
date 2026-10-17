@@ -959,6 +959,32 @@ test("a background run stops after 4 hours of its own time, and waits no longer 
   expect(t.tasks.get(id)?.summary).toContain("4 hours");
 });
 
+test("a run that throws while it sets up ends as failed, and its schedule can run again", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Ran.", notify: false })] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const tools = t.plugins.tools;
+  t.plugins.tools = () => {
+    throw new Error("a plugin broke");
+  };
+  const run = {
+    title: "Nightly",
+    goal: "Check",
+    origin: "schedule",
+    runKey: "schedule:9",
+  } as const;
+  const first = t.tasks.createBackgroundTask(run);
+  await t.tasks.idle();
+  expect(t.tasks.get(first?.id ?? 0)).toMatchObject({ status: "failed" });
+  expect(t.tasks.get(first?.id ?? 0)?.summary).toContain("a plugin broke");
+  t.plugins.tools = tools;
+  const second = t.tasks.createBackgroundTask(run);
+  expect(second).not.toBeNull();
+  await t.tasks.idle();
+  expect(t.tasks.get(second?.id ?? 0)).toMatchObject({ status: "done", summary: "Ran." });
+});
+
 test("a task whose reply hit the context window stops as failed, without running its calls", async () => {
   const work = new FakeModel([
     {
