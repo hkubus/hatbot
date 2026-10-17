@@ -58,8 +58,11 @@ export type PluginTool<I = unknown> = {
    * write: changes something; only tasks get it, and its policy applies.
    */
   access: "read" | "write";
-  /** Its output is untrusted content (PLAN.md §6.1), e.g. issue text written by strangers. */
-  untrusted?: boolean | ((input: I) => boolean);
+  /**
+   * Its output is untrusted content (PLAN.md §6.1), e.g. issue text written by strangers. `output`:
+   * what the call returned, once it has; without it, whether its output may be.
+   */
+  untrusted?: boolean | ((input: I, output?: string) => boolean);
   /**
    * Its description and schema were written by someone else (an MCP server you haven't trusted):
    * whatever is offered it starts tainted, because that text is in the prompt.
