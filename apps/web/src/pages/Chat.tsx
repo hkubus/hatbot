@@ -55,7 +55,6 @@ import {
   openConversation,
   retryReply,
   sendMessage,
-  setPaused,
   useStore,
 } from "../store";
 import { isActive, PendingApproval, taskLine, tokenText, whenText } from "../tasks";
@@ -589,7 +588,6 @@ export function Chat({ id }: { id: number }) {
   const progress = useStore((s) => s.progress);
   const unread = useStore((s) => s.unread);
   const hasEarlier = useStore((s) => s.hasEarlier);
-  const paused = useStore((s) => s.paused);
   const incognito = useStore((s) => s.incognito);
   const name = useStore((s) => chatName(s, currentChat(s)));
   const members = useStore(groupMembers);
@@ -801,16 +799,6 @@ export function Chat({ id }: { id: number }) {
         {...drop}
       >
         <div className="chat-scroll">
-          {paused && (
-            <div className="paused-banner">
-              <Icon name="pause" />
-              All activity is paused.
-              <span style={{ flex: 1 }} />
-              <button type="button" className="btn sm" onClick={() => setPaused(false)}>
-                Resume
-              </button>
-            </div>
-          )}
           <div className="thread" ref={thread}>
             {hasEarlier && (
               <button type="button" className="btn sm ghost load-earlier" onClick={earlier}>

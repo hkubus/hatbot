@@ -124,7 +124,9 @@ const subscribe = (l: () => void) => {
 };
 
 export function useStore<T>(select: (s: State) => T): T {
-  return useSyncExternalStore(subscribe, () => select(state));
+  const snapshot = () => select(state);
+  // The second snapshot is for rendering to a string, which the tests do.
+  return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 export const getState = () => state;
 
