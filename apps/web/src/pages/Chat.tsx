@@ -704,6 +704,12 @@ export function follows(was: boolean, lastTop: number, top: number, below: numbe
   return top < lastTop ? false : was;
 }
 
+/**
+ * A wheel turned up stops following at once, before the next streamed line pulls it back. Not when
+ * the thread can't move up: no scroll would follow to start it again.
+ */
+export const wheelStops = (deltaY: number, top: number) => deltaY < 0 && top > 0;
+
 /** `id`: the chat to show. It's opened here, before loading, so a message asked for is looked for in it. */
 export function Chat({ id }: { id: number }) {
   const messages = useStore((s) => s.messages);
@@ -936,9 +942,8 @@ export function Chat({ id }: { id: number }) {
         className={`view ${dropping ? "dropping" : ""}`}
         ref={scroller}
         onScroll={onScroll}
-        // A wheel turned up stops following at once, before the next streamed line pulls it back.
         onWheel={(e) => {
-          if (e.deltaY < 0) stick.current = false;
+          if (wheelStops(e.deltaY, e.currentTarget.scrollTop)) stick.current = false;
         }}
       >
         <div className="chat-scroll">

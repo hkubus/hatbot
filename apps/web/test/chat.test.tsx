@@ -3,8 +3,17 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { installDom, settle } from "./dom";
 
 installDom();
-const { AssistantBody, appPath, Composer, dayLabel, fileDrops, follows, Message, spoken } =
-  await import("../src/pages/Chat");
+const {
+  AssistantBody,
+  appPath,
+  Composer,
+  dayLabel,
+  fileDrops,
+  follows,
+  Message,
+  spoken,
+  wheelStops,
+} = await import("../src/pages/Chat");
 const drafts = await import("../src/drafts");
 
 test("the composer says it has a menu, and which line in it is picked", () => {
@@ -220,6 +229,13 @@ test("the thread stops following on any scroll up, and starts again only at the 
   expect(follows(true, 200, 600, 700)).toBe(true);
   // The view grew and the browser moved it up to the new bottom: still following.
   expect(follows(true, 1300, 1200, 0)).toBe(true);
+});
+
+test("a wheel turned up stops following only when the thread can move up", () => {
+  expect(wheelStops(-40, 500)).toBe(true);
+  expect(wheelStops(40, 500)).toBe(false);
+  // A short thread that fits the view: no scroll follows to start it again, so keep following.
+  expect(wheelStops(-40, 0)).toBe(false);
 });
 
 test("a reply's links to the app stay in this tab; other sites open in a new one", () => {
