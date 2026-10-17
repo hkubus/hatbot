@@ -7,6 +7,9 @@ const pages = [
   { targetId: "B", type: "page", url: "https://b.example/", title: "B" },
 ];
 let visibilityChecks = 0;
+/** The tab on screen, and how long each tab takes to say whether it's visible. */
+let onScreen = "A";
+let answerMs = 0;
 let browserSocket: ServerWebSocket<unknown> | null = null;
 const cdp = Bun.serve({
   port: 0,
@@ -24,7 +27,7 @@ const cdp = Bun.serve({
     open(ws) {
       browserSocket = ws;
     },
-    message(ws, raw) {
+    async message(ws, raw) {
       const { id, method, params, sessionId } = JSON.parse(String(raw)) as {
         id: number;
         method: string;
@@ -36,7 +39,9 @@ const cdp = Bun.serve({
       if (method === "Target.attachToTarget") result = { sessionId: `s-${params.targetId}` };
       if (method === "Runtime.evaluate" && params.expression === "document.visibilityState") {
         visibilityChecks++;
-        result = { result: { value: sessionId === "s-A" ? "visible" : "hidden" } };
+        const shown = onScreen;
+        await Bun.sleep(answerMs);
+        result = { result: { value: sessionId === `s-${shown}` ? "visible" : "hidden" } };
       }
       ws.send(JSON.stringify({ id, result }));
     },
@@ -79,4 +84,26 @@ test("the tabs are asked which is on screen only when that may have changed", as
   expect(visibilityChecks).toBe(7);
   await browser.state();
   expect(visibilityChecks).toBe(7);
+});
+
+test("a call while the tabs are being asked waits for an answer from after the switch", async () => {
+  const browser = new Browser(null);
+  expect((await browser.onScreen(null))?.url).toBe("https://a.example/");
+  // The owner switches to B; the tabs are slow to answer, and a second caller comes meanwhile.
+  answerMs = 300;
+  onScreen = "B";
+  browser.screenTouched();
+  const first = browser.onScreen(null);
+  await Bun.sleep(20);
+  const second = await browser.onScreen(null);
+  expect([(await first)?.url, second?.url]).toEqual(["https://b.example/", "https://b.example/"]);
+
+  // A page brings a tab to the front without opening or closing one: only its info changes.
+  answerMs = 0;
+  onScreen = "A";
+  browserSocket?.send(
+    JSON.stringify({ method: "Target.targetInfoChanged", params: { targetInfo: pages[0] } }),
+  );
+  await Bun.sleep(20);
+  expect((await browser.onScreen(null))?.url).toBe("https://a.example/");
 });

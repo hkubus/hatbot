@@ -199,3 +199,53 @@ test.skipIf(!chromium)(
     expect(await browser.inspect(at(1))).toMatchObject({ tag: "a", href: `${base}/out?to=x` });
   },
 );
+
+pages["/opener"] = `<!doctype html><body style="margin:0">
+  <button style="${box(0)}" onclick="window.open('/popup', 'pp', 'width=400,height=300')">PayPal</button>
+  <p style="${box(4)}">harmless text</p></body>`;
+pages["/popup"] =
+  `<!doctype html><body style="margin:0"><button style="${box(4)}">Pay Now</button></body>`;
+pages["/dialog"] = `<!doctype html><body style="margin:0">
+  <div role="dialog" aria-label="Podsumowanie zamówienia" style="position:absolute;left:0;top:0;width:300px;height:200px">
+    <button style="position:absolute;left:100px;top:80px;width:100px;height:40px">Zapłać 900 zł</button>
+  </div></body>`;
+
+test.skipIf(!chromium)(
+  "a click on a ref is checked where it lands: the button in a container's middle",
+  async () => {
+    await browser.call("navigate", { url: `${base}/dialog` });
+    const found = await browser.call("find", { query: "Podsumowanie zamówienia" });
+    const text = found.kind === "text" ? found.text : "";
+    expect(text).toContain("dialog");
+    const ref = /\[(ref_\d+)\]/.exec(text)?.[1] as string;
+    expect(await browser.inspect({ ref })).toMatchObject({ tag: "button", label: "Zapłać 900 zł" });
+  },
+);
+
+test.skipIf(!chromium)(
+  "a popup window's point isn't checked against the page under it",
+  async () => {
+    await browser.call("navigate", { url: `${base}/opener` });
+    await browser.call("left_click", { target: { type: "coordinate", ...at(0) } });
+    let state = await browser.state();
+    for (let i = 0; state.tabs.length < 2 && i < 50; i++) {
+      await Bun.sleep(100);
+      state = await browser.state();
+    }
+    expect(state.tabs.map((t) => new URL(t.url).pathname).sort()).toEqual(["/opener", "/popup"]);
+    // Both windows' tabs say they're visible. Where the windows overlap, the screen's inspect can't tell
+    // which is on top, so it says so rather than answer for the one below.
+    browser.screenTouched();
+    await expect(inspectScreen(browser, 50, 260)).rejects.toThrow("can't tell which is on top");
+    const popup = state.tabs.find((t) => t.url.endsWith("/popup"))?.tab_id;
+    await browser.call("close_tab", { tab_id: popup });
+    browser.screenTouched();
+    expect(await inspectScreen(browser, 50, 260)).not.toBeUndefined();
+  },
+);
+
+test.skipIf(!chromium)("navigate takes its address only as text", async () => {
+  await expect(browser.call("navigate", { url: [`${base}/controls`] })).rejects.toThrow(
+    "url must be a string",
+  );
+});

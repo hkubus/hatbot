@@ -182,6 +182,13 @@ export function checkFor(
   input: Record<string, unknown>,
 ): Check | null {
   const browser = toolset === "browser";
+  // Its menu is a window of the browser's own, over the page: a click on one of its items would be
+  // checked against the page under it.
+  if (name === "right_click")
+    return {
+      refuse:
+        "A right click opens the browser's menu, and Hatbot can't see what its items do. Use left_click, or a key shortcut.",
+    };
   if (CLICKS.has(name)) {
     const at = browser
       ? target(input.target)

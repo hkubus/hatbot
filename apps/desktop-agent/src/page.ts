@@ -458,10 +458,17 @@ export const INSPECT = `(o) => {
   if (o.ref) {
     const el = byRef(o.ref);
     if (!el) return null;
-    if (!isFrame(el)) return info({ el });
-    // A click on a frame's ref lands in its middle.
-    const r = el.getBoundingClientRect();
-    return info({ el, frame: { x: r.width / 2 - el.clientLeft, y: r.height / 2 - el.clientTop } });
+    // A click on a ref lands in its middle, as RESOLVE_REF works it out, scrolled into view first: what's
+    // there is what it presses (for a dialog or a card, the button in its middle; for a frame, inside it).
+    let r = rectOf(el);
+    if (!(r.top >= 0 && r.left >= 0 && r.bottom <= innerHeight && r.right <= innerWidth)) {
+      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+      r = rectOf(el);
+    }
+    if (r.width === 0 && r.height === 0) return info({ el });
+    const x = Math.round(Math.min(Math.max(r.left + r.width / 2, 0), innerWidth - 1));
+    const y = Math.round(Math.min(Math.max(r.top + r.height / 2, 0), innerHeight - 1));
+    return info(elementAt(x, y));
   }
   if (typeof o.x === 'number' && typeof o.y === 'number') return info(elementAt(o.x, o.y));
   return info(focusedAt());

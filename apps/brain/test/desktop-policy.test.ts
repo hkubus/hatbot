@@ -284,6 +284,13 @@ test("a key Hatbot can't read is refused, so Enter can't go under another name",
   expect(pressOf("0xff0d")).toBeNull();
 });
 
+test("a right click is refused: its menu is a window Hatbot can't see into", () => {
+  expect(checkFor("computer", "right_click", { coordinate: [3, 4] })).toHaveProperty("refuse");
+  expect(
+    checkFor("browser", "right_click", { target: { type: "ref", ref: "ref_2" } }),
+  ).toHaveProperty("refuse");
+});
+
 test("a middle click is checked where it lands", () => {
   expect(checkFor("computer", "middle_click", { coordinate: [3, 4] })).toEqual({
     press: "click",
