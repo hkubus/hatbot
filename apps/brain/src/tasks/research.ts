@@ -9,6 +9,7 @@ import { modelErrorText } from "../agent/model";
 import { RESEARCH_CHECK_PROMPT, RESEARCH_PROMPT, RESEARCH_WORKER_PROMPT } from "../agent/prompt";
 import { localStamp } from "../agent/thread";
 import { containerOf, serverToolWaiting, toolParam, webReads, webTools } from "../agent/tools";
+import { tagJson, untrustedFields } from "../agent/untrusted";
 import { botFolder, slugWords } from "../bots";
 import { MemoryConflict } from "../memory/store";
 import { BudgetError, estimateTokens, requestCeiling } from "../spend";
@@ -145,10 +146,6 @@ const folderOf = (bot: { id: string }) => {
 
 /** `read`: a helper read the page, so its link is one the task has (PLAN.md §17). */
 type Source = { n: number; url: string; title: string; date?: string; read?: boolean };
-
-/** Untrusted text as a JSON string, with nothing in it that can close the tag around it. */
-const untrustedJson = (text: string) =>
-  JSON.stringify(text).replace(/[<>&]/g, (c) => `\\u00${c.charCodeAt(0).toString(16)}`);
 
 const TRACKING = /^(utm_\w+|fbclid|gclid|dclid|msclkid|yclid|igshid|mc_cid|mc_eid)$/i;
 
@@ -656,17 +653,17 @@ export async function investigate(
       const n = sources.add(f, confirmed, unchecked, r.visited?.has(pageUrl(f.url)));
       bySource.set(n, [
         ...(bySource.get(n) ?? []),
-        `- ${untrustedJson(f.claim)}\n  Quote: ${untrustedJson(f.quote)}${confirmed ? "" : unchecked ? `\n  ${UNCHECKED}` : "\n  Unconfirmed: the quote isn't in what the helper read."}`,
+        `- ${tagJson(f.claim)}\n  Quote: ${tagJson(f.quote)}${confirmed ? "" : unchecked ? `\n  ${UNCHECKED}` : "\n  Unconfirmed: the quote isn't in what the helper read."}`,
       ]);
     }
     const found = [...bySource].map(([n, lines]) => {
       const s = sources.get(n) as Source;
-      return `[${n}] ${untrustedJson(s.title)} ${s.url}${s.date ? ` ${untrustedJson(s.date)}` : ""}\n${lines.join("\n")}`;
+      return `[${n}] ${tagJson(s.title)} ${s.url}${s.date ? ` ${tagJson(s.date)}` : ""}\n${lines.join("\n")}`;
     });
     return [
-      `<part topic=${untrustedJson(part.topic)}>`,
+      `<part topic=${tagJson(part.topic)}>`,
       found.length ? found.join("\n") : "No findings.",
-      r.gaps.trim() ? `Gaps: ${untrustedJson(r.gaps.trim())}` : "",
+      r.gaps.trim() ? `Gaps: ${tagJson(r.gaps.trim())}` : "",
       r.note ?? "",
       "</part>",
     ]
@@ -676,7 +673,7 @@ export async function investigate(
   const { d } = run.tasks;
   const spent = `Spent so far: $${d.spend.treeSpend(run.task.id).toFixed(2)} of this task's $${run.tasks.budget(run.task.id)} limit.`;
   return {
-    content: `<findings trusted="false">\n${blocks.join("\n\n")}\n</findings>\n\nCite these as [n]. ${spent}`,
+    content: `${untrustedFields("findings", blocks.join("\n\n"))}\n\nCite these as [n]. ${spent}`,
     isError: false,
   };
 }
@@ -761,10 +758,10 @@ function evidenceFor(sources: ResearchSources, cited: number[]): string {
   const blocks: string[] = [];
   const left: number[] = [];
   for (const n of cited) {
-    const lines = [`[${n}] ${untrustedJson((sources.get(n) as Source).title)}`];
+    const lines = [`[${n}] ${tagJson((sources.get(n) as Source).title)}`];
     let size = lines[0]?.length ?? 0;
     for (const f of sources.findings) {
-      const line = `- ${untrustedJson(f.quote)}`;
+      const line = `- ${tagJson(f.quote)}`;
       if (f.n !== n || !(f.confirmed || f.unchecked) || size + line.length > SOURCE_CHARS) continue;
       lines.push(line);
       size += line.length + 1;
@@ -806,7 +803,7 @@ async function checkNumbers(
       messages: [
         {
           role: "user",
-          content: `<sources trusted="false">\n${evidenceFor(sources, cited)}\n</sources>\n\n<report>\n${text}\n</report>`,
+          content: `${untrustedFields("sources", evidenceFor(sources, cited))}\n\n<report>\n${text}\n</report>`,
         },
       ],
     });
@@ -905,7 +902,10 @@ export async function finishResearch(
         ...(problems.length
           ? [
               "A check of the numbers you cite against the confirmed quotes of those sources found these:",
-              `<check trusted="false">\n${problems.map((p) => `- ${untrustedJson(p.text)}: ${untrustedJson(p.why)}`).join("\n")}\n</check>`,
+              untrustedFields(
+                "check",
+                problems.map((p) => `- ${tagJson(p.text)}: ${tagJson(p.why)}`).join("\n"),
+              ),
             ]
           : []),
         "Look at each against its source (fetch it again if you need to): correct the number if the source says otherwise, or drop the number or the citation if you can't confirm it. Then call finish_research again.",
