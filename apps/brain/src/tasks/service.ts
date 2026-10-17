@@ -105,6 +105,7 @@ const toTask = (r: Row): Task => ({
   id: r.id,
   botId: r.bot_id,
   requestedBy: r.requested_by,
+  conversationId: r.conversation_id,
   title: r.title,
   goal: r.goal,
   successCriteria: r.success_criteria,

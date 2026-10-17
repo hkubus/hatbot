@@ -10,7 +10,9 @@ import { LoadError, loadErrorText } from "../load";
 import { NegotiationChip } from "../negotiations";
 import { navigate } from "../router";
 import {
+  botName,
   cancelTask,
+  chatName,
   HATBOT_CHAT,
   loadNegotiations,
   loadTask,
@@ -226,14 +228,23 @@ export function Tasks() {
 }
 
 /** Where a task came from, linked. */
-function From({ task }: { task: Task }) {
+export function From({ task }: { task: Task }) {
+  // The chat it was started in, while it's still one of yours.
+  const chat = useStore((s) => {
+    const c = s.conversations.find((c) => c.id === task.conversationId);
+    if (!c) return null;
+    return c.kind === "group" ? chatName(s, c) : `Chat with ${botName(s, c.botIds[0])}`;
+  });
   const go = (to: string, label: string) => (
     <button type="button" className="text-link" onClick={() => navigate(to)}>
       {label}
     </button>
   );
   if (task.parentId) return go(`/tasks/${task.parentId}`, `Task #${task.parentId}`);
-  if (task.origin === "chat") return <>Chat</>;
+  if (task.origin === "chat") {
+    const id = task.conversationId;
+    return chat && id ? go(id === HATBOT_CHAT ? "/" : `/chat/${id}`, chat) : <>Chat</>;
+  }
   const name = task.source ?? "";
   if (task.origin === "schedule")
     return task.scheduleId ? go(`/schedules/${task.scheduleId}`, name) : name;

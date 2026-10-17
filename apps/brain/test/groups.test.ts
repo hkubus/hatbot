@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Bot, Conversation } from "@hatbot/shared";
+import type { Bot, Conversation, Task } from "@hatbot/shared";
 import { mentionsIn } from "../src/agent/thread";
 import { FakeModel, text } from "./fake-model";
 import { setUpOwner, type TestApp, testApp } from "./helpers";
@@ -127,6 +127,22 @@ test("a group's name and bots change, and it can be deleted", async () => {
   ).json()) as Conversation[];
   expect(chats.every((c) => c.kind === "direct")).toBe(true);
   expect(t.chats.thread(g.id)).toBeNull();
+});
+
+test("a task says which chat it came from", async () => {
+  const t = await testApp(new FakeModel());
+  const { cookie } = await setUpOwner(t);
+  bot(t, "Chef");
+  const g = await group(t, cookie, ["chef", "hatbot"]);
+  const task = t.tasks.createBackgroundTask({
+    title: "Plan dinner",
+    goal: "Plan it",
+    origin: "chat",
+    botId: "chef",
+    conversationId: g.id,
+  });
+  const res = await t.call("GET", `/tasks/${task?.id}`, undefined, { cookie });
+  expect(((await res.json()) as { task: Task }).task.conversationId).toBe(g.id);
 });
 
 test("mentions are found by name or id, in order", () => {
