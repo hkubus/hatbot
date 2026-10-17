@@ -2990,6 +2990,42 @@ mark {
   font-size: 13px;
 }
 
+/* The app's dialog: asks before deleting or discarding, or for a line of text. */
+.ask {
+  width: min(380px, calc(100vw - 32px));
+  padding: 0;
+  border: 0.5px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+}
+.ask::backdrop {
+  background: rgba(0, 0, 0, 0.32);
+}
+.ask form {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+.ask p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.ask .field {
+  width: 100%;
+  height: 32px;
+}
+.ask-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.ask-actions .btn {
+  height: 30px;
+}
+
 /* Rows that are links: the whole row is the link's target. */
 .row-link,
 .link-row a {

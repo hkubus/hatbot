@@ -2,6 +2,7 @@
 import { BOT_COLORS, BOT_ICONS, BOT_TEMPLATES, type Bot, HATBOT_ID } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { ApiError } from "../api";
+import { ask } from "../confirm";
 import { BotMark, Icon } from "../icons";
 import { navigate } from "../router";
 import { createBot, deleteBot, loadPlugins, saveBot, useStore } from "../store";
@@ -108,9 +109,10 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
   const remove = async () => {
     if (!stored) return;
     if (
-      !confirm(
-        `Delete ${stored.name}? Its chat and notes stay readable; its schedules and triggers go to Hatbot.`,
-      )
+      !(await ask({
+        text: `Delete ${stored.name}? Its chat and notes stay readable; its schedules and triggers go to Hatbot.`,
+        ok: "Delete",
+      }))
     )
       return;
     try {

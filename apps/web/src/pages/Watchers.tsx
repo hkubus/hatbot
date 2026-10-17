@@ -12,6 +12,7 @@ import {
 } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { ask } from "../confirm";
 import { Icon } from "../icons";
 import { navigate } from "../router";
 import { loadPlugins, loadSchedules, putWatcher, useStore } from "../store";
@@ -276,7 +277,14 @@ export function WatcherEdit({ id }: { id: number | null }) {
     }
   };
   const remove = async () => {
-    if (!stored || !confirm(`Delete "${stored.name}"? The tasks it started stay in Tasks.`)) return;
+    if (
+      !stored ||
+      !(await ask({
+        text: `Delete "${stored.name}"? The tasks it started stay in Tasks.`,
+        ok: "Delete",
+      }))
+    )
+      return;
     try {
       await api(`/watchers/${stored.id}`, { method: "DELETE" });
       navigate("/schedules");

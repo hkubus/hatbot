@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { Dialogs } from "./confirm";
 import "./styles.css";
 
 const root = document.getElementById("root");
@@ -8,6 +9,7 @@ if (root) {
   createRoot(root).render(
     <StrictMode>
       <App />
+      <Dialogs />
     </StrictMode>,
   );
 }

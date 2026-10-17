@@ -23,6 +23,7 @@ import remarkGfm from "remark-gfm";
 import { ApiError, attachmentUrl } from "../api";
 import { Chart, ChartPending } from "../chart";
 import { parseChart } from "../chartspec";
+import { ask } from "../confirm";
 import {
   attachFiles,
   type DraftFile,
@@ -884,8 +885,13 @@ export function Chat({ id }: { id: number }) {
                     text={g.fold}
                     open={open}
                     onToggle={() => toggle(id)}
-                    onDelete={() => {
-                      if (!confirm(`Delete this conversation for good? ${name} forgets it too.`))
+                    onDelete={async () => {
+                      if (
+                        !(await ask({
+                          text: `Delete this conversation for good? ${name} forgets it too.`,
+                          ok: "Delete",
+                        }))
+                      )
                         return;
                       setError("");
                       deleteEpisode(id).catch((err) =>

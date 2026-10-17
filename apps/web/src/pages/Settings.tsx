@@ -8,6 +8,7 @@ import {
 } from "@hatbot/shared";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api";
+import { ask, askText } from "../confirm";
 import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
 import { navigate } from "../router";
@@ -86,7 +87,11 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
   };
 
   const createToken = async () => {
-    const name = prompt("Name for the new token, e.g. iPhone")?.trim();
+    const name = await askText({
+      text: "Name for the new token",
+      placeholder: "iPhone",
+      ok: "Create",
+    });
     if (!name) return;
     const t = await api<CreateTokenResponse>("/tokens", { body: { name } });
     setNewToken(t);
@@ -94,7 +99,10 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
   };
 
   const revoke = async (t: ApiToken) => {
-    if (!confirm(`Revoke "${t.name}"? Apps using it will be signed out.`)) return;
+    if (
+      !(await ask({ text: `Revoke "${t.name}"? Apps using it will be signed out.`, ok: "Revoke" }))
+    )
+      return;
     await api(`/tokens/${t.id}`, { method: "DELETE" });
     setTokens(await api<ApiToken[]>("/tokens"));
   };
@@ -524,7 +532,12 @@ function RollbackRow({ toast }: { toast: (t: string) => void }) {
   const rollback = async () => {
     const snap = snaps.find((s) => s.name === picked);
     if (!snap) return;
-    if (!confirm(`Roll the desktop back to ${snapLabel(snap)}? Everything since then is lost.`))
+    if (
+      !(await ask({
+        text: `Roll the desktop back to ${snapLabel(snap)}? Everything since then is lost.`,
+        ok: "Roll back",
+      }))
+    )
       return;
     setBusy(true);
     try {

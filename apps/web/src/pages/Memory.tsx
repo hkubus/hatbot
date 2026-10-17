@@ -1,9 +1,10 @@
 import type { Commit, MemoryFile, Proposal, SkillStatus } from "@hatbot/shared";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, api } from "../api";
+import { ask, askText, useLeaveGuard } from "../confirm";
 import { lineDiff } from "../diff";
 import { Icon } from "../icons";
-import { navigate, setLeaveGuard } from "../router";
+import { navigate } from "../router";
 import { bumpMemory, loadProposals, putProposal, startTeach, useStore } from "../store";
 
 type Selection =
@@ -110,16 +111,7 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
   const dirty = sel.kind === "file" && content !== saved;
 
   // Leaving with unsaved changes asks first: the sidebar, Back, closing the tab.
-  useEffect(() => {
-    if (!dirty) return;
-    const off = setLeaveGuard(() => confirm("Leave without saving your changes?"));
-    const onUnload = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener("beforeunload", onUnload);
-    return () => {
-      off();
-      window.removeEventListener("beforeunload", onUnload);
-    };
-  }, [dirty]);
+  useLeaveGuard(dirty);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reload when memory changes anywhere
   useEffect(() => {
@@ -132,8 +124,8 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
   }, []);
 
   const openFile = useCallback(
-    (path: string) => {
-      if (dirty && !confirm("Discard your unsaved changes?")) return;
+    async (path: string) => {
+      if (dirty && !(await ask({ text: "Discard your unsaved changes?", ok: "Discard" }))) return;
       setConflict(null);
       setSel({ kind: "file", path });
     },
@@ -200,8 +192,12 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
     setConflict(null);
   };
 
-  const newFile = () => {
-    const path = prompt("New file path, e.g. projects/garden.md")?.trim();
+  const newFile = async () => {
+    const path = await askText({
+      text: "New file's path",
+      placeholder: "projects/garden.md",
+      ok: "Create",
+    });
     if (!path) return;
     const p = path.endsWith(".md") ? path : `${path}.md`;
     setSel({ kind: "file", path: p });
@@ -213,7 +209,11 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
   };
 
   const remove = async () => {
-    if (sel.kind !== "file" || !confirm(`Delete ${sel.path}? It stays in the history.`)) return;
+    if (
+      sel.kind !== "file" ||
+      !(await ask({ text: `Delete ${sel.path}? It stays in the history.`, ok: "Delete" }))
+    )
+      return;
     try {
       await api(`/memory/file?path=${enc(sel.path)}`, { method: "DELETE" });
       toast(`Deleted ${sel.path}`);
@@ -225,7 +225,7 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
   };
 
   const revert = async (c: Commit) => {
-    if (!confirm(`Revert "${c.message}"?`)) return;
+    if (!(await ask({ text: `Revert "${c.message}"?`, ok: "Revert" }))) return;
     try {
       const r = await api<{ sha: string | null }>(`/memory/revert/${c.sha}`, { body: {} });
       toast(r.sha ? `Reverted. New commit ${r.sha.slice(0, 7)}` : "Nothing to revert");

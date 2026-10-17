@@ -2,6 +2,7 @@
 import { MAX_GROUP_BOTS } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { ApiError } from "../api";
+import { ask } from "../confirm";
 import { Icon } from "../icons";
 import { navigate } from "../router";
 import { createGroup, deleteGroup, saveGroup, useStore } from "../store";
@@ -56,7 +57,13 @@ export function GroupPage({ id, toast }: { id: string; toast: (t: string) => voi
     }
   };
   const remove = async () => {
-    if (!confirm(`Delete ${title || "this group"}? Its messages go with it.`)) return;
+    if (
+      !(await ask({
+        text: `Delete ${title || "this group"}? Its messages go with it.`,
+        ok: "Delete",
+      }))
+    )
+      return;
     try {
       await deleteGroup(Number(id));
       navigate("/");

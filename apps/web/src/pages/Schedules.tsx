@@ -9,6 +9,7 @@ import {
 } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
+import { ask } from "../confirm";
 import { Icon } from "../icons";
 import { navigate } from "../router";
 import {
@@ -301,7 +302,11 @@ function ScheduleEdit({ id }: { id: number | null }) {
     setBusy(false);
   };
   const remove = async () => {
-    if (!stored || !confirm(`Delete "${stored.name}"? Its past runs stay in Tasks.`)) return;
+    if (
+      !stored ||
+      !(await ask({ text: `Delete "${stored.name}"? Its past runs stay in Tasks.`, ok: "Delete" }))
+    )
+      return;
     try {
       await api(`/schedules/${stored.id}`, { method: "DELETE" });
       navigate("/schedules");
@@ -572,7 +577,14 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
     setBusy(false);
   };
   const rotate = async () => {
-    if (!stored || !confirm("Replace the secret? The old one stops working right away.")) return;
+    if (
+      !stored ||
+      !(await ask({
+        text: "Replace the secret? The old one stops working right away.",
+        ok: "Replace",
+      }))
+    )
+      return;
     try {
       setSecret(await api<TriggerWithSecret>(`/triggers/${stored.id}/secret`, { body: {} }));
     } catch (err) {
@@ -580,7 +592,11 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
     }
   };
   const remove = async () => {
-    if (!stored || !confirm(`Delete "${stored.name}"? Its past runs stay in Tasks.`)) return;
+    if (
+      !stored ||
+      !(await ask({ text: `Delete "${stored.name}"? Its past runs stay in Tasks.`, ok: "Delete" }))
+    )
+      return;
     try {
       await api(`/triggers/${stored.id}`, { method: "DELETE" });
       navigate("/schedules");

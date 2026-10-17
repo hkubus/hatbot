@@ -1,6 +1,7 @@
 // SSH's settings: the brain's public key to install, the hosts Hatbot may reach, and their pinned keys.
 import { useEffect, useState } from "react";
 import { ApiError } from "../api";
+import { ask } from "../confirm";
 import { Icon } from "../icons";
 import { Switch } from "../switch";
 import type { PluginSettingsProps } from ".";
@@ -61,7 +62,13 @@ export function SshSettings({ config, save, action, running }: PluginSettingsPro
     setBusy(false);
   };
   const forget = async (name: string) => {
-    if (!confirm(`Forget ${name}'s host key? Hatbot trusts whatever key it sees next.`)) return;
+    if (
+      !(await ask({
+        text: `Forget ${name}'s host key? Hatbot trusts whatever key it sees next.`,
+        ok: "Forget",
+      }))
+    )
+      return;
     try {
       await action("forget", { name });
       setKeys({ ...keys, [name]: null });

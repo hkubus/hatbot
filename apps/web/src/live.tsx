@@ -4,6 +4,7 @@ import { API_PREFIX, latestNoteOnly, type TaskStep } from "@hatbot/shared";
 import type { LiveInput } from "@hatbot/shared/desktop";
 import { useEffect, useRef, useState } from "react";
 import { ApiError } from "./api";
+import { ask } from "./confirm";
 import { Icon } from "./icons";
 import { navigate } from "./router";
 import {
@@ -305,8 +306,9 @@ export function LiveView({ taskId }: { taskId?: number }) {
       const s = await stopTeach();
       navigate(`/memory/teach/${s.id}`);
     });
-  const discard = (id: number) => {
-    if (confirm("Throw this recording away?")) run(() => discardTeach(id));
+  const discard = async (id: number) => {
+    if (await ask({ text: "Throw this recording away?", ok: "Throw away" }))
+      run(() => discardTeach(id));
   };
 
   return (
