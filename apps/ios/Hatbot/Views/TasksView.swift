@@ -5,6 +5,7 @@ import SwiftUI
 struct TasksView: View {
   @Binding var path: [Route]
   @Environment(AppStore.self) private var store
+  @Environment(\.sectionShown) private var sectionShown
   @State private var filter = AppStore.TaskFilter.active
   @State private var finishedIds: [Int]?
   /// Finished tasks go back further than the pages loaded so far.
@@ -65,7 +66,8 @@ struct TasksView: View {
       }
       .navigationBarTitleDisplayMode(.inline)
       .refreshable { await load() }
-      .task(id: filter) { await load() }
+      // The section is kept while another shows: coming back to it loads the list again.
+      .task(id: sectionShown ? filter : nil) { if sectionShown { await load() } }
       .routes()
     }
   }
