@@ -601,4 +601,7 @@ export const migrations: string[] = [
   ALTER TABLE tasks ADD COLUMN report_path TEXT;
   ALTER TABLE messages ADD COLUMN sources TEXT;
   `,
+  /* 32: a watcher that counts too often in a day is switched off; switching it on starts the count again */ `
+  ALTER TABLE watchers ADD COLUMN counting_since TEXT;
+  `,
 ];

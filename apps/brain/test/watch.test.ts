@@ -242,11 +242,19 @@ test("a page that can't be read isn't made, and failing checks are told once", a
     })
   ).json()) as Watcher;
   t.agent.pages.set(url, page(`<p>moved</p>`));
+  // From the third failure in a row, each wait is twice the last.
+  const waits: number[] = [];
+  const gap = () => {
+    const x = t.watchers.get(w.id);
+    return Date.parse(x?.nextCheckAt ?? "") - Date.parse(x?.lastCheckedAt ?? "");
+  };
   for (let i = 0; i < 6; i++) {
-    t.advance(5 * 60_000);
+    t.advance(gap());
     t.watchers.tick();
     await t.watchers.idle();
+    waits.push(gap() / 60_000);
   }
+  expect(waits).toEqual([5, 5, 10, 20, 40, 80]);
   expect(t.watchers.get(w.id)).toMatchObject({ errors: 6, lastValue: "5" });
   expect(t.watchers.get(w.id)?.lastError).toContain("matched nothing");
   expect(t.notifier.sent.map((n) => n.title)).toEqual(["Can't check X"]);
@@ -257,6 +265,44 @@ test("a page that can't be read isn't made, and failing checks are told once", a
 
   expect((await api("DELETE", `/watchers/${w.id}`)).status).toBe(200);
   expect(t.watchers.list()).toHaveLength(0);
+});
+
+test("a watcher that counts more than 12 times in a day is switched off, and you're told once", async () => {
+  const t = await testApp();
+  const api = await owner(t);
+  const url = "https://news.example/";
+  t.agent.pages.set(url, page(`<p>Updated 0 minutes ago</p>`));
+  const w = (await (
+    await api("POST", "/watchers", { name: "News", source: { kind: "page", url }, everyMinutes: 5 })
+  ).json()) as Watcher;
+  // A page that changes on every look.
+  for (let i = 1; i <= 14; i++) {
+    t.agent.pages.set(url, page(`<p>Updated ${i * 5} minutes ago</p>`));
+    t.advance(5 * 60_000);
+    t.watchers.tick();
+    await t.watchers.idle();
+  }
+  const off = t.watchers.get(w.id);
+  expect(off).toMatchObject({
+    enabled: false,
+    nextCheckAt: null,
+    lastValue: "Updated 65 minutes ago",
+  });
+  expect(off?.lastError).toContain("more than 12 times in a day");
+  const titles = () => t.notifier.sent.map((n) => n.title);
+  expect(titles().filter((x) => x === "News")).toHaveLength(12);
+  expect(titles().filter((x) => x === "News is off")).toHaveLength(1);
+  // Only 13 looks: the 14th found it off.
+  expect(t.agent.fetched).toHaveLength(14);
+
+  // Switched back on, it counts from then.
+  expect((await api("PATCH", `/watchers/${w.id}`, { enabled: true })).status).toBe(200);
+  expect(t.watchers.get(w.id)?.lastError).toBeNull();
+  t.agent.pages.set(url, page(`<p>Updated 70 minutes ago</p>`));
+  t.watchers.tick();
+  await t.watchers.idle();
+  expect(t.watchers.get(w.id)?.enabled).toBe(true);
+  expect(titles().filter((x) => x === "News")).toHaveLength(13);
 });
 
 test("a watcher deleted while its page is read is let go, and the checks carry on", async () => {
