@@ -3,7 +3,14 @@
 // negotiation's conversation. Pure, so desktop-run and the tests share it.
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { type Combo, combosIn, readCombo } from "@hatbot/shared/keys";
-import { pressOf } from "../tasks/policy";
+import {
+  consequentialLabel,
+  fold,
+  type Hold,
+  heldWhat,
+  type Press,
+  pressOf,
+} from "../tasks/policy";
 
 /** What a negotiation's desktop task may do, from its record. */
 export type SendGate = {
@@ -77,32 +84,60 @@ export function sameAddress(tab: string, want: string): boolean {
 
 /**
  * The tab shows this negotiation's conversation: the listing (a first message is written there), the
- * conversation recorded for it, or another page on the listing's site whose address names the listing.
+ * conversation recorded for it, or another page on the listing's site whose path names the listing.
  */
 export function onConversation(tab: string, gate: SendGate): boolean {
   if (sameAddress(tab, gate.listingUrl)) return true;
   if (gate.conversationUrl && sameAddress(tab, gate.conversationUrl)) return true;
   if (!sameHost(tab, gate.listingUrl) || gate.listingId.length < 5) return false;
   const id = gate.listingId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`[/=-]${id}(?:[/?&#.-]|$)`, "i").test(
-    new URL(tab).pathname + new URL(tab).search,
-  );
+  // In the path only: a query value is anything the model puts there.
+  return new RegExp(`[/=-]${id}(?:[/.-]|$)`, "i").test(new URL(tab).pathname);
 }
 
-/** Labels a send button has: these pass as the send. Anything else consequential needs confirm_intent. */
+/** Labels a send button has: these pass as the send. Anything else consequential is held. */
 const SEND_LIKE =
   /^(send|send message|reply|submit|post|wyślij|wyslij|wyślij wiadomość|odpowiedz|odeślij|odpowiedź|napisz|poslat|odeslat|odeslat zprávu|odpovědět)$/i;
+/** A send verb first, folded: "Wyślij wiadomość do sprzedającego", "Send a message". */
+const SEND_VERB =
+  /^(?:send|reply|wyslij|odpowiedz|odeslij|poslat|odeslat|odpovedet)(?![\p{L}\p{N}])/u;
+/** Words that make a send something else: an offer, a price, a payment or an order. */
+const NOT_A_MESSAGE =
+  /(?<![\p{L}\p{N}])(?:offer|ofert|propozycj|nabid|price|cen[aeyu]?(?![\p{L}])|platb|przelew|blik|faktur|invoice|deposit|zaliczk)/u;
+
+/** A label that sends the message, and nothing else with it. */
+export function sendLabel(label: string): boolean {
+  if (SEND_LIKE.test(collapse(label))) return true;
+  const l = fold(collapse(label));
+  const rest = l.replace(SEND_VERB, "");
+  return rest !== l && !consequentialLabel(rest) && !NOT_A_MESSAGE.test(rest);
+}
+
+/** A link that opens another page: a web address that isn't this one ("#" and javascript: don't). */
+function opensPage(href: string, here: string | undefined): boolean {
+  try {
+    const to = new URL(href);
+    if (to.protocol !== "https:" && to.protocol !== "http:") return false;
+    to.hash = "";
+    const from = new URL(here ?? "");
+    from.hash = "";
+    return to.href !== from.href;
+  } catch {
+    return false;
+  }
+}
 
 /**
- * Which way a click or Enter goes in a negotiation's desktop task. `consequentialLabel` is the ordinary
- * check's answer for this element: a pay or buy button still needs confirm_intent with the text in place.
+ * Which way a click or Enter goes in a negotiation's desktop task. `held`: the ordinary check's answer
+ * for this element. A pay or buy button, or any button at checkout, isn't the send, with the text in
+ * place or not.
  */
 export function gateCheck(
   gate: SendGate,
   state: GateState,
   kind: "click" | "enter",
   el: AgentElement | null,
-  consequentialLabel: string | null,
+  held: Hold | null,
 ): GateCheck {
   if (!el)
     return {
@@ -132,7 +167,12 @@ export function gateCheck(
   if (!fields.length) {
     // Typed text in a box Hatbot can't see into (a closed shadow root, another site's frame) would go
     // without being compared. Only a link elsewhere on the listing's site needs no box.
-    if (gate.mode === "send" && state.typed && !state.sent && !(kind === "click" && el.href))
+    if (
+      gate.mode === "send" &&
+      state.typed &&
+      !state.sent &&
+      !(kind === "click" && el.href && opensPage(el.href, el.url))
+    )
       return {
         action: "hold",
         why: "Hatbot can't see the text box this would send from, so it can't check the message. Type it into the conversation's own message box, or open the conversation again.",
@@ -167,11 +207,33 @@ export function gateCheck(
       action: "hold",
       why: "Call record_conversation first, with the messages in the conversation, so a reply that came meanwhile isn't missed.",
     };
-  if (consequentialLabel && !SEND_LIKE.test(collapse(consequentialLabel)))
-    return { action: "usual" };
-  // A frame from another address (a payment widget, say) isn't this page's Send.
+  // At checkout any button may order or pay; a frame from another address (a payment widget, say)
+  // isn't this page's Send.
+  if (held && ("checkout" in held || "frame" in held)) return { action: "usual" };
   if (el.tag === "iframe" || el.tag === "frame") return { action: "usual" };
+  // Enter in a chat box sends from it, whichever of the buttons by it comes first.
+  const chat = kind === "enter" && el.editable && el.tag !== "input";
+  if (
+    held &&
+    "label" in held &&
+    !sendLabel(held.label) &&
+    !(chat && el.buttonsAfter?.some(sendLabel))
+  )
+    return { action: "usual" };
   return { action: "send" };
+}
+
+/**
+ * What the model is told when a step in a negotiation's task would need confirm_intent: it never arms
+ * there, so the step can't go.
+ */
+export function gateHeld(gate: SendGate, press: Press, hold: Hold): string {
+  const act = press === "click" ? "click" : press === "space" ? "Space" : "Enter";
+  const only =
+    gate.mode === "send"
+      ? "it only sends the approved message, with the conversation's Send button or Enter while the box holds exactly that text"
+      : "it only reads the conversation";
+  return `this ${act} ${heldWhat(hold)} would need the owner's approval, and this task can't ask for it: ${only}. If this is in the way, finish and say why.`;
 }
 
 /** Enter in a key press: any combo in the sequence, e.g. "shift+Return" or "a Return". */

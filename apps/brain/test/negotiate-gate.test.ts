@@ -36,7 +36,7 @@ const send = (over: Partial<AgentElement> = {}): AgentElement => ({
 });
 
 test("the approved text on the listing or the conversation passes as the send", () => {
-  expect(gateCheck(gate, ready, "click", send(), "Wyślij")).toEqual({ action: "send" });
+  expect(gateCheck(gate, ready, "click", send(), { label: "Wyślij" })).toEqual({ action: "send" });
   expect(gateCheck(gate, ready, "enter", send({ tag: "textarea" }), null)).toEqual({
     action: "send",
   });
@@ -91,24 +91,86 @@ test("before record_conversation, after a send, or once stopped, nothing goes", 
 });
 
 test("empty boxes take the usual check; a click into a box passes; pay buttons still ask", () => {
-  expect(gateCheck(gate, ready, "click", send({ fields: [] }), "Wyślij")).toEqual({
+  expect(gateCheck(gate, ready, "click", send({ fields: [] }), { label: "Wyślij" })).toEqual({
     action: "usual",
   });
   expect(
-    gateCheck(gate, ready, "click", send({ tag: "textarea", editable: true }), "Reply"),
+    gateCheck(gate, ready, "click", send({ tag: "textarea", editable: true }), { label: "Reply" }),
   ).toEqual({ action: "pass" });
-  expect(gateCheck(gate, ready, "click", send({ label: "Kup teraz" }), "Kup teraz")).toEqual({
+  expect(
+    gateCheck(gate, ready, "click", send({ label: "Kup teraz" }), { label: "Kup teraz" }),
+  ).toEqual({
     action: "usual",
+  });
+});
+
+test("a Send button by another name sends; one that offers, pays or orders doesn't", () => {
+  for (const label of [
+    "Wyślij wiadomość do sprzedającego",
+    "Send a message",
+    "Wyślij teraz",
+    "Odpowiedz sprzedającemu",
+  ])
+    expect([label, gateCheck(gate, ready, "click", send({ label }), { label })]).toEqual([
+      label,
+      { action: "send" },
+    ]);
+  for (const label of [
+    "Wyślij ofertę",
+    "Send offer",
+    "Wyślij i zapłać",
+    "Wyślij propozycję ceny",
+    "Kup teraz",
+  ])
+    expect([label, gateCheck(gate, ready, "click", send({ label }), { label }).action]).toEqual([
+      label,
+      "usual",
+    ]);
+  // Enter in a chat box sends from it, whichever button by it comes first; Enter in a one-line box
+  // submits its form with that form's button.
+  const box = send({
+    tag: "textarea",
+    editable: true,
+    buttonsAfter: ["Zaproponuj cenę", "Wyślij"],
+  });
+  expect(gateCheck(gate, ready, "enter", box, { label: "Zaproponuj cenę" })).toEqual({
+    action: "send",
+  });
+  const field = { ...box, tag: "input", type: "text", submitLabel: "Zaproponuj cenę" };
+  expect(gateCheck(gate, ready, "enter", field, { label: "Zaproponuj cenę" })).toEqual({
+    action: "usual",
+  });
+  expect(gateCheck(gate, ready, "click", box, { label: "Zaproponuj cenę" })).toEqual({
+    action: "pass",
+  });
+});
+
+test("at checkout or in a payment frame nothing passes as the send; an icon-only Send does", () => {
+  const checkout = send({ label: "Dalej", url: "https://www.olx.pl/d/delivery/checkout/1001abc" });
+  expect(gateCheck(gate, ready, "click", checkout, { checkout: "www.olx.pl" })).toEqual({
+    action: "usual",
+  });
+  expect(gateCheck(gate, ready, "click", send({ label: "" }), { frame: "Płatność" })).toEqual({
+    action: "usual",
+  });
+  expect(gateCheck(gate, ready, "click", send({ label: "" }), { unlabelled: "button" })).toEqual({
+    action: "send",
   });
 });
 
 test("Enter with the keyboard off the page is held, though the box holds the approved text", () => {
   const box = send({ tag: "textarea", editable: true, buttonsAfter: ["Wyślij"] });
-  expect(gateCheck(gate, { ...ready, typed: true }, "enter", box, "Wyślij")).toEqual({
+  expect(gateCheck(gate, { ...ready, typed: true }, "enter", box, { label: "Wyślij" })).toEqual({
     action: "send",
   });
   const why = JSON.stringify(
-    gateCheck(gate, { ...ready, typed: true }, "enter", { ...box, pageFocus: false }, "Wyślij"),
+    gateCheck(
+      gate,
+      { ...ready, typed: true },
+      "enter",
+      { ...box, pageFocus: false },
+      { label: "Wyślij" },
+    ),
   );
   expect(why).toContain("keyboard isn't on the page");
 });
@@ -151,7 +213,9 @@ test("a seller's link is never opened, however it's written or reached", () => {
     expect(gateCheck(gate, ready, "enter", link(href), null).action).toBe("hold");
   }
   expect(gateCheck(gate, ready, "click", link(LISTING), null)).toEqual({ action: "send" });
-  expect(gateCheck(gate, ready, "click", send({ href: "javascript:void(0)" }), "Wyślij")).toEqual({
+  expect(
+    gateCheck(gate, ready, "click", send({ href: "javascript:void(0)" }), { label: "Wyślij" }),
+  ).toEqual({
     action: "send",
   });
 });
@@ -165,9 +229,16 @@ test("once something's typed, a click or Enter that sees no text box is held", (
   expect(
     gateCheck(gate, typed, "enter", { ...blind, tag: "div", editable: true }, null).action,
   ).toBe("hold");
-  // A link on the listing's site needs no box; before typing, or after the send, the usual check decides.
+  // A link to another page on the listing's site needs no box; before typing, or after the send, the
+  // usual check decides.
   const back = send({ fields: [], tag: "a", href: "https://www.olx.pl/myaccount/answers" });
   expect(gateCheck(gate, typed, "click", back, null)).toEqual({ action: "usual" });
+  // A link that stays on the page is a control like any other: an icon-only Send built as one.
+  for (const href of [`${LISTING}#`, `${LISTING}#send`, "javascript:void(0)"])
+    expect([href, gateCheck(gate, typed, "click", { ...back, href }, null).action]).toEqual([
+      href,
+      "hold",
+    ]);
   expect(gateCheck(gate, ready, "click", blind, null)).toEqual({ action: "usual" });
   expect(gateCheck(gate, { ...typed, sent: true }, "click", blind, null)).toEqual({
     action: "usual",
@@ -187,8 +258,8 @@ test("a click in a frame isn't the send; a click on the page itself sends nothin
 
 test("a read-only task sends nothing", () => {
   const read: SendGate = { ...gate, mode: "read", text: null };
-  expect(gateCheck(read, ready, "click", send(), "Wyślij").action).toBe("hold");
-  expect(gateCheck(read, ready, "click", send({ fields: [] }), "Wyślij")).toEqual({
+  expect(gateCheck(read, ready, "click", send(), { label: "Wyślij" }).action).toBe("hold");
+  expect(gateCheck(read, ready, "click", send({ fields: [] }), { label: "Wyślij" })).toEqual({
     action: "usual",
   });
   expect(refused(read, "type", { text: "hello" })).toContain("only reads");
@@ -285,7 +356,10 @@ test("addresses match by host, path and the query they need", () => {
   expect(sameAddress("https://www.olx.pl/a/c", "https://www.olx.pl/a/b")).toBe(false);
   expect(onConversation("https://www.olx.pl/chat/ID1001abc/", gate)).toBe(false);
   expect(onConversation("https://www.olx.pl/chat/1001abc/", gate)).toBe(true);
-  expect(onConversation("https://www.olx.pl/chat?ad=1001abc", gate)).toBe(true);
+  expect(onConversation("https://www.olx.pl/chat/1001abc?tab=2", gate)).toBe(true);
+  // A query value is anything the model types there: another seller's conversation with our id added.
+  expect(onConversation("https://www.olx.pl/chat?ad=1001abc", gate)).toBe(false);
+  expect(onConversation("https://www.olx.pl/myaccount/answers/666?ref=1001abc", gate)).toBe(false);
   expect(onConversation("https://www.olx.pl/chat?ad=1001abcd", gate)).toBe(false);
   expect(collapse(" a \n b​ ")).toBe("a b");
   // Fullwidth digits, soft hyphens and direction marks compare as what they show.

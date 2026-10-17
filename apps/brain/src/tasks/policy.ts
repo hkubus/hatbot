@@ -20,18 +20,13 @@ const START = "(?<![\\p{L}\\p{N}])";
 const END = "(?![\\p{L}\\p{N}])";
 const words = (list: string[]) => new RegExp(`${START}(?:${list.join("|")})`, "iu");
 
-/**
- * Buying, paying, ordering, offering, sending, booking, publishing and account changes, in English, Polish
- * and Czech, folded. Polish and Czech words bend, so most are stems; a stem that would catch a common
- * harmless word ("Kontynuuj zakupy", "Moje zamówienia", "Wysłane") stops short of it.
- */
-const STRONG = words([
+/** Buying, paying, ordering, bidding and accepting or making an offer, folded. */
+const BUY = [
   // English, whole words.
-  `(?:send|post|publish|reply|pay|payment|buy|purchase|order|checkout|check out|book|reserve|transfer|sign up|register|subscribe|unsubscribe|donate|bid|place bid|withdraw|change password)${END}`,
+  `(?:pay|payment|buy|purchase|order|checkout|check out|bid|place bid|donate)${END}`,
   `(?:make|send|submit) (?:an |a )?offer${END}`,
   `accept (?:the |this )?offer${END}`,
   `(?:proceed|continue|go) to (?:payment|checkout)${END}`,
-  `cancel (?:order|subscription|booking|reservation)${END}`,
   // Polish: kupić, Kup teraz, Kupuję i płacę (not kupon).
   "kup(?!on)",
   `zakup(?!y|ow|ach|ami)`,
@@ -47,6 +42,7 @@ const STRONG = words([
   `place(?:$| (?:blik|kart|teraz|przelew|online|gotowk|z gory|za))`,
   `do kas[ay]${END}`,
   "(?:wykonaj|zlec|zatwierdz)\\p{L}* przelew",
+  "przelej",
   `zamow(?:ic)?${END}`,
   "zamawiam",
   `zloz(?:yc)?${END}`,
@@ -55,6 +51,26 @@ const STRONG = words([
   "przyjmuj\\p{L}* ofert",
   "zaproponuj",
   "licytuj",
+  // Czech: koupit, zaplatit (above), platba, objednat, objednávku, nabídnout.
+  "koupit",
+  "platb",
+  `objedn(?:at|ej|ejte|avam)${END}`,
+  `objednavk[au]${END}`,
+  "dokoncit (?:nakup|objednavk)",
+  "prij(?:mout|mete|mi) nabid",
+  "nabidn",
+  "(?:ucinit|udelat|podat) nabid",
+];
+
+/**
+ * Buying and paying (above), sending, booking, publishing and account changes, in English, Polish and
+ * Czech, folded. Polish and Czech words bend, so most are stems; a stem that would catch a common
+ * harmless word ("Kontynuuj zakupy", "Moje zamówienia", "Wysłane") stops short of it.
+ */
+const STRONG = words([
+  ...BUY,
+  `(?:send|post|publish|reply|book|reserve|transfer|sign up|register|subscribe|unsubscribe|withdraw|change password)${END}`,
+  `cancel (?:order|subscription|booking|reservation)${END}`,
   "podbij",
   "wyroznij",
   "wystaw",
@@ -68,16 +84,7 @@ const STRONG = words([
   "zmien haslo",
   "(?:za)?subskrybuj",
   "anuluj (?:zamowienie|subskrypcj|rezerwacj)",
-  "przelej",
-  // Czech: koupit, zaplatit (above), platba, objednat, objednávku, nabídnout, poslat, odeslat.
-  "koupit",
-  "platb",
-  `objedn(?:at|ej|ejte|avam)${END}`,
-  `objednavk[au]${END}`,
-  "dokoncit (?:nakup|objednavk)",
-  "prij(?:mout|mete|mi) nabid",
-  "nabidn",
-  "(?:ucinit|udelat|podat) nabid",
+  // Czech: poslat, odeslat, rezervovat.
   "poslat",
   "odeslat",
   `(?:posli|odesli)${END}`,
@@ -89,6 +96,10 @@ const STRONG = words([
   "zverejnit",
   "zrusit (?:objednavk|predplatn|rezervac)",
 ]);
+const BUYING = words(BUY);
+
+/** Whether a label buys, pays, orders or makes or accepts an offer. */
+export const buyingLabel = (label: string) => BUYING.test(fold(label));
 
 /** Submitting, confirming, saving and deleting: consequential, except on a filter, sort or search control. */
 const SOFT = words([
@@ -272,8 +283,37 @@ export function samePage(a: string | null | undefined, b: string | null | undefi
 }
 
 /** Payment pages shops hand over to (PayU, Przelewy24, PayPal and the like). */
-const PAYMENT_HOSTS =
-  /(?:^|\.)(?:payu\.com|przelewy24\.pl|paypal\.com|tpay\.com|paynow\.pl|imoje\.pl|dotpay\.pl|blik\.com|gopay\.cz|gopay\.com|comgate\.cz|checkout\.stripe\.com|adyen\.com)$/i;
+const PAYMENT_HOSTS = [
+  "payu.com",
+  "payu.pl",
+  "przelewy24.pl",
+  "paypal.com",
+  "tpay.com",
+  "paynow.pl",
+  "imoje.pl",
+  "dotpay.pl",
+  "blik.com",
+  "autopay.pl",
+  "bluemedia.pl",
+  "gopay.cz",
+  "gopay.com",
+  "comgate.cz",
+  "checkout.stripe.com",
+  "buy.stripe.com",
+  "js.stripe.com",
+  "hooks.stripe.com",
+  "adyen.com",
+  "klarna.com",
+  "checkout.com",
+  "braintreegateway.com",
+  "pay.google.com",
+];
+
+/** A payment provider's host, or one under it: a step there pays. */
+export function paymentHost(host: string): boolean {
+  const h = host.toLowerCase();
+  return PAYMENT_HOSTS.some((p) => h === p || h.endsWith(`.${p}`));
+}
 /**
  * A checkout or payment step, by the word a part of its address's path starts with (Shopify's checkouts
  * too), or that is the whole part: order and order1.php (PrestaShop, IdoSell), buy (Amazon's /gp/buy/).
@@ -297,7 +337,7 @@ export function checkoutHost(url: string | undefined): string | null {
         .split("/")
         .some((p) => CHECKOUT_ROUTE.test(p)),
     );
-    return PAYMENT_HOSTS.test(u.hostname) || routed || parts.some((p) => CHECKOUT_PATH.test(p))
+    return paymentHost(u.hostname) || routed || parts.some((p) => CHECKOUT_PATH.test(p))
       ? u.hostname
       : null;
   } catch {

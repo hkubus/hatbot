@@ -109,15 +109,15 @@ function openNegotiation(t: TestApp, over: Partial<Negotiation> = {}): Negotiati
 }
 
 /** The listing page's message box and its Send button, as desktop-agent shows them. */
-function messageBox(t: TestApp, url = LISTING_URL) {
+function messageBox(t: TestApp, url = LISTING_URL, label = "Wyślij") {
   let fields: string[] = [];
   const button = (): AgentElement => ({
     tag: "button",
     role: null,
     type: "submit",
-    label: "Wyślij",
+    label,
     inForm: true,
-    url,
+    url: t.agent.page.url ?? url,
     editable: false,
     fields,
   });
@@ -931,6 +931,78 @@ test("the send gate: exactly the approved text, once, on the conversation, after
   expect(t.agent.profiles).toEqual(["hatbot"]);
   // The task was offered record_conversation; other tasks aren't.
   expect(JSON.stringify(work.requests[0]?.tools)).toContain("record_conversation");
+});
+
+test("a Send by a longer name sends; a button that isn't one says the task can't press it", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("record_conversation", { messages: [] })] },
+    { content: [computer("type", { text: TEXT })] },
+    { content: [computer("left_click", { coordinate: [300, 500] })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  messageBox(t, LISTING_URL, "Wyślij wiadomość do sprzedającego");
+  const n = openNegotiation(t);
+  await t.negotiations.send(n, { text: TEXT, offer: 1060, agree: false, stated: null }, call());
+  await t.tasks.idle();
+  expect(results(work, 3)).toContain("The message went");
+  expect(t.negotiations.messages(n.id)[0]?.status).toBe("sent");
+
+  const buy = new FakeModel([
+    { content: [toolUse("record_conversation", { messages: [] })] },
+    { content: [computer("type", { text: TEXT })] },
+    { content: [computer("left_click", { coordinate: [300, 500] })] },
+    finish("Couldn't."),
+  ]);
+  const u = await testApp(new FakeModel(), buy);
+  messageBox(u, LISTING_URL, "Kup teraz");
+  const m = openNegotiation(u);
+  await u.negotiations.send(m, { text: TEXT, offer: 1060, agree: false, stated: null }, call());
+  await u.tasks.idle();
+  expect(results(buy, 3)).toContain("this task can't ask for it");
+  expect(results(buy, 3)).not.toContain("call confirm_intent");
+  expect(u.agent.actions.some((a) => a.name === "left_click")).toBe(false);
+});
+
+test("a send through a tab that isn't on screen records that tab's conversation", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("record_conversation", { messages: [] })] },
+    { content: [browser("type", { text: TEXT, tab_id: "tab-2" })] },
+    {
+      content: [browser("left_click", { target: { type: "ref", ref: "ref_1" }, tab_id: "tab-2" })],
+    },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  messageBox(t);
+  t.agent.afterAction = (name) => {
+    // The send leaves tab-2 on its conversation; the screen shows another seller's.
+    if (name === "left_click") t.agent.page = { url: CHAT_URL, title: "OLX", text: "" };
+  };
+  let sent = false;
+  const fields = (): string[] => (sent ? [] : [TEXT]);
+  // tab-2's Send at the ref, and its text box where typing goes.
+  t.agent.browserInspect = async (at) => ({
+    tag: at.ref ? "button" : "textarea",
+    role: null,
+    type: null,
+    label: "Wyślij",
+    inForm: true,
+    url: t.agent.page.url ?? LISTING_URL,
+    editable: !at.ref,
+    fields: fields(),
+  });
+  t.agent.context = async () => ({ url: "https://www.olx.pl/myaccount/answers/999", title: "" });
+  const before = t.agent.afterAction;
+  t.agent.afterAction = (name, input) => {
+    before?.(name, input);
+    if (name === "left_click") sent = true;
+  };
+  const n = openNegotiation(t);
+  await t.negotiations.send(n, { text: TEXT, offer: 1060, agree: false, stated: null }, call());
+  await t.tasks.idle();
+  expect(results(work, 3)).toContain("The message went");
+  expect(t.negotiations.get(n.id)?.conversationUrl).toBe(CHAT_URL);
 });
 
 test("the send gate holds on the wrong conversation, and the send fails when the task ends", async () => {

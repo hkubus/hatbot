@@ -19,12 +19,19 @@ import { untrustedBlock } from "../agent/untrusted";
 import { type Outcome, ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
-import { collapse, type GateState, gateCheck, refused, typesText } from "../negotiate/gate";
+import {
+  collapse,
+  type GateState,
+  gateCheck,
+  gateHeld,
+  refused,
+  typesText,
+} from "../negotiate/gate";
 import { marketplaceSend } from "../negotiate/marketplace";
 import { destructive } from "../plugins/ssh/policy";
 import { BudgetError, estimateTokens, fixedTokens, requestCeiling, usesReserve } from "../spend";
 import { skillPath } from "../teach/skills";
-import { approvalKind } from "./approval-kind";
+import { type Armed, approvalKind, notCovered } from "./approval-kind";
 import {
   checkFor,
   consequential,
@@ -341,8 +348,10 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   let since = 0;
   let seq = 0;
   let lastUrl: string | null = null;
-  /** An approved confirm_intent: it covers the next consequential action, on the page it was asked on. */
-  let armed: { page: string | null } | null = null;
+  /** An approved confirm_intent: it covers the held step it was asked for, on the page it was asked on. */
+  let armed: Armed | null = null;
+  /** The last step held for confirm_intent, and where: what an approval asked next is for. */
+  let lastHeld: { hold: Hold; page: string | null; what: string } | null = null;
   /** A negotiation's task: it may send one approved message, or only read (PLAN.md §16.3). */
   const gate = tasks.negotiations?.gateFor(id) ?? null;
   const gateState: GateState = { recorded: false, sent: false, stopped: null };
@@ -680,8 +689,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       if (gate) {
         // Closed, or its mandate ran out, since the task started.
         gateState.stopped ||= tasks.negotiations?.sendStopped(id) ?? null;
-        const label = hold && "label" in hold ? hold.label : null;
-        const g = gateCheck(gate, gateState, kind, el, label);
+        const g = gateCheck(gate, gateState, kind, el, hold);
         if (g.action === "hold") {
           tasks.addStep(id, { kind: "note", name: "Held back", detail: g.why, url: lastUrl });
           return textResult(call, `Not run: ${g.why}`, true);
@@ -690,22 +698,22 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         if (g.action !== "usual") hold = null;
         sending = g.action === "send";
       }
-      // An approval covers the next held step, on the page it was given for.
-      const approved =
-        armed !== null && (armed.page === null || samePage(el?.url ?? lastUrl, armed.page));
-      if (hold && !approved) {
+      // An approval covers the step it was asked for, on the page it was given for.
+      const here = el?.url ?? lastUrl;
+      const uncovered = hold && armed ? notCovered(armed, hold, here) : null;
+      if (hold && (!armed || uncovered)) {
+        const what = `${call.name} ${heldWhat(hold)}`;
         tasks.addStep(id, {
           kind: "note",
           name: "Held back",
-          detail: `${call.name} ${heldWhat(hold)} needs approval`,
+          detail: `${what} needs approval`,
           url: lastUrl,
         });
-        const elsewhere = armed?.page
-          ? ` The owner's approval was for a step on ${armed.page}, not this page.`
-          : "";
+        if (gate) return textResult(call, `Not run: ${gateHeld(gate, check.press, hold)}`, true);
+        lastHeld = { hold, page: here, what };
         return textResult(
           call,
-          `Not run: ${heldBack(check.press, hold, gate ? null : el)}${elsewhere}`,
+          `Not run: ${heldBack(check.press, hold, el)}${uncovered ? ` ${uncovered}` : ""}`,
           true,
         );
       }
@@ -728,10 +736,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     if (sending && inspectAgain) {
       // One message, once: whether it went or not, nothing more goes from this task.
       gateState.sent = true;
-      const went = await sentFrom(inspectAgain);
-      // Where it went: the tab right after, before the model can move it.
-      const tab = went ? await agent.context(false).catch(() => null) : null;
-      tasks.negotiations?.sendPassed(id, went, tab?.url ?? null);
+      // Where it went: the page the send was in, as it is right after, before the model can move it.
+      const { went, url } = await sentFrom(inspectAgain);
+      tasks.negotiations?.sendPassed(id, went, url);
       const note = went
         ? "The message went: the text box is empty now. Call record_conversation, then finish."
         : "Send was clicked, but the text is still in the box, so it may not have gone. Don't try again: call record_conversation, then finish.";
@@ -753,15 +760,21 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     return r;
   };
 
-  /** Whether the approved text has left the text boxes, looking a few times as the page catches up. */
-  const sentFrom = async (inspectAgain: () => Promise<Inspected>): Promise<boolean> => {
+  /**
+   * Whether the approved text has left the text boxes, looking a few times as the page catches up, and
+   * the address of the page it was sent from (its tab, not whichever is on screen).
+   */
+  const sentFrom = async (
+    inspectAgain: () => Promise<Inspected>,
+  ): Promise<{ went: boolean; url: string | null }> => {
     const text = collapse(gate?.text ?? "");
     for (let i = 0; i < sendConfirm.tries; i++) {
       await Bun.sleep(sendConfirm.everyMs);
       const el = (await inspectAgain()) ?? (await agent.inspect().catch(() => null));
-      if (el?.fields && !el.fields.map(collapse).includes(text)) return true;
+      if (el?.fields && !el.fields.map(collapse).includes(text))
+        return { went: true, url: el.url ?? null };
     }
-    return false;
+    return { went: false, url: null };
   };
 
   /** record_conversation: the brain stores what the seller wrote, and says whether the send may go. */
@@ -819,8 +832,24 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       url: lastUrl,
     });
     await capture(bytes, "Before approval", "screenshot", step.id);
-    const kind = approvalKind(p.data.kind, p.data, { url: page, text: tab?.text ?? null });
-    const { outcome, note } = await askApproval({ ...p.data, kind, screenshotStepId: step.id });
+    // The step held on this page, if any, is what this asks for: the owner sees it, and it sets the kind.
+    const held = lastHeld && samePage(lastHeld.page, page) ? lastHeld : null;
+    lastHeld = null;
+    const kind = approvalKind(
+      p.data.kind,
+      p.data,
+      { url: page, text: tab?.text ?? null },
+      held?.hold,
+    );
+    const reason = held
+      ? `${p.data.reason ? `${p.data.reason} ` : ""}(Hatbot held: ${held.what}.)`
+      : p.data.reason;
+    const { outcome, note } = await askApproval({
+      ...p.data,
+      ...(reason ? { reason } : {}),
+      kind,
+      screenshotStepId: step.id,
+    });
     if (outcome !== "approved") {
       return textResult(
         call,
@@ -829,7 +858,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           : "The owner denied this. Don't do it. Finish the task, or carry on another way that doesn't need it.",
       );
     }
-    armed = { page };
+    armed = { page, kind, hold: held?.hold ?? null };
     // While this waited, another task may have had the browser and left it elsewhere.
     const now = (await agent.context(false).catch(() => null))?.url ?? null;
     const moved =

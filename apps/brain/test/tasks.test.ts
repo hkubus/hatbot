@@ -4,7 +4,7 @@ import type { AgentElement } from "@hatbot/shared/desktop";
 import { inBatches } from "../src/agent/tools";
 import { DesktopError, HttpDesktopAgent } from "../src/desktop/client";
 import { marketplaceSend } from "../src/negotiate/marketplace";
-import { approvalKind } from "../src/tasks/approval-kind";
+import { approvalKind, notCovered } from "../src/tasks/approval-kind";
 import { limits } from "../src/tasks/desktop-run";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
@@ -414,6 +414,90 @@ test("purchases, payments, mandates and budget raises can't be approved from a n
     expect(denied.status).toBe(200);
     expect(t.approvals.get(a.id)).toMatchObject({ status: "denied", decidedVia: "ntfy" });
   }
+});
+
+test("a checkout page, a payment host or the held step raises the kind, whatever the summary says", () => {
+  const blank = { summary: "Continue to the next step" };
+  const at = (url: string) => ({ url, text: "" });
+  expect(approvalKind("other", blank, at("https://www.mediaexpert.pl/checkout/summary"))).toBe(
+    "purchase",
+  );
+  expect(approvalKind("other", blank, at("https://sklep.example.pl/zamowienie/podsumowanie"))).toBe(
+    "purchase",
+  );
+  expect(approvalKind("other", blank, at("https://gate.gopay.cz/gw/v3/123"))).toBe("payment");
+  expect(approvalKind("other", blank, at("https://pay.google.com/x"))).toBe("payment");
+  const listing = at("https://www.olx.pl/d/oferta/rower-CID1-ID77.html");
+  expect(approvalKind("send", { summary: "Ask the seller" }, listing)).toBe("send");
+  expect(approvalKind("send", { summary: "Ask the seller" }, listing, { label: "Kup teraz" })).toBe(
+    "purchase",
+  );
+  expect(approvalKind("other", blank, listing, { label: "Zaproponuj cenę" })).toBe("purchase");
+  expect(approvalKind("other", blank, listing, { frame: "Secure payment input frame" })).toBe(
+    "purchase",
+  );
+  expect(approvalKind("send", blank, listing, { label: "Wyślij" })).toBe("send");
+  expect(approvalKind("other", { summary: "Order it now" }, listing)).toBe("purchase");
+});
+
+test("an approval covers the step it was asked for; one from the lock screen never buys", () => {
+  const page = "https://www.olx.pl/d/oferta/rower-CID1-ID77.html";
+  const send = { page, kind: "send" as const, hold: { label: "Wyślij" } };
+  expect(notCovered(send, { label: "Wyślij" }, page)).toBeNull();
+  expect(notCovered(send, { label: "wyślij" }, `${page}#x`)).toBeNull();
+  expect(notCovered(send, { label: "Kup teraz" }, page)).toContain('the step on "Wyślij"');
+  expect(notCovered(send, { label: "Wyślij" }, "https://www.olx.pl/")).toContain("not this page");
+  // Asked before trying: it covers the next held step, but not one that buys, unless it was a purchase.
+  const ahead = { page, kind: "send" as const, hold: null };
+  expect(notCovered(ahead, { unlabelled: "button" }, page)).toBeNull();
+  expect(notCovered(ahead, { label: "Kup teraz" }, page)).toContain("kind purchase or payment");
+  expect(notCovered(ahead, { checkout: "www.olx.pl" }, page)).toContain("kind purchase");
+  expect(notCovered({ ...ahead, kind: "purchase" }, { label: "Kup teraz" }, page)).toBeNull();
+});
+
+test("a lock-screen approval for a message doesn't buy, and the held step is on the card", async () => {
+  const url = "https://www.olx.pl/d/oferta/rower-CID1-ID77.html";
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("confirm_intent", {
+          kind: "send",
+          summary: "Ask the seller whether the bike is still for sale",
+        }),
+      ],
+    },
+    { content: [computer("left_click", { coordinate: [300, 520] })] },
+    { content: [toolUse("confirm_intent", { kind: "send", summary: "Ask the seller again" })] },
+    { content: [computer("left_click", { coordinate: [300, 520] })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.agent.page = { url, title: "Rower", text: "Rower. 500 zł. Kup teraz." };
+  t.agent.element = {
+    tag: "button",
+    role: null,
+    type: "button",
+    label: "Kup teraz",
+    inForm: false,
+    url,
+    editable: false,
+    fields: [],
+  };
+  startTask(t, "Ask about the bike");
+  const first = await pending(t);
+  expect(first.kind).toBe("send");
+  expect(t.approvals.decide(first.id, "approve", "ntfy")).not.toBeNull();
+  // The click it was spent on buys: held again, and asking again names it and needs the app.
+  const second = await waitFor(() => t.approvals.list(true)[0]);
+  expect(JSON.stringify(work.requests[2]?.messages.at(-1))).toContain(
+    "wasn't for buying or paying",
+  );
+  expect(second.kind).toBe("purchase");
+  expect(second.reason).toContain('Hatbot held: left_click on "Kup teraz"');
+  expect(t.approvals.decide(second.id, "approve", "ntfy")).toBeNull();
+  t.approvals.decide(second.id, "approve", "web");
+  await t.tasks.idle();
+  expect(t.agent.actions.filter((a) => a.name === "left_click")).toHaveLength(1);
 });
 
 test("a step that buys or pays asks as a purchase or a payment, whatever the model called it", async () => {
