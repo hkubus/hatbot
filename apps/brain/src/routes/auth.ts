@@ -2,19 +2,9 @@ import { API_PREFIX, CreateToken, Login, type Me, SetupFinish, SetupStart } from
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { principalOf, requireAuth, SESSION_COOKIE } from "../auth/middleware";
+import { principalOf, requireAuth, SESSION_COOKIE, setSessionCookie } from "../auth/middleware";
 import type { AppEnv } from "../context";
 import { badRequest, json } from "./util";
-
-function setSessionCookie(c: Context<AppEnv>, token: string) {
-  setCookie(c, SESSION_COOKIE, token, {
-    httpOnly: true,
-    secure: c.var.config.publicUrl.startsWith("https://"),
-    sameSite: "Strict",
-    path: "/",
-    maxAge: 30 * 86400,
-  });
-}
 
 /** Marks a browser or app that has signed in here before (A18). Only sign-in routes see it. */
 const DEVICE_COOKIE = "hatbot_device";

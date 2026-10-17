@@ -184,6 +184,7 @@ await desktop.setPaused(settings.get().paused);
 await desktop.refresh();
 setInterval(() => void desktop.refresh(), 30_000);
 setInterval(() => approvals.expireDue(), 60_000);
+setInterval(() => auth.prune(), 3600_000);
 setInterval(() => negotiations.due(), 60_000);
 setInterval(() => void chats.sweep(), 60_000);
 const ping = new DeadManPing({ db, url: process.env.HATBOT_PING_URL });

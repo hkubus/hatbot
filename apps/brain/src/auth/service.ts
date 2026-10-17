@@ -3,7 +3,7 @@ import type { ApiToken } from "@hatbot/shared";
 import { type Db, now } from "../db";
 import { newTotpSecret, totpUri, verifyTotp } from "./totp";
 
-const SESSION_DAYS = 30;
+export const SESSION_DAYS = 30;
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 const randomToken = (prefix: string) => prefix + randomBytes(32).toString("base64url");
 const sameText = (a: string, b: string) => {
@@ -13,6 +13,8 @@ const sameText = (a: string, b: string) => {
 };
 
 export type Principal = { kind: "session"; id: number } | { kind: "token"; id: number };
+
+const keyOf = (p: Principal) => `${p.kind} ${p.id}`;
 
 type OwnerRow = { password_hash: string; totp_secret: string; totp_last_step: number };
 
@@ -26,6 +28,8 @@ export class AuthService {
    * reverse proxy, most likely, which makes every sign-in count as coming from one address.
    */
   untrustedProxy: string | null = null;
+  /** Live sockets, by the session or token that opened them, to close when it ends. */
+  private sockets = new Map<string, Set<() => void>>();
 
   constructor(
     private db: Db,
@@ -99,7 +103,29 @@ export class AuthService {
     return createHmac("sha256", this.deviceKey).update(id).digest("base64url");
   }
 
+  /** Closes a live socket when the session or token it was opened with ends. Returns how to forget it. */
+  onEnd(p: Principal, close: () => void): () => void {
+    const key = keyOf(p);
+    const set = this.sockets.get(key) ?? new Set();
+    set.add(close);
+    this.sockets.set(key, set);
+    return () => {
+      set.delete(close);
+      if (!set.size && this.sockets.get(key) === set) this.sockets.delete(key);
+    };
+  }
+
+  private ended(kind: Principal["kind"], ids: number[]) {
+    for (const id of ids) {
+      const key = keyOf({ kind, id });
+      const set = this.sockets.get(key);
+      this.sockets.delete(key);
+      for (const close of set ?? []) close();
+    }
+  }
+
   createSession(userAgent: string | null): string {
+    this.prune();
     const token = randomToken("hbs_");
     const expires = new Date(this.clock() + SESSION_DAYS * 86400_000).toISOString();
     this.db
@@ -109,10 +135,28 @@ export class AuthService {
   }
 
   deleteSession(token: string) {
-    this.db.query("DELETE FROM sessions WHERE token_hash = ?").run(sha256(token));
+    const rows = this.db
+      .query<{ id: number }, [string]>("DELETE FROM sessions WHERE token_hash = ? RETURNING id")
+      .all(sha256(token));
+    this.ended(
+      "session",
+      rows.map((r) => r.id),
+    );
   }
 
-  resolveSession(token: string): Principal | null {
+  /** Deletes expired sessions; the brain calls it hourly. */
+  prune() {
+    const rows = this.db
+      .query<{ id: number }, [string]>("DELETE FROM sessions WHERE expires_at <= ? RETURNING id")
+      .all(new Date(this.clock()).toISOString());
+    this.ended(
+      "session",
+      rows.map((r) => r.id),
+    );
+  }
+
+  /** The session, and whether its expiry moved on, so its cookie should too. */
+  resolveSession(token: string): (Principal & { renewed?: true }) | null {
     const row = this.db
       .query<{ id: number; expires_at: string }, [string]>(
         "SELECT id, expires_at FROM sessions WHERE token_hash = ?",
@@ -122,12 +166,14 @@ export class AuthService {
     const nowMs = this.clock();
     if (Date.parse(row.expires_at) <= nowMs) {
       this.db.query("DELETE FROM sessions WHERE id = ?").run(row.id);
+      this.ended("session", [row.id]);
       return null;
     }
     // Sliding expiry, refreshed at most daily.
     if (Date.parse(row.expires_at) - nowMs < (SESSION_DAYS - 1) * 86400_000) {
       const expires = new Date(nowMs + SESSION_DAYS * 86400_000).toISOString();
       this.db.query("UPDATE sessions SET expires_at = ? WHERE id = ?").run(expires, row.id);
+      return { kind: "session", id: row.id, renewed: true };
     }
     return { kind: "session", id: row.id };
   }
@@ -152,7 +198,9 @@ export class AuthService {
   }
 
   deleteToken(id: number): boolean {
-    return this.db.query("DELETE FROM api_tokens WHERE id = ?").run(id).changes === 1;
+    if (this.db.query("DELETE FROM api_tokens WHERE id = ?").run(id).changes !== 1) return false;
+    this.ended("token", [id]);
+    return true;
   }
 
   resolveToken(token: string): Principal | null {

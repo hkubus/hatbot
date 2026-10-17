@@ -337,6 +337,41 @@ describe("login", () => {
     t.advance(31 * 86400_000);
     expect((await t.call("GET", "/tokens", undefined, { cookie })).status).toBe(401);
   });
+
+  test("a session in use sends its cookie again as its expiry moves on", async () => {
+    const t = await testApp();
+    const { cookie } = await setUpOwner(t);
+    // Within the day, nothing moves.
+    expect((await t.call("GET", "/tokens", undefined, { cookie })).headers.get("set-cookie")).toBe(
+      null,
+    );
+    for (let day = 0; day < 3; day++) {
+      t.advance(20 * 86400_000);
+      const res = await t.call("GET", "/tokens", undefined, { cookie });
+      expect(res.status).toBe(200);
+      const renewed = res.headers.get("set-cookie") ?? "";
+      expect(renewed).toStartWith(`${cookie};`);
+      expect(renewed).toContain("Max-Age=2592000");
+    }
+    // /auth/me renews it too, which the web app asks first.
+    t.advance(20 * 86400_000);
+    const me = await t.call("GET", "/auth/me", undefined, { cookie });
+    expect(me.headers.get("set-cookie")).toStartWith(`${cookie};`);
+  });
+
+  test("expired sessions are pruned", async () => {
+    const t = await testApp();
+    await setUpOwner(t);
+    const count = () =>
+      t.db.query<{ n: number }, []>("SELECT count(*) AS n FROM sessions").get()?.n;
+    expect(count()).toBe(1);
+    t.advance(31 * 86400_000);
+    t.auth.createSession(null);
+    expect(count()).toBe(1);
+    t.advance(31 * 86400_000);
+    t.auth.prune();
+    expect(count()).toBe(0);
+  });
 });
 
 describe("tokens", () => {

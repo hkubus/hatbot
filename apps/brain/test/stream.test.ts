@@ -1,6 +1,45 @@
 import { expect, test } from "bun:test";
 import type { HatbotEvent } from "@hatbot/shared";
+import { websocket } from "hono/bun";
 import { batchText } from "../src/routes/stream";
+import { ORIGIN, setUpOwner, testApp } from "./helpers";
+
+test("signing out or revoking a token closes its live sockets, and only those", async () => {
+  const t = await testApp();
+  const { cookie, secret, password } = await setUpOwner(t);
+  const app = await t.call("POST", "/auth/login", {
+    password,
+    totp: t.code(secret),
+    client: "app",
+    device: "iPhone",
+  });
+  const { token } = (await app.json()) as { token: string };
+  const tokenId = t.auth.listTokens()[0]?.id;
+  const brain = Bun.serve({ port: 0, fetch: (req, srv) => t.app.fetch(req, srv), websocket });
+  const open = async (headers: Record<string, string>) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${brain.port}/api/v1/stream`, {
+      headers,
+    } as unknown as string[]);
+    const closed = new Promise<number>((r) => {
+      ws.onclose = (e) => r(e.code);
+    });
+    await new Promise((r) => {
+      ws.onmessage = r;
+    });
+    return { ws, closed };
+  };
+  try {
+    const web = await open({ cookie, origin: ORIGIN });
+    const phone = await open({ authorization: `Bearer ${token}` });
+    expect((await t.call("POST", "/auth/logout", {}, { cookie })).status).toBe(200);
+    expect(await web.closed).toBe(1008);
+    expect(phone.ws.readyState).toBe(WebSocket.OPEN);
+    t.auth.deleteToken(tokenId ?? 0);
+    expect(await phone.closed).toBe(1008);
+  } finally {
+    brain.stop(true);
+  }
+});
 
 test("streamed text goes out together, and before whatever follows it", async () => {
   const sent: HatbotEvent[] = [];
