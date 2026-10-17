@@ -592,7 +592,7 @@ test("two sends at once: the second is blocked; one the desktop can't take is ma
   expect(both.map((r) => r.isError)).toEqual([false, true]);
   expect(both[1]?.content).toContain("is being sent already");
   expect(t.negotiations.messages(n.id).map((m) => m.status)).toEqual(["sending"]);
-  await t.negotiations.close(t.bots.hatbot().id, n, "abandoned", null, null);
+  await t.negotiations.close(n, "abandoned", null, null);
   t.tasks.lane.release(-5);
   await t.tasks.idle();
 
@@ -803,6 +803,25 @@ test("closing writes the bot's notes; agreeing outside the mandate asks", async 
   await t.plugins.stopAll();
 });
 
+test("a close approved after the owner stopped the negotiation doesn't undo the Stop", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
+  await withScout(t, false);
+  const n = openNegotiation(t);
+  const close = named(negotiateTools(t), "negotiate_close");
+  const over = close.schema.parse({ negotiation: n.id, outcome: "agreed", price: 1450 });
+  expect(verdictFor(close, over, call(), true).action).toBe("ask");
+  // While that waits, the owner presses Stop; then approves the close.
+  await t.negotiations.stop(n.id);
+  const r = await runPluginTool(close, over, call());
+  expect(r.isError).toBe(true);
+  expect(r.content).toContain(`Negotiation #${n.id} is abandoned already.`);
+  expect(t.negotiations.get(n.id)).toMatchObject({ status: "abandoned", agreedPrice: null });
+  const want = t.db.query<{ status: string }, [number]>("SELECT status FROM wants WHERE id = ?");
+  expect(want.get(n.wantId)?.status).toBe("open");
+  expect((await t.memory.read("negotiations.md"))?.match(/^## /gm)).toHaveLength(1);
+  await t.plugins.stopAll();
+});
+
 test("closing a negotiation cancels a send that's queued; one closed meanwhile isn't sent", async () => {
   const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
   await withScout(t, false);
@@ -889,10 +908,9 @@ test("you can stop a negotiation; two closes at once both keep their notes", asy
 
   const first = openNegotiation(t);
   const second = openNegotiation(t);
-  const bot = t.bots.hatbot().id;
   await Promise.all([
-    t.negotiations.close(bot, first, "lost", null, "First seller sold it."),
-    t.negotiations.close(bot, second, "abandoned", null, "Second seller went quiet."),
+    t.negotiations.close(first, "lost", null, "First seller sold it."),
+    t.negotiations.close(second, "abandoned", null, "Second seller went quiet."),
   ]);
   const notes = await t.memory.read("negotiations.md");
   expect(notes).toContain("First seller sold it.");

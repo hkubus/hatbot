@@ -340,13 +340,15 @@ export function negotiateTools(
         const held = neg.held(n);
         if (held) throw new PluginError(held);
         const path = await neg.close(
-          bot.id,
           n,
           i.outcome,
           i.price ?? null,
           i.notes ?? null,
           call.task?.id ?? null,
         );
+        // Stopped or closed while this one was being asked about: that stands.
+        if (path === null)
+          throw new PluginError(`Negotiation #${n.id} is ${neg.get(n.id)?.status} already.`);
         const scout = await neg.recordOutcome(available, n, i.outcome, i.price ?? null);
         return `Negotiation #${n.id} is ${i.outcome}. Notes are in ${path}.${scout ? ` ${scout}` : ""}${i.outcome === "agreed" ? " Paying is a separate desktop task, which stops at the checkout and asks the owner." : ""}`;
       },
