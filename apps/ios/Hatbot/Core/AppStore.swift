@@ -298,17 +298,13 @@ final class AppStore {
       if !botIds.contains(b.id) { botIds.append(b.id) }
     case let .botDeleted(id):
       botIds.removeAll { $0 == id }
+      // Its own chat goes with it.
+      for c in conversations where c.kind == .direct && c.botIds.first == id { chatGone(c.id) }
       refreshConversations()
     case let .conversationUpdated(c):
       put(c)
     case let .conversationDeleted(id):
-      conversations.removeAll { $0.id == id }
-      cache?.forget(id)
-      // The group you're in was deleted elsewhere: back to Hatbot's own chat, keeping none of it.
-      if conversationId == id {
-        messages = []
-        Task { await openConversation(1) }
-      }
+      chatGone(id)
     case let .proposalUpdated(p):
       proposals[p.id] = p
     case let .watcherUpdated(w):
@@ -403,6 +399,16 @@ final class AppStore {
     for start in stride(from: 0, to: ids.count, by: 200) {
       let chunk = Array(ids[start..<min(start + 200, ids.count)])
       let _: Empty? = try? await api.post("/thread/seen", body: Body(ids: chunk))
+    }
+  }
+
+  /// A chat deleted elsewhere. If it's the one you're in, back to Hatbot's own chat, keeping none of it.
+  private func chatGone(_ id: Int) {
+    conversations.removeAll { $0.id == id }
+    cache?.forget(id)
+    if conversationId == id {
+      messages = []
+      Task { await openConversation(1) }
     }
   }
 

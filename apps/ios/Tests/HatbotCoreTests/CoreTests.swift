@@ -1327,6 +1327,31 @@ final class NetworkTests: XCTestCase {
     XCTAssertEqual(ids, [60])
     XCTAssertEqual(chats, [1])
   }
+
+  /// The bot whose chat you're in, deleted elsewhere: its chat goes too, back to Hatbot's own.
+  func testABotDeletedElsewhereClosesItsChat() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    SlowBrain.routes["/conversations"] = #"[{"id":1,"kind":"direct","botIds":["hatbot"],"unread":0}]"#
+    SlowBrain.routes["/conversations/1/messages?limit=50"] = "[\(Self.message(60, in: 1))]"
+    SlowBrain.routes["/conversations/3/messages?limit=50"] = "[\(Self.message(80, in: 3))]"
+    await MainActor.run {
+      store.conversations = [
+        Conversation(id: 1, kind: .direct, botIds: ["hatbot"], unread: 0),
+        Conversation(id: 3, kind: .direct, botIds: ["chef"], unread: 0),
+      ]
+      store.botIds = ["hatbot", "chef"]
+    }
+    await store.openConversation(3)
+    await MainActor.run {
+      XCTAssertEqual(store.messages.map(\.id), [80])
+      store.apply(.botDeleted(id: "chef"))
+      XCTAssertEqual(store.messages, [])
+    }
+    try await Task.sleep(for: .milliseconds(600))
+    let (shown, ids) = await MainActor.run { (store.conversationId, store.messages.map(\.id)) }
+    XCTAssertEqual(shown, 1)
+    XCTAssertEqual(ids, [60])
+  }
 }
 
 /// The token in memory, where the app keeps it in the Keychain.
