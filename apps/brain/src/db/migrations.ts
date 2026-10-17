@@ -608,4 +608,7 @@ export const migrations: string[] = [
   ALTER TABLE messages ADD COLUMN tainted_by TEXT;
   ALTER TABLE episodes ADD COLUMN injection_suspected TEXT;
   `,
+  /* 33: the ledger by conversation, which the chat reads before each request */ `
+  CREATE INDEX IF NOT EXISTS spend_ledger_episode ON spend_ledger (episode_id, id);
+  `,
 ];

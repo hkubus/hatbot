@@ -23,6 +23,7 @@ import {
 } from "@hatbot/shared";
 import { useSyncExternalStore } from "react";
 import { ApiError, api } from "./api";
+import { withDelta } from "./delta";
 import type { Toast } from "./toast";
 
 type State = {
@@ -651,7 +652,11 @@ function onMessages(list: ThreadMessage[], e: HatbotEvent): ThreadMessage[] {
         ? upsert(list, e.message)
         : list;
     case "message.delta":
-      return patch(e.id, (m) => ({ ...m, text: m.text + e.text }));
+      // A page read after this text was sent already has it.
+      return patch(e.id, (m) => {
+        const text = withDelta(m.text, e);
+        return text === m.text ? m : { ...m, text };
+      });
     case "message.edited":
       return patch(e.id, (m) => ({ ...m, editedAt: e.editedAt }));
     case "message.rewrite":
@@ -686,7 +691,7 @@ function onMessages(list: ThreadMessage[], e: HatbotEvent): ThreadMessage[] {
 }
 
 // A reply streams in many small deltas: they're added up and shown once per frame.
-const deltas = new Map<number, string>();
+const deltas = new Map<number, { text: string; at?: number }>();
 let deltaFrame = 0;
 function flushDeltas() {
   if (deltaFrame) cancelAnimationFrame(deltaFrame);
@@ -696,7 +701,8 @@ function flushDeltas() {
   deltas.clear();
   const messages = patchMessages((m) => {
     const d = added.get(m.id);
-    return d === undefined ? m : { ...m, text: m.text + d };
+    const text = d === undefined ? m.text : withDelta(m.text, d);
+    return text === m.text ? m : { ...m, text };
   });
   if (messages !== state.messages) set({ messages });
 }
@@ -704,7 +710,8 @@ function flushDeltas() {
 function apply(e: HatbotEvent) {
   if (e.type.startsWith("message.")) for (const events of missed) events.push(e);
   if (e.type === "message.delta") {
-    deltas.set(e.id, (deltas.get(e.id) ?? "") + e.text);
+    const d = deltas.get(e.id);
+    deltas.set(e.id, d ? { ...d, text: d.text + e.text } : { text: e.text, at: e.at });
     if (!deltaFrame) deltaFrame = requestAnimationFrame(flushDeltas);
     return;
   }

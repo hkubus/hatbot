@@ -11,7 +11,7 @@ import type { BetaBrowserMemberInput } from "@anthropic-ai/sdk/resources/beta";
 import type { ApprovalKind } from "@hatbot/shared";
 import type { AgentElement, BrowserState, ComputerMember } from "@hatbot/shared/desktop";
 import { z } from "zod";
-import { modelErrorText, type StreamParams } from "../agent/model";
+import { cutOff, modelErrorText, type StreamParams } from "../agent/model";
 import { DESKTOP_PROMPT } from "../agent/prompt";
 import { type Screening, screenPage } from "../agent/screening";
 import { localStamp } from "../agent/thread";
@@ -22,7 +22,7 @@ import { type DesktopAgent, DesktopError } from "../desktop/client";
 import { collapse, type GateState, gateCheck, refused, sendsWith } from "../negotiate/gate";
 import { marketplaceSend } from "../negotiate/marketplace";
 import { destructive } from "../plugins/ssh/policy";
-import { BudgetError, estimateTokens, priceOf, usesReserve } from "../spend";
+import { BudgetError, estimateTokens, fixedTokens, requestCeiling, usesReserve } from "../spend";
 import { skillPath } from "../teach/skills";
 import { approvalKind } from "./approval-kind";
 import { checkFor, consequential } from "./policy";
@@ -158,6 +158,10 @@ const RECORD_TOOL: Anthropic.Beta.BetaTool = {
   eager_input_streaming: true,
 };
 
+/** The answer to a reply that called no tool. */
+const NUDGE =
+  "(No message from the owner: your reply called no tool, and only finish_task ends the task. If it's done, or can't be done, call finish_task with the outcome. Otherwise carry on with the next action.)";
+
 /** How a send the gate let through is confirmed: the text leaving the box. Tests shorten it. */
 export const sendConfirm = { tries: 6, everyMs: 500 };
 
@@ -292,20 +296,32 @@ const describe = (name: string, input: Record<string, unknown>): string => {
   }
 };
 
-/** Rough upper estimate before a request: text by length, images at their typical size. */
-function estimateCost(messages: Anthropic.Beta.BetaMessageParam[], model: string): number {
-  const p = priceOf(model);
-  const tokens = estimateTokens(messages) + 3000;
-  return (tokens * p.input * 0.3 + 1500 * p.output) / 1_000_000;
+/**
+ * The most a request may cost, for the check before it: images at their typical size, and the part
+ * the last request left in the cache (`cached`) at the read price.
+ */
+function ceilingOf(params: Omit<StreamParams, "stream">, cached = 0): number {
+  const prompt = estimateTokens(params.messages) + fixedTokens(params.system, params.tools);
+  return requestCeiling(params.model, {
+    prompt: Math.max(prompt, cached),
+    cached,
+    write: "5m",
+    maxTokens: params.max_tokens,
+  });
 }
 
 export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSignal): Promise<void> {
   const { d } = tasks;
   const task = tasks.get(id);
   if (!task) return;
-  const agent = d.desktop.agent;
+  // Its requests end when the task is cancelled, not when they would have.
+  const agent = d.desktop.agent.withSignal?.(signal) ?? d.desktop.agent;
   /** Haiku's, until it fails and Opus carries on. */
   let model = task.model;
+  /** Lets go of what the request in flight holds against the limits. */
+  let held = () => {};
+  /** What the last request left in the cache, and when it started: entries last 5 minutes. */
+  let cache = { tokens: 0, at: 0 };
 
   let holding = false;
   let activeMs = 0;
@@ -333,7 +349,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     tasks.setStatus(id, "running");
     // Its bot's logins, not another's. Another task may have switched it while this one was away.
     try {
-      await d.desktop.agent.useProfile(task.botId);
+      await agent.useProfile(task.botId);
     } catch (err) {
       release();
       throw new Stop(
@@ -864,6 +880,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     );
     await observePage();
     record("user", first);
+    let nudged = false;
 
     for (let step = 0; ; step++) {
       if (signal.aborted) throw signal.reason;
@@ -876,9 +893,11 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         );
       if (activeMs + (holding ? tasks.clock() - since : 0) > MAX_ACTIVE_MS)
         throw new Stop("failed", "Stopped: it ran for 30 minutes without finishing.", true, ASK);
+      const params = request(messages);
       try {
-        d.spend.check(
-          estimateCost(messages, model),
+        const cached = tasks.clock() - cache.at < 5 * 60_000 ? cache.tokens : 0;
+        held = d.spend.hold(
+          ceilingOf(params, cached),
           { id, limitUsd: tasks.budget(id) },
           { reserve: usesReserve(task.origin) },
         );
@@ -886,21 +905,26 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         if (!(err instanceof BudgetError)) throw err;
         if (err.limit !== "task") throw new Stop("failed", `Stopped: ${err.message}`);
         const extra = d.settings.get().limits.taskUsd;
-        const { outcome } = await askApproval({
-          kind: "budget",
-          summary: `Let task #${id} spend $${extra} more`,
-          reason: `"${task.title}" has used its $${tasks.budget(id)} limit.`,
-        });
+        const { outcome } = await askApproval({ kind: "budget", ...tasks.budgetAsk(id, extra) });
         if (outcome !== "approved") throw new Stop("failed", "Stopped at its spending limit.");
         tasks.raiseBudget(id, extra);
         continue;
       }
 
-      const res = await d.model.stream(request(messages), {
+      const sent = tasks.clock();
+      const res = await d.model.stream(params, {
         onText: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
         onThinking: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
+        onFailedUsage: (m, usage) =>
+          d.spend.recordResponse({ model: m, purpose: "task", usage, taskId: id }),
         signal,
       });
+      held();
+      cache = {
+        tokens:
+          (res.usage.cache_read_input_tokens ?? 0) + (res.usage.cache_creation_input_tokens ?? 0),
+        at: sent,
+      };
       d.spend.recordResponse({
         model,
         purpose: "task",
@@ -920,18 +944,30 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         throw new Stop("failed", "The model declined to carry on with this task.", true, {
           account: "",
         });
+      // Asking it what it tried wouldn't fit either; Opus starts afresh without its account.
+      if (res.stop_reason === "model_context_window_exceeded")
+        throw new Stop("failed", "Stopped: the task's conversation got too long.", true, {
+          account: "",
+        });
       if (res.stop_reason === "pause_turn") continue;
       const calls = res.content.filter(
         (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use",
       );
       if (!calls.length) {
-        if (res.stop_reason === "max_tokens")
-          throw new Stop("failed", "Stopped: a reply was cut off.", true, ASK);
+        if (cutOff(res)) throw new Stop("failed", "Stopped: a reply was cut off.", true, ASK);
         const text = res.content
           .map((b) => (b.type === "text" ? b.text : ""))
           .join("")
           .trim();
-        throw new Stop("done", text || "Finished.");
+        // Only finish_task ends a task: asked once, then it has failed, and Opus may carry on.
+        if (!nudged) {
+          nudged = true;
+          record("user", [{ type: "text", text: NUDGE }]);
+          continue;
+        }
+        throw new Stop("failed", text || "Stopped: it ended without finishing.", true, {
+          account: text || null,
+        });
       }
 
       const results: BlockParam[] = [];
@@ -940,7 +976,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       const halted = new Set<string>();
       for (const call of calls) {
         const toolset = call.toolset_name ?? "";
-        if (res.stop_reason === "max_tokens") {
+        if (signal.aborted) {
+          results.push(textResult(call, "Not run: the task was cancelled.", true));
+        } else if (cutOff(res)) {
           results.push(
             textResult(call, "Input was cut off at max_tokens. Retry with a shorter input.", true),
           );
@@ -994,6 +1032,10 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           finished.outcome === "failed" && { account: "" },
         );
       }
+      if (signal.aborted) {
+        record("user", results);
+        throw signal.reason;
+      }
       await observePage();
       record("user", results);
     }
@@ -1019,12 +1061,13 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           ]
         : [...messages, { role: "user", content: [ask] }];
     try {
-      d.spend.check(
-        estimateCost(asked, model),
+      const params = { ...request(asked), max_tokens: 4000 };
+      const done = d.spend.hold(
+        ceilingOf(params, tasks.clock() - cache.at < 5 * 60_000 ? cache.tokens : 0),
         { id, limitUsd: tasks.budget(id) },
         { reserve: usesReserve(task.origin) },
       );
-      const res = await d.model.create({ ...request(asked), max_tokens: 4000 });
+      const res = await d.model.create(params).finally(done);
       d.spend.recordResponse({ model, purpose: "task", usage: res.usage, taskId: id });
       return res.content
         .map((b) => (b.type === "text" ? b.text : ""))
@@ -1046,7 +1089,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         : "";
     await acquire();
     // Tabs an earlier task left open would be in this one's way, and in its context.
-    await d.desktop.agent.resetBrowser().catch((err) => {
+    await agent.resetBrowser().catch((err) => {
       if (signal.aborted) throw err;
       console.error(`task ${id}: couldn't close the old tabs`, err);
     });
@@ -1066,6 +1109,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       model = ESCALATE_TO;
       tasks.setModel(id, model, FIRST_MODEL);
       messages.length = 0;
+      // Another model reads nothing of Haiku's cache.
+      cache = { tokens: 0, at: 0 };
       screening = [];
       armed = false;
       activeMs = 0;
@@ -1096,6 +1141,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       );
     }
   } finally {
+    held();
     release();
     d.approvals.cancelForTask(id);
     d.desktop.clearRequest(id);

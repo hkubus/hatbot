@@ -5,7 +5,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { type ApprovalKind, chartBlocks, chartProblem, type Task } from "@hatbot/shared";
 import { z } from "zod";
-import { modelErrorText } from "../agent/model";
+import { cutOff, modelErrorText } from "../agent/model";
 import { AGENT_PROMPT } from "../agent/prompt";
 import { mayReview, safeToRun } from "../agent/review";
 import { Screener } from "../agent/screening";
@@ -30,7 +30,14 @@ import { type Outcome, ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import type { CallContext, PluginTool, Verdict } from "../plugins/plugin";
 import { describeCall, runPluginTool, untrustedDefinitions, verdictFor } from "../plugins/registry";
-import { BudgetError, estimateTokens, priceOf, usesReserve } from "../spend";
+import {
+  BudgetError,
+  estimateTokens,
+  fixedTokens,
+  requestCeiling,
+  searchesIn,
+  usesReserve,
+} from "../spend";
 import { alertMessageSource, alertParts } from "../triggers";
 import { Stop, UPDATES_MODELS } from "./desktop-run";
 import {
@@ -50,6 +57,11 @@ import type { Tasks } from "./service";
 const MAX_STEPS = 30;
 /** Code work (effort medium or high) reads and writes more. */
 const MAX_CODE_STEPS = 80;
+/**
+ * The most a run may take of its own time (the model, its tools and its waits), so a schedule's next
+ * runs aren't held up for ever. Time waiting for the owner, or for tasks it started, doesn't count.
+ */
+const MAX_RUN_MS = 4 * 3600_000;
 const BETAS: Anthropic.Beta.AnthropicBeta[] = [
   "thinking-display-updates-2026-08-18",
   "context-management-2025-06-27",
@@ -146,13 +158,6 @@ const CORE_TOOLS: Anthropic.Beta.BetaTool[] = [
   }),
 ];
 
-/** Rough upper estimate before a request: cached prefix at read price, plus room for a reply. */
-function estimateCost(messages: Anthropic.Beta.BetaMessageParam[], model: string): number {
-  const p = priceOf(model);
-  const tokens = estimateTokens(messages) + 4000;
-  return (tokens * p.input * 0.3 + 2000 * p.output) / 1_000_000;
-}
-
 const STARTED_BY = {
   schedule: (s: string) => `the schedule "${s}"`,
   webhook: (s: string) => `the webhook "${s}"`,
@@ -198,6 +203,33 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const sources = new Set<string>();
   let slot = false;
   let notified = 0;
+  /** Lets go of what the request in flight holds against the limits. */
+  let held = () => {};
+  /** When it got its first slot, and the time since spent waiting for the owner or its own tasks. */
+  let startedAt = 0;
+  let awayMs = 0;
+  /** The run's own time so far: the model, its tools and its waits. */
+  const ownMs = () => tasks.clock() - startedAt - awayMs;
+
+  /**
+   * Runs `fn` without holding a slot, then queues for one again, shown as queued meanwhile. `own`: the
+   * time counts towards the run's limit (the wait tool); waiting for the owner or for a task it started
+   * doesn't, since those have limits of their own.
+   */
+  const withoutSlot = async <T>(fn: () => Promise<T>, own = false): Promise<T> => {
+    const from = tasks.clock();
+    tasks.pool.release();
+    slot = false;
+    try {
+      return await fn();
+    } finally {
+      tasks.setStatus(id, "queued");
+      await tasks.pool.acquire(signal);
+      slot = true;
+      tasks.setStatus(id, "running");
+      if (!own) awayMs += tasks.clock() - from;
+    }
+  };
   // Fixed for the whole run: the tool list is part of the prompt cache.
   // A bot gets only the plugins it may use.
   const own = d.plugins.tools(bot.plugins);
@@ -269,15 +301,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       detail: "",
       url: `/tasks/${childId}`,
     });
-    tasks.pool.release();
-    slot = false;
-    let ended: Task;
-    try {
-      ended = await tasks.waitFor(childId, signal);
-    } finally {
-      await tasks.pool.acquire(signal);
-      slot = true;
-    }
+    const ended = await withoutSlot(() => tasks.waitFor(childId, signal));
     // Still in `children` if this task is cancelled meanwhile, so it's cancelled with it.
     children.delete(childId);
     return ended;
@@ -304,15 +328,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       url: `/tasks/${child.id}`,
     });
     // Waiting on the screen doesn't hold a slot other tasks could use.
-    tasks.pool.release();
-    slot = false;
-    let ended: Task;
-    try {
-      ended = await tasks.waitFor(child.id, signal);
-    } finally {
-      await tasks.pool.acquire(signal);
-      slot = true;
-    }
+    const ended = await withoutSlot(() => tasks.waitFor(child.id, signal));
     // Still in `children` if this task is cancelled meanwhile, so it's cancelled with it.
     children.delete(child.id);
     // Its summary is made from web pages (PLAN.md §6.1).
@@ -346,15 +362,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       url: `/tasks/${child.id}`,
     });
     // Waiting doesn't hold a slot: the bot asked needs one.
-    tasks.pool.release();
-    slot = false;
-    let ended: Task;
-    try {
-      ended = await tasks.waitFor(child.id, signal);
-    } finally {
-      await tasks.pool.acquire(signal);
-      slot = true;
-    }
+    const ended = await withoutSlot(() => tasks.waitFor(child.id, signal));
     // Still in `children` if this task is cancelled meanwhile, so it's cancelled with it.
     children.delete(child.id);
     if (ended.tainted) taint(`Task #${child.id} by ${name}`);
@@ -392,15 +400,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     });
     tasks.setStatus(id, "waiting_approval");
     // Waiting for you doesn't hold a slot other tasks could use.
-    tasks.pool.release();
-    slot = false;
-    let outcome: Outcome;
-    try {
-      outcome = await d.approvals.wait(approval.id, signal);
-    } finally {
-      await tasks.pool.acquire(signal);
-      slot = true;
-    }
+    const outcome: Outcome = await withoutSlot(() => d.approvals.wait(approval.id, signal));
     tasks.addStep(id, {
       kind: "approval",
       name: `Approval ${outcome}`,
@@ -415,18 +415,13 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       notes.push(`[${localStamp(new Date())}] ${note}`);
       tasks.addStep(id, { kind: "note", name: "Your note", detail: note, url: null });
     }
-    tasks.setStatus(id, "running");
     return { outcome, note };
   };
 
   /** Asks for more money when the task hits its limit (PLAN.md §6.3). */
   const askBudget = async () => {
     const extra = d.settings.get().limits.taskUsd;
-    const { outcome } = await askApproval({
-      kind: "budget",
-      summary: `Let task #${id} spend $${extra} more`,
-      reason: `"${task.title}" has used its $${tasks.budget(id)} limit.`,
-    });
+    const { outcome } = await askApproval({ kind: "budget", ...tasks.budgetAsk(id, extra) });
     if (outcome !== "approved") throw new Stop("failed", "Stopped at its spending limit.");
     tasks.raiseBudget(id, extra);
   };
@@ -574,28 +569,23 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const wait = async (call: Anthropic.Beta.BetaToolUseBlock) => {
     const p = Wait.safeParse(call.input);
     if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
-    const { minutes } = p.data;
+    // Not past the run's time limit.
+    const left = Math.max(1, Math.floor((MAX_RUN_MS - ownMs()) / 60_000));
+    const minutes = Math.min(p.data.minutes, left);
     tasks.addStep(id, {
       kind: "action",
       name: "wait",
       detail: `Waiting up to ${minutes} min for ${p.data.for}`,
       url: null,
     });
-    tasks.pool.release();
-    slot = false;
-    let woke: boolean;
-    try {
-      woke = await tasks.nextEvent(id, minutes * 60_000, signal);
-    } finally {
-      await tasks.pool.acquire(signal);
-      slot = true;
-    }
+    const woke = await withoutSlot(() => tasks.nextEvent(id, minutes * 60_000, signal), true);
     return result(call, woke ? "Woke early: an event arrived (below)." : `Waited ${minutes} min.`);
   };
 
   try {
     await tasks.pool.acquire(signal);
     slot = true;
+    startedAt = tasks.clock();
     tasks.setStatus(id, "running");
     // Why it may already be tainted, for its approvals (PLAN.md §6.2).
     if (task.tainted) sources.add(task.taintedBy ?? "What started it");
@@ -629,14 +619,33 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const run = { tasks, task, signal, taint };
     /** Where the web tools' code runs: the same one each step, so paused code can carry on. */
     let container: string | undefined;
+    /** It was asked once to end with finish_task after a reply that called no tool. */
+    let nudged = false;
+    // Code work writes whole files into tool calls, and research its report.
+    const maxTokens = research ? 64000 : task.effort ? 32000 : 16000;
+    /** What the last request left in the cache, and when it started: entries last 5 minutes. */
+    let cache = { tokens: 0, at: 0 };
     for (let step = 0; ; step++) {
       if (signal.aborted) throw signal.reason;
       const maxSteps = research ? MAX_RESEARCH_STEPS : task.effort ? MAX_CODE_STEPS : MAX_STEPS;
       if (step >= maxSteps)
         throw new Stop("failed", `Stopped after ${maxSteps} steps without finishing.`);
+      if (ownMs() >= MAX_RUN_MS)
+        throw new Stop(
+          "failed",
+          `Stopped: it ran for ${MAX_RUN_MS / 3600_000} hours without finishing.`,
+        );
+      // What it may cost at most, held against the limits until it's recorded.
+      const cached = tasks.clock() - cache.at < 5 * 60_000 ? cache.tokens : 0;
       try {
-        d.spend.check(
-          estimateCost(messages, task.model),
+        held = d.spend.hold(
+          requestCeiling(task.model, {
+            prompt: Math.max(estimateTokens(messages) + fixedTokens(system, tools), cached),
+            cached,
+            write: "5m",
+            maxTokens,
+            webSearches: searchesIn(tools),
+          }),
           { id, limitUsd: tasks.budget(id) },
           { reserve: usesReserve(task.origin) },
         );
@@ -653,11 +662,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         continue;
       }
 
+      const sent = tasks.clock();
       const res = await d.model.stream(
         {
           model: task.model,
-          // Code work writes whole files into tool calls, and research its report.
-          max_tokens: research ? 64000 : task.effort ? 32000 : 16000,
+          max_tokens: maxTokens,
           betas: research ? [...BETAS, RESEARCH_BETA] : BETAS,
           // Tools and system end here, the same for each of this bot's tasks, so they share the entry; the
           // top-level breakpoint follows the conversation. Two of the four breakpoints allowed.
@@ -695,9 +704,17 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         {
           onText: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
           onThinking: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
+          onFailedUsage: (model, usage) =>
+            d.spend.recordResponse({ model, purpose: "task", usage, taskId: id }),
           signal,
         },
       );
+      held();
+      cache = {
+        tokens:
+          (res.usage.cache_read_input_tokens ?? 0) + (res.usage.cache_creation_input_tokens ?? 0),
+        at: sent,
+      };
       d.spend.recordResponse({
         model: task.model,
         purpose: "task",
@@ -720,25 +737,38 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
       if (res.stop_reason === "refusal")
         throw new Stop("failed", "The model declined to carry on with this task.");
+      if (res.stop_reason === "model_context_window_exceeded")
+        throw new Stop("failed", "Stopped: the task's conversation got too long.");
       if (res.stop_reason === "pause_turn") continue;
       const calls = res.content.filter(
         (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use",
       );
       if (!calls.length) {
-        if (res.stop_reason === "max_tokens")
-          throw new Stop("failed", "Stopped: a reply was cut off.");
+        if (cutOff(res)) throw new Stop("failed", "Stopped: a reply was cut off.");
         const text = res.content
           .map((b) => (b.type === "text" ? b.text : ""))
           .join("")
           .trim();
-        throw new Stop("done", text || "Finished.");
+        // Only finish_task (or finish_research) ends a task: asked once, then it has failed.
+        if (!nudged) {
+          nudged = true;
+          const finish = research ? "finish_research" : "finish_task";
+          record("user", [
+            {
+              type: "text",
+              text: `(No message from the owner: your reply called no tool, and only ${finish} ends the task. If it's done, or can't be done, call ${finish} with the outcome. Otherwise carry on.)`,
+            },
+          ]);
+          continue;
+        }
+        throw new Stop("failed", text || "Stopped: it ended without finishing.");
       }
 
       let finished: z.infer<typeof FinishTask> | null = null;
       // Lookups in a row run at once, and so do changes allowed without asking, each on a different
       // thing (checking updates on every host); anything that asks runs on its own.
       const lookup = (call: Anthropic.Beta.BetaToolUseBlock): boolean | string => {
-        if (res.stop_reason === "max_tokens") return false;
+        if (cutOff(res)) return false;
         const t = pluginTools.get(call.name);
         if (LOOKUP_TOOLS.includes(call.name) || t?.access === "read") return true;
         if (!t?.target) return false;
@@ -751,7 +781,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         return !untrusted && `${t.name.split("_")[0]}:${t.target(parsed.data)}`;
       };
       const results: BlockParam[] = await inBatches(calls, lookup, async (call) => {
-        if (res.stop_reason === "max_tokens")
+        if (signal.aborted) return result(call, "Not run: the task was cancelled.", true);
+        if (cutOff(res))
           return result(call, "Input was cut off at max_tokens. Retry with a shorter input.", true);
         if (finished) return result(call, "Not run: the task already finished.", true);
         if (call.name === "finish_task") {
@@ -873,6 +904,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       );
     }
   } finally {
+    held();
     if (slot) tasks.pool.release();
     for (const child of children) tasks.cancel(child);
     d.approvals.cancelForTask(id);

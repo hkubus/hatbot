@@ -504,6 +504,8 @@ export class Negotiations {
    * that are due. Nothing else wakes a negotiation until N3's inbox poller.
    */
   due() {
+    // Paused: nothing starts, and what's due waits for Resume.
+    if (this.d.tasks.paused()) return;
     const waiting = this.d.db
       .query<{ approval_id: number }, []>(
         "SELECT approval_id FROM negotiations WHERE status = 'awaiting_mandate' AND approval_id IS NOT NULL",

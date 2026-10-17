@@ -8,7 +8,7 @@ import {
 } from "@hatbot/shared";
 import type { StreamHandlers, StreamParams } from "../src/agent/model";
 import { activity, parseSummary, titleOf, withNote } from "../src/agent/thread";
-import { costOf } from "../src/spend";
+import { costOf, FALLBACK_MODELS, PRICES } from "../src/spend";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, testApp } from "./helpers";
 
@@ -173,6 +173,51 @@ test("system prompt and tools are identical across requests (cache-stable)", asy
   expect(JSON.stringify(model.requests[0]?.tools)).toBe(JSON.stringify(model.requests[1]?.tools));
 });
 
+test("each request marks where the last one ended, so a long reply still reads the cache", async () => {
+  const search = (id: string) => [
+    { type: "server_tool_use", id, name: "web_search", input: { query: "x" } },
+    { type: "web_search_tool_result", tool_use_id: id, content: [] },
+    text("Found something. "),
+  ];
+  const model = new FakeModel([
+    // A reply of 25 blocks: past the 20 the top-level breakpoint looks back.
+    {
+      content: [
+        ...Array.from({ length: 8 }, (_, i) => search(`srvtoolu_${i}`)).flat(),
+        toolUse("memory_list", {}),
+      ] as never,
+    },
+    { content: [text("Done.")] },
+    { content: [text("Hi again.")] },
+  ]);
+  const t = await testApp(model);
+  await t.thread.post("look it up").done;
+  await t.thread.post("thanks").done;
+  /** Each marked block's turn, whether it's that turn's last block, and its marker. */
+  const marks = (i: number) =>
+    (model.requests[i]?.messages ?? []).flatMap((m, turn) =>
+      typeof m.content === "string"
+        ? []
+        : m.content.flatMap((b, block, all) =>
+            "cache_control" in b && b.cache_control
+              ? [[turn, block === all.length - 1, b.cache_control]]
+              : [],
+          ),
+    );
+  const hour = { type: "ephemeral", ttl: "1h" } as const;
+  expect(marks(0)).toEqual([]);
+  // The second request: on the opening message, where the first request ended.
+  expect(marks(1)).toEqual([[0, true, hour]]);
+  // The third: on the tool results the second request ended with.
+  expect(marks(2)).toEqual([[2, true, hour]]);
+  expect(model.requests[2]?.messages[2]?.role).toBe("user");
+  // With the system prompt's and the top-level one: three of the four allowed.
+  expect(model.requests[2]?.cache_control).toBeTruthy();
+  // The stored turns don't keep it.
+  const stored = t.db.query<{ content: string }, []>("SELECT content FROM episode_turns").all();
+  expect(stored.some((r) => r.content.includes("cache_control"))).toBe(false);
+});
+
 test("spend is recorded, and the daily limit stops replies", async () => {
   const t = await testApp(new FakeModel([{ content: [text("ok")] }]));
   t.settings.update({ chatModel: "claude-opus-5-5" });
@@ -211,6 +256,103 @@ test("fallback iterations are billed per model", async () => {
     },
   });
   expect(t.spend.summary().todayUsd).toBeCloseTo(3, 6);
+});
+
+test("every model a request may be answered by has a price; an unknown one costs the most", () => {
+  const models = [
+    "claude-opus-5-5",
+    "claude-haiku-5-5",
+    ...Object.keys(FALLBACK_MODELS),
+    ...Object.values(FALLBACK_MODELS).flat(),
+  ];
+  for (const m of models) expect(PRICES[m] ?? m).toBeObject();
+  const million = { input: 1_000_000, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0, output: 0 };
+  expect(costOf("claude-opus-4-8-20260101", million)).toBeCloseTo(5, 6);
+  expect(costOf("claude-unheard-of", million)).toBeCloseTo(10, 6);
+});
+
+test("after a fallback partway, the declined model's tool calls don't run and aren't kept", async () => {
+  const search = { type: "server_tool_use", id: "srvtoolu_1", name: "web_search", input: {} };
+  const found = { type: "web_search_tool_result", tool_use_id: "srvtoolu_1", content: [] };
+  const lone = { type: "server_tool_use", id: "srvtoolu_2", name: "web_search", input: {} };
+  const model = new FakeModel([
+    {
+      model: "claude-opus-4-8",
+      content: [
+        { type: "thinking", thinking: "", signature: "sig" },
+        text("Let me save that. "),
+        search,
+        found,
+        lone,
+        toolUse("memory_write", { path: "notes/x.md", content: "x" }, "toolu_declined"),
+        {
+          type: "fallback",
+          from: { model: "claude-opus-5-5" },
+          to: { model: "claude-opus-4-8" },
+          trigger: { type: "refusal" },
+        },
+        text("Here's what I can say instead."),
+      ] as never,
+      stop_reason: "end_turn",
+    },
+  ]);
+  const t = await testApp(model);
+  t.settings.update({ chatModel: "claude-opus-5-5" });
+  await t.thread.post("save a note").done;
+  expect(model.requests).toHaveLength(1);
+  expect(t.thread.list().at(-1)).toMatchObject({ status: "done" });
+  expect(await t.memory.exists("notes/x.md")).toBe(false);
+  const stored = t.db
+    .query<{ content: string }, []>("SELECT content FROM episode_turns WHERE role = 'assistant'")
+    .get()?.content;
+  const types = (JSON.parse(stored ?? "[]") as { type: string }[]).map((b) => b.type);
+  expect(types).toEqual(["text", "server_tool_use", "web_search_tool_result", "fallback", "text"]);
+});
+
+test("a reply that hit the context window ends as cut off, and its tool calls don't run", async () => {
+  const model = new FakeModel([
+    {
+      content: [text("Saving it"), toolUse("memory_write", { path: "notes/y.md", content: "y" })],
+      stop_reason: "model_context_window_exceeded",
+    },
+    { content: [text("All of it")], stop_reason: "model_context_window_exceeded" },
+  ]);
+  const t = await testApp(model);
+  await t.thread.post("save a note").done;
+  expect(model.requests).toHaveLength(1);
+  expect(await t.memory.exists("notes/y.md")).toBe(false);
+  expect(t.thread.list().at(-1)).toMatchObject({ status: "error" });
+  expect(t.thread.list().at(-1)?.text).toContain("cut off");
+  await t.thread.post("again").done;
+  expect(t.thread.list().at(-1)).toMatchObject({ status: "error" });
+});
+
+test("a reply a fallback model wrote is kept, and billed at that model's price", async () => {
+  const usage = { input_tokens: 1_000_000, output_tokens: 0 };
+  const t = await testApp(
+    new FakeModel([
+      {
+        model: "claude-opus-4-8",
+        content: [text("Here are the firewall rules.")],
+        usage: {
+          ...usage,
+          iterations: [
+            { type: "message", model: "claude-opus-5-5", ...usage, input_tokens: 0 },
+            { type: "fallback_message", model: "claude-opus-4-8", ...usage },
+          ] as never,
+        },
+      },
+    ]),
+  );
+  t.settings.update({ chatModel: "claude-opus-5-5" });
+  await t.thread.post("which firewall rules?").done;
+  expect(t.thread.list().at(-1)).toMatchObject({
+    status: "done",
+    text: "Here are the firewall rules.",
+  });
+  expect(t.spend.summary().todayUsd).toBeCloseTo(5, 6);
+  const turns = t.db.query("SELECT role FROM episode_turns WHERE role = 'assistant'").all();
+  expect(turns.length).toBe(1);
 });
 
 test("search_history finds older conversations, not the one you're in", async () => {
@@ -646,6 +788,24 @@ test("/task runs what you typed as a background task, shown under the line it st
 
   await t.thread.post("/task").done;
   expect(t.thread.list().at(-1)?.text).toContain("Say what to do");
+});
+
+test("while paused, /task and anything else that starts a task doesn't start one", async () => {
+  const work = new FakeModel([]);
+  const t = await testApp(new FakeModel(), work);
+  t.settings.update({ paused: true });
+  await t.thread.post("/task check the backups").done;
+  expect(t.thread.list().at(-1)?.text).toBe("Hatbot is paused. Resume to start tasks.");
+  expect(t.tasks.list()).toEqual([]);
+
+  const task = t.tasks.createBackgroundTask({ title: "Watch", goal: "Look", origin: "watch" });
+  await t.tasks.idle();
+  expect(t.tasks.get(task?.id ?? 0)).toMatchObject({
+    status: "cancelled",
+    summary: "Not started: Hatbot is paused.",
+  });
+  expect(work.requests).toHaveLength(0);
+  expect(t.notifier.sent).toEqual([]);
 });
 
 test("/remember saves what you typed to INDEX.md's Notes, word for word", async () => {

@@ -35,11 +35,20 @@ import {
 } from "../plugins/registry";
 import type { Schedules } from "../schedules";
 import type { SettingsStore } from "../settings";
-import { BudgetError, estimateTokens, priceOf, type Spend, tokenCount, tokensOf } from "../spend";
+import {
+  BudgetError,
+  estimateTokens,
+  fixedTokens,
+  requestCeiling,
+  type Spend,
+  searchesIn,
+  tokenCount,
+  tokensOf,
+} from "../spend";
 import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
 import type { Watchers } from "../watch/service";
-import { type ModelClient, modelErrorText } from "./model";
+import { afterFallback, cutOff, type ModelClient, modelErrorText } from "./model";
 import {
   EXPERT_PROMPT,
   FORGET_PROMPT,
@@ -76,7 +85,11 @@ const MAX_SUMMARY_TRIES = 3;
 const LONG_EPISODE_TOKENS = 90_000;
 const RECENT_MESSAGES = 10;
 const MAX_STEPS = 25;
+/** A chat request's output limit, and ask_opus's: the check before each counts on all of it. */
+const MAX_TOKENS = 32000;
 const MAX_TURN_MS = 10 * 60_000;
+/** How often a reply being written is saved, so one a restart cuts off keeps what it had. */
+const SAVE_TEXT_MS = 3000;
 /** Commands one reply runs itself; past this, the work belongs in a background task (run_task). */
 const MAX_CHAT_COMMANDS = 2;
 /** Why a reply was cut off: /stop, rather than Pause all. */
@@ -194,6 +207,8 @@ export class Thread {
   private currentIncognito = false;
   /** The approval the reply in progress waits for; your next message cancels it. */
   private waiting: number | null = null;
+  /** The text of the reply being written, by message id, as it is now: for a chat opened mid-reply. */
+  private live = new Map<number, string>();
   private clock: () => number;
 
   constructor(
@@ -257,7 +272,11 @@ export class Thread {
       )
       .all(this.conversationId, before ?? Number.MAX_SAFE_INTEGER, incognito ? 1 : 0, limit)
       .reverse()
-      .map(messageOf);
+      .map(messageOf)
+      .map((m) => {
+        const text = m.status === "streaming" ? this.live.get(m.id) : undefined;
+        return text === undefined ? m : { ...m, text };
+      });
     return this.d.attachments?.fill(rows) ?? rows;
   }
 
@@ -668,6 +687,8 @@ export class Thread {
       if (!c.arg)
         return void this.commandNote("Say what to do, like /task check the backups.", episode.id);
       if (!tasks) return void this.commandNote("Tasks aren't available.", episode.id);
+      if (tasks.paused())
+        return void this.commandNote("Hatbot is paused. Resume to start tasks.", episode.id);
       const note = this.commandNote("Started a task.", episode.id);
       // Your own words: the task isn't tainted by what the conversation read.
       tasks.createBackgroundTask({
@@ -971,6 +992,17 @@ export class Thread {
     return { id: row.id, isNew: true, fresh, long };
   }
 
+  /** Prompt tokens the bot's last request in the episode left in the cache, while its hour lasts. */
+  private cachedTokens(episodeId: number, botId: string): number {
+    const last = this.d.db
+      .query<{ tokens: number; created_at: string }, [number, string]>(
+        `SELECT cache_read_tokens + cache_write_5m_tokens + cache_write_1h_tokens AS tokens, created_at
+         FROM spend_ledger WHERE episode_id = ? AND bot_id = ? AND purpose = 'thread' ORDER BY id DESC LIMIT 1`,
+      )
+      .get(episodeId, botId);
+    return last && this.clock() - Date.parse(last.created_at) < 3600_000 ? last.tokens : 0;
+  }
+
   /** How long the episode's last chat request was, in prompt tokens. */
   private promptTokens(episodeId: number): number {
     return (
@@ -1049,6 +1081,8 @@ export class Thread {
         await this.summarize(e.id);
         this.summaryFailures.delete(e.id);
       } catch (err) {
+        // A spent limit isn't the summary's failure: it's written once there's room again.
+        if (err instanceof BudgetError) continue;
         const failures = (this.summaryFailures.get(e.id) ?? 0) + 1;
         this.summaryFailures.set(e.id, failures);
         if (failures < MAX_SUMMARY_TRIES) {
@@ -1232,6 +1266,13 @@ export class Thread {
   ): Promise<string> {
     const transcript = rows.map((m) => this.transcript(m)).join("\n");
     const names = this.members().map((b) => b.name);
+    const content = `<summary>\n${this.threadSummary()}\n</summary>\n\n<deleted_conversation>\n${transcript}\n</deleted_conversation>`;
+    this.d.spend.check(
+      requestCeiling(SUMMARY_MODEL, {
+        prompt: fixedTokens(FORGET_PROMPT, content),
+        maxTokens: 4000,
+      }),
+    );
     const res = await this.d.model.create({
       model: SUMMARY_MODEL,
       max_tokens: 4000,
@@ -1241,12 +1282,7 @@ export class Thread {
         names.length === 1 && names[0] === "Hatbot"
           ? FORGET_PROMPT
           : FORGET_PROMPT.replace(/\bHatbot\b/g, names.join(" and ")),
-      messages: [
-        {
-          role: "user",
-          content: `<summary>\n${this.threadSummary()}\n</summary>\n\n<deleted_conversation>\n${transcript}\n</deleted_conversation>`,
-        },
-      ],
+      messages: [{ role: "user", content }],
     });
     this.d.spend.recordResponse({
       model: SUMMARY_MODEL,
@@ -1279,6 +1315,13 @@ export class Thread {
     // One with only commands in it (/new and nothing after) has nothing to summarize.
     if (transcript && this.hasTurns(episodeId)) {
       const names = this.members().map((b) => b.name);
+      const content = `<previous_summary>\n${this.threadSummary() || "(none)"}\n</previous_summary>\n\n<conversation>\n${transcript}\n</conversation>`;
+      this.d.spend.check(
+        requestCeiling(SUMMARY_MODEL, {
+          prompt: fixedTokens(SUMMARY_PROMPT, content),
+          maxTokens: 4000,
+        }),
+      );
       const res = await this.d.model.create({
         model: SUMMARY_MODEL,
         max_tokens: 4000,
@@ -1288,12 +1331,7 @@ export class Thread {
           names.length === 1 && names[0] === "Hatbot"
             ? SUMMARY_PROMPT
             : SUMMARY_PROMPT.replace(/\bHatbot\b/g, names.join(" and ")),
-        messages: [
-          {
-            role: "user",
-            content: `<previous_summary>\n${this.threadSummary() || "(none)"}\n</previous_summary>\n\n<conversation>\n${transcript}\n</conversation>`,
-          },
-        ],
+        messages: [{ role: "user", content }],
       });
       this.d.spend.recordResponse({
         model: SUMMARY_MODEL,
@@ -1670,6 +1708,17 @@ export class Thread {
     this.touch(episode.id);
     let text = "";
     let separate = false;
+    let savedAt = this.clock();
+    /** Keeps the text as it is now: in memory for the apps, and every few seconds in the database. */
+    const keep = () => {
+      this.live.set(out.id, text);
+      if (this.clock() - savedAt < SAVE_TEXT_MS) return;
+      savedAt = this.clock();
+      db.query("UPDATE messages SET text = ? WHERE id = ? AND status = 'streaming'").run(
+        text,
+        out.id,
+      );
+    };
     /** Charts in the reply that don't draw, while the model writes them again, out of view. */
     let chartFix: { broken: { start: number; end: number }[]; text: string } | null = null;
     let fixedCharts = false;
@@ -1687,8 +1736,10 @@ export class Thread {
         delta = `\n\n---\n\n${delta}`;
       }
       separate = false;
+      // `at`: where it goes in the text, so an app that loaded the reply mid-way doesn't add it twice.
+      events.emit({ type: "message.delta", id: out.id, text: delta, at: text.length });
       text += delta;
-      events.emit({ type: "message.delta", id: out.id, text: delta });
+      keep();
     };
     /** The pages the reply cites, and the titles of those it fetched (`addSources`). */
     const cited: Source[] = [];
@@ -1703,6 +1754,7 @@ export class Thread {
         separate = true;
         say(note);
       }
+      this.live.delete(out.id);
       db.query("UPDATE messages SET text = ?, status = ?, sources = ? WHERE id = ?").run(
         text,
         status,
@@ -1735,8 +1787,20 @@ export class Thread {
         text = at.text;
         separate = at.separate;
         if (chartFix && at.fix !== undefined) chartFix.text = at.fix;
+        keep();
         events.emit({ type: "message.rewrite", id: out.id });
-        if (text) events.emit({ type: "message.delta", id: out.id, text });
+        if (text) events.emit({ type: "message.delta", id: out.id, text, at: 0 });
+      };
+    };
+
+    /** What this reply's requests in flight hold against the limits; all let go when it ends. */
+    const holding = new Set<() => void>();
+    const hold = (usd: number) => {
+      const release = spend.hold(usd);
+      holding.add(release);
+      return () => {
+        release();
+        holding.delete(release);
       };
     };
 
@@ -1755,15 +1819,19 @@ export class Thread {
         return result("Opus was already asked once in this reply. Work with its answer.", true);
       askedOpus = true;
       const content = `<question>\n${p.data.question}\n</question>\n\n<context>\n${p.data.context || "(none)"}\n</context>`;
-      const price = priceOf(EXPERT_MODEL);
-      spend.check(((content.length / 3 + 2000) * price.input + 8000 * price.output) / 1_000_000);
+      const held = hold(
+        requestCeiling(EXPERT_MODEL, {
+          prompt: fixedTokens(EXPERT_PROMPT, content),
+          maxTokens: MAX_TOKENS,
+        }),
+      );
       separate = true;
       let answer = "";
       const restore = checkpoint();
       const res = await model.stream(
         {
           model: EXPERT_MODEL,
-          max_tokens: 32000,
+          max_tokens: MAX_TOKENS,
           betas: ["server-side-fallback-2026-07-01"],
           fallbacks: "default",
           system: EXPERT_PROMPT,
@@ -1780,9 +1848,19 @@ export class Thread {
             answer = "";
             restore();
           },
+          onFailedUsage: (m, usage) => {
+            used.costUsd += spend.recordResponse({
+              model: m,
+              purpose: "expert",
+              usage,
+              episodeId: episode.id,
+              botId: bot.id,
+            });
+          },
           signal: abort.signal,
         },
       );
+      held();
       used.costUsd += spend.recordResponse({
         model: EXPERT_MODEL,
         purpose: "expert",
@@ -1797,7 +1875,7 @@ export class Thread {
       // The answer itself too, so what comes after it can follow on from it.
       return result(
         `${
-          res.stop_reason === "max_tokens"
+          cutOff(res)
             ? "Opus's answer was cut off; it's in your reply as far as it got. Tell the owner, briefly."
             : "Opus's answer is now in your reply, shown to the owner as is. Don't repeat, summarise or rewrite it. Add at most a line if something needs saying; otherwise end your reply."
         }\n\n<opus_answer>\n${answer.trim()}\n</opus_answer>`,
@@ -1830,8 +1908,19 @@ export class Thread {
         }
 
         const { turns: messages, effort } = await this.loadTurns(episode.id, bot.id, files);
+        // What it may cost at most, held against the limits until it's recorded.
+        const cached = this.cachedTokens(episode.id, bot.id);
+        let held: () => void;
         try {
-          spend.check(estimateCost(messages, chatModel));
+          held = hold(
+            requestCeiling(chatModel, {
+              prompt: Math.max(estimateTokens(messages) + fixedTokens(system, tools), cached),
+              cached,
+              write: "1h",
+              maxTokens: MAX_TOKENS,
+              webSearches: searchesIn(tools),
+            }),
+          );
         } catch (err) {
           if (err instanceof BudgetError) return finish("error", `_Stopped: ${err.message}_`);
           throw err;
@@ -1841,7 +1930,7 @@ export class Thread {
         const res = await model.stream(
           {
             model: chatModel,
-            max_tokens: 32000,
+            max_tokens: MAX_TOKENS,
             betas: BETAS,
             // Haiku 5.5 has no server-side fallback; a refusal there ends the reply with a note.
             ...(onHaiku ? {} : { fallbacks: "default" as const }),
@@ -1865,7 +1954,7 @@ export class Thread {
             },
             output_config: { effort: effort ?? chatEffort },
             ...(container ? { container } : {}),
-            messages,
+            messages: markPrevious(messages),
           },
           {
             onText: say,
@@ -1880,9 +1969,19 @@ export class Thread {
               else if (read && "read" in read) progress(`Reading ${read.read || "a web page"}`);
             },
             onRetry: checkpoint(),
+            onFailedUsage: (m, usage) => {
+              used.costUsd += spend.recordResponse({
+                model: m,
+                purpose: "thread",
+                usage,
+                episodeId: episode.id,
+                botId: bot.id,
+              });
+            },
             signal: abort.signal,
           },
         );
+        held();
         // A paused turn picks up mid-thought; only text after tools starts a new part.
         separate = res.stop_reason !== "pause_turn";
         container = containerOf(res, container);
@@ -1891,6 +1990,10 @@ export class Thread {
             `episode ${episode.id}: the API changed the input`,
             JSON.stringify(res.input_transformations).slice(0, 1000),
           );
+        // What the declined model did before a fallback partway isn't kept, and its calls don't run.
+        const content = afterFallback(res.content);
+        // The turn first: what the API has answered is kept, whatever recording its cost does.
+        this.appendTurn(episode.id, bot.id, "assistant", content);
         used.costUsd += spend.recordResponse({
           model: chatModel,
           purpose: "thread",
@@ -1900,14 +2003,19 @@ export class Thread {
         });
         used.tokens += tokenCount(tokensOf(res.usage));
         events.emit({ type: "message.usage", id: out.id, ...used });
-        this.appendTurn(episode.id, bot.id, "assistant", res.content);
-        addSources(cited, fetched, res.content);
+        // The last request's entry was there to read, but most of it was written again.
+        const read = res.usage.cache_read_input_tokens ?? 0;
+        if (cached > 4000 && read < cached / 2)
+          console.warn(
+            `episode ${episode.id}: the cache missed (read ${read} of ${cached} tokens; wrote ${res.usage.cache_creation_input_tokens ?? 0})`,
+          );
+        addSources(cited, fetched, content);
         // Web pages are untrusted (PLAN.md §6.1).
         const web = webReads(res.content);
         if (web.length) this.taint(episode.id, web[0] as string);
         for (const page of webTexts(res.content)) screen(page.source, page.text);
 
-        const toolUses = res.content.filter(
+        const toolUses = content.filter(
           (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use",
         );
         if (res.stop_reason === "pause_turn") continue;
@@ -1917,8 +2025,11 @@ export class Thread {
             text ? "_(I stopped there: I can't help with the rest.)_" : "I can't help with that.",
           );
         }
+        // Nothing more fits: its calls may be cut short, and another request would fail the same way.
+        if (res.stop_reason === "model_context_window_exceeded")
+          return finish("error", "_(My reply was cut off: this conversation got too long.)_");
         if (!toolUses.length) {
-          if (res.stop_reason === "max_tokens") return finish("error", "_(My reply was cut off.)_");
+          if (cutOff(res)) return finish("error", "_(My reply was cut off.)_");
           if (chartFix) {
             // Each chart that now draws takes the broken one's place; one that still doesn't stays code.
             const fixes = chartBlocks(chartFix.text);
@@ -1956,11 +2067,18 @@ export class Thread {
 
         // Every tool_use needs a result, or the episode can't continue. Lookups in a row run at once.
         const lookup = (call: Anthropic.Beta.BetaToolUseBlock) =>
-          res.stop_reason !== "max_tokens" &&
+          !cutOff(res) &&
           (LOOKUP_TOOLS.includes(call.name) ||
             pluginTools.find((t) => t.name === call.name)?.access === "read");
         const results = await inBatches(toolUses, lookup, async (call): Promise<BlockParam> => {
-          if (res.stop_reason === "max_tokens")
+          if (abort.signal.aborted)
+            return {
+              type: "tool_result",
+              tool_use_id: call.id,
+              is_error: true,
+              content: "Not run: the reply was stopped.",
+            };
+          if (cutOff(res))
             return {
               type: "tool_result",
               tool_use_id: call.id,
@@ -2050,6 +2168,7 @@ export class Thread {
           };
         });
         this.appendTurn(episode.id, bot.id, "user", results);
+        abort.signal.throwIfAborted();
       }
     } catch (err) {
       if (abort.signal.aborted)
@@ -2065,6 +2184,8 @@ export class Thread {
       );
     } finally {
       this.current = null;
+      this.live.delete(out.id);
+      for (const release of holding) release();
     }
   }
 }
@@ -2084,6 +2205,31 @@ export function mentionsIn(text: string, bots: Bot[]): Bot[] {
     .filter((m): m is { b: Bot; at: number } => m.at !== undefined)
     .sort((x, y) => x.at - y.at)
     .map((m) => m.b);
+}
+
+/** Blocks a cache breakpoint can go on. */
+const CACHEABLE = ["text", "image", "document", "tool_use", "tool_result"];
+
+/**
+ * The turns with a 1-hour breakpoint where the last request ended, on the turn before the latest
+ * response: that request's cache entry. The top-level breakpoint looks back only 20 blocks for it,
+ * and a long reply (many searches between bits of text) can pass that and write the whole
+ * conversation to the cache again. With the system prompt's and the top-level one, three of four.
+ */
+export function markPrevious(turns: Turn[]): Turn[] {
+  let at = turns.findLastIndex((t) => t.role === "assistant") - 1;
+  // An effort change is a message of its own, with nothing to mark.
+  while (at >= 0 && turns[at]?.role === "system") at--;
+  const turn = turns[at];
+  if (!turn || typeof turn.content === "string") return turns;
+  // Where the last request's own breakpoint went: its last block that takes one.
+  const i = turn.content.findLastIndex((b) => CACHEABLE.includes(b.type));
+  if (i < 0) return turns;
+  const content = [...turn.content];
+  content[i] = { ...content[i], cache_control: { type: "ephemeral", ttl: "1h" } } as BlockParam;
+  const out = [...turns];
+  out[at] = { ...turn, content };
+  return out;
 }
 
 /**
@@ -2196,13 +2342,6 @@ export function activity(label: string, input: unknown): string {
   const detail = parts.join(", ");
   if (!detail) return label;
   return `${label}: ${detail.length > 80 ? `${detail.slice(0, 79)}…` : detail}`;
-}
-
-/** Rough upper estimate before a request: cached prefix at read price, plus room for a reply. */
-function estimateCost(messages: Turn[], model: string): number {
-  const p = priceOf(model);
-  const tokens = estimateTokens(messages) + 4000;
-  return (tokens * p.input * 0.25 + 2000 * p.output) / 1_000_000;
 }
 
 /** "Thu 2026-10-09 18:04", in the brain's local time. */

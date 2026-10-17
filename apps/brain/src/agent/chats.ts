@@ -33,8 +33,14 @@ export class Chats {
 
   constructor(private d: ThreadDeps) {
     this.clock = d.clock ?? Date.now;
-    // A restart cuts off any reply that was streaming.
-    d.db.query("UPDATE messages SET status = 'error' WHERE status = 'streaming'").run();
+    // A restart cuts off any reply that was streaming: it keeps what was saved of it, and says so.
+    const note = "_This reply was cut off._";
+    d.db
+      .query(
+        `UPDATE messages SET status = 'error',
+         text = CASE WHEN text = '' THEN ?1 ELSE text || ?2 END WHERE status = 'streaming'`,
+      )
+      .run(note, `\n\n---\n\n${note}`);
   }
 
   private now() {

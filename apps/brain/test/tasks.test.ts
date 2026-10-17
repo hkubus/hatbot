@@ -19,6 +19,10 @@ function startTask(t: TestApp, goal = "Book a table") {
 
 const pending = (t: TestApp) => waitFor(() => t.approvals.list(true)[0]);
 
+/** What the last message of a request said. */
+const lastText = (req: { messages: { content: unknown }[] } | undefined) =>
+  JSON.stringify(req?.messages.at(-1)?.content);
+
 test("chat starts a desktop task that runs, archives screenshots and reports back", async () => {
   const chat = new FakeModel([
     {
@@ -913,6 +917,45 @@ test("a Haiku desktop task that gives up carries on on Opus with what it said", 
   );
 });
 
+test("a desktop reply with no tool call is asked to finish once; again, and Opus carries on", async () => {
+  const work = new FakeModel([
+    { content: [text("I think that's it.")] },
+    { content: [text("The table is booked, I believe.")] },
+    finish("Checked: booked on Opus."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = startTask(t);
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)).toMatchObject({
+    status: "done",
+    summary: "Checked: booked on Opus.",
+    model: "claude-opus-5-5",
+  });
+  expect(lastText(work.requests[1])).toContain("only finish_task ends the task");
+  const opus = JSON.stringify(work.requests[2]?.messages);
+  expect(opus).toContain("The table is booked, I believe.");
+
+  // Asked once, it finishes.
+  const once = new FakeModel([{ content: [text("Done, I think.")] }, finish("Booked.")]);
+  const t2 = await testApp(new FakeModel(), once);
+  const b = startTask(t2);
+  await t2.tasks.idle();
+  expect(t2.tasks.get(b.id)).toMatchObject({ status: "done", summary: "Booked." });
+  expect(once.requests.map((r) => r.model)).toEqual(["claude-haiku-5-5", "claude-haiku-5-5"]);
+});
+
+test("a background reply with no tool call is asked to finish once; again, it has failed", async () => {
+  const work = new FakeModel([
+    { content: [text("All backups look fine.")] },
+    { content: [text("Yes, all fine.")] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = t.tasks.createBackgroundTask({ title: "Backups", goal: "Check", origin: "chat" });
+  await t.tasks.idle();
+  expect(t.tasks.get(task?.id ?? 0)).toMatchObject({ status: "failed", summary: "Yes, all fine." });
+  expect(lastText(work.requests[1])).toContain("only finish_task ends the task");
+});
+
 test("blocked, budget, cancelled and switched-off desktop tasks don't carry on on Opus", async () => {
   // Blocked on a login: Opus can't get past it either.
   const blocked = new FakeModel([
@@ -982,4 +1025,186 @@ test("the weekly report counts desktop tasks by the model they started on", asyn
   const { text } = await t.report.make();
   expect(text).toContain("- Desktop on Haiku 5.5: 2 done, 3 failed, 1 of them then done on Opus.");
   expect(text).toContain("- Desktop on Opus 5.5: 1 done, 0 failed.");
+});
+
+test("cancelling a desktop task stops the rest of the actions in its turn", async () => {
+  const work = new FakeModel([
+    {
+      content: [
+        computer("left_click", { coordinate: [10, 10] }),
+        computer("type", { text: "hello" }),
+        computer("key", { text: "Return" }),
+      ],
+    },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = startTask(t);
+  t.agent.afterAction = (name) => {
+    if (name === "left_click") t.tasks.cancel(task.id);
+  };
+  await t.tasks.idle();
+  expect(t.agent.actions.map((a) => a.name)).toEqual(["left_click"]);
+  expect(t.tasks.get(task.id)?.status).toBe("cancelled");
+  const turns = t.db
+    .query<{ content: string }, [number]>(
+      "SELECT content FROM task_turns WHERE task_id = ? AND role = 'user' ORDER BY id DESC LIMIT 1",
+    )
+    .get(task.id)?.content;
+  expect(turns).toContain("Not run: the task was cancelled.");
+});
+
+test("cancelling a background task stops the rest of the calls in its turn", async () => {
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("notify_owner", { message: "Starting." }),
+        toolUse("memory_write", { path: "notes/late.md", content: "late" }),
+      ],
+    },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.tasks.notifyOwner = (id: number) => void t.tasks.cancel(id);
+  const task = t.tasks.createBackgroundTask({ title: "Two", goal: "Do two", origin: "chat" });
+  await t.tasks.idle();
+  expect(t.tasks.get(task?.id ?? 0)?.status).toBe("cancelled");
+  expect(await t.memory.exists("notes/late.md")).toBe(false);
+});
+
+test("a desktop client request ends as soon as its task's signal aborts", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: () => new Promise<Response>((r) => setTimeout(() => r(Response.json({})), 5000)),
+  });
+  try {
+    const stop = new AbortController();
+    const agent = new HttpDesktopAgent(`http://localhost:${server.port}`, "token").withSignal(
+      stop.signal,
+    );
+    const started = Date.now();
+    const pending = agent.action({ name: "wait", input: { duration: 5 } });
+    setTimeout(() => stop.abort(new Error("cancelled")), 20);
+    await expect(pending).rejects.toThrow("cancelled");
+    expect(Date.now() - started).toBeLessThan(2000);
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("an answered background task waiting for a slot shows as queued, not waiting for approval", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Fine.", notify: false })] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.settings.update({ limits: { taskUsd: 0.05, dailyUsd: 10, monthlyUsd: 200 } });
+  const task = t.tasks.createBackgroundTask({ title: "Check", goal: "Check", origin: "chat" });
+  const approval = await pending(t);
+  expect(t.tasks.get(task?.id ?? 0)?.status).toBe("waiting_approval");
+  // Every slot is taken meanwhile.
+  const signal = AbortSignal.timeout(2000);
+  for (let i = 0; i < t.tasks.pool.size; i++) await t.tasks.pool.acquire(signal);
+  t.approvals.decide(approval.id, "approve", "web");
+  await waitFor(() => t.tasks.get(task?.id ?? 0)?.status === "queued");
+  for (let i = 0; i < t.tasks.pool.size; i++) t.tasks.pool.release();
+  // Each approval adds one task limit; keep approving until it finishes.
+  for (;;) {
+    const next = await waitFor(
+      () => t.approvals.list(true)[0] ?? (t.tasks.get(task?.id ?? 0)?.status === "done" && "done"),
+    );
+    if (next === "done") break;
+    t.approvals.decide((next as Approval).id, "approve", "web");
+  }
+  await t.tasks.idle();
+  expect(t.tasks.get(task?.id ?? 0)?.status).toBe("done");
+});
+
+test("a background run stops after 4 hours of its own time, and waits no longer than that", async () => {
+  let release = () => {};
+  let release2 = () => {};
+  const work = new FakeModel([
+    {
+      content: [toolUse("wait", { minutes: 240, for: "the build" })],
+      wait: new Promise<void>((r) => {
+        release = r;
+      }),
+    },
+    {
+      content: [toolUse("memory_list", {})],
+      wait: new Promise<void>((r) => {
+        release2 = r;
+      }),
+    },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = t.tasks.createBackgroundTask({ title: "Long", goal: "Watch", origin: "schedule" });
+  const id = task?.id ?? 0;
+  await waitFor(() => work.requests.length);
+  t.advance(3.9 * 3600_000);
+  release();
+  const step = await waitFor(() => t.tasks.steps(id).find((s) => s.name === "wait"));
+  expect(step.detail).toBe("Waiting up to 6 min for the build");
+  t.tasks.tell(id, "The build finished.");
+  await waitFor(() => work.requests.length === 2);
+  t.advance(10 * 60_000);
+  release2();
+  await t.tasks.idle();
+  expect(t.tasks.get(id)).toMatchObject({ status: "failed" });
+  expect(t.tasks.get(id)?.summary).toContain("4 hours");
+});
+
+test("a run that throws while it sets up ends as failed, and its schedule can run again", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Ran.", notify: false })] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const tools = t.plugins.tools;
+  t.plugins.tools = () => {
+    throw new Error("a plugin broke");
+  };
+  const run = {
+    title: "Nightly",
+    goal: "Check",
+    origin: "schedule",
+    runKey: "schedule:9",
+  } as const;
+  const first = t.tasks.createBackgroundTask(run);
+  await t.tasks.idle();
+  expect(t.tasks.get(first?.id ?? 0)).toMatchObject({ status: "failed" });
+  expect(t.tasks.get(first?.id ?? 0)?.summary).toContain("a plugin broke");
+  t.plugins.tools = tools;
+  const second = t.tasks.createBackgroundTask(run);
+  expect(second).not.toBeNull();
+  await t.tasks.idle();
+  expect(t.tasks.get(second?.id ?? 0)).toMatchObject({ status: "done", summary: "Ran." });
+});
+
+test("a Haiku desktop task out of context carries on on Opus without being asked what it tried", async () => {
+  const work = new FakeModel([
+    { content: [computer("screenshot")], stop_reason: "model_context_window_exceeded" },
+    finish("Booked on Opus."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = startTask(t);
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)).toMatchObject({ status: "done", model: "claude-opus-5-5" });
+  // One look at the start of each attempt: the cut-off screenshot call didn't run.
+  expect(t.agent.screenshots).toBe(2);
+  expect(work.creates.some((c) => JSON.stringify(c.messages).includes("You were stopped"))).toBe(
+    false,
+  );
+  expect(JSON.stringify(work.requests[1]?.messages)).toContain("got too long");
+});
+
+test("a task whose reply hit the context window stops as failed, without running its calls", async () => {
+  const work = new FakeModel([
+    {
+      content: [toolUse("memory_write", { path: "notes/z.md", content: "z" })],
+      stop_reason: "model_context_window_exceeded",
+    },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = t.tasks.createBackgroundTask({ title: "Long", goal: "Read it all", origin: "chat" });
+  await t.tasks.idle();
+  expect(t.tasks.get(task?.id ?? 0)).toMatchObject({ status: "failed" });
+  expect(t.tasks.get(task?.id ?? 0)?.summary).toContain("too long");
+  expect(await t.memory.exists("notes/z.md")).toBe(false);
 });

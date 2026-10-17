@@ -103,3 +103,16 @@ test("migration 26 indexes per-task lookups, and they're used", () => {
   expect(plan("SELECT * FROM tasks WHERE parent_id = 1")).toContain("tasks_parent");
   expect(db.query("SELECT count(*) AS n FROM hook_deliveries").get()).toEqual({ n: 0 });
 });
+
+test("migration 33 indexes the ledger by conversation, and the chat's lookups use it", () => {
+  const db = at(32);
+  migrate(db);
+  const plan = db
+    .query<{ detail: string }, []>(
+      "EXPLAIN QUERY PLAN SELECT * FROM spend_ledger WHERE episode_id = 1 AND purpose = 'thread' ORDER BY id DESC LIMIT 1",
+    )
+    .all()
+    .map((r) => r.detail)
+    .join(" ");
+  expect(plan).toContain("spend_ledger_episode");
+});

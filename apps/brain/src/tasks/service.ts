@@ -93,8 +93,10 @@ type Row = {
   steps: number;
 };
 
+// A task's cost is its own and that of the tasks it started, which share its limit.
 const SELECT = `SELECT t.*,
-  (SELECT sum(cost_usd) FROM spend_ledger s WHERE s.task_id = t.id) AS cost_usd,
+  (WITH RECURSIVE tree(id) AS (SELECT t.id UNION ALL SELECT c.id FROM tasks c JOIN tree ON c.parent_id = tree.id)
+   SELECT sum(cost_usd) FROM spend_ledger s WHERE s.task_id IN tree) AS cost_usd,
   (SELECT count(*) FROM task_steps st WHERE st.task_id = t.id AND st.kind = 'action') AS steps
   FROM tasks t`;
 
@@ -143,6 +145,8 @@ const ACTIVE: typeof ACTIVE_TASK_STATUSES = [
 ];
 const FINAL: TaskStatus[] = ["done", "failed", "cancelled"];
 const RESTARTED = "Stopped: the brain restarted.";
+const errorText = (err: unknown) =>
+  err instanceof Error ? err.message.slice(0, 200) : "unknown error";
 
 export class Tasks {
   readonly lane = new ScreenLane();
@@ -645,12 +649,33 @@ export class Tasks {
     };
   }
 
+  /** Pause all is on: no task runs, and none starts. */
+  paused(): boolean {
+    return this.d.settings.get().paused;
+  }
+
   private start(id: number) {
+    // Whatever started it while paused hears it didn't run; it can be run again once resumed.
+    if (this.paused()) {
+      this.finish(id, "cancelled", "Not started: Hatbot is paused.", false, { ntfy: false });
+      return;
+    }
     const abort = new AbortController();
     this.running.set(id, abort);
     const runner = this.get(id)?.lane === "background" ? runAgentTask : runDesktopTask;
     const run = runner(this, id, abort.signal)
-      .catch((err) => console.error(`task ${id} crashed`, err))
+      .catch((err) => {
+        console.error(`task ${id} crashed`, err);
+        // A throw before the run could end it (building its tools or prompt) would leave it queued,
+        // and a queued task holds up its schedule's and trigger's next runs.
+        try {
+          const t = this.get(id);
+          if (t && !FINAL.includes(t.status))
+            this.finish(id, "failed", `Something went wrong starting it (${errorText(err)}).`);
+        } catch (again) {
+          console.error(`task ${id} couldn't be ended`, again);
+        }
+      })
       .finally(() => {
         this.running.delete(id);
         this.inbox.delete(id);
@@ -699,14 +724,46 @@ export class Tasks {
     this.emit(id);
   }
 
+  /**
+   * The task that started this one's tree, or itself. Its limit covers the whole tree, so a task that
+   * starts others can't spend a limit in each (PLAN.md §6.3).
+   */
+  rootOf(id: number): number {
+    for (let at = id; ; ) {
+      const parent = this.d.db
+        .query<{ parent_id: number | null }, [number]>("SELECT parent_id FROM tasks WHERE id = ?")
+        .get(at)?.parent_id;
+      if (!parent) return at;
+      at = parent;
+    }
+  }
+
+  /** The limit a task spends against: its tree's, which is the root's. */
   budget(id: number): number {
     return this.d.db
       .query<{ budget_usd: number }, [number]>("SELECT budget_usd FROM tasks WHERE id = ?")
-      .get(id)?.budget_usd as number;
+      .get(this.rootOf(id))?.budget_usd as number;
   }
 
   raiseBudget(id: number, byUsd: number) {
-    this.d.db.query("UPDATE tasks SET budget_usd = budget_usd + ? WHERE id = ?").run(byUsd, id);
+    this.d.db
+      .query("UPDATE tasks SET budget_usd = budget_usd + ? WHERE id = ?")
+      .run(byUsd, this.rootOf(id));
+  }
+
+  /** What a task at its tree's limit asks you, to raise it by `extra`. */
+  budgetAsk(id: number, extra: number): { summary: string; reason: string } {
+    const root = this.rootOf(id);
+    const title = (n: number) => `"${this.get(n)?.title ?? `Task #${n}`}"`;
+    return root === id
+      ? {
+          summary: `Let task #${id} spend $${extra} more`,
+          reason: `${title(id)} has used its $${this.budget(id)} limit.`,
+        }
+      : {
+          summary: `Let task #${root} and the tasks it started spend $${extra} more`,
+          reason: `${title(root)} and the tasks it started, ${title(id)} among them, have used its $${this.budget(id)} limit.`,
+        };
   }
 
   addStep(
