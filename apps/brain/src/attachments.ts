@@ -21,6 +21,11 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_PDF_BYTES = 20 * 1024 * 1024;
 /** Text files the model reads whole; longer ones go through the sandbox. */
 const MAX_TEXT_BYTES = 400 * 1024;
+/**
+ * What one conversation's files may add to every request, as base64 and text: well under the API's
+ * 32 MB a request. Files past it go through the sandbox. Tests lower it.
+ */
+export const inlineLimit = { bytes: 20 * 1024 * 1024 };
 
 const IMAGES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 const BY_EXTENSION: Record<string, string> = {
@@ -68,6 +73,16 @@ const isText = (a: Attachment) =>
   a.mediaType.startsWith("text/") ||
   TEXT_TYPES.includes(a.mediaType) ||
   CODE_EXTENSIONS.test(a.name);
+
+const labelOf = (a: Attachment) =>
+  `Attachment #${a.id}: "${a.name}" (${a.mediaType}, ${sizeText(a.size)})`;
+
+/** What a file's blocks add to a request: their base64 and text documents. */
+const inlineBytes = (blocks: BlockParam[]) =>
+  blocks.reduce((n, b) => {
+    const source = (b as { source?: { type?: string; data?: unknown } }).source;
+    return n + (typeof source?.data === "string" ? source.data.length : 0);
+  }, 0);
 
 /** "2.1 MB", "340 KB". */
 export const sizeText = (n: number) =>
@@ -248,12 +263,17 @@ export class Attachments {
     return list.map((a) => ({ type: ATTACHMENT_REF, id: a.id }) as unknown as BlockParam);
   }
 
-  /** Turns with their file references made into what the model reads. `cache` lasts a reply. */
+  /**
+   * Turns with their file references made into what the model reads. `cache` lasts a reply. Files are
+   * read oldest first until inlineLimit is used up; later ones are named, for code_run. Earlier turns
+   * come out the same every time, so the prompt cache still matches.
+   */
   async expand(
     turns: Anthropic.Beta.BetaMessageParam[],
     cache = new Map<number, BlockParam[]>(),
   ): Promise<Anthropic.Beta.BetaMessageParam[]> {
     const out: Anthropic.Beta.BetaMessageParam[] = [];
+    let inline = 0;
     for (const turn of turns) {
       if (typeof turn.content === "string" || !turn.content.some(isRef)) {
         out.push(turn);
@@ -266,13 +286,22 @@ export class Attachments {
           continue;
         }
         let blocks = cache.get(b.id);
+        const a = this.get(b.id);
         if (!blocks) {
-          const a = this.get(b.id);
           blocks = a
             ? await this.blocks([a])
             : [{ type: "text", text: `Attachment #${b.id}: deleted.` }];
           cache.set(b.id, blocks);
         }
+        const size = inlineBytes(blocks);
+        if (a && size && inline + size > inlineLimit.bytes) {
+          content.push({
+            type: "text",
+            text: `${labelOf(a)}: not read here, since the conversation's files already fill what a request can carry. code_run can copy it into the sandbox (files: [${a.id}]) to work on it.`,
+          });
+          continue;
+        }
+        inline += size;
         content.push(...blocks);
       }
       out.push({ ...turn, content });
@@ -283,7 +312,7 @@ export class Attachments {
   async blocks(list: Attachment[]): Promise<Anthropic.Beta.BetaContentBlockParam[]> {
     const out: Anthropic.Beta.BetaContentBlockParam[] = [];
     for (const a of list) {
-      const label = `Attachment #${a.id}: "${a.name}" (${a.mediaType}, ${sizeText(a.size)})`;
+      const label = labelOf(a);
       const bytes = await this.bytes(a.id);
       if (!bytes) {
         out.push({ type: "text", text: `${label}: the file is missing.` });

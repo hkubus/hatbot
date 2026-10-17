@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Attachment, ThreadMessage } from "@hatbot/shared";
+import { inlineLimit } from "../src/attachments";
 import type { CallContext } from "../src/plugins/plugin";
 import { estimateTokens } from "../src/spend";
 import { FakeModel, text, toolUse } from "./fake-model";
@@ -73,6 +74,44 @@ test("you upload a photo, send it with a message, and the model sees it; it tain
   const image = { type: "image", source: { type: "base64", media_type: "image/png", data: b64 } };
   expect(chat.requests[0]?.messages[0]?.content).toContainEqual(image as never);
   expect(chat.requests[1]?.messages[0]?.content).toContainEqual(image as never);
+});
+
+test("files past what a request can carry are named for code_run, the same on every request", async () => {
+  const chat = new FakeModel([
+    { content: [text("One.")] },
+    { content: [text("Two.")] },
+    { content: [text("Three.")] },
+  ]);
+  const t = await testApp(chat);
+  const { cookie } = await setUpOwner(t);
+  const send = async (name: string, words: string) => {
+    const a = (await (
+      await upload(t, cookie, new File([PNG], name, { type: "image/png" }))
+    ).json()) as Attachment;
+    await t.call("POST", "/thread/messages", { text: words, attachmentIds: [a.id] }, { cookie });
+    await t.thread.idle();
+    return a;
+  };
+  // An 11-byte PNG is 16 characters of base64: room for one.
+  const saved = inlineLimit.bytes;
+  inlineLimit.bytes = 20;
+  try {
+    const first = await send("one.png", "first");
+    const second = await send("two.png", "second");
+    await t.thread.post("third").done;
+    const images = (i: number) =>
+      JSON.stringify(chat.requests[i]?.messages).split('"image"').length - 1;
+    expect([images(0), images(1), images(2)]).toEqual([1, 1, 1]);
+    const last = JSON.stringify(chat.requests[2]?.messages);
+    expect(last).toContain(`Attachment #${second.id}: \\"two.png\\"`);
+    expect(last).toContain(`files: [${second.id}]`);
+    expect(last).not.toContain(`files: [${first.id}]`);
+    // What the first two requests sent comes back the same in the third.
+    const head = JSON.stringify(chat.requests[1]?.messages.slice(0, 3));
+    expect(JSON.stringify(chat.requests[2]?.messages.slice(0, 3))).toBe(head);
+  } finally {
+    inlineLimit.bytes = saved;
+  }
 });
 
 test("turns stored with the bytes themselves still go out as they are", async () => {
