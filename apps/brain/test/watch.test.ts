@@ -90,6 +90,10 @@ test("numbers are read in either style, and only a move into the condition count
   expect(numberIn("-300 zł")).toBe(-300);
   expect(numberIn("Taniej o 15 % 849,00 zł")).toBe(849);
   expect(numberIn("Laptop 16 GB 3 999 zł")).toBe(3999);
+  // A percentage is the number when there's no other.
+  expect(numberIn("15%")).toBe(15);
+  expect(numberIn("Battery: 15 %, -20% 7")).toBe(7);
+  expect(counts({ when: "below", value: 20 }, "25%", "15%")).toBe(true);
   // Neighbouring prices aren't read as one number.
   expect(numberIn("1 299 zł 1 499 zł")).toBe(1299);
   expect(numberIn("299\n999")).toBe(299);

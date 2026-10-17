@@ -207,17 +207,18 @@ function parseNumber(written: string, money: boolean): number {
 }
 
 /**
- * The price or number in a value: the first one next to a currency if there is one, else the first,
- * leaving out percentages ("-20%"). A negative one next to a currency is a discount, not the price. "1 299,99 zł" is 1299.99, "1.299 zł" is 1299, "€1.299,00" is
+ * The price or number in a value: the first one next to a currency if there is one, else the first
+ * that isn't a percentage ("-20%"), else the first percentage ("15%"). A negative one next to a
+ * currency is a discount, not the price. "1 299,99 zł" is 1299.99, "1.299 zł" is 1299, "€1.299,00" is
  * 1299, "$1,299.00" is 1299, "-3.5 °C" is -3.5. NaN when there's none.
  */
 export function numberIn(value: string): number {
   let first: number | null = null;
+  let percent: number | null = null;
   for (const m of value.matchAll(NUMBER)) {
     let written = m[0];
     const start = m.index;
     const end = start + written.length;
-    if (/^\s?%/.test(value.slice(end))) continue;
     // A dash after a word or number is a range or a hyphen, not a minus: "100-200", "A-4".
     if (/^[-−]/.test(written) && /[\p{L}\p{N}]$/u.test(value.slice(0, start)))
       written = written.slice(1);
@@ -225,11 +226,12 @@ export function numberIn(value: string): number {
     const money = MONEY_AFTER.test(value.slice(end, end + 12)) || MONEY_BEFORE.test(before);
     const n = parseNumber(written, money);
     if (Number.isNaN(n)) continue;
+    if (/^\s?%/.test(value.slice(end))) percent ??= n;
     // A price is never negative: "-300 zł" is a discount badge.
-    if (money && n >= 0) return n;
-    first ??= n;
+    else if (money && n >= 0) return n;
+    else first ??= n;
   }
-  return first ?? Number.NaN;
+  return first ?? percent ?? Number.NaN;
 }
 
 /** Whether a value is in the condition: contains the text, or is below or above the number. */
