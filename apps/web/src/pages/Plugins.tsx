@@ -127,7 +127,7 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
           {error && <div className="form-error">{error}</div>}
           {result && <div className={result.ok ? "" : "form-error"}>{result.message}</div>}
           {p.secrets.length > 0 && (
-            <dl className="kv">
+            <dl className="kv secrets">
               {p.secrets.map((s) => (
                 <SecretRow key={s.name} name={s.name} set={s.set} />
               ))}

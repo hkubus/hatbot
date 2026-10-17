@@ -21,7 +21,7 @@ const CHAR_W = 6.2;
 
 const color = (i: number) => `var(--series-${i + 1})`;
 
-function useWidth(ref: React.RefObject<HTMLElement | null>): number {
+export function useWidth(ref: React.RefObject<HTMLElement | null>): number {
   const [width, setWidth] = useState(0);
   useLayoutEffect(() => {
     const el = ref.current;
@@ -36,7 +36,7 @@ function useWidth(ref: React.RefObject<HTMLElement | null>): number {
 
 /** Same footprint as the chart, while its block is still streaming in. */
 export function ChartPending() {
-  return <div className="chart pending" style={{ height: HEIGHT }} />;
+  return <div className="reply-chart pending" style={{ height: HEIGHT }} />;
 }
 
 export function Chart({ spec }: { spec: ChartSpec }) {
@@ -421,7 +421,7 @@ function Frame({ spec, children }: { spec: ChartSpec; children: ReactNode }) {
   const labels = spec.x.map(String);
   const fmt = (v: number) => chartValue(v, spec.unit);
   return (
-    <figure className="chart">
+    <figure className="reply-chart">
       {spec.title && <figcaption className="chart-title">{spec.title}</figcaption>}
       {spec.series.length > 1 && (
         <div className="chart-legend">

@@ -7,6 +7,7 @@ import type {
 } from "@hatbot/shared";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { useWidth } from "../chart";
 import { LoadError, loadErrorText } from "../load";
 import { useStore } from "../store";
 import { tokenText } from "../tasks";
@@ -59,7 +60,8 @@ type Point = { key: string; usd: number; axis?: string; title: string; detail: s
 function BarChart({ points, limit, label }: { points: Point[]; limit?: number; label: string }) {
   const box = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<{ i: number; x: number; y: number } | null>(null);
-  const W = 720;
+  // Drawn at the width it's shown at, so the labels stay 11px on a phone and on a wide screen.
+  const W = useWidth(box) || 720;
   const H = 230;
   const L = 44;
   const R = 8;
@@ -313,7 +315,6 @@ export function Spend() {
             <div className={`meter ${todayUsd >= limits.dailyUsd ? "hot" : ""}`}>
               <span style={{ width: `${Math.min(100, (todayUsd / limits.dailyUsd) * 100)}%` }} />
             </div>
-            <div className="label tnum">{tokenText(summary.todayTokens)} tokens</div>
           </div>
           <div className="tile">
             <div className="label">This month</div>
@@ -327,12 +328,10 @@ export function Spend() {
           <div className="tile">
             <div className="label">Last hour</div>
             <div className="value tnum">{fineMoney(summary.lastHour.usd)}</div>
-            <div className="label tnum">{tokenText(summary.lastHour.tokens)} tokens</div>
           </div>
           <div className="tile">
             <div className="label">Last minute</div>
             <div className="value tnum">{fineMoney(summary.lastMinute.usd)}</div>
-            <div className="label tnum">{tokenText(summary.lastMinute.tokens)} tokens</div>
           </div>
         </div>
 

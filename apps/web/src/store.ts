@@ -23,6 +23,7 @@ import {
 } from "@hatbot/shared";
 import { useSyncExternalStore } from "react";
 import { ApiError, api } from "./api";
+import type { Toast } from "./toast";
 
 type State = {
   /** The chat that's showing: a bot's own, or a group. */
@@ -555,7 +556,6 @@ export const needsYou = (s: State) =>
   Object.values(s.approvals).filter((a) => a.status === "pending").length +
   (s.desktop?.request ? 1 : 0);
 
-type Toast = (text: string) => void;
 let toast: Toast = () => {};
 export const onToast = (fn: Toast) => {
   toast = fn;
@@ -687,7 +687,8 @@ function apply(e: HatbotEvent) {
     case "proposal.updated":
       return putProposal(e.proposal);
     case "memory.committed":
-      if (state.botIds.some((id) => botName(state, id) === e.author)) toast(`Memory: ${e.message}`);
+      if (state.botIds.some((id) => botName(state, id) === e.author))
+        toast(`Memory: ${e.message}`, "info");
       return set({ memoryVersion: state.memoryVersion + 1 });
     case "paused":
       return set({ paused: e.paused });

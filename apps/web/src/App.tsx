@@ -36,6 +36,7 @@ import {
   useStore,
 } from "./store";
 import { getTheme, setTheme, type Theme } from "./theme";
+import { TOAST_ICON, type Toast, type ToastKind } from "./toast";
 
 // Pages you open now and then load when first opened; chat and tasks come with the app.
 const NegotiationPage = lazy(() =>
@@ -91,13 +92,24 @@ export function App() {
   const [unreachable, setUnreachable] = useState(false);
   // Only a 401 means you're signed out; anything else is the brain or the network being down.
   const refresh = useCallback(() => {
-    setUnreachable(false);
-    api<Me>("/auth/me").then(setMe, (err) => {
-      if (err instanceof ApiError && err.status === 401)
-        setMe({ setupDone: true, authenticated: false });
-      else setUnreachable(true);
-    });
+    api<Me>("/auth/me").then(
+      (m) => {
+        setUnreachable(false);
+        setMe(m);
+      },
+      (err) => {
+        const out = err instanceof ApiError && err.status === 401;
+        if (out) setMe({ setupDone: true, authenticated: false });
+        setUnreachable(!out);
+      },
+    );
   }, []);
+  // A restart, say: it tries again on its own every 5 s, keeping the message up meanwhile.
+  useEffect(() => {
+    if (!unreachable || me) return;
+    const t = setInterval(refresh, 5000);
+    return () => clearInterval(t);
+  }, [unreachable, me, refresh]);
 
   useEffect(() => {
     refresh();
@@ -158,7 +170,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     const t = setTimeout(() => setDown(true), 4000);
     return () => clearTimeout(t);
   }, [connected]);
-  const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
+  const [toasts, setToasts] = useState<{ id: number; text: string; kind: ToastKind }[]>([]);
   const [insp, setInsp] = useState(() => localStorage.getItem("hatbot:insp") === "1");
   const view = viewOf(path);
   // The side panel is hidden on a phone; it isn't drawn either, or its live view would stream unseen.
@@ -195,9 +207,9 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     );
   }, [approvalId]);
 
-  const toast = useCallback((text: string) => {
+  const toast = useCallback<Toast>((text, kind = "done") => {
     const id = Date.now() + Math.random();
-    setToasts((t) => [...t, { id, text }]);
+    setToasts((t) => [...t, { id, text, kind }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2800);
   }, []);
 
@@ -456,7 +468,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
             ))}
           {view.path === "/live" && (
             <section className="view">
-              <div className="page narrow">
+              <div className="page live-page">
                 <LiveView />
               </div>
             </section>
@@ -520,12 +532,15 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
       </nav>
 
       <div className="toasts" aria-live="polite">
-        {toasts.map((t) => (
-          <div className="toast" key={t.id}>
-            <Icon name="check" />
-            {t.text}
-          </div>
-        ))}
+        {toasts.map((t) => {
+          const icon = TOAST_ICON[t.kind];
+          return (
+            <div className={`toast ${t.kind}`} key={t.id}>
+              {icon && <Icon name={icon} />}
+              {t.text}
+            </div>
+          );
+        })}
       </div>
     </>
   );
