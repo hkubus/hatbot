@@ -1,4 +1,4 @@
-// A bot's page (PLAN.md §14): its name, role, model and plugins. No id makes one.
+// A bot's page (PLAN.md §14): its name, role, model and plugins. No id makes one, from a template or not.
 import SwiftUI
 
 struct BotView: View {
@@ -9,6 +9,8 @@ struct BotView: View {
   @Environment(\.dismiss) private var dismiss
   @State private var form = Form()
   @State private var plugins: [PluginName] = []
+  @State private var templates: [BotTemplate] = []
+  @State private var template: String?
   @State private var busy = false
   @State private var confirmDelete = false
   @State private var error: String?
@@ -32,6 +34,15 @@ struct BotView: View {
       chatEffort = b.chatEffort
       plugins = b.plugins
     }
+    init(_ t: BotTemplate) {
+      name = t.name
+      icon = t.icon
+      color = t.color
+      instructions = t.instructions
+      chatModel = t.chatModel
+      chatEffort = t.chatEffort
+      plugins = t.plugins
+    }
 
     func change(rename: Bool) -> AppStore.BotChange {
       AppStore.BotChange(
@@ -48,6 +59,22 @@ struct BotView: View {
     let changed = stored.map { Form($0) != form } ?? true
     SwiftUI.Form {
       if let error { Text(error).foregroundStyle(.red) }
+      if id == nil, !templates.isEmpty {
+        Section {
+          Picker("Template", selection: $template) {
+            Text("None").tag(String?.none)
+            ForEach(templates) { Text($0.name).tag(String?.some($0.id)) }
+          }
+          .onChange(of: template) { _, key in
+            if let t = templates.first(where: { $0.id == key }) {
+              form = Form(t)
+            } else {
+              form = Form()
+              form.color = freeColor
+            }
+          }
+        }
+      }
       Section {
         TextField("Name", text: $form.name).disabled(isHatbot)
       }
@@ -164,14 +191,19 @@ struct BotView: View {
       if let stored {
         form = Form(stored)
       } else {
-        // A new bot starts in a colour none of the others has yet.
-        let used = store.botIds.compactMap { store.bots[$0]?.color }
-        form.color = Bot.Tint.allCases.min { a, b in
-          used.filter { $0 == a }.count < used.filter { $0 == b }.count
-        } ?? .amber
+        form.color = freeColor
+        templates = await store.loadBotTemplates()
       }
       plugins = ((try? await store.loadPluginNames()) ?? []).sorted { $0.name < $1.name }
     }
+  }
+
+  /// A new bot starts in a colour none of the others has yet.
+  private var freeColor: Bot.Tint {
+    let used = store.botIds.compactMap { store.bots[$0]?.color }
+    return Bot.Tint.allCases.min { a, b in
+      used.filter { $0 == a }.count < used.filter { $0 == b }.count
+    } ?? .amber
   }
 
   private func save() async {

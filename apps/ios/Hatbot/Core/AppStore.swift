@@ -564,6 +564,11 @@ final class AppStore {
     try await api.get("/plugins")
   }
 
+  /// None on a brain from before templates.
+  func loadBotTemplates() async -> [BotTemplate] {
+    (try? await api.get("/bot-templates")) ?? []
+  }
+
   func loadEarlier() async throws {
     guard let first = messages.first, !loadingEarlier else { return }
     loadingEarlier = true

@@ -1,6 +1,14 @@
 import { expect, test } from "bun:test";
-import type { Bot, Conversation, Task, ThreadMessage } from "@hatbot/shared";
+import {
+  BOT_TEMPLATES,
+  type Bot,
+  type BotTemplate,
+  type Conversation,
+  type Task,
+  type ThreadMessage,
+} from "@hatbot/shared";
 import { slugOf } from "../src/bots";
+import { PLUGINS } from "../src/plugins";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, type TestApp, testApp } from "./helpers";
 
@@ -189,6 +197,26 @@ test("a bot has an icon and a colour, a new one in a colour no other bot has", a
   const res = await t.call("PATCH", "/bots/hatbot", { icon: "cat", color: "teal" }, { cookie });
   expect(await res.json()).toMatchObject({ name: "Hatbot", icon: "cat", color: "teal" });
   expect(t.bots.hatbot()).toMatchObject({ icon: "cat", color: "teal" });
+});
+
+test("each template makes a bot as it is, with plugins that exist", async () => {
+  const t = await testApp(new FakeModel());
+  const { cookie } = await setUpOwner(t);
+  expect((await t.call("GET", "/bot-templates")).status).toBe(401);
+  const templates = (await (
+    await t.call("GET", "/bot-templates", undefined, { cookie })
+  ).json()) as BotTemplate[];
+  expect(templates).toEqual(BOT_TEMPLATES);
+  const plugins = new Set([...PLUGINS.map((p) => p.id), "code"]);
+  for (const { id, ...fields } of templates) {
+    expect(slugOf(fields.name)).toBe(id);
+    expect(fields.plugins?.filter((p) => !plugins.has(p)) ?? []).toEqual([]);
+    // The others see its first line, cut at 160 characters.
+    expect(fields.instructions.split("\n")[0]?.length).toBeLessThanOrEqual(160);
+    const res = await t.call("POST", "/bots", fields, { cookie });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ id, ...fields });
+  }
 });
 
 test("a bot's id comes from its name", () => {

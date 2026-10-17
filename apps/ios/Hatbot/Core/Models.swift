@@ -399,6 +399,18 @@ extension Bot {
   }
 }
 
+/// A starting point for a new bot (PLAN.md §14.6), from GET /bot-templates.
+struct BotTemplate: Decodable, Identifiable, Equatable, Sendable {
+  let id: String
+  var name: String
+  var icon: Bot.Icon
+  var color: Bot.Tint
+  var instructions: String
+  var chatModel: AppSettings.ChatModel?
+  var chatEffort: AppSettings.Effort?
+  var plugins: [String]?
+}
+
 /// A plugin, as far as a bot's page needs it.
 struct PluginName: Decodable, Identifiable, Equatable, Sendable {
   let id: String

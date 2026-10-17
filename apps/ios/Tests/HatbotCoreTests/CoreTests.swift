@@ -440,6 +440,20 @@ final class FoldTests: XCTestCase {
     XCTAssertEqual(Bot.Icon.code.symbol, "chevron.left.forwardslash.chevron.right")
   }
 
+  func testDecodesBotTemplates() throws {
+    let json = #"""
+      [{"id":"haggler","name":"Haggler","icon":"cart","color":"green","instructions":"You buy.","chatModel":null,"chatEffort":null,"plugins":["mcp"]},
+       {"id":"lookout","name":"Lookout","icon":"globe","color":"pink","instructions":"","chatModel":"claude-haiku-5-5","chatEffort":null,"plugins":[]}]
+      """#
+    let templates = try JSONDecoder().decode([BotTemplate].self, from: Data(json.utf8))
+    XCTAssertEqual(templates.map(\.id), ["haggler", "lookout"])
+    XCTAssertEqual(templates[0].icon, .cart)
+    XCTAssertEqual(templates[0].plugins, ["mcp"])
+    XCTAssertNil(templates[0].chatModel)
+    XCTAssertEqual(templates[1].chatModel, .haiku)
+    XCTAssertEqual(templates[1].plugins, [])
+  }
+
   func testEncodesABotChangeWithNulls() throws {
     let change = AppStore.BotChange(name: nil, instructions: "x", chatModel: nil, chatEffort: .low, plugins: nil)
     let json = String(decoding: try JSONEncoder().encode(change), as: UTF8.self)

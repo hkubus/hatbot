@@ -11,6 +11,7 @@ export * from "./negotiate";
 export * from "./plugin";
 export * from "./schedule";
 export * from "./search";
+export * from "./templates";
 export * from "./thread";
 export * from "./watch";
 

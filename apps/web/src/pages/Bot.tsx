@@ -1,5 +1,5 @@
-// A bot's page (PLAN.md §14): its name, role, model and plugins. "new" makes one.
-import { BOT_COLORS, BOT_ICONS, type Bot, HATBOT_ID } from "@hatbot/shared";
+// A bot's page (PLAN.md §14): its name, role, model and plugins. "new" makes one, from a template or not.
+import { BOT_COLORS, BOT_ICONS, BOT_TEMPLATES, type Bot, HATBOT_ID } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { ApiError } from "../api";
 import { BotMark, Icon } from "../icons";
@@ -45,6 +45,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
     return BOT_COLORS.reduce((best, c) => (count(c) < count(best) ? c : best));
   });
   const [form, setForm] = useState<Form>(EMPTY);
+  const [template, setTemplate] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -56,11 +57,22 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
   }, [stored]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: only when the page opens, not as bots change
   useEffect(() => {
-    if (isNew) setForm({ ...EMPTY, color: freeColor });
+    if (isNew) {
+      setForm({ ...EMPTY, color: freeColor });
+      setTemplate("");
+    }
   }, [isNew]);
 
   if (!isNew && !stored) return <section className="view" />;
   const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }));
+  const pickTemplate = (key: string) => {
+    const t = BOT_TEMPLATES.find((x) => x.id === key);
+    setTemplate(key);
+    if (t) {
+      const { id: _, ...fields } = t;
+      setForm(fields);
+    } else setForm({ ...EMPTY, color: freeColor });
+  };
   const changed =
     isNew ||
     (stored !== undefined &&
@@ -130,6 +142,23 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
         </div>
 
         <div className="panel form">
+          {isNew && (
+            <div className="form-row">
+              <span className="label">Template</span>
+              <select
+                className="field"
+                value={template}
+                onChange={(e) => pickTemplate(e.target.value)}
+              >
+                <option value="">None</option>
+                {BOT_TEMPLATES.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <label>
             <span className="label">Name</span>
             <input
