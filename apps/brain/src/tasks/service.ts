@@ -637,7 +637,17 @@ export class Tasks {
     };
   }
 
+  /** Pause all is on: no task runs, and none starts. */
+  paused(): boolean {
+    return this.d.settings.get().paused;
+  }
+
   private start(id: number) {
+    // Whatever started it while paused hears it didn't run; it can be run again once resumed.
+    if (this.paused()) {
+      this.finish(id, "cancelled", "Not started: Hatbot is paused.", false, { ntfy: false });
+      return;
+    }
     const abort = new AbortController();
     this.running.set(id, abort);
     const runner = this.get(id)?.lane === "background" ? runAgentTask : runDesktopTask;

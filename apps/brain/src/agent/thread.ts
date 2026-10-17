@@ -601,6 +601,8 @@ export class Thread {
       if (!c.arg)
         return void this.commandNote("Say what to do, like /task check the backups.", episode.id);
       if (!tasks) return void this.commandNote("Tasks aren't available.", episode.id);
+      if (tasks.paused())
+        return void this.commandNote("Hatbot is paused. Resume to start tasks.", episode.id);
       const note = this.commandNote("Started a task.", episode.id);
       // Your own words: the task isn't tainted by what the conversation read.
       tasks.createBackgroundTask({

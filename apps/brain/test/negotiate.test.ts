@@ -482,6 +482,21 @@ test("approved during quiet hours, the opening message waits for the morning", a
   await t.tasks.idle();
 });
 
+test("while paused, a due opening message waits for Resume", async () => {
+  const t = await testApp();
+  const n = openNegotiation(t);
+  const due = new Date(Date.parse("2026-10-09T11:00:00Z")).toISOString();
+  t.negotiations.update(n.id, { next_follow_up_at: due });
+  t.settings.update({ paused: true });
+  t.negotiations.due();
+  expect(t.negotiations.get(n.id)?.nextFollowUpAt).toBe(due);
+  expect(t.tasks.list()).toEqual([]);
+  t.settings.update({ paused: false });
+  t.negotiations.due();
+  expect(t.negotiations.get(n.id)?.nextFollowUpAt).toBeNull();
+  await t.tasks.idle();
+});
+
 test("the policy reads the pace from the record: ten new conversations a day, two minutes between messages", async () => {
   const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
   await withScout(t, false);

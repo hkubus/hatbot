@@ -708,6 +708,24 @@ test("/task runs what you typed as a background task, shown under the line it st
   expect(t.thread.list().at(-1)?.text).toContain("Say what to do");
 });
 
+test("while paused, /task and anything else that starts a task doesn't start one", async () => {
+  const work = new FakeModel([]);
+  const t = await testApp(new FakeModel(), work);
+  t.settings.update({ paused: true });
+  await t.thread.post("/task check the backups").done;
+  expect(t.thread.list().at(-1)?.text).toBe("Hatbot is paused. Resume to start tasks.");
+  expect(t.tasks.list()).toEqual([]);
+
+  const task = t.tasks.createBackgroundTask({ title: "Watch", goal: "Look", origin: "watch" });
+  await t.tasks.idle();
+  expect(t.tasks.get(task?.id ?? 0)).toMatchObject({
+    status: "cancelled",
+    summary: "Not started: Hatbot is paused.",
+  });
+  expect(work.requests).toHaveLength(0);
+  expect(t.notifier.sent).toEqual([]);
+});
+
 test("/remember saves what you typed to INDEX.md's Notes, word for word", async () => {
   const t = await testApp(new FakeModel());
   await t.thread.post("/remember the NAS is at 192.168.55.120").done;
