@@ -232,6 +232,8 @@ export class ResearchState {
   readonly sources = new ResearchSources();
   /** The last report it tried to finish with: kept if the run stops short. */
   draft: ResearchResult | null = null;
+  /** finish_research went through: what it ended with is the run's. */
+  finished = false;
   /** The numbers are checked when it first finishes; `unchecked` says why not, if the check failed. */
   checked = false;
   unchecked: string | null = null;
@@ -773,6 +775,7 @@ export async function finishResearch(
     order.map((n, i) => [n, { k: i + 1, url: (sources.get(n) as Source).url }]),
   );
   const answer = linked(result.answer.trim(), renumber);
+  state.finished = true;
   if (!result.report.trim()) return { summary: answer };
 
   const unchecked = state.unchecked
@@ -879,7 +882,7 @@ export async function keepUnfinished(
   why: string,
 ): Promise<string> {
   const { sources, draft } = state;
-  if (!draft && !sources.findings.length) return why;
+  if (state.finished || (!draft && !sources.findings.length)) return why;
   try {
     // Numbered as the helpers' findings were, which the draft cites.
     const all = sources.list.map((s) => s.n);

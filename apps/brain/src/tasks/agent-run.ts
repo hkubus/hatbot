@@ -862,8 +862,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         summary: `Something went wrong talking to the model (${modelErrorText(err)}).`,
       };
     }
-    // Research that stops short keeps what it had (PLAN.md §17).
-    if (research && ended.status === "failed")
+    // Research that stops short keeps what it had (PLAN.md §17), unless you stopped it.
+    if (research && ended.status !== "done" && !signal.aborted)
       ended.summary = await keepUnfinished(run, found, ended.summary);
     tasks.finish(id, ended.status, ended.summary, ended.notify);
   } finally {

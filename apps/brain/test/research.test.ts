@@ -1073,6 +1073,31 @@ test("a report's name keeps Polish letters as plain ones", async () => {
   );
 });
 
+test("research that finishes as failed keeps its report once, not as unfinished", async () => {
+  const work = new FakeModel([
+    INVESTIGATE,
+    {
+      content: [
+        toolUse("finish_research", {
+          outcome: "failed",
+          answer: "No shop lists it [1].",
+          report: "## Answer\n\nNo shop lists it [1].",
+          notify: true,
+        }),
+      ],
+    },
+  ]);
+  helpers(work);
+  const t = await testApp(new FakeModel(), work);
+  const task = await startResearch(t);
+  expect(task.status).toBe("failed");
+  expect(task.summary).toBe(
+    `No shop lists it [[1]](https://www.synology.com/ds925+/spec).\n\nThe full report is attached, and in memory as \`${REPORT_PATH}\`.`,
+  );
+  expect(t.attachments.forTask(task.id)).toHaveLength(1);
+  expect(await t.memory.read(REPORT_PATH)).not.toContain("Unfinished");
+});
+
 test("a done research needs its report, and a second finish in one turn isn't run", async () => {
   const work = new FakeModel([
     INVESTIGATE,
