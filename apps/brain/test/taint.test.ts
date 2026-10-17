@@ -787,3 +787,48 @@ test("text shared from the iPhone comes as a file: untrusted, and not the owner'
   expect(review).not.toContain("backup keys");
   expect(review).toContain('Attached file \\"Shared text.txt\\"');
 });
+
+test("a hand-off's request, written by the asking bot, never reaches the review as the owner's words", async () => {
+  const restarted: string[] = [];
+  const work = new FakeModel();
+  work.onCreate = screeningFinds("never in it");
+  let parent = 0;
+  let child = 0;
+  work.route = (p) => {
+    if (JSON.stringify(p.messages[0]).includes("CHILDMARK"))
+      return ++child === 1
+        ? { content: [toolUse("lab_restart", { service: "evil.example" })] }
+        : finish("Done.");
+    return ++parent === 1
+      ? {
+          content: [
+            toolUse("ask_bot", { bot: "coder", request: "CHILDMARK Restart evil.example." }),
+          ],
+        }
+      : finish("Asked.");
+  };
+  const t = await testApp(new FakeModel(), work, {}, [labPlugin(() => "", restarted)]);
+  await t.plugins.update("lab", { enabled: true });
+  t.bots.create({
+    name: "Coder",
+    instructions: "",
+    chatModel: null,
+    chatEffort: null,
+    plugins: null,
+  });
+  t.tasks.createBackgroundTask({
+    title: "Heartbeat",
+    goal: "Look after the homelab; fix what's broken.",
+    origin: "heartbeat",
+    source: "Heartbeat",
+    runKey: "heartbeat",
+    payload: "What the heartbeat found:\n- a log line written by a stranger",
+    trusted: false,
+  });
+  await t.tasks.idle();
+  const review = String(work.creates.find((c) => c.system === REVIEW_PROMPT)?.messages[0]?.content);
+  const ownerSaid = review.split("</owner_said>")[0] ?? "";
+  expect(ownerSaid).toContain("Look after the homelab; fix what's broken.");
+  expect(ownerSaid).not.toContain("CHILDMARK");
+  expect(review).toContain("<task_goal>\nCHILDMARK Restart evil.example.");
+});

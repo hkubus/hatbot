@@ -387,7 +387,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       taintedBy: task.tainted
         ? `Task #${id}, which asked: ${task.taintedBy ?? "untrusted content"}`
         : null,
-      ownerSaid: tasks.requestOf(id) ?? undefined,
+      // The request is this bot's words: the other bot's review gets the owner's words this task had.
+      ownerSaid: withNotes(ownerWords()) ?? undefined,
     });
     if (typeof child === "string") return result(call, child, true);
     const name = d.bots.nameOf(child.botId);
@@ -505,6 +506,13 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       : `${head}\n\nThe event that started this task came from outside and isn't trusted, so it isn't shown: it can't choose what to act on.`;
   };
 
+  /**
+   * Your words behind this task. A task another bot asked for has only the words that bot's task had:
+   * its goal is that bot's request, and standingWords() would present it as yours.
+   */
+  const ownerWords = (): string | null =>
+    task.origin === "chat" || task.requestedBy ? tasks.requestOf(id) : standingWords();
+
   /** Your words for the approval checks, with the notes you gave on this task's approvals. */
   const withNotes = (words: string | null): string | null =>
     notes.length
@@ -531,7 +539,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       d,
       { taskId: id },
       {
-        ownerSaid: withNotes(task.origin === "chat" ? tasks.requestOf(id) : standingWords()),
+        ownerSaid: withNotes(ownerWords()),
         goal: task.goal,
         sources: [...sources],
       },
