@@ -995,6 +995,22 @@ test("a report never overwrites another, even two of the same name at once", asy
   expect(await t.memory.read(`${base}-9.md`)).toBe("Earlier.\n");
 });
 
+test("a report's name keeps Polish letters as plain ones", async () => {
+  const work = new FakeModel([INVESTIGATE, finish("Weź DS925+ [1].", "Raport [1].")]);
+  helpers(work);
+  const t = await testApp(new FakeModel(), work);
+  const created = t.tasks.createBackgroundTask({
+    title: "Głośny czy cichy NAS? Żółć ß",
+    goal: "Który NAS jest cichy?",
+    origin: "chat",
+    research: true,
+  });
+  await t.tasks.idle();
+  expect(t.tasks.get(created?.id as number)?.reportPath).toBe(
+    `research/${DAY}-glosny-czy-cichy-nas-zolc-ss.md`,
+  );
+});
+
 test("a done research needs its report, and a second finish in one turn isn't run", async () => {
   const work = new FakeModel([
     INVESTIGATE,

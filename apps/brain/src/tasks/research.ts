@@ -9,7 +9,7 @@ import { modelErrorText } from "../agent/model";
 import { RESEARCH_CHECK_PROMPT, RESEARCH_PROMPT, RESEARCH_WORKER_PROMPT } from "../agent/prompt";
 import { localStamp } from "../agent/thread";
 import { containerOf, serverToolWaiting, toolParam, webReads, webTools } from "../agent/tools";
-import { botFolder } from "../bots";
+import { botFolder, slugWords } from "../bots";
 import { MemoryConflict } from "../memory/store";
 import { BudgetError, estimateTokens, priceOf } from "../spend";
 import { refreshing } from "./research-goal";
@@ -695,15 +695,7 @@ async function checkNumbers(
   }
 }
 
-const slugOf = (title: string) =>
-  title
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60)
-    .replace(/-+$/, "") || "report";
+const slugOf = (title: string) => slugWords(title).slice(0, 60).replace(/-+$/, "") || "report";
 
 /** The owner's date, YYYY-MM-DD. */
 const dayOf = (ms: number) => new Date(ms).toLocaleDateString("sv-SE");

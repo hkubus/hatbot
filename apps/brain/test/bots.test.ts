@@ -222,6 +222,8 @@ test("each template makes a bot as it is, with plugins that exist", async () => 
 test("a bot's id comes from its name", () => {
   expect(slugOf("Home Lab")).toBe("home-lab");
   expect(slugOf("Café")).toBe("cafe");
+  expect(slugOf("Łowca okazji")).toBe("lowca-okazji");
+  expect(slugOf("Głośny")).toBe("glosny");
   expect(slugOf("42")).toBe("bot-42");
 });
 

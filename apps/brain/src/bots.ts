@@ -37,15 +37,33 @@ export class BotError extends Error {}
 /** What a deleted bot's schedules, triggers and watchers were: they're Hatbot's now. */
 export type Moved = { schedules: number[]; triggers: number[]; watchers: number[] };
 
+/** Letters that don't decompose into a plain one and an accent. */
+const FOLDED: Record<string, string> = {
+  ł: "l",
+  đ: "d",
+  ð: "d",
+  ø: "o",
+  ß: "ss",
+  æ: "ae",
+  œ: "oe",
+  þ: "th",
+  ı: "i",
+};
+
+/** Lowercase ASCII words joined by hyphens: "Głośny NAS" → "glosny-nas". */
+export function slugWords(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[łđðøßæœþı]/g, (c) => FOLDED[c] ?? c)
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 /** A bot's id from its name: "Home lab" → "home-lab". */
 export function slugOf(name: string): string {
-  const slug = name
-    .normalize("NFKD")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 24)
-    .replace(/-+$/, "");
+  const slug = slugWords(name).slice(0, 24).replace(/-+$/, "");
   return /^[a-z]/.test(slug) ? slug : `bot-${slug}`.replace(/-+$/, "");
 }
 
