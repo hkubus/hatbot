@@ -63,6 +63,26 @@ final class ModelTests: XCTestCase {
     XCTAssertEqual(obj["down"] as? Bool, true)
   }
 
+  /// A limit is read as it's typed, in the phone's own format, so Save knows about it before Return.
+  func testReadsMoneyAsItsTyped() {
+    let us = Locale(identifier: "en_US")
+    let pl = Locale(identifier: "pl_PL")
+    XCTAssertEqual(Format.amount("5", locale: us), 5)
+    XCTAssertEqual(Format.amount("2.50", locale: us), 2.5)
+    XCTAssertEqual(Format.amount("2.", locale: us), 2)
+    XCTAssertEqual(Format.amount(".5", locale: us), 0.5)
+    XCTAssertEqual(Format.amount("$1,000.00", locale: us), 1000)
+    XCTAssertEqual(Format.amount("2,50", locale: pl), 2.5)
+    XCTAssertEqual(Format.amount("1 000,5", locale: pl), 1000.5)
+    XCTAssertNil(Format.amount("", locale: us))
+    XCTAssertNil(Format.amount(".", locale: us))
+    XCTAssertNil(Format.amount("1.2.3", locale: us))
+    XCTAssertEqual(Format.amountText(2.5, locale: us), "2.5")
+    XCTAssertEqual(Format.amountText(2.5, locale: pl), "2,5")
+    XCTAssertEqual(Format.amountText(1000, locale: us), "1000")
+    XCTAssertEqual(Format.amount(Format.amountText(12.34, locale: pl), locale: pl), 12.34)
+  }
+
   func testParsesBrainDates() {
     XCTAssertNotNil(Format.date("2026-10-10T08:00:00.123Z"))
     XCTAssertNotNil(Format.date("2026-10-10T08:00:00Z"))

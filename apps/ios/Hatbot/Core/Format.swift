@@ -13,6 +13,27 @@ enum Format {
     String(format: "$%.2f", usd)
   }
 
+  /// A money field's text, read as it's typed: "5", "2.50", or "2,50" where a comma is the decimal mark.
+  /// Grouping, spaces and a currency sign are left out; nil when there's no number.
+  static func amount(_ text: String, locale: Locale = .current) -> Double? {
+    let mark = locale.decimalSeparator ?? "."
+    var number = ""
+    for ch in text {
+      if ch.isASCII && ch.isNumber {
+        number.append(ch)
+      } else if String(ch) == mark {
+        number.append(".")
+      }
+    }
+    guard number.contains(where: \.isNumber), number.filter({ $0 == "." }).count <= 1 else { return nil }
+    return Double(number.hasSuffix(".") ? String(number.dropLast()) : number)
+  }
+
+  /// A money amount to edit: "2.5", "1000", with the phone's decimal mark.
+  static func amountText(_ usd: Double, locale: Locale = .current) -> String {
+    usd.formatted(.number.grouping(.never).precision(.fractionLength(0...2)).locale(locale))
+  }
+
   /// 950, 12.4k, 3.1M.
   /// 1000 or 12.5: no ".0" on whole numbers.
   static func number(_ n: Double) -> String {
