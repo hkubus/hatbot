@@ -27,6 +27,28 @@ test("you keep control of the desktop across a brain restart", async () => {
   expect(agent.locked).toBe(false);
 });
 
+test("requests for you wait in turn; handing back ends only the one you took over for", async () => {
+  const desktop = new Desktop(new FakeDesktop(), new EventBus());
+  desktop.requestTakeover(1, "Solve the captcha");
+  desktop.requestTakeover(2, "Log in to OLX");
+  expect(desktop.get().request).toEqual({ taskId: 1, reason: "Solve the captcha" });
+  const readied: number[] = [];
+  const off = desktop.onTakeover(1, async () => {
+    readied.push(1);
+  });
+  await desktop.takeover(true);
+  expect(readied).toEqual([1]);
+  await desktop.handback();
+  expect(desktop.get().request).toEqual({ taskId: 2, reason: "Log in to OLX" });
+  off();
+  // A plain takeover (teach mode) answers nobody's request.
+  await desktop.takeover();
+  await desktop.handback();
+  expect(desktop.get().request?.taskId).toBe(2);
+  desktop.clearRequest(2);
+  expect(desktop.get().request).toBeNull();
+});
+
 test("a live viewer that fell behind gets the newest frame once it catches up", async () => {
   const t = await testApp();
   const { cookie } = await setUpOwner(t);

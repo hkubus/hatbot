@@ -6,8 +6,9 @@
 /** Shared by the scripts below: element references, roles, names and visibility. */
 /**
  * The text boxes a click or Enter could send, for the brain's exact-text check (PLAN.md §16.3): what each
- * visible one holds, whitespace collapsed, in the element's form when that has any, otherwise in its page.
- * A box inside another (an editable region in a role=textbox) counts once.
+ * visible one holds, whitespace collapsed, in the element's form when that has any, otherwise in its page,
+ * open shadow roots and same-origin frames included. A box inside another (an editable region in a
+ * role=textbox) counts once.
  */
 export const FIELDS = `
   const TEXT_BOX = 'textarea, input:not([type]), input[type=text], input[type=search], input[type=email], input[type=tel], input[type=url], input[type=number], [contenteditable=""], [contenteditable=true], [contenteditable=plaintext-only], [role=textbox]';
@@ -16,12 +17,133 @@ export const FIELDS = `
     && (e.ownerDocument.defaultView || window).getComputedStyle(e).visibility !== 'hidden';
   const boxValue = (e) => String((e.matches('input, textarea') ? e.value : e.innerText) || '')
     .replace(/\\s+/g, ' ').trim().slice(0, 4000);
+  const boxesIn = (root, out = []) => {
+    for (const e of root.querySelectorAll('*')) {
+      if (e.matches(TEXT_BOX)) out.push(e);
+      if (e.shadowRoot) boxesIn(e.shadowRoot, out);
+      if (e.tagName === 'IFRAME' || e.tagName === 'FRAME') {
+        let d = null;
+        try { d = e.contentDocument; } catch {}
+        if (d) boxesIn(d, out);
+      }
+    }
+    return out;
+  };
   const fieldsFor = (el) => {
-    const all = (root) => [...root.querySelectorAll(TEXT_BOX)].filter(shownBox);
+    const all = (root) => boxesIn(root).filter(shownBox);
     const form = el.closest('form');
     const inForm = form ? all(form) : [];
     const boxes = inForm.length ? inForm : all(el.ownerDocument);
     return boxes.filter((b) => !boxes.some((o) => o !== b && o.contains(b))).map(boxValue).filter(Boolean);
+  };
+`;
+
+/**
+ * What the brain's click and Enter checks look at (PLAN.md §6.1), shared by the browser toolset's inspect
+ * and the screen's (cdp.ts): `elementInfo(el)` for the control at or around `el`.
+ */
+export const ELEMENT = `
+  ${FIELDS}
+  const CONTROL = 'button, a, input, select, textarea, label, summary, [role=button], [role=link], [role=menuitem], [onclick]';
+  const squash = (s) => String(s || '').trim().replace(/\\s+/g, ' ').slice(0, 200);
+  // Its name as a person would read it: aria-labelledby, aria-label, an input's value, its text, its title,
+  // or failing those its icon's (img alt, svg aria-label or title).
+  const nameFor = (e) => {
+    const by = (e.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean)
+      .map((id) => e.ownerDocument.getElementById(id)?.textContent || '').join(' ');
+    const own = squash(by) || squash(e.getAttribute('aria-label')) || (e.tagName === 'INPUT' ? squash(e.value) : '')
+      || squash(e.innerText) || squash(e.getAttribute('title')) || squash(e.getAttribute('alt'));
+    if (own) return own;
+    const icon = e.querySelector('img[alt], [aria-label], [title], svg title');
+    if (!icon) return '';
+    return squash(icon.tagName.toLowerCase() === 'title' ? icon.textContent
+      : icon.getAttribute('alt') || icon.getAttribute('aria-label') || icon.getAttribute('title'));
+  };
+  const TOGGLE_ROLES = ['tab', 'switch', 'checkbox', 'radio', 'option', 'menuitemcheckbox', 'menuitemradio', 'combobox'];
+  const isToggle = (e) => e.hasAttribute('aria-expanded') || e.hasAttribute('aria-pressed')
+    || (e.getAttribute('aria-haspopup') || 'false') !== 'false' || e.tagName === 'SUMMARY' || e.tagName === 'SELECT'
+    || TOGGLE_ROLES.includes(e.getAttribute('role'))
+    || (e.tagName === 'INPUT' && ['checkbox', 'radio'].includes(e.type))
+    || (e.tagName === 'LABEL' && !!e.control && e.control !== e && isToggle(e.control));
+  // A search box, or a control in a search or filter form: Enter or a click there narrows a list.
+  const isSearch = (e, form) => !!(e.closest('[role=search]')
+    || (e.matches('input[type=search], [role=searchbox], [role=combobox]'))
+    || (form && ((form.getAttribute('method') || '').toLowerCase() === 'get'
+      || form.querySelector('input[type=search], [role=searchbox]'))));
+  const BUTTON = 'button, [role=button], input[type=submit], input[type=button], input[type=image]';
+  // The buttons after a text box in the nearest part of the page around it that has any: a chat box's Send,
+  // which Enter in the box may press. Up through open shadow roots to their hosts.
+  const buttonsAfter = (el) => {
+    let up = el.parentNode;
+    for (let i = 0; i < 5 && up && up !== el.ownerDocument.body && up.nodeType !== 9; i++) {
+      const after = [...up.querySelectorAll(BUTTON)].filter((b) => !el.contains(b) && shownBox(b)
+        && el.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+      if (after.length) return after.slice(0, 5).map(nameFor);
+      up = up.nodeType === 11 ? up.host : up.parentNode;
+    }
+    return [];
+  };
+  const elementInfo = (el) => {
+    if (!el || el === el.ownerDocument.body) return null;
+    const c = el.closest(CONTROL);
+    if (c) el = c;
+    const form = el.closest('form');
+    const editable = isTextBox(el);
+    const out = { tag: el.tagName.toLowerCase(), role: el.getAttribute('role'), type: el.getAttribute('type'),
+      label: el.tagName === 'INPUT' && !['submit', 'button', 'image', 'reset'].includes(el.type) ? (el.placeholder || el.name || '') : nameFor(el),
+      inForm: !!form, url: location.href, editable, fields: fieldsFor(el),
+      toggle: isToggle(el), search: isSearch(el, form) };
+    if (form) {
+      const submit = form.querySelector('button[type=submit], input[type=submit], button:not([type])');
+      if (submit) out.submitLabel = nameFor(submit);
+    }
+    if (editable) out.buttonsAfter = buttonsAfter(el);
+    const link = el.closest('a[href], area[href]');
+    if (link) {
+      try { out.href = new URL(link.getAttribute('href'), link.baseURI).href.slice(0, 2000); } catch {}
+    }
+    return out;
+  };
+  const isFrame = (e) => !!e && (e.tagName === 'IFRAME' || e.tagName === 'FRAME');
+  // The deepest element at a viewport point, through open shadow roots and same-origin frames. At a frame it
+  // can't enter (another origin's), { el: the frame, frame: the point inside it }, for browser.ts to follow.
+  const elementAt = (x, y) => {
+    let doc = document, ox = 0, oy = 0, el = null;
+    for (;;) {
+      let hit = doc.elementFromPoint(x - ox, y - oy);
+      while (hit && hit.shadowRoot) {
+        const deeper = hit.shadowRoot.elementFromPoint(x - ox, y - oy);
+        if (!deeper || deeper === hit) break;
+        hit = deeper;
+      }
+      if (!hit) return { el };
+      el = hit;
+      if (!isFrame(hit)) return { el };
+      const r = hit.getBoundingClientRect();
+      const fx = ox + r.left + hit.clientLeft, fy = oy + r.top + hit.clientTop;
+      let inner = null;
+      try { inner = hit.contentDocument; } catch {}
+      if (!inner) return { el, frame: { x: x - fx, y: y - fy } };
+      ox = fx; oy = fy; doc = inner;
+    }
+  };
+  // The focused element, through open shadow roots and same-origin frames; at a frame it can't enter, that
+  // frame with { focused: true }.
+  const focusedAt = () => {
+    let el = document.activeElement;
+    for (;;) {
+      while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+      if (!isFrame(el)) return { el };
+      let inner = null;
+      try { inner = el.contentDocument; } catch {}
+      if (!inner) return { el, frame: { focused: true } };
+      el = inner.activeElement;
+    }
+  };
+  // A frame left for browser.ts to follow: it finds the element through this.
+  const leaveFrame = (out, at) => {
+    if (out && at.frame && isFrame(at.el)) { globalThis.__hatbotFrame = at.el; out.frame = at.frame; }
+    return out;
   };
 `;
 
@@ -174,37 +296,7 @@ const COMMON = `
     if (el.tagName === 'SLOT') return el.assignedElements();
     return el.shadowRoot ? [...el.shadowRoot.children] : [...el.children];
   };
-  ${FIELDS}
-  const elementInfo = (el) => {
-    if (!el || el === el.ownerDocument.body) return null;
-    const c = el.closest('button, a, input, select, textarea, label, summary, [role=button], [role=link], [role=menuitem], [onclick]');
-    if (c) el = c;
-    const t = (e) => clean(e.getAttribute('aria-label') || e.value || e.innerText || e.title || e.alt || '', 200);
-    const form = el.closest('form');
-    const out = { tag: el.tagName.toLowerCase(), role: el.getAttribute('role'), type: el.getAttribute('type'),
-      label: el.tagName === 'INPUT' && !['submit', 'button'].includes(el.type) ? (el.placeholder || el.name || '') : t(el),
-      inForm: !!form, url: location.href, editable: isTextBox(el), fields: fieldsFor(el) };
-    if (form) {
-      const submit = form.querySelector('button[type=submit], input[type=submit], button:not([type])');
-      if (submit) out.submitLabel = t(submit);
-    }
-    return out;
-  };
-  // The deepest element at a viewport point, descending into same-origin iframes.
-  const elementAt = (x, y) => {
-    let doc = document, ox = 0, oy = 0, el = null;
-    for (;;) {
-      const hit = doc.elementFromPoint(x - ox, y - oy);
-      if (!hit) return el;
-      el = hit;
-      if (hit.tagName !== 'IFRAME') return el;
-      let inner;
-      try { inner = hit.contentDocument; } catch { return el; }
-      if (!inner) return el;
-      const r = hit.getBoundingClientRect();
-      ox += r.left + hit.clientLeft; oy += r.top + hit.clientTop; doc = inner;
-    }
-  };
+  ${ELEMENT}
 `;
 
 /**
@@ -360,11 +452,19 @@ export const PAGE_TEXT = `(o) => {
 /** The element for the click policy: by ref, at a viewport point, or the focused one. */
 export const INSPECT = `(o) => {
   ${COMMON}
-  if (o.ref) return elementInfo(byRef(o.ref));
-  if (typeof o.x === 'number' && typeof o.y === 'number') return elementInfo(elementAt(o.x, o.y));
-  let el = document.activeElement;
-  while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
-  return elementInfo(el);
+  // Nothing there, or nothing focused, is the page itself; null means it couldn't be looked at (a stale ref).
+  const info = (at) => leaveFrame(elementInfo(at.el) || { tag: 'body', role: null, type: null, label: '',
+    inForm: false, url: location.href, editable: false, fields: fieldsFor(document.body) }, at);
+  if (o.ref) {
+    const el = byRef(o.ref);
+    if (!el) return null;
+    if (!isFrame(el)) return info({ el });
+    // A click on a frame's ref lands in its middle.
+    const r = el.getBoundingClientRect();
+    return info({ el, frame: { x: r.width / 2 - el.clientLeft, y: r.height / 2 - el.clientTop } });
+  }
+  if (typeof o.x === 'number' && typeof o.y === 'number') return info(elementAt(o.x, o.y));
+  return info(focusedAt());
 }`;
 
 export const VIEWPORT = `() => ({ width: innerWidth, height: innerHeight, scrollX, scrollY, url: location.href, title: document.title })`;

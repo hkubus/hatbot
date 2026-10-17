@@ -100,6 +100,19 @@ export type AgentElement = {
    * With the "fields" feature.
    */
   fields?: string[];
+  /** It opens or closes part of the page (aria-expanded, aria-pressed, a menu or a tab). With "gates". */
+  toggle?: boolean;
+  /** It's a search box, or in a search or filter form. With "gates". */
+  search?: boolean;
+  /**
+   * For a text box: the names of the buttons after it in the nearest part of the page that has any (a
+   * chat box's Send, say), "" for one with no name. Enter there may press one. With "gates".
+   */
+  buttonsAfter?: string[];
+  /** It's inside a frame from another address (a payment widget, say), this one. With "gates". */
+  frameUrl?: string;
+  /** For a link, or something inside one: where it goes, resolved. With "gates". */
+  href?: string;
 };
 
 /** POST /exec: a command run by the desktop's shell, which can't see the browser profile or the screen. */

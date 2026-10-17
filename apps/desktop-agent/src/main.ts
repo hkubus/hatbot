@@ -72,6 +72,8 @@ const FEATURES = [
   // inspect reports the tab's address and its text boxes, for the exact-text send check.
   "fields",
   "render",
+  // inspect names icon buttons and says which controls toggle or search, for the click and Enter checks.
+  "gates",
 ];
 
 // The display may still be starting (Xvnc restarting, say): wait for it rather than exit and be restarted.

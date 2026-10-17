@@ -19,13 +19,21 @@ import { untrustedBlock } from "../agent/untrusted";
 import { type Outcome, ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
-import { collapse, type GateState, gateCheck, refused, sendsWith } from "../negotiate/gate";
+import { collapse, type GateState, gateCheck, refused, typesText } from "../negotiate/gate";
 import { marketplaceSend } from "../negotiate/marketplace";
 import { destructive } from "../plugins/ssh/policy";
 import { BudgetError, estimateTokens, fixedTokens, requestCeiling, usesReserve } from "../spend";
 import { skillPath } from "../teach/skills";
 import { approvalKind } from "./approval-kind";
-import { checkFor, consequential } from "./policy";
+import {
+  checkFor,
+  consequential,
+  type Hold,
+  heldBack,
+  heldWhat,
+  samePage,
+  type Where,
+} from "./policy";
 import { DesktopSendToChat, SEND_TO_CHAT_DESCRIPTION, sendToChat } from "./send-to-chat";
 import type { Tasks } from "./service";
 
@@ -34,8 +42,11 @@ export const UPDATES_MODELS = new Set(["claude-opus-5-5"]);
 /** A desktop task Haiku gives up on carries on, once, on Opus (PLAN.md §5.4). */
 const FIRST_MODEL = "claude-haiku-5-5";
 const ESCALATE_TO = "claude-opus-5-5";
-/** Steps per attempt; tests lower it. */
-export const limits = { maxSteps: 80 };
+/**
+ * Steps per attempt, and how long Take over waits for another task to let go of the screen for the task
+ * that asked; tests lower them.
+ */
+export const limits = { maxSteps: 80, takeoverReadyMs: 8_000 };
 /** A failure Opus may get past, where the model is asked what it tried. */
 const ASK = { account: null };
 const MAX_ACTIVE_MS = 30 * 60_000;
@@ -47,6 +58,8 @@ const BETAS: Anthropic.Beta.AnthropicBeta[] = [
 
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 type ToolResult = Anthropic.Beta.BetaToolResultBlockParam;
+/** What an inspect saw: undefined when the page couldn't be looked at. */
+type Inspected = AgentElement | null | undefined;
 
 const ConfirmIntent = z.object({
   kind: z.enum([
@@ -328,8 +341,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   let since = 0;
   let seq = 0;
   let lastUrl: string | null = null;
-  /** An approved confirm_intent covers the next consequential action. */
-  let armed = false;
+  /** An approved confirm_intent: it covers the next consequential action, on the page it was asked on. */
+  let armed: { page: string | null } | null = null;
   /** A negotiation's task: it may send one approved message, or only read (PLAN.md §16.3). */
   const gate = tasks.negotiations?.gateFor(id) ?? null;
   const gateState: GateState = { recorded: false, sent: false, stopped: null };
@@ -341,9 +354,26 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   /** Archive paths of the images in `messages`, so the stored transcript references files. */
   const imagePaths = new Map<string, string>();
 
-  const acquire = async () => {
-    await tasks.lane.acquire(id, signal);
+  /** Waiting for the model with the screen held: another task waiting ahead of the line may have it. */
+  let thinking = false;
+  /** A task waits ahead of the line: let go of the screen before the next model turn. */
+  let yieldAsked = false;
+  /** The screen went to another task while the model thought: what it planned may not fit any more. */
+  let lostScreen = false;
+  const giveWay = () => {
+    release();
+    lostScreen = true;
+  };
+
+  /** `first`: ahead of the line, for the task you took over for. `wait`: how long it may wait. */
+  const acquire = async (first = false, wait = signal) => {
+    await tasks.lane.acquire(id, wait, first);
     holding = true;
+    yieldAsked = false;
+    tasks.lane.onYield(id, () => {
+      if (thinking) giveWay();
+      else yieldAsked = true;
+    });
     since = tasks.clock();
     d.desktop.setActiveTask(id, task.botId);
     tasks.setStatus(id, "running");
@@ -577,66 +607,89 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       tasks.addStep(id, { kind: "note", name: "Held back", detail: no, url: lastUrl });
       return textResult(call, `Not run: ${no}`, true);
     }
-    if (
-      call.name === "type" ||
-      call.name === "form_input" ||
-      ((call.name === "key" || call.name === "hold_key") &&
-        /(ctrl|super)\+v|shift\+insert/i.test(String(input.text ?? "")))
-    )
-      typed = true;
-    const check = gate ? sendsWith(call.name, input) : checkFor(call.name, input);
+    if (typesText(call.name, input)) typed = true;
+    const check = checkFor(isBrowser ? "browser" : "computer", call.name, input);
+    if (check && "refuse" in check) {
+      tasks.addStep(id, { kind: "note", name: "Held back", detail: check.refuse, url: lastUrl });
+      return textResult(call, `Not run: ${check.refuse}`, true);
+    }
     /** Looks again at what the check looked at, to see whether a send left the text box. */
-    let inspectAgain: (() => Promise<AgentElement | null>) | null = null;
+    let inspectAgain: (() => Promise<Inspected>) | null = null;
     let sending = false;
     if (check) {
-      let el: AgentElement | null;
-      if (isBrowser) {
-        const t = input.target as
-          | { type?: string; ref?: string; x?: number; y?: number }
-          | undefined;
-        const at =
-          check === "enter" ? {} : t?.type === "ref" ? { ref: t.ref } : { x: t?.x, y: t?.y };
-        const tab = typeof input.tab_id === "string" ? { tab_id: input.tab_id } : {};
-        inspectAgain = () => agent.browserInspect({ ...at, ...tab }).catch(() => null);
-      } else {
-        let point = input.coordinate as number[] | undefined;
-        if (check === "click" && !point) {
+      const tab = typeof input.tab_id === "string" ? { tab_id: input.tab_id } : {};
+      const inspectAt = async (w: Where): Promise<() => Promise<Inspected>> => {
+        if (isBrowser) {
+          const at = "ref" in w ? { ref: w.ref } : "x" in w ? { x: w.x, y: w.y } : {};
+          // The browser toolset always acts on a page: no answer means it couldn't be looked at.
+          return () =>
+            agent.browserInspect({ ...at, ...tab }).then(
+              (e) => e ?? undefined,
+              () => undefined,
+            );
+        }
+        let point = "x" in w ? [w.x, w.y] : null;
+        if ("cursor" in w) {
           const r = await agent.action({ name: "cursor_position", input: {} });
           point = [r.x ?? 0, r.y ?? 0];
         }
-        inspectAgain = () => agent.inspect(point?.[0], point?.[1]).catch(() => null);
-      }
-      el = await inspectAgain();
-      let label = consequential(check, el);
-      // Outside a negotiation, anything that could message a seller asks first.
-      if (!gate && !label) label = marketplaceSend(check, el, lastUrl);
+        // Null is somewhere that isn't a page (the browser's own bar); an error, a page that couldn't be read.
+        return () => agent.inspect(point?.[0], point?.[1]).catch(() => undefined);
+      };
+      // Each end of a drag; one place for everything else.
+      const looks = await Promise.all(check.at.map(inspectAt));
+      const els = await Promise.all(looks.map((f) => f()));
+      inspectAgain = looks[0] ?? null;
+      const el = els[0] ?? null;
+      const kind = check.press === "click" || check.press === "space" ? "click" : "enter";
+      // Typed text with a line break is in the box by the time its Enter is pressed.
+      const typing = call.name === "type" && typeof input.text === "string" ? input.text : "";
+      let hold =
+        els
+          .map((e): Hold | null => {
+            if (e === undefined) return { unseen: true };
+            const h = consequential(check.press, e);
+            if (h || gate) return h;
+            // Outside a negotiation, anything that could message a seller asks first.
+            const box =
+              e?.editable && e.fields && typing.trim()
+                ? { ...e, fields: [...e.fields, typing] }
+                : e;
+            const send = marketplaceSend(kind, box, lastUrl);
+            return send ? { label: send } : null;
+          })
+          .find((h) => h !== null) ?? null;
       if (gate) {
         // Closed, or its mandate ran out, since the task started.
         gateState.stopped ||= tasks.negotiations?.sendStopped(id) ?? null;
-        const g = gateCheck(gate, gateState, check, el, label);
+        const label = hold && "label" in hold ? hold.label : null;
+        const g = gateCheck(gate, gateState, kind, el, label);
         if (g.action === "hold") {
           tasks.addStep(id, { kind: "note", name: "Held back", detail: g.why, url: lastUrl });
           return textResult(call, `Not run: ${g.why}`, true);
         }
         // The send itself, or a click into a text box: neither needs confirm_intent.
-        if (g.action !== "usual") label = null;
+        if (g.action !== "usual") hold = null;
         sending = g.action === "send";
       }
-      if (label && !armed) {
+      // An approval covers the next held step, on the page it was given for.
+      const approved =
+        armed !== null && (armed.page === null || samePage(el?.url ?? lastUrl, armed.page));
+      if (hold && !approved) {
         tasks.addStep(id, {
           kind: "note",
           name: "Held back",
-          detail: `${call.name} on "${label}" needs approval`,
+          detail: `${call.name} ${heldWhat(hold)} needs approval`,
           url: lastUrl,
         });
-        return textResult(
-          call,
-          `Not run: this would ${check === "click" ? "click" : "submit with"} "${label}", which looks like a consequential step. If it's the step you mean to take, call confirm_intent first. If not, carry on.`,
-          true,
-        );
+        const elsewhere = armed?.page
+          ? ` The owner's approval was for a step on ${armed.page}, not this page.`
+          : "";
+        return textResult(call, `Not run: ${heldBack(check.press, hold)}${elsewhere}`, true);
       }
-      if (label) armed = false;
+      if (hold) armed = null;
     }
+    if (gate && typesText(call.name, input)) gateState.typed = true;
     const step = tasks.addStep(id, {
       kind: call.name === "screenshot" ? "screenshot" : "action",
       name: call.name,
@@ -679,7 +732,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   };
 
   /** Whether the approved text has left the text boxes, looking a few times as the page catches up. */
-  const sentFrom = async (inspectAgain: () => Promise<AgentElement | null>): Promise<boolean> => {
+  const sentFrom = async (inspectAgain: () => Promise<Inspected>): Promise<boolean> => {
     const text = collapse(gate?.text ?? "");
     for (let i = 0; i < sendConfirm.tries; i++) {
       await Bun.sleep(sendConfirm.everyMs);
@@ -734,6 +787,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         p.data.kind !== "send",
       );
     const bytes = await agent.screenshot();
+    // What the owner sees and approves: the step on this page, whose text says what kind of step it is.
+    const tab = await agent.context(true).catch(() => null);
+    const page = tab?.url ?? lastUrl;
     const step = tasks.addStep(id, {
       kind: "screenshot",
       name: "Before approval",
@@ -741,11 +797,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       url: lastUrl,
     });
     await capture(bytes, "Before approval", "screenshot", step.id);
-    const page = await agent.context(true).catch(() => null);
-    const kind = approvalKind(p.data.kind, p.data, {
-      url: page?.url ?? lastUrl,
-      text: page?.text ?? null,
-    });
+    const kind = approvalKind(p.data.kind, p.data, { url: page, text: tab?.text ?? null });
     const { outcome, note } = await askApproval({ ...p.data, kind, screenshotStepId: step.id });
     if (outcome !== "approved") {
       return textResult(
@@ -755,14 +807,20 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           : "The owner denied this. Don't do it. Finish the task, or carry on another way that doesn't need it.",
       );
     }
-    armed = true;
+    armed = { page };
+    // While this waited, another task may have had the browser and left it elsewhere.
+    const now = (await agent.context(false).catch(() => null))?.url ?? null;
+    const moved =
+      page && !samePage(now, page)
+        ? ` While you waited, another task used the browser: the page you asked about (${page}) isn't on screen now${now ? ` (${now})` : ""}. Go back to it first; the approval holds only there.`
+        : "";
     return textResult(
       call,
       await look(
         "After approval",
-        note
+        (note
           ? `Approved by the owner. ${ownerNote(note)}`
-          : "Approved by the owner. Go ahead with exactly this action.",
+          : "Approved by the owner. Go ahead with exactly this action.") + moved,
       ),
     );
   };
@@ -835,6 +893,49 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       priority: 4,
       click: `${d.config.publicUrl}/tasks/${id}?live=1`,
     });
+    if (d.desktop.get().control === "hatbot") {
+      // Until you take over, other tasks may use the screen; when you do, it's this task's first.
+      release();
+      tasks.setStatus(id, "waiting_takeover");
+      let failed: unknown = null;
+      let taken = () => {};
+      const asked = new Promise<void>((resolve) => {
+        taken = resolve;
+      });
+      const off = d.desktop.onTakeover(id, async () => {
+        try {
+          if (!holding)
+            await acquire(
+              true,
+              AbortSignal.any([signal, AbortSignal.timeout(limits.takeoverReadyMs)]),
+            );
+          taken();
+        } catch (err) {
+          // Another task kept the screen past the wait: you can try again. Anything else ends this one.
+          if (err instanceof Stop) {
+            failed = err;
+            taken();
+          }
+          throw err;
+        }
+      });
+      const timeout = AbortSignal.timeout(TAKEOVER_TIMEOUT_MS);
+      const until = AbortSignal.any([signal, timeout]);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          if (until.aborted) return reject(until.reason);
+          until.addEventListener("abort", () => reject(until.reason), { once: true });
+          void asked.then(resolve);
+        });
+      } catch (err) {
+        if (timeout.aborted && !signal.aborted)
+          throw new Stop("cancelled", "Nobody took over the desktop within 24 hours.");
+        throw err;
+      } finally {
+        off();
+      }
+      if (failed) throw failed;
+    }
     await waitForOwner();
     d.desktop.clearRequest(id);
     tasks.addStep(id, { kind: "takeover", name: "You handed back", detail: "", url: lastUrl });
@@ -911,14 +1012,21 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         continue;
       }
 
+      // The model doesn't need the screen to think: a task you took over for may have it meanwhile.
+      if (yieldAsked && tasks.lane.waiting) giveWay();
+      thinking = true;
       const sent = tasks.clock();
-      const res = await d.model.stream(params, {
-        onText: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
-        onThinking: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
-        onFailedUsage: (m, usage) =>
-          d.spend.recordResponse({ model: m, purpose: "task", usage, taskId: id }),
-        signal,
-      });
+      const res = await d.model
+        .stream(params, {
+          onText: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
+          onThinking: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
+          onFailedUsage: (m, usage) =>
+            d.spend.recordResponse({ model: m, purpose: "task", usage, taskId: id }),
+          signal,
+        })
+        .finally(() => {
+          thinking = false;
+        });
       held();
       cache = {
         tokens:
@@ -968,6 +1076,28 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         throw new Stop("failed", text || "Stopped: it ended without finishing.", true, {
           account: text || null,
         });
+      }
+      if (lostScreen) {
+        lostScreen = false;
+        if (!holding) {
+          tasks.setStatus(id, "queued");
+          await acquire();
+        }
+        const seen = await look(
+          "After another task",
+          "Not run: while you were thinking, another task had the desktop. It may have changed.",
+        );
+        record(
+          "user",
+          calls.map((c, i) =>
+            textResult(
+              c,
+              i === 0 ? seen : "Not run: another task had the desktop meanwhile.",
+              true,
+            ),
+          ),
+        );
+        continue;
       }
 
       const results: BlockParam[] = [];
@@ -1088,11 +1218,17 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         ? `<skill name="${task.skill}">\n${(await d.memory.read(skillPath(task.skill))).trim()}\n</skill>\n\n`
         : "";
     await acquire();
-    // Tabs an earlier task left open would be in this one's way, and in its context.
-    await agent.resetBrowser().catch((err) => {
-      if (signal.aborted) throw err;
-      console.error(`task ${id}: couldn't close the old tabs`, err);
-    });
+    // Tabs an earlier task left open would be in this one's way, and in its context. A task of the same
+    // bot that's waiting for you mid-run keeps its page: this one starts in a tab of its own instead.
+    const another = tasks
+      .list({ status: "active", botId: task.botId })
+      .some((t) => t.id !== id && t.lane === "screen" && t.startedAt !== null);
+    await (another ? agent.browser({ name: "new_tab", input: {} }) : agent.resetBrowser()).catch(
+      (err) => {
+        if (signal.aborted) throw err;
+        console.error(`task ${id}: couldn't clear the browser for it`, err);
+      },
+    );
     const brief = `${skill}<task>\n${task.goal}\nDone when: ${task.successCriteria || "the goal is met"}\n</task>`;
     try {
       await attempt("Start", brief);
@@ -1112,7 +1248,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       // Another model reads nothing of Haiku's cache.
       cache = { tokens: 0, at: 0 };
       screening = [];
-      armed = false;
+      armed = null;
       activeMs = 0;
       since = tasks.clock();
       // Haiku's notes: its own account, which may repeat what pages said, so it's data.

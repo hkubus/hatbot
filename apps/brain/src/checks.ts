@@ -30,7 +30,7 @@ const BIG_WAL_BYTES = 512 * 1024 ** 2;
 /** Nightly snapshots: one older than this means they've stopped. */
 const SNAPSHOT_MAX_AGE_MS = 36 * 3600_000;
 /** Features the brain uses that an older desktop-agent doesn't have. */
-const DESKTOP_FEATURES = ["profiles", "exec", "files", "fields"];
+const DESKTOP_FEATURES = ["profiles", "exec", "files", "fields", "gates"];
 
 export type ChecksDeps = {
   db: Db;

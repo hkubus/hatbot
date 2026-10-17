@@ -35,6 +35,11 @@ export async function devToolsUp(): Promise<boolean> {
 
 /** A failure the model should read: becomes an error result. */
 export class BrowserError extends Error {}
+/** Chromium isn't there to ask: nothing on screen is a page. */
+export class ChromiumDown extends BrowserError {}
+
+/** The element script's answer: a frame it couldn't enter is followed here, at a point or its focus. */
+type Inspected = AgentElement & { frame?: { x: number; y: number } | { focused: true } };
 
 type Json = Record<string, unknown>;
 type Pending = {
@@ -49,6 +54,8 @@ type Lifecycle = { seq: number; sessionId: string; name: string; loaderId?: stri
 
 /** One WebSocket to the browser endpoint; tab commands carry their session id (flat mode). */
 class Connection {
+  constructor(private endpoint: string) {}
+
   private ws: WebSocket | null = null;
   private nextId = 1;
   private pending = new Map<number, Pending>();
@@ -67,15 +74,17 @@ class Connection {
   private async open(): Promise<boolean> {
     let url: string;
     try {
-      const res = await fetch(`${CDP}/json/version`, { signal: AbortSignal.timeout(3000) });
+      const res = await fetch(`${this.endpoint}/json/version`, {
+        signal: AbortSignal.timeout(3000),
+      });
       url = ((await res.json()) as { webSocketDebuggerUrl: string }).webSocketDebuggerUrl;
     } catch {
-      throw new BrowserError("Chromium isn't running, or isn't answering on its DevTools port.");
+      throw new ChromiumDown("Chromium isn't running, or isn't answering on its DevTools port.");
     }
     const ws = new WebSocket(url);
     await new Promise<void>((resolve, reject) => {
       ws.onopen = () => resolve();
-      ws.onerror = () => reject(new BrowserError("Couldn't connect to Chromium's DevTools port."));
+      ws.onerror = () => reject(new ChromiumDown("Couldn't connect to Chromium's DevTools port."));
     });
     ws.onmessage = (e) => this.receive(String(e.data));
     ws.onclose = () => {
@@ -294,7 +303,7 @@ type Target = { type: "coordinate"; x: number; y: number } | { type: "ref"; ref:
 const BUTTONS = { left: 1, right: 2, middle: 4 } as const;
 
 export class Browser {
-  private cdp = new Connection();
+  private cdp: Connection;
   private targets = new Map<string, TargetInfo>();
   private tabIds = new Map<string, string>();
   private nextTab = 1;
@@ -320,8 +329,15 @@ export class Browser {
   private pointers = new Map<string, Point>();
   private readying: Promise<void> | null = null;
 
-  /** `downloadDir`: where downloads go, named by their guid, so they can be sent on; null leaves Chromium's default. */
-  constructor(private downloadDir: string | null = null) {
+  /**
+   * `downloadDir`: where downloads go, named by their guid, so they can be sent on; null leaves Chromium's
+   * default. `endpoint`: its DevTools address, when it isn't $HATBOT_CDP (a test's own Chromium).
+   */
+  constructor(
+    private downloadDir: string | null = null,
+    endpoint = CDP,
+  ) {
+    this.cdp = new Connection(endpoint);
     this.cdp.on((method, p, sessionId) => this.event(method, p, sessionId));
   }
 
@@ -566,24 +582,7 @@ export class Browser {
         this.worlds.set(targetId, world);
       }
       try {
-        const r = await this.cdp.send<{
-          result: { value?: T };
-          exceptionDetails?: { text?: string; exception?: { description?: string } };
-        }>(
-          "Runtime.evaluate",
-          {
-            expression: `(${script})(${JSON.stringify(arg)})`,
-            contextId: world.contextId,
-            returnByValue: true,
-            awaitPromise: true,
-          },
-          s,
-        );
-        if (r.exceptionDetails) {
-          const why = r.exceptionDetails.exception?.description ?? r.exceptionDetails.text;
-          throw new BrowserError(`The page script failed: ${String(why).split("\n")[0]}`);
-        }
-        return r.result.value as T;
+        return await this.evaluate<T>(s, world.contextId, script, arg);
       } catch (err) {
         // The document changed under us (a navigation): make a new world once.
         if (attempt === 0 && err instanceof BrowserError && /context/i.test(err.message)) {
@@ -592,6 +591,107 @@ export class Browser {
         }
         throw err;
       }
+    }
+  }
+
+  /** Runs one of page.ts's scripts in an execution context of a session. */
+  private async evaluate<T>(session: string, contextId: number, script: string, arg: unknown) {
+    const r = await this.cdp.send<{
+      result: { value?: T };
+      exceptionDetails?: { text?: string; exception?: { description?: string } };
+    }>(
+      "Runtime.evaluate",
+      {
+        expression: `(${script})(${JSON.stringify(arg)})`,
+        contextId,
+        returnByValue: true,
+        awaitPromise: true,
+      },
+      session,
+    );
+    if (r.exceptionDetails) {
+      const why = r.exceptionDetails.exception?.description ?? r.exceptionDetails.text;
+      throw new BrowserError(`The page script failed: ${String(why).split("\n")[0]}`);
+    }
+    return r.result.value as T;
+  }
+
+  /**
+   * Follows the element script into the frames it couldn't enter (another origin's, where a payment or chat
+   * widget lives), through Hatbot's world in each frame's own document, and answers with what's inside. A
+   * frame it can't get into either stays the answer, so the brain holds what it can't see.
+   */
+  private async intoFrames(
+    targetId: string,
+    first: Inspected | null,
+  ): Promise<AgentElement | null> {
+    if (!first?.frame) return first;
+    let el: Inspected = first;
+    let session = await this.session(targetId);
+    let contextId = this.worlds.get(targetId)?.contextId;
+    const attached: string[] = [];
+    try {
+      for (let depth = 0; el.frame && contextId !== undefined && depth < 4; depth++) {
+        const frame = el.frame;
+        const { result } = await this.cdp.send<{ result: { objectId?: string } }>(
+          "Runtime.evaluate",
+          { expression: "globalThis.__hatbotFrame", contextId },
+          session,
+        );
+        if (!result.objectId) break;
+        const { node } = await this.cdp.send<{ node: { frameId?: string } }>(
+          "DOM.describeNode",
+          { objectId: result.objectId },
+          session,
+        );
+        if (!node.frameId) break;
+        const world = await this.frameWorld(session, node.frameId, attached);
+        const inner = await this.evaluate<Inspected | null>(
+          world.session,
+          world.contextId,
+          INSPECT,
+          "focused" in frame ? {} : frame,
+        );
+        if (!inner) break;
+        ({ session, contextId } = world);
+        // The tab's address stays the tab's; the frame's is said apart. Whether the page has the keyboard
+        // (not the address bar) is the tab's too.
+        el = { ...inner, url: first.url, frameUrl: inner.url };
+        if (first.pageFocus !== undefined) el.pageFocus = first.pageFocus;
+      }
+    } catch {
+      // What was seen so far stands: at worst the frame itself.
+    } finally {
+      for (const s of attached)
+        void this.cdp.send("Target.detachFromTarget", { sessionId: s }).catch(() => {});
+    }
+    const { frame: _, ...out } = el;
+    // Teach mode counts typing in a frame as secret, whatever's inside.
+    return first.secret ? { ...out, secret: true } : out;
+  }
+
+  /**
+   * Hatbot's world in a frame: through the parent's session for a frame in the same process (another origin
+   * of the same site), or through the frame's own target for one of another site, which runs in its own.
+   */
+  private async frameWorld(session: string, frameId: string, attached: string[]) {
+    const world = async (s: string) => {
+      const { executionContextId } = await this.cdp.send<{ executionContextId: number }>(
+        "Page.createIsolatedWorld",
+        { frameId, worldName: "hatbot" },
+        s,
+      );
+      return { session: s, contextId: executionContextId };
+    };
+    try {
+      return await world(session);
+    } catch {
+      const { sessionId } = await this.cdp.send<{ sessionId: string }>("Target.attachToTarget", {
+        targetId: frameId,
+        flatten: true,
+      });
+      attached.push(sessionId);
+      return world(sessionId);
     }
   }
 
@@ -1147,7 +1247,17 @@ export class Browser {
   }): Promise<AgentElement | null> {
     await this.ready();
     await this.syncActive();
-    return this.run<AgentElement | null>(this.targetOf(o.tab_id), INSPECT, o).catch(() => null);
+    const t = this.targetOf(o.tab_id);
+    return this.run<Inspected | null>(t, INSPECT, o)
+      .then((el) => this.intoFrames(t, el))
+      .catch(() => null);
+  }
+
+  /** The screen's /inspect: cdp.ts's element script in the tab on screen, followed into frames. */
+  async screenElement(script: string, arg: unknown): Promise<AgentElement | null> {
+    const tab = await this.onScreen<Inspected | null>(script, arg);
+    if (!tab || !this.active) return null;
+    return this.intoFrames(this.active, tab.value ?? null);
   }
 }
 

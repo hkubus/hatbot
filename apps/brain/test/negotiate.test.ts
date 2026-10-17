@@ -121,6 +121,17 @@ function messageBox(t: TestApp, url = LISTING_URL) {
     fields,
   });
   Object.defineProperty(t.agent, "element", { get: button, configurable: true });
+  // What's focused is the text box, where typing goes; a point is on Send.
+  const focused = (): AgentElement => ({
+    ...button(),
+    tag: "textarea",
+    type: null,
+    editable: true,
+  });
+  t.agent.inspect = async (x?: number) => (x === undefined ? focused() : button());
+  const browserInspect = t.agent.browserInspect.bind(t.agent);
+  t.agent.browserInspect = async (at) =>
+    at.ref !== undefined || at.x !== undefined ? browserInspect(at) : focused();
   t.agent.health = { features: ["profiles", "exec", "files", "fields"] };
   t.agent.page = { url, title: "OLX", text: "" };
   const box = {

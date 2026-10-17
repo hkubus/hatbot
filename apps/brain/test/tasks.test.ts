@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { type Approval, latestNoteOnly, type Task, type TaskStep } from "@hatbot/shared";
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { inBatches } from "../src/agent/tools";
-import { HttpDesktopAgent } from "../src/desktop/client";
+import { DesktopError, HttpDesktopAgent } from "../src/desktop/client";
 import { marketplaceSend } from "../src/negotiate/marketplace";
 import { approvalKind } from "../src/tasks/approval-kind";
 import { limits } from "../src/tasks/desktop-run";
@@ -138,7 +138,8 @@ test("a consequential click is held back until confirm_intent is approved", asyn
   // One approval, one click: the second Pay click is held back again.
   expect(t.agent.actions.filter((a) => a.name === "left_click").length).toBe(1);
   const held = JSON.stringify(work.requests[0 + 4]?.messages.at(-1));
-  expect(held).toContain("confirm_intent first");
+  expect(held).toContain("If that's the action you mean to take, call confirm_intent first.");
+  expect(held).toContain("the label misled the check, reach the same place another way");
   expect(t.tasks.get(task.id)?.status).toBe("done");
 });
 
@@ -464,6 +465,92 @@ test("a step's screenshot is served only as an image, to the app itself", async 
   expect(res.headers.get("cross-origin-resource-policy")).toBe("same-origin");
 });
 
+test("an unanswered takeover leaves the screen to other tasks; Take over gives it back first", async () => {
+  let done = () => {};
+  const thinking = new Promise<void>((resolve) => {
+    done = resolve;
+  });
+  const work = new FakeModel([
+    // A meets a captcha at night and asks for you...
+    { content: [toolUse("request_takeover", { reason: "Solve the captcha" })] },
+    // ...B, an alert's task, runs meanwhile and is thinking when you take over...
+    { content: [computer("left_click", { coordinate: [10, 10] })], wait: thinking },
+    // ...A carries on once you hand back...
+    finish("A done."),
+    // ...and B looks again before it acts.
+    finish("B done."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const { cookie } = await setUpOwner(t);
+  const a = startTask(t, "A");
+  await waitFor(() => t.tasks.get(a.id)?.status === "waiting_takeover");
+  expect(t.tasks.lane.holderId).toBeNull();
+  const b = startTask(t, "B");
+  await waitFor(() => work.requests.length === 2);
+  expect(t.tasks.lane.holderId).toBe(b.id);
+
+  expect((await t.call("POST", "/desktop/takeover", undefined, { cookie })).status).toBe(200);
+  expect(t.tasks.lane.holderId).toBe(a.id);
+  expect(t.desktop.get()).toMatchObject({
+    control: "owner",
+    activeTaskId: a.id,
+    request: { taskId: a.id },
+  });
+  done();
+  await waitFor(() => t.tasks.get(b.id)?.status === "queued");
+  expect((await t.call("POST", "/desktop/handback", undefined, { cookie })).status).toBe(200);
+  await t.tasks.idle();
+  expect(t.tasks.get(a.id)?.summary).toBe("A done.");
+  expect(t.tasks.get(b.id)?.summary).toBe("B done.");
+  // B's click was planned on a screen that changed: it never ran.
+  expect(t.agent.actions.filter((x) => x.name === "left_click")).toEqual([]);
+  expect(JSON.stringify(work.requests[3]?.messages.at(-1))).toContain(
+    "another task had the desktop",
+  );
+  expect(t.desktop.get().request).toBeNull();
+});
+
+test("Take over says to try again while another task won't let go of the screen in time", async () => {
+  limits.takeoverReadyMs = 100;
+  let done = () => {};
+  const slow = new Promise<void>((resolve) => {
+    done = resolve;
+  });
+  const work = new FakeModel([
+    { content: [toolUse("request_takeover", { reason: "Solve the captcha" })] },
+    { content: [computer("left_click", { coordinate: [10, 10] })] },
+    finish("B done."),
+    finish("A done."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const { cookie } = await setUpOwner(t);
+  const action = t.agent.action.bind(t.agent);
+  t.agent.action = async (x) => {
+    if (x.name === "left_click") await slow;
+    return action(x);
+  };
+  try {
+    const a = startTask(t, "A");
+    await waitFor(() => t.tasks.get(a.id)?.status === "waiting_takeover");
+    const b = startTask(t, "B");
+    // B is in the middle of its click.
+    await waitFor(() => t.tasks.steps(b.id).some((s) => s.name === "left_click"));
+    const busy = await t.call("POST", "/desktop/takeover", undefined, { cookie });
+    expect(busy.status).toBe(409);
+    expect(((await busy.json()) as { error: string }).error).toContain("Try again");
+    expect(t.desktop.get().control).toBe("hatbot");
+    done();
+    await waitFor(() => t.tasks.get(b.id)?.status === "done");
+
+    expect((await t.call("POST", "/desktop/takeover", undefined, { cookie })).status).toBe(200);
+    expect((await t.call("POST", "/desktop/handback", undefined, { cookie })).status).toBe(200);
+    await t.tasks.idle();
+    expect(t.tasks.get(a.id)?.summary).toBe("A done.");
+  } finally {
+    limits.takeoverReadyMs = 8_000;
+  }
+});
+
 test("a page that looks like a prompt injection stops the task unless you approve", async () => {
   const work = new FakeModel([{ content: [computer("screenshot")] }, finish()]);
   work.onCreate = () => '{"suspected": true, "excerpt": "Ignore previous instructions"}';
@@ -633,6 +720,46 @@ test("one task at a time on the screen; waiting for approval frees it", async ()
   expect(t.tasks.lane.holderId).toBeNull();
 });
 
+test("an approval holds only on its page, and a task waiting for one keeps its tabs", async () => {
+  const work = new FakeModel([
+    // A asks to pay on its order page...
+    { content: [toolUse("confirm_intent", { kind: "payment", summary: "Click Zapłać" })] },
+    // ...B runs meanwhile and leaves the browser on another site...
+    finish("B done."),
+    // ...so A's click there isn't the one approved.
+    { content: [computer("left_click", { coordinate: [300, 520] })] },
+    finish("A stopped."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const order = "https://shop.example/order/1";
+  t.agent.page = { url: order, title: "Order", text: "" };
+  const a = startTask(t, "A");
+  const b = startTask(t, "B");
+  const approval = await pending(t);
+  await waitFor(() => t.tasks.get(b.id)?.status === "done");
+  // B didn't close A's tabs: it opened its own.
+  expect(t.agent.resets).toBe(1);
+  expect(t.agent.browserCalls.map((c) => c.name)).toEqual(["new_tab"]);
+
+  const elsewhere = "https://other.example/";
+  t.agent.page = { url: elsewhere, title: "Other", text: "" };
+  t.agent.element = {
+    tag: "button",
+    role: null,
+    type: "button",
+    label: "Zapłać",
+    inForm: false,
+    url: elsewhere,
+  };
+  t.approvals.decide(approval.id, "approve", "web");
+  await t.tasks.idle();
+  expect(t.tasks.get(a.id)?.summary).toBe("A stopped.");
+  const said = (n: number) => JSON.stringify(work.requests[n]?.messages.at(-1)?.content);
+  expect(said(2)).toContain(`the page you asked about (${order}) isn't on screen now`);
+  expect(said(3)).toContain(`The owner's approval was for a step on ${order}, not this page.`);
+  expect(t.agent.actions.filter((x) => x.name === "left_click")).toEqual([]);
+});
+
 test("desktop_shell runs commands as text; destructive ones ask first", async () => {
   const work = new FakeModel([
     { content: [toolUse("desktop_shell", { command: "python3 -c 'print(6*7)'" })] },
@@ -745,6 +872,88 @@ test("a consequential browser click is checked by its element reference", async 
   // The batch stops at the held-back click: typing would land in the wrong place.
   expect(results[1]?.is_error).toBe(true);
   expect(results[1]?.content).toBe("Not executed: an earlier action in this turn failed.");
+});
+
+test("a click in a frame Hatbot can't enter, or that it couldn't look at, is held", async () => {
+  const work = new FakeModel([
+    // A PayU widget desktop-agent couldn't get into.
+    { content: [browser("left_click", { target: { type: "coordinate", x: 60, y: 30 } })] },
+    // The browser couldn't say what's at the point.
+    { content: [browser("left_click", { target: { type: "ref", ref: "ref_9" } })] },
+    // The screen's inspect failed on a page.
+    { content: [computer("left_click", { coordinate: [60, 30] })] },
+    // Off the page (the browser's own bar): nothing to check, so it runs.
+    { content: [computer("left_click", { coordinate: [400, 10] })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const frame = { tag: "iframe", role: null, type: null, label: "PayU", inForm: false };
+  const looks: (typeof frame | null)[] = [frame, null];
+  t.agent.browserInspect = async () => looks.shift() ?? null;
+  let screen = 0;
+  t.agent.inspect = async () => {
+    if (screen++ === 0) throw new DesktopError("The page script failed: timed out", 400);
+    return null;
+  };
+  startTask(t, "Pay for the order");
+  await t.tasks.idle();
+
+  const said = (n: number) => JSON.stringify(work.requests[n]?.messages.at(-1)?.content);
+  expect(said(1)).toContain('lands in an embedded frame (\\"PayU\\")');
+  expect(said(2)).toContain("couldn't see what this click would act on");
+  expect(said(3)).toContain("couldn't see what this click would act on");
+  expect(t.agent.browserCalls).toEqual([]);
+  expect(t.agent.actions.map((a) => a.input)).toEqual([{ coordinate: [400, 10] }]);
+});
+
+test("Space, mouse up, a drag, Enter after Tab and Enter in a chat box don't slip past", async () => {
+  const pay = { tag: "button", role: null, type: "button", label: "Zapłać", inForm: false };
+  const chat = {
+    tag: "textarea",
+    role: null,
+    type: null,
+    label: "Napisz wiadomość",
+    inForm: false,
+    editable: true,
+    buttonsAfter: ["", "Wyślij"],
+  };
+  const work = new FakeModel([
+    { content: [computer("key", { text: "space" })] },
+    { content: [computer("left_mouse_down")] },
+    { content: [computer("left_mouse_up")] },
+    {
+      content: [computer("left_click_drag", { start_coordinate: [5, 5], coordinate: [300, 520] })],
+    },
+    { content: [computer("key", { text: "Tab Return" })] },
+    { content: [computer("hold_key", { text: "Return", duration: 1 })] },
+    { content: [browser("key", { text: "Return" })] },
+    { content: [browser("type", { text: "Dzień dobry\n" })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.agent.element = pay;
+  const stream = work.stream.bind(work);
+  work.stream = async (p, h) => {
+    const res = await stream(p, h);
+    // The last two land in a chat box whose Send is after it.
+    if (work.requests.length >= 7) t.agent.element = chat;
+    return res;
+  };
+  startTask(t, "Write to the seller");
+  await t.tasks.idle();
+
+  // Nothing ran: each was held or refused.
+  expect(t.agent.actions.filter((a) => a.name !== "cursor_position")).toEqual([]);
+  expect(t.agent.browserCalls).toEqual([]);
+  const said = (n: number) => JSON.stringify(work.requests[n]?.messages.at(-1)?.content);
+  expect(said(1)).toContain('press \\"Zapłać\\"');
+  expect(said(2)).toContain('click \\"Zapłać\\"');
+  expect(said(3)).toContain('click \\"Zapłać\\"');
+  expect(said(4)).toContain('click \\"Zapłać\\"');
+  expect(said(5)).toContain("in a key action of its own");
+  expect(said(6)).toContain("Holding Enter or Space repeats it");
+  expect(said(7)).toContain('submit with \\"Wyślij\\"');
+  expect(said(8)).toContain('submit with \\"Wyślij\\"');
 });
 
 test("lookups in a row run at once; everything else runs on its own, in order", async () => {

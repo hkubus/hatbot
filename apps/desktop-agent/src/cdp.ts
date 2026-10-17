@@ -2,8 +2,8 @@
 // browser.ts's one DevTools connection, in Hatbot's isolated world, so the page's own scripts can't see or
 // fake the answers.
 import type { AgentContext, AgentElement } from "@hatbot/shared/desktop";
-import type { Browser } from "./browser";
-import { FIELDS } from "./page";
+import { type Browser, ChromiumDown } from "./browser";
+import { ELEMENT } from "./page";
 
 const MAX_TEXT = 20_000;
 
@@ -78,34 +78,27 @@ export async function context(
 // Screen point to viewport point: Chromium is maximised with no window border, so the viewport's left edge is
 // the window's, and its top is below the tab strip and toolbar (outer height minus inner height).
 export const ELEMENT_JS = `(o) => {
-  ${FIELDS}
+  ${ELEMENT}
   ${SECRET}
   const dpr = window.devicePixelRatio || 1;
   const left = window.screenX + (window.outerWidth - window.innerWidth * dpr) / 2;
   const top = window.screenY + window.outerHeight - window.innerHeight * dpr;
-  let el = o.focused ? document.activeElement
-    : document.elementFromPoint((o.x - left) / dpr, (o.y - top) / dpr);
-  while (o.focused && el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
-  if (!el || el === document.body) return null;
+  const at = o.focused ? focusedAt() : elementAt((o.x - left) / dpr, (o.y - top) / dpr);
+  const el = at.el;
+  if (!el || el === el.ownerDocument.body) return null;
   // Teach mode drops what's typed here. A frame's focus can't be seen from the page, so it counts too.
-  const secret = el.tagName === 'IFRAME' || isSecret(el);
-  const clickable = el.closest('button, a, input, select, textarea, label, summary, [role=button], [role=link], [role=menuitem], [onclick]');
-  if (clickable) el = clickable;
-  const text = (e) => (e.getAttribute('aria-label') || e.value || e.innerText || e.title || e.alt || '').trim().replace(/\\s+/g, ' ').slice(0, 200);
-  const form = el.closest('form');
-  const out = { tag: el.tagName.toLowerCase(), role: el.getAttribute('role'), type: el.getAttribute('type'),
-    label: el.tagName === 'INPUT' && !['submit', 'button'].includes(el.type) ? (el.placeholder || el.name || '') : text(el),
-    inForm: !!form, secret, url: location.href, editable: isTextBox(el), fields: fieldsFor(el) };
+  const secret = isFrame(el) || isSecret(el);
+  const out = { ...elementInfo(el), secret };
   // Typing goes to the focused element only while the page has the keyboard, not the address bar.
   if (o.focused) out.pageFocus = document.hasFocus();
-  if (o.focused && form) {
-    const submit = form.querySelector('button[type=submit], input[type=submit], button:not([type])');
-    if (submit) out.submitLabel = text(submit);
-  }
-  return out;
+  return leaveFrame(out, at);
 }`;
 
-/** The element under a screen point, or the focused element when x and y are omitted. */
+/**
+ * The element under a screen point, or the focused element when x and y are omitted, followed into frames.
+ * Null when it's not in a page (the browser's own bar, another window) or Chromium isn't running; a page
+ * that can't be looked at throws, so the brain doesn't take it for nothing there.
+ */
 export async function inspect(
   browser: Browser,
   x?: number,
@@ -113,13 +106,13 @@ export async function inspect(
 ): Promise<AgentElement | null> {
   try {
     const focused = x === undefined || y === undefined;
-    const tab = await browser.onScreen<AgentElement | null>(ELEMENT_JS, {
+    return await browser.screenElement(ELEMENT_JS, {
       x: Math.round(x ?? 0),
       y: Math.round(y ?? 0),
       focused,
     });
-    return tab?.value ?? null;
-  } catch {
-    return null;
+  } catch (err) {
+    if (err instanceof ChromiumDown) return null;
+    throw err;
   }
 }
