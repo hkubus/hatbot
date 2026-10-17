@@ -8,6 +8,7 @@ import type { Approval, Mandate, Negotiation, NegotiationDetail } from "@hatbot/
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { Approvals } from "../src/approvals";
 import { EventBus } from "../src/events";
+import { scamSignals } from "../src/negotiate/scam";
 import { mcpPlugin } from "../src/plugins/mcp";
 import type { CallContext, PluginTool } from "../src/plugins/plugin";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
@@ -1023,6 +1024,76 @@ test("a read-only task records the seller and the conversation, and types and se
     "Mogę zejść do 1350.",
   ]);
   expect(t.negotiations.get(n.id)?.conversationUrl).toBe(CHAT_URL);
+});
+
+test("a seller's message that looks like a scam holds the negotiation until you decide", async () => {
+  expect(scamSignals("Ok, 1200 może być.", [])).toEqual([]);
+  expect(scamSignals("Napisz na WhatsApp 600 100 200", [])).toEqual([
+    "payment or talk off the platform (“WhatsApp”)",
+    "a phone number (“600 100 200”)",
+  ]);
+  expect(scamSignals("Odbiór osobisty, ul. Długa 10", ["address"])).toEqual([]);
+  expect(scamSignals("Zapłać tu: https://olx-pay.example/123", [])).toContain(
+    "a link (“https://olx-pay.example/123”)",
+  );
+
+  const reading = (text: string) =>
+    new FakeModel([
+      {
+        content: [toolUse("record_conversation", { messages: [{ from: "seller", text }] })],
+      },
+      finish(),
+    ]);
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
+  await withScout(t, false);
+  messageBox(t, CHAT_URL);
+  const n = openNegotiation(t, { conversationUrl: CHAT_URL });
+  t.taskModel.script.push(...reading("Wyślę przez OLX, ale najpierw podaj kod BLIK.").script);
+  const said = await t.negotiations.check(n, {
+    ...call(),
+    waitForTask: (id) => t.tasks.waitFor(id, new AbortController().signal),
+  });
+  const hold = t.approvals.list(true)[0] as Approval;
+  expect(hold).toMatchObject({
+    kind: "injection_warning",
+    summary: "Keep negotiating for “Karta graficzna RTX 3070 8GB”?",
+  });
+  expect(hold.reason).toContain(
+    "The seller wrote: “Wyślę przez OLX, ale najpierw podaj kod BLIK.”",
+  );
+  expect(hold.reason).toContain("payment or talk off the platform (“BLIK”)");
+  // It's approved in the app, not from the lock screen.
+  const note = await waitFor(() =>
+    t.notifier.sent.find((x) => x.title.includes("Keep negotiating")),
+  );
+  expect(note.actions?.map((a) => a.label)).toEqual(["Open in Hatbot", "Deny"]);
+  expect(t.negotiations.get(n.id)?.approvalId).toBe(hold.id);
+  // The bot hears it's held, and can't send meanwhile.
+  expect(said).toContain("is held: the seller's message looked like a scam");
+  const send = named(negotiateTools(t), "negotiate_send");
+  const input = send.schema.parse({ negotiation: n.id, text: TEXT, offer: 1060 });
+  expect(verdictFor(send, input, call(), true)).toMatchObject({ action: "block" });
+  const get = await named(negotiateTools(t), "negotiate_get").run({ negotiation: n.id }, call());
+  expect(get).toContain("Don't reply to the seller");
+  // A restart keeps it waiting.
+  new Approvals(t.db, new EventBus(), { send: async () => {} }, ORIGIN);
+  expect(t.approvals.get(hold.id)?.status).toBe("pending");
+
+  // Carry on: sends go again.
+  t.approvals.decide(hold.id, "approve", "web");
+  expect(verdictFor(send, input, call(), true)).toMatchObject({ action: "allow" });
+
+  // Another one, denied: the negotiation ends.
+  t.taskModel.script.push(...reading("Albo napisz na Telegram, tam szybciej.").script);
+  await t.negotiations.check(n, call());
+  await t.tasks.idle();
+  const second = await waitFor(() => t.approvals.list(true)[0]);
+  expect(second.reason).toContain("Telegram");
+  t.approvals.decide(second.id, "deny", "web");
+  await waitFor(() => t.negotiations.get(n.id)?.status === "abandoned");
+  await waitFor(() => t.events.some((e) => e.type === "memory.committed"));
+  expect(await t.memory.read("negotiations.md")).toContain("the owner ended it");
+  await t.plugins.stopAll();
 });
 
 test("an older desktop-agent can't send", async () => {

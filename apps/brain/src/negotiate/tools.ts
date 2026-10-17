@@ -39,6 +39,8 @@ function negotiationText(neg: Negotiations, n: Negotiation): string {
     `Conversation: ${n.conversationUrl ?? "none recorded yet"}`,
     `Mandate${n.status === "awaiting_mandate" ? " (waiting for the owner's approval)" : ""}: open at ${zl(m.opening)}, aim for ${zl(m.target)}, ${n.role === "buy" ? "pay at most" : "take at least"} ${zl(m.limit)}; delivery: ${m.delivery}; until ${m.expiresAt.slice(0, 16).replace("T", " ")} UTC; contact details allowed: ${m.allow.length ? m.allow.join(", ") : "none"}.`,
   ];
+  const held = neg.held(n);
+  if (held) head.push(held);
   const c = n.claims;
   const claims = [
     c.max !== null ? `your stated max ${zl(c.max)}` : null,
@@ -232,11 +234,15 @@ export function negotiateTools(
       policy: (i) => {
         const n = neg.get(i.negotiation);
         if (!n || n.botId !== bot.id) return block(`There's no negotiation #${i.negotiation}.`);
+        const held = neg.held(n);
+        if (held) return block(held);
         return sendPolicy(n, toSend(i), neg.facts(n));
       },
       run: async (i, call) => {
         const n = neg.mine(bot, i.negotiation);
         const input = toSend(i);
+        const held = neg.held(n);
+        if (held) throw new PluginError(held);
         // Again, since an approval may have taken hours: quiet hours and the pace still hold.
         const v = sendPolicy(n, input, neg.facts(n));
         if (v.action === "block") throw new PluginError(v.why);
