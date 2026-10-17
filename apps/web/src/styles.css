@@ -1774,13 +1774,14 @@ html[data-theme="dark"] .seg button.active {
   border-top: 1px solid var(--line-strong);
 }
 
-/* Code blocks: Copy in the corner, on hover (always there on touch screens). */
-.msg .md .code-block {
+/* Code blocks: Copy in the corner, on hover (always there on touch screens), with room kept for it. */
+.md .code-block {
   position: relative;
   min-width: 0;
 }
-.msg .md .code-block pre {
+.md .code-block pre {
   margin: 0;
+  padding-right: 34px;
 }
 .code-copy {
   position: absolute;
@@ -1799,6 +1800,10 @@ html[data-theme="dark"] .seg button.active {
 @media (hover: none) {
   .code-copy {
     opacity: 1;
+  }
+  /* There all the time: the code starts below it. */
+  .md .code-block pre {
+    padding: 30px 12px 10px;
   }
 }
 
