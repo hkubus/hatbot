@@ -127,6 +127,7 @@ export function GroupPage({ id, toast }: { id: string; toast: (t: string) => voi
             <div className="form-row" key={b}>
               <span>{bots[b]?.name ?? b}</span>
               <Switch
+                label={bots[b]?.name ?? b}
                 on={members.includes(b)}
                 onChange={(on) => setMembers((m) => (on ? [...m, b] : m.filter((x) => x !== b)))}
               />

@@ -368,6 +368,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
               <button
                 type="button"
                 className={form.kind === "page" ? "active" : ""}
+                aria-pressed={form.kind === "page"}
                 onClick={() => set({ kind: "page" })}
               >
                 A page
@@ -375,6 +376,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
               <button
                 type="button"
                 className={form.kind === "tool" ? "active" : ""}
+                aria-pressed={form.kind === "tool"}
                 onClick={() =>
                   set({ kind: "tool", pick: form.pick === "selector" ? "path" : form.pick })
                 }
@@ -460,6 +462,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
                     type="button"
                     key={pick}
                     className={form.pick === pick ? "active" : ""}
+                    aria-pressed={form.pick === pick}
                     onClick={() => set({ pick })}
                   >
                     {label}
@@ -471,6 +474,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
             <input
               className="field mono"
               value={form.selector}
+              aria-label="CSS selector"
               spellCheck={false}
               placeholder=".price"
               onChange={(e) => set({ selector: e.target.value })}
@@ -480,6 +484,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
             <input
               className="field mono"
               value={form.path}
+              aria-label="JSON path"
               spellCheck={false}
               placeholder="items.0.price"
               onChange={(e) => set({ path: e.target.value })}
@@ -512,6 +517,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
             <span className="label">Counts when it</span>
             <select
               className="field"
+              aria-label="Counts when it"
               value={form.when}
               onChange={(e) => set({ when: e.target.value as WatchCondition["when"] })}
             >
@@ -526,6 +532,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
             <input
               className="field"
               value={form.text}
+              aria-label="Text"
               placeholder="In stock"
               onChange={(e) => set({ text: e.target.value })}
             />
@@ -535,6 +542,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
               className="field"
               inputMode="decimal"
               value={form.value}
+              aria-label="Number"
               placeholder="1000"
               onChange={(e) => set({ value: e.target.value })}
             />
@@ -543,6 +551,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
             <span className="label">Look</span>
             <select
               className="field"
+              aria-label="Look"
               value={form.everyMinutes}
               onChange={(e) => set({ everyMinutes: Number(e.target.value) })}
             >

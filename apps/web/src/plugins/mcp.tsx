@@ -130,6 +130,7 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
                     type="button"
                     key={t}
                     className={s.transport === t ? "active" : ""}
+                    aria-pressed={s.transport === t}
                     onClick={() => set(i, { transport: t })}
                   >
                     {t === "http" ? "HTTP" : "Command"}

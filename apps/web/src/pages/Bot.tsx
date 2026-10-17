@@ -174,6 +174,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
               <span className="label">Template</span>
               <select
                 className="field"
+                aria-label="Template"
                 value={template}
                 onChange={(e) => pickTemplate(e.target.value)}
               >
@@ -246,6 +247,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
             <span className="label">Model</span>
             <select
               className="field"
+              aria-label="Model"
               value={form.chatModel ?? ""}
               onChange={(e) => set({ chatModel: (e.target.value || null) as Form["chatModel"] })}
             >
@@ -258,6 +260,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
             <span className="label">Effort</span>
             <select
               className="field"
+              aria-label="Effort"
               value={form.chatEffort ?? ""}
               onChange={(e) => set({ chatEffort: (e.target.value || null) as Form["chatEffort"] })}
             >
@@ -280,6 +283,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
                   <div className="form-row" key={p.id}>
                     <span>{p.name}</span>
                     <Switch
+                      label={p.name}
                       on={form.plugins?.includes(p.id) ?? false}
                       onChange={(on) =>
                         set({

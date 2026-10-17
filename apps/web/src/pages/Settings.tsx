@@ -152,6 +152,7 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
                     type="button"
                     key={t}
                     className={theme === t ? "active" : ""}
+                    aria-pressed={theme === t}
                     onClick={() => {
                       setTheme(t);
                       setThemeState(t);

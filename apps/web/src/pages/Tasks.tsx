@@ -160,6 +160,7 @@ export function Tasks() {
             <button
               type="button"
               className={filter === "active" ? "active" : ""}
+              aria-pressed={filter === "active"}
               onClick={() => setFilter("active")}
             >
               Active
@@ -167,6 +168,7 @@ export function Tasks() {
             <button
               type="button"
               className={filter === "done" ? "active" : ""}
+              aria-pressed={filter === "done"}
               onClick={() => setFilter("done")}
             >
               Finished

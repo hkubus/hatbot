@@ -173,6 +173,7 @@ function SpendCard({ title, points, limit }: { title: string; points: Point[]; l
           <button
             type="button"
             className={mode === "chart" ? "active" : ""}
+            aria-pressed={mode === "chart"}
             onClick={() => setMode("chart")}
           >
             Chart
@@ -180,6 +181,7 @@ function SpendCard({ title, points, limit }: { title: string; points: Point[]; l
           <button
             type="button"
             className={mode === "table" ? "active" : ""}
+            aria-pressed={mode === "table"}
             onClick={() => setMode("table")}
           >
             Table

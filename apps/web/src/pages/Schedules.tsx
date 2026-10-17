@@ -12,6 +12,7 @@ import { ApiError, api } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm } from "../form";
 import { Icon } from "../icons";
+import { Link } from "../link";
 import { navigate } from "../router";
 import { atIso, cronOk, localInput } from "../schedule-form";
 import {
@@ -234,8 +235,11 @@ export function Runs({
           <table className="table">
             <tbody>
               {shown.map((t) => (
-                <tr key={t.id} onClick={() => navigate(`/tasks/${t.id}`)}>
-                  <td className="wrap">{t.summary ?? t.title}</td>
+                <tr key={t.id} className="link-row">
+                  <td className="wrap">
+                    {/* The link covers the whole row, and the keyboard reaches it. */}
+                    <Link to={`/tasks/${t.id}`}>{t.summary ?? t.title}</Link>
+                  </td>
                   <td>
                     <StatusChip status={t.status} />
                   </td>
@@ -413,6 +417,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
               <button
                 type="button"
                 className={form.repeat ? "active" : ""}
+                aria-pressed={form.repeat}
                 onClick={() => set({ repeat: true })}
               >
                 Repeats
@@ -420,6 +425,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
               <button
                 type="button"
                 className={form.repeat ? "" : "active"}
+                aria-pressed={!form.repeat}
                 onClick={() => set({ repeat: false })}
               >
                 Once
@@ -692,6 +698,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
                     type="button"
                     key={k}
                     className={form.kind === k ? "active" : ""}
+                    aria-pressed={form.kind === k}
                     onClick={() =>
                       set({
                         kind: k,
@@ -739,6 +746,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
                     type="button"
                     key={label}
                     className={form.confirmChecks === n ? "active" : ""}
+                    aria-pressed={form.confirmChecks === n}
                     onClick={() => set({ confirmChecks: n })}
                   >
                     {label}
@@ -788,7 +796,12 @@ export function BotPicker({ value, onChange }: { value: string; onChange: (id: s
   return (
     <div className="form-row">
       <span className="label">Runs as</span>
-      <select className="field" value={value} onChange={(e) => onChange(e.target.value)}>
+      <select
+        className="field"
+        aria-label="Runs as"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
         {(ids.includes(value) ? ids : [...ids, value]).map((id) => (
           <option key={id} value={id}>
             {bots[id]?.name ?? id}
