@@ -6,6 +6,7 @@ import { runTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
 import { HATBOT } from "../src/memory/store";
 import { definePlugin, ready, tool } from "../src/plugins/plugin";
+import { BudgetError, fixedTokens, requestCeiling } from "../src/spend";
 import { plain as plainRead, quoteFound } from "../src/tasks/research";
 import { Tasks } from "../src/tasks/service";
 import { FakeModel, type Scripted, text, toolUse } from "./fake-model";
@@ -689,6 +690,43 @@ test("when the number check can't run, the timeline and the report say so", asyn
     expect(await t.memory.read(task.reportPath as string)).toContain(
       `The numbers weren't checked against their sources (${why})._`,
     );
+  }
+});
+
+test("the number check is priced at all of its output first, and a limit leaves the report unchecked", async () => {
+  for (const over of [false, true]) {
+    const work = new FakeModel([INVESTIGATE, finish("Get the DS925+ [1].", "Report [1].")]);
+    helpers(work);
+    work.onCreate = (p) =>
+      p.system === RESEARCH_CHECK_PROMPT ? JSON.stringify({ problems: [] }) : undefined;
+    const t = await testApp(new FakeModel(), work);
+    const checked: number[] = [];
+    const check = t.spend.check.bind(t.spend);
+    t.spend.check = (usd, ...rest) => {
+      // Only the number check's own call is made from checkNumbers.
+      if (new Error().stack?.includes("checkNumbers")) {
+        checked.push(usd);
+        if (over) throw new BudgetError("task", "This task would go over its $3 limit.");
+      }
+      return check(usd, ...rest);
+    };
+    const task = await startResearch(t);
+    expect(task.status).toBe("done");
+    const sent = work.creates.find((p) => p.system === RESEARCH_CHECK_PROMPT);
+    if (over) {
+      expect(sent).toBeUndefined();
+      expect(task.summary).toEndWith("Its numbers weren't checked against their sources.");
+      expect(await t.memory.read(task.reportPath as string)).toContain(
+        "The numbers weren't checked against their sources (a spending limit stopped it)._",
+      );
+    } else {
+      expect(checked).toEqual([
+        requestCeiling("claude-haiku-5-5", {
+          prompt: fixedTokens(RESEARCH_CHECK_PROMPT, String(sent?.messages[0]?.content)),
+          maxTokens: sent?.max_tokens ?? 0,
+        }),
+      ]);
+    }
   }
 });
 

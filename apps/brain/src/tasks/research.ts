@@ -12,12 +12,14 @@ import { containerOf, serverToolWaiting, toolParam, webReads, webTools } from ".
 import { tagJson, untrustedFields } from "../agent/untrusted";
 import { botFolder, slugWords } from "../bots";
 import { MemoryConflict } from "../memory/store";
-import { BudgetError, estimateTokens, requestCeiling } from "../spend";
+import { BudgetError, estimateTokens, fixedTokens, requestCeiling } from "../spend";
 import { refreshing } from "./research-goal";
 import type { Tasks } from "./service";
 
 const WORKER_MODEL = "claude-haiku-5-5";
 const CHECK_MODEL = "claude-haiku-5-5";
+/** Room for the number check's thinking and its verdict. */
+const CHECK_TOKENS = 16000;
 export const MAX_RESEARCH_STEPS = 60;
 /** The API's task budget for the research loop: the model paces itself to finish within it. */
 export const RESEARCH_TOKENS = 250_000;
@@ -792,20 +794,23 @@ async function checkNumbers(
   const { d } = run.tasks;
   const cited = citedIn([text]).filter((n) => sources.get(n));
   if (!cited.length) return { problems: [] };
+  const content = `${untrustedFields("sources", evidenceFor(sources, cited))}\n\n<report>\n${text}\n</report>`;
   try {
+    // Past a limit it throws, and the report says its numbers weren't checked.
+    d.spend.check(
+      requestCeiling(CHECK_MODEL, {
+        prompt: fixedTokens(RESEARCH_CHECK_PROMPT, content),
+        maxTokens: CHECK_TOKENS,
+      }),
+      { id: run.task.id, limitUsd: run.tasks.budget(run.task.id) },
+    );
     const res = await d.model.create({
       model: CHECK_MODEL,
-      // Room for thinking and the verdict.
-      max_tokens: 16000,
+      max_tokens: CHECK_TOKENS,
       thinking: { type: "adaptive" },
       output_config: { effort: "low", format: { type: "json_schema", schema: CHECK_SCHEMA } },
       system: RESEARCH_CHECK_PROMPT,
-      messages: [
-        {
-          role: "user",
-          content: `${untrustedFields("sources", evidenceFor(sources, cited))}\n\n<report>\n${text}\n</report>`,
-        },
-      ],
+      messages: [{ role: "user", content }],
     });
     d.spend.recordResponse({
       model: CHECK_MODEL,
@@ -833,6 +838,7 @@ async function checkNumbers(
         .slice(0, 15),
     };
   } catch (err) {
+    if (err instanceof BudgetError) return { failed: "a spending limit stopped it" };
     // The check helps; it doesn't hold the report up, which says it wasn't checked.
     console.error(`research task ${run.task.id}: the number check failed`, err);
     return { failed: `the check failed: ${modelErrorText(err)}` };
