@@ -520,7 +520,9 @@ export class Negotiations {
       .all();
     for (const h of holds) {
       const a = this.d.approvals.get(h.approval_id);
-      if (a?.kind === "injection_warning" && a.status !== "pending") void this.holdDecided(a);
+      // Denied or unanswered while the brain was away; an approved one needs nothing more.
+      if (a?.kind === "injection_warning" && a.status !== "pending" && a.status !== "approved")
+        void this.holdDecided(a);
     }
     const lapsed = this.d.db
       .query<{ id: number }, [string]>(
@@ -530,6 +532,9 @@ export class Negotiations {
     for (const { id } of lapsed) {
       this.update(id, { status: "expired", closed_at: this.now(), next_follow_up_at: null });
       this.stopTasks(id);
+      // A hold waiting for you is moot now.
+      const held = this.get(id)?.approvalId;
+      if (held && this.d.approvals.get(held)?.status === "pending") this.d.approvals.cancel(held);
     }
     const ready = this.d.db
       .query<Row, [string]>(

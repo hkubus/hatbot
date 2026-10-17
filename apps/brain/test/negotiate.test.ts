@@ -745,12 +745,20 @@ test("a negotiation whose mandate runs out expires, and its tasks stop", async (
   const n = openNegotiation(t);
   await t.tasks.lane.acquire(-5, new AbortController().signal);
   await t.negotiations.check(n, call());
+  // Held for the owner, who hasn't answered.
+  const hold = t.approvals.create({
+    taskId: null,
+    kind: "injection_warning",
+    summary: "Keep going?",
+  });
+  t.negotiations.update(n.id, { approval_id: hold.id });
   t.negotiations.due();
   expect(t.negotiations.get(n.id)?.status).toBe("open");
   t.advance(Date.parse(MANDATE.expiresAt) - Date.parse("2026-10-09T12:00:00Z"));
   t.negotiations.due();
   expect(t.negotiations.get(n.id)).toMatchObject({ status: "expired" });
   expect(t.negotiations.get(n.id)?.closedAt).toBeTruthy();
+  expect(t.approvals.get(hold.id)?.status).toBe("cancelled");
   t.tasks.lane.release(-5);
   await t.tasks.idle();
   expect(t.tasks.get(1)?.status).toBe("cancelled");
