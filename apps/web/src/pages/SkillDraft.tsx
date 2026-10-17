@@ -107,6 +107,7 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
           {error && <div className="form-error">{error}</div>}
           <textarea
             className="editor-text"
+            aria-label={name ? `skills/${name}.md` : "Skill"}
             spellCheck={false}
             value={content}
             onChange={(e) => setContent(e.target.value)}

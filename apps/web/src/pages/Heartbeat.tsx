@@ -48,7 +48,8 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
   useEffect(() => {
     api<HeartbeatInfo>("/heartbeat").then(setInfo, () => {});
   }, [heartbeatVersion]);
-  useLeaveGuard(settings !== null && instructions !== settings.heartbeat.instructions);
+  const unsaved = settings !== null && instructions !== settings.heartbeat.instructions;
+  useLeaveGuard(unsaved);
 
   if (!settings)
     return (
@@ -96,7 +97,14 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
             Settings
           </button>
           <span className="spacer" />
-          <button type="button" className="btn sm" disabled={busy} onClick={lookNow}>
+          {/* It looks with what's saved: off while you have unsaved instructions. */}
+          <button
+            type="button"
+            className="btn sm"
+            disabled={busy || unsaved}
+            title={unsaved ? "Save your changes first" : undefined}
+            onClick={lookNow}
+          >
             Look now
           </button>
         </div>
@@ -109,6 +117,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
             <span className="label">Look</span>
             <select
               className="field"
+              aria-label="Look"
               value={hb.everyMinutes}
               onChange={(e) => save({ everyMinutes: Number(e.target.value) })}
             >

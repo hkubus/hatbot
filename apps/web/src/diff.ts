@@ -18,7 +18,7 @@ export function lineDiff(before: string | null, after: string | null): DiffLine[
   return lines;
 }
 
-/** The longest common subsequence of the lines between the unchanged start and end. */
+/** The fewest lines deleted and added, with the unchanged start and end set aside first. */
 function diff(before: string | null, after: string | null): DiffLine[] {
   const a = before === null ? [] : before.replace(/\n$/, "").split("\n");
   const b = after === null ? [] : after.replace(/\n$/, "").split("\n");
@@ -53,43 +53,90 @@ function diff(before: string | null, after: string | null): DiffLine[] {
   return out;
 }
 
+/** Past this many lines deleted or added, the middle is shown as a whole replacement. */
+const MOST_EDITS = 2_000;
+
+/**
+ * Myers' diff: its time grows with the file times the number of edits, not with the file squared, so
+ * a few edits far apart in a long file are cheap.
+ */
 function middle(a: string[], b: string[]): DiffLine[] {
-  // A huge rewrite: whole replacement rather than a slow table.
-  if (a.length * b.length > 4_000_000)
+  const n = a.length;
+  const m = b.length;
+  // v[k + off] is how far along `a` the path on diagonal k (x - y) has got; one snapshot per step.
+  const off = Math.min(n + m, MOST_EDITS) + 1;
+  const v = new Int32Array(2 * off + 1);
+  const trace: Int32Array[] = [];
+  let edits = -1;
+  for (let d = 0; d <= Math.min(n + m, MOST_EDITS) && edits < 0; d++) {
+    for (let k = -d; k <= d; k += 2) {
+      // Down from k + 1 is an added line, right from k - 1 a deleted one; on a tie, the deletion.
+      let x =
+        k === -d || (k !== d && (v[off + k - 1] as number) < (v[off + k + 1] as number))
+          ? (v[off + k + 1] as number)
+          : (v[off + k - 1] as number) + 1;
+      let y = x - k;
+      while (x < n && y < m && a[x] === b[y]) {
+        x++;
+        y++;
+      }
+      v[off + k] = x;
+      if (x >= n && y >= m) {
+        edits = d;
+        break;
+      }
+    }
+    trace.push(v.slice(off - d, off + d + 1));
+  }
+  // A huge rewrite: whole replacement rather than a slow search.
+  if (edits < 0)
     return [
       ...a.map((text) => ({ kind: "del" as const, text })),
       ...b.map((text) => ({ kind: "add" as const, text })),
     ];
-  const lcs = Array.from({ length: a.length + 1 }, () => new Uint32Array(b.length + 1));
-  for (let i = a.length - 1; i >= 0; i--)
-    for (let j = b.length - 1; j >= 0; j--)
-      (lcs[i] as Uint32Array)[j] =
-        a[i] === b[j]
-          ? ((lcs[i + 1] as Uint32Array)[j + 1] as number) + 1
-          : Math.max(
-              (lcs[i + 1] as Uint32Array)[j] as number,
-              (lcs[i] as Uint32Array)[j + 1] as number,
-            );
+  // Back from the end, step by step.
   const all: DiffLine[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < a.length || j < b.length) {
-    if (i < a.length && j < b.length && a[i] === b[j]) {
-      all.push({ kind: "same", text: a[i] as string });
-      i++;
-      j++;
-    } else if (
-      i < a.length &&
-      (j >= b.length ||
-        ((lcs[i + 1] as Uint32Array)[j] as number) >= ((lcs[i] as Uint32Array)[j + 1] as number))
-    ) {
-      // What goes, before what replaces it.
-      all.push({ kind: "del", text: a[i] as string });
-      i++;
-    } else {
-      all.push({ kind: "add", text: b[j] as string });
-      j++;
+  let x = n;
+  let y = m;
+  for (let d = edits; d > 0; d--) {
+    const prev = trace[d - 1] as Int32Array;
+    const at = (k: number) => prev[k + d - 1] as number;
+    const k = x - y;
+    const down = k === -d || (k !== d && at(k - 1) < at(k + 1));
+    const px = down ? at(k + 1) : at(k - 1);
+    const py = px - (down ? k + 1 : k - 1);
+    // The unchanged run after this step's edit, then the edit.
+    while (x > (down ? px : px + 1)) {
+      x--;
+      all.push({ kind: "same", text: a[x] as string });
     }
+    all.push(
+      down ? { kind: "add", text: b[py] as string } : { kind: "del", text: a[px] as string },
+    );
+    x = px;
+    y = py;
+  }
+  while (x > 0) {
+    x--;
+    all.push({ kind: "same", text: a[x] as string });
+  }
+  all.reverse();
+  // What goes, before what replaces it.
+  for (let s = 0; s < all.length; ) {
+    if (all[s]?.kind === "same") {
+      s++;
+      continue;
+    }
+    let e = s;
+    while (e < all.length && all[e]?.kind !== "same") e++;
+    const run = all.slice(s, e);
+    all.splice(
+      s,
+      e - s,
+      ...run.filter((l) => l.kind === "del"),
+      ...run.filter((l) => l.kind === "add"),
+    );
+    s = e;
   }
   return all;
 }

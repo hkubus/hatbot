@@ -81,7 +81,7 @@ final class Session {
 
   /// The brain no longer accepts the token.
   private func forget() {
-    store?.disconnect()
+    store?.close()
     store = nil
     vault.clear()
     cache?.clear()

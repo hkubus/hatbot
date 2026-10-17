@@ -3,9 +3,19 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { installDom, settle } from "./dom";
 
 installDom();
-const { AssistantBody, appPath, Composer, dayLabel, fileDrops, follows, spoken } = await import(
-  "../src/pages/Chat"
-);
+const {
+  AssistantBody,
+  appPath,
+  Composer,
+  dayLabel,
+  fileDrops,
+  follows,
+  Message,
+  sendError,
+  spoken,
+  wheelStops,
+} = await import("../src/pages/Chat");
+const { ApiError } = await import("../src/api");
 const drafts = await import("../src/drafts");
 
 test("the composer says it has a menu, and which line in it is picked", () => {
@@ -15,8 +25,9 @@ test("the composer says it has a menu, and which line in it is picked", () => {
   };
   const open = html("/");
   const box = /<textarea[^>]*>/.exec(open)?.[0] ?? "";
-  expect(box).toContain('role="combobox"');
-  expect(box).toContain('aria-expanded="true"');
+  // A textarea keeps its own role, a multi-line text box; a combobox role isn't allowed on one.
+  expect(box).not.toContain("role=");
+  expect(box).not.toContain("aria-expanded");
   expect(box).toContain('aria-autocomplete="list"');
   const menu = /aria-controls="([^"]+)"/.exec(box)?.[1];
   const picked = /aria-activedescendant="([^"]+)"/.exec(box)?.[1];
@@ -25,9 +36,43 @@ test("the composer says it has a menu, and which line in it is picked", () => {
     new RegExp(`id="${picked}"[^>]*role="option"[^>]*tabindex="-1"[^>]*aria-selected="true"`),
   );
   const closed = /<textarea[^>]*>/.exec(html("hello"))?.[0] ?? "";
-  expect(closed).toContain('aria-expanded="false"');
+  expect(closed).not.toContain("aria-controls");
   expect(closed).not.toContain("aria-activedescendant");
   drafts.saveDraftText("7", "");
+});
+
+test("until its task or schedule loads, a card's line shows without Markdown's marks", () => {
+  const card = (patch: object) =>
+    renderToStaticMarkup(
+      <Message
+        m={{
+          id: 40,
+          role: "assistant",
+          conversationId: 1,
+          botId: "hatbot",
+          kind: "task",
+          text: "Task #12: Check the NAS. Done: **All good.** The `tank` pool is fine.",
+          status: "done",
+          createdAt: "2026-10-17T10:00:00.000Z",
+          taskId: 12,
+          scheduleId: null,
+          negotiationId: null,
+          episodeId: null,
+          editedAt: null,
+          seenAt: null,
+          ...patch,
+        }}
+        animate={false}
+        unread={false}
+      />,
+    );
+  expect(card({})).toContain(
+    '<div class="muted card-pending">Task #12: Check the NAS. Done: All good. The tank pool is fine.</div>',
+  );
+  expect(card({ text: "" })).toContain('<div class="muted card-pending">Task #12</div>');
+  expect(
+    card({ kind: "schedule", taskId: null, scheduleId: 3, text: "Scheduled **Backups**: daily." }),
+  ).toContain('<div class="muted card-pending">Scheduled Backups: daily.</div>');
 });
 
 test("a finished reply is said without Markdown's marks", () => {
@@ -187,6 +232,24 @@ test("the thread stops following on any scroll up, and starts again only at the 
   expect(follows(true, 200, 600, 700)).toBe(true);
   // The view grew and the browser moved it up to the new bottom: still following.
   expect(follows(true, 1300, 1200, 0)).toBe(true);
+});
+
+test("a send that failed on the way says it may have gone; only the brain's no says it didn't", () => {
+  expect(sendError(new ApiError(413, "The message is too long."), true)).toBe(
+    "The message is too long.",
+  );
+  // The brain may have posted it before the answer was lost, even with the socket down.
+  for (const err of [new ApiError(502, "Bad gateway"), new TypeError("Failed to fetch")]) {
+    expect(sendError(err, true)).toBe("It may not have been sent.");
+    expect(sendError(err, false)).toBe("Can't reach Hatbot. It may not have been sent.");
+  }
+});
+
+test("a wheel turned up stops following only when the thread can move up", () => {
+  expect(wheelStops(-40, 500)).toBe(true);
+  expect(wheelStops(40, 500)).toBe(false);
+  // A short thread that fits the view: no scroll follows to start it again, so keep following.
+  expect(wheelStops(-40, 0)).toBe(false);
 });
 
 test("a reply's links to the app stay in this tab; other sites open in a new one", () => {

@@ -3,7 +3,7 @@ import { BOT_COLORS, BOT_ICONS, BOT_TEMPLATES, type Bot, HATBOT_ID } from "@hatb
 import { useCallback, useEffect, useState } from "react";
 import { ApiError } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
-import { NoForm, useStoredForm } from "../form";
+import { NoForm, toggled, useStoredForm } from "../form";
 import { BotMark, Icon } from "../icons";
 import { loadErrorText } from "../load";
 import { navigate } from "../router";
@@ -59,7 +59,9 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
     return BOT_COLORS.reduce((best, c) => (count(c) < count(best) ? c : best));
   });
   const [start] = useState<Form>(() => ({ ...EMPTY, color: freeColor }));
-  const { form, dirty, set, fill } = useStoredForm<Form>(isNew ? start : stored && formOf(stored));
+  const { form, base, dirty, set, fill, saved } = useStoredForm<Form>(
+    isNew ? start : stored && formOf(stored),
+  );
   const [template, setTemplate] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -124,8 +126,8 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
         navigate(`/bots/${bot.id}`, true);
         toast(`Made ${bot.name}`);
       } else {
-        // What was saved: the form is clean again.
-        fill(formOf(await saveBot(id, isHatbot ? { ...body, name: undefined } : body)));
+        // What was saved: the form is clean again, unless you went on editing.
+        saved(form, formOf(await saveBot(id, isHatbot ? { ...body, name: undefined } : body)));
         toast("Saved");
       }
     } catch (err) {
@@ -293,9 +295,13 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
                         on={form.plugins?.includes(p.id) ?? false}
                         onChange={(on) =>
                           set({
-                            plugins: on
-                              ? [...(form.plugins ?? []), p.id]
-                              : (form.plugins ?? []).filter((x) => x !== p.id),
+                            plugins: toggled(
+                              form.plugins ?? [],
+                              p.id,
+                              on,
+                              base?.plugins ?? [],
+                              pluginList.map((x) => x.id),
+                            ),
                           })
                         }
                       />

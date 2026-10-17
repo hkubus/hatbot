@@ -13,6 +13,8 @@ struct SettingsView: View {
   @State private var error: String?
   /// Changes made here; an answer for one that a later change has overtaken isn't shown.
   @State private var changes = 0
+  /// Changes still saving. A load meanwhile may not have them yet, so it leaves the settings alone.
+  @State private var saving = 0
 
   var body: some View {
     NavigationStack(path: $path) {
@@ -219,6 +221,7 @@ struct SettingsView: View {
     let next = edited
     settings = next
     changes += 1
+    saving += 1
     let mine = changes
     Task {
       error = nil
@@ -230,14 +233,19 @@ struct SettingsView: View {
         if mine == changes { settings = before }
         self.error = message(for: error)
       }
+      saving -= 1
     }
   }
 
   private func load() async {
+    let seen = changes
     await act {
       async let s = store.loadSettings()
       async let sp = store.loadSpend()
-      (settings, spend) = try await (s, sp)
+      let (loaded, summary) = try await (s, sp)
+      spend = summary
+      // Each change's own answer brings the settings: this one may be from before it.
+      if seen == changes && saving == 0 { settings = loaded }
     }
   }
 

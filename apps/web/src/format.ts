@@ -3,16 +3,16 @@
 /** Dollars to the cent; a cost under half a cent shows as "<$0.01", not "$0.00". */
 export const usd = (v: number) => (v > 0 && v < 0.005 ? "<$0.01" : `$${v.toFixed(2)}`);
 
-const MODEL_NAMES: Record<string, string> = {
-  "claude-opus-5-5": "Opus 5.5",
-  "claude-sonnet-5-5": "Sonnet 5.5",
-  "claude-sonnet-5": "Sonnet 5",
-  "claude-haiku-5-5": "Haiku 5.5",
-  "claude-haiku-4-5": "Haiku 4.5",
-};
-
-/** "Opus 5.5" for claude-opus-5-5; an id it doesn't know stays as it is. */
-export const modelName = (id: string) => MODEL_NAMES[id] ?? id;
+/**
+ * "Opus 5.5" for claude-opus-5-5, "Opus 4.8" for a fallback's claude-opus-4-8, worked out from the
+ * id so a new model has a name too; an id of another shape stays as it is.
+ */
+export function modelName(id: string): string {
+  const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(id);
+  if (!m) return id;
+  const [, family = "", major, minor] = m;
+  return `${family.charAt(0).toUpperCase()}${family.slice(1)} ${major}${minor ? `.${minor}` : ""}`;
+}
 
 /**
  * Markdown as one line of plain text, for snippets, finds and notes: links and images keep their
@@ -37,8 +37,10 @@ export function plainText(md: string): string {
       .replace(/~~(?=\S)([^~]*?\S)~~/g, "$1")
       .replace(/(^|[^\w*])\*(?=\S)([^*\n]*?\S)\*(?![\w*])/g, "$1$2")
       .replace(/(^|\W)_(?=\S)([^_\n]*?\S)_(?!\w)/g, "$1$2")
-      // What a cut-off snippet leaves unpaired.
-      .replace(/\*\*|~~|`/g, "")
+      // What a cut-off snippet leaves unpaired: a mark against a word on one side only, so 2**10
+      // and x ** 2 stay.
+      .replace(/(?<![\w*~`])(\*\*|~~|`)(?=[^\s*~`])/g, "")
+      .replace(/(?<=[^\s*~`])(\*\*|~~|`)(?![\w*~`])/g, "")
       .replace(/\s+/g, " ")
       .trim()
   );

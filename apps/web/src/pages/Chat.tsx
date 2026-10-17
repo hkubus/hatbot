@@ -36,6 +36,7 @@ import {
   setDraftFiles,
   useDraftFiles,
 } from "../drafts";
+import { plainText } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LoadError, loadErrorText } from "../load";
@@ -317,7 +318,7 @@ function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
     return (
       <>
         <div className="body">
-          <div className="muted card-pending">{m.text || `Task #${taskId}`}</div>
+          <div className="muted card-pending">{plainText(m.text) || `Task #${taskId}`}</div>
         </div>
         <Meta m={m} open={{ to: `/tasks/${taskId}`, label: "Open task" }} />
       </>
@@ -503,7 +504,7 @@ function ScheduleMessage({ m, scheduleId }: { m: ThreadMessage; scheduleId: numb
     return (
       <>
         <div className="body">
-          <div className="muted card-pending">{m.text}</div>
+          <div className="muted card-pending">{plainText(m.text)}</div>
         </div>
         <Meta m={m} open={{ to: `/schedules/${scheduleId}`, label: "Open schedule" }} />
       </>
@@ -578,7 +579,7 @@ function Files({ list }: { list: Attachment[] }) {
 type Option = { key: string; label: React.ReactNode; desc: string; choose: () => void };
 
 // Memoized: while a reply streams only its own message redraws, not the whole thread's markdown.
-const Message = memo(function Message({
+export const Message = memo(function Message({
   m,
   progress,
   animate,
@@ -701,6 +702,23 @@ export function fileDrops(
 export function follows(was: boolean, lastTop: number, top: number, below: number): boolean {
   if (below < 4) return true;
   return top < lastTop ? false : was;
+}
+
+/**
+ * A wheel turned up stops following at once, before the next streamed line pulls it back. Not when
+ * the thread can't move up: no scroll would follow to start it again.
+ */
+export const wheelStops = (deltaY: number, top: number) => deltaY < 0 && top > 0;
+
+/**
+ * What the composer says when a send fails. Only the brain saying no means it wasn't posted: with no
+ * answer, or a failure on the way, the brain may have posted it before the answer was lost.
+ */
+export function sendError(err: unknown, connected: boolean): string {
+  if (err instanceof ApiError && err.status < 500) return err.message;
+  return connected
+    ? "It may not have been sent."
+    : "Can't reach Hatbot. It may not have been sent.";
 }
 
 /** `id`: the chat to show. It's opened here, before loading, so a message asked for is looked for in it. */
@@ -935,9 +953,8 @@ export function Chat({ id }: { id: number }) {
         className={`view ${dropping ? "dropping" : ""}`}
         ref={scroller}
         onScroll={onScroll}
-        // A wheel turned up stops following at once, before the next streamed line pulls it back.
         onWheel={(e) => {
-          if (e.deltaY < 0) stick.current = false;
+          if (wheelStops(e.deltaY, e.currentTarget.scrollTop)) stick.current = false;
         }}
       >
         <div className="chat-scroll">
@@ -1154,6 +1171,8 @@ export function Composer({ chat, onSend }: { chat: string; onSend: () => void })
   const send = async (command?: string) => {
     const text = (command ?? draft).trim();
     if ((!text && !ready.length) || sending || uploading || failed.length) return;
+    // Offline it surely won't go, so it isn't tried and stays in the composer.
+    if (!navigator.onLine) return setError("You're offline. It wasn't sent.");
     setSending(true);
     setError("");
     onSend();
@@ -1173,18 +1192,10 @@ export function Composer({ chat, onSend }: { chat: string; onSend: () => void })
       setFiles((f) => (f.length ? f : sent));
       setDraft((d) => d || text);
       requestAnimationFrame(resize);
-      // The brain said no: it wasn't posted. No answer, or a failure on the way: it may have been.
+      // A resend with the same text and files carries the same id, which the brain answers once.
       const refused = err instanceof ApiError && err.status < 500;
       unsure.current = refused ? null : { what, clientId };
-      setError(
-        refused
-          ? err.message
-          : !navigator.onLine
-            ? "You're offline. It wasn't sent."
-            : getState().connected
-              ? "It may not have been sent. Sending it again won't send it twice."
-              : "Can't reach Hatbot. It wasn't sent.",
-      );
+      setError(sendError(err, getState().connected));
     } finally {
       setSending(false);
     }
@@ -1267,11 +1278,10 @@ export function Composer({ chat, onSend }: { chat: string; onSend: () => void })
         <textarea
           ref={textarea}
           rows={1}
-          // The menu over it: commands after "/", a group's bots after "@".
-          role="combobox"
+          // The menu over it: commands after "/", a group's bots after "@". A textarea keeps its own
+          // role (combobox isn't allowed on one), which takes all of these but aria-expanded.
           aria-label={`Message ${name}`}
           aria-autocomplete="list"
-          aria-expanded={options.length > 0}
           aria-controls={options.length > 0 ? menuId : undefined}
           aria-activedescendant={picked ? `${menuId}-${picked.key}` : undefined}
           placeholder={incognito ? `Message ${name} incognito…` : `Message ${name}…`}

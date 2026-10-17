@@ -264,7 +264,7 @@ private struct TaskDetails: View {
       LabeledContent("Done when") { Text(task.successCriteria).multilineTextAlignment(.trailing) }
     }
     LabeledContent("Started", value: task.startedAt?.stampText ?? "–")
-    LabeledContent("Model", value: task.model)
+    LabeledContent("Model", value: Format.modelName(task.model))
     LabeledContent("Trust") {
       if task.injectionSuspected {
         Label("Possible prompt injection", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)

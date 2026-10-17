@@ -61,6 +61,33 @@ describe("lineDiff", () => {
     expect(d).toHaveLength(8);
   });
 
+  test("two edits 3,000 lines apart are two edits, however long the file", () => {
+    for (const n of [3_100, 20_000]) {
+      const before = lines(n);
+      const after = [...before];
+      after[50] = "changed top";
+      after[3_050] = "changed bottom";
+      const d = lineDiff(before.join("\n"), after.join("\n"));
+      expect(d.filter((l) => l.kind === "del")).toEqual([
+        { kind: "del", text: "line 51" },
+        { kind: "del", text: "line 3051" },
+      ]);
+      expect(d.filter((l) => l.kind === "add")).toEqual([
+        { kind: "add", text: "changed top" },
+        { kind: "add", text: "changed bottom" },
+      ]);
+    }
+  });
+
+  test("a rewrite too big to work out is shown whole", () => {
+    const before = lines(3_000);
+    const after = lines(3_000, 5_000);
+    const d = lineDiff(before.join("\n"), after.join("\n"));
+    expect(d.filter((l) => l.kind === "del")).toHaveLength(3_000);
+    expect(d.filter((l) => l.kind === "add")).toHaveLength(3_000);
+    expect(d[0]).toEqual({ kind: "del", text: "line 1" });
+  });
+
   test("the same diff again is the same answer, not worked out again", () => {
     const before = lines(50).join("\n");
     const after = lines(51).join("\n");

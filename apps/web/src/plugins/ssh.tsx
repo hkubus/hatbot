@@ -104,24 +104,28 @@ export function SshSettings({ config, save, action, running }: PluginSettingsPro
             <div className="host-fields">
               <input
                 className="field"
+                aria-label="Name"
                 placeholder="Name, e.g. nas"
                 value={h.name}
                 onChange={(e) => set(i, { name: e.target.value.toLowerCase() })}
               />
               <input
                 className="field"
+                aria-label="Address"
                 placeholder="Address"
                 value={h.address}
                 onChange={(e) => set(i, { address: e.target.value })}
               />
               <input
                 className="field"
+                aria-label="User"
                 placeholder="User"
                 value={h.user}
                 onChange={(e) => set(i, { user: e.target.value })}
               />
               <input
                 className="field"
+                aria-label="Port"
                 type="number"
                 min={1}
                 max={65535}

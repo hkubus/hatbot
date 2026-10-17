@@ -719,6 +719,26 @@ final class LookingAfterThingsTests: XCTestCase {
     XCTAssertEqual(LineDiff.of("a\nb\nc", "a\nc").map(\.text), [" a", "-b", " c"])
   }
 
+  /// Two edits far apart in a long file are two edits; moved lines still line up; a rewrite too big to
+  /// work out is shown whole.
+  func testDiffsFewEditsFarApart() {
+    let lines = (0..<20_000).map { "line \($0)" }
+    var edited = lines
+    edited[50] = "changed top"
+    edited[3050] = "changed bottom"
+    let start = Date()
+    let diff = LineDiff.of(lines.joined(separator: "\n"), edited.joined(separator: "\n"))
+    XCTAssertLessThan(Date().timeIntervalSince(start), 1)
+    XCTAssertEqual(diff.filter { $0.kind != .context && $0.kind != .hunk }.map(\.text), [
+      "-line 50", "+changed top", "-line 3050", "+changed bottom",
+    ])
+    XCTAssertEqual(
+      LineDiff.of("x\na\nb\na\ny", "x\nb\na\nb\ny").map(\.text), [" x", "-a", " b", " a", "+b", " y"])
+    let rewrite = LineDiff.of(lines[..<3000].joined(separator: "\n"), lines[5000..<8000].joined(separator: "\n"))
+    XCTAssertEqual(rewrite.filter { $0.kind == .removed }.count, 3000)
+    XCTAssertEqual(rewrite.first?.text, "-line 0")
+  }
+
   /// The heartbeat's pickers have a row for what's set now, even when it's not one of theirs.
   func testHeartbeatPickersKeepAValueSetElsewhere() {
     XCTAssertEqual(AppSettings.Heartbeat.everyChoices(with: 15), [5, 10, 15, 30, 60, 120, 240])
@@ -885,6 +905,34 @@ final class DiskCacheTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
   }
 
+  /// A chat still loading when you sign out doesn't write its page back afterwards.
+  func testALoadThatEndsAfterSigningOutKeepsNothing() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    SlowBrain.routes = [
+      "/auth/logout": "{}",
+      "/thread/messages?limit=50":
+        #"[{"id":7,"role":"user","kind":"text","text":"secret","status":"done","createdAt":"2026-10-15T10:00:00Z"}]"#,
+    ]
+    SlowBrain.slower = ["/thread/messages?limit=50": 0.5]
+    defer { SlowBrain.slower = [:] }
+    let vault = MemoryVault("t")
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+    defaults.set("https://h.example", forKey: Session.serverKey)
+    let session = await MainActor.run {
+      Session(vault: vault, defaults: defaults, cacheDir: dir, urlSession: SlowBrain.session())
+    }
+    // As the sidebar does: the store lives on in a task of its own.
+    await MainActor.run {
+      let store = session.store!
+      Task { await store.openConversation(2) }
+    }
+    try await Task.sleep(for: .milliseconds(50))
+    await session.signOut()
+    try await Task.sleep(for: .milliseconds(800))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
+  }
+
   /// A 401 that answers a request the old token made, after you've signed in again, leaves you signed in.
   func testALate401FromTheOldTokenDoesntSignYouOut() async throws {
     SlowBrain.routes = [
@@ -922,6 +970,16 @@ final class PlainTextTests: XCTestCase {
 }
 
 final class SpendTests: XCTestCase {
+  /// Every model the brain bills has a name, the fallbacks too, and a dated id goes by its model's.
+  func testModelsHaveNames() {
+    XCTAssertEqual(Format.modelName("claude-opus-5-5"), "Opus 5.5")
+    XCTAssertEqual(Format.modelName("claude-opus-5"), "Opus 5")
+    XCTAssertEqual(Format.modelName("claude-opus-4-8"), "Opus 4.8")
+    XCTAssertEqual(Format.modelName("claude-haiku-4-5-20251001"), "Haiku 4.5")
+    XCTAssertEqual(Format.modelName("some-new-model"), "some-new-model")
+    XCTAssertEqual(SpendCharts.byModel([SpendByModel(model: "claude-opus-4-8", usd: 1)])?.x, ["Opus 4.8"])
+  }
+
   func testSpendChartsAreBarsAndRankings() throws {
     let hours = [SpendHour(hour: "2026-10-15T13:00:00.000Z", usd: 0.5, tokens: 10)]
     let hourly = try XCTUnwrap(SpendCharts.hourly(hours, timeZone: TimeZone(identifier: "UTC")!))
@@ -1298,6 +1356,31 @@ final class NetworkTests: XCTestCase {
     XCTAssertEqual(shown, 1)
     XCTAssertEqual(ids, [60])
     XCTAssertEqual(chats, [1])
+  }
+
+  /// The bot whose chat you're in, deleted elsewhere: its chat goes too, back to Hatbot's own.
+  func testABotDeletedElsewhereClosesItsChat() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    SlowBrain.routes["/conversations"] = #"[{"id":1,"kind":"direct","botIds":["hatbot"],"unread":0}]"#
+    SlowBrain.routes["/conversations/1/messages?limit=50"] = "[\(Self.message(60, in: 1))]"
+    SlowBrain.routes["/conversations/3/messages?limit=50"] = "[\(Self.message(80, in: 3))]"
+    await MainActor.run {
+      store.conversations = [
+        Conversation(id: 1, kind: .direct, botIds: ["hatbot"], unread: 0),
+        Conversation(id: 3, kind: .direct, botIds: ["chef"], unread: 0),
+      ]
+      store.botIds = ["hatbot", "chef"]
+    }
+    await store.openConversation(3)
+    await MainActor.run {
+      XCTAssertEqual(store.messages.map(\.id), [80])
+      store.apply(.botDeleted(id: "chef"))
+      XCTAssertEqual(store.messages, [])
+    }
+    try await Task.sleep(for: .milliseconds(600))
+    let (shown, ids) = await MainActor.run { (store.conversationId, store.messages.map(\.id)) }
+    XCTAssertEqual(shown, 1)
+    XCTAssertEqual(ids, [60])
   }
 }
 

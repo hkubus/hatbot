@@ -477,7 +477,10 @@ export async function savePlugin(id: string, patch: { enabled?: boolean; config?
 }
 
 export const putProposal = (p: Proposal) => set({ proposals: { ...state.proposals, [p.id]: p } });
+// A page has asked for them, even if none came: a reconnect looks again.
+let proposalsLoaded = false;
 export async function loadProposals() {
+  proposalsLoaded = true;
   const list = await api<Proposal[]>("/proposals?status=pending");
   set({ proposals: { ...state.proposals, ...Object.fromEntries(list.map((p) => [p.id, p])) } });
 }
@@ -879,8 +882,12 @@ async function catchUp(reconnected: boolean) {
       heartbeatVersion: state.heartbeatVersion + 1,
       memoryVersion: state.memoryVersion + 1,
     });
-    if (Object.keys(state.proposals).length) void refreshProposals().catch(() => {});
+    if (proposalsLoaded || Object.keys(state.proposals).length)
+      void refreshProposals().catch(() => {});
     if (Object.keys(state.plugins).length) void loadPlugins().catch(() => {});
+    // A negotiation's page shows its messages; negotiation.updated may have been missed.
+    for (const id of Object.keys(state.negotiationMessages))
+      void loadNegotiation(Number(id)).catch(() => {});
   }
   const active = await loadTasks({ status: "active" }).catch(() => null);
   // Ones we thought running that aren't any more ended while we were away. loadLive reloads those

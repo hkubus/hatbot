@@ -3,7 +3,7 @@ import { MAX_GROUP_BOTS } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
-import { NoForm, useStoredForm } from "../form";
+import { NoForm, toggled, useStoredForm } from "../form";
 import { Icon } from "../icons";
 import { loadErrorText } from "../load";
 import { navigate } from "../router";
@@ -22,7 +22,7 @@ export function GroupPage({ id, toast }: { id: string; toast: (t: string) => voi
   const bots = useStore((s) => s.bots);
   const botIds = useStore((s) => s.botIds);
   // Only its name and bots: the chat's unread count and order change all the time.
-  const { form, dirty, set, fill } = useStoredForm<{ title: string; members: string[] }>(
+  const { form, base, dirty, set, saved } = useStoredForm<{ title: string; members: string[] }>(
     isNew ? NEW_GROUP : stored && { title: stored.title ?? "", members: stored.botIds },
   );
   const [busy, setBusy] = useState(false);
@@ -68,8 +68,8 @@ export function GroupPage({ id, toast }: { id: string; toast: (t: string) => voi
         navigate(`/chat/${c.id}`, true);
       } else {
         await saveGroup(Number(id), body);
-        // What was saved, trimmed: the form is clean again.
-        fill({ title: body.title, members });
+        // What was saved, trimmed: the form is clean again, unless you went on editing.
+        saved(form, { title: body.title, members });
         toast("Saved");
       }
     } catch (err) {
@@ -129,7 +129,7 @@ export function GroupPage({ id, toast }: { id: string; toast: (t: string) => voi
               <Switch
                 label={bots[b]?.name ?? b}
                 on={members.includes(b)}
-                onChange={(on) => setMembers((m) => (on ? [...m, b] : m.filter((x) => x !== b)))}
+                onChange={(on) => setMembers((m) => toggled(m, b, on, base?.members ?? [], botIds))}
               />
             </div>
           ))}

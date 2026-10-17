@@ -1,5 +1,6 @@
 // Search for the app: chats (full text), tasks, memory files, and schedules, triggers and watchers.
 import { MATCH_END, MATCH_START, type SearchResults } from "@hatbot/shared";
+import { LISTED_CHAT } from "./agent/chats";
 import type { Db } from "./db";
 import type { MemoryStore } from "./memory/store";
 import type { Tasks } from "./tasks/service";
@@ -27,7 +28,8 @@ export async function search(
   const empty: SearchResults = { query: q, messages: [], tasks: [], memory: [], routines: [] };
   if (!q) return empty;
   const fts = ftsQuery(q);
-  // Incognito messages aren't in the index, so they can't be found.
+  // Incognito messages aren't in the index, so they can't be found. A chat that's gone from the list,
+  // a deleted group or a deleted bot's own, isn't searched either: its results would lead nowhere.
   const messages = fts
     ? d.db
         .query<
@@ -43,8 +45,8 @@ export async function search(
         >(
           `SELECT m.id, m.conversation_id, m.bot_id, m.role, m.created_at,
              snippet(messages_fts, 0, ?, ?, '…', 24) AS snippet
-           FROM messages_fts f JOIN messages m ON m.id = f.rowid
-           WHERE messages_fts MATCH ? ORDER BY rank LIMIT ?`,
+           FROM messages_fts f JOIN messages m ON m.id = f.rowid JOIN conversations c ON c.id = m.conversation_id
+           WHERE messages_fts MATCH ? AND ${LISTED_CHAT} ORDER BY rank LIMIT ?`,
         )
         .all(MATCH_START, MATCH_END, fts, LIMIT)
         .map((r) => ({

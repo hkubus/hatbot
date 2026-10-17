@@ -51,12 +51,11 @@ test("an approval's fields show exactly as written, never as Markdown", () => {
   expect(html).toContain('class="btn tint-danger"');
 });
 
-test("in the chat's tray, the command and its sources show at once and the rest waits behind More", () => {
-  const a = approval({ kind: "mandate" });
+test("in the chat's tray, the command shows at once and the rest waits behind More", () => {
+  const a = approval({ kind: "mandate", sources: [] });
   const html = renderToStaticMarkup(<PendingApproval a={a} compact />);
   const text = plain(html);
   expect(text).toContain(a.summary);
-  expect(text).toContain("After reading https://example.com/a_b_c");
   expect(text).not.toContain("It cleans up");
   expect(html).not.toContain("<textarea");
   expect(html).toContain('aria-expanded="false"');
@@ -67,4 +66,25 @@ test("in the chat's tray, the command and its sources show at once and the rest 
   expect(renderToStaticMarkup(<PendingApproval a={approval({ kind: "budget" })} />)).not.toContain(
     "<textarea",
   );
+});
+
+test("in the tray, why it asks shows at once when something it read may be steering it", () => {
+  const warning = approval({
+    kind: "injection_warning",
+    summary: "Keep going on shop.example?",
+    reason: 'This page may contain instructions aimed at Hatbot: "ignore the owner"',
+    sources: [],
+  });
+  const text = plain(renderToStaticMarkup(<PendingApproval a={warning} compact />));
+  expect(text).toContain("This page may contain instructions aimed at Hatbot");
+  // Nothing else is folded away, so there's no More.
+  expect(text).not.toContain("More");
+  // A tainted chat's approval says why Haiku's review was skipped, beside what it read.
+  const tainted = approval({ kind: "send", reason: "Haiku's review is skipped: it read a page." });
+  const html = renderToStaticMarkup(<PendingApproval a={tainted} compact />);
+  expect(plain(html)).toContain("Haiku's review is skipped");
+  expect(plain(html)).toContain("After reading https://example.com/a_b_c");
+  // The note still waits behind More.
+  expect(html).not.toContain("<textarea");
+  expect(plain(html)).toContain("More");
 });

@@ -340,6 +340,7 @@ private struct Composer: View {
   let sent: () -> Void
   @Environment(AppStore.self) private var store
   @Environment(Drafts.self) private var drafts
+  @Environment(\.sectionShown) private var sectionShown
   /// The draft as you type; kept in `drafts` when you leave the chat or switch to another.
   @State private var draft = ""
   @State private var photos: [PhotosPickerItem] = []
@@ -437,8 +438,9 @@ private struct Composer: View {
         .buttonBorderShape(.circle)
         .tint(.brand)
         .disabled(!canSend)
-        // With a keyboard, Return makes a new line and Command-Return sends.
-        .keyboardShortcut(.return, modifiers: .command)
+        // With a keyboard, Return makes a new line and Command-Return sends. Not from another section:
+        // the chat stays there, hidden, and its shortcut with it.
+        .keyboardShortcut(sectionShown ? KeyboardShortcut(.return, modifiers: .command) : nil)
         .accessibilityLabel("Send")
       }
       .glassGroup(spacing: 8)
@@ -700,7 +702,7 @@ private struct MessageRow: View, Equatable {
         if m.status != .streaming, let editedAt {
           Text("Edited \(editedAt.timeText)")
             .font(.caption2)
-            .foregroundStyle(Color.brand)
+            .foregroundStyle(Color.brandText)
             .padding(.leading, Bubble.tailWidth + 12)
         }
       }

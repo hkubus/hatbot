@@ -10,7 +10,7 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
-import { NoForm } from "../form";
+import { NoForm, useStoredForm } from "../form";
 import { plainText } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
@@ -46,7 +46,6 @@ export const stamp = (iso: string) =>
   });
 export const errorText = (err: unknown) =>
   err instanceof ApiError ? err.message : "Couldn't reach Hatbot.";
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 /**
  * An edit page's item, loaded with the rest when it isn't in the store: `missing` once they've
@@ -264,40 +263,32 @@ const NEW_SCHEDULE = {
   botId: HATBOT_ID,
 };
 
+const scheduleForm = (s: Schedule): typeof NEW_SCHEDULE => ({
+  name: s.name,
+  repeat: Boolean(s.cron),
+  cron: s.cron ?? "0 8 * * *",
+  at: s.runAt ? localInput(s.runAt) : "",
+  prompt: s.prompt,
+  botId: s.botId,
+});
+
 function ScheduleEdit({ id }: { id: number | null }) {
   const stored = useStore((s) => (id === null ? undefined : s.schedules[id]));
   // A run of it that hasn't ended: Run now waits for it.
   const running = useStore(
     (s) => id !== null && Object.values(s.tasks).some((t) => t.scheduleId === id && !t.finishedAt),
   );
-  const [form, setForm] = useState<typeof NEW_SCHEDULE | null>(id === null ? NEW_SCHEDULE : null);
+  // A change made elsewhere comes in while you haven't edited it.
+  const { form, dirty, set, saved } = useStoredForm(
+    id === null ? NEW_SCHEDULE : stored ? scheduleForm(stored) : undefined,
+  );
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [starting, setStarting] = useState(false);
   const listed = useListed("schedules", id, stored);
-  const edited =
-    !!form &&
-    (stored
-      ? form.name !== stored.name ||
-        form.prompt !== stored.prompt ||
-        form.botId !== stored.botId ||
-        (form.repeat
-          ? form.cron.trim() !== stored.cron
-          : !stored.runAt || form.at !== localInput(stored.runAt))
-      : !same(form, NEW_SCHEDULE));
+  // Deleted elsewhere: there's nothing left to save.
+  const edited = dirty && stored !== null;
   const release = useLeaveGuard(edited);
-
-  useEffect(() => {
-    if (stored && !form)
-      setForm({
-        name: stored.name,
-        repeat: Boolean(stored.cron),
-        cron: stored.cron ?? "0 8 * * *",
-        at: stored.runAt ? localInput(stored.runAt) : "",
-        prompt: stored.prompt,
-        botId: stored.botId,
-      });
-  }, [stored, form]);
 
   if (listed.missing || !form)
     return (
@@ -309,7 +300,6 @@ function ScheduleEdit({ id }: { id: number | null }) {
       />
     );
 
-  const set = (patch: Partial<typeof form>) => setForm({ ...form, ...patch });
   // The time you see, as a moment: the brain would read it in its own time zone.
   const when = form.repeat ? { cron: form.cron.trim() } : { at: atIso(form.at) };
   const changed = !stored || stored.tainted || edited;
@@ -321,13 +311,14 @@ function ScheduleEdit({ id }: { id: number | null }) {
     setError("");
     try {
       if (stored) {
-        await saveSchedule(stored.id, {
+        const s = await saveSchedule(stored.id, {
           name: form.name,
           prompt: form.prompt,
           botId: form.botId,
           ...when,
           ...(!stored.enabled && !stored.cron ? { enabled: true } : {}),
         });
+        saved(form, scheduleForm(s));
       } else {
         const s = await api<Schedule>("/schedules", {
           body: { name: form.name, prompt: form.prompt, botId: form.botId, ...when },
@@ -548,6 +539,15 @@ function Setup({ t }: { t: TriggerWithSecret }) {
   );
 }
 
+const triggerForm = (t: Trigger) => ({
+  name: t.name,
+  kind: t.kind,
+  prompt: t.prompt,
+  trusted: t.trusted,
+  confirmChecks: t.confirmChecks,
+  botId: t.botId,
+});
+
 function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["kind"] }) {
   const stored = useStore((s) => (id === null ? undefined : s.triggers[id]));
   const [start] = useState(() => ({
@@ -558,7 +558,10 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
     confirmChecks: 0,
     botId: HATBOT_ID,
   }));
-  const [form, setForm] = useState<typeof start | null>(id === null ? start : null);
+  // A change made elsewhere comes in while you haven't edited it.
+  const { form, dirty, set, saved } = useStoredForm(
+    id === null ? start : stored ? triggerForm(stored) : undefined,
+  );
   const [secret, setSecret] = useState<TriggerWithSecret | null>(() => {
     const t = fresh?.id === id ? fresh : null;
     fresh = null;
@@ -567,28 +570,9 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const listed = useListed("triggers", id, stored);
-  const edited =
-    !!form &&
-    (stored
-      ? form.name !== stored.name ||
-        form.prompt !== stored.prompt ||
-        form.trusted !== stored.trusted ||
-        form.confirmChecks !== stored.confirmChecks ||
-        form.botId !== stored.botId
-      : !same(form, start));
+  // Deleted elsewhere: there's nothing left to save.
+  const edited = dirty && stored !== null;
   const release = useLeaveGuard(edited);
-
-  useEffect(() => {
-    if (stored && !form)
-      setForm({
-        name: stored.name,
-        kind: stored.kind,
-        prompt: stored.prompt,
-        trusted: stored.trusted,
-        confirmChecks: stored.confirmChecks,
-        botId: stored.botId,
-      });
-  }, [stored, form]);
 
   if (listed.missing || !form)
     return (
@@ -600,7 +584,6 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
       />
     );
 
-  const set = (patch: Partial<typeof form>) => setForm({ ...form, ...patch });
   const changed = !stored || edited;
 
   const save = async () => {
@@ -608,18 +591,18 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
     setError("");
     try {
       if (stored) {
-        putTrigger(
-          await api<Trigger>(`/triggers/${stored.id}`, {
-            method: "PATCH",
-            body: {
-              name: form.name,
-              prompt: form.prompt,
-              trusted: form.trusted,
-              confirmChecks: form.confirmChecks,
-              botId: form.botId,
-            },
-          }),
-        );
+        const t = await api<Trigger>(`/triggers/${stored.id}`, {
+          method: "PATCH",
+          body: {
+            name: form.name,
+            prompt: form.prompt,
+            trusted: form.trusted,
+            confirmChecks: form.confirmChecks,
+            botId: form.botId,
+          },
+        });
+        putTrigger(t);
+        saved(form, triggerForm(t));
       } else {
         const t = await api<TriggerWithSecret>("/triggers", { body: form });
         putTrigger(t);

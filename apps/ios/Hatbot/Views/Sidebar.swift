@@ -224,13 +224,13 @@ struct Sidebar<Content: View>: View {
       setOpen(false)
     } label: {
       HStack(spacing: 14) {
-        Image(systemName: icon).frame(width: 26).foregroundStyle(tint ?? (selected ? Color.brand : .primary))
+        Image(systemName: icon).frame(width: 26).foregroundStyle(tint ?? (selected ? Color.brandText : .primary))
         Text(title).lineLimit(1)
         Spacer()
         if count > 0 { Count(n: count, needsYou: needsYou) }
       }
       .font(.body.weight(selected ? .semibold : .regular))
-      .foregroundStyle(selected ? Color.brand : .primary)
+      .foregroundStyle(selected ? Color.brandText : .primary)
       .padding(.horizontal, 14)
       .padding(.vertical, 12)
       .background(selected ? Color.brand.opacity(0.14) : .clear, in: .capsule)

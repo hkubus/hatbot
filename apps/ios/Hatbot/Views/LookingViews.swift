@@ -104,7 +104,7 @@ private struct Snippet: View {
 
   var body: some View {
     Search.parts(text).reduce(Text("")) { out, part in
-      out + (part.match ? Text(part.text).bold().foregroundColor(.brand) : Text(part.text))
+      out + (part.match ? Text(part.text).bold().foregroundColor(.brandText) : Text(part.text))
     }
     .lineLimit(3)
   }
@@ -210,7 +210,8 @@ struct WatcherDetailView: View {
               enabled = on
               Task {
                 await act { _ = try await store.setWatcherEnabled(id, on) }
-                enabled = nil
+                // Saved, or put back: the watcher shows which. Unless it's been switched again meanwhile.
+                if enabled == on { enabled = nil }
               }
             }))
         LabeledContent(w.source.kind == .page ? "Page" : "Tool", value: w.source.text)
@@ -266,7 +267,7 @@ struct WatcherDetailView: View {
             VStack(alignment: .leading, spacing: 3) {
               Text(v.value).font(.system(.callout, design: .monospaced)).lineLimit(3)
               Text(v.fired ? "\(v.createdAt.stampText), counted" : v.createdAt.stampText)
-                .font(.footnote).foregroundStyle(v.fired ? Color.brand : .secondary)
+                .font(.footnote).foregroundStyle(v.fired ? Color.brandText : .secondary)
             }
           }
         }

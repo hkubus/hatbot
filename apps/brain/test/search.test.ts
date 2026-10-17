@@ -46,3 +46,39 @@ test("search finds chat messages, tasks, memory and schedules", async () => {
   expect(none.tasks).toEqual([]);
   expect((await t.call("GET", "/search?q=x")).status).toBe(401);
 });
+
+test("search leaves out a deleted bot's chat and a deleted group", async () => {
+  const t = await testApp(
+    new FakeModel([
+      { content: [text("Pancakes need flour.")] },
+      { content: [text("Pancakes, then.")] },
+      { content: [text("Pancakes are on the list.")] },
+    ]),
+  );
+  const { cookie } = await setUpOwner(t);
+  t.bots.create({
+    name: "Chef",
+    instructions: "",
+    chatModel: null,
+    chatEffort: null,
+    plugins: null,
+  });
+  await t.chats.direct("chef").post("how about pancakes").done;
+  const res = await t.call("POST", "/conversations", { botIds: ["chef", "hatbot"] }, { cookie });
+  const group = (await res.json()) as { id: number };
+  await t.chats.thread(group.id)?.post("pancakes or waffles?").done;
+  await t.thread.post("add pancakes to the list").done;
+  const found = async () =>
+    (
+      (await (
+        await t.call("GET", "/search?q=pancakes", undefined, { cookie })
+      ).json()) as SearchResults
+    ).messages.map((m) => m.conversationId);
+  expect(new Set(await found())).toEqual(new Set([1, 2, group.id]));
+
+  // Its chat goes away with the bot; a group with it stays until it's deleted.
+  await t.call("DELETE", "/bots/chef", undefined, { cookie });
+  expect(new Set(await found())).toEqual(new Set([1, group.id]));
+  await t.call("DELETE", `/conversations/${group.id}`, undefined, { cookie });
+  expect(new Set(await found())).toEqual(new Set([1]));
+});

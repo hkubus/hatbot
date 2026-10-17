@@ -187,6 +187,8 @@ export type Task = {
   botId: string;
   /** The bot that handed it over with ask_bot; null when you or its own bot started it. */
   requestedBy: string | null;
+  /** The chat it reports to: the one it was started from, or its bot's own. Null on older tasks. */
+  conversationId: number | null;
   title: string;
   goal: string;
   successCriteria: string;

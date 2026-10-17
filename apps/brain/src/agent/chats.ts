@@ -17,6 +17,14 @@ type Parts = Pick<
   | "proposals"
 >;
 
+/**
+ * The chats you have, as SQL on `conversations c`: not deleted groups, and not the own chat of a
+ * deleted bot.
+ */
+export const LISTED_CHAT = `c.deleted_at IS NULL AND (c.kind = 'group' OR EXISTS (
+  SELECT 1 FROM conversation_bots cb JOIN bots b ON b.id = cb.bot_id
+  WHERE cb.conversation_id = c.id AND b.deleted_at IS NULL))`;
+
 type Row = {
   id: number;
   kind: Conversation["kind"];
@@ -103,9 +111,7 @@ export class Chats {
              AND (m.seen_at IS NULL OR m.seen_at < coalesce(m.edited_at, m.created_at))) AS unread,
            (SELECT max(created_at) FROM messages m WHERE m.conversation_id = c.id AND m.incognito = 0) AS last_message_at
          FROM conversations c
-         WHERE c.deleted_at IS NULL AND (c.kind = 'group' OR EXISTS (
-           SELECT 1 FROM conversation_bots cb JOIN bots b ON b.id = cb.bot_id
-           WHERE cb.conversation_id = c.id AND b.deleted_at IS NULL))
+         WHERE ${LISTED_CHAT}
          ORDER BY c.kind = 'group', c.id`,
       )
       .all()

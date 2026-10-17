@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { refill } from "../src/form";
+import { afterSave, refill, toggled } from "../src/form";
 
 type F = { name: string; members: string[] };
 const saved: F = { name: "Kitchen", members: ["hatbot", "chef"] };
@@ -38,4 +38,32 @@ test("a form filled from a template stays filled while the stored values don't c
   const empty: F = { name: "", members: [] };
   const template: F = { name: "Haggler", members: ["mcp"] };
   expect(refill<F>({ form: template, base: template, seen: empty }, empty)).toBeNull();
+});
+
+test("what you type while Save is on its way stays, and still counts as unsaved", () => {
+  const sent = { ...saved, name: "Pantry " };
+  const back = { ...saved, name: "Pantry" };
+  // Nothing typed since: the form is what was saved, clean.
+  expect(afterSave<F>({ ...clean(saved), form: sent }, sent, back)).toEqual(clean(back));
+  // More typed: it stays, against what was saved.
+  const more = { ...sent, name: "Pantry and larder" };
+  const after = afterSave<F>({ ...clean(saved), form: more }, sent, back);
+  expect(after).toEqual({ form: more, base: back, seen: back });
+  // The store's copy of the save then doesn't replace it.
+  expect(refill<F>(after, back)).toBeNull();
+});
+
+test("switching one off and on again leaves the list as it was", () => {
+  const all = ["hatbot", "chef", "haggler"];
+  const off = toggled(["chef", "hatbot"], "chef", false, ["chef", "hatbot"], all);
+  expect(off).toEqual(["hatbot"]);
+  expect(toggled(off, "chef", true, ["chef", "hatbot"], all)).toEqual(["chef", "hatbot"]);
+  // A new one goes after the saved ones, in the list's order.
+  expect(toggled(["chef", "hatbot"], "haggler", true, ["chef", "hatbot"], all)).toEqual([
+    "chef",
+    "hatbot",
+    "haggler",
+  ]);
+  // One that isn't in either list stays.
+  expect(toggled(["old"], "chef", true, [], all)).toEqual(["chef", "old"]);
 });

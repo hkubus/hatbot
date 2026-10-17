@@ -81,6 +81,7 @@ export function Search({ query }: { query: string }) {
             ref={input}
             className="field"
             type="search"
+            aria-label="Search"
             value={draft}
             placeholder="Search chats, tasks and memory"
             onChange={(e) => setDraft(e.target.value)}
