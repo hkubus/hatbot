@@ -161,8 +161,9 @@ export function pageUrl(url: string): string {
 }
 
 /**
- * Text as it's compared: one case, no markdown or quote marks, single spaces, and numbers without
- * separators, so "2 399,00 zł" on the page matches "2399,00 zł" in a quote.
+ * Text as it's compared: one case, no markdown or quote marks, single spaces, numbers without their
+ * thousands separators and with a decimal point, so "2 399,00 zł" on the page matches "2399.00 zł" in
+ * a quote. A separator is a thousands one when three digits follow it, and no more.
  */
 export const plain = (text: string) =>
   text
@@ -170,16 +171,32 @@ export const plain = (text: string) =>
     .toLowerCase()
     .replace(/[*_`#>|"'“”„‘’«»]/g, " ")
     .replace(/\s+/g, " ")
-    .replace(/(\d)[\s.,']+(?=\d)/g, "$1")
+    .replace(/(\d)[ .,](?=\d{3}(?!\d))/g, "$1")
+    .replace(/(\d),(?=\d)/g, "$1.")
     .trim();
 
-/** Whether a quote is in what a helper read: each part of it, around any "…". */
+const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Whether a quote is in what a helper read: each part of it, around any "…". A number at either end
+ * of a part is a whole number there, not the end of "2 399" or the start of "1,5".
+ */
 export function quoteFound(quote: string, read: string): boolean {
   const parts = quote
     .split(/\[?(?:\.\.\.|…)\]?/)
     .map(plain)
     .filter((p) => p.length >= 3);
-  return parts.length > 0 && parts.every((p) => read.includes(p));
+  return (
+    parts.length > 0 &&
+    parts.every((p) => {
+      const start = /^\d/.test(p);
+      const end = /\d$/.test(p);
+      if (!start && !end) return read.includes(p);
+      return new RegExp(
+        `${start ? String.raw`(?<!\d|\d\.)` : ""}${escaped(p)}${end ? String.raw`(?!\d|\.\d)` : ""}`,
+      ).test(read);
+    })
+  );
 }
 
 /**

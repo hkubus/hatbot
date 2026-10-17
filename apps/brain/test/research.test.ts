@@ -515,6 +515,22 @@ test("a quote is found in what the helper read, whatever the spaces and number f
   expect(quoteFound("Synology DS925+ 2 299,00 zł", read)).toBe(false);
   expect(quoteFound("Synology DS925+ … Out of stock", read)).toBe(false);
   expect(quoteFound("…", read)).toBe(false);
+
+  // Decimal separators are kept, and a number is a whole one on the page.
+  const page = plainRead(
+    "Cena: 2 399,00 zł. Waga: 15 kg. Moc 25 W. Głośność 22,4 dB(A), 1.299 osób",
+  );
+  expect(quoteFound("Cena: 2399.00 zł", page)).toBe(true);
+  expect(quoteFound("Głośność 22.4 dB(A)", page)).toBe(true);
+  expect(quoteFound("1299 osób", page)).toBe(true);
+  expect(quoteFound("399,00 zł", page)).toBe(false);
+  expect(quoteFound("Waga: 1,5 kg", page)).toBe(false);
+  expect(quoteFound("Moc 2,5 W", page)).toBe(false);
+  expect(quoteFound("23 990,0 zł", page)).toBe(false);
+  expect(quoteFound("2,4 dB(A)", page)).toBe(false);
+  expect(quoteFound("Głośność 22", page)).toBe(false);
+  // Numbers in a list aren't one number.
+  expect(plainRead("2024, 2025")).toBe("2024, 2025");
 });
 
 test("a price copied wrong is unconfirmed, and the check doesn't see it", async () => {
