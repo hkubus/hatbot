@@ -110,7 +110,7 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
   const [diff, setDiff] = useState("");
   /** History is the last file you opened's. */
   const [histPath, setHistPath] = useState(open || "INDEX.md");
-  const [log, setLog] = useState<Commit[]>([]);
+  const [log, setLog] = useState<Commit[] | null>(null);
   const [older, setOlder] = useState(false);
 
   const dirty = isDirty(doc);
@@ -142,9 +142,9 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
     };
   }, [histPath, version]);
   const loadOlder = () =>
-    api<Commit[]>(`/memory/log?path=${enc(histPath)}&limit=${PAGE}&skip=${log.length}`).then(
+    api<Commit[]>(`/memory/log?path=${enc(histPath)}&limit=${PAGE}&skip=${log?.length ?? 0}`).then(
       (l) => {
-        setLog((had) => [...had, ...l.filter((c) => !had.some((x) => x.sha === c.sha))]);
+        setLog((had) => [...(had ?? []), ...l.filter((c) => !had?.some((x) => x.sha === c.sha))]);
         setOlder(l.length === PAGE);
       },
       (err) => toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot"),
@@ -557,8 +557,8 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
           )}
           <div className="history">
             <h3 className="section-title">History</h3>
-            {!log.length && <div className="muted">No changes yet.</div>}
-            {log.map((c) => (
+            {log?.length === 0 && <div className="muted">No changes yet.</div>}
+            {log?.map((c) => (
               <div className="commit" key={c.sha}>
                 <span className="sha">{c.sha.slice(0, 7)}</span>
                 <div>
