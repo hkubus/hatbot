@@ -43,6 +43,7 @@ export function createApp(deps: Deps) {
   });
   app.use("/auth/*", small);
   app.use("/approvals/:id/token-decision", small);
+  app.use("/pause-all/token", small);
   app.use(async (c, next) => {
     if (c.req.method === "POST" && c.req.path === `${API_PREFIX}/attachments`) return next();
     return limitBody(c, next, 5 * 1024 * 1024);

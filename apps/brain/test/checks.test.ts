@@ -90,7 +90,11 @@ test("a test approval goes out, and its answer shows", async () => {
     await t.call("POST", "/checks/approval", undefined, { cookie })
   ).json()) as Approval;
   expect(a.status).toBe("pending");
-  expect(t.notifier.sent.at(-1)?.actions?.map((b) => b.label)).toEqual(["Approve", "Deny"]);
+  expect(t.notifier.sent.at(-1)?.actions?.map((b) => b.label)).toEqual([
+    "Approve",
+    "Deny",
+    "Pause all",
+  ]);
   await t.call("POST", `/approvals/${a.id}`, { decision: "approve" }, { cookie });
   const info = (await (await t.call("GET", "/checks", undefined, { cookie })).json()) as ChecksInfo;
   expect(info.approval?.status).toBe("approved");

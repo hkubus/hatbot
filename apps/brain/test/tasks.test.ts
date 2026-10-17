@@ -106,8 +106,11 @@ test("a consequential click is held back until confirm_intent is approved", asyn
   expect(approval.sources).toEqual(["https://example.com/"]);
   expect(t.agent.actions).toEqual([]);
   expect(t.tasks.get(task.id)?.status).toBe("waiting_approval");
-  // Payments only offer "Open in Hatbot" on the phone.
-  expect(t.notifier.sent.at(-1)?.actions?.map((a) => a.label)).toEqual(["Open in Hatbot"]);
+  // Payments only offer "Open in Hatbot" on the phone, and Pause all, which is always safe.
+  expect(t.notifier.sent.at(-1)?.actions?.map((a) => a.label)).toEqual([
+    "Open in Hatbot",
+    "Pause all",
+  ]);
   // It waits above the composer, not in the thread.
   expect(t.thread.list().map((m) => m.kind as string)).not.toContain("approval");
 
@@ -168,7 +171,7 @@ test("ntfy buttons carry single-use signed tokens", async () => {
   startTask(t);
   const approval = await pending(t);
   const buttons = t.notifier.sent.at(-1)?.actions ?? [];
-  expect(buttons.map((b) => b.label)).toEqual(["Approve", "Deny"]);
+  expect(buttons.map((b) => b.label)).toEqual(["Approve", "Deny", "Pause all"]);
   const approve = buttons[0] as { url: string; body: string };
   expect(approve.url).toBe(`https://hatbot.test/api/v1/approvals/${approval.id}/token-decision`);
   const body = JSON.parse(approve.body);
@@ -184,6 +187,44 @@ test("ntfy buttons carry single-use signed tokens", async () => {
   expect(again.status).toBe(409);
   expect((t.approvals.get(approval.id) as Approval).decidedVia).toBe("ntfy");
   await t.tasks.idle();
+});
+
+test("Pause all on a notification pauses everything with its own signed token", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("confirm_intent", { kind: "send", summary: "Post the reply" })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = startTask(t);
+  const approval = await pending(t);
+  const buttons = (t.notifier.sent.at(-1)?.actions ?? []) as { url: string; body: string }[];
+  const pause = buttons[2] as { url: string; body: string };
+  expect(pause.url).toBe("https://hatbot.test/api/v1/pause-all/token");
+  const body = JSON.parse(pause.body) as { exp: number; sig: string };
+  // An Approve button's signature doesn't pause, and a pause one doesn't approve.
+  const approveSig = JSON.parse((buttons[0] as { body: string }).body).sig;
+  expect((await t.call("POST", "/pause-all/token", { ...body, sig: approveSig })).status).toBe(403);
+  expect(
+    (
+      await t.call("POST", `/approvals/${approval.id}/token-decision`, {
+        decision: "approve",
+        exp: body.exp,
+        sig: body.sig,
+      })
+    ).status,
+  ).toBe(403);
+  expect((await t.call("POST", "/pause-all/token", { ...body, exp: body.exp + 1 })).status).toBe(
+    403,
+  );
+  expect(t.settings.get().paused).toBe(false);
+  const res = await t.call("POST", "/pause-all/token", body, { origin: "" });
+  expect(res.status).toBe(200);
+  expect(t.settings.get().paused).toBe(true);
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)?.status).not.toBe("running");
+  // Once the approval it came with has expired, it's refused.
+  t.advance(25 * 3600_000);
+  expect((await t.call("POST", "/pause-all/token", body)).status).toBe(403);
 });
 
 test("request_takeover waits for you to take over and hand back", async () => {
