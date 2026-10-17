@@ -27,3 +27,7 @@ On the Proxmox host, as root:
 8. The iPhone app (optional): add the SideStore source `https://hkubus.github.io/hatbot/source.json`, or build your own (`apps/ios/README.md`). A fork's iOS workflow uses the repository variable `BUNDLE_PREFIX`, a reverse domain you own.
 
 `infra/README.md` explains each step, updates and rollbacks. `bun run licenses` lists the dependencies' licences; Hatbot takes no copyleft ones.
+
+## Licence
+
+MIT (`LICENSE`).
