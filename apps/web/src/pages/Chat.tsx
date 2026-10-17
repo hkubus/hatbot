@@ -47,6 +47,7 @@ import {
   ensureSchedule,
   ensureTask,
   getState,
+  HATBOT_CHAT,
   loadEarlier,
   loadThread,
   markSeen,
@@ -58,6 +59,7 @@ import {
   useStore,
 } from "../store";
 import { isActive, PendingApproval, taskLine, tokenText, whenText } from "../tasks";
+import { splitWaiting } from "../waiting";
 
 /** How long an unread message stays on screen before it counts as seen. */
 const SEEN_AFTER_MS = 1500;
@@ -569,12 +571,19 @@ export function Chat({ id }: { id: number }) {
   const messages = useStore((s) => s.messages);
   const episodes = useStore((s) => s.episodes);
   const approvals = useStore((s) => s.approvals);
-  const pending = useMemo(
+  const chat = useStore(currentChat);
+  const chats = useStore((s) => s.conversations);
+  // This chat's approvals, and a line for the rest: each chat's bots ask in their own.
+  const waiting = useMemo(
     () =>
-      Object.values(approvals)
-        .filter((a) => a.status === "pending")
-        .sort((a, b) => a.id - b.id),
-    [approvals],
+      splitWaiting(
+        Object.values(approvals)
+          .filter((a) => a.status === "pending")
+          .sort((a, b) => a.id - b.id),
+        chat,
+        chats,
+      ),
+    [approvals, chat, chats],
   );
   const [unfolded, setUnfolded] = useState<Set<number>>(() => new Set());
   const progress = useStore((s) => s.progress);
@@ -854,11 +863,29 @@ export function Chat({ id }: { id: number }) {
             <Icon name="down" />
           </button>
         )}
-        {pending.length > 0 && (
+        {(waiting.here.length > 0 || waiting.rest > 0) && (
           <div className="approval-tray">
-            {pending.map((a) => (
+            {waiting.here.map((a) => (
               <TrayApproval key={a.id} a={a} />
             ))}
+            {waiting.rest > 0 && (
+              <button
+                type="button"
+                className="tray-more"
+                onClick={() =>
+                  navigate(
+                    !waiting.elsewhere
+                      ? "/tasks"
+                      : waiting.elsewhere.id === HATBOT_CHAT
+                        ? "/"
+                        : `/chat/${waiting.elsewhere.id}`,
+                  )
+                }
+              >
+                {waiting.here.length ? `${waiting.rest} more` : waiting.rest} waiting in{" "}
+                {waiting.elsewhere ? chatName(getState(), waiting.elsewhere) : "other chats"}
+              </button>
+            )}
           </div>
         )}
         {error && (

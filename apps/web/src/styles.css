@@ -2564,10 +2564,10 @@ pre.payload {
   background: var(--surface-2);
 }
 
-/* Approvals waiting for you, above the composer */
+/* Approvals waiting for you, above the composer: never more than a modest part of the screen. */
 .approval-tray {
   max-width: 760px;
-  max-height: 45vh;
+  max-height: min(30vh, 260px);
   overflow-y: auto;
   margin: 0 auto 8px;
   display: grid;
@@ -2581,6 +2581,22 @@ pre.payload {
 }
 .approval-tray .shot {
   max-width: 280px;
+}
+/* Approvals waiting in other chats: one line that goes there. */
+.tray-more {
+  justify-self: start;
+  padding: 2px 4px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.tray-more:hover {
+  color: var(--text);
 }
 
 /* Files on messages and in the composer. */
