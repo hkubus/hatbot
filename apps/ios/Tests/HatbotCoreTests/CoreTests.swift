@@ -410,6 +410,8 @@ final class ScheduleAndMemoryTests: XCTestCase {
   func testReadsAppLinks() {
     let link = { (s: String) in AppLink(url: URL(string: s)!) }
     XCTAssertEqual(link("hatbot://tasks/12"), .task(12))
+    // Any case, as opens() lets it through.
+    XCTAssertEqual(link("HATBOT://tasks/12"), .task(12))
     XCTAssertEqual(link("hatbot://approvals/5"), .approval(5))
     XCTAssertEqual(link("hatbot://schedules/2"), .schedule(2))
     XCTAssertEqual(link("hatbot://triggers/3"), .trigger(3))
