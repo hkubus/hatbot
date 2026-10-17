@@ -2,12 +2,15 @@
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { type Combo, combosIn, readCombo } from "@hatbot/shared/keys";
 
-/** Lower case, accents dropped and ł read as l, so "ZAPŁAĆ", "Zapłać" and "Zaplac" match alike. */
+/**
+ * Lower case, accents dropped and ł read as l, so "ZAPŁAĆ", "Zapłać" and "Zaplac" match alike; invisible
+ * format characters (a zero-width space inside "Kup") dropped.
+ */
 export const fold = (s: string) =>
   s
     .toLowerCase()
     .normalize("NFD")
-    .replace(/\p{M}/gu, "")
+    .replace(/[\p{M}\p{Cf}]/gu, "")
     .replace(/ł/g, "l")
     .replace(/\s+/g, " ")
     .trim();
@@ -24,7 +27,7 @@ const words = (list: string[]) => new RegExp(`${START}(?:${list.join("|")})`, "i
  */
 const STRONG = words([
   // English, whole words.
-  `(?:send|post|publish|reply|pay|buy|purchase|order|checkout|check out|book|reserve|transfer|sign up|register|subscribe|unsubscribe|donate|bid|place bid|withdraw|change password)${END}`,
+  `(?:send|post|publish|reply|pay|payment|buy|purchase|order|checkout|check out|book|reserve|transfer|sign up|register|subscribe|unsubscribe|donate|bid|place bid|withdraw|change password)${END}`,
   `(?:make|send|submit) (?:an |a )?offer${END}`,
   `accept (?:the |this )?offer${END}`,
   `(?:proceed|continue|go) to (?:payment|checkout)${END}`,
@@ -40,17 +43,23 @@ const STRONG = words([
   "wplac",
   "platnos",
   `plac${END}`,
+  // Płacę on its own or with how (folded, "place" is also English: "Place" alone, or before a way to pay).
+  `place(?:$| (?:blik|kart|teraz|przelew|online|gotowk|z gory|za))`,
+  `do kas[ay]${END}`,
+  "(?:wykonaj|zlec|zatwierdz)\\p{L}* przelew",
   `zamow(?:ic)?${END}`,
   "zamawiam",
   `zloz(?:yc)?${END}`,
-  "(?:za)?akceptuj\\p{L}* ofert",
+  "(?:za)?akceptuj\\p{L}* (?:ofert|cen|propozycj)",
   "przyjmij ofert",
+  "przyjmuj\\p{L}* ofert",
   "zaproponuj",
   "licytuj",
   "podbij",
   "wyroznij",
   "wystaw",
   `wysl(?:ij|ac|e)${END}`,
+  `wysylam${END}`,
   `odesl(?:ij|ac)${END}`,
   `odpowiedz${END}`,
   "(?:o)?publikuj",
@@ -113,6 +122,10 @@ const NARROWING = words([
   "hleda",
   "vyhled",
 ]);
+
+/** A label that searches, filters or sorts ("Szukaj", "Pokaż wyniki"), and names nothing consequential. */
+export const narrowingLabel = (label: string) =>
+  NARROWING.test(fold(label)) && !STRONG.test(fold(label));
 
 /** Whether a label names a consequential step. `search`: the control narrows a list (a search form, say). */
 export function consequentialLabel(label: string, search = false): boolean {
@@ -261,9 +274,16 @@ export function samePage(a: string | null | undefined, b: string | null | undefi
 /** Payment pages shops hand over to (PayU, Przelewy24, PayPal and the like). */
 const PAYMENT_HOSTS =
   /(?:^|\.)(?:payu\.com|przelewy24\.pl|paypal\.com|tpay\.com|paynow\.pl|imoje\.pl|dotpay\.pl|blik\.com|gopay\.cz|gopay\.com|comgate\.cz|checkout\.stripe\.com|adyen\.com)$/i;
-/** A checkout or payment step, by the word a part of its address's path starts with. */
+/**
+ * A checkout or payment step, by the word a part of its address's path starts with (Shopify's checkouts
+ * too), or that is the whole part: order and order1.php (PrestaShop, IdoSell), buy (Amazon's /gp/buy/).
+ */
 const CHECKOUT_PATH =
-  /^(?:checkout|finali[sz]e|kasa|platnosci?|payments?|pay|zamowienie|transaction|objednavka|pokladna)(?:$|[-_.])/i;
+  /^(?:(?:checkouts?|finali[sz]e|kasa|platnosci?|payments?|pay|zamowienie|transaction|objednavka|pokladna)(?:$|[-_.])|(?:order\d*|buy)(?:\.\w+)?$)/i;
+/** Shops that route by the query instead: OpenCart's route=checkout/…, PrestaShop's controller=order. */
+const CHECKOUT_QUERY = ["route", "controller", "step", "fc"];
+const CHECKOUT_ROUTE =
+  /^(?:checkout|order(?!s|-detail|-history)|payment|platnosc|zamowienie|kasa|objednavka)/i;
 
 /** The host of a checkout or payment page, where any click may order or pay; null for other pages. */
 export function checkoutHost(url: string | undefined): string | null {
@@ -272,7 +292,12 @@ export function checkoutHost(url: string | undefined): string | null {
     const u = new URL(url);
     if (u.protocol !== "https:" && u.protocol !== "http:") return null;
     const parts = fold(decodeURIComponent(u.pathname)).split("/");
-    return PAYMENT_HOSTS.test(u.hostname) || parts.some((p) => CHECKOUT_PATH.test(p))
+    const routed = CHECKOUT_QUERY.some((k) =>
+      fold(u.searchParams.get(k) ?? "")
+        .split("/")
+        .some((p) => CHECKOUT_ROUTE.test(p)),
+    );
+    return PAYMENT_HOSTS.test(u.hostname) || routed || parts.some((p) => CHECKOUT_PATH.test(p))
       ? u.hostname
       : null;
   } catch {
@@ -298,6 +323,8 @@ export type Hold =
 const buttonLike = (el: AgentElement) =>
   el.tag === "button" ||
   el.role === "button" ||
+  // A div or icon the page made clickable (desktop-agent says so).
+  el.role === "clickable" ||
   (el.tag === "input" && ["submit", "button", "image", "reset"].includes(el.type ?? ""));
 
 /** Somewhere to type. An older desktop-agent doesn't say, so it goes by the tag. */
@@ -330,6 +357,8 @@ export function consequential(press: Press, el: AgentElement | null): Hold | nul
   if (named !== undefined) return { label: named };
   if (checkout && (el.inForm || labels.length)) return { checkout };
   if (search) return null;
+  // A chat box with no button Hatbot can see by it (Discord's) sends on Enter as easily as not.
+  if (!labels.length) return el.inForm ? null : { unlabelled: "beside" };
   return labels.some(nameless) ? { unlabelled: "beside" } : null;
 }
 
@@ -359,11 +388,16 @@ export function heldWhat(hold: Hold): string {
     : "on a button with no label";
 }
 
-/** What the model is told when a step is held for confirm_intent. */
-export function heldBack(press: Press, hold: Hold): string {
+/**
+ * What the model is told when a step is held for confirm_intent. `el`: what Enter was pressed in, when
+ * shift+Return there would be a new line instead (a text area, not a one-line box).
+ */
+export function heldBack(press: Press, hold: Hold, el: AgentElement | null = null): string {
   const act = press === "click" ? "click" : press === "space" ? "Space" : "Enter";
   const newLine =
-    press === "enter" ? " If you only meant a new line in a text box, press shift+Return." : "";
+    press === "enter" && el && el.tag !== "input" && editable(el)
+      ? " If you only meant a new line in this box, press shift+Return."
+      : "";
   if ("label" in hold)
     return `this would ${press === "click" ? "click" : press === "space" ? "press" : "submit with"} "${hold.label}", which looks like a consequential step. If that's the action you mean to take, call confirm_intent first. If this ${act} doesn't send, buy, book or delete anything and the label misled the check, reach the same place another way.${newLine}`;
   if ("checkout" in hold)
@@ -371,10 +405,10 @@ export function heldBack(press: Press, hold: Hold): string {
   if ("frame" in hold)
     return `this ${act} lands in an embedded frame${hold.frame ? ` ("${hold.frame}")` : ""} that Hatbot can't see into, so it can't tell what it does; payment and chat widgets live in frames. If it pays, sends, books or deletes anything, call confirm_intent first. If it doesn't, reach the same place another way.`;
   if ("unseen" in hold)
-    return `Hatbot couldn't see what this ${act} would act on, so it can't tell whether it's safe. Take a screenshot or read the page again and retry; if it still can't, and this pays, sends, books or deletes anything, call confirm_intent first.`;
+    return `Hatbot couldn't see what this ${act} would act on, so it can't tell whether it's safe. Take a screenshot or read the page again and retry. If it still can't, and this pays, sends, books or deletes anything, call confirm_intent first; if it doesn't, reach the same place another way.`;
   if ("outside" in hold)
     return `the keyboard isn't on the page: it's in the browser's address bar or another window, where ${act} opens what was typed or presses something Hatbot can't see. To open a page, use the browser's navigate; to type in the page, click into its box first. If this answers a dialog you mean to answer, call confirm_intent first.`;
   if (hold.unlabelled === "beside")
-    return `Enter here could press the button next to this box, which has no label, so Hatbot can't tell whether it sends. If it sends, buys, pays, books or deletes anything, call confirm_intent first.${newLine}`;
+    return `Enter here could send what's in this box, through a button beside it that has no label or none Hatbot can see, so Hatbot can't tell what it does. If it sends, buys, pays, books or deletes anything, call confirm_intent first. If it doesn't, reach the same place another way, such as a labelled button.${newLine}`;
   return `this ${act} is on a button with no label, so Hatbot can't tell what it does: it could send or pay as easily as open a menu. If it sends, buys, pays, books or deletes anything, call confirm_intent first. If it doesn't, reach the same place another way: Escape to close something, scrolling, or a labelled control.`;
 }

@@ -613,6 +613,18 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       tasks.addStep(id, { kind: "note", name: "Held back", detail: check.refuse, url: lastUrl });
       return textResult(call, `Not run: ${check.refuse}`, true);
     }
+    // A chat box may show its Send button only once it holds text, so the Enter a line break presses is
+    // checked with the text before it typed.
+    const cut =
+      call.name === "type" && typeof input.text === "string" ? input.text.search(/[\r\n]/) : -1;
+    if (check && cut > 0) {
+      const text = input.text as string;
+      const head = await toolsetCall({ ...call, input: { ...input, text: text.slice(0, cut) } });
+      if (head.is_error) return head;
+      const rest = await toolsetCall({ ...call, input: { ...input, text: text.slice(cut) } });
+      if (!rest.is_error || typeof rest.content !== "string") return rest;
+      return { ...rest, content: `The text before the line break was typed. ${rest.content}` };
+    }
     /** Looks again at what the check looked at, to see whether a send left the text box. */
     let inspectAgain: (() => Promise<Inspected>) | null = null;
     let sending = false;
@@ -691,7 +703,11 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         const elsewhere = armed?.page
           ? ` The owner's approval was for a step on ${armed.page}, not this page.`
           : "";
-        return textResult(call, `Not run: ${heldBack(check.press, hold)}${elsewhere}`, true);
+        return textResult(
+          call,
+          `Not run: ${heldBack(check.press, hold, gate ? null : el)}${elsewhere}`,
+          true,
+        );
       }
       if (hold) armed = null;
     }

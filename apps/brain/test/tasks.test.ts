@@ -210,6 +210,20 @@ test("outside a negotiation, a click or Enter that could message a seller asks f
   // Off the marketplaces, the ordinary check decides.
   expect(marketplaceSend("enter", { ...box(), url: "https://example.com/" }, null)).toBeNull();
   expect(marketplaceSend("enter", box(), null)).toBeNull();
+  // Searching and filtering send nothing, whatever the boxes hold; desktop-agent leaves the site's
+  // search box out of them, so its query doesn't hold up other buttons either.
+  fields = ["rtx 3070"];
+  const search = { ...box(), tag: "input", type: "search", inForm: false, search: true };
+  expect(marketplaceSend("enter", search, null)).toBeNull();
+  expect(marketplaceSend("click", { ...send(), label: "Szukaj" }, null)).toBeNull();
+  fields = ["1000", "1500"];
+  expect(marketplaceSend("click", { ...send(), label: "Pokaż wyniki" }, null)).toBeNull();
+  expect(marketplaceSend("click", { ...send(), label: "Filtry", toggle: true }, null)).toBeNull();
+  fields = [];
+  expect(marketplaceSend("click", { ...send(), label: "Obserwuj" }, null)).toBeNull();
+  // A message in the box still asks.
+  fields = ["Czy aktualne?"];
+  expect(marketplaceSend("click", { ...send(), label: "Obserwuj" }, null)).toContain("Obserwuj");
 });
 
 test("a desktop task from a tainted chat or task starts tainted", async () => {
@@ -998,9 +1012,9 @@ test("Space, mouse up, a drag, Enter after Tab and Enter in a chat box don't sli
   startTask(t, "Write to the seller");
   await t.tasks.idle();
 
-  // Nothing ran: each was held or refused.
+  // Nothing ran but the text before the line break: each was held or refused.
   expect(t.agent.actions.filter((a) => a.name !== "cursor_position")).toEqual([]);
-  expect(t.agent.browserCalls).toEqual([]);
+  expect(t.agent.browserCalls).toEqual([{ name: "type", input: { text: "Dzień dobry" } }]);
   const said = (n: number) => JSON.stringify(work.requests[n]?.messages.at(-1)?.content);
   expect(said(1)).toContain('press \\"Zapłać\\"');
   expect(said(2)).toContain('click \\"Zapłać\\"');
@@ -1010,6 +1024,40 @@ test("Space, mouse up, a drag, Enter after Tab and Enter in a chat box don't sli
   expect(said(6)).toContain("Holding Enter or Space repeats it");
   expect(said(7)).toContain('submit with \\"Wyślij\\"');
   expect(said(8)).toContain('submit with \\"Wyślij\\"');
+  expect(said(8)).toContain("The text before the line break was typed.");
+});
+
+test("a line break typed into a chat box is checked with the text before it in the box", async () => {
+  const work = new FakeModel([
+    { content: [computer("type", { text: "Hi there\nsecond line" })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  // Like WhatsApp's: a voice message button while the box is empty, Send once it holds text.
+  let fields: string[] = [];
+  Object.defineProperty(t.agent, "element", {
+    get: (): AgentElement => ({
+      tag: "div",
+      role: "textbox",
+      type: null,
+      label: "",
+      inForm: false,
+      url: "https://chat.example/c/1",
+      editable: true,
+      fields,
+      buttonsAfter: fields.length ? ["Send"] : ["Voice message"],
+    }),
+    configurable: true,
+  });
+  t.agent.afterAction = (name, input) => {
+    if (name === "type") fields = [...fields, String(input.text)];
+  };
+  startTask(t, "Write to Ann");
+  await t.tasks.idle();
+  expect(t.agent.actions.map((a) => a.input.text)).toEqual(["Hi there"]);
+  const said = JSON.stringify(work.requests[1]?.messages.at(-1)?.content);
+  expect(said).toContain("The text before the line break was typed.");
+  expect(said).toContain('submit with \\"Send\\"');
 });
 
 test("lookups in a row run at once; everything else runs on its own, in order", async () => {

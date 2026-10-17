@@ -143,10 +143,11 @@ test.skipIf(!chromium)(
   async () => {
     await browser.call("navigate", { url: `${base}/chat` });
     await browser.call("left_click", { target: { type: "coordinate", ...at(0) } });
+    // The buttons after it first, then the one before it in its own row.
     expect(await browser.inspect({})).toMatchObject({
       tag: "textarea",
       editable: true,
-      buttonsAfter: ["", "Wyślij"],
+      buttonsAfter: ["", "Wyślij", "Emoji"],
     });
     await browser.call("left_click", { target: { type: "coordinate", x: 50, y: 170 } });
     expect(await browser.inspect({})).toMatchObject({
@@ -241,6 +242,66 @@ test.skipIf(!chromium)(
     await browser.call("close_tab", { tab_id: popup });
     browser.screenTouched();
     expect(await inspectScreen(browser, 50, 260)).not.toBeUndefined();
+  },
+);
+
+const nest = (inner: string, n: number): string => (n ? `<div>${nest(inner, n - 1)}</div>` : inner);
+pages["/search"] = `<!doctype html><body style="margin:0">
+  <div><input placeholder="Szukaj" style="${box(0)}"><button style="${box(1)}">${icon}</button></div>
+  <textarea style="${box(3)}"></textarea></body>`;
+pages["/one-form"] = `<!doctype html><body style="margin:0"><form method="post">
+  <input type="search" name="q" style="${box(0)}"><button style="${box(1)}">Usuń konto</button>
+  <button style="${box(2)}">${icon}</button></form></body>`;
+pages["/divs"] = `<!doctype html><body style="margin:0">
+  <div style="${box(0)};cursor:pointer">${icon}</div>
+  <div style="${box(1)};cursor:pointer"><svg width="30" height="30"><rect width="30" height="30"/></svg> Kup teraz</div></body>`;
+pages["/composers"] = `<!doctype html><body style="margin:0">
+  ${nest(`<textarea style="${box(0)}"></textarea>`, 7)}<button style="${box(1)}">Send</button>
+  <div style="position:absolute;top:120px"><button aria-label="Wyślij" style="position:absolute;left:120px;width:40px;height:40px">${icon}</button>
+    <textarea style="position:absolute;left:0;width:100px;height:40px"></textarea></div>
+  <div style="position:absolute;top:200px"><div><div role="textbox" contenteditable="true" style="width:100px;height:40px"></div></div></div>
+  </body>`;
+
+test.skipIf(!chromium)(
+  "a site's search box is searching by its own name, and its query isn't a message",
+  async () => {
+    await browser.call("navigate", { url: `${base}/search` });
+    await browser.call("left_click", { target: { type: "coordinate", ...at(0) } });
+    await browser.call("type", { text: "rtx 3070" });
+    expect(await browser.inspect({})).toMatchObject({ tag: "input", search: true });
+    expect(await browser.inspect(at(1))).toMatchObject({ tag: "button", search: true });
+    // A box elsewhere on the page doesn't count the query as text waiting to go.
+    expect(await browser.inspect(at(3))).toMatchObject({ tag: "textarea", fields: [] });
+    // In a page built as one form, a search box in it doesn't make its other buttons searching.
+    await browser.call("navigate", { url: `${base}/one-form` });
+    expect(await browser.inspect(at(1))).toMatchObject({ label: "Usuń konto", search: false });
+    expect(await browser.inspect(at(2))).toMatchObject({ label: "", search: false });
+  },
+);
+
+test.skipIf(!chromium)("a div made clickable is reported as one, named by its text", async () => {
+  await browser.call("navigate", { url: `${base}/divs` });
+  expect(await browser.inspect(at(0))).toMatchObject({ tag: "div", role: "clickable", label: "" });
+  expect(await browser.inspect({ x: 10, y: 65 })).toMatchObject({
+    tag: "div",
+    role: "clickable",
+    label: "Kup teraz",
+  });
+});
+
+test.skipIf(!chromium)(
+  "a chat box finds its Send however deep, before or after it, or says there's none",
+  async () => {
+    await browser.call("navigate", { url: `${base}/composers` });
+    await browser.call("left_click", { target: { type: "coordinate", ...at(0) } });
+    expect(await browser.inspect({})).toMatchObject({
+      tag: "textarea",
+      buttonsAfter: ["Send", "Wyślij"],
+    });
+    await browser.call("left_click", { target: { type: "coordinate", x: 50, y: 140 } });
+    expect(await browser.inspect({})).toMatchObject({ tag: "textarea", buttonsAfter: ["Wyślij"] });
+    await browser.call("left_click", { target: { type: "coordinate", x: 50, y: 220 } });
+    expect(await browser.inspect({})).toMatchObject({ role: "textbox", buttonsAfter: [] });
   },
 );
 
