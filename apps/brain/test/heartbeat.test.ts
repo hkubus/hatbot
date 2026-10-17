@@ -118,6 +118,30 @@ test("a monitor whose Kuma alert has a task on it, or waits, isn't told again", 
   expect(t.notifier.sent.filter((n) => n.title === "Heartbeat")).toHaveLength(1);
 });
 
+test("a monitor whose waiting alert starts no task is told after all", async () => {
+  const down = ["Plex"];
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [kuma(down, "uptimekuma")]);
+  await t.plugins.update("uptimekuma", { enabled: true });
+  await on(t);
+  const trigger = t.triggers.create({
+    name: "Kuma, after two checks",
+    kind: "kuma",
+    prompt: "Look into it.",
+    confirmChecks: 2,
+  });
+  const alert = { heartbeat: { status: 0, msg: "timeout" }, monitor: { id: 2, name: "Plex" } };
+  expect(t.triggers.receiveKuma(trigger.id, alert).status).toBe("waiting");
+  expect((await t.heartbeat.run()).action).toBe("nothing");
+  // Switched off before the wait is over: the alert is dropped, and the heartbeat tells.
+  t.triggers.update(trigger.id, { enabled: false });
+  t.advance(3 * 60_000);
+  t.triggers.tick();
+  expect(t.tasks.list()).toHaveLength(0);
+  t.taskModel.onCreate = () => '{"action": "notify", "message": "Plex is down."}';
+  t.advance(30 * 60_000);
+  expect((await t.heartbeat.run()).found).toEqual(["Plex is down"]);
+});
+
 test("after a long time off, the heartbeat only tells what's recent", async () => {
   const t = await testApp();
   await on(t);
