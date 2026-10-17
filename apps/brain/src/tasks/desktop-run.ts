@@ -1330,8 +1330,10 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       messages.length = 0;
       // Another model reads nothing of Haiku's cache.
       cache = { tokens: 0, at: 0 };
-      screening = [];
+      // Pages Haiku left on screen aren't screened again: their verdicts come first.
+      await screened();
       armed = null;
+      lastHeld = null;
       activeMs = 0;
       since = tasks.clock();
       // Haiku's notes: its own account, which may repeat what pages said, so it's data.
@@ -1341,7 +1343,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       );
     }
   } catch (err) {
-    if (err instanceof Stop) tasks.finish(id, err.status, err.summary);
+    if (err instanceof Stop) tasks.finish(id, err.status, err.summary, err.notify);
     else if (signal.aborted) {
       const paused = signal.reason instanceof Error && signal.reason.message === "paused";
       tasks.finish(id, "cancelled", paused ? "Stopped by Pause all." : "Cancelled.");
