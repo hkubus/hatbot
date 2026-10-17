@@ -208,8 +208,8 @@ const localDate = (d: Date) =>
 const WEB_SEARCH_USD = 0.01;
 
 export class Spend {
-  /** Requests in flight: the most each may cost, and its task. */
-  private held = new Map<symbol, { usd: number; taskId?: number }>();
+  /** Requests in flight: the most each may cost, and its task's tree (the task that started it). */
+  private held = new Map<symbol, { usd: number; root?: number }>();
   /** Today's and the month's spend, brought up to date from the rows added since, not summed again. */
   private totals = { day: "", month: "", lastId: 0, todayUsd: 0, monthUsd: 0 };
 
@@ -389,21 +389,51 @@ export class Spend {
   }
 
   /**
+   * A task's tree: the task that started it (or it), and every task started under that one, which
+   * share its limit; and what they have spent together.
+   */
+  private tree(taskId: number): { root: number; usd: number } {
+    const row = this.db
+      .query<{ root: number | null; usd: number | null }, [number]>(
+        `WITH RECURSIVE up(id, parent) AS (
+           SELECT id, parent_id FROM tasks WHERE id = ?1
+           UNION ALL SELECT t.id, t.parent_id FROM tasks t JOIN up ON t.id = up.parent),
+         tree(id) AS (
+           SELECT id FROM up WHERE parent IS NULL
+           UNION ALL SELECT t.id FROM tasks t JOIN tree ON t.parent_id = tree.id)
+         SELECT (SELECT id FROM up WHERE parent IS NULL) AS root,
+           (SELECT sum(cost_usd) FROM spend_ledger WHERE task_id IN tree) AS usd`,
+      )
+      .get(taskId);
+    // A task the ledger knows but the tasks table doesn't: on its own.
+    return row?.root == null
+      ? { root: taskId, usd: this.taskSpend(taskId) }
+      : { root: row.root, usd: row.usd ?? 0 };
+  }
+
+  /**
    * Throws BudgetError if a request estimated at `estimateUsd` would cross a limit, counting what the
-   * requests in flight may still cost. Only work with `reserve` may spend the last `alertReserveUsd`
-   * of the daily and monthly limits.
+   * requests in flight may still cost. A task's limit (`limitUsd`, its tree's) covers the tasks it
+   * started and the task that started it. Only work with `reserve` may spend the last
+   * `alertReserveUsd` of the daily and monthly limits.
    */
   check(estimateUsd: number, task?: { id: number; limitUsd: number }, { reserve = false } = {}) {
     const limits = this.settings.get().limits;
     const { todayUsd, monthUsd } = this.spent();
+    const tree = task ? this.tree(task.id) : null;
     let inFlight = 0;
     let taskInFlight = 0;
     for (const h of this.held.values()) {
       inFlight += h.usd;
-      if (task && h.taskId === task.id) taskInFlight += h.usd;
+      if (tree && h.root === tree.root) taskInFlight += h.usd;
     }
-    if (task && this.taskSpend(task.id) + taskInFlight + estimateUsd > task.limitUsd) {
-      throw new BudgetError("task", `This task would go over its $${task.limitUsd} limit.`);
+    if (task && tree && tree.usd + taskInFlight + estimateUsd > task.limitUsd) {
+      throw new BudgetError(
+        "task",
+        tree.root === task.id
+          ? `This task would go over its $${task.limitUsd} limit.`
+          : `This task would take task #${tree.root}, which started it, over its $${task.limitUsd} limit.`,
+      );
     }
     const need = estimateUsd + inFlight;
     const kept = reserve ? 0 : limits.alertReserveUsd;
@@ -435,7 +465,7 @@ export class Spend {
   ): () => void {
     this.check(estimateUsd, task, opts);
     const key = Symbol();
-    this.held.set(key, { usd: estimateUsd, taskId: task?.id });
+    this.held.set(key, { usd: estimateUsd, root: task ? this.tree(task.id).root : undefined });
     return () => {
       this.held.delete(key);
     };

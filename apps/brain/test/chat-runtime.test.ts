@@ -589,6 +589,45 @@ test("the check keeps today's and the month's spend up to date without summing t
   t.spend.check(0.5);
 });
 
+test("a task's limit covers the tasks it started; its cost shows theirs too", async () => {
+  const t = await testApp();
+  const add = (parent: number | null) =>
+    t.db
+      .query<{ id: number }, [number | null]>(
+        `INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, parent_id)
+         VALUES ('Research a laptop', 'g', '', 'chat', 'background', 'claude-opus-5-5', 'running', 3, '2026-10-09T12:00:00Z', ?)
+         RETURNING id`,
+      )
+      .get(parent)?.id as number;
+  const root = add(null);
+  const asked = add(root);
+  const screen = add(asked);
+  const spent = (usd: number, taskId: number) =>
+    t.spend.record({
+      model: "claude-haiku-5-5",
+      purpose: "task",
+      usage: { input_tokens: 0, output_tokens: 0 },
+      taskId,
+      extraUsd: usd,
+    });
+  spent(1, root);
+  spent(1, asked);
+  spent(0.9, screen);
+  expect(t.tasks.rootOf(screen)).toBe(root);
+  expect(t.tasks.budget(screen)).toBe(3);
+  // Each would have room on its own; together the tree is at its limit.
+  const limit = { id: screen, limitUsd: t.tasks.budget(screen) };
+  expect(() => t.spend.check(0.2, limit)).toThrow(`task #${root}, which started it`);
+  expect(t.tasks.get(root)?.costUsd).toBeCloseTo(2.9, 9);
+  expect(t.tasks.get(asked)?.costUsd).toBeCloseTo(1.9, 9);
+  expect(t.tasks.budgetAsk(screen, 3).summary).toBe(
+    `Let task #${root} and the tasks it started spend $3 more`,
+  );
+  t.tasks.raiseBudget(screen, 3);
+  expect(t.tasks.budget(root)).toBe(6);
+  t.spend.check(0.2, { id: screen, limitUsd: t.tasks.budget(screen) });
+});
+
 test("an Opus reply that could pass the limit with all its output isn't started", async () => {
   const model = new FakeModel([{ content: [text("ok")] }]);
   const t = await testApp(model);

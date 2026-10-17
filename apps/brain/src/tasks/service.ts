@@ -93,8 +93,10 @@ type Row = {
   steps: number;
 };
 
+// A task's cost is its own and that of the tasks it started, which share its limit.
 const SELECT = `SELECT t.*,
-  (SELECT sum(cost_usd) FROM spend_ledger s WHERE s.task_id = t.id) AS cost_usd,
+  (WITH RECURSIVE tree(id) AS (SELECT t.id UNION ALL SELECT c.id FROM tasks c JOIN tree ON c.parent_id = tree.id)
+   SELECT sum(cost_usd) FROM spend_ledger s WHERE s.task_id IN tree) AS cost_usd,
   (SELECT count(*) FROM task_steps st WHERE st.task_id = t.id AND st.kind = 'action') AS steps
   FROM tasks t`;
 
@@ -712,14 +714,46 @@ export class Tasks {
     this.emit(id);
   }
 
+  /**
+   * The task that started this one's tree, or itself. Its limit covers the whole tree, so a task that
+   * starts others can't spend a limit in each (PLAN.md §6.3).
+   */
+  rootOf(id: number): number {
+    for (let at = id; ; ) {
+      const parent = this.d.db
+        .query<{ parent_id: number | null }, [number]>("SELECT parent_id FROM tasks WHERE id = ?")
+        .get(at)?.parent_id;
+      if (!parent) return at;
+      at = parent;
+    }
+  }
+
+  /** The limit a task spends against: its tree's, which is the root's. */
   budget(id: number): number {
     return this.d.db
       .query<{ budget_usd: number }, [number]>("SELECT budget_usd FROM tasks WHERE id = ?")
-      .get(id)?.budget_usd as number;
+      .get(this.rootOf(id))?.budget_usd as number;
   }
 
   raiseBudget(id: number, byUsd: number) {
-    this.d.db.query("UPDATE tasks SET budget_usd = budget_usd + ? WHERE id = ?").run(byUsd, id);
+    this.d.db
+      .query("UPDATE tasks SET budget_usd = budget_usd + ? WHERE id = ?")
+      .run(byUsd, this.rootOf(id));
+  }
+
+  /** What a task at its tree's limit asks you, to raise it by `extra`. */
+  budgetAsk(id: number, extra: number): { summary: string; reason: string } {
+    const root = this.rootOf(id);
+    const title = (n: number) => `"${this.get(n)?.title ?? `Task #${n}`}"`;
+    return root === id
+      ? {
+          summary: `Let task #${id} spend $${extra} more`,
+          reason: `${title(id)} has used its $${this.budget(id)} limit.`,
+        }
+      : {
+          summary: `Let task #${root} and the tasks it started spend $${extra} more`,
+          reason: `${title(root)} and the tasks it started, ${title(id)} among them, have used its $${this.budget(id)} limit.`,
+        };
   }
 
   addStep(
