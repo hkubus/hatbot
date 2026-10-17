@@ -269,7 +269,7 @@ test("a background task hands the chat a JSON file; the bot reads it and the cha
   ]);
   expect(t.tasks.steps(task?.id as number).filter((s) => s.name === "send_to_chat").length).toBe(2);
   // The bot gets them with the task's result, and writes its reply again with the chart.
-  const told = JSON.stringify(chat.requests.at(-1)?.messages.at(-1));
+  const told = JSON.stringify(chat.requests.at(-1)?.messages.at(-2));
   expect(told).toContain('handed you, below: #1 \\"cpu.json\\", #2 \\"cpu.png\\"');
   expect(told).toContain(JSON.stringify(series).slice(1, -1));
   expect(told).toContain('"type":"image"');

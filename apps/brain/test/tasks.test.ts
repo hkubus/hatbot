@@ -71,7 +71,9 @@ test("chat starts a desktop task that runs, archives screenshots and reports bac
   // The chat model hears how it ended right away, and writes the reply that started it again: no
   // message of its own. The edited reply is unread until you've seen it.
   await t.thread.idle();
-  const told = JSON.stringify(chat.requests.at(-1)?.messages.at(-1));
+  // The task's news, then the app's note to the bot, as a system message.
+  const told = JSON.stringify(chat.requests.at(-1)?.messages.slice(-2));
+  expect(chat.requests.at(-1)?.messages.at(-1)?.role).toBe("system");
   expect(told).toContain("<task_updates>");
   expect(told).toContain("replaces your reply that started it");
   const after = t.thread.list().filter((m) => m.role === "assistant");

@@ -63,6 +63,7 @@ import {
   webCalls,
   webReads,
 } from "./tools";
+import { tagJson, tagText } from "./untrusted";
 
 /** What ask_opus consults when the chat runs on Haiku 5.5. */
 export const EXPERT_MODEL = "claude-opus-5-5";
@@ -139,6 +140,8 @@ type Turn = Anthropic.Beta.BetaMessageParam;
 type Effort = NonNullable<Anthropic.Beta.BetaOutputConfig["effort"]>;
 /** Stored among a bot's turns where its chat effort was set: not a turn itself. */
 type EffortMark = { effort: Effort };
+/** Stored among a bot's turns: a note from the app, sent as a system message, not as the owner. */
+type NoteMark = { note: string };
 /** How a reply ended: its text, for the @names that bring other bots in. */
 type Said = { text: string; status: "done" | "error"; stopped?: boolean };
 
@@ -714,8 +717,8 @@ export class Thread {
       )
       .all(this.conversationId, after, bot.id)
       .reverse()
-      .map((m) => `[${localStamp(new Date(m.created_at))}] ${this.speaker(m)}: ${m.text}`)
-      .join("\n\n");
+      .map((m) => this.transcript(m))
+      .join("\n");
   }
 
   /** Waits for queued replies (tests, shutdown). */
@@ -777,6 +780,15 @@ export class Thread {
       .run(episodeId, botId, role, JSON.stringify(content), this.now());
   }
 
+  /** A note from the app to the bot, e.g. that a task ended: a system message, after a user turn. */
+  private appendNote(episodeId: number, botId: string, note: string) {
+    this.d.db
+      .query(
+        "INSERT INTO episode_turns (episode_id, bot_id, role, content, created_at) VALUES (?, ?, 'user', ?, ?)",
+      )
+      .run(episodeId, botId, JSON.stringify({ note } satisfies NoteMark), this.now());
+  }
+
   /**
    * A bot's own API conversation in the episode: in a group, each bot keeps its own. `files`: the
    * reply's files, read once; older turns hold the bytes themselves. `effort`: the episode's first,
@@ -796,6 +808,7 @@ export class Thread {
       .flatMap((r): Turn[] => {
         const content = JSON.parse(r.content);
         if (Array.isArray(content)) return [{ role: r.role, content }];
+        if ("note" in content) return [{ role: "system", content: (content as NoteMark).note }];
         const set = (content as EffortMark).effort;
         if (effort === null) {
           effort = set;
@@ -814,7 +827,7 @@ export class Thread {
   private setEffort(episodeId: number, botId: string, effort: Effort) {
     const last = this.d.db
       .query<{ content: string }, [number, string]>(
-        "SELECT content FROM episode_turns WHERE episode_id = ? AND bot_id = ? AND substr(content, 1, 1) = '{' ORDER BY id DESC LIMIT 1",
+        `SELECT content FROM episode_turns WHERE episode_id = ? AND bot_id = ? AND substr(content, 1, 10) = '{"effort":' ORDER BY id DESC LIMIT 1`,
       )
       .get(episodeId, botId);
     if (last && (JSON.parse(last.content) as EffortMark).effort === effort) return;
@@ -1123,9 +1136,7 @@ export class Thread {
     episodeId: number,
     rows: { role: string; bot_id: string | null; text: string; created_at: string }[],
   ): Promise<string> {
-    const transcript = rows
-      .map((m) => `[${localStamp(new Date(m.created_at))}] ${this.speaker(m)}: ${m.text}`)
-      .join("\n\n");
+    const transcript = rows.map((m) => this.transcript(m)).join("\n");
     const names = this.members().map((b) => b.name);
     const res = await this.d.model.create({
       model: SUMMARY_MODEL,
@@ -1169,8 +1180,8 @@ export class Thread {
         "SELECT role, bot_id, text, created_at FROM messages WHERE episode_id = ? AND status != 'streaming' ORDER BY id",
       )
       .all(episodeId)
-      .map((m) => `[${localStamp(new Date(m.created_at))}] ${this.speaker(m)}: ${m.text}`)
-      .join("\n\n");
+      .map((m) => this.transcript(m))
+      .join("\n");
     // One with only commands in it (/new and nothing after) has nothing to summarize.
     if (transcript && this.hasTurns(episodeId)) {
       const names = this.members().map((b) => b.name);
@@ -1234,11 +1245,10 @@ export class Thread {
   ): Promise<string> {
     const recent = this.list(beforeMessageId, RECENT_MESSAGES, incognito)
       .filter((m) => m.status !== "streaming" && (!fresh || m.episodeId === episodeId))
-      .map(
-        (m) =>
-          `[${localStamp(new Date(m.createdAt))}] ${this.speaker({ role: m.role, bot_id: m.botId })}: ${m.text}`,
+      .map((m) =>
+        this.transcript({ role: m.role, bot_id: m.botId, text: m.text, created_at: m.createdAt }),
       )
-      .join("\n\n");
+      .join("\n");
     return [
       "<context>",
       await memoryIndex(this.d.memory, bot.id),
@@ -1271,16 +1281,24 @@ export class Thread {
          ORDER BY id`,
       )
       .all(episodeId, userId, episodeId, userId)
-      .map(
-        (m) =>
-          `[${localStamp(new Date(m.created_at))}] ${this.speaker(m)}: ${m.text}${m.task_id ? ` (task #${m.task_id})` : ""}`,
-      )
+      .map((m) => this.transcript(m, m.task_id ? ` task="${m.task_id}"` : ""))
       .join("\n");
   }
 
   /** "Owner", or the bot that wrote it. */
   private speaker(m: { role: string; bot_id: string | null }): string {
     return m.role === "user" ? "Owner" : this.d.bots.nameOf(m.bot_id ?? HATBOT_ID);
+  }
+
+  /**
+   * A message in a transcript the model reads: who wrote it and when, its text escaped so that a line
+   * in it can't pass for another message.
+   */
+  private transcript(
+    m: { role: string; bot_id: string | null; text: string; created_at: string },
+    attrs = "",
+  ): string {
+    return `<message from=${tagJson(this.speaker(m))} at="${localStamp(new Date(m.created_at))}"${attrs}>${tagText(m.text)}</message>`;
   }
 
   /**
@@ -1456,7 +1474,7 @@ export class Thread {
         if (commands)
           userBlocks.push({
             type: "text",
-            text: `<owner_commands>\nCommands the owner ran since their last message; ${bot.name}'s lines are what the app answered.\n${commands}\n</owner_commands>`,
+            text: `<owner_commands>\nCommands the owner ran since their last message; ${bot.name}'s messages are what the app answered.\n${commands}\n</owner_commands>`,
           });
       }
       // An untrusted MCP server's tool descriptions are in the prompt now.
@@ -1495,36 +1513,35 @@ export class Thread {
           ? "What you write now replaces your reply that started it, and it's all the owner sees of how it went. Tell them what came of it, briefly, with what you know from this conversation."
           : "Tell them what came of it, briefly, with what you know from this conversation. Don't repeat what they can already see."
       })`;
+      // What the app tells the bot goes as a system message: the owner didn't write it.
+      let note: string | null = null;
       if (group) {
         const since = this.groupSince(bot, spoke);
+        if (since)
+          userBlocks.push({ type: "text", text: `<group_messages>\n${since}\n</group_messages>` });
+        if (!user)
+          note = group.nudged
+            ? `(Your turn, ${bot.name}: you were mentioned above. Answer your part.)`
+            : taskNews;
+      } else if (user)
         userBlocks.push({
           type: "text",
-          text:
-            [
-              ...(since ? [`<group_messages>\n${since}\n</group_messages>`] : []),
-              ...(user
-                ? []
-                : [
-                    group.nudged
-                      ? `(Your turn, ${bot.name}: you were mentioned above. Answer your part.)`
-                      : taskNews,
-                  ]),
-            ].join("\n\n") || taskNews,
+          text: `[${localStamp(new Date(user.createdAt))}]\n${user.text || "(no text, only files)"}`,
         });
-      } else
-        userBlocks.push({
-          type: "text",
-          text: user
-            ? `[${localStamp(new Date(user.createdAt))}]\n${user.text || "(no text, only files)"}`
-            : taskNews,
-        });
+      else note = taskNews;
       // Your files: what's in them was written by whoever made them, so they're untrusted (PLAN.md §6.1).
       if (user?.attachments?.length && this.d.attachments) {
         userBlocks.push(...this.d.attachments.refs(user.attachments));
         this.taint(episode.id, `Attached file "${user.attachments[0]?.name}"`);
       }
+      // A system message follows a user turn; with nothing else to say, the note is that turn.
+      if (note && !userBlocks.length) {
+        userBlocks.push({ type: "text", text: note });
+        note = null;
+      }
       this.setEffort(episode.id, bot.id, chatEffort);
       this.appendTurn(episode.id, bot.id, "user", userBlocks);
+      if (note) this.appendNote(episode.id, bot.id, note);
     }
 
     const out =

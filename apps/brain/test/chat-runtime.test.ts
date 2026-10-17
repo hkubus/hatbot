@@ -77,7 +77,9 @@ test("a conversation whose last request passed 90k tokens carries on in a new on
   await t.thread.post("second").done;
   expect(model.requests[1]?.messages.length).toBe(1);
   const opening = lastUserText(model.requests[1] as never);
-  expect(opening).toContain("Owner: first");
+  expect(opening).toContain(
+    '<message from=\\"Owner\\" at=\\"Fri 2026-10-09 12:00\\">first</message>',
+  );
   expect(opening).toContain("They talked at length.");
   const [one, two] = t.thread.list().filter((m) => m.role === "user");
   expect(two?.episodeId).not.toBe(one?.episodeId as number);
@@ -278,7 +280,8 @@ test("tasks a restart stopped are told in their chat, with one notification", as
   await t.thread.idle();
   const reply = t.thread.list().find((m) => m.role === "assistant" && m.taskId);
   expect(reply?.text).toContain("restarted before it ran");
-  expect(lastUserText(chat.requests.at(-1) as never)).toContain("the brain restarted");
+  // What the task said comes before the note that it ended.
+  expect(JSON.stringify(chat.requests.at(-1)?.messages.slice(-2))).toContain("the brain restarted");
   const notes = t.notifier.sent.slice(sent);
   expect(notes).toHaveLength(1);
   expect(notes[0]?.message).toContain("Book a table");

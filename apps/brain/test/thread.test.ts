@@ -111,7 +111,9 @@ test("within 30 minutes the episode continues; after, a new one starts with a su
   expect(model.requests[2]?.messages.length).toBe(1);
   const opening = lastUserText(model.requests[2] as never);
   expect(opening).toContain("They said one and two.");
-  expect(opening).toContain("Owner: second");
+  expect(opening).toContain(
+    '<message from=\\"Owner\\" at=\\"Fri 2026-10-09 12:10\\">second</message>',
+  );
 });
 
 test("an update that changes the prompt or tools starts a new episode", async () => {
@@ -123,7 +125,9 @@ test("an update that changes the prompt or tools starts a new episode", async ()
   t.advance(60_000);
   await t.thread.post("second").done;
   expect(model.requests[1]?.messages.length).toBe(1);
-  expect(lastUserText(model.requests[1] as never)).toContain("Owner: first");
+  expect(lastUserText(model.requests[1] as never)).toContain(
+    '<message from=\\"Owner\\" at=\\"Fri 2026-10-09 12:00\\">first</message>',
+  );
   // Thinking that fails the check anyway is dropped instead of failing the reply.
   expect(model.requests[1]?.thinking).toMatchObject({
     block_binding: { prefix_mismatch_behavior: "drop_block" },
@@ -438,7 +442,9 @@ test("on Opus the chat has no ask_opus, keeps its fallback, and a switch starts 
   expect(opus?.tools?.some((x) => "name" in x && x.name === "ask_opus")).toBe(false);
   // A fresh episode: one message, opening with the context block.
   expect(opus?.messages.length).toBe(1);
-  expect(lastUserText(opus as never)).toContain("Owner: first");
+  expect(lastUserText(opus as never)).toContain(
+    '<message from=\\"Owner\\" at=\\"Fri 2026-10-09 12:00\\">first</message>',
+  );
 });
 
 test("a task started from the chat keeps what you said, for its approval check", async () => {
@@ -492,7 +498,7 @@ test("/new starts a conversation that carries nothing over, and folds the last o
   expect(model.requests[1]?.messages.length).toBe(1);
   const opening = lastUserText(model.requests[1] as never);
   expect(opening).toContain("They said one.");
-  expect(opening).not.toContain("Owner: first");
+  expect(opening).not.toContain(">first</message>");
   const episodes = t.db
     .query<{ tainted: number; fresh: number }, []>(
       "SELECT tainted, fresh FROM episodes ORDER BY id",
@@ -604,7 +610,9 @@ test("/task runs what you typed as a background task, shown under the line it st
   await t.thread.post("how's it going?").done;
   const said = lastUserText(model.requests[1] as never);
   expect(said).toContain("<owner_commands>");
-  expect(said).toContain(`Hatbot: All fine. (task #${task?.id})`);
+  expect(said).toContain(
+    `<message from=\\"Hatbot\\" at=\\"Fri 2026-10-09 12:00\\" task=\\"${task?.id}\\">All fine.</message>`,
+  );
   expect(said).toContain("how's it going?");
 
   await t.thread.post("/task").done;

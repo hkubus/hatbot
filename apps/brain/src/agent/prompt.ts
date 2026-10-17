@@ -53,7 +53,7 @@ export const MAX_GROUP_REPLIES = 4;
 export function groupPrompt(title: string | null, me: string, names: string[]): string {
   return `This is a group chat
 - ${title ? `"${title}" is` : "This is"} a group chat with the owner and these bots: ${names.join(", ")}. You are ${me}; the others answer for themselves.
-- What was said since your last turn comes in <group_messages>, each line with who said it. Answer what's addressed to you, and don't repeat what another bot already said.
+- What was said since your last turn comes in <group_messages>, each message with who said it. Answer what's addressed to you, and don't repeat what another bot already said.
 - To bring another bot in, write @ and its name, like @${names.find((n) => n !== me) ?? names[0]}; it answers after you. Do it only when its part is needed: at most ${MAX_GROUP_REPLIES} bot replies follow each message from the owner.
 - There's no incognito here.`;
 }
