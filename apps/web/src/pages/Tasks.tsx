@@ -1,7 +1,7 @@
 import { latestNoteOnly, OPEN_NEGOTIATION_STATUSES, type Task } from "@hatbot/shared";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, api } from "../api";
-import { usd } from "../format";
+import { modelName, usd } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LiveView, StepIcon } from "../live";
@@ -258,7 +258,7 @@ function Details({ task }: { task: Task }) {
       <dt>Started</dt>
       <dd>{task.startedAt ? stamp(task.startedAt) : "–"}</dd>
       <dt>Model</dt>
-      <dd>{task.model}</dd>
+      <dd>{modelName(task.model)}</dd>
       <dt>Trust</dt>
       <dd>
         {task.injectionSuspected ? (
