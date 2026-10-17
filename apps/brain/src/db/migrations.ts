@@ -604,4 +604,9 @@ export const migrations: string[] = [
   /* 32: a watcher that counts too often in a day is switched off; switching it on starts the count again */ `
   ALTER TABLE watchers ADD COLUMN counting_since TEXT;
   `,
+  /* 33: chat search finds words in any form ("runs" finds "run"); incognito stays out of it */ `
+  DROP TABLE messages_fts;
+  CREATE VIRTUAL TABLE messages_fts USING fts5(text, content='messages', content_rowid='id', tokenize='porter unicode61');
+  INSERT INTO messages_fts (rowid, text) SELECT id, text FROM messages WHERE incognito = 0;
+  `,
 ];

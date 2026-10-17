@@ -103,3 +103,27 @@ test("migration 26 indexes per-task lookups, and they're used", () => {
   expect(plan("SELECT * FROM tasks WHERE parent_id = 1")).toContain("tasks_parent");
   expect(db.query("SELECT count(*) AS n FROM hook_deliveries").get()).toEqual({ n: 0 });
 });
+
+test("the chat search index is rebuilt to find words in any form, and incognito stays out", () => {
+  const v = migrations.findIndex((m) => m.includes("DROP TABLE messages_fts")) + 1;
+  const db = at(v - 1);
+  const now = "2026-10-01T00:00:00Z";
+  const add = (text: string, incognito = 0) =>
+    db
+      .query(
+        "INSERT INTO messages (role, text, status, created_at, kind, incognito) VALUES ('user', ?, 'done', ?, 'text', ?)",
+      )
+      .run(text, now, incognito);
+  add("I renamed the backups share");
+  add("my secret password", 1);
+
+  migrate(db);
+
+  const match = (q: string) =>
+    db.query("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?").all(q);
+  expect(match("renaming backup")).toEqual([{ rowid: 1 }]);
+  expect(match("secret")).toEqual([]);
+  // New messages are indexed as before.
+  add("the backup is running");
+  expect(match("runs")).toEqual([{ rowid: 3 }]);
+});

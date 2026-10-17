@@ -355,7 +355,9 @@ export const TOOLS = [
            ORDER BY rank LIMIT 20`,
         )
         .all(
-          terms.map((t) => `"${t}"`).join(" "),
+          // Any of the words, each also as the start of a longer one; rank puts messages with more
+          // of them, and rarer ones, first.
+          terms.map((t) => `"${t}"*`).join(" OR "),
           after ?? "0000",
           before ?? "9999",
           episodeId ?? -1,
@@ -365,7 +367,7 @@ export const TOOLS = [
       return rows
         .map(
           (r) =>
-            `[${r.created_at.slice(0, 16).replace("T", " ")}] ${r.role === "user" ? "owner" : (bots?.nameOf(r.bot_id ?? HATBOT_ID) ?? "assistant")}: ${r.text.slice(0, 1500)}`,
+            `[${local(r.created_at)}] ${r.role === "user" ? "owner" : (bots?.nameOf(r.bot_id ?? HATBOT_ID) ?? "assistant")}: ${r.text.slice(0, 1500)}`,
         )
         .join("\n\n");
     },
