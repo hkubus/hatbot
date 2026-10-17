@@ -124,7 +124,8 @@ test("a consequential click is held back until confirm_intent is approved", asyn
   // One approval, one click: the second Pay click is held back again.
   expect(t.agent.actions.filter((a) => a.name === "left_click").length).toBe(1);
   const held = JSON.stringify(work.requests[0 + 4]?.messages.at(-1));
-  expect(held).toContain("confirm_intent first");
+  expect(held).toContain("If that's the action you mean to take, call confirm_intent first.");
+  expect(held).toContain("the label misled the check, reach the same place another way");
   expect(t.tasks.get(task.id)?.status).toBe("done");
 });
 

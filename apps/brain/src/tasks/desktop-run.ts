@@ -599,7 +599,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         });
         return textResult(
           call,
-          `Not run: this would ${check === "click" ? "click" : "submit with"} "${label}", which looks like a consequential step. If it's the step you mean to take, call confirm_intent first. If not, carry on.`,
+          `Not run: this would ${check === "click" ? "click" : "submit with"} "${label}", which looks like a consequential step. If that's the action you mean to take, call confirm_intent first. If this ${check === "click" ? "click" : "Enter"} doesn't send, buy, book or delete anything and the label misled the check, reach the same place another way.`,
           true,
         );
       }
