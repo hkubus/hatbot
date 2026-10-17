@@ -807,6 +807,30 @@ test("/stop stops the reply being written; with a number, that task", async () =
   expect(t.thread.unread()).not.toContain(t.thread.list().at(-1)?.id as number);
 });
 
+test("/stop after a lull doesn't reopen the conversation that was summarized", async () => {
+  const model = new FakeModel(
+    [{ content: [text("one")] }, { content: [text("two")] }],
+    ["<recap>Said one.</recap><summary>They said one.</summary>"],
+  );
+  const t = await testApp(model);
+  await t.thread.post("first").done;
+  t.advance(31 * 60_000);
+  await t.thread.sweep();
+  await t.thread.post("/stop").done;
+  await t.thread.post("second").done;
+  // A new conversation, opening with the summary, not the turns of the one before.
+  expect(model.requests[1]?.messages).toHaveLength(1);
+  expect(lastUserText(model.requests[1] as never)).toContain("They said one.");
+  expect(t.thread.list().map((m) => [m.text, m.episodeId])).toEqual([
+    ["first", 1],
+    ["one", 1],
+    ["/stop", 1],
+    ["Nothing to stop.", 1],
+    ["second", 2],
+    ["two", 2],
+  ]);
+});
+
 test("tool calls a stop cut off get a result, so the next message still goes through", async () => {
   const model = new FakeModel([{ content: [text("one")] }, { content: [text("two")] }]);
   const t = await testApp(model);

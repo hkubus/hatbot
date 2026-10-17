@@ -644,15 +644,15 @@ export class Thread {
 
   /**
    * Files your message under its conversation, now that it has one. False if it's gone: you left
-   * incognito before its turn came.
+   * incognito before its turn came. `activity`: false for one that doesn't carry the conversation on.
    */
-  private file(message: ThreadMessage, episodeId: number): boolean {
+  private file(message: ThreadMessage, episodeId: number, activity = true): boolean {
     const filed = this.d.db
       .query("UPDATE messages SET episode_id = ? WHERE id = ?")
       .run(episodeId, message.id).changes;
     if (!filed) return false;
     // A message is activity: the sweep mustn't fold up the conversation it just went into.
-    this.touch(episodeId);
+    if (activity) this.touch(episodeId);
     this.d.events.emit({ type: "message.created", message: { ...message, episodeId } });
     return true;
   }
@@ -692,7 +692,8 @@ export class Thread {
           "SELECT id FROM episodes WHERE conversation_id = ? AND incognito = ? ORDER BY id DESC LIMIT 1",
         )
         .get(this.conversationId, incognito ? 1 : 0)?.id ?? null;
-    if (episodeId !== null) this.file(message, episodeId);
+    // Filed with the latest conversation, which may be summarized already: /stop doesn't reopen it.
+    if (episodeId !== null) this.file(message, episodeId, false);
     const note = (text: string) => void this.commandNote(text, episodeId, incognito);
     if (!arg) {
       // Only the reply in the conversation you're looking at.
