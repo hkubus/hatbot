@@ -535,7 +535,7 @@ export async function investigate(
       .join("\n");
   });
   const { d } = run.tasks;
-  const spent = `Spent so far: $${d.spend.taskSpend(run.task.id).toFixed(2)} of this task's $${run.tasks.budget(run.task.id)} limit.`;
+  const spent = `Spent so far: $${d.spend.treeSpend(run.task.id).toFixed(2)} of this task's $${run.tasks.budget(run.task.id)} limit.`;
   return {
     content: `<findings trusted="false">\n${blocks.join("\n\n")}\n</findings>\n\nCite these as [n]. ${spent}`,
     isError: false,

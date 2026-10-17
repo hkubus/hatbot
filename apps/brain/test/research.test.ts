@@ -1164,3 +1164,36 @@ test("a summary long with links is cut to fit a notification, and kept whole on 
   expect(sent).toEndWith("…");
   expect(task.summary).toStartWith(sent.slice(0, -1));
 });
+
+test("a research tree's raises are research's size, and its spend counts the tasks it started", async () => {
+  const t = await testApp();
+  t.settings.update({ limits: { taskUsd: 3, researchUsd: 5 } });
+  const add = (parent: number | null, research: number) =>
+    t.db
+      .query<{ id: number }, [number | null, number]>(
+        `INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, parent_id, research)
+         VALUES ('Price', 'g', '', 'chat', 'background', 'claude-opus-5-5', 'running', 5, '2026-10-09T12:00:00Z', ?, ?)
+         RETURNING id`,
+      )
+      .get(parent, research)?.id as number;
+  const root = add(null, 1);
+  const screen = add(root, 0);
+  const plain = add(null, 0);
+  // A desktop task research started asks for research's raise, on the research's limit.
+  expect(t.tasks.raiseStep(root)).toBe(5);
+  expect(t.tasks.raiseStep(screen)).toBe(5);
+  expect(t.tasks.raiseStep(plain)).toBe(3);
+  const spent = (usd: number, taskId: number) =>
+    t.spend.record({
+      model: "claude-haiku-5-5",
+      purpose: "task",
+      usage: { input_tokens: 0, output_tokens: 0 },
+      taskId,
+      extraUsd: usd,
+    });
+  spent(1, root);
+  spent(2, screen);
+  expect(t.spend.treeSpend(root)).toBeCloseTo(3, 9);
+  expect(t.spend.treeSpend(screen)).toBeCloseTo(3, 9);
+  expect(t.spend.treeSpend(plain)).toBe(0);
+});

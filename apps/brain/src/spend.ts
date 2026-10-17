@@ -388,6 +388,11 @@ export class Spend {
     return this.sumSince(new Date(0), "AND task_id = ?", taskId);
   }
 
+  /** What a task's tree, which shares its limit, has spent: the task that started it and all under it. */
+  treeSpend(taskId: number): number {
+    return this.tree(taskId).usd;
+  }
+
   /**
    * A task's tree: the task that started it (or it), and every task started under that one, which
    * share its limit; and what they have spent together.

@@ -904,7 +904,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       } catch (err) {
         if (!(err instanceof BudgetError)) throw err;
         if (err.limit !== "task") throw new Stop("failed", `Stopped: ${err.message}`);
-        const extra = d.settings.get().limits.taskUsd;
+        const extra = tasks.raiseStep(id);
         const { outcome } = await askApproval({ kind: "budget", ...tasks.budgetAsk(id, extra) });
         if (outcome !== "approved") throw new Stop("failed", "Stopped at its spending limit.");
         tasks.raiseBudget(id, extra);

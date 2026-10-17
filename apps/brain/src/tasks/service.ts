@@ -774,6 +774,12 @@ export class Tasks {
       .run(byUsd, this.rootOf(id));
   }
 
+  /** What one raise of a task's limit adds: its tree's, so a research tree's is research's size. */
+  raiseStep(id: number): number {
+    const { limits } = this.d.settings.get();
+    return this.get(this.rootOf(id))?.research ? limits.researchUsd : limits.taskUsd;
+  }
+
   /** What a task at its tree's limit asks you, to raise it by `extra`. */
   budgetAsk(id: number, extra: number): { summary: string; reason: string } {
     const root = this.rootOf(id);

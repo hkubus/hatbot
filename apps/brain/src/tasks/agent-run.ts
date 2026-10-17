@@ -430,9 +430,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
   /** Asks for more money when the task hits its limit (PLAN.md §6.3). */
   const askBudget = async () => {
-    // The limit is its tree's, so a research tree's raise is research's size.
-    const { limits } = d.settings.get();
-    const extra = tasks.get(tasks.rootOf(id))?.research ? limits.researchUsd : limits.taskUsd;
+    const extra = tasks.raiseStep(id);
     const { outcome } = await askApproval({ kind: "budget", ...tasks.budgetAsk(id, extra) });
     if (outcome !== "approved") throw new Stop("failed", "Stopped at its spending limit.");
     tasks.raiseBudget(id, extra);
@@ -924,7 +922,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       // Research near its step cap or its limit finishes with what it has, rather than stopping short.
       if (research && !toldToFinish && !serverToolWaiting(res.content)) {
         const left = maxSteps - step - 1;
-        const spent = d.spend.taskSpend(id);
+        // The limit is its tree's: the tasks it started count too.
+        const spent = d.spend.treeSpend(id);
         const limit = tasks.budget(id);
         if (left <= 2 || spent >= 0.8 * limit) {
           toldToFinish = true;
