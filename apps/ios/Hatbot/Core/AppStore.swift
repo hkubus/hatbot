@@ -722,9 +722,11 @@ final class AppStore {
     case active, done
   }
 
-  /// The ids of the tasks in a list, newest first.
-  func loadTasks(_ filter: TaskFilter) async throws -> [Int] {
-    let list: [AgentTask] = try await api.get("/tasks?status=\(filter.rawValue)")
+  /// The ids of a page of the tasks in a list, newest first; `before` a task's id, the page after it.
+  /// A page is `AppStore.page` long; a shorter one is the last.
+  func loadTasks(_ filter: TaskFilter, before: Int? = nil) async throws -> [Int] {
+    let list: [AgentTask] = try await api.get(
+      "/tasks?status=\(filter.rawValue)" + (before.map { "&before=\($0)" } ?? ""))
     for t in list { tasks[t.id] = t }
     return list.map(\.id)
   }

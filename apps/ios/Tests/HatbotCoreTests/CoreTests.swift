@@ -1220,6 +1220,17 @@ final class NetworkTests: XCTestCase {
     XCTAssertEqual(sent["baseSha"] as? String, "")
   }
 
+  /// Finished tasks come a page at a time, each from before the last one loaded.
+  func testFinishedTasksLoadPageByPage() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    SlowBrain.routes["/tasks?status=done"] = "[\(Self.task(71)),\(Self.task(70))]"
+    SlowBrain.routes["/tasks?status=done&before=70"] = "[\(Self.task(69))]"
+    let first = try await store.loadTasks(.done)
+    let next = try await store.loadTasks(.done, before: try XCTUnwrap(first.last))
+    XCTAssertEqual(first + next, [71, 70, 69])
+    XCTAssertEqual(SlowBrain.requested.suffix(2), ["GET /tasks?status=done", "GET /tasks?status=done&before=70"])
+  }
+
   /// A file goes up from disk as the same multipart body as one from memory, and the body file is deleted.
   func testUploadsAFileFromDisk() async throws {
     let store = try await MainActor.run { try Self.store() }
