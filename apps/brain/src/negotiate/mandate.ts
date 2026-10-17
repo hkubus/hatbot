@@ -6,6 +6,7 @@ import { MANDATE_CONTACTS, type Mandate, type Negotiation } from "@hatbot/shared
 import { z } from "zod";
 import type { ModelClient } from "../agent/model";
 import type { Spend } from "../spend";
+import { allowance } from "./policy";
 
 /** The mandate as negotiate_start takes it, and as Haiku gives it back from a note. */
 export const MandateInput = z.object({
@@ -37,12 +38,13 @@ export function mandateProblem(
   m: Pick<Mandate, "opening" | "target" | "limit">,
   role: "buy" | "sell",
   asking: number | null,
+  currency: string,
 ): string | null {
   if (role === "buy") {
     if (!(m.opening <= m.target && m.target <= m.limit))
       return "The opening offer, target and limit must go up in that order: opening ≤ target ≤ limit.";
     if (asking !== null && m.limit > asking)
-      return `The limit (${zl(m.limit)}) is above the asking price (${zl(asking)}): there's no paying more than asked.`;
+      return `The limit (${zl(m.limit, currency)}) is above the asking price (${zl(asking, currency)}): there's no paying more than asked.`;
   } else if (!(m.opening >= m.target && m.target >= m.limit))
     return "Selling, the opening price, target and floor must come down in that order: opening ≥ target ≥ floor.";
   return null;
@@ -94,13 +96,14 @@ const contacts = (allow: string[]) => (allow.length ? allow.join(", ") : "none")
 export function mandateReason(n: Negotiation, botName: string): string {
   const m = n.mandate;
   const a = n.appraisal;
+  const extra = n.role === "buy" ? allowance(m.delivery, m.limit) : 0;
   return [
     n.listingUrl,
     `Asking ${n.asking !== null ? zl(n.asking, m.currency) : "unknown"}.`,
     a
       ? `Scout: open at ${zl(a.opening, a.currency)}, aim for ${zl(a.target, a.currency)}, walk away ${n.role === "buy" ? "above" : "below"} ${zl(a.walkAway, a.currency)}. ${a.basis}`
       : "No appraisal from Scout.",
-    `Delivery: ${m.delivery}. Until ${day(m.expiresAt)}. Contact details: ${contacts(m.allow)}.`,
+    `Delivery: ${m.delivery}.${extra ? ` Up to ${zl(extra, m.currency)} on top of the limit for shipping.` : ""} Until ${day(m.expiresAt)}. Contact details: ${contacts(m.allow)}.`,
     `Inside this, ${botName} sends and agrees on its own; outside it, it asks you. A note can change the numbers.`,
   ].join("\n");
 }
@@ -188,7 +191,7 @@ export async function applyNote(
     );
     const parsed = MandateInput.safeParse(call?.input);
     if (!parsed.success) return { error: "Haiku's answer wasn't a mandate" };
-    const problem = mandateProblem(parsed.data, n.role, n.asking);
+    const problem = mandateProblem(parsed.data, n.role, n.asking, n.mandate.currency);
     if (problem) return { error: problem };
     const unchanged = parsed.data.expires_in_days === days;
     const mandate = toMandate(parsed.data, m.currency, now);
