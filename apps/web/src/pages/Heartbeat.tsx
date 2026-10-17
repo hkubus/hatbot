@@ -2,6 +2,7 @@
 import { type AppSettings, describeEvery, type HeartbeatInfo } from "@hatbot/shared";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api";
+import { useLeaveGuard } from "../confirm";
 import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
 import { navigate } from "../router";
@@ -46,6 +47,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
   useEffect(() => {
     api<HeartbeatInfo>("/heartbeat").then(setInfo, () => {});
   }, [heartbeatVersion]);
+  useLeaveGuard(settings !== null && instructions !== settings.heartbeat.instructions);
 
   if (!settings)
     return (

@@ -1,15 +1,18 @@
 // A group chat's page (PLAN.md §14.4): its name and bots. "new" makes one.
 import { MAX_GROUP_BOTS } from "@hatbot/shared";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ApiError } from "../api";
-import { ask } from "../confirm";
+import { ask, useLeaveGuard } from "../confirm";
+import { NoForm, useStoredForm } from "../form";
 import { Icon } from "../icons";
+import { loadErrorText } from "../load";
 import { navigate } from "../router";
-import { createGroup, deleteGroup, saveGroup, useStore } from "../store";
+import { createGroup, deleteGroup, loadBots, saveGroup, useStore } from "../store";
 import { Switch } from "../switch";
 
 const errorText = (err: unknown) =>
   err instanceof ApiError ? err.message : "Couldn't reach Hatbot.";
+const NEW_GROUP = { title: "", members: [] as string[] };
 
 export function GroupPage({ id, toast }: { id: string; toast: (t: string) => void }) {
   const isNew = id === "new";
@@ -18,24 +21,40 @@ export function GroupPage({ id, toast }: { id: string; toast: (t: string) => voi
   );
   const bots = useStore((s) => s.bots);
   const botIds = useStore((s) => s.botIds);
-  const [title, setTitle] = useState("");
-  const [members, setMembers] = useState<string[]>([]);
+  // Only its name and bots: the chat's unread count and order change all the time.
+  const { form, dirty, set, fill } = useStoredForm<{ title: string; members: string[] }>(
+    isNew ? NEW_GROUP : stored && { title: stored.title ?? "", members: stored.botIds },
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-
+  const release = useLeaveGuard(dirty);
+  // The chats again, to tell one that's gone from one not loaded yet.
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const load = useCallback(() => {
+    setLoadError("");
+    loadBots().then(
+      () => setLoaded(true),
+      (err) => setLoadError(loadErrorText(err)),
+    );
+  }, []);
   useEffect(() => {
-    if (stored) {
-      setTitle(stored.title ?? "");
-      setMembers(stored.botIds);
-    }
-  }, [stored]);
+    if (!isNew) load();
+  }, [isNew, load]);
 
-  if (!isNew && !stored) return <section className="view" />;
-  const changed =
-    isNew ||
-    (stored !== undefined &&
-      (title !== (stored.title ?? "") ||
-        JSON.stringify(members) !== JSON.stringify(stored.botIds)));
+  const back = () => navigate(isNew || !stored ? "/" : `/chat/${id}`);
+  if (!form || (!isNew && !stored))
+    return (
+      <NoForm
+        error={loadError}
+        missing={loaded ? "This group doesn't exist." : ""}
+        retry={load}
+        back={{ label: "Chat", go: back }}
+      />
+    );
+  const { title, members } = form;
+  const setMembers = (fn: (m: string[]) => string[]) => set({ members: fn(members) });
+  const changed = isNew || dirty;
   const valid = members.length >= 2 && members.length <= MAX_GROUP_BOTS;
 
   const save = async () => {
@@ -45,9 +64,12 @@ export function GroupPage({ id, toast }: { id: string; toast: (t: string) => voi
       const body = { title: title.trim(), botIds: members };
       if (isNew) {
         const c = await createGroup(body);
+        release();
         navigate(`/chat/${c.id}`, true);
       } else {
         await saveGroup(Number(id), body);
+        // What was saved, trimmed: the form is clean again.
+        fill({ title: body.title, members });
         toast("Saved");
       }
     } catch (err) {
@@ -66,6 +88,7 @@ export function GroupPage({ id, toast }: { id: string; toast: (t: string) => voi
       return;
     try {
       await deleteGroup(Number(id));
+      release();
       navigate("/");
     } catch (err) {
       setError(errorText(err));
@@ -76,11 +99,7 @@ export function GroupPage({ id, toast }: { id: string; toast: (t: string) => voi
     <section className="view">
       <div className="page narrow">
         <div className="page-head">
-          <button
-            type="button"
-            className="btn sm ghost back"
-            onClick={() => navigate(isNew ? "/" : `/chat/${id}`)}
-          >
+          <button type="button" className="btn sm ghost back" onClick={back}>
             <Icon name="chevron" />
             Chat
           </button>
@@ -100,7 +119,7 @@ export function GroupPage({ id, toast }: { id: string; toast: (t: string) => voi
               value={title}
               maxLength={80}
               placeholder="Kitchen"
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => set({ title: e.target.value })}
             />
           </label>
           <span className="label">Bots, 2 to {MAX_GROUP_BOTS}</span>

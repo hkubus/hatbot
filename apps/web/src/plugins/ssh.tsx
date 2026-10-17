@@ -1,7 +1,7 @@
 // SSH's settings: the brain's public key to install, the hosts Hatbot may reach, and their pinned keys.
 import { useEffect, useState } from "react";
 import { ApiError } from "../api";
-import { ask } from "../confirm";
+import { ask, useLeaveGuard } from "../confirm";
 import { Icon } from "../icons";
 import { Switch } from "../switch";
 import type { PluginSettingsProps } from ".";
@@ -47,6 +47,7 @@ export function SshSettings({ config, save, action, running }: PluginSettingsPro
   const set = (i: number, patch: Partial<Host>) =>
     setHosts(hosts.map((h, j) => (j === i ? { ...h, ...patch } : h)));
   const changed = JSON.stringify(hosts) !== JSON.stringify(config.hosts);
+  useLeaveGuard(changed);
   const complete = hosts.every((h) => h.name.trim() && h.address.trim() && h.user.trim());
 
   const submit = async () => {

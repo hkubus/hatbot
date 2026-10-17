@@ -1,6 +1,7 @@
 // MCP's settings: servers, and for each of their tools whether Hatbot may use it.
 import { useEffect, useState } from "react";
 import { ApiError } from "../api";
+import { useLeaveGuard } from "../confirm";
 import { Switch } from "../switch";
 import type { PluginSettingsProps } from ".";
 
@@ -97,6 +98,7 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
   const changed =
     JSON.stringify(servers.map(fromRow)) !==
     JSON.stringify(config.servers.map((s) => fromRow(toRow(s))));
+  useLeaveGuard(changed);
 
   const submit = async () => {
     setBusy(true);
