@@ -4,7 +4,7 @@ import { ApiError, api } from "../api";
 import { ask, askText, useLeaveGuard } from "../confirm";
 import { lineDiff } from "../diff";
 import { Icon } from "../icons";
-import { LoadError } from "../load";
+import { LoadError, loadErrorText } from "../load";
 import { type Doc, isDirty, loading, newDoc, readDoc, readFailed } from "../memory-doc";
 import { navigate } from "../router";
 import { bumpMemory, loadProposals, putProposal, startTeach, useStore } from "../store";
@@ -14,6 +14,7 @@ type Selection =
   | { kind: "file"; path: string }
   | { kind: "diff"; commit: Commit }
   | { kind: "proposal"; id: number };
+type History = { path: string; log: Commit[]; older: boolean; error: string };
 
 const enc = encodeURIComponent;
 /** Commits in a page of History. */
@@ -111,8 +112,11 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
   const [diff, setDiff] = useState("");
   /** History is the last file you opened's. */
   const [histPath, setHistPath] = useState(open || "INDEX.md");
-  const [log, setLog] = useState<Commit[] | null>(null);
-  const [older, setOlder] = useState(false);
+  /** Its commits, whether there are older ones, and why they didn't load. */
+  const [hist, setHist] = useState<History | null>(null);
+  const [histAttempt, setHistAttempt] = useState(0);
+  // Another file's commits never show, while this one's load or if they don't.
+  const shownHist = hist?.path === histPath ? hist : null;
 
   const dirty = isDirty(doc);
 
@@ -130,26 +134,42 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: again when memory changes anywhere
   useEffect(() => {
     let stale = false;
-    api<Commit[]>(`/memory/log?path=${enc(histPath)}&limit=${PAGE}`).then(
-      (l) => {
-        if (stale) return;
-        setLog(l);
-        setOlder(l.length === PAGE);
+    const path = histPath;
+    api<Commit[]>(`/memory/log?path=${enc(path)}&limit=${PAGE}`).then(
+      (log) => {
+        if (!stale) setHist({ path, log, older: log.length === PAGE, error: "" });
       },
-      () => {},
+      (err) => {
+        if (stale) return;
+        const error = loadErrorText(err);
+        setHist((h) =>
+          h?.path === path ? { ...h, error } : { path, log: [], older: false, error },
+        );
+      },
     );
     return () => {
       stale = true;
     };
-  }, [histPath, version]);
-  const loadOlder = () =>
-    api<Commit[]>(`/memory/log?path=${enc(histPath)}&limit=${PAGE}&skip=${log?.length ?? 0}`).then(
-      (l) => {
-        setLog((had) => [...(had ?? []), ...l.filter((c) => !had?.some((x) => x.sha === c.sha))]);
-        setOlder(l.length === PAGE);
-      },
+  }, [histPath, version, histAttempt]);
+  const loadOlder = () => {
+    const path = histPath;
+    api<Commit[]>(
+      `/memory/log?path=${enc(path)}&limit=${PAGE}&skip=${shownHist?.log.length ?? 0}`,
+    ).then(
+      (l) =>
+        // Dropped if you've opened another file since.
+        setHist((h) =>
+          h?.path !== path
+            ? h
+            : {
+                ...h,
+                log: [...h.log, ...l.filter((c) => !h.log.some((x) => x.sha === c.sha))],
+                older: l.length === PAGE,
+              },
+        ),
       (err) => toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot", "error"),
     );
+  };
 
   /** Reads a file into the editor; `quiet` refreshes the one shown without blanking it. */
   const read = useCallback((path: string, quiet = false) => {
@@ -562,8 +582,13 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
           )}
           <div className="history">
             <h3 className="section-title">History</h3>
-            {log?.length === 0 && <div className="muted">No changes yet.</div>}
-            {log?.map((c) => (
+            {shownHist?.error && (
+              <LoadError error={shownHist.error} retry={() => setHistAttempt((n) => n + 1)} />
+            )}
+            {shownHist && !shownHist.error && shownHist.log.length === 0 && (
+              <div className="muted">No changes yet.</div>
+            )}
+            {shownHist?.log.map((c) => (
               <div className="commit" key={c.sha}>
                 <span className="sha">{c.sha.slice(0, 7)}</span>
                 <div>
@@ -586,7 +611,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
                 </div>
               </div>
             ))}
-            {older && (
+            {shownHist?.older && (
               <button type="button" className="btn sm ghost load-earlier" onClick={loadOlder}>
                 Older
               </button>
