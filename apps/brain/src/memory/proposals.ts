@@ -432,7 +432,9 @@ export class Proposals {
         system,
         messages: [{ role: "user", content }],
       },
-      {},
+      {
+        onFailedUsage: (model, usage) => this.d.spend.recordResponse({ model, purpose, usage }),
+      },
     );
     this.d.spend.recordResponse({ model: PROPOSAL_MODEL, purpose, usage: res.usage });
     if (res.stop_reason === "max_tokens")

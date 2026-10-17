@@ -784,6 +784,27 @@ test("a helper that declines or fails says so, and the others' findings still co
   expect(task.status).toBe("done");
 });
 
+test("a helper's try whose stream failed partway is billed to the task too", async () => {
+  const work = new FakeModel([ONE_PART, finish("Get the DS925+ [1].", "Report [1].")]);
+  work.route = (p) =>
+    isHelper(p)
+      ? {
+          content: [toolUse("report_findings", { findings: [PRICE], gaps: "" })],
+          failedWith: "",
+          failedUsage: { input_tokens: 5000, output_tokens: 0 },
+        }
+      : undefined;
+  const t = await testApp(new FakeModel(), work);
+  const task = await startResearch(t);
+  const rows = t.db
+    .query<{ input_tokens: number }, [number]>(
+      "SELECT input_tokens FROM spend_ledger WHERE task_id = ? AND model = 'claude-haiku-5-5' ORDER BY id",
+    )
+    .all(task.id);
+  // The failed try, the helper's answer, then the number check's.
+  expect(rows.map((r) => r.input_tokens)).toEqual([5000, 1000, 1000]);
+});
+
 test("cancelled while the helpers search, the research ends cancelled with nothing saved", async () => {
   let release = () => {};
   const gate = new Promise<void>((resolve) => {

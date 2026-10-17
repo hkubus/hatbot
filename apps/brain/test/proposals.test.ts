@@ -76,6 +76,35 @@ test("a tidy-up is proposed as a diff, and applied as you in one commit", async 
   );
 });
 
+test("a tidy-up whose stream failed partway is billed for that try too", async () => {
+  const t = await testApp();
+  const { cookie } = await setUpOwner(t);
+  await t.memory.writeAll([{ path: "home.md", content: "# Home\nRouter\n" }], HATBOT, "Notes");
+  t.taskModel.route = (p) =>
+    p.output_config?.format
+      ? {
+          content: [
+            text(
+              JSON.stringify({
+                title: "Tidy home",
+                reason: "Shorter.",
+                changes: [{ path: "home.md", content: "# Home\nThe router.\n" }],
+              }),
+            ),
+          ],
+          failedWith: "",
+          failedUsage: { input_tokens: 5000, output_tokens: 0 },
+        }
+      : undefined;
+  await tidy(t, cookie);
+  const rows = t.db
+    .query<{ input_tokens: number }, []>(
+      "SELECT input_tokens FROM spend_ledger WHERE purpose = 'tidy' ORDER BY id",
+    )
+    .all();
+  expect(rows.map((r) => r.input_tokens)).toEqual([5000, 1000]);
+});
+
 test("a proposal goes stale when memory changes under it; nothing to tidy is no proposal", async () => {
   const t = await testApp();
   const { cookie } = await setUpOwner(t);

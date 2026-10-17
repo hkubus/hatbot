@@ -18,8 +18,11 @@ export type StreamHandlers = {
   onServerTool?: (name: string, input: Record<string, unknown>) => void;
   /** The stream failed partway and is tried again: what it streamed so far is void. */
   onRetry?: () => void;
-  /** What an attempt that failed after it started had used, for the ledger: it may still be billed. */
-  onFailedUsage?: (model: string, usage: Anthropic.Beta.BetaUsage) => void;
+  /**
+   * What an attempt that failed after it started had used, for the ledger: it may still be billed.
+   * Required, so no caller leaves it out of the ledger.
+   */
+  onFailedUsage: (model: string, usage: Anthropic.Beta.BetaUsage) => void;
   signal?: AbortSignal;
 };
 
@@ -80,7 +83,7 @@ export class AnthropicModelClient implements ModelClient {
       }
       return await stream.finalMessage();
     } catch (err) {
-      if (used) handlers.onFailedUsage?.(used.model, used.usage);
+      if (used) handlers.onFailedUsage(used.model, used.usage);
       throw err;
     }
   }

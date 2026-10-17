@@ -391,7 +391,11 @@ async function runWorker(
           ...(container ? { container } : {}),
           messages,
         },
-        { signal },
+        {
+          signal,
+          onFailedUsage: (model, usage) =>
+            d.spend.recordResponse({ model, purpose: "research", usage, taskId: task.id }),
+        },
       );
     } finally {
       held.usd -= cost;
