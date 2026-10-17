@@ -84,7 +84,7 @@ pct exec <brain> -- sh -c 'echo "you@example.com namespaces=\"git\" ssh-ed25519 
 pct exec <brain> -- sh -c 'echo HATBOT_UPDATE_SIGNERS=/etc/hatbot/allowed_signers >> /etc/hatbot/update.env'
 ```
 
-Until there's a key, Check everything warns under "Last update". Sign your commits (`git config gpg.format ssh`, `git config user.signingkey ~/.ssh/id_ed25519.pub`, `git config commit.gpgsign true`). From then on an update whose newest commit fails `git verify-commit` stops before deploying anything, and Settings says why. The check is in `hatbot-update` itself, so it starts working after the next update (or deploy) installs this version of it. `deploy.sh` keeps the line when it rewrites `update.env`.
+Until there's a key, Check everything warns under "Last update". Sign your commits (`git config gpg.format ssh`, `git config user.signingkey ~/.ssh/id_ed25519.pub`, `git config commit.gpgsign true`). From then on an update whose newest commit fails `git verify-commit` stops before deploying anything, and Settings says why. So does one whose newest commit doesn't come after the live one: a branch moved back to an older signed commit, or rewritten. To deploy that on purpose, run `deploy.sh` on the host. The check is in `hatbot-update` itself, so it starts working after the next update (or deploy) installs this version of it. `deploy.sh` keeps the line when it rewrites `update.env`.
 
 ## Commands in your containers (optional)
 
