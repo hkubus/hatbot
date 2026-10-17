@@ -710,6 +710,17 @@ export function follows(was: boolean, lastTop: number, top: number, below: numbe
  */
 export const wheelStops = (deltaY: number, top: number) => deltaY < 0 && top > 0;
 
+/**
+ * What the composer says when a send fails. Only the brain saying no means it wasn't posted: with no
+ * answer, or a failure on the way, the brain may have posted it before the answer was lost.
+ */
+export function sendError(err: unknown, connected: boolean): string {
+  if (err instanceof ApiError && err.status < 500) return err.message;
+  return connected
+    ? "It may not have been sent."
+    : "Can't reach Hatbot. It may not have been sent.";
+}
+
 /** `id`: the chat to show. It's opened here, before loading, so a message asked for is looked for in it. */
 export function Chat({ id }: { id: number }) {
   const messages = useStore((s) => s.messages);
@@ -1160,6 +1171,8 @@ export function Composer({ chat, onSend }: { chat: string; onSend: () => void })
   const send = async (command?: string) => {
     const text = (command ?? draft).trim();
     if ((!text && !ready.length) || sending || uploading || failed.length) return;
+    // Offline it surely won't go, so it isn't tried and stays in the composer.
+    if (!navigator.onLine) return setError("You're offline. It wasn't sent.");
     setSending(true);
     setError("");
     onSend();
@@ -1179,18 +1192,10 @@ export function Composer({ chat, onSend }: { chat: string; onSend: () => void })
       setFiles((f) => (f.length ? f : sent));
       setDraft((d) => d || text);
       requestAnimationFrame(resize);
-      // The brain said no: it wasn't posted. No answer, or a failure on the way: it may have been.
+      // A resend with the same text and files carries the same id, which the brain answers once.
       const refused = err instanceof ApiError && err.status < 500;
       unsure.current = refused ? null : { what, clientId };
-      setError(
-        refused
-          ? err.message
-          : !navigator.onLine
-            ? "You're offline. It wasn't sent."
-            : getState().connected
-              ? "It may not have been sent. Sending it again won't send it twice."
-              : "Can't reach Hatbot. It wasn't sent.",
-      );
+      setError(sendError(err, getState().connected));
     } finally {
       setSending(false);
     }

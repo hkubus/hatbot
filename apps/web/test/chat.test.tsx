@@ -11,9 +11,11 @@ const {
   fileDrops,
   follows,
   Message,
+  sendError,
   spoken,
   wheelStops,
 } = await import("../src/pages/Chat");
+const { ApiError } = await import("../src/api");
 const drafts = await import("../src/drafts");
 
 test("the composer says it has a menu, and which line in it is picked", () => {
@@ -230,6 +232,17 @@ test("the thread stops following on any scroll up, and starts again only at the 
   expect(follows(true, 200, 600, 700)).toBe(true);
   // The view grew and the browser moved it up to the new bottom: still following.
   expect(follows(true, 1300, 1200, 0)).toBe(true);
+});
+
+test("a send that failed on the way says it may have gone; only the brain's no says it didn't", () => {
+  expect(sendError(new ApiError(413, "The message is too long."), true)).toBe(
+    "The message is too long.",
+  );
+  // The brain may have posted it before the answer was lost, even with the socket down.
+  for (const err of [new ApiError(502, "Bad gateway"), new TypeError("Failed to fetch")]) {
+    expect(sendError(err, true)).toBe("It may not have been sent.");
+    expect(sendError(err, false)).toBe("Can't reach Hatbot. It may not have been sent.");
+  }
 });
 
 test("a wheel turned up stops following only when the thread can move up", () => {
