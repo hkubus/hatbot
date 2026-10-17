@@ -13,12 +13,16 @@ const MAX_TEXT = 20_000;
  * or its shape: one character (a code's box per digit), a short number field (a code), a long one (a card
  * number), or text drawn as dots. Names are split at camelCase, capitals, digits, dashes and underscores,
  * so OTPCode, otp1 and nr_karty read as words. Text areas too: a key or a recovery phrase goes in one.
+ * Not a promo code, an email to verify, or the number of a house or of things to buy.
  */
 export const SECRET = `
-  const SECRET_HINT = /pass|has[lł]|\\bpwd?\\b|\\bcc(?: ?(?:num(?:ber)?|no)|\\b)|\\bcard ?(?:num(?:ber)?|no)\\b|(?:credit|debit) ?card|\\b(?:numer|nr) ?kart|\\bcvc|\\bcvv|\\bcsc\\b|\\b(?:otp|pin)(?:code)?\\b|totp|\\b2 ?fa\\b|\\bmfa\\b|\\bkod(?! ?poczt)|(?<!zip |post |postal )\\bcode\\b|security ?code|one time|\\btoken|\\bblik|\\bsms|verif|secret|private ?key|api ?key|recovery|mnemonic/;
+  const SECRET_HINT = /pass(?:word|wd|wort|phrase|code)|\\bpass\\b|has[lł]|\\bpwd?\\b|\\bcc(?: ?(?:num(?:ber)?|no)|\\b)|\\bcard ?(?:num(?:ber)?|no)\\b|(?:credit|debit) ?card|\\b(?:numer|nr) ?kart|\\bcvc|\\bcvv|\\bcsc\\b|\\b(?:otp|pin)(?:code)?\\b|totp|\\b2 ?fa\\b|\\bmfa\\b|\\bkod(?! ?(?:poczt|rabat|promo))|(?<!\\b(?:zip|post(?:al)?|promo(?:tional)?|coupon|discount|rabat) )\\bcode\\b|security ?code|one time|\\btoken|\\bblik|\\bsms|verif(?![a-z]* (?:your |the )?e ?mail)|secret|private ?key|api ?key|recovery(?! ?(?:e ?mail|phone))|mnemonic/;
+  const ORDINARY = /\\bzip\\b|post(?:al)? ?code|poczt|house|street|building|apartment|\\bapt\\b|domu|mieszkani|lokal|\\bqty\\b|quantity|ilo[sś][cć]/;
   const CARD_SHAPE = /(?:[0-9x•*] ?){4}(?:[ -]?(?:[0-9x•*]){4}){2,}/i;
+  // Inputs nobody types into: a checkbox's value is "on", a button's is its label.
+  const UNTYPED = ['hidden', 'checkbox', 'radio', 'submit', 'button', 'reset', 'image', 'file', 'range', 'color'];
   const isSecret = (el) => {
-    if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') || el.type === 'hidden') return false;
+    if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') || UNTYPED.includes(el.type)) return false;
     if (el.type === 'password') return true;
     const hints = [el.getAttribute('autocomplete'), el.getAttribute('name'), el.id,
       el.getAttribute('placeholder'), el.getAttribute('aria-label')].join(' ')
@@ -30,14 +34,15 @@ export const SECRET = `
       const look = (el.ownerDocument.defaultView || window).getComputedStyle(el);
       if ((look.webkitTextSecurity || 'none') !== 'none') return true;
     } catch {}
-    if (el.tagName !== 'INPUT') return false;
+    if (el.tagName !== 'INPUT' || ORDINARY.test(hints)) return false;
     if (CARD_SHAPE.test(el.getAttribute('placeholder') || '')) return true;
-    if (el.maxLength === 1 && el.type !== 'checkbox' && el.type !== 'radio') return true;
-    const numeric = el.inputMode === 'numeric' || el.type === 'tel' || el.type === 'number'
-      || /\\\\d|0-9/.test(el.pattern || '');
-    if (numeric && el.maxLength > 0 && el.maxLength <= 8) return true;
+    if (el.maxLength === 1) return true;
+    const numeric = el.inputMode === 'numeric' || el.type === 'tel' || /\\\\d|0-9/.test(el.pattern || '');
+    // A code; type=number counts things (how many to buy).
+    if (numeric && el.type !== 'number' && el.maxLength > 0 && el.maxLength <= 8) return true;
     // A card number, spaces and all; a phone number is shorter, and says it's one.
-    return numeric && el.type !== 'tel' && el.maxLength >= 16 && el.maxLength <= 23;
+    return (numeric || el.type === 'number') && el.type !== 'tel' && el.maxLength >= 16
+      && el.maxLength <= 23;
   };
 `;
 

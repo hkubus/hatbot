@@ -92,7 +92,16 @@ test("Teach knows password, code and card fields by their names, in English and 
     { name: "x", inputMode: "numeric", maxLength: 19 },
     { name: "pwd" },
     { name: "pw" },
+    { name: "pass" },
+    { name: "confirmpassword" },
+    { name: "passcode" },
+    { label: "Passwort" },
     { name: "api_key" },
+    { name: "recoveryCode" },
+    { name: "verification_code" },
+    { label: "Verify it's you" },
+    { type: "number", maxLength: 1 },
+    { name: "card", type: "number", maxLength: 16 },
     // A text area that takes a key or a phrase.
     { tag: "TEXTAREA", name: "secret_value" },
     { tag: "TEXTAREA", name: "private_key" },
@@ -155,6 +164,28 @@ test("ordinary fields aren't taken for secrets", () => {
     { name: "kod_pocztowy" },
     { label: "ZIP code" },
     { label: "Postal code" },
+    // Inputs nobody types into, whatever they're called.
+    { type: "checkbox", name: "remember_password" },
+    { type: "submit", name: "verify" },
+    { type: "radio", name: "pin_on_map" },
+    // Words with "pass" in them, codes that aren't secret, and an email to verify.
+    { name: "passenger_name" },
+    { name: "passport" },
+    { name: "bypass" },
+    { name: "compass" },
+    { name: "promoCode" },
+    { name: "coupon_code" },
+    { label: "Discount code" },
+    { label: "Kod rabatowy" },
+    { placeholder: "Verify your email" },
+    { name: "verifyEmail" },
+    { name: "recovery_email" },
+    // Short numbers that say what they are: a postcode, a house, how many.
+    { name: "zip", inputMode: "numeric", maxLength: 5 },
+    { name: "house_number", inputMode: "numeric", maxLength: 6 },
+    { name: "nrDomu", type: "tel", maxLength: 5 },
+    { name: "qty", type: "number", maxLength: 3 },
+    { type: "number", maxLength: 3 },
   ])
     expect([f, isSecret(input(f))]).toEqual([f, false]);
 });
