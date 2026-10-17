@@ -366,7 +366,9 @@ export class Watchers {
     }
   }
 
-  private failed(w: Watcher, error: string) {
+  private failed(seen: Watcher, error: string) {
+    const w = this.still(seen);
+    if (!w) return;
     const errors = w.errors + 1;
     // One that keeps failing looks less often: each wait twice the last, up to six hours.
     const every = Math.max(minWatchMinutes(w.source), w.everyMinutes);
@@ -377,14 +379,12 @@ export class Watchers {
             every,
             Math.min(BACKOFF_MAX_MINUTES, every * 2 ** (errors - BACKOFF_AFTER_ERRORS + 1)),
           );
-    const updated = this.d.db
+    this.d.db
       .query(
         `UPDATE watchers SET last_checked_at = ?, last_error = ?, errors = ?,
          next_check_at = CASE WHEN enabled = 1 THEN ? ELSE next_check_at END WHERE id = ?`,
       )
-      .run(this.now(), error, errors, this.after(wait), w.id).changes;
-    // Deleted while it was being read.
-    if (!updated) return;
+      .run(this.now(), error, errors, this.after(wait), w.id);
     this.changed(w.id);
     if (errors === TELL_AFTER_ERRORS)
       void this.d.notifier.send({
@@ -397,9 +397,8 @@ export class Watchers {
 
   /** A value it found: kept if it's new, and acted on if it counts. */
   private async saw(seen: Watcher, value: string, untrusted: boolean) {
-    // As it is now: it may have been deleted, or given a new source, while its page was read.
-    const w = this.get(seen.id);
-    if (!w || saved(w.source) !== saved(seen.source)) return;
+    const w = this.still(seen);
+    if (!w) return;
     const previous = w.lastValue;
     const fired = counts(w.condition, previous, value);
     const now = this.now();
@@ -439,6 +438,12 @@ export class Watchers {
     if (fired && this.firedToday(w.id) > MAX_FIRES_PER_DAY) return this.tooOften(w);
     this.changed(w.id);
     if (fired) this.fire(w, previous, value, untrusted);
+  }
+
+  /** The watcher as it is now, or null if it was deleted or given a new source while it was read. */
+  private still(seen: Watcher): Watcher | null {
+    const w = this.get(seen.id);
+    return w && saved(w.source) === saved(seen.source) ? w : null;
   }
 
   /** Times it counted in the last 24 hours, since it was last switched on or given a new source. */
