@@ -1,6 +1,7 @@
 import type { Conversation, Me } from "@hatbot/shared";
 import {
   lazy,
+  type ReactNode,
   Suspense,
   useCallback,
   useEffect,
@@ -65,19 +66,21 @@ const VIEWS = [
   { path: "/settings", title: "Settings", icon: "sliders", phone: true },
 ] as const satisfies readonly { path: string; title: string; icon: IconName; phone: boolean }[];
 
-const viewOf = (path: string) =>
-  VIEWS.find((v) =>
-    path.startsWith("/triggers/") || path.startsWith("/watchers/")
-      ? v.path === "/schedules"
-      : path.startsWith("/negotiations/")
-        ? v.path === "/tasks"
-        : v.path === "/"
-          ? path === "/" ||
-            path.startsWith("/chat/") ||
-            path.startsWith("/bots/") ||
-            path.startsWith("/groups/")
-          : path === v.path || path.startsWith(`${v.path}/`),
-  ) ?? VIEWS[0];
+/** Pages that belong to another view than their first segment names. */
+const VIEW_OF: Record<string, string> = {
+  chat: "/",
+  bots: "/",
+  groups: "/",
+  negotiations: "/tasks",
+  triggers: "/schedules",
+  watchers: "/schedules",
+};
+const viewOf = (path: string) => {
+  const first = path.split("/")[1] ?? "";
+  return VIEWS.find((v) => v.path === (VIEW_OF[first] ?? `/${first}`)) ?? VIEWS[0];
+};
+/** On a phone, Spend and Schedules are reached from Settings, so its tab stays lit. */
+const TAB_OF: Record<string, string> = { "/spend": "/settings", "/schedules": "/settings" };
 
 function useTheme(): Theme {
   return useSyncExternalStore((l) => {
@@ -144,22 +147,15 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const [chatMenu, setChatMenu] = useState(false);
   const chatMenuEl = useRef<HTMLDivElement>(null);
   const chatSwitch = useRef<HTMLButtonElement>(null);
-  // The phone's chat switcher closes on Escape and on a tap anywhere else.
+  // The phone's chat switcher closes on a tap anywhere else, and on Escape (below).
   useEffect(() => {
     if (!chatMenu) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setChatMenu(false);
-    };
     const onDown = (e: PointerEvent) => {
       const t = e.target as Node;
       if (!chatMenuEl.current?.contains(t) && !chatSwitch.current?.contains(t)) setChatMenu(false);
     };
-    document.addEventListener("keydown", onKey);
     document.addEventListener("pointerdown", onDown);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("pointerdown", onDown);
-    };
+    return () => document.removeEventListener("pointerdown", onDown);
   }, [chatMenu]);
   const connected = useStore((s) => s.connected);
   // A blip while reconnecting isn't worth a banner.
@@ -180,7 +176,6 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const approvalId = Number(params.get("approval"));
   const botPage = /^\/bots\/([a-z0-9-]+)$/.exec(path)?.[1];
   const groupPage = /^\/groups\/(new|\d+)$/.exec(path)?.[1];
-  const manyBots = useStore((s) => s.botIds.length > 1);
   const chatId = path === "/" ? HATBOT_CHAT : Number(/^\/chat\/(\d+)$/.exec(path)?.[1] ?? 0);
   // A bot's or group's page is titled with its name and keeps its chat lit in the sidebar; a
   // negotiation's with its listing.
@@ -190,13 +185,18 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
       : s.conversations.find((c) => c.kind === "group" && String(c.id) === groupPage),
   );
   const pageTitle = useStore((s) =>
-    botPage && botPage !== "new"
-      ? s.bots[botPage]?.name
-      : pageChat
-        ? chatName(s, pageChat)
-        : negotiationId
-          ? s.negotiations[Number(negotiationId)]?.title
-          : undefined,
+    botPage === "new"
+      ? "New bot"
+      : botPage
+        ? (s.bots[botPage]?.name ?? "Bot")
+        : groupPage === "new"
+          ? "New group"
+          : groupPage
+            ? pageChat
+              ? chatName(s, pageChat)
+              : "Group"
+            : ((negotiationId ? s.negotiations[Number(negotiationId)]?.title : undefined) ??
+              view.title),
   );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: closes on every navigation
@@ -277,11 +277,11 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
         return;
       }
       if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (chatMenu) return setChatMenu(false);
       // Escape in a field, or typed on the desktop in the live view, is theirs.
       const t = e.target as HTMLElement | null;
       if (t?.closest("input, textarea, select, canvas, [contenteditable]")) return;
-      if (chatMenu) setChatMenu(false);
-      else if (insp) {
+      if (insp) {
         localStorage.setItem("hatbot:insp", "0");
         setInsp(false);
       }
@@ -310,46 +310,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
             <div className="brand-name">Hatbot</div>
           </div>
           <nav className="nav">
-            {chats.map((c) => (
-              <button
-                type="button"
-                key={c.id}
-                className={`nav-item ${(chatId || pageChat?.id) === c.id ? "active" : ""}`}
-                onClick={() => navigate(chatPath(c.id))}
-              >
-                <ChatIcon chat={c} />
-                <span className="nav-name">{chatName(getState(), c)}</span>
-                {c.unread > 0 && <span className="count unread">{c.unread}</span>}
-              </button>
-            ))}
-            {!chats.length && (
-              <button
-                type="button"
-                className={`nav-item ${chatId ? "active" : ""}`}
-                onClick={() => navigate("/")}
-              >
-                <Icon name="chat" />
-                <span>Chat</span>
-              </button>
-            )}
-            <button
-              type="button"
-              className={`nav-item ${botPage === "new" ? "active" : ""}`}
-              onClick={() => navigate("/bots/new")}
-            >
-              <Icon name="plus" />
-              <span>New bot</span>
-            </button>
-            {manyBots && (
-              <button
-                type="button"
-                className={`nav-item ${groupPage === "new" ? "active" : ""}`}
-                onClick={() => navigate("/groups/new")}
-              >
-                <Icon name="users" />
-                <span>New group</span>
-              </button>
-            )}
+            <ChatNav current={chatId || pageChat?.id || 0} path={path} />
           </nav>
           <nav className="nav nav-views">
             {VIEWS.filter((v) => v.path !== "/").map((v) => (
@@ -386,17 +347,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
                 </button>
               </>
             ) : (
-              <h1>
-                {botPage
-                  ? botPage === "new"
-                    ? "New bot"
-                    : (pageTitle ?? "Bot")
-                  : groupPage
-                    ? groupPage === "new"
-                      ? "New group"
-                      : (pageTitle ?? "Group")
-                    : (pageTitle ?? view.title)}
-              </h1>
+              <h1>{pageTitle}</h1>
             )}
             <span className="spacer" />
             {chat && chatId > 0 && (
@@ -457,40 +408,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           <PausedBanner />
           {chatMenu && chatId > 0 && (
             <div className="chat-menu" ref={chatMenuEl}>
-              {chats.map((c) => (
-                <button
-                  type="button"
-                  key={c.id}
-                  className={c.id === chatId ? "on" : ""}
-                  onClick={() => {
-                    setChatMenu(false);
-                    navigate(chatPath(c.id));
-                  }}
-                >
-                  <span className="name">{chatName(getState(), c)}</span>
-                  {c.unread > 0 && <span className="badge unread">{c.unread}</span>}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => {
-                  setChatMenu(false);
-                  navigate("/bots/new");
-                }}
-              >
-                <span className="name">New bot</span>
-              </button>
-              {manyBots && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setChatMenu(false);
-                    navigate("/groups/new");
-                  }}
-                >
-                  <span className="name">New group</span>
-                </button>
-              )}
+              <ChatNav current={chatId} path={path} onPick={() => setChatMenu(false)} />
             </div>
           )}
           {chatId > 0 && <Chat key={chatId} id={chatId} />}
@@ -552,12 +470,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           <button
             type="button"
             key={v.path}
-            className={
-              v === view ||
-              (v.path === "/settings" && (view.path === "/spend" || view.path === "/schedules"))
-                ? "active"
-                : ""
-            }
+            className={v.path === (TAB_OF[view.path] ?? view.path) ? "active" : ""}
             onClick={() => navigate(v.path)}
           >
             <Icon name={v.icon} />
@@ -608,6 +521,52 @@ export function PausedBanner() {
         Resume
       </button>
     </div>
+  );
+}
+
+/** Your chats, then New bot and New group: in the sidebar, and in the phone's chat switcher. */
+function ChatNav({
+  current,
+  path,
+  onPick,
+}: {
+  /** The chat that's lit. */
+  current: number;
+  path: string;
+  onPick?: () => void;
+}) {
+  const chats = useStore((s) => s.conversations);
+  const manyBots = useStore((s) => s.botIds.length > 1);
+  const item = (to: string, lit: boolean, icon: ReactNode, name: string, unread = 0) => (
+    <button
+      type="button"
+      key={to}
+      className={`nav-item ${lit ? "active" : ""}`}
+      onClick={() => {
+        onPick?.();
+        navigate(to);
+      }}
+    >
+      {icon}
+      <span className="nav-name">{name}</span>
+      {unread > 0 && <span className="count unread">{unread}</span>}
+    </button>
+  );
+  return (
+    <>
+      {chats.map((c) =>
+        item(
+          chatPath(c.id),
+          c.id === current,
+          <ChatIcon chat={c} />,
+          chatName(getState(), c),
+          c.unread,
+        ),
+      )}
+      {!chats.length && item("/", current > 0, <Icon name="chat" />, "Chat")}
+      {item("/bots/new", path === "/bots/new", <Icon name="plus" />, "New bot")}
+      {manyBots && item("/groups/new", path === "/groups/new", <Icon name="users" />, "New group")}
+    </>
   );
 }
 
