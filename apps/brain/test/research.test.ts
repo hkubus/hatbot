@@ -667,13 +667,15 @@ test("a helper near the task's limit reports at once, and helpers check the limi
   let step = 0;
   work.route = (p) => {
     if (!isHelper(p)) return undefined;
-    // Its first search spends all but about $0.09 of the $1.
+    // Its first search spends all but about $0.08 of the $2.
     if (step++ === 0)
-      return { content: search("ds925+ price", "srvtoolu_1"), usage: { input_tokens: 1_803_000 } };
+      return { content: search("ds925+ price", "srvtoolu_1"), usage: { input_tokens: 3_803_000 } };
     return { content: [toolUse("report_findings", { findings: [PRICE], gaps: "" })] };
   };
   const t = await testApp(new FakeModel(), work);
-  t.settings.update({ limits: { researchUsd: 1, dailyUsd: 1000, monthlyUsd: 1000 } });
+  // $2: the lead's own request may cost up to about $1.45 (all of its 64k output tokens), and it
+  // starts within the limit.
+  t.settings.update({ limits: { researchUsd: 2, dailyUsd: 1000, monthlyUsd: 1000 } });
   const created = t.tasks.createBackgroundTask({
     title: "Price",
     goal: "The DS925+ price.",
@@ -686,7 +688,7 @@ test("a helper near the task's limit reports at once, and helpers check the limi
   expect(helper.map(forced)).toEqual([false, true]);
   expect(resultsIn(work.requests.at(-1))).toContain('[1] "Synology DS925+ | x-kom"');
   expect(resultsIn(work.requests.at(-1))).toMatch(
-    /Spent so far: \$0\.9\d of this task's \$1 limit\./,
+    /Spent so far: \$1\.9\d of this task's \$2 limit\./,
   );
   expect(task.status).toBe("done");
 
@@ -701,8 +703,8 @@ test("a helper near the task's limit reports at once, and helpers check the limi
           ],
         }),
       ],
-      // All but about $0.09 of the $1.
-      usage: { input_tokens: 226_500 },
+      // All but about $0.09 of the $2.
+      usage: { input_tokens: 476_500 },
     },
     finish("Get the DS925+ [1].", "Report [1]."),
   ]);
@@ -711,7 +713,7 @@ test("a helper near the task's limit reports at once, and helpers check the limi
       ? { content: [toolUse("report_findings", { findings: [PRICE], gaps: "" })] }
       : undefined;
   const t2 = await testApp(new FakeModel(), work2);
-  t2.settings.update({ limits: { researchUsd: 1, dailyUsd: 1000, monthlyUsd: 1000 } });
+  t2.settings.update({ limits: { researchUsd: 2, dailyUsd: 1000, monthlyUsd: 1000 } });
   const created2 = t2.tasks.createBackgroundTask({
     title: "Price",
     goal: "The DS925+ price.",
@@ -722,7 +724,7 @@ test("a helper near the task's limit reports at once, and helpers check the limi
   expect(work2.requests.filter(isHelper).map(forced)).toEqual([true]);
   const findings = resultsIn(work2.requests.filter((r) => !isHelper(r))[1]);
   expect(findings).toContain('[1] "Synology DS925+ | x-kom"');
-  expect(findings).toContain("No findings.\nStopped: This task would go over its $1 limit.");
+  expect(findings).toContain("No findings.\nStopped: This task would go over its $2 limit.");
 });
 
 test("a helper's report cut off at max_tokens is asked for again, shorter, once", async () => {
