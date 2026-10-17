@@ -35,16 +35,45 @@ type State = {
   last_updated?: string;
 };
 
-/** Domains whose attributes carry text from outside: event titles, to-do items, what's playing. */
-const UNTRUSTED_DOMAINS = new Set([
-  "calendar",
-  "todo",
-  "media_player",
-  "event",
-  "image",
-  "feedreader",
-  "mailbox",
+/**
+ * Domains whose states and attributes are the device's own, with no text from outside in them. The
+ * rest can carry what strangers wrote: a phone's last notification, a mail's subject, an update's
+ * release notes, a to-do item, what's playing.
+ */
+const TRUSTED_DOMAINS = new Set([
+  "light",
+  "switch",
+  "fan",
+  "climate",
+  "binary_sensor",
+  "cover",
+  "lock",
+  "alarm_control_panel",
+  "input_boolean",
+  "input_number",
+  "humidifier",
+  "water_heater",
+  "vacuum",
+  "siren",
+  "valve",
+  "number",
+  "counter",
+  "timer",
+  "button",
+  "scene",
+  "script",
+  "automation",
+  "sun",
+  "zone",
+  "person",
 ]);
+/** A state that can't say anything: a number, an on/off-like word, a time. */
+const PLAIN_STATE = /^[A-Za-z0-9_.:+-]{1,32}$/;
+/** What lists show instead of a state that is free text from outside. */
+const TEXT_STATE = "[text]";
+/** A state to show where output is trusted: free text from outside is left out. */
+const shownState = (entityId: string, state: string) =>
+  TRUSTED_DOMAINS.has(domainOf(entityId)) || PLAIN_STATE.test(state) ? state : TEXT_STATE;
 
 /**
  * Everyday device control: runs without asking. Not notify: it can message anyone. A switch or a
@@ -155,10 +184,12 @@ export const homeassistantPlugin = definePlugin({
       return (await res.json()) as T;
     };
 
-    const stateLine = (s: State) => {
+    /** `whole`: the state as it is, for output already marked untrusted. */
+    const stateLine = (s: State, whole = false) => {
       const unit = s.attributes.unit_of_measurement;
       const name = s.attributes.friendly_name;
-      return `${s.entity_id}: ${s.state}${unit ? ` ${unit}` : ""}${name ? ` (${name})` : ""}`;
+      const state = whole ? s.state : shownState(s.entity_id, s.state);
+      return `${s.entity_id}: ${state}${unit ? ` ${unit}` : ""}${name ? ` (${name})` : ""}`;
     };
 
     /** Entities the owner marked as letting someone in. */
@@ -193,7 +224,7 @@ export const homeassistantPlugin = definePlugin({
     const tools = [
       tool({
         name: "homeassistant_states",
-        description: `Home Assistant's entities with their state, friendly name and unit, sorted by id. Filter by domain (light, sensor, climate…) and/or a search over ids and names; at most ${MAX_ENTITIES} are listed.`,
+        description: `Home Assistant's entities with their state, friendly name and unit, sorted by id. Filter by domain (light, sensor, climate…) and/or a search over ids and names; at most ${MAX_ENTITIES} are listed. A state that is free text from outside (a notification, a mail's subject) shows as ${TEXT_STATE}; homeassistant_entity reads it, as untrusted.`,
         access: "read",
         label: "Checking Home Assistant",
         schema: z.object({
@@ -220,7 +251,7 @@ export const homeassistantPlugin = definePlugin({
             )
             .sort((a, b) => a.entity_id.localeCompare(b.entity_id));
           if (!list.length) return "No matching entities.";
-          const out = list.slice(0, MAX_ENTITIES).map(stateLine);
+          const out = list.slice(0, MAX_ENTITIES).map((s) => stateLine(s));
           if (list.length > MAX_ENTITIES)
             out.push(
               `…and ${list.length - MAX_ENTITIES} more; narrow it down with domain or search.`,
@@ -231,9 +262,9 @@ export const homeassistantPlugin = definePlugin({
       tool({
         name: "homeassistant_entity",
         description:
-          "One entity's state, when it last changed, and its attributes. Calendar, to-do, media player and similar entities carry text from outside: untrusted.",
+          "One entity's state, when it last changed, and its attributes. Apart from plain devices (lights, switches, climate, binary sensors, locks, covers and the like), entities can carry text from outside, such as sensors, calendars, to-do lists, updates and media players: untrusted.",
         access: "read",
-        untrusted: ({ entity_id }) => UNTRUSTED_DOMAINS.has(domainOf(entity_id)),
+        untrusted: ({ entity_id }) => !TRUSTED_DOMAINS.has(domainOf(entity_id)),
         label: "Checking Home Assistant",
         schema: z.object({ entity_id: EntityId }),
         describe: ({ entity_id }) => `Read ${entity_id}`,
@@ -241,7 +272,7 @@ export const homeassistantPlugin = definePlugin({
           const s = await api<State>("GET", `/states/${encodeURIComponent(entity_id)}`);
           const attrs = JSON.stringify(s.attributes);
           return [
-            stateLine(s),
+            stateLine(s, true),
             `Last changed: ${time(s.last_changed)} UTC`,
             `Attributes: ${attrs.length > MAX_ATTRIBUTES ? `${attrs.slice(0, MAX_ATTRIBUTES)}… (cut)` : attrs}`,
           ].join("\n");
@@ -250,7 +281,7 @@ export const homeassistantPlugin = definePlugin({
       tool({
         name: "homeassistant_history",
         description:
-          "How one or a few entities' states changed over the last hours (1 to 168, 24 by default), oldest first, times in UTC.",
+          "How one or a few entities' states changed over the last hours (1 to 168, 24 by default), oldest first, times in UTC. Free-text states show as [text].",
         access: "read",
         label: "Checking Home Assistant",
         schema: z.object({
@@ -274,7 +305,7 @@ export const homeassistantPlugin = definePlugin({
             out.push(
               `${id} (${run.length} state${run.length === 1 ? "" : "s"}):`,
               ...(cut ? [`  …${cut} earlier ones left out`] : []),
-              ...run.slice(cut).map((e) => `  ${time(e.last_changed)} ${e.state}`),
+              ...run.slice(cut).map((e) => `  ${time(e.last_changed)} ${shownState(id, e.state)}`),
             );
           }
           return out.join("\n") || `No history for ${ids.join(", ")} in the last ${hours} hours.`;
@@ -351,7 +382,9 @@ export const homeassistantPlugin = definePlugin({
           });
           if (!Array.isArray(changed) || !changed.length)
             return `Called ${domain}.${service}; no states changed (yet).`;
-          return [`Called ${domain}.${service}; now:`, ...changed.map(stateLine)].join("\n");
+          return [`Called ${domain}.${service}; now:`, ...changed.map((s) => stateLine(s))].join(
+            "\n",
+          );
         },
       }),
     ];
