@@ -89,6 +89,8 @@
   --line-strong: rgba(0, 0, 0, 0.16);
 
   --accent: #e8820c;
+  /* Text and icons on amber: white is 2.75:1 on it, this is 6.1:1 (8.2:1 on the dark theme's amber). */
+  --on-accent: #1d1d1f;
   --accent-strong: #c96f0a;
   --accent-soft: #fdf0e1;
   --accent-text: #a55a00;
@@ -384,7 +386,7 @@ svg.i {
 }
 .nav-item .count.unread {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .mini-meter {
@@ -506,7 +508,7 @@ svg.i {
 }
 .btn.accent {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-color: transparent;
 }
 .btn.danger {
@@ -791,6 +793,7 @@ html[data-theme="dark"] .seg button.active {
 @media (max-width: 899px) {
   .tabbar .badge.unread {
     background: var(--accent);
+    color: var(--on-accent);
   }
 }
 
@@ -1041,7 +1044,7 @@ html[data-theme="dark"] .seg button.active {
 }
 .composer .send {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 .composer .send:hover {
   background: var(--accent-strong);
@@ -2881,7 +2884,7 @@ pre.payload {
   display: grid;
   place-items: center;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 @media (max-width: 899px) {
   .chat-switch.show-phone-inline {
