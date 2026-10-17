@@ -55,6 +55,10 @@ const selling = (over: Partial<Negotiation> = {}) =>
     mandate: { ...negotiation().mandate, opening: 1300, target: 1150, limit: 1000 },
     ...over,
   });
+/** Delivery by OLX or pickup in person. */
+const pickupToo = negotiation({
+  mandate: { ...negotiation().mandate, delivery: "OLX delivery, or pickup in Warsaw" },
+});
 
 const facts = (over: Partial<SendFacts> = {}): SendFacts => ({
   now: NOW,
@@ -79,7 +83,7 @@ const why = (v: ReturnType<typeof sendPolicy>) => ("why" in v ? v.why : "");
 describe("inside the mandate, it goes without asking", () => {
   test.each([
     ["Dzień dobry, czy przyjmie Pan 1060 zł?", 1060],
-    ["Mogę dać 1 250 zł, odbiór dziś.", 1250],
+    ["Mogę dać 1 250 zł, z wysyłką OLX.", 1250],
     ["Dam 1.400 zł i to moje ostatnie słowo.", 1400],
     ["Czy RTX 3070 jest sprawna? Dam 1200.", 1200],
     ["Would you take 1,300 PLN?", 1300],
@@ -105,7 +109,7 @@ describe("inside the mandate, it goes without asking", () => {
       "Gigabyte RTX 3070 Gaming OC, ok. 3 dni dostawy.",
       "Proszę o 2 sztuki zdjęć. Ile fps, 60 fps?",
     ])
-      expect(verdict(text)).toMatchObject({ action: "allow" });
+      expect(verdict(text, {}, pickupToo)).toMatchObject({ action: "allow" });
   });
 });
 
@@ -373,6 +377,82 @@ describe("another currency asks: its amounts can't be compared at face value", (
   });
 });
 
+describe("ways to pay, delivery changes and saying we've paid ask", () => {
+  test.each([
+    ["Mogę zapłacić BLIKiem.", "BLIK"],
+    ["Zrobię przelew na konto.", "a bank transfer"],
+    ["Proszę podać numer konta.", "a bank transfer"],
+    ["Proszę o IBAN.", "a bank transfer"],
+    ["Zapłacę gotówką.", "cash"],
+    ["Can I pay cash?", "cash"],
+    ["Proszę wysłać za pobraniem.", "cash on delivery"],
+    ["Płacę PayPalem.", "PayPal"],
+    ["Mam Revolut, może być?", "Revolut"],
+    ["Mogę zapłacić w bitcoinach.", "crypto"],
+    ["Wyślę przez Western Union.", "a money transfer service"],
+    ["Mogę dać zaliczkę.", "a deposit"],
+  ])("paying: %s", (text, name) => {
+    const v = verdict(text);
+    expect(v.action).toBe("ask");
+    expect(why(v)).toContain(`a way to pay that the mandate's terms don't name: ${name}`);
+  });
+
+  test("a way to pay the delivery terms name goes", () => {
+    const cash = negotiation({
+      mandate: { ...negotiation().mandate, delivery: "Pickup in Warsaw, cash on the spot" },
+    });
+    expect(verdict("Zapłacę gotówką przy odbiorze.", {}, cash).action).toBe("allow");
+    expect(why(verdict("Zapłacę BLIKiem przy odbiorze.", {}, cash))).toContain("BLIK");
+  });
+
+  test.each([
+    "Mogę odebrać osobiście jutro.",
+    "Odbiór dziś?",
+    "Spotkajmy się pod Galerią.",
+    "Podjadę po nią wieczorem.",
+    "Can I pick it up today?",
+    "Let's meet tomorrow.",
+  ])("pickup when the mandate says shipping: %s", (text) => {
+    expect(why(verdict(text))).toContain("picking up or meeting in person");
+    expect(verdict(text, {}, pickupToo).action).toBe("allow");
+    const noPickup = negotiation({
+      mandate: { ...negotiation().mandate, delivery: "OLX delivery only, no pickup" },
+    });
+    expect(verdict(text, {}, noPickup).action).toBe("ask");
+  });
+
+  test("shipping when the mandate says pickup", () => {
+    const pickupOnly = negotiation({
+      mandate: { ...negotiation().mandate, delivery: "Odbiór osobisty w Warszawie" },
+    });
+    for (const text of ["Może Pan wysłać paczkomatem?", "Czy jest wysyłka?", "Can you ship it?"])
+      expect(why(verdict(text, {}, pickupOnly))).toContain("It brings up shipping");
+    expect(verdict("Mogę odebrać jutro.", {}, pickupOnly).action).toBe("allow");
+    expect(verdict("Czy jest wysyłka OLX?").action).toBe("allow");
+  });
+
+  test.each([
+    "Zapłaciłem już.",
+    "Przelałam pieniądze.",
+    "Wysłałem przelew wczoraj.",
+    "Wpłaciłem zaliczkę.",
+    "Przelew poszedł.",
+    "Opłacone.",
+    "I've paid.",
+    "I’ve already sent the money.",
+    "Payment sent.",
+  ])("saying something was paid or sent: %s", (text) => {
+    const all = negotiation({
+      mandate: {
+        ...negotiation().mandate,
+        delivery: "OLX delivery, bank transfer or a deposit",
+        allow: ["phone", "email", "address", "apps"],
+      },
+    });
+    expect(why(verdict(text, {}, all))).toContain("It says something was paid or sent");
+  });
+});
+
 describe("contact details and other apps ask unless the mandate allows them", () => {
   test.each([
     ["Mój numer: 600 700 800.", "phone"],
@@ -382,7 +462,7 @@ describe("contact details and other apps ask unless the mandate allows them", ()
     ["Pisz: jan.kowalski (at) gmail (dot) com", "email"],
     ["jan małpa wp kropka pl", "email"],
     ["Write to jan at gmail dot com", "email"],
-    ["Odbiór: ul. Marszałkowska 10, Warszawa", "address"],
+    ["Adres: ul. Marszałkowska 10, Warszawa", "address"],
     ["Mieszkam na osiedlu Kabaty", "address"],
     ["Ship to 10 Downing Street please", "address"],
     ["Kod pocztowy 00-950", "address"],

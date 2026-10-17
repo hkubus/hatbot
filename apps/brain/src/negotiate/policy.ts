@@ -131,6 +131,23 @@ export function outside(n: Negotiation, input: SendInput, now: number): string[]
     why.push(
       `The text spells a number out digit by digit ("${spaced[0]}"), which can't be checked against the mandate.`,
     );
+  for (const p of paymentsIn(text))
+    if (!paymentsIn(m.delivery).some((d) => d.name === p.name))
+      why.push(
+        `It brings up a way to pay that the mandate's terms don't name: ${p.name} ("${p.raw}").`,
+      );
+  const pickup = PICKUP.exec(text)?.[0];
+  if (pickup && !(PICKUP.test(m.delivery) && !NO_PICKUP.test(m.delivery)))
+    why.push(
+      `It brings up picking up or meeting in person ("${pickup}"), which the delivery terms ("${m.delivery}") don't allow.`,
+    );
+  const shipping = SHIPPING.exec(text)?.[0];
+  if (shipping && !(SHIPPING.test(m.delivery) && !NO_SHIPPING.test(m.delivery)))
+    why.push(
+      `It brings up shipping ("${shipping}"), which the delivery terms ("${m.delivery}") don't include.`,
+    );
+  const paid = PAID.exec(text)?.[0];
+  if (paid) why.push(`It says something was paid or sent ("${paid}").`);
   const contacts = contactsIn(text).filter((c) => !m.allow.includes(c.kind));
   for (const c of contacts) why.push(`It carries ${CONTACT_NAMES[c.kind]} ("${c.raw}").`);
   const links = linksIn(text);
@@ -498,6 +515,57 @@ export function numberWords(raw: string): string[] {
   }
   return out;
 }
+
+// ——— Paying and delivery ———
+
+/** Ways to pay. Bringing one up asks unless the mandate's delivery terms name it. */
+const PAYMENTS: { name: string; re: RegExp }[] = [
+  { name: "BLIK", re: /(?<![\p{L}])blik\p{L}*/iu },
+  {
+    name: "a bank transfer",
+    re: /(?<![\p{L}])(?:przelew\p{L}*|przela[ćcłl]\p{L}*|przelej\p{L}*|przelej[eę]|kont[aou]?|koncie|kontem|iban|transfer\p{L}*)(?![\p{L}])/iu,
+  },
+  { name: "cash", re: /(?<![\p{L}])(?:got[óo]wk\p{L}*|got[óo]wce|cash)(?![\p{L}])/iu },
+  { name: "cash on delivery", re: /(?<![\p{L}])pobrani\p{L}*/iu },
+  { name: "PayPal", re: /(?<![\p{L}])pay\s?pal\p{L}*/iu },
+  { name: "Revolut", re: /(?<![\p{L}])revolut\p{L}*/iu },
+  {
+    name: "crypto",
+    re: /(?<![\p{L}])(?:krypto\p{L}*|crypto\p{L}*|bitcoin\p{L}*|btc|usdt|ethereum)(?![\p{L}])/iu,
+  },
+  {
+    name: "a money transfer service",
+    re: /(?<![\p{L}])(?:western\s+union|moneygram|skrill|payoneer)(?![\p{L}])/iu,
+  },
+  {
+    name: "a deposit",
+    re: /(?<![\p{L}])(?:zaliczk\p{L}*|zadat(?:ek|ku|kiem)|przedp[łl]at\p{L}*|deposit\p{L}*|prepay\p{L}*|upfront|up\s+front)(?![\p{L}])/iu,
+  },
+];
+
+/** The ways to pay a text brings up. */
+export function paymentsIn(raw: string): { name: string; raw: string }[] {
+  const text = plain(raw);
+  return PAYMENTS.flatMap((p) => {
+    const m = p.re.exec(text);
+    return m ? [{ name: p.name, raw: m[0] }] : [];
+  });
+}
+
+/** Picking up or meeting in person. */
+const PICKUP =
+  /(?<![\p{L}])(?:odbi[óo]r\p{L}*|odbier\p{L}*|odebra\p{L}*|osobi[śs]cie|spotka\p{L}*|podjad\p{L}*|podjech\p{L}*|przyjad\p{L}*|przyjech\p{L}*|pick(?:\s+\p{L}+)?(?:\s|-)?up|collect\p{L}*|in\s+person|meet\p{L}*)(?![\p{L}])/iu;
+/** Sending it by post or courier. */
+const SHIPPING =
+  /(?<![\p{L}])(?:wysy[łl]k\p{L}*|przesy[łl]k\p{L}*|kurier\p{L}*|paczkomat\p{L}*|paczk\p{L}*|inpost\p{L}*|dpd|dhl|gls|poczt\p{L}*|dostaw\p{L}*|ship\p{L}*|deliver\p{L}*|courier\p{L}*|parcel\p{L}*|postage)(?![\p{L}])/iu;
+/** Delivery terms that rule one out: "no pickup", "shipping only", "tylko odbiór". */
+const NO_PICKUP =
+  /(?:no|not|without|bez|nie|brak)\s+(?:\p{L}+\s+)?(?:odbi[óo]r\p{L}*|pick(?:\s|-)?up|collection|osobi[śs]cie|in\s+person)|(?:shipping|delivery|wysy[łl]k\p{L}*|przesy[łl]k\p{L}*)\s+only|(?:only|tylko)\s+(?:shipping|delivery|wysy[łl]k\p{L}*|przesy[łl]k\p{L}*)/iu;
+const NO_SHIPPING =
+  /(?:no|not|without|bez|nie|brak)\s+(?:\p{L}+\s+)?(?:wysy[łl]k\p{L}*|przesy[łl]k\p{L}*|dostaw\p{L}*|shipping|delivery)|(?:pickup|pick-up|collection|odbi[óo]r\p{L}*)\s+only|(?:only|tylko)\s+(?:pickup|pick-up|collection|odbi[óo]r\p{L}*|osobi[śs]cie)/iu;
+/** Saying something was paid or sent: only the owner can say that. */
+const PAID =
+  /(?<![\p{L}])(?:(?:za|o|w|do|prze)?p[łl]aci[łl](?:em|am|[ae][śs]my|y[śs]my)|prze[łl]a[łl](?:em|am|[ae][śs]my)|wys[łl]a[łl](?:em|am|[ae][śs]my)|przes[łl]a[łl](?:em|am|[ae][śs]my)|nada[łl](?:em|am|[ae][śs]my)|(?:za|o)p[łl]acon[eaoy]|przelew\s+(?:poszed[łl]|wys[łl]any|zrobiony|zlecony)|zrobi[łl](?:em|am)\s+przelew|i(?:['’]ve|\s+have)?\s+(?:already\s+)?(?:paid|sent|transferred|wired|shipped|posted)|payment\s+(?:is\s+|has\s+been\s+|was\s+)?(?:sent|made|done|complete\p{L}*)|already\s+paid)(?![\p{L}])/iu;
 
 // ——— Contacts and links ———
 
