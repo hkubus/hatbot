@@ -439,6 +439,7 @@ export const sshPlugin = definePlugin({
             .number()
             .int()
             .min(1)
+            .max(1_000_000_000)
             .optional()
             .describe("The first line to read; 1 by default"),
           lines: z

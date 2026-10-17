@@ -701,6 +701,11 @@ test("only status commands' output is trusted", () => {
     "ip netns exec x cat /etc/shadow",
     "sudo -u www-data df; less /x",
     "apt list --upgradable",
+    // Status commands that read a file and print what they can't parse.
+    "df --files0-from=/var/mail/root",
+    "uptime | wc --files0-from=/var/mail/root",
+    "hostname -F /var/mail/root",
+    "date -f /var/mail/root",
   ])
     expect(statusOnly(cmd), cmd).toBe(false);
 });

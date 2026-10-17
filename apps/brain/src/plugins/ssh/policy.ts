@@ -150,11 +150,11 @@ const STATUS: Record<string, string[] | null> = {
   df: null,
   free: null,
   nproc: null,
-  hostname: null,
+  // hostname -F and date -f read a file, and print what they can't parse.
+  hostname: [""],
   uname: null,
   whoami: null,
   id: null,
-  date: null,
   lsblk: null,
   echo: null,
   true: null,
@@ -179,7 +179,14 @@ export function statusOnly(command: string): boolean {
   const lines = pipelines(command);
   return Boolean(
     lines?.length &&
-      lines.every((p) => p.every((words, i) => (i === 0 ? isStatus : isFilter)(plain(words)))),
+      lines.every((p) =>
+        p.every((words, i) => {
+          const w = plain(words);
+          // df --files0-from=F, wc --files0-from=F: names read from a file come back in errors.
+          if (w.some((a) => a.startsWith("-") && /file|from/i.test(a))) return false;
+          return (i === 0 ? isStatus : isFilter)(w);
+        }),
+      ),
   );
 }
 
