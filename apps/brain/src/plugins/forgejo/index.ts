@@ -111,7 +111,11 @@ export const forgejoPlugin = definePlugin({
           "GET",
           `${contentsPath(repo, path)}?ref=${encodeURIComponent(ref)}`,
         );
-        return Array.isArray(c) ? null : c.sha;
+        if (Array.isArray(c)) return null;
+        // Written through the contents API, they'd become plain files.
+        if (c.type === "symlink" || c.type === "submodule")
+          throw new PluginError(`${path} is a ${c.type}; Hatbot doesn't change those.`);
+        return c.sha;
       } catch (err) {
         if (err instanceof PluginError && err.message.startsWith("Forgejo said 404")) return null;
         throw err;

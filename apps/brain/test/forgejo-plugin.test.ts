@@ -78,6 +78,8 @@ beforeAll(() => {
         });
       if (path === "/repos/kubus/hatbot/contents/new.md")
         return json({ message: "not found" }, 404);
+      if (path === "/repos/kubus/hatbot/contents/link")
+        return json({ type: "symlink", name: "link", path: "link", sha: "sha-link", size: 9 });
       if (path === "/repos/kubus/hatbot/contents" && req.method === "POST")
         return json(
           { commit: { sha: "0123456789abcdef", html_url: "https://git.test/c/0123" } },
@@ -179,6 +181,19 @@ test("commits update existing files by sha and create new ones on a new branch",
       { operation: "create", path: "new.md" },
     ],
   });
+  // Through the contents API a link would become a plain file.
+  await expect(
+    fj("forgejo_commit_files").run(
+      {
+        repo: "kubus/hatbot",
+        branch: "main",
+        new_branch: "hatbot/x",
+        message: "M",
+        files: [{ path: "link", content: "/etc/passwd" }],
+      },
+      call,
+    ),
+  ).rejects.toThrow("link is a symlink; Hatbot doesn't change those.");
 });
 
 test("policy: new branches run, the default branch, workflows and merges ask", async () => {

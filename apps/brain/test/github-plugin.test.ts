@@ -109,6 +109,23 @@ beforeAll(() => {
       if (path === `${r}/git/ref/heads/main`) return json({ object: { sha: "head-sha" } });
       if (path === `${r}/git/commits/head-sha`) return json({ tree: { sha: "tree-sha" } });
       if (path === `${r}/git/trees`) return json({ sha: "new-tree" }, 201);
+      const entry = (path: string, mode: string, type = "blob", sha = `${path}-sha`) => ({
+        path,
+        mode,
+        type,
+        sha,
+      });
+      if (path === `${r}/git/trees/tree-sha`)
+        return json({
+          tree: [
+            entry("README.md", "100644"),
+            entry("run.sh", "100755"),
+            entry("link", "120000"),
+            entry("vendor", "160000", "commit"),
+            entry("docs", "040000", "tree"),
+          ],
+        });
+      if (path === `${r}/git/trees/docs-sha`) return json({ tree: [entry("build.sh", "100755")] });
       if (path === `${r}/git/commits` && req.method === "POST")
         return json(
           { sha: "0123456789abcdef", html_url: "https://github.test/hkubus/hatbot/commit/0123" },
@@ -307,6 +324,44 @@ test("commits many files as one commit on a new branch, and won't delete what is
     ),
   ).rejects.toThrow("gone.md doesn't exist on main.");
   expect(posted("/git/trees")).toBeUndefined();
+});
+
+test("a commit keeps each file's mode, and won't write over links or submodules", async () => {
+  const { gh } = await started();
+  const commit = (files: { path: string; content: string | null }[]) =>
+    gh("github_commit_files").run(
+      { repo: "hkubus/hatbot", branch: "main", new_branch: "hatbot/x", message: "M", files },
+      call,
+    );
+  const posted = () =>
+    seen.find((s) => s.method === "POST" && s.path === "/repos/hkubus/hatbot/git/trees")?.body;
+  seen.length = 0;
+  await commit([
+    { path: "run.sh", content: "#!/bin/sh\n" },
+    { path: "docs/build.sh", content: "#!/bin/sh\n" },
+    { path: "docs/new.md", content: "new" },
+    { path: "link", content: null },
+  ]);
+  expect((posted() as { tree: { path: string; mode: string }[] }).tree).toMatchObject([
+    { path: "run.sh", mode: "100755" },
+    { path: "docs/build.sh", mode: "100755" },
+    { path: "docs/new.md", mode: "100644" },
+    { path: "link", mode: "120000", sha: null },
+  ]);
+  // The top folder is read once for all four.
+  expect(seen.filter((s) => s.path.endsWith("/git/trees/tree-sha"))).toHaveLength(1);
+
+  seen.length = 0;
+  await expect(commit([{ path: "link", content: "/etc/passwd" }])).rejects.toThrow(
+    "link is a symbolic link; Hatbot doesn't write over those.",
+  );
+  await expect(commit([{ path: "vendor", content: "x" }])).rejects.toThrow(
+    "vendor is a submodule; Hatbot doesn't change those.",
+  );
+  await expect(commit([{ path: "docs", content: "x" }])).rejects.toThrow(
+    "docs is a folder on main.",
+  );
+  expect(posted()).toBeUndefined();
 });
 
 test("policy: new branches run, the default branch, workflows and merges ask", async () => {

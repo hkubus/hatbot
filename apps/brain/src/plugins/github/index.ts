@@ -40,6 +40,10 @@ type Content = {
   content?: string;
   encoding?: string;
 };
+/** mode: 100644 a file, 100755 an executable, 120000 a link, 040000 a folder, 160000 a submodule. */
+type TreeEntry = { path: string; mode: string; type: "blob" | "tree" | "commit"; sha: string };
+/** The folder a path is in, "" for the top. */
+const parentOf = (path: string) => (path.includes("/") ? posix.dirname(path) : "");
 
 /** About how much of a CI log the model gets, in characters. */
 const LOG_CHARS = 20_000;
@@ -195,18 +199,6 @@ export const githubPlugin = definePlugin({
     const offDefault = (repo: string, ref?: string) => {
       const main = defaults.get(repo);
       return !main || (ref !== undefined && ref !== main);
-    };
-    const exists = async (repo: string, path: string, ref: string) => {
-      try {
-        const c = await api<Content | Content[]>(
-          "GET",
-          `${contentsPath(repo, path)}?ref=${encodeURIComponent(ref)}`,
-        );
-        return !Array.isArray(c);
-      } catch (err) {
-        if (err instanceof PluginError && err.message.startsWith("GitHub said 404")) return false;
-        throw err;
-      }
     };
 
     const issueLine = (i: Issue) =>
@@ -536,17 +528,47 @@ export const githubPlugin = definePlugin({
             `${p}/git/commits/${head.object.sha}`,
           );
           const paths = files.map((f) => posix.normalize(f.path).replace(/^\/+/, ""));
-          await Promise.all(
-            files.map(async (f, i) => {
-              if (f.content === null && !(await exists(repo, paths[i] as string, branch)))
-                throw new PluginError(`${f.path} doesn't exist on ${branch}.`);
-            }),
+          // What's at each path now, from the folders they're in, so a script keeps its executable
+          // bit and links and submodules aren't overwritten as plain files.
+          const folders = new Map<string, Promise<Map<string, TreeEntry> | null>>();
+          const folder = (dir: string): Promise<Map<string, TreeEntry> | null> => {
+            let found = folders.get(dir);
+            if (!found) {
+              found = (async () => {
+                let sha = parent.tree.sha;
+                if (dir) {
+                  const up = await folder(parentOf(dir));
+                  const entry = up?.get(posix.basename(dir));
+                  if (entry?.type !== "tree") return null;
+                  sha = entry.sha;
+                }
+                const t = await api<{ tree: TreeEntry[] }>("GET", `${p}/git/trees/${sha}`);
+                return new Map(t.tree.map((e) => [e.path, e]));
+              })();
+              folders.set(dir, found);
+            }
+            return found;
+          };
+          const now = await Promise.all(
+            paths.map(async (path) => (await folder(parentOf(path)))?.get(posix.basename(path))),
           );
+          files.forEach((f, i) => {
+            const e = now[i];
+            if (!e && f.content === null)
+              throw new PluginError(`${f.path} doesn't exist on ${branch}.`);
+            if (e?.type === "tree") throw new PluginError(`${f.path} is a folder on ${branch}.`);
+            if (e?.type === "commit")
+              throw new PluginError(`${f.path} is a submodule; Hatbot doesn't change those.`);
+            if (e?.mode === "120000" && f.content !== null)
+              throw new PluginError(
+                `${f.path} is a symbolic link; Hatbot doesn't write over those.`,
+              );
+          });
           const tree = await api<{ sha: string }>("POST", `${p}/git/trees`, {
             base_tree: parent.tree.sha,
             tree: files.map((f, i) => ({
               path: paths[i],
-              mode: "100644",
+              mode: now[i]?.mode ?? "100644",
               type: "blob",
               ...(f.content === null ? { sha: null } : { content: f.content }),
             })),
