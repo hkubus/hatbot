@@ -162,6 +162,6 @@ test("a certificate that doesn't match the pin stops it", async () => {
   });
   await t.plugins.update("pbs", { enabled: true });
   await expect(t.plugins.test("pbs")).rejects.toThrow(
-    "Proxmox Backup Server's certificate doesn't match the pinned fingerprint.",
+    "Proxmox Backup Server's certificate doesn't match the pinned fingerprint. It now shows D7:6A:C1:55:98:6E:33:E6:73:98:B6:92:28:50:A5:F7:F0:69:D9:96:AD:CC:64:25:0D:DA:0F:BC:7A:4C:40:D0. If its certificate was renewed, put that in PBS_TLS_FINGERPRINT in /etc/hatbot/pbs.env",
   );
 });

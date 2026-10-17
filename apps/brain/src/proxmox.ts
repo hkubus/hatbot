@@ -1,9 +1,11 @@
 // Proxmox VE API client with Hatbot's scoped token (PLAN.md §9.3): the desktop's snapshots for
 // Settings, and the Proxmox plugin's calls.
-// The host's certificate is self-signed, so the connection is pinned to its SHA-256 fingerprint.
-// Bun's fetch skips checkServerIdentity when rejectUnauthorized is off, so this speaks HTTP/1.1
-// over a node:tls socket it has checked itself.
-import { connect } from "node:tls";
+// The host's certificate is self-signed, so the connection is pinned to its SHA-256 fingerprint. A
+// certificate from a public CA for the host's name is accepted too, so one that renews itself (ACME)
+// keeps working. Bun's fetch skips checkServerIdentity when rejectUnauthorized is off, so this speaks
+// HTTP/1.1 over a node:tls socket it has checked itself.
+import { isIP } from "node:net";
+import { checkServerIdentity, connect } from "node:tls";
 import { PluginError } from "./plugins/plugin";
 
 /** Its message is fine to show the owner and the model. */
@@ -42,8 +44,12 @@ export type PinnedApi = {
   port: number;
   /** SHA-256, colons optional. */
   fingerprint: string;
+  /** Where the owner sets the fingerprint, for when the certificate changes. */
+  setting: string;
   /** The Authorization header. */
   auth: string;
+  /** Certificate authorities to trust instead of the system's: for tests. */
+  ca?: string;
 };
 
 /** One call to /api2/json over a connection checked against the pinned fingerprint; its `data`. */
@@ -54,7 +60,14 @@ export async function pinnedRequest(
   form?: Record<string, string>,
 ): Promise<unknown> {
   const body = form ? new URLSearchParams(form).toString() : "";
-  const socket = connect({ host: api.host, port: api.port, rejectUnauthorized: false });
+  const socket = connect({
+    host: api.host,
+    port: api.port,
+    rejectUnauthorized: false,
+    // A name for SNI, so a server with a public certificate sends the right one; never an IP.
+    ...(isIP(api.host) ? {} : { servername: api.host }),
+    ...(api.ca ? { ca: api.ca } : {}),
+  });
   socket.setTimeout(30_000, () => socket.destroy(new Error("timed out")));
   try {
     await new Promise<void>((resolve, reject) => {
@@ -65,11 +78,15 @@ export async function pinnedRequest(
     socket.destroy();
     throw new ProxmoxError(`Can't reach ${api.name}: ${(err as Error).message}`);
   }
-  if (
-    normalizeFp(socket.getPeerCertificate().fingerprint256 ?? "") !== normalizeFp(api.fingerprint)
-  ) {
+  const cert = socket.getPeerCertificate();
+  const seen = cert.fingerprint256 ?? "";
+  const pinned = normalizeFp(seen) === normalizeFp(api.fingerprint);
+  const publicCa = socket.authorized && !checkServerIdentity(api.host, cert);
+  if (!pinned && !publicCa) {
     socket.destroy();
-    throw new ProxmoxError(`${api.name}'s certificate doesn't match the pinned fingerprint.`);
+    throw new ProxmoxError(
+      `${api.name}'s certificate doesn't match the pinned fingerprint. It now shows ${seen || "no certificate"}. If its certificate was renewed, put that in ${api.setting} and restart the brain; if not, something else may be answering in its place.`,
+    );
   }
   const chunks: Buffer[] = [];
   const done = new Promise<void>((resolve, reject) => {
@@ -165,6 +182,7 @@ export class Proxmox {
         host: this.host,
         port: this.port,
         fingerprint: this.fingerprint,
+        setting: "PROXMOX_TLS_FINGERPRINT in /etc/hatbot/proxmox.env",
         auth: this.auth,
       },
       method,

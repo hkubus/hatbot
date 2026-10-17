@@ -75,6 +75,7 @@ export const pbsPlugin = definePlugin({
       host: url.hostname,
       port: Number(url.port || 8007),
       fingerprint: env.PBS_TLS_FINGERPRINT,
+      setting: "PBS_TLS_FINGERPRINT in /etc/hatbot/pbs.env",
       auth: `PBSAPIToken=${env.PBS_TOKEN_ID}:${env.PBS_TOKEN_SECRET}`,
     };
     const get = <T>(path: string) => pinnedRequest(pbs, "GET", path) as Promise<T>;
