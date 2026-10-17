@@ -16,7 +16,9 @@ test("values are picked by selector, path, pattern, or the page's text", async (
   const html = page(
     `<div class="price">€1.299,<b>00</b></div><div class="price">€99</div><p>In&nbsp;stock &amp; ready</p><img class="price">`,
   );
-  expect(await pick(html, "text/html", { kind: "page", selector: ".price" })).toBe("€1.299,00 €99");
+  expect(await pick(html, "text/html", { kind: "page", selector: ".price" })).toBe(
+    "€1.299,00\n€99",
+  );
   expect(await pick(html, "text/html", { kind: "page" })).toBe("€1.299, 00 €99 In stock & ready");
   expect(await pick(html, "text/html", { kind: "page", pattern: "in\\s+(stock)" })).toBe("stock");
   expect(
@@ -66,6 +68,25 @@ test("numbers are read in either style, and only a move into the condition count
   expect(numberIn("12,5 °C")).toBe(12.5);
   expect(numberIn("-3.5")).toBe(-3.5);
   expect(numberIn("none")).toBeNaN();
+  // Polish prices.
+  expect(numberIn("1 299,99 zł")).toBe(1299.99);
+  expect(numberIn("1\u00a0299,99\u00a0zł")).toBe(1299.99);
+  expect(numberIn("1.299 zł")).toBe(1299);
+  expect(numberIn("1 299 zł")).toBe(1299);
+  expect(numberIn("Cena: 12 499,00 PLN")).toBe(12499);
+  expect(numberIn("2 599 złotych")).toBe(2599);
+  expect(numberIn("0,99 zł")).toBe(0.99);
+  // A badge or a model number before the price doesn't win.
+  expect(numberIn("-20% 1 299 zł")).toBe(1299);
+  expect(numberIn("Taniej o 15 % 849,00 zł")).toBe(849);
+  expect(numberIn("Laptop 16 GB 3 999 zł")).toBe(3999);
+  // Neighbouring prices aren't read as one number.
+  expect(numberIn("1 299 zł 1 499 zł")).toBe(1299);
+  expect(numberIn("299\n999")).toBe(299);
+  // Without a currency a lone dot is still a decimal point, and a dash after a word isn't a minus.
+  expect(numberIn("1.299")).toBe(1.299);
+  expect(numberIn("−3,5 °C")).toBe(-3.5);
+  expect(numberIn("A-4 paper, 500 sheets")).toBe(4);
 
   const below = { when: "below", value: 1000 } as const;
   expect(counts(below, null, "€999")).toBe(true);
@@ -78,6 +99,24 @@ test("numbers are read in either style, and only a move into the condition count
   expect(counts({ when: "changed" }, null, "a")).toBe(false);
   expect(counts({ when: "changed" }, "a", "b")).toBe(true);
   expect(counts({ when: "changed" }, "a", "a")).toBe(false);
+  // Only the spacing between elements: not a change.
+  expect(counts({ when: "changed" }, "€10 €12", "€10\n€12")).toBe(false);
+});
+
+test("each price a selector matches is read on its own", async () => {
+  const html = page(
+    `<span class="badge">-20%</span><span class="price">299</span><span class="price">999</span>`,
+  );
+  const value = await pick(html, "text/html", { kind: "page", selector: ".price" });
+  expect(value).toBe("299\n999");
+  expect(numberIn(value)).toBe(299);
+  const shop = await pick(
+    page(`<div class="product"><span>-20%</span> <b>1 299,99 zł</b> <s>1 624,99 zł</s></div>`),
+    "text/html",
+    { kind: "page", selector: ".product" },
+  );
+  expect(numberIn(shop)).toBe(1299.99);
+  expect(counts({ when: "below", value: 1300 }, "1 499,99 zł", shop)).toBe(true);
 });
 
 test("a watcher without a prompt tells you in the chat and by notification, then waits", async () => {

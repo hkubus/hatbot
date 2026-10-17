@@ -165,33 +165,70 @@ export async function pick(
     if (m === null) throw new WatchError(`The pattern "${source.pattern}" matched nothing.`);
     text = m;
   }
-  return collapse(text).slice(0, MAX_VALUE_CHARS);
+  // Each element a selector matched on a line of its own, so neighbouring prices aren't read as one.
+  const lines = source.selector && !source.pattern ? text.split("\n") : [text];
+  return lines.map(collapse).filter(Boolean).join("\n").slice(0, MAX_VALUE_CHARS);
 }
 
 /**
- * The first number in a value: "€1.299,00" is 1299, "1,299.00" is 1299, "-3.5 °C" is -3.5.
- * NaN when there's none.
+ * A number as written: digits grouped in threes by spaces ("1 299,99"), or by dots, commas or
+ * apostrophes, with a decimal part or not. Spaces never group across lines.
  */
-export function numberIn(value: string): number {
-  const m = /-?\d[\d.,\s  ']*/.exec(value);
-  if (!m) return Number.NaN;
-  let s = m[0].replace(/[\s  ']/g, "").replace(/[.,]$/, "");
+const NUMBER =
+  /[-−]?\d{1,3}(?:[ \u00a0\u202f\u2009]\d{3})+(?:[.,]\d+)?(?!\d)|[-−]?\d+(?:[.,']\d+)*/g;
+/** Currencies a price is written next to: "1 299 zł", "PLN 1299", "€99", "99 złotych". */
+const MONEY =
+  "zł(?:oty(?:ch)?|ote)?|zl|pln|€|eur|\\$|usd|£|gbp|chf|kč|czk|kr|sek|nok|dkk|huf|lei|ron|¥|jpy|₹|₴|uah";
+const MONEY_AFTER = new RegExp(`^\\s?(?:${MONEY})(?![\\p{L}])`, "iu");
+const MONEY_BEFORE = new RegExp(`(?<![\\p{L}])(?:${MONEY})\\s?$`, "iu");
+
+/** The number in one written form; `money` reads "1.299" as 1299, as a price would mean it. */
+function parseNumber(written: string, money: boolean): number {
+  let s = written.replace(/[ \u00a0\u202f\u2009']/g, "").replace("−", "-");
   const lastDot = s.lastIndexOf(".");
   const lastComma = s.lastIndexOf(",");
+  // "1,299" and "1,299,000" group thousands, as does "1.299.000"; "12,5" and "0,299" don't.
+  const grouped = (sep: string) => {
+    const [head = "", ...rest] = s.split(sep);
+    return /^-?[1-9]\d{0,2}$/.test(head) && rest.every((g) => g.length === 3);
+  };
   if (lastDot >= 0 && lastComma >= 0) {
     // The later one is the decimal point.
     const decimal = lastDot > lastComma ? "." : ",";
     const group = decimal === "." ? "," : ".";
     s = s.split(group).join("").replace(decimal, ".");
   } else if (lastComma >= 0) {
-    // "1,299" and "1,299,000" group thousands; "12,5" has a decimal comma.
-    const groups = s.split(",");
-    s = groups.slice(1).every((g) => g.length === 3) ? groups.join("") : s.replace(",", ".");
-  } else if (s.split(".").length > 2) {
-    // "1.299.000"; a single dot is a decimal point.
-    s = s.split(".").join("");
+    s = grouped(",") ? s.split(",").join("") : s.replace(",", ".");
+  } else if (lastDot >= 0) {
+    // A single dot is a decimal point, except in a price: "1.299 zł" is 1299.
+    if (grouped(".") && (money || s.split(".").length > 2)) s = s.split(".").join("");
   }
   return Number(s);
+}
+
+/**
+ * The price or number in a value: the first one next to a currency if there is one, else the first,
+ * leaving out percentages ("-20%"). "1 299,99 zł" is 1299.99, "1.299 zł" is 1299, "€1.299,00" is
+ * 1299, "$1,299.00" is 1299, "-3.5 °C" is -3.5. NaN when there's none.
+ */
+export function numberIn(value: string): number {
+  let first: number | null = null;
+  for (const m of value.matchAll(NUMBER)) {
+    let written = m[0];
+    const start = m.index;
+    const end = start + written.length;
+    if (/^\s?%/.test(value.slice(end))) continue;
+    // A dash after a word or number is a range or a hyphen, not a minus: "100-200", "A-4".
+    if (/^[-−]/.test(written) && /[\p{L}\p{N}]$/u.test(value.slice(0, start)))
+      written = written.slice(1);
+    const before = value.slice(Math.max(0, start - 4), start);
+    const money = MONEY_AFTER.test(value.slice(end, end + 12)) || MONEY_BEFORE.test(before);
+    const n = parseNumber(written, money);
+    if (Number.isNaN(n)) continue;
+    if (money) return n;
+    first ??= n;
+  }
+  return first ?? Number.NaN;
 }
 
 /** Whether a value is in the condition: contains the text, or is below or above the number. */
@@ -200,9 +237,9 @@ function holds(c: WatchCondition, value: string): boolean {
     case "changed":
       return true;
     case "contains":
-      return value.toLowerCase().includes(c.text.toLowerCase());
+      return collapse(value).toLowerCase().includes(c.text.toLowerCase());
     case "missing":
-      return !value.toLowerCase().includes(c.text.toLowerCase());
+      return !collapse(value).toLowerCase().includes(c.text.toLowerCase());
     case "below":
       return numberIn(value) < c.value;
     case "above":
@@ -215,6 +252,7 @@ function holds(c: WatchCondition, value: string): boolean {
  * the condition (the first check counts if it's already there), not every check while it holds.
  */
 export function counts(c: WatchCondition, previous: string | null, value: string): boolean {
-  if (c.when === "changed") return previous !== null && previous !== value;
+  // Only spacing: not a change (values saved before elements went on lines of their own, too).
+  if (c.when === "changed") return previous !== null && collapse(previous) !== collapse(value);
   return holds(c, value) && !(previous !== null && holds(c, previous));
 }
