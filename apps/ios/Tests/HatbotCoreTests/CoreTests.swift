@@ -665,6 +665,11 @@ final class LookingAfterThingsTests: XCTestCase {
 
     let task = #"{"id":1,"title":"t","goal":"g","successCriteria":"","origin":"watch","lane":"background","model":"m","status":"done","tainted":false,"injectionSuspected":false,"costUsd":0,"steps":0,"createdAt":"2026-10-15T08:00:00Z"}"#
     XCTAssertEqual(try JSONDecoder().decode(AgentTask.self, from: Data(task.utf8)).origin, .watch)
+    XCTAssertNil(try JSONDecoder().decode(AgentTask.self, from: Data(task.utf8)).reportPath)
+    let research = task.replacingOccurrences(
+      of: #""steps":0"#, with: #""steps":0,"research":true,"reportPath":"research/2026-10-17-nas.md""#)
+    XCTAssertEqual(
+      try JSONDecoder().decode(AgentTask.self, from: Data(research.utf8)).reportPath, "research/2026-10-17-nas.md")
   }
 }
 

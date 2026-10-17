@@ -22,6 +22,7 @@ import { NEGOTIATE_TOOL_NAMES } from "../negotiate/names";
 import type { PluginTool } from "../plugins/plugin";
 import { describeCall, type Plugins, runPluginTool } from "../plugins/registry";
 import { ScheduleError, type Schedules } from "../schedules";
+import { refreshing } from "../tasks/research-goal";
 import type { Tasks } from "../tasks/service";
 import { skillPath } from "../teach/skills";
 import type { Triggers } from "../triggers";
@@ -129,6 +130,24 @@ export const RunTaskInput = z.object({
     .optional()
     .describe(
       'Leave out for routine work. "medium" for writing or changing code; "high" when the owner asks for it or an earlier attempt failed',
+    ),
+});
+
+export const ResearchInput = z.object({
+  title: z.string().min(1).max(80).describe('Short title, e.g. "Quiet NAS for four drives"'),
+  question: z
+    .string()
+    .min(1)
+    .max(4000)
+    .describe(
+      "What to find out, with everything from the conversation that bears on it: what it's for, the budget, where the owner is, must-haves, what they already know or ruled out, and what the answer should cover",
+    ),
+  previous: z
+    .string()
+    .max(300)
+    .optional()
+    .describe(
+      "To refresh an earlier report: its path in memory. The task checks it again and says what changed",
     ),
 });
 
@@ -419,6 +438,33 @@ export const TOOLS = [
       });
       if (!task) return "The task couldn't start.";
       return `Started task #${task.id}. It's running in the background; the owner sees its progress and result under this reply. Don't wait for it.`;
+    },
+  }),
+  def({
+    name: "research",
+    description:
+      "Start a research task, for a question that needs many searches and pages: comparing products or options, prices across shops, a technical question whose sources disagree. Opus plans it and hands parts to helpers that search at once, the numbers are checked against their sources, and it ends in a report with numbered sources, saved in memory and attached. It takes a few minutes and costs about $1–3. Its short answer shows under your reply. It can't see this conversation, so put everything that bears on the question in it. For a fact or two, search yourself instead.",
+    schema: ResearchInput,
+    run: async (
+      { title, question, previous },
+      { tasks, memory, messageId, tainted, ownerSaid, bot, conversationId },
+    ) => {
+      if (!tasks) return "Tasks aren't available.";
+      if (previous && !(await memory.exists(previous)))
+        return `There's no report at ${previous}. Check the path, or leave previous out.`;
+      const task = tasks.createBackgroundTask({
+        title,
+        goal: refreshing(question, previous ?? null),
+        origin: "chat",
+        botId: bot?.id,
+        conversationId,
+        message: messageId,
+        taintedBy: chatTaint(tainted?.()),
+        request: ownerSaid?.(),
+        research: true,
+      });
+      if (!task) return "The research couldn't start.";
+      return `Started research task #${task.id}. It runs in the background for a few minutes; the owner sees its progress and answer under this reply. Don't wait for it.`;
     },
   }),
   def({
@@ -794,6 +840,9 @@ export async function inBatches<C, R>(
 export const CORE_TOOL_NAMES = [
   ...TOOLS.map((t) => t.name),
   "finish_task",
+  "investigate",
+  "finish_research",
+  "report_findings",
   "confirm_intent",
   "request_takeover",
   "record_conversation",

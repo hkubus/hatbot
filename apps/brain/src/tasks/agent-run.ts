@@ -29,6 +29,17 @@ import type { CallContext, PluginTool, Verdict } from "../plugins/plugin";
 import { describeCall, runPluginTool, untrustedDefinitions, verdictFor } from "../plugins/registry";
 import { BudgetError, estimateTokens, priceOf, usesReserve } from "../spend";
 import { Stop, UPDATES_MODELS } from "./desktop-run";
+import {
+  FinishResearch,
+  finishResearch,
+  investigate,
+  MAX_RESEARCH_STEPS,
+  RESEARCH_BETA,
+  RESEARCH_TOKENS,
+  RESEARCH_TOOLS,
+  ResearchSources,
+  researchPrompt,
+} from "./research";
 import { SEND_TO_CHAT_DESCRIPTION, SendToChat, sendToChat } from "./send-to-chat";
 import type { Tasks } from "./service";
 
@@ -182,13 +193,18 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     ]),
   );
   const others = d.bots.list().filter((b) => b.id !== bot.id);
+  // Research ends with finish_research instead (PLAN.md §17).
+  const { research } = task;
   const tools = [
-    ...CORE_TOOLS.filter((t) => others.length || t.name !== "ask_bot"),
+    ...CORE_TOOLS.filter(
+      (t) => (others.length || t.name !== "ask_bot") && !(research && t.name === "finish_task"),
+    ),
+    ...(research ? RESEARCH_TOOLS : []),
     ...[...pluginTools.values()].map(toolParam),
     ...WEB_TOOLS,
   ];
   const guidance = d.plugins.guidance(bot.plugins);
-  const prompt = promptFor(AGENT_PROMPT, bot, others);
+  const prompt = promptFor(research ? researchPrompt(bot) : AGENT_PROMPT, bot, others);
   const system = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
   const taint = (source: string) => {
     sources.add(source);
@@ -559,11 +575,15 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
     /** finish_task sends a summary whose charts don't draw back once, not every time. */
     let chartsChecked = false;
+    /** Research: the helpers' sources, and whether finish_research has been checked yet. */
+    const found = new ResearchSources();
+    let reportChecked = false;
+    const run = { tasks, task, signal, taint };
     /** Where the web tools' code runs: the same one each step, so paused code can carry on. */
     let container: string | undefined;
     for (let step = 0; ; step++) {
       if (signal.aborted) throw signal.reason;
-      const maxSteps = task.effort ? MAX_CODE_STEPS : MAX_STEPS;
+      const maxSteps = research ? MAX_RESEARCH_STEPS : task.effort ? MAX_CODE_STEPS : MAX_STEPS;
       if (step >= maxSteps)
         throw new Stop("failed", `Stopped after ${maxSteps} steps without finishing.`);
       try {
@@ -590,7 +610,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           model: task.model,
           // Code work writes whole files into tool calls.
           max_tokens: task.effort ? 32000 : 16000,
-          betas: BETAS,
+          betas: research ? [...BETAS, RESEARCH_BETA] : BETAS,
           // Tools and system end here, the same for each of this bot's tasks, so they share the entry; the
           // top-level breakpoint follows the conversation. Two of the four breakpoints allowed.
           system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
@@ -600,7 +620,13 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
             ? { type: "adaptive", display: "updates" }
             : { type: "adaptive" },
           // The chat's dial unless the task asked for more: the same kind of work, without a screen.
-          output_config: { effort: task.effort ?? d.settings.get().chatEffort },
+          output_config: {
+            effort: task.effort ?? d.settings.get().chatEffort,
+            // Research paces itself to this many tokens, its helpers' apart.
+            ...(research
+              ? { task_budget: { type: "tokens" as const, total: RESEARCH_TOKENS } }
+              : {}),
+          },
           // Old tool results are cleared on the server once the prompt passes 70k, below the 100k
           // where Haiku 5.5 bills the whole request at 5x.
           context_management: {
@@ -610,7 +636,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
                 trigger: { type: "input_tokens", value: 70_000 },
                 keep: { type: "tool_uses", value: 6 },
                 clear_at_least: { type: "input_tokens", value: 20_000 },
-                exclude_tools: ["finish_task"],
+                // A research task's findings are what it cites.
+                exclude_tools: ["finish_task", "finish_research", "investigate"],
               },
             ],
           },
@@ -695,6 +722,27 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
             p.success ? "Finished." : `Invalid input: ${z.prettifyError(p.error)}`,
             !p.success,
           );
+        }
+        if (call.name === "finish_research") {
+          const p = FinishResearch.safeParse(call.input);
+          if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+          const broken = chartsChecked ? "" : brokenCharts(`${p.data.answer}\n\n${p.data.report}`);
+          chartsChecked = true;
+          if (broken)
+            return result(
+              call,
+              `Not finished: ${broken} Call finish_research again with it fixed. Don't guess where a value belongs; if you can't tell, leave the chart out.`,
+              true,
+            );
+          const r = await finishResearch(run, found, p.data, reportChecked);
+          reportChecked = true;
+          if ("retry" in r) return result(call, r.retry, true);
+          finished = { outcome: p.data.outcome, summary: r.summary, notify: p.data.notify };
+          return result(call, "Finished.");
+        }
+        if (call.name === "investigate") {
+          const r = await investigate(run, found, call.input);
+          return result(call, r.content, r.isError);
         }
         if (call.name === "run_desktop_task") return desktopTask(call);
         if (call.name === "ask_bot") return askBot(call);

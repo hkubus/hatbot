@@ -284,6 +284,20 @@ function Details({ task }: { task: Task }) {
       )}
       <dt>Cost</dt>
       <dd className="tnum">{money(task.costUsd)}</dd>
+      {task.reportPath && (
+        <>
+          <dt>Report</dt>
+          <dd>
+            <button
+              type="button"
+              className="text-link"
+              onClick={() => navigate(`/memory?path=${encodeURIComponent(task.reportPath ?? "")}`)}
+            >
+              {task.reportPath}
+            </button>
+          </dd>
+        </>
+      )}
       {task.payload && (
         <>
           <dt>Event</dt>

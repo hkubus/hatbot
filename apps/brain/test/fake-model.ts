@@ -44,6 +44,8 @@ export const browser = (name: string, input: unknown = {}): Block =>
 export class FakeModel implements ModelClient {
   requests: Omit<StreamParams, "stream">[] = [];
   creates: CreateParams[] = [];
+  /** Picks a response for a request before the script does: for requests made at once. */
+  route: ((p: Omit<StreamParams, "stream">) => Scripted | undefined) | null = null;
   /** Replies to create() calls other than summaries, e.g. injection screening. */
   onCreate: ((p: CreateParams) => string | undefined) | null = null;
   constructor(
@@ -53,7 +55,7 @@ export class FakeModel implements ModelClient {
 
   async stream(params: Omit<StreamParams, "stream">, h: StreamHandlers) {
     this.requests.push(structuredClone(params));
-    const next = this.script.shift();
+    const next = this.route?.(params) ?? this.script.shift();
     if (!next) throw new Error("FakeModel: no scripted response left");
     if (h.signal?.aborted) throw h.signal.reason;
     if (next.failedWith !== undefined) {

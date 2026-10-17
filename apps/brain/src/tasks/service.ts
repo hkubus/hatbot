@@ -29,6 +29,7 @@ import type { Skills } from "../teach/skills";
 import { runAgentTask } from "./agent-run";
 import { runDesktopTask } from "./desktop-run";
 import { Pool, ScreenLane } from "./lane";
+import { RESEARCH_MODEL, refreshing } from "./research-goal";
 
 export type TasksDeps = {
   db: Db;
@@ -396,6 +397,8 @@ export class Tasks {
     requestedBy?: string;
     /** The task that handed it over, which waits for it; it shows nowhere in the chat. */
     parent?: Task;
+    /** A research task (PLAN.md §17): Opus at high effort with helpers, ending in a report. */
+    research?: boolean;
   }): Task | null {
     if (input.runKey && this.activeFor(input.runKey)) return null;
     const taintedBy =
@@ -417,8 +420,9 @@ export class Tasks {
       origin: input.origin,
       lane: "background",
       // Fixed for the task, like a desktop task's.
-      model: this.d.settings.get().taskModel,
-      effort: input.effort ?? null,
+      model: input.research ? RESEARCH_MODEL : this.d.settings.get().taskModel,
+      effort: input.research ? "high" : (input.effort ?? null),
+      research: input.research ? 1 : 0,
       source: input.source ?? null,
       schedule_id: input.scheduleId ?? null,
       trigger_id: input.triggerId ?? null,
@@ -534,7 +538,8 @@ export class Tasks {
       .get(id);
     return this.createBackgroundTask({
       title: t.title,
-      goal: goal?.trim() || t.goal,
+      // Research again says what changed since its last report.
+      goal: t.research ? refreshing(goal?.trim() || t.goal, t.reportPath) : goal?.trim() || t.goal,
       origin: t.origin,
       source: t.source ?? undefined,
       scheduleId: t.scheduleId ?? undefined,
@@ -549,7 +554,14 @@ export class Tasks {
       request: r?.request ?? undefined,
       botId: t.botId,
       conversationId: r?.conversation_id ?? undefined,
+      research: t.research,
     });
+  }
+
+  /** Where a research task saved its report. */
+  setReportPath(id: number, path: string) {
+    this.d.db.query("UPDATE tasks SET report_path = ? WHERE id = ?").run(path, id);
+    this.emit(id);
   }
 
   /** What you said in the chat when you started it, or null. */

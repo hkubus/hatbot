@@ -210,6 +210,8 @@ struct AgentTask: Codable, Identifiable, Equatable, Sendable {
   var botId: String?
   /// The bot that handed it over with ask_bot.
   var requestedBy: String?
+  /// A research task's report, in memory; missing on brains from before research.
+  var reportPath: String?
 
   var isActive: Bool { finishedAt == nil }
 }

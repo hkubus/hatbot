@@ -253,6 +253,9 @@ private struct TaskDetails: View {
       LabeledContent("Tainted by") { Text(taintedBy).multilineTextAlignment(.trailing) }
     }
     LabeledContent("Cost", value: Format.money(task.costUsd))
+    if let report = task.reportPath {
+      NavigationLink(value: Route.memoryFile(report)) { LabeledContent("Report", value: report) }
+    }
     if let payload = task.payload {
       VStack(alignment: .leading, spacing: 6) {
         Text("Event")

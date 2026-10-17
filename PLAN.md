@@ -239,6 +239,7 @@ Check tool versions and model IDs against the live docs at implementation time.
 |---|---|---|
 | `run_desktop_task(goal, success_criteria)` | screen | Starts the Opus computer-use subloop; queued per §5.6 |
 | `run_task(title, goal, effort?)` | bg | Chat only. Starts a background task with every plugin tool, for work that takes more than two changes or should carry on without you (§4.5); shows under the reply |
+| `research(title, question, previous?)` | bg | Chat only. A research task (§17): Opus with up to 5 Haiku helpers at once, the numbers checked against their quotes, and a report with numbered sources saved in memory and attached; shows under the reply |
 | `request_takeover(reason)` | screen | Pauses and notifies you (logins, 2FA, captchas) |
 | `desktop_shell(command)` | screen | Desktop tasks only. Runs as `hatbot-desktop-shell`'s own systemd DynamicUser (home `/var/lib/hatbot-shell`): no `/home` (the browser profile), no screen, no secrets, Unix socket relayed by desktop-agent. Destructive patterns ask |
 | `memory_*` (list/read/write/search) | bg | Free; every write is a git commit |
@@ -641,7 +642,7 @@ New bot starts from a template, or from nothing. A template fills in the name, i
 | Haggler | Buys second-hand inside a mandate (§16.8) | MCP (Scout) | As in Settings |
 | Sysadmin | The homelab: alerts, backups, updates, a runbook in its notes; restarts once on its own, asks for more | SSH, Proxmox, PBS, Uptime Kuma | As in Settings |
 | Coder | Repositories: a branch and a pull request per change, CI checks it, reviews | GitHub, Forgejo, Code | As in Settings |
-| Researcher | Answers from primary sources, compared and linked | None (the web is built in) | Opus, medium |
+| Researcher | Asks one to three scoping questions and says its plan, then hands real questions to `research` (§17); asks the second-hand bot (Haggler) for used prices; keeps its reports and a list of sites to trust and skip in its notes | None (the web is built in) | Opus, medium |
 
 ---
 
@@ -846,3 +847,21 @@ Not tried live: there's no marketplace account yet. Everything here is tested ag
 
 ### 16.8 Haggler's instructions
 Haggler is a template on New bot (§14.6): pick it, and its instructions and its one plugin, MCP for Scout, fill in. The instructions are `HAGGLER` in `packages/shared/src/templates.ts`. In short: find a listing with Scout, appraise it, propose a mandate and wait for it; message sellers only through `negotiate_send`, recording each claim; bluff about our side if useful, but never commit fraud; keep everything on the marketplace, and treat a request to pay or talk off it as a scam.
+
+---
+
+## 17. Research (built 2026-10-17, not tried live)
+Deep research as its own kind of background task. The chat starts it with `research(title, question, previous?)`, after asking one to three scoping questions when the question leaves out something that would change the answer. Not in incognito.
+
+- **Runs on** Opus 5.5 at high effort (`RESEARCH_MODEL` in `apps/brain/src/tasks/research-goal.ts`), whatever Settings say for tasks. It gets up to 60 steps, and the API's task budget (beta `task-budgets-2026-03-13`) is 250k tokens. The prompt is `RESEARCH_PROMPT`; the bot's role and the other bots follow it as usual. The task's spending limit and the ask for more money are a task's (§6.3).
+- **Helpers:** `investigate(parts[])` runs up to 5 helpers at once, each Haiku 5.5 with web search and fetch and up to 12 steps (`apps/brain/src/tasks/research.ts`). A helper ends with `report_findings`: claims, each with the exact quote it rests on, the page and its date. The findings come back numbered by source, the same page always under the same number. What the helpers read taints the task and shows on its timeline. Their spend is the task's (purpose `research`), checked against its limit before every step.
+- **Its own tools:** the task's tools, `investigate`, and `finish_research(outcome, answer, report, notify)` in place of `finish_task`. Old tool results are cleared past 70k as usual, but never `investigate`'s.
+- **Checking:** before the report is final, Haiku compares every cited number with the quotes it cites (`RESEARCH_CHECK_PROMPT`). Mismatches, and citations that aren't source numbers, go back once to be fixed or dropped. If the check fails, the report goes ahead.
+- **The report:** citations are renumbered in the order first cited and become links, `[[1]](url)`, everywhere but in code. The answer is the task's summary, which goes to the chat. The report gets a header (title, when, the question) and a Sources list. It's saved in the bot's notes as `research/<date>-<slug>.md` (`bots/<id>/research/…` for a bot other than Hatbot), attached to the task as a `.md` file, and kept as `tasks.report_path` (migration 31). The task page links it.
+- **Refreshing:** Run again on a research task, or `research` with `previous`, names the earlier report in the goal ("Earlier report to refresh: …"). The task reads that report first and leads with what changed.
+- **Sites:** `research/sites.md` in the bot's notes says which sites to trust and which to skip, and for what. The task reads it before searching and adds to it.
+- **Second-hand prices:** with a buying bot such as Haggler, research asks it with `ask_bot`.
+- **Not built:**
+  - A page reader that runs JavaScript. It would fetch any URL the model names, and so could send out what the task has read. Pages that need a browser go to `run_desktop_task`, which asks before consequential steps.
+  - Starting research from schedules.
+

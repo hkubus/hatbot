@@ -40,9 +40,9 @@ Acceptance tests for parts that have never run live. The owner runs them; write 
 
 ## Where things stand
 
-- **Built:** M0–M5, the iOS app, more than one bot (§14), looking after things (§15) and negotiation's N1 and N2 (§16). M4 onwards is built and committed but not yet deployed or tried live.
+- **Built:** M0–M5, the iOS app, more than one bot (§14), looking after things (§15), negotiation's N1 and N2 (§16), and research (§17). M4 onwards is built and committed but not yet deployed or tried live.
 - **Not yet tried live** (the owner does these): the M2 lock-screen approval, the M3 morning schedule, Forgejo webhook and Kuma alert, all of M4 and M5, the first iOS install from SideStore, and everything from the gaps pass. The renderer was tried only with Playwright's Chromium here, not Debian's on the desktop.
-- **Checks:** 453 tests (brain, desktop-agent and web) and 54 iOS core tests pass, Biome and `tsc -b` are clean, and `bun run licenses` passes.
+- **Checks:** 456 tests (brain, desktop-agent and web) and 54 iOS core tests pass, Biome and `tsc -b` are clean, and `bun run licenses` passes.
 
 ## How to work here
 
@@ -162,6 +162,11 @@ PLAN §16: Haggler haggles with a seller inside a mandate you approve. §16.7 sa
   5. **Time zone:** quiet hours (22:00–08:00) go by the brain's clock. Check that the brain's container is on your time zone.
   6. **The live run:** item 7 above.
 - **Fixed on the way:** a restart used to cancel every pending approval, so a redeploy would have abandoned each negotiation waiting for its mandate. Mandates now outlast a restart.
+
+## Research (built 2026-10-17, not tried live)
+PLAN §17: `research` in the chat starts a research task. Opus 5.5 at high effort plans it and hands parts to up to 5 Haiku 5.5 helpers at once (`investigate`). Each helper reports claims with the quotes they rest on. Haiku checks the cited numbers against those quotes before the report is final. The answer goes to the chat with numbered source links. The report is saved in the bot's notes under `research/` and attached to the task, and the task page links it. Run again, or `previous`, refreshes a report and says what changed. The Researcher template asks scoping questions first, uses `research`, asks Haggler for second-hand prices and keeps `research/sites.md`. Tested with a stand-in model only.
+- **Not built:** a page reader that runs JavaScript. It could fetch any URL the model names, and so send out what the task has read; pages that need a browser go to `run_desktop_task`. Also research from schedules.
+- **To try:** ask the Researcher (or Hatbot) something worth comparing, e.g. a quiet four-bay NAS under 3,000 zł. It passes when it asks what it needs to know, the task's timeline shows the helpers' searches, the answer arrives with numbered links, and the report opens from the task page. Note what it cost: about $1–3 is expected. If a request is turned away, `HATBOT_WEB_TOOLS=basic` in the brain's `/etc/hatbot/secrets.env`, and a restart, puts the basic web tools back while you look.
 
 ## 4. Later (not v1, don't start without the owner)
 - **After v1** (PLAN §11): email via Proton Bridge.
