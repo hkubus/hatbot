@@ -500,6 +500,39 @@ test("a lock-screen approval for a message doesn't buy, and the held step is on 
   expect(t.agent.actions.filter((a) => a.name === "left_click")).toHaveLength(1);
 });
 
+test("a held step the model moved on from isn't what its next approval is for", async () => {
+  const url = "https://www.olx.pl/d/oferta/rower-CID1-ID77.html";
+  const work = new FakeModel([
+    { content: [computer("left_click", { coordinate: [300, 520] })] },
+    { content: [computer("type", { text: "Czy aktualne?" })] },
+    {
+      content: [toolUse("confirm_intent", { kind: "send", summary: "Send the seller a question" })],
+    },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.agent.page = { url, title: "Rower", text: "" };
+  const button: AgentElement = {
+    tag: "button",
+    role: null,
+    type: "button",
+    label: "Usuń ogłoszenie",
+    inForm: false,
+    url,
+    editable: false,
+    fields: [],
+  };
+  // The point is on the button; typing goes to the message box.
+  const box: AgentElement = { ...button, tag: "textarea", label: "", editable: true };
+  t.agent.inspect = async (x?: number) => (x === undefined ? box : button);
+  startTask(t, "Ask about the bike");
+  const a = await pending(t);
+  expect(t.agent.actions.map((x) => x.name)).toEqual(["type"]);
+  expect(a.reason ?? "").not.toContain("Hatbot held");
+  t.approvals.decide(a.id, "deny", "web");
+  await t.tasks.idle();
+});
+
 test("a step that buys or pays asks as a purchase or a payment, whatever the model called it", async () => {
   expect(approvalKind("send", { summary: "Send the reply to Anna" }, { url: null, text: "" })).toBe(
     "send",

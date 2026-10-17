@@ -719,6 +719,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       }
       if (hold) armed = null;
     }
+    // The model went on to something else: an approval it asks for next isn't for the held step.
+    if (check || typesText(call.name, input) || call.name === "navigate") lastHeld = null;
     if (gate && typesText(call.name, input)) gateState.typed = true;
     const step = tasks.addStep(id, {
       kind: call.name === "screenshot" ? "screenshot" : "action",
