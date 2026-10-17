@@ -649,14 +649,15 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           .map((e): Hold | null => {
             if (e === undefined) return { unseen: true };
             const h = consequential(check.press, e);
-            if (h || gate) return h;
-            // Outside a negotiation, anything that could message a seller asks first.
+            if (gate || (h && "label" in h)) return h;
+            // Outside a negotiation, anything that could message a seller asks first, and says why
+            // when no label does (an icon-only Send is also a button with no label).
             const box =
               e?.editable && e.fields && typing.trim()
                 ? { ...e, fields: [...e.fields, typing] }
                 : e;
             const send = marketplaceSend(kind, box, lastUrl);
-            return send ? { label: send } : null;
+            return send ? { label: send } : h;
           })
           .find((h) => h !== null) ?? null;
       if (gate) {

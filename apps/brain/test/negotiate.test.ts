@@ -1045,7 +1045,10 @@ test("text in the box isn't taken for a sent message, and another conversation's
   ]);
   const u = await testApp(new FakeModel(), typed);
   messageBox(u);
-  u.agent.inspect = async () => null;
+  // Typing goes into the focused box; once it holds the text, record_conversation can't see into it.
+  const seen: (x?: number) => Promise<AgentElement | null> = u.agent.inspect.bind(u.agent);
+  u.agent.inspect = async (x?: number) =>
+    u.agent.actions.some((a) => a.name === "type") ? null : seen(x);
   const m = openNegotiation(u);
   await u.negotiations.send(m, { text: TEXT, offer: 1060, agree: false, stated: null }, call());
   await u.tasks.idle();

@@ -197,12 +197,15 @@ test("outside a negotiation, a click or Enter that could message a seller asks f
   expect(result(3)).toContain("call confirm_intent first");
   expect(result(4)).toContain("with text in a box on olx.pl");
   expect(t.agent.actions.map((a) => a.name)).toEqual(["left_click", "type"]);
-  // A link isn't a send; the approved click goes once; with the box empty, nothing asks.
+  // A link isn't a send; the approved click goes once. With the box empty the marketplace check doesn't
+  // ask, but a button with no label still does.
   expect(t.agent.browserCalls.map((c) => (c.input.target as { ref: string }).ref)).toEqual([
     "ref_3",
     "ref_2",
-    "ref_2",
   ]);
+  expect(result(8)).toContain("a button with no label");
+  expect(result(8)).not.toContain("with text in a box");
+  expect(marketplaceSend("click", send(), null)).toBeNull();
   expect(t.approvals.list(false)).toHaveLength(1);
   // Off the marketplaces, the ordinary check decides.
   expect(marketplaceSend("enter", { ...box(), url: "https://example.com/" }, null)).toBeNull();

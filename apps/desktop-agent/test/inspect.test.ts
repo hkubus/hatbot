@@ -164,9 +164,14 @@ test.skipIf(!chromium)(
     expect(await settled({ x: 60, y: 270 }, pay)).toMatchObject({ tag: "button", label: "Zapłać" });
 
     // Typing in the other site's frame: the focus is followed too, and counts as secret for teach mode.
+    // Whether the page has the keyboard (not the address bar) is the tab's, and still said.
     await browser.call("left_click", { target: { type: "coordinate", x: 200, y: 25 } });
     expect(await browser.inspect({})).toMatchObject({ tag: "input", editable: true });
-    expect(await inspectScreen(browser)).toMatchObject({ tag: "input", secret: true });
+    expect(await inspectScreen(browser)).toMatchObject({
+      tag: "input",
+      secret: true,
+      pageFocus: expect.any(Boolean),
+    });
   },
 );
 
