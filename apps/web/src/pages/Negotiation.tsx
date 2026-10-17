@@ -2,6 +2,7 @@
 import { type NegotiationMessage, OPEN_NEGOTIATION_STATUSES } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "../api";
+import { ask } from "../confirm";
 import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
 import { money, NegotiationChip, negotiationText } from "../negotiations";
@@ -59,7 +60,10 @@ export function NegotiationPage({ id }: { id: number }) {
 
   // Abandons it: nothing more goes to the seller, and its tasks stop.
   const stop = async () => {
-    if (!confirm("Stop this negotiation? Nothing more goes to the seller.")) return;
+    if (
+      !(await ask({ text: "Stop this negotiation? Nothing more goes to the seller.", ok: "Stop" }))
+    )
+      return;
     setBusy(true);
     setError("");
     try {

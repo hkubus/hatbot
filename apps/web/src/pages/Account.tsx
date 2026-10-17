@@ -2,6 +2,7 @@
 import type { Session, SetupStartResponse, SignedOutOthers } from "@hatbot/shared";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "../api";
+import { ask } from "../confirm";
 import { deviceName } from "../device";
 import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
@@ -242,7 +243,13 @@ function Sessions({ toast, version }: { toast: Toast; version: number }) {
   };
 
   const endOthers = async () => {
-    if (!confirm("Sign out every other browser and app? Apps will need to sign in again.")) return;
+    if (
+      !(await ask({
+        text: "Sign out every other browser and app? Apps will need to sign in again.",
+        ok: "Sign out",
+      }))
+    )
+      return;
     try {
       const r = await api<SignedOutOthers>("/auth/sign-out-others", { body: {} });
       if (r.ended) toast("Signed out everywhere else");
