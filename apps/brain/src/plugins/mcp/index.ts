@@ -5,7 +5,11 @@
 import { createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import {
+  StreamableHTTPClientTransport,
+  StreamableHTTPError,
+} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { CallToolResultSchema, ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import {
   allow,
@@ -93,6 +97,23 @@ export function toolName(server: string, name: string): string {
 function withoutMeta(schema: Record<string, unknown>): Record<string, unknown> {
   const { $schema: _, $id: __, ...rest } = schema;
   return rest;
+}
+
+/** What fetch says when it couldn't open a connection at all. */
+const NO_CONNECTION = new Set(["ConnectionRefused", "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"]);
+
+/**
+ * Whether a failed call can't have reached the server, so sending it again can't run it twice: the
+ * connection was already gone, the server couldn't be reached, or it had forgotten the session (it
+ * refuses those calls before running anything).
+ */
+export function unsent(err: unknown): boolean {
+  if (err instanceof StreamableHTTPError) return err.code === 404;
+  if (err instanceof McpError || !(err instanceof Error)) return false;
+  if (err.message === "Not connected") return true;
+  const code =
+    (err as { code?: unknown }).code ?? (err.cause as { code?: unknown } | undefined)?.code;
+  return typeof code === "string" && NO_CONNECTION.has(code);
 }
 
 /** An MCP tool result as text for the model. */
@@ -192,27 +213,49 @@ export const mcpPlugin = definePlugin({
                       : ask(`MCP tools ask first unless the owner allows them in Settings.`),
                 }),
             run: async (input, { signal }) => {
+              // Through request, not callTool: callTool also checks the result against the tool's
+              // output schema, and fails after the server has done the work.
               const call = async () => {
                 if (!c.client)
                   throw new PluginError(`${c.server.name} isn't connected: ${c.error}`);
-                return c.client.callTool({ name: t.name, arguments: input }, undefined, {
-                  signal,
-                  timeout: CALL_TIMEOUT_MS,
-                });
+                return c.client.request(
+                  { method: "tools/call", params: { name: t.name, arguments: input } },
+                  CallToolResultSchema,
+                  { signal, timeout: CALL_TIMEOUT_MS },
+                );
               };
+              const failed = (err: unknown) =>
+                new PluginError(
+                  `${c.server.name} failed: ${err instanceof Error ? err.message.slice(0, 300) : "error"}`,
+                );
               let r: Awaited<ReturnType<typeof call>>;
               try {
                 r = await call();
               } catch (err) {
                 if (signal.aborted || err instanceof PluginError) throw err;
-                // The server may have restarted or dropped the session: reconnect once.
+                const answered =
+                  (err instanceof McpError && err.code !== ErrorCode.ConnectionClosed) ||
+                  err instanceof StreamableHTTPError;
+                // A call that may have reached the server is sent again only if it only reads (the
+                // owner said so): a write could run twice.
+                if (!unsent(err) && (mode !== "chat" || answered)) {
+                  if (err instanceof McpError && err.code === ErrorCode.RequestTimeout)
+                    throw new PluginError(
+                      `${c.server.name} didn't answer in ${CALL_TIMEOUT_MS / 1000} s. It may have done it anyway: check before trying again.`,
+                    );
+                  if (!answered)
+                    throw new PluginError(
+                      `The connection to ${c.server.name} broke during the call, so it may or may not have run: check before trying again.`,
+                    );
+                  throw failed(err);
+                }
+                // The server restarted, dropped the session or the connection: reconnect once.
                 await reconnect(c);
                 try {
                   r = await call();
                 } catch (again) {
-                  throw new PluginError(
-                    `${c.server.name} failed: ${again instanceof Error ? again.message.slice(0, 300) : "error"}`,
-                  );
+                  if (signal.aborted) throw again;
+                  throw again instanceof PluginError ? again : failed(again);
                 }
               }
               const text = resultText(r as { content?: unknown; structuredContent?: unknown });

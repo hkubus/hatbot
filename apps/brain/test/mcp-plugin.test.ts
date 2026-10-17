@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Task } from "@hatbot/shared";
+import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { mcpPlugin, toolName } from "../src/plugins/mcp";
+import { mcpPlugin, toolName, unsent } from "../src/plugins/mcp";
 import { type CallContext, definePlugin, PluginError, ready } from "../src/plugins/plugin";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { FakeModel, toolUse } from "./fake-model";
@@ -85,6 +87,53 @@ test("per-tool modes: allowed in chat, allowed in tasks, off; trusted servers ar
   const status = (await t.plugins.action("mcp", "status", {})) as { tools: { mode: string }[] }[];
   expect(status[0]?.tools.map((x) => x.mode)).toEqual(["chat", "off", "allow"]);
   await t.plugins.stopAll();
+});
+
+test("a write whose server dies during the call isn't sent again; the next call reconnects", async () => {
+  const count = join(mkdtempSync(join(tmpdir(), "hatbot-mcp-")), "count");
+  const { t } = await started({ ...fixture, env: { ...fixture.env, MCP_COUNT: count } });
+  const tool = (name: string) => {
+    const found = t.plugins.tools().find((x) => x.name === name);
+    if (!found) throw new Error(`no ${name}`);
+    return found;
+  };
+  await expect(tool("mcp_fix_once").run({}, call)).rejects.toThrow(
+    "The connection to fix broke during the call, so it may or may not have run: check before trying again.",
+  );
+  expect(readFileSync(count, "utf8")).toBe("ran\n");
+  // The connection is gone, so this call never left: it reconnects and runs once.
+  expect(await tool("mcp_fix_echo").run({ text: "back" }, call)).toBe("echo: back");
+  await t.plugins.stopAll();
+});
+
+test("a result is used even when it doesn't match the output schema the tool lists", async () => {
+  const list = [
+    {
+      name: "echo",
+      description: "Echo text back",
+      inputSchema: { type: "object", properties: { text: { type: "string" } } },
+      outputSchema: { type: "object", properties: { n: { type: "number" } }, required: ["n"] },
+    },
+  ];
+  const { t } = await started({
+    ...fixture,
+    env: { ...fixture.env, MCP_LIST: JSON.stringify(list) },
+  });
+  expect(await t.plugins.tools()[0]?.run({ text: "hi" }, call)).toBe("echo: hi");
+  await t.plugins.stopAll();
+});
+
+test("only a call that can't have reached the server is sent again", () => {
+  const refused = Object.assign(new TypeError("Unable to connect"), { code: "ConnectionRefused" });
+  const reset = Object.assign(new TypeError("The socket closed"), { code: "ECONNRESET" });
+  expect(unsent(new Error("Not connected"))).toBe(true);
+  expect(unsent(refused)).toBe(true);
+  expect(unsent(new StreamableHTTPError(404, "Session not found"))).toBe(true);
+  expect(unsent(new StreamableHTTPError(500, "Internal error"))).toBe(false);
+  expect(unsent(new McpError(ErrorCode.RequestTimeout, "Request timed out"))).toBe(false);
+  expect(unsent(new McpError(ErrorCode.ConnectionClosed, "Connection closed"))).toBe(false);
+  expect(unsent(new McpError(ErrorCode.InternalError, "It broke"))).toBe(false);
+  expect(unsent(reset)).toBe(false);
 });
 
 test("a server that won't start is reported, and a missing secret says which", async () => {

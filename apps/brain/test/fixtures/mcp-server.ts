@@ -1,8 +1,9 @@
 // A small MCP server over stdio for the MCP plugin's tests.
 
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 // A server that isn't up yet: it won't start until this file exists.
@@ -25,4 +26,17 @@ server.registerTool("broken", { description: "Always fails" }, async () => ({
   isError: true,
   content: [{ type: "text", text: "disk on fire" }],
 }));
+// A write that's done, then the server dies before it answers.
+const count = process.env.MCP_COUNT;
+if (count)
+  server.registerTool("once", { description: "Counts, then crashes" }, async () => {
+    appendFileSync(count, "ran\n");
+    process.exit(1);
+  });
+// The listing as given, whatever the tools really are: for definitions the API wouldn't take.
+const list = process.env.MCP_LIST;
+if (list)
+  server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: JSON.parse(list),
+  }));
 await server.connect(new StdioServerTransport());
