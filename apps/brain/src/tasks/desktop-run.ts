@@ -860,6 +860,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       const res = await d.model.stream(request(messages), {
         onText: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
         onThinking: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
+        onFailedUsage: (m, usage) =>
+          d.spend.recordResponse({ model: m, purpose: "task", usage, taskId: id }),
         signal,
       });
       d.spend.recordResponse({

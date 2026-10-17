@@ -647,6 +647,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         {
           onText: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
           onThinking: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
+          onFailedUsage: (model, usage) =>
+            d.spend.recordResponse({ model, purpose: "task", usage, taskId: id }),
           signal,
         },
       );

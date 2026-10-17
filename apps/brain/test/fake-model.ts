@@ -11,6 +11,8 @@ export type Scripted = {
   usage?: Partial<Anthropic.Beta.BetaUsage>;
   /** Streamed first, then dropped: the stream failed there and was tried again. */
   failedWith?: string;
+  /** What that failed attempt had used. */
+  failedUsage?: Partial<Anthropic.Beta.BetaUsage>;
   /** The code execution container the response ran in. */
   container?: string;
 };
@@ -60,6 +62,7 @@ export class FakeModel implements ModelClient {
     if (h.signal?.aborted) throw h.signal.reason;
     if (next.failedWith !== undefined) {
       h.onText?.(next.failedWith);
+      if (next.failedUsage) h.onFailedUsage?.(params.model, usage(next.failedUsage));
       h.onRetry?.();
     }
     if (next.wait) await next.wait;

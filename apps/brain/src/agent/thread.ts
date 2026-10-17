@@ -1644,6 +1644,15 @@ export class Thread {
             answer = "";
             restore();
           },
+          onFailedUsage: (m, usage) => {
+            used.costUsd += spend.recordResponse({
+              model: m,
+              purpose: "expert",
+              usage,
+              episodeId: episode.id,
+              botId: bot.id,
+            });
+          },
           signal: abort.signal,
         },
       );
@@ -1736,6 +1745,15 @@ export class Thread {
               else if (read && "read" in read) progress(`Reading ${read.read || "a web page"}`);
             },
             onRetry: checkpoint(),
+            onFailedUsage: (m, usage) => {
+              used.costUsd += spend.recordResponse({
+                model: m,
+                purpose: "thread",
+                usage,
+                episodeId: episode.id,
+                botId: bot.id,
+              });
+            },
             signal: abort.signal,
           },
         );

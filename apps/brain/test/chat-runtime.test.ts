@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
 import Anthropic from "@anthropic-ai/sdk";
-import { retryable, withRetries } from "../src/agent/model";
+import {
+  AnthropicModelClient,
+  retryAfterMs,
+  retryable,
+  retryDelays,
+  withRetries,
+} from "../src/agent/model";
 import type { BudgetError } from "../src/spend";
 import { Tasks } from "../src/tasks/service";
 import { FakeModel, text, toolUse } from "./fake-model";
@@ -162,6 +168,109 @@ test("a stream that fails partway is tried again; one the owner stopped isn't", 
   stopped.abort();
   await expect(withRetries(always, { signal: stopped.signal }, [0, 0])).rejects.toBe(overloaded);
   expect(tries).toBe(1);
+});
+
+test("a retry waits as long as retry-after asks, and one that asks too long isn't made", async () => {
+  const limited = (headers: Record<string, string>) =>
+    new Anthropic.APIError(
+      429,
+      { type: "error", error: { type: "rate_limit_error", message: "slow down" } },
+      undefined,
+      new Headers(headers),
+      "rate_limit_error",
+    );
+  expect(retryAfterMs(limited({ "retry-after": "2" }))).toBe(2000);
+  expect(retryAfterMs(limited({ "retry-after-ms": "150" }))).toBe(150);
+  expect(
+    retryAfterMs(limited({ "retry-after": "Fri, 09 Oct 2026 12:00:30 GMT" }), 0),
+  ).toBeGreaterThan(0);
+  expect(retryAfterMs(limited({}))).toBeNull();
+
+  let tries = 0;
+  const started = Date.now();
+  const twice = () =>
+    ++tries < 2 ? Promise.reject(limited({ "retry-after-ms": "60" })) : Promise.resolve("ok");
+  expect(await withRetries(twice, {}, [0, 0])).toBe("ok");
+  expect(Date.now() - started).toBeGreaterThanOrEqual(55);
+
+  tries = 0;
+  const later = () => {
+    tries++;
+    return Promise.reject(limited({ "retry-after": "3600" }));
+  };
+  await expect(withRetries(later, {}, [0, 0])).rejects.toBeInstanceOf(Anthropic.APIError);
+  expect(tries).toBe(1);
+});
+
+test("a stream is tried at most three times in all, and a failed try's usage is reported", async () => {
+  const overloaded = new Anthropic.APIError(
+    undefined,
+    { type: "error", error: { type: "overloaded_error", message: "Overloaded" } },
+    undefined,
+    undefined,
+    "overloaded_error",
+  );
+  const options: unknown[] = [];
+  const client = new AnthropicModelClient("sk-test");
+  (client as unknown as { client: unknown }).client = {
+    beta: {
+      messages: {
+        stream: (_params: unknown, opts: unknown) => {
+          options.push(opts);
+          return {
+            async *[Symbol.asyncIterator]() {
+              yield {
+                type: "message_start",
+                message: {
+                  model: "claude-opus-5-5",
+                  usage: { input_tokens: 500, output_tokens: 1 },
+                },
+              };
+              yield {
+                type: "message_delta",
+                delta: {},
+                usage: { input_tokens: null, output_tokens: 40 },
+              };
+              throw overloaded;
+            },
+            finalMessage: async () => ({}),
+          };
+        },
+      },
+    },
+  };
+  const failed: { model: string; output: number }[] = [];
+  const saved = retryDelays.ms;
+  retryDelays.ms = [0, 0];
+  try {
+    await expect(
+      client.stream(
+        { model: "claude-opus-5-5", max_tokens: 10, messages: [] },
+        {
+          onFailedUsage: (model, usage) => failed.push({ model, output: usage.output_tokens }),
+        },
+      ),
+    ).rejects.toBe(overloaded);
+  } finally {
+    retryDelays.ms = saved;
+  }
+  expect(options).toHaveLength(3);
+  expect(options[0]).toMatchObject({ maxRetries: 0 });
+  expect(failed).toEqual(Array(3).fill({ model: "claude-opus-5-5", output: 40 }));
+});
+
+test("a reply whose stream failed partway bills that try too", async () => {
+  const model = new FakeModel([
+    {
+      content: [text("The whole answer.")],
+      failedWith: "The who",
+      failedUsage: { input_tokens: 1000, output_tokens: 0 },
+    },
+  ]);
+  const t = await testApp(model);
+  await t.thread.post("hi").done;
+  const rows = t.db.query("SELECT input_tokens FROM spend_ledger WHERE purpose = 'thread'").all();
+  expect(rows).toHaveLength(2);
 });
 
 test("a reply whose stream is tried again drops what it had streamed", async () => {
