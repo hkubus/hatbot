@@ -47,6 +47,11 @@ exit 1
 `,
   );
   chmodSync(join(dir, "bin", "sudo"), 0o755);
+  // The checks' commands answer here, so a test never waits on this machine's own (df can hang).
+  for (const name of ["uptime", "df", "free"]) {
+    writeFileSync(join(dir, "bin", name), `#!/bin/sh\necho "${name} here"\n`);
+    chmodSync(join(dir, "bin", name), 0o755);
+  }
   writeFileSync(
     join(dir, "ssh-keygen"),
     `#!/bin/sh
@@ -146,7 +151,7 @@ test("checks run fixed commands with the pinned-key options; the chat gets them"
       .map((x) => x.name),
   ).toEqual(["ssh_check", "ssh_read_file"]);
   const out = await sshTool("ssh_check").run({ host: "nas", what: "overview" }, call);
-  expect(out.startsWith("Exit code ")).toBe(true);
+  expect(out).toStartWith("Exit code 0\nuptime here\n\ndf here\n\nfree here");
   const args = readFileSync(join(dir, "ssh.log"), "utf8").trim().split("\n").at(-1) ?? "";
   expect(args).toContain("StrictHostKeyChecking=accept-new");
   expect(args).toContain(`UserKnownHostsFile=${join(dir, "known_hosts")}`);
