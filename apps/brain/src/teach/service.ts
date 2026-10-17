@@ -202,7 +202,7 @@ export class Teach {
       screen: async () => {
         const [bytes, page] = await Promise.all([
           desktop.agent.screenshot(),
-          desktop.agent.context().catch(() => null),
+          desktop.agent.context(false, true).catch(() => null),
         ]);
         return page?.secretShown ? null : bytes;
       },

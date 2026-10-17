@@ -27,30 +27,47 @@ export const SECRET = `
   };
 `;
 
-// The page's text when asked for, and whether a secret field on it holds something now: a screenshot
-// would show a card number or a revealed password.
+// The page's text, and whether a secret field on it holds something now (a screenshot would show a card
+// number or a revealed password), each only when asked: a busy page is slow to answer a script.
 export const CONTEXT_JS = `(o) => {
   ${SECRET}
-  const secretShown = [...document.querySelectorAll('input')]
+  const out = {};
+  if (o.text) out.text = (document.body ? document.body.innerText : "").slice(0, o.max);
+  if (o.secrets) out.secretShown = [...document.querySelectorAll('input')]
     .some((e) => isSecret(e) && e.value && e.getClientRects().length > 0);
-  return { text: o.text ? (document.body ? document.body.innerText : "").slice(0, o.max) : undefined, secretShown };
+  return out;
 }`;
 
-export async function context(browser: Browser, withText: boolean): Promise<AgentContext> {
+type Page = {
+  url: string;
+  title: string;
+  value: { text?: string; secretShown?: boolean } | undefined;
+};
+
+export async function context(
+  browser: Browser,
+  withText: boolean,
+  secrets = false,
+): Promise<AgentContext> {
   try {
-    const tab = await browser
-      .onScreen<{ text?: string; secretShown: boolean }>(CONTEXT_JS, {
+    const tab: Page | null = await browser
+      .onScreen<Page["value"]>(withText || secrets ? CONTEXT_JS : null, {
         max: MAX_TEXT,
         text: withText,
+        secrets,
       })
-      // A page that can't run a script now (loading, a Chromium error page) still has an address.
-      .catch(() => browser.onScreen<undefined>(null));
+      .catch(async (err) => {
+        if (withText || !secrets) throw err;
+        // A page that can't be read now (loading, say) may be showing one.
+        const bare = await browser.onScreen<undefined>(null);
+        return bare && { ...bare, value: { secretShown: true } };
+      });
     if (!tab) return { url: null, title: null };
     return {
       url: tab.url,
       title: tab.title,
       ...(withText ? { text: tab.value?.text ?? "" } : {}),
-      ...(tab.value ? { secretShown: tab.value.secretShown } : {}),
+      ...(secrets ? { secretShown: tab.value?.secretShown ?? true } : {}),
     };
   } catch {
     // Chromium isn't running.

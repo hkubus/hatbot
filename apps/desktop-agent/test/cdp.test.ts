@@ -74,16 +74,19 @@ test("the page says when a secret field holds something a screenshot would show"
     value: f.value,
     getClientRects: () => (f.shown === false ? [] : [{}]),
   });
-  const run = (fields: ReturnType<typeof field>[]) => {
-    const page = new Function("document", `return (${CONTEXT_JS})({ max: 100, text: true });`) as (
+  type Ask = { secrets?: boolean; text?: boolean; max?: number };
+  const run = (fields: ReturnType<typeof field>[], ask: Ask = { secrets: true }) => {
+    const page = new Function("document", "o", `return (${CONTEXT_JS})(o);`) as (
       d: unknown,
-    ) => { text?: string; secretShown: boolean };
-    return page({ querySelectorAll: () => fields, body: { innerText: "Zapłać" } });
+      o: unknown,
+    ) => { text?: string; secretShown?: boolean };
+    return page({ querySelectorAll: () => fields, body: { innerText: "Zapłać" } }, ask);
   };
-  expect(run([field({ name: "q", value: "dune" })])).toEqual({
-    text: "Zapłać",
-    secretShown: false,
-  });
+  expect(
+    run([field({ name: "q", value: "dune" })], { secrets: true, text: true, max: 100 }),
+  ).toEqual({ text: "Zapłać", secretShown: false });
+  // Each only when asked.
+  expect(run([field({ name: "pin", value: "1234" })], {})).toEqual({});
   expect(run([field({ autocomplete: "cc-number", value: "4111111111111111" })]).secretShown).toBe(
     true,
   );

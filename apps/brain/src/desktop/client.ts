@@ -32,7 +32,8 @@ export interface DesktopAgent {
   screenshot(): Promise<Uint8Array>;
   zoom(region: number[]): Promise<Uint8Array>;
   action(a: AgentAction): Promise<AgentActionResult>;
-  context(withText?: boolean): Promise<AgentContext>;
+  /** `secrets`: also whether a secret field on the page holds something (secretShown), for Teach. */
+  context(withText?: boolean, secrets?: boolean): Promise<AgentContext>;
   inspect(x?: number, y?: number): Promise<AgentElement | null>;
   /** A command in the desktop's shell, which can't see the browser profile or the screen. */
   exec(command: string, timeoutS: number): Promise<ShellResult>;
@@ -136,9 +137,10 @@ export class HttpDesktopAgent implements DesktopAgent {
       await this.req("POST", "/action", a, actionTimeoutMs(a))
     ).json()) as AgentActionResult;
   }
-  async context(withText = false) {
+  async context(withText = false, secrets = false) {
+    const query = [withText && "text=1", secrets && "secrets=1"].filter(Boolean).join("&");
     return (await (
-      await this.req("GET", `/context${withText ? "?text=1" : ""}`)
+      await this.req("GET", `/context${query ? `?${query}` : ""}`)
     ).json()) as AgentContext;
   }
   async inspect(x?: number, y?: number) {

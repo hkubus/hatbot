@@ -60,9 +60,9 @@ export class FakeDesktop implements DesktopAgent {
     this.afterAction?.(a.name, a.input);
     return a.name === "cursor_position" ? { x: 10, y: 20 } : {};
   }
-  async context(withText = false) {
-    const { text: _, ...page } = this.page;
-    return withText ? { ...this.page } : page;
+  async context(withText = false, secrets = false) {
+    const page = withText ? { ...this.page } : { url: this.page.url, title: this.page.title };
+    return secrets ? { ...page, secretShown: this.page.secretShown ?? false } : page;
   }
   async inspect() {
     return this.element;
