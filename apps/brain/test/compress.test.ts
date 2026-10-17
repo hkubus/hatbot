@@ -45,7 +45,7 @@ test("JSON answers come compressed; small ones and other types as they are", asy
   // Errors keep their status.
   const missing = await get("/conversations/999/messages", "br");
   expect(missing.status).toBe(404);
-  expect(await missing.json()).toEqual({ error: "not found" });
+  expect(await missing.json()).toEqual({ error: "That's gone." });
 });
 
 test("a missing asset or file is a 404, not the app; routes still get the app", async () => {

@@ -4,7 +4,7 @@ import { z } from "zod";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
 import { TeachError } from "../teach/service";
-import { json } from "./util";
+import { json, signedOut } from "./util";
 
 const id = (raw: string) => {
   const n = Number(raw);
@@ -24,6 +24,7 @@ export const teachRoutes = new Hono<AppEnv>()
   // replaces: a skill to record again; the draft keeps its name.
   .post("/teach/start", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { replaces?: unknown };
+    if (signedOut(c)) return c.json({ error: "unauthorized" }, 401);
     const replaces =
       typeof body.replaces === "string" && SKILL_NAME.test(body.replaces)
         ? body.replaces

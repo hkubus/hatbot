@@ -146,6 +146,8 @@ export const searchesIn = (tools: readonly unknown[]) =>
  * The most one request may cost, for the check before it's made (PLAN.md §6.3): the prompt not known
  * to be in the cache priced as a cache write (`write`, the TTL its breakpoints use) or plain input, the
  * part that is at the read price, all of max_tokens as output, and every web search it may make.
+ * With `fallbacks`, a model that declines partway is billed for what it read, and one of
+ * FALLBACK_MODELS answers at its own rates, with none of the prompt in its cache.
  */
 export function requestCeiling(
   model: string,
@@ -157,20 +159,28 @@ export function requestCeiling(
     write?: "5m" | "1h";
     maxTokens: number;
     webSearches?: number;
+    /** Sent with `fallbacks: "default"`. */
+    fallbacks?: boolean;
   },
 ): number {
-  const cached = Math.min(r.cached ?? 0, r.prompt);
-  const fresh = r.prompt - cached;
-  return (
-    costOf(model, {
+  const ceiling = (m: string, cachedTokens: number, output: number) => {
+    const cached = Math.min(cachedTokens, r.prompt);
+    const fresh = r.prompt - cached;
+    return costOf(m, {
       input: r.write ? 0 : fresh,
       cacheWrite5m: r.write === "5m" ? fresh : 0,
       cacheWrite1h: r.write === "1h" ? fresh : 0,
       cacheRead: cached,
-      output: r.maxTokens,
-    }) +
-    (r.webSearches ?? 0) * WEB_SEARCH_USD
-  );
+      output,
+    });
+  };
+  const searches = (r.webSearches ?? 0) * WEB_SEARCH_USD;
+  const own = ceiling(model, r.cached ?? 0, r.maxTokens);
+  const others = r.fallbacks ? (FALLBACK_MODELS[model] ?? []) : [];
+  if (!others.length) return own + searches;
+  const declined = ceiling(model, r.cached ?? 0, 0);
+  const rescue = Math.max(...others.map((m) => ceiling(m, 0, r.maxTokens)));
+  return Math.max(own, declined + rescue) + searches;
 }
 
 /** Work that may spend the reserve kept at the end of the limits: alerts, and the heartbeat. */

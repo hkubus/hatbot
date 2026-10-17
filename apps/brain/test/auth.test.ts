@@ -261,21 +261,47 @@ describe("login", () => {
     expect(after.status).toBe(429);
   });
 
-  test("the overall limit says once when it trips", () => {
+  test("the overall limit tells when it trips, and hourly while someone keeps it tripped", () => {
+    let now = 0;
     const tripped: string[] = [];
     const limit = new FailureLimiter(
-      3,
-      60_000,
-      () => 0,
+      50,
+      15 * 60_000,
+      () => now,
       (key) => tripped.push(key),
     );
+    for (let i = 0; i < 49; i++) {
+      limit.fail("*");
+      limit.stood("*");
+    }
+    // A right attempt at 49 is counted while it's checked, then taken back.
     limit.fail("*");
-    limit.fail("*");
+    limit.forgive("*");
     expect(tripped).toEqual([]);
-    limit.fail("*");
-    expect(limit.blocked("*")).toBe(true);
-    expect(tripped).toEqual(["*"]);
-    limit.fail("*");
+    // One wrong try every 18 seconds for two hours, as fast as the window lets them through.
+    for (; now < 2 * 3600_000 - 1000; now += 18_000) {
+      if (limit.blocked("*")) continue;
+      limit.fail("*");
+      limit.stood("*");
+    }
+    expect(tripped).toEqual(["*", "*"]);
+  });
+
+  test("a right sign-in at the overall limit doesn't say it tripped; a wrong one does", async () => {
+    const t = await testApp();
+    const { secret, password } = await setUpOwner(t);
+    const tripped: string[] = [];
+    t.loginLimits.global = new FailureLimiter(50, 15 * 60_000, Date.now, (key) =>
+      tripped.push(key),
+    );
+    for (let i = 0; i < 49; i++) t.loginLimits.global.fail("*");
+    expect((await t.call("POST", "/auth/login", { password, totp: t.code(secret) })).status).toBe(
+      200,
+    );
+    expect(tripped).toEqual([]);
+    expect((await t.call("POST", "/auth/login", { password: "nope", totp: "000000" })).status).toBe(
+      401,
+    );
     expect(tripped).toEqual(["*"]);
   });
 
@@ -448,6 +474,50 @@ describe("your account", () => {
     expect(fresh.status).toBe(200);
   });
 
+  test("a request whose body was still coming when it was signed out does nothing", async () => {
+    const { t, cookie, otherCookie, token } = await signedInTwice();
+    /** A request let in on its headers, whose body is still on its way. */
+    const slow = (path: string, headers: Record<string, string>, bytes: Uint8Array) => {
+      let finish = () => {};
+      const body = new ReadableStream<Uint8Array>({
+        start(ctl) {
+          ctl.enqueue(bytes.slice(0, 3));
+          finish = () => {
+            ctl.enqueue(bytes.slice(3));
+            ctl.close();
+          };
+        },
+      });
+      const res = t.app.request(`/api/v1${path}`, {
+        method: "POST",
+        headers: { origin: ORIGIN, ...headers },
+        body,
+        duplex: "half",
+      } as RequestInit);
+      return { res, finish: () => finish() };
+    };
+    const mint = slow(
+      "/tokens",
+      { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      new TextEncoder().encode('{"name":"Backup"}'),
+    );
+    const form = new FormData();
+    form.append("file", new File(["hello"], "note.txt", { type: "text/plain" }));
+    const multipart = new Request("http://x", { method: "POST", body: form });
+    const upload = slow(
+      "/attachments",
+      { cookie: otherCookie, "content-type": multipart.headers.get("content-type") ?? "" },
+      new Uint8Array(await multipart.arrayBuffer()),
+    );
+    await Bun.sleep(10);
+    expect((await t.call("POST", "/auth/sign-out-others", {}, { cookie })).status).toBe(200);
+    mint.finish();
+    upload.finish();
+    expect((await mint.res).status).toBe(401);
+    expect((await upload.res).status).toBe(401);
+    expect(t.auth.listTokens()).toEqual([]);
+  });
+
   test("a password change from another site is refused", async () => {
     const { t, secret, password, cookie } = await signedInTwice();
     const res = await t.call(
@@ -497,6 +567,27 @@ describe("your account", () => {
     ).toBe(200);
   });
 
+  test("a sign-in still being checked when the authenticator changes doesn't get in", async () => {
+    const t = await testApp();
+    const { secret, password, cookie } = await setUpOwner(t);
+    const start = await t.call(
+      "POST",
+      "/auth/totp/start",
+      { password, totp: t.code(secret) },
+      { cookie },
+    );
+    const next = (await start.json()) as { secret: string };
+    // The old authenticator's next code, which is still let in.
+    t.advance(30_000);
+    const ahead = t.code(secret);
+    t.advance(-30_000);
+    const intruder = t.call("POST", "/auth/login", { password, totp: ahead });
+    const done = await t.call("POST", "/auth/totp", { totp: t.code(next.secret) }, { cookie });
+    expect(done.status).toBe(200);
+    expect((await intruder).status).toBe(401);
+    expect(t.auth.listSessions()).toHaveLength(1);
+  });
+
   test("a new authenticator not confirmed in 10 minutes is dropped", async () => {
     const { t, secret, password, cookie } = await signedInTwice();
     const start = await t.call(
@@ -540,6 +631,10 @@ describe("your account", () => {
       (await t.call("DELETE", `/auth/sessions/${other?.id}`, undefined, { cookie })).status,
     ).toBe(200);
     expect(await works({ cookie: otherCookie })).toBe(false);
+    // Signed out already, from another tab say: said plainly.
+    const twice = await t.call("DELETE", `/auth/sessions/${other?.id}`, undefined, { cookie });
+    expect(twice.status).toBe(404);
+    expect(await twice.json()).toEqual({ error: "That browser is already signed out." });
     expect(await works({ authorization: `Bearer ${token}` })).toBe(true);
     const all = await t.call("POST", "/auth/sign-out-others", {}, { cookie });
     expect((await all.json()) as SignedOutOthers).toEqual({ ok: true, ended: 1 });

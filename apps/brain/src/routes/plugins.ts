@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
 import { PluginError } from "../plugins/plugin";
-import { json } from "./util";
+import { json, signedOut } from "./util";
 
 // Plugins in Settings (PLAN.md §4.5): switch on or off, change settings, test.
 export const pluginRoutes = new Hono<AppEnv>()
@@ -12,12 +12,12 @@ export const pluginRoutes = new Hono<AppEnv>()
   .get("/plugins", (c) => c.json(c.var.plugins.list()))
   .get("/plugins/:id", (c) => {
     const p = c.var.plugins.get(c.req.param("id"));
-    return p ? c.json(p) : c.json({ error: "not found" }, 404);
+    return p ? c.json(p) : c.json({ error: "That's gone." }, 404);
   })
   .patch("/plugins/:id", json(UpdatePlugin), async (c) => {
     const { plugins } = c.var;
     const id = c.req.param("id");
-    if (!plugins.get(id)) return c.json({ error: "not found" }, 404);
+    if (!plugins.get(id)) return c.json({ error: "That's gone." }, 404);
     try {
       return c.json(await plugins.update(id, c.req.valid("json")));
     } catch (err) {
@@ -27,6 +27,7 @@ export const pluginRoutes = new Hono<AppEnv>()
   })
   .post("/plugins/:id/actions/:name", async (c) => {
     const args = await c.req.json().catch(() => ({}));
+    if (signedOut(c)) return c.json({ error: "unauthorized" }, 401);
     try {
       return c.json({
         result: await c.var.plugins.action(c.req.param("id"), c.req.param("name"), args),

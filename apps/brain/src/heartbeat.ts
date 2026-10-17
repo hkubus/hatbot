@@ -28,6 +28,8 @@ export type Signal = {
   text: string;
   /** You were told already, or it's being looked into: kept as seen, so it isn't told later either. */
   known?: boolean;
+  /** Something may still take it, like a Kuma alert waiting: skipped for now, and not kept as seen. */
+  later?: boolean;
 };
 
 type Last = Omit<HeartbeatInfo, "recent">;
@@ -127,9 +129,14 @@ export class Heartbeat {
     // Saved first, so a look that crashes or hangs isn't started again every few seconds.
     this.save({ ...state, lastRunAt: now });
     const signals = await this.gather(since);
-    const fresh = signals.filter((s) => !s.known && !(s.key in state.seen));
-    // A problem that's gone is forgotten, so it's told again if it comes back.
-    const seen = Object.fromEntries(signals.map((s) => [s.key, state.seen[s.key] ?? now]));
+    const fresh = signals.filter((s) => !s.known && !s.later && !(s.key in state.seen));
+    // A problem that's gone is forgotten, so it's told again if it comes back. One that waits isn't
+    // kept, so it's told if nothing takes it in the end.
+    const seen = Object.fromEntries(
+      signals
+        .filter((s) => !s.later || s.key in state.seen)
+        .map((s) => [s.key, state.seen[s.key] ?? now]),
+    );
     let last: Last = { at: now, found: [], action: "nothing", note: "", taskId: null };
     let recent = state.recent;
     if (fresh.length) {
@@ -209,26 +216,27 @@ export class Heartbeat {
         text: `This month's spend is $${monthUsd.toFixed(2)} of the $${limits.monthlyUsd} limit.`,
       });
     for (const s of await this.d.plugins.signals()) {
-      // A monitor Kuma's own alert started a task for: that task told you, or is on it.
+      // A monitor Kuma's own alert started a task for: that task told you, or is on it. One whose
+      // alert waits may get no task in the end (switched off, paused, the day's limit), so it waits too.
       const monitor = /^uptimekuma:down:(.+)$/.exec(s.key)?.[1];
-      out.push(monitor !== undefined && this.alerted(monitor) ? { ...s, known: true } : s);
+      const alert = monitor === undefined ? null : this.alerted(monitor);
+      out.push(alert ? { ...s, [alert]: true } : s);
     }
     return out;
   }
 
-  /** Whether a Kuma alert for this monitor waits for more checks, or its task runs or ended this hour. */
-  private alerted(monitor: string): boolean {
+  /** "later" while a Kuma alert for this monitor waits; "known" while its task runs or ended this hour. */
+  private alerted(monitor: string): "known" | "later" | null {
     const hourAgo = new Date(this.clock() - 3600_000).toISOString();
-    return Boolean(
-      this.d.db.query("SELECT 1 FROM kuma_waiting WHERE name = ?").get(monitor) ||
-        this.d.db
-          .query(
-            `SELECT 1 FROM tasks WHERE origin = 'alert'
-             AND CASE WHEN json_valid(payload) THEN json_extract(payload, '$.monitor') END = ?
-             AND (finished_at IS NULL OR finished_at > ?)`,
-          )
-          .get(monitor, hourAgo),
-    );
+    if (this.d.db.query("SELECT 1 FROM kuma_waiting WHERE name = ?").get(monitor)) return "later";
+    const task = this.d.db
+      .query(
+        `SELECT 1 FROM tasks WHERE origin = 'alert'
+         AND CASE WHEN json_valid(payload) THEN json_extract(payload, '$.monitor') END = ?
+         AND (finished_at IS NULL OR finished_at > ?)`,
+      )
+      .get(monitor, hourAgo);
+    return task ? "known" : null;
   }
 
   private async act(fresh: Signal[], now: string): Promise<Last> {

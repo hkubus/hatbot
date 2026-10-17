@@ -631,11 +631,11 @@ export const migrations: string[] = [
   CREATE INDEX attachments_message ON attachments(message_id);
   CREATE INDEX attachments_task ON attachments(task_id);
   -- Ids deleted from the top before now were given out once already: in a database that has been
-  -- used, new ones start well past them.
+  -- set up, new ones start well past them, even with no messages left (incognito's go when it ends).
   DELETE FROM sqlite_sequence WHERE name = 'attachments';
   INSERT INTO sqlite_sequence (name, seq)
     SELECT 'attachments', coalesce((SELECT max(id) FROM attachments), 0) + 1000
-    WHERE EXISTS (SELECT 1 FROM messages);
+    WHERE EXISTS (SELECT 1 FROM owner) OR EXISTS (SELECT 1 FROM messages);
   `,
   /* 35: a watcher that counts too often in a day is switched off; switching it on starts the count again */ `
   ALTER TABLE watchers ADD COLUMN counting_since TEXT;

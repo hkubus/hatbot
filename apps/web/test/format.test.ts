@@ -18,8 +18,9 @@ describe("usd", () => {
 test("modelName", () => {
   expect(modelName("claude-opus-5-5")).toBe("Opus 5.5");
   expect(modelName("claude-haiku-5-5")).toBe("Haiku 5.5");
-  expect(modelName("claude-opus-4-8")).toBe("Opus 4.8");
+  // Opus 5.5's fallbacks, which the ledger keeps under their own ids.
   expect(modelName("claude-opus-5")).toBe("Opus 5");
+  expect(modelName("claude-opus-4-8")).toBe("Opus 4.8");
   expect(modelName("claude-haiku-4-5-20251001")).toBe("Haiku 4.5");
   expect(modelName("some-new-model")).toBe("some-new-model");
 });

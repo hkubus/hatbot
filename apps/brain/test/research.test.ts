@@ -256,6 +256,41 @@ test("numbers the quotes don't say, and citations that aren't sources, go back o
   expect(task.summary).toStartWith("It's **22.4 dB(A)** [[1]]");
 });
 
+test("a failed finish doesn't use up the number check, and citations that aren't sources always go back", async () => {
+  const work = new FakeModel([
+    INVESTIGATE,
+    {
+      content: [
+        toolUse("finish_research", {
+          outcome: "failed",
+          answer: "Couldn't [9].",
+          report: "",
+          notify: true,
+        }),
+      ],
+    },
+    finish("It's **19 dB** [1].", "Report [1]."),
+    finish("It's **22.4 dB(A)** [1], see [8].", "Report [1]."),
+    finish("It's **22.4 dB(A)** [1].", "Report [1]."),
+  ]);
+  helpers(work);
+  let checks = 0;
+  work.onCreate = (p) => {
+    if (p.system !== RESEARCH_CHECK_PROMPT) return undefined;
+    checks++;
+    return '{"problems": [{"text": "It\'s **19 dB** [1]", "why": "The quote says 22.4 dB(A)."}]}';
+  };
+  const { t, task } = await research(work);
+  const leads = work.requests.filter((r) => r.model === "claude-opus-5-5");
+  expect(resultsIn(leads[2])).toContain("These citations aren't source numbers: [9].");
+  expect(resultsIn(leads[3])).toContain('- "It\'s **19 dB** [1]": "The quote says 22.4 dB(A)."');
+  expect(resultsIn(leads[4])).toContain("These citations aren't source numbers: [8].");
+  expect(checks).toBe(1);
+  expect(task.status).toBe("done");
+  expect(task.summary).toStartWith("It's **22.4 dB(A)** [[1]]");
+  expect(await t.memory.read(task.reportPath as string)).not.toContain("weren't checked");
+});
+
 test("running research again refreshes its report, and the chat can name one to refresh", async () => {
   const work = new FakeModel([INVESTIGATE, finish("Still the DS925+ [1].", "Report [1].")]);
   helpers(work);
@@ -480,6 +515,22 @@ test("a quote is found in what the helper read, whatever the spaces and number f
   expect(quoteFound("Synology DS925+ 2 299,00 zł", read)).toBe(false);
   expect(quoteFound("Synology DS925+ … Out of stock", read)).toBe(false);
   expect(quoteFound("…", read)).toBe(false);
+
+  // Decimal separators are kept, and a number is a whole one on the page.
+  const page = plainRead(
+    "Cena: 2 399,00 zł. Waga: 15 kg. Moc 25 W. Głośność 22,4 dB(A), 1.299 osób",
+  );
+  expect(quoteFound("Cena: 2399.00 zł", page)).toBe(true);
+  expect(quoteFound("Głośność 22.4 dB(A)", page)).toBe(true);
+  expect(quoteFound("1299 osób", page)).toBe(true);
+  expect(quoteFound("399,00 zł", page)).toBe(false);
+  expect(quoteFound("Waga: 1,5 kg", page)).toBe(false);
+  expect(quoteFound("Moc 2,5 W", page)).toBe(false);
+  expect(quoteFound("23 990,0 zł", page)).toBe(false);
+  expect(quoteFound("2,4 dB(A)", page)).toBe(false);
+  expect(quoteFound("Głośność 22", page)).toBe(false);
+  // Numbers in a list aren't one number.
+  expect(plainRead("2024, 2025")).toBe("2024, 2025");
 });
 
 test("a price copied wrong is unconfirmed, and the check doesn't see it", async () => {
@@ -508,6 +559,88 @@ test("a price copied wrong is unconfirmed, and the check doesn't see it", async 
   const check = work.creates.find((c) => c.system === RESEARCH_CHECK_PROMPT);
   expect(String(check?.messages[0]?.content)).toStartWith(
     '<sources trusted="false">\n[1] "Synology DS925+ | x-kom"\n- No confirmed quote.\n</sources>',
+  );
+});
+
+test("a quote from a PDF or from code's encrypted output is used unchecked, and the report says so", async () => {
+  const PDF = "https://global.synologydownload.com/ds925.pdf";
+  const pdf: Block[] = [
+    {
+      type: "server_tool_use",
+      id: "srvtoolu_pdf",
+      name: "web_fetch",
+      input: { url: PDF },
+    } as Block,
+    {
+      type: "web_fetch_tool_result",
+      tool_use_id: "srvtoolu_pdf",
+      content: {
+        type: "web_fetch_result",
+        url: PDF,
+        retrieved_at: null,
+        content: {
+          type: "document",
+          title: "DS925+ datasheet",
+          citations: null,
+          source: { type: "base64", media_type: "application/pdf", data: "JVBERi0xLjQK" },
+        },
+      },
+    } as unknown as Block,
+  ];
+  const encrypted: Block[] = [
+    {
+      type: "server_tool_use",
+      id: "srvtoolu_code",
+      name: "code_execution",
+      input: { code: "print(web_search(query='ds925+ price'))" },
+    } as Block,
+    {
+      type: "code_execution_tool_result",
+      tool_use_id: "srvtoolu_code",
+      content: {
+        type: "encrypted_code_execution_result",
+        encrypted_stdout: "c2VjcmV0",
+        stderr: "",
+        return_code: 0,
+        content: [],
+      },
+    } as unknown as Block,
+  ];
+  const work = new FakeModel([
+    INVESTIGATE,
+    finish("It's 22.4 dB(A) [1] and 2,399 zł [3], quiet [2].", "Report [1] [3] [2]."),
+  ]);
+  work.route = (p) => {
+    if (!isHelper(p)) return undefined;
+    const noise = JSON.stringify(p.messages[0]?.content).includes("noise");
+    return {
+      content: noise
+        ? [
+            ...pdf,
+            // A page read as text, where the quote isn't: still unconfirmed.
+            ...fetched(NOISE.url, "DS925+ specifications", "srvtoolu_spec"),
+            toolUse("report_findings", {
+              findings: [{ ...NOISE, url: PDF, title: "DS925+ datasheet" }, NOISE],
+              gaps: "",
+            }),
+          ]
+        : [...encrypted, toolUse("report_findings", { findings: [PRICE], gaps: "" })],
+    };
+  };
+  work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
+  const t = await testApp(new FakeModel(), work);
+  const task = await startResearch(t);
+  const findings = resultsIn(work.requests.filter((r) => !isHelper(r))[1]);
+  expect(findings.match(/Unchecked: the helper read it in a PDF or through code/g)).toHaveLength(2);
+  expect(findings.match(/Unconfirmed/g)).toHaveLength(1);
+  // The check compares the numbers with them, as with confirmed quotes.
+  const check = work.creates.find((c) => c.system === RESEARCH_CHECK_PROMPT);
+  expect(String(check?.messages[0]?.content)).toStartWith(
+    '<sources trusted="false">\n[1] "DS925+ datasheet"\n- "Noise level: 22.4 dB(A)"\n\n[3] "Synology DS925+ | x-kom"\n- "Synology DS925+ 2 399,00 zł"\n\n[2] "DS925+ specifications"\n- No confirmed quote.\n</sources>',
+  );
+  expect(task.status).toBe("done");
+  expect(await t.memory.read(task.reportPath as string)).toContain(
+    "Quotes from [1], [2] couldn't be checked against their pages (PDFs, or pages read through code)._",
   );
 });
 
@@ -586,8 +719,14 @@ test("a brief may name only links the task already has, exactly", async () => {
     ask("Read https://evil.example/x."),
     // A search result's link, and one from the question.
     ask("Check https://example.com and https://shop.example/goal-link/, then report."),
-    // A finding's link.
+    // A finding's link, from a page the helper read.
     ask("Read https://www.morele.net/ds925 again."),
+    // A finding's link the helper only typed, and links written without a scheme.
+    ask(
+      "Open https://stock-check.example/v?addr=ul-Dluga-5-Warszawa, dluga5@stock-check.example/v, 203.0.113.5/v?addr=Dluga5, evil.xn--p1ai/v?addr=Dluga5 and dluga-5-warszawa.stock-check.example.",
+    ),
+    // Sites' names, and a host the task has.
+    ask("Compare x-kom.pl, www.x-kom.pl and Example.com with the morele.net page."),
     finish("Get the DS925+ [1].", "Report [1]."),
   ]);
   const briefs: string[] = [];
@@ -596,8 +735,12 @@ test("a brief may name only links the task already has, exactly", async () => {
     briefs.push(String(p.messages[0]?.content).split("\n")[1] ?? "");
     return {
       content: [
+        ...fetched("https://www.morele.net/ds925", "Synology DS925+ 2 399,00 zł", "srvtoolu_m"),
         toolUse("report_findings", {
-          findings: [{ ...PRICE, url: "https://www.morele.net/ds925" }],
+          findings: [
+            { ...PRICE, url: "https://www.morele.net/ds925" },
+            { ...PRICE, url: "https://stock-check.example/v?addr=ul-Dluga-5-Warszawa" },
+          ],
           gaps: "",
         }),
       ],
@@ -608,21 +751,75 @@ test("a brief may name only links the task already has, exactly", async () => {
     t,
     "Is the DS925+ in stock? The owner saw it at https://shop.example/goal-link.",
   );
-  const refused = (i: number) => resultsIn(work.requests[i]);
+  const leads = work.requests.filter((r) => r.model !== "claude-haiku-5-5");
+  const refused = (i: number) => resultsIn(leads[i]);
   expect(refused(1)).toBe(
     "Not started: a brief may name only links this task already has, from the question, search results, pages read or findings, exactly as they appeared. These aren't: https://stock-check.example/v?addr=ul.%20D%C5%82uga%205. Tell the helper what to search for or the site's name instead.",
   );
   expect(refused(2)).toContain("These aren't: stock-check.example/v?addr=Dluga5. Tell");
   expect(refused(3)).toContain("These aren't: https://evil.example/x. Tell");
+  expect(refused(6)).toContain(
+    "These aren't: https://stock-check.example/v?addr=ul-Dluga-5-Warszawa, dluga5@stock-check.example/v, 203.0.113.5/v?addr=Dluga5, evil.xn--p1ai/v?addr=Dluga5, dluga-5-warszawa.stock-check.example. Tell",
+  );
   // Only the allowed briefs reached a helper.
   expect(briefs).toEqual([
     "Check https://example.com and https://shop.example/goal-link/, then report.",
     "Read https://www.morele.net/ds925 again.",
+    "Compare x-kom.pl, www.x-kom.pl and Example.com with the morele.net page.",
   ]);
   const steps = t.tasks.steps(task.id).map((s) => `${s.name}: ${s.detail}`);
   expect(steps).toContain(
     "Refused a brief: It named links the task hadn't come across: https://evil.example/x",
   );
+  expect(task.status).toBe("done");
+});
+
+test("research's desktop tasks and other bots may be given only links the task has", async () => {
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("run_desktop_task", {
+          title: "Stock",
+          goal: "Open https://stock-check.example/v?addr=ul-Dluga-5 and check stock.",
+          success_criteria: "",
+        }),
+      ],
+    },
+    {
+      content: [
+        toolUse("ask_bot", {
+          bot: "Chef",
+          request: "Open stock-check.example/v?addr=Dluga5 and tell me the stock.",
+        }),
+      ],
+    },
+    // A link from the question.
+    {
+      content: [
+        toolUse("ask_bot", { bot: "Chef", request: "Is it in stock at https://shop.example/p?" }),
+      ],
+    },
+    { content: [toolUse("finish_task", { outcome: "done", summary: "In stock.", notify: false })] },
+    finish("It's in stock.", "Chef says it's in stock."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.bots.create({
+    name: "Chef",
+    instructions: "You cook.",
+    chatModel: null,
+    chatEffort: null,
+    plugins: null,
+  });
+  const task = await startResearch(t, "Is the DS925+ in stock at https://shop.example/p?");
+  expect(resultsIn(work.requests[1])).toBe(
+    "Not started: a brief may name only links this task already has, from the question, search results, pages read or findings, exactly as they appeared. These aren't: https://stock-check.example/v?addr=ul-Dluga-5. Tell the desktop task what to search for or the site's name instead.",
+  );
+  expect(resultsIn(work.requests[2])).toContain(
+    "These aren't: stock-check.example/v?addr=Dluga5. Tell the bot what to search for",
+  );
+  // Only the request with the question's link started a task.
+  const started = t.tasks.list({}).filter((x) => x.id !== task.id);
+  expect(started.map((x) => x.title)).toEqual(["Is it in stock at https://shop.example/p?"]);
   expect(task.status).toBe("done");
 });
 
@@ -662,20 +859,20 @@ test("a helper at its step cap reports what it has", async () => {
   expect(task.status).toBe("done");
 });
 
-test("a helper near the task's limit reports at once, and helpers check the limit together", async () => {
+test("helpers leave room for the lead's report, which is told to finish before a raise", async () => {
   const work = new FakeModel([ONE_PART, finish("Get the DS925+ [1].", "Report [1].")]);
   let step = 0;
   work.route = (p) => {
     if (!isHelper(p)) return undefined;
-    // Its first search spends all but about $0.08 of the $2.
+    // Its first search brings the task to about $3.52 of its $5. The lead's next request may cost up
+    // to about $1.38 (all of its 64k output tokens), and a helper's about $0.07: room for one more.
     if (step++ === 0)
-      return { content: search("ds925+ price", "srvtoolu_1"), usage: { input_tokens: 3_803_000 } };
+      return { content: search("ds925+ price", "srvtoolu_1"), usage: { input_tokens: 7_020_000 } };
     return { content: [toolUse("report_findings", { findings: [PRICE], gaps: "" })] };
   };
+  work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
   const t = await testApp(new FakeModel(), work);
-  // $2: the lead's own request may cost up to about $1.45 (all of its 64k output tokens), and it
-  // starts within the limit.
-  t.settings.update({ limits: { researchUsd: 2, dailyUsd: 1000, monthlyUsd: 1000 } });
+  t.settings.update({ limits: { dailyUsd: 1000, monthlyUsd: 1000 } });
   const created = t.tasks.createBackgroundTask({
     title: "Price",
     goal: "The DS925+ price.",
@@ -683,13 +880,18 @@ test("a helper near the task's limit reports at once, and helpers check the limi
     research: true,
   });
   const task = await settle(t, created?.id as number);
+  expect(t.tasks.budget(task.id)).toBe(5);
   const helper = work.requests.filter(isHelper);
   // Room for one more step only: it reports.
   expect(helper.map(forced)).toEqual([false, true]);
-  expect(resultsIn(work.requests.at(-1))).toContain('[1] "Synology DS925+ | x-kom"');
-  expect(resultsIn(work.requests.at(-1))).toMatch(
-    /Spent so far: \$1\.9\d of this task's \$2 limit\./,
+  const last = JSON.stringify(work.requests.at(-1)?.messages.at(-1));
+  expect(last).toContain('[1] \\"Synology DS925+ | x-kom\\"');
+  expect(last).toMatch(/Spent so far: \$3\.5\d of this task's \$5 limit\./);
+  // Told to finish while its report still fits, so it never asks for more.
+  expect(last).toMatch(
+    /This task is near its spending limit \(\$3\.5\d of \$5\)\. Call finish_research now/,
   );
+  expect(t.db.query("SELECT id FROM approvals").all()).toEqual([]);
   expect(task.status).toBe("done");
 
   // Two helpers start with room for one step: the second counts the first's request in flight.
@@ -703,8 +905,8 @@ test("a helper near the task's limit reports at once, and helpers check the limi
           ],
         }),
       ],
-      // All but about $0.09 of the $2.
-      usage: { input_tokens: 476_500 },
+      // About $3.52 of the $5, as above.
+      usage: { input_tokens: 879_000 },
     },
     finish("Get the DS925+ [1].", "Report [1]."),
   ]);
@@ -712,8 +914,9 @@ test("a helper near the task's limit reports at once, and helpers check the limi
     isHelper(p)
       ? { content: [toolUse("report_findings", { findings: [PRICE], gaps: "" })] }
       : undefined;
+  work2.onCreate = work.onCreate;
   const t2 = await testApp(new FakeModel(), work2);
-  t2.settings.update({ limits: { researchUsd: 2, dailyUsd: 1000, monthlyUsd: 1000 } });
+  t2.settings.update({ limits: { dailyUsd: 1000, monthlyUsd: 1000 } });
   const created2 = t2.tasks.createBackgroundTask({
     title: "Price",
     goal: "The DS925+ price.",
@@ -724,7 +927,35 @@ test("a helper near the task's limit reports at once, and helpers check the limi
   expect(work2.requests.filter(isHelper).map(forced)).toEqual([true]);
   const findings = resultsIn(work2.requests.filter((r) => !isHelper(r))[1]);
   expect(findings).toContain('[1] "Synology DS925+ | x-kom"');
-  expect(findings).toContain("No findings.\nStopped: This task would go over its $2 limit.");
+  expect(findings).toContain("No findings.\nStopped: This task would go over its $5 limit.");
+});
+
+test("a helper's request in flight counts for the chat and other tasks too", async () => {
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const work = new FakeModel([ONE_PART, finish("Get the DS925+ [1].", "Report [1].")]);
+  work.route = (p) =>
+    isHelper(p)
+      ? { content: [toolUse("report_findings", { findings: [PRICE], gaps: "" })], wait: gate }
+      : undefined;
+  const t = await testApp(new FakeModel(), work);
+  t.settings.update({ limits: { dailyUsd: 1000, monthlyUsd: 1000, alertReserveUsd: 0 } });
+  t.tasks.createBackgroundTask({
+    title: "Price",
+    goal: "The DS925+ price.",
+    origin: "chat",
+    research: true,
+  });
+  await waitFor(() => work.requests.some(isHelper));
+  // All of the day but a cent is spent: with the helper's request held, nothing else fits.
+  const today = t.spend.summary().todayUsd;
+  t.settings.update({ limits: { dailyUsd: today + 0.06 } });
+  expect(() => t.spend.check(0.01)).toThrow("Today's");
+  release();
+  await t.tasks.idle();
+  expect(() => t.spend.check(0.01)).not.toThrow();
 });
 
 test("a helper's report cut off at max_tokens is asked for again, shorter, once", async () => {
@@ -782,6 +1013,27 @@ test("a helper that declines or fails says so, and the others' findings still co
   expect(findings).toContain("No findings.\nThe helper declined this part.");
   expect(findings).toContain("No findings.\nThe helper failed (overloaded).");
   expect(task.status).toBe("done");
+});
+
+test("a helper's try whose stream failed partway is billed to the task too", async () => {
+  const work = new FakeModel([ONE_PART, finish("Get the DS925+ [1].", "Report [1].")]);
+  work.route = (p) =>
+    isHelper(p)
+      ? {
+          content: [toolUse("report_findings", { findings: [PRICE], gaps: "" })],
+          failedWith: "",
+          failedUsage: { input_tokens: 5000, output_tokens: 0 },
+        }
+      : undefined;
+  const t = await testApp(new FakeModel(), work);
+  const task = await startResearch(t);
+  const rows = t.db
+    .query<{ input_tokens: number }, [number]>(
+      "SELECT input_tokens FROM spend_ledger WHERE task_id = ? AND model = 'claude-haiku-5-5' ORDER BY id",
+    )
+    .all(task.id);
+  // The failed try, the helper's answer, then the number check's.
+  expect(rows.map((r) => r.input_tokens)).toEqual([5000, 1000, 1000]);
 });
 
 test("cancelled while the helpers search, the research ends cancelled with nothing saved", async () => {

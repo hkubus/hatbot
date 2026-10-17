@@ -7,7 +7,9 @@ import {
   threadGroups,
 } from "@hatbot/shared";
 import type { StreamHandlers, StreamParams } from "../src/agent/model";
-import { activity, parseSummary, titleOf, withNote } from "../src/agent/thread";
+import { activity, markPrevious, parseSummary, titleOf, withNote } from "../src/agent/thread";
+import { runTool } from "../src/agent/tools";
+import { EventBus } from "../src/events";
 import { costOf, FALLBACK_MODELS, PRICES } from "../src/spend";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, testApp } from "./helpers";
@@ -218,6 +220,24 @@ test("each request marks where the last one ended, so a long reply still reads t
   expect(stored.some((r) => r.content.includes("cache_control"))).toBe(false);
 });
 
+test("after a reply paused mid-search, the mark goes on the search result its request ended with", () => {
+  const paused = [
+    text("Looking."),
+    { type: "server_tool_use", id: "srv1", name: "web_search", input: { query: "a" } },
+    { type: "web_search_tool_result", tool_use_id: "srv1", content: [] },
+    { type: "thinking", thinking: "", signature: "sig" },
+  ];
+  const turns = [
+    { role: "user", content: [text("search lots")] },
+    { role: "assistant", content: paused },
+    { role: "assistant", content: [text("more"), toolUse("x", {}, "t1")] },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
+  ] as Parameters<typeof markPrevious>[0];
+  const marked = markPrevious(turns)[1]?.content as { type: string; cache_control?: unknown }[];
+  expect(marked.map((b) => Boolean(b.cache_control))).toEqual([false, false, true, false]);
+  expect(marked[2]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+});
+
 test("spend is recorded, and the daily limit stops replies", async () => {
   const t = await testApp(new FakeModel([{ content: [text("ok")] }]));
   t.settings.update({ chatModel: "claude-opus-5-5" });
@@ -393,6 +413,27 @@ test("search_history finds any of the words, in any form, and shows local times"
   expect(result).toContain(
     `<message from=\\"Owner\\" at=\\"${stamp}\\">I renamed the backups share to vault</message>`,
   );
+});
+
+test("search_history's dates are local days, like the times it shows", async () => {
+  const tz = process.env.TZ;
+  process.env.TZ = "Europe/Warsaw";
+  try {
+    const t = await testApp(new FakeModel([{ content: [text("Noted.")] }]));
+    await t.thread.post("The vault share moved to the NAS").done;
+    // Half past midnight on 17 October in Warsaw.
+    t.db
+      .query("UPDATE messages SET created_at = '2026-10-16T22:30:00.000Z' WHERE role = 'user'")
+      .run();
+    const ctx = { db: t.db, memory: t.memory, events: new EventBus(), bot: t.bots.hatbot() };
+    const search = async (dates: { after?: string; before?: string }) =>
+      (await runTool("search_history", { query: "vault", ...dates }, ctx)).content;
+    expect(await search({ after: "2026-10-17" })).toContain("17 Oct 2026, 00:30");
+    expect(await search({ before: "2026-10-17" })).toBe("No matches.");
+  } finally {
+    // bun test runs in UTC with TZ unset, and unsetting it again doesn't go back.
+    process.env.TZ = tz ?? "UTC";
+  }
 });
 
 test("Haiku 5.5 bills the whole request at the long-prompt price past 100k prompt tokens", () => {
@@ -1048,6 +1089,42 @@ test("deleting a conversation takes it out of the chat, search, files and the su
   await t.thread.post("still there?").done;
   expect(lastUserText(model.requests.at(-1) as never)).not.toContain("hello");
   expect(t.thread.list().map((m) => m.text)).toEqual(["still there?", "Yes."]);
+});
+
+test("deleting a summarized conversation may use what's kept for alerts, and a spent limit says so", async () => {
+  const model = new FakeModel(
+    [{ content: [text("Noted.")] }, { content: [text("Hi.")] }, { content: [text("Sure.")] }],
+    ["<summary>WireGuard runs on 51820.</summary>", "<summary>Hello.</summary>"],
+  );
+  const t = await testApp(model);
+  const { cookie } = await setUpOwner(t);
+  await t.thread.post("my wireguard port is 51820").done;
+  t.advance(31 * 60_000);
+  await t.thread.sweep();
+  await t.thread.post("hello").done;
+  t.advance(31 * 60_000);
+  await t.thread.sweep();
+  await t.thread.post("and now?").done;
+  const [first, , second] = t.thread.list();
+  const del = (episode: number) =>
+    t.call("DELETE", `/thread/episodes/${episode}`, undefined, { cookie });
+
+  // Only what's kept for alerts is left today: the owner's deletion may use it.
+  const today = t.spend.summary().todayUsd;
+  t.settings.update({ limits: { dailyUsd: today + 0.5, alertReserveUsd: 1 } });
+  model.onCreate = () => "<summary>Hello.</summary>";
+  expect((await del(first?.episodeId as number)).status).toBe(200);
+  expect(t.thread.list().map((m) => m.text)).not.toContain("my wireguard port is 51820");
+
+  // Nothing at all is left: it says why, and nothing is deleted.
+  t.settings.update({ limits: { dailyUsd: 0.000001, alertReserveUsd: 0 } });
+  const res = await del(second?.episodeId as number);
+  expect(res.status).toBe(429);
+  expect(await res.json()).toEqual({
+    error:
+      "Today's spending limit is used up, so it couldn't be taken out of the summary. Nothing was deleted.",
+  });
+  expect(t.thread.list().map((m) => m.text)).toContain("hello");
 });
 
 test("ask posts a message and answers with the reply once it's done", async () => {

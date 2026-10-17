@@ -246,7 +246,7 @@ test("a signed webhook starts an untrusted background task; bad or replayed ones
   expect((await hook({ "x-hub-signature-256": `sha256=${hub}` }, other)).status).toBe(202);
   await t.tasks.idle();
 
-  // After a restart it's still a replay, and a forge's delivery id counts on its own.
+  // After a restart it's still a replay, and a delivery id the forge didn't sign doesn't make it new.
   const restarted = new Triggers(
     t.db,
     new EventBus(),
@@ -262,10 +262,10 @@ test("a signed webhook starts an untrusted background task; bad or replayed ones
       new TextEncoder().encode(b),
     );
   expect(verify(other, {})).toMatchObject({ ok: true, replay: true });
-  expect(verify(other, { "x-github-delivery": "d-0" })).toMatchObject({ ok: true, replay: false });
+  expect(verify(other, { "x-github-delivery": "d-0" })).toMatchObject({ ok: true, replay: true });
 
-  // A forge's delivery id names the delivery: the same body in two deliveries runs twice, and the
-  // same delivery again doesn't, whatever its body.
+  // A forge's delivery id names the delivery: the same delivery again doesn't run, whatever its body,
+  // and neither does a body that ran, with another id or none.
   const forge = (b: string, delivery: string) =>
     hook(
       {
@@ -277,8 +277,12 @@ test("a signed webhook starts an untrusted background task; bad or replayed ones
   const ping = JSON.stringify({ zen: "Keep it simple." });
   expect((await forge(ping, "d-1")).status).toBe(202);
   await t.tasks.idle();
-  expect((await forge(ping, "d-2")).status).toBe(202);
-  await t.tasks.idle();
+  expect(await (await forge(ping, "d-2")).json()).toMatchObject({ skipped: "duplicate" });
+  expect(
+    await (
+      await hook({ "x-hub-signature-256": `sha256=${hmac(created.secret, ping)}` }, ping)
+    ).json(),
+  ).toMatchObject({ skipped: "duplicate" });
   expect(await (await forge('{"n":2}', "d-1")).json()).toMatchObject({ skipped: "duplicate" });
 
   // Off: accepted but not run, and not remembered, so it can be delivered again once it's on.

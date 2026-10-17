@@ -105,6 +105,39 @@ export function Login({ onDone }: { onDone: () => void }) {
   );
 }
 
+/**
+ * For an authenticator on this device, where there's no code to scan: a link that opens it, and the
+ * secret in groups of four to copy.
+ */
+export function AddToAuthenticator({ uri, secret }: { uri: string; secret: string }) {
+  const shown = useRef<HTMLElement>(null);
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    // Without a secure origin there's no clipboard: the secret is selected to copy by hand.
+    const select = () => shown.current && getSelection()?.selectAllChildren(shown.current);
+    if (!navigator.clipboard) return select();
+    navigator.clipboard.writeText(secret).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }, select);
+  };
+  return (
+    <>
+      <a className="btn" href={uri}>
+        Add to authenticator
+      </a>
+      <div className="copyable">
+        <code className="secret" ref={shown}>
+          {secret.match(/.{1,4}/g)?.join(" ")}
+        </code>
+        <button type="button" className="btn sm ghost" onClick={copy}>
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+    </>
+  );
+}
+
 export function Setup({ onDone }: { onDone: () => void }) {
   const [code, setCode] = useState("");
   const [secret, setSecret] = useState<SetupStartResponse | null>(null);
@@ -136,19 +169,6 @@ export function Setup({ onDone }: { onDone: () => void }) {
           : message(err),
       );
     }
-  };
-
-  const [copied, setCopied] = useState(false);
-  const copySecret = () => {
-    if (!secret) return;
-    // Without a secure origin there's no clipboard: the secret is selected to copy by hand.
-    const shown = document.querySelector(".login-card code.secret");
-    const select = () => shown && getSelection()?.selectAllChildren(shown);
-    if (!navigator.clipboard) return select();
-    navigator.clipboard.writeText(secret.secret).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }, select);
   };
 
   const finish = async (e: FormEvent) => {
@@ -200,16 +220,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
           </div>
           {/* biome-ignore lint/security/noDangerouslySetInnerHtml: SVG generated locally by qrcode */}
           <div className="qr" dangerouslySetInnerHTML={{ __html: qr }} />
-          {/* On a phone there's nothing to scan: the link opens the authenticator. */}
-          <a className="btn" href={secret.uri}>
-            Add to authenticator
-          </a>
-          <div className="copyable">
-            <code className="secret">{secret.secret.match(/.{1,4}/g)?.join(" ")}</code>
-            <button type="button" className="btn sm ghost" onClick={copySecret}>
-              {copied ? "Copied" : "Copy"}
-            </button>
-          </div>
+          <AddToAuthenticator uri={secret.uri} secret={secret.secret} />
           <input
             className="field"
             type="password"

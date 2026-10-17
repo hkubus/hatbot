@@ -277,13 +277,16 @@ export class Checks {
     if (!info.source) return skip("Updates aren't set up; deploy.sh sets them up.");
     const s = info.status;
     if (s?.state === "failed") return fail(`The last update failed: ${s.error ?? s.step}.`);
-    if (s?.state === "done" && s.notes.length)
-      return warn(`Still to do by hand after the last update: ${s.notes.join(" ")}`);
-    // Update runs the new commit's deploy script as root on the brain.
-    if (info.source.signed === false)
-      return warn(
+    // Update runs the new commit's deploy script as root on the brain. Said along with any notes,
+    // which an install without a desktop has after every update.
+    const warnings = [
+      info.source.signed === false &&
         `Update deploys whatever ${info.source.branch} holds, so whoever can push to it can run code on the brain. Run deploy.sh with HATBOT_GIT_URL set to give it the key you sign commits with.`,
-      );
+      s?.state === "done" &&
+        s.notes.length > 0 &&
+        `Still to do by hand after the last update: ${s.notes.join(" ")}`,
+    ].filter(Boolean);
+    if (warnings.length) return warn(warnings.join(" "));
     if (!s) return ok("No update has run yet.");
     return ok(info.current?.sha ? `Running ${info.current.sha.slice(0, 7)}.` : "Up to date.");
   }
@@ -298,7 +301,19 @@ export class Checks {
       );
     await ntfy.health();
     // Whoever reads the topic sees every notification, and can press its Approve buttons.
-    const open = await ntfy.readableByAnyone().catch(() => null);
+    let open: boolean;
+    try {
+      open = await ntfy.readableByAnyone();
+    } catch (err) {
+      const why =
+        (err as Error).name === "TimeoutError" ? "ntfy didn't answer" : (err as Error).message;
+      const fix = "Allow only your ntfy user to read the topic.";
+      return guessableTopic(ntfy.topic)
+        ? fail(
+            `Couldn't tell whether anyone can read your notifications (${why}), and the topic's name is easy to guess. Run deploy.sh with NTFY_URL set to pick a random one. ${fix}`,
+          )
+        : warn(`Couldn't tell whether anyone can read the topic (${why}). ${fix}`);
+    }
     if (open && guessableTopic(ntfy.topic))
       return fail(
         "Anyone can read your notifications, Approve buttons included: the server lets anyone read the topic, and its name is easy to guess. Run deploy.sh with NTFY_URL set to pick a random one, and allow only your ntfy user to read it.",

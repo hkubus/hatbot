@@ -9,6 +9,8 @@ import { REVIEW_PROMPT } from "./prompt";
 import { tagJson } from "./untrusted";
 
 const REVIEW_MODEL = "claude-haiku-5-5";
+/** Room for thinking, so it can't crowd out the verdict. */
+const REVIEW_TOKENS = 4000;
 
 const VERDICT = {
   type: "object",
@@ -55,13 +57,12 @@ export async function safeToRun(
     d.spend.check(
       requestCeiling(REVIEW_MODEL, {
         prompt: fixedTokens(REVIEW_PROMPT, content),
-        maxTokens: 2000,
+        maxTokens: REVIEW_TOKENS,
       }),
     );
     const res = await d.model.create({
       model: REVIEW_MODEL,
-      // Room for thinking, so it can't crowd out the verdict.
-      max_tokens: 4000,
+      max_tokens: REVIEW_TOKENS,
       thinking: { type: "adaptive" },
       output_config: { effort: "low", format: { type: "json_schema", schema: VERDICT } },
       system: REVIEW_PROMPT,

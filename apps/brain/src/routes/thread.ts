@@ -12,7 +12,8 @@ import { MAX_ATTACHMENT_BYTES } from "../attachments";
 import { requireAuth } from "../auth/middleware";
 import { BotError } from "../bots";
 import type { AppEnv } from "../context";
-import { json, query } from "./util";
+import { BudgetError } from "../spend";
+import { json, query, signedOut } from "./util";
 
 /** RFC 5987's encoding for filename*: encodeURIComponent leaves ' ( ) * as they are, which it doesn't allow. */
 const rfc5987 = (s: string) =>
@@ -46,6 +47,7 @@ export const threadRoutes = new Hono<AppEnv>()
     if (Number(c.req.header("content-length") ?? 0) > MAX_ATTACHMENT_BYTES + 64 * 1024)
       return c.json({ error: "The file is over 25 MB." }, 413);
     const form = await c.req.formData().catch(() => null);
+    if (signedOut(c)) return c.json({ error: "unauthorized" }, 401);
     const file = form?.get("file");
     if (!(file instanceof File))
       return c.json({ error: 'Send the file as multipart field "file".' }, 400);
@@ -63,7 +65,7 @@ export const threadRoutes = new Hono<AppEnv>()
     const id = Number(c.req.param("id"));
     const a = Number.isInteger(id) ? c.var.attachments.get(id) : null;
     const file = a && c.var.attachments.file(id);
-    if (!a || !file || !(await file.exists())) return c.json({ error: "not found" }, 404);
+    if (!a || !file || !(await file.exists())) return c.json({ error: "That's gone." }, 404);
     const inline = INLINE.includes(a.mediaType) && c.req.query("download") === undefined;
     const ascii = a.name.replace(/[^\x20-\x7e]|["\\]/g, "_");
     // Checked each time rather than kept for a year: an incognito one isn't kept at all.
@@ -93,13 +95,13 @@ export const threadRoutes = new Hono<AppEnv>()
   .patch("/conversations/:id", json(UpdateGroup), (c) =>
     groupError(() => {
       const group = c.var.chats.updateGroup(Number(c.req.param("id")), c.req.valid("json"));
-      return group ? c.json(group) : c.json({ error: "not found" }, 404);
+      return group ? c.json(group) : c.json({ error: "That's gone." }, 404);
     }, c),
   )
   .delete("/conversations/:id", (c) =>
     c.var.chats.deleteGroup(Number(c.req.param("id")))
       ? c.json({ ok: true })
-      : c.json({ error: "not found" }, 404),
+      : c.json({ error: "That's gone." }, 404),
   )
   .get("/thread/messages", query(ListMessages), (c) => listMessages(c, c.var.chats.hatbot()))
   .get("/conversations/:id/messages", query(ListMessages), (c) =>
@@ -156,7 +158,7 @@ function groupError(f: () => Response, c: Ctx): Response {
 function withThread(c: Ctx, f: (t: Thread) => Response | Promise<Response>) {
   const id = Number(c.req.param("id"));
   const thread = Number.isInteger(id) ? c.var.chats.thread(id) : null;
-  return thread ? f(thread) : c.json({ error: "not found" }, 404);
+  return thread ? f(thread) : c.json({ error: "That's gone." }, 404);
 }
 
 /** A deleted bot's chat is gone from the app; a page still showing it can't start the bot again. */
@@ -191,8 +193,15 @@ async function deleteEpisode(c: Ctx, t: Thread) {
   try {
     return Number.isInteger(id) && (await t.deleteEpisode(id))
       ? c.json({ ok: true })
-      : c.json({ error: "not found" }, 404);
+      : c.json({ error: "That's gone." }, 404);
   } catch (err) {
+    if (err instanceof BudgetError)
+      return c.json(
+        {
+          error: `${err.limit === "monthly" ? "This month's" : "Today's"} spending limit is used up, so it couldn't be taken out of the summary. Nothing was deleted.`,
+        },
+        429,
+      );
     console.error("deleting a conversation failed", err);
     return c.json({ error: "Couldn't take it out of the summary. Nothing was deleted." }, 502);
   }

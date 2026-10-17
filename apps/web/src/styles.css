@@ -1437,14 +1437,14 @@ html[data-theme="dark"] .seg button.active {
 .login-card .btn {
   height: 34px;
 }
-.login-card a.btn:hover {
+a.btn:hover {
   text-decoration: none;
 }
 .login-card .copyable .btn {
   height: 24px;
 }
 /* The secret wraps between its groups of four. */
-.login-card .copyable code {
+.copyable code.secret {
   word-break: normal;
   text-align: left;
 }

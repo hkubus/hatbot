@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { Approval, CheckReport, ChecksInfo } from "@hatbot/shared";
 import { Checks } from "../src/checks";
 import { DesktopError } from "../src/desktop/client";
-import { NtfyNotifier } from "../src/notify";
+import { guessableTopic, NtfyNotifier } from "../src/notify";
 import { ORIGIN, setUpOwner, type TestApp, testApp } from "./helpers";
 
 const byId = (r: CheckReport) => Object.fromEntries(r.results.map((c) => [c.id, c]));
@@ -118,13 +118,17 @@ test("plain lines for infra/smoke.sh", async () => {
   expect(text).toContain("ok    Database: Schema version");
 });
 
-/** Check everything's ntfy line, against a server that answers each path as `answers` says. */
+/**
+ * Check everything's ntfy line, against a server that answers each path as `answers` says; 0 is no
+ * answer in time.
+ */
 async function ntfyCheck(t: TestApp, env: Record<string, string>, answers: Record<string, number>) {
   const asked: { url: string; auth: string | null }[] = [];
   const fetcher = (async (url: string, init?: RequestInit) => {
     asked.push({ url, auth: new Headers(init?.headers).get("authorization") });
     const path = new URL(url).pathname;
     const status = answers[path] ?? 404;
+    if (status === 0) throw new DOMException("The operation timed out.", "TimeoutError");
     return path === "/v1/health"
       ? Response.json({ healthy: status === 200 }, { status })
       : new Response("", { status });
@@ -173,6 +177,41 @@ test("ntfy: a topic anyone can read fails the check, and one with no token warns
   const none = await ntfyCheck(t, {}, closed);
   expect(none.result?.state).toBe("fail");
   expect(none.result?.detail).toContain("NTFY_TOPIC isn't set");
+});
+
+test("ntfy: a topic named by hand can be guessed, and an answer that doesn't say isn't taken as closed", async () => {
+  const t = await testApp();
+  for (const topic of ["hatbot-notifications", "hatbot_approvals_topic", "aaaaaaaaaaaaaaaaaaaa"]) {
+    const open = { "/v1/health": 200, [`/${topic}/json`]: 200 };
+    expect(guessableTopic(topic)).toBe(true);
+    expect(
+      (await ntfyCheck(t, { NTFY_TOPIC: topic, NTFY_TOKEN: "tk_1" }, open)).result?.state,
+    ).toBe("fail");
+  }
+  expect(guessableTopic("hatbot-0f3a9c2e5b7d41a8c6e0f2b4")).toBe(false);
+  expect(guessableTopic("Xq3_vB9kLm2-Rt7wYz1aPc4")).toBe(false);
+
+  const random = "hatbot-0f3a9c2e5b7d41a8c6e0f2b4";
+  for (const [status, why] of [
+    [429, "ntfy answered 429"],
+    [502, "ntfy answered 502"],
+    [0, "ntfy didn't answer"],
+  ] as const) {
+    const answers = { "/v1/health": 200, [`/${random}/json`]: status };
+    expect(
+      (await ntfyCheck(t, { NTFY_TOPIC: random, NTFY_TOKEN: "tk_1" }, answers)).result,
+    ).toMatchObject({
+      state: "warn",
+      detail: `Couldn't tell whether anyone can read the topic (${why}). Allow only your ntfy user to read the topic.`,
+    });
+  }
+  const shared = await ntfyCheck(
+    t,
+    { NTFY_TOPIC: "hatbot", NTFY_TOKEN: "tk_1" },
+    { "/v1/health": 200, "/hatbot/json": 429 },
+  );
+  expect(shared.result?.state).toBe("fail");
+  expect(shared.result?.detail).toContain("easy to guess");
 });
 
 test("ntfy: nothing is sent without a topic, there's no shared default", async () => {

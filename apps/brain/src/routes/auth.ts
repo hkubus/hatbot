@@ -35,10 +35,11 @@ const TOO_MANY = "Too many tries. Try again in 15 minutes.";
 
 /**
  * Counts a sign-in attempt as failed before it's checked, so a burst can't all get past the limit while
- * the first is still being checked; ok() takes it back. Null when too many have failed. A browser that
- * has signed in here before counts on its own, so strangers' failures can't lock it out.
+ * the first is still being checked; ok() takes it back, and failed() keeps it. Null when too many have
+ * failed. A browser that has signed in here before counts on its own, so strangers' failures can't
+ * lock it out.
  */
-function attempt(c: Context<AppEnv>): { ok(): void } | null {
+function attempt(c: Context<AppEnv>): { ok(): void; failed(): void } | null {
   const { auth, loginLimits, clientIp } = c.var;
   const device = auth.knownDevice(getCookie(c, DEVICE_COOKIE));
   const key = device ? `device ${device}` : clientIp;
@@ -49,6 +50,10 @@ function attempt(c: Context<AppEnv>): { ok(): void } | null {
     ok() {
       loginLimits.perIp.reset(key);
       if (!device) loginLimits.global.forgive("*");
+    },
+    // Only now may the overall limit have tripped: a right one at the limit was counted too.
+    failed() {
+      if (!device) loginLimits.global.stood("*");
     },
   };
 }
@@ -79,9 +84,13 @@ export const authRoutes = new Hono<AppEnv>()
     if (!tried) return c.json({ error: TOO_MANY }, 429);
     // A body that isn't a login counts as a failure too.
     const body = Login.safeParse(await c.req.json().catch(() => null));
-    if (!body.success) return badRequest(c, body.error);
+    if (!body.success) {
+      tried.failed();
+      return badRequest(c, body.error);
+    }
     const { password, totp, client, device } = body.data;
     if (!(await auth.checkCredentials(password, totp))) {
+      tried.failed();
       return c.json({ error: "That password or code isn't right." }, 401);
     }
     tried.ok();
@@ -114,8 +123,10 @@ export const authRoutes = new Hono<AppEnv>()
     const tried = attempt(c);
     if (!tried) return c.json({ error: TOO_MANY }, 429);
     const { password, totp, newPassword } = c.req.valid("json");
-    if (!(await auth.checkCredentials(password, totp)))
+    if (!(await auth.checkCredentials(password, totp))) {
+      tried.failed();
       return c.json({ error: "That password or code isn't right." }, 401);
+    }
     tried.ok();
     await auth.changePassword(newPassword);
     return c.json<SignedOutOthers>({ ok: true, ended: auth.endOthers(principal) });
@@ -125,8 +136,10 @@ export const authRoutes = new Hono<AppEnv>()
     const tried = attempt(c);
     if (!tried) return c.json({ error: TOO_MANY }, 429);
     const { password, totp } = c.req.valid("json");
-    if (!(await auth.checkCredentials(password, totp)))
+    if (!(await auth.checkCredentials(password, totp))) {
+      tried.failed();
       return c.json({ error: "That password or code isn't right." }, 401);
+    }
     tried.ok();
     return c.json(auth.startTotpChange(principal));
   })
@@ -140,7 +153,7 @@ export const authRoutes = new Hono<AppEnv>()
   .delete("/auth/sessions/:id{[0-9]+}", requireAuth, (c) =>
     c.var.auth.endSession(Number(c.req.param("id")))
       ? c.json({ ok: true })
-      : c.json({ error: "not found" }, 404),
+      : c.json({ error: "That browser is already signed out." }, 404),
   )
   .post("/auth/sign-out-others", requireAuth, (c) =>
     c.json<SignedOutOthers>({ ok: true, ended: c.var.auth.endOthers(c.var.principal) }),
@@ -153,5 +166,5 @@ export const authRoutes = new Hono<AppEnv>()
   .delete("/tokens/:id{[0-9]+}", requireAuth, (c) =>
     c.var.auth.deleteToken(Number(c.req.param("id")))
       ? c.json({ ok: true })
-      : c.json({ error: "not found" }, 404),
+      : c.json({ error: "That token is already revoked." }, 404),
   );

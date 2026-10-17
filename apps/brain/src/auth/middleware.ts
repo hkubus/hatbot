@@ -15,12 +15,16 @@ export function setSessionCookie(c: Context<AppEnv>, token: string) {
   });
 }
 
-export function principalOf(c: Context<AppEnv>): Principal | null {
+/**
+ * Who's asking. `renew: false` leaves a session's expiry where it is: a WebSocket upgrade answers with
+ * its own 101 and can't carry the cookie, so the next request moves both on.
+ */
+export function principalOf(c: Context<AppEnv>, opts: { renew?: boolean } = {}): Principal | null {
   const { auth } = c.var;
   const header = c.req.header("authorization");
   if (header?.startsWith("Bearer ")) return auth.resolveToken(header.slice(7).trim());
   const cookie = getCookie(c, SESSION_COOKIE);
-  const session = cookie ? auth.resolveSession(cookie) : null;
+  const session = cookie ? auth.resolveSession(cookie, opts.renew ?? true) : null;
   if (!session || !cookie) return null;
   // The session's expiry moved on, so the cookie's does too, or it would end on day 30 regardless.
   if (session.renewed) setSessionCookie(c, cookie);

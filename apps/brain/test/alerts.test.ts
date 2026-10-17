@@ -165,7 +165,7 @@ test("a flapping monitor goes on its last task's timeline for an hour; a trigger
   if (first.status !== "started") throw new Error(first.status);
   await waitFor(() => t.tasks.get(first.task.id)?.finishedAt);
 
-  // Back up and down again ten minutes later: on that task's timeline, not a new task.
+  // Back up and down again ten minutes later: on that task's timeline, not a new task, and you're told.
   t.advance(10 * 60_000);
   expect(t.triggers.receiveKuma(triggerId, up)).toEqual({ status: "skipped", reason: "ignored" });
   expect(t.triggers.receiveKuma(triggerId, down)).toEqual({ status: "skipped", reason: "recent" });
@@ -173,10 +173,27 @@ test("a flapping monitor goes on its last task's timeline for an hour; a trigger
     expect.arrayContaining(["Jellyfin is back up", "Jellyfin is down again"]),
   );
   expect(t.tasks.list()).toHaveLength(1);
-  // An hour after the task ended, a new one.
-  t.advance(60 * 60_000);
-  const second = t.triggers.receiveKuma(triggerId, down);
-  expect(second.status).toBe("started");
+  const downAgain = () => t.notifier.sent.filter((n) => n.title === "Jellyfin is down again");
+  expect(downAgain()).toEqual([
+    expect.objectContaining({
+      message: `It went down again after task #${first.task.id} ended. If it's still down in 50 minutes, a new task looks into it.`,
+      click: expect.stringContaining(`/tasks/${first.task.id}`),
+    }),
+  ]);
+  // Flapping more within the hour isn't told again.
+  t.advance(60_000);
+  t.triggers.receiveKuma(triggerId, up);
+  t.triggers.receiveKuma(triggerId, down);
+  expect(downAgain()).toHaveLength(1);
+  // Kuma says nothing more while it stays down. An hour after the task ended, a new one.
+  t.advance(40 * 60_000);
+  t.triggers.tick();
+  expect(t.tasks.list()).toHaveLength(1);
+  t.advance(10 * 60_000);
+  t.triggers.tick();
+  const tasks = t.tasks.list();
+  expect(tasks).toHaveLength(2);
+  expect(tasks.find((x) => x.id !== first.task.id)).toMatchObject({ title: "Jellyfin is down" });
   await t.tasks.idle();
 
   // 22 more today, as if other monitors had gone down: the 24th is the last, and you're told.

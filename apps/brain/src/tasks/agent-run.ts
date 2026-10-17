@@ -52,6 +52,7 @@ import {
   RESEARCH_TOKENS,
   RESEARCH_TOOLS,
   ResearchState,
+  refusedLinks,
   researchPrompt,
 } from "./research";
 import { SEND_TO_CHAT_DESCRIPTION, SendToChat, sendToChat } from "./send-to-chat";
@@ -347,6 +348,16 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const desktopTask = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
     const p = DesktopTaskInput.safeParse(call.input);
     if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+    const { title, goal, success_criteria } = p.data;
+    const refused =
+      research &&
+      refusedLinks(
+        run,
+        found.sources,
+        `${title}\n${goal}\n${success_criteria}`,
+        "the desktop task",
+      );
+    if (refused) return result(call, refused, true);
     const missing = await missingSkill(d.memory, p.data.skill);
     if (missing) return result(call, missing, true);
     const child = tasks.createDesktopTask({
@@ -379,6 +390,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const askBot = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
     const p = AskBotInput.safeParse(call.input);
     if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+    const refused = research && refusedLinks(run, found.sources, p.data.request, "the bot");
+    if (refused) return result(call, refused, true);
     const child = tasks.askBot({
       from: bot,
       to: p.data.bot,
@@ -630,7 +643,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
   /** Research: the helpers' sources, and how finishing has gone. */
   const found = new ResearchState();
-  const run = { tasks, task, signal, taint, messages };
+  const run = { tasks, task, signal, taint, messages, reserveUsd: 0 };
 
   try {
     await tasks.pool.acquire(signal);
@@ -686,15 +699,18 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         );
       // What it may cost at most, held against the limits until it's recorded.
       const cached = tasks.clock() - cache.at < 5 * 60_000 ? cache.tokens : 0;
+      const ceiling = requestCeiling(task.model, {
+        prompt: Math.max(estimateTokens(messages) + fixedTokens(system, tools), cached),
+        cached,
+        write: "5m",
+        maxTokens,
+        webSearches: searchesIn(tools),
+      });
+      // Research's helpers leave room for its next request.
+      run.reserveUsd = ceiling;
       try {
         held = d.spend.hold(
-          requestCeiling(task.model, {
-            prompt: Math.max(estimateTokens(messages) + fixedTokens(system, tools), cached),
-            cached,
-            write: "5m",
-            maxTokens,
-            webSearches: searchesIn(tools),
-          }),
+          ceiling,
           { id, limitUsd: tasks.budget(id) },
           { reserve: usesReserve(task.origin) },
         );
@@ -972,7 +988,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         // The limit is its tree's: the tasks it started count too.
         const spent = d.spend.treeSpend(id);
         const limit = tasks.budget(id);
-        if (left <= 2 || spent >= 0.8 * limit) {
+        // Room for two more requests at most: the report, and one more if the check sends it back.
+        if (left <= 2 || spent >= 0.8 * limit || limit - spent < 2 * run.reserveUsd) {
           toldToFinish = true;
           const near =
             left <= 2

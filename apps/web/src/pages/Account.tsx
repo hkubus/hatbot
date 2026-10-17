@@ -8,7 +8,7 @@ import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
 import { navigate } from "../router";
 import type { Toast } from "../toast";
-import { OtpInput } from "./Login";
+import { AddToAuthenticator, OtpInput } from "./Login";
 
 const errorText = (err: unknown) =>
   err instanceof ApiError ? err.message : "Couldn't reach Hatbot.";
@@ -16,6 +16,19 @@ const changed = (what: string, ended: number) =>
   ended ? `${what}. Every other browser and app is signed out.` : what;
 const since = (iso: string) =>
   `Since ${new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`;
+
+/**
+ * Signs a browser out; what went wrong, or null. One signed out already, from another tab or by
+ * expiring, is no error: the list shows it once it loads again.
+ */
+export async function signOut(id: number): Promise<string | null> {
+  try {
+    await api(`/auth/sessions/${id}`, { method: "DELETE" });
+    return null;
+  } catch (err) {
+    return err instanceof ApiError && err.status === 404 ? null : errorText(err);
+  }
+}
 
 export function Account({ toast }: { toast: Toast }) {
   // A change signs out the other sessions, so the list loads again.
@@ -194,12 +207,12 @@ function AuthenticatorForm({ toast, onChanged }: { toast: Toast; onChanged: () =
     <form className="panel form" onSubmit={finish}>
       <h3 className="section-title">Authenticator</h3>
       <div className="muted">
-        Scan this with the new authenticator and enter the code it shows. The old one works until
-        then.
+        Scan this with the new authenticator, or add it on this device, and enter the code it shows.
+        The old one works until then.
       </div>
       {/* biome-ignore lint/security/noDangerouslySetInnerHtml: SVG generated locally by qrcode */}
       <div className="qr" dangerouslySetInnerHTML={{ __html: qr }} />
-      <div className="secret">{next.secret}</div>
+      <AddToAuthenticator uri={next.uri} secret={next.secret} />
       <span className="label">Code from the new authenticator</span>
       <OtpInput value={code} onChange={setCode} />
       {error && <div className="form-error">{error}</div>}
@@ -234,11 +247,8 @@ function Sessions({ toast, version }: { toast: Toast; version: number }) {
   useEffect(load, [load, version]);
 
   const end = async (s: Session) => {
-    try {
-      await api(`/auth/sessions/${s.id}`, { method: "DELETE" });
-    } catch (err) {
-      toast(errorText(err), "error");
-    }
+    const error = await signOut(s.id);
+    if (error) toast(error, "error");
     load();
   };
 

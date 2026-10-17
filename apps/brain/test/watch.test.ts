@@ -84,6 +84,9 @@ test("numbers are read in either style, and only a move into the condition count
   expect(numberIn("0,99 zł")).toBe(0.99);
   // A badge or a model number before the price doesn't win.
   expect(numberIn("-20% 1 299 zł")).toBe(1299);
+  expect(numberIn("-300 zł 1 299 zł")).toBe(1299);
+  expect(numberIn("Rabat -300 zł\n1 299 zł")).toBe(1299);
+  expect(numberIn("-300 zł")).toBe(-300);
   expect(numberIn("Taniej o 15 % 849,00 zł")).toBe(849);
   expect(numberIn("Laptop 16 GB 3 999 zł")).toBe(3999);
   // Neighbouring prices aren't read as one number.
@@ -366,6 +369,22 @@ test("a watcher deleted while its page is read is let go, and the checks carry o
   }
   expect(t.watchers.get(c.id)).toBeNull();
   expect(t.notifier.sent.map((n) => n.title)).not.toContain("Can't check C");
+
+  // Deleted while a new source is read for it: it's gone, not an error.
+  t.agent.fetch = fetch;
+  t.agent.pages.set(url, page(`<p class="price">€9</p>`));
+  const d = await make("D");
+  expect(d.id).toBeNumber();
+  t.agent.pages.set("https://shop.example/new", page(`<p class="price">€8</p>`));
+  t.agent.fetch = async (u) => {
+    const r = await fetch(u);
+    t.watchers.delete(d.id);
+    return r;
+  };
+  const moved = await api("PATCH", `/watchers/${d.id}`, {
+    source: { kind: "page", url: "https://shop.example/new", selector: ".price" },
+  });
+  expect(moved.status).toBe(404);
 });
 
 test("the chat makes a watcher from what it saw first", async () => {

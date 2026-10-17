@@ -77,10 +77,14 @@ export class AuthService {
     const passwordOk = await Bun.password.verify(password, owner.password_hash);
     const step = verifyTotp(owner.totp_secret, totp, this.clock());
     if (!passwordOk || step === null || step <= owner.totp_last_step) return false;
-    // Only advance if nobody used this step concurrently.
+    // Only advance if nobody used this step concurrently, and the password and authenticator are still
+    // the ones checked: a change while the check ran signs out everything but the changer.
     const res = this.db
-      .query("UPDATE owner SET totp_last_step = ? WHERE id = 1 AND totp_last_step < ?")
-      .run(step, step);
+      .query(
+        `UPDATE owner SET totp_last_step = ? WHERE id = 1 AND totp_last_step < ?
+         AND password_hash = ? AND totp_secret = ?`,
+      )
+      .run(step, step, owner.password_hash, owner.totp_secret);
     return res.changes === 1;
   }
 
@@ -146,6 +150,15 @@ export class AuthService {
     this.ended("session", sessions);
     this.ended("token", tokens);
     return sessions.length + tokens.length;
+  }
+
+  /** Whether a session or token still stands, for a request that was let in before it ended. */
+  alive(p: Principal): boolean {
+    return p.kind === "session"
+      ? this.db
+          .query("SELECT 1 FROM sessions WHERE id = ? AND expires_at > ?")
+          .get(p.id, new Date(this.clock()).toISOString()) !== null
+      : this.db.query("SELECT 1 FROM api_tokens WHERE id = ?").get(p.id) !== null;
   }
 
   /** A browser or app that has signed in here: a random id, signed so one can't be made up. */
@@ -226,7 +239,7 @@ export class AuthService {
   }
 
   /** The session, and whether its expiry moved on, so its cookie should too. */
-  resolveSession(token: string): (Principal & { renewed?: true }) | null {
+  resolveSession(token: string, renew = true): (Principal & { renewed?: true }) | null {
     const row = this.db
       .query<{ id: number; expires_at: string }, [string]>(
         "SELECT id, expires_at FROM sessions WHERE token_hash = ?",
@@ -240,7 +253,7 @@ export class AuthService {
       return null;
     }
     // Sliding expiry, refreshed at most daily.
-    if (Date.parse(row.expires_at) - nowMs < (SESSION_DAYS - 1) * 86400_000) {
+    if (renew && Date.parse(row.expires_at) - nowMs < (SESSION_DAYS - 1) * 86400_000) {
       const expires = new Date(nowMs + SESSION_DAYS * 86400_000).toISOString();
       this.db.query("UPDATE sessions SET expires_at = ? WHERE id = ?").run(expires, row.id);
       return { kind: "session", id: row.id, renewed: true };
@@ -289,15 +302,19 @@ export class AuthService {
   }
 }
 
+/** How often onBlocked may be told about one key. */
+const TELL_EVERY_MS = 3600_000;
+
 /** Counts failed logins per key in a sliding window. */
 export class FailureLimiter {
   private failures = new Map<string, number[]>();
+  private toldAt = new Map<string, number>();
 
   constructor(
     private max: number,
     private windowMs: number,
     private clock: () => number = Date.now,
-    /** Told when a key reaches the limit. */
+    /** Told when a failure that stood brings a key to the limit, at most once an hour. */
     private onBlocked?: (key: string) => void,
   ) {}
 
@@ -305,11 +322,23 @@ export class FailureLimiter {
     return this.recent(key).length >= this.max;
   }
 
+  /** Counts a failure; one counted before it's checked is taken back with forgive() or kept with stood(). */
   fail(key: string) {
     const list = this.recent(key);
     list.push(this.clock());
     this.failures.set(key, list);
-    if (list.length === this.max) this.onBlocked?.(key);
+  }
+
+  /**
+   * A failure that stood once it was checked. Someone failing as fast as the window lets them keeps
+   * the key at its limit, so onBlocked hears about it hourly, not each time.
+   */
+  stood(key: string) {
+    if (!this.onBlocked || !this.blocked(key)) return;
+    const now = this.clock();
+    if (now - (this.toldAt.get(key) ?? -Infinity) < TELL_EVERY_MS) return;
+    this.toldAt.set(key, now);
+    this.onBlocked(key);
   }
 
   /** Takes back one failure: an attempt counted before it was checked, which turned out right. */
