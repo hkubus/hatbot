@@ -3,9 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { installDom, settle } from "./dom";
 
 installDom();
-const { AssistantBody, appPath, Composer, dayLabel, fileDrops, follows, spoken } = await import(
-  "../src/pages/Chat"
-);
+const { AssistantBody, appPath, Composer, dayLabel, fileDrops, follows, Message, spoken } =
+  await import("../src/pages/Chat");
 const drafts = await import("../src/drafts");
 
 test("the composer says it has a menu, and which line in it is picked", () => {
@@ -28,6 +27,40 @@ test("the composer says it has a menu, and which line in it is picked", () => {
   expect(closed).toContain('aria-expanded="false"');
   expect(closed).not.toContain("aria-activedescendant");
   drafts.saveDraftText("7", "");
+});
+
+test("until its task or schedule loads, a card's line shows without Markdown's marks", () => {
+  const card = (patch: object) =>
+    renderToStaticMarkup(
+      <Message
+        m={{
+          id: 40,
+          role: "assistant",
+          conversationId: 1,
+          botId: "hatbot",
+          kind: "task",
+          text: "Task #12: Check the NAS. Done: **All good.** The `tank` pool is fine.",
+          status: "done",
+          createdAt: "2026-10-17T10:00:00.000Z",
+          taskId: 12,
+          scheduleId: null,
+          negotiationId: null,
+          episodeId: null,
+          editedAt: null,
+          seenAt: null,
+          ...patch,
+        }}
+        animate={false}
+        unread={false}
+      />,
+    );
+  expect(card({})).toContain(
+    '<div class="muted card-pending">Task #12: Check the NAS. Done: All good. The tank pool is fine.</div>',
+  );
+  expect(card({ text: "" })).toContain('<div class="muted card-pending">Task #12</div>');
+  expect(
+    card({ kind: "schedule", taskId: null, scheduleId: 3, text: "Scheduled **Backups**: daily." }),
+  ).toContain('<div class="muted card-pending">Scheduled Backups: daily.</div>');
 });
 
 test("a finished reply is said without Markdown's marks", () => {

@@ -36,6 +36,7 @@ import {
   setDraftFiles,
   useDraftFiles,
 } from "../drafts";
+import { plainText } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LoadError, loadErrorText } from "../load";
@@ -317,7 +318,7 @@ function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
     return (
       <>
         <div className="body">
-          <div className="muted card-pending">{m.text || `Task #${taskId}`}</div>
+          <div className="muted card-pending">{plainText(m.text) || `Task #${taskId}`}</div>
         </div>
         <Meta m={m} open={{ to: `/tasks/${taskId}`, label: "Open task" }} />
       </>
@@ -503,7 +504,7 @@ function ScheduleMessage({ m, scheduleId }: { m: ThreadMessage; scheduleId: numb
     return (
       <>
         <div className="body">
-          <div className="muted card-pending">{m.text}</div>
+          <div className="muted card-pending">{plainText(m.text)}</div>
         </div>
         <Meta m={m} open={{ to: `/schedules/${scheduleId}`, label: "Open schedule" }} />
       </>
@@ -578,7 +579,7 @@ function Files({ list }: { list: Attachment[] }) {
 type Option = { key: string; label: React.ReactNode; desc: string; choose: () => void };
 
 // Memoized: while a reply streams only its own message redraws, not the whole thread's markdown.
-const Message = memo(function Message({
+export const Message = memo(function Message({
   m,
   progress,
   animate,
