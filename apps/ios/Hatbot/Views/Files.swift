@@ -22,9 +22,14 @@ final class AttachmentCache {
     return image
   }
 
+  /// Signed out.
+  func clear() {
+    images.removeAllObjects()
+  }
+
   /// The file saved where Quick Look can open it, under its own name.
   func file(_ api: API, _ a: Attachment) async throws -> URL {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("attachments/\(a.id)", isDirectory: true)
+    let dir = DiskCache.openedFiles.appendingPathComponent("\(a.id)", isDirectory: true)
     let url = dir.appendingPathComponent(a.name.replacingOccurrences(of: "/", with: "_"))
     if FileManager.default.fileExists(atPath: url.path) { return url }
     let data = try await api.data("/attachments/\(a.id)?download")

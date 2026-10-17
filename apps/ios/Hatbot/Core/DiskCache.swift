@@ -5,6 +5,13 @@ import Foundation
 struct DiskCache: Sendable {
   let dir: URL
 
+  /// Reads, writes and clearing take turns here, so a write still on its way can't bring back what
+  /// signing out cleared.
+  private static let queue = DispatchQueue(label: "hatbot.disk-cache", qos: .userInitiated)
+
+  /// Files opened from the chat, saved for Quick Look under their own names; signing out deletes them.
+  static let openedFiles = FileManager.default.temporaryDirectory.appendingPathComponent("attachments", isDirectory: true)
+
   /// The bots and chats, and which chat was open.
   struct Chats: Codable, Equatable, Sendable {
     var bots: [Bot]
@@ -27,13 +34,15 @@ struct DiskCache: Sendable {
 
   func save(_ page: Page, for conversationId: Int) { write(page, "page-\(conversationId).json") }
 
-  /// Signing out leaves nothing behind.
+  /// Signing out leaves nothing behind. Done once the writes before it are.
   func clear() {
-    try? FileManager.default.removeItem(at: dir)
+    let dir = dir
+    Self.queue.sync { try? FileManager.default.removeItem(at: dir) }
   }
 
   private func load<T: Decodable>(_ name: String) -> T? {
-    guard let data = try? Data(contentsOf: dir.appendingPathComponent(name)) else { return nil }
+    let url = dir.appendingPathComponent(name)
+    guard let data = Self.queue.sync(execute: { try? Data(contentsOf: url) }) else { return nil }
     return try? JSONDecoder().decode(T.self, from: data)
   }
 
@@ -41,7 +50,7 @@ struct DiskCache: Sendable {
   private func write<T: Encodable>(_ value: T, _ name: String) {
     guard let data = try? JSONEncoder().encode(value) else { return }
     let dir = dir
-    Task.detached(priority: .utility) {
+    Self.queue.async {
       try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
       try? data.write(to: dir.appendingPathComponent(name), options: .atomic)
     }

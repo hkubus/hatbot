@@ -33,6 +33,8 @@ struct HatbotApp: App {
       .onChange(of: session.store == nil) { _, out in
         if out {
           Spotlight.clear()
+          AttachmentCache.shared.clear()
+          ScreenCache.shared.clear()
           Task { await Badge.show(0) }
         }
       }

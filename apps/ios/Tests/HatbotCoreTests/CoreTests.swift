@@ -747,6 +747,47 @@ final class DiskCacheTests: XCTestCase {
     cache.clear()
     XCTAssertNil(cache.chats())
   }
+
+  /// A page still being written when you sign out doesn't come back after the cache is cleared.
+  func testClearingWaitsForWritesOnTheirWay() throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let cache = DiskCache(dir: dir)
+    let m = ThreadMessage(id: 1, role: .user, kind: .text, text: "secret", status: .done, createdAt: "2026-10-15T10:00:00Z")
+    for id in 1...50 { cache.save(DiskCache.Page(messages: [m], episodes: [], hasEarlier: false), for: id) }
+    cache.clear()
+    Thread.sleep(forTimeInterval: 0.3)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
+    XCTAssertNil(cache.page(50))
+  }
+
+  /// Signing out deletes the chat cache and the files opened from the chat, and forgets the token.
+  func testSigningOutLeavesNothingBehind() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let opened = DiskCache.openedFiles.appendingPathComponent("9", isDirectory: true)
+    try FileManager.default.createDirectory(at: opened, withIntermediateDirectories: true)
+    try Data("invoice".utf8).write(to: opened.appendingPathComponent("invoice.pdf"))
+    SlowBrain.routes = ["/auth/logout": "{}"]
+    let vault = MemoryVault("t")
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+    defaults.set("https://h.example", forKey: Session.serverKey)
+    let session = await MainActor.run {
+      let s = Session(vault: vault, defaults: defaults, cacheDir: dir, urlSession: SlowBrain.session())
+      s.store?.messages = [
+        ThreadMessage(id: 1, role: .user, kind: .text, text: "hi", status: .done, createdAt: "2026-10-15T10:00:00Z")
+      ]
+      return s
+    }
+    await session.signOut()
+    let store = await MainActor.run { session.store }
+    XCTAssertNil(store)
+    XCTAssertNil(vault.load())
+    XCTAssertFalse(FileManager.default.fileExists(atPath: DiskCache.openedFiles.path))
+    // The page the store kept as it disconnected is gone too.
+    try await Task.sleep(for: .milliseconds(200))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
+  }
 }
 
 final class PlainTextTests: XCTestCase {

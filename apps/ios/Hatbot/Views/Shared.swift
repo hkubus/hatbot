@@ -150,6 +150,11 @@ final class ScreenCache {
     cache.setObject(image, forKey: key)
     return image
   }
+
+  /// Signed out.
+  func clear() {
+    cache.removeAllObjects()
+  }
 }
 
 /// A task's screenshot; a tap opens it full screen.
