@@ -1,4 +1,15 @@
-import { API_PREFIX, CreateToken, Login, type Me, SetupFinish, SetupStart } from "@hatbot/shared";
+import {
+  API_PREFIX,
+  ChangePassword,
+  ConfirmOwner,
+  CreateToken,
+  FinishTotpChange,
+  Login,
+  type Me,
+  SetupFinish,
+  SetupStart,
+  type SignedOutOthers,
+} from "@hatbot/shared";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
@@ -6,7 +17,7 @@ import { principalOf, requireAuth, SESSION_COOKIE, setSessionCookie } from "../a
 import type { AppEnv } from "../context";
 import { badRequest, json } from "./util";
 
-/** Marks a browser or app that has signed in here before (A18). Only sign-in routes see it. */
+/** Marks a browser or app that has signed in here before. Only sign-in routes see it. */
 const DEVICE_COOKIE = "hatbot_device";
 
 function rememberDevice(c: Context<AppEnv>) {
@@ -93,6 +104,45 @@ export const authRoutes = new Hono<AppEnv>()
     deleteCookie(c, SESSION_COOKIE, { path: "/" });
     return c.json({ ok: true });
   })
+
+  // Your account (Settings → Password and sign-ins). A change to the password or the authenticator
+  // signs out every other browser and app: whoever learnt the old one may have signed in with it.
+  .post("/auth/password", requireAuth, json(ChangePassword), async (c) => {
+    const { auth, principal } = c.var;
+    const tried = attempt(c);
+    if (!tried) return c.json({ error: TOO_MANY }, 429);
+    const { password, totp, newPassword } = c.req.valid("json");
+    if (!(await auth.checkCredentials(password, totp)))
+      return c.json({ error: "That password or code isn't right." }, 401);
+    tried.ok();
+    await auth.changePassword(newPassword);
+    return c.json<SignedOutOthers>({ ok: true, ended: auth.endOthers(principal) });
+  })
+  .post("/auth/totp/start", requireAuth, json(ConfirmOwner), async (c) => {
+    const { auth, principal } = c.var;
+    const tried = attempt(c);
+    if (!tried) return c.json({ error: TOO_MANY }, 429);
+    const { password, totp } = c.req.valid("json");
+    if (!(await auth.checkCredentials(password, totp)))
+      return c.json({ error: "That password or code isn't right." }, 401);
+    tried.ok();
+    return c.json(auth.startTotpChange(principal));
+  })
+  .post("/auth/totp", requireAuth, json(FinishTotpChange), (c) => {
+    const { auth, principal } = c.var;
+    if (!auth.finishTotpChange(principal, c.req.valid("json").totp))
+      return c.json({ error: "That code didn't match. Try the next one." }, 403);
+    return c.json<SignedOutOthers>({ ok: true, ended: auth.endOthers(principal) });
+  })
+  .get("/auth/sessions", requireAuth, (c) => c.json(c.var.auth.listSessions(c.var.principal)))
+  .delete("/auth/sessions/:id{[0-9]+}", requireAuth, (c) =>
+    c.var.auth.endSession(Number(c.req.param("id")))
+      ? c.json({ ok: true })
+      : c.json({ error: "not found" }, 404),
+  )
+  .post("/auth/sign-out-others", requireAuth, (c) =>
+    c.json<SignedOutOthers>({ ok: true, ended: c.var.auth.endOthers(c.var.principal) }),
+  )
 
   .get("/tokens", requireAuth, (c) => c.json(c.var.auth.listTokens()))
   .post("/tokens", requireAuth, json(CreateToken), (c) =>

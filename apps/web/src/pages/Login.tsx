@@ -3,7 +3,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api";
 import { Icon } from "../icons";
 
-function OtpInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+export function OtpInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const refs = useRef<(HTMLInputElement | null)[]>([]);
   const digits = Array.from({ length: 6 }, (_, i) => value[i] ?? "");
   const setAt = (i: number, d: string) => {

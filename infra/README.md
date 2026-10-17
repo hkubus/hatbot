@@ -61,6 +61,8 @@ The first run asks for:
 
  Then it prints a setup code. Open `https://<your hatbot host>/setup` and enter the code to set your password and TOTP. The code changes whenever the brain restarts before setup is done. To read the current one, run `pct exec <brain> -- journalctl -u hatbot-brain | grep 'setup code'`.
 
+To change the password or the authenticator, use **Settings → Password and sign-ins**; either change signs out every other browser and app. If you've lost them, `./reset-login.sh` on the host forgets both, signs out everything, restarts the brain and prints a new setup code.
+
 Each deploy is a new release in `/var/lib/hatbot/releases` inside the brain, and `/var/lib/hatbot/app` links to the live one. Before switching, the brain stops and its database is copied into the new release (`hatbot.sqlite.before`). If the new release fails its health check, the previous one goes back live with that copy of the database, so a migration it can't read is undone. The last 3 are kept. To change the URL or proxy later, run with `HATBOT_PUBLIC_URL=… HATBOT_TRUSTED_PROXIES=… ./deploy.sh …`; for ntfy, set `NTFY_URL=…`; for updates, `HATBOT_GIT_URL=…`.
 
 ## Update from Settings

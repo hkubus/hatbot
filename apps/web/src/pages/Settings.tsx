@@ -16,6 +16,7 @@ import { Switch } from "../switch";
 import { getTheme, setTheme, type Theme } from "../theme";
 import { PluginPage, PluginsGroup } from "./Plugins";
 
+const Account = lazy(() => import("./Account").then((m) => ({ default: m.Account })));
 const Checks = lazy(() => import("./Checks").then((m) => ({ default: m.Checks })));
 const HeartbeatPage = lazy(() => import("./Heartbeat").then((m) => ({ default: m.HeartbeatPage })));
 
@@ -34,6 +35,8 @@ export function Settings({
   const plugin = /^\/settings\/plugins\/([a-z0-9]+)$/.exec(path)?.[1];
   const page = plugin ? (
     <PluginPage key={plugin} id={plugin} toast={toast} />
+  ) : path === "/settings/account" ? (
+    <Account toast={toast} />
   ) : path === "/settings/checks" ? (
     <Checks />
   ) : path === "/settings/heartbeat" ? (
@@ -394,6 +397,16 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
         <section className="group">
           <h2>Account</h2>
           <div className="group-box">
+            <button
+              type="button"
+              className="row link"
+              onClick={() => navigate("/settings/account")}
+            >
+              <div className="txt">
+                <b>Password and sign-ins</b>
+              </div>
+              <Icon name="chevron" className="chev" />
+            </button>
             {tokens.map((t) => (
               <div className="row" key={t.id}>
                 <div className="txt">

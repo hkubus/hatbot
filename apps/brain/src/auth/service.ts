@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import type { ApiToken } from "@hatbot/shared";
+import type { ApiToken, Session } from "@hatbot/shared";
 import { type Db, now } from "../db";
 import { newTotpSecret, totpUri, verifyTotp } from "./totp";
 
@@ -15,6 +15,8 @@ const sameText = (a: string, b: string) => {
 export type Principal = { kind: "session"; id: number } | { kind: "token"; id: number };
 
 const keyOf = (p: Principal) => `${p.kind} ${p.id}`;
+/** How long a new authenticator has to be confirmed. */
+const TOTP_CHANGE_MS = 10 * 60_000;
 
 type OwnerRow = { password_hash: string; totp_secret: string; totp_last_step: number };
 
@@ -30,6 +32,8 @@ export class AuthService {
   untrustedProxy: string | null = null;
   /** Live sockets, by the session or token that opened them, to close when it ends. */
   private sockets = new Map<string, Set<() => void>>();
+  /** A new authenticator secret waiting for its first code, and who asked for it. */
+  private totpChange: { secret: string; for: string; until: number } | null = null;
 
   constructor(
     private db: Db,
@@ -76,6 +80,66 @@ export class AuthService {
       .query("UPDATE owner SET totp_last_step = ? WHERE id = 1 AND totp_last_step < ?")
       .run(step, step);
     return res.changes === 1;
+  }
+
+  /** A new password. Check the old one and a code first (checkCredentials). */
+  async changePassword(password: string) {
+    const hash = await Bun.password.hash(password, { algorithm: "argon2id" });
+    this.db.query("UPDATE owner SET password_hash = ? WHERE id = 1").run(hash);
+  }
+
+  /**
+   * A new authenticator secret for `p` to scan. It takes over only once a code from it comes back
+   * (finishTotpChange), so a mistyped scan doesn't lock you out. Check the password and a code first.
+   */
+  startTotpChange(p: Principal): { secret: string; uri: string } {
+    const secret = newTotpSecret();
+    this.totpChange = { secret, for: keyOf(p), until: this.clock() + TOTP_CHANGE_MS };
+    return { secret, uri: totpUri(secret) };
+  }
+
+  finishTotpChange(p: Principal, code: string): boolean {
+    const change = this.totpChange;
+    if (!change || change.for !== keyOf(p) || change.until < this.clock()) return false;
+    const step = verifyTotp(change.secret, code, this.clock());
+    if (step === null) return false;
+    this.db
+      .query("UPDATE owner SET totp_secret = ?, totp_last_step = ? WHERE id = 1")
+      .run(change.secret, step);
+    this.totpChange = null;
+    return true;
+  }
+
+  /** Signed-in browsers, newest first. */
+  listSessions(current?: Principal): Session[] {
+    return this.db
+      .query<Omit<Session, "current">, [string]>(
+        `SELECT id, user_agent AS userAgent, created_at AS createdAt, expires_at AS expiresAt
+         FROM sessions WHERE expires_at > ? ORDER BY id DESC`,
+      )
+      .all(new Date(this.clock()).toISOString())
+      .map((r) => ({ ...r, current: current?.kind === "session" && current.id === r.id }));
+  }
+
+  endSession(id: number): boolean {
+    if (this.db.query("DELETE FROM sessions WHERE id = ?").run(id).changes !== 1) return false;
+    this.ended("session", [id]);
+    return true;
+  }
+
+  /** Signs out every browser and app but the one asking. Returns how many. */
+  endOthers(keep: Principal): number {
+    const sessions = this.db
+      .query<{ id: number }, [number]>("DELETE FROM sessions WHERE id != ? RETURNING id")
+      .all(keep.kind === "session" ? keep.id : -1)
+      .map((r) => r.id);
+    const tokens = this.db
+      .query<{ id: number }, [number]>("DELETE FROM api_tokens WHERE id != ? RETURNING id")
+      .all(keep.kind === "token" ? keep.id : -1)
+      .map((r) => r.id);
+    this.ended("session", sessions);
+    this.ended("token", tokens);
+    return sessions.length + tokens.length;
   }
 
   /** A browser or app that has signed in here: a random id, signed so one can't be made up. */

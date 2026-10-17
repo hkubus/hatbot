@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import type { Session, SignedOutOthers } from "@hatbot/shared";
 import { FailureLimiter } from "../src/auth/service";
+import { resetLogin } from "../src/reset-login";
 import { ORIGIN, setUpOwner, testApp } from "./helpers";
 
 const cookieOf = (res: Response, name: string) =>
@@ -371,6 +373,159 @@ describe("login", () => {
     t.advance(31 * 86400_000);
     t.auth.prune();
     expect(count()).toBe(0);
+  });
+});
+
+describe("your account", () => {
+  async function signedInTwice() {
+    const t = await testApp();
+    const { secret, password, cookie } = await setUpOwner(t);
+    const other = await t.call("POST", "/auth/login", { password, totp: t.code(secret) });
+    const otherCookie = other.headers.get("set-cookie")?.split(";")[0] ?? "";
+    t.advance(30_000);
+    const app = await t.call("POST", "/auth/login", {
+      password,
+      totp: t.code(secret),
+      client: "app",
+      device: "iPhone",
+    });
+    const { token } = (await app.json()) as { token: string };
+    t.advance(30_000);
+    const works = async (headers: Record<string, string>) =>
+      (await t.call("GET", "/tokens", undefined, headers)).status === 200;
+    return { t, secret, password, cookie, otherCookie, token, works };
+  }
+
+  test("changing the password needs the old one and a code, and signs out everywhere else", async () => {
+    const { t, secret, password, cookie, otherCookie, token, works } = await signedInTwice();
+    const wrong = await t.call(
+      "POST",
+      "/auth/password",
+      { password: "not it", totp: t.code(secret), newPassword: "a whole new password" },
+      { cookie },
+    );
+    expect(wrong.status).toBe(401);
+    const short = await t.call(
+      "POST",
+      "/auth/password",
+      { password, totp: t.code(secret), newPassword: "short" },
+      { cookie },
+    );
+    expect(short.status).toBe(400);
+    const res = await t.call(
+      "POST",
+      "/auth/password",
+      { password, totp: t.code(secret), newPassword: "a whole new password" },
+      { cookie },
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()) as SignedOutOthers).toEqual({ ok: true, ended: 2 });
+    expect(await works({ cookie })).toBe(true);
+    expect(await works({ cookie: otherCookie })).toBe(false);
+    expect(await works({ authorization: `Bearer ${token}` })).toBe(false);
+    t.advance(30_000);
+    expect((await t.call("POST", "/auth/login", { password, totp: t.code(secret) })).status).toBe(
+      401,
+    );
+    t.advance(30_000);
+    const fresh = await t.call("POST", "/auth/login", {
+      password: "a whole new password",
+      totp: t.code(secret),
+    });
+    expect(fresh.status).toBe(200);
+  });
+
+  test("a password change from another site is refused", async () => {
+    const { t, secret, password, cookie } = await signedInTwice();
+    const res = await t.call(
+      "POST",
+      "/auth/password",
+      { password, totp: t.code(secret), newPassword: "a whole new password" },
+      { cookie, origin: "https://evil.test" },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test("a new authenticator takes over once a code from it comes back", async () => {
+    const { t, secret, password, cookie, otherCookie, token, works } = await signedInTwice();
+    expect(
+      (await t.call("POST", "/auth/totp/start", { password, totp: "000000" }, { cookie })).status,
+    ).toBe(401);
+    const start = await t.call(
+      "POST",
+      "/auth/totp/start",
+      { password, totp: t.code(secret) },
+      { cookie },
+    );
+    expect(start.status).toBe(200);
+    const next = (await start.json()) as { secret: string; uri: string };
+    expect(next.uri).toContain(`secret=${next.secret}`);
+    // Nothing has changed yet: the old authenticator still works, and the new one isn't asked for.
+    expect((await t.call("POST", "/auth/totp", { totp: t.code(secret) }, { cookie })).status).toBe(
+      403,
+    );
+    // Only the browser that asked can finish it.
+    expect(
+      (await t.call("POST", "/auth/totp", { totp: t.code(next.secret) }, { cookie: otherCookie }))
+        .status,
+    ).toBe(403);
+    const done = await t.call("POST", "/auth/totp", { totp: t.code(next.secret) }, { cookie });
+    expect(done.status).toBe(200);
+    expect((await done.json()) as SignedOutOthers).toEqual({ ok: true, ended: 2 });
+    expect(await works({ cookie })).toBe(true);
+    expect(await works({ authorization: `Bearer ${token}` })).toBe(false);
+    t.advance(30_000);
+    expect((await t.call("POST", "/auth/login", { password, totp: t.code(secret) })).status).toBe(
+      401,
+    );
+    t.advance(30_000);
+    expect(
+      (await t.call("POST", "/auth/login", { password, totp: t.code(next.secret) })).status,
+    ).toBe(200);
+  });
+
+  test("a new authenticator not confirmed in 10 minutes is dropped", async () => {
+    const { t, secret, password, cookie } = await signedInTwice();
+    const start = await t.call(
+      "POST",
+      "/auth/totp/start",
+      { password, totp: t.code(secret) },
+      { cookie },
+    );
+    const next = (await start.json()) as { secret: string };
+    t.advance(11 * 60_000);
+    expect(
+      (await t.call("POST", "/auth/totp", { totp: t.code(next.secret) }, { cookie })).status,
+    ).toBe(403);
+  });
+
+  test("you see where you're signed in, and can sign out one or everywhere else", async () => {
+    const { t, cookie, otherCookie, token, works } = await signedInTwice();
+    const list = (await (
+      await t.call("GET", "/auth/sessions", undefined, { cookie })
+    ).json()) as Session[];
+    expect(list).toHaveLength(2);
+    expect(list.filter((s) => s.current)).toHaveLength(1);
+    const other = list.find((s) => !s.current);
+    expect(
+      (await t.call("DELETE", `/auth/sessions/${other?.id}`, undefined, { cookie })).status,
+    ).toBe(200);
+    expect(await works({ cookie: otherCookie })).toBe(false);
+    expect(await works({ authorization: `Bearer ${token}` })).toBe(true);
+    const all = await t.call("POST", "/auth/sign-out-others", {}, { cookie });
+    expect((await all.json()) as SignedOutOthers).toEqual({ ok: true, ended: 1 });
+    expect(await works({ authorization: `Bearer ${token}` })).toBe(false);
+    expect(await works({ cookie })).toBe(true);
+  });
+
+  test("the reset forgets the password and authenticator and signs out everything", async () => {
+    const { t, cookie, token, works } = await signedInTwice();
+    resetLogin(t.db);
+    expect(t.auth.isSetUp()).toBe(false);
+    expect(await works({ cookie })).toBe(false);
+    expect(await works({ authorization: `Bearer ${token}` })).toBe(false);
+    const start = await t.call("POST", "/auth/setup/start", { code: t.auth.setupCode });
+    expect(start.status).toBe(200);
   });
 });
 
