@@ -457,7 +457,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
             ))}
           {view.path === "/live" && (
             <section className="view">
-              <div className="page narrow">
+              <div className="page live-page">
                 <LiveView />
               </div>
             </section>

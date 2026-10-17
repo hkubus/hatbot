@@ -2025,7 +2025,7 @@ html[data-theme="dark"] .seg button.active {
 
 /* ---------- Tasks, approvals and the live view ---------- */
 .app.insp {
-  grid-template-columns: var(--sb-w) minmax(0, 1fr) 420px;
+  grid-template-columns: var(--sb-w) minmax(0, 1fr) clamp(420px, 32vw, 640px);
 }
 .inspector {
   display: flex;
@@ -2066,6 +2066,15 @@ html[data-theme="dark"] .seg button.active {
 .page .live {
   gap: 14px;
 }
+/* The Live page: the desktop (1280 × 800) as large as the window's width and height allow. */
+.page.live-page {
+  max-width: none;
+}
+.live-page .live {
+  width: 100%;
+  max-width: clamp(480px, (100dvh - 200px) * 1.6, 1280px);
+  margin: 0 auto;
+}
 .screen {
   position: relative;
   width: 100%;
@@ -2077,7 +2086,8 @@ html[data-theme="dark"] .seg button.active {
   outline-offset: 2px;
   transition: outline-color 0.2s;
 }
-.screen.empty {
+/* The desktop isn't answering: the same shape, so its note shows. */
+.screen:not(:has(canvas)) {
   aspect-ratio: 16 / 10;
 }
 .screen.control {
