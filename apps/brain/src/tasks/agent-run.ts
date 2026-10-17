@@ -6,7 +6,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { type ApprovalKind, chartBlocks, chartProblem, type Task } from "@hatbot/shared";
 import { z } from "zod";
 import { modelErrorText } from "../agent/model";
-import { AGENT_PROMPT } from "../agent/prompt";
+import { AGENT_PROMPT, RESEARCH_ASK_BOT } from "../agent/prompt";
 import { mayReview, safeToRun } from "../agent/review";
 import { localStamp, memoryIndex } from "../agent/thread";
 import {
@@ -212,7 +212,9 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   /** Results never cleared: a research task's findings are what it cites. Only tools sent. */
   const keptTools = ["finish_task", "finish_research", "investigate"].filter((n) => sent.has(n));
   const guidance = d.plugins.guidance(bot.plugins);
-  const prompt = promptFor(research ? researchPrompt(bot) : AGENT_PROMPT, bot, others);
+  const prompt = research
+    ? promptFor(researchPrompt(bot), bot, others, RESEARCH_ASK_BOT)
+    : promptFor(AGENT_PROMPT, bot, others);
   const system = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
   const taint = (source: string) => {
     sources.add(source);

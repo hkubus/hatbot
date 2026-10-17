@@ -209,7 +209,12 @@ export const botIndex = (id: string) => {
  * One of the stable prompts as `bot`: its name, its role, its memory and the other bots. Hatbot on its
  * own gets the prompt as it is, so the cache and its conversation carry on.
  */
-export function promptFor(base: string, bot: Bot, others: Bot[]): string {
+export function promptFor(
+  base: string,
+  bot: Bot,
+  others: Bot[],
+  handOver = "For work in another bot's line, hand it over with ask_bot rather than doing it yourself.",
+): string {
   const named = bot.id === HATBOT_ID ? base : base.replace(/\bHatbot\b/g, bot.name);
   const parts: string[] = [];
   if (bot.instructions.trim())
@@ -223,7 +228,7 @@ export function promptFor(base: string, bot: Bot, others: Bot[]): string {
         "The owner's other bots",
         ...others.map((o) => `- ${o.name} (${o.id})${roleLine(o) ? `: ${roleLine(o)}` : ""}`),
         "- Each bot has its own chat with the owner, and its own plugins and browser profile.",
-        "- For work in another bot's line, hand it over with ask_bot rather than doing it yourself.",
+        `- ${handOver}`,
         folder
           ? `- Memory outside bots/ is shared by every bot: keep what any of them would need there (the owner, their homelab, their projects). Your own notes go in ${folder}/, with ${folder}/INDEX.md mapping them. Leave other bots' folders alone.`
           : "- Memory outside bots/ is shared by every bot, you included. Each other bot keeps its own notes in bots/<its id>/; leave those alone.",

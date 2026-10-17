@@ -921,3 +921,40 @@ test("research a restart stopped keeps what it had, read back from its turns", a
     "## Sources\n\n1. [DS925+ specifications](https://www.synology.com/ds925+/spec), 2025-04\n2. [Synology DS925+ | x-kom](https://www.x-kom.pl/p/ds925)",
   );
 });
+
+test("another bot's research keeps to its own folder, and asks other bots only for their tools", async () => {
+  const work = new FakeModel([INVESTIGATE, finish("Get the DS925+ [1].", "Report [1].")]);
+  helpers(work);
+  work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
+  const t = await testApp(new FakeModel(), work);
+  const scout = t.bots.create({
+    name: "Scout",
+    instructions: "You research things.",
+    chatModel: null,
+    chatEffort: null,
+    plugins: null,
+  });
+  const created = t.tasks.createBackgroundTask({
+    title: "Quiet NAS for four drives",
+    goal: "Which quiet four-bay NAS?",
+    origin: "chat",
+    botId: scout.id,
+    research: true,
+  });
+  await t.tasks.idle();
+  const lead = work.requests[0];
+  const system = JSON.stringify(lead?.system);
+  expect(system).toContain("your earlier reports are in bots/scout/research/");
+  expect(system).not.toContain("{research}");
+  expect(system).toContain(
+    "- Ask another bot only for what needs its tools, like second-hand prices.",
+  );
+  expect(system).not.toContain("hand it over with ask_bot");
+  expect(system).toContain("Write in the question's language.");
+  expect(system).not.toContain("(see below)");
+  expect(toolNames(lead)).toContain("ask_bot");
+  const task = t.tasks.get(created?.id as number);
+  expect(task?.reportPath).toBe(`bots/scout/research/${DAY}-quiet-nas-for-four-drives.md`);
+  const [commit] = await t.memory.log(1, task?.reportPath as string);
+  expect(commit?.author).toBe("Scout");
+});
