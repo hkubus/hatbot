@@ -23,6 +23,7 @@ const pages: Record<string, string> = {
     <form method="get" style="${box(4)}"><input type="search" name="q" style="width:50px"><button style="width:40px">${icon}</button></form>
     <span id="l" hidden>Zapłać</span><div role="button" aria-labelledby="l" style="${box(5)}">${icon}</div>
     <button style="${box(6)}">➤</button>
+    <label style="${box(7)}"><input type="radio" name="d"> Paczkomat</label>
   </body>`,
 };
 
@@ -58,6 +59,12 @@ test.skipIf(!chromium)(
     });
     expect(await browser.inspect(at(5))).toMatchObject({ role: "button", label: "Zapłać" });
     expect(await browser.inspect(at(6))).toMatchObject({ label: "➤" });
+    // A choice's label chooses, like the choice.
+    expect(await browser.inspect({ x: 80, y: 370 })).toMatchObject({
+      tag: "label",
+      label: "Paczkomat",
+      toggle: true,
+    });
   },
 );
 

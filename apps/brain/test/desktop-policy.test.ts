@@ -1,7 +1,7 @@
 // The desktop's click and Enter checks (PLAN.md §6.1), without a desktop.
 import { expect, test } from "bun:test";
 import type { AgentElement } from "@hatbot/shared/desktop";
-import { consequential, consequentialLabel, fold } from "../src/tasks/policy";
+import { checkoutHost, consequential, consequentialLabel, fold } from "../src/tasks/policy";
 
 const button = (label: string, over: Partial<AgentElement> = {}): AgentElement => ({
   tag: "button",
@@ -175,4 +175,36 @@ test("labels are compared folded and with Unicode word edges", () => {
   expect(consequentialLabel("Usuńmy")).toBe(false);
   expect(consequentialLabel("zapłata")).toBe(true);
   expect(consequentialLabel("Bezpłatnie")).toBe(false);
+});
+
+test("on a checkout or payment page every button asks; typing and choosing don't", () => {
+  const checkout = "https://allegro.pl/zamowienie/podsumowanie";
+  expect(consequential("click", button("Dalej", { url: checkout }))).toEqual({
+    checkout: "allegro.pl",
+  });
+  expect(consequential("click", button("", { tag: "a", url: checkout }))).toEqual({
+    checkout: "allegro.pl",
+  });
+  const radio = button("Paczkomat", { role: "radio", toggle: true, url: checkout });
+  expect(consequential("click", radio)).toBeNull();
+  const street = button("Ulica", { tag: "input", type: "text", editable: true, url: checkout });
+  expect(consequential("click", street)).toBeNull();
+  // A label still says more than the page.
+  expect(consequential("click", button("Zapłać", { url: checkout }))).toEqual({ label: "Zapłać" });
+  const field = button("Kod", { tag: "input", type: "text", inForm: true, url: checkout });
+  expect(consequential("enter", field)).toEqual({ checkout: "allegro.pl" });
+
+  const pages: [string, string | null][] = [
+    ["https://www.vinted.pl/checkout?transaction_id=1", "www.vinted.pl"],
+    ["https://secure.payu.com/pay/?orderId=1", "secure.payu.com"],
+    ["https://go.przelewy24.pl/trnRequest/1", "go.przelewy24.pl"],
+    ["https://www.olx.pl/d/delivery/checkout/abc", "www.olx.pl"],
+    ["https://www.alza.cz/pokladna", "www.alza.cz"],
+    ["https://allegro.pl/oferta/rtx-3070-123", null],
+    ["https://allegro.pl/moje-allegro/zakupy/zamowienia", null],
+    ["https://www.paypal.com.evil.example/", null],
+    ["https://example.com/blog/how-to-pay-less", null],
+    ["not a url", null],
+  ];
+  for (const [url, host] of pages) expect([url, checkoutHost(url)]).toEqual([url, host]);
 });

@@ -135,8 +135,30 @@ export function checkFor(name: string, input: Record<string, unknown>): "click" 
   return null;
 }
 
-/** Why an element needs confirm_intent: its label, or that it has none to go by. */
-export type Hold = { label: string } | { unlabelled: true };
+/** Payment pages shops hand over to (PayU, Przelewy24, PayPal and the like). */
+const PAYMENT_HOSTS =
+  /(?:^|\.)(?:payu\.com|przelewy24\.pl|paypal\.com|tpay\.com|paynow\.pl|imoje\.pl|dotpay\.pl|blik\.com|gopay\.cz|gopay\.com|comgate\.cz|checkout\.stripe\.com|adyen\.com)$/i;
+/** A checkout or payment step, by the word a part of its address's path starts with. */
+const CHECKOUT_PATH =
+  /^(?:checkout|finali[sz]e|kasa|platnosci?|payments?|pay|zamowienie|transaction|objednavka|pokladna)(?:$|[-_.])/i;
+
+/** The host of a checkout or payment page, where any click may order or pay; null for other pages. */
+export function checkoutHost(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+    const parts = fold(decodeURIComponent(u.pathname)).split("/");
+    return PAYMENT_HOSTS.test(u.hostname) || parts.some((p) => CHECKOUT_PATH.test(p))
+      ? u.hostname
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Why an element needs confirm_intent: its label, that it has none to go by, or the page it's on. */
+export type Hold = { label: string } | { unlabelled: true } | { checkout: string };
 
 /** A button that does something, as opposed to a text box, a link or plain text. */
 const buttonLike = (el: AgentElement) =>
@@ -148,13 +170,17 @@ const buttonLike = (el: AgentElement) =>
 export function consequential(kind: "click" | "enter", el: AgentElement | null): Hold | null {
   if (!el) return null;
   const search = el.search === true;
+  const checkout = checkoutHost(el.url);
   if (kind === "enter") {
     // Enter in a form field submits the form; in a textarea it's a new line.
     if (!el.inForm || el.tag === "textarea") return null;
     const label = el.submitLabel ?? "";
-    return consequentialLabel(label, search) ? { label } : null;
+    if (consequentialLabel(label, search)) return { label };
+    return checkout ? { checkout } : null;
   }
   if (consequentialLabel(el.label, search)) return { label: el.label };
+  // At checkout, a button labelled "Dalej" may be the one that orders: only typing and choosing pass.
+  if (checkout && !el.editable && !el.toggle && el.tag !== "body") return { checkout };
   if (search) return null;
   if (el.type === "submit" && el.inForm) return { label: el.label || "Submit" };
   // An icon with no name ("➤" counts as none) could be Send or Pay as easily as a menu; one that opens or
@@ -168,5 +194,7 @@ export function heldBack(kind: "click" | "enter", hold: Hold): string {
   const act = kind === "click" ? "click" : "Enter";
   if ("label" in hold)
     return `this would ${kind === "click" ? "click" : "submit with"} "${hold.label}", which looks like a consequential step. If that's the action you mean to take, call confirm_intent first. If this ${act} doesn't send, buy, book or delete anything and the label misled the check, reach the same place another way.`;
+  if ("checkout" in hold)
+    return `this ${act} is on a checkout or payment page (${hold.checkout}), where any button may order or pay, so each one needs the owner. Typing in a field and choosing an option don't. Call confirm_intent first, saying what this ${act} does.`;
   return `this ${act} is on a button with no label, so Hatbot can't tell what it does: it could send or pay as easily as open a menu. If it sends, buys, pays, books or deletes anything, call confirm_intent first. If it doesn't, reach the same place another way: Escape to close something, scrolling, or a labelled control.`;
 }

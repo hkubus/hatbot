@@ -50,7 +50,8 @@ export const ELEMENT = `
   const isToggle = (e) => e.hasAttribute('aria-expanded') || e.hasAttribute('aria-pressed')
     || (e.getAttribute('aria-haspopup') || 'false') !== 'false' || e.tagName === 'SUMMARY' || e.tagName === 'SELECT'
     || TOGGLE_ROLES.includes(e.getAttribute('role'))
-    || (e.tagName === 'INPUT' && ['checkbox', 'radio'].includes(e.type));
+    || (e.tagName === 'INPUT' && ['checkbox', 'radio'].includes(e.type))
+    || (e.tagName === 'LABEL' && !!e.control && e.control !== e && isToggle(e.control));
   // A search box, or a control in a search or filter form: Enter or a click there narrows a list.
   const isSearch = (e, form) => !!(e.closest('[role=search]')
     || (e.matches('input[type=search], [role=searchbox], [role=combobox]'))
