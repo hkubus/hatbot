@@ -3,6 +3,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { ModelClient } from "../src/agent/model";
 import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { safeToRun } from "../src/agent/review";
+import { priceOf } from "../src/spend";
 import { FakeModel, text } from "./fake-model";
 import { testApp } from "./helpers";
 
@@ -96,4 +97,19 @@ test("the verdict is schema-checked JSON, and anything else asks", async () => {
         } as unknown as Anthropic.Beta.BetaMessage)
       ).verdict.safe,
     ).toBe(false);
+});
+
+test("the check before the review counts all of the reply it may write", async () => {
+  const t = await testApp();
+  const fake = new FakeModel();
+  fake.onCreate = () => JSON.stringify({ safe: true, why: "ok" });
+  const checked: number[] = [];
+  const check = t.spend.check.bind(t.spend);
+  t.spend.check = (usd, ...rest) => {
+    checked.push(usd);
+    return check(usd, ...rest);
+  };
+  await safeToRun({ model: fake, spend: t.spend }, { taskId: 1 }, context, action);
+  const output = (fake.creates[0]?.max_tokens ?? 0) * (priceOf("claude-haiku-5-5").output / 1e6);
+  expect(checked[0]).toBeGreaterThan(output);
 });
