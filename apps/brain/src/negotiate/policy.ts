@@ -151,7 +151,7 @@ export function outside(n: Negotiation, input: SendInput, now: number): string[]
   const contacts = contactsIn(text).filter((c) => !m.allow.includes(c.kind));
   for (const c of contacts) why.push(`It carries ${CONTACT_NAMES[c.kind]} ("${c.raw}").`);
   const links = linksIn(text);
-  if (links.length) why.push(`It carries a link ("${links[0]}").`);
+  if (links.length) why.push(`It carries a link ("${links[0]?.slice(0, 80)}").`);
   return why;
 }
 
@@ -574,29 +574,66 @@ export function phonesIn(text: string): string[] {
   return [...text.matchAll(/(?:\+|00)?\d(?:[\s \-.()/]{0,2}\d){8,}/g)].map((m) => m[0]);
 }
 
-const EMAIL = /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/u;
+/** E-mail providers, as people name them when they spell an address out. */
+const PROVIDERS =
+  "g\\s?mail|wp|onet|o2|02|interia|yahoo|outlook|hotmail|icloud|proton(?:mail)?|op|gazeta|tlen|vp|poczta";
+const EMAIL = /[\p{L}\p{N}._%+-]+\s?@\s?\p{L}[\p{L}\p{N}-]*(?:\.[\p{L}\p{N}-]+)*/giu;
 /** name at gmail dot com, name(at)wp.pl, name małpa onet kropka pl. */
-const EMAIL_SPELT =
-  /[\p{L}\p{N}._%+-]+\s*(?:\(at\)|\[at\]|\{at\}|\(małpa\)|\s+małpa\s+|\s+malpa\s+|\s+at\s+(?=(?:gmail|wp|onet|o2|interia|yahoo|outlook|hotmail|icloud|proton|op|gazeta|tlen|vp)(?![\p{L}])))\s*[\p{L}\p{N}-]+\s*(?:\.|\(dot\)|\[dot\]|\s+dot\s+|\s+kropka\s+)\s*\p{L}{2,}/iu;
-const ADDRESS = [
-  /(?<![\p{L}.])(?:ul|al|os|pl)\.\s*\p{Lu}/u,
-  /(?<![\p{L}])(?:ulica|ulicy|ulicę|aleja|alei|aleję|osiedle|osiedlu)\s+\p{Lu}/u,
-  /\p{Lu}[\p{L}'-]+\s+(?:Street|St\.|Road|Rd\.|Avenue|Ave\.|Lane|Drive|Boulevard)(?![\p{L}])/u,
-  /(?<![\d-])\d{2}-\d{3}(?![\d-])/u,
+const EMAIL_SPELT = new RegExp(
+  `[\\p{L}\\p{N}._%+-]+\\s*(?:\\(at\\)|\\[at\\]|\\{at\\}|\\(małpa\\)|\\s+małpa\\s+|\\s+malpa\\s+|\\s+at\\s+(?=(?:${PROVIDERS})(?![\\p{L}])))\\s*[\\p{L}\\p{N}-]+\\s*(?:\\.|\\(dot\\)|\\[dot\\]|\\s+dot\\s+|\\s+kropka\\s+)\\s*\\p{L}{2,}`,
+  "giu",
+);
+/** A provider and its domain with the dot left out: "jan gmail com", "wp pl". */
+const EMAIL_HOST = new RegExp(
+  `(?<![\\p{L}\\p{N}])(?:${PROVIDERS})\\s*(?:[,]|\\s|kropka|dot)\\s*(?:com|pl|net|eu|me)(?![\\p{L}])`,
+  "giu",
+);
+/** Asking to move to e-mail without an address: "napisz na maila". */
+const EMAIL_WORD =
+  /(?<![\p{L}])(?:e-?mail\p{L}*|mail[aeu]|mailem|mejl\p{L}*|g\s?mail\p{L}*)(?![\p{L}])/iu;
+/** Words before a number that make it a rating or a date, not a street: "Stan 9/10", "Odbiór 15/10". */
+const NOT_STREETS = new Set(
+  "stan ocena kondycja bateria wygląd wyglad gwarancja wersja rozmiar model rating condition battery size version odbiór odbior termin data dnia pan pana pani panu panem państwa panstwa".split(
+    " ",
+  ),
+);
+const ADDRESS: { re: RegExp; street?: number }[] = [
+  { re: /(?<![\p{L}.])(?:ul|al|os|pl)\.\s*\p{Lu}/u },
+  { re: /(?<![\p{L}.])ul\s+\p{Lu}/u },
+  { re: /(?<![\p{L}])(?:ulica|ulicy|ulicę|aleja|alei|aleję|osiedle|osiedlu)\s+\p{Lu}/u },
+  {
+    re: /\p{Lu}[\p{L}'-]+\s+(?:Street|St\.|Road|Rd\.|Avenue|Ave\.|Lane|Drive|Boulevard)(?![\p{L}])/u,
+  },
+  { re: /(?<![\d-])\d{2}-\d{3}(?![\d-])/u },
+  // Długa 10/5, Długa 10 m. 5, Jana Pawła 10/5.
+  {
+    re: /(\p{Lu}\p{Ll}+)(?:\s+\p{Lu}\p{Ll}+)?\s+\d{1,4}[a-zA-Z]?\s*(?:\/\s*\d{1,4}[a-zA-Z]?|(?:m|lok|apt|flat)\.?\s*\d{1,4})(?!\d)/u,
+    street: 1,
+  },
+  // na Długiej 10, przy Kasprowicza 5.
+  {
+    re: /(?<![\p{L}])(?:na|przy)\s+(\p{Lu}\p{Ll}+)\s+\d{1,4}[a-zA-Z]?(?![\p{N}/.,:]|\s*(?:zł|zl|pln|k|tys)(?![\p{L}]))/u,
+    street: 1,
+  },
 ];
 const APPS =
-  /(?<![\p{L}])(?:whats\s?app\p{L}*|wa\.me|telegram\p{L}*|t\.me|signal\p{L}*|viber\p{L}*|messenger\p{L}*|facebook\p{L}*|fb\.com|fejs\p{L}*|instagram\p{L}*|insta|snapchat\p{L}*|wechat|discord\p{L}*|skype\p{L}*|sms\p{L}*|esem\p{L}*|imessage)(?![\p{L}])/iu;
+  /(?<![\p{L}])(?:whats\s?app\p{L}*|wh?ats?\s?up|[łlw]h?[ao](?:ts|c|s)ap+\p{L}*|wa\.me|telegram\p{L}*|t\.me|signal\p{L}*|viber\p{L}*|messenger\p{L}*|facebook\p{L}*|fb\.com|fejs\p{L}*|instagram\p{L}*|insta\p{L}*|snapchat\p{L}*|wechat|discord\p{L}*|skype\p{L}*|threema|sms\p{L}*|esem\p{L}*|imessage)(?![\p{L}])/iu;
+/** WA, TG, FB, IG: on their own, not in Wa-wa or a domain. */
+const APP_SHORT = /(?<![\p{L}\p{N}.@-])(?:wa|tg|fb|ig|snap)(?![\p{L}\p{N}-])/iu;
 
 /** Contact details in a message, by the kind the mandate can allow. */
-export function contactsIn(text: string): { kind: MandateContact; raw: string }[] {
+export function contactsIn(raw: string): { kind: MandateContact; raw: string }[] {
+  const text = plain(raw);
   const out: { kind: MandateContact; raw: string }[] = [];
   const phone = phonesIn(blankDates(text))[0];
   if (phone) out.push({ kind: "phone", raw: phone.trim() });
-  const email = EMAIL.exec(text)?.[0] ?? EMAIL_SPELT.exec(text)?.[0];
+  const email = [EMAIL, EMAIL_SPELT, EMAIL_HOST, EMAIL_WORD]
+    .map((re) => text.match(re)?.[0])
+    .find(Boolean);
   if (email) out.push({ kind: "email", raw: email });
-  for (const re of ADDRESS) {
+  for (const { re, street } of ADDRESS) {
     const a = re.exec(text);
-    if (a) {
+    if (a && !(street && NOT_STREETS.has(a[street]?.toLowerCase() ?? ""))) {
       out.push({
         kind: "address",
         raw: text.slice(a.index, a.index + 40).split(/[,;\n]/)[0] ?? "",
@@ -604,17 +641,47 @@ export function contactsIn(text: string): { kind: MandateContact; raw: string }[
       break;
     }
   }
-  const app = APPS.exec(text)?.[0];
+  const app = APPS.exec(text)?.[0] ?? APP_SHORT.exec(text)?.[0];
   if (app) out.push({ kind: "apps", raw: app });
   return out;
 }
 
-/** Links: an address with a scheme, www., or a domain. They always ask. */
-export function linksIn(text: string): string[] {
-  const s = text.replace(EMAIL, " ");
-  return [
-    ...s.matchAll(
-      /(?:https?:\/\/|www\.)\S+|(?<![\p{L}\p{N}@.-])[\p{L}\p{N}-]+\.(?:pl|com|net|org|eu|io|me|ly|cz|de|uk|info|biz|link|app|xyz|shop|store|site|online|top|click)(?:\/\S*)?(?![\p{L}\p{N}])/giu,
-    ),
-  ].map((m) => m[0]);
+/** Dots and schemes written so a filter misses them: olx[.]pl, olx (dot) pl, olx . pl, hxxps://. */
+const undefang = (s: string) =>
+  s
+    .replace(/\s*[[({<]\s*(?:\.|dot|kropka)\s*[\])}>]\s*/giu, ".")
+    .replace(/\s+(?:dot|kropka)\s+(?=[\p{L}\p{N}])/giu, ".")
+    .replace(
+      /\s*\.\s+(?=(?:pl|com|net|org|eu|io|me|ly|info|app|xyz|shop|link)(?![\p{L}\p{N}]))/giu,
+      ".",
+    )
+    .replace(
+      /\s+\.(?=(?:pl|com|net|org|eu|io|me|ly|info|app|xyz|shop|link)(?![\p{L}\p{N}]))/giu,
+      ".",
+    )
+    .replace(/h(?:tt|xx|\*\*)p(s?)\s*(?:\[:\]|\(:\)|:)?\s*\/\//giu, "http$1://");
+/** An address with a scheme, www., an IP address, or a host with any top-level domain. */
+const LINK =
+  /(?:https?|ftp):\/\/\S+|www\.\S+|(?<![\p{N}.])(?:\d{1,3}\.){3}\d{1,3}(?![\p{N}]|\.\d)(?::\d{2,5})?(?:\/\S*)?|(?<![\p{L}\p{N}@._-])((?:[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?\.)+)\p{L}{2,24}(?![\p{L}\p{N}-])(?::\d{2,5})?(?:\/\S*)?/giu;
+/** Abbreviations a sentence can run into without a space: "np.zdjęcie", "tys.zł". */
+const ABBREVIATIONS = new Set(
+  "np ok tzn itd itp tj ul al os pl nr godz tys zł zl r m św sw dr mgr inż inz prof ds pt jw wg ww tel ps kpl szt min max st".split(
+    " ",
+  ),
+);
+
+/** Links: an address with a scheme, www., an IP address or a domain, however it's disguised. They always ask. */
+export function linksIn(raw: string): string[] {
+  let s = plain(raw);
+  for (const re of [EMAIL, EMAIL_SPELT, EMAIL_HOST]) s = s.replace(re, " ");
+  s = undefang(s);
+  return [...s.matchAll(LINK)]
+    .filter((m) => {
+      const labels = m[1];
+      if (labels === undefined) return true;
+      if (!/\p{L}/u.test(labels)) return false;
+      const parts = labels.split(".").filter(Boolean);
+      return !(parts.length === 1 && ABBREVIATIONS.has(parts[0]?.toLowerCase() ?? ""));
+    })
+    .map((m) => m[0]);
 }

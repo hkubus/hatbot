@@ -505,6 +505,66 @@ describe("contact details and other apps ask unless the mandate allows them", ()
     }
     expect(linksIn("Kontakt: jan@wp.pl")).toEqual([]);
   });
+
+  test.each([
+    ["Napisz na WA", "apps"],
+    ["Mam TG, pisz", "apps"],
+    ["Pisz na FB", "apps"],
+    ["Mam IG", "apps"],
+    ["Pisz na łatsapie", "apps"],
+    ["Masz watsapa?", "apps"],
+    ["Zadzwoń 6OO 7OO 8OO", "phone"],
+    ["Mój numer: 6O0-7O0-8O0", "phone"],
+    ["Pisz: jan gmail com", "email"],
+    ["Pisz: jan wp pl", "email"],
+    ["jan @ gmail", "email"],
+    ["Napisz na maila", "email"],
+    ["Mieszkam: Długa 10/5", "address"],
+    ["Długa 10 m. 5, Kraków", "address"],
+    ["Mieszkam na Długiej 10", "address"],
+    ["Odbiór przy Kasprowicza 5", "address"],
+    ["Adres: ul Długa 7", "address"],
+  ])("disguised contact details: %s", (text, kind) => {
+    expect(contactsIn(text).map((c) => c.kind)).toContain(kind as never);
+  });
+
+  test("ratings, dates, Wa-wa and polite forms aren't contact details", () => {
+    for (const text of [
+      "Stan 9/10?",
+      "Odbiór 15/10 pasuje?",
+      "Dam na Pana 1100 zł.",
+      "Odbiór Wa-wa.",
+      "Dam 1100, igła?",
+    ])
+      expect(contactsIn(text)).toEqual([]);
+  });
+
+  test.each([
+    ["Sprawdź evil.shop", "evil.shop"],
+    ["Wejdź na olx-pay.online/x", "olx-pay.online/x"],
+    ["Zapłać na pay.olx.pl.evil.co/x", "pay.olx.pl.evil.co/x"],
+    ["Zapłać na olx[.]pl.evil[.]co", "olx.pl.evil.co"],
+    ["Zobacz olx (dot) pl", "olx.pl"],
+    ["Zobacz olx kropka pl", "olx.pl"],
+    ["Zobacz olx . pl", "olx.pl"],
+    ["Wejdź hxxps://evil.example/pay", "https://evil.example/pay"],
+    ["Wejdź https[:]//evil.example", "https://evil.example"],
+    ["Wejdź 192.168.1.20/pay", "192.168.1.20/pay"],
+    ["Wejdź na сайт.рф", "сайт.рф"],
+  ])("disguised links, reported whole: %s", (text, link) => {
+    expect(linksIn(text)[0]).toBe(link);
+    expect(why(verdict(text))).toContain(`It carries a link ("${link}")`);
+  });
+
+  test("abbreviations run into a word aren't links", () => {
+    for (const text of [
+      "Np.zdjęcie z boku?",
+      "Dam 1,5 tys.zł",
+      "M.in. cena, dzięki.",
+      "Dzięki. Ok?",
+    ])
+      expect(linksIn(text)).toEqual([]);
+  });
 });
 
 describe("the wrong conversation, and what can't go at all", () => {
