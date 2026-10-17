@@ -185,7 +185,12 @@ export const hookRoutes = new Hono<AppEnv>()
       console.log(`${hook}: refused, missing or wrong signature, or no such webhook trigger`);
       return c.json({ error: "unauthorized" }, 401);
     }
-    const r = triggers.receiveWebhook(id(c), new TextDecoder().decode(bytes), check.replay);
+    const r = triggers.receiveWebhook(
+      id(c),
+      new TextDecoder().decode(bytes),
+      check.replay,
+      check.key,
+    );
     console.log(
       `${hook}: ${r.status === "started" ? `started task #${r.task.id}` : `skipped (${r.status === "skipped" ? r.reason : r.status})`}`,
     );

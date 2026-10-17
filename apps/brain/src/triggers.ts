@@ -219,10 +219,11 @@ export class Triggers {
       want = mac(body);
     }
     if (!sig || !same(sig.toLowerCase(), want)) return { ok: false as const };
-    const keys = [`${id}:mac:${want}`];
+    // A forge's delivery id names the delivery, so two with the same body are both run; without one,
+    // the same signed body again is the replay.
     const delivery = DELIVERY_HEADERS.map(header).find(Boolean);
-    if (delivery) keys.push(`${id}:delivery:${delivery.slice(0, 200)}`);
-    return { ok: true as const, replay: this.replayed(keys) };
+    const key = delivery ? `${id}:delivery:${delivery.slice(0, 200)}` : `${id}:mac:${want}`;
+    return { ok: true as const, replay: this.seen(key), key };
   }
 
   /** Uptime Kuma can't sign; it sends `Authorization: Bearer <secret>` from its Additional Headers. */
@@ -232,12 +233,21 @@ export class Triggers {
     return Boolean(secret && got && same(got, secret));
   }
 
-  /** A verified generic webhook: starts its run with the body as the payload. */
-  receiveWebhook(id: number, body: string, replay: boolean): Received {
+  /**
+   * A verified generic webhook: starts its run with the body as the payload. Only a delivery that
+   * started one is remembered as seen, so one skipped while paused or off can be delivered again.
+   */
+  receiveWebhook(id: number, body: string, replay: boolean, key?: string): Received {
     const t = this.get(id);
     if (!t) return { status: "skipped", reason: "disabled" };
     if (replay) return { status: "skipped", reason: "duplicate" };
-    this.fired(id);
+    const r = this.startWebhook(t, body);
+    if (r.status === "started" && key) this.remember(key);
+    return r;
+  }
+
+  private startWebhook(t: Trigger, body: string): Received {
+    this.fired(t.id);
     const blocked = this.blocked(t) ?? this.limited(t);
     if (blocked) return blocked;
     const task = this.tasks.createBackgroundTask({
@@ -445,22 +455,23 @@ export class Triggers {
     this.changed(id);
   }
 
-  /** Kept in the database, so a restart doesn't let an old delivery run again. */
-  private replayed(keys: string[]): boolean {
+  /** Whether a delivery ran within the window. Kept in the database, so a restart doesn't forget. */
+  private seen(key: string): boolean {
     this.prune();
     const cutoff = new Date(this.clock() - REPLAY_WINDOW_MS).toISOString();
-    return this.db.transaction(() => {
-      const seen = keys.some((k) =>
-        this.db.query("SELECT 1 FROM hook_deliveries WHERE key = ? AND seen_at > ?").get(k, cutoff),
-      );
-      for (const k of keys)
-        this.db
-          .query(
-            "INSERT INTO hook_deliveries (key, seen_at) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET seen_at = excluded.seen_at",
-          )
-          .run(k, this.now());
-      return seen;
-    })();
+    return Boolean(
+      this.db.query("SELECT 1 FROM hook_deliveries WHERE key = ? AND seen_at > ?").get(key, cutoff),
+    );
+  }
+
+  /** A delivery that ran; a replay doesn't move its time, so the window ends when it should. */
+  private remember(key: string) {
+    this.db
+      .query(
+        `INSERT INTO hook_deliveries (key, seen_at) VALUES (?, ?)
+         ON CONFLICT (key) DO UPDATE SET seen_at = excluded.seen_at WHERE seen_at <= ?`,
+      )
+      .run(key, this.now(), new Date(this.clock() - REPLAY_WINDOW_MS).toISOString());
   }
 
   /** Deliveries older than the window go, once a day. */
