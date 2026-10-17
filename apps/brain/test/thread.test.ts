@@ -141,6 +141,51 @@ test("system prompt and tools are identical across requests (cache-stable)", asy
   expect(JSON.stringify(model.requests[0]?.tools)).toBe(JSON.stringify(model.requests[1]?.tools));
 });
 
+test("each request marks where the last one ended, so a long reply still reads the cache", async () => {
+  const search = (id: string) => [
+    { type: "server_tool_use", id, name: "web_search", input: { query: "x" } },
+    { type: "web_search_tool_result", tool_use_id: id, content: [] },
+    text("Found something. "),
+  ];
+  const model = new FakeModel([
+    // A reply of 25 blocks: past the 20 the top-level breakpoint looks back.
+    {
+      content: [
+        ...Array.from({ length: 8 }, (_, i) => search(`srvtoolu_${i}`)).flat(),
+        toolUse("memory_list", {}),
+      ] as never,
+    },
+    { content: [text("Done.")] },
+    { content: [text("Hi again.")] },
+  ]);
+  const t = await testApp(model);
+  await t.thread.post("look it up").done;
+  await t.thread.post("thanks").done;
+  /** Each marked block's turn, whether it's that turn's last block, and its marker. */
+  const marks = (i: number) =>
+    (model.requests[i]?.messages ?? []).flatMap((m, turn) =>
+      typeof m.content === "string"
+        ? []
+        : m.content.flatMap((b, block, all) =>
+            "cache_control" in b && b.cache_control
+              ? [[turn, block === all.length - 1, b.cache_control]]
+              : [],
+          ),
+    );
+  const hour = { type: "ephemeral", ttl: "1h" } as const;
+  expect(marks(0)).toEqual([]);
+  // The second request: on the opening message, where the first request ended.
+  expect(marks(1)).toEqual([[0, true, hour]]);
+  // The third: on the tool results the second request ended with.
+  expect(marks(2)).toEqual([[2, true, hour]]);
+  expect(model.requests[2]?.messages[2]?.role).toBe("user");
+  // With the system prompt's and the top-level one: three of the four allowed.
+  expect(model.requests[2]?.cache_control).toBeTruthy();
+  // The stored turns don't keep it.
+  const stored = t.db.query<{ content: string }, []>("SELECT content FROM episode_turns").all();
+  expect(stored.some((r) => r.content.includes("cache_control"))).toBe(false);
+});
+
 test("spend is recorded, and the daily limit stops replies", async () => {
   const t = await testApp(new FakeModel([{ content: [text("ok")] }]));
   t.settings.update({ chatModel: "claude-opus-5-5" });

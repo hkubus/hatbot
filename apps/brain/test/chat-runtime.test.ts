@@ -481,7 +481,10 @@ test("an effort change mid-conversation is a message where it was made, so the c
     expect(req?.betas).toContain("mid-conversation-output-config-2026-07-01");
   }
   const marker = { role: "system", content: [], output_config: { effort: "medium" } };
-  expect(two?.messages.slice(0, 1)).toEqual(one?.messages as never);
+  // The same turns, but for where each request marks the cache.
+  const unmarked = (v: unknown) =>
+    JSON.parse(JSON.stringify(v, (k, x) => (k === "cache_control" ? undefined : x)));
+  expect(unmarked(two?.messages.slice(0, 1))).toEqual(unmarked(one?.messages));
   expect(two?.messages[1]?.role).toBe("assistant");
   expect(two?.messages[2]).toEqual(marker as never);
   expect(two?.messages[3]?.role).toBe("user");

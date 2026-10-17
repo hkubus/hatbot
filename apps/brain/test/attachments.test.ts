@@ -8,6 +8,10 @@ import { ORIGIN, setUpOwner, type TestApp, testApp } from "./helpers";
 
 const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
 
+/** Turns as sent, but for where each request marks the cache. */
+const unmarked = (v: unknown) =>
+  JSON.parse(JSON.stringify(v, (k, x) => (k === "cache_control" ? undefined : x)));
+
 async function upload(t: TestApp, cookie: string, file: File) {
   const form = new FormData();
   form.append("file", file);
@@ -73,7 +77,7 @@ test("you upload a photo, send it with a message, and the model sees it; it tain
   expect(stored).toContain(`"id":${a.id}`);
   const image = { type: "image", source: { type: "base64", media_type: "image/png", data: b64 } };
   expect(chat.requests[0]?.messages[0]?.content).toContainEqual(image as never);
-  expect(chat.requests[1]?.messages[0]?.content).toContainEqual(image as never);
+  expect(unmarked(chat.requests[1]?.messages[0]?.content)).toContainEqual(image);
 });
 
 test("files past what a request can carry are named for code_run, the same on every request", async () => {
@@ -107,8 +111,8 @@ test("files past what a request can carry are named for code_run, the same on ev
     expect(last).toContain(`files: [${second.id}]`);
     expect(last).not.toContain(`files: [${first.id}]`);
     // What the first two requests sent comes back the same in the third.
-    const head = JSON.stringify(chat.requests[1]?.messages.slice(0, 3));
-    expect(JSON.stringify(chat.requests[2]?.messages.slice(0, 3))).toBe(head);
+    const head = unmarked(chat.requests[1]?.messages.slice(0, 3));
+    expect(unmarked(chat.requests[2]?.messages.slice(0, 3))).toEqual(head);
   } finally {
     inlineLimit.bytes = saved;
   }
@@ -126,7 +130,7 @@ test("turns stored with the bytes themselves still go out as they are", async ()
     .query("UPDATE episode_turns SET content = ? WHERE id = 1")
     .run(JSON.stringify([{ type: "text", text: "old" }, image]));
   await t.thread.post("second").done;
-  expect(chat.requests[1]?.messages[0]?.content).toContainEqual(image as never);
+  expect(unmarked(chat.requests[1]?.messages[0]?.content)).toContainEqual(image);
 });
 
 test("the estimate before a request counts images and PDFs by size, not their base64", () => {

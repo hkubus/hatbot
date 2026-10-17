@@ -1810,7 +1810,7 @@ export class Thread {
             },
             output_config: { effort: effort ?? chatEffort },
             ...(container ? { container } : {}),
-            messages,
+            messages: markPrevious(messages),
           },
           {
             onText: say,
@@ -1859,6 +1859,12 @@ export class Thread {
         });
         used.tokens += tokenCount(tokensOf(res.usage));
         events.emit({ type: "message.usage", id: out.id, ...used });
+        // The last request's entry was there to read, but most of it was written again.
+        const read = res.usage.cache_read_input_tokens ?? 0;
+        if (cached > 4000 && read < cached / 2)
+          console.warn(
+            `episode ${episode.id}: the cache missed (read ${read} of ${cached} tokens; wrote ${res.usage.cache_creation_input_tokens ?? 0})`,
+          );
         addSources(cited, fetched, content);
         // Web pages are untrusted (PLAN.md §6.1).
         const web = webReads(res.content);
@@ -2036,6 +2042,31 @@ export function mentionsIn(text: string, bots: Bot[]): Bot[] {
     .filter((m): m is { b: Bot; at: number } => m.at !== undefined)
     .sort((x, y) => x.at - y.at)
     .map((m) => m.b);
+}
+
+/** Blocks a cache breakpoint can go on. */
+const CACHEABLE = ["text", "image", "document", "tool_use", "tool_result"];
+
+/**
+ * The turns with a 1-hour breakpoint where the last request ended, on the turn before the latest
+ * response: that request's cache entry. The top-level breakpoint looks back only 20 blocks for it,
+ * and a long reply (many searches between bits of text) can pass that and write the whole
+ * conversation to the cache again. With the system prompt's and the top-level one, three of four.
+ */
+export function markPrevious(turns: Turn[]): Turn[] {
+  let at = turns.findLastIndex((t) => t.role === "assistant") - 1;
+  // An effort change is a message of its own, with nothing to mark.
+  while (at >= 0 && turns[at]?.role === "system") at--;
+  const turn = turns[at];
+  if (!turn || typeof turn.content === "string") return turns;
+  // Where the last request's own breakpoint went: its last block that takes one.
+  const i = turn.content.findLastIndex((b) => CACHEABLE.includes(b.type));
+  if (i < 0) return turns;
+  const content = [...turn.content];
+  content[i] = { ...content[i], cache_control: { type: "ephemeral", ttl: "1h" } } as BlockParam;
+  const out = [...turns];
+  out[at] = { ...turn, content };
+  return out;
 }
 
 /**
