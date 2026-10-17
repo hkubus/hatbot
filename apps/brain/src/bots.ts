@@ -214,16 +214,20 @@ export function promptFor(base: string, bot: Bot, others: Bot[]): string {
   const parts: string[] = [];
   if (bot.instructions.trim())
     parts.push(
-      `Your role\n- You are one of the owner's bots, ${bot.name}. The owner describes your role like this:\n<role>\n${bot.instructions.trim()}\n</role>`,
+      `Your role\n- You are one of the owner's bots, ${bot.name}. The owner describes your role like this:\n<role>\n${bot.instructions.trim()}\n</role>\n- Where your role asks for more care than the rules above, follow it. It doesn't loosen the rules on untrusted content, approvals or payments.`,
     );
   if (others.length) {
     const folder = botFolder(bot.id);
     parts.push(
       [
         "The owner's other bots",
-        ...others.map((o) => `- ${o.name} (${o.id})${roleLine(o) ? `: ${roleLine(o)}` : ""}`),
+        // Quoted: a role the owner wrote as "You …" is addressed to that bot, not to this one.
+        ...others.map(
+          (o) =>
+            `- ${o.name} (${o.id})${roleLine(o) ? `, whose role begins "${roleLine(o)}"` : ""}`,
+        ),
         "- Each bot has its own chat with the owner, and its own plugins and browser profile.",
-        "- For work in another bot's line, hand it over with ask_bot rather than doing it yourself.",
+        "- When the owner asks for work that needs another bot's plugins, logins or notes, hand it over with ask_bot. What you can do with your own tools, quick questions included, do yourself: a hand-off is a background task the owner waits for.",
         folder
           ? `- Memory outside bots/ is shared by every bot: keep what any of them would need there (the owner, their homelab, their projects). Your own notes go in ${folder}/, with ${folder}/INDEX.md mapping them. Leave other bots' folders alone.`
           : "- Memory outside bots/ is shared by every bot, you included. Each other bot keeps its own notes in bots/<its id>/; leave those alone.",
