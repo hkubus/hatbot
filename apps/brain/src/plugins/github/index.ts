@@ -18,7 +18,7 @@ type Issue = {
   state: string;
   user: User;
   labels?: { name: string }[];
-  comments: number;
+  comments?: number;
   created_at: string;
   updated_at: string;
   html_url: string;
@@ -44,6 +44,9 @@ type Content = {
 type TreeEntry = { path: string; mode: string; type: "blob" | "tree" | "commit"; sha: string };
 /** The folder a path is in, "" for the top. */
 const parentOf = (path: string) => (path.includes("/") ? posix.dirname(path) : "");
+
+/** Pages of 100 read at most when listing issues, which come mixed with pull requests. */
+const ISSUE_PAGES = 3;
 
 /** About how much of a CI log the model gets, in characters. */
 const LOG_CHARS = 20_000;
@@ -201,8 +204,9 @@ export const githubPlugin = definePlugin({
       return !main || (ref !== undefined && ref !== main);
     };
 
+    // The pull request list has no comment count.
     const issueLine = (i: Issue) =>
-      `#${i.number} ${i.title} (${i.state}${i.pull_request ? (i.pull_request.merged_at ? ", merged" : ", PR") : ""}, by ${i.user.login}, ${i.comments} comments, updated ${i.updated_at.slice(0, 10)})${i.labels?.length ? ` [${i.labels.map((l) => l.name).join(", ")}]` : ""}`;
+      `#${i.number} ${i.title} (${i.state}${i.pull_request ? (i.pull_request.merged_at ? ", merged" : ", PR") : ""}, by ${i.user.login}${i.comments === undefined ? "" : `, ${i.comments} comments`}, updated ${i.updated_at.slice(0, 10)})${i.labels?.length ? ` [${i.labels.map((l) => l.name).join(", ")}]` : ""}`;
 
     const tools = [
       tool({
@@ -252,11 +256,37 @@ export const githubPlugin = definePlugin({
               `/search/issues?${new URLSearchParams({ q, sort: "updated", per_page: "30" })}`,
             );
             list = found.items;
+          } else if (kind === "pulls") {
+            const q = new URLSearchParams({
+              state,
+              sort: "updated",
+              direction: "desc",
+              per_page: "30",
+            });
+            const pulls = await api<(Issue & { merged_at: string | null })[]>(
+              "GET",
+              `${repoPath(repo)}/pulls?${q}`,
+            );
+            list = pulls.map((p) => ({ ...p, pull_request: { merged_at: p.merged_at } }));
           } else {
-            // The issues list has pull requests in it too; the issues kind leaves them out.
-            const q = new URLSearchParams({ state, sort: "updated", per_page: "50" });
-            const all = await api<Issue[]>("GET", `${repoPath(repo)}/issues?${q}`);
-            list = all.filter((i) => (kind === "pulls") === Boolean(i.pull_request)).slice(0, 30);
+            // The issues list has pull requests in it too, so a page may hold few issues: read on.
+            list = [];
+            let read = 0;
+            for (let page = 1; page <= ISSUE_PAGES && list.length < 30; page++) {
+              const q = new URLSearchParams({
+                state,
+                sort: "updated",
+                per_page: "100",
+                page: String(page),
+              });
+              const batch = await api<Issue[]>("GET", `${repoPath(repo)}/issues?${q}`);
+              list.push(...batch.filter((i) => !i.pull_request));
+              read += batch.length;
+              if (batch.length < 100) break;
+              if (page === ISSUE_PAGES && !list.length)
+                return `No ${state} issues among the ${read} most recently updated issues and pull requests. Give query to search them all.`;
+            }
+            list = list.slice(0, 30);
           }
           return list.map(issueLine).join("\n") || `No ${state} ${kind}.`;
         },

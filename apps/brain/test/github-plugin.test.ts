@@ -71,8 +71,25 @@ beforeAll(() => {
             permissions: { push: true },
           },
         ]);
+      // The most recently updated hundred are all pull requests; the issue is on the next page.
       if (path === `${r}/issues` && req.method === "GET")
-        return json([issue(7), issue(8, { pull_request: { merged_at: null } })]);
+        return json(
+          url.searchParams.get("page") === "1"
+            ? Array.from({ length: 100 }, (_, i) =>
+                issue(100 + i, { pull_request: { merged_at: null } }),
+              )
+            : [issue(7), issue(8, { pull_request: { merged_at: null } })],
+        );
+      if (path === "/repos/hkubus/busy/issues")
+        return json(
+          Array.from({ length: 100 }, (_, i) =>
+            issue(i + 1, { pull_request: { merged_at: null } }),
+          ),
+        );
+      if (path === `${r}/pulls` && req.method === "GET") {
+        const { comments: _, ...pr } = issue(8);
+        return json([{ ...pr, merged_at: null, draft: false }]);
+      }
       if (path === "/search/issues") return json({ items: [issue(5)] });
       if (path === `${r}/issues/8`) return json(issue(8, { pull_request: { merged_at: null } }));
       if (path === `${r}/issues/8/comments`)
@@ -204,11 +221,27 @@ test("reads issues as untrusted, pull requests with files, reviews, diff and com
     "#7 Issue 7 (open, by stranger, 1 comments, updated 2026-10-02) [bug]",
   );
   expect(list.content).not.toContain("#8");
+  expect(list.content).not.toContain("#100");
+  // A first page of only pull requests didn't hide the issue on the second.
+  expect(
+    seen.filter((s) => s.path.startsWith("/repos/hkubus/hatbot/issues?")).map((s) => s.path),
+  ).toEqual([
+    "/repos/hkubus/hatbot/issues?state=open&sort=updated&per_page=100&page=1",
+    "/repos/hkubus/hatbot/issues?state=open&sort=updated&per_page=100&page=2",
+  ]);
+  expect(
+    await gh("github_issues").run({ repo: "hkubus/busy", kind: "issues", state: "open" }, call),
+  ).toBe(
+    "No open issues among the 300 most recently updated issues and pull requests. Give query to search them all.",
+  );
   const pulls = await gh("github_issues").run(
     { repo: "hkubus/hatbot", kind: "pulls", state: "open" },
     call,
   );
-  expect(pulls).toContain("#8 Issue 8 (open, PR");
+  expect(pulls).toBe("#8 Issue 8 (open, PR, by stranger, updated 2026-10-02) [bug]");
+  expect(seen.at(-1)?.path).toBe(
+    "/repos/hkubus/hatbot/pulls?state=open&sort=updated&direction=desc&per_page=30",
+  );
   expect(
     await gh("github_issues").run(
       { repo: "hkubus/hatbot", kind: "issues", state: "open", query: "router" },
