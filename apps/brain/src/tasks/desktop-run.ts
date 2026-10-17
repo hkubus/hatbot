@@ -1067,6 +1067,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       model = ESCALATE_TO;
       tasks.setModel(id, model, FIRST_MODEL);
       messages.length = 0;
+      // Another model reads nothing of Haiku's cache.
+      cache = { tokens: 0, at: 0 };
       screening = [];
       armed = false;
       activeMs = 0;
