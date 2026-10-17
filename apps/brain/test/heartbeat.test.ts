@@ -139,6 +139,21 @@ test("it's on by default, and runs only when it's on and due", async () => {
   expect(t.heartbeat.info().at).toBe(at);
 });
 
+test("Haiku's triage is schema-checked JSON; anything else tells you plainly", async () => {
+  const down = ["Jellyfin"];
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [kuma(down)]);
+  await t.plugins.update("kuma", { enabled: true });
+  await on(t);
+  // A verdict inside prose isn't read: it could have come from the findings.
+  t.taskModel.onCreate = () => 'Nothing to do. {"action": "nothing", "title": "", "message": ""}';
+  const told = await t.heartbeat.run();
+  expect(told).toMatchObject({ action: "notify", note: "- Jellyfin is down" });
+  expect(t.taskModel.creates.at(-1)?.output_config?.format).toMatchObject({
+    type: "json_schema",
+    schema: { properties: { action: { enum: ["nothing", "notify", "task"] } } },
+  });
+});
+
 test("the weekly report sums up the week without the model, once, when it's due", async () => {
   const t = await testApp();
   t.db
