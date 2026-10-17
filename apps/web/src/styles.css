@@ -1788,14 +1788,14 @@ html[data-theme="dark"] .seg button.active {
 }
 
 /* Charts in replies (chart.tsx). */
-.chart {
+.reply-chart {
   width: 560px;
   max-width: 100%;
   margin: 2px 0;
   display: grid;
   gap: 6px;
 }
-.chart.pending {
+.reply-chart.pending {
   border-radius: 8px;
   background: var(--grid);
 }
@@ -1817,12 +1817,12 @@ html[data-theme="dark"] .seg button.active {
   align-items: center;
   gap: 6px;
 }
-.chart .key {
+.reply-chart .key {
   width: 12px;
   height: 2px;
   border-radius: 1px;
 }
-.chart .swatch {
+.reply-chart .swatch {
   width: 8px;
   height: 8px;
   border-radius: 2px;
@@ -1830,52 +1830,52 @@ html[data-theme="dark"] .seg button.active {
 .chart-plot {
   position: relative;
 }
-.chart svg {
+.reply-chart svg {
   display: block;
   overflow: visible;
   touch-action: pan-y;
   outline: none;
 }
-.chart svg:focus-visible {
+.reply-chart svg:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 4px;
 }
-.chart .grid {
+.reply-chart .grid {
   stroke: var(--grid);
 }
-.chart .baseline {
+.reply-chart .baseline {
   stroke: var(--line-strong);
 }
-.chart .tick,
-.chart .end {
+.reply-chart .tick,
+.reply-chart .end {
   font-family: var(--font);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   fill: var(--muted);
 }
-.chart .tick.y {
+.reply-chart .tick.y {
   text-anchor: end;
   dominant-baseline: middle;
 }
-.chart .end {
+.reply-chart .end {
   fill: var(--text-2);
   dominant-baseline: middle;
 }
-.chart .tick.row {
+.reply-chart .tick.row {
   fill: var(--text-2);
   dominant-baseline: middle;
 }
-.chart .line {
+.reply-chart .line {
   fill: none;
   stroke-width: 2;
   stroke-linejoin: round;
   stroke-linecap: round;
 }
-.chart .crosshair {
+.reply-chart .crosshair {
   stroke: var(--line-strong);
 }
-.chart .dot {
+.reply-chart .dot {
   stroke: var(--bot-bubble);
   stroke-width: 2;
 }
