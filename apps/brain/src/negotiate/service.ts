@@ -29,7 +29,7 @@ import type { Spend } from "../spend";
 import type { Tasks } from "../tasks/service";
 import { type ListingFacts, parseKey, scoutTool } from "./appraise";
 import { collapse, type SendGate, sameAddress, sameHost } from "./gate";
-import { applyNote, mandateReason, mandateSummary } from "./mandate";
+import { applyNote, mandateReason, mandateSummary, mandateTerms } from "./mandate";
 import { QUIET_HOURS, type SendFacts } from "./policy";
 import { negotiateTools } from "./tools";
 
@@ -511,7 +511,8 @@ export class Negotiations {
       conversationId: n.conversationId ?? undefined,
       message: card,
       runKey: `negotiation:${n.id}`,
-      request: `The owner approved the mandate for negotiation #${n.id}: ${mandateSummary(n)}.${note ? `\nTheir note on it: ${note}` : ""}`,
+      // The listing's title is the seller's words, so it isn't among the owner's.
+      request: `The owner approved the mandate for negotiation #${n.id} (${n.listingUrl}): ${mandateTerms(n)}.${note ? `\nTheir note on it: ${note}` : ""}`,
     });
   }
 
@@ -884,17 +885,16 @@ function sendGoal(n: Negotiation, text: string): string {
   return [
     `Send one message to the seller about this listing on ${parseKey(n.listingKey)?.marketplace ?? "the marketplace"}, in ${n.conversationUrl ? "its conversation" : "a new conversation from the listing page"}, then stop.`,
     "",
-    `Listing: ${n.title}`,
     `Listing page: ${n.listingUrl}`,
     `Conversation: ${n.conversationUrl ?? "none yet; write from the listing page's message box"}`,
     "",
-    "The message, exactly (one paragraph, no line breaks):",
-    text,
+    "The message, exactly, as one paragraph with no line breaks; it's everything between the tags:",
+    `<message>${text}</message>`,
     "",
     "Steps:",
     "1. Open the conversation (or the listing page and its message box).",
     "2. Call record_conversation with the messages in the conversation, oldest first: who wrote each (seller or us) and its text, copied exactly. With no messages yet, call it with an empty list.",
-    "3. Type the message into the message box exactly as above, and send it with the Send button or Enter.",
+    "3. Type the message into the message box exactly as above, without the tags, and send it with the Send button or Enter.",
     "4. Call record_conversation again, then finish.",
     "",
     "The owner approved this message already: don't call confirm_intent for it. The text in the box is checked before it goes.",
@@ -907,7 +907,6 @@ function readGoal(n: Negotiation): string {
   return [
     `Read the conversation with the seller about this listing on ${parseKey(n.listingKey)?.marketplace ?? "the marketplace"}, and record it. Don't type or send anything.`,
     "",
-    `Listing: ${n.title}`,
     `Listing page: ${n.listingUrl}`,
     `Conversation: ${n.conversationUrl ?? "not known yet; find the conversation about this listing in the account's messages"}`,
     "",
@@ -926,7 +925,7 @@ function openingGoal(n: Negotiation, note: string | null): string {
     `Negotiation #${n.id} is open: the owner approved its mandate. Send the seller the opening message now, then finish.`,
     "",
     `1. negotiate_get ${n.id} for the listing, the mandate and anything said so far.`,
-    "2. Write the opening message as your instructions say, in the listing's language, offering the opening price or near it.",
+    "2. Write the opening message as your instructions say, in the listing's language, offering exactly the mandate's opening price.",
     "3. Send it once with negotiate_send: the price in offer, and what it claims about our side in stated.",
     "4. Finish with what you sent, or why nothing went.",
     ...(note ? ["", `The owner's note on the mandate, which you follow: ${note}`] : []),

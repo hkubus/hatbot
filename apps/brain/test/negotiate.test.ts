@@ -295,7 +295,7 @@ test("negotiate_start asks for the mandate; once approved, the negotiation runs 
   expect(approval?.taskId).toBeNull();
   expect(approval?.conversationId).toBe(t.thread.conversationId);
   expect(approval?.summary).toBe(
-    "Negotiate for Karta graficzna RTX 3070 8GB: open at 1,060 zł, aim for 1,250 zł, pay at most 1,400 zł",
+    "Negotiate for “Karta graficzna RTX 3070 8GB”: open at 1,060 zł, aim for 1,250 zł, pay at most 1,400 zł",
   );
   expect(approval?.reason).toContain("Asking 1,500 zł.");
   expect(approval?.reason).toContain("walk away above 1,400 zł");
@@ -337,6 +337,13 @@ test("negotiate_start asks for the mandate; once approved, the negotiation runs 
   expect(results(work, 6)).toContain("this task only sends the approved message");
   expect(JSON.stringify(work.requests[2]?.messages[0])).toContain(
     "don't call confirm_intent for it",
+  );
+  // The seller wrote the listing's title: it's in neither brief, nor among what the owner said.
+  expect(t.tasks.get(2)?.goal).toContain(`<message>${TEXT}</message>`);
+  expect(t.tasks.get(2)?.goal).not.toContain("Karta graficzna");
+  expect(t.tasks.get(1)?.goal).toContain("offering exactly the mandate's opening price");
+  expect(t.tasks.requestOf(1)).toBe(
+    `The owner approved the mandate for negotiation #1 (${LISTING_URL}): open at 1,060 zł, aim for 1,250 zł, pay at most 1,400 zł.`,
   );
   // The opening task waited for its desktop task and heard how it went.
   expect(JSON.stringify(work.requests[8]?.messages.at(-1))).toContain("Sent.");

@@ -61,10 +61,16 @@ export function toMandate(i: MandateInput, currency: string, now: number): Manda
   };
 }
 
-/** The mandate approval's one line. */
-export function mandateSummary(n: Negotiation): string {
+/** The mandate's numbers in a line: "open at 1,060 zł, aim for 1,250 zł, pay at most 1,400 zł". */
+export function mandateTerms(n: Pick<Negotiation, "mandate" | "role">): string {
   const m = n.mandate;
-  return `Negotiate for ${n.title.slice(0, 60)}: open at ${zl(m.opening, m.currency)}, aim for ${zl(m.target, m.currency)}, ${n.role === "buy" ? "pay at most" : "take at least"} ${zl(m.limit, m.currency)}`;
+  return `open at ${zl(m.opening, m.currency)}, aim for ${zl(m.target, m.currency)}, ${n.role === "buy" ? "pay at most" : "take at least"} ${zl(m.limit, m.currency)}`;
+}
+
+/** The mandate approval's one line. The listing's title is the seller's words, so it's quoted. */
+export function mandateSummary(n: Negotiation): string {
+  const title = n.title.length > 60 ? `${n.title.slice(0, 59)}…` : n.title;
+  return `Negotiate for “${title}”: ${mandateTerms(n)}`;
 }
 
 /** The mandate approval's detail: the appraisal it rests on and the rest of the mandate. */
