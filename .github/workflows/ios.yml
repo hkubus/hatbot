@@ -78,7 +78,6 @@ jobs:
       - name: SideStore source
         env:
           VERSION: ${{ needs.build.outputs.version }}
-          BUILD: ${{ github.run_number }}
           BASE_URL: ${{ steps.pages.outputs.base_url }}
         run: |
           mv site/Hatbot.ipa "site/Hatbot-$VERSION.ipa"
