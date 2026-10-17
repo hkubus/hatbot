@@ -27,7 +27,10 @@ type Resource = {
 };
 
 const Config = z.object({
-  /** Guests whose power actions always ask first, e.g. the router or the NAS. */
+  /**
+   * Guests where every change waits for the owner, e.g. the router or the NAS: power actions here,
+   * and commands and files in them through the SSH plugin.
+   */
   careful: z.array(z.number().int().positive()).default([]),
 });
 
@@ -55,14 +58,22 @@ export const proxmoxPlugin = definePlugin({
     const desktop = Number(pve.desktopId) || null;
     /** Names from the last listing, so timeline lines and approvals can say which guest. */
     const names = new Map<number, string>();
+    /** Guests tagged as Hatbot's own (host-setup.sh tags them), from the last listing. */
+    const own = new Set<number>();
 
     const guests = async (): Promise<Resource[]> => {
       const list = ((await pve.get("/cluster/resources?type=vm")) as Resource[])
         .filter((r) => !r.template)
         .sort((a, b) => a.vmid - b.vmid);
-      for (const r of list) names.set(r.vmid, label(r));
+      own.clear();
+      for (const r of list) {
+        names.set(r.vmid, label(r));
+        if (ownTag(r)) own.add(r.vmid);
+      }
       return list;
     };
+    /** Hatbot's own guests other than the desktop are never powered, whatever their ID now. */
+    const refused = (vmid: number) => vmid === brain || (own.has(vmid) && vmid !== desktop);
     const find = async (vmid: number): Promise<Resource> => {
       const r = (await guests()).find((g) => g.vmid === vmid);
       if (!r) throw new ProxmoxError(`There's no guest ${vmid}.`);
@@ -169,46 +180,63 @@ export const proxmoxPlugin = definePlugin({
           );
         },
       }),
-      tool({
-        name: "proxmox_power",
-        description:
-          "Start, reboot, shut down (clean) or stop (hard power-off) a guest, and wait until Proxmox is done. Starting and rebooting run right away; shutting down or stopping asks the owner first.",
-        access: "write",
-        schema: z.object({
-          vmid: Vmid,
-          action: z.enum(["start", "reboot", "shutdown", "stop"]),
-        }),
-        describe: ({ vmid, action }) => `${ACTION[action]} ${named(vmid)}`,
-        policy: ({ vmid, action }) => {
-          if (vmid === brain)
-            return block(
-              "That's Hatbot's own brain: powering it would end this task. Ask the owner to do it.",
-            );
-          if (action === "shutdown" || action === "stop")
-            return ask(`It stays off until someone starts it again.`);
-          if (careful.has(vmid))
-            return askAlways("The owner asked to approve power actions on it.");
-          if (vmid === desktop) return ask("The desktop may be in use by a desktop task.");
-          return allow();
-        },
-        run: async ({ vmid, action }, { signal }) => {
-          const r = await find(vmid);
-          const upid = (await pve.post(`${path(r)}/status/${action}`)) as string;
-          const exit = await pve.waitTask(upid, POWER_TIMEOUT_MS, signal);
-          const now = (await pve.get(`${path(r)}/status/current`)) as { status?: string };
-          if (exit === null)
-            return `${ACTION[action]} ${label(r)} is still going after 3 minutes; it's ${now.status} now.`;
-          if (exit !== "OK")
-            throw new ProxmoxError(
-              `${ACTION[action]} ${label(r)} failed: ${exit}. It's ${now.status}.`,
-            );
-          return `${ACTION[action]} ${label(r)}: done. It's ${now.status} now.`;
-        },
-      }),
+      // Only while the brain knows its own ID: the token may power every guest, the brain included.
+      ...(brain
+        ? [
+            tool({
+              name: "proxmox_power",
+              description:
+                "Start, reboot, shut down (clean) or stop (hard power-off) a guest, and wait until Proxmox is done. Shutting down or stopping needs approval (the safety review or the owner); any power action on a careful guest waits for the owner.",
+              access: "write",
+              schema: z.object({
+                vmid: Vmid,
+                action: z.enum(["start", "reboot", "shutdown", "stop"]),
+              }),
+              describe: ({ vmid, action }) => `${ACTION[action]} ${named(vmid)}`,
+              policy: ({ vmid, action }) => {
+                if (refused(vmid))
+                  return block(
+                    vmid === brain
+                      ? "That's the brain you run on: powering it would end this task. Ask the owner to do it."
+                      : "That's one of the guests you run on (tagged hatbot). Ask the owner to do it.",
+                  );
+                const off =
+                  action === "shutdown" || action === "stop"
+                    ? "It stays off until someone starts it again."
+                    : null;
+                if (careful.has(vmid))
+                  return askAlways(
+                    `The owner asked to approve power actions on it.${off ? ` ${off}` : ""}`,
+                  );
+                if (off) return ask(off);
+                if (vmid === desktop) return ask("The desktop may be in use by a desktop task.");
+                return allow();
+              },
+              run: async ({ vmid, action }, { signal }) => {
+                const r = await find(vmid);
+                // Checked again on the fresh listing: the policy saw the last one.
+                if (refused(vmid))
+                  throw new ProxmoxError(
+                    `${label(r)} is one of the guests you run on (tagged hatbot); it isn't powered from here.`,
+                  );
+                const upid = (await pve.post(`${path(r)}/status/${action}`)) as string;
+                const exit = await pve.waitTask(upid, POWER_TIMEOUT_MS, signal);
+                const now = (await pve.get(`${path(r)}/status/current`)) as { status?: string };
+                if (exit === null)
+                  return `${ACTION[action]} ${label(r)} is still going after 3 minutes; it's ${now.status} now.`;
+                if (exit !== "OK")
+                  throw new ProxmoxError(
+                    `${ACTION[action]} ${label(r)} failed: ${exit}. It's ${now.status}.`,
+                  );
+                return `${ACTION[action]} ${label(r)}: done. It's ${now.status} now.`;
+              },
+            }),
+          ]
+        : []),
       tool({
         name: "proxmox_snapshot",
         description:
-          "Take a snapshot of one of Hatbot's own guests (the brain or the desktop), e.g. before a risky change. Other guests are refused by Proxmox.",
+          "Take a snapshot of the brain you run on or of your desktop, e.g. before a risky change to them. Proxmox refuses other guests: for those, check they have a recent backup (pbs_backups).",
         access: "write",
         schema: z.object({
           vmid: Vmid,
@@ -234,17 +262,21 @@ export const proxmoxPlugin = definePlugin({
     ];
 
     const special = [
-      brain ? `Guest ${brain} is Hatbot's own brain; never power it.` : null,
+      brain
+        ? `Guest ${brain} is the brain you run on; never power it.`
+        : "Powering guests is off until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env, so the brain can't be powered off by mistake.",
       desktop ? `Guest ${desktop} is your desktop.` : null,
-      careful.size ? `Power actions on ${[...careful].join(", ")} always ask the owner.` : null,
+      careful.size
+        ? `Power actions on ${[...careful].join(", ")}, and commands and files in them, always wait for the owner.`
+        : null,
     ].filter(Boolean);
     return ready(tools, {
       guidance:
-        `Proxmox host "${pve.node}". proxmox_guests lists every guest; read memory for what each one runs. Starting and rebooting a guest runs right away; shutting one down or stopping it asks the owner first. ${special.join(" ")}`.trim(),
+        `Proxmox host "${pve.node}". proxmox_guests lists every guest; read memory for what each one runs. Shutting a guest down or stopping it needs approval (the safety review or the owner). ${special.join(" ")}`.trim(),
       test: async () => {
         const list = await guests();
         const running = list.filter((g) => g.status === "running").length;
-        return `Connected to ${pve.node}: ${list.length} guests, ${running} running.`;
+        return `Connected to ${pve.node}: ${list.length} guests, ${running} running.${brain ? "" : " Powering guests is off until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env."}`;
       },
     });
   },
@@ -276,6 +308,9 @@ type TaskRow = {
 };
 
 const ACTION = { start: "Start", reboot: "Reboot", shutdown: "Shut down", stop: "Stop" };
+
+/** Tagged as one of Hatbot's own guests: Proxmox keeps tags as "a;b". */
+const ownTag = (r: Resource) => (r.tags ?? "").split(/[;, ]+/).includes("hatbot");
 
 const label = (r: Resource) =>
   `${r.type === "lxc" ? "CT" : "VM"} ${r.vmid}${r.name ? ` (${r.name})` : ""}`;

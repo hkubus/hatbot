@@ -51,6 +51,7 @@ const GUESTS = [
     node: "pve",
     status: "running",
     pool: "hatbot",
+    tags: "hatbot",
     maxcpu: 2,
   },
   {
@@ -200,6 +201,10 @@ test("reads guests, a guest, the host and recent tasks", async () => {
   expect(failed).not.toContain("vzdump 105");
 
   expect(await t.plugins.test("proxmox")).toBe("Connected to pve: 3 guests, 3 running.");
+  // A bot can have another name: what the model reads doesn't call it Hatbot.
+  const read = [t.plugins.guidance(), ...t.plugins.tools().map((x) => x.description)].join("\n");
+  expect(read).toContain("Guest 125 is the brain you run on");
+  expect(read).not.toContain("Hatbot");
 });
 
 test("reboot runs right away; shutdown, careful guests and the desktop ask; the brain is refused", async () => {
@@ -211,6 +216,12 @@ test("reboot runs right away; shutdown, careful guests and the desktop ask; the 
   expect(v({ vmid: 105, action: "start" }).action).toBe("allow");
   expect(v({ vmid: 105, action: "shutdown" }).action).toBe("ask");
   expect(v({ vmid: 200, action: "reboot" })).toMatchObject({ action: "ask", always: true });
+  // Shutting down a careful guest waits for the owner, not the review.
+  expect(v({ vmid: 200, action: "shutdown" })).toEqual({
+    action: "ask",
+    always: true,
+    why: "The owner asked to approve power actions on it. It stays off until someone starts it again.",
+  });
   expect(v({ vmid: 126, action: "reboot" }).action).toBe("ask");
   expect(v({ vmid: 125, action: "reboot" }).action).toBe("block");
   // Tainted: even a reboot asks.
@@ -224,6 +235,32 @@ test("reboot runs right away; shutdown, careful guests and the desktop ask; the 
   await expect(power.run({ vmid: 404, action: "start" }, call)).rejects.toThrow(
     "There's no guest 404.",
   );
+});
+
+test("Hatbot's own guests are refused by their tag too; without HATBOT_BRAIN_ID nothing is powered", async () => {
+  // The brain moved to a new ID that the env doesn't know yet; its tag still says what it is.
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [proxmoxPlugin], {
+    ...env(),
+    HATBOT_BRAIN_ID: "300",
+  });
+  await t.plugins.update("proxmox", { enabled: true });
+  const power = t.plugins.tools().find((x) => x.name === "proxmox_power");
+  if (!power) throw new Error("no proxmox_power");
+  await expect(power.run({ vmid: 125, action: "reboot" }, call)).rejects.toThrow(
+    "CT 125 (hatbot-brain) is one of the guests you run on (tagged hatbot)",
+  );
+  expect(posts.some((p) => p.path.includes("/125/status/"))).toBe(false);
+  expect(verdictFor(power, { vmid: 125, action: "reboot" }, call).action).toBe("block");
+  expect(verdictFor(power, { vmid: 105, action: "reboot" }, call).action).toBe("allow");
+
+  const noBrain = Object.fromEntries(
+    Object.entries(env()).filter(([k]) => k !== "HATBOT_BRAIN_ID"),
+  );
+  const off = await testApp(new FakeModel(), new FakeModel(), {}, [proxmoxPlugin], noBrain);
+  await off.plugins.update("proxmox", { enabled: true });
+  expect(off.plugins.tools().some((x) => x.name === "proxmox_power")).toBe(false);
+  expect(off.plugins.guidance()).toContain("Powering guests is off until HATBOT_BRAIN_ID is set");
+  expect(await off.plugins.test("proxmox")).toContain("Powering guests is off");
 });
 
 test("an alert task reboots a guest and reports; shutting down waits for you", async () => {
@@ -256,5 +293,5 @@ test("an alert task reboots a guest and reports; shutting down waits for you", a
   const steps = t.tasks.steps(task.id).map((s) => s.detail);
   expect(steps).toContain("Reboot CT 105 (jellyfin)");
   // The system prompt says which guest is the brain.
-  expect(JSON.stringify(work.requests[0]?.system)).toContain("Guest 125 is Hatbot's own brain");
+  expect(JSON.stringify(work.requests[0]?.system)).toContain("Guest 125 is the brain you run on");
 });

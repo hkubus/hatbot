@@ -2,8 +2,10 @@
 # Hatbot: let it run commands inside your containers (the SSH plugin's ssh_pct_exec).
 # Run as root on the Proxmox host after host-setup.sh. Safe to re-run. It sets up:
 #   - a `hatbot` Unix user here that logs in with the brain's SSH key,
+#   - the "hatbot" tag on Hatbot's own brain and desktop (host-setup.sh tags them when it creates
+#     them; older ones get it here),
 #   - /usr/local/sbin/hatbot-pct-exec, which runs one command in one running container and refuses
-#     Hatbot's own brain and desktop,
+#     Hatbot's own: any container tagged "hatbot", and the brain's and desktop's IDs as of now,
 #   - a sudo rule for that program and nothing else.
 # Then add this host in Settings → Plugins → SSH with "Proxmox host" switched on.
 
@@ -21,7 +23,7 @@ ct_running "$BRAIN_ID" || die "the brain (CT $BRAIN_ID) is not running"
 WRAPPER=/usr/local/sbin/hatbot-pct-exec
 SUDOERS=/etc/sudoers.d/hatbot-pct-exec
 
-step "1/3 hatbot user"
+step "1/4 hatbot user"
 id hatbot >/dev/null 2>&1 || useradd --create-home --shell /bin/bash hatbot
 key=$(pct exec "$BRAIN_ID" -- cat /var/lib/hatbot/.ssh/id_ed25519.pub) ||
   die "no SSH key in the brain; run brain-provision.sh"
@@ -31,12 +33,29 @@ chown hatbot:hatbot /home/hatbot/.ssh/authorized_keys
 chmod 600 /home/hatbot/.ssh/authorized_keys
 ok "hatbot logs in with ${key##* }"
 
-step "2/3 $WRAPPER"
+# The wrapper refuses by this tag, so a brain or desktop made again under another ID stays refused.
+# The brain's token can't change tags (that needs VM.Config.Options).
+step "2/4 the hatbot tag"
+for ct in "$BRAIN_ID" "$DESKTOP_ID"; do
+  if ! tags=$(pct config "$ct" 2>/dev/null | sed -n 's/^tags:[[:space:]]*//p'); then
+    warn "CT $ct not found; not tagged"
+    continue
+  fi
+  if [[ ";${tags//[, ]/;};" == *";hatbot;"* ]]; then
+    ok "CT $ct is tagged hatbot"
+  else
+    pct set "$ct" --tags "${tags:+$tags;}hatbot"
+    ok "tagged CT $ct hatbot"
+  fi
+done
+
+step "3/4 $WRAPPER"
 tmp=$(mktemp)
 cat >"$tmp" <<EOF
 #!/bin/bash
 # Installed by Hatbot's infra/pct-exec-setup.sh. Runs one command in one running container, as root
-# there. Hatbot reaches it through sudo; its own containers ($BRAIN_ID, $DESKTOP_ID) are refused.
+# there. Hatbot reaches it through sudo. Its own containers are refused: any tagged "hatbot", and
+# $BRAIN_ID and $DESKTOP_ID, the brain's and the desktop's when this was installed.
 set -euo pipefail
 if [[ \$# -ne 2 || ! \$1 =~ ^[0-9]{3,9}\$ ]]; then
   echo "usage: hatbot-pct-exec <container id> <command>" >&2
@@ -49,9 +68,16 @@ case "\$id" in
     exit 3
     ;;
 esac
-if [[ ! -f /etc/pve/lxc/\$id.conf ]]; then
+conf=/etc/pve/lxc/\$id.conf
+if [[ ! -f \$conf ]]; then
   echo "CT \$id isn't a container on this host." >&2
   exit 4
+fi
+# The tags of its current config; the [snapshot] sections after it have their own.
+tags=\$(sed -n '/^\[/q; s/^tags:[[:space:]]*//p' "\$conf")
+if [[ ";\${tags//[, ]/;};" == *";hatbot;"* ]]; then
+  echo "CT \$id is tagged hatbot, one of Hatbot's own containers; refused." >&2
+  exit 3
 fi
 if ! pct status "\$id" | grep -q 'status: running'; then
   echo "CT \$id isn't running." >&2
@@ -62,9 +88,9 @@ EOF
 bash -n "$tmp"
 install -o root -g root -m 755 "$tmp" "$WRAPPER"
 rm -f "$tmp"
-ok "refuses CT $BRAIN_ID and CT $DESKTOP_ID"
+ok "refuses containers tagged hatbot, and CT $BRAIN_ID and CT $DESKTOP_ID"
 
-step "3/3 sudo rule"
+step "4/4 sudo rule"
 # Proxmox VE doesn't ship sudo.
 if ! command -v visudo >/dev/null; then
   apt-get install -y -qq --no-install-recommends sudo >/dev/null || die "couldn't install sudo"

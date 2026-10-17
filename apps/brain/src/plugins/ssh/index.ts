@@ -10,15 +10,18 @@ import {
   allow,
   ask,
   askAlways,
+  block,
   definePlugin,
   PluginError,
   ready,
   tool,
   type Verdict,
 } from "../plugin";
-import { commandCount, destructive, reboots } from "./policy";
+import { commandCount, destructive, statusOnly } from "./policy";
 
 const OUTPUT_CHARS = 15_000;
+/** The most lines ssh_read_file shows in one call. */
+const READ_LINES = 500;
 
 const Host = z.object({
   name: z
@@ -44,7 +47,8 @@ const Config = z.object({ hosts: z.array(Host).default([]) });
 const CHECKS = {
   overview: "uptime; echo; df -h -x tmpfs -x devtmpfs -x overlay; echo; free -m",
   failed: "systemctl --failed --no-pager --plain",
-  service: "systemctl status --no-pager --lines=30 -- {unit}",
+  // Without its journal lines, which can quote what strangers sent the service: logs shows those.
+  service: "systemctl status --no-pager --lines=0 -- {unit}",
   logs: "journalctl --no-pager -n 150 -u {unit}",
   errors: "journalctl --no-pager -p err -n 100 --since -1d",
   containers: "docker ps -a --format 'table {{.Names}}\\t{{.Status}}\\t{{.Image}}'",
@@ -52,23 +56,34 @@ const CHECKS = {
   top: "top -b -n 1 -o %CPU | head -n 25",
 } as const;
 
+/** The most output kept from each stream; past it, its first and last halves. */
+const KEEP_BYTES = 1024 * 1024;
+/** A command that writes more than this is stopped: nothing useful is that long. */
+const FLOOD_BYTES = 256 * 1024 * 1024;
+/** Printed on the host before the command runs, so a failed command isn't taken for a failed login. */
+const CONNECTED = "hatbot-ssh-connected\n";
+
 export type Run = (
   args: string[],
-  /** `input`: what the command reads on stdin. */
-  opts: { timeoutMs: number; signal?: AbortSignal; input?: Uint8Array },
+  /** `input`: what the command reads on stdin. `keepBytes`: the most of stdout kept whole. */
+  opts: { timeoutMs: number; signal?: AbortSignal; input?: Uint8Array; keepBytes?: number },
 ) => Promise<{
   code: number;
   stdout: string;
-  /** stdout as it came, for files. */
+  /** stdout as it came, for files: its first and last parts if `cut`. */
   bytes: Uint8Array;
+  /** How many bytes of stdout were left out of the middle. */
+  cut: number;
   stderr: string;
   timedOut: boolean;
+  /** Stopped for writing more than FLOOD_BYTES. */
+  flooded: boolean;
 }>;
 
-/** Runs a program and collects its output; kills it on timeout or abort. */
+/** Runs a program and collects its output; kills it on timeout, abort, or endless output. */
 export const spawnRun =
   (bin: string): Run =>
-  async (args, { timeoutMs, signal, input }) => {
+  async (args, { timeoutMs, signal, input, keepBytes = KEEP_BYTES }) => {
     const proc = Bun.spawn([bin, ...args], {
       stdin: input ?? "ignore",
       stdout: "pipe",
@@ -76,48 +91,95 @@ export const spawnRun =
       env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? homedir() },
     });
     let timedOut = false;
+    let flooded = false;
     const timer = setTimeout(() => {
       timedOut = true;
       proc.kill();
     }, timeoutMs);
     const abort = () => proc.kill();
     signal?.addEventListener("abort", abort, { once: true });
-    const out = collect(proc.stdout);
-    const err = collect(proc.stderr);
+    const flood = () => {
+      flooded = true;
+      proc.kill();
+    };
+    const out = collect(proc.stdout, keepBytes, flood);
+    const err = collect(proc.stderr, KEEP_BYTES, flood);
     try {
       const code = await proc.exited;
       // Something the command started may still hold the pipes; don't wait on it for long.
       await Promise.race([Promise.all([out.done, err.done]), Bun.sleep(1000)]);
       out.stop();
       err.stop();
-      return { code, stdout: out.text(), bytes: out.bytes(), stderr: err.text(), timedOut };
+      return {
+        code,
+        stdout: out.text(),
+        bytes: out.bytes(),
+        cut: out.cut(),
+        stderr: err.text(),
+        timedOut,
+        flooded,
+      };
     } finally {
       clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
     }
   };
 
-/** Reads a stream as it comes, so the output so far is there even if it never ends. */
-function collect(stream: ReadableStream<Uint8Array>) {
-  const chunks: Uint8Array[] = [];
+/**
+ * Reads a stream as it comes, so the output so far is there even if it never ends. Up to `keep`
+ * bytes are kept whole; past that only the first and last halves, so a command that writes
+ * gigabytes doesn't fill the brain's memory.
+ */
+function collect(stream: ReadableStream<Uint8Array>, keep: number, flood: () => void) {
+  const half = Math.floor(keep / 2);
+  let chunks: Uint8Array[] = [];
+  /** Once past `keep`: the first half, and the chunks that hold at least the last half. */
+  let head: Buffer | null = null;
+  let tail: Uint8Array[] = [];
+  let tailBytes = 0;
+  let total = 0;
   const reader = stream.getReader();
   const done = (async () => {
     for (;;) {
       const r = await reader.read().catch(() => ({ done: true as const, value: undefined }));
       if (r.done) return;
-      chunks.push(r.value);
+      total += r.value.byteLength;
+      if (total > FLOOD_BYTES) flood();
+      if (!head) {
+        chunks.push(r.value);
+        if (total <= keep) continue;
+        const all = Buffer.concat(chunks);
+        chunks = [];
+        head = all.subarray(0, half);
+        tail = [all.subarray(half)];
+        tailBytes = all.byteLength - half;
+      } else {
+        tail.push(r.value);
+        tailBytes += r.value.byteLength;
+      }
+      while (tail.length > 1 && tailBytes - (tail[0]?.byteLength ?? 0) >= half)
+        tailBytes -= tail.shift()?.byteLength ?? 0;
     }
   })();
+  const last = () => Buffer.concat(tail).subarray(Math.max(0, tailBytes - half));
+  const cut = () => (head ? total - head.byteLength - last().byteLength : 0);
   return {
     done,
     stop: () => void reader.cancel().catch(() => {}),
-    text: () => Buffer.concat(chunks).toString("utf8"),
-    bytes: () => new Uint8Array(Buffer.concat(chunks)),
+    text: () =>
+      head
+        ? `${head.toString("utf8")}\n… (${sizeText(cut())} left out) …\n${last().toString("utf8")}`
+        : Buffer.concat(chunks).toString("utf8"),
+    bytes: () => new Uint8Array(head ? Buffer.concat([head, last()]) : Buffer.concat(chunks)),
+    cut,
   };
 }
 
+/** Output for the model: long output keeps its start and its end, where errors usually are. */
 const cut = (s: string) =>
-  s.length > OUTPUT_CHARS ? `${s.slice(0, OUTPUT_CHARS)}\n… (cut; ${s.length} characters)` : s;
+  s.length > OUTPUT_CHARS
+    ? `${s.slice(0, OUTPUT_CHARS - 5000)}\n… (${s.length - OUTPUT_CHARS} characters left out) …\n${s.slice(-5000)}`
+    : s;
 
 export const sshPlugin = definePlugin({
   id: "ssh",
@@ -132,7 +194,19 @@ export const sshPlugin = definePlugin({
     const keygen = spawnRun(env.HATBOT_SSH_KEYGEN_BIN ?? "ssh-keygen");
     const hosts = new Map(config.hosts.map((h) => [h.name, h]));
     const hostNames = config.hosts.map((h) => h.name);
-    const pctHosts = config.hosts.filter((h) => h.proxmox).map((h) => h.name);
+    // Containers are reached only while the brain knows its own guests' IDs, so it can refuse them
+    // here as well as in the host's wrapper.
+    const brainId = Number(env.HATBOT_BRAIN_ID) || null;
+    const desktopId = Number(env.HATBOT_DESKTOP_ID) || null;
+    const marked = config.hosts.filter((h) => h.proxmox).map((h) => h.name);
+    const pctHosts = brainId ? marked : [];
+    /** Why a container can't be reached from here, if it can't. */
+    const guestRefused = (guest: number): string | null =>
+      !brainId
+        ? `Containers are off until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env.`
+        : guest === brainId || guest === desktopId
+          ? `CT ${guest} is the brain you run on or your desktop; it isn't reached from here.`
+          : null;
 
     const hostOf = (name: string): Host => {
       const h = hosts.get(name);
@@ -148,7 +222,7 @@ export const sshPlugin = definePlugin({
     const connect = async (
       h: Host,
       command: string,
-      opts: { timeoutMs: number; signal?: AbortSignal; input?: Uint8Array },
+      opts: { timeoutMs: number; signal?: AbortSignal; input?: Uint8Array; keepBytes?: number },
     ) => {
       const r = await ssh(
         [
@@ -174,19 +248,30 @@ export const sshPlugin = definePlugin({
           h.user,
           "--",
           h.address,
-          command,
+          `echo ${CONNECTED.trim()}; ${command}`,
         ],
         opts,
       );
-      if (/REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed/.test(r.stderr))
+      // Once the marker is there, ssh connected: the command's own errors (and exit code 255) are
+      // its own, whatever they say.
+      const at = r.stdout.indexOf(CONNECTED);
+      if (at < 0) {
+        if (/REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed/.test(r.stderr))
+          throw new PluginError(
+            `${h.name}'s host key changed, so it isn't connected to: it could be someone else. If the owner rebuilt it, they can forget its key in Settings → Plugins → SSH.`,
+          );
         throw new PluginError(
-          `${h.name}'s host key changed, so Hatbot won't connect: it could be someone else. If the owner rebuilt it, they can forget its key in Settings → Plugins → SSH.`,
+          `Couldn't connect to ${h.name} (${h.user}@${h.address}): ${r.stderr.trim().slice(0, 300) || (r.timedOut ? "it took too long" : "ssh failed")}`,
         );
-      if (r.code === 255 && !r.stdout)
-        throw new PluginError(
-          `Couldn't connect to ${h.name} (${h.user}@${h.address}): ${r.stderr.trim().slice(0, 300) || "ssh failed"}`,
-        );
-      return r;
+      }
+      const from = Buffer.from(r.bytes.buffer, r.bytes.byteOffset, r.bytes.byteLength).indexOf(
+        CONNECTED,
+      );
+      return {
+        ...r,
+        stdout: r.stdout.slice(at + CONNECTED.length),
+        bytes: r.bytes.subarray(from + CONNECTED.length),
+      };
     };
 
     /** Runs a command on a host; the result as text for the model. */
@@ -198,13 +283,15 @@ export const sshPlugin = definePlugin({
     ): Promise<{ text: string; ok: boolean }> => {
       const r = await connect(h, command, { timeoutMs, signal });
       const parts = [
-        r.timedOut
-          ? `Stopped after ${Math.round(timeoutMs / 1000)}s (exit code ${r.code})`
-          : `Exit code ${r.code}`,
+        r.flooded
+          ? `Stopped: it wrote over ${FLOOD_BYTES / 1024 / 1024} MB (exit code ${r.code})`
+          : r.timedOut
+            ? `Stopped after ${Math.round(timeoutMs / 1000)}s (exit code ${r.code})`
+            : `Exit code ${r.code}`,
       ];
       if (r.stdout.trim()) parts.push(cut(r.stdout.trimEnd()));
       if (r.stderr.trim()) parts.push(`stderr:\n${cut(r.stderr.trimEnd())}`);
-      return { text: parts.join("\n"), ok: r.code === 0 && !r.timedOut };
+      return { text: parts.join("\n"), ok: r.code === 0 && !r.timedOut && !r.flooded };
     };
 
     /** The Proxmox plugin's guests whose power actions always ask, read live from its settings. */
@@ -221,10 +308,13 @@ export const sshPlugin = definePlugin({
     /** A file's host and path; with `guest`, inside that Proxmox host's container. */
     const placeOf = (r: Remote): Host => {
       const h = hostOf(r.host);
-      if (r.guest !== undefined && !h.proxmox)
+      if (r.guest === undefined) return h;
+      if (!h.proxmox)
         throw new PluginError(
           `${r.host} isn't set up as a Proxmox host, so it can't reach CT ${r.guest}. Use: ${pctHosts.join(", ") || "none yet"}.`,
         );
+      const refused = guestRefused(r.guest);
+      if (refused) throw new PluginError(refused);
       return h;
     };
     /** A command for the file's place: in the container through its wrapper, or on the host. */
@@ -241,9 +331,14 @@ export const sshPlugin = definePlugin({
       const h = placeOf(r);
       // One byte past the limit tells a file that's too big from one that just fits.
       const cmd = `head -c ${MAX_ATTACHMENT_BYTES + 1} -- ${shellPath(r.path)}`;
-      const res = await connect(h, inPlace(r, cmd), { timeoutMs: COPY_TIMEOUT_MS, signal });
+      const res = await connect(h, inPlace(r, cmd), {
+        timeoutMs: COPY_TIMEOUT_MS,
+        signal,
+        // Room for the file whole, and for anything the login prints first.
+        keepBytes: MAX_ATTACHMENT_BYTES + 64 * 1024,
+      });
       if (res.code !== 0 || res.timedOut) throw failed(r, "read", res);
-      if (res.bytes.byteLength > MAX_ATTACHMENT_BYTES)
+      if (res.cut || res.bytes.byteLength > MAX_ATTACHMENT_BYTES)
         throw new PluginError(`${where(r)} is over 25 MB.`);
       return res.bytes;
     };
@@ -261,8 +356,18 @@ export const sshPlugin = definePlugin({
       if (res.code !== 0 || res.timedOut) throw failed(r, "write", res);
     };
 
+    /** Why every change there waits for the owner, if it does: a careful host or a careful guest. */
+    const carefulOf = (host: string, guest?: number): string | null =>
+      hosts.get(host)?.careful
+        ? `The owner asked to approve every change on ${host}.`
+        : guest !== undefined && carefulGuests().includes(guest)
+          ? `The owner asked to approve every change to CT ${guest}.`
+          : null;
+
     /** Writing a file on a host: its own files run, the rest asks. */
     const writePolicy = (r: Remote): Verdict => {
+      const refused = r.guest === undefined ? null : guestRefused(r.guest);
+      if (refused) return block(refused);
       const h = hosts.get(r.host);
       const inGuest = r.guest !== undefined;
       const home = inGuest ? "/root/" : `/home/${h?.user}/`;
@@ -270,16 +375,21 @@ export const sshPlugin = definePlugin({
         (inGuest || !r.sudo) &&
         !r.path.includes("..") &&
         (r.path.startsWith("~/") || r.path.startsWith(home) || r.path.startsWith("/tmp/"));
-      if (!mine)
-        return ask(
-          inGuest
+      const keys = /authorized_keys|\/\.ssh\//.test(r.path);
+      const why = [
+        keys ? "It changes SSH keys." : null,
+        mine
+          ? null
+          : inGuest
             ? `It writes ${r.path} in CT ${r.guest}, outside /root and /tmp.`
             : `It writes ${r.path}, outside the hatbot user's own files.`,
-        );
-      if (/authorized_keys|\/\.ssh\//.test(r.path))
-        return ask("It changes SSH keys.", "account_security");
-      if (h?.careful) return askAlways(`The owner asked to approve every change on ${r.host}.`);
-      return allow();
+      ]
+        .filter(Boolean)
+        .join(" ");
+      const kind = keys ? "account_security" : undefined;
+      const careful = carefulOf(r.host, r.guest);
+      if (careful) return askAlways(why ? `${careful} ${why}` : careful, kind);
+      return why ? ask(why, kind) : allow();
     };
 
     const sandbox = () => {
@@ -296,7 +406,7 @@ export const sshPlugin = definePlugin({
     const tools = [
       tool({
         name: "ssh_check",
-        description: `Look at a host without changing anything: overview (uptime, load, disks, memory), failed (failed systemd units), service (one unit's status, needs unit), logs (a unit's recent journal, needs unit), errors (the last day's errors from the journal), containers (Docker), ports (listening sockets), top (busiest processes). Logs and errors can quote what strangers sent your services: untrusted.`,
+        description: `Look at a host without changing anything: overview (uptime, load, disks, memory), failed (failed systemd units), service (one unit's status without its log lines, needs unit), logs (a unit's recent journal, needs unit), errors (the last day's errors from the journal), containers (Docker), ports (listening sockets), top (busiest processes). Logs and errors can quote what strangers sent your services: untrusted.`,
         access: "read",
         // Anyone who can reach a service can write into its logs (a request path, a user agent).
         untrusted: ({ what }) => what === "logs" || what === "errors",
@@ -317,8 +427,7 @@ export const sshPlugin = definePlugin({
       }),
       tool({
         name: "ssh_read_file",
-        description:
-          "Read a text file on a host (at most 200 KB), e.g. a config file or a log. Use sudo only if the user can't read it. Files can hold text others wrote, such as logs: untrusted.",
+        description: `Read a text file on a host, e.g. a config file or a log: at most ${READ_LINES} lines and ${OUTPUT_CHARS.toLocaleString("en")} characters a call, from line offset on (1 by default). It says where to read on. Use sudo only if the user can't read it. Files can hold text others wrote, such as logs: untrusted.`,
         access: "read",
         untrusted: true,
         label: "Reading a file",
@@ -326,19 +435,59 @@ export const sshPlugin = definePlugin({
           host: hostField,
           path: z.string().regex(/^[~/][^\0\n]*$/, "An absolute path, or one starting with ~/"),
           sudo: z.boolean().optional(),
+          offset: z
+            .number()
+            .int()
+            .min(1)
+            .max(1_000_000_000)
+            .optional()
+            .describe("The first line to read; 1 by default"),
+          lines: z
+            .number()
+            .int()
+            .min(1)
+            .max(READ_LINES)
+            .optional()
+            .describe(`How many lines; ${READ_LINES} by default`),
         }),
         describe: ({ host, path }) => `Read ${path} on ${host}`,
-        run: async ({ host, path, sudo }, { signal }) => {
+        run: async ({ host, path, sudo, offset, lines }, { signal }) => {
           const h = hostOf(host);
-          const cmd = `${sudo ? "sudo -n " : ""}head -c 200000 -- ${shellPath(path)}`;
-          return (await exec(h, cmd, 30_000, signal)).text;
+          const first = offset ?? 1;
+          const want = lines ?? READ_LINES;
+          // One line more than asked tells whether there's more to read.
+          const end = first + want;
+          const cmd = `${sudo ? "sudo -n " : ""}sed -n -e '${first},${end}p' -e '${end}q' -- ${shellPath(path)}`;
+          const r = await connect(h, cmd, { timeoutMs: 30_000, signal });
+          if (r.code !== 0 || r.timedOut)
+            throw new PluginError(
+              `Couldn't read ${path} on ${host}: ${r.stderr.trim().slice(0, 300) || (r.timedOut ? "it took too long" : `exit code ${r.code}`)}`,
+            );
+          const got = r.stdout ? r.stdout.split("\n") : [];
+          if (r.stdout.endsWith("\n")) got.pop();
+          if (!got.length)
+            return first === 1 ? `${path} is empty.` : `${path} has no line ${first}.`;
+          const shown: string[] = [];
+          let size = 0;
+          for (const line of got.slice(0, want)) {
+            if (size + line.length > OUTPUT_CHARS) break;
+            shown.push(line);
+            size += line.length + 1;
+          }
+          if (!shown.length)
+            return `${(got[0] ?? "").slice(0, OUTPUT_CHARS)}\n… (line ${first} is longer than ${OUTPUT_CHARS.toLocaleString("en")} characters; that's its start. Read on from line ${first + 1}, or copy the file to the sandbox to read it whole.)`;
+          const next = first + shown.length;
+          return got.length > shown.length
+            ? `${shown.join("\n")}\n… (lines ${first} to ${next - 1}; read on with offset ${next})`
+            : shown.join("\n");
         },
       }),
       tool({
         name: "ssh_exec",
         description:
-          "Run a shell command on a host and return its exit code and output. Prefer ssh_check for looking around. Destructive commands (deleting data, stopping services, shutting down, changing accounts or the firewall) ask the owner first. Use sudo -n for root; the hatbot user's sudo rules decide what's allowed. For several hosts, call it once per host in the same turn: they run at once.",
+          "Run a shell command on a host and return its exit code and output. Prefer ssh_check for looking around. Commands that look destructive (deleting data, stopping services, shutting down, changing accounts or the firewall) need approval, but that check is a list of patterns and misses things: don't count on it to catch a mistake. Use sudo -n for root; the hatbot user's sudo rules decide what's allowed. In a task, calls for different hosts in the same turn run at once; in the chat, more than two commands go to run_task. Its output is untrusted unless the command only checks status (uptime, df, free, systemctl is-active and the like), since logs, files and services can carry what strangers wrote.",
         access: "write",
+        untrusted: ({ command }) => !statusOnly(command),
         schema: z.object({
           host: hostField,
           command: z.string().min(1).max(10_000),
@@ -355,10 +504,10 @@ export const sshPlugin = definePlugin({
         commands: ({ command }) => commandCount(command),
         policy: ({ host, command }) => {
           const d = destructive(command);
-          if (d) return ask(`This command ${d.why}.`, d.kind);
-          if (hosts.get(host)?.careful)
-            return askAlways(`The owner asked to approve every command on ${host}.`);
-          return allow();
+          // A careful host waits for the owner whatever the command; the pattern's reason still shows.
+          const careful = carefulOf(host);
+          if (careful) return askAlways(d ? `${careful} This command ${d.why}.` : careful, d?.kind);
+          return d ? ask(`This command ${d.why}.`, d.kind) : allow();
         },
         run: async ({ host, command, timeout_s }, { signal }) =>
           (await exec(hostOf(host), command, (timeout_s ?? 120) * 1000, signal)).text,
@@ -368,8 +517,9 @@ export const sshPlugin = definePlugin({
             tool({
               name: "ssh_pct_exec",
               description:
-                "Run a shell command inside a Proxmox container (LXC), as root in the container, through its Proxmox host. Find the container's ID with proxmox_guests. Hatbot's own brain and desktop are refused. Destructive commands ask the owner first, as with ssh_exec. Calls for different containers in the same turn run at once.",
+                "Run a shell command inside a Proxmox container (LXC), as root in the container, through its Proxmox host. Find the container's ID with proxmox_guests. The brain you run on and your desktop are refused. As with ssh_exec, commands that look destructive need approval, and its output is untrusted unless the command only checks status; in a careful guest, every command waits for the owner. In a task, calls for different containers in the same turn run at once.",
               access: "write",
+              untrusted: ({ command }) => !statusOnly(command),
               schema: z.object({
                 host: z.string().describe(`The Proxmox host: ${pctHosts.join(", ")}`),
                 guest: z.number().int().min(100).max(999_999_999).describe("The container's ID"),
@@ -387,20 +537,17 @@ export const sshPlugin = definePlugin({
               target: ({ host, guest }) => `${host}/${guest}`,
               commands: ({ command }) => commandCount(command),
               policy: ({ host, guest, command }) => {
+                const refused = guestRefused(guest);
+                if (refused) return block(refused);
                 const d = destructive(command, "container");
-                if (d) return ask(`This command ${d.why}.`, d.kind);
-                if (hosts.get(host)?.careful)
-                  return askAlways(`The owner asked to approve every command on ${host}.`);
-                if (reboots(command) && carefulGuests().includes(guest))
-                  return askAlways("The owner asked to approve power actions on it.");
-                return allow();
+                // A careful guest is careful about everything, not only power actions.
+                const careful = carefulOf(host, guest);
+                if (careful)
+                  return askAlways(d ? `${careful} This command ${d.why}.` : careful, d?.kind);
+                return d ? ask(`This command ${d.why}.`, d.kind) : allow();
               },
               run: async ({ host, guest, command, timeout_s }, { signal }) => {
-                const h = hostOf(host);
-                if (!h.proxmox)
-                  throw new PluginError(
-                    `${host} isn't set up as a Proxmox host. Use: ${pctHosts.join(", ")}.`,
-                  );
+                const h = placeOf({ host, guest, path: "/" });
                 const cmd = `sudo -n /usr/local/sbin/hatbot-pct-exec ${guest} ${quote(command)}`;
                 return (await exec(h, cmd, (timeout_s ?? 120) * 1000, signal)).text;
               },
@@ -410,7 +557,7 @@ export const sshPlugin = definePlugin({
       tool({
         name: "ssh_write_file",
         description:
-          "Create or replace a text file on a host with the content you give. Files outside the user's home directory and /tmp ask the owner first.",
+          "Create or replace a text file on a host with the content you give. Files outside the user's home directory and /tmp need approval (the safety review or the owner); SSH keys, and anything on a careful host, wait for the owner.",
         access: "write",
         schema: z.object({
           host: hostField,
@@ -421,18 +568,15 @@ export const sshPlugin = definePlugin({
         describe: ({ host, path }) => `Write ${path} on ${host}`,
         policy: ({ host, path, sudo }) => writePolicy({ host, path, sudo }),
         run: async ({ host, path, content, sudo }, { signal }) => {
-          const h = hostOf(host);
-          // The content travels base64-encoded inside the command, so nothing in it is shell syntax.
-          const b64 = Buffer.from(content).toString("base64");
-          const sh = `${sudo ? "sudo -n " : ""}sh -c ${quote(`mkdir -p -- "$(dirname -- ${shellPath(path)})" && base64 -d > ${shellPath(path)}`)}`;
-          const r = await exec(h, `printf %s ${quote(b64)} | ${sh}`, 60_000, signal);
-          if (!r.ok) throw new PluginError(`Couldn't write ${path} on ${host}. ${r.text}`);
-          return `Wrote ${path} on ${host} (${Buffer.byteLength(content)} bytes).`;
+          // On stdin, as copies go: in the command it would pass the system's argument limit.
+          const bytes = new TextEncoder().encode(content);
+          await push({ host, path, sudo }, bytes, signal);
+          return `Wrote ${path} on ${host} (${bytes.byteLength} bytes).`;
         },
       }),
       tool({
         name: "ssh_copy_file",
-        description: `Copy a file of any kind, up to 25 MB, between your hosts, the containers on a Proxmox host, the desktop's sandbox and the chat. from: a file on a host ({host, path}, plus guest for a container), in the sandbox ({sandbox}), or in the chat ({attachment}: one the owner attached or you sent). to: a host, the sandbox, or the owner ({owner: true}), who gets it under your reply. A path ending in / keeps the file's name. Writing on a host outside the user's home and /tmp asks the owner first; in a container, outside /root and /tmp. To look at a text file, ssh_read_file is quicker; copy it to the sandbox to work on it with code_run.`,
+        description: `Copy a file of any kind, up to 25 MB, between your hosts, the containers on a Proxmox host, the desktop's sandbox and the chat. from: a file on a host ({host, path}, plus guest for a container), in the sandbox ({sandbox}), or in the chat ({attachment}: one the owner attached or you sent). to: a host, the sandbox, or the owner ({owner: true}), who gets it under your reply. A path ending in / keeps the file's name. Writing on a host outside the user's home and /tmp needs approval, as with ssh_write_file; in a container, outside /root and /tmp. To look at a text file, ssh_read_file is quicker; copy it to the sandbox to work on it with code_run.`,
         access: "write",
         label: "Copying a file",
         schema: z.object({
@@ -523,7 +667,7 @@ export const sshPlugin = definePlugin({
 
     return ready(tools, {
       guidance: hostNames.length
-        ? `You can reach these hosts over SSH: ${config.hosts.map((h) => `${h.name} (${h.user}@${h.address}${h.careful ? ", every command asks the owner" : ""})`).join("; ")}. Read memory for what runs where. Look with ssh_check and ssh_read_file; ssh_exec and ssh_write_file change things, and destructive commands ask the owner first. Restarting a service (systemctl restart) runs right away.${pctHosts.length ? ` ${pctHosts.join(" and ")} ${pctHosts.length > 1 ? "are Proxmox hosts" : "is a Proxmox host"}: ssh_pct_exec runs a command inside one of its containers, by ID.` : ""} ssh_copy_file moves files between hosts${pctHosts.length ? ", containers" : ""}, the sandbox and the chat: the owner's attachments onto a host, a host's file to the owner or into the sandbox to work on.`
+        ? `You can reach these hosts over SSH: ${config.hosts.map((h) => `${h.name} (${h.user}@${h.address}${h.careful ? ", every command asks the owner" : ""})`).join("; ")}. Read memory for what runs where. Look with ssh_check and ssh_read_file; ssh_exec and ssh_write_file change things. Commands that look destructive need approval (the safety review or the owner); a restart (systemctl restart) needs none of its own.${pctHosts.length ? ` ${pctHosts.join(" and ")} ${pctHosts.length > 1 ? "are Proxmox hosts" : "is a Proxmox host"}: ssh_pct_exec runs a command inside one of its containers, by ID.` : marked.length ? ` Its containers can't be reached until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env.` : ""} ssh_copy_file moves files between hosts${pctHosts.length ? ", containers" : ""}, the sandbox and the chat: the owner's attachments onto a host, a host's file to the owner or into the sandbox to work on.`
         : undefined,
       test: async () => {
         if (!hostNames.length) throw new PluginError("Add a host first.");
@@ -537,6 +681,8 @@ export const sshPlugin = definePlugin({
             }
           }),
         );
+        if (marked.length && !brainId)
+          lines.push("Containers: off until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env.");
         return lines.join("\n");
       },
       actions,

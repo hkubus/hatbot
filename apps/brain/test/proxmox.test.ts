@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { Proxmox } from "../src/proxmox";
+import { Proxmox, pinnedRequest } from "../src/proxmox";
 import { setUpOwner, testApp } from "./helpers";
 
 const FINGERPRINT =
@@ -84,9 +84,42 @@ describe("Proxmox", () => {
   test("refuses a certificate that doesn't match the pin, before sending the token", async () => {
     const before = seen.length;
     const wrong = FINGERPRINT.replace("D7", "D8");
-    await expect(new Proxmox(env(wrong)).desktopSnapshots()).rejects.toThrow(/pinned fingerprint/);
+    // It says what it saw and where to put it, for a certificate that was renewed.
+    await expect(new Proxmox(env(wrong)).desktopSnapshots()).rejects.toThrow(
+      `Proxmox's certificate doesn't match the pinned fingerprint. It now shows ${FINGERPRINT}. If its certificate was renewed, put that in PROXMOX_TLS_FINGERPRINT in /etc/hatbot/proxmox.env and restart the brain`,
+    );
     await Bun.sleep(50);
     expect(seen.length).toBe(before);
+  });
+
+  test("a certificate from a trusted CA for the host's name passes without the pin", async () => {
+    const ca = Bun.serve({
+      port: 0,
+      tls: {
+        cert: Bun.file(join(fixtures, "ca-signed-cert.pem")),
+        key: Bun.file(join(fixtures, "ca-signed-key.pem")),
+      },
+      fetch: () => Response.json({ data: "ok" }),
+    });
+    try {
+      const api = {
+        name: "Proxmox",
+        host: "localhost",
+        port: Number(ca.port),
+        fingerprint: FINGERPRINT,
+        setting: "PROXMOX_TLS_FINGERPRINT in /etc/hatbot/proxmox.env",
+        auth: "PVEAPIToken=x=y",
+      };
+      // Not a CA the system trusts: the pin decides, and it doesn't match.
+      await expect(pinnedRequest(api, "GET", "/version")).rejects.toThrow(/pinned fingerprint/);
+      const testCa = await Bun.file(join(fixtures, "test-ca.pem")).text();
+      expect(await pinnedRequest({ ...api, ca: testCa }, "GET", "/version")).toBe("ok");
+      // The CA's word counts only for the name it signed.
+      const other = { ...api, ca: testCa, host: "127.0.0.2" };
+      await expect(pinnedRequest(other, "GET", "/version")).rejects.toThrow(/pinned fingerprint/);
+    } finally {
+      ca.stop(true);
+    }
   });
 
   test("rolls back, starting the desktop again, and waits for the task", async () => {

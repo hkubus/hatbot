@@ -1,9 +1,10 @@
-// Proxmox Backup Server: datastores, backups and their verification, and recent tasks. It can start a
-// verify or a garbage collection; deleting a backup asks you. Restores happen in Proxmox VE, not here.
+// Proxmox Backup Server: datastores, backups and their verification, and recent tasks. Where its token
+// may, it starts a verify or a garbage collection, and deletes a backup after asking you. Restores
+// happen in Proxmox VE, not here.
 // The certificate is self-signed, so the connection is pinned like Proxmox VE's (src/proxmox.ts).
 import { z } from "zod";
 import { pinnedRequest } from "../../proxmox";
-import { allow, ask, definePlugin, needsSetup, ready, tool } from "../plugin";
+import { allow, ask, definePlugin, needsSetup, type PluginInstance, tool } from "../plugin";
 
 type Usage = {
   store: string;
@@ -64,17 +65,18 @@ export const pbsPlugin = definePlugin({
   description: "Check your backups, verify them, and clean up old ones",
   secrets: ["PBS_URL", "PBS_TOKEN_ID", "PBS_TOKEN_SECRET", "PBS_TLS_FINGERPRINT"],
   config: z.object({}),
-  start: ({ env }) => {
+  start: async ({ env }) => {
     const url = env.PBS_URL ? new URL(env.PBS_URL) : null;
     if (!url || !env.PBS_TOKEN_ID || !env.PBS_TOKEN_SECRET || !env.PBS_TLS_FINGERPRINT)
       return needsSetup(
-        "Create an API token for Hatbot in PBS (Configuration → Access Control → API Token, with DatastoreAudit and DatastoreBackup on /datastore, and Sys.Audit on /), then put PBS_URL, PBS_TOKEN_ID, PBS_TOKEN_SECRET and PBS_TLS_FINGERPRINT (from the PBS dashboard's Show Fingerprint) in /etc/hatbot/pbs.env on the brain and restart it.",
+        "Create an API token for Hatbot in PBS (Configuration → Access Control → API Token) and give it (Permissions → Add → API Token Permission) the DatastoreAudit role on /datastore and the Audit role on /: it sees backups and tasks, not what's in them. To let it start verifies, add DatastoreReader on the datastores; for garbage collection and deleting backups, DatastoreAdmin. Both can also read every backup's contents. Then put PBS_URL, PBS_TOKEN_ID, PBS_TOKEN_SECRET and PBS_TLS_FINGERPRINT (from the PBS dashboard's Show Fingerprint) in /etc/hatbot/pbs.env on the brain and restart it.",
       );
     const pbs = {
       name: "Proxmox Backup Server",
       host: url.hostname,
       port: Number(url.port || 8007),
       fingerprint: env.PBS_TLS_FINGERPRINT,
+      setting: "PBS_TLS_FINGERPRINT in /etc/hatbot/pbs.env",
       auth: `PBSAPIToken=${env.PBS_TOKEN_ID}:${env.PBS_TOKEN_SECRET}`,
     };
     const get = <T>(path: string) => pinnedRequest(pbs, "GET", path) as Promise<T>;
@@ -234,11 +236,83 @@ export const pbsPlugin = definePlugin({
       }),
     ];
 
-    return ready(tools, {
-      guidance: `Proxmox Backup Server at ${url.host}. Backup IDs of vm and ct backups are Proxmox VE guest IDs. Check pbs_backups for guests whose last backup is old, and pbs_tasks for failures. Starting a verify or garbage collection runs without asking; deleting a backup asks the owner. Restoring happens in Proxmox VE, not here.`,
+    /** The datastores the token may verify, and change (garbage collection, deleting), as PBS says. */
+    let may: { verify: string[]; modify: string[] } | null = null;
+    let unchecked: string | null = null;
+    const check = async () => {
+      try {
+        const stores = (await get<Usage[]>("/status/datastore-usage")).map((d) => d.store).sort();
+        const privs = await Promise.all(
+          stores.map(async (s) => {
+            const path = `/datastore/${s}`;
+            const q = new URLSearchParams({ path });
+            const all = await get<Record<string, Record<string, boolean>>>(
+              `/access/permissions?${q}`,
+            );
+            return all[path] ?? {};
+          }),
+        );
+        may = {
+          verify: stores.filter((_, i) => privs[i]?.["Datastore.Verify"] !== undefined),
+          modify: stores.filter((_, i) => privs[i]?.["Datastore.Modify"] !== undefined),
+        };
+        unchecked = null;
+      } catch (err) {
+        unchecked = err instanceof Error ? err.message : String(err);
+      }
+    };
+    // Only what the token can do: a tool that always fails a 403 is worse than none.
+    const offered = () =>
+      tools.filter((t) => {
+        const need = NEEDS[t.name];
+        return !need || Boolean(may?.[need].length);
+      });
+    // A server that doesn't answer mustn't hold up Settings; it's checked again later.
+    let wait: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      check(),
+      new Promise<void>((resolve) => {
+        wait = setTimeout(() => {
+          if (!may) unchecked ??= "it didn't answer in 10 seconds";
+          resolve();
+        }, 10_000);
+      }),
+    ]);
+    clearTimeout(wait);
+    let current = offered();
+
+    const can = () => {
+      if (!may) return "Its token's privileges couldn't be checked yet, so it only looks for now.";
+      const parts = [
+        may.verify.length ? `verify backups in ${may.verify.join(", ")}` : null,
+        may.modify.length
+          ? `collect garbage and delete backups in ${may.modify.join(", ")}; deleting a backup needs approval (the safety review or the owner)`
+          : null,
+      ].filter(Boolean);
+      return parts.length
+        ? `Its token may ${parts.join(", and ")}.`
+        : "Its token may only look: verifying needs the DatastoreReader role, garbage collection and deleting DatastoreAdmin.";
+    };
+
+    return {
+      status: { state: "ready" },
+      get tools() {
+        return current;
+      },
+      get guidance() {
+        return `Proxmox Backup Server at ${url.host}. Backup IDs of vm and ct backups are Proxmox VE guest IDs. Check pbs_backups for guests whose last backup is old, and pbs_tasks for failures. ${can()} Restoring happens in Proxmox VE, not here.`;
+      },
       test: async () => {
         const list = await get<Usage[]>("/status/datastore-usage");
-        return `Connected; it sees ${list.length} datastore${list.length === 1 ? "" : "s"}.`;
+        await check();
+        current = offered();
+        return `Connected; it sees ${list.length} datastore${list.length === 1 ? "" : "s"}. ${can()}`;
+      },
+      down: () =>
+        unchecked ? `Couldn't check what its token may do, so it only looks: ${unchecked}` : null,
+      recover: async () => {
+        await check();
+        current = offered();
       },
       // Failed tasks of the last day, and datastores nearly full.
       signals: async () => {
@@ -262,6 +336,13 @@ export const pbsPlugin = definePlugin({
             })),
         ];
       },
-    });
+    } satisfies PluginInstance;
   },
 });
+
+/** The privilege each write tool needs on a datastore: verify Datastore.Verify, the rest Modify. */
+const NEEDS: Record<string, "verify" | "modify"> = {
+  pbs_verify: "verify",
+  pbs_garbage_collect: "modify",
+  pbs_delete_snapshot: "modify",
+};

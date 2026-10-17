@@ -1,6 +1,7 @@
 // Home Assistant: look at the house's devices and sensors, their history, and control them through
-// HA's REST API with a long-lived access token. Everyday device control just runs; locks, alarms,
-// covers (doors, garage, gates) and anything that changes Home Assistant itself ask the owner first.
+// HA's REST API with a long-lived access token. Everyday device control just runs; anything that
+// changes Home Assistant itself asks first, and whatever lets someone in (locks, alarms, covers, and
+// the entities you mark, such as a gate on a switch) always waits for you.
 import { z } from "zod";
 import {
   allow,
@@ -34,18 +35,50 @@ type State = {
   last_updated?: string;
 };
 
-/** Domains whose attributes carry text from outside: event titles, to-do items, what's playing. */
-const UNTRUSTED_DOMAINS = new Set([
-  "calendar",
-  "todo",
-  "media_player",
-  "event",
-  "image",
-  "feedreader",
-  "mailbox",
+/**
+ * Domains whose states and attributes are the device's own, with no text from outside in them. The
+ * rest can carry what strangers wrote: a phone's last notification, a mail's subject, an update's
+ * release notes, a to-do item, what's playing.
+ */
+const TRUSTED_DOMAINS = new Set([
+  "light",
+  "switch",
+  "fan",
+  "climate",
+  "binary_sensor",
+  "cover",
+  "lock",
+  "alarm_control_panel",
+  "input_boolean",
+  "input_number",
+  "humidifier",
+  "water_heater",
+  "vacuum",
+  "siren",
+  "valve",
+  "number",
+  "counter",
+  "timer",
+  "button",
+  "scene",
+  "script",
+  "automation",
+  "sun",
+  "zone",
+  "person",
 ]);
+/** A state that can't say anything: a number, an on/off-like word, a time. */
+const PLAIN_STATE = /^[A-Za-z0-9_.:+-]{1,32}$/;
+/** What lists show instead of a state that is free text from outside. */
+const TEXT_STATE = "[text]";
+/** A state to show where output is trusted: free text from outside is left out. */
+const shownState = (entityId: string, state: string) =>
+  TRUSTED_DOMAINS.has(domainOf(entityId)) || PLAIN_STATE.test(state) ? state : TEXT_STATE;
 
-/** Everyday device control: runs without asking. */
+/**
+ * Everyday device control: runs without asking. Not notify: it can message anyone. A switch or a
+ * button that opens a gate is one of the owner's access entities, which always ask.
+ */
 const EVERYDAY = new Set([
   "light",
   "switch",
@@ -61,7 +94,6 @@ const EVERYDAY = new Set([
   "water_heater",
   "remote",
   "tts",
-  "notify",
   "counter",
   "timer",
 ]);
@@ -86,18 +118,35 @@ const ACCESS = new Set(["lock", "alarm_control_panel", "cover"]);
 const careful = (domain: string) =>
   ACCESS.has(domain) ? askAlways(CAREFUL[domain] ?? "") : ask(CAREFUL[domain] ?? "");
 
+/** Targets that stand for many entities: Home Assistant resolves them, so they can hide a lock. */
+const INDIRECT = ["area_id", "device_id", "label_id", "floor_id"];
+
 const domainOf = (entityId: string) => entityId.split(".")[0] ?? "";
 const time = (iso: string) => iso.slice(0, 16).replace("T", " ");
 const listOf = (ids: string | string[] | undefined) =>
   ids === undefined ? [] : Array.isArray(ids) ? ids : [ids];
+/** Entity ids as Home Assistant reads them: one, a list, or a comma-separated string. */
+const idsOf = (ids: unknown): string[] =>
+  (Array.isArray(ids) ? ids : ids === undefined || ids === null ? [] : [ids])
+    .flatMap((x) => String(x).split(","))
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+const Config = z.object({
+  /**
+   * Entities that let someone in besides locks, alarms and covers, e.g. a gate on a switch or a
+   * garage button: every change to them, and to a scene that sets one, waits for the owner.
+   */
+  access: z.array(z.string().regex(/^[a-z0-9_]+\.[a-z0-9_]+$/, "domain.object_id")).default([]),
+});
 
 export const homeassistantPlugin = definePlugin({
   id: "homeassistant",
   name: "Home Assistant",
   description: "The house's devices and sensors: look at them and control them",
   secrets: ["HOMEASSISTANT_URL", "HOMEASSISTANT_TOKEN"],
-  config: z.object({}),
-  start: ({ env }) => {
+  config: Config,
+  start: ({ env, config }) => {
     const base = env.HOMEASSISTANT_URL?.replace(/\/$/, "");
     const token = env.HOMEASSISTANT_TOKEN;
     if (!base || !token)
@@ -135,16 +184,54 @@ export const homeassistantPlugin = definePlugin({
       return (await res.json()) as T;
     };
 
-    const stateLine = (s: State) => {
+    /** `whole`: the state as it is, for output already marked untrusted. */
+    const stateLine = (s: State, whole = false) => {
       const unit = s.attributes.unit_of_measurement;
       const name = s.attributes.friendly_name;
-      return `${s.entity_id}: ${s.state}${unit ? ` ${unit}` : ""}${name ? ` (${name})` : ""}`;
+      const state = whole ? s.state : shownState(s.entity_id, s.state);
+      return `${s.entity_id}: ${state}${unit ? ` ${unit}` : ""}${name ? ` (${name})` : ""}`;
+    };
+
+    /** Entities the owner marked as letting someone in. */
+    const marked = new Set(config.access);
+    const isAccess = (id: string) => ACCESS.has(domainOf(id)) || marked.has(id);
+    const accessWhy = (id: string) =>
+      marked.has(id)
+        ? `The owner asked to approve every change to ${id}.`
+        : (CAREFUL[domainOf(id)] ?? "");
+    /** Each scene's entities, from the last look at every state; a policy can't wait to ask. */
+    const scenes = new Map<string, string[]>();
+    const membersOf = (s: State) => idsOf(s.attributes.entity_id);
+    const learn = (all: State[]) => {
+      scenes.clear();
+      for (const s of all)
+        if (domainOf(s.entity_id) === "scene") scenes.set(s.entity_id, membersOf(s));
+    };
+    let looked = 0;
+    /** Looks at every state in the background, at most once a minute. */
+    const relearn = () => {
+      if (Date.now() - looked < 60_000) return;
+      looked = Date.now();
+      void api<State[]>("GET", "/states")
+        .then(learn)
+        .catch(() => {});
+    };
+    relearn();
+    /** The entities a call names, wherever it names them. */
+    const targetsOf = (entityId: unknown, data: Record<string, unknown> | undefined) => {
+      const target = (data?.target ?? {}) as Record<string, unknown>;
+      return [
+        ...idsOf(entityId),
+        ...idsOf(data?.entity_id),
+        ...idsOf(target.entity_id),
+        ...Object.keys((data?.entities as Record<string, unknown> | undefined) ?? {}),
+      ];
     };
 
     const tools = [
       tool({
         name: "homeassistant_states",
-        description: `Home Assistant's entities with their state, friendly name and unit, sorted by id. Filter by domain (light, sensor, climate…) and/or a search over ids and names; at most ${MAX_ENTITIES} are listed.`,
+        description: `Home Assistant's entities with their state, friendly name and unit, sorted by id. Filter by domain (light, sensor, climate…) and/or a search over ids and names; at most ${MAX_ENTITIES} are listed. A state that is free text from outside (a notification, a mail's subject) shows as ${TEXT_STATE}; homeassistant_entity reads it, as untrusted.`,
         access: "read",
         label: "Checking Home Assistant",
         schema: z.object({
@@ -159,7 +246,9 @@ export const homeassistantPlugin = definePlugin({
           `Listed Home Assistant entities${domain ? ` in ${domain}` : ""}${search ? ` matching "${search}"` : ""}`,
         run: async ({ domain, search }) => {
           const needle = search?.toLowerCase();
-          const list = (await api<State[]>("GET", "/states"))
+          const all = await api<State[]>("GET", "/states");
+          learn(all);
+          const list = all
             .filter((s) => !domain || domainOf(s.entity_id) === domain)
             .filter(
               (s) =>
@@ -169,7 +258,7 @@ export const homeassistantPlugin = definePlugin({
             )
             .sort((a, b) => a.entity_id.localeCompare(b.entity_id));
           if (!list.length) return "No matching entities.";
-          const out = list.slice(0, MAX_ENTITIES).map(stateLine);
+          const out = list.slice(0, MAX_ENTITIES).map((s) => stateLine(s));
           if (list.length > MAX_ENTITIES)
             out.push(
               `…and ${list.length - MAX_ENTITIES} more; narrow it down with domain or search.`,
@@ -180,9 +269,9 @@ export const homeassistantPlugin = definePlugin({
       tool({
         name: "homeassistant_entity",
         description:
-          "One entity's state, when it last changed, and its attributes. Calendar, to-do, media player and similar entities carry text from outside: untrusted.",
+          "One entity's state, when it last changed, and its attributes. Apart from plain devices (lights, switches, climate, binary sensors, locks, covers and the like), entities can carry text from outside, such as sensors, calendars, to-do lists, updates and media players: untrusted.",
         access: "read",
-        untrusted: ({ entity_id }) => UNTRUSTED_DOMAINS.has(domainOf(entity_id)),
+        untrusted: ({ entity_id }) => !TRUSTED_DOMAINS.has(domainOf(entity_id)),
         label: "Checking Home Assistant",
         schema: z.object({ entity_id: EntityId }),
         describe: ({ entity_id }) => `Read ${entity_id}`,
@@ -190,7 +279,7 @@ export const homeassistantPlugin = definePlugin({
           const s = await api<State>("GET", `/states/${encodeURIComponent(entity_id)}`);
           const attrs = JSON.stringify(s.attributes);
           return [
-            stateLine(s),
+            stateLine(s, true),
             `Last changed: ${time(s.last_changed)} UTC`,
             `Attributes: ${attrs.length > MAX_ATTRIBUTES ? `${attrs.slice(0, MAX_ATTRIBUTES)}… (cut)` : attrs}`,
           ].join("\n");
@@ -199,7 +288,7 @@ export const homeassistantPlugin = definePlugin({
       tool({
         name: "homeassistant_history",
         description:
-          "How one or a few entities' states changed over the last hours (1 to 168, 24 by default), oldest first, times in UTC.",
+          "How one or a few entities' states changed over the last hours (1 to 168, 24 by default), oldest first, times in UTC. Free-text states show as [text].",
         access: "read",
         label: "Checking Home Assistant",
         schema: z.object({
@@ -223,7 +312,7 @@ export const homeassistantPlugin = definePlugin({
             out.push(
               `${id} (${run.length} state${run.length === 1 ? "" : "s"}):`,
               ...(cut ? [`  …${cut} earlier ones left out`] : []),
-              ...run.slice(cut).map((e) => `  ${time(e.last_changed)} ${e.state}`),
+              ...run.slice(cut).map((e) => `  ${time(e.last_changed)} ${shownState(id, e.state)}`),
             );
           }
           return out.join("\n") || `No history for ${ids.join(", ")} in the last ${hours} hours.`;
@@ -232,7 +321,7 @@ export const homeassistantPlugin = definePlugin({
       tool({
         name: "homeassistant_call_service",
         description:
-          'Call a Home Assistant service, e.g. domain "light", service "turn_on", entity_id "light.kitchen", data {"brightness_pct": 40}. Everyday device control runs at once; locks, alarms, covers, scripts, automations and Home Assistant itself ask the owner first.',
+          'Call a Home Assistant service, e.g. domain "light", service "turn_on", entity_id "light.kitchen", data {"brightness_pct": 40}. Locks, alarms, covers (doors, garage, gates), the entities the owner marked, and scenes, areas, devices, labels or floors that could include them always wait for the owner. Scripts, automations, notifications, Home Assistant itself and other services that aren\'t everyday device control need approval (the safety review or the owner).',
         access: "write",
         label: "Controlling Home Assistant",
         schema: z.object({
@@ -244,37 +333,74 @@ export const homeassistantPlugin = definePlugin({
         describe: ({ domain, service, entity_id }) =>
           `${domain}.${service}${entity_id ? ` ${listOf(entity_id).join(", ")}` : ""}`,
         policy: ({ domain, service, entity_id, data }) => {
+          // Who can get in comes first, whatever the domain: homeassistant.toggle on a cover, a
+          // scene that unlocks a door, or a stray entity_id in data.
+          const targets = targetsOf(entity_id, data);
+          const reached = targets.flatMap((t) => [t, ...(scenes.get(t) ?? [])]);
+          const door = reached.find(isAccess);
+          if (door) return askAlways(accessWhy(door));
+          // Home Assistant resolves areas, devices, labels, floors and "all" itself. A service only
+          // acts on its own domain's entities, so they matter where a door could be among them.
+          const target = (data?.target ?? {}) as Record<string, unknown>;
+          const many =
+            targets.includes("all") ||
+            INDIRECT.some((k) => data?.[k] !== undefined || target[k] !== undefined);
+          if (
+            many &&
+            (ACCESS.has(domain) ||
+              ["homeassistant", "scene"].includes(domain) ||
+              [...marked].some((id) => domainOf(id) === domain))
+          )
+            return askAlways(
+              "It acts on a whole area, device, label or floor, which can include a lock, the alarm, a door or a gate.",
+            );
+          const unseen = targets.filter((t) => domainOf(t) === "scene" && !scenes.has(t));
+          if (unseen.length) {
+            // So the next call knows it, if Home Assistant was down when this one started.
+            relearn();
+            return askAlways(
+              `It isn't known yet what ${unseen.join(", ")} sets, and a scene can open a door.`,
+            );
+          }
           if (domain === "recorder" && service === "purge")
             return ask("It deletes recorded history.", "delete");
           if (CAREFUL[domain]) return careful(domain);
           if (!EVERYDAY.has(domain) && !domain.startsWith("input_"))
             return ask(`It calls ${domain}.${service}, which isn't everyday device control.`);
-          // A scene or a stray entity_id in data can still reach a lock or a garage door.
-          const targets = [
-            ...listOf(entity_id),
-            ...listOf(data?.entity_id as string | string[] | undefined),
-            ...Object.keys((data?.entities as Record<string, unknown> | undefined) ?? {}),
-          ];
-          for (const t of targets) {
-            const domain = domainOf(String(t));
+          for (const t of reached) {
+            const domain = domainOf(t);
             if (CAREFUL[domain]) return careful(domain);
           }
           return allow();
         },
         run: async ({ domain, service, entity_id, data }) => {
+          // The policy went by the scenes as last seen: one changed since could now open a door.
+          for (const id of targetsOf(entity_id, data)) {
+            const before = scenes.get(id);
+            if (domainOf(id) !== "scene" || !before) continue;
+            const now = membersOf(await api<State>("GET", `/states/${encodeURIComponent(id)}`));
+            scenes.set(id, now);
+            const added = now.filter((e) => isAccess(e) && !before.includes(e));
+            if (added.length)
+              throw new PluginError(
+                `${id} now also sets ${added.join(", ")}, so it waits for the owner: call it again.`,
+              );
+          }
           const changed = await api<State[]>("POST", `/services/${domain}/${service}`, {
             ...data,
             ...(entity_id ? { entity_id } : {}),
           });
           if (!Array.isArray(changed) || !changed.length)
             return `Called ${domain}.${service}; no states changed (yet).`;
-          return [`Called ${domain}.${service}; now:`, ...changed.map(stateLine)].join("\n");
+          return [`Called ${domain}.${service}; now:`, ...changed.map((s) => stateLine(s))].join(
+            "\n",
+          );
         },
       }),
     ];
 
     return ready(tools, {
-      guidance: `Home Assistant at ${base}: the house's lights, switches, climate, media players, sensors and the rest. Find entities with homeassistant_states (filter by domain or search), read one with homeassistant_entity, see how it changed with homeassistant_history, and control devices with homeassistant_call_service. Everyday control runs at once; service calls for locks, alarms, covers (doors, garage, gates), scripts, automations and Home Assistant itself ask the owner first.`,
+      guidance: `Home Assistant at ${base}: the house's lights, switches, climate, media players, sensors and the rest. Find entities with homeassistant_states (filter by domain or search), read one with homeassistant_entity, see how it changed with homeassistant_history, and control devices with homeassistant_call_service. Locks, alarms, covers (doors, garage, gates)${marked.size ? `, ${[...marked].join(", ")}` : ""} and scenes that set them always wait for the owner; scripts, automations, notifications and Home Assistant itself need approval (the safety review or the owner).`,
       test: async () => {
         await api("GET", "/");
         const config = await api<{ location_name?: string; version?: string }>(

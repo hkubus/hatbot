@@ -4,13 +4,19 @@ import { pbsPlugin } from "../src/plugins/pbs";
 import type { CallContext } from "../src/plugins/plugin";
 import { verdictFor } from "../src/plugins/registry";
 import { FakeModel } from "./fake-model";
-import { testApp } from "./helpers";
+import { testApp, waitFor } from "./helpers";
 
 const FINGERPRINT =
   "D7:6A:C1:55:98:6E:33:E6:73:98:B6:92:28:50:A5:F7:F0:69:D9:96:AD:CC:64:25:0D:DA:0F:BC:7A:4C:40:D0";
 const fixtures = join(import.meta.dir, "fixtures");
 const seen: { method: string; path: string; auth: string | null; body: string }[] = [];
 let server: ReturnType<typeof Bun.serve>;
+/** What the token may do on the datastore "main"; null answers 403, as an old token's check would. */
+let privs: Record<string, boolean> | null = {
+  "Datastore.Audit": true,
+  "Datastore.Verify": true,
+  "Datastore.Modify": true,
+};
 
 // A stand-in for the backup server's proxy, with a self-signed certificate.
 beforeAll(() => {
@@ -30,6 +36,10 @@ beforeAll(() => {
         body: await req.text(),
       });
       const data = (d: unknown) => Response.json({ data: d });
+      if (path === "/access/permissions" && url.searchParams.get("path") === "/datastore/main")
+        return privs
+          ? data({ "/datastore/main": privs })
+          : new Response(null, { status: 500, statusText: "Internal Server Error" });
       if (path === "/status/datastore-usage")
         return data([
           {
@@ -114,7 +124,9 @@ test("without a token it needs setup", async () => {
 
 test("reads datastores, backups oldest first, snapshots newest first, and tasks", async () => {
   const { t, pbs } = await started();
-  expect(await t.plugins.test("pbs")).toBe("Connected; it sees 1 datastore.");
+  expect(await t.plugins.test("pbs")).toBe(
+    "Connected; it sees 1 datastore. Its token may verify backups in main, and collect garbage and delete backups in main; deleting a backup needs approval (the safety review or the owner).",
+  );
   expect(seen.at(-1)?.auth).toBe("PBSAPIToken=hatbot@pbs!brain:s3cret");
 
   expect(await pbs("pbs_datastores").run({}, call)).toBe(
@@ -155,6 +167,44 @@ test("verifying runs; deleting a backup asks first and sends the snapshot's id",
   });
 });
 
+test("it offers only what its token may do, and checks again when it couldn't", async () => {
+  const full = privs;
+  try {
+    privs = { "Datastore.Audit": true };
+    const look = await started();
+    expect(look.t.plugins.tools().map((x) => x.name)).toEqual([
+      "pbs_datastores",
+      "pbs_backups",
+      "pbs_snapshots",
+      "pbs_tasks",
+    ]);
+    expect(look.t.plugins.guidance()).toContain(
+      "Its token may only look: verifying needs the DatastoreReader role",
+    );
+
+    privs = { "Datastore.Audit": true, "Datastore.Verify": true, "Datastore.Read": true };
+    const verify = await started();
+    const names = verify.t.plugins.tools().map((x) => x.name);
+    expect(names).toContain("pbs_verify");
+    expect(names).not.toContain("pbs_garbage_collect");
+    expect(names).not.toContain("pbs_delete_snapshot");
+
+    // The check failed: it only looks, Settings says why, and it checks again.
+    privs = null;
+    const t = await testApp(new FakeModel(), new FakeModel(), {}, [pbsPlugin], env());
+    t.plugins.retryMs = [20];
+    const info = await t.plugins.update("pbs", { enabled: true });
+    expect(info.state).toBe("ready");
+    expect(info.message).toContain("Couldn't check what its token may do, so it only looks");
+    expect(t.plugins.tools().some((x) => x.name === "pbs_verify")).toBe(false);
+    privs = full;
+    await waitFor(() => t.plugins.tools().some((x) => x.name === "pbs_delete_snapshot"));
+    expect(t.plugins.get("pbs")?.message).toBeNull();
+  } finally {
+    privs = full;
+  }
+});
+
 test("a certificate that doesn't match the pin stops it", async () => {
   const t = await testApp(new FakeModel(), new FakeModel(), {}, [pbsPlugin], {
     ...env(),
@@ -162,6 +212,6 @@ test("a certificate that doesn't match the pin stops it", async () => {
   });
   await t.plugins.update("pbs", { enabled: true });
   await expect(t.plugins.test("pbs")).rejects.toThrow(
-    "Proxmox Backup Server's certificate doesn't match the pinned fingerprint.",
+    "Proxmox Backup Server's certificate doesn't match the pinned fingerprint. It now shows D7:6A:C1:55:98:6E:33:E6:73:98:B6:92:28:50:A5:F7:F0:69:D9:96:AD:CC:64:25:0D:DA:0F:BC:7A:4C:40:D0. If its certificate was renewed, put that in PBS_TLS_FINGERPRINT in /etc/hatbot/pbs.env",
   );
 });
