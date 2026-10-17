@@ -244,7 +244,7 @@ Check tool versions and model IDs against the live docs at implementation time.
 | `memory_*` (list/read/write/search) | bg | Free; every write is a git commit |
 | `search_history` | bg | Free |
 | `schedule_*` / `trigger_*` (create/list/update/delete) | bg | Free; everything visible in the UI |
-| `web_fetch` / `web_search` | bg | Free; output is **untrusted** |
+| `web_fetch` / `web_search` | bg | Anthropic's server tools, the dynamic-filtering versions: called directly or from code in Anthropic's container, which keeps only what matters; $0.01 a search; output is **untrusted** |
 | `proxmox_*` plugin (status, list, start/stop/restart, snapshot of own guests) | bg | Read and restart free; anything else needs approval |
 | `ssh_exec(host, cmd)` plugin | bg | Hosts from Settings, as the `hatbot` user; destructive patterns need approval |
 | `ssh_pct_exec(host, guest, cmd)` plugin | bg | Optional: a command in a Proxmox container through a host marked "Proxmox host" (`infra/pct-exec-setup.sh`): root in the container via a sudo-only wrapper that refuses Hatbot's own guests; same rules as `ssh_exec` |

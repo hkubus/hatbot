@@ -11,11 +11,13 @@ import { mayReview, safeToRun } from "../agent/review";
 import { localStamp, memoryIndex } from "../agent/thread";
 import {
   AskBotInput,
+  containerOf,
   DesktopTaskInput,
   inBatches,
   LOOKUP_TOOLS,
   missingSkill,
   runTool,
+  serverToolWaiting,
   TOOL_PARAMS,
   toolParam,
   WEB_TOOLS,
@@ -557,6 +559,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
     /** finish_task sends a summary whose charts don't draw back once, not every time. */
     let chartsChecked = false;
+    /** Where the web tools' code runs: the same one each step, so paused code can carry on. */
+    let container: string | undefined;
     for (let step = 0; ; step++) {
       if (signal.aborted) throw signal.reason;
       const maxSteps = task.effort ? MAX_CODE_STEPS : MAX_STEPS;
@@ -610,6 +614,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
               },
             ],
           },
+          ...(container ? { container } : {}),
           messages,
         },
         {
@@ -625,6 +630,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         taskId: id,
       });
       record("assistant", res.content);
+      container = containerOf(res, container);
       // What it read on the web: steps on the timeline, and untrusted (PLAN.md §6.1).
       for (const read of webReads(res.content)) {
         tasks.addStep(id, { kind: "action", name: "web", detail: read, url: null });
@@ -739,8 +745,10 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       const ended = finished as z.infer<typeof FinishTask> | null;
       if (ended) throw new Stop(ended.outcome, ended.summary, ended.notify);
       // What happened meanwhile, e.g. the monitor came back up. Trusted: it comes from the trigger.
-      for (const event of tasks.takeInbox(id))
-        results.push({ type: "text", text: `<event trusted="true">\n${event}\n</event>` });
+      // Not while the web tools' code is still running: then only tool results may follow.
+      if (!serverToolWaiting(res.content))
+        for (const event of tasks.takeInbox(id))
+          results.push({ type: "text", text: `<event trusted="true">\n${event}\n</event>` });
       record("user", results);
     }
   } catch (err) {

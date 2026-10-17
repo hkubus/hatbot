@@ -51,12 +51,14 @@ import {
 import { mayReview, safeToRun } from "./review";
 import {
   CHAT_WEB_TOOLS,
+  containerOf,
   INCOGNITO_TOOLS,
   inBatches,
   LOOKUP_TOOLS,
   runTool,
   TOOL_PARAMS,
   toolParam,
+  webCalls,
   webReads,
 } from "./tools";
 
@@ -1649,6 +1651,7 @@ export class Thread {
     const started = this.clock();
     let waited = 0;
     let commands = 0;
+    let container: string | undefined;
     const abort = new AbortController();
     this.current = abort;
     this.currentIncognito = incognito;
@@ -1695,6 +1698,7 @@ export class Thread {
               block_binding: { prefix_mismatch_behavior: "drop_block" },
             },
             output_config: { effort: effort ?? chatEffort },
+            ...(container ? { container } : {}),
             messages,
           },
           {
@@ -1702,9 +1706,12 @@ export class Thread {
             onThinking: (delta) =>
               events.emit({ type: "message.progress", id: out.id, text: delta }),
             onServerTool: (name, input) => {
-              if (name === "web_search") progress(activity("Searching the web", input));
-              else if (name === "web_fetch")
-                progress(`Reading ${String(input.url ?? "a web page")}`);
+              const calls = webCalls(name, input);
+              const queries = calls.flatMap((c) => ("search" in c && c.search ? [c.search] : []));
+              const read = calls.find((c) => "read" in c);
+              if (calls.some((c) => "search" in c))
+                progress(activity("Searching the web", { query: queries.join(", ") }));
+              else if (read && "read" in read) progress(`Reading ${read.read || "a web page"}`);
             },
             onRetry: checkpoint(),
             signal: abort.signal,
@@ -1712,6 +1719,7 @@ export class Thread {
         );
         // A paused turn picks up mid-thought; only text after tools starts a new part.
         separate = res.stop_reason !== "pause_turn";
+        container = containerOf(res, container);
         if (res.input_transformations?.length)
           console.warn(
             `episode ${episode.id}: the API changed the input`,

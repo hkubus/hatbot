@@ -11,6 +11,8 @@ export type Scripted = {
   usage?: Partial<Anthropic.Beta.BetaUsage>;
   /** Streamed first, then dropped: the stream failed there and was tried again. */
   failedWith?: string;
+  /** The code execution container the response ran in. */
+  container?: string;
 };
 
 const usage = (over: Partial<Anthropic.Beta.BetaUsage> = {}) =>
@@ -67,7 +69,10 @@ export class FakeModel implements ModelClient {
     const stop =
       next.stop_reason ??
       (next.content.some((b) => b.type === "tool_use") ? "tool_use" : "end_turn");
-    return message(next.model ?? params.model, next.content, stop, next.usage);
+    const res = message(next.model ?? params.model, next.content, stop, next.usage);
+    if (next.container)
+      res.container = { id: next.container, expires_at: "2026-10-17T00:00:00Z", skills: null };
+    return res;
   }
 
   async create(params: CreateParams) {

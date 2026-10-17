@@ -799,27 +799,137 @@ export const CORE_TOOL_NAMES = [
   ...NEGOTIATE_TOOL_NAMES,
 ];
 
+/** The code the API runs for the web tools' dynamic filtering, by its server tool names. */
+const CODE_TOOLS = ["code_execution", "bash_code_execution"];
+
 /**
- * Anthropic's web search and fetch, run by the API itself. The basic versions: dynamic filtering would
- * bring a code container into every conversation. Fetch only takes URLs already in the conversation.
+ * Anthropic's web search and fetch, run by the API itself (PLAN.md §5.5), in the versions with dynamic
+ * filtering. The model calls them directly for a quick look, or from code it runs in a container of
+ * Anthropic's, so that only what matters of the results and pages reaches it. A call made from code
+ * stays out of the response, with what it read; the code's output is what the model sees. Fetch only
+ * takes URLs already in the conversation. Searches are local to the brain's time zone, which is the
+ * owner's. HATBOT_WEB_TOOLS=basic brings back the versions without filtering, should the API refuse
+ * these.
  */
-export const WEB_TOOLS: Anthropic.Beta.BetaToolUnion[] = [
-  { type: "web_search_20250305", name: "web_search", max_uses: 8 },
-  { type: "web_fetch_20250910", name: "web_fetch", max_uses: 8, max_content_tokens: 30000 },
-];
-
-/** The chat's: a page stays in the conversation for every later reply, so it reads less of one. */
-export const CHAT_WEB_TOOLS: Anthropic.Beta.BetaToolUnion[] = [
-  { type: "web_search_20250305", name: "web_search", max_uses: 8 },
-  { type: "web_fetch_20250910", name: "web_fetch", max_uses: 8, max_content_tokens: 10000 },
-];
-
-/** What a reply looked up on the web, in a line each: `Searched the web for "x"`, `Read https://…`. */
-export function webReads(content: Anthropic.Beta.BetaContentBlock[]): string[] {
-  return content.flatMap((b) => {
-    if (b.type !== "server_tool_use") return [];
-    if (b.name === "web_search") return [`Searched the web for "${String(b.input.query ?? "")}"`];
-    if (b.name === "web_fetch") return [`Read ${String(b.input.url ?? "a web page")}`];
-    return [];
+export function webTools(opts: {
+  /** The most of a page a direct fetch reads. */
+  pageTokens: number;
+  /** Searches and fetches each request may make. */
+  uses?: number;
+  /** A fetched page can be cited, as search results always can. */
+  citations?: boolean;
+  timeZone?: string;
+  env?: Record<string, string | undefined>;
+}): Anthropic.Beta.BetaToolUnion[] {
+  const uses = opts.uses ?? 8;
+  const zone = opts.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const where =
+    zone && !/^(Etc\/)?(UTC|GMT|Universal|Zulu)$/.test(zone)
+      ? { user_location: { type: "approximate" as const, timezone: zone } }
+      : {};
+  const cite = opts.citations ? { citations: { enabled: true } } : {};
+  if ((opts.env ?? process.env).HATBOT_WEB_TOOLS === "basic")
+    return [
+      { type: "web_search_20250305", name: "web_search", max_uses: uses, ...where },
+      {
+        type: "web_fetch_20250910",
+        name: "web_fetch",
+        max_uses: uses,
+        max_content_tokens: opts.pageTokens,
+        ...cite,
+      },
+    ];
+  const filtered = () => ({
+    allowed_callers: ["direct" as const, "code_execution_20260120" as const],
+    response_inclusion: "excluded" as const,
   });
+  return [
+    { type: "web_search_20260318", name: "web_search", max_uses: uses, ...filtered(), ...where },
+    {
+      type: "web_fetch_20260318",
+      name: "web_fetch",
+      max_uses: uses,
+      max_content_tokens: opts.pageTokens,
+      ...filtered(),
+      ...cite,
+    },
+  ];
 }
+
+/** A task's: it reads more of a page than the chat, where a page stays for every later reply. */
+export const WEB_TOOLS = webTools({ pageTokens: 30000 });
+export const CHAT_WEB_TOOLS = webTools({ pageTokens: 10000, citations: true });
+
+/** A search ("" when the code doesn't say what for) or a page read ("" when it doesn't say which). */
+export type WebCall = { search: string } | { read: string };
+
+const STRING = String.raw`[fFrRuU]?(["'])((?:\\.|(?!\1).)*)\1`;
+const QUERY = new RegExp(String.raw`(?:["']query["']\s*:|\bquery\s*=)\s*${STRING}`, "g");
+const URL_IN_CODE = /https?:\/\/[^\s"'`\\<>)\]}]+/g;
+const MAX_CALLS = 10;
+
+/**
+ * The web searches and reads in a server tool call: one made directly, or the ones in code the model
+ * ran for dynamic filtering, from the queries and URLs written in it.
+ */
+export function webCalls(name: string, input: Record<string, unknown>): WebCall[] {
+  if (name === "web_search") return [{ search: String(input.query ?? "") }];
+  if (name === "web_fetch") return [{ read: String(input.url ?? "") }];
+  if (!CODE_TOOLS.includes(name)) return [];
+  const code = Object.values(input)
+    .filter((v): v is string => typeof v === "string")
+    .join("\n");
+  const calls: WebCall[] = [];
+  if (/\bweb_search\s*\(/.test(code)) {
+    const queries = [...code.matchAll(QUERY)].map((m) => (m[2] ?? "").replace(/\\(.)/g, "$1"));
+    const unique = [...new Set(queries.filter((q) => q.trim()))];
+    calls.push(...(unique.length ? unique.map((search) => ({ search })) : [{ search: "" }]));
+  }
+  if (/\bweb_fetch\s*\(/.test(code)) {
+    const urls = [...new Set(code.match(URL_IN_CODE) ?? [])];
+    calls.push(...(urls.length ? urls.map((read) => ({ read })) : [{ read: "" }]));
+  }
+  return calls.slice(0, MAX_CALLS);
+}
+
+const readLine = (c: WebCall) =>
+  "search" in c
+    ? c.search
+      ? `Searched the web for "${c.search}"`
+      : "Searched the web"
+    : `Read ${c.read || "a web page"}`;
+
+/**
+ * What a reply looked up on the web, in a line each: `Searched the web for "x"`, `Read https://…`.
+ * Code whose own calls came back with it (a paused turn's) is told by those.
+ */
+export function webReads(content: Anthropic.Beta.BetaContentBlock[]): string[] {
+  const told = new Set(
+    content.flatMap((b) =>
+      b.type === "server_tool_use" && b.caller && "tool_id" in b.caller ? [b.caller.tool_id] : [],
+    ),
+  );
+  return content.flatMap((b) =>
+    b.type === "server_tool_use" && !told.has(b.id) ? webCalls(b.name, b.input).map(readLine) : [],
+  );
+}
+
+/**
+ * A server tool call that hasn't run: called alongside client tools, it runs once their results are
+ * back, and until then the API takes nothing but those results.
+ */
+export function serverToolWaiting(content: Anthropic.Beta.BetaContentBlock[]): boolean {
+  const done = new Set(
+    content.flatMap((b) =>
+      "tool_use_id" in b && b.type.endsWith("_tool_result") ? [b.tool_use_id] : [],
+    ),
+  );
+  return content.some((b) => b.type === "server_tool_use" && !done.has(b.id));
+}
+
+/**
+ * The container the API ran the model's code in, to send with the next request of the same reply or
+ * task: code paused mid-run carries on in it, and what the code kept stays.
+ */
+export const containerOf = (res: Anthropic.Beta.BetaMessage, before?: string) =>
+  res.container?.id ?? before;
