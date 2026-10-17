@@ -22,7 +22,15 @@ import { collapse, type GateState, gateCheck, refused, typesText } from "../nego
 import { destructive } from "../plugins/ssh/policy";
 import { BudgetError, estimateTokens, priceOf, usesReserve } from "../spend";
 import { skillPath } from "../teach/skills";
-import { checkFor, consequential, type Hold, heldBack, heldWhat, type Where } from "./policy";
+import {
+  checkFor,
+  consequential,
+  type Hold,
+  heldBack,
+  heldWhat,
+  samePage,
+  type Where,
+} from "./policy";
 import { DesktopSendToChat, SEND_TO_CHAT_DESCRIPTION, sendToChat } from "./send-to-chat";
 import type { Tasks } from "./service";
 
@@ -311,8 +319,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   let since = 0;
   let seq = 0;
   let lastUrl: string | null = null;
-  /** An approved confirm_intent covers the next consequential action. */
-  let armed = false;
+  /** An approved confirm_intent: it covers the next consequential action, on the page it was asked on. */
+  let armed: { page: string | null } | null = null;
   /** A negotiation's task: it may send one approved message, or only read (PLAN.md §16.3). */
   const gate = tasks.negotiations?.gateFor(id) ?? null;
   const gateState: GateState = { recorded: false, sent: false, stopped: null };
@@ -609,16 +617,22 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         if (g.action !== "usual") hold = null;
         sending = g.action === "send";
       }
-      if (hold && !armed) {
+      // An approval covers the next held step, on the page it was given for.
+      const approved =
+        armed !== null && (armed.page === null || samePage(el?.url ?? lastUrl, armed.page));
+      if (hold && !approved) {
         tasks.addStep(id, {
           kind: "note",
           name: "Held back",
           detail: `${call.name} ${heldWhat(hold)} needs approval`,
           url: lastUrl,
         });
-        return textResult(call, `Not run: ${heldBack(check.press, hold)}`, true);
+        const elsewhere = armed?.page
+          ? ` The owner's approval was for a step on ${armed.page}, not this page.`
+          : "";
+        return textResult(call, `Not run: ${heldBack(check.press, hold)}${elsewhere}`, true);
       }
-      if (hold) armed = false;
+      if (hold) armed = null;
     }
     if (gate && typesText(call.name, input)) gateState.typed = true;
     const step = tasks.addStep(id, {
@@ -700,6 +714,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         true,
       );
     const bytes = await agent.screenshot();
+    // What the owner sees and approves: the step on this page.
+    const page = (await agent.context(false).catch(() => null))?.url ?? lastUrl;
     const step = tasks.addStep(id, {
       kind: "screenshot",
       name: "Before approval",
@@ -716,14 +732,20 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           : "The owner denied this. Don't do it. Finish the task, or carry on another way that doesn't need it.",
       );
     }
-    armed = true;
+    armed = { page };
+    // While this waited, another task may have had the browser and left it elsewhere.
+    const now = (await agent.context(false).catch(() => null))?.url ?? null;
+    const moved =
+      page && !samePage(now, page)
+        ? ` While you waited, another task used the browser: the page you asked about (${page}) isn't on screen now${now ? ` (${now})` : ""}. Go back to it first; the approval holds only there.`
+        : "";
     return textResult(
       call,
       await look(
         "After approval",
-        note
+        (note
           ? `Approved by the owner. ${ownerNote(note)}`
-          : "Approved by the owner. Go ahead with exactly this action.",
+          : "Approved by the owner. Go ahead with exactly this action.") + moved,
       ),
     );
   };
@@ -1022,10 +1044,17 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         ? `<skill name="${task.skill}">\n${(await d.memory.read(skillPath(task.skill))).trim()}\n</skill>\n\n`
         : "";
     await acquire();
-    // Tabs an earlier task left open would be in this one's way, and in its context.
-    await d.desktop.agent.resetBrowser().catch((err) => {
+    // Tabs an earlier task left open would be in this one's way, and in its context. A task of the same
+    // bot that's waiting for you mid-run keeps its page: this one starts in a tab of its own instead.
+    const paused = tasks
+      .list({ status: "active", botId: task.botId })
+      .some((t) => t.id !== id && t.lane === "screen" && t.startedAt !== null);
+    await (paused
+      ? agent.browser({ name: "new_tab", input: {} })
+      : d.desktop.agent.resetBrowser()
+    ).catch((err) => {
       if (signal.aborted) throw err;
-      console.error(`task ${id}: couldn't close the old tabs`, err);
+      console.error(`task ${id}: couldn't clear the browser for it`, err);
     });
     const brief = `${skill}<task>\n${task.goal}\nDone when: ${task.successCriteria || "the goal is met"}\n</task>`;
     try {
@@ -1044,7 +1073,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       tasks.setModel(id, model, FIRST_MODEL);
       messages.length = 0;
       screening = [];
-      armed = false;
+      armed = null;
       activeMs = 0;
       since = tasks.clock();
       await attempt(

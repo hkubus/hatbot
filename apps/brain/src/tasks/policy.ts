@@ -217,6 +217,19 @@ export function checkFor(
   return null;
 }
 
+/** Two addresses are the same page: the same origin and path, a trailing slash aside. */
+export function samePage(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  try {
+    const x = new URL(a);
+    const y = new URL(b);
+    const path = (p: string) => p.replace(/\/+$/, "") || "/";
+    return x.origin === y.origin && path(x.pathname) === path(y.pathname);
+  } catch {
+    return a === b;
+  }
+}
+
 /** Payment pages shops hand over to (PayU, Przelewy24, PayPal and the like). */
 const PAYMENT_HOSTS =
   /(?:^|\.)(?:payu\.com|przelewy24\.pl|paypal\.com|tpay\.com|paynow\.pl|imoje\.pl|dotpay\.pl|blik\.com|gopay\.cz|gopay\.com|comgate\.cz|checkout\.stripe\.com|adyen\.com)$/i;

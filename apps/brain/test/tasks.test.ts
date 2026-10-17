@@ -377,6 +377,46 @@ test("one task at a time on the screen; waiting for approval frees it", async ()
   expect(t.tasks.lane.holderId).toBeNull();
 });
 
+test("an approval holds only on its page, and a task waiting for one keeps its tabs", async () => {
+  const work = new FakeModel([
+    // A asks to pay on its order page...
+    { content: [toolUse("confirm_intent", { kind: "payment", summary: "Click Zapłać" })] },
+    // ...B runs meanwhile and leaves the browser on another site...
+    finish("B done."),
+    // ...so A's click there isn't the one approved.
+    { content: [computer("left_click", { coordinate: [300, 520] })] },
+    finish("A stopped."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const order = "https://shop.example/order/1";
+  t.agent.page = { url: order, title: "Order", text: "" };
+  const a = startTask(t, "A");
+  const b = startTask(t, "B");
+  const approval = await pending(t);
+  await waitFor(() => t.tasks.get(b.id)?.status === "done");
+  // B didn't close A's tabs: it opened its own.
+  expect(t.agent.resets).toBe(1);
+  expect(t.agent.browserCalls.map((c) => c.name)).toEqual(["new_tab"]);
+
+  const elsewhere = "https://other.example/";
+  t.agent.page = { url: elsewhere, title: "Other", text: "" };
+  t.agent.element = {
+    tag: "button",
+    role: null,
+    type: "button",
+    label: "Zapłać",
+    inForm: false,
+    url: elsewhere,
+  };
+  t.approvals.decide(approval.id, "approve", "web");
+  await t.tasks.idle();
+  expect(t.tasks.get(a.id)?.summary).toBe("A stopped.");
+  const said = (n: number) => JSON.stringify(work.requests[n]?.messages.at(-1)?.content);
+  expect(said(2)).toContain(`the page you asked about (${order}) isn't on screen now`);
+  expect(said(3)).toContain(`The owner's approval was for a step on ${order}, not this page.`);
+  expect(t.agent.actions.filter((x) => x.name === "left_click")).toEqual([]);
+});
+
 test("desktop_shell runs commands as text; destructive ones ask first", async () => {
   const work = new FakeModel([
     { content: [toolUse("desktop_shell", { command: "python3 -c 'print(6*7)'" })] },
