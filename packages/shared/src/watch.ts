@@ -69,6 +69,8 @@ export type WatchPreview = { ok: true; value: string } | { ok: false; error: str
 
 /** Watchers look at most this often, in minutes. */
 export const MIN_WATCH_MINUTES = 5;
+/** A watcher looks at least once a week. */
+export const MAX_WATCH_MINUTES = 7 * 24 * 60;
 /** Watchers that run a page's scripts look at most this often: each look is a Chromium on the desktop. */
 export const MIN_RENDER_WATCH_MINUTES = 15;
 
@@ -102,11 +104,7 @@ const fields = {
   source: WatchSourceInput,
   condition: WatchConditionInput,
   prompt: z.string().trim().max(4000),
-  everyMinutes: z
-    .number()
-    .int()
-    .min(MIN_WATCH_MINUTES)
-    .max(7 * 24 * 60),
+  everyMinutes: z.number().int().min(MIN_WATCH_MINUTES).max(MAX_WATCH_MINUTES),
   once: z.boolean(),
   enabled: z.boolean(),
   botId: z.string().regex(/^[a-z][a-z0-9-]{0,30}$/),

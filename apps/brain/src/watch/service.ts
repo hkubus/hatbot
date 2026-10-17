@@ -4,6 +4,7 @@ import {
   type CreateWatcher,
   describeCondition,
   HATBOT_ID,
+  MAX_WATCH_MINUTES,
   minWatchMinutes,
   type UpdateWatcher,
   type WatchCondition,
@@ -113,6 +114,8 @@ const saved = (s: WatchSource) => JSON.stringify({ ...s, render: s.render || und
 
 /** Throws when a watcher would look more often than its source allows. */
 function oftenEnough(source: WatchSource, everyMinutes: number) {
+  if (everyMinutes > MAX_WATCH_MINUTES)
+    throw new WatchError("A watcher looks at least once a week.");
   const min = minWatchMinutes(source);
   if (everyMinutes < min)
     throw new WatchError(
@@ -580,21 +583,23 @@ export class Watchers {
 
 /** A watcher in a line or two, for the chat's tools. What an untrusted source said is quoted as data. */
 export function watcherLine(w: Watcher, untrusted = false): string {
-  const where =
-    w.source.kind === "page"
-      ? w.source.url
-      : `${w.source.tool} ${JSON.stringify(w.source.input ?? {})}`;
-  const picks = [
-    w.source.kind === "page" && w.source.render && "runs its scripts",
-    w.source.selector && `selector ${w.source.selector}`,
-    w.source.path && `path ${w.source.path}`,
-    w.source.pattern && `pattern /${w.source.pattern}/`,
-  ].filter(Boolean);
   return [
-    `#${w.id} "${w.name}": ${where}${picks.length ? ` (${picks.join(", ")})` : ""}; when it ${describeCondition(w.condition).toLowerCase()}; every ${w.everyMinutes} min${w.once ? ", once" : ""}${w.enabled ? "" : "; off"}`,
+    `#${w.id} "${w.name}": ${describeLook(w.source)}; when it ${describeCondition(w.condition).toLowerCase()}; every ${w.everyMinutes} min${w.once ? ", once" : ""}${w.enabled ? "" : "; off"}`,
     `  Now: ${w.lastError ? `failing: ${w.lastError}` : w.lastValue === null ? "not checked yet" : untrusted ? `<value trusted="false">${tagJson(short(w.lastValue, 200))}</value>` : short(w.lastValue, 200)}${w.lastFiredAt ? `; last counted ${w.lastFiredAt.slice(0, 16).replace("T", " ")} UTC` : ""}`,
     `  ${w.prompt ? `Does: ${w.prompt}` : "Tells the owner."}`,
   ].join("\n");
+}
+
+/** What a watcher looks at, and what it picks out of it. */
+export function describeLook(s: WatchSource): string {
+  const where = s.kind === "page" ? s.url : `${s.tool} ${JSON.stringify(s.input ?? {})}`;
+  const picks = [
+    s.kind === "page" && s.render && "runs its scripts",
+    s.selector && `selector ${s.selector}`,
+    s.path && `path ${s.path}`,
+    s.pattern && `pattern /${s.pattern}/`,
+  ].filter(Boolean);
+  return `${where}${picks.length ? ` (${picks.join(", ")})` : ""}`;
 }
 
 /** Its condition, from the chat tools' flat fields. */

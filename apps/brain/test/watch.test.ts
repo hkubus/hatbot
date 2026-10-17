@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { type Task, type Watcher, type WatcherValue, WatchSourceInput } from "@hatbot/shared";
+import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { counts, numberIn, pick } from "../src/watch/extract";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
@@ -526,6 +527,9 @@ test("the chat turns a page's scripts on and off, and the interval follows", asy
     { content: [toolUse("watch_update", { id: 1, render: true })] },
     { content: [text("Done.")] },
   ]);
+  // What it saw on the page taints the chat: Haiku's review lets the owner's changes through.
+  chat.onCreate = (p) =>
+    p.system === REVIEW_PROMPT ? JSON.stringify({ safe: true, why: "Asked for." }) : undefined;
   const t = await testApp(chat);
   const url = "https://example.com/app";
   t.agent.pages.set(url, page(`<p id="v">…</p>`));

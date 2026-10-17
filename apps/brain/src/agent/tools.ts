@@ -2,8 +2,10 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import {
   type Bot,
+  describeCondition,
   describeCron,
   HATBOT_ID,
+  MAX_WATCH_MINUTES,
   minWatchMinutes,
   type Schedule,
   SKILL_NAME,
@@ -27,7 +29,13 @@ import { refreshing } from "../tasks/research-goal";
 import type { Tasks } from "../tasks/service";
 import { skillPath } from "../teach/skills";
 import type { Triggers } from "../triggers";
-import { conditionOf, WatchError, type Watchers, watcherLine } from "../watch/service";
+import {
+  conditionOf,
+  describeLook,
+  WatchError,
+  type Watchers,
+  watcherLine,
+} from "../watch/service";
 import type { Readable } from "./screening";
 import { messageTag, tagText, untrustedBlock } from "./untrusted";
 
@@ -291,6 +299,16 @@ async function askedIfSuspected(
 
 const cut = (s: string, n = 300) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
+/**
+ * A change to a schedule or watcher that's on, in words for its approval: all of it, since it all goes
+ * ahead once approved. Only switching off: "Switch off …".
+ */
+function changing(what: string, changes: string[]): string {
+  return changes.length === 1 && changes[0] === "switch it off"
+    ? `Switch off the ${what}`
+    : `Change the ${what}: ${changes.join("; ")}`;
+}
+
 /** Switching a trigger off, or changing how many failed checks it waits for, asks as above. */
 function stoppingTrigger(
   ctx: ToolContext,
@@ -353,8 +371,11 @@ const watchFields = {
     .number()
     .int()
     .positive()
+    .max(MAX_WATCH_MINUTES)
     .optional()
-    .describe("How often to look, at least 5 (15 with render); 60 if left out"),
+    .describe(
+      "How often to look, at least 5 (15 with render) and at most 10080 (a week); 60 if left out",
+    ),
   once: z.boolean().optional().describe("Switch off after the first time it counts"),
   prompt: z
     .string()
@@ -724,12 +745,32 @@ export const TOOLS = [
       const { schedules, tainted } = ctx;
       if (patch.cron && patch.at) return "Give either cron or at, not both.";
       const current = schedules?.get(id);
+      // On, it looks after something: after reading untrusted content, anything but switching it on
+      // asks, since a new time or prompt can silence it as surely as switching it off. A new name
+      // always does: it's what a later approval to delete it would show.
+      const renamed =
+        current && patch.name !== undefined && patch.name !== current.name
+          ? [`rename it "${patch.name}"`]
+          : [];
+      const changes = current?.enabled
+        ? [
+            ...(patch.enabled === false ? ["switch it off"] : []),
+            ...renamed,
+            ...(patch.prompt !== undefined && patch.prompt !== current.prompt
+              ? [`make it do: ${cut(patch.prompt)}`]
+              : []),
+            ...(patch.cron !== undefined && patch.cron !== current.cron
+              ? [`run it ${describeCron(patch.cron).toLowerCase()}`]
+              : []),
+            ...(patch.at !== undefined ? [`run it once at ${patch.at}`] : []),
+          ]
+        : renamed;
       const note =
-        current?.enabled && patch.enabled === false
+        current && changes.length
           ? await asked(ctx, signal, {
               name: "schedule_update",
               input: { id, ...patch },
-              what: `Switch off the schedule #${id} "${current.name}"`,
+              what: changing(`schedule #${id} "${current.name}"`, changes),
             })
           : "";
       const s = schedules?.update(id, patch, { via: "chat", taintedBy: tainted?.() ?? null });
@@ -853,14 +894,36 @@ export const TOOLS = [
       // Running the page's scripts looks less often, so a shorter time is raised to that.
       const min = minWatchMinutes(source ?? w.source);
       const every = input.every_minutes ?? (w.everyMinutes < min ? min : undefined);
-      const note =
-        w.enabled && input.enabled === false
-          ? await asked(ctx, signal, {
-              name: "watch_update",
-              input: { id, ...input },
-              what: `Switch off the watcher #${id} "${w.name}"`,
-            })
-          : "";
+      const renamed =
+        input.name !== undefined && input.name !== w.name ? [`rename it "${input.name}"`] : [];
+      const changes = w.enabled
+        ? [
+            ...(input.enabled === false ? ["switch it off"] : []),
+            ...renamed,
+            ...(input.prompt !== undefined && input.prompt.trim() !== w.prompt
+              ? [
+                  input.prompt.trim()
+                    ? `make it do: ${cut(input.prompt.trim())}`
+                    : "make it only tell the owner",
+                ]
+              : []),
+            ...(condition ? [`count when it ${describeCondition(condition).toLowerCase()}`] : []),
+            ...(source ? [`look at ${describeLook(source)}`] : []),
+            ...(input.every_minutes !== undefined && input.every_minutes !== w.everyMinutes
+              ? [`look every ${input.every_minutes} min`]
+              : []),
+            ...(input.once !== undefined && input.once !== w.once
+              ? [input.once ? "count only once" : "keep counting"]
+              : []),
+          ]
+        : renamed;
+      const note = changes.length
+        ? await asked(ctx, signal, {
+            name: "watch_update",
+            input: { id, ...input },
+            what: changing(`watcher #${id} "${w.name}"`, changes),
+          })
+        : "";
       try {
         const updated = await watchers.update(
           id,
