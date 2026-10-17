@@ -242,6 +242,7 @@ export async function testApp(
     proxmox,
     updates,
     ntfy: null,
+    auth,
     ping,
     fetch: async (url) =>
       url === `${ORIGIN}/api/v1/health`

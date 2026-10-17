@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { FailureLimiter } from "../src/auth/service";
 import { ORIGIN, setUpOwner, testApp } from "./helpers";
+
+const cookieOf = (res: Response, name: string) =>
+  res.headers
+    .getSetCookie()
+    .find((c) => c.startsWith(`${name}=`))
+    ?.split(";")[0];
 
 describe("setup", () => {
   test("needs the setup code and a valid first TOTP code", async () => {
@@ -197,6 +204,94 @@ describe("login", () => {
     expect(t.loginLimits.global.blocked("*")).toBe(false);
     t.loginLimits.global.fail("*");
     expect(t.loginLimits.global.blocked("*")).toBe(true);
+  });
+
+  test("a browser that signed in before still can while strangers are locked out", async () => {
+    const t = await testApp();
+    const { secret, password } = await setUpOwner(t);
+    const first = await t.call("POST", "/auth/login", { password, totp: t.code(secret) });
+    const device = cookieOf(first, "hatbot_device") ?? "";
+    expect(device).toStartWith("hatbot_device=");
+    expect(first.headers.getSetCookie().join("\n")).toContain("Path=/api/v1/auth");
+    // Strangers fail from everywhere: their own address and the whole brain are blocked.
+    for (let i = 0; i < 10; i++)
+      await t.call("POST", "/auth/login", { password: "nope", totp: "000000" });
+    for (let i = 0; i < 50; i++) t.loginLimits.global.fail("*");
+    t.advance(30_000);
+    const stranger = await t.call("POST", "/auth/login", { password, totp: t.code(secret) });
+    expect(stranger.status).toBe(429);
+    const forged = await t.call(
+      "POST",
+      "/auth/login",
+      { password, totp: t.code(secret) },
+      { cookie: "hatbot_device=made.up" },
+    );
+    expect(forged.status).toBe(429);
+    const known = await t.call(
+      "POST",
+      "/auth/login",
+      { password, totp: t.code(secret) },
+      { cookie: device },
+    );
+    expect(known.status).toBe(200);
+    // The known browser isn't given a new mark, and has a limit of its own.
+    expect(cookieOf(known, "hatbot_device")).toBeUndefined();
+    for (let i = 0; i < 10; i++)
+      await t.call("POST", "/auth/login", { password: "nope", totp: "000000" }, { cookie: device });
+    t.advance(30_000);
+    const after = await t.call(
+      "POST",
+      "/auth/login",
+      { password, totp: t.code(secret) },
+      { cookie: device },
+    );
+    expect(after.status).toBe(429);
+  });
+
+  test("the overall limit says once when it trips", () => {
+    const tripped: string[] = [];
+    const limit = new FailureLimiter(
+      3,
+      60_000,
+      () => 0,
+      (key) => tripped.push(key),
+    );
+    limit.fail("*");
+    limit.fail("*");
+    expect(tripped).toEqual([]);
+    limit.fail("*");
+    expect(limit.blocked("*")).toBe(true);
+    expect(tripped).toEqual(["*"]);
+    limit.fail("*");
+    expect(tripped).toEqual(["*"]);
+  });
+
+  test("a proxy that isn't trusted is noticed, and Check everything says to add it", async () => {
+    const t = await testApp();
+    const { cookie } = await setUpOwner(t);
+    const via = (address: string) => ({
+      requestIP: () => ({ address, family: "IPv4", port: 40000 }),
+    });
+    await t.app.request(
+      "/api/v1/health",
+      { headers: { "x-forwarded-for": "5.6.7.8" } },
+      via("8.8.4.4"),
+    );
+    expect(t.auth.untrustedProxy).toBeNull();
+    await t.app.request("/api/v1/health", {}, via("192.168.1.10"));
+    expect(t.auth.untrustedProxy).toBeNull();
+    await t.app.request(
+      "/api/v1/health",
+      { headers: { "x-forwarded-for": "5.6.7.8" } },
+      via("192.168.1.10"),
+    );
+    expect(t.auth.untrustedProxy).toBe("192.168.1.10");
+    const report = (await (await t.call("POST", "/checks", undefined, { cookie })).json()) as {
+      results: { id: string; state: string; detail: string }[];
+    };
+    const check = report.results.find((r) => r.id === "public-url");
+    expect(check?.state).toBe("warn");
+    expect(check?.detail).toContain("192.168.1.10, which isn't in HATBOT_TRUSTED_PROXIES");
   });
 
   test("app login returns a bearer token", async () => {

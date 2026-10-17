@@ -4,6 +4,7 @@ import type { Approval, CheckReport, CheckResult, ChecksInfo, StorageInfo } from
 import { type ModelClient, modelErrorText } from "./agent/model";
 import type { Approvals } from "./approvals";
 import type { Archive } from "./archive";
+import type { AuthService } from "./auth/service";
 import type { Config } from "./config";
 import type { Db } from "./db";
 import { migrations } from "./db/migrations";
@@ -46,6 +47,8 @@ export type ChecksDeps = {
   updates: Updates;
   /** Your ntfy server; null when it isn't set up. */
   ntfy: { configured: boolean; health(): Promise<void> } | null;
+  /** For a reverse proxy that isn't in HATBOT_TRUSTED_PROXIES. */
+  auth?: Pick<AuthService, "untrustedProxy">;
   /** The dead-man ping; absent in tests that don't need it. */
   ping?: Pick<DeadManPing, "configured" | "lastPing">;
   /** False when ANTHROPIC_API_KEY is missing. */
@@ -214,6 +217,11 @@ export class Checks {
       );
     }
     if (!res.ok) return fail(`${url}/api/v1/health answered ${res.status}.`);
+    const proxy = this.d.auth?.untrustedProxy;
+    if (proxy)
+      return warn(
+        `${url} reaches the brain through ${proxy}, which isn't in HATBOT_TRUSTED_PROXIES, so sign-in limits count everyone as one address. Add it to /etc/hatbot/brain.env.`,
+      );
     return ok(`${url} reaches the brain.`);
   }
 

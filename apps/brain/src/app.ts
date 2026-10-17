@@ -3,6 +3,7 @@ import { type Context, Hono, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { getConnInfo } from "hono/bun";
 import { HTTPException } from "hono/http-exception";
+import type { AuthService } from "./auth/service";
 import { compressJson } from "./compress";
 import type { AppEnv, Deps } from "./context";
 import { adminRoutes } from "./routes/admin";
@@ -31,7 +32,7 @@ export function createApp(deps: Deps) {
   app.use(compressJson);
   app.use(async (c, next) => {
     for (const [k, v] of Object.entries(deps)) c.set(k as keyof Deps, v as never);
-    c.set("clientIp", clientIp(c, deps.config.trustedProxies));
+    c.set("clientIp", clientIp(c, deps.config.trustedProxies, deps.auth));
     await next();
   });
   // Bun takes bodies up to the 25 MB an attachment needs. Sign-in and the notification buttons answer
@@ -113,7 +114,11 @@ function limitBody(c: Context, next: Next, max: number): Response | Promise<void
 }
 
 // The socket peer, or the client your reverse proxy reports if the peer is the proxy.
-function clientIp(c: Parameters<typeof getConnInfo>[0], trusted: string[]): string {
+function clientIp(
+  c: Parameters<typeof getConnInfo>[0],
+  trusted: string[],
+  auth: Pick<AuthService, "untrustedProxy">,
+): string {
   let peer = "unknown";
   try {
     peer = getConnInfo(c).remote.address ?? "unknown";
@@ -121,9 +126,26 @@ function clientIp(c: Parameters<typeof getConnInfo>[0], trusted: string[]): stri
     // app.request() in tests has no socket.
   }
   peer = peer.replace(/^::ffff:/, "");
+  const forwarded = c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim();
   if (trusted.includes(peer)) {
-    const forwarded = c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim();
     if (forwarded) return forwarded;
+  } else if (forwarded && isPrivate(peer) && auth.untrustedProxy !== peer) {
+    // Your proxy, not listed: every sign-in would count as coming from it, and lock out the rest.
+    auth.untrustedProxy = peer;
+    console.warn(
+      `${peer} forwards requests but isn't in HATBOT_TRUSTED_PROXIES, so sign-in limits count every client as ${peer}`,
+    );
   }
   return peer;
+}
+
+/** Loopback, private and link-local addresses: where a reverse proxy on your network would be. */
+function isPrivate(ip: string): boolean {
+  return (
+    /^(127|10)\./.test(ip) ||
+    /^192\.168\./.test(ip) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(ip) ||
+    /^169\.254\./.test(ip) ||
+    /^(::1$|f[cd][0-9a-f]{2}:|fe[89ab][0-9a-f]:)/i.test(ip)
+  );
 }

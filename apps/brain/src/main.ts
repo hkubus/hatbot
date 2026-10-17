@@ -221,11 +221,20 @@ const checks = new Checks({
   updates,
   ntfy,
   ping,
+  auth,
   apiKeySet: Boolean(process.env.ANTHROPIC_API_KEY),
 });
 const loginLimits = {
   perIp: new FailureLimiter(10, 15 * 60_000),
-  global: new FailureLimiter(50, 15 * 60_000),
+  global: new FailureLimiter(50, 15 * 60_000, Date.now, () => {
+    void notifier.send({
+      title: "Sign-in is on hold",
+      message:
+        "50 wrong passwords or codes in 15 minutes. New browsers can't sign in until it calms down; ones you've signed in on before still can.",
+      priority: 4,
+      tags: ["warning"],
+    });
+  }),
 };
 
 const app = createApp({

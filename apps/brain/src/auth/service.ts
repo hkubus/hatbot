@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { ApiToken } from "@hatbot/shared";
 import { type Db, now } from "../db";
 import { newTotpSecret, totpUri, verifyTotp } from "./totp";
@@ -6,6 +6,11 @@ import { newTotpSecret, totpUri, verifyTotp } from "./totp";
 const SESSION_DAYS = 30;
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 const randomToken = (prefix: string) => prefix + randomBytes(32).toString("base64url");
+const sameText = (a: string, b: string) => {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+};
 
 export type Principal = { kind: "session"; id: number } | { kind: "token"; id: number };
 
@@ -15,6 +20,12 @@ export class AuthService {
   /** One-time code that unlocks first-run setup; printed to the log while no owner exists. */
   readonly setupCode = randomBytes(6).toString("hex");
   private pendingSecret: string | null = null;
+  private deviceKey: Buffer | null = null;
+  /**
+   * A private address that passed on X-Forwarded-For without being in HATBOT_TRUSTED_PROXIES: your
+   * reverse proxy, most likely, which makes every sign-in count as coming from one address.
+   */
+  untrustedProxy: string | null = null;
 
   constructor(
     private db: Db,
@@ -26,13 +37,13 @@ export class AuthService {
   }
 
   startSetup(code: string): { secret: string; uri: string } | null {
-    if (this.isSetUp() || code !== this.setupCode) return null;
+    if (this.isSetUp() || !sameText(code, this.setupCode)) return null;
     this.pendingSecret ??= newTotpSecret();
     return { secret: this.pendingSecret, uri: totpUri(this.pendingSecret) };
   }
 
   async finishSetup(code: string, password: string, totp: string): Promise<boolean> {
-    if (this.isSetUp() || code !== this.setupCode || !this.pendingSecret) return false;
+    if (this.isSetUp() || !sameText(code, this.setupCode) || !this.pendingSecret) return false;
     const step = verifyTotp(this.pendingSecret, totp, this.clock());
     if (step === null) return false;
     const hash = await Bun.password.hash(password, { algorithm: "argon2id" });
@@ -61,6 +72,31 @@ export class AuthService {
       .query("UPDATE owner SET totp_last_step = ? WHERE id = 1 AND totp_last_step < ?")
       .run(step, step);
     return res.changes === 1;
+  }
+
+  /** A browser or app that has signed in here: a random id, signed so one can't be made up. */
+  newDevice(): string {
+    const id = randomBytes(16).toString("base64url");
+    return `${id}.${this.signDevice(id)}`;
+  }
+
+  /** The id in a cookie newDevice() made, or null. */
+  knownDevice(cookie: string | undefined): string | null {
+    const [id, sig, ...rest] = cookie?.split(".") ?? [];
+    return id && sig && !rest.length && sameText(sig, this.signDevice(id)) ? id : null;
+  }
+
+  private signDevice(id: string): string {
+    if (!this.deviceKey) {
+      this.db
+        .query("INSERT INTO settings (key, value) VALUES ('device_key', ?) ON CONFLICT DO NOTHING")
+        .run(randomBytes(32).toString("hex"));
+      const row = this.db
+        .query<{ value: string }, []>("SELECT value FROM settings WHERE key = 'device_key'")
+        .get();
+      this.deviceKey = Buffer.from(row?.value ?? "", "hex");
+    }
+    return createHmac("sha256", this.deviceKey).update(id).digest("base64url");
   }
 
   createSession(userAgent: string | null): string {
@@ -137,6 +173,8 @@ export class FailureLimiter {
     private max: number,
     private windowMs: number,
     private clock: () => number = Date.now,
+    /** Told when a key reaches the limit. */
+    private onBlocked?: (key: string) => void,
   ) {}
 
   blocked(key: string): boolean {
@@ -147,6 +185,7 @@ export class FailureLimiter {
     const list = this.recent(key);
     list.push(this.clock());
     this.failures.set(key, list);
+    if (list.length === this.max) this.onBlocked?.(key);
   }
 
   /** Takes back one failure: an attempt counted before it was checked, which turned out right. */
