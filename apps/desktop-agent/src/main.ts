@@ -182,7 +182,7 @@ async function liveInput(m: LiveInput) {
 const touched = () => browser.screenTouched();
 const liveQueue = new LiveQueue((m) => serial(() => liveInput(m).finally(touched)));
 
-const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
+const server = Bun.serve<{ off?: () => void; behind?: Uint8Array; input?: boolean }>({
   hostname: host,
   port: Number(port),
   maxRequestBodySize: MAX_BODY_BYTES,
@@ -347,6 +347,8 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
           return json(health());
         case "POST /unlock":
           locked = false;
+          // Whatever the owner's view still held down (it lost focus mid-press, say) is let go.
+          liveQueue.release();
           live.setFps(LIVE_FPS_WATCHING);
           return json(health());
         case "GET /live":
@@ -380,7 +382,7 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
         ws.sendBinary(frame);
       }
     },
-    message(_ws, msg) {
+    message(ws, msg) {
       if (typeof msg !== "string") return;
       let m: LiveInput;
       try {
@@ -388,10 +390,13 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
       } catch {
         return;
       }
+      ws.data.input = true;
       liveQueue.push(m);
     },
     close(ws) {
       ws.data.off?.();
+      // A viewer that sent input went away: nothing it pressed stays held.
+      if (ws.data.input) liveQueue.release();
     },
   },
 });

@@ -4,6 +4,7 @@ import { API_PREFIX, latestNoteOnly, type TaskStep } from "@hatbot/shared";
 import type { LiveInput } from "@hatbot/shared/desktop";
 import { useEffect, useRef, useState } from "react";
 import { ApiError } from "./api";
+import { Held } from "./held";
 import { Icon } from "./icons";
 import { navigate } from "./router";
 import {
@@ -37,6 +38,7 @@ const feed = (() => {
   let next: Blob | null = null;
   // For a screen that opens while the desktop is still: the desktop sends only changes.
   let last: Blob | null = null;
+  const held = new Held();
 
   const status = (c: Conn) => {
     conn = c;
@@ -93,7 +95,13 @@ const feed = (() => {
       timer = setTimeout(open, Math.min(15_000, 1000 * 2 ** retry++));
     };
   };
+  /** Lets go of what's held down on the desktop, while the socket is still there to say so. */
+  const release = () => {
+    for (const m of held.ups())
+      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(m));
+  };
   const close = () => {
+    release();
     clearTimeout(timer);
     const ws = socket;
     socket = null;
@@ -128,8 +136,11 @@ const feed = (() => {
       };
     },
     send(m: LiveInput) {
-      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(m));
+      if (socket?.readyState !== WebSocket.OPEN) return;
+      held.note(m);
+      socket.send(JSON.stringify(m));
     },
+    release,
   };
 })();
 
@@ -146,6 +157,16 @@ function Screen({ control }: { control: boolean }) {
   const keyboard = useRef<HTMLInputElement>(null);
   const { conn, send } = useFrames(canvas);
   const lastMove = useRef(0);
+  // Keys and buttons held when the view loses them (another window, a hidden tab, Hand back, leaving the
+  // page) are let go of, or they'd stay held on the desktop.
+  useEffect(() => {
+    if (!control) return;
+    window.addEventListener("blur", feed.release);
+    return () => {
+      window.removeEventListener("blur", feed.release);
+      feed.release();
+    };
+  }, [control]);
   // Wheel events come by the dozen; they're added up and sent every 100 ms.
   const wheel = useRef<{ dx: number; dy: number; x: number; y: number } | null>(null);
 
@@ -182,6 +203,8 @@ function Screen({ control }: { control: boolean }) {
           const button = BUTTONS[e.button];
           if (button) send({ t: "button", button, down: false, ...point(e) });
         },
+        onPointerCancel: feed.release,
+        onBlur: feed.release,
         onWheel: (e: React.WheelEvent) => {
           const at = point(e);
           const w = wheel.current;
@@ -299,14 +322,20 @@ export function LiveView({ taskId }: { taskId?: number }) {
     setError("");
     fn().catch((err) => setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot."));
   };
+  // Before control goes back: after it, the brain no longer passes your input on.
+  const giveBack = (fn: () => Promise<void>) =>
+    run(() => {
+      feed.release();
+      return fn();
+    });
 
   const stop = () =>
-    run(async () => {
+    giveBack(async () => {
       const s = await stopTeach();
       navigate(`/memory/teach/${s.id}`);
     });
   const discard = (id: number) => {
-    if (confirm("Throw this recording away?")) run(() => discardTeach(id));
+    if (confirm("Throw this recording away?")) giveBack(() => discardTeach(id));
   };
 
   return (
@@ -329,7 +358,7 @@ export function LiveView({ taskId }: { taskId?: number }) {
           <Icon name="hand" />
           You're in control. Hatbot is paused.
           <span className="spacer" />
-          <button type="button" className="btn sm primary" onClick={() => run(handback)}>
+          <button type="button" className="btn sm primary" onClick={() => giveBack(handback)}>
             Hand back
           </button>
         </div>
