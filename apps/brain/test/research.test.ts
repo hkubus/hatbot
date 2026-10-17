@@ -147,8 +147,12 @@ test("research runs on Opus at high effort, with helpers, a token budget and its
   const lead = work.requests.find((r) => r.model === "claude-opus-5-5");
   expect(toolNames(lead)).toEqual(expect.arrayContaining(["investigate", "finish_research"]));
   expect(toolNames(lead)).not.toContain("finish_task");
-  // Only tools the request sends are named as kept.
+  // Only tools the request sends are named as kept, and the Opus lead clears late and in bulk.
   expect(kept(lead)).toEqual(["finish_research", "investigate"]);
+  expect(lead?.context_management?.edits?.[0]).toMatchObject({
+    trigger: { type: "input_tokens", value: 150_000 },
+    clear_at_least: { type: "input_tokens", value: 50_000 },
+  });
   expect(lead?.betas).toContain("task-budgets-2026-03-13");
   // Its own limit, and less of a page than other tasks read: the helpers read for it.
   expect(t.tasks.budget(task.id)).toBe(5);
