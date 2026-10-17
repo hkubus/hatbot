@@ -710,6 +710,7 @@ html[data-theme="dark"] .seg button.active {
 .fold-text {
   flex: 1;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 .fold .t {
   flex: none;
@@ -1180,12 +1181,19 @@ html[data-theme="dark"] .seg button.active {
 .row .txt b {
   font-weight: 550;
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 .row .txt span {
   font-size: 12px;
   color: var(--muted);
 }
+/* A long value is cut short; it never pushes the name out. */
 .row .val {
+  min-width: 0;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--muted);
   font-size: 12.5px;
   text-align: right;
@@ -1934,6 +1942,7 @@ html[data-theme="dark"] .seg button.active {
   font-size: 12px;
   color: var(--muted);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .load-earlier {
   align-self: center;
@@ -2344,13 +2353,6 @@ html[data-theme="dark"] .seg button.active {
     display: grid;
   }
 }
-.row .val.version {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 60%;
-}
 
 /* ---------- Schedules & Triggers ---------- */
 .row-main {
@@ -2741,9 +2743,11 @@ pre.payload {
 /* What came of a command: a quiet line, not a message. */
 .msg-note {
   align-self: center;
+  max-width: 100%;
   padding: 2px 0;
   font-size: 12px;
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 /* Chats in the sidebar, above the other views. */
@@ -3002,12 +3006,6 @@ mark {
 }
 .row-link:hover {
   background: rgba(127, 127, 127, 0.06);
-}
-.row-link .val {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .link-row {
   position: relative;

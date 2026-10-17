@@ -641,7 +641,7 @@ function UpdateGroup({ toast }: { toast: Toast }) {
           <div className="txt">
             <b>Version</b>
           </div>
-          <span className="val version">
+          <span className="val">
             {info.current?.sha
               ? `${short(info.current.sha)}${info.current.subject ? ` ${info.current.subject}` : ""}`
               : "Unknown"}
