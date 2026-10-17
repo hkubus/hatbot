@@ -256,6 +256,41 @@ test("numbers the quotes don't say, and citations that aren't sources, go back o
   expect(task.summary).toStartWith("It's **22.4 dB(A)** [[1]]");
 });
 
+test("a failed finish doesn't use up the number check, and citations that aren't sources always go back", async () => {
+  const work = new FakeModel([
+    INVESTIGATE,
+    {
+      content: [
+        toolUse("finish_research", {
+          outcome: "failed",
+          answer: "Couldn't [9].",
+          report: "",
+          notify: true,
+        }),
+      ],
+    },
+    finish("It's **19 dB** [1].", "Report [1]."),
+    finish("It's **22.4 dB(A)** [1], see [8].", "Report [1]."),
+    finish("It's **22.4 dB(A)** [1].", "Report [1]."),
+  ]);
+  helpers(work);
+  let checks = 0;
+  work.onCreate = (p) => {
+    if (p.system !== RESEARCH_CHECK_PROMPT) return undefined;
+    checks++;
+    return '{"problems": [{"text": "It\'s **19 dB** [1]", "why": "The quote says 22.4 dB(A)."}]}';
+  };
+  const { t, task } = await research(work);
+  const leads = work.requests.filter((r) => r.model === "claude-opus-5-5");
+  expect(resultsIn(leads[2])).toContain("These citations aren't source numbers: [9].");
+  expect(resultsIn(leads[3])).toContain('- "It\'s **19 dB** [1]": "The quote says 22.4 dB(A)."');
+  expect(resultsIn(leads[4])).toContain("These citations aren't source numbers: [8].");
+  expect(checks).toBe(1);
+  expect(task.status).toBe("done");
+  expect(task.summary).toStartWith("It's **22.4 dB(A)** [[1]]");
+  expect(await t.memory.read(task.reportPath as string)).not.toContain("weren't checked");
+});
+
 test("running research again refreshes its report, and the chat can name one to refresh", async () => {
   const work = new FakeModel([INVESTIGATE, finish("Still the DS925+ [1].", "Report [1].")]);
   helpers(work);

@@ -234,7 +234,10 @@ export class ResearchState {
   draft: ResearchResult | null = null;
   /** finish_research went through: what it ended with is the run's. */
   finished = false;
-  /** The numbers are checked when it first finishes; `unchecked` says why not, if the check failed. */
+  /**
+   * The numbers are checked the first time it finishes as done; `unchecked` says why not, if the
+   * check failed.
+   */
   checked = false;
   unchecked: string | null = null;
 }
@@ -707,8 +710,9 @@ const slugOf = (title: string) => slugWords(title).slice(0, 60).replace(/-+$/, "
 const dayOf = (ms: number) => new Date(ms).toLocaleDateString("sv-SE");
 
 /**
- * finish_research: checks the report once (citations that aren't sources, numbers their quotes don't
- * say), then saves it. A string sends it back to the model; otherwise the task's summary.
+ * finish_research: checks the report (citations that aren't sources each time, and once the numbers
+ * their quotes don't say), then saves it. A string sends it back to the model; otherwise the task's
+ * summary.
  */
 export async function finishResearch(
   run: ResearchRun,
@@ -725,52 +729,50 @@ export async function finishResearch(
       retry:
         "Not finished: the report is empty. Write the full report, then call finish_research again.",
     };
-  if (!state.checked) {
-    state.checked = true;
-    const unknown = citedIn(texts).filter((n) => !sources.get(n));
-    const check =
-      result.outcome === "done"
-        ? await checkNumbers(run, sources, texts.join("\n\n"))
-        : { problems: [] };
-    // Cancelled while the check ran: nothing is saved.
-    if (run.signal.aborted) throw run.signal.reason;
-    if ("failed" in check) {
-      state.unchecked = check.failed;
-      tasks.addStep(task.id, {
-        kind: "note",
-        name: "The number check didn't run",
-        detail: check.failed,
-        url: null,
-      });
-    }
-    const problems = "problems" in check ? check.problems : [];
-    if (unknown.length || problems.length) {
-      tasks.addStep(task.id, {
-        kind: "note",
-        name: "Checked the numbers",
-        detail: [
-          ...(unknown.length ? [`No source ${unknown.map((n) => `[${n}]`).join(", ")}`] : []),
-          ...problems.map((p) => `"${p.text}": ${p.why}`),
-        ].join("\n"),
-        url: null,
-      });
-      return {
-        retry: [
-          "Not finished: the report doesn't match its sources yet.",
-          ...(unknown.length
-            ? [`These citations aren't source numbers: ${unknown.map((n) => `[${n}]`).join(", ")}.`]
-            : []),
-          // The checker read the quotes, which come from web pages: its verdict is data too.
-          ...(problems.length
-            ? [
-                "A check of the numbers you cite against the confirmed quotes of those sources found these:",
-                `<check trusted="false">\n${problems.map((p) => `- ${untrustedJson(p.text)}: ${untrustedJson(p.why)}`).join("\n")}\n</check>`,
-              ]
-            : []),
-          "Look at each against its source (fetch it again if you need to): correct the number if the source says otherwise, or drop the number or the citation if you can't confirm it. Then call finish_research again.",
-        ].join("\n"),
-      };
-    }
+  // Citations that aren't sources go back every time; the numbers are checked on the first report
+  // that's done, not on a failed one before it.
+  const unknown = citedIn(texts).filter((n) => !sources.get(n));
+  const checking = !state.checked && result.outcome === "done";
+  if (checking) state.checked = true;
+  const check = checking ? await checkNumbers(run, sources, texts.join("\n\n")) : { problems: [] };
+  // Cancelled while the check ran: nothing is saved.
+  if (run.signal.aborted) throw run.signal.reason;
+  if ("failed" in check) {
+    state.unchecked = check.failed;
+    tasks.addStep(task.id, {
+      kind: "note",
+      name: "The number check didn't run",
+      detail: check.failed,
+      url: null,
+    });
+  }
+  const problems = "problems" in check ? check.problems : [];
+  if (unknown.length || problems.length) {
+    tasks.addStep(task.id, {
+      kind: "note",
+      name: "Checked the numbers",
+      detail: [
+        ...(unknown.length ? [`No source ${unknown.map((n) => `[${n}]`).join(", ")}`] : []),
+        ...problems.map((p) => `"${p.text}": ${p.why}`),
+      ].join("\n"),
+      url: null,
+    });
+    return {
+      retry: [
+        "Not finished: the report doesn't match its sources yet.",
+        ...(unknown.length
+          ? [`These citations aren't source numbers: ${unknown.map((n) => `[${n}]`).join(", ")}.`]
+          : []),
+        // The checker read the quotes, which come from web pages: its verdict is data too.
+        ...(problems.length
+          ? [
+              "A check of the numbers you cite against the confirmed quotes of those sources found these:",
+              `<check trusted="false">\n${problems.map((p) => `- ${untrustedJson(p.text)}: ${untrustedJson(p.why)}`).join("\n")}\n</check>`,
+            ]
+          : []),
+        "Look at each against its source (fetch it again if you need to): correct the number if the source says otherwise, or drop the number or the citation if you can't confirm it. Then call finish_research again.",
+      ].join("\n"),
+    };
   }
 
   // Numbered as first cited, the answer's first; the report's list has the same numbers.
