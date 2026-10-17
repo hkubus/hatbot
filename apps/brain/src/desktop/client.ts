@@ -79,6 +79,15 @@ export function actionTimeoutMs(a: AgentAction): number {
   return 45_000 + (chars > 200 ? chars * 25 : 0);
 }
 
+/**
+ * `wait` and page loads may take up to 30 s. The browser types key by key at a person's pace, about
+ * 85 ms a key and now and then 400, so the wait grows with the text.
+ */
+export function browserTimeoutMs(call: BrowserCall): number {
+  const text = call.name === "type" ? call.input?.text : undefined;
+  return 45_000 + (typeof text === "string" ? text.length * 150 : 0);
+}
+
 export class HttpDesktopAgent implements DesktopAgent {
   readonly configured: boolean;
 
@@ -202,8 +211,9 @@ export class HttpDesktopAgent implements DesktopAgent {
     await this.req("POST", "/render/check", {}, 30_000);
   }
   async browser(call: BrowserCall) {
-    // `wait` and page loads may take up to 30 s.
-    return (await (await this.req("POST", "/browser", call, 45_000)).json()) as BrowserResult;
+    return (await (
+      await this.req("POST", "/browser", call, browserTimeoutMs(call))
+    ).json()) as BrowserResult;
   }
   async browserState() {
     return (await (await this.req("GET", "/browser/state")).json()) as BrowserState;

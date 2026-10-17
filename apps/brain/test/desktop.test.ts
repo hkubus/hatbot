@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { connect, createServer, type Socket } from "node:net";
 import { websocket } from "hono/bun";
 import { openDb } from "../src/db";
+import { browserTimeoutMs } from "../src/desktop/client";
 import { Desktop } from "../src/desktop/service";
 import { EventBus } from "../src/events";
 import { FakeDesktop } from "./fake-desktop";
@@ -47,6 +48,13 @@ test("requests for you wait in turn; handing back ends only the one you took ove
   expect(desktop.get().request?.taskId).toBe(2);
   desktop.clearRequest(2);
   expect(desktop.get().request).toBeNull();
+});
+
+test("a browser call waits as long as its text takes to type at a person's pace", () => {
+  const type = (text: string) => browserTimeoutMs({ name: "type", input: { text } });
+  expect(browserTimeoutMs({ name: "wait", input: { duration: 30 } })).toBe(45_000);
+  // 520 characters with a line break go key by key, at about 85 ms each: 44 s, and a page load after.
+  expect(type(`${"x".repeat(519)}\n`)).toBeGreaterThan(30_000 + 520 * 85 * 1.5);
 });
 
 test("a live viewer that fell behind gets the newest frame once it catches up", async () => {
