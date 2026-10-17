@@ -147,6 +147,17 @@ export function destructive(
 }
 
 /**
+ * Whether a host command runs something in a container: the wrapper ssh_pct_exec uses, pct exec or
+ * lxc-attach, named even with quotes, escapes, variables, substitutions or globs in the way
+ * (hatbot-$p-exec, hatbot-*-exec). A name built some other way still gets past this, so a careful
+ * guest's safety is its host being marked "Proxmox host", where every change asks.
+ */
+export function inContainer(command: string): boolean {
+  const bare = command.replace(/\$\([^)]*\)|`[^`]*`|\$\{[^}]*\}|\$\w+|['"\\]/g, "");
+  return /hatbot-\S*exec|pct-exec|\bpct\s+exec\b|\blxc-attach\b/.test(bare);
+}
+
+/**
  * Commands whose output is the machine's own status, with nothing in it a stranger could have
  * written (PLAN.md §6.1). null: any arguments; otherwise the subcommands allowed ("" for none).
  */

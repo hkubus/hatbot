@@ -17,7 +17,7 @@ import {
   tool,
   type Verdict,
 } from "../plugin";
-import { commandCount, destructive, statusOnly } from "./policy";
+import { commandCount, destructive, inContainer, statusOnly } from "./policy";
 
 const OUTPUT_CHARS = 15_000;
 /** The most lines ssh_read_file shows in one call. */
@@ -520,7 +520,7 @@ export const sshPlugin = definePlugin({
         target: ({ host }) => host,
         commands: ({ command }) => commandCount(command),
         policy: ({ host, command }) => {
-          if (/pct-exec/.test(command.replace(/['"\\]/g, "")))
+          if (inContainer(command))
             return block(
               "Use ssh_pct_exec to run commands in containers: there each container's own rules apply.",
             );

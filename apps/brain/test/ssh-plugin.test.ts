@@ -604,14 +604,23 @@ test("ssh_pct_exec runs a command in a container through a Proxmox host, quoted,
   ).toBe("allow");
   // The host's own commands can reach it through the wrapper, or a script that calls it.
   const exec = sshTool("ssh_exec");
-  for (const command of [
-    "sudo -n /usr/local/sbin/hatbot-pct-exec 105 'apt-get -y dist-upgrade'",
-    "sudo -n /usr/local/sbin/hatbot-pct-e''xec 105 reboot",
-  ])
-    expect(verdictFor(exec, { host: "pve", command }, call), command).toEqual({
-      action: "block",
-      why: "Use ssh_pct_exec to run commands in containers: there each container's own rules apply.",
-    });
+  // On a host not marked as Proxmox too, however the wrapper's name is spelled.
+  for (const host of ["pve", "nas"])
+    for (const command of [
+      "sudo -n /usr/local/sbin/hatbot-pct-exec 105 'apt-get -y dist-upgrade'",
+      "sudo -n /usr/local/sbin/hatbot-pct-e''xec 105 reboot",
+      "p=pct; sudo -n /usr/local/sbin/hatbot-$p-exec 105 reboot",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell variable
+      "sudo -n /usr/local/sbin/hatbot-${p}-exec 105 reboot",
+      "sudo -n /usr/local/sbin/hatbot-$(echo pct)-exec 105 reboot",
+      "sudo -n /usr/local/sbin/hatbot-*-exec 105 reboot",
+      "echo 'p=pct; sudo -n /usr/local/sbin/hatbot-$p-exec 105 reboot' > ~/.ssh/rc",
+      "sudo pct exec 105 -- reboot",
+    ])
+      expect(verdictFor(exec, { host, command }, call), command).toEqual({
+        action: "block",
+        why: "Use ssh_pct_exec to run commands in containers: there each container's own rules apply.",
+      });
   for (const command of ["sh ~/upgrade.sh", "$(printf 'sudo -n /usr/local/sbin/x') 105 uptime"])
     expect(verdictFor(exec, { host: "pve", command }, call), command).toMatchObject({
       action: "ask",
@@ -626,7 +635,7 @@ test("ssh_pct_exec runs a command in a container through a Proxmox host, quoted,
   for (const command of [
     "echo x > ~/.bashrc",
     "uptime | sort -o/home/hatbot/.bashrc",
-    "echo 'p=pct; sudo -n /usr/local/sbin/hatbot-$p-exec 105 apt-get -y dist-upgrade' > ~/.ssh/rc",
+    "echo 'sh ~/x.sh' > ~/.ssh/rc",
   ])
     expect(verdictFor(exec, { host: "pve", command }, tainted), command).toMatchObject({
       action: "ask",
