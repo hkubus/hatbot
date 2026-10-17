@@ -3,7 +3,37 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { installDom } from "./dom";
 
 installDom();
-const { AssistantBody, appPath, follows } = await import("../src/pages/Chat");
+const { AssistantBody, appPath, dayLabel, follows } = await import("../src/pages/Chat");
+
+test("day labels: today, yesterday, then the date, with the year only when it isn't this one", () => {
+  const now = new Date(2026, 9, 17, 9, 0);
+  expect(dayLabel(new Date(2026, 9, 17, 1, 0).toISOString(), now)).toBe("Today");
+  expect(dayLabel(new Date(2026, 9, 16, 23, 0).toISOString(), now)).toBe("Yesterday");
+  const long = { weekday: "long", day: "numeric", month: "long" } as const;
+  const earlier = new Date(2026, 9, 3, 12, 0);
+  expect(dayLabel(earlier.toISOString(), now)).toBe(earlier.toLocaleDateString("en-GB", long));
+  expect(dayLabel(earlier.toISOString(), now)).toContain("3 October");
+  const lastYear = new Date(2025, 11, 31, 12, 0);
+  expect(dayLabel(lastYear.toISOString(), now)).toBe(
+    lastYear.toLocaleDateString("en-GB", { ...long, year: "numeric" }),
+  );
+  expect(dayLabel(lastYear.toISOString(), now)).toContain("31 December 2025");
+  // The next day, what was today is yesterday.
+  const tomorrow = new Date(2026, 9, 18, 9, 0);
+  expect(dayLabel(new Date(2026, 9, 17, 1, 0).toISOString(), tomorrow)).toBe("Yesterday");
+});
+
+test("a streaming reply renders as it will once it's done", () => {
+  const text = "# Plan\n\nFirst **this**.\n\n```sh\necho a\n\necho b\n```\n\n- one\n- two\n\nLast.";
+  // Only the line breaks between blocks differ, which a grid doesn't show.
+  const html = (streaming: boolean) =>
+    renderToStaticMarkup(<AssistantBody text={text} streaming={streaming} />).replace(
+      />\n+</g,
+      "><",
+    );
+  expect(html(true)).toBe(html(false));
+  expect(html(true)).toContain('<code class="language-sh">echo a\n\necho b\n</code>');
+});
 
 test("the thread stops following on any scroll up, and starts again only at the bottom", () => {
   // Following, and a reply streams: a few pixels up to read stops it.

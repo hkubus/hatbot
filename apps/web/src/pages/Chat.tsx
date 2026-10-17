@@ -37,6 +37,7 @@ import {
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LoadError, loadErrorText } from "../load";
+import { splitBlocks } from "../md-blocks";
 import { touchScreen } from "../media";
 import { negotiationText } from "../negotiations";
 import { navigate, useRoute } from "../router";
@@ -68,19 +69,39 @@ const SEEN_AFTER_MS = 1500;
 const time = (iso: string) =>
   new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
-function dayLabel(iso: string): string {
-  const d = new Date(iso);
-  const today = new Date();
-  const yesterday = new Date();
-  yesterday.setDate(today.getDate() - 1);
-  if (d.toDateString() === today.toDateString()) return "Today";
-  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
-  return d.toLocaleDateString("en-GB", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: d.getFullYear() === today.getFullYear() ? undefined : "numeric",
-  });
+const DAY = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" });
+const DAY_YEAR = new Intl.DateTimeFormat("en-GB", {
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+});
+// Each message's day, worked out once: the thread asks for every message's on every render. Kept for
+// one day, as "Today" becomes "Yesterday" at midnight.
+const days = new Map<string, string>();
+let daysOn = "";
+
+/** "Today", "Yesterday", "Saturday 17 October", or with the year when it isn't this one. */
+export function dayLabel(iso: string, now: Date): string {
+  const today = now.toDateString();
+  if (daysOn !== today) {
+    days.clear();
+    daysOn = today;
+  }
+  let label = days.get(iso);
+  if (label === undefined) {
+    const d = new Date(iso);
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    label =
+      d.toDateString() === today
+        ? "Today"
+        : d.toDateString() === yesterday.toDateString()
+          ? "Yesterday"
+          : (d.getFullYear() === now.getFullYear() ? DAY : DAY_YEAR).format(d);
+    days.set(iso, label);
+  }
+  return label;
 }
 
 /** Copies `text`; `copied` is true for a moment after. */
@@ -183,6 +204,14 @@ const MD_COMPONENTS: Components = {
 
 const REMARK = [remarkGfm];
 
+const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
+  return (
+    <Markdown remarkPlugins={REMARK} components={MD_COMPONENTS}>
+      {text}
+    </Markdown>
+  );
+});
+
 export const AssistantBody = memo(function AssistantBody({
   text,
   streaming = false,
@@ -193,9 +222,15 @@ export const AssistantBody = memo(function AssistantBody({
   return (
     <div className="md">
       <Streaming.Provider value={streaming}>
-        <Markdown remarkPlugins={REMARK} components={MD_COMPONENTS}>
-          {text}
-        </Markdown>
+        {/* While it streams, only the block still growing is parsed again. */}
+        {streaming ? (
+          splitBlocks(text).map((block, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: blocks only grow at the end
+            <MarkdownBlock key={i} text={block} />
+          ))
+        ) : (
+          <MarkdownBlock text={text} />
+        )}
       </Streaming.Provider>
     </div>
   );
@@ -804,8 +839,9 @@ export function Chat({ id }: { id: number }) {
   const retryableId = lastReply?.status === "error" ? lastReply.id : 0;
 
   let lastDay = "";
+  const now = new Date();
   const dayBefore = (m: ThreadMessage) => {
-    const day = dayLabel(m.createdAt);
+    const day = dayLabel(m.createdAt, now);
     const show = day !== lastDay;
     lastDay = day;
     return show ? <div className="day">{day}</div> : null;
