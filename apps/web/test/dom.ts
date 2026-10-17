@@ -76,6 +76,8 @@ export function installDom() {
       return frame;
     },
     cancelAnimationFrame: (id: number) => frames.delete(id),
+    // A desktop: hover, no touch screen.
+    matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
     WebSocket: FakeSocket,
     fetch: async (url: string, init: RequestInit = {}) => {
       const req: Request = {

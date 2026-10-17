@@ -1,9 +1,115 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { installDom } from "./dom";
+import { installDom, settle } from "./dom";
 
 installDom();
-const { AssistantBody, appPath, dayLabel, follows } = await import("../src/pages/Chat");
+const { AssistantBody, appPath, Composer, dayLabel, fileDrops, follows } = await import(
+  "../src/pages/Chat"
+);
+const drafts = await import("../src/drafts");
+
+/** The upload's other end, driven by the test. */
+class FakeXhr {
+  static all: FakeXhr[] = [];
+  upload: { onprogress: ((e: object) => void) | null } = { onprogress: null };
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  onabort: (() => void) | null = null;
+  status = 0;
+  responseText = "";
+  open() {}
+  send() {
+    FakeXhr.all.push(this);
+  }
+  abort() {
+    this.onabort?.();
+  }
+  answer(status: number, body: unknown) {
+    this.status = status;
+    this.responseText = JSON.stringify(body);
+    this.onload?.();
+  }
+}
+
+test("a file that didn't upload holds the message and says why; uploads show how far they've got", async () => {
+  const g = globalThis as Record<string, unknown>;
+  const before = g.XMLHttpRequest;
+  g.XMLHttpRequest = FakeXhr;
+  try {
+    const chat = "9";
+    drafts.attachFiles(chat, [new File(["x"], "notes.txt"), new File(["y"], "clip.mov")]);
+    const [notes, clip] = FakeXhr.all.slice(-2) as [FakeXhr, FakeXhr];
+    notes.upload.onprogress?.({ lengthComputable: true, loaded: 50, total: 100 });
+    const html = () => renderToStaticMarkup(<Composer chat={chat} onSend={() => {}} />);
+    expect(html()).toContain('class="upload-bar" style="width:50%"');
+
+    clip.answer(413, { error: "The file is over 25 MB." });
+    notes.answer(201, { id: 3, name: "notes.txt", mediaType: "text/plain", size: 1 });
+    await settle();
+    const files = drafts.draftFiles(chat);
+    expect(files.map((d) => [d.name, d.attachment?.id, d.error])).toEqual([
+      ["notes.txt", 3, undefined],
+      ["clip.mov", undefined, "The file is over 25 MB."],
+    ]);
+    // Sending would leave it out without a word: the button waits, and the line says why.
+    expect(html()).toContain("clip.mov: The file is over 25 MB. Take it off to send.");
+    expect(html()).toMatch(/<button[^>]*title="Send"[^>]*disabled/);
+    expect(html()).not.toContain("upload-bar");
+
+    drafts.removeFile(chat, (files[1] as { key: number }).key);
+    expect(html()).not.toContain("Take it off");
+    expect(html()).not.toMatch(/<button[^>]*title="Send"[^>]*disabled/);
+  } finally {
+    g.XMLHttpRequest = before;
+  }
+});
+
+test("files dropped anywhere in the window go into the composer, not over the app", () => {
+  const attached: unknown[] = [];
+  let dropping = false;
+  const on = new Map(
+    fileDrops(
+      (list) => attached.push(list),
+      (v) => {
+        dropping = v;
+      },
+    ),
+  );
+  const event = (types: string[], files: unknown[] = [], relatedTarget: unknown = null) => ({
+    dataTransfer: { types, files },
+    relatedTarget,
+    defaultPrevented: false,
+    preventDefault() {
+      this.defaultPrevented = true;
+    },
+  });
+  const fire = (type: string, e: ReturnType<typeof event>) => on.get(type)?.(e as unknown as Event);
+
+  // Over the sidebar or the toolbar: the browser is told the drop is taken.
+  const over = event(["Files"]);
+  fire("dragover", over);
+  expect(over.defaultPrevented).toBe(true);
+  expect(dropping).toBe(true);
+  // Leaving one element for another inside the window keeps it showing.
+  fire("dragleave", event(["Files"], [], {}));
+  expect(dropping).toBe(true);
+  const files = [new File(["x"], "a.txt")];
+  const drop = event(["Files"], files);
+  fire("drop", drop);
+  expect(drop.defaultPrevented).toBe(true);
+  expect(attached).toEqual([files]);
+  expect(dropping).toBe(false);
+  // Dragged text is the page's own business.
+  const text = event(["text/plain"]);
+  fire("dragover", text);
+  fire("drop", text);
+  expect(text.defaultPrevented).toBe(false);
+  expect(attached).toHaveLength(1);
+  // Out of the window: no longer showing.
+  fire("dragover", event(["Files"]));
+  fire("dragleave", event(["Files"]));
+  expect(dropping).toBe(false);
+});
 
 test("day labels: today, yesterday, then the date, with the year only when it isn't this one", () => {
   const now = new Date(2026, 9, 17, 9, 0);

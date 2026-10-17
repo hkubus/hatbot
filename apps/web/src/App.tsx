@@ -208,6 +208,19 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     return disconnect;
   }, [toast]);
 
+  // A file dropped where nothing takes it would replace the app with the file; a chat takes it.
+  useEffect(() => {
+    const keep = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+    };
+    window.addEventListener("dragover", keep);
+    window.addEventListener("drop", keep);
+    return () => {
+      window.removeEventListener("dragover", keep);
+      window.removeEventListener("drop", keep);
+    };
+  }, []);
+
   // What's waiting shows in the tab's title, and on the app's icon where the system has badges.
   useEffect(() => {
     const n = unread + pending;

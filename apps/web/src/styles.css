@@ -2698,6 +2698,20 @@ pre.payload {
 }
 .composer-file.loading {
   opacity: 0.55;
+  overflow: hidden;
+}
+/* How much of it has gone up. */
+.composer-file .upload-bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+.composer-error {
+  max-width: 760px;
+  margin: 0 auto 6px;
 }
 .composer-file.failed {
   border-color: var(--danger, #d33);

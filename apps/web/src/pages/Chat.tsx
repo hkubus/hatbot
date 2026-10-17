@@ -643,6 +643,39 @@ function Fold({
 }
 
 /**
+ * Window listeners that take files dragged anywhere over the app: the browser would otherwise open a
+ * file dropped outside the chat in the app's place.
+ */
+export function fileDrops(
+  attach: (files: FileList) => void,
+  setDropping: (on: boolean) => void,
+): [string, (e: Event) => void][] {
+  const files = (e: DragEvent) => !!e.dataTransfer?.types.includes("Files");
+  return [
+    [
+      "dragover",
+      (e) => {
+        if (!files(e as DragEvent)) return;
+        e.preventDefault();
+        setDropping(true);
+      },
+    ],
+    // Out of the window, or the drag given up.
+    ["dragleave", (e) => !(e as DragEvent).relatedTarget && setDropping(false)],
+    [
+      "drop",
+      (e) => {
+        const list = (e as DragEvent).dataTransfer?.files;
+        if (!files(e as DragEvent)) return;
+        e.preventDefault();
+        setDropping(false);
+        if (list?.length) attach(list);
+      },
+    ],
+  ];
+}
+
+/**
  * Whether the thread follows the newest message after a scroll: any scroll up, however small, stops it
  * (reading back while a reply streams), and only reaching the bottom again starts it.
  */
@@ -698,24 +731,15 @@ export function Chat({ id }: { id: number }) {
     stick.current = true;
   }, []);
   const chatKey = `${id}${incognito ? ":incognito" : ""}`;
-  // Files dropped anywhere on the chat go into the composer.
+  // Files dropped anywhere in the window go into the composer.
   const [dropping, setDropping] = useState(false);
-  const drop = {
-    onDragOver: (e: React.DragEvent) => {
-      if (!e.dataTransfer.types.includes("Files")) return;
-      e.preventDefault();
-      setDropping(true);
-    },
-    onDragLeave: (e: React.DragEvent) => {
-      if (!e.currentTarget.contains(e.relatedTarget as HTMLElement | null)) setDropping(false);
-    },
-    onDrop: (e: React.DragEvent) => {
-      if (!e.dataTransfer.files.length) return;
-      e.preventDefault();
-      setDropping(false);
-      attachFiles(chatKey, e.dataTransfer.files);
-    },
-  };
+  useEffect(() => {
+    const on = fileDrops((list) => attachFiles(chatKey, list), setDropping);
+    for (const [type, f] of on) window.addEventListener(type, f);
+    return () => {
+      for (const [type, f] of on) window.removeEventListener(type, f);
+    };
+  }, [chatKey]);
 
   // Opening the chat, or going to or from incognito, loads its conversation in the store.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset the animation on each switch
@@ -891,7 +915,6 @@ export function Chat({ id }: { id: number }) {
         onWheel={(e) => {
           if (e.deltaY < 0) stick.current = false;
         }}
-        {...drop}
       >
         <div className="chat-scroll">
           <div className="thread" ref={thread}>
@@ -940,7 +963,7 @@ export function Chat({ id }: { id: number }) {
           </div>
         </div>
       </section>
-      <div className="composer-wrap" {...drop}>
+      <div className="composer-wrap">
         {far && (
           <button type="button" className="to-bottom" title="Latest messages" onClick={toBottom}>
             <Icon name="down" />
@@ -989,7 +1012,7 @@ const groupMembers = (s: ReturnType<typeof getState>) => {
 };
 
 /** What you're writing, its files and the menu over it; apart from the thread, so typing redraws only this. */
-function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
+export function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
   const incognito = useStore((s) => s.incognito);
   const name = useStore((s) => chatName(s, currentChat(s)));
   const members = useStore(groupMembers);
@@ -1032,6 +1055,8 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
   const unattach = (key: number) => removeFile(chat, key);
   const uploading = files.some((d) => !d.attachment && !d.error);
   const ready = files.filter((d) => d.attachment);
+  // A file that didn't upload holds the message until it's taken off: it would go without it.
+  const failed = files.filter((d) => d.error);
 
   // Incognito keeps nothing, so commands that would outlast it aren't offered.
   const commands = menuClosed
@@ -1077,7 +1102,7 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
 
   const send = async (command?: string) => {
     const text = (command ?? draft).trim();
-    if ((!text && !ready.length) || sending || uploading) return;
+    if ((!text && !ready.length) || sending || uploading || failed.length) return;
     setSending(true);
     setError("");
     onSend();
@@ -1141,7 +1166,7 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
           {files.map((d) => (
             <span
               key={d.key}
-              className={`composer-file ${d.attachment ? "" : "loading"} ${d.error ? "failed" : ""}`}
+              className={`composer-file ${d.error ? "failed" : d.attachment ? "" : "loading"}`}
               title={d.error ?? d.name}
             >
               {d.preview ? <img src={d.preview} alt="" /> : <Icon name="file" />}
@@ -1149,8 +1174,17 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
               <button type="button" title="Remove" onClick={() => unattach(d.key)}>
                 <Icon name="x" />
               </button>
+              {!d.attachment && !d.error && (
+                <span className="upload-bar" style={{ width: `${(d.sent ?? 0) * 100}%` }} />
+              )}
             </span>
           ))}
+        </div>
+      )}
+      {failed.length > 0 && (
+        <div className="form-error composer-error">
+          {failed.map((d) => `${d.name}: ${d.error}`).join(" ")}{" "}
+          {failed.length > 1 ? "Take them off to send." : "Take it off to send."}
         </div>
       )}
       <div className="composer">
@@ -1243,7 +1277,7 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
             type="button"
             className="icon-btn send"
             title="Send"
-            disabled={(!draft.trim() && !ready.length) || sending || uploading}
+            disabled={(!draft.trim() && !ready.length) || sending || uploading || failed.length > 0}
             onClick={() => send()}
           >
             <Icon name="up" />
