@@ -11,6 +11,10 @@ struct BotView: View {
   @State private var plugins: [PluginName] = []
   @State private var templates: [BotTemplate] = []
   @State private var template: String?
+  /// What the form was last filled with, blank or from a template, to tell whether you've changed it.
+  @State private var filled = Form()
+  /// A template picked over changes of yours, until you say whether it replaces them.
+  @State private var replacing: Pick?
   @State private var busy = false
   @State private var confirmDelete = false
   @State private var error: String?
@@ -61,17 +65,14 @@ struct BotView: View {
       if let error { Text(error).foregroundStyle(.red) }
       if id == nil, !templates.isEmpty {
         Section {
-          Picker("Template", selection: $template) {
+          Picker(
+            "Template",
+            selection: Binding(
+              get: { template },
+              set: { key in if form == filled { fill(key) } else { replacing = Pick(key: key) } })
+          ) {
             Text("None").tag(String?.none)
             ForEach(templates) { Text($0.name).tag(String?.some($0.id)) }
-          }
-          .onChange(of: template) { _, key in
-            if let t = templates.first(where: { $0.id == key }) {
-              form = Form(t)
-            } else {
-              form = Form()
-              form.color = freeColor
-            }
           }
         }
       }
@@ -181,6 +182,15 @@ struct BotView: View {
           .disabled(busy || !changed || form.name.trimmingCharacters(in: .whitespaces).isEmpty)
       }
     }
+    .confirmationDialog(
+      "Replace what you've written?",
+      isPresented: Binding(get: { replacing != nil }, set: { if !$0 { replacing = nil } }),
+      titleVisibility: .visible,
+      presenting: replacing
+    ) { pick in
+      Button(pick.key == nil ? "Clear it" : "Use the template", role: .destructive) { fill(pick.key) }
+      Button("Keep mine", role: .cancel) {}
+    }
     .confirmationDialog("Delete \(stored?.name ?? "this bot")?", isPresented: $confirmDelete, titleVisibility: .visible) {
       Button("Delete", role: .destructive) {
         Task {
@@ -198,11 +208,30 @@ struct BotView: View {
       if let stored {
         form = Form(stored)
       } else {
-        form.color = freeColor
+        // Only if you haven't started on it yet.
+        if form == filled { fill(nil) }
         templates = await store.loadBotTemplates()
       }
       plugins = ((try? await store.loadPluginNames()) ?? []).sorted { $0.name < $1.name }
     }
+  }
+
+  /// A template picked, waiting for an answer.
+  struct Pick: Identifiable {
+    let key: String?
+    var id: String { key ?? "" }
+  }
+
+  /// Fills the form from a template, or blank with a colour no other bot has.
+  private func fill(_ key: String?) {
+    template = key
+    if let t = templates.first(where: { $0.id == key }) {
+      form = Form(t)
+    } else {
+      form = Form()
+      form.color = freeColor
+    }
+    filled = form
   }
 
   /// A new bot starts in a colour none of the others has yet.
