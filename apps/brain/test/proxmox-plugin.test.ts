@@ -211,6 +211,12 @@ test("reboot runs right away; shutdown, careful guests and the desktop ask; the 
   expect(v({ vmid: 105, action: "start" }).action).toBe("allow");
   expect(v({ vmid: 105, action: "shutdown" }).action).toBe("ask");
   expect(v({ vmid: 200, action: "reboot" })).toMatchObject({ action: "ask", always: true });
+  // Shutting down a careful guest waits for the owner, not the review.
+  expect(v({ vmid: 200, action: "shutdown" })).toEqual({
+    action: "ask",
+    always: true,
+    why: "The owner asked to approve power actions on it. It stays off until someone starts it again.",
+  });
   expect(v({ vmid: 126, action: "reboot" }).action).toBe("ask");
   expect(v({ vmid: 125, action: "reboot" }).action).toBe("block");
   // Tainted: even a reboot asks.

@@ -108,6 +108,3 @@ export function destructive(
       return { why: r.why.replace("{where}", `the ${where}`), kind: r.kind ?? "other" };
   return null;
 }
-
-/** Whether a command reboots the machine it runs on. */
-export const reboots = (command: string) => REBOOT.test(command);

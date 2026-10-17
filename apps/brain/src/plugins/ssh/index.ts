@@ -16,7 +16,7 @@ import {
   tool,
   type Verdict,
 } from "../plugin";
-import { commandCount, destructive, reboots } from "./policy";
+import { commandCount, destructive } from "./policy";
 
 const OUTPUT_CHARS = 15_000;
 
@@ -261,6 +261,14 @@ export const sshPlugin = definePlugin({
       if (res.code !== 0 || res.timedOut) throw failed(r, "write", res);
     };
 
+    /** Why every change there waits for the owner, if it does: a careful host or a careful guest. */
+    const carefulOf = (host: string, guest?: number): string | null =>
+      hosts.get(host)?.careful
+        ? `The owner asked to approve every change on ${host}.`
+        : guest !== undefined && carefulGuests().includes(guest)
+          ? `The owner asked to approve every change to CT ${guest}.`
+          : null;
+
     /** Writing a file on a host: its own files run, the rest asks. */
     const writePolicy = (r: Remote): Verdict => {
       const h = hosts.get(r.host);
@@ -270,16 +278,21 @@ export const sshPlugin = definePlugin({
         (inGuest || !r.sudo) &&
         !r.path.includes("..") &&
         (r.path.startsWith("~/") || r.path.startsWith(home) || r.path.startsWith("/tmp/"));
-      if (!mine)
-        return ask(
-          inGuest
+      const keys = /authorized_keys|\/\.ssh\//.test(r.path);
+      const why = [
+        keys ? "It changes SSH keys." : null,
+        mine
+          ? null
+          : inGuest
             ? `It writes ${r.path} in CT ${r.guest}, outside /root and /tmp.`
             : `It writes ${r.path}, outside the hatbot user's own files.`,
-        );
-      if (/authorized_keys|\/\.ssh\//.test(r.path))
-        return ask("It changes SSH keys.", "account_security");
-      if (h?.careful) return askAlways(`The owner asked to approve every change on ${r.host}.`);
-      return allow();
+      ]
+        .filter(Boolean)
+        .join(" ");
+      const kind = keys ? "account_security" : undefined;
+      const careful = carefulOf(r.host, r.guest);
+      if (careful) return askAlways(why ? `${careful} ${why}` : careful, kind);
+      return why ? ask(why, kind) : allow();
     };
 
     const sandbox = () => {
@@ -355,10 +368,10 @@ export const sshPlugin = definePlugin({
         commands: ({ command }) => commandCount(command),
         policy: ({ host, command }) => {
           const d = destructive(command);
-          if (d) return ask(`This command ${d.why}.`, d.kind);
-          if (hosts.get(host)?.careful)
-            return askAlways(`The owner asked to approve every command on ${host}.`);
-          return allow();
+          // A careful host waits for the owner whatever the command; the pattern's reason still shows.
+          const careful = carefulOf(host);
+          if (careful) return askAlways(d ? `${careful} This command ${d.why}.` : careful, d?.kind);
+          return d ? ask(`This command ${d.why}.`, d.kind) : allow();
         },
         run: async ({ host, command, timeout_s }, { signal }) =>
           (await exec(hostOf(host), command, (timeout_s ?? 120) * 1000, signal)).text,
@@ -388,12 +401,11 @@ export const sshPlugin = definePlugin({
               commands: ({ command }) => commandCount(command),
               policy: ({ host, guest, command }) => {
                 const d = destructive(command, "container");
-                if (d) return ask(`This command ${d.why}.`, d.kind);
-                if (hosts.get(host)?.careful)
-                  return askAlways(`The owner asked to approve every command on ${host}.`);
-                if (reboots(command) && carefulGuests().includes(guest))
-                  return askAlways("The owner asked to approve power actions on it.");
-                return allow();
+                // A careful guest is careful about everything, not only power actions.
+                const careful = carefulOf(host, guest);
+                if (careful)
+                  return askAlways(d ? `${careful} This command ${d.why}.` : careful, d?.kind);
+                return d ? ask(`This command ${d.why}.`, d.kind) : allow();
               },
               run: async ({ host, guest, command, timeout_s }, { signal }) => {
                 const h = hostOf(host);

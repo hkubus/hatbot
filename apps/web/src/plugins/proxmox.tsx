@@ -1,4 +1,4 @@
-// Proxmox's settings: guests whose power actions always ask first.
+// Proxmox's settings: guests where every change asks first (power, and commands and files over SSH).
 import { useState } from "react";
 import { ApiError } from "../api";
 import type { PluginSettingsProps } from ".";
@@ -30,7 +30,7 @@ export function ProxmoxSettings({ config, save }: PluginSettingsProps<Config>) {
   return (
     <div className="panel form">
       <label>
-        <span className="label">Always ask before powering these guests</span>
+        <span className="label">Always ask before powering or changing these guests</span>
         <input
           className="field"
           value={text}

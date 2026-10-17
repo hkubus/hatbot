@@ -27,7 +27,10 @@ type Resource = {
 };
 
 const Config = z.object({
-  /** Guests whose power actions always ask first, e.g. the router or the NAS. */
+  /**
+   * Guests where every change waits for the owner, e.g. the router or the NAS: power actions here,
+   * and commands and files in them through the SSH plugin.
+   */
   careful: z.array(z.number().int().positive()).default([]),
 });
 
@@ -184,10 +187,15 @@ export const proxmoxPlugin = definePlugin({
             return block(
               "That's Hatbot's own brain: powering it would end this task. Ask the owner to do it.",
             );
-          if (action === "shutdown" || action === "stop")
-            return ask(`It stays off until someone starts it again.`);
+          const off =
+            action === "shutdown" || action === "stop"
+              ? "It stays off until someone starts it again."
+              : null;
           if (careful.has(vmid))
-            return askAlways("The owner asked to approve power actions on it.");
+            return askAlways(
+              `The owner asked to approve power actions on it.${off ? ` ${off}` : ""}`,
+            );
+          if (off) return ask(off);
           if (vmid === desktop) return ask("The desktop may be in use by a desktop task.");
           return allow();
         },
@@ -236,7 +244,9 @@ export const proxmoxPlugin = definePlugin({
     const special = [
       brain ? `Guest ${brain} is Hatbot's own brain; never power it.` : null,
       desktop ? `Guest ${desktop} is your desktop.` : null,
-      careful.size ? `Power actions on ${[...careful].join(", ")} always ask the owner.` : null,
+      careful.size
+        ? `Power actions on ${[...careful].join(", ")}, and commands and files in them, always wait for the owner.`
+        : null,
     ].filter(Boolean);
     return ready(tools, {
       guidance:

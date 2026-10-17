@@ -192,7 +192,29 @@ test("policy: restarts run, destructive commands and careful hosts ask, writes o
     action: "ask",
     why: "This command stops or disables a service.",
   });
-  expect(v("ssh_exec", { host: "router", command: "uptime" }).action).toBe("ask");
+  expect(v("ssh_exec", { host: "router", command: "uptime" })).toMatchObject({
+    action: "ask",
+    always: true,
+  });
+  // A destructive command on a careful host still waits for the owner, not the review.
+  expect(v("ssh_exec", { host: "router", command: "rm -rf /srv" })).toEqual({
+    action: "ask",
+    always: true,
+    kind: "delete",
+    why: "The owner asked to approve every change on router. This command deletes files recursively.",
+  });
+  expect(
+    v("ssh_write_file", { host: "router", path: "/etc/x", content: "", sudo: true }),
+  ).toMatchObject({ action: "ask", always: true });
+  // Keys outside home are still about keys.
+  expect(
+    v("ssh_write_file", {
+      host: "nas",
+      path: "/root/.ssh/authorized_keys",
+      content: "",
+      sudo: true,
+    }),
+  ).toMatchObject({ action: "ask", kind: "account_security" });
   expect(v("ssh_write_file", { host: "nas", path: "~/notes.txt", content: "" }).action).toBe(
     "allow",
   );
@@ -423,17 +445,33 @@ test("ssh_pct_exec runs a command in a container through a Proxmox host, quoted,
   expect(
     verdictFor(pct, { host: "pve", guest: 105, command: "docker restart app" }, call).action,
   ).toBe("allow");
-  // A container reboot runs, unless the Proxmox plugin marks the guest careful.
+  // A container reboot runs, unless the Proxmox plugin marks the guest careful: then everything in
+  // it waits for the owner, past the review, the pattern's reason and kind kept.
   expect(verdictFor(pct, { host: "pve", guest: 105, command: "reboot" }, call).action).toBe(
     "allow",
   );
   t.db
     .query("INSERT INTO settings (key, value) VALUES (?, ?)")
     .run("plugin:proxmox", JSON.stringify({ enabled: false, config: { careful: [105] } }));
-  expect(verdictFor(pct, { host: "pve", guest: 105, command: "reboot" }, call).action).toBe("ask");
+  for (const command of ["reboot", "systemctl restart nginx", "apt-get -y dist-upgrade"])
+    expect(verdictFor(pct, { host: "pve", guest: 105, command }, call), command).toMatchObject({
+      action: "ask",
+      always: true,
+      why: "The owner asked to approve every change to CT 105.",
+    });
+  expect(verdictFor(pct, { host: "pve", guest: 105, command: "rm -rf /srv" }, call)).toEqual({
+    action: "ask",
+    always: true,
+    kind: "delete",
+    why: "The owner asked to approve every change to CT 105. This command deletes files recursively.",
+  });
   expect(
-    verdictFor(pct, { host: "pve", guest: 105, command: "systemctl restart nginx" }, call).action,
+    verdictFor(pct, { host: "pve", guest: 106, command: "systemctl restart nginx" }, call).action,
   ).toBe("allow");
+  // So does copying a file into it.
+  const copy = sshTool("ssh_copy_file");
+  const into = { from: { sandbox: "x" }, to: { host: "pve", guest: 105, path: "/root/x" } };
+  expect(verdictFor(copy, into, call)).toMatchObject({ action: "ask", always: true });
   // The approval and the timeline show the whole command.
   const long = `${"echo checking; ".repeat(20)}systemctl restart ntfy`;
   expect(pct.describe?.({ host: "pve", guest: 105, command: long })).toBe(
