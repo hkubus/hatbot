@@ -3,6 +3,7 @@
 import type { PluginInfo } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "../api";
+import { NoForm } from "../form";
 import { Icon } from "../icons";
 import { PLUGIN_SETTINGS } from "../plugins";
 import { navigate } from "../router";
@@ -22,16 +23,29 @@ const STATE: Record<PluginInfo["state"], string> = {
 
 export function PluginsGroup() {
   const [ids, setIds] = useState<string[] | null>(null);
+  const [error, setError] = useState("");
   const plugins = useStore((s) => s.plugins);
-  useEffect(() => {
-    loadPlugins().then(setIds, () => setIds([]));
+  const load = useCallback(() => {
+    setError("");
+    loadPlugins().then(setIds, (err) => setError(errorText(err)));
   }, []);
-  if (!ids?.length) return null;
+  useEffect(load, [load]);
+  if (!error && !ids?.length) return null;
   return (
     <section className="group">
       <h2>Plugins</h2>
       <div className="group-box">
-        {ids.map((id) => {
+        {error && (
+          <div className="row">
+            <div className="txt">
+              <span className="form-error">{error}</span>
+            </div>
+            <button type="button" className="btn sm" onClick={load}>
+              Retry
+            </button>
+          </div>
+        )}
+        {(ids ?? []).map((id) => {
           const p = plugins[id];
           if (!p) return null;
           return (
@@ -59,31 +73,48 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
   const [error, setError] = useState("");
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+  /** The switch as you just set it, until the brain answers. */
+  const [turning, setTurning] = useState<boolean | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const action = useCallback(
     async <T,>(name: string, args: unknown = {}) =>
       (await api<{ result: T }>(`/plugins/${id}/actions/${name}`, { body: args })).result,
     [id],
   );
+  const load = useCallback(() => {
+    setError("");
+    loadPlugins().then(
+      () => setLoaded(true),
+      (err) => setError(errorText(err)),
+    );
+  }, []);
 
   useEffect(() => {
-    if (!p) loadPlugins().catch((err) => setError(errorText(err)));
-  }, [p]);
+    if (!p) load();
+  }, [p, load]);
 
   if (!p)
     return (
-      <section className="view">
-        <div className="page narrow">{error && <div className="form-error">{error}</div>}</div>
-      </section>
+      <NoForm
+        error={error}
+        missing={loaded ? "This plugin doesn't exist." : ""}
+        retry={load}
+        back={{ label: "Settings", go: () => navigate("/settings") }}
+      />
     );
 
   const Settings = PLUGIN_SETTINGS[p.id];
   const toggle = async (enabled: boolean) => {
     setError("");
     setResult(null);
+    // It flips at once; a failed save flips it back.
+    setTurning(enabled);
     try {
       await savePlugin(p.id, { enabled });
     } catch (err) {
       setError(errorText(err));
+    } finally {
+      setTurning(null);
     }
   };
   const save = async (config: unknown) => {
@@ -121,7 +152,7 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
         <div className="panel form">
           <div className="form-row">
             <span className="label">{p.name}</span>
-            <Switch on={p.enabled} onChange={toggle} />
+            <Switch on={turning ?? p.enabled} onChange={toggle} />
           </div>
           {p.message && <div className="form-error">{p.message}</div>}
           {error && <div className="form-error">{error}</div>}
