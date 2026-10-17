@@ -952,10 +952,12 @@ const readLine = (c: WebCall) =>
       ? `Searched the web for "${c.search}"`
       : "Searched the web"
     : `Read ${c.read || "a web page"}`;
+const CODE_READ = "Ran code that can search and read the web";
 
 /**
  * What a reply looked up on the web, in a line each: `Searched the web for "x"`, `Read https://…`.
- * Code whose own calls came back with it (a paused turn's) is told by those.
+ * Code whose own calls came back with it (a paused turn's) is told by those. Code the web tools run
+ * counts as a read even when no call shows in it: a URL in a variable or a helper function hides one.
  */
 export function webReads(content: Anthropic.Beta.BetaContentBlock[]): string[] {
   const told = new Set(
@@ -963,9 +965,12 @@ export function webReads(content: Anthropic.Beta.BetaContentBlock[]): string[] {
       b.type === "server_tool_use" && b.caller && "tool_id" in b.caller ? [b.caller.tool_id] : [],
     ),
   );
-  return content.flatMap((b) =>
-    b.type === "server_tool_use" && !told.has(b.id) ? webCalls(b.name, b.input).map(readLine) : [],
-  );
+  return content.flatMap((b) => {
+    if (b.type !== "server_tool_use" || told.has(b.id)) return [];
+    const calls = webCalls(b.name, b.input);
+    if (!calls.length && CODE_TOOLS.includes(b.name)) return [CODE_READ];
+    return calls.map(readLine);
+  });
 }
 
 /**
