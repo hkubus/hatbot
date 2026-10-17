@@ -562,6 +562,88 @@ test("a price copied wrong is unconfirmed, and the check doesn't see it", async 
   );
 });
 
+test("a quote from a PDF or from code's encrypted output is used unchecked, and the report says so", async () => {
+  const PDF = "https://global.synologydownload.com/ds925.pdf";
+  const pdf: Block[] = [
+    {
+      type: "server_tool_use",
+      id: "srvtoolu_pdf",
+      name: "web_fetch",
+      input: { url: PDF },
+    } as Block,
+    {
+      type: "web_fetch_tool_result",
+      tool_use_id: "srvtoolu_pdf",
+      content: {
+        type: "web_fetch_result",
+        url: PDF,
+        retrieved_at: null,
+        content: {
+          type: "document",
+          title: "DS925+ datasheet",
+          citations: null,
+          source: { type: "base64", media_type: "application/pdf", data: "JVBERi0xLjQK" },
+        },
+      },
+    } as unknown as Block,
+  ];
+  const encrypted: Block[] = [
+    {
+      type: "server_tool_use",
+      id: "srvtoolu_code",
+      name: "code_execution",
+      input: { code: "print(web_search(query='ds925+ price'))" },
+    } as Block,
+    {
+      type: "code_execution_tool_result",
+      tool_use_id: "srvtoolu_code",
+      content: {
+        type: "encrypted_code_execution_result",
+        encrypted_stdout: "c2VjcmV0",
+        stderr: "",
+        return_code: 0,
+        content: [],
+      },
+    } as unknown as Block,
+  ];
+  const work = new FakeModel([
+    INVESTIGATE,
+    finish("It's 22.4 dB(A) [1] and 2,399 zł [3], quiet [2].", "Report [1] [3] [2]."),
+  ]);
+  work.route = (p) => {
+    if (!isHelper(p)) return undefined;
+    const noise = JSON.stringify(p.messages[0]?.content).includes("noise");
+    return {
+      content: noise
+        ? [
+            ...pdf,
+            // A page read as text, where the quote isn't: still unconfirmed.
+            ...fetched(NOISE.url, "DS925+ specifications", "srvtoolu_spec"),
+            toolUse("report_findings", {
+              findings: [{ ...NOISE, url: PDF, title: "DS925+ datasheet" }, NOISE],
+              gaps: "",
+            }),
+          ]
+        : [...encrypted, toolUse("report_findings", { findings: [PRICE], gaps: "" })],
+    };
+  };
+  work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
+  const t = await testApp(new FakeModel(), work);
+  const task = await startResearch(t);
+  const findings = resultsIn(work.requests.filter((r) => !isHelper(r))[1]);
+  expect(findings.match(/Unchecked: the helper read it in a PDF or through code/g)).toHaveLength(2);
+  expect(findings.match(/Unconfirmed/g)).toHaveLength(1);
+  // The check compares the numbers with them, as with confirmed quotes.
+  const check = work.creates.find((c) => c.system === RESEARCH_CHECK_PROMPT);
+  expect(String(check?.messages[0]?.content)).toStartWith(
+    '<sources trusted="false">\n[1] "DS925+ datasheet"\n- "Noise level: 22.4 dB(A)"\n\n[3] "Synology DS925+ | x-kom"\n- "Synology DS925+ 2 399,00 zł"\n\n[2] "DS925+ specifications"\n- No confirmed quote.\n</sources>',
+  );
+  expect(task.status).toBe("done");
+  expect(await t.memory.read(task.reportPath as string)).toContain(
+    "Quotes from [1], [2] couldn't be checked against their pages (PDFs, or pages read through code)._",
+  );
+});
+
 test("cancelled while the numbers are checked, the research saves nothing", async () => {
   const work = new FakeModel([INVESTIGATE, finish("Get the DS925+ [1].", "Report [1].")]);
   helpers(work);
