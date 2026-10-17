@@ -1579,7 +1579,7 @@ export class Thread {
           type: "text",
           text: await this.episodeContext(bot, contextBefore, episode.id, episode.fresh, incognito),
         });
-        // /new and incognito leave what came before, and what it had read, behind.
+        // /new and incognito leave the messages before, and what they had read, behind.
         if (episode.isNew && !episode.fresh && !incognito) this.inheritTaint(episode.id, userId);
         // The running summary carries on what the conversations folded into it read.
         const carried = incognito ? null : this.summaryTaint();
@@ -2013,10 +2013,10 @@ export class Thread {
                       isError: true,
                     };
                 }
+                // A change waits for what the reply read so far to be screened.
+                await screener?.settled();
                 const from = this.clock();
                 try {
-                  // A change waits for what the reply read so far to be screened.
-                  await screener?.settled();
                   return await this.gatedCall(
                     episode.id,
                     bot,

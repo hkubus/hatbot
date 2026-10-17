@@ -489,12 +489,12 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     call: Anthropic.Beta.BetaToolUseBlock,
     what: string,
     verdict: Extract<Verdict, { action: "ask" }>,
-  ): Promise<{ safe: boolean; why: string }> => {
+  ): Promise<{ safe: boolean; why: string; suspected?: boolean }> => {
     // What it read so far is screened first: suspected injection skips the review.
     await screener.settled();
     const suspected = tasks.get(id)?.injectionSuspected ?? false;
     if (!d.settings.get().reviewChanges || !mayReview(verdict, suspected))
-      return { safe: false, why: suspected ? SUSPECTED : "" };
+      return { safe: false, why: "", suspected };
     const check = await safeToRun(
       d,
       { taskId: id },
@@ -547,12 +547,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         const answer = await askApproval({
           kind: verdict.kind ?? "other",
           summary: what,
-          reason:
-            check.why === SUSPECTED
-              ? `${verdict.why} ${SUSPECTED}`
-              : check.why
-                ? `${verdict.why} Haiku: ${check.why}`
-                : verdict.why,
+          reason: check.suspected
+            ? `${verdict.why} ${SUSPECTED}`
+            : check.why
+              ? `${verdict.why} Haiku: ${check.why}`
+              : verdict.why,
         });
         note = answer.note;
         if (answer.outcome !== "approved")

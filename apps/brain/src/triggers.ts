@@ -424,7 +424,6 @@ function same(a: string, b: string): boolean {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
-/** JSON indented for reading; anything else as it came. Cut to what a run gets to see. */
 /**
  * An Uptime Kuma alert in two parts: what Kuma itself says (the monitor, its type and address, the
  * status and the time), which is trusted, and its free-text message, which often quotes the monitored
@@ -447,6 +446,7 @@ export function alertParts(payload: string): { alert: string; message: string } 
 /** What a task read when it read an alert's message. */
 export const alertMessageSource = (monitor: string) => `The message in the alert for "${monitor}"`;
 
+/** JSON indented for reading; anything else as it came. Cut to what a run gets to see. */
 function pretty(body: string): string {
   let text = body;
   try {
