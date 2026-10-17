@@ -4,6 +4,7 @@ import { upgradeWebSocket } from "hono/bun";
 import { z } from "zod";
 import { principalOf, requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
+import { DesktopBusy } from "../desktop/service";
 import { ProxmoxError } from "../proxmox";
 import { json } from "./util";
 
@@ -90,8 +91,9 @@ export const desktopRoutes = new Hono<AppEnv>()
   .get("/desktop/status", (c) => c.json(c.var.desktop.get()))
   .post("/desktop/takeover", async (c) => {
     try {
-      await c.var.desktop.takeover();
-    } catch {
+      await c.var.desktop.takeover(true);
+    } catch (err) {
+      if (err instanceof DesktopBusy) return c.json({ error: err.message }, 409);
       return c.json({ error: "The desktop isn't answering." }, 503);
     }
     return c.json(c.var.desktop.get());

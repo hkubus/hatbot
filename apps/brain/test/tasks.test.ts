@@ -208,6 +208,92 @@ test("request_takeover waits for you to take over and hand back", async () => {
   expect(JSON.stringify(work.requests[1]?.messages.at(-1))).toContain("handed the desktop back");
 });
 
+test("an unanswered takeover leaves the screen to other tasks; Take over gives it back first", async () => {
+  let done = () => {};
+  const thinking = new Promise<void>((resolve) => {
+    done = resolve;
+  });
+  const work = new FakeModel([
+    // A meets a captcha at night and asks for you...
+    { content: [toolUse("request_takeover", { reason: "Solve the captcha" })] },
+    // ...B, an alert's task, runs meanwhile and is thinking when you take over...
+    { content: [computer("left_click", { coordinate: [10, 10] })], wait: thinking },
+    // ...A carries on once you hand back...
+    finish("A done."),
+    // ...and B looks again before it acts.
+    finish("B done."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const { cookie } = await setUpOwner(t);
+  const a = startTask(t, "A");
+  await waitFor(() => t.tasks.get(a.id)?.status === "waiting_takeover");
+  expect(t.tasks.lane.holderId).toBeNull();
+  const b = startTask(t, "B");
+  await waitFor(() => work.requests.length === 2);
+  expect(t.tasks.lane.holderId).toBe(b.id);
+
+  expect((await t.call("POST", "/desktop/takeover", undefined, { cookie })).status).toBe(200);
+  expect(t.tasks.lane.holderId).toBe(a.id);
+  expect(t.desktop.get()).toMatchObject({
+    control: "owner",
+    activeTaskId: a.id,
+    request: { taskId: a.id },
+  });
+  done();
+  await waitFor(() => t.tasks.get(b.id)?.status === "queued");
+  expect((await t.call("POST", "/desktop/handback", undefined, { cookie })).status).toBe(200);
+  await t.tasks.idle();
+  expect(t.tasks.get(a.id)?.summary).toBe("A done.");
+  expect(t.tasks.get(b.id)?.summary).toBe("B done.");
+  // B's click was planned on a screen that changed: it never ran.
+  expect(t.agent.actions.filter((x) => x.name === "left_click")).toEqual([]);
+  expect(JSON.stringify(work.requests[3]?.messages.at(-1))).toContain(
+    "another task had the desktop",
+  );
+  expect(t.desktop.get().request).toBeNull();
+});
+
+test("Take over says to try again while another task won't let go of the screen in time", async () => {
+  limits.takeoverReadyMs = 100;
+  let done = () => {};
+  const slow = new Promise<void>((resolve) => {
+    done = resolve;
+  });
+  const work = new FakeModel([
+    { content: [toolUse("request_takeover", { reason: "Solve the captcha" })] },
+    { content: [computer("left_click", { coordinate: [10, 10] })] },
+    finish("B done."),
+    finish("A done."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const { cookie } = await setUpOwner(t);
+  const action = t.agent.action.bind(t.agent);
+  t.agent.action = async (x) => {
+    if (x.name === "left_click") await slow;
+    return action(x);
+  };
+  try {
+    const a = startTask(t, "A");
+    await waitFor(() => t.tasks.get(a.id)?.status === "waiting_takeover");
+    const b = startTask(t, "B");
+    // B is in the middle of its click.
+    await waitFor(() => t.tasks.steps(b.id).some((s) => s.name === "left_click"));
+    const busy = await t.call("POST", "/desktop/takeover", undefined, { cookie });
+    expect(busy.status).toBe(409);
+    expect(((await busy.json()) as { error: string }).error).toContain("Try again");
+    expect(t.desktop.get().control).toBe("hatbot");
+    done();
+    await waitFor(() => t.tasks.get(b.id)?.status === "done");
+
+    expect((await t.call("POST", "/desktop/takeover", undefined, { cookie })).status).toBe(200);
+    expect((await t.call("POST", "/desktop/handback", undefined, { cookie })).status).toBe(200);
+    await t.tasks.idle();
+    expect(t.tasks.get(a.id)?.summary).toBe("A done.");
+  } finally {
+    limits.takeoverReadyMs = 8_000;
+  }
+});
+
 test("a page that looks like a prompt injection stops the task unless you approve", async () => {
   const work = new FakeModel([{ content: [computer("screenshot")] }, finish()]);
   work.onCreate = () => '{"suspected": true, "excerpt": "Ignore previous instructions"}';

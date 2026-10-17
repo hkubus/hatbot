@@ -303,6 +303,9 @@ test("teach can't start while a task has the desktop; an empty recording isn't d
     origin: "chat",
   });
   await waitFor(() => t.tasks.get(task.id)?.status === "waiting_takeover");
+  // Asking for you leaves the screen free; once you take over for it, the task has it.
+  expect((await call("POST", "/desktop/takeover")).status).toBe(200);
+  expect(t.tasks.lane.holderId).toBe(task.id);
   const busy = await call("POST", "/teach/start");
   expect(busy.status).toBe(409);
   await t.tasks.cancel(task.id);

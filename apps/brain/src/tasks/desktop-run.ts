@@ -39,8 +39,11 @@ export const UPDATES_MODELS = new Set(["claude-opus-5-5"]);
 /** A desktop task Haiku gives up on carries on, once, on Opus (PLAN.md §5.4). */
 const FIRST_MODEL = "claude-haiku-5-5";
 const ESCALATE_TO = "claude-opus-5-5";
-/** Steps per attempt; tests lower it. */
-export const limits = { maxSteps: 80 };
+/**
+ * Steps per attempt, and how long Take over waits for another task to let go of the screen for the task
+ * that asked; tests lower them.
+ */
+export const limits = { maxSteps: 80, takeoverReadyMs: 8_000 };
 /** A failure Opus may get past, where the model is asked what it tried. */
 const ASK = { account: null };
 const MAX_ACTIVE_MS = 30 * 60_000;
@@ -330,9 +333,26 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   /** Archive paths of the images in `messages`, so the stored transcript references files. */
   const imagePaths = new Map<string, string>();
 
-  const acquire = async () => {
-    await tasks.lane.acquire(id, signal);
+  /** Waiting for the model with the screen held: another task waiting ahead of the line may have it. */
+  let thinking = false;
+  /** A task waits ahead of the line: let go of the screen before the next model turn. */
+  let yieldAsked = false;
+  /** The screen went to another task while the model thought: what it planned may not fit any more. */
+  let lostScreen = false;
+  const giveWay = () => {
+    release();
+    lostScreen = true;
+  };
+
+  /** `first`: ahead of the line, for the task you took over for. `wait`: how long it may wait. */
+  const acquire = async (first = false, wait = signal) => {
+    await tasks.lane.acquire(id, wait, first);
     holding = true;
+    yieldAsked = false;
+    tasks.lane.onYield(id, () => {
+      if (thinking) giveWay();
+      else yieldAsked = true;
+    });
     since = tasks.clock();
     d.desktop.setActiveTask(id, task.botId);
     tasks.setStatus(id, "running");
@@ -818,6 +838,49 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       priority: 4,
       click: `${d.config.publicUrl}/tasks/${id}?live=1`,
     });
+    if (d.desktop.get().control === "hatbot") {
+      // Until you take over, other tasks may use the screen; when you do, it's this task's first.
+      release();
+      tasks.setStatus(id, "waiting_takeover");
+      let failed: unknown = null;
+      let taken = () => {};
+      const asked = new Promise<void>((resolve) => {
+        taken = resolve;
+      });
+      const off = d.desktop.onTakeover(id, async () => {
+        try {
+          if (!holding)
+            await acquire(
+              true,
+              AbortSignal.any([signal, AbortSignal.timeout(limits.takeoverReadyMs)]),
+            );
+          taken();
+        } catch (err) {
+          // Another task kept the screen past the wait: you can try again. Anything else ends this one.
+          if (err instanceof Stop) {
+            failed = err;
+            taken();
+          }
+          throw err;
+        }
+      });
+      const timeout = AbortSignal.timeout(TAKEOVER_TIMEOUT_MS);
+      const until = AbortSignal.any([signal, timeout]);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          if (until.aborted) return reject(until.reason);
+          until.addEventListener("abort", () => reject(until.reason), { once: true });
+          void asked.then(resolve);
+        });
+      } catch (err) {
+        if (timeout.aborted && !signal.aborted)
+          throw new Stop("cancelled", "Nobody took over the desktop within 24 hours.");
+        throw err;
+      } finally {
+        off();
+      }
+      if (failed) throw failed;
+    }
     await waitForOwner();
     d.desktop.clearRequest(id);
     tasks.addStep(id, { kind: "takeover", name: "You handed back", detail: "", url: lastUrl });
@@ -895,11 +958,18 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         continue;
       }
 
-      const res = await d.model.stream(request(messages), {
-        onText: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
-        onThinking: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
-        signal,
-      });
+      // The model doesn't need the screen to think: a task you took over for may have it meanwhile.
+      if (yieldAsked && tasks.lane.waiting) giveWay();
+      thinking = true;
+      const res = await d.model
+        .stream(request(messages), {
+          onText: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
+          onThinking: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
+          signal,
+        })
+        .finally(() => {
+          thinking = false;
+        });
       d.spend.recordResponse({
         model,
         purpose: "task",
@@ -931,6 +1001,28 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           .join("")
           .trim();
         throw new Stop("done", text || "Finished.");
+      }
+      if (lostScreen) {
+        lostScreen = false;
+        if (!holding) {
+          tasks.setStatus(id, "queued");
+          await acquire();
+        }
+        const seen = await look(
+          "After another task",
+          "Not run: while you were thinking, another task had the desktop. It may have changed.",
+        );
+        record(
+          "user",
+          calls.map((c, i) =>
+            textResult(
+              c,
+              i === 0 ? seen : "Not run: another task had the desktop meanwhile.",
+              true,
+            ),
+          ),
+        );
+        continue;
       }
 
       const results: BlockParam[] = [];
@@ -1046,10 +1138,10 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     await acquire();
     // Tabs an earlier task left open would be in this one's way, and in its context. A task of the same
     // bot that's waiting for you mid-run keeps its page: this one starts in a tab of its own instead.
-    const paused = tasks
+    const another = tasks
       .list({ status: "active", botId: task.botId })
       .some((t) => t.id !== id && t.lane === "screen" && t.startedAt !== null);
-    await (paused
+    await (another
       ? agent.browser({ name: "new_tab", input: {} })
       : d.desktop.agent.resetBrowser()
     ).catch((err) => {
