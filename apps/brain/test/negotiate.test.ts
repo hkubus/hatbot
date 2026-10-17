@@ -1469,3 +1469,32 @@ test("the scam screen knows the marketplace's own name, card details and disguis
     "a bank account number (“61109010140000071219812874”)",
   );
 });
+
+test("the scam screen lets graphics cards, parcel codes, serial numbers and the marketplace's own address pass", () => {
+  for (const text of [
+    "Dane karty: GTX 1080, 8 GB GDDR5",
+    "Nr karty gwarancyjnej 123",
+    "Podam numer karty z pudełka",
+    "Proszę o dane karty pamięci",
+    "Wsp. do monitora gratis",
+    "Kod z aplikacji InPost do odbioru",
+    "Kod potwierdzenia nadania mam",
+    "SN: AB12 CD34 EF56 GH78",
+    "Wysyłka przez www.olx.pl.",
+    "Wysyłka przez www.olx.pl, ok?",
+    "Wysyłka przez https://olx.pl.",
+    "Wysyłka (olx.pl)",
+  ])
+    expect([text, scamSignals(text, [])]).toEqual([text, []]);
+  for (const text of [
+    "Podaj numer karty płatniczej",
+    "Wyślij dane karty kredytowej",
+    "Pisz na wsp",
+    "Kod z aplikacji bankowej poproszę",
+    "Podaj kod do potwierdzenia transakcji",
+  ])
+    expect([text, scamSignals(text, []).length > 0]).toEqual([text, true]);
+  // A number shaped like an account but whose check digits don't add up is no account.
+  for (const text of ["Konto 61109010140000071219812875", "Kod produktu: PL12 3456 7890 1234"])
+    expect(scamSignals(text, []).join()).not.toContain("bank account");
+});

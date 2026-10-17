@@ -60,10 +60,58 @@ const fold = (s: string) =>
     .replace(/\s+/g, " ");
 
 /**
- * Paying off the platform, card details, the apps scams move to and crypto, matched on folded text so
- * the disguised spellings count too. `*` is any ending.
+ * A word or phrase to find in folded text: `*` is any ending, and `not` lists what may not follow it
+ * ("kod z aplikacji" is a bank's, not InPost's).
  */
-const DISGUISED = [
+type Term = string | { t: string; not: string[] };
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const stem = (t: string) =>
+  t
+    .split("*")
+    .map((p) => escapeRe(fold(p)))
+    .join("\\p{L}*");
+/** One pattern for a list of terms, a group each, so the match says which term it was. */
+const termsRe = (terms: Term[]) =>
+  new RegExp(
+    `(?<![\\p{L}\\p{N}])(?:${terms
+      .map((t) =>
+        typeof t === "string"
+          ? `(${stem(t)})`
+          : `(${stem(t.t)}(?! (?:${t.not.map(stem).join("|")})))`,
+      )
+      .join("|")})(?![\\p{L}\\p{N}])`,
+    "u",
+  );
+const termOf = (terms: Term[], m: RegExpExecArray) => {
+  const t = terms[m.slice(1).findIndex((g) => g !== undefined)];
+  return (typeof t === "string" ? t : t?.t)?.replace(/\*/g, "") ?? m[0];
+};
+
+/** What a parcel's or a delivery's own code is for: not a payment. */
+const PARCEL = [
+  "inpost",
+  "paczkomat*",
+  "olx",
+  "allegro",
+  "vinted",
+  "dpd",
+  "dhl",
+  "poczt*",
+  "orlen",
+  "zabk*",
+  "odbior*",
+  "nadani*",
+  "przesylk*",
+  "paczk*",
+  "dostaw*",
+  "wysylk*",
+];
+
+/**
+ * Paying off the platform, the apps scams move to and crypto, matched on folded text so the
+ * disguised spellings count too.
+ */
+const DISGUISED: Term[] = [
   "blik*",
   "przelew*",
   "przelac",
@@ -83,26 +131,21 @@ const DISGUISED = [
   "pejpal*",
   "pay pal",
   "western union",
-  "dane karty",
-  "danych karty",
-  "dane do karty",
-  "numer* karty",
-  "nr karty",
   "cvv*",
   "cvc*",
   "kod* z karty",
-  "kod* z aplikacji",
+  { t: "kod* z aplikacji", not: PARCEL },
   "kod* do platnosci",
   "kod* platnosci",
-  "kod* potwierdzenia",
-  "kod* do potwierdzenia",
-  "card number",
-  "card details",
+  { t: "kod* potwierdzenia", not: PARCEL },
+  { t: "kod* do potwierdzenia", not: PARCEL },
   "whatsapp*",
   "whatsap*",
   "whatsup*",
   "watsap*",
-  "wsp",
+  // "Wsp." is short for much else; as an app, it's where to write.
+  "na wsp",
+  "przez wsp",
   "telegram*",
   "wa.me",
   "t.me",
@@ -114,40 +157,93 @@ const DISGUISED = [
   "tether",
   "ethereum",
 ];
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const DISGUISED_RE = new RegExp(
-  `(?<![\\p{L}\\p{N}])(?:${DISGUISED.map(
-    (t) =>
-      `(${t
-        .split("*")
-        .map((p) => escapeRe(fold(p)))
-        .join("\\p{L}*")})`,
-  ).join("|")})(?![\\p{L}\\p{N}])`,
-  "u",
-);
+const DISGUISED_RE = termsRe(DISGUISED);
+
+/** A card's details, unless it's a graphics, memory, SIM or warranty card's. */
+const CARD_KINDS = [
+  "graficzn*",
+  "gwarancyjn*",
+  "pamieci",
+  "sd",
+  "microsd",
+  "sim",
+  "sieciow*",
+  "dzwiekow*",
+  "muzyczn*",
+  "rozszerzen*",
+  "graphics",
+  "memory",
+  "sound",
+  "video",
+];
+const CARD: Term[] = [
+  "dane karty",
+  "danych karty",
+  "dane do karty",
+  "dane z karty",
+  "numer* karty",
+  "nr karty",
+  "nr. karty",
+  "card number",
+  "card details",
+].map((t) => ({ t, not: CARD_KINDS }));
+const CARD_RE = termsRe(CARD);
+/** Words that make a card's details a payment card's, asked for: "Podaj dane karty", "karty płatniczej". */
+const CARD_ASKED = termsRe([
+  "podaj*",
+  "przeslij*",
+  "wyslij*",
+  "platnicz*",
+  "kredytow*",
+  "debetow*",
+  "cvv*",
+  "cvc*",
+  "kod*",
+  "blik*",
+  "zaplat*",
+  "platnos*",
+  "credit",
+  "debit",
+  "send",
+]);
 
 /** The word a disguised spelling stands for, or null. */
 function disguised(text: string): string | null {
-  const m = DISGUISED_RE.exec(fold(text));
-  if (!m) return null;
-  const i = m.slice(1).findIndex((g) => g !== undefined);
-  return DISGUISED[i]?.replace(/\*/g, "") ?? m[0];
+  const folded = fold(text);
+  const m = DISGUISED_RE.exec(folded);
+  if (m) return termOf(DISGUISED, m);
+  const card = CARD_RE.exec(folded);
+  return card && CARD_ASKED.test(folded) ? termOf(CARD, card) : null;
 }
 
 /**
- * A bank account number: a Polish one's 26 digits, with PL or without, or an IBAN with its country.
- * Not any long number: a parcel's is 24 digits.
+ * A bank account number: a Polish one's 26 digits, with PL or without, or an IBAN with its country,
+ * whose check digits add up. Not any long number: a parcel's is 24 digits, and a serial number can look
+ * like an IBAN.
  */
 const ACCOUNT =
-  /(?<![\p{L}\p{N}])(?:(?:PL ?)?\d{2}(?:[ -]?\d{4}){6}|[A-Z]{2}\d{2}(?: ?[A-Z\d]{4}){3,7}(?: ?[A-Z\d]{1,3})?)(?![\p{L}\p{N}])/u;
+  /(?<![\p{L}\p{N}])(?:(?:PL ?)?\d{2}(?:[ -]?\d{4}){6}|[A-Z]{2}\d{2}(?: ?[A-Z\d]{4}){3,7}(?: ?[A-Z\d]{1,3})?)(?![\p{L}\p{N}])/gu;
 const digits = (s: string) => s.replace(/\D/g, "");
 
-/** The marketplace's own name as a bare address ("OLX.pl"), which isn't a link anywhere. */
+/** IBAN's mod-97 check; a Polish account's 26 digits are checked as PL's. */
+function ibanChecks(raw: string): boolean {
+  let s = raw.replace(/[\s-]/g, "").toUpperCase();
+  if (/^\d{26}$/.test(s)) s = `PL${s}`;
+  if (s.startsWith("PL") && s.length !== 28) return false;
+  let rem = 0;
+  for (const ch of s.slice(4) + s.slice(0, 4))
+    for (const d of /\d/.test(ch) ? ch : String(ch.charCodeAt(0) - 55))
+      rem = (rem * 10 + Number(d)) % 97;
+  return rem === 1;
+}
+
+/** The marketplace's own name as a bare address ("OLX.pl", "www.olx.pl."), which isn't a link anywhere. */
 function ownSite(link: string): boolean {
   try {
-    const u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(link) ? link : `https://${link}`);
+    const bare = link.replace(/[.,;:!?)\]]+$/, "");
+    const u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(bare) ? bare : `https://${bare}`);
     const host = u.hostname.toLowerCase().replace(/^www\./, "");
-    return MARKETPLACE_HOSTS.includes(host) && u.pathname === "/" && !u.search;
+    return MARKETPLACE_HOSTS.includes(host) && u.pathname === "/" && !u.search && !u.hash;
   } catch {
     return false;
   }
@@ -165,7 +261,7 @@ export function scamSignals(text: string, allow: MandateContact[]): string[] {
   const out: string[] = [];
   const off = OFF_PLATFORM.exec(text)?.[0] ?? disguised(text);
   if (off) out.push(`payment or talk off the platform (“${off}”)`);
-  const account = ACCOUNT.exec(plain(text))?.[0];
+  const account = [...plain(text).matchAll(ACCOUNT)].map((m) => m[0]).find(ibanChecks);
   if (account) out.push(`a bank account number (“${account}”)`);
   const link = linksIn(text).find((l) => !ownSite(l));
   if (link) out.push(`a link (“${link}”)`);
