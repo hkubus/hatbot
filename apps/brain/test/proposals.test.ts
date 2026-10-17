@@ -1,7 +1,14 @@
 import { expect, test } from "bun:test";
 import type { Proposal, SkillStatus } from "@hatbot/shared";
+import type { StreamParams } from "../src/agent/model";
 import { HATBOT } from "../src/memory/store";
+import { text } from "./fake-model";
 import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
+
+/** Answers each proposal request with the JSON `reply` gives, as the model would. */
+function answers(t: TestApp, reply: (p: Omit<StreamParams, "stream">) => string) {
+  t.taskModel.route = (p) => (p.output_config?.format ? { content: [text(reply(p))] } : undefined);
+}
 
 /** Starts a tidy-up and waits for the proposal it writes. */
 async function tidy(t: TestApp, cookie: string): Promise<Proposal> {
@@ -26,7 +33,7 @@ test("a tidy-up is proposed as a diff, and applied as you in one commit", async 
     HATBOT,
     "Notes",
   );
-  t.taskModel.onCreate = (p) => {
+  answers(t, (p) => {
     expect(JSON.stringify(p.messages)).toContain("The router is at 192.168.1.1.");
     return JSON.stringify({
       title: "Merge the router notes",
@@ -37,14 +44,22 @@ test("a tidy-up is proposed as a diff, and applied as you in one commit", async 
         { path: "skills/x.md", content: "nope" },
       ],
     });
-  };
+  });
   const p = await tidy(t, cookie);
   expect(t.events.some((e) => e.type === "proposal.updated" && e.proposal.id === p.id)).toBe(true);
   expect(p.changes.map((c) => [c.path, c.before !== null, c.after !== null])).toEqual([
     ["network.md", true, false],
     ["home.md", true, true],
   ]);
-  expect(t.taskModel.creates.at(-1)?.model).toBe("claude-opus-5-5");
+  // Opus 5.5 can't be made to call a tool: it answers in JSON of a set shape instead.
+  const request = t.taskModel.requests.at(-1);
+  expect(request).toMatchObject({
+    model: "claude-opus-5-5",
+    thinking: { type: "adaptive" },
+    output_config: { format: { type: "json_schema" } },
+  });
+  expect(request?.tool_choice).toBeUndefined();
+  expect(request?.tools).toBeUndefined();
   const found = async () => [...new Set((await t.memory.search("router")).map((h) => h.path))];
   expect(await found()).toEqual(expect.arrayContaining(["home.md", "network.md"]));
 
@@ -65,8 +80,9 @@ test("a proposal goes stale when memory changes under it; nothing to tidy is no 
   const t = await testApp();
   const { cookie } = await setUpOwner(t);
   await t.memory.write("a.md", "# A\nold\n", HATBOT, "A");
-  t.taskModel.onCreate = () =>
-    JSON.stringify({ title: "T", reason: "R", changes: [{ path: "a.md", content: "# A\nnew\n" }] });
+  answers(t, () =>
+    JSON.stringify({ title: "T", reason: "R", changes: [{ path: "a.md", content: "# A\nnew\n" }] }),
+  );
   const p = await tidy(t, cookie);
   await t.memory.write("a.md", "# A\nedited by hand\n", HATBOT, "Edit");
   const res = await t.call("POST", `/proposals/${p.id}/apply`, undefined, { cookie });
@@ -74,17 +90,24 @@ test("a proposal goes stale when memory changes under it; nothing to tidy is no 
   expect(t.proposals.get(p.id)?.status).toBe("stale");
 
   // Nothing to tidy, or a failure: you're told.
-  t.taskModel.onCreate = () => JSON.stringify({ title: "Nothing", reason: "Tidy.", changes: [] });
+  answers(t, () => JSON.stringify({ title: "Nothing", reason: "Tidy.", changes: [] }));
   expect((await t.call("POST", "/proposals/tidy", undefined, { cookie })).status).toBe(202);
   await waitFor(() => t.notifier.sent.find((n) => n.title === "Memory is tidy"));
-  t.taskModel.onCreate = () => {
+  answers(t, () => {
     throw new Error("overloaded");
-  };
+  });
   expect((await t.call("POST", "/proposals/tidy", undefined, { cookie })).status).toBe(202);
   const told = await waitFor(() =>
     t.notifier.sent.find((n) => n.title === "The tidy-up of memory failed"),
   );
   expect(told.message).toContain("overloaded");
+  // An answer that isn't the JSON asked for.
+  answers(t, () => "I'd merge the router notes.");
+  expect((await t.call("POST", "/proposals/tidy", undefined, { cookie })).status).toBe(202);
+  const unread = await waitFor(() =>
+    t.notifier.sent.find((n) => n.message === "The model's answer couldn't be read. Try again."),
+  );
+  expect(unread.title).toBe("The tidy-up of memory failed");
 });
 
 test("a skill whose tasks failed or needed you is flagged, and its fix replaces it", async () => {
@@ -125,7 +148,7 @@ test("a skill whose tasks failed or needed you is flagged, and its fix replaces 
   ).json()) as SkillStatus[];
   expect(s).toMatchObject({ name: "order-pizza", runs: 3, failed: [failed], takeovers: [handed] });
 
-  t.taskModel.onCreate = (p) => {
+  answers(t, (p) => {
     expect(JSON.stringify(p.messages)).toContain("The Order button is gone");
     return JSON.stringify({
       title: "Use the new checkout",
@@ -138,7 +161,7 @@ test("a skill whose tasks failed or needed you is flagged, and its fix replaces 
         },
       ],
     });
-  };
+  });
   const res = await t.call("POST", "/skills/order-pizza/fix", undefined, { cookie });
   expect(res.status).toBe(202);
   const p = await waitFor(() => t.proposals.list()[0]);
