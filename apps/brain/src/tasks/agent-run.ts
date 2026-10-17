@@ -23,6 +23,7 @@ import {
   WEB_TOOLS,
   webReads,
 } from "../agent/tools";
+import { tagJson, untrustedBlock } from "../agent/untrusted";
 import { type Outcome, ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import type { CallContext, PluginTool, Verdict } from "../plugins/plugin";
@@ -292,7 +293,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     taint(`Desktop task #${child.id}`);
     return result(
       call,
-      `Desktop task #${child.id} ended: ${ended.status}, $${ended.costUsd.toFixed(2)}.\n<desktop_summary trusted="false">\n${JSON.stringify(ended.summary ?? "")}\n</desktop_summary>`,
+      `Desktop task #${child.id} ended: ${ended.status}, $${ended.costUsd.toFixed(2)}.\n${untrustedBlock("desktop_summary", ended.summary ?? "")}`,
     );
   };
 
@@ -560,7 +561,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const skills = d.skills.prompt();
     const source = task.source ?? "";
     const payload = task.payload
-      ? `\n<event trusted="${task.tainted ? "false" : "true"}">\n${JSON.stringify(task.payload)}\n</event>`
+      ? `\n<event trusted="${task.tainted ? "false" : "true"}">\n${tagJson(task.payload)}\n</event>`
       : "";
     const asker = task.requestedBy && d.bots.nameOf(task.requestedBy);
     const startedBy = asker

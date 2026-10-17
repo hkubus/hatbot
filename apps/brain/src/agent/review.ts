@@ -6,6 +6,7 @@ import type { Verdict } from "../plugins/plugin";
 import type { Spend } from "../spend";
 import type { ModelClient } from "./model";
 import { REVIEW_PROMPT } from "./prompt";
+import { tagJson } from "./untrusted";
 
 const REVIEW_MODEL = "claude-haiku-5-5";
 
@@ -46,8 +47,8 @@ export async function safeToRun(
           content: [
             `<owner_said>\n${context.ownerSaid ?? "(nothing the owner wrote is available for this task)"}\n</owner_said>`,
             `<task_goal>\n${context.goal}\n</task_goal>`,
-            `<untrusted_sources>\n${JSON.stringify(context.sources)}\n</untrusted_sources>`,
-            `<action>\n${JSON.stringify({ tool: action.tool, input: action.input, summary: action.what, would_ask_because: action.why })}\n</action>`,
+            `<untrusted_sources>\n${tagJson(context.sources)}\n</untrusted_sources>`,
+            `<action>\n${tagJson({ tool: action.tool, input: action.input, summary: action.what, would_ask_because: action.why })}\n</action>`,
           ].join("\n\n"),
         },
       ],

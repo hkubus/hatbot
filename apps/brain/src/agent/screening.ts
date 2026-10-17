@@ -3,6 +3,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Spend } from "../spend";
 import type { ModelClient } from "./model";
 import { SCREENING_PROMPT } from "./prompt";
+import { tagJson } from "./untrusted";
 
 export const SCREENING_MODEL = "claude-haiku-5-5";
 
@@ -35,7 +36,7 @@ export async function screenPage(
       messages: [
         {
           role: "user",
-          content: `<page_json>\n${JSON.stringify({ url: page.url, title: page.title, text: page.text })}\n</page_json>`,
+          content: `<page_json>\n${tagJson({ url: page.url, title: page.title, text: page.text })}\n</page_json>`,
         },
       ],
     });

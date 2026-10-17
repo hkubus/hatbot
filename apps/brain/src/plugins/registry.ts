@@ -2,6 +2,7 @@
 // to tasks (PLAN.md §4.5).
 import type { PluginInfo, PluginState } from "@hatbot/shared";
 import { z } from "zod";
+import { untrustedBlock } from "../agent/untrusted";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
 import {
@@ -346,9 +347,7 @@ export async function runPluginTool(
   const untrusted =
     typeof t.untrusted === "function" ? t.untrusted(parsed.data) : Boolean(t.untrusted);
   const label = (text: string) =>
-    untrusted
-      ? `<tool_output tool="${t.name}" trusted="false">\n${JSON.stringify(text)}\n</tool_output>`
-      : text;
+    untrusted ? untrustedBlock("tool_output", text, { tool: t.name }) : text;
   let out: string;
   try {
     out = await t.run(parsed.data, call);
