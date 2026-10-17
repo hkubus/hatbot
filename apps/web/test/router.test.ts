@@ -2,7 +2,9 @@ import { afterAll, expect, test } from "bun:test";
 import { fakeBrowser, settle } from "./fake-browser";
 
 const b = fakeBrowser("/memory");
-const { navigate, setLeaveGuard } = await import("../src/router");
+// Its own copy of the router: it listens on the window that's there as it loads, and the files run
+// before this one load theirs under another.
+const { navigate, setLeaveGuard } = await import("../src/router.ts?router-test");
 const { ask, askText } = await import("../src/confirm");
 afterAll(() => b.restore());
 
