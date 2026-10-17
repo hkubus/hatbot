@@ -29,7 +29,7 @@ export const desktopRoutes = new Hono<AppEnv>()
     "/desktop/live",
     // Same rules as /stream: a cookie needs the public Origin, an app uses its bearer token.
     async (c, next) => {
-      const principal = principalOf(c);
+      const principal = principalOf(c, { renew: false });
       if (!principal) return c.json({ error: "unauthorized" }, 401);
       if (principal.kind === "session" && c.req.header("origin") !== c.var.config.publicUrl) {
         return c.json({ error: "bad origin" }, 403);

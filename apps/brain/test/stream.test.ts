@@ -41,6 +41,27 @@ test("signing out or revoking a token closes its live sockets, and only those", 
   }
 });
 
+test("opening the stream leaves the session's renewal to the next request, which sends the cookie", async () => {
+  const t = await testApp();
+  const { cookie } = await setUpOwner(t);
+  t.advance(2 * 86400_000);
+  const brain = Bun.serve({ port: 0, fetch: (req, srv) => t.app.fetch(req, srv), websocket });
+  try {
+    const ws = new WebSocket(`ws://127.0.0.1:${brain.port}/api/v1/stream`, {
+      headers: { cookie, origin: ORIGIN },
+    } as unknown as string[]);
+    await new Promise((r) => {
+      ws.onmessage = r;
+    });
+    ws.close();
+  } finally {
+    brain.stop(true);
+  }
+  const me = await t.call("GET", "/auth/me", undefined, { cookie });
+  expect(me.headers.get("set-cookie")).toStartWith(`${cookie};`);
+  expect(me.headers.get("set-cookie")).toContain("Max-Age=2592000");
+});
+
 test("streamed text goes out together, and before whatever follows it", async () => {
   const sent: HatbotEvent[] = [];
   const batch = batchText((e) => sent.push(e));

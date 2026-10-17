@@ -226,7 +226,7 @@ export class AuthService {
   }
 
   /** The session, and whether its expiry moved on, so its cookie should too. */
-  resolveSession(token: string): (Principal & { renewed?: true }) | null {
+  resolveSession(token: string, renew = true): (Principal & { renewed?: true }) | null {
     const row = this.db
       .query<{ id: number; expires_at: string }, [string]>(
         "SELECT id, expires_at FROM sessions WHERE token_hash = ?",
@@ -240,7 +240,7 @@ export class AuthService {
       return null;
     }
     // Sliding expiry, refreshed at most daily.
-    if (Date.parse(row.expires_at) - nowMs < (SESSION_DAYS - 1) * 86400_000) {
+    if (renew && Date.parse(row.expires_at) - nowMs < (SESSION_DAYS - 1) * 86400_000) {
       const expires = new Date(nowMs + SESSION_DAYS * 86400_000).toISOString();
       this.db.query("UPDATE sessions SET expires_at = ? WHERE id = ?").run(expires, row.id);
       return { kind: "session", id: row.id, renewed: true };
