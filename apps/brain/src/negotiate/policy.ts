@@ -75,9 +75,17 @@ export function sendPolicy(n: Negotiation, input: SendInput, f: SendFacts): Verd
 
   // Asks: outside the mandate, or something the mandate doesn't cover.
   const why = outside(n, input, f);
-  return why.length
-    ? askAlways(`Outside the mandate: ${why.join(" ")}`, "send")
-    : covered("Within the mandate you approved");
+  if (!why.length) return covered("Within the mandate you approved");
+  // Money and terms past the mandate are approved in the app, as the mandate is; a message that only
+  // carries a link or contact details can be approved from the lock screen.
+  const text = plain(input.text);
+  const talk =
+    contactsIn(text).filter((c) => !n.mandate.allow.includes(c.kind)).length +
+    (linksIn(text).length ? 1 : 0);
+  return askAlways(
+    `Outside the mandate: ${why.join(" ")}`,
+    input.agree || why.length > talk ? "purchase" : "send",
+  );
 }
 
 const pad = (h: number) => String(h).padStart(2, "0");
