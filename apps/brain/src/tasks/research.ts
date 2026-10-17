@@ -8,7 +8,7 @@ import { z } from "zod";
 import { modelErrorText } from "../agent/model";
 import { RESEARCH_CHECK_PROMPT, RESEARCH_PROMPT, RESEARCH_WORKER_PROMPT } from "../agent/prompt";
 import { localStamp } from "../agent/thread";
-import { containerOf, toolParam, webReads, webTools } from "../agent/tools";
+import { containerOf, serverToolWaiting, toolParam, webReads, webTools } from "../agent/tools";
 import { botFolder } from "../bots";
 import { BudgetError, estimateTokens, priceOf } from "../spend";
 import { refreshing } from "./research-goal";
@@ -187,6 +187,20 @@ async function runWorker(
         tools: WORKER_TOOLS,
         thinking: { type: "adaptive" },
         output_config: { effort: "medium" },
+        // Pages read early are cleared on the server once the prompt passes 70k, below the 100k where
+        // Haiku 5.5 bills the whole request at 5x.
+        betas: ["context-management-2025-06-27"],
+        context_management: {
+          edits: [
+            {
+              type: "clear_tool_uses_20250919",
+              trigger: { type: "input_tokens", value: 70_000 },
+              keep: { type: "tool_uses", value: 4 },
+              clear_at_least: { type: "input_tokens", value: 20_000 },
+              exclude_tools: ["report_findings"],
+            },
+          ],
+        },
         ...(container ? { container } : {}),
         messages,
       },
@@ -218,9 +232,9 @@ async function runWorker(
     const parsed = report && ReportFindings.safeParse(report.input);
     if (parsed?.success) return parsed.data;
     if (res.stop_reason === "max_tokens") return stopped("The helper's report was cut off.");
-    const last = step >= MAX_WORKER_STEPS - 2;
+    // Not while the web tools' code is still running: then only tool results may follow.
     const nudge: BlockParam[] =
-      last || !calls.length
+      (step >= MAX_WORKER_STEPS - 2 || !calls.length) && !serverToolWaiting(res.content)
         ? [{ type: "text", text: "Report what you found now, with report_findings." }]
         : [];
     messages.push({

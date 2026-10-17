@@ -608,8 +608,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       const res = await d.model.stream(
         {
           model: task.model,
-          // Code work writes whole files into tool calls.
-          max_tokens: task.effort ? 32000 : 16000,
+          // Code work writes whole files into tool calls, and research its report.
+          max_tokens: research ? 64000 : task.effort ? 32000 : 16000,
           betas: research ? [...BETAS, RESEARCH_BETA] : BETAS,
           // Tools and system end here, the same for each of this bot's tasks, so they share the entry; the
           // top-level breakpoint follows the conversation. Two of the four breakpoints allowed.
