@@ -460,9 +460,9 @@ private struct Composer: View {
       guard !picked.isEmpty else { return }
       photos = []
       Task {
-        for (i, item) in picked.enumerated() {
-          let index = files.count + i + 1
-          guard let photo = await Self.load(item, index: index) else {
+        for item in picked {
+          // attach() adds each one to `files`, so the next is numbered after it.
+          guard let photo = await Self.load(item, index: files.count + 1) else {
             error = "Couldn't read that photo."
             continue
           }

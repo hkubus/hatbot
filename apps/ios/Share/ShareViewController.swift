@@ -125,9 +125,10 @@ struct ShareView: View {
   }
 
   private func load() async {
-    for (i, p) in providers.enumerated() {
+    for p in providers {
       if p.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
-        if let photo = await Self.photo(p, index: i + 1) {
+        // Numbered among the files, not among links and texts.
+        if let photo = await Self.photo(p, index: files.count + 1) {
           files.append(
             SharedFile(content: .data(photo.data), name: photo.name, mediaType: "image/jpeg", preview: photo.preview))
         }
