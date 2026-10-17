@@ -80,7 +80,6 @@ type KumaBody = {
 };
 
 export class Triggers {
-  private clock: () => number;
   private prunedAt = 0;
 
   constructor(
@@ -90,10 +89,8 @@ export class Triggers {
     private tasks: Tasks,
     private notifier: Notifier,
     private publicUrl: string,
-    clock?: () => number,
-  ) {
-    this.clock = clock ?? Date.now;
-  }
+    private clock: () => number = Date.now,
+  ) {}
 
   private toTrigger = (r: Row): Trigger => ({
     id: r.id,
