@@ -565,6 +565,15 @@ function Fold({
   );
 }
 
+/**
+ * Whether the thread follows the newest message after a scroll: any scroll up, however small, stops it
+ * (reading back while a reply streams), and only reaching the bottom again starts it.
+ */
+export function follows(was: boolean, lastTop: number, top: number, below: number): boolean {
+  if (below < 4) return true;
+  return top < lastTop ? false : was;
+}
+
 /** `id`: the chat to show. It's opened here, before loading, so a message asked for is looked for in it. */
 export function Chat({ id }: { id: number }) {
   const messages = useStore((s) => s.messages);
@@ -687,7 +696,8 @@ export function Chat({ id }: { id: number }) {
     const el = scroller.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   });
-  // Cards and screenshots load after the messages and grow the thread; keep following.
+  // Cards and screenshots load after the messages and grow the thread, and a growing composer or tray
+  // shrinks the view; keep following.
   useEffect(() => {
     const el = scroller.current;
     const content = thread.current;
@@ -696,6 +706,7 @@ export function Chat({ id }: { id: number }) {
       if (stick.current) el.scrollTop = el.scrollHeight;
     });
     ro.observe(content);
+    ro.observe(el);
     return () => ro.disconnect();
   }, []);
 
@@ -720,11 +731,13 @@ export function Chat({ id }: { id: number }) {
     return () => clearInterval(timer);
   }, [unread]);
 
+  const lastTop = useRef(0);
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
     const below = el.scrollHeight - el.scrollTop - el.clientHeight;
-    stick.current = below < 80;
+    stick.current = follows(stick.current, lastTop.current, el.scrollTop, below);
+    lastTop.current = el.scrollTop;
     setFar(below > Math.max(400, el.clientHeight));
   };
   const toBottom = () => {
@@ -796,6 +809,10 @@ export function Chat({ id }: { id: number }) {
         className={`view ${dropping ? "dropping" : ""}`}
         ref={scroller}
         onScroll={onScroll}
+        // A wheel turned up stops following at once, before the next streamed line pulls it back.
+        onWheel={(e) => {
+          if (e.deltaY < 0) stick.current = false;
+        }}
         {...drop}
       >
         <div className="chat-scroll">

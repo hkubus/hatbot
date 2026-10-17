@@ -3051,15 +3051,16 @@ mark {
   outline-offset: -2px;
 }
 
-/* Back to the latest messages, when you've scrolled well up. */
+/* Back to the latest messages, when you've scrolled well up: at the column's right edge, above the
+   composer, clear of most of the text. */
 .composer-wrap {
   position: relative;
 }
 .to-bottom {
   position: absolute;
-  top: -36px;
-  left: 50%;
-  transform: translateX(-50%);
+  top: -40px;
+  right: max(20px, calc((100% - 760px) / 2));
+  z-index: 1;
   width: 32px;
   height: 32px;
   border-radius: 50%;
