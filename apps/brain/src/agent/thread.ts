@@ -259,17 +259,24 @@ export class Thread {
     return this.d.attachments?.fill(rows) ?? rows;
   }
 
-  /** A task or schedule card from `botId`. `text` is what search and summaries see. */
+  /**
+   * A task or schedule card from `botId`. `text` is what search and summaries see. `taintedBy`: its
+   * text came from untrusted content, this.
+   */
   addCard(
     kind: "task" | "schedule" | "text",
     text: string,
     ref: { taskId?: number; scheduleId?: number },
     botId = this.bot().id,
+    taintedBy: string | null = null,
   ) {
     const row = this.d.db
-      .query<MessageRow, [number, string, string, string, string, number | null, number | null]>(
-        `INSERT INTO messages (conversation_id, bot_id, role, kind, text, status, created_at, task_id, schedule_id)
-         VALUES (?, ?, 'assistant', ?, ?, 'done', ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
+      .query<
+        MessageRow,
+        [number, string, string, string, string, number | null, number | null, string | null]
+      >(
+        `INSERT INTO messages (conversation_id, bot_id, role, kind, text, status, created_at, task_id, schedule_id, tainted_by)
+         VALUES (?, ?, 'assistant', ?, ?, 'done', ?, ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
       )
       .get(
         this.conversationId,
@@ -279,6 +286,7 @@ export class Thread {
         this.now(),
         ref.taskId ?? null,
         ref.scheduleId ?? null,
+        taintedBy,
       );
     if (!row) throw new Error("card insert failed");
     const message = messageOf(row);
@@ -379,29 +387,51 @@ export class Thread {
 
   /**
    * A new episode carries recent messages over. It starts tainted if any of them came from a tainted
-   * episode or a tainted task (PLAN.md §6.1).
+   * episode or a tainted task, or is a note with untrusted text in it (PLAN.md §6.1).
    */
   private inheritTaint(episodeId: number, beforeMessageId: number) {
     const recent = this.list(beforeMessageId, RECENT_MESSAGES).map((m) => m.id);
     if (!recent.length) return;
     const from = this.d.db
-      .query<{ episode: string | null; task_id: number | null; title: string | null }, number[]>(
+      .query<
+        {
+          episode: string | null;
+          note: string | null;
+          task_id: number | null;
+          title: string | null;
+        },
+        number[]
+      >(
         `SELECT CASE WHEN e.tainted = 1 THEN coalesce(e.tainted_by, '') END AS episode,
-           t.id AS task_id, t.title
+           m.tainted_by AS note, t.id AS task_id, t.title
          FROM messages m
          LEFT JOIN episodes e ON e.id = m.episode_id
          LEFT JOIN tasks t ON t.id = m.task_id
-         WHERE m.id IN (${recent.map(() => "?").join(", ")}) AND (e.tainted = 1 OR t.tainted = 1)
+         WHERE m.id IN (${recent.map(() => "?").join(", ")})
+         AND (e.tainted = 1 OR t.tainted = 1 OR m.tainted_by IS NOT NULL)
          ORDER BY m.id LIMIT 1`,
       )
       .get(...recent);
     if (from)
       this.taint(
         episodeId,
-        from.episode !== null
-          ? from.episode || "Untrusted content"
-          : `Task #${from.task_id} "${from.title}"`,
+        from.note ??
+          (from.episode !== null
+            ? from.episode || "Untrusted content"
+            : `Task #${from.task_id} "${from.title}"`),
       );
+  }
+
+  /** Which of these messages are notes with untrusted text in them, and what it came from. */
+  private untrustedNotes(ids: number[]): Map<number, string> {
+    if (!ids.length) return new Map();
+    const rows = this.d.db
+      .query<{ id: number; tainted_by: string }, number[]>(
+        `SELECT id, tainted_by FROM messages WHERE id IN (${ids.map(() => "?").join(", ")})
+         AND tainted_by IS NOT NULL`,
+      )
+      .all(...ids);
+    return new Map(rows.map((r) => [r.id, r.tainted_by]));
   }
 
   /** Your last few messages in this conversation, as you wrote them. */
@@ -1086,7 +1116,14 @@ export class Thread {
     // Its messages, and the cards after them that fold up with it: up to the next conversation's.
     const rows = db
       .query<
-        { id: number; role: string; bot_id: string | null; text: string; created_at: string },
+        {
+          id: number;
+          role: string;
+          bot_id: string | null;
+          text: string;
+          created_at: string;
+          tainted_by: string | null;
+        },
         number[]
       >(
         `WITH span AS (
@@ -1094,7 +1131,7 @@ export class Thread {
              coalesce((SELECT min(id) FROM messages WHERE conversation_id = ?2 AND incognito = 0
                AND episode_id IS NOT NULL AND episode_id != ?1
                AND id > (SELECT min(id) FROM messages WHERE episode_id = ?1)), 9e18) AS next)
-         SELECT m.id, m.role, m.bot_id, m.text, m.created_at FROM messages m, span
+         SELECT m.id, m.role, m.bot_id, m.text, m.created_at, m.tainted_by FROM messages m, span
          WHERE m.episode_id = ?1 OR (m.conversation_id = ?2 AND m.incognito = 0
            AND m.episode_id IS NULL AND m.role = 'assistant' AND m.id > span.first AND m.id < span.next)
          ORDER BY m.id`,
@@ -1134,7 +1171,13 @@ export class Thread {
   /** The running summary with what a deleted conversation put in it taken out, by Haiku. */
   private async summaryWithout(
     episodeId: number,
-    rows: { role: string; bot_id: string | null; text: string; created_at: string }[],
+    rows: {
+      role: string;
+      bot_id: string | null;
+      text: string;
+      created_at: string;
+      tainted_by: string | null;
+    }[],
   ): Promise<string> {
     const transcript = rows.map((m) => this.transcript(m)).join("\n");
     const names = this.members().map((b) => b.name);
@@ -1243,10 +1286,19 @@ export class Thread {
     fresh: boolean,
     incognito: boolean,
   ): Promise<string> {
-    const recent = this.list(beforeMessageId, RECENT_MESSAGES, incognito)
-      .filter((m) => m.status !== "streaming" && (!fresh || m.episodeId === episodeId))
+    const messages = this.list(beforeMessageId, RECENT_MESSAGES, incognito).filter(
+      (m) => m.status !== "streaming" && (!fresh || m.episodeId === episodeId),
+    );
+    const untrusted = this.untrustedNotes(messages.map((m) => m.id));
+    const recent = messages
       .map((m) =>
-        this.transcript({ role: m.role, bot_id: m.botId, text: m.text, created_at: m.createdAt }),
+        this.transcript({
+          role: m.role,
+          bot_id: m.botId,
+          text: m.text,
+          created_at: m.createdAt,
+          tainted_by: untrusted.get(m.id) ?? null,
+        }),
       )
       .join("\n");
     return [
@@ -1292,13 +1344,23 @@ export class Thread {
 
   /**
    * A message in a transcript the model reads: who wrote it and when, its text escaped so that a line
-   * in it can't pass for another message.
+   * in it can't pass for another message. A note whose text came from untrusted content says so, and
+   * its text is quoted.
    */
   private transcript(
-    m: { role: string; bot_id: string | null; text: string; created_at: string },
+    m: {
+      role: string;
+      bot_id: string | null;
+      text: string;
+      created_at: string;
+      tainted_by?: string | null;
+    },
     attrs = "",
   ): string {
-    return `<message from=${tagJson(this.speaker(m))} at="${localStamp(new Date(m.created_at))}"${attrs}>${tagText(m.text)}</message>`;
+    const head = `<message from=${tagJson(this.speaker(m))} at="${localStamp(new Date(m.created_at))}"${attrs}`;
+    return m.tainted_by
+      ? `${head} trusted="false" source=${tagJson(m.tainted_by)}>${tagJson(m.text)}</message>`
+      : `${head}>${tagText(m.text)}</message>`;
   }
 
   /**

@@ -209,7 +209,8 @@ export class Heartbeat {
     }
     if (choice.action === "nothing") return { ...base, action: "nothing", note: choice.message };
     const message = choice.message || list;
-    this.d.chats.note(botId, `**Heartbeat**: ${message}`);
+    // Written from logs, monitors and pages, like the task it would have started.
+    this.d.chats.note(botId, `**Heartbeat**: ${message}`, "What the heartbeat found");
     void this.d.notifier.send({
       title: "Heartbeat",
       message: message.slice(0, 1000),

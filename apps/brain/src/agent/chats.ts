@@ -233,9 +233,12 @@ export class Chats {
     return (this.thread(conversationId) ?? this.direct(botId)).addCard(kind, text, ref, botId);
   }
 
-  /** A line from a bot in its own chat, outside any conversation, e.g. what a watcher saw. */
-  note(botId: string, text: string) {
-    return this.direct(botId).addCard("text", text, {}, botId);
+  /**
+   * A line from a bot in its own chat, outside any conversation, e.g. what a watcher saw. `taintedBy`:
+   * its text came from untrusted content, this; a conversation that reads it is tainted.
+   */
+  note(botId: string, text: string, taintedBy: string | null = null) {
+    return this.direct(botId).addCard("text", text, {}, botId, taintedBy);
   }
 
   /** A task ended: `botId` tells you in the chat it was started from. */

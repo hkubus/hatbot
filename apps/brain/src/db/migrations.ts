@@ -601,4 +601,7 @@ export const migrations: string[] = [
   ALTER TABLE tasks ADD COLUMN report_path TEXT;
   ALTER TABLE messages ADD COLUMN sources TEXT;
   `,
+  /* 32: a note in the chat whose text came from untrusted content, and what (PLAN.md §6.1) */ `
+  ALTER TABLE messages ADD COLUMN tainted_by TEXT;
+  `,
 ];

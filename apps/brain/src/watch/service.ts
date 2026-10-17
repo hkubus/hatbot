@@ -426,7 +426,13 @@ export class Watchers {
       console.log(`watcher ${w.id} "${w.name}": its last task is still going`);
     }
     const what = previous === null ? short(value) : `${short(previous, 120)} → ${short(value)}`;
-    this.d.chats.note(w.botId, `**${w.name}**: ${what}`);
+    // What a page said, or a name the chat wrote after reading one, isn't the bot's own words.
+    const from = untrusted
+      ? `What the watcher "${w.name}" saw`
+      : w.tainted
+        ? `The watcher "${w.name}", made after reading: ${w.taintedBy ?? "untrusted content"}`
+        : null;
+    this.d.chats.note(w.botId, `**${w.name}**: ${what}`, from);
     void this.d.notifier.send({
       title: this.titled(w, w.name),
       message: what,
