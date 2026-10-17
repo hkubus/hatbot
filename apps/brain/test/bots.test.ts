@@ -287,7 +287,9 @@ test("from a task, ask_bot waits for the other bot, and taint goes both ways", a
   await t.tasks.idle();
   const child = t.tasks.list({}).find((x) => x.botId === "chef");
   expect(child).toMatchObject({ parentId: parent.id, requestedBy: "hatbot", tainted: true });
-  expect(JSON.stringify(work.requests[2]?.messages.at(-1))).toContain('<summary from=\\"Chef\\">');
+  expect(JSON.stringify(work.requests[2]?.messages.at(-1))).toContain(
+    '<summary from=\\"Chef\\" trusted=\\"false\\">',
+  );
   expect(t.tasks.get(parent.id)?.summary).toBe("Chef: soup.");
 });
 
