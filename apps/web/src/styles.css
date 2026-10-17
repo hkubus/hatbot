@@ -721,7 +721,8 @@ svg.i {
 }
 
 /* Cards */
-.card {
+.card,
+.group-box {
   background: var(--surface);
   border: 0.5px solid var(--line-strong);
   border-radius: 12px;
@@ -902,9 +903,6 @@ svg.i {
 .table tbody tr.link-row {
   cursor: pointer;
 }
-.table tbody tr.link-row:hover {
-  background: rgba(127, 127, 127, 0.06);
-}
 .table .num {
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -931,12 +929,6 @@ svg.i {
   font-weight: 600;
   color: var(--text-2);
   margin: 0 12px;
-}
-.group-box {
-  background: var(--surface);
-  border-radius: 12px;
-  border: 0.5px solid var(--line-strong);
-  overflow: hidden;
 }
 .row {
   display: flex;
@@ -1052,13 +1044,6 @@ svg.i {
 .tree button.active {
   background: rgba(127, 127, 127, 0.18);
   font-weight: 550;
-}
-.tree button .badge {
-  margin-left: auto;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
 }
 .editor {
   display: flex;
@@ -1220,7 +1205,6 @@ svg.i {
   fill: transparent;
   cursor: default;
 }
-.chart .hit:hover + .bar,
 .chart .bar.hl {
   fill: var(--accent);
 }
@@ -2000,7 +1984,8 @@ a.btn:hover {
   flex: none;
   color: var(--soft);
 }
-.log {
+.log,
+.timeline {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -2049,12 +2034,6 @@ a.btn:hover {
 .tl-step.tl-error,
 .tl-step.tl-error > svg.i {
   color: var(--danger-text);
-}
-.timeline {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
 }
 .tl-step {
   font-size: 12.5px;
@@ -2145,9 +2124,6 @@ a.btn:hover {
 }
 .row.link:last-child {
   border-bottom-width: 0;
-}
-.row.link:hover {
-  background: rgba(127, 127, 127, 0.06);
 }
 @media (max-width: 899px) {
   .app.insp {
@@ -2353,9 +2329,6 @@ pre.payload {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.msg .shot {
-  max-width: 280px;
 }
 
 /* ---------- Plugins ---------- */
@@ -2940,6 +2913,8 @@ dialog.ask .field {
   color: inherit;
   text-decoration: none;
 }
+.table tbody tr.link-row:hover,
+.row.link:hover,
 .row-link:hover {
   background: rgba(127, 127, 127, 0.06);
 }
