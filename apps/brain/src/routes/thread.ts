@@ -12,7 +12,7 @@ import { MAX_ATTACHMENT_BYTES } from "../attachments";
 import { requireAuth } from "../auth/middleware";
 import { BotError } from "../bots";
 import type { AppEnv } from "../context";
-import { json, query } from "./util";
+import { json, query, signedOut } from "./util";
 
 /** RFC 5987's encoding for filename*: encodeURIComponent leaves ' ( ) * as they are, which it doesn't allow. */
 const rfc5987 = (s: string) =>
@@ -46,6 +46,7 @@ export const threadRoutes = new Hono<AppEnv>()
     if (Number(c.req.header("content-length") ?? 0) > MAX_ATTACHMENT_BYTES + 64 * 1024)
       return c.json({ error: "The file is over 25 MB." }, 413);
     const form = await c.req.formData().catch(() => null);
+    if (signedOut(c)) return c.json({ error: "unauthorized" }, 401);
     const file = form?.get("file");
     if (!(file instanceof File))
       return c.json({ error: 'Send the file as multipart field "file".' }, 400);

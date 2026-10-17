@@ -148,6 +148,15 @@ export class AuthService {
     return sessions.length + tokens.length;
   }
 
+  /** Whether a session or token still stands, for a request that was let in before it ended. */
+  alive(p: Principal): boolean {
+    return p.kind === "session"
+      ? this.db
+          .query("SELECT 1 FROM sessions WHERE id = ? AND expires_at > ?")
+          .get(p.id, new Date(this.clock()).toISOString()) !== null
+      : this.db.query("SELECT 1 FROM api_tokens WHERE id = ?").get(p.id) !== null;
+  }
+
   /** A browser or app that has signed in here: a random id, signed so one can't be made up. */
   newDevice(): string {
     const id = randomBytes(16).toString("base64url");

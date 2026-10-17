@@ -474,6 +474,50 @@ describe("your account", () => {
     expect(fresh.status).toBe(200);
   });
 
+  test("a request whose body was still coming when it was signed out does nothing", async () => {
+    const { t, cookie, otherCookie, token } = await signedInTwice();
+    /** A request let in on its headers, whose body is still on its way. */
+    const slow = (path: string, headers: Record<string, string>, bytes: Uint8Array) => {
+      let finish = () => {};
+      const body = new ReadableStream<Uint8Array>({
+        start(ctl) {
+          ctl.enqueue(bytes.slice(0, 3));
+          finish = () => {
+            ctl.enqueue(bytes.slice(3));
+            ctl.close();
+          };
+        },
+      });
+      const res = t.app.request(`/api/v1${path}`, {
+        method: "POST",
+        headers: { origin: ORIGIN, ...headers },
+        body,
+        duplex: "half",
+      } as RequestInit);
+      return { res, finish: () => finish() };
+    };
+    const mint = slow(
+      "/tokens",
+      { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      new TextEncoder().encode('{"name":"Backup"}'),
+    );
+    const form = new FormData();
+    form.append("file", new File(["hello"], "note.txt", { type: "text/plain" }));
+    const multipart = new Request("http://x", { method: "POST", body: form });
+    const upload = slow(
+      "/attachments",
+      { cookie: otherCookie, "content-type": multipart.headers.get("content-type") ?? "" },
+      new Uint8Array(await multipart.arrayBuffer()),
+    );
+    await Bun.sleep(10);
+    expect((await t.call("POST", "/auth/sign-out-others", {}, { cookie })).status).toBe(200);
+    mint.finish();
+    upload.finish();
+    expect((await mint.res).status).toBe(401);
+    expect((await upload.res).status).toBe(401);
+    expect(t.auth.listTokens()).toEqual([]);
+  });
+
   test("a password change from another site is refused", async () => {
     const { t, secret, password, cookie } = await signedInTwice();
     const res = await t.call(
