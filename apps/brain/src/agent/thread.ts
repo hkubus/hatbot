@@ -209,6 +209,8 @@ export class Thread {
   private waiting: number | null = null;
   /** The text of the reply being written, by message id, as it is now: for a chat opened mid-reply. */
   private live = new Map<number, string>();
+  /** When each bot's last chat request was sent, and in which episode: its cache entry's hour runs from then. */
+  private sentAt = new Map<string, { episodeId: number; at: number }>();
   private clock: () => number;
 
   constructor(
@@ -999,7 +1001,11 @@ export class Thread {
     return { id: row.id, isNew: true, fresh, long };
   }
 
-  /** Prompt tokens the bot's last request in the episode left in the cache, while its hour lasts. */
+  /**
+   * Prompt tokens the bot's last request in the episode left in the cache, while its hour lasts. The
+   * hour runs from when the request was sent; the ledger has when it ended, so after a restart it's
+   * taken to have run as long as a turn may.
+   */
   private cachedTokens(episodeId: number, botId: string): number {
     const last = this.d.db
       .query<{ tokens: number; created_at: string }, [number, string]>(
@@ -1007,7 +1013,12 @@ export class Thread {
          FROM spend_ledger WHERE episode_id = ? AND bot_id = ? AND purpose = 'thread' ORDER BY id DESC LIMIT 1`,
       )
       .get(episodeId, botId);
-    return last && this.clock() - Date.parse(last.created_at) < 3600_000 ? last.tokens : 0;
+    if (!last) return 0;
+    const ended = Date.parse(last.created_at);
+    const sent = this.sentAt.get(botId);
+    const at =
+      sent && sent.episodeId === episodeId && sent.at <= ended ? sent.at : ended - MAX_TURN_MS;
+    return this.clock() - at < 3600_000 ? last.tokens : 0;
   }
 
   /** How long the episode's last chat request was, in prompt tokens. */
@@ -1834,6 +1845,7 @@ export class Thread {
         requestCeiling(EXPERT_MODEL, {
           prompt: fixedTokens(EXPERT_PROMPT, content),
           maxTokens: MAX_TOKENS,
+          fallbacks: true,
         }),
       );
       separate = true;
@@ -1930,6 +1942,7 @@ export class Thread {
               write: "1h",
               maxTokens: MAX_TOKENS,
               webSearches: searchesIn(tools),
+              fallbacks: !onHaiku,
             }),
           );
         } catch (err) {
@@ -1938,6 +1951,7 @@ export class Thread {
         }
 
         progress("Thinking…");
+        this.sentAt.set(bot.id, { episodeId: episode.id, at: this.clock() });
         const res = await model.stream(
           {
             model: chatModel,

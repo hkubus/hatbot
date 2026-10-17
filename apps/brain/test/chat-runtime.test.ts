@@ -562,6 +562,61 @@ test("the most a request may cost: uncached input as a cache write, all of max_t
   ).toBe(8);
 });
 
+test("with fallbacks, the most a request may cost counts a decline and an answer from a dearer model", () => {
+  const r = { prompt: 100_000, cached: 60_000, write: "1h" as const, maxTokens: 32_000 };
+  // Opus 5.5 reads the prompt and declines; Opus 5 or Opus 4.8 answers at $5/$25, with nothing cached.
+  expect(requestCeiling("claude-opus-5-5", { ...r, fallbacks: true })).toBeCloseTo(
+    (40_000 * 8 + 60_000 * 0.2) / 1e6 + (100_000 * 10 + 32_000 * 25) / 1e6,
+    9,
+  );
+  // Haiku 5.5 has none.
+  expect(requestCeiling("claude-haiku-5-5", { ...r, fallbacks: true })).toBe(
+    requestCeiling("claude-haiku-5-5", r),
+  );
+});
+
+test("the chat's hold counts its fallbacks, and its cache's hour runs from when it was sent", async () => {
+  let release = () => {};
+  const model = new FakeModel([
+    {
+      content: [text("Hi.")],
+      usage: {
+        cache_creation_input_tokens: 80_000,
+        cache_creation: { ephemeral_1h_input_tokens: 80_000, ephemeral_5m_input_tokens: 0 },
+      },
+      wait: new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    },
+    { content: [text("Again.")] },
+  ]);
+  const t = await testApp(model);
+  t.settings.update({ chatModel: "claude-opus-5-5" });
+  const holds: number[] = [];
+  const hold = t.spend.hold.bind(t.spend);
+  t.spend.hold = (usd, ...rest) => {
+    holds.push(usd);
+    return hold(usd, ...rest);
+  };
+  // About 80k tokens: what the first request wrote to the cache.
+  const first = t.thread.post(`Read this: ${"lorem ".repeat(47_000)}`).done;
+  await waitFor(() => model.requests.length === 1);
+  // A reply that takes 35 minutes, then a message 26 minutes after it: an hour after the request was
+  // sent, its cache entry is gone.
+  t.advance(35 * 60_000);
+  release();
+  await first;
+  t.advance(26 * 60_000);
+  await t.thread.post("again").done;
+  expect(new Set(t.thread.list().map((m) => m.episodeId)).size).toBe(1);
+  // Each may cost 80k tokens of prompt written to the cache by Opus 5.5, which declines, and again by
+  // Opus 5, which answers with all of its output and searches.
+  const most = (80_000 * 8 + 80_000 * 10) / 1e6 + 0.85;
+  expect(holds[0]).toBeGreaterThan(most);
+  // The second was sent over an hour after the first: none of it is in the cache.
+  expect(holds[1]).toBeGreaterThan(most);
+});
+
 test("requests in flight hold what they may cost, so ones made at once can't pass a limit together", async () => {
   const t = await testApp();
   t.settings.update({ limits: { taskUsd: 3, dailyUsd: 1, monthlyUsd: 200, alertReserveUsd: 0 } });
