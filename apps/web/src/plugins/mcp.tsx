@@ -186,6 +186,12 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
               </>
             ) : (
               <>
+                <div className="hint">
+                  A command runs on the brain as Hatbot's own user, so it can read every secret
+                  Hatbot has: its keys, tokens and database. Run only servers you trust, or an HTTP
+                  server elsewhere. Pin the version (package@1.2.3): npx and uvx fetch the newest
+                  one at every start.
+                </div>
                 <label>
                   <span className="label">Command (runs on the brain)</span>
                   <input
@@ -200,6 +206,7 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
                   <textarea
                     className="field mono"
                     rows={2}
+                    placeholder={"-y\n@scope/server@1.2.3"}
                     value={s.argsText}
                     onChange={(e) => set(i, { argsText: e.target.value })}
                   />
