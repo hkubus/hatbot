@@ -3,14 +3,16 @@ import SwiftUI
 
 struct MemoryView: View {
   @Environment(AppStore.self) private var store
-  @State private var path: [Route] = []
+  @Binding var path: [Route]
   @State private var files: [MemoryFile]?
   @State private var error: String?
   @State private var naming = false
   @State private var newName = ""
-  @State private var proposals: [Proposal] = []
   @State private var skills: [SkillStatus] = []
+  /// The tidy-up ("") or skill fix being worked on; it arrives as proposal.updated.
   @State private var asking: String?
+  /// The proposals there were when you asked, so the new one can be told apart.
+  @State private var before = Set<Int>()
 
   var body: some View {
     NavigationStack(path: $path) {
@@ -18,6 +20,7 @@ struct MemoryView: View {
         if let error {
           Text(error).foregroundStyle(.red)
         }
+        let proposals = store.pendingProposals
         if !proposals.isEmpty {
           Section("To look over") {
             ForEach(proposals) { p in
@@ -79,6 +82,13 @@ struct MemoryView: View {
       }
       .refreshable { await load() }
       .task(id: store.memoryVersion) { await load() }
+      .onChange(of: store.proposals) { arrived() }
+      .task(id: asking) {
+        // Failures are told through ntfy; stop waiting after a while.
+        guard asking != nil else { return }
+        try? await Task.sleep(for: .seconds(180))
+        if !Task.isCancelled { asking = nil }
+      }
       .routes()
     }
   }
@@ -91,7 +101,7 @@ struct MemoryView: View {
       self.error = message(for: error)
     }
     // Brains from before proposals answer 404; the files still show.
-    proposals = (try? await store.loadProposals()) ?? []
+    try? await store.loadProposals()
     skills = (try? await store.loadSkills()) ?? []
   }
 
@@ -102,12 +112,15 @@ struct MemoryView: View {
     return parts.joined(separator: ", ")
   }
 
-  /// A tidy-up of all of memory ("") or a fix to one skill, opened when there is one.
-  private func propose(_ asking: String, _ work: () async throws -> Proposal?) async {
+  /// A tidy-up of all of memory ("") or a fix to one skill, opened when it arrives.
+  private func propose(_ asking: String, _ work: () async throws -> ProposalStarted) async {
+    before = Set(store.proposals.keys)
     self.asking = asking
     do {
-      if let p = try await work() {
-        proposals = (try? await store.loadProposals()) ?? [p]
+      let r = try await work()
+      if r.started { return }
+      if let p = r.proposal {
+        store.proposals[p.id] = p
         path.append(.proposal(p))
       } else {
         store.toast = asking.isEmpty ? "Nothing to tidy" : "No fix found"
@@ -116,6 +129,17 @@ struct MemoryView: View {
       self.error = message(for: error)
     }
     self.asking = nil
+  }
+
+  /// The proposal asked for came in: open it.
+  private func arrived() {
+    guard let asking else { return }
+    let p = store.pendingProposals.first { p in
+      !before.contains(p.id) && (asking.isEmpty ? p.kind == .tidy : p.skill == asking)
+    }
+    guard let p else { return }
+    self.asking = nil
+    path.append(.proposal(p))
   }
 
   private func tidy() { Task { await propose("") { try await store.proposeTidy() } } }

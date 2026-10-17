@@ -35,6 +35,11 @@ final class API: Sendable {
     self.onUnauthorized = onUnauthorized
   }
 
+  /// The brain no longer takes the token, as told some other way than a JSON call (the event stream's handshake).
+  func unauthorized() {
+    onUnauthorized()
+  }
+
   /// "https://host/" or "host" → https://host; a pasted ".../api/v1" is dropped. Plain http only when typed.
   static func serverURL(from input: String) -> URL? {
     var s = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -56,9 +61,10 @@ final class API: Sendable {
     try await call(path, method: "GET", body: nil as Empty?)
   }
 
+  /// `timeout`: for the calls that wait on the model or try every part, in seconds.
   @discardableResult
-  func post<T: Decodable, B: Encodable>(_ path: String, body: B) async throws -> T {
-    try await call(path, method: "POST", body: body)
+  func post<T: Decodable, B: Encodable>(_ path: String, body: B, timeout: TimeInterval? = nil) async throws -> T {
+    try await call(path, method: "POST", body: body, timeout: timeout)
   }
 
   func post(_ path: String) async throws {
@@ -69,8 +75,8 @@ final class API: Sendable {
     try await call(path, method: "PUT", body: body)
   }
 
-  func patch<T: Decodable, B: Encodable>(_ path: String, body: B) async throws -> T {
-    try await call(path, method: "PATCH", body: body)
+  func patch<T: Decodable, B: Encodable>(_ path: String, body: B, timeout: TimeInterval? = nil) async throws -> T {
+    try await call(path, method: "PATCH", body: body, timeout: timeout)
   }
 
   @discardableResult
@@ -129,6 +135,13 @@ final class API: Sendable {
     return session.webSocketTask(with: req)
   }
 
+  /// Siri's ask: the brain waits up to 25 seconds for the reply.
+  static let askTimeout: TimeInterval = 40
+  /// Check everything tries each part, some of them slowly.
+  static let checksTimeout: TimeInterval = 120
+  /// A watcher that runs a page's scripts may wait behind others on the desktop, up to 2 minutes.
+  static let watcherTimeout: TimeInterval = 130
+
   private func request(_ path: String, method: String) -> URLRequest {
     var req = URLRequest(url: url(path))
     req.httpMethod = method
@@ -137,8 +150,11 @@ final class API: Sendable {
     return req
   }
 
-  private func call<T: Decodable, B: Encodable>(_ path: String, method: String, body: B?) async throws -> T {
+  private func call<T: Decodable, B: Encodable>(
+    _ path: String, method: String, body: B?, timeout: TimeInterval? = nil
+  ) async throws -> T {
     var req = request(path, method: method)
+    if let timeout { req.timeoutInterval = timeout }
     if let body {
       req.setValue("application/json", forHTTPHeaderField: "Content-Type")
       req.httpBody = try JSONEncoder().encode(body)

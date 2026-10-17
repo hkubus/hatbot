@@ -45,9 +45,13 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   var kind: Kind
   var text: String
   var status: Status
-  var createdAt: String
+  var createdAt: String { didSet { date = Format.date(createdAt) } }
+  /// `createdAt`, parsed once: the chat compares every message's to the one before.
+  private(set) var date: Date?
   var taskId: Int?
   var scheduleId: Int?
+  /// The negotiation it started, shown under it; missing on brains from before negotiations.
+  var negotiationId: Int?
   /// The conversation it belongs to; cards from background tasks have none.
   var episodeId: Int?
   /// When a task's result changed it after it was sent; missing on brains from before.
@@ -67,6 +71,57 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
 
   /// What came of a command you ran, shown as a quiet line; one that started a task shows like a reply.
   var isNote: Bool { role == .assistant && kind == .command && taskId == nil }
+
+  private enum CodingKeys: String, CodingKey {
+    case id, role, kind, text, status, createdAt, taskId, scheduleId, episodeId, editedAt, seenAt, attachments
+    case incognito, conversationId, botId, negotiationId
+  }
+
+  init(
+    id: Int, role: Role, kind: Kind, text: String, status: Status, createdAt: String, taskId: Int? = nil,
+    scheduleId: Int? = nil, episodeId: Int? = nil, editedAt: String? = nil, seenAt: String? = nil,
+    attachments: [Attachment]? = nil, incognito: Bool? = nil, conversationId: Int? = nil, botId: String? = nil,
+    negotiationId: Int? = nil
+  ) {
+    self.id = id
+    self.role = role
+    self.kind = kind
+    self.text = text
+    self.status = status
+    self.createdAt = createdAt
+    date = Format.date(createdAt)
+    self.taskId = taskId
+    self.scheduleId = scheduleId
+    self.episodeId = episodeId
+    self.editedAt = editedAt
+    self.seenAt = seenAt
+    self.attachments = attachments
+    self.incognito = incognito
+    self.conversationId = conversationId
+    self.botId = botId
+    self.negotiationId = negotiationId
+  }
+
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    try self.init(
+      id: c.decode(Int.self, forKey: .id),
+      role: c.decode(Role.self, forKey: .role),
+      kind: c.decode(Kind.self, forKey: .kind),
+      text: c.decode(String.self, forKey: .text),
+      status: c.decode(Status.self, forKey: .status),
+      createdAt: c.decode(String.self, forKey: .createdAt),
+      taskId: c.decodeIfPresent(Int.self, forKey: .taskId),
+      scheduleId: c.decodeIfPresent(Int.self, forKey: .scheduleId),
+      episodeId: c.decodeIfPresent(Int.self, forKey: .episodeId),
+      editedAt: c.decodeIfPresent(String.self, forKey: .editedAt),
+      seenAt: c.decodeIfPresent(String.self, forKey: .seenAt),
+      attachments: c.decodeIfPresent([Attachment].self, forKey: .attachments),
+      incognito: c.decodeIfPresent(Bool.self, forKey: .incognito),
+      conversationId: c.decodeIfPresent(Int.self, forKey: .conversationId),
+      botId: c.decodeIfPresent(String.self, forKey: .botId),
+      negotiationId: c.decodeIfPresent(Int.self, forKey: .negotiationId))
+  }
 }
 
 /// A file on a message: one you attached, or one Hatbot or a task sent you.
@@ -165,7 +220,7 @@ struct TaskStep: Codable, Identifiable, Equatable, Sendable {
   var createdAt: String
 
   /// The model's own notes; yours on approvals are named "Your note".
-  var isModelNote: Bool { kind == .note && name != "Your note" }
+  var isModelNote: Bool { kind == .note && name == "Note" }
 }
 
 extension [TaskStep] {
@@ -189,6 +244,8 @@ struct Approval: Codable, Identifiable, Equatable, Sendable {
 
   let id: Int
   var taskId: Int?
+  /// ApprovalKind: send, purchase, payment, mandate (a negotiation's, PLAN.md §16.1) and the rest. A
+  /// String, so a kind this app doesn't know still shows.
   var kind: String
   var summary: String
   var reason: String
@@ -424,6 +481,9 @@ struct Limits: Codable, Equatable, Sendable {
   var taskUsd: Double
   var dailyUsd: Double
   var monthlyUsd: Double
+  /// The last of the daily and monthly limits, which only alerts and the heartbeat spend; nil from
+  /// brains before it.
+  var alertReserveUsd: Double?
 }
 
 struct SpendWindow: Codable, Equatable, Sendable {
@@ -472,6 +532,8 @@ struct AppSettings: Codable, Equatable, Sendable {
   var notificationsOpen: Opens?
   /// The model that drives desktop tasks; missing on brains from before the setting.
   var desktopModel: DesktopModel?
+  /// A desktop task Haiku fails at carries on once on Opus; missing on older brains.
+  var desktopEscalate: Bool?
   /// The model background tasks run on; missing on brains from before the setting.
   var taskModel: TaskModel?
   /// The chat's model; missing on brains from before the setting.
@@ -518,6 +580,19 @@ struct AppSettings: Codable, Equatable, Sendable {
   }
 }
 
+/// A negotiation with a seller (Negotiation in packages/shared/src/negotiate.ts). The app doesn't show
+/// negotiations yet, so only their outline; the rest of the brain's JSON is ignored.
+struct Negotiation: Decodable, Identifiable, Equatable, Sendable {
+  let id: Int
+  var botId: String
+  var title: String
+  var listingUrl: String
+  /// awaiting_mandate, open, agreed, lost, abandoned or expired.
+  var status: String
+  var agreedPrice: Double?
+  var approvalId: Int?
+}
+
 /// Live events on /api/v1/stream. Events this app doesn't know decode to `.unknown`.
 enum HatbotEvent: Decodable, Sendable {
   case messageCreated(ThreadMessage)
@@ -525,6 +600,8 @@ enum HatbotEvent: Decodable, Sendable {
   case messageProgress(id: Int, text: String)
   case messageDone(id: Int, text: String, status: ThreadMessage.Status)
   case messageTask(id: Int, taskId: Int)
+  /// A negotiation now shows under this reply.
+  case messageNegotiation(id: Int, negotiationId: Int)
   case messageEdited(id: Int, editedAt: String)
   case messageRewrite(id: Int)
   case messageSeen(ids: [Int], seenAt: String)
@@ -550,12 +627,20 @@ enum HatbotEvent: Decodable, Sendable {
   case botDeleted(id: String)
   case conversationUpdated(Conversation)
   case conversationDeleted(id: Int)
+  case proposalUpdated(Proposal)
+  case watcherUpdated(Watcher)
+  /// Settings changed, here or elsewhere: open settings refetch.
+  case settingsUpdated
+  /// The heartbeat looked again.
+  case heartbeatUpdated
+  case watcherDeleted(id: Int)
+  case negotiationUpdated(Negotiation)
   case unknown(String)
 
   private enum Key: String, CodingKey {
     case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused, tokens, costUsd
     case task, step, approval, state, schedule, trigger, episode, editedAt, ids, seenAt, attachment
-    case bot, conversation
+    case bot, conversation, proposal, watcher, negotiation, negotiationId
   }
 
   init(from decoder: Decoder) throws {
@@ -574,6 +659,9 @@ enum HatbotEvent: Decodable, Sendable {
         status: try c.decode(ThreadMessage.Status.self, forKey: .status))
     case "message.task":
       self = .messageTask(id: try c.decode(Int.self, forKey: .id), taskId: try c.decode(Int.self, forKey: .taskId))
+    case "message.negotiation":
+      self = .messageNegotiation(
+        id: try c.decode(Int.self, forKey: .id), negotiationId: try c.decode(Int.self, forKey: .negotiationId))
     case "message.edited":
       self = .messageEdited(id: try c.decode(Int.self, forKey: .id), editedAt: try c.decode(String.self, forKey: .editedAt))
     case "message.rewrite": self = .messageRewrite(id: try c.decode(Int.self, forKey: .id))
@@ -613,6 +701,13 @@ enum HatbotEvent: Decodable, Sendable {
     case "conversation.updated":
       self = .conversationUpdated(try c.decode(Conversation.self, forKey: .conversation))
     case "conversation.deleted": self = .conversationDeleted(id: try c.decode(Int.self, forKey: .id))
+    case "proposal.updated": self = .proposalUpdated(try c.decode(Proposal.self, forKey: .proposal))
+    case "watcher.updated": self = .watcherUpdated(try c.decode(Watcher.self, forKey: .watcher))
+    case "settings.updated": self = .settingsUpdated
+    case "heartbeat.updated": self = .heartbeatUpdated
+    case "watcher.deleted": self = .watcherDeleted(id: try c.decode(Int.self, forKey: .id))
+    case "negotiation.updated":
+      self = .negotiationUpdated(try c.decode(Negotiation.self, forKey: .negotiation))
     default: self = .unknown(type)
     }
   }

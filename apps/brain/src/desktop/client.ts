@@ -10,6 +10,7 @@ import type {
   BrowserResult,
   BrowserState,
   FetchResult,
+  RenderResult,
   ShellResult,
 } from "@hatbot/shared/desktop";
 
@@ -26,7 +27,8 @@ export class DesktopError extends Error {
 /** What the brain needs from the desktop; tests substitute a fake. */
 export interface DesktopAgent {
   readonly configured: boolean;
-  status(): Promise<AgentStatus>;
+  /** `deep`: also grabs a frame and asks Chromium's DevTools, for Check everything. */
+  status(deep?: boolean): Promise<AgentStatus>;
   screenshot(): Promise<Uint8Array>;
   zoom(region: number[]): Promise<Uint8Array>;
   action(a: AgentAction): Promise<AgentActionResult>;
@@ -42,6 +44,10 @@ export interface DesktopAgent {
   getDownload(id: string): Promise<{ name: string; bytes: Uint8Array }>;
   /** A GET from the desktop, which reaches only the internet. */
   fetch(url: string): Promise<FetchResult>;
+  /** The page after its scripts ran, in a headless Chromium on the desktop that isn't the bots'. */
+  render(url: string): Promise<RenderResult>;
+  /** Renders a page of the desktop's own whose script writes its text. Throws when that fails. */
+  renderCheck(): Promise<void>;
   /** One browser toolset member, run on Chromium over CDP. */
   browser(call: BrowserCall): Promise<BrowserResult>;
   browserState(): Promise<BrowserState>;
@@ -52,10 +58,22 @@ export interface DesktopAgent {
    * desktop has the one shared profile.
    */
   useProfile(botId: string): Promise<boolean>;
+  /** Closes the tabs earlier tasks left open, down to one blank tab. False on an older desktop-agent. */
+  resetBrowser(): Promise<boolean>;
   lock(): Promise<void>;
   unlock(): Promise<void>;
   /** WebSocket URL and headers for the live view. */
   liveSocket(): { url: string; headers: Record<string, string> };
+}
+
+/**
+ * `wait` may take up to 30 s. desktop-agent types the first 200 characters at a person's pace (up to
+ * 15 s) and longer text at about 12 ms a character, so the wait grows with the text.
+ */
+export function actionTimeoutMs(a: AgentAction): number {
+  const text = a.name === "type" ? a.input?.text : undefined;
+  const chars = typeof text === "string" ? text.length : 0;
+  return 45_000 + (chars > 200 ? chars * 25 : 0);
 }
 
 export class HttpDesktopAgent implements DesktopAgent {
@@ -98,8 +116,14 @@ export class HttpDesktopAgent implements DesktopAgent {
     return res;
   }
 
-  async status() {
-    return (await (await this.req("GET", "/health", undefined, 3000)).json()) as AgentStatus;
+  async status(deep = false) {
+    const res = await this.req(
+      "GET",
+      deep ? "/health?deep=1" : "/health",
+      undefined,
+      deep ? 15_000 : 3000,
+    );
+    return (await res.json()) as AgentStatus;
   }
   async screenshot() {
     return (await this.req("POST", "/screenshot")).bytes();
@@ -108,8 +132,9 @@ export class HttpDesktopAgent implements DesktopAgent {
     return (await this.req("POST", "/zoom", { region })).bytes();
   }
   async action(a: AgentAction) {
-    // `wait` may take up to 30 s.
-    return (await (await this.req("POST", "/action", a, 45_000)).json()) as AgentActionResult;
+    return (await (
+      await this.req("POST", "/action", a, actionTimeoutMs(a))
+    ).json()) as AgentActionResult;
   }
   async context(withText = false) {
     return (await (
@@ -148,6 +173,22 @@ export class HttpDesktopAgent implements DesktopAgent {
       throw err;
     }
   }
+  async render(url: string) {
+    // The desktop renders one page at a time, so this one may wait behind a few others.
+    try {
+      return (await (await this.req("POST", "/render", { url }, 120_000)).json()) as RenderResult;
+    } catch (err) {
+      if (err instanceof DesktopError && err.status === 404)
+        throw new DesktopError(
+          "desktop-agent is too old to run a page's scripts; run Update.",
+          404,
+        );
+      throw err;
+    }
+  }
+  async renderCheck() {
+    await this.req("POST", "/render/check", {}, 30_000);
+  }
   async browser(call: BrowserCall) {
     // `wait` and page loads may take up to 30 s.
     return (await (await this.req("POST", "/browser", call, 45_000)).json()) as BrowserResult;
@@ -164,6 +205,15 @@ export class HttpDesktopAgent implements DesktopAgent {
       return ((await res.json()) as { profile: string | null }).profile !== null;
     } catch (err) {
       // An older desktop-agent: one profile for every bot.
+      if (err instanceof DesktopError && err.status === 404) return false;
+      throw err;
+    }
+  }
+  async resetBrowser() {
+    try {
+      await this.req("POST", "/browser/reset");
+      return true;
+    } catch (err) {
       if (err instanceof DesktopError && err.status === 404) return false;
       throw err;
     }

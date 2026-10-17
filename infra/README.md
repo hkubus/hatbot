@@ -43,6 +43,8 @@ Scripts that set up Hatbot on the Proxmox host (PLAN.md §9).
 
 Re-running `host-setup.sh` is safe. It finds the containers by name and skips what already exists.
 
+If your router forwards ports to the LAN (the web app's reverse proxy, say), the desktop could come back in through your public address. Block it with `HATBOT_PUBLIC_IPS="203.0.113.7"` (space-separated, IPv4) in `/etc/hatbot/host.env` and re-run `host-setup.sh`. `verify.sh` fails if the desktop can reach the web app's public URL.
+
 ## Deploy the app
 
 Run this on the host for the first install, and whenever the host-side scripts change. It deploys the last commit of the checkout in CT 124:
@@ -59,17 +61,28 @@ The first run asks for:
 
  Then it prints a setup code. Open `https://<your hatbot host>/setup` and enter the code to set your password and TOTP. The code changes whenever the brain restarts before setup is done. To read the current one, run `pct exec <brain> -- journalctl -u hatbot-brain | grep 'setup code'`.
 
-Each deploy is a new release in `/var/lib/hatbot/releases` inside the brain, and `/var/lib/hatbot/app` links to the live one. If the new release fails its health check, the previous one goes back live. The last 3 are kept. To change the URL or proxy later, run with `HATBOT_PUBLIC_URL=… HATBOT_TRUSTED_PROXIES=… ./deploy.sh …`; for ntfy, set `NTFY_URL=…`; for updates, `HATBOT_GIT_URL=…`.
+Each deploy is a new release in `/var/lib/hatbot/releases` inside the brain, and `/var/lib/hatbot/app` links to the live one. Before switching, the brain stops and its database is copied into the new release (`hatbot.sqlite.before`). If the new release fails its health check, the previous one goes back live with that copy of the database, so a migration it can't read is undone. The last 3 are kept. To change the URL or proxy later, run with `HATBOT_PUBLIC_URL=… HATBOT_TRUSTED_PROXIES=… ./deploy.sh …`; for ntfy, set `NTFY_URL=…`; for updates, `HATBOT_GIT_URL=…`.
 
 ## Update from Settings
 
-After that, **Settings → Updates → Update** pulls the branch and deploys it: desktop-agent first, then the brain, each with the same health check and rollback as `deploy.sh`. The page reloads on the new version.
+After that, **Settings → Updates → Update** pulls the branch and deploys it: the brain first, then desktop-agent, each with the same health check and rollback as `deploy.sh`. If the brain goes back to its old version, the desktop isn't touched. The page reloads on the new version.
 
 - The brain only writes `/var/lib/hatbot/update-request`. `hatbot-update.path` runs `hatbot-update` as root, which reads the git token from `/etc/hatbot/update.env` (root only), so the brain service never holds it.
 - desktop-agent receives its new code over its own API; a root service on the desktop (`hatbot-desktop-agent-update.path`) installs it. The first `deploy.sh` run after this feature sets that up.
 - It refuses while a task is running, because the brain restarts.
 - It doesn't touch the host. If a commit changes host-side scripts (`host-setup.sh`, `deploy.sh`, `desktop-deploy.sh` and so on), Settings says so; run `deploy.sh` on the host for those.
 - Logs: `/var/lib/hatbot-update/last.log` on the brain, and `journalctl -u hatbot-desktop-agent-update` on the desktop.
+
+### Signed commits only (optional)
+
+An update runs the new commit's `brain-deploy.sh` as root on the brain, so whoever can push to the branch can run code there. To deploy only commits you signed with an SSH key, put the key in an allowed signers file on the brain and point `update.env` at it:
+
+```sh
+pct exec <brain> -- sh -c 'echo "you@example.com namespaces=\"git\" ssh-ed25519 AAAA…" > /etc/hatbot/allowed_signers'
+pct exec <brain> -- sh -c 'echo HATBOT_UPDATE_SIGNERS=/etc/hatbot/allowed_signers >> /etc/hatbot/update.env'
+```
+
+Sign your commits (`git config gpg.format ssh`, `git config user.signingkey ~/.ssh/id_ed25519.pub`, `git config commit.gpgsign true`). From then on an update whose newest commit fails `git verify-commit` stops before deploying anything, and Settings says why. The check is in `hatbot-update` itself, so it starts working after the next update (or deploy) installs this version of it. `deploy.sh` keeps the line when it rewrites `update.env`.
 
 ## Commands in your containers (optional)
 
@@ -89,7 +102,7 @@ Integrations are plugins you switch on in the web app, under **Settings → Plug
 
 ```sh
 pct exec <brain> -- sh -c 'install -m 640 -g hatbot /dev/stdin /etc/hatbot/forgejo.env <<EOF
-FORGEJO_URL=https://git.gaycats.ovh
+FORGEJO_URL=https://git.example.com
 FORGEJO_TOKEN=…
 EOF
 systemctl restart hatbot-brain'
@@ -107,6 +120,20 @@ systemctl restart hatbot-brain'
 | MCP | servers are added on the plugin's page. Secrets they need go in `/etc/hatbot/mcp.env` and are referenced as `${NAME}` in headers or environment. A "Command" server runs inside the brain as the `hatbot` user, which can read the brain's other secrets, so only run servers you trust there; prefer HTTP servers running elsewhere |
 
 The brain's unit loads these env files from the first deploy after they were added; redeploy the brain once for `pbs.env`, `homeassistant.env` and `uptimekuma.env`.
+
+## When the brain itself is down
+
+Check everything and the heartbeat run inside the brain, so they can't tell you it's down. Instead the brain pings a monitor outside it once a minute, and the monitor tells you when the pings stop. In Uptime Kuma:
+
+1. **Notification:** Settings → Notifications → Setup Notification, type **ntfy**, with your ntfy server, topic and token. It must go to ntfy directly, not to Hatbot's Kuma trigger, because Hatbot is what's down.
+2. **Monitor:** Add New Monitor, type **Push**, heartbeat interval **60** seconds, retries **2**, with that notification on. Copy its push URL.
+3. **The brain:** put the URL in `/etc/hatbot/secrets.env` and restart:
+
+   ```sh
+   pct exec <brain> -- sh -c 'echo "HATBOT_PING_URL=https://kuma.example/api/push/…?status=up&msg=OK&ping=" >> /etc/hatbot/secrets.env; systemctl restart hatbot-brain'
+   ```
+
+The brain sends `status=up` while its database answers and `status=down` with the error when it doesn't, and keeps pinging while paused. Treat the URL as a secret: whoever has it can say "up" for the brain. Settings → Check everything shows the last ping. Any other dead-man service that takes a GET with `status` and `msg` works too.
 
 ## Settings
 

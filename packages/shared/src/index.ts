@@ -1,11 +1,13 @@
 // API types shared by the brain, the web app and the future iOS app (PLAN.md §4.4).
 import { z } from "zod";
+import type { Negotiation } from "./negotiate";
 import type { PluginInfo } from "./plugin";
 import type { Schedule, Trigger } from "./schedule";
 import type { Watcher } from "./watch";
 
 export * from "./chart";
 export * from "./checks";
+export * from "./negotiate";
 export * from "./plugin";
 export * from "./schedule";
 export * from "./search";
@@ -60,7 +62,23 @@ export const SeenMessages = z.object({ ids: z.array(z.number().int().positive())
 export const PutMemoryFile = z.object({
   content: z.string().max(1_000_000),
   message: z.string().max(200).optional(),
+  /**
+   * The `sha` GET /memory/file gave ("" for a new file). If the file has changed since, the write is
+   * refused with 409 `{ error: "changed", sha, content }`: what it is now.
+   */
+  baseSha: z
+    .string()
+    .regex(/^([0-9a-f]{40})?$/)
+    .optional(),
 });
+
+/** GET /memory/file. */
+export type MemoryFileContent = {
+  path: string;
+  content: string;
+  /** Git's blob id of `content`; send it back as `baseSha`. */
+  sha: string;
+};
 
 export type ThreadMessage = {
   id: number;
@@ -79,6 +97,8 @@ export type ThreadMessage = {
   createdAt: string;
   taskId: number | null;
   scheduleId: number | null;
+  /** A negotiation this reply started shows under it (PLAN.md §16.5). */
+  negotiationId: number | null;
   /** The conversation it belongs to; cards from background tasks have none. */
   episodeId: number | null;
   /** When a task's result changed it after it was sent. */
@@ -186,7 +206,7 @@ export type TaskStep = {
 
 /** A task's steps with only the model's latest note; your own notes on approvals stay. */
 export function latestNoteOnly(steps: TaskStep[]): TaskStep[] {
-  const isModelNote = (s: TaskStep) => s.kind === "note" && s.name !== "Your note";
+  const isModelNote = (s: TaskStep) => s.kind === "note" && s.name === "Note";
   const last = steps.findLast(isModelNote);
   return steps.filter((s) => !isModelNote(s) || s === last);
 }
@@ -200,6 +220,8 @@ export type ApprovalKind =
   | "account_security"
   | "injection_warning"
   | "budget"
+  /** A negotiation's mandate (PLAN.md §16.1): what the bot may do on its own with one seller. */
+  | "mandate"
   | "other";
 
 export type Approval = {
@@ -256,6 +278,8 @@ export type HatbotEvent =
   | { type: "message.done"; id: number; text: string; status: "done" | "error" }
   /** A task now shows under this reply. */
   | { type: "message.task"; id: number; taskId: number }
+  /** A negotiation now shows under this reply (PLAN.md §16.5). */
+  | { type: "message.negotiation"; id: number; negotiationId: number }
   /** A task's result changed this message. */
   | { type: "message.edited"; id: number; editedAt: string }
   /** The task shown under this reply ended: its bot is writing the reply again, to say what came of it. */
@@ -283,13 +307,18 @@ export type HatbotEvent =
   | { type: "trigger.deleted"; id: number }
   | { type: "watcher.updated"; watcher: Watcher }
   | { type: "watcher.deleted"; id: number }
+  | { type: "negotiation.updated"; negotiation: Negotiation }
   | { type: "plugin.updated"; plugin: PluginInfo }
   | { type: "teach.updated"; session: TeachSession }
   | { type: "episode.updated"; episode: Episode }
   | { type: "bot.updated"; bot: Bot }
   | { type: "bot.deleted"; id: string }
   | { type: "conversation.updated"; conversation: Conversation }
-  | { type: "conversation.deleted"; id: number };
+  | { type: "conversation.deleted"; id: number }
+  /** After PUT /settings: clients refetch or take these. */
+  | { type: "settings.updated"; settings: AppSettings }
+  /** After each heartbeat run: clients refetch GET /heartbeat. */
+  | { type: "heartbeat.updated" };
 
 /** The first bot. It can't be deleted, and /thread is its chat. */
 export const HATBOT_ID = "hatbot";
@@ -441,10 +470,10 @@ export type UpdateInfo = {
 
 export type MemoryFile = { path: string; size: number };
 
-/** A change to memory for you to look over: a tidy-up, or a fix to a skill. */
+/** A change to memory for you to look over: a tidy-up, a fix to a skill, or a held write (PLAN.md §6.1). */
 export type Proposal = {
   id: number;
-  kind: "tidy" | "skill";
+  kind: "tidy" | "skill" | "write";
   title: string;
   reason: string;
   /** null before: a new file; null after: deleted. */
@@ -474,7 +503,13 @@ export type Commit = {
   files: string[];
 };
 
-export type Limits = { taskUsd: number; dailyUsd: number; monthlyUsd: number };
+export type Limits = {
+  taskUsd: number;
+  dailyUsd: number;
+  monthlyUsd: number;
+  /** The last of the daily and monthly limits, which only alerts and the heartbeat spend. */
+  alertReserveUsd: number;
+};
 /** Spend over a stretch of time: dollars, and tokens of every kind (input, cache, output). */
 export type SpendWindow = { usd: number; tokens: number };
 export type SpendSummary = {
@@ -489,6 +524,8 @@ export type SpendSummary = {
 export type SpendHour = SpendWindow & { hour: string };
 export type SpendDay = { date: string; usd: number };
 export type SpendByModel = { model: string; usd: number };
+/** GET /spend/by-purpose: what the money went on, the most first. */
+export type SpendByPurpose = { purpose: string; costUsd: number };
 
 export type AppSettings = {
   limits: Limits;
@@ -503,6 +540,8 @@ export type AppSettings = {
   notificationsOpen: "web" | "app";
   /** The model that drives desktop tasks. */
   desktopModel: "claude-opus-5-5" | "claude-haiku-5-5";
+  /** A desktop task Haiku fails at carries on once on Opus. */
+  desktopEscalate: boolean;
   /** The model background tasks (SSH, Proxmox, code work) run on. */
   taskModel: "claude-haiku-5-5" | "claude-opus-5-5";
   heartbeat: HeartbeatSettings;
@@ -539,6 +578,17 @@ export type HeartbeatInfo = {
   /** The new things it found. */
   found: string[];
   action: "nothing" | "notify" | "task" | null;
+  note: string;
+  taskId: number | null;
+  /** The last 20 looks that found something, newest first. */
+  recent: HeartbeatRun[];
+};
+
+/** A look that found something. */
+export type HeartbeatRun = {
+  at: string;
+  found: string[];
+  action: "nothing" | "notify" | "task";
   note: string;
   taskId: number | null;
 };

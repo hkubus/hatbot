@@ -48,10 +48,13 @@ step "2/3 Settings"
 if ct_has_file "$BRAIN_ID" /etc/hatbot/brain.env && [[ -z ${HATBOT_PUBLIC_URL:-} ]]; then
   ok "keeping /etc/hatbot/brain.env (set HATBOT_PUBLIC_URL to change it)"
 else
-  def_url=${HATBOT_PUBLIC_URL:-https://hatbot.gaycats.ovh}
+  def_url=${HATBOT_PUBLIC_URL:-}
   def_proxies=${HATBOT_TRUSTED_PROXIES:-}
   url='' proxies=''
-  read -r -p "   Public URL of the web app [$def_url]: " url || true
+  until [[ ${url:-$def_url} == http*://* ]]; do
+    read -r -p "   Public URL of the web app, e.g. https://hatbot.example.com${def_url:+ [$def_url]}: " url ||
+      die "the web app's public URL is needed"
+  done
   read -r -p "   IP of your reverse proxy, to trust its X-Forwarded-For (empty: none) [$def_proxies]: " proxies || true
   push_secret "$BRAIN_ID" /etc/hatbot/brain.env <<EOF
 HATBOT_PUBLIC_URL=${url:-$def_url}
@@ -152,8 +155,12 @@ else
     else
       warn "the brain can't read $git_branch from $git_url; saving it anyway"
     fi
-    printf 'HATBOT_GIT_URL=%q\nHATBOT_GIT_BRANCH=%q\nHATBOT_GIT_USER=%q\nHATBOT_GIT_TOKEN=%q\n' \
-      "$git_url" "$git_branch" "$git_user" "$git_token" | push_secret "$BRAIN_ID" /etc/hatbot/update.env
+    {
+      printf 'HATBOT_GIT_URL=%q\nHATBOT_GIT_BRANCH=%q\nHATBOT_GIT_USER=%q\nHATBOT_GIT_TOKEN=%q\n' \
+        "$git_url" "$git_branch" "$git_user" "$git_token"
+      # Kept from the file this replaces: commit signature checks (README.md).
+      pct exec "$BRAIN_ID" -- sh -c 'grep -s "^HATBOT_UPDATE_SIGNERS=" /etc/hatbot/update.env || true'
+    } | push_secret "$BRAIN_ID" /etc/hatbot/update.env
     unset git_token
   elif [[ -n $git_url ]]; then
     warn "only https repositories are supported; skipping updates"

@@ -1,12 +1,13 @@
 // The heartbeat: every few minutes, a look at what went wrong without the model. Only something new
 // goes to Haiku, which tells you, starts a task, or lets it be (PLAN.md §16).
 import type Anthropic from "@anthropic-ai/sdk";
-import type { HeartbeatInfo } from "@hatbot/shared";
+import type { HeartbeatInfo, HeartbeatRun } from "@hatbot/shared";
 import type { Chats } from "./agent/chats";
 import type { ModelClient } from "./agent/model";
 import type { Bots } from "./bots";
 import type { Db } from "./db";
 import type { Desktop } from "./desktop/service";
+import type { EventBus } from "./events";
 import type { Notifier } from "./notify";
 import type { Plugins } from "./plugins/registry";
 import type { SettingsStore } from "./settings";
@@ -15,18 +16,24 @@ import type { Tasks } from "./tasks/service";
 
 export const HEARTBEAT_MODEL = "claude-haiku-5-5";
 const STATE_KEY = "heartbeat:state";
+/** Looks that found something, kept for Settings. */
+const KEEP_RUNS = 20;
 
 export type Signal = { key: string; text: string };
+
+type Last = Omit<HeartbeatInfo, "recent">;
 
 type State = {
   lastRunAt: string | null;
   /** Problems already told, by key: told again only after they've gone and come back. */
   seen: Record<string, string>;
-  last: HeartbeatInfo;
+  last: Last;
+  recent: HeartbeatRun[];
 };
 
 export type HeartbeatDeps = {
   db: Db;
+  events: EventBus;
   settings: SettingsStore;
   spend: Spend;
   model: ModelClient;
@@ -59,7 +66,8 @@ export class Heartbeat {
   }
 
   info(): HeartbeatInfo {
-    return this.state().last;
+    const s = this.state();
+    return { ...s.last, recent: s.recent };
   }
 
   /** Runs when it's due; the brain calls it every few seconds. */
@@ -76,30 +84,42 @@ export class Heartbeat {
     if (this.running) return this.info();
     this.running = true;
     try {
-      return await this.beat();
+      await this.beat();
     } catch (err) {
       console.error("heartbeat failed", err);
-      return this.info();
     } finally {
       this.running = false;
     }
+    this.d.events.emit({ type: "heartbeat.updated" });
+    return this.info();
   }
 
-  private async beat(): Promise<HeartbeatInfo> {
+  private async beat() {
     const settings = this.d.settings.get();
     const now = new Date(this.clock()).toISOString();
     const state = this.state();
+    // After a long time off, only what's recent: not a week of failures at once.
+    const earliest = new Date(this.clock() - 2 * settings.heartbeat.everyMinutes * 60_000);
     const since =
-      state.lastRunAt ??
-      new Date(this.clock() - settings.heartbeat.everyMinutes * 60_000).toISOString();
+      state.lastRunAt && Date.parse(state.lastRunAt) > earliest.getTime()
+        ? state.lastRunAt
+        : earliest.toISOString();
+    // Saved first, so a look that crashes or hangs isn't started again every few seconds.
+    this.save({ ...state, lastRunAt: now });
     const signals = await this.gather(since);
     const fresh = signals.filter((s) => !(s.key in state.seen));
     // A problem that's gone is forgotten, so it's told again if it comes back.
     const seen = Object.fromEntries(signals.map((s) => [s.key, state.seen[s.key] ?? now]));
-    let last: HeartbeatInfo = { at: now, found: [], action: "nothing", note: "", taskId: null };
-    if (fresh.length) last = await this.act(fresh, now);
-    this.save({ lastRunAt: now, seen, last });
-    return last;
+    let last: Last = { at: now, found: [], action: "nothing", note: "", taskId: null };
+    let recent = state.recent;
+    if (fresh.length) {
+      last = await this.act(fresh, now);
+      recent = [{ ...last, at: now, action: last.action ?? "nothing" }, ...recent].slice(
+        0,
+        KEEP_RUNS,
+      );
+    }
+    this.save({ lastRunAt: now, seen, last, recent });
   }
 
   /** What's wrong, without the model. */
@@ -158,7 +178,7 @@ export class Heartbeat {
     return out;
   }
 
-  private async act(fresh: Signal[], now: string): Promise<HeartbeatInfo> {
+  private async act(fresh: Signal[], now: string): Promise<Last> {
     const { heartbeat } = this.d.settings.get();
     const found = fresh.map((s) => s.text);
     const list = found.map((t) => `- ${t}`).join("\n");
@@ -199,7 +219,7 @@ export class Heartbeat {
   }
 
   private async triage(instructions: string, list: string) {
-    this.d.spend.check(0.01);
+    this.d.spend.check(0.01, undefined, { reserve: true });
     const res = await this.d.model.create({
       model: HEARTBEAT_MODEL,
       max_tokens: 2000,
@@ -237,6 +257,7 @@ export class Heartbeat {
       lastRunAt: null,
       seen: {},
       last: { at: null, found: [], action: null, note: "", taskId: null },
+      recent: [],
     };
     return row ? { ...empty, ...(JSON.parse(row.value) as Partial<State>) } : empty;
   }

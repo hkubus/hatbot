@@ -6,16 +6,18 @@ import {
   type Limits,
   type UpdateInfo,
 } from "@hatbot/shared";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api";
 import { Icon } from "../icons";
+import { LoadError, loadErrorText } from "../load";
 import { navigate } from "../router";
 import { setPaused, useStore } from "../store";
 import { Switch } from "../switch";
 import { getTheme, setTheme, type Theme } from "../theme";
-import { Checks } from "./Checks";
-import { HeartbeatPage } from "./Heartbeat";
 import { PluginPage, PluginsGroup } from "./Plugins";
+
+const Checks = lazy(() => import("./Checks").then((m) => ({ default: m.Checks })));
+const HeartbeatPage = lazy(() => import("./Heartbeat").then((m) => ({ default: m.HeartbeatPage })));
 
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -30,9 +32,14 @@ export function Settings({
   onSignOut: () => void;
 }) {
   const plugin = /^\/settings\/plugins\/([a-z0-9]+)$/.exec(path)?.[1];
-  if (plugin) return <PluginPage key={plugin} id={plugin} toast={toast} />;
-  if (path === "/settings/checks") return <Checks />;
-  if (path === "/settings/heartbeat") return <HeartbeatPage toast={toast} />;
+  const page = plugin ? (
+    <PluginPage key={plugin} id={plugin} toast={toast} />
+  ) : path === "/settings/checks" ? (
+    <Checks />
+  ) : path === "/settings/heartbeat" ? (
+    <HeartbeatPage toast={toast} />
+  ) : null;
+  if (page) return <Suspense fallback={<section className="view" />}>{page}</Suspense>;
   return <SettingsHome toast={toast} onSignOut={onSignOut} />;
 }
 
@@ -42,11 +49,24 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
   const [newToken, setNewToken] = useState<CreateTokenResponse | null>(null);
   const [theme, setThemeState] = useState<Theme>(getTheme());
   const paused = useStore((s) => s.paused);
-
+  const [loadError, setLoadError] = useState("");
+  // Saved elsewhere (the app, another tab): shown here too.
+  const settingsVersion = useStore((s) => s.settingsVersion);
   useEffect(() => {
-    api<AppSettings>("/settings").then(setSettings);
-    api<ApiToken[]>("/tokens").then(setTokens);
+    if (settingsVersion) api<AppSettings>("/settings").then(setSettings, () => {});
+  }, [settingsVersion]);
+
+  const load = useCallback(() => {
+    setLoadError("");
+    Promise.all([api<AppSettings>("/settings"), api<ApiToken[]>("/tokens")]).then(
+      ([s, t]) => {
+        setSettings(s);
+        setTokens(t);
+      },
+      (err) => setLoadError(loadErrorText(err)),
+    );
   }, []);
+  useEffect(load, [load]);
 
   const update = async (patch: Partial<AppSettings>) => {
     try {
@@ -59,7 +79,9 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
 
   const setLimit = (key: keyof Limits, value: string) => {
     const n = Number(value);
-    if (!settings || !(n > 0) || n === settings.limits[key]) return;
+    // Nothing kept for alerts is allowed; a limit of nothing isn't.
+    const ok = key === "alertReserveUsd" ? n >= 0 : n > 0;
+    if (!settings || !ok || n === settings.limits[key]) return;
     void update({ limits: { ...settings.limits, [key]: n } });
   };
 
@@ -82,7 +104,16 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
     onSignOut();
   };
 
-  if (!settings) return <section className="view" />;
+  if (!settings)
+    return (
+      <section className="view">
+        {loadError && (
+          <div className="page">
+            <LoadError error={loadError} retry={load} />
+          </div>
+        )}
+      </section>
+    );
 
   return (
     <section className="view">
@@ -138,6 +169,7 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
                 ["dailyUsd", "Per day"],
                 ["monthlyUsd", "Per month"],
                 ["taskUsd", "Per task"],
+                ["alertReserveUsd", "Kept for alerts"],
               ] as const
             ).map(([key, label]) => (
               <div className="row" key={key}>
@@ -147,7 +179,7 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
                 $
                 <input
                   type="number"
-                  min="0.01"
+                  min={key === "alertReserveUsd" ? "0" : "0.01"}
                   step="0.01"
                   defaultValue={settings.limits[key]}
                   onBlur={(e) => setLimit(key, e.target.value)}
@@ -319,10 +351,21 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
                   update({ desktopModel: e.target.value as AppSettings["desktopModel"] })
                 }
               >
+                <option value="claude-haiku-5-5">Haiku 5.5</option>
                 <option value="claude-opus-5-5">Opus 5.5</option>
-                <option value="claude-haiku-5-5">Haiku 5.5 (cheaper, less tested)</option>
               </select>
             </div>
+            {settings.desktopModel === "claude-haiku-5-5" && (
+              <div className="row">
+                <div className="txt">
+                  <b>Try again on Opus when Haiku fails</b>
+                </div>
+                <Switch
+                  on={settings.desktopEscalate}
+                  onChange={(desktopEscalate) => update({ desktopEscalate })}
+                />
+              </div>
+            )}
           </div>
         </section>
 

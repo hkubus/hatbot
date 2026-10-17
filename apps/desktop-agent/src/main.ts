@@ -1,5 +1,5 @@
 // desktop-agent: runs on the desktop, takes orders only from the brain (PLAN.md §4.2).
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
@@ -7,15 +7,28 @@ import type {
   AgentStatus,
   BrowserCall,
   BrowserInspect,
-  FetchResult,
   LiveInput,
 } from "@hatbot/shared/desktop";
-import { Browser, BrowserError } from "./browser";
+import { Browser, BrowserError, devToolsUp } from "./browser";
 import { context, inspect } from "./cdp";
+import { FetchError, fetchPage } from "./fetch";
 import { browserKey } from "./keys";
+import { LiveQueue } from "./livequeue";
 import { runningProfile, useProfile } from "./profile";
+import { RENDER_SOCKET } from "./render";
 import { SHELL_SOCKET } from "./shell";
-import { ActionError, act, LiveCapture, screenSize, screenshot, xdotool, zoom } from "./x11";
+import {
+  ActionError,
+  act,
+  displayUp,
+  LIVE_FPS_CONTROL,
+  LIVE_FPS_WATCHING,
+  LiveCapture,
+  screenSize,
+  screenshot,
+  xdotool,
+  zoom,
+} from "./x11";
 
 const token = process.env.DESKTOP_AGENT_TOKEN ?? "";
 if (token.length < 32) throw new Error("DESKTOP_AGENT_TOKEN is missing or too short");
@@ -29,15 +42,47 @@ const version = (() => {
     return undefined;
   }
 })();
+/**
+ * The sha256 of the installed desktop-deploy.sh. Updates from the brain don't replace it (only deploy.sh
+ * does), so the brain compares it with its own copy's to tell when deploy.sh must be run again.
+ */
+const installer = (() => {
+  try {
+    const bytes = readFileSync(
+      process.env.HATBOT_INSTALLER ?? "/usr/local/sbin/hatbot-desktop-agent-deploy",
+    );
+    return createHash("sha256").update(bytes).digest("hex");
+  } catch {
+    return undefined;
+  }
+})();
 /** Set by systemd's StateDirectory=; an archive dropped here is installed by a root service. */
 const stateDir = process.env.STATE_DIRECTORY;
 const MAX_UPDATE_BYTES = 10 * 1024 * 1024;
 /** Endpoints added since the first deploy; the brain's checks say when the desktop is behind. */
-const FEATURES = ["profiles", "exec", "files", "fetch"];
-/** Pages a watcher fetches are cut here. */
-const MAX_FETCH_CHARS = 2 * 1024 * 1024;
+const FEATURES = [
+  "profiles",
+  "exec",
+  "files",
+  "fetch",
+  "deep-health",
+  "browser-reset",
+  // inspect reports the tab's address and its text boxes, for the exact-text send check.
+  "fields",
+  "render",
+];
 
-const size = await screenSize();
+// The display may still be starting (Xvnc restarting, say): wait for it rather than exit and be restarted.
+const size = await (async () => {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await screenSize();
+    } catch (err) {
+      if (attempt === 0) console.error(`waiting for the display: ${(err as Error).message}`);
+      await Bun.sleep(Math.min(5000, 500 * (attempt + 1)));
+    }
+  }
+})();
 const live = new LiveCapture(size);
 // Downloads land where desktop-agent can read them (it can't see /home), to be sent on to the owner.
 const downloadDir = stateDir ? join(stateDir, "downloads") : null;
@@ -54,7 +99,8 @@ const authorized = (req: Request) => {
   return got.length === want.length && timingSafeEqual(got, want);
 };
 const json = (body: unknown, status = 200) => Response.json(body, { status });
-const health = (): AgentStatus => ({
+// `installer` is local until it joins AgentStatus in packages/shared.
+const health = (): AgentStatus & { installer?: string } => ({
   ok: true,
   ...size,
   locked,
@@ -62,7 +108,26 @@ const health = (): AgentStatus => ({
   profile: runningProfile(),
   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   features: FEATURES,
+  installer,
 });
+/** GET /health?deep=1: plain health, plus whether the screen can be grabbed and DevTools and the shell answer. */
+type DeepHealth = Omit<AgentStatus, "ok"> & {
+  ok: boolean;
+  x: boolean;
+  cdp: boolean;
+  shell: boolean;
+};
+async function deepHealth(): Promise<DeepHealth> {
+  const shellUp = fetch("http://shell/", {
+    unix: SHELL_SOCKET,
+    signal: AbortSignal.timeout(2000),
+  } as RequestInit).then(
+    () => true,
+    () => false,
+  );
+  const [x, cdp, shell] = await Promise.all([displayUp(), devToolsUp(), shellUp]);
+  return { ...health(), ok: x && cdp, x, cdp, shell };
+}
 const image = (bytes: Uint8Array) =>
   new Response(bytes, { headers: { "content-type": "image/webp", "cache-control": "no-store" } });
 
@@ -111,7 +176,9 @@ async function liveInput(m: LiveInput) {
   }
 }
 
-const server = Bun.serve<{ off?: () => void }>({
+const liveQueue = new LiveQueue((m) => serial(() => liveInput(m)));
+
+const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
   hostname: host,
   port: Number(port),
   async fetch(req, srv) {
@@ -121,7 +188,7 @@ const server = Bun.serve<{ off?: () => void }>({
     try {
       switch (route) {
         case "GET /health":
-          return json(health());
+          return json(url.searchParams.get("deep") === "1" ? await deepHealth() : health());
         case "POST /update": {
           // A new copy of this app from the brain's updater (the Update button in Settings).
           // hatbot-desktop-agent-update.path picks it up and installs it as root, then restarts us.
@@ -174,28 +241,35 @@ const server = Bun.serve<{ off?: () => void }>({
           const { url: target } = (await req.json()) as { url: string };
           if (!/^https?:\/\//.test(target ?? ""))
             return json({ error: "Only http and https." }, 400);
+          try {
+            return json(await fetchPage(target, { own: [host ?? ""] }));
+          } catch (err) {
+            if (err instanceof FetchError) return json({ error: err.message }, err.status);
+            throw err;
+          }
+        }
+        case "POST /render":
+        case "POST /render/check": {
+          // For watchers that run a page's scripts: hatbot-render, one page at a time, so a render may
+          // wait behind a few others. Not serialised with input: its Chromium isn't the one on screen.
           let res: Response;
           try {
-            res = await fetch(target, {
-              redirect: "follow",
-              signal: AbortSignal.timeout(20_000),
-              headers: {
-                "user-agent":
-                  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36",
-                accept: "text/html,application/json;q=0.9,*/*;q=0.8",
-                "accept-language": "en-GB,en;q=0.9",
-              },
-            });
+            res = await fetch(`http://render/${url.pathname === "/render" ? "render" : "check"}`, {
+              method: "POST",
+              unix: RENDER_SOCKET,
+              headers: { "content-type": "application/json" },
+              body: await req.text(),
+              signal: AbortSignal.timeout(110_000),
+            } as RequestInit);
           } catch (err) {
-            return json({ error: `Couldn't fetch it: ${(err as Error).message}` }, 502);
+            if ((err as Error).name === "TimeoutError")
+              return json({ error: "The renderer didn't answer in time." }, 504);
+            return json({ error: "The renderer isn't running (deploy.sh sets it up)." }, 503);
           }
-          const body = await res.text();
-          return json({
+          return new Response(res.body, {
             status: res.status,
-            url: res.url || target,
-            contentType: res.headers.get("content-type") ?? "",
-            body: body.slice(0, MAX_FETCH_CHARS),
-          } satisfies FetchResult);
+            headers: { "content-type": "application/json" },
+          });
         }
         case "GET /download": {
           const d = browser.download(url.searchParams.get("id") ?? "");
@@ -243,6 +317,9 @@ const server = Bun.serve<{ off?: () => void }>({
           const { id } = (await req.json()) as { id: string };
           return json({ profile: await serial(() => useProfile(id, stateDir ?? null, browser)) });
         }
+        case "POST /browser/reset":
+          if (locked) return json({ error: "The owner has control of the desktop." }, 423);
+          return json(await serial(() => browser.reset()));
         case "GET /browser/state":
           return json(await serial(() => browser.state()));
         case "POST /browser/inspect": {
@@ -250,16 +327,18 @@ const server = Bun.serve<{ off?: () => void }>({
           return json(await serial(() => browser.inspect(at)));
         }
         case "GET /context":
-          return json(await context(url.searchParams.get("text") === "1"));
+          return json(await context(browser, url.searchParams.get("text") === "1"));
         case "POST /inspect": {
           const { x, y } = (await req.json()) as { x?: number; y?: number };
-          return json(await inspect(x, y));
+          return json(await inspect(browser, x, y));
         }
         case "POST /lock":
           locked = true;
+          live.setFps(LIVE_FPS_CONTROL);
           return json(health());
         case "POST /unlock":
           locked = false;
+          live.setFps(LIVE_FPS_WATCHING);
           return json(health());
         case "GET /live":
           if (srv.upgrade(req, { data: {} })) return undefined;
@@ -278,8 +357,19 @@ const server = Bun.serve<{ off?: () => void }>({
     // Frames out as binary JPEG; live input in as JSON text.
     open(ws) {
       ws.data.off = live.subscribe((frame) => {
-        if (ws.getBufferedAmount() < LIVE_BUFFER_BYTES) ws.sendBinary(frame);
+        // A frame skipped here goes out once the socket drains: an unchanging screen sends no more.
+        if (ws.getBufferedAmount() < LIVE_BUFFER_BYTES) {
+          ws.data.behind = undefined;
+          ws.sendBinary(frame);
+        } else ws.data.behind = frame;
       });
+    },
+    drain(ws) {
+      const frame = ws.data.behind;
+      if (frame && ws.getBufferedAmount() < LIVE_BUFFER_BYTES) {
+        ws.data.behind = undefined;
+        ws.sendBinary(frame);
+      }
     },
     message(_ws, msg) {
       if (typeof msg !== "string") return;
@@ -289,7 +379,7 @@ const server = Bun.serve<{ off?: () => void }>({
       } catch {
         return;
       }
-      void serial(() => liveInput(m)).catch((err) => console.error("live input", err));
+      liveQueue.push(m);
     },
     close(ws) {
       ws.data.off?.();

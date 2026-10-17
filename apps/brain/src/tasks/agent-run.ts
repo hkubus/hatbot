@@ -25,7 +25,7 @@ import { type Outcome, ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import type { CallContext, PluginTool, Verdict } from "../plugins/plugin";
 import { describeCall, runPluginTool, untrustedDefinitions, verdictFor } from "../plugins/registry";
-import { BudgetError, priceOf } from "../spend";
+import { BudgetError, estimateTokens, priceOf, usesReserve } from "../spend";
 import { Stop, UPDATES_MODELS } from "./desktop-run";
 import { SEND_TO_CHAT_DESCRIPTION, SendToChat, sendToChat } from "./send-to-chat";
 import type { Tasks } from "./service";
@@ -33,7 +33,10 @@ import type { Tasks } from "./service";
 const MAX_STEPS = 30;
 /** Code work (effort medium or high) reads and writes more. */
 const MAX_CODE_STEPS = 80;
-const BETAS: Anthropic.Beta.AnthropicBeta[] = ["thinking-display-updates-2026-08-18"];
+const BETAS: Anthropic.Beta.AnthropicBeta[] = [
+  "thinking-display-updates-2026-08-18",
+  "context-management-2025-06-27",
+];
 /** The chat's tools a background task gets. Schedules and triggers stay with the chat. */
 const SHARED_TOOLS = [
   "memory_list",
@@ -129,7 +132,7 @@ const CORE_TOOLS: Anthropic.Beta.BetaTool[] = [
 /** Rough upper estimate before a request: cached prefix at read price, plus room for a reply. */
 function estimateCost(messages: Anthropic.Beta.BetaMessageParam[], model: string): number {
   const p = priceOf(model);
-  const tokens = JSON.stringify(messages).length / 3 + 4000;
+  const tokens = estimateTokens(messages) + 4000;
   return (tokens * p.input * 0.3 + 2000 * p.output) / 1_000_000;
 }
 
@@ -141,6 +144,18 @@ const STARTED_BY = {
   heartbeat: () => "the heartbeat, which found something worth a look",
   chat: () => "the owner, from the chat",
 };
+
+/** An alert the limits stopped before anything looked at it: what it said, so you still hear it. */
+function notInvestigated(limit: "daily" | "monthly", payload: string | null): string {
+  let said = (payload ?? "").slice(0, 500);
+  try {
+    const a = JSON.parse(payload ?? "") as Record<string, unknown>;
+    const where = a.url || a.hostname;
+    said = `${a.monitor ?? "A monitor"}${where ? ` (${where})` : ""} is down${a.message ? `: ${a.message}` : "."}`;
+  } catch {}
+  const spent = limit === "daily" ? "today's" : "this month's";
+  return `Not investigated: ${spent} limit is spent. The alert: ${said}`;
+}
 
 export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal): Promise<void> {
   const { d } = tasks;
@@ -157,8 +172,12 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   let notified = 0;
   // Fixed for the whole run: the tool list is part of the prompt cache.
   // A bot gets only the plugins it may use.
+  const own = d.plugins.tools(bot.plugins);
   const pluginTools = new Map<string, PluginTool>(
-    d.plugins.tools(bot.plugins).map((t) => [t.name, t]),
+    [...own, ...(tasks.negotiations?.tools(bot, own, { conversationId: null }) ?? [])].map((t) => [
+      t.name,
+      t,
+    ]),
   );
   const others = d.bots.list().filter((b) => b.id !== bot.id);
   const tools = [
@@ -195,6 +214,30 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     ...(isError ? { is_error: true } : {}),
   });
 
+  /** Waits for a task this one started, without holding a slot; it's cancelled with this one. */
+  const waitForChild = async (childId: number): Promise<Task> => {
+    const child = tasks.get(childId);
+    children.add(childId);
+    tasks.addStep(id, {
+      kind: "task",
+      name: child?.title ?? `Task #${childId}`,
+      detail: "",
+      url: `/tasks/${childId}`,
+    });
+    tasks.pool.release();
+    slot = false;
+    let ended: Task;
+    try {
+      ended = await tasks.waitFor(childId, signal);
+    } finally {
+      await tasks.pool.acquire(signal);
+      slot = true;
+    }
+    // Still in `children` if this task is cancelled meanwhile, so it's cancelled with it.
+    children.delete(childId);
+    return ended;
+  };
+
   const desktopTask = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
     const p = DesktopTaskInput.safeParse(call.input);
     if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
@@ -215,7 +258,17 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       detail: "",
       url: `/tasks/${child.id}`,
     });
-    const ended = await tasks.waitFor(child.id, signal);
+    // Waiting on the screen doesn't hold a slot other tasks could use.
+    tasks.pool.release();
+    slot = false;
+    let ended: Task;
+    try {
+      ended = await tasks.waitFor(child.id, signal);
+    } finally {
+      await tasks.pool.acquire(signal);
+      slot = true;
+    }
+    // Still in `children` if this task is cancelled meanwhile, so it's cancelled with it.
     children.delete(child.id);
     // Its summary is made from web pages (PLAN.md §6.1).
     taint(`Desktop task #${child.id}`);
@@ -254,10 +307,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     try {
       ended = await tasks.waitFor(child.id, signal);
     } finally {
-      children.delete(child.id);
       await tasks.pool.acquire(signal);
       slot = true;
     }
+    // Still in `children` if this task is cancelled meanwhile, so it's cancelled with it.
+    children.delete(child.id);
     if (ended.tainted) taint(`Task #${child.id} by ${name}`);
     return result(
       call,
@@ -414,6 +468,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         ? (name, bytes) =>
             attachments.save({ bytes, name, mediaType: "", from: "hatbot", taskId: id })
         : undefined,
+      waitForTask: (childId) => waitForChild(childId),
     };
     const what = describeCall(t, call.input);
     const verdict = verdictFor(t, call.input, cc);
@@ -508,10 +563,20 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       if (step >= maxSteps)
         throw new Stop("failed", `Stopped after ${maxSteps} steps without finishing.`);
       try {
-        d.spend.check(estimateCost(messages, task.model), { id, limitUsd: tasks.budget(id) });
+        d.spend.check(
+          estimateCost(messages, task.model),
+          { id, limitUsd: tasks.budget(id) },
+          { reserve: usesReserve(task.origin) },
+        );
       } catch (err) {
         if (!(err instanceof BudgetError)) throw err;
-        if (err.limit !== "task") throw new Stop("failed", `Stopped: ${err.message}`);
+        if (err.limit !== "task")
+          throw new Stop(
+            "failed",
+            task.origin === "alert"
+              ? notInvestigated(err.limit, task.payload)
+              : `Stopped: ${err.message}`,
+          );
         await askBudget();
         continue;
       }
@@ -522,7 +587,9 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           // Code work writes whole files into tool calls.
           max_tokens: task.effort ? 32000 : 16000,
           betas: BETAS,
-          system: [{ type: "text", text: system }],
+          // Tools and system end here, the same for each of this bot's tasks, so they share the entry; the
+          // top-level breakpoint follows the conversation. Two of the four breakpoints allowed.
+          system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
           cache_control: { type: "ephemeral" },
           tools,
           thinking: UPDATES_MODELS.has(task.model)
@@ -530,6 +597,19 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
             : { type: "adaptive" },
           // The chat's dial unless the task asked for more: the same kind of work, without a screen.
           output_config: { effort: task.effort ?? d.settings.get().chatEffort },
+          // Old tool results are cleared on the server once the prompt passes 70k, below the 100k
+          // where Haiku 5.5 bills the whole request at 5x.
+          context_management: {
+            edits: [
+              {
+                type: "clear_tool_uses_20250919",
+                trigger: { type: "input_tokens", value: 70_000 },
+                keep: { type: "tool_uses", value: 6 },
+                clear_at_least: { type: "input_tokens", value: 20_000 },
+                exclude_tools: ["finish_task"],
+              },
+            ],
+          },
           messages,
         },
         {

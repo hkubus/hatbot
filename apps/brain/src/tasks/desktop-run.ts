@@ -1,4 +1,5 @@
 // run_desktop_task: the computer- and browser-use subloop (PLAN.md §5.5, §5.6, §6.1).
+import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
   BetaAbstractBrowserToolset20260801,
@@ -10,15 +11,16 @@ import type { BetaBrowserMemberInput } from "@anthropic-ai/sdk/resources/beta";
 import type { ApprovalKind } from "@hatbot/shared";
 import type { AgentElement, BrowserState, ComputerMember } from "@hatbot/shared/desktop";
 import { z } from "zod";
-import { modelErrorText } from "../agent/model";
+import { modelErrorText, type StreamParams } from "../agent/model";
 import { DESKTOP_PROMPT } from "../agent/prompt";
-import { screenPage } from "../agent/screening";
+import { type Screening, screenPage } from "../agent/screening";
 import { localStamp } from "../agent/thread";
 import { type Outcome, ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
+import { collapse, type GateState, gateCheck, refused, sendsWith } from "../negotiate/gate";
 import { destructive } from "../plugins/ssh/policy";
-import { BudgetError, priceOf } from "../spend";
+import { BudgetError, estimateTokens, priceOf, usesReserve } from "../spend";
 import { skillPath } from "../teach/skills";
 import { checkFor, consequential } from "./policy";
 import { DesktopSendToChat, SEND_TO_CHAT_DESCRIPTION, sendToChat } from "./send-to-chat";
@@ -26,7 +28,13 @@ import type { Tasks } from "./service";
 
 /** Models whose between-tool progress notes (`display: "updates"`) are documented. */
 export const UPDATES_MODELS = new Set(["claude-opus-5-5"]);
-const MAX_STEPS = 80;
+/** A desktop task Haiku gives up on carries on, once, on Opus (PLAN.md §5.4). */
+const FIRST_MODEL = "claude-haiku-5-5";
+const ESCALATE_TO = "claude-opus-5-5";
+/** Steps per attempt; tests lower it. */
+export const limits = { maxSteps: 80 };
+/** A failure Opus may get past, where the model is asked what it tried. */
+const ASK = { account: null };
 const MAX_ACTIVE_MS = 30 * 60_000;
 const TAKEOVER_TIMEOUT_MS = 24 * 3600_000;
 const BETAS: Anthropic.Beta.AnthropicBeta[] = [
@@ -80,6 +88,17 @@ const SendFile = z
     name: z.string().max(200).optional().describe("The name the owner sees, if not the file's own"),
   })
   .refine((v) => !!v.download_id !== !!v.path, "Give either download_id or path.");
+const RecordConversation = z.object({
+  messages: z
+    .array(
+      z.object({
+        from: z.enum(["seller", "us"]),
+        text: z.string().max(4000),
+      }),
+    )
+    .max(100)
+    .describe("The conversation's messages, oldest first, each copied exactly"),
+});
 const FinishTask = z.object({
   outcome: z.enum(["done", "failed", "blocked"]),
   summary: z.string().min(1).max(2000).describe("What you did and the result, for the owner"),
@@ -127,12 +146,29 @@ const CUSTOM_TOOLS: Anthropic.Beta.BetaTool[] = [
   eager_input_streaming: true,
 }));
 
-/** Ends the run from inside a helper. `notify` false: a routine result nobody needs to hear about. */
+/** Only in a negotiation's desktop tasks (PLAN.md §16.3). */
+const RECORD_TOOL: Anthropic.Beta.BetaTool = {
+  name: "record_conversation",
+  description:
+    "Record the conversation with the seller as it is on screen now: every message, oldest first, who wrote it (the seller, or us: this account) and its text, copied exactly. Call it once the conversation is open, before sending anything, and again after. It says what to do next.",
+  input_schema: z.toJSONSchema(RecordConversation) as Anthropic.Beta.BetaTool.InputSchema,
+  eager_input_streaming: true,
+};
+
+/** How a send the gate let through is confirmed: the text leaving the box. Tests shorten it. */
+export const sendConfirm = { tries: 6, everyMs: 500 };
+
+/**
+ * Ends the run from inside a helper. `notify` false: a routine result nobody needs to hear about.
+ * `escalate`: a failure a stronger model might get past (out of steps or time, refused, cut off, or it
+ * gave up), with the model's own account of what it tried when it gave one.
+ */
 export class Stop extends Error {
   constructor(
     readonly status: "done" | "failed" | "cancelled",
     readonly summary: string,
     readonly notify = true,
+    readonly escalate: false | { account: string | null } = false,
   ) {
     super(summary);
   }
@@ -255,23 +291,8 @@ const describe = (name: string, input: Record<string, unknown>): string => {
 
 /** Rough upper estimate before a request: text by length, images at their typical size. */
 function estimateCost(messages: Anthropic.Beta.BetaMessageParam[], model: string): number {
-  let chars = 0;
-  let images = 0;
-  const walk = (v: unknown) => {
-    if (Array.isArray(v)) v.forEach(walk);
-    else if (v && typeof v === "object") {
-      const o = v as Record<string, unknown>;
-      if (o.type === "image") images++;
-      else
-        for (const [k, x] of Object.entries(o)) {
-          if (typeof x !== "string") walk(x);
-          else if (k !== "data") chars += x.length;
-        }
-    }
-  };
-  walk(messages);
   const p = priceOf(model);
-  const tokens = chars / 3.5 + images * 1600 + 3000;
+  const tokens = estimateTokens(messages) + 3000;
   return (tokens * p.input * 0.3 + 1500 * p.output) / 1_000_000;
 }
 
@@ -280,6 +301,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   const task = tasks.get(id);
   if (!task) return;
   const agent = d.desktop.agent;
+  /** Haiku's, until it fails and Opus carries on. */
+  let model = task.model;
 
   let holding = false;
   let activeMs = 0;
@@ -288,6 +311,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   let lastUrl: string | null = null;
   /** An approved confirm_intent covers the next consequential action. */
   let armed = false;
+  /** A negotiation's task: it may send one approved message, or only read (PLAN.md §16.3). */
+  const gate = tasks.negotiations?.gateFor(id) ?? null;
+  const gateState: GateState = { recorded: false, sent: false, stopped: null };
   const sources = new Set<string>();
   const trustedHosts = new Set<string>();
   const messages: Anthropic.Beta.BetaMessageParam[] = [];
@@ -324,6 +350,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     release();
     tasks.setStatus(id, "waiting_approval");
     const out = await fn();
+    // Approved or answered: what it waits for now is the screen.
+    tasks.setStatus(id, "queued");
     await acquire();
     return out;
   };
@@ -429,7 +457,12 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     tasks.setStatus(id, "running");
   };
 
-  /** Logs page changes and screens each new page for prompt injection. */
+  /** Verdicts by page, so a page seen again isn't screened again. */
+  const verdicts = new Map<string, Screening>();
+  /** Pages being screened while the model reads them; their verdicts come before its next actions. */
+  let screening: Promise<{ verdict: Screening; host: string; url: string }>[] = [];
+
+  /** Logs page changes and starts screening each new page for prompt injection. */
   const observePage = async () => {
     const ctx = await agent.context(false).catch(() => null);
     const url = ctx?.url?.split("#")[0] ?? null;
@@ -440,32 +473,52 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     tasks.addStep(id, { kind: "page", name: ctx?.title || url, detail: "", url });
     const host = new URL(url).host;
     if (trustedHosts.has(host)) return;
-    try {
-      const page = await agent.context(true);
-      const verdict = await screenPage(d.model, d.spend, id, {
-        url,
-        title: page.title,
-        text: page.text ?? "",
-      });
-      if (!verdict.suspected) return;
-      tasks.mark(id, "injection_suspected");
-      tasks.addStep(id, {
-        kind: "note",
-        name: "Possible prompt injection",
-        detail: verdict.excerpt,
-        url,
-      });
+    const page = await agent.context(true).catch((err) => {
+      if (signal.aborted) throw err;
+      console.error(`task ${id}: couldn't read the page to screen it`, err);
+      return null;
+    });
+    if (!page) return;
+    const text = page.text ?? "";
+    const key = createHash("sha256").update(`${url}\n${text}`).digest("hex");
+    const known = verdicts.get(key);
+    // Never rejects: it may be left unread when the task stops first.
+    const verdict = known
+      ? Promise.resolve(known)
+      : screenPage(d.model, d.spend, id, { url, title: page.title, text }).then((v) => {
+          if (!v.failed) verdicts.set(key, v);
+          return v;
+        });
+    screening.push(verdict.then((v) => ({ verdict: v, host, url })));
+  };
+
+  /** Applies the verdicts on the pages the model just read: a suspected one asks you to go on. */
+  const screened = async () => {
+    const pending = screening;
+    screening = [];
+    for (const { verdict, host, url } of await Promise.all(pending)) {
+      if (!verdict.suspected || trustedHosts.has(host)) continue;
+      if (verdict.failed)
+        tasks.addStep(id, { kind: "note", name: "Couldn't check the page", detail: "", url });
+      else {
+        tasks.mark(id, "injection_suspected");
+        tasks.addStep(id, {
+          kind: "note",
+          name: "Possible prompt injection",
+          detail: verdict.excerpt,
+          url,
+        });
+      }
       const { outcome } = await askApproval({
         kind: "injection_warning",
         summary: `Keep going on ${host}?`,
-        reason: `This page may contain instructions aimed at Hatbot: "${verdict.excerpt}"`,
+        reason: verdict.failed
+          ? "Hatbot couldn't check this page for instructions aimed at it."
+          : `This page may contain instructions aimed at Hatbot: "${verdict.excerpt}"`,
       });
       if (outcome !== "approved")
         throw new Stop("cancelled", `Stopped on ${host}: the page may contain a prompt injection.`);
       trustedHosts.add(host);
-    } catch (err) {
-      if (err instanceof Stop || signal.aborted) throw err;
-      console.error(`task ${id}: page screening failed`, err);
     }
   };
 
@@ -498,7 +551,15 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         ),
       );
     }
-    const check = checkFor(call.name, input);
+    const no = gate && refused(gate, call.name, input);
+    if (no) {
+      tasks.addStep(id, { kind: "note", name: "Held back", detail: no, url: lastUrl });
+      return textResult(call, `Not run: ${no}`, true);
+    }
+    const check = gate ? sendsWith(call.name, input) : checkFor(call.name, input);
+    /** Looks again at what the check looked at, to see whether a send left the text box. */
+    let inspectAgain: (() => Promise<AgentElement | null>) | null = null;
+    let sending = false;
     if (check) {
       let el: AgentElement | null;
       if (isBrowser) {
@@ -508,16 +569,27 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         const at =
           check === "enter" ? {} : t?.type === "ref" ? { ref: t.ref } : { x: t?.x, y: t?.y };
         const tab = typeof input.tab_id === "string" ? { tab_id: input.tab_id } : {};
-        el = await agent.browserInspect({ ...at, ...tab }).catch(() => null);
+        inspectAgain = () => agent.browserInspect({ ...at, ...tab }).catch(() => null);
       } else {
         let point = input.coordinate as number[] | undefined;
         if (check === "click" && !point) {
           const r = await agent.action({ name: "cursor_position", input: {} });
           point = [r.x ?? 0, r.y ?? 0];
         }
-        el = await agent.inspect(point?.[0], point?.[1]).catch(() => null);
+        inspectAgain = () => agent.inspect(point?.[0], point?.[1]).catch(() => null);
       }
-      const label = consequential(check, el);
+      el = await inspectAgain();
+      let label = consequential(check, el);
+      if (gate) {
+        const g = gateCheck(gate, gateState, check, el, label);
+        if (g.action === "hold") {
+          tasks.addStep(id, { kind: "note", name: "Held back", detail: g.why, url: lastUrl });
+          return textResult(call, `Not run: ${g.why}`, true);
+        }
+        // The send itself, or a click into a text box: neither needs confirm_intent.
+        if (g.action !== "usual") label = null;
+        sending = g.action === "send";
+      }
       if (label && !armed) {
         tasks.addStep(id, {
           kind: "note",
@@ -540,16 +612,77 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       url: lastUrl,
     });
     pendingStepId = step.id;
+    let r: ToolResult;
     try {
-      return await (isBrowser ? browser : computer).toolResult(call);
+      r = await (isBrowser ? browser : computer).toolResult(call);
     } finally {
       pendingStepId = undefined;
     }
+    if (sending && inspectAgain) {
+      // One message, once: whether it went or not, nothing more goes from this task.
+      gateState.sent = true;
+      const went = await sentFrom(inspectAgain);
+      tasks.negotiations?.sendPassed(id, went);
+      const note = went
+        ? "The message went: the text box is empty now. Call record_conversation, then finish."
+        : "Send was clicked, but the text is still in the box, so it may not have gone. Don't try again: call record_conversation, then finish.";
+      tasks.addStep(id, {
+        kind: "note",
+        name: went ? "Sent the approved message" : "Not sure the message went",
+        detail: collapse(gate?.text ?? ""),
+        url: lastUrl,
+      });
+      const content = r.content ?? [];
+      r = {
+        ...r,
+        content:
+          typeof content === "string"
+            ? `${content}\n\n${note}`
+            : [...content, { type: "text", text: note }],
+      };
+    }
+    return r;
+  };
+
+  /** Whether the approved text has left the text boxes, looking a few times as the page catches up. */
+  const sentFrom = async (inspectAgain: () => Promise<AgentElement | null>): Promise<boolean> => {
+    const text = collapse(gate?.text ?? "");
+    for (let i = 0; i < sendConfirm.tries; i++) {
+      await Bun.sleep(sendConfirm.everyMs);
+      const el = (await inspectAgain()) ?? (await agent.inspect().catch(() => null));
+      if (el?.fields && !el.fields.map(collapse).includes(text)) return true;
+    }
+    return false;
+  };
+
+  /** record_conversation: the brain stores what the seller wrote, and says whether the send may go. */
+  const recordConversation = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> => {
+    const p = RecordConversation.safeParse(call.input);
+    if (!p.success) return textResult(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+    if (!gate || !tasks.negotiations)
+      return textResult(call, "This task has no negotiation.", true);
+    const tab = await agent.context(false).catch(() => null);
+    const r = tasks.negotiations.record(id, tab?.url ?? null, p.data.messages, gateState);
+    gateState.recorded = true;
+    if (r.stale || r.alreadySent) gateState.stopped = r.text;
+    tasks.addStep(id, {
+      kind: "action",
+      name: "record_conversation",
+      detail: r.text,
+      url: lastUrl,
+    });
+    return textResult(call, r.text);
   };
 
   const confirmIntent = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> => {
     const p = ConfirmIntent.safeParse(call.input);
     if (!p.success) return textResult(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+    if (gate?.mode === "read")
+      return textResult(
+        call,
+        "Not asked: this task only reads the conversation. Record it and finish.",
+        true,
+      );
     const bytes = await agent.screenshot();
     const step = tasks.addStep(id, {
       kind: "screenshot",
@@ -656,29 +789,60 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   // Its bot's name; the desktop model needs no role or memory.
   const system = promptFor(DESKTOP_PROMPT, { ...tasks.botOf(task), instructions: "" }, []);
 
-  try {
-    // The owner saved it (PLAN.md §5.4), so it's trusted like the task itself.
-    const skill =
-      task.skill && (await d.memory.exists(skillPath(task.skill)))
-        ? `<skill name="${task.skill}">\n${(await d.memory.read(skillPath(task.skill))).trim()}\n</skill>\n\n`
-        : "";
-    await acquire();
+  const request = (msgs: Anthropic.Beta.BetaMessageParam[]): Omit<StreamParams, "stream"> => ({
+    model,
+    max_tokens: 16000,
+    betas: BETAS,
+    // Tools and system end here, the same for each of this bot's tasks, so they share the entry; the
+    // top-level breakpoint follows the conversation. Two of the four breakpoints allowed.
+    system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+    cache_control: { type: "ephemeral" },
+    tools: [computer.toJSON(), browser.toJSON(), ...CUSTOM_TOOLS, ...(gate ? [RECORD_TOOL] : [])],
+    thinking: UPDATES_MODELS.has(model)
+      ? { type: "adaptive", display: "updates" }
+      : { type: "adaptive" },
+    output_config: { effort: "medium" },
+    // Old screenshots are cleared on the server; clearing them here would break cached reasoning.
+    context_management: {
+      edits: [
+        {
+          type: "clear_tool_uses_20250919",
+          trigger: { type: "input_tokens", value: 80_000 },
+          keep: { type: "tool_uses", value: 8 },
+          clear_at_least: { type: "input_tokens", value: 30_000 },
+          exclude_tools: ["confirm_intent", "request_takeover", "finish_task"],
+        },
+      ],
+    },
+    messages: msgs,
+  });
+
+  /** One model's go at the task. It ends by throwing: Stop, or why it couldn't go on. */
+  const attempt = async (label: string, brief: string): Promise<never> => {
     const first = await look(
-      "Start",
-      `${skill}<task>\n${task.goal}\nDone when: ${task.successCriteria || "the goal is met"}\n</task>\nStarted ${localStamp(new Date(tasks.clock()))}, the owner's local time.`,
+      label,
+      `${brief}\nStarted ${localStamp(new Date(tasks.clock()))}, the owner's local time.`,
     );
     await observePage();
     record("user", first);
 
     for (let step = 0; ; step++) {
       if (signal.aborted) throw signal.reason;
-      if (step >= MAX_STEPS)
-        throw new Stop("failed", `Stopped after ${MAX_STEPS} steps without finishing.`);
-      if (activeMs + (holding ? tasks.clock() - since : 0) > MAX_ACTIVE_MS) {
-        throw new Stop("failed", "Stopped: it ran for 30 minutes without finishing.");
-      }
+      if (step >= limits.maxSteps)
+        throw new Stop(
+          "failed",
+          `Stopped after ${limits.maxSteps} steps without finishing.`,
+          true,
+          ASK,
+        );
+      if (activeMs + (holding ? tasks.clock() - since : 0) > MAX_ACTIVE_MS)
+        throw new Stop("failed", "Stopped: it ran for 30 minutes without finishing.", true, ASK);
       try {
-        d.spend.check(estimateCost(messages, task.model), { id, limitUsd: tasks.budget(id) });
+        d.spend.check(
+          estimateCost(messages, model),
+          { id, limitUsd: tasks.budget(id) },
+          { reserve: usesReserve(task.origin) },
+        );
       } catch (err) {
         if (!(err instanceof BudgetError)) throw err;
         if (err.limit !== "task") throw new Stop("failed", `Stopped: ${err.message}`);
@@ -693,45 +857,20 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         continue;
       }
 
-      const res = await d.model.stream(
-        {
-          model: task.model,
-          max_tokens: 16000,
-          betas: BETAS,
-          system: [{ type: "text", text: system }],
-          cache_control: { type: "ephemeral" },
-          tools: [computer.toJSON(), browser.toJSON(), ...CUSTOM_TOOLS],
-          thinking: UPDATES_MODELS.has(task.model)
-            ? { type: "adaptive", display: "updates" }
-            : { type: "adaptive" },
-          output_config: { effort: "medium" },
-          // Old screenshots are cleared on the server; clearing them here would break cached reasoning.
-          context_management: {
-            edits: [
-              {
-                type: "clear_tool_uses_20250919",
-                trigger: { type: "input_tokens", value: 80_000 },
-                keep: { type: "tool_uses", value: 8 },
-                clear_at_least: { type: "input_tokens", value: 30_000 },
-                exclude_tools: ["confirm_intent", "request_takeover", "finish_task"],
-              },
-            ],
-          },
-          messages,
-        },
-        {
-          onText: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
-          onThinking: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
-          signal,
-        },
-      );
+      const res = await d.model.stream(request(messages), {
+        onText: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
+        onThinking: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
+        signal,
+      });
       d.spend.recordResponse({
-        model: task.model,
+        model,
         purpose: "task",
         usage: res.usage,
         taskId: id,
       });
       record("assistant", res.content);
+      // The model read the pages while Haiku screened them; nothing it asks for runs before the verdict.
+      await screened();
       for (const b of res.content) {
         const note = b.type === "text" ? b.text : b.type === "thinking" ? b.thinking : "";
         if (note.trim())
@@ -739,14 +878,16 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       }
 
       if (res.stop_reason === "refusal")
-        throw new Stop("failed", "The model declined to carry on with this task.");
+        throw new Stop("failed", "The model declined to carry on with this task.", true, {
+          account: "",
+        });
       if (res.stop_reason === "pause_turn") continue;
       const calls = res.content.filter(
         (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use",
       );
       if (!calls.length) {
         if (res.stop_reason === "max_tokens")
-          throw new Stop("failed", "Stopped: a reply was cut off.");
+          throw new Stop("failed", "Stopped: a reply was cut off.", true, ASK);
         const text = res.content
           .map((b) => (b.type === "text" ? b.text : ""))
           .join("")
@@ -780,6 +921,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           results.push(await shellCall(call));
         } else if (call.name === "send_file") {
           results.push(await sendFile(call));
+        } else if (call.name === "record_conversation" && gate) {
+          results.push(await recordConversation(call));
         } else if (call.name === "send_to_chat") {
           const p = DesktopSendToChat.safeParse(call.input);
           if (!p.success)
@@ -804,10 +947,94 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       }
       if (finished) {
         const prefix = finished.outcome === "blocked" ? "Blocked: " : "";
-        throw new Stop(finished.outcome === "done" ? "done" : "failed", prefix + finished.summary);
+        // Blocked is a login or captcha: Opus can't get past it either.
+        throw new Stop(
+          finished.outcome === "done" ? "done" : "failed",
+          prefix + finished.summary,
+          true,
+          finished.outcome === "failed" && { account: "" },
+        );
       }
       await observePage();
       record("user", results);
+    }
+  };
+
+  /** Whether a failed attempt carries on on Opus: Haiku's, once, unless Settings say not to. */
+  const escalates = () =>
+    model === FIRST_MODEL && d.settings.get().desktopEscalate && !signal.aborted;
+
+  /** The model's account of what it tried, for the one carrying on; empty if it can't give one. */
+  const accountOf = async (why: string): Promise<string> => {
+    const ask: BlockParam = {
+      type: "text",
+      text: `You were stopped: ${why} Another model carries on from here, with the desktop as it is now. Don't use any tools. In under 150 words, tell it what you tried, what worked and what didn't, and where things stand.`,
+    };
+    const last = messages.at(-1);
+    // The same request as the run's, so it reads from the cache.
+    const asked: Anthropic.Beta.BetaMessageParam[] =
+      last?.role === "user"
+        ? [
+            ...messages.slice(0, -1),
+            { role: "user", content: [...(last.content as BlockParam[]), ask] },
+          ]
+        : [...messages, { role: "user", content: [ask] }];
+    try {
+      d.spend.check(
+        estimateCost(asked, model),
+        { id, limitUsd: tasks.budget(id) },
+        { reserve: usesReserve(task.origin) },
+      );
+      const res = await d.model.create({ ...request(asked), max_tokens: 4000 });
+      d.spend.recordResponse({ model, purpose: "task", usage: res.usage, taskId: id });
+      return res.content
+        .map((b) => (b.type === "text" ? b.text : ""))
+        .join("")
+        .trim()
+        .slice(0, 2000);
+    } catch (err) {
+      if (signal.aborted) throw err;
+      console.error(`task ${id}: no account of the first attempt`, err);
+      return "";
+    }
+  };
+
+  try {
+    // The owner saved it (PLAN.md §5.4), so it's trusted like the task itself.
+    const skill =
+      task.skill && (await d.memory.exists(skillPath(task.skill)))
+        ? `<skill name="${task.skill}">\n${(await d.memory.read(skillPath(task.skill))).trim()}\n</skill>\n\n`
+        : "";
+    await acquire();
+    // Tabs an earlier task left open would be in this one's way, and in its context.
+    await d.desktop.agent.resetBrowser().catch((err) => {
+      if (signal.aborted) throw err;
+      console.error(`task ${id}: couldn't close the old tabs`, err);
+    });
+    const brief = `${skill}<task>\n${task.goal}\nDone when: ${task.successCriteria || "the goal is met"}\n</task>`;
+    try {
+      await attempt("Start", brief);
+    } catch (err) {
+      if (!(err instanceof Stop && err.escalate) || !escalates()) throw err;
+      // The same task carries on: its card, its parent's wait and its approvals stay as they are.
+      const account = err.escalate.account ?? (await accountOf(err.summary));
+      tasks.addStep(id, {
+        kind: "note",
+        name: "Trying again on Opus",
+        detail: `Haiku stopped: ${err.summary}`,
+        url: lastUrl,
+      });
+      model = ESCALATE_TO;
+      tasks.setModel(id, model, FIRST_MODEL);
+      messages.length = 0;
+      screening = [];
+      armed = false;
+      activeMs = 0;
+      since = tasks.clock();
+      await attempt(
+        "Start on Opus",
+        `${brief}\n<earlier_attempt>\nAnother model tried this first and stopped: ${err.summary}${account ? `\nWhat it said it tried:\n${account}` : ""}\nThe desktop is as it left it.\n</earlier_attempt>`,
+      );
     }
   } catch (err) {
     if (err instanceof Stop) tasks.finish(id, err.status, err.summary);

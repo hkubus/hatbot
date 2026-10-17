@@ -1,13 +1,23 @@
 // Built-in tools for the chat thread (PLAN.md §5.5): memory, history search, desktop tasks, schedules.
 import type Anthropic from "@anthropic-ai/sdk";
-import { type Bot, describeCron, HATBOT_ID, type Schedule, SKILL_NAME } from "@hatbot/shared";
+import {
+  type Bot,
+  describeCron,
+  HATBOT_ID,
+  minWatchMinutes,
+  type Schedule,
+  SKILL_NAME,
+  type WatchSource,
+} from "@hatbot/shared";
 import { z } from "zod";
 import type { Attachments } from "../attachments";
 import { type Bots, botFolder } from "../bots";
 import type { Db } from "../db";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import type { EventBus } from "../events";
+import type { Proposals } from "../memory/proposals";
 import { HATBOT, MemoryError, type MemoryStore } from "../memory/store";
+import { NEGOTIATE_TOOL_NAMES } from "../negotiate/names";
 import type { PluginTool } from "../plugins/plugin";
 import { describeCall, type Plugins, runPluginTool } from "../plugins/registry";
 import { ScheduleError, type Schedules } from "../schedules";
@@ -41,8 +51,12 @@ export type ToolContext = {
   /** Adds a schedule's card to the thread. */
   scheduleCard?: (s: Schedule) => void;
   plugins?: Plugins;
+  /** The plugin tools this reply was offered, with negotiation's; all of the plugins' without it. */
+  pluginTools?: PluginTool[];
+  /** Where writes to skills and indexes go while the conversation or task is tainted. */
+  proposals?: Proposals;
   /**
-   * What untrusted content the conversation first read, or null; tasks it starts begin tainted
+   * What untrusted content the conversation or task first read, or null; tasks it starts begin tainted
    * (PLAN.md §6.1).
    */
   tainted?: () => string | null;
@@ -139,10 +153,43 @@ function authorOf(ctx: ToolContext, path: string) {
   return ctx.bots?.author(id) ?? HATBOT;
 }
 
+/** Files every later chat and task reads and trusts: skills, and the memory indexes. */
+const TRUSTED_FILE = /^(skills\/.+|INDEX\.md|bots\/[^/]+\/INDEX\.md)$/;
+
+/**
+ * A write (or, content null, a delete) to a trusted file after reading untrusted content becomes a
+ * proposal you apply, so injected text can't make itself trusted (PLAN.md §6.1). The tool's reply,
+ * or null to write it directly.
+ */
+async function held(
+  ctx: ToolContext,
+  path: string,
+  content: string | null,
+  reason: string,
+): Promise<string | null> {
+  const by = ctx.tainted?.();
+  const { rel } = ctx.memory.resolve(path);
+  if (!by || !TRUSTED_FILE.test(rel)) return null;
+  if (!ctx.proposals)
+    throw new MemoryError(`${rel} can't be changed after reading untrusted content.`);
+  const p = await ctx.proposals.hold(rel, content, reason, by);
+  if (!p)
+    return content === null
+      ? `Nothing to delete: ${rel} doesn't exist.`
+      : "No change: the file already had this content.";
+  return "Saved as a proposal; the owner applies it. After reading untrusted content, changes to skills and INDEX.md wait for them.";
+}
+
 /** Why a task the chat starts is tainted, from what the chat had read. */
 const chatTaint = (by: string | null | undefined) => by && `The chat had read: ${by}`;
 
 const watchFields = {
+  render: z
+    .boolean()
+    .optional()
+    .describe(
+      'A page: load it in a headless browser on the desktop and run its scripts first, for a page that fills in with JavaScript (empty or "Loading…" without). Slower: such a watcher looks every 15 minutes at most. Sites with bot protection block it too',
+    ),
   selector: z
     .string()
     .optional()
@@ -174,7 +221,7 @@ const watchFields = {
     .int()
     .positive()
     .optional()
-    .describe("How often to look, at least 5; 60 if left out"),
+    .describe("How often to look, at least 5 (15 with render); 60 if left out"),
   once: z.boolean().optional().describe("Switch off after the first time it counts"),
   prompt: z
     .string()
@@ -231,6 +278,8 @@ export const TOOLS = [
     }),
     run: async ({ path, content, reason }, ctx) => {
       const author = authorOf(ctx, path);
+      const proposed = await held(ctx, path, content, reason);
+      if (proposed) return proposed;
       const sha = await ctx.memory.write(path, content, author, reason);
       if (!sha) return "No change: the file already had this content.";
       ctx.events.emit({ type: "memory.committed", sha, message: reason, author: author.name });
@@ -243,6 +292,8 @@ export const TOOLS = [
     schema: z.object({ path: z.string(), reason: z.string().describe("Short commit message") }),
     run: async ({ path, reason }, ctx) => {
       const author = authorOf(ctx, path);
+      const proposed = await held(ctx, path, null, reason);
+      if (proposed) return proposed;
       const sha = await ctx.memory.delete(path, author, reason);
       if (sha)
         ctx.events.emit({ type: "memory.committed", sha, message: reason, author: author.name });
@@ -251,7 +302,8 @@ export const TOOLS = [
   }),
   def({
     name: "memory_search",
-    description: "Search your memory repo for a phrase (case-insensitive). Returns matching lines.",
+    description:
+      "Search your memory by words, in any form (runs finds run). The best-matching sections first, each as file:line: excerpt.",
     schema: z.object({ query: z.string().min(1) }),
     run: async ({ query }, { memory }) =>
       (await memory.search(query)).map((h) => `${h.path}:${h.line}: ${h.text}`).join("\n") ||
@@ -473,7 +525,7 @@ export const TOOLS = [
   def({
     name: "watch_create",
     description:
-      "Watch a web page or a plugin's read tool and act only when its value changes the way the owner wants: back in stock, a price below a number, a PR merged, a new release. It's checked on a timer without a model, so it costs nothing until something happens; prefer it to a schedule for \"tell me when…\". Pages are fetched as plain HTML with no JavaScript, from the desktop. Pick one value out with selector, path or pattern: a whole page changes too often. It looks once before it's made and tells you what it saw, or why it couldn't, so you can fix the selector or pattern.",
+      "Watch a web page or a plugin's read tool and act only when its value changes the way the owner wants: back in stock, a price below a number, a PR merged, a new release. It's checked on a timer without a model, so it costs nothing until something happens; prefer it to a schedule for \"tell me when…\". Pages are fetched from the desktop as plain HTML without running their scripts; set render for a page that fills in with JavaScript. Neither gets past bot protection (a challenge page, a captcha). Pick one value out with selector, path or pattern: a whole page changes too often. It looks once before it's made and tells you what it saw, or why it couldn't, so you can fix the selector or pattern.",
     schema: z.object({
       name: z.string().min(1).max(80).describe('Short name, e.g. "Framework 16 price"'),
       url: z.string().optional().describe("A page or JSON API to fetch"),
@@ -486,22 +538,23 @@ export const TOOLS = [
       if (Boolean(input.url) === Boolean(input.tool)) return "Give either url or tool.";
       const condition = conditionOf(input);
       if (typeof condition === "string") return condition;
+      const source: WatchSource = {
+        kind: input.url ? "page" : "tool",
+        ...(input.url
+          ? { url: input.url, ...(input.render ? { render: true } : {}) }
+          : { tool: input.tool, input: input.tool_input ?? {} }),
+        ...(input.selector ? { selector: input.selector } : {}),
+        ...(input.path ? { path: input.path } : {}),
+        ...(input.pattern ? { pattern: input.pattern } : {}),
+      };
       try {
         const w = await watchers.create(
           {
             name: input.name,
-            source: {
-              kind: input.url ? "page" : "tool",
-              ...(input.url
-                ? { url: input.url }
-                : { tool: input.tool, input: input.tool_input ?? {} }),
-              ...(input.selector ? { selector: input.selector } : {}),
-              ...(input.path ? { path: input.path } : {}),
-              ...(input.pattern ? { pattern: input.pattern } : {}),
-            },
+            source,
             condition,
             prompt: input.prompt?.trim() ?? "",
-            everyMinutes: Math.max(5, input.every_minutes ?? 60),
+            everyMinutes: Math.max(minWatchMinutes(source), input.every_minutes ?? 60),
             once: input.once ?? false,
             enabled: true,
             botId: bot?.id ?? HATBOT_ID,
@@ -529,7 +582,7 @@ export const TOOLS = [
   def({
     name: "watch_update",
     description:
-      "Change a watcher: what counts, how often it looks, what it does, its name, or turn it on or off. Only the fields you give change.",
+      "Change a watcher: what counts, how often it looks, whether it runs the page's scripts, what it does, its name, or turn it on or off. Only the fields you give change.",
     schema: z.object({
       id: z.number().int(),
       name: z.string().min(1).max(80).optional(),
@@ -541,8 +594,23 @@ export const TOOLS = [
       if (!watchers || !w) return `No watcher #${id}.`;
       const condition = input.when ? conditionOf(input) : undefined;
       if (typeof condition === "string") return condition;
+      if (input.render !== undefined && w.source.kind !== "page")
+        return "Only a page has scripts to run; this watcher calls a tool.";
       const picks = ["selector", "path", "pattern"] as const;
-      const repick = picks.some((k) => input[k] !== undefined);
+      const source: WatchSource | undefined =
+        picks.some((k) => input[k] !== undefined) || input.render !== undefined
+          ? {
+              ...w.source,
+              // An empty string takes that pick away.
+              ...Object.fromEntries(
+                picks.filter((k) => input[k] !== undefined).map((k) => [k, input[k] || undefined]),
+              ),
+              ...(input.render !== undefined ? { render: input.render || undefined } : {}),
+            }
+          : undefined;
+      // Running the page's scripts looks less often, so a shorter time is raised to that.
+      const min = minWatchMinutes(source ?? w.source);
+      const every = input.every_minutes ?? (w.everyMinutes < min ? min : undefined);
       try {
         const updated = await watchers.update(
           id,
@@ -551,19 +619,9 @@ export const TOOLS = [
             enabled: input.enabled,
             condition,
             prompt: input.prompt?.trim(),
-            everyMinutes: input.every_minutes && Math.max(5, input.every_minutes),
+            everyMinutes: every === undefined ? undefined : Math.max(min, every),
             once: input.once,
-            source: repick
-              ? {
-                  ...w.source,
-                  // An empty string takes that pick away.
-                  ...Object.fromEntries(
-                    picks
-                      .filter((k) => input[k] !== undefined)
-                      .map((k) => [k, input[k] || undefined]),
-                  ),
-                }
-              : undefined,
+            source,
           },
           { via: "chat", taintedBy: tainted?.() ?? null },
         );
@@ -656,7 +714,8 @@ export async function runTool(
     TOOLS.find((t) => t.name === name) ??
     TOOLS.find((t) => t.name.toLowerCase() === name.toLowerCase());
   if (!tool) {
-    const plugin = ctx.plugins?.tools().find((t) => t.name === name);
+    const offered = ctx.pluginTools ?? ctx.plugins?.tools() ?? [];
+    const plugin = offered.find((t) => t.name === name);
     if (plugin?.access === "write") {
       if (!ctx.gated) return { content: `${name} can't run here.`, isError: true };
       return ctx.gated(plugin, input, signal);
@@ -666,7 +725,7 @@ export async function runTool(
       if (r.untrusted) ctx.taint?.(describeCall(plugin, input));
       return r;
     }
-    const names = [...TOOLS, ...(ctx.plugins?.tools() ?? [])].map((t) => t.name);
+    const names = [...TOOLS, ...offered].map((t) => t.name);
     return { content: `Unknown tool "${name}". Available: ${names.join(", ")}`, isError: true };
   }
   const parsed = tool.schema.safeParse(input);
@@ -736,6 +795,8 @@ export const CORE_TOOL_NAMES = [
   "finish_task",
   "confirm_intent",
   "request_takeover",
+  "record_conversation",
+  ...NEGOTIATE_TOOL_NAMES,
 ];
 
 /**
@@ -745,6 +806,12 @@ export const CORE_TOOL_NAMES = [
 export const WEB_TOOLS: Anthropic.Beta.BetaToolUnion[] = [
   { type: "web_search_20250305", name: "web_search", max_uses: 8 },
   { type: "web_fetch_20250910", name: "web_fetch", max_uses: 8, max_content_tokens: 30000 },
+];
+
+/** The chat's: a page stays in the conversation for every later reply, so it reads less of one. */
+export const CHAT_WEB_TOOLS: Anthropic.Beta.BetaToolUnion[] = [
+  { type: "web_search_20250305", name: "web_search", max_uses: 8 },
+  { type: "web_fetch_20250910", name: "web_fetch", max_uses: 8, max_content_tokens: 10000 },
 ];
 
 /** What a reply looked up on the web, in a line each: `Searched the web for "x"`, `Read https://…`. */

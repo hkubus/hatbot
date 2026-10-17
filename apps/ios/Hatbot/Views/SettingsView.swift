@@ -31,6 +31,8 @@ struct SettingsView: View {
             LabeledContent(
               "Last minute", value: "\(String(format: "$%.3f", minute.usd)) · \(Format.tokens(minute.tokens)) tokens")
           }
+          NavigationLink("Spend by hour, day, model and bot", value: Route.spend)
+          NavigationLink("Limits", value: Route.limits)
         }
         Section {
           NavigationLink("Schedules & Triggers", value: Route.schedules)
@@ -90,8 +92,17 @@ struct SettingsView: View {
           if let model = settings.desktopModel {
             Section("Desktop") {
               Picker("Model for desktop tasks", selection: desktopModel(model)) {
+                Text("Haiku 5.5").tag(AppSettings.DesktopModel.haiku)
                 Text("Opus 5.5").tag(AppSettings.DesktopModel.opus)
-                Text("Haiku 5.5 (cheaper, less tested)").tag(AppSettings.DesktopModel.haiku)
+              }
+              if model == .haiku, let escalate = settings.desktopEscalate {
+                Toggle(
+                  "Try again on Opus when Haiku fails",
+                  isOn: Binding(
+                    get: { escalate },
+                    set: { on in
+                      Task { await act { self.settings = try await store.setDesktopEscalate(on) } }
+                    }))
               }
             }
           }
@@ -125,6 +136,7 @@ struct SettingsView: View {
         }
         Section {
           LabeledContent("Server", value: store.api.server.host() ?? store.api.server.absoluteString)
+          NavigationLink("Signed-in devices", value: Route.devices)
           Button("Sign out", role: .destructive) { confirmSignOut = true }
         }
       }
@@ -138,6 +150,7 @@ struct SettingsView: View {
       }
       .task { await load() }
       .refreshable { await load() }
+      .onChange(of: store.settingsVersion) { Task { await load() } }
       .routes()
     }
   }

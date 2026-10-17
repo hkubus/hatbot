@@ -32,6 +32,15 @@ export type FetchResult = {
   body: string;
 };
 
+/** POST /render: a page after its scripts ran, in a headless Chromium on the desktop (watchers). */
+export type RenderResult = {
+  /**
+   * The page as HTML, cut at 2 MB. Chromium doesn't say the HTTP status, so a site's own error page
+   * comes back like any other.
+   */
+  html: string;
+};
+
 /** POST /action. `screenshot` and `zoom` have their own endpoints, which return an image. */
 export type AgentAction = {
   name: Exclude<ComputerMember, "screenshot" | "zoom">;
@@ -40,7 +49,8 @@ export type AgentAction = {
 export type AgentActionResult = { text?: string; x?: number; y?: number };
 
 export type AgentStatus = {
-  ok: true;
+  /** False when a deep check found something down. */
+  ok: boolean;
   width: number;
   height: number;
   locked: boolean;
@@ -52,6 +62,10 @@ export type AgentStatus = {
   timeZone?: string;
   /** What this copy can do beyond the basics, so the brain knows when it's out of date. */
   features?: string[];
+  /** With ?deep=1: whether a frame could be grabbed from the X display. */
+  x?: boolean;
+  /** With ?deep=1: whether Chromium's DevTools answered. */
+  cdp?: boolean;
 };
 
 /** GET /context: the visible Chromium tab. `text` only with ?text=1. */
@@ -68,6 +82,16 @@ export type AgentElement = {
   submitLabel?: string;
   /** The focused element takes a password, a one-time code or card details, or can't be seen into (a frame). */
   secret?: boolean;
+  /** The tab's address. With the "fields" feature. */
+  url?: string;
+  /** It's somewhere to type: a text box, text area or editable region. With the "fields" feature. */
+  editable?: boolean;
+  /**
+   * What the visible text boxes hold, whitespace collapsed, empty ones left out: the form's when the
+   * element is in one that has any, otherwise the page's. For the exact-text send check (PLAN.md §16.3).
+   * With the "fields" feature.
+   */
+  fields?: string[];
 };
 
 /** POST /exec: a command run by the desktop's shell, which can't see the browser profile or the screen. */

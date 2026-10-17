@@ -18,7 +18,9 @@ import { EventBus, type HatbotEvent } from "../src/events";
 import { Heartbeat } from "../src/heartbeat";
 import { Proposals } from "../src/memory/proposals";
 import { MemoryStore } from "../src/memory/store";
+import { Negotiations } from "../src/negotiate/service";
 import { LinkingNotifier, type Notification, type Notifier } from "../src/notify";
+import { DeadManPing } from "../src/ping";
 import { codePlugin } from "../src/plugins/code";
 import type { Plugin } from "../src/plugins/plugin";
 import { Plugins } from "../src/plugins/registry";
@@ -27,6 +29,7 @@ import { WeeklyReport } from "../src/report";
 import { Schedules } from "../src/schedules";
 import { SettingsStore } from "../src/settings";
 import { Spend } from "../src/spend";
+import { Storage } from "../src/storage";
 import { Tasks } from "../src/tasks/service";
 import { Teach } from "../src/teach/service";
 import { Skills } from "../src/teach/skills";
@@ -77,14 +80,15 @@ export async function testApp(
   events.on((e) => seen.push(e));
   const settings = new SettingsStore(db);
   const spend = new Spend(db, settings, events, clock);
-  const memory = new MemoryStore(tempDir("hatbot-test-mem-"));
+  const memory = new MemoryStore(tempDir("hatbot-test-mem-"), db);
   await memory.init();
   const skills = new Skills(db, memory, clock);
   skills.watch(events);
   const archive = new Archive(tempDir("hatbot-test-archive-"), clock);
   const attachments = new Attachments({ db, archive, events }, clock);
+  const storage = new Storage({ db, archive, clock });
   const agent = new FakeDesktop();
-  const desktop = new Desktop(agent, events);
+  const desktop = new Desktop(agent, events, db);
   const plugins = new Plugins([...pluginList, codePlugin({ desktop: agent, attachments })], {
     db,
     events,
@@ -148,6 +152,7 @@ export async function testApp(
   });
   const heartbeat = new Heartbeat({
     db,
+    events,
     settings,
     spend,
     model: taskModel,
@@ -169,6 +174,8 @@ export async function testApp(
     memory,
     skills,
     tasks,
+    notifier,
+    publicUrl: ORIGIN,
     clock,
   });
   const report = new WeeklyReport({
@@ -178,10 +185,36 @@ export async function testApp(
     notifier,
     bots,
     memory,
+    storage,
     publicUrl: ORIGIN,
     clock,
   });
-  chats.attach({ tasks, schedules, triggers, watchers, approvals, attachments, desktop: agent });
+  const negotiations = new Negotiations({
+    db,
+    events,
+    tasks,
+    approvals,
+    chats,
+    bots,
+    memory,
+    desktop,
+    model: taskModel,
+    spend,
+    clock,
+  });
+  tasks.negotiations = negotiations;
+  chats.attach({
+    tasks,
+    schedules,
+    triggers,
+    watchers,
+    approvals,
+    attachments,
+    desktop: agent,
+    negotiations,
+    proposals,
+  });
+  tasks.attach({ proposals });
   const updateDir = tempDir("hatbot-test-update-");
   const updates = new Updates(
     {
@@ -193,6 +226,7 @@ export async function testApp(
   );
   const proxmox = new Proxmox(proxmoxEnv);
   proxmox.pollMs = 5;
+  const ping = new DeadManPing({ db, clock });
   const checks = new Checks({
     db,
     config,
@@ -201,12 +235,14 @@ export async function testApp(
     model: taskModel,
     memory,
     archive,
+    storage,
     desktop,
     plugins,
     approvals,
     proxmox,
     updates,
     ntfy: null,
+    ping,
     fetch: async (url) =>
       url === `${ORIGIN}/api/v1/health`
         ? Response.json({ ok: true })
@@ -240,6 +276,7 @@ export async function testApp(
     plugins,
     teach,
     checks,
+    negotiations,
   });
 
   const call = (
@@ -277,6 +314,7 @@ export async function testApp(
     schedules,
     triggers,
     watchers,
+    negotiations,
     heartbeat,
     report,
     proposals,
@@ -284,6 +322,8 @@ export async function testApp(
     skills,
     teach,
     checks,
+    ping,
+    storage,
     updateDir,
     events: seen,
     call,

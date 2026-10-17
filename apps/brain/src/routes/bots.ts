@@ -37,9 +37,22 @@ export const botRoutes = new Hono<AppEnv>()
   })
   .delete("/bots/:id", (c) => {
     try {
-      return c.var.bots.delete(c.req.param("id"))
-        ? c.json({ ok: true })
-        : c.json({ error: "not found" }, 404);
+      const moved = c.var.bots.delete(c.req.param("id"));
+      if (!moved) return c.json({ error: "not found" }, 404);
+      const { events, schedules, triggers, watchers } = c.var;
+      for (const id of moved.schedules) {
+        const schedule = schedules.get(id);
+        if (schedule) events.emit({ type: "schedule.updated", schedule });
+      }
+      for (const id of moved.triggers) {
+        const trigger = triggers.get(id);
+        if (trigger) events.emit({ type: "trigger.updated", trigger });
+      }
+      for (const id of moved.watchers) {
+        const watcher = watchers.get(id);
+        if (watcher) events.emit({ type: "watcher.updated", watcher });
+      }
+      return c.json({ ok: true });
     } catch (err) {
       if (err instanceof BotError) return c.json({ error: err.message }, 400);
       throw err;

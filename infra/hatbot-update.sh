@@ -65,6 +65,14 @@ if [[ $from == "$to" ]]; then
   exit 0
 fi
 
+# This runs the fetched commit's brain-deploy.sh as root. With HATBOT_UPDATE_SIGNERS (an ssh
+# allowed_signers file) set in update.env, only a commit signed by one of its keys is deployed.
+if [[ -n ${HATBOT_UPDATE_SIGNERS:-} ]]; then
+  [[ -r $HATBOT_UPDATE_SIGNERS ]] || fail "can't read HATBOT_UPDATE_SIGNERS ($HATBOT_UPDATE_SIGNERS)"
+  git -C "$REPO" -c gpg.ssh.allowedSignersFile="$HATBOT_UPDATE_SIGNERS" verify-commit "$to" ||
+    fail "${to:0:7} isn't signed by a key in $HATBOT_UPDATE_SIGNERS, so it wasn't deployed"
+fi
+
 # Host-side scripts only change through deploy.sh or host-setup.sh on the Proxmox host.
 if [[ -n $from ]] && git -C "$REPO" cat-file -e "$from^{commit}" 2>/dev/null; then
   changed=$(git -C "$REPO" diff --name-only "$from" "$to" -- infra \
@@ -75,15 +83,26 @@ fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 git -C "$REPO" archive --format=tar "$to" >"$tmp/app.tar"
+# desktop-agent's part, taken out now: brain-deploy.sh removes the archive it's given.
+mkdir "$tmp/agent"
+tar -C "$tmp/agent" -xf "$tmp/app.tar" --strip-components=2 apps/desktop-agent
+echo "$to" >"$tmp/agent/VERSION"
+tar -C "$tmp/agent" -cf "$tmp/agent.tar" .
+
+# The brain first: if it fails and goes back to the old version, the desktop hasn't changed either.
+# A new brain copes with the old desktop-agent for the minute until it's updated.
+step="Updating the brain"
+status running "$step"
+# The new release's own deploy script, so changes to it apply too. It restarts the brain, rolls
+# back if the new one fails its health check, and installs the new version of this script.
+tar -C "$tmp" -xf "$tmp/app.tar" infra/brain-deploy.sh
+RELEASE_SUBJECT=$subject bash "${HATBOT_BRAIN_DEPLOY:-$tmp/infra/brain-deploy.sh}" "$tmp/app.tar" ||
+  fail "the new version didn't start, so the brain stayed on the old one and the desktop wasn't updated"
 
 step="Updating the desktop"
 status running "$step"
 # shellcheck source=/dev/null
 if [[ -r $ETC/desktop.env ]] && source "$ETC/desktop.env" && [[ -n ${DESKTOP_AGENT_URL:-} ]]; then
-  mkdir "$tmp/agent"
-  tar -C "$tmp/agent" -xf "$tmp/app.tar" --strip-components=2 apps/desktop-agent
-  echo "$to" >"$tmp/agent/VERSION"
-  tar -C "$tmp/agent" -cf "$tmp/agent.tar" .
   agent() { printf 'Authorization: Bearer %s\n' "$DESKTOP_AGENT_TOKEN" | curl -sS -m 30 -H @- "$@"; }
   code=$(agent -o "$tmp/agent.out" -w '%{http_code}' --data-binary @"$tmp/agent.tar" \
     -H 'content-type: application/x-tar' "$DESKTOP_AGENT_URL/update" || true)
@@ -109,14 +128,6 @@ if [[ -r $ETC/desktop.env ]] && source "$ETC/desktop.env" && [[ -n ${DESKTOP_AGE
 else
   note "The desktop isn't set up; only the brain was updated."
 fi
-
-step="Updating the brain"
-status running "$step"
-# The new release's own deploy script, so changes to it apply too. It restarts the brain, rolls
-# back if the new one fails its health check, and installs the new version of this script.
-tar -C "$tmp" -xf "$tmp/app.tar" infra/brain-deploy.sh
-RELEASE_SUBJECT=$subject bash "${HATBOT_BRAIN_DEPLOY:-$tmp/infra/brain-deploy.sh}" "$tmp/app.tar" ||
-  fail "the new version didn't start, so the brain stayed on the old one"
 
 trap - ERR
 status "done" "Updated"

@@ -8,7 +8,7 @@ import { Icon } from "./icons";
 import { navigate } from "./router";
 import {
   discardTeach,
-  ensureTask,
+  ensureSteps,
   handback,
   recording,
   startTeach,
@@ -23,76 +23,120 @@ const time = (iso: string) =>
 
 type Conn = "connecting" | "live" | "offline";
 
+type Viewer = { canvas: React.RefObject<HTMLCanvasElement | null>; setConn: (c: Conn) => void };
+
+/** One socket per tab however many screens show it: the inspector beside a task's page, say. */
+const feed = (() => {
+  const viewers = new Set<Viewer>();
+  let socket: WebSocket | null = null;
+  let conn: Conn = "connecting";
+  let retry = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // Draw only the newest frame; skip any that arrive while one decodes.
+  let decoding = false;
+  let next: Blob | null = null;
+  // For a screen that opens while the desktop is still: the desktop sends only changes.
+  let last: Blob | null = null;
+
+  const status = (c: Conn) => {
+    conn = c;
+    for (const v of viewers) v.setConn(c);
+  };
+  const paint = async (blob: Blob, to: Iterable<Viewer>) => {
+    try {
+      const bmp = await createImageBitmap(blob);
+      for (const v of to) {
+        const c = v.canvas.current;
+        if (!c) continue;
+        if (c.width !== bmp.width || c.height !== bmp.height) {
+          c.width = bmp.width;
+          c.height = bmp.height;
+        }
+        c.getContext("2d")?.drawImage(bmp, 0, 0);
+      }
+      bmp.close();
+    } catch {
+      // A truncated frame; the next one replaces it.
+    }
+  };
+  const draw = async (blob: Blob) => {
+    decoding = true;
+    await paint(blob, viewers);
+    decoding = false;
+    if (next) {
+      const b = next;
+      next = null;
+      void draw(b);
+    }
+  };
+
+  const open = () => {
+    const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${API_PREFIX}/desktop/live`;
+    const ws = new WebSocket(url);
+    ws.binaryType = "blob";
+    socket = ws;
+    ws.onopen = () => {
+      retry = 0;
+      status("live");
+    };
+    ws.onmessage = (e) => {
+      if (!(e.data instanceof Blob)) return;
+      last = e.data;
+      if (decoding) next = e.data;
+      else void draw(e.data);
+    };
+    ws.onclose = () => {
+      // Closed on purpose (hidden, nobody watching): nothing to retry.
+      if (socket !== ws) return;
+      socket = null;
+      status("offline");
+      timer = setTimeout(open, Math.min(15_000, 1000 * 2 ** retry++));
+    };
+  };
+  const close = () => {
+    clearTimeout(timer);
+    const ws = socket;
+    socket = null;
+    ws?.close();
+  };
+  // No frames for a tab nobody's looking at; back on when it's visible again.
+  const onVisibility = () => {
+    if (document.hidden) return close();
+    if (socket) return;
+    retry = 0;
+    status("connecting");
+    open();
+  };
+
+  return {
+    join(v: Viewer) {
+      viewers.add(v);
+      if (viewers.size === 1) {
+        document.addEventListener("visibilitychange", onVisibility);
+        status("connecting");
+        if (!document.hidden) open();
+      } else {
+        v.setConn(conn);
+        if (last) void paint(last, [v]);
+      }
+      return () => {
+        viewers.delete(v);
+        if (viewers.size) return;
+        document.removeEventListener("visibilitychange", onVisibility);
+        close();
+        last = next = null;
+      };
+    },
+    send(m: LiveInput) {
+      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(m));
+    },
+  };
+})();
+
 function useFrames(canvas: React.RefObject<HTMLCanvasElement | null>) {
   const [conn, setConn] = useState<Conn>("connecting");
-  const socket = useRef<WebSocket | null>(null);
-
-  useEffect(() => {
-    let stopped = false;
-    let retry = 0;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    // Draw only the newest frame; skip any that arrive while one decodes.
-    let decoding = false;
-    let next: Blob | null = null;
-
-    const draw = async (blob: Blob) => {
-      decoding = true;
-      try {
-        const bmp = await createImageBitmap(blob);
-        const c = canvas.current;
-        if (c) {
-          if (c.width !== bmp.width || c.height !== bmp.height) {
-            c.width = bmp.width;
-            c.height = bmp.height;
-          }
-          c.getContext("2d")?.drawImage(bmp, 0, 0);
-        }
-        bmp.close();
-      } catch {
-        // A truncated frame; the next one replaces it.
-      }
-      decoding = false;
-      if (next) {
-        const b = next;
-        next = null;
-        void draw(b);
-      }
-    };
-
-    const open = () => {
-      const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${API_PREFIX}/desktop/live`;
-      const ws = new WebSocket(url);
-      ws.binaryType = "blob";
-      socket.current = ws;
-      ws.onopen = () => {
-        retry = 0;
-        setConn("live");
-      };
-      ws.onmessage = (e) => {
-        if (!(e.data instanceof Blob)) return;
-        if (decoding) next = e.data;
-        else void draw(e.data);
-      };
-      ws.onclose = () => {
-        // A socket closed by an earlier mount mustn't clear the one that replaced it.
-        if (socket.current === ws) socket.current = null;
-        if (stopped) return;
-        setConn("offline");
-        timer = setTimeout(open, Math.min(15_000, 1000 * 2 ** retry++));
-      };
-    };
-    open();
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-      socket.current?.close();
-    };
-  }, [canvas]);
-
-  const send = (m: LiveInput) => {
-    if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(m));
-  };
-  return { conn, send };
+  useEffect(() => feed.join({ canvas, setConn }), [canvas]);
+  return { conn, send: feed.send };
 }
 
 const BUTTONS: Record<number, 1 | 2 | 3> = { 0: 1, 1: 2, 2: 3 };
@@ -102,6 +146,8 @@ function Screen({ control }: { control: boolean }) {
   const keyboard = useRef<HTMLInputElement>(null);
   const { conn, send } = useFrames(canvas);
   const lastMove = useRef(0);
+  // Wheel events come by the dozen; they're added up and sent every 100 ms.
+  const wheel = useRef<{ dx: number; dy: number; x: number; y: number } | null>(null);
 
   const point = (e: { clientX: number; clientY: number }) => {
     const c = canvas.current;
@@ -136,8 +182,20 @@ function Screen({ control }: { control: boolean }) {
           const button = BUTTONS[e.button];
           if (button) send({ t: "button", button, down: false, ...point(e) });
         },
-        onWheel: (e: React.WheelEvent) =>
-          send({ t: "wheel", dx: e.deltaX, dy: e.deltaY, ...point(e) }),
+        onWheel: (e: React.WheelEvent) => {
+          const at = point(e);
+          const w = wheel.current;
+          if (w) {
+            Object.assign(w, { dx: w.dx + e.deltaX, dy: w.dy + e.deltaY, ...at });
+            return;
+          }
+          wheel.current = { dx: e.deltaX, dy: e.deltaY, ...at };
+          setTimeout(() => {
+            const sum = wheel.current;
+            wheel.current = null;
+            if (sum) send({ t: "wheel", ...sum });
+          }, 100);
+        },
         onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
         onKeyDown: (e: React.KeyboardEvent) => {
           if (e.nativeEvent.isComposing) return;
@@ -233,7 +291,7 @@ export function LiveView({ taskId }: { taskId?: number }) {
   const teach = useStore(recording);
   const [error, setError] = useState("");
   useEffect(() => {
-    if (activeId) ensureTask(activeId);
+    if (activeId) ensureSteps(activeId);
   }, [activeId]);
 
   const control = desktop?.control === "owner";

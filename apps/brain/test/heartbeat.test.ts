@@ -57,6 +57,36 @@ test("the heartbeat tells you once about something new, and again only after it 
   down.push("Jellyfin");
   await t.heartbeat.run();
   expect(t.notifier.sent.filter((n) => n.title === "Heartbeat")).toHaveLength(2);
+  // The looks that found something are kept, newest first, and each look tells the clients.
+  const info = t.heartbeat.info();
+  expect(info.recent.map((r) => r.action)).toEqual(["notify", "notify"]);
+  expect(info.recent[0]?.found).toEqual(["Jellyfin is down"]);
+  expect(t.events.filter((e) => e.type === "heartbeat.updated")).toHaveLength(4);
+});
+
+test("after a long time off, the heartbeat only looks at the last two intervals", async () => {
+  const t = await testApp();
+  await on(t);
+  t.taskModel.onCreate = () => '{"action": "nothing", "message": ""}';
+  const failed = (title: string, finished: string) =>
+    t.db
+      .query(
+        `INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, finished_at)
+         VALUES (?, 'g', '', 'schedule', 'background', 'm', 'failed', 1, ?, ?)`,
+      )
+      .run(title, finished, finished);
+  failed("Old", "2026-10-09T10:00:00.000Z");
+  failed("Recent", "2026-10-09T11:30:00.000Z");
+  await t.heartbeat.run();
+  t.advance(3 * 24 * 3600_000);
+  failed("Days ago", "2026-10-10T12:00:00.000Z");
+  failed("Just now", new Date(Date.parse("2026-10-12T11:50:00Z")).toISOString());
+  const later = await t.heartbeat.run();
+  expect(later.found).toEqual(['Task #4 "Just now" failed']);
+  expect(t.heartbeat.info().recent.map((r) => r.found)).toEqual([
+    ['Task #4 "Just now" failed'],
+    ['Task #2 "Recent" failed'],
+  ]);
 });
 
 test("a failed task wakes Haiku, which can start a tainted heartbeat task", async () => {
@@ -92,8 +122,10 @@ test("a failed task wakes Haiku, which can start a tainted heartbeat task", asyn
   expect(t.taskModel.creates.at(-1)?.model).toBe("claude-haiku-5-5");
 });
 
-test("it runs only when it's on and due", async () => {
+test("it's on by default, and runs only when it's on and due", async () => {
   const t = await testApp();
+  expect(t.settings.get().heartbeat.enabled).toBe(true);
+  t.settings.update({ heartbeat: { ...t.settings.get().heartbeat, enabled: false } });
   t.heartbeat.tick();
   await Bun.sleep(5);
   expect(t.heartbeat.info().at).toBeNull();

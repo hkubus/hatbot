@@ -2,7 +2,6 @@ import {
   type Approval,
   type Attachment,
   matchingCommands,
-  parseChart,
   type ThreadMessage,
   threadGroups,
 } from "@hatbot/shared";
@@ -10,6 +9,7 @@ import {
   createContext,
   Fragment,
   memo,
+  useCallback,
   useContext,
   useEffect,
   useLayoutEffect,
@@ -19,9 +19,23 @@ import {
 } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ApiError, attachmentUrl, upload } from "../api";
+import { ApiError, attachmentUrl } from "../api";
 import { Chart, ChartPending } from "../chart";
+import { parseChart } from "../chartspec";
+import {
+  attachFiles,
+  type DraftFile,
+  draftText,
+  PICTURES,
+  removeFile,
+  saveDraftText,
+  setDraftFiles,
+  useDraftFiles,
+} from "../drafts";
 import { Icon } from "../icons";
+import { LoadError, loadErrorText } from "../load";
+import { touchScreen } from "../media";
+import { negotiationText } from "../negotiations";
 import { navigate, useRoute } from "../router";
 import {
   botName,
@@ -29,17 +43,21 @@ import {
   currentChat,
   decideApproval,
   deleteEpisode,
+  ensureNegotiation,
   ensureSchedule,
   ensureTask,
   getState,
   loadEarlier,
   loadThread,
   markSeen,
+  negotiationOf,
+  openConversation,
+  retryReply,
   sendMessage,
   setPaused,
   useStore,
 } from "../store";
-import { isActive, Shot, taskLine, tokenText, whenText } from "../tasks";
+import { isActive, MANDATE_NOTE, Shot, taskLine, tokenText, whenText } from "../tasks";
 
 /** How long an unread message stays on screen before it counts as seen. */
 const SEEN_AFTER_MS = 1500;
@@ -120,6 +138,8 @@ const MD_COMPONENTS: Components = {
   },
 };
 
+const REMARK = [remarkGfm];
+
 export const AssistantBody = memo(function AssistantBody({
   text,
   streaming = false,
@@ -130,7 +150,7 @@ export const AssistantBody = memo(function AssistantBody({
   return (
     <div className="md">
       <Streaming.Provider value={streaming}>
-        <Markdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
+        <Markdown remarkPlugins={REMARK} components={MD_COMPONENTS}>
           {text}
         </Markdown>
       </Streaming.Provider>
@@ -143,12 +163,17 @@ function Meta({
   m,
   copy,
   open,
+  retry,
 }: {
   m: ThreadMessage;
   copy?: string;
   open?: { to: string; label: string };
+  /** An errored reply: its bot writes it again. */
+  retry?: () => Promise<unknown>;
 }) {
   const [copied, doCopy] = useCopy();
+  const [retrying, setRetrying] = useState(false);
+  const [retryFailed, setRetryFailed] = useState(false);
   return (
     <div className="meta">
       <span className="time">{time(m.createdAt)}</span>
@@ -163,6 +188,27 @@ function Meta({
             onClick={() => copy && doCopy(copy)}
           >
             <Icon name={copied ? "check" : "copy"} />
+          </button>
+        )}
+        {retry && (
+          <button
+            type="button"
+            className="msg-act"
+            title={retryFailed ? "Couldn't try again" : "Try again"}
+            disabled={retrying}
+            onClick={() => {
+              setRetrying(true);
+              setRetryFailed(false);
+              retry().then(
+                () => setRetrying(false),
+                () => {
+                  setRetrying(false);
+                  setRetryFailed(true);
+                },
+              );
+            }}
+          >
+            <Icon name="undo" />
           </button>
         )}
         {open && (
@@ -248,12 +294,37 @@ function TaskResult({ taskId }: { taskId: number }) {
   return <div className="muted resolved">Cancelled.</div>;
 }
 
+/** A negotiation under the reply that started it: the listing, and where it stands. */
+function NegotiationResult({ id }: { id: number }) {
+  const n = useStore((s) => s.negotiations[id]);
+  useEffect(() => ensureNegotiation(id), [id]);
+  if (!n) return null;
+  return (
+    <div className="md">
+      <p>
+        <a href={n.listingUrl} target="_blank" rel="noreferrer noopener">
+          <b>{n.title}</b>
+        </a>
+        : {negotiationText(n)}
+      </p>
+    </div>
+  );
+}
+
 /**
  * Hatbot's reply, with the task it started (if any) working under it. Once the task finishes or fails,
  * its bot writes the reply again to say what came of it; if it doesn't, the task's result shows in the
  * reply's place. A cancelled task leaves the reply.
  */
-function ReplyMessage({ m, progress }: { m: ThreadMessage; progress?: string }) {
+function ReplyMessage({
+  m,
+  progress,
+  retryable,
+}: {
+  m: ThreadMessage;
+  progress?: string;
+  retryable: boolean;
+}) {
   const task = useStore((s) => (m.taskId ? s.tasks[m.taskId] : undefined));
   const used = useStore((s) => s.usage[m.id]);
   const streaming = m.status === "streaming";
@@ -281,6 +352,7 @@ function ReplyMessage({ m, progress }: { m: ThreadMessage; progress?: string }) 
             {tokenText(used.tokens)} tokens · ${used.costUsd.toFixed(3)}
           </div>
         )}
+        {m.negotiationId && <NegotiationResult id={m.negotiationId} />}
         {ended && !finished && m.text && <hr className="result-rule" />}
         {m.taskId && !finished && <TaskResult taskId={m.taskId} />}
         {m.attachments?.length ? <Files list={m.attachments} /> : null}
@@ -289,22 +361,35 @@ function ReplyMessage({ m, progress }: { m: ThreadMessage; progress?: string }) 
         <Meta
           m={m}
           copy={replaced ? (ended.summary ?? "") : m.text}
-          open={m.taskId ? { to: `/tasks/${m.taskId}`, label: "Open task" } : undefined}
+          open={
+            m.negotiationId
+              ? { to: `/negotiations/${m.negotiationId}`, label: "Open negotiation" }
+              : m.taskId
+                ? { to: `/tasks/${m.taskId}`, label: "Open task" }
+                : undefined
+          }
+          retry={retryable && m.status === "error" ? () => retryReply(m) : undefined}
         />
       )}
     </>
   );
 }
 
-/** An approval waiting for you, above the composer, with Approve and Deny under it. */
+/**
+ * An approval waiting for you, above the composer, with Approve and Deny under it. A negotiation's
+ * mandate takes a note here too: it can change the numbers.
+ */
 function PendingApproval({ a }: { a: Approval }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+  const mandate = a.kind === "mandate";
+  const negotiation = useStore((s) => (mandate ? negotiationOf(s, a.id) : undefined));
   const decide = async (decision: "approve" | "deny") => {
     setBusy(true);
     setError("");
     try {
-      await decideApproval(a.id, decision);
+      await decideApproval(a.id, decision, note);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
       setBusy(false);
@@ -312,7 +397,8 @@ function PendingApproval({ a }: { a: Approval }) {
   };
   const text = [
     `**Can I go ahead?** ${a.summary}`,
-    a.reason,
+    // Its lines stay lines.
+    a.reason.replace(/\n/g, "  \n"),
     a.sources.length ? `_After reading ${a.sources.join(", ")}_` : "",
   ]
     .filter(Boolean)
@@ -323,6 +409,16 @@ function PendingApproval({ a }: { a: Approval }) {
       {a.taskId && a.screenshotStepId && (
         <Shot taskId={a.taskId} stepId={a.screenshotStepId} alt="The screen before this step" />
       )}
+      {mandate && (
+        <textarea
+          className="field approval-note"
+          rows={2}
+          maxLength={4000}
+          value={note}
+          placeholder={MANDATE_NOTE}
+          onChange={(e) => setNote(e.target.value)}
+        />
+      )}
       {error && <div className="form-error">{error}</div>}
       <div className="msg-buttons">
         {a.taskId && (
@@ -332,6 +428,15 @@ function PendingApproval({ a }: { a: Approval }) {
             onClick={() => navigate(`/tasks/${a.taskId}`)}
           >
             Open task
+          </button>
+        )}
+        {negotiation && (
+          <button
+            type="button"
+            className="btn sm ghost"
+            onClick={() => navigate(`/negotiations/${negotiation.id}`)}
+          >
+            Open negotiation
           </button>
         )}
         <span className="spacer" />
@@ -373,9 +478,6 @@ function ScheduleMessage({ m, scheduleId }: { m: ThreadMessage; scheduleId: numb
   );
 }
 
-/** Types the page shows as pictures; the rest are links. */
-const PICTURES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
-
 /** A message's files: pictures you can open, the rest to open or save. */
 function Files({ list }: { list: Attachment[] }) {
   return (
@@ -408,28 +510,22 @@ function Files({ list }: { list: Attachment[] }) {
   );
 }
 
-/** A file in the composer: uploading, uploaded, or failed. */
 /** A line in the menu over the composer: a command, or in a group a bot to @mention. */
 type Option = { key: string; label: React.ReactNode; desc: string; choose: () => void };
 
-type Draft = {
-  key: number;
-  name: string;
-  preview?: string;
-  attachment?: Attachment;
-  error?: string;
-};
-let draftKey = 0;
-
-function Message({
+// Memoized: while a reply streams only its own message redraws, not the whole thread's markdown.
+const Message = memo(function Message({
   m,
   progress,
   animate,
   unread,
+  retryable = false,
 }: {
   m: ThreadMessage;
   progress?: string;
   animate: boolean;
+  /** The latest reply, errored: it can be tried again. */
+  retryable?: boolean;
   /** Sent or edited since you last saw it. */
   unread: boolean;
 }) {
@@ -457,16 +553,20 @@ function Message({
   } else if (m.kind === "schedule" && m.scheduleId) {
     inner = <ScheduleMessage m={m} scheduleId={m.scheduleId} />;
   } else {
-    inner = <ReplyMessage m={m} progress={progress} />;
+    inner = <ReplyMessage m={m} progress={progress} retryable={retryable} />;
   }
 
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: a tap only reveals the buttons, which are reachable by keyboard anyway
-    <div className={cls} data-id={m.id} onClick={() => setTapped((v) => !v)}>
+    // biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: on a touch screen a tap only reveals the buttons, which are reachable by keyboard anyway
+    <div
+      className={cls}
+      data-id={m.id}
+      onClick={touchScreen() ? () => setTapped((v) => !v) : undefined}
+    >
       {inner}
     </div>
   );
-}
+});
 
 /** A finished conversation, folded up under its recap. */
 function Fold({
@@ -497,7 +597,8 @@ function Fold({
   );
 }
 
-export function Chat() {
+/** `id`: the chat to show. It's opened here, before loading, so a message asked for is looked for in it. */
+export function Chat({ id }: { id: number }) {
   const messages = useStore((s) => s.messages);
   const episodes = useStore((s) => s.episodes);
   const approvals = useStore((s) => s.approvals);
@@ -514,42 +615,64 @@ export function Chat() {
   const hasEarlier = useStore((s) => s.hasEarlier);
   const paused = useStore((s) => s.paused);
   const incognito = useStore((s) => s.incognito);
-  const conversationId = useStore((s) => s.conversationId);
   const name = useStore((s) => chatName(s, currentChat(s)));
-  // A group's bots, for the names above their messages and @ in the composer.
-  const members = useStore((s) => {
-    const c = currentChat(s);
-    return c?.kind === "group" ? c.botIds : null;
-  });
+  const members = useStore(groupMembers);
   const bots = useStore((s) => s.bots);
-  const [draft, setDraft] = useState("");
-  // The command list under "/…": which one is picked, and whether Escape closed it.
-  const [pick, setPick] = useState(0);
-  const [menuClosed, setMenuClosed] = useState(false);
-  const [files, setFiles] = useState<Draft[]>([]);
-  const picker = useRef<HTMLInputElement>(null);
-  const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  // Until the thread has loaded there's nothing to say about it, not even hello.
+  const [ready, setReady] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [attempt, setAttempt] = useState(0);
   const scroller = useRef<HTMLElement>(null);
-  const textarea = useRef<HTMLTextAreaElement>(null);
   const thread = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  // Scrolled well up: an arrow above the composer goes back down.
+  const [far, setFar] = useState(false);
   // Only messages that arrive after the first paint animate in.
   const animateFrom = useRef<number>(Number.POSITIVE_INFINITY);
   const loaded = useRef<Promise<void>>(Promise.resolve());
   // A message to show, from search: ?message=<id>.
   const { path, params } = useRoute();
   const target = Number(params.get("message")) || 0;
+  const onSend = useCallback(() => {
+    stick.current = true;
+  }, []);
+  const chatKey = `${id}${incognito ? ":incognito" : ""}`;
+  // Files dropped anywhere on the chat go into the composer.
+  const [dropping, setDropping] = useState(false);
+  const drop = {
+    onDragOver: (e: React.DragEvent) => {
+      if (!e.dataTransfer.types.includes("Files")) return;
+      e.preventDefault();
+      setDropping(true);
+    },
+    onDragLeave: (e: React.DragEvent) => {
+      if (!e.currentTarget.contains(e.relatedTarget as HTMLElement | null)) setDropping(false);
+    },
+    onDrop: (e: React.DragEvent) => {
+      if (!e.dataTransfer.files.length) return;
+      e.preventDefault();
+      setDropping(false);
+      attachFiles(chatKey, e.dataTransfer.files);
+    },
+  };
 
-  // Switching chats, or to or from incognito, loads the other conversation in the store.
+  // Opening the chat, or going to or from incognito, loads its conversation in the store.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset the animation on each switch
   useEffect(() => {
     animateFrom.current = Number.POSITIVE_INFINITY;
     stick.current = true;
-    loaded.current = loadThread().then(() => {
-      animateFrom.current = (getState().messages.at(-1)?.id ?? 0) + 1;
-    });
-  }, [incognito, conversationId]);
+    void openConversation(id);
+    setReady(false);
+    setLoadError("");
+    loaded.current = loadThread().then(
+      () => {
+        animateFrom.current = (getState().messages.at(-1)?.id ?? 0) + 1;
+        setReady(true);
+      },
+      (err) => setLoadError(loadErrorText(err)),
+    );
+  }, [incognito, id, attempt]);
 
   // Loads back to the message, opens its conversation if it's folded, and scrolls to it.
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs once per message asked for
@@ -625,7 +748,16 @@ export function Chat() {
 
   const onScroll = () => {
     const el = scroller.current;
-    if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (!el) return;
+    const below = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stick.current = below < 80;
+    setFar(below > Math.max(400, el.clientHeight));
+  };
+  const toBottom = () => {
+    const el = scroller.current;
+    if (!el) return;
+    stick.current = true;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   };
 
   const earlier = async () => {
@@ -638,37 +770,189 @@ export function Chat() {
     });
   };
 
+  // Only the latest reply can be tried again, and only if it errored.
+  const lastReply = messages.findLast((m) => m.role === "assistant" && m.kind !== "command");
+  const retryableId = lastReply?.status === "error" ? lastReply.id : 0;
+
+  let lastDay = "";
+  const dayBefore = (m: ThreadMessage) => {
+    const day = dayLabel(m.createdAt);
+    const show = day !== lastDay;
+    lastDay = day;
+    return show ? <div className="day">{day}</div> : null;
+  };
+  // In a group, the bot's name above each run of its messages.
+  let lastSender: string | null = null;
+  const senderBefore = (m: ThreadMessage) => {
+    const sender = m.role === "assistant" ? m.botId : null;
+    const show = members && sender && sender !== lastSender && m.kind !== "command";
+    lastSender = sender;
+    return show ? (
+      <div
+        className="msg-sender"
+        style={bots[sender] ? { color: `var(--bot-${bots[sender].color})` } : undefined}
+      >
+        {bots[sender]?.name ?? sender}
+      </div>
+    ) : null;
+  };
+  const row = (m: ThreadMessage) => (
+    <Fragment key={m.id}>
+      {dayBefore(m)}
+      {senderBefore(m)}
+      <Message
+        m={m}
+        progress={progress[m.id]}
+        animate={m.id >= animateFrom.current}
+        unread={unread.includes(m.id)}
+        retryable={m.id === retryableId}
+      />
+    </Fragment>
+  );
+  const toggle = (id: number) =>
+    setUnfolded((s) => {
+      const next = new Set(s);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+
+  return (
+    <>
+      <section
+        className={`view ${dropping ? "dropping" : ""}`}
+        ref={scroller}
+        onScroll={onScroll}
+        {...drop}
+      >
+        <div className="chat-scroll">
+          {paused && (
+            <div className="paused-banner">
+              <Icon name="pause" />
+              All activity is paused.
+              <span style={{ flex: 1 }} />
+              <button type="button" className="btn sm" onClick={() => setPaused(false)}>
+                Resume
+              </button>
+            </div>
+          )}
+          <div className="thread" ref={thread}>
+            {hasEarlier && (
+              <button type="button" className="btn sm ghost load-earlier" onClick={earlier}>
+                Earlier messages
+              </button>
+            )}
+            {loadError && !messages.length && (
+              <LoadError error={loadError} retry={() => setAttempt((n) => n + 1)} />
+            )}
+            {ready && !messages.length && (
+              <div className="empty">
+                {incognito
+                  ? `${name} can't see earlier conversations here, and this one is deleted when you leave.`
+                  : `Say hello to ${name}.`}
+              </div>
+            )}
+            {threadGroups(messages, episodes).map((g) => {
+              if (g.fold === null || g.episodeId === null) return g.messages.map(row);
+              const id = g.episodeId;
+              const open = unfolded.has(id);
+              // A message you haven't seen stays in view.
+              const waiting = g.messages.filter((m) => unread.includes(m.id));
+              return (
+                <Fragment key={`fold-${id}`}>
+                  {dayBefore(g.messages[0] as ThreadMessage)}
+                  <Fold
+                    messages={g.messages}
+                    text={g.fold}
+                    open={open}
+                    onToggle={() => toggle(id)}
+                    onDelete={() => {
+                      if (!confirm(`Delete this conversation for good? ${name} forgets it too.`))
+                        return;
+                      setError("");
+                      deleteEpisode(id).catch((err) =>
+                        setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot."),
+                      );
+                    }}
+                  />
+                  {open ? g.messages.map(row) : waiting.map(row)}
+                </Fragment>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+      <div className="composer-wrap" {...drop}>
+        {far && (
+          <button type="button" className="to-bottom" title="Latest messages" onClick={toBottom}>
+            <Icon name="down" />
+          </button>
+        )}
+        {pending.length > 0 && (
+          <div className="approval-tray">
+            {pending.map((a) => (
+              <PendingApproval key={a.id} a={a} />
+            ))}
+          </div>
+        )}
+        {error && (
+          <div className="form-error" style={{ maxWidth: 760, margin: "0 auto 6px" }}>
+            {error}
+          </div>
+        )}
+        <Composer key={chatKey} chat={chatKey} onSend={onSend} />
+      </div>
+    </>
+  );
+}
+
+/** A group's bots, for the names above their messages and @ in the composer. */
+const groupMembers = (s: ReturnType<typeof getState>) => {
+  const c = currentChat(s);
+  return c?.kind === "group" ? c.botIds : null;
+};
+
+/** What you're writing, its files and the menu over it; apart from the thread, so typing redraws only this. */
+function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
+  const incognito = useStore((s) => s.incognito);
+  const name = useStore((s) => chatName(s, currentChat(s)));
+  const members = useStore(groupMembers);
+  const bots = useStore((s) => s.bots);
+  const [draft, setDraftState] = useState(() => draftText(chat));
+  const setDraft = (fn: string | ((d: string) => string)) =>
+    setDraftState((d) => {
+      const next = typeof fn === "string" ? fn : fn(d);
+      saveDraftText(chat, next);
+      return next;
+    });
+  // The command list under "/…": which one is picked, and whether Escape closed it.
+  const [pick, setPick] = useState(0);
+  const [menuClosed, setMenuClosed] = useState(false);
+  const files = useDraftFiles(chat);
+  // Uploads finish into their own chat's draft, even after you've gone to another.
+  const setFiles = (fn: (f: DraftFile[]) => DraftFile[]) => setDraftFiles(chat, fn);
+  const picker = useRef<HTMLInputElement>(null);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  // While a reply streams, an empty composer's button stops it.
+  const replying = useStore((s) => s.messages.some((m) => m.status === "streaming"));
+  const canStop = replying && !draft.trim() && !files.length;
+
   const resize = () => {
     const ta = textarea.current;
     if (!ta) return;
     ta.style.height = "auto";
     ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
   };
+  // A kept draft can be several lines; sized once, on opening.
+  useLayoutEffect(resize, []);
+  // Opening a chat puts you in its composer; not on a phone, where that would open the keyboard.
+  useEffect(() => {
+    if (!touchScreen()) textarea.current?.focus({ preventScroll: true });
+  }, []);
 
-  const attach = (list: FileList | File[]) => {
-    for (const file of Array.from(list).slice(0, 10)) {
-      const key = ++draftKey;
-      const preview = PICTURES.includes(file.type) ? URL.createObjectURL(file) : undefined;
-      setFiles((f) => [...f, { key, name: file.name, preview }]);
-      upload(file).then(
-        (attachment) => setFiles((f) => f.map((d) => (d.key === key ? { ...d, attachment } : d))),
-        (err) =>
-          setFiles((f) =>
-            f.map((d) =>
-              d.key === key
-                ? { ...d, error: err instanceof ApiError ? err.message : "Couldn't upload." }
-                : d,
-            ),
-          ),
-      );
-    }
-  };
-  const unattach = (key: number) =>
-    setFiles((f) => {
-      const d = f.find((x) => x.key === key);
-      if (d?.preview) URL.revokeObjectURL(d.preview);
-      return f.filter((x) => x.key !== key);
-    });
+  const attach = (list: FileList | File[]) => attachFiles(chat, list);
+  const unattach = (key: number) => removeFile(chat, key);
   const uploading = files.some((d) => !d.attachment && !d.error);
   const ready = files.filter((d) => d.attachment);
 
@@ -719,11 +1003,11 @@ export function Chat() {
     if ((!text && !ready.length) || sending || uploading) return;
     setSending(true);
     setError("");
-    stick.current = true;
+    onSend();
     // Clear it right away; it comes back if the send fails.
     const sent = files;
     setDraft("");
-    setFiles([]);
+    setFiles(() => []);
     requestAnimationFrame(resize);
     try {
       await sendMessage(
@@ -731,219 +1015,153 @@ export function Chat() {
         ready.map((d) => (d.attachment as Attachment).id),
       );
       for (const d of sent) if (d.preview) URL.revokeObjectURL(d.preview);
-    } catch {
+    } catch (err) {
       setFiles((f) => (f.length ? f : sent));
       setDraft((d) => d || text);
       requestAnimationFrame(resize);
-      setError("Couldn't send. Check your connection and try again.");
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : !navigator.onLine
+            ? "You're offline. It wasn't sent."
+            : getState().connected
+              ? "Couldn't send. Try again."
+              : "Can't reach Hatbot. It wasn't sent.",
+      );
     } finally {
       setSending(false);
     }
   };
 
-  let lastDay = "";
-  const dayBefore = (m: ThreadMessage) => {
-    const day = dayLabel(m.createdAt);
-    const show = day !== lastDay;
-    lastDay = day;
-    return show ? <div className="day">{day}</div> : null;
-  };
-  // In a group, the bot's name above each run of its messages.
-  let lastSender: string | null = null;
-  const senderBefore = (m: ThreadMessage) => {
-    const sender = m.role === "assistant" ? m.botId : null;
-    const show = members && sender && sender !== lastSender && m.kind !== "command";
-    lastSender = sender;
-    return show ? (
-      <div
-        className="msg-sender"
-        style={bots[sender] ? { color: `var(--bot-${bots[sender].color})` } : undefined}
-      >
-        {bots[sender]?.name ?? sender}
-      </div>
-    ) : null;
-  };
-  const row = (m: ThreadMessage) => (
-    <Fragment key={m.id}>
-      {dayBefore(m)}
-      {senderBefore(m)}
-      <Message
-        m={m}
-        progress={progress[m.id]}
-        animate={m.id >= animateFrom.current}
-        unread={unread.includes(m.id)}
-      />
-    </Fragment>
-  );
-  const toggle = (id: number) =>
-    setUnfolded((s) => {
-      const next = new Set(s);
-      if (!next.delete(id)) next.add(id);
-      return next;
-    });
-
   return (
     <>
-      <section className="view" ref={scroller} onScroll={onScroll}>
-        <div className="chat-scroll">
-          {paused && (
-            <div className="paused-banner">
-              <Icon name="pause" />
-              All activity is paused.
-              <span style={{ flex: 1 }} />
-              <button type="button" className="btn sm" onClick={() => setPaused(false)}>
-                Resume
-              </button>
-            </div>
-          )}
-          <div className="thread" ref={thread}>
-            {hasEarlier && (
-              <button type="button" className="btn sm ghost load-earlier" onClick={earlier}>
-                Earlier messages
-              </button>
-            )}
-            {!messages.length && (
-              <div className="empty">
-                {incognito
-                  ? `${name} can't see earlier conversations here, and this one is deleted when you leave.`
-                  : `Say hello to ${name}.`}
-              </div>
-            )}
-            {threadGroups(messages, episodes).map((g) => {
-              if (g.fold === null || g.episodeId === null) return g.messages.map(row);
-              const id = g.episodeId;
-              const open = unfolded.has(id);
-              // A message you haven't seen stays in view.
-              const waiting = g.messages.filter((m) => unread.includes(m.id));
-              return (
-                <Fragment key={`fold-${id}`}>
-                  {dayBefore(g.messages[0] as ThreadMessage)}
-                  <Fold
-                    messages={g.messages}
-                    text={g.fold}
-                    open={open}
-                    onToggle={() => toggle(id)}
-                    onDelete={() => {
-                      if (!confirm(`Delete this conversation for good? ${name} forgets it too.`))
-                        return;
-                      setError("");
-                      deleteEpisode(id).catch((err) =>
-                        setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot."),
-                      );
-                    }}
-                  />
-                  {open ? g.messages.map(row) : waiting.map(row)}
-                </Fragment>
-              );
-            })}
-          </div>
+      {error && (
+        <div className="form-error" style={{ maxWidth: 760, margin: "0 auto 6px" }}>
+          {error}
         </div>
-      </section>
-      <div className="composer-wrap">
-        {pending.length > 0 && (
-          <div className="approval-tray">
-            {pending.map((a) => (
-              <PendingApproval key={a.id} a={a} />
-            ))}
-          </div>
-        )}
-        {error && (
-          <div className="form-error" style={{ maxWidth: 760, margin: "0 auto 6px" }}>
-            {error}
-          </div>
-        )}
-        {options.length > 0 && (
-          <div className="command-menu" role="listbox">
-            {options.map((o) => (
-              <button
-                key={o.key}
-                type="button"
-                role="option"
-                aria-selected={o === picked}
-                className={o === picked ? "on" : ""}
-                // Keeps the focus in the composer.
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={o.choose}
-              >
-                <span className="name">{o.label}</span>
-                <span className="desc">{o.desc}</span>
+      )}
+      {options.length > 0 && (
+        <div className="command-menu" role="listbox">
+          {options.map((o) => (
+            <button
+              key={o.key}
+              type="button"
+              role="option"
+              aria-selected={o === picked}
+              className={o === picked ? "on" : ""}
+              // Keeps the focus in the composer.
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={o.choose}
+            >
+              <span className="name">{o.label}</span>
+              <span className="desc">{o.desc}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {files.length > 0 && (
+        <div className="composer-files">
+          {files.map((d) => (
+            <span
+              key={d.key}
+              className={`composer-file ${d.attachment ? "" : "loading"} ${d.error ? "failed" : ""}`}
+              title={d.error ?? d.name}
+            >
+              {d.preview ? <img src={d.preview} alt="" /> : <Icon name="file" />}
+              {!d.preview && <span className="name">{d.name}</span>}
+              <button type="button" title="Remove" onClick={() => unattach(d.key)}>
+                <Icon name="x" />
               </button>
-            ))}
-          </div>
-        )}
-        {files.length > 0 && (
-          <div className="composer-files">
-            {files.map((d) => (
-              <span
-                key={d.key}
-                className={`composer-file ${d.attachment ? "" : "loading"} ${d.error ? "failed" : ""}`}
-                title={d.error ?? d.name}
-              >
-                {d.preview ? <img src={d.preview} alt="" /> : <Icon name="file" />}
-                {!d.preview && <span className="name">{d.name}</span>}
-                <button type="button" title="Remove" onClick={() => unattach(d.key)}>
-                  <Icon name="x" />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-        <div className="composer">
-          <input
-            ref={picker}
-            type="file"
-            multiple
-            hidden
-            onChange={(e) => {
-              if (e.target.files) attach(e.target.files);
-              e.target.value = "";
-            }}
-          />
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="composer">
+        <input
+          ref={picker}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            if (e.target.files) attach(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        <button
+          type="button"
+          className="icon-btn"
+          title="Attach files"
+          onClick={() => picker.current?.click()}
+        >
+          <Icon name="clip" />
+        </button>
+        <textarea
+          ref={textarea}
+          rows={1}
+          placeholder={incognito ? `Message ${name} incognito…` : `Message ${name}…`}
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setPick(0);
+            setMenuClosed(false);
+            resize();
+          }}
+          onPaste={(e) => {
+            if (e.clipboardData.files.length) {
+              e.preventDefault();
+              attach(e.clipboardData.files);
+            }
+          }}
+          onKeyDown={(e) => {
+            if (picked && !e.nativeEvent.isComposing) {
+              const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+              if (step) {
+                e.preventDefault();
+                const i = options.indexOf(picked);
+                return setPick((i + step + options.length) % options.length);
+              }
+              if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
+                e.preventDefault();
+                return picked.choose();
+              }
+              if (e.key === "Escape") return setMenuClosed(true);
+            }
+            // Up in an empty composer brings back what you last sent, to send again or fix.
+            if (e.key === "ArrowUp" && !draft && !e.nativeEvent.isComposing) {
+              const last = getState().messages.findLast((m) => m.role === "user" && m.text);
+              if (last) {
+                e.preventDefault();
+                setDraft(last.text);
+                requestAnimationFrame(() => {
+                  resize();
+                  const ta = textarea.current;
+                  ta?.setSelectionRange(ta.value.length, ta.value.length);
+                });
+              }
+              return;
+            }
+            if (e.key === "Escape" && canStop) {
+              e.preventDefault();
+              return void send("/stop");
+            }
+            // On a phone's keyboard Enter is a new line; the button sends.
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !touchScreen()) {
+              e.preventDefault();
+              void send();
+            }
+          }}
+        />
+        {canStop ? (
           <button
             type="button"
-            className="icon-btn"
-            title="Attach files"
-            onClick={() => picker.current?.click()}
+            className="icon-btn send"
+            title="Stop"
+            disabled={sending}
+            onClick={() => send("/stop")}
           >
-            <Icon name="clip" />
+            <Icon name="stop" />
           </button>
-          <textarea
-            ref={textarea}
-            rows={1}
-            placeholder={incognito ? `Message ${name} incognito…` : `Message ${name}…`}
-            value={draft}
-            onChange={(e) => {
-              setDraft(e.target.value);
-              setPick(0);
-              setMenuClosed(false);
-              resize();
-            }}
-            onPaste={(e) => {
-              if (e.clipboardData.files.length) {
-                e.preventDefault();
-                attach(e.clipboardData.files);
-              }
-            }}
-            onKeyDown={(e) => {
-              if (picked && !e.nativeEvent.isComposing) {
-                const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
-                if (step) {
-                  e.preventDefault();
-                  const i = options.indexOf(picked);
-                  return setPick((i + step + options.length) % options.length);
-                }
-                if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
-                  e.preventDefault();
-                  return picked.choose();
-                }
-                if (e.key === "Escape") return setMenuClosed(true);
-              }
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-          />
+        ) : (
           <button
             type="button"
             className="icon-btn send"
@@ -953,7 +1171,7 @@ export function Chat() {
           >
             <Icon name="up" />
           </button>
-        </div>
+        )}
       </div>
     </>
   );

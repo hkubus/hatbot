@@ -144,8 +144,28 @@ test("a bot's tasks report in its chat, and deleting it hands its schedules to H
   expect(chefChat.list().map((m) => [m.kind, m.botId])).toEqual([["task", "chef"]]);
   expect(t.thread.list()).toEqual([]);
 
+  t.agent.pages.set("https://menu.example/", "soup");
+  const watcher = await t.watchers.create(
+    {
+      name: "Menu",
+      source: { kind: "page", url: "https://menu.example/" },
+      condition: { when: "changed" },
+      prompt: "",
+      everyMinutes: 60,
+      once: false,
+      enabled: true,
+      botId: "chef",
+    },
+    "owner",
+  );
+  const before = t.events.length;
   expect((await t.call("DELETE", "/bots/chef", undefined, { cookie })).status).toBe(200);
   expect(t.schedules.get(schedule.id)?.botId).toBe("hatbot");
+  expect(t.watchers.get(watcher.id)?.botId).toBe("hatbot");
+  // Their pages hear that they moved.
+  const moved = t.events.slice(before).map((e) => e.type);
+  expect(moved).toContain("schedule.updated");
+  expect(moved).toContain("watcher.updated");
   const chats = (await (
     await t.call("GET", "/conversations", undefined, { cookie })
   ).json()) as Conversation[];
@@ -295,4 +315,38 @@ test("a desktop task opens its bot's browser profile", async () => {
     await t.tasks.idle();
   }
   expect(t.agent.profiles).toEqual(["chef", "hatbot"]);
+});
+
+test("cancelling a task that asked another bot cancels the task it asked for", async () => {
+  let release = () => {};
+  const held = new Promise((r) => {
+    release = () => r(null);
+  });
+  const work = new FakeModel([
+    { content: [toolUse("ask_bot", { bot: "Chef", request: "Plan Sunday dinner" })] },
+    {
+      wait: held,
+      content: [toolUse("finish_task", { outcome: "done", summary: "Soup.", notify: false })],
+    },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  chef(t);
+  const parent = t.tasks.createBackgroundTask({
+    title: "Weekend",
+    goal: "Plan the weekend",
+    origin: "webhook",
+    source: "hook",
+    payload: "{}",
+  });
+  if (!parent) throw new Error("no task");
+  for (let i = 0; i < 50 && !t.tasks.list({}).some((x) => x.botId === "chef"); i++)
+    await Bun.sleep(5);
+  const child = t.tasks.list({}).find((x) => x.botId === "chef");
+  if (!child) throw new Error("no child");
+  t.tasks.cancel(parent.id);
+  await Bun.sleep(20);
+  release();
+  await t.tasks.idle();
+  expect(t.tasks.get(parent.id)?.status).toBe("cancelled");
+  expect(t.tasks.get(child.id)?.status).toBe("cancelled");
 });

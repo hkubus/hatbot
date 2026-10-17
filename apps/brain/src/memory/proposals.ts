@@ -1,17 +1,18 @@
 // Proposals: changes to memory written by the model for you to look over as a diff, then apply or
-// dismiss. A tidy-up of the whole memory (weekly, or when you ask), and fixes to skills that keep
-// failing or needing you.
+// dismiss. A tidy-up of the whole memory (weekly, or when you ask), fixes to skills that keep failing
+// or needing you, and writes to skills and indexes from work that had read untrusted content.
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Proposal, SkillStatus } from "@hatbot/shared";
-import type { ModelClient } from "../agent/model";
+import { type ModelClient, modelErrorText } from "../agent/model";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
+import type { Notifier } from "../notify";
 import { lastDue } from "../report";
 import type { SettingsStore } from "../settings";
 import type { Spend } from "../spend";
 import type { Tasks } from "../tasks/service";
 import { type Skills, skillPath } from "../teach/skills";
-import type { MemoryStore } from "./store";
+import { MemoryConflict, type MemoryStore } from "./store";
 
 export const PROPOSAL_MODEL = "claude-opus-5-5";
 const TIDY_KEY = "tidy:last";
@@ -36,6 +37,8 @@ export type ProposalsDeps = {
   memory: MemoryStore;
   skills: Skills;
   tasks: Tasks;
+  notifier: Notifier;
+  publicUrl: string;
   clock?: () => number;
 };
 
@@ -108,6 +111,8 @@ const SKILL_PROMPT = `You fix Hatbot's skills: Markdown procedures that its desk
 export class Proposals {
   private clock: () => number;
   private tidying = false;
+  /** Skills whose fix is being written. */
+  private fixing = new Set<string>();
 
   constructor(private d: ProposalsDeps) {
     this.clock = d.clock ?? Date.now;
@@ -146,7 +151,52 @@ export class Proposals {
         "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
       )
       .run(TIDY_KEY, this.now());
-    void this.tidy().catch((err) => console.error("memory tidy failed", err));
+    void this.tidy().catch((err) => this.failed("The weekly tidy-up of memory failed", err));
+  }
+
+  /**
+   * A tidy-up you asked for, in the background: it arrives as a proposal.updated event. You're told
+   * through a notification if it fails or finds nothing to change.
+   */
+  startTidy() {
+    if (this.tidying) throw new ProposalError("A tidy-up is already being written.", 409);
+    void this.tidy().then(
+      (p) => {
+        if (!p) this.tell("Memory is tidy", "The tidy-up found nothing worth changing.");
+      },
+      (err) => this.failed("The tidy-up of memory failed", err),
+    );
+  }
+
+  /** A fix for a skill, in the background, as startTidy. Throws at once if there's nothing to fix. */
+  async startFix(name: string) {
+    if (this.fixing.has(name)) throw new ProposalError("A fix is already being written.", 409);
+    const ids = await this.troubled(name);
+    this.fixing.add(name);
+    void this.fixSkill(name, ids)
+      .then(
+        (p) => {
+          if (!p)
+            this.tell(`No fix for ${name}`, "Its tasks didn't show what to change in the skill.");
+        },
+        (err) => this.failed(`The fix for ${name} failed`, err),
+      )
+      .finally(() => this.fixing.delete(name));
+  }
+
+  private failed(title: string, err: unknown) {
+    console.error(`${title}:`, err);
+    const why = err instanceof ProposalError ? err.message : `It stopped: ${modelErrorText(err)}.`;
+    this.tell(title, why);
+  }
+
+  private tell(title: string, message: string, priority: 2 | 3 = 3) {
+    void this.d.notifier.send({
+      title,
+      message,
+      priority,
+      click: `${this.d.publicUrl}/memory`,
+    });
   }
 
   /** Asks the model for a tidy-up of memory. null: it found nothing to change. */
@@ -179,8 +229,8 @@ export class Proposals {
     }
   }
 
-  /** Asks the model for a fix to a skill, from the tasks that failed or needed you. */
-  async fixSkill(name: string): Promise<Proposal | null> {
+  /** The latest tasks following a skill that failed or needed you; throws if there are none. */
+  private async troubled(name: string): Promise<number[]> {
     const status = (await this.skillStatus()).find((s) => s.name === name);
     if (!status) throw new ProposalError(`No skill called ${name}.`, 404);
     const ids = [...new Set([...status.failed, ...status.takeovers])]
@@ -188,6 +238,12 @@ export class Proposals {
       .slice(0, 3);
     if (!ids.length)
       throw new ProposalError("None of its tasks failed or needed you since it last changed.", 409);
+    return ids;
+  }
+
+  /** Asks the model for a fix to a skill, from the tasks that failed or needed you. */
+  async fixSkill(name: string, troubled?: number[]): Promise<Proposal | null> {
+    const ids = troubled ?? (await this.troubled(name));
     const content = await this.d.memory.read(skillPath(name));
     const timelines = ids.map((id) => {
       const t = this.d.tasks.get(id);
@@ -211,35 +267,63 @@ export class Proposals {
     return this.store("skill", out.title, out.reason, changes, name);
   }
 
+  /**
+   * A write to a skill or an INDEX.md, which every later chat and task reads and trusts, from work
+   * that had read untrusted content (`by`): held for you (PLAN.md §6.1). Content null deletes the
+   * file. null: it wouldn't change anything.
+   */
+  async hold(path: string, content: string | null, what: string, by: string) {
+    const p = await this.store(
+      "write",
+      what,
+      `Written after reading untrusted content: ${by}. Skills and indexes are trusted from then on, so this waits for you.`,
+      [content === null ? { path, delete: true } : { path, content }],
+      null,
+    );
+    if (p) this.tell("A memory change is waiting", `${p.changes[0]?.path}: ${p.title}`, 2);
+    return p;
+  }
+
   /** Writes it as you, in one commit. A file changed since it was proposed makes it stale. */
   async apply(id: number): Promise<{ proposal: Proposal; sha: string | null }> {
     const p = this.get(id);
     if (!p) throw new ProposalError("No such proposal.", 404);
     if (p.status !== "pending") throw new ProposalError(`It's already ${p.status}.`, 409);
-    for (const c of p.changes) {
-      const now = (await this.d.memory.exists(c.path)) ? await this.d.memory.read(c.path) : null;
-      if (now !== c.before) {
-        this.resolve(id, "stale");
-        throw new ProposalError(
-          `${c.path} changed since this was proposed. Ask for a new one.`,
-          409,
+    const owner = this.d.settings.get().owner;
+    // Each file is checked and written with no other write in between.
+    let changed: string | null = null;
+    let sha: string | null = null;
+    try {
+      if (p.kind === "skill" && p.skill) {
+        changed = p.changes[0]?.path ?? null;
+        const fix = `Fix skill ${p.skill}: ${p.title}`;
+        sha = await this.d.skills.save(
+          p.skill,
+          p.changes[0]?.after ?? "",
+          owner,
+          fix,
+          p.changes[0]?.before ?? null,
+        );
+      } else {
+        sha = await this.d.memory.edit(
+          async (read) => {
+            for (const c of p.changes) {
+              changed = c.path;
+              const now = await read(c.path);
+              if (now !== c.before) throw new MemoryConflict("", now ?? "");
+            }
+            return p.changes.map((c) => ({ path: c.path, content: c.after }));
+          },
+          owner,
+          p.kind === "write" ? p.title : `Tidy: ${p.title}`,
         );
       }
-    }
-    const owner = this.d.settings.get().owner;
-    let sha: string | null;
-    if (p.kind === "skill" && p.skill) {
-      sha = await this.d.skills.save(
-        p.skill,
-        p.changes[0]?.after ?? "",
-        owner,
-        `Fix skill ${p.skill}: ${p.title}`,
-      );
-    } else {
-      sha = await this.d.memory.change(
-        p.changes.map((c) => ({ path: c.path, content: c.after })),
-        owner,
-        `Tidy: ${p.title}`,
+    } catch (err) {
+      if (!(err instanceof MemoryConflict)) throw err;
+      this.resolve(id, "stale");
+      throw new ProposalError(
+        `${changed ?? "A file"} changed since this was proposed. Ask for a new one.`,
+        409,
       );
     }
     if (sha)
@@ -304,12 +388,13 @@ export class Proposals {
       changes.push({ path: rel, before, after });
     }
     if (!changes.length) return null;
-    // A newer proposal of the same kind (and skill) replaces one still waiting.
+    // A newer proposal of the same kind (and skill, or for a write, file) replaces one still waiting.
     this.d.db
       .query(
-        `UPDATE proposals SET status = 'dismissed', resolved_at = ? WHERE status = 'pending' AND kind = ? AND coalesce(skill, '') = ?`,
+        `UPDATE proposals SET status = 'dismissed', resolved_at = ? WHERE status = 'pending' AND kind = ? AND coalesce(skill, '') = ?
+         AND (kind <> 'write' OR json_extract(changes, '$[0].path') = ?)`,
       )
-      .run(this.now(), kind, skill ?? "");
+      .run(this.now(), kind, skill ?? "", changes[0]?.path ?? "");
     const id = this.d.db
       .query<{ id: number }, [string, string, string, string, string | null, string]>(
         "INSERT INTO proposals (kind, title, reason, changes, skill, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",

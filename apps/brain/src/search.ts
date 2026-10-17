@@ -1,16 +1,19 @@
 // Search for the app: chats (full text), tasks, memory files, and schedules, triggers and watchers.
-import { MATCH_END, MATCH_START, type SearchResults, type Task } from "@hatbot/shared";
+import { MATCH_END, MATCH_START, type SearchResults } from "@hatbot/shared";
 import type { Db } from "./db";
 import type { MemoryStore } from "./memory/store";
 import type { Tasks } from "./tasks/service";
 
 const LIMIT = 30;
 
-/** Words for FTS5, each quoted; the last one also matches as a prefix, so results come while typing. */
-export function ftsQuery(query: string): string | null {
+/**
+ * Words for FTS5, each quoted; the last one also matches as a prefix, so results come while typing.
+ * All of them must match, or with `join` " OR ", any.
+ */
+export function ftsQuery(query: string, join = " "): string | null {
   const terms = query.match(/[\p{L}\p{N}_]+/gu) ?? [];
   if (!terms.length) return null;
-  return terms.map((t, i) => `"${t}"${i === terms.length - 1 ? "*" : ""}`).join(" ");
+  return terms.map((t, i) => `"${t}"${i === terms.length - 1 ? "*" : ""}`).join(join);
 }
 
 /** For LIKE: % and _ match themselves. */
@@ -53,14 +56,7 @@ export async function search(
         }))
     : [];
   const pattern = like(q);
-  const tasks = d.db
-    .query<{ id: number }, [string, string, string, number]>(
-      `SELECT id FROM tasks WHERE title LIKE ? ESCAPE '\\' OR goal LIKE ? ESCAPE '\\'
-       OR coalesce(summary, '') LIKE ? ESCAPE '\\' ORDER BY id DESC LIMIT ?`,
-    )
-    .all(pattern, pattern, pattern, LIMIT)
-    .map((r) => d.tasks.get(r.id))
-    .filter((t): t is Task => t !== null);
+  const tasks = d.tasks.list({ like: pattern, limit: LIMIT });
   const routines = d.db
     .query<{ kind: "schedule" | "trigger" | "watcher"; id: number; name: string }, string[]>(
       `SELECT 'schedule' AS kind, id, name FROM schedules WHERE name LIKE ?1 ESCAPE '\\' OR prompt LIKE ?1 ESCAPE '\\'

@@ -77,6 +77,20 @@ expect "desktop reaches the internet (https://deb.debian.org)" \
 blocked "desktop can't reach the Proxmox host" "$HOST_LAN_IP" 8006 22
 blocked "desktop can't reach the LAN gateway" "$LAN_GW" 443 80 53 22
 blocked "desktop can't open connections to the brain" "$BRAIN_IP" 8080 22
+# The web app's public URL usually leads back into the LAN (a port forward on your router); the desktop
+# must not get there. HATBOT_PUBLIC_IPS in host.env blocks those addresses.
+# shellcheck disable=SC2016 # expands inside the brain
+public_url=$(pct exec "$BRAIN_ID" -- sh -c '. /etc/hatbot/brain.env 2>/dev/null && printf %s "$HATBOT_PUBLIC_URL"' 2>/dev/null)
+if [[ -n $public_url ]]; then
+  if pct exec "$DESKTOP_ID" -- curl -sS -m 6 -o /dev/null "$public_url" 2>/dev/null; then
+    result FAIL "desktop can't reach the web app at $public_url" \
+      "it did; add your public IP to HATBOT_PUBLIC_IPS in /etc/hatbot/host.env and re-run host-setup.sh"
+  else
+    result OK "desktop can't reach the web app at $public_url"
+  fi
+else
+  printf '   %sskip%s  desktop and the web app (no public URL yet; deploy.sh asks for it)\n' "$yel" "$rst"
+fi
 expect "desktop has no IPv6 route out" sh -c "! pct exec $DESKTOP_ID -- ip -6 route show default | grep -q ."
 
 step "Brain ↔ desktop"
@@ -88,6 +102,48 @@ expect "Chromium is running (sandbox works in the container)" \
   pct exec "$DESKTOP_ID" -- pgrep -u desk -f chrome-profile
 expect "Chromium's CDP answers on the desktop's localhost only" \
   pct exec "$DESKTOP_ID" -- curl -fsS -m 5 -o /dev/null http://127.0.0.1:9222/json/version
+# shell_exec COMMAND -> the JSON answer of the desktop's shell (desktop_shell), which runs it as its own user.
+shell_exec() {
+  pct exec "$DESKTOP_ID" -- curl -sS -m 20 --unix-socket /run/hatbot-shell/shell.sock \
+    -H 'content-type: application/json' --data-binary @- http://shell/exec 2>/dev/null <<<"{\"command\": \"$1\", \"timeoutS\": 8}"
+}
+if pct exec "$DESKTOP_ID" -- test -S /run/hatbot-shell/shell.sock; then
+  for probe in "Chromium's DevTools (127.0.0.1:9222)|exec 3<>/dev/tcp/127.0.0.1/9222" \
+    "desktop-agent ($DESKTOP_IP:7070)|exec 3<>/dev/tcp/$DESKTOP_IP/7070" \
+    "the screen (:1)|DISPLAY=:1 xdotool getdisplaygeometry" \
+    "the renderer's socket|cd /run/hatbot-render"; do
+    out=$(shell_exec "${probe#*|}")
+    if [[ -z $out ]]; then
+      result FAIL "the desktop shell answers" "no reply on /run/hatbot-shell/shell.sock"
+    elif grep -q '"exitCode":0' <<<"$out"; then
+      result FAIL "the desktop shell can't reach ${probe%%|*}" "it did; run deploy.sh"
+    else
+      result OK "the desktop shell can't reach ${probe%%|*}"
+    fi
+  done
+  # shellcheck disable=SC2016 # expands inside the desktop
+  expect "only desktop-agent's user reaches the shell's socket" \
+    pct exec "$DESKTOP_ID" -- sh -c '[ "$(stat -c "%a %G" /run/hatbot-shell)" = "750 desk" ]'
+else
+  printf '   %sskip%s  desktop shell (not running; deploy.sh installs it)\n' "$yel" "$rst"
+fi
+# The renderer's Chromium loads whatever a page asks for; only the loopback rule keeps it off DevTools.
+if pct exec "$DESKTOP_ID" -- test -S /run/hatbot-render/render.sock; then
+  # shellcheck disable=SC2016 # expands inside the desktop
+  uid=$(pct exec "$DESKTOP_ID" -- sh -c 'ps -o uid= -p "$(systemctl show -P MainPID hatbot-render)"' 2>/dev/null | tr -d ' ')
+  if [[ $uid =~ ^[0-9]+$ ]] && ((uid >= 61184 && uid <= 65519)); then
+    result OK "the renderer runs as a user the loopback rule covers (uid $uid)"
+  else
+    result FAIL "the renderer runs as a user the loopback rule covers" "uid ${uid:-unknown}"
+  fi
+  expect "the renderer runs a page's scripts" sh -c "pct exec $DESKTOP_ID -- curl -sS -m 30 -X POST \
+    --unix-socket /run/hatbot-render/render.sock http://render/check | grep -q '\"ok\":true'"
+  # shellcheck disable=SC2016 # expands inside the desktop
+  expect "only desktop-agent's user reaches the renderer's socket" \
+    pct exec "$DESKTOP_ID" -- sh -c '[ "$(stat -c "%a %G" /run/hatbot-render)" = "750 desk" ]'
+else
+  printf '   %sskip%s  renderer (not running; deploy.sh installs it)\n' "$yel" "$rst"
+fi
 if pct exec "$BRAIN_ID" -- grep -qs '^NTFY_URL=http' /etc/hatbot/ntfy.env; then
   # shellcheck disable=SC2016 # expands inside the brain
   expect "the brain reaches your ntfy server" pct exec "$BRAIN_ID" -- sh -c \
@@ -104,6 +160,7 @@ else
 fi
 expect "the brain holds the Proxmox token" pct exec "$BRAIN_ID" -- test -s /etc/hatbot/proxmox.env
 # "Roll back desktop" lists snapshots with this token (the brain pins the certificate itself).
+# shellcheck disable=SC2016 # expands inside the brain
 expect "the brain's token can list the desktop's snapshots" pct exec "$BRAIN_ID" -- sh -c \
   '. /etc/hatbot/proxmox.env && printf "Authorization: PVEAPIToken=%s=%s\n" "$PROXMOX_TOKEN_ID" "$PROXMOX_TOKEN_SECRET" | curl -fsSk -m 5 -o /dev/null -H @- "$PROXMOX_URL/api2/json/nodes/$PROXMOX_NODE/lxc/$HATBOT_DESKTOP_ID/snapshot"'
 expect "the brain holds the desktop secrets" pct exec "$BRAIN_ID" -- test -s /etc/hatbot/desktop.env

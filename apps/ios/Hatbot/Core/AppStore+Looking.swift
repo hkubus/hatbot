@@ -9,12 +9,22 @@ extension AppStore {
 
   // MARK: Watchers
 
+  @discardableResult
   func loadWatchers() async throws -> [Watcher] {
-    try await api.get("/watchers")
+    let list: [Watcher] = try await api.get("/watchers")
+    watchers = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+    watchersLoaded = true
+    return list
   }
 
+  @discardableResult
   func loadWatcher(_ id: Int) async throws -> Watcher {
-    try await api.get("/watchers/\(id)")
+    keep(try await api.get("/watchers/\(id)"))
+  }
+
+  private func keep(_ w: Watcher) -> Watcher {
+    watchers[w.id] = w
+    return w
   }
 
   func watcherValues(_ id: Int) async throws -> [WatcherValue] {
@@ -23,27 +33,36 @@ extension AppStore {
 
   func setWatcherEnabled(_ id: Int, _ on: Bool) async throws -> Watcher {
     struct Body: Encodable { let enabled: Bool }
-    return try await api.patch("/watchers/\(id)", body: Body(enabled: on))
+    return keep(try await api.patch("/watchers/\(id)", body: Body(enabled: on)))
+  }
+
+  /// The brain reads the page again before it saves this.
+  func setWatcherRender(_ id: Int, _ on: Bool) async throws -> Watcher {
+    guard let w = watchers[id] else { throw APIError(status: 404, message: "This watcher doesn't exist.") }
+    return keep(try await api.patch("/watchers/\(id)", body: w.render(on), timeout: API.watcherTimeout))
   }
 
   /// Looks now; the watcher as it is after.
   func checkWatcher(_ id: Int) async throws -> Watcher {
-    try await api.post("/watchers/\(id)/check", body: Empty())
+    keep(try await api.post("/watchers/\(id)/check", body: Empty(), timeout: API.watcherTimeout))
   }
 
   func deleteWatcher(_ id: Int) async throws {
     let _: Empty = try await api.delete("/watchers/\(id)")
+    watchers[id] = nil
+    deletedWatchers.insert(id)
   }
 
   // MARK: Check everything
 
-  func loadChecks() async throws -> CheckReport? {
+  func loadChecks() async throws -> ChecksInfo {
     let info: ChecksInfo = try await api.get("/checks")
-    return info.report
+    if let a = info.approval { approvals[a.id] = a }
+    return info
   }
 
   func runChecks() async throws -> CheckReport {
-    try await api.post("/checks", body: Empty())
+    try await api.post("/checks", body: Empty(), timeout: API.checksTimeout)
   }
 
   // MARK: Heartbeat and weekly report
@@ -80,25 +99,32 @@ extension AppStore {
 
   // MARK: Proposals
 
-  func loadProposals() async throws -> [Proposal] {
-    try await api.get("/proposals?status=pending")
+  func loadProposals() async throws {
+    let list: [Proposal] = try await api.get("/proposals?status=pending")
+    proposals = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
   }
 
-  /// Asks for a tidy-up now; nil when there's nothing to tidy.
-  func proposeTidy() async throws -> Proposal? {
+  /// The proposals waiting for you, oldest first.
+  var pendingProposals: [Proposal] {
+    proposals.values.filter { $0.status == .pending }.sorted { $0.id < $1.id }
+  }
+
+  /// Asks for a tidy-up. The brain answers at once and the proposal comes as proposal.updated; a brain
+  /// from before answers with it, or nothing when there's nothing to tidy.
+  func proposeTidy() async throws -> ProposalStarted {
     try await api.post("/proposals/tidy", body: Empty())
   }
 
   func applyProposal(_ id: Int) async throws -> Proposal {
     let p: Proposal = try await api.post("/proposals/\(id)/apply", body: Empty())
+    proposals[p.id] = p
     memoryVersion += 1
     return p
   }
 
   func dismissProposal(_ id: Int) async throws -> Proposal {
     let p: Proposal = try await api.post("/proposals/\(id)/dismiss", body: Empty())
-    // The memory screen lists what's left.
-    memoryVersion += 1
+    proposals[p.id] = p
     return p
   }
 
@@ -106,8 +132,8 @@ extension AppStore {
     try await api.get("/skills")
   }
 
-  /// Asks for a fix to a skill; nil when Hatbot found nothing to change.
-  func proposeSkillFix(_ name: String) async throws -> Proposal? {
+  /// Asks for a fix to a skill, like `proposeTidy`.
+  func proposeSkillFix(_ name: String) async throws -> ProposalStarted {
     try await api.post("/skills/\(API.query(name))/fix", body: Empty())
   }
 

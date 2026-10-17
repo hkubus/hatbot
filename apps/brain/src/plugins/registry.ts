@@ -19,6 +19,8 @@ import {
 /** What a model gets to see of one tool's output. */
 const MAX_OUTPUT_CHARS = 30_000;
 const TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
+/** A plugin in error is started again after these, then every last one; a part down, recovered. */
+const RETRY_MS = [60_000, 5 * 60_000, 15 * 60_000];
 
 type Slot = {
   plugin: Plugin;
@@ -29,6 +31,9 @@ type Slot = {
   instance: PluginInstance | null;
   /** Bumped on every (re)start, so a slow start that was overtaken is thrown away. */
   generation: number;
+  /** Tries since it last worked, for the backoff. */
+  retries: number;
+  retry: ReturnType<typeof setTimeout> | null;
 };
 
 export type PluginsDeps = {
@@ -43,6 +48,8 @@ export type PluginsDeps = {
 export class Plugins {
   private slots = new Map<string, Slot>();
   private env: Record<string, string | undefined>;
+  /** Waits between tries for a plugin that's down; tests shorten them. */
+  retryMs = RETRY_MS;
 
   constructor(
     plugins: Plugin[],
@@ -61,6 +68,8 @@ export class Plugins {
         message: null,
         instance: null,
         generation: 0,
+        retries: 0,
+        retry: null,
       });
     }
   }
@@ -95,6 +104,7 @@ export class Plugins {
       s.config = parsed.data;
     }
     if (patch.enabled !== undefined) s.enabled = patch.enabled;
+    s.retries = 0;
     this.d.db
       .query(
         "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
@@ -227,10 +237,46 @@ export class Plugins {
     s.state = state;
     s.message = message;
     this.emit(s);
+    this.later(s);
+  }
+
+  /** Tries again later if it's in error or a part of it is down; forgets the tries once it works. */
+  private later(s: Slot) {
+    if (s.retry) clearTimeout(s.retry);
+    s.retry = null;
+    const down = s.state === "error" || (s.state === "ready" && s.instance?.down?.());
+    if (!s.enabled || !down) {
+      s.retries = 0;
+      return;
+    }
+    const ms = this.retryMs[Math.min(s.retries, this.retryMs.length - 1)] ?? 15 * 60_000;
+    s.retries++;
+    const generation = s.generation;
+    s.retry = setTimeout(() => {
+      s.retry = null;
+      if (generation === s.generation) void this.again(s);
+    }, ms);
+    s.retry.unref?.();
+  }
+
+  private async again(s: Slot) {
+    const instance = s.instance;
+    if (s.state === "ready" && instance?.recover) {
+      const generation = s.generation;
+      await instance.recover().catch((err) => console.error(`plugin ${s.plugin.id}: recover`, err));
+      if (generation !== s.generation) return;
+      this.emit(s);
+      this.later(s);
+      return;
+    }
+    console.log(`plugin ${s.plugin.id}: starting again (try ${s.retries})`);
+    await this.restart(s);
   }
 
   private async stop(s: Slot) {
     s.generation++;
+    if (s.retry) clearTimeout(s.retry);
+    s.retry = null;
     const instance = s.instance;
     s.instance = null;
     const was = s.state;
@@ -264,7 +310,7 @@ export class Plugins {
       description: s.plugin.description,
       enabled: s.enabled,
       state: s.state,
-      message: s.message,
+      message: s.message ?? (s.state === "ready" ? (s.instance?.down?.() ?? null) : null),
       secrets: (s.plugin.secrets ?? []).map((name) => ({ name, set: Boolean(this.env[name]) })),
       config: s.config,
       tools: (s.instance?.tools ?? []).map((t) => ({
@@ -339,7 +385,7 @@ export function describeCall(t: PluginTool, input: unknown): string {
 /**
  * Whether a call may run: the tool's own policy, made stricter by the untrusted-content rule. Once a
  * task or a conversation has read untrusted content, every write needs your approval (PLAN.md §6.1),
- * unless Haiku's review lets it through.
+ * unless Haiku's review lets it through, or the tool's policy says an approval you gave covers it.
  */
 export function verdictFor(
   t: PluginTool,
@@ -352,7 +398,7 @@ export function verdictFor(
   // Bad input fails in runPluginTool, before anything runs.
   if (!parsed.success) return allow();
   const own = t.policy ? t.policy(parsed.data, call) : allow();
-  if (own.action !== "allow") return own;
+  if (own.action !== "allow" || own.covered) return own;
   if (tainted)
     return {
       action: "ask",

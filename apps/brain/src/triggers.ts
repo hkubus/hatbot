@@ -7,6 +7,7 @@ import {
   type Trigger,
   type TriggerWithSecret,
 } from "@hatbot/shared";
+import { liveBot } from "./bots";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
 import type { Notifier } from "./notify";
@@ -15,8 +16,10 @@ import type { Tasks } from "./tasks/service";
 
 /** How far a signed timestamp may be from now. */
 const MAX_SKEW_S = 300;
-/** Signatures seen this recently are replays. */
-const REPLAY_WINDOW_MS = 24 * 3600_000;
+/** Signatures and delivery ids seen this recently are replays. */
+const REPLAY_WINDOW_MS = 30 * 24 * 3600_000;
+/** Headers with a delivery id: a forge retrying one sends it again with the same id. */
+const DELIVERY_HEADERS = ["x-github-delivery", "x-gitea-delivery", "x-forgejo-delivery"];
 /** What a run gets to see of a payload. */
 const MAX_PAYLOAD_CHARS = 20_000;
 /** A Kuma monitor's check interval when its alert doesn't say, and the range we believe. */
@@ -65,8 +68,8 @@ type KumaBody = {
 };
 
 export class Triggers {
-  private seen = new Map<string, number>();
   private clock: () => number;
+  private prunedAt = 0;
 
   constructor(
     private db: Db,
@@ -208,7 +211,10 @@ export class Triggers {
       want = mac(body);
     }
     if (!sig || !same(sig.toLowerCase(), want)) return { ok: false as const };
-    return { ok: true as const, replay: this.replayed(`${id}:${want}`) };
+    const keys = [`${id}:mac:${want}`];
+    const delivery = DELIVERY_HEADERS.map(header).find(Boolean);
+    if (delivery) keys.push(`${id}:delivery:${delivery.slice(0, 200)}`);
+    return { ok: true as const, replay: this.replayed(keys) };
   }
 
   /** Uptime Kuma can't sign; it sends `Authorization: Bearer <secret>` from its Additional Headers. */
@@ -232,7 +238,7 @@ export class Triggers {
       origin: "webhook",
       source: t.name,
       triggerId: t.id,
-      botId: t.botId,
+      botId: liveBot(this.db, t.botId),
       runKey: `trigger:${t.id}`,
       payload: pretty(body),
       trusted: t.trusted,
@@ -322,6 +328,7 @@ export class Triggers {
 
   /** Starts the alerts whose wait is over: their monitor didn't come back up. The brain calls it often. */
   tick() {
+    this.prune();
     const due = this.db
       .query<{ run_key: string; trigger_id: number; name: string; alert: string }, [string]>(
         "SELECT run_key, trigger_id, name, alert FROM kuma_waiting WHERE due_at <= ? ORDER BY due_at",
@@ -345,7 +352,7 @@ export class Triggers {
       origin: "alert",
       source: t.name,
       triggerId: t.id,
-      botId: t.botId,
+      botId: liveBot(this.db, t.botId),
       runKey,
       payload,
       trusted: true,
@@ -374,12 +381,30 @@ export class Triggers {
     this.changed(id);
   }
 
-  private replayed(key: string): boolean {
-    const now = this.clock();
-    for (const [k, until] of this.seen) if (until < now) this.seen.delete(k);
-    if (this.seen.has(key)) return true;
-    this.seen.set(key, now + REPLAY_WINDOW_MS);
-    return false;
+  /** Kept in the database, so a restart doesn't let an old delivery run again. */
+  private replayed(keys: string[]): boolean {
+    this.prune();
+    const cutoff = new Date(this.clock() - REPLAY_WINDOW_MS).toISOString();
+    return this.db.transaction(() => {
+      const seen = keys.some((k) =>
+        this.db.query("SELECT 1 FROM hook_deliveries WHERE key = ? AND seen_at > ?").get(k, cutoff),
+      );
+      for (const k of keys)
+        this.db
+          .query(
+            "INSERT INTO hook_deliveries (key, seen_at) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET seen_at = excluded.seen_at",
+          )
+          .run(k, this.now());
+      return seen;
+    })();
+  }
+
+  /** Deliveries older than the window go, once a day. */
+  private prune() {
+    if (this.clock() - this.prunedAt < 24 * 3600_000) return;
+    this.prunedAt = this.clock();
+    const cutoff = new Date(this.clock() - REPLAY_WINDOW_MS).toISOString();
+    this.db.query("DELETE FROM hook_deliveries WHERE seen_at <= ?").run(cutoff);
   }
 
   private changed(id: number) {

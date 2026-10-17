@@ -41,16 +41,27 @@ export const desktopRoutes = new Hono<AppEnv>()
     upgradeWebSocket((c) => {
       const { desktop, teach } = (c as Context<AppEnv>).var;
       let upstream: WebSocket | null = null;
+      let behind: ArrayBuffer | null = null;
+      let waiting: ReturnType<typeof setTimeout> | undefined;
       return {
         onOpen(_, ws) {
           const { url, headers } = desktop.agent.liveSocket();
+          const raw = ws.raw as { getBufferedAmount?: () => number } | undefined;
+          // On a slow connection, skip frames rather than fall behind the desktop. The newest goes out
+          // once the viewer catches up: a desktop that has gone still sends nothing more.
+          const flush = () => {
+            waiting = undefined;
+            if (!behind) return;
+            if ((raw?.getBufferedAmount?.() ?? 0) < LIVE_BUFFER_BYTES) {
+              ws.send(behind);
+              behind = null;
+            } else waiting = setTimeout(flush, 100);
+          };
           upstream = new WebSocket(url, { headers } as unknown as string[]);
           upstream.binaryType = "arraybuffer";
           upstream.onmessage = (e) => {
-            // On a slow connection, drop frames rather than fall behind the desktop.
-            const raw = ws.raw as { getBufferedAmount?: () => number } | undefined;
-            if ((raw?.getBufferedAmount?.() ?? 0) < LIVE_BUFFER_BYTES)
-              ws.send(e.data as ArrayBuffer);
+            behind = e.data as ArrayBuffer;
+            if (!waiting) flush();
           };
           upstream.onclose = () => ws.close(1011, "desktop disconnected");
           upstream.onerror = () => ws.close(1011, "desktop unreachable");
@@ -69,6 +80,7 @@ export const desktopRoutes = new Hono<AppEnv>()
           }
         },
         onClose() {
+          clearTimeout(waiting);
           upstream?.close();
         },
       };

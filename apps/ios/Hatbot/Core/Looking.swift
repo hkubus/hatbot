@@ -13,6 +13,8 @@ struct Watcher: Codable, Identifiable, Equatable, Sendable {
 
     var kind: Kind
     var url: String?
+    /// A page loaded in a headless Chromium on the desktop, so what its scripts write is there.
+    var render: Bool?
     var tool: String?
     var selector: String?
     var path: String?
@@ -65,6 +67,22 @@ struct Watcher: Codable, Identifiable, Equatable, Sendable {
   var errors: Int
   var lastTaskId: Int?
 
+  /// Watchers that run a page's scripts look at most this often, in minutes.
+  static let minRenderMinutes = 15
+
+  /// What turns running the page's scripts on or off. One that looked more often slows down.
+  struct RenderChange: Encodable, Equatable, Sendable {
+    var source: Source
+    var everyMinutes: Int?
+  }
+
+  func render(_ on: Bool) -> RenderChange {
+    var s = source
+    s.render = on ? true : nil
+    let slower = on && everyMinutes < Self.minRenderMinutes
+    return RenderChange(source: s, everyMinutes: slower ? Self.minRenderMinutes : nil)
+  }
+
   /// "Every hour", "Every 15 minutes", "Every 2 days".
   static func every(_ minutes: Int) -> String {
     func unit(_ n: Int, _ word: String) -> String { n == 1 ? "Every \(word)" : "Every \(n) \(word)s" }
@@ -102,12 +120,15 @@ struct CheckReport: Codable, Equatable, Sendable {
 
 struct ChecksInfo: Decodable, Sendable {
   var report: CheckReport?
+  /// The last test approval; missing on brains from before it.
+  var approval: Approval?
 }
 
-/// A tidy-up of memory or a fix to a skill, shown as a diff to apply or dismiss.
+/// A tidy-up of memory, a fix to a skill, or a write to a skill or index from work that had read
+/// untrusted content, shown as a diff to apply or dismiss.
 struct Proposal: Codable, Identifiable, Hashable, Sendable {
   enum Kind: String, LenientEnum {
-    case tidy, skill
+    case tidy, skill, write
     static let fallback = Kind.tidy
   }
 
@@ -135,6 +156,20 @@ struct Proposal: Codable, Identifiable, Hashable, Sendable {
   var resolvedAt: String?
 }
 
+/// What asking for a tidy-up or a skill fix answers: `202 { started: true }`, the proposal from a brain
+/// from before, or nothing (204) when that brain found nothing to change.
+struct ProposalStarted: Decodable, Sendable {
+  var proposal: Proposal?
+  var started: Bool
+
+  private enum Key: String, CodingKey { case started }
+
+  init(from decoder: Decoder) throws {
+    proposal = try? Proposal(from: decoder)
+    started = (try? decoder.container(keyedBy: Key.self).decodeIfPresent(Bool.self, forKey: .started)) == true
+  }
+}
+
 /// A skill, and the tasks following it that failed or needed you since it last changed.
 struct SkillStatus: Codable, Identifiable, Equatable, Sendable {
   var name: String
@@ -153,11 +188,20 @@ struct HeartbeatInfo: Codable, Equatable, Sendable {
     static let fallback = Action.nothing
   }
 
+  /// One look of the ones before.
+  struct Run: Codable, Equatable, Sendable {
+    var at: String
+    var found: [String]
+    var action: Action?
+  }
+
   var at: String?
   var found: [String]
   var action: Action?
   var note: String
   var taskId: Int?
+  /// The last few looks, newest first; missing on brains from before.
+  var recent: [Run]?
 }
 
 enum LineDiff {

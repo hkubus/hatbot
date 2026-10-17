@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
 import type { Schedule, Task, TriggerWithSecret } from "@hatbot/shared";
+import { EventBus } from "../src/events";
+import { Triggers } from "../src/triggers";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
+import { ORIGIN, setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
 
 const finish = (summary: string, notify: boolean) => ({
   content: [toolUse("finish_task", { outcome: "done", summary, notify })],
@@ -153,6 +155,29 @@ function sign(secret: string, body: string, t: number) {
   return `t=${t},v1=${v1}`;
 }
 
+test("a webhook body over 256 KB is refused before it's all read, with or without a length", async () => {
+  const t = await testApp();
+  const chunk = new Uint8Array(64 * 1024);
+  let sent = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(c) {
+      sent++;
+      // Far more than the limit if it were all read.
+      if (sent > 200) c.close();
+      else c.enqueue(chunk);
+    },
+  });
+  const res = await t.app.request("/api/v1/hooks/1", { method: "POST", body: stream });
+  expect(res.status).toBe(413);
+  expect(sent).toBeLessThan(10);
+  const big = await t.app.request("/api/v1/hooks/1", {
+    method: "POST",
+    headers: { "content-length": String(300 * 1024) },
+    body: "x",
+  });
+  expect(big.status).toBe(413);
+});
+
 test("a signed webhook starts an untrusted background task; bad or replayed ones don't", async () => {
   const work = new FakeModel([finish("Nothing to do.", false), finish("Second.", false)]);
   const t = await testApp(new FakeModel(), work);
@@ -208,6 +233,25 @@ test("a signed webhook starts an untrusted background task; bad or replayed ones
   const hub = createHmac("sha256", created.secret).update(other).digest("hex");
   expect((await hook({ "x-hub-signature-256": `sha256=${hub}` }, other)).status).toBe(202);
   await t.tasks.idle();
+
+  // After a restart it's still a replay, and a forge's delivery id counts on its own.
+  const restarted = new Triggers(
+    t.db,
+    new EventBus(),
+    t.settings,
+    t.tasks,
+    { send: async () => {} },
+    ORIGIN,
+  );
+  const verify = (b: string, headers: Record<string, string>) =>
+    restarted.verifyWebhook(
+      created.id,
+      (h) => ({ "x-hub-signature-256": `sha256=${hmac(created.secret, b)}`, ...headers })[h],
+      new TextEncoder().encode(b),
+    );
+  expect(verify(other, {})).toEqual({ ok: true, replay: true });
+  expect(verify('{"n":1}', { "x-github-delivery": "d-1" })).toEqual({ ok: true, replay: false });
+  expect(verify('{"n":2}', { "x-github-delivery": "d-1" })).toEqual({ ok: true, replay: true });
 
   // Off: accepted but not run.
   await call("PATCH", `/triggers/${created.id}`, { enabled: false });
@@ -459,3 +503,6 @@ test("Uptime Kuma's other formats: the secret in the URL, form data, GET, and a 
   const junk = await t.app.request(url, { method: "POST", body: "hello" });
   expect(junk.status).toBe(400);
 });
+
+const hmac = (secret: string, body: string) =>
+  createHmac("sha256", secret).update(body).digest("hex");

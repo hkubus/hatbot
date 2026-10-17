@@ -6,6 +6,8 @@ export const Settings = z.object({
     taskUsd: z.number().positive(),
     dailyUsd: z.number().positive(),
     monthlyUsd: z.number().positive(),
+    /** The last of the daily and monthly limits, which only alerts and the heartbeat spend (PLAN.md §6.3). */
+    alertReserveUsd: z.number().min(0),
   }),
   /** Effort for the chat thread. Heavier work runs as tasks, at their own effort. */
   chatEffort: z.enum(["low", "medium"]),
@@ -19,8 +21,10 @@ export const Settings = z.object({
   reviewChanges: z.boolean(),
   /** What tapping a notification opens: the web app, or the iOS app (hatbot:// links). */
   notificationsOpen: z.enum(["web", "app"]),
-  /** The model that drives the desktop (PLAN.md §5.4). Haiku 5.5 is the experiment: far cheaper, less tested. */
+  /** The model that drives the desktop (PLAN.md §5.4): Haiku 5.5 is far cheaper, Opus 5.5 fails less. */
   desktopModel: z.enum(["claude-opus-5-5", "claude-haiku-5-5"]),
+  /** A desktop task Haiku fails at carries on once on Opus. */
+  desktopEscalate: z.boolean(),
   /** The model background tasks run on (SSH, Proxmox, code work: anything without a screen). */
   taskModel: z.enum(["claude-haiku-5-5", "claude-opus-5-5"]),
   heartbeat: z.object({
@@ -38,19 +42,23 @@ export const Settings = z.object({
   }),
 });
 export type Settings = z.infer<typeof Settings>;
+/** A change to settings: limits may change one at a time. */
+export const SettingsPatch = Settings.extend({ limits: Settings.shape.limits.partial() }).partial();
+export type SettingsPatch = z.infer<typeof SettingsPatch>;
 
 export const DEFAULT_SETTINGS: Settings = {
-  limits: { taskUsd: 3, dailyUsd: 10, monthlyUsd: 200 },
+  limits: { taskUsd: 3, dailyUsd: 10, monthlyUsd: 200, alertReserveUsd: 1 },
   chatEffort: "low",
   chatModel: "claude-haiku-5-5",
   owner: { name: "You", email: "owner@local" },
   paused: false,
   reviewChanges: true,
   notificationsOpen: "web",
-  desktopModel: "claude-opus-5-5",
+  desktopModel: "claude-haiku-5-5",
+  desktopEscalate: true,
   taskModel: "claude-haiku-5-5",
   heartbeat: {
-    enabled: false,
+    enabled: true,
     everyMinutes: 30,
     botId: "hatbot",
     instructions:
@@ -73,11 +81,14 @@ export class SettingsStore {
     // reviewChanges was reviewTaintedChanges, for tainted work only.
     if (stored.reviewTaintedChanges !== undefined)
       stored.reviewChanges ??= stored.reviewTaintedChanges;
-    return Settings.parse({ ...DEFAULT_SETTINGS, ...stored });
+    // Limits saved before a new one existed take its default.
+    const limits = { ...DEFAULT_SETTINGS.limits, ...stored.limits };
+    return Settings.parse({ ...DEFAULT_SETTINGS, ...stored, limits });
   }
 
-  update(patch: Partial<Settings>): Settings {
-    const next = Settings.parse({ ...this.get(), ...patch });
+  update(patch: SettingsPatch): Settings {
+    const now = this.get();
+    const next = Settings.parse({ ...now, ...patch, limits: { ...now.limits, ...patch.limits } });
     this.db
       .query(
         "INSERT INTO settings (key, value) VALUES ('app', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",

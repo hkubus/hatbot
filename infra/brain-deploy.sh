@@ -45,6 +45,8 @@ cat >/etc/systemd/system/hatbot-brain.service <<'EOF'
 Description=Hatbot brain
 After=network-online.target
 Wants=network-online.target
+# Keep restarting however often it fails, 2 s apart, instead of giving up after five.
+StartLimitIntervalSec=0
 
 [Service]
 User=hatbot
@@ -65,6 +67,7 @@ EnvironmentFile=-/etc/hatbot/homeassistant.env
 EnvironmentFile=-/etc/hatbot/uptimekuma.env
 ExecStart=/usr/local/bin/bun src/main.ts
 Restart=on-failure
+RestartSec=2
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
@@ -97,11 +100,34 @@ healthy() {
   return 1
 }
 started=$(date '+%Y-%m-%d %H:%M:%S')
+# The new release may migrate the database, which the previous one can't read; a copy from before goes
+# back with it. The brain is stopped first, so nothing is written after the copy.
+db=$ROOT/hatbot.sqlite
+backup=''
+if [[ -n $previous && -f $db ]]; then
+  systemctl stop hatbot-brain
+  backup=$rel/hatbot.sqlite.before
+  if ! (cd "$ROOT" && as_hatbot env SRC="$db" DST="$backup" bun -e \
+    'const { Database } = require("bun:sqlite"); new Database(process.env.SRC).run("VACUUM INTO ?", [process.env.DST]);'); then
+    systemctl start hatbot-brain
+    echo "couldn't copy the database; the brain stays on $previous" >&2
+    exit 1
+  fi
+  chmod 600 "$backup"
+  echo "database copied to $backup"
+fi
 switch_to "$rel"
 if ! healthy; then
   journalctl -u hatbot-brain --since "$started" -n 40 --no-pager >&2 || true
   if [[ -n $previous ]]; then
     echo "the new release failed its health check; going back to $previous" >&2
+    if [[ -n $backup ]]; then
+      systemctl stop hatbot-brain
+      as_hatbot cp "$backup" "$db.restore"
+      rm -f "$db-wal" "$db-shm"
+      mv -f "$db.restore" "$db"
+      echo "database put back as it was before the deploy"
+    fi
     switch_to "$previous"
   fi
   exit 1

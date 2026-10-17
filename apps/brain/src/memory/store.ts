@@ -1,7 +1,10 @@
 // The memory repo (PLAN.md §7.2): markdown files in git. Every write is a commit.
+import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, normalize, sep } from "node:path";
+import type { Db } from "../db";
+import { ftsQuery } from "../search";
 
 export type Author = { name: string; email: string };
 export const HATBOT: Author = { name: "Hatbot", email: "hatbot@local" };
@@ -18,10 +21,75 @@ export type SearchHit = { path: string; line: number; text: string };
 
 export class MemoryError extends Error {}
 
+/** A file changed since it was read: what it is now. */
+export class MemoryConflict extends MemoryError {
+  constructor(
+    readonly sha: string,
+    readonly content: string,
+  ) {
+    super("changed");
+  }
+}
+
+/** Git's blob id for this content, as `git hash-object` gives it; "" for no file. */
+export function blobSha(content: string | null): string {
+  if (content === null) return "";
+  const bytes = Buffer.from(content, "utf8");
+  return createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+}
+
+/** Lines (or sections) per file Search shows, the best first. */
+const LINES_PER_FILE = 3;
+/** Files bigger than this aren't indexed for search. */
+const INDEX_MAX_BYTES = 1_000_000;
+
+/** A file's sections, split at markdown headings outside code blocks, each with its first line. */
+export function sections(content: string): { line: number; text: string }[] {
+  const out: { line: number; text: string }[] = [];
+  let lines: string[] = [];
+  let start = 1;
+  let fence = false;
+  content.split("\n").forEach((l, i) => {
+    if (/^\s*(```|~~~)/.test(l)) fence = !fence;
+    else if (!fence && /^#{1,6}\s/.test(l) && lines.length) {
+      out.push({ line: start, text: lines.join("\n") });
+      lines = [];
+      start = i + 1;
+    }
+    lines.push(l);
+  });
+  out.push({ line: start, text: lines.join("\n") });
+  return out.filter((s) => s.text.trim());
+}
+
+/**
+ * The line of a section highlighted with \x02 and \x03 that has the most matches, the first on a tie,
+ * cut to 300 characters around its first match.
+ */
+function bestLine(marked: string, first: number): { line: number; text: string } {
+  const lines = marked.split("\n");
+  let best = 0;
+  let most = -1;
+  lines.forEach((l, i) => {
+    const n = l.split("\x02").length - 1;
+    if (n > most) [best, most] = [i, n];
+  });
+  const line = lines[best] ?? "";
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: the markers are control characters.
+  const text = line.replace(/[\x02\x03]/g, "");
+  const at = line.indexOf("\x02");
+  const from = at > 200 ? at - 100 : 0;
+  return { line: first + best, text: `${from ? "…" : ""}${text.slice(from, from + 300)}` };
+}
+
 export class MemoryStore {
   private queue: Promise<unknown> = Promise.resolve();
 
-  constructor(readonly dir: string) {}
+  /** With `db`, search ranks sections through its full-text index, which every commit keeps current. */
+  constructor(
+    readonly dir: string,
+    private db?: Db,
+  ) {}
 
   /** Creates the repo if it doesn't exist (the brain's provisioning normally does this). */
   async init() {
@@ -32,6 +100,35 @@ export class MemoryStore {
       await this.git(["add", "-A"]);
       await this.commitAs(HATBOT, "Start memory");
     }
+    // From scratch: files edited by hand outside Hatbot are indexed as they are now.
+    if (this.db) {
+      this.db.run("DELETE FROM memory_fts");
+      await this.index((await this.tree()).map((f) => f.path));
+    }
+  }
+
+  /** Puts these files' sections in the search index as they are now: a missing file drops out. */
+  private async index(paths: string[]) {
+    const db = this.db;
+    if (!db) return;
+    const files: { path: string; content: string | null }[] = [];
+    for (const path of paths) {
+      let content: string | null = null;
+      try {
+        const { abs } = this.resolve(path);
+        if ((await stat(abs)).size <= INDEX_MAX_BYTES) content = await readFile(abs, "utf8");
+      } catch {}
+      files.push({ path, content: content?.includes("\0") ? null : content });
+    }
+    const drop = db.query("DELETE FROM memory_fts WHERE path = ?");
+    const add = db.query("INSERT INTO memory_fts (path, line, text) VALUES (?, ?, ?)");
+    db.transaction(() => {
+      for (const f of files) {
+        drop.run(f.path);
+        for (const s of f.content === null ? [] : sections(f.content))
+          add.run(f.path, s.line, s.text);
+      }
+    })();
   }
 
   /** Resolves a repo-relative path, refusing anything outside the repo or inside .git. */
@@ -89,21 +186,47 @@ export class MemoryStore {
     author: Author,
     message: string,
   ): Promise<string | null> {
+    return this.serial(() => this.apply(files, author, message));
+  }
+
+  /**
+   * Reads, then writes, with no other write in between: `fn` reads what it needs (null for a file
+   * that doesn't exist) and returns the files to write or delete, or null to change nothing.
+   */
+  edit(
+    fn: (
+      read: (path: string) => Promise<string | null>,
+    ) => Promise<{ path: string; content: string | null }[] | null>,
+    author: Author,
+    message: string,
+  ): Promise<string | null> {
     return this.serial(async () => {
-      for (const f of files) {
-        const { rel, abs } = this.resolve(f.path, { markdown: true });
-        if (f.content === null) {
-          if (!(await this.exists(rel))) continue;
-          await rm(abs);
-          await this.git(["add", "-A", "--", rel]);
-        } else {
-          await mkdir(dirname(abs), { recursive: true });
-          await writeFile(abs, f.content.endsWith("\n") ? f.content : `${f.content}\n`);
-          await this.git(["add", "--", rel]);
-        }
-      }
-      return this.commitAs(author, message);
+      const read = async (path: string) =>
+        (await this.exists(path)) ? await this.read(path) : null;
+      const files = await fn(read);
+      return files ? this.apply(files, author, message) : null;
     });
+  }
+
+  private async apply(
+    files: { path: string; content: string | null }[],
+    author: Author,
+    message: string,
+  ) {
+    // Every path checked before anything is written.
+    const resolved = files.map((f) => ({ ...this.resolve(f.path, { markdown: true }), ...f }));
+    for (const { rel, abs, content } of resolved) {
+      if (content === null) {
+        if (!(await this.exists(rel))) continue;
+        await rm(abs);
+        await this.git(["add", "-A", "--", rel]);
+      } else {
+        await mkdir(dirname(abs), { recursive: true });
+        await writeFile(abs, content.endsWith("\n") ? content : `${content}\n`);
+        await this.git(["add", "--", rel]);
+      }
+    }
+    return this.commitAs(author, message);
   }
 
   /** Writes several files in one commit. */
@@ -112,15 +235,50 @@ export class MemoryStore {
     author: Author,
     message: string,
   ): Promise<string | null> {
-    return this.serial(async () => {
-      const resolved = files.map((f) => ({ ...this.resolve(f.path, { markdown: true }), ...f }));
-      for (const { rel, abs, content } of resolved) {
-        await mkdir(dirname(abs), { recursive: true });
-        await writeFile(abs, content.endsWith("\n") ? content : `${content}\n`);
-        await this.git(["add", "--", rel]);
-      }
-      return this.commitAs(author, message);
-    });
+    return this.serial(() => this.apply(files, author, message));
+  }
+
+  /**
+   * Reads a file, changes it with `fn`, and writes it back, with no other write in between. `fn` gets
+   * null for a file that doesn't exist yet, and returns null to leave it as it is. Returns the commit.
+   */
+  update(
+    path: string,
+    fn: (current: string | null) => string | null | Promise<string | null>,
+    author: Author,
+    message: string,
+  ): Promise<string | null> {
+    return this.edit(
+      async (read) => {
+        const next = await fn(await read(path));
+        return next === null ? null : [{ path, content: next }];
+      },
+      author,
+      message,
+    );
+  }
+
+  /**
+   * Writes a file unless it changed since it was read as `baseSha` ("" if it didn't exist then).
+   * Throws MemoryConflict with what it is now.
+   */
+  writeIf(
+    path: string,
+    content: string,
+    baseSha: string,
+    author: Author,
+    message: string,
+  ): Promise<string | null> {
+    return this.update(
+      path,
+      (current) => {
+        const sha = blobSha(current);
+        if (sha !== baseSha) throw new MemoryConflict(sha, current ?? "");
+        return content;
+      },
+      author,
+      message,
+    );
   }
 
   delete(path: string, author: Author, message: string): Promise<string | null> {
@@ -133,21 +291,79 @@ export class MemoryStore {
     });
   }
 
+  /**
+   * Sections with any of the words, in any form ("runs" finds "run"), the best match first, each as
+   * its line with the most of them. Without the index, or if it fails, lines with every word.
+   */
   async search(query: string, limit = 50): Promise<SearchHit[]> {
-    const res = await this.git(["grep", "-n", "-I", "-i", "-F", "-e", query, "--", "."], {
-      allowFail: true,
-    });
-    return res.stdout
-      .split("\n")
-      .filter(Boolean)
-      .slice(0, limit)
-      .map((line) => {
-        const m = /^(.*?):(\d+):(.*)$/.exec(line);
-        return m
-          ? { path: m[1] as string, line: Number(m[2]), text: (m[3] as string).slice(0, 300) }
-          : null;
-      })
-      .filter((h): h is SearchHit => h !== null);
+    const fts = this.db && ftsQuery(query, " OR ");
+    if (fts && this.db) {
+      try {
+        const rows = this.db
+          .query<{ path: string; line: number; marked: string }, [string, number]>(
+            `SELECT path, line, highlight(memory_fts, 2, '\x02', '\x03') AS marked FROM memory_fts
+             WHERE memory_fts MATCH ? ORDER BY bm25(memory_fts) LIMIT ?`,
+          )
+          .all(fts, limit * LINES_PER_FILE);
+        const perFile = new Map<string, number>();
+        return rows
+          .filter((r) => {
+            perFile.set(r.path, (perFile.get(r.path) ?? 0) + 1);
+            return (perFile.get(r.path) ?? 0) <= LINES_PER_FILE;
+          })
+          .slice(0, limit)
+          .map((r) => ({ path: r.path, ...bestLine(r.marked, r.line) }));
+      } catch (err) {
+        console.error("memory search fell back to grep", err);
+      }
+    }
+    return this.grep(query, limit);
+  }
+
+  /**
+   * Files with every word somewhere in them, the ones with the most matching lines first, and in each
+   * the lines with the most of the words.
+   */
+  private async grep(query: string, limit: number): Promise<SearchHit[]> {
+    const words = [...new Set(query.toLowerCase().split(/\s+/).filter(Boolean))].slice(0, 10);
+    if (!words.length) return [];
+    const res = await this.git(
+      [
+        "grep",
+        "-n",
+        "-I",
+        "-i",
+        "-F",
+        "--all-match",
+        ...words.flatMap((w) => ["-e", w]),
+        "--",
+        ".",
+      ],
+      { allowFail: true },
+    );
+    const files = new Map<string, { hit: SearchHit; words: number }[]>();
+    for (const line of res.stdout.split("\n")) {
+      const m = /^(.*?):(\d+):(.*)$/.exec(line);
+      if (!m) continue;
+      const text = m[3] as string;
+      const lower = text.toLowerCase();
+      const hit = { path: m[1] as string, line: Number(m[2]), text: text.slice(0, 300) };
+      const found = words.filter((w) => lower.includes(w)).length;
+      const list = files.get(hit.path) ?? [];
+      list.push({ hit, words: found });
+      files.set(hit.path, list);
+    }
+    return [...files.values()]
+      .sort(
+        (a, b) => b.length - a.length || (a[0]?.hit.path ?? "").localeCompare(b[0]?.hit.path ?? ""),
+      )
+      .flatMap((lines) =>
+        lines
+          .sort((a, b) => b.words - a.words || a.hit.line - b.hit.line)
+          .slice(0, LINES_PER_FILE)
+          .map((l) => l.hit),
+      )
+      .slice(0, limit);
   }
 
   /** Files changed outside Hatbot and not committed, e.g. edited by hand on the brain. */
@@ -159,8 +375,10 @@ export class MemoryStore {
       .map((l) => l.slice(3));
   }
 
-  async log(limit = 50, path?: string): Promise<Commit[]> {
-    const args = ["log", `-n${limit}`, "--format=%x1e%H%x1f%an%x1f%aI%x1f%s", "--name-only"];
+  /** Newest first; `skip` that many for the next page. */
+  async log(limit = 50, path?: string, skip = 0): Promise<Commit[]> {
+    const args = ["log", `-n${limit}`, `--skip=${skip}`, "--format=%x1e%H%x1f%an%x1f%aI%x1f%s"];
+    args.push("--name-only");
     if (path) args.push("--", this.resolve(path).rel);
     const res = await this.git(args, { allowFail: true });
     return res.stdout
@@ -207,7 +425,22 @@ export class MemoryStore {
         GIT_COMMITTER_EMAIL: HATBOT.email,
       },
     });
-    return (await this.git(["rev-parse", "HEAD"])).stdout.trim();
+    const sha = (await this.git(["rev-parse", "HEAD"])).stdout.trim();
+    if (this.db) {
+      // The commit stands even if the index can't follow; search falls back to grep if it's broken.
+      const changed = await this.git([
+        "diff-tree",
+        "--no-commit-id",
+        "--name-only",
+        "-r",
+        "--root",
+        sha,
+      ]);
+      await this.index(changed.stdout.split("\n").filter(Boolean)).catch((err) =>
+        console.error("memory index update failed", err),
+      );
+    }
+    return sha;
   }
 
   private serial<T>(fn: () => Promise<T>): Promise<T> {

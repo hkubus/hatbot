@@ -285,3 +285,87 @@ test("a watcher the chat made after reading something untrusted is tainted until
   ).json()) as Watcher;
   expect(saved.tainted).toBe(false);
 });
+
+test("a page that fills in with its scripts is read once they ran, every 15 minutes at most", async () => {
+  const t = await testApp();
+  const api = await owner(t);
+  const url = "https://shop.example/app";
+  t.agent.pages.set(url, page(`<p id="price">Loading…</p>`));
+  t.agent.rendered.set(url, page(`<p id="price">€999</p>`));
+  const source = { kind: "page", url, selector: "#price", render: true };
+
+  expect(await (await api("POST", "/watchers/preview", { source })).json()).toEqual({
+    ok: true,
+    value: "€999",
+  });
+  const often = await api("POST", "/watchers", { name: "App", source, everyMinutes: 5 });
+  expect(often.status).toBe(400);
+  expect(((await often.json()) as { error: string }).error).toBe(
+    "A watcher can't look more often than every 15 minutes when it runs the page's scripts.",
+  );
+  const json = await api("POST", "/watchers", {
+    name: "App",
+    source: { kind: "page", url, path: "price", render: true },
+    everyMinutes: 15,
+  });
+  expect(((await json.json()) as { error: string }).error).toContain("JSON path");
+
+  const w = (await (
+    await api("POST", "/watchers", { name: "App", source, everyMinutes: 15 })
+  ).json()) as Watcher;
+  expect(w).toMatchObject({ lastValue: "€999", source: { render: true } });
+  expect(t.agent.fetched).toHaveLength(0);
+  t.agent.rendered.set(url, page(`<p id="price">€949</p>`));
+  t.advance(15 * 60_000);
+  t.watchers.tick();
+  await t.watchers.idle();
+  expect(t.watchers.get(w.id)?.lastValue).toBe("€949");
+  expect(t.agent.renders).toEqual([url, url, url]);
+
+  // Off again: a plain fetch, which has only what the page is sent with. An off switch isn't kept.
+  const off = (await (
+    await api("PATCH", `/watchers/${w.id}`, { source: { ...source, render: false } })
+  ).json()) as Watcher;
+  expect(off.source).toEqual({ kind: "page", url, selector: "#price" });
+  expect(off.lastValue).toBe("Loading…");
+  expect(t.agent.fetched).toEqual([url]);
+});
+
+test("the chat turns a page's scripts on and off, and the interval follows", async () => {
+  const chat = new FakeModel([
+    {
+      content: [
+        toolUse("watch_create", {
+          name: "App",
+          url: "https://example.com/app",
+          selector: "#v",
+          render: true,
+          every_minutes: 5,
+        }),
+      ],
+    },
+    { content: [text("Watching.")] },
+    { content: [toolUse("watch_update", { id: 1, render: false, every_minutes: 5 })] },
+    { content: [text("Done.")] },
+    { content: [toolUse("watch_update", { id: 1, render: true })] },
+    { content: [text("Done.")] },
+  ]);
+  const t = await testApp(chat);
+  const url = "https://example.com/app";
+  t.agent.pages.set(url, page(`<p id="v">…</p>`));
+  t.agent.rendered.set(url, page(`<p id="v">v2.4</p>`));
+  await t.thread.post("watch the app's version").done;
+  expect(t.watchers.get(1)).toMatchObject({
+    source: { kind: "page", url, selector: "#v", render: true },
+    everyMinutes: 15,
+    lastValue: "v2.4",
+  });
+  expect(JSON.stringify(chat.requests[1]?.messages.at(-1))).toContain("runs its scripts");
+
+  await t.thread.post("no need for the scripts, and look more often").done;
+  expect(t.watchers.get(1)?.source).toEqual({ kind: "page", url, selector: "#v" });
+  expect(t.watchers.get(1)).toMatchObject({ everyMinutes: 5, lastValue: "…" });
+
+  await t.thread.post("run them again").done;
+  expect(t.watchers.get(1)).toMatchObject({ source: { render: true }, everyMinutes: 15 });
+});

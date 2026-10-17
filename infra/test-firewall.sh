@@ -18,7 +18,7 @@ trap cleanup EXIT
 # Render the ruleset exactly as host-setup.sh writes it.
 rules=$(awk '/^write_file \/etc\/hatbot\/host.nft/ { f = 1; next } f && /^EOF$/ { exit } f' "$HERE/host-setup.sh" |
   DESKTOP_NAME=hatbot-desktop DESKTOP_ID=125 DESKTOP_VETH=veth125i0 DESKTOP_MAC=bc:24:11:ab:cd:ef \
-    DESKTOP_IP=192.168.55.225 BRAIN_IP=192.168.55.224 LAN_NET=192.168.55.0/24 envsubst)
+    DESKTOP_IP=192.168.55.225 BRAIN_IP=192.168.55.224 LAN_NET=192.168.55.0/24 PUBLIC_BLOCK=', 5.6.7.8' envsubst)
 
 for n in $NS; do
   ip netns add "$n"
@@ -37,7 +37,11 @@ pair desk veth125i0 192.168.55.225 bc:24:11:ab:cd:ef
 pair brain veth124i0 192.168.55.224 bc:24:11:00:00:01
 pair gw veth900i0 192.168.55.1 bc:24:11:00:00:02
 ip -n gw addr add 9.9.9.9/32 dev lo
+# The owner's public address (HATBOT_PUBLIC_IPS) and a benchmarking one, both behind the gateway too.
+ip -n gw addr add 5.6.7.8/32 dev lo
+ip -n gw addr add 198.18.0.1/32 dev lo
 ip -n desk route add default via 192.168.55.1
+ip -n brain route add default via 192.168.55.1
 ip netns exec hh nft -f - <<<"$rules" || exit 1
 
 listen() { # listen NS IP PORT
@@ -49,6 +53,8 @@ while True:
   PIDS+=" $!"
 }
 listen gw 9.9.9.9 443
+listen gw 5.6.7.8 443
+listen gw 198.18.0.1 443
 listen gw 192.168.55.1 443
 listen hh 192.168.55.113 8006
 listen brain 192.168.55.224 8080
@@ -72,6 +78,9 @@ expect_closed() { if conn "$@"; then report FAIL "$1 → $2:$3 should be blocked
 
 expect_open desk 9.9.9.9 443
 expect_closed desk 192.168.55.1 443
+expect_closed desk 5.6.7.8 443
+expect_closed desk 198.18.0.1 443
+expect_open brain 5.6.7.8 443
 expect_closed desk 192.168.55.113 8006
 expect_closed desk 192.168.55.224 8080
 expect_closed desk 192.168.55.224 8080 '' 5901

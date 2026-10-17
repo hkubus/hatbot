@@ -7,7 +7,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 - **No vendor cloud.** It runs on your hardware.
 - **Predictable cost.** Spending limits are enforced.
 
-> Status: design agreed 2026-10-09. M0–M4 are built (M4 not yet deployed or tried live); the iOS app is built and awaiting its first install. M5 is next. The clickable UI prototype lives in [`prototype/`](prototype/).
+> Status: design agreed 2026-10-09. M0–M5, the iOS app, more than one bot (§14) and looking after things (§15) are built. M4 onwards is not yet deployed or tried live, and the iOS app awaits its first install. Next is the owner's deploy and live run (`HANDOFF.md`). The clickable UI prototype lives in [`prototype/`](prototype/).
 
 ---
 
@@ -21,11 +21,12 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 - **Teach-by-showing**: you demo a task on the desktop, and Hatbot turns it into a reusable skill.
 - **Memory**: a git-tracked markdown folder that Hatbot edits and you can read, diff and revert.
 - A native **iOS app** (SwiftUI, sideloaded with SideStore) for chat, tasks, approvals and the live view (§4.7).
+- **More than one bot**, each with its own role, chat, memory folder and browser profile, handing work to each other (§14).
+- **Looking after things**: a heartbeat that looks for problems and acts on them with your instructions, watchers, Check everything and a weekly report (§15).
 
 ### v1 is not
 - Email or calendar. You use Proton Mail and no calendar; this can come later via Proton Bridge.
-- Open-ended goals ("grow my newsletter"), or a proactive heartbeat that wakes up and decides on its own what to do.
-- More than one agent. It's planned for after v1 (§14).
+- Open-ended goals ("grow my newsletter"). The heartbeat follows your instructions about problems it finds; it doesn't set goals of its own.
 - Multiple users. It's single-operator by design.
 
 ---
@@ -35,7 +36,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 | Area | Decision |
 |---|---|
 | Product shape | Personal agent first; teams later |
-| Audience | You first, open-source later (private now, licence chosen at release, **no copyleft dependencies**) |
+| Audience | You first. The repository is public, under the MIT licence. **No copyleft dependencies**: `bun run licenses` fails CI on one, with only build tools that ship nothing allowed by name (Vite's `lightningcss`, MPL-2.0) |
 | Hosting | Self-hosted only, on the Proxmox host `192.168.55.113` (i3-12100F, ~16 GiB RAM, no GPU) |
 | Isolation | **Brain** and **desktop** are separate guests |
 | Brain guest | New dedicated unprivileged LXC |
@@ -43,7 +44,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 | Network | Both guests on the LAN at `192.168.55.<VMID+100>`. The host filters the desktop's bridge port: internet only, LAN and host blocked, only the brain can reach it |
 | Provisioning | A setup script you review and run once on the host; Hatbot then uses a **scoped Proxmox API token** |
 | Model provider | Claude only |
-| Models | **Opus 5.5** at low effort is the brain (chat, planning, tools), at medium it drives the desktop and writes code · **Haiku 5.5** handles triage, summaries and injection screening · no Sonnet or Fable (§5.4) |
+| Models | **Haiku 5.5** by default for chat, background tasks and the desktop (each can be switched to Opus in Settings), and for triage, summaries and injection screening · **Opus 5.5** for `ask_opus`, desktop tasks Haiku fails, and teach-by-showing · no Sonnet or Fable (§5.4) |
 | Agent loop | **Custom loop on the raw Messages API**, with no Agent SDK. Same model quality; we own context, caching and cost |
 | Tools | Built-in TypeScript tools; integrations (Proxmox, SSH, Forgejo, MCP) are **plugins** that ship with Hatbot and are switched on in Settings (§4.5) |
 | Billing | API key funded by **Max 20x's included $200/mo API credits**; stop when they run out |
@@ -172,8 +173,8 @@ Integrations are plugins: Proxmox, Proxmox Backup Server, SSH, Home Assistant, U
 - **Live view**: the `/desktop/live` frames. During takeover a tap clicks, a drag drags, a long press right-clicks, two fingers scroll, and a Keyboard button types.
 - **Build**: `project.yml` (XcodeGen) → `build-ipa.sh` makes an unsigned IPA; SideStore signs it with your Apple ID. The GitHub mirror's iOS workflow builds it on macOS for every change and, on `main`, publishes it with a SideStore source at `https://hkubus.github.io/hatbot/source.json`, so SideStore installs and updates it. `Hatbot/Core` is also a Swift package, tested with `swift test` (on Linux too).
 - **Links**: `hatbot://tasks/<id>` and `hatbot://approvals/<id>`.
-- **Siri and Shortcuts**: App Intents in the app: Ask Hatbot (`POST /thread/ask`, which waits up to 50 seconds for the reply), Give Hatbot a Task (`/task`), Send to Hatbot (text and files).
-- **Share sheet**: the `HatbotShare` extension sends text, links, photos and files with a note to Hatbot's chat. The app keeps the token in the App Group's Keychain access group (`group.ovh.gaycats.hatbot`, renamed by SideStore with the team ID) and the address in the group's defaults. It's a second App ID in SideStore.
+- **Siri and Shortcuts**: App Intents in the app: Ask Hatbot (`POST /thread/ask`, which waits up to 25 seconds for the reply), Give Hatbot a Task (`/task`), Send to Hatbot (text and files).
+- **Share sheet**: the `HatbotShare` extension sends text, links, photos and files with a note to Hatbot's chat. The app keeps the token in the App Group's Keychain access group (`group.<prefix>.hatbot`, from `project.yml`'s `BUNDLE_PREFIX`, renamed by SideStore with the team ID) and the address in the group's defaults. It's a second App ID in SideStore.
 
 ---
 
@@ -219,17 +220,19 @@ build context (system + memory index + task)  →  call model (stream)
 | Job | Model | Notes |
 |---|---|---|
 | Chat, planning, non-screen tools | `claude-haiku-5-5` by default, or `claude-opus-5-5` (Settings → Chat); effort `low` (Settings: low or medium) | On Haiku the chat has `ask_opus`: one Opus 5.5 call (effort `high`, no tools) per reply at most, for code, debugging and multi-step reasoning, its answer streamed into the reply as is. Haiku has no server-side fallback, so a refusal ends the reply with a note. Changing the model or effort starts a new episode or drops the cache, so heavier work runs as a task instead |
-| Desktop driving (`run_desktop_task`) | `claude-opus-5-5`, effort `medium`; Settings → Desktop can switch new tasks to `claude-haiku-5-5` | Native `computer_toolset_20260801` plus `browser_toolset_20260801` for web pages. Best screenshot reading. Haiku 5.5 supports the toolset too; its tasks run without `display: "updates"`, which isn't documented for it |
-| Schedules and triggers (background tasks) | `claude-opus-5-5`, the chat's effort | Same kind of work as chat, without a screen (§5.6) |
+| Desktop driving (`run_desktop_task`) | `claude-haiku-5-5`, effort `medium`; when Haiku fails, the same task carries on once on `claude-opus-5-5` (Settings → Desktop: the model, and "Try again on Opus when Haiku fails", on by default) | Native `computer_toolset_20260801` plus `browser_toolset_20260801` for web pages. Haiku is cheap but fails more (72% on OSWorld); Opus reads screenshots best. Haiku's tasks run without `display: "updates"`, which isn't documented for it. See "Desktop escalation" below |
+| Schedules and triggers (background tasks) | `claude-haiku-5-5` by default, or `claude-opus-5-5` (Settings → Tasks); the chat's effort | Same kind of work as chat, without a screen (§5.6) |
 | Injection screening, thread summaries, alert triage | `claude-haiku-5-5`, effort `low` | $0.10/$0.50 per 1M tokens up to 100k-token prompts, 5x above (whole request). Thinks by default |
-| Writing code (`forge_*`, `ssh_exec` work, M4) | `claude-opus-5-5`, effort `medium`; `high` when you ask or after a failed attempt | Runs as a task with its own card, spend limit and timeline, like desktop tasks |
+| Writing code (`forge_*`, `ssh_exec` work, M4) | the background tasks' model, effort `medium`; `high` when you ask or after a failed attempt | Runs as a task with its own card, spend limit and timeline, like desktop tasks |
 | Teach-by-showing skill writing | `claude-opus-5-5` | Infrequent |
 
 Chat requests opt into server-side fallback (`fallbacks: "default"`): if the model refuses, the API retries on a fallback model, and the spend ledger bills each model that ran at its own rates.
 
 Why these (Artificial Analysis Intelligence Index, score and cost per index task, October 2026): Haiku 5.5 medium–max 34–43 at $0.05–0.21; Opus 5.5 medium 51 at $1.34, high 54 at $1.82, xhigh 56 at $3.46, max 58 at $5.98; Sonnet 5.5 low/medium 36/41 at $0.41/0.48, high 47 at $0.88, max 56 at $5.5–7.7. Every Sonnet setting is beaten on score or price by Haiku 5.5 or Opus 5.5. Opus low (42 at $0.55) loses to Haiku max on the index, but chat turns are short and tool-driven: a big model with little thinking answers faster and judges better, and cache reads cost the same as Sonnet's. Fable 5.1 and Opus xhigh/max cost 2–4x for a few points; not used.
 
-Later, run a small test on real tasks to see whether Haiku 5.5 (72% on OSWorld) can drive the desktop well enough to save money. Check tool versions and model IDs against the live docs at implementation time.
+**Desktop escalation** (decided 2026-10-16): a Haiku desktop task that runs out of steps (80) or time (30 minutes), is refused, is cut off, or finishes as failed on its own carries on once on Opus, in the same task: its card, its timeline, its parent's wait and its spend limit stay. Haiku is first asked, on its own cached conversation, what it tried; Opus starts afresh with the task, that account and why Haiku stopped, on the desktop as Haiku left it (`escalated_from` on the task, migration 28). Budget stops, cancellations, takeovers nobody answered and "Blocked: …" endings (a login or captcha) don't carry on, since Opus can't get past them either. The weekly report has a line per model a desktop task started on: done, failed, and how many of Haiku's failures Opus then finished.
+
+Check tool versions and model IDs against the live docs at implementation time.
 
 ### 5.5 Built-in tools (brain)
 | Tool | Lane | Default policy |
@@ -246,7 +249,7 @@ Later, run a small test on real tasks to see whether Haiku 5.5 (72% on OSWorld) 
 | `ssh_exec(host, cmd)` plugin | bg | Hosts from Settings, as the `hatbot` user; destructive patterns need approval |
 | `ssh_pct_exec(host, guest, cmd)` plugin | bg | Optional: a command in a Proxmox container through a host marked "Proxmox host" (`infra/pct-exec-setup.sh`): root in the container via a sudo-only wrapper that refuses Hatbot's own guests; same rules as `ssh_exec` |
 | `forgejo_*` plugin (read, comment, open PR) | bg | Merge, force-push and delete need approval |
-| `github_*` plugin (the same, on GitHub) | bg | Merging, committing to the default branch and changing workflows ask |
+| `github_*` plugin (the same, on GitHub, plus CI: `github_ci` lists each check with its id, `github_ci_log` reads a failed job's log, **untrusted**) | bg | Merging, committing to the default branch and changing workflows ask. Code work lets the repository's CI check its branch before the pull request: on a failure it reads the log, fixes and pushes, at most 3 rounds, then says the result in the pull request (a draft if it still fails). The sandbox has no Rust or Swift and little RAM, so CI is the build machine |
 | `watch_*` (create/list/update/delete) | bg | Free; a watcher made after untrusted content starts its tasks tainted (§15) |
 | `notify(message, priority)` | bg | Free |
 | `mcp_*` plugin (each server's tools) | bg | Default **ask**; set allow/ask/block per tool |
@@ -292,6 +295,8 @@ Once a task has read **any untrusted content**, it is *tainted*. In a tainted ta
 - buying
 - changing remote state (SSH writes, Proxmox power actions, forge writes)
 
+**Memory that everything trusts** (decided 2026-10-16): memory is trusted on every read, so a tainted chat or task can't write it all directly. Its `memory_write` and `memory_delete` on `skills/**`, the root `INDEX.md` and `bots/*/INDEX.md` become a proposal (Memory → To look over) with a low-priority notification. The proposal's reason names the untrusted sources, never their text. Applying it commits as you; a newer write to the same file replaces one still waiting, and a file changed since makes it stale. Other files still commit directly. Your own edits, `/remember` and teach-by-showing are unchanged.
+
 Untainted tasks stay fully autonomous. **Haiku's review:** before any change that would ask, whether this rule or a plugin's own policy asks, tainted or not, in the chat or in a task, Haiku 5.5 reviews it: it sees your request or standing instructions, the goal, the names of the untrusted sources if any (never their text) and the action. If it isn't destructive or dangerous (a restart, a reload, a re-run, a fix to what the work is about, a merge or a post you asked for), it goes ahead and the timeline says so. Deleting and other hard-to-undo changes, taking things down for good, account, key, sudo, firewall or persistence changes, posting or sending what you didn't ask for, fetching and running code, home access, and anything whose input looks like it came from untrusted content still ask, with Haiku's reason. Doubt or a failed check means asking; suspected injection skips the review. Settings → Safety turns it off. (2026-10-13, the owner's choice: this replaced a separate "you already asked for this" check, which only ever saved taps the review now saves.) **Always approval, no review:** payments, purchases, credential and account-security changes, budget, hosts and guests you marked careful, and locks, the alarm, doors and gates in Home Assistant.
 
 How it's enforced:
@@ -312,7 +317,9 @@ How it's enforced:
 ### 6.3 Spending
 - **Price table**: per-model prices live in config. Cost = `usage` × price, recorded per request, task and day.
 - **Before each request**: estimate the input cost. Refuse if it would exceed the per-task ($3), daily ($10) or monthly ($200) limit.
-- **When a limit is hit**: the task pauses as `waiting_budget` and you're notified. You can raise a single task's limit from its card.
+- **A task's own limit**: the task asks to spend one more per-task limit ($3), as an approval. Approve and it carries on; deny, or no answer in 24h, and it fails ("Stopped at its spending limit.").
+- **The daily or monthly limit**: the task fails at once with "Stopped: Today's $10 limit would be exceeded." (or the month's), and a chat reply stops with the same line. Nothing more runs until the limit resets or you raise it in Settings.
+- **Kept for alerts** (decided 2026-10-16): the last $1 of the daily and monthly limits (`limits.alertReserveUsd`, Settings → Spending limits) is only for alert and heartbeat tasks, their desktop tasks, and the heartbeat's own look. Everything else stops short of it ("… (its last $1 is kept for alerts)"). So a busy day still leaves room to look into a monitor that goes down. When even that is spent, the alert task fails with "Not investigated: today's limit is spent. The alert: Jellyfin (http://…) is down: timeout", so the notification still says what happened.
 - **Credits**: the Max 20x API credits are the only funding source, so the provider stops requests at $0 as a backstop.
 
 ### 6.4 Isolation
@@ -331,7 +338,7 @@ How it's enforced:
 ## 7. Data
 
 ### 7.1 SQLite (SSD, WAL)
-`messages` (thread; FTS5 index), `episodes`, `tasks`, `task_steps` (tool calls, results metadata, screenshot refs), `approvals`, `schedules`, `triggers`, `spend_ledger`, `sessions` (auth), `api_tokens`, `settings` (including each plugin's switch and settings), `skills_index`.
+`messages` (thread; FTS5 index), `memory_fts` (memory files by section, for search), `episodes`, `tasks`, `task_steps` (tool calls, results metadata, screenshot refs), `approvals`, `schedules`, `triggers`, `spend_ledger`, `sessions` (auth), `api_tokens`, `settings` (including each plugin's switch and settings), `skills_index`.
 
 ### 7.2 Memory repo (`/var/lib/hatbot/memory`, git, SSD)
 ```
@@ -345,6 +352,7 @@ journal/YYYY-MM.md  ← notable events, short
 ```
 - **Commits**: every write is a commit authored `Hatbot <hatbot@local>`, with a message that names the task. Your edits from the UI are committed as you.
 - **UI**: lists commits, shows diffs, and reverts a commit with one click.
+- **Search** (`memory_search` and the app's search box): FTS5 over each file's sections, split at headings, with Porter stemming. Any of the words may match, the best-ranked (bm25) section first, shown as its line with the most matches. Every commit reindexes the files it changed; startup reindexes everything, which picks up hand edits. If the index fails, search falls back to `git grep` for lines with every word. No meaning-based search: Anthropic has no embedding API, and a local model on a host without a GPU isn't worth it at this size.
 - **Not pushed to any remote.** Backed up by PBS.
 
 ### 7.3 Archive (`/archive`, HDD pool mount)
@@ -355,19 +363,19 @@ journal/YYYY-MM.md  ← notable events, short
 ---
 
 ## 8. API (for web and the iOS app)
-REST + JSON under `/api/v1`. One WebSocket at `/api/v1/stream` for events. A generated OpenAPI spec lives in `packages/shared`.
+REST + JSON under `/api/v1`. One WebSocket at `/api/v1/stream` for events. The types live in `packages/shared`. A 400 is `{error, field?}`, naming zod's first issue.
 
 | Area | Endpoints |
 |---|---|
 | Auth | `POST /auth/login` (password + TOTP) → session cookie (web) or bearer token (apps) · `POST /auth/logout` (ends the session, or the bearer token it's called with) · `GET/POST/DELETE /tokens` |
-| Thread | `GET /thread/messages?before=` · `POST /thread/messages` (streams the reply over WS) · `POST /thread/ask` (waits for the reply, for Siri) · `GET /thread/episodes?ids=` (recaps) |
-| Tasks | `GET /tasks?status=` · `GET /tasks/:id` (+ steps) · `POST /tasks/:id/cancel` · `POST /tasks/:id/rerun` `{goal?}` · `GET /tasks/:id/screens/:stepId` (a raised budget is an approval) |
+| Thread | `GET /thread/messages?before=` · `POST /thread/messages` (streams the reply over WS) · `POST /thread/ask` (waits up to 25 s for the reply, for Siri) · `POST /thread/messages/:id/retry` and `/conversations/:id/messages/:id/retry` (an errored latest reply, written again in place) · `GET /thread/episodes?ids=` (recaps) |
+| Tasks | `GET /tasks?status=&before=&limit=&botId=&origin=` · `GET /tasks/:id` (+ steps) · `POST /tasks/:id/cancel` · `POST /tasks/:id/rerun` `{goal?}` · `GET /tasks/:id/screens/:stepId` (a raised budget is an approval) |
 | Approvals | `GET /approvals?pending` · `POST /approvals/:id` `{decision}` · `POST /approvals/:id/token-decision` (ntfy) |
 | Desktop | `GET /desktop/status` · `POST /desktop/takeover` · `POST /desktop/handback` · `WS /desktop/live` (frames + input) · `GET /desktop/snapshots` · `POST /desktop/rollback` |
 | Schedules/triggers | CRUD at `/schedules`, `/triggers` · `POST /schedules/:id/run` · `POST /triggers/:id/secret` (a new secret, shown once) · `GET /tasks?scheduleId=&triggerId=` |
 | Hooks | `POST /hooks/:id` (HMAC) · `POST/GET /hooks/kuma/:id?token=` |
-| Memory | `GET /memory/tree` · `GET/PUT /memory/file?path=` · `GET /memory/log` · `GET /memory/diff/:sha` · `POST /memory/revert/:sha` |
-| Spend | `GET /spend/summary` (today, month, last hour and minute, with tokens) · `GET /spend/hourly?hours=24` · `GET /spend/daily?days=30` |
+| Memory | `GET /memory/tree` · `GET/PUT /memory/file?path=` (GET gives the blob `sha`; PUT with `baseSha` answers 409 if it changed) · `GET /memory/log?skip=` · `GET /memory/diff/:sha` · `POST /memory/revert/:sha` |
+| Spend | `GET /spend/summary` (today, month, last hour and minute, with tokens) · `GET /spend/hourly?hours=24` · `GET /spend/daily?days=30` · `GET /spend/by-model` · `GET /spend/by-bot` · `GET /spend/by-purpose?days=30` |
 | Teach | `GET /teach` (recording + drafts) · `POST /teach/start` · `POST /teach/stop` → draft skill · `GET /teach/:id` · `POST /teach/:id/draft` (again) · `POST /teach/:id/save` `{name, content, replace?}` · `DELETE /teach/:id` |
 | Admin | `POST /pause-all` · `POST /resume` · `GET/PUT /settings` · `GET/POST /update` |
 | Plugins | `GET /plugins` · `GET/PATCH /plugins/:id` `{enabled?, config?}` · `POST /plugins/:id/test` |
@@ -376,7 +384,7 @@ REST + JSON under `/api/v1`. One WebSocket at `/api/v1/stream` for events. A gen
 | Proposals | `GET /proposals?status=` · `POST /proposals/tidy` · `POST /proposals/:id/apply` · `POST /proposals/:id/dismiss` · `GET /skills` · `POST /skills/:name/fix` |
 | Search | `GET /search?q=` (messages, tasks, memory, schedules, triggers and watchers) |
 
-**WS events**: `message.created`, `message.delta`, `message.progress`, `message.done`, `task.updated`, `task.step`, `task.progress`, `approval.created`, `approval.resolved`, `desktop.state`, `spend.updated`, `memory.committed`, `paused`, `schedule.updated`, `schedule.deleted`, `trigger.updated`, `trigger.deleted`, `plugin.updated`, `watcher.updated`, `watcher.deleted`, `proposal.updated`.
+**WS events**: `message.created`, `message.delta`, `message.progress`, `message.done`, `task.updated`, `task.step`, `task.progress`, `approval.created`, `approval.resolved`, `desktop.state`, `spend.updated`, `memory.committed`, `paused`, `schedule.updated`, `schedule.deleted`, `trigger.updated`, `trigger.deleted`, `plugin.updated`, `watcher.updated`, `watcher.deleted`, `proposal.updated`, `settings.updated`, `heartbeat.updated`.
 
 ---
 
@@ -552,7 +560,9 @@ Each milestone ends with a working, demo-able system.
 - **Done when**: you can chat, approve and take over from the app on your phone.
 
 ### After v1
-Email via Proton Bridge · more than one agent (§14) · a heartbeat that acts on its own (§15) · open-source release (choose a licence, docs, one-command installer).
+Email via Proton Bridge.
+
+**Not planned** (the owner's call, 2026-10-16): messengers (Signal, Telegram, Matrix); being reachable only through Hatbot's own web and iOS app is fine. Email and calendar wait for after v1.
 
 ---
 
@@ -628,11 +638,217 @@ More than one Hatbot, like Grok Bot: several named bots, each with its own role,
 ## 15. Looking after things (built 2026-10-15)
 What runs without you asking, and the tools to see that it works.
 
-- **Check everything** (Settings, `apps/brain/src/checks.ts`): a real try of each part: the database and its migrations, the public address, a Haiku call, memory, the archive, spending, the last update, ntfy, desktop snapshots, the desktop (version, browser profiles, time zone, shell, browser), schedules that keep failing, old approvals, watchers that can't read, and each plugin's own test. A test approval tries the lock-screen buttons. `infra/smoke.sh` runs it from a shell with an API token.
+- **Check everything** (Settings, `apps/brain/src/checks.ts`): a real try of each part: the database and its migrations, the public address, a Haiku call, memory, the archive, spending, the last update, ntfy, desktop snapshots, the desktop (version, browser profiles, time zone, shell, browser, page scripts), schedules that keep failing, old approvals, watchers that can't read, and each plugin's own test. A test approval tries the lock-screen buttons. `infra/smoke.sh` runs it from a shell with an API token.
 - **Watchers** (`apps/brain/src/watch/`, migration 24): a page (fetched by the desktop, which only reaches the internet) or a plugin's read tool, picked out by CSS selector, JSON path or pattern, looked at every 5 minutes or more. No model call: only a change *into* the condition (changed, contains, missing, below, above) counts, and then it tells you or starts a background task with the watcher's prompt. Page text is untrusted, so those tasks start tainted. Made in the chat (`watch_*`) or on the web.
+  - **Run the page's scripts** (`render` on a page's source): for a page that fills in with JavaScript. desktop-agent relays `POST /render` to `hatbot-render` (`apps/desktop-agent/src/render.ts`), a headless Chromium per page with a throwaway profile and no DevTools port, run as its own DynamicUser like the shell, capped at 500 MB, one page at a time. Such a watcher looks every 15 minutes at most. Bot protection blocks it as it blocks a fetch.
 - **Search**: one box over messages (FTS5), tasks, memory, schedules, triggers and watchers. A found message opens in its chat.
 - **Run again**: an ended root background task starts anew with its goal as you edit it, keeping its origin, bot, payload and taint.
-- **Heartbeat** (`apps/brain/src/heartbeat.ts`, off by default): every 30 minutes a look, without the model, at failed tasks, expired approvals, watchers and plugins that can't be read, an offline desktop, spend over 80%, and plugin signals (Uptime Kuma monitors down, PBS jobs failed or datastores over 90%). Only something new goes to Haiku, which lets it be, tells you, or starts a task with your instructions. Its tasks start untrusted.
+- **Heartbeat** (`apps/brain/src/heartbeat.ts`, on by default): every 30 minutes a look, without the model, at failed tasks, expired approvals, watchers and plugins that can't be read, an offline desktop, spend over 80%, and plugin signals (Uptime Kuma monitors down, PBS jobs failed or datastores over 90%). Only something new goes to Haiku, which lets it be, tells you, or starts a task with your instructions. Its tasks start untrusted.
 - **Weekly report** (`apps/brain/src/report.ts`, on by default, Monday 09:00): spend by bot, tasks done and failed, approvals, watchers, memory commits. In Hatbot's chat and as a notification, made without the model.
-- **Proposals** (`apps/brain/src/memory/proposals.ts`, migration 25): Opus proposes a tidy-up of memory (weekly when switched on, or Tidy up in Memory) and fixes to skills whose tasks failed or needed you since they last changed. Each is a diff per file; Apply commits it as you, Dismiss drops it, and a proposal goes stale if memory changed under it.
+- **Proposals** (`apps/brain/src/memory/proposals.ts`, migrations 25 and 30): writes to skills and indexes held from tainted work (§6.1), and Opus proposes a tidy-up of memory (weekly when switched on, or Tidy up in Memory) and fixes to skills whose tasks failed or needed you since they last changed. Each is a diff per file; Apply commits it as you, Dismiss drops it, and a proposal goes stale if memory changed under it.
 
+
+---
+
+## 16. Negotiation (planned 2026-10-16; N1 and N2 built the same day, not tried live)
+Hatbot haggles on OLX, Allegro Lokalnie and Vinted for you. It buys first; selling your flips comes later. Its market data comes from Scout (`../scout`) over the MCP plugin. Agreed 2026-10-16.
+
+### 16.1 Decisions
+| Area | Decision |
+|---|---|
+| Who | A bot, **Haggler** (§14). It has its own browser profile, logged in to a separate marketplace account (you make it later), and its own memory folder for the playbook and notes on sellers. Scout is its only plugin |
+| Mandate | You approve one **mandate** per negotiation. It covers the listing, the opening offer, the target, the ceiling (a floor when selling), delivery terms and when it expires. Inside it, Hatbot sends and agrees on its own; outside it, it asks. Paying always asks (§6.1) |
+| Untrusted content | Seller messages are untrusted, as before. The mandate stands in for the approval §6.1 would ask for, but only for `negotiate_send` within the mandate, checked in code rather than by Haiku. Every other outward action in the task still follows §6.1 |
+| Agreeing | Within the mandate, Hatbot agrees on its own (your choice, 2026-10-16) |
+| One deal per want | Talking to several sellers about one thing at once is fine. The first agreement locks the want, and the other sellers get a decline |
+| Tactics | It doesn't have to be honest about our side (your choice, 2026-10-16). It may state a lower "max" than the ceiling, mention other offers, claim urgency or walk away. **Never**: misstating an item's condition, defects or authenticity when selling; fake proof of payment, shipping or receipt; claiming to have paid or sent; posing as the marketplace or a courier; reporting false defects after receiving an item to get money back. Those are fraud: buyer protection reverses them, and they get the account banned |
+| Consistency | What Hatbot has told each seller (its stated max, other offers, timing) is kept on the negotiation, so it doesn't contradict itself |
+| Pace | At most 10 new conversations per account per day, sends at a person's pace, nothing between 22:00 and 08:00 |
+| Scams | Haiku also screens seller messages for marketplace scams: payment or courier links, BLIK codes or card details, moving to WhatsApp or Telegram, pressure to pay off the platform. A suspected scam pauses the negotiation and tells you. The desktop never opens a link from a seller |
+| Transport | Hatbot reads the inbox through Scout (cheap, frequent, read-only). At first, sending is a desktop task in Haggler's browser; Scout could take over sending later |
+
+### 16.2 Data (migration 27)
+- **`wants`**: what you're after ("RTX 3070, working, ≤ 1,400 zł"), quantity, status, bot.
+- **`negotiations`**:
+  - the want, and the listing key (`<Marketplace>:<listingId>`, as Scout gives it);
+  - role (`buy` or `sell`) and the mandate (JSON);
+  - the conversation's URL and id, and the claims made so far;
+  - the next follow-up time and the bot;
+  - status: `awaiting_mandate → open → agreed | lost | abandoned | expired`, then `paid` and `received`.
+- **`negotiation_messages`**: direction, text, offer amount, time, and the marketplace's message id, which dedupes inbox reads.
+
+### 16.3 Tools
+These live in the core, in `apps/brain/src/negotiate/`, like watchers. They are not a plugin, because they start tasks and drive the desktop. They call Scout's tools by name through the MCP plugin, as watchers call plugin tools.
+- **`negotiate_appraise(listing)`** (read): gathers Scout's price reference and comparables, plus the listing's price history, days listed and negotiable flag. It returns an opening offer, a target and a walk-away price, with the listings each rests on.
+- **`negotiate_start(listing, mandate, want?)`**: makes the record and asks you to approve the mandate. The card shows the listing, the appraisal and the mandate; a steering note (§6.2) can change the numbers.
+- **`negotiate_list`** / **`negotiate_get`** (read).
+- **`negotiate_send(negotiation, text, offer?, agree?, stated?)`**: the only way out. `stated` records what this message claims about our side. The policy, in code:
+  - `offer` is within the mandate (at or under the ceiling when buying, at or over the floor when selling), and `agree` only at a price within it;
+  - only the negotiation's own conversation;
+  - no phone number, address, e-mail or other app unless the mandate allows it;
+  - an amount in `text` outside the mandate asks, so the cap can't be dodged by writing the number out;
+  - the pace limits;
+  - anything else asks, as in §6.2.
+
+  It then runs a desktop task that may send exactly this text in this conversation. The brain lets the Send click through only while the composer holds that text and the tab shows that conversation.
+- **`negotiate_close(negotiation, outcome, price?)`**:
+  - ends the negotiation;
+  - writes notes on the seller, and on what worked, to the bot's memory;
+  - sends the outcome to Scout;
+  - on `agreed`, declines the want's other open negotiations.
+
+  Paying comes after this: a desktop task goes as far as the checkout and asks (`payment`, always).
+- **Waking**:
+  - A poller without the model reads `scout_inbox` every 10 minutes while any negotiation is open.
+  - A new seller message is stored and screened, then starts a short background task for that negotiation with its record (mandate, claims, messages). Nothing waits in a long task for days; `wait` stops at 240 minutes anyway.
+  - When the follow-up time passes without a reply, a task starts too, to nudge the seller or give up.
+
+### 16.4 Scout's part
+This goes in Scout's own repo, as a handoff there. Read tools, all `readOnlyHint`:
+- **`scout_price_reference`**: P0-4 in Scout's `HAT_DEALS_HANDOFF.md`, never built. That handoff was written for the old `hat` and is otherwise stale.
+- **`scout_comparables(listingKey)`**: live alternatives for the same item. They are the fallback, and honest leverage.
+- **`scout_listing_detail`** gains days listed, price drops, relists, the seller's other listings and the negotiable flag. It also gains `live: true` (P1-3), to check the listing before an offer and before paying.
+- **`scout_inbox(marketplace, since?)`** and **`scout_conversation(id)`**, through Scout's stored marketplace sessions.
+
+And one write tool:
+- **`scout_record_outcome`**: the final price. It is kept apart from Scout's asking-price statistics, as flips are, and comes back as a figure of its own ("you pay about 84% of asking for GPUs on OLX").
+
+A later option is `scout_send_message`, if sending from the desktop turns out to be too slow.
+
+### 16.5 UI
+A negotiation shows the way a task does:
+- a card under the reply that started it, with the listing, the mandate, the last message and the state;
+- its messages on its own page;
+- mandate approvals and scam stops among what needs you.
+
+The iOS app follows later.
+
+### 16.6 Milestones
+- **N1, by hand**: the Haggler bot; a playbook skill (show it one negotiation per site, M5); wants, negotiations and their tools; every send asks. Done when one OLX negotiation runs end to end with you approving each send.
+- **N2, mandates**: the mandate approval, `negotiate_send`'s policy, claims and pace limits. Done when a negotiation runs inside its mandate without asking.
+- **N3, waking**: Scout's inbox tools, the poller, follow-ups and scam screening. Done when a seller's reply gets an answer within 15 minutes, with nobody in the chat.
+- **N4, several sellers**: wants with several negotiations, the lock and the declines.
+- **N5, selling**: answering buyers on your listings. The floor comes from Scout's flips: the buy price, fees and a margin.
+
+Scout: N1 needs `scout_price_reference` and `scout_comparables` (until then, the appraisal uses `scout_watch_analytics`); N3 needs the inbox tools.
+
+### 16.7 As built (N1 and N2, 2026-10-16)
+Not tried live: there's no marketplace account yet. Everything here is tested against a stand-in desktop-agent and a stand-in Scout.
+
+- **Where:**
+  - `apps/brain/src/negotiate/`: `service.ts` (records, mandates, the send and read tasks, the pace), `tools.ts`, `appraise.ts`, `mandate.ts`, `policy.ts` (`negotiate_send`'s policy) and `gate.ts` (the exact-text gate). The last two are pure functions.
+  - Types are in `packages/shared/src/negotiate.ts`.
+  - Migration 27 also adds `negotiation_tasks`, which records the desktop task that reads or sends for a negotiation and the message it sends. It also adds `messages.negotiation_id`, the reply a negotiation shows under.
+- **Who gets the tools:** any bot whose plugin tools include Scout's `scout_listing_detail`; a bot without it gets none. Scout's tools are found by name suffix (`mcp_<server>_scout_…`) and used only when set to Chat, so reading Scout never asks.
+- **Tools:**
+  - The six in §16.3, plus **`negotiate_check`**. It runs a desktop task that reads the conversation and records the seller's messages, sending nothing. N3's poller takes over the routine reads.
+  - There is one open negotiation per listing and per want. N4 lifts the second limit.
+  - A message is one paragraph of at most 1,000 characters.
+  - Amounts are in PLN.
+  - The mandate has one `limit`: a ceiling when buying, a floor when selling.
+  - The mandate lasts 7 days unless set otherwise, at most 30.
+- **Appraisal:**
+  - **The typical price** comes from the first source that has one:
+    1. Scout's price reference (with its lower quartile);
+    2. the watch's median and lower band from `scout_watch_analytics`;
+    3. the watch's typical price from `scout_listing_detail`;
+    4. the asking price alone.
+  - **Walk-away** is the lowest of the asking price, the typical price and any comparable listing priced at 60% of typical or more. A cheaper comparable is likely a different item.
+  - **Target and opening:** the target is the lower quartile, or 90% of the typical price. The opening offer is 85% of the target. All three are rounded down the way people write prices.
+  - **Notes:** price drops, days listed and the negotiable flag.
+  - `negotiate_start` reuses an appraisal made in the same turn.
+- **The mandate approval:**
+  - `negotiate_start` checks the numbers. Buying, opening ≤ target ≤ limit, and the limit may not exceed the asking price; this also catches misread numbers.
+  - It then makes an `awaiting_mandate` record and an approval of the new `ApprovalKind` `mandate`. The approval has no task and belongs to the chat.
+  - The card shows the listing, Scout's numbers, delivery, expiry and the contact details allowed.
+  - **A note on Approve** is turned into new numbers by Haiku, with a forced `set_mandate` call that sees only the note and the mandate. The new numbers get the same checks. If the note can't be applied, the approval is asked again with the old numbers and the reason.
+  - **Deny or cancel** makes the negotiation `abandoned`. No answer within 24 h makes it `expired`.
+  - **A restart** leaves mandate approvals pending. Other pending approvals are cancelled at a restart, because their tasks stopped.
+  - The negotiation keeps its approval, so the decision and the note show on its page.
+- **The opening message:**
+  - On approval, `next_follow_up_at` is set to now, or to 08:00 if it is quiet hours.
+  - A one-minute timer (`due()`) then starts a background task as the bot. Its origin is "chat", it shows under the reply with the negotiation, and its request is the approved mandate and the note.
+  - The task writes the first message and sends it with `negotiate_send`.
+- **`negotiate_send`'s policy** (`policy.ts`, in code, not Haiku):
+  - **Refused, with the reason given to the model:**
+    - the negotiation isn't open;
+    - a send is already in flight;
+    - it's another bot's negotiation;
+    - the conversation isn't on the listing's site;
+    - `agree` without `offer`;
+    - quiet hours (22:00–08:00, by the brain's local time);
+    - an 11th new conversation within a rolling 24 h, per bot and marketplace, counted by each negotiation's first sent message;
+    - less than 2 minutes since our last unanswered message.
+  - **Asks you** (`send`, always: Haiku can't let these through):
+    - an expired mandate;
+    - `offer`, `agree` or `stated.max` past the limit;
+    - an amount in the text past the limit, including "2 tys.", "1,5k" and "2 000 zł";
+    - any amount written in words (English or Polish, slang included);
+    - contact details the mandate doesn't allow: a phone number of 9 or more digits, an e-mail address (spelt out too), a street address or postcode, or another app;
+    - any link.
+  - **Goes without asking:** everything else, as covered by the mandate.
+  - Model numbers (i7-12700, RTX 3070, 512 GB), dates, times and years aren't counted as amounts.
+  - Quoting the seller's price when it's above the ceiling asks too. The tool's description tells the model to avoid it.
+- **Claims:** `stated` (max, other offers, timing, other) is kept on the message and merged into the negotiation's claims once the message is sent. `negotiate_get` shows the claims.
+- **Sending** (`gate.ts`, `tasks/desktop-run.ts`):
+  - **Start:** `negotiate_send` stores the message as `sending` and starts a desktop task. Called from a task, it waits for the desktop task, giving up its slot meanwhile. Called from the chat, the desktop task shows under the reply.
+  - **`record_conversation`** must come first. It stores the seller's messages and the conversation's address. If the seller wrote since the message was approved, nothing is sent. If the message is already in the conversation, it counts as sent.
+  - **The send:** a click or Enter passes as the send only when all of these hold:
+    - desktop-agent shows exactly the approved text in the one filled text box (Unicode-normalised, with whitespace collapsed);
+    - the tab is the listing or the recorded conversation;
+    - the button reads like Send.
+
+    The gate stands in for `confirm_intent` on that one action. A pay or buy button still needs `confirm_intent`.
+  - **Once only:** after the send passes, nothing more goes from that task.
+  - **Status:**
+    - `sent`: the text left the box;
+    - `unconfirmed`: the text was still there after 3 s;
+    - `failed`: the task ended without the send passing, or the message was left `sending` across a restart.
+  - **Refused outright:** press-and-drag mouse actions, typing a line break, repeated Enter, leaving the listing's site, and typing in a reading task.
+  - **desktop-agent:** its inspect now returns the tab's `url`, whether the element is `editable`, and the text in the page's text boxes (`fields`). It advertises this as the feature `fields`; an older desktop-agent can't send.
+- **`negotiate_close`:**
+  - It sets the outcome and appends notes to `bots/<id>/negotiations.md` in memory.
+  - It cancels a pending mandate approval.
+  - It calls `scout_record_outcome` if Scout has it and it's set to Allow; otherwise it tells the model why not.
+  - Agreeing past the limit asks (`purchase`).
+  - It doesn't decline other sellers yet (N4).
+- **API and events:**
+  - `GET /negotiations?status=open|closed` and `GET /negotiations/:id` (with its messages).
+  - The events `negotiation.updated`, and `message.negotiation`: a reply now shows a negotiation.
+  - `Models.swift` decodes both events; the app doesn't show negotiations yet.
+- **Web:**
+  - Under the reply: the listing, linked, and one line on where it stands.
+  - The negotiation's page, `/negotiations/:id` under Tasks: the mandate approval or its decision, the mandate, Scout's appraisal, what has been said, every message, and a link to the conversation.
+  - Open negotiations are listed on Tasks.
+  - A mandate approval opens its negotiation from Waiting for you, from the chat's tray (which has a note box for it) and from a notification.
+- **What the brain reads from Scout:**
+  - `scout_listing_detail {key}`: `listing.{url, title, price, marketplace, typical, watchId, priceNegotiable, postedAt|firstSeenAt}` and `history[].{price, observedAt}`.
+  - `scout_watch_analytics {id}`: `current.{medianPrice, lowerPrice, minPrice, listingCount}`.
+  - Once they exist:
+    - `scout_price_reference {query, sources}` → `best.{typicalPrice, p25, samples, name, basis, ready}`;
+    - `scout_comparables {listingKey}` → `comparables|listings|items[].{title, price, url}`;
+    - `scout_record_outcome` gets `{listingKey, outcome, price, asking, currency}`.
+
+  Scout's handoff should match these shapes.
+- **Not done:**
+  - N1's playbook skill, which needs the account: show Haggler one negotiation per site (M5).
+  - Everything from N3 on.
+
+### 16.8 Haggler's instructions
+Haggler is a bot you make yourself (§14): New bot, with Scout's MCP plugin as its only plugin. Paste this as its instructions:
+
+```
+You buy second-hand things for the owner on OLX, Allegro Lokalnie and Vinted, and haggle with sellers inside a mandate the owner approves.
+
+How you work
+- When the owner names something to buy, find listings with Scout and pick the best. Call negotiate_appraise on it, then propose a mandate built on the appraisal and on what the owner said: the opening offer, the target, the most to pay, delivery, and how many days it lasts. Then call negotiate_start. Nothing goes to a seller until the owner approves the mandate.
+- Message sellers only with negotiate_send. Write as a polite private buyer, in the seller's language (Polish on OLX and Allegro Lokalnie), in one short paragraph, with amounts in digits. Put your offer in `offer`. Set `agree` only when the message accepts a price. Record anything you claim about our side in `stated`.
+- Before each message, read negotiate_get: the mandate, what you've claimed so far, and the conversation. Never contradict an earlier claim.
+- Open at the opening offer. Move up in small steps, and give a reason each time: the condition, the market price, collection or shipping. Never write a price above your limit, not even to quote the seller. If the seller won't come within the limit, thank them and close the negotiation as lost.
+- When you agree, close the negotiation as agreed, with the price and notes on how the seller haggled and what worked. Paying is a separate step, and it always asks the owner.
+
+What you may say, and what you never do
+- You may bluff about our side. You may give a lower maximum than your real limit, mention other offers you're weighing, say you're in a hurry or that you can wait, and walk away or say you will.
+- Never commit fraud. Never misstate an item's condition, defects or authenticity. Never send or describe fake proof of payment, shipping or receipt. Never claim to have paid or sent something you haven't. Never pose as the marketplace, its support or a courier. Never claim false defects after receiving an item to get money back. These are fraud: buyer protection reverses them, and the account gets banned.
+- Keep everything on the marketplace. Give no phone number, e-mail, address or other app unless the mandate allows it. Never open a link a seller sends. A request to pay off the platform, by BLIK code or through a link, or to move to WhatsApp or Telegram, is a scam: stop, and tell the owner.
+```

@@ -1,6 +1,6 @@
 // The sections, in a drawer under the left edge, so chat gets the whole screen. The section slides
 // aside to show it, following your finger: swipe in from the left edge, or tap the button at the
-// top left of each section, which counts what needs you.
+// top left of each section, which counts what needs you. On an iPad's full width it stays beside them.
 import SwiftUI
 
 enum AppTab: Hashable, CaseIterable {
@@ -89,8 +89,21 @@ struct Sidebar<Content: View>: View {
   @State private var roots = 0
   @State private var newBot = false
   @State private var newGroup = false
+  @Environment(\.horizontalSizeClass) private var width
 
   var body: some View {
+    if width == .regular {
+      HStack(spacing: 0) {
+        panel.frame(width: 300)
+        Divider().ignoresSafeArea()
+        content.environment(\.sidebarRoot) { _ in }
+      }
+    } else {
+      drawer
+    }
+  }
+
+  private var drawer: some View {
     GeometryReader { geo in
       let width = min(300, geo.size.width * 0.82)
       let shown = min(1, max(0, (open ? 1 : 0) + drag / width))

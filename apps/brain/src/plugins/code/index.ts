@@ -1,6 +1,6 @@
 // Code: commands and scripts in the desktop's sandbox shell (apps/desktop-agent/src/shell.ts), for the chat
 // and for tasks. The shell is its own throwaway user on the desktop container: no browser profile, no
-// screen, no secrets, but it does reach the network. Your attachments can be copied in first.
+// screen, no secrets and no LAN, but it does reach the internet. Your attachments can be copied in first.
 import { z } from "zod";
 import type { Attachments } from "../../attachments";
 import { type DesktopAgent, DesktopError } from "../../desktop/client";
@@ -23,7 +23,7 @@ export const codePlugin = (d: { desktop: DesktopAgent; attachments: Attachments 
         tool({
           name: "code_run",
           description:
-            "Run a bash command in the sandbox: a throwaway Linux user on the desktop container with Python 3 (numpy, pandas, matplotlib, openpyxl), jq, sqlite3, poppler-utils and git. Use it to compute, convert or analyse files, make files and images, or test a snippet. The working directory is the sandbox's home and persists between calls; files: copies the owner's attachments into in/ first. It reaches the internet and the LAN but can't see the browser or the screen. send_file hands the owner a file it made.",
+            "Run a bash command in the sandbox: a throwaway Linux user on the desktop container with Python 3 (numpy, pandas, matplotlib, openpyxl), jq, sqlite3, poppler-utils and git. Use it to compute, convert or analyse files, make files and images, or test a snippet. The working directory is the sandbox's home and persists between calls; files: copies the owner's attachments into in/ first. It reaches the internet but not your LAN, and can't see the browser or the screen. send_file hands the owner a file it made.",
           access: "write",
           label: "Running code",
           schema: z.object({

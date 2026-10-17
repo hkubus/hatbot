@@ -21,13 +21,15 @@ export function clip(out: string, max = MAX_OUTPUT): string {
 
 export async function run(command: string, timeoutS = 60): Promise<ShellResult> {
   const home = process.env.HOME ?? "/tmp";
-  const proc = Bun.spawn(["setsid", "bash", "-lc", command], {
+  // No profile or rc files: the system's would print banners into the output and change the environment.
+  const proc = Bun.spawn(["setsid", "bash", "--noprofile", "--norc", "-c", command], {
     cwd: home,
     // A clean environment: nothing of the service's leaks into commands.
     env: {
       HOME: home,
       USER: "shell",
-      PATH: "/usr/local/bin:/usr/bin:/bin",
+      // ~/.local/bin for what pip install --user puts there.
+      PATH: `${home}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
       LANG: "C.UTF-8",
       TERM: "dumb",
     },

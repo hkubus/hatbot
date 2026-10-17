@@ -32,6 +32,8 @@ ARCHIVE_SIZE=${ARCHIVE_SIZE:-200}           # GiB, can be grown later
 LAN_BRIDGE=${LAN_BRIDGE:-}                  # bridge both guests join (default: the uplink)
 DNS=${DNS:-9.9.9.9 1.1.1.1}                 # the desktop's resolvers (it can't reach LAN DNS)
 FORCE=${FORCE:-0}                           # 1 = continue despite the RAM check
+HATBOT_PUBLIC_IPS=${HATBOT_PUBLIC_IPS:-}    # optional: your public IPv4s (space-separated), so the desktop
+                                            # can't come back in through them (port forwards, hairpin NAT)
 
 POOL=hatbot
 PVE_USER=hatbot@pve
@@ -121,7 +123,7 @@ save_state() {
   {
     echo "# Written by hatbot infra/host-setup.sh; edit and re-run to change."
     local v
-    for v in BRAIN_ID DESKTOP_ID BRAIN_IP DESKTOP_IP SSD_STORE HDD_STORE ARCHIVE_SIZE LAN_BRIDGE DNS; do
+    for v in BRAIN_ID DESKTOP_ID BRAIN_IP DESKTOP_IP SSD_STORE HDD_STORE ARCHIVE_SIZE LAN_BRIDGE DNS HATBOT_PUBLIC_IPS; do
       printf '%s=%q\n' "$v" "${!v}"
     done
   } >"$STATE"
@@ -321,6 +323,12 @@ if ! command -v nft >/dev/null; then
   run systemctl disable nftables.service
 fi
 
+PUBLIC_BLOCK=''
+for ip in $HATBOT_PUBLIC_IPS; do
+  [[ $ip =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?$ ]] || die "HATBOT_PUBLIC_IPS: $ip isn't an IPv4 address"
+  PUBLIC_BLOCK+=", $ip"
+done
+
 # Filters frames at the desktop's port on the bridge, before they reach the LAN or the host.
 # Stateless on purpose: bridge conntrack (nf_conntrack_bridge) could interfere with the Proxmox firewall.
 # The interface name also matches when the NIC sits behind a Proxmox firewall bridge (fwbr), since that
@@ -332,13 +340,15 @@ table bridge hatbot
 delete table bridge hatbot
 
 table bridge hatbot {
-  # Everything the desktop must never reach: private and special ranges, multicast, broadcast, this LAN.
+  # Everything the desktop must never reach: private and special ranges (benchmarking, the TEST-NETs),
+  # multicast, broadcast, this LAN, and your own public addresses if set (HATBOT_PUBLIC_IPS).
   set blocked {
     type ipv4_addr
     flags interval
     auto-merge
     elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12,
-                 192.168.0.0/16, 224.0.0.0/3, $LAN_NET }
+                 192.0.0.0/24, 192.0.2.0/24, 192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24,
+                 203.0.113.0/24, 224.0.0.0/3, $LAN_NET$PUBLIC_BLOCK }
   }
 
   chain forward {
@@ -579,6 +589,6 @@ cat <<EOF
    Next:
    1. Check isolation and permissions:   $HERE/verify.sh
    2. Install the app:   $HERE/deploy.sh <CTID>:<path to the hatbot checkout>   (see README.md)
-   3. Reverse proxy:  hatbot.gaycats.ovh → http://$BRAIN_IP:8080 (with WebSockets)
+   3. Reverse proxy:  your domain (e.g. hatbot.example.com) → http://$BRAIN_IP:8080 (with WebSockets)
    4. Before M4: add the brain's SSH key (/var/lib/hatbot/.ssh/id_ed25519.pub) to a "hatbot" user on hosts it may manage.
 EOF

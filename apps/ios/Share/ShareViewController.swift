@@ -25,13 +25,26 @@ final class ShareViewController: UIViewController {
   }
 }
 
-/// A file read from the share sheet, ready to upload.
+/// A file from the share sheet, ready to upload: a photo already scaled, anything else copied to a file
+/// that's read only when it goes up, one at a time.
 struct SharedFile: Identifiable {
+  enum Content {
+    case data(Data)
+    case file(URL)
+  }
+
   let id = UUID()
-  var data: Data
+  var content: Content
   var name: String
   var mediaType: String
   var preview: UIImage?
+
+  func data() throws -> Data {
+    switch content {
+    case let .data(data): data
+    case let .file(url): try Data(contentsOf: url)
+    }
+  }
 }
 
 struct ShareView: View {
@@ -96,8 +109,9 @@ struct ShareView: View {
   private func load() async {
     for (i, p) in providers.enumerated() {
       if p.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
-        if let data = await Self.data(p, UTType.image), let photo = PickedFile.photo(data, index: i + 1) {
-          files.append(SharedFile(data: photo.data, name: photo.name, mediaType: "image/jpeg", preview: photo.preview))
+        if let photo = await Self.photo(p, index: i + 1) {
+          files.append(
+            SharedFile(content: .data(photo.data), name: photo.name, mediaType: "image/jpeg", preview: photo.preview))
         }
       } else if p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
         if let f = await Self.file(p) { files.append(f) }
@@ -106,9 +120,10 @@ struct ShareView: View {
       } else if p.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
         if let text = await Self.text(p) { draft.texts.append(text) }
       } else if let type = p.registeredTypeIdentifiers.compactMap(UTType.init).first(where: { $0.conforms(to: .data) }) {
-        if let data = await Self.data(p, type) {
-          let name = p.suggestedName.map { $0 + (type.preferredFilenameExtension.map { ".\($0)" } ?? "") } ?? "file"
-          files.append(SharedFile(data: data, name: name, mediaType: type.preferredMIMEType ?? "application/octet-stream"))
+        let name = p.suggestedName.map { $0 + (type.preferredFilenameExtension.map { ".\($0)" } ?? "") } ?? "file"
+        if let url = await Self.copy(p, type, name: name) {
+          files.append(
+            SharedFile(content: .file(url), name: name, mediaType: type.preferredMIMEType ?? "application/octet-stream"))
         }
       }
     }
@@ -123,7 +138,7 @@ struct ShareView: View {
     do {
       var ids: [Int] = []
       for f in files {
-        let a: Attachment = try await api.upload("/attachments", data: f.data, name: f.name, mediaType: f.mediaType)
+        let a: Attachment = try await api.upload("/attachments", data: try f.data(), name: f.name, mediaType: f.mediaType)
         ids.append(a.id)
       }
       struct Post: Encodable {
@@ -150,18 +165,36 @@ struct ShareView: View {
     }
   }
 
-  private static func data(_ p: NSItemProvider, _ type: UTType) async -> Data? {
+  /// A photo, scaled from the file the share sheet lends while it lends it (off the main thread).
+  private static func photo(_ p: NSItemProvider, index: Int) async -> PickedFile.Photo? {
+    let photo: PickedFile.Photo? = await withCheckedContinuation { c in
+      _ = p.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) { url, _ in
+        c.resume(returning: url.flatMap { PickedFile.photo(at: $0, index: index) })
+      }
+    }
+    if let photo { return photo }
+    // Some apps share a picture only as data.
+    let data: Data? = await withCheckedContinuation { c in
+      _ = p.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in c.resume(returning: data) }
+    }
+    return data.flatMap { PickedFile.photo($0, index: index) }
+  }
+
+  /// Anything else as a file of our own, copied while the share sheet lends it.
+  private static func copy(_ p: NSItemProvider, _ type: UTType, name: String) async -> URL? {
     await withCheckedContinuation { c in
-      _ = p.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, _ in c.resume(returning: data) }
+      _ = p.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, _ in
+        c.resume(returning: url.flatMap { PickedFile.copy($0, name: name) })
+      }
     }
   }
 
-  /// A file, read while the share sheet lends it.
+  /// A file from Files or another app.
   private static func file(_ p: NSItemProvider) async -> SharedFile? {
     await withCheckedContinuation { c in
       _ = p.loadObject(ofClass: URL.self) { url, _ in
-        guard let url, let f = PickedFile.file(url) else { return c.resume(returning: nil) }
-        c.resume(returning: SharedFile(data: f.data, name: f.name, mediaType: f.mediaType))
+        guard let url, let copy = PickedFile.copy(url) else { return c.resume(returning: nil) }
+        c.resume(returning: SharedFile(content: .file(copy), name: url.lastPathComponent, mediaType: PickedFile.mediaType(url)))
       }
     }
   }

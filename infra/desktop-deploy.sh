@@ -48,6 +48,8 @@ mv "$DIR.new" "$DIR"
 cat >/etc/systemd/system/hatbot-desktop-agent.service <<EOF
 [Unit]
 Description=Hatbot desktop-agent: screenshots and input for the brain, on $DESKTOP_IP:7070
+# Restart=always means always: no giving up after five quick failures.
+StartLimitIntervalSec=0
 Requires=hatbot-xvnc.service
 After=hatbot-session.service
 
@@ -69,20 +71,62 @@ ProtectHome=yes
 WantedBy=multi-user.target
 EOF
 
+# The shell's and the renderer's DynamicUsers (systemd gives them UIDs from 61184-65519) get no TCP on
+# loopback or this container's own address: Chromium's DevTools port (127.0.0.1:9222) has no
+# authentication and would hand over the browser's logins. systemd's IPAddressDeny= below needs BPF,
+# which an unprivileged container may not have, so nftables does it. Loaded after nftables.service, whose
+# 'flush ruleset' drops it, and again on its restarts.
+install -d -m 750 /etc/hatbot-desktop
+cat >/etc/hatbot-desktop/shell.nft <<'EOF'
+#!/usr/sbin/nft -f
+# Managed by hatbot infra/desktop-deploy.sh.
+table inet hatbot_shell
+delete table inet hatbot_shell
+
+table inet hatbot_shell {
+  chain output {
+    type filter hook output priority filter; policy accept;
+    oif lo meta skuid 61184-65519 meta l4proto tcp counter reject with tcp reset
+  }
+}
+EOF
+# No ExecStop: stopping it must not open loopback up.
+cat >/etc/systemd/system/hatbot-shell-firewall.service <<'EOF'
+[Unit]
+Description=Hatbot: keep the desktop shell and the renderer off loopback (Chromium's DevTools)
+After=nftables.service
+PartOf=nftables.service
+Before=hatbot-desktop-shell.service hatbot-render.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/hatbot-desktop/shell.nft
+
+[Install]
+WantedBy=multi-user.target nftables.service
+EOF
+
 # The desktop's shell (desktop_shell): its own throwaway user, a home in /var/lib/hatbot-shell, no /home
-# (the browser profile), no screen, no secrets. desktop-agent reaches it on a Unix socket.
+# (the browser profile), no screen, no secrets. desktop-agent reaches it on a Unix socket, in a directory
+# only desk may enter, so the renderer can't. systemd sets the directory's group back to the unit's own
+# when ExecStart runs, so desk gets it after.
 cat >/etc/systemd/system/hatbot-desktop-shell.service <<EOF
 [Unit]
 Description=Hatbot desktop shell: commands from desktop tasks, kept away from the browser profile
+StartLimitIntervalSec=0
+Requires=hatbot-shell-firewall.service
+After=hatbot-shell-firewall.service
 
 [Service]
 DynamicUser=yes
 StateDirectory=hatbot-shell
 RuntimeDirectory=hatbot-shell
-RuntimeDirectoryMode=0755
+RuntimeDirectoryMode=0750
 Environment=HOME=/var/lib/hatbot-shell
 WorkingDirectory=/var/lib/hatbot-shell
 ExecStart=/usr/local/bin/bun $DIR/src/shell.ts
+ExecStartPost=+/usr/bin/chgrp desk /run/hatbot-shell
 Restart=always
 RestartSec=2
 ProtectHome=yes
@@ -92,8 +136,49 @@ ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=localhost $DESKTOP_IP
 TasksMax=256
+MemoryHigh=600M
 MemoryMax=1G
+# Under memory pressure the kernel kills a runaway command before Chromium or desktop-agent.
+OOMScoreAdjust=500
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# The renderer, for watchers that run a page's scripts (src/render.ts): a headless Chromium per page, with
+# a throwaway profile, as its own throwaway user like the shell. No /home (the bots' profiles), no screen,
+# no DevTools port, and a socket only desk reaches, like the shell's. Chromium's own sandbox works under
+# it. getifaddrs, which it uses to know the desktop's addresses, needs netlink. The desktop has 1.5 GB and
+# the bots' Chromium has no cap, so this one does.
+cat >/etc/systemd/system/hatbot-render.service <<EOF
+[Unit]
+Description=Hatbot renderer: pages for watchers, in a headless Chromium of its own
+StartLimitIntervalSec=0
+Requires=hatbot-shell-firewall.service
+After=hatbot-shell-firewall.service
+
+[Service]
+DynamicUser=yes
+RuntimeDirectory=hatbot-render
+RuntimeDirectoryMode=0750
+Environment=HOME=/tmp
+ExecStart=/usr/local/bin/bun $DIR/src/render.ts
+ExecStartPost=+/usr/bin/chgrp desk /run/hatbot-render
+Restart=always
+RestartSec=2
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+IPAddressDeny=localhost $DESKTOP_IP
+TasksMax=512
+MemoryMax=500M
+OOMScoreAdjust=500
 
 [Install]
 WantedBy=multi-user.target
@@ -119,6 +204,7 @@ chmod 755 /usr/local/bin/hatbot-chromium
 cat >/etc/systemd/system/hatbot-chromium.service <<'EOF'
 [Unit]
 Description=Hatbot desktop: Chromium, on the profile of the bot using it
+StartLimitIntervalSec=0
 Requires=hatbot-xvnc.service
 After=hatbot-session.service
 
@@ -142,6 +228,16 @@ if [[ -e /home/desk/.config/autostart/hatbot-chromium.desktop ]]; then
   rm -f /home/desk/.config/autostart/hatbot-chromium.desktop
   pkill -u desk -f -- '--user-data-dir=/home/desk/chrome-profile' || true
   sleep 2
+fi
+
+# Xvnc's abstract socket (@/tmp/.X11-unix/X1) is shared by everything in the container's network
+# namespace, so the shell or the renderer could reach the screen through it; their PrivateTmp already
+# hides the file socket, which desktop-agent, the session and Chromium use. Provisions before this lack -nolisten local.
+xvnc=/etc/systemd/system/hatbot-xvnc.service
+restart_x=0
+if [[ -f $xvnc ]] && ! grep -q -- '-nolisten local' "$xvnc"; then
+  sed -i 's/ -nolisten tcp$/ -nolisten tcp -nolisten local/' "$xvnc"
+  restart_x=1
 fi
 
 # Updates from the brain. Only deploy.sh runs install the installer, so an update can't change it.
@@ -170,21 +266,33 @@ ExecStart=$SELF $STATE/update.tar
 EOF
 
 systemctl daemon-reload
-systemctl enable -q hatbot-desktop-agent hatbot-desktop-shell
+systemctl enable -q hatbot-shell-firewall
+systemctl restart hatbot-shell-firewall
+if ((restart_x)); then systemctl restart hatbot-xvnc; fi
+systemctl enable -q hatbot-desktop-agent hatbot-desktop-shell hatbot-render
 systemctl enable -q --now hatbot-chromium
 systemctl enable -q --now hatbot-desktop-agent-update.path
-systemctl restart hatbot-desktop-shell hatbot-desktop-agent
+systemctl restart hatbot-desktop-shell hatbot-render hatbot-desktop-agent
 
 # shellcheck source=/dev/null
 token=$(. /etc/hatbot-desktop/secrets.env && printf '%s' "$DESKTOP_AGENT_TOKEN")
-for _ in $(seq 1 20); do
-  if printf 'Authorization: Bearer %s\n' "$token" |
-    curl -fsS -m 2 -o /dev/null -H @- "http://$DESKTOP_IP:7070/health" 2>/dev/null; then
+# The deep check grabs a frame and asks Chromium's DevTools. desktop-agent waits for the display before it
+# answers, so a restarted Xvnc takes a few seconds.
+health=''
+for _ in $(seq 1 60); do
+  health=$(printf 'Authorization: Bearer %s\n' "$token" |
+    curl -fsS -m 5 -H @- "http://$DESKTOP_IP:7070/health?deep=1" 2>/dev/null || true)
+  if grep -q '"ok":true' <<<"$health"; then
     say "desktop-agent is up"
     exit 0
   fi
   sleep 0.5
 done
+# Chromium not answering isn't desktop-agent's fault; keep the new version.
+if grep -q '"x":true' <<<"$health"; then
+  say "desktop-agent is up, but Chromium's DevTools isn't answering (journalctl -u hatbot-chromium)"
+  exit 0
+fi
 journalctl -u hatbot-desktop-agent -n 30 --no-pager >&2 || true
 if [[ -d $DIR.old ]]; then
   echo "desktop-agent didn't come up; going back to the previous version" >&2

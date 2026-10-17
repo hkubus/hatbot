@@ -4,7 +4,7 @@ import {
   type CreateWatcher,
   describeCondition,
   HATBOT_ID,
-  MIN_WATCH_MINUTES,
+  minWatchMinutes,
   type UpdateWatcher,
   type WatchCondition,
   type Watcher,
@@ -14,7 +14,7 @@ import {
 } from "@hatbot/shared";
 import type { z } from "zod";
 import type { Chats } from "../agent/chats";
-import type { Bots } from "../bots";
+import { type Bots, liveBot } from "../bots";
 import type { Db } from "../db";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import type { EventBus } from "../events";
@@ -102,6 +102,18 @@ const toWatcher = (r: Row): Watcher => ({
 /** "€1,299" → "€1,099", cut short for a notification. */
 const short = (s: string, n = 300) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
+/** A source as it's kept: a switch that's off is left out, so it reads the same however it was saved. */
+const saved = (s: WatchSource) => JSON.stringify({ ...s, render: s.render || undefined });
+
+/** Throws when a watcher would look more often than its source allows. */
+function oftenEnough(source: WatchSource, everyMinutes: number) {
+  const min = minWatchMinutes(source);
+  if (everyMinutes < min)
+    throw new WatchError(
+      `A watcher can't look more often than every ${min} minutes${source.render ? " when it runs the page's scripts" : ""}.`,
+    );
+}
+
 /** Where a watcher looks, in a few words: the page's host, or the tool. */
 export function describeSource(s: WatchSource): string {
   if (s.kind === "tool") return s.tool ?? "a tool";
@@ -158,6 +170,7 @@ export class Watchers {
     taintedBy: string | null = null,
   ): Promise<Watcher> {
     taintedBy = via === "chat" ? taintedBy : null;
+    oftenEnough(input.source, input.everyMinutes);
     const first = await this.read(input.source, input.botId);
     const row = this.d.db
       .query<
@@ -184,7 +197,7 @@ export class Watchers {
       .get(
         input.botId,
         input.name,
-        JSON.stringify(input.source),
+        saved(input.source),
         JSON.stringify(input.condition),
         input.prompt,
         input.everyMinutes,
@@ -215,7 +228,9 @@ export class Watchers {
     if (!w) return null;
     const source = patch.source ?? w.source;
     const botId = patch.botId ?? w.botId;
-    const sourceChanged = patch.source && JSON.stringify(patch.source) !== JSON.stringify(w.source);
+    const every = patch.everyMinutes ?? w.everyMinutes;
+    oftenEnough(source, every);
+    const sourceChanged = patch.source && saved(patch.source) !== saved(w.source);
     const first = sourceChanged ? await this.read(source, botId) : null;
     const enabled = patch.enabled ?? w.enabled;
     // What it does or where it looks: yours to trust again.
@@ -229,7 +244,6 @@ export class Watchers {
           ? by.taintedBy
           : null
       : null;
-    const every = patch.everyMinutes ?? w.everyMinutes;
     const next = !enabled
       ? null
       : sourceChanged || (enabled && !w.enabled) || every !== w.everyMinutes
@@ -245,7 +259,7 @@ export class Watchers {
       .run(
         patch.name ?? w.name,
         botId,
-        JSON.stringify(source),
+        saved(source),
         JSON.stringify(patch.condition ?? w.condition),
         patch.prompt ?? w.prompt,
         every,
@@ -314,7 +328,7 @@ export class Watchers {
       // The next check counts from this one, so an outage doesn't queue up a check per missed time.
       this.d.db
         .query("UPDATE watchers SET next_check_at = ? WHERE id = ? AND enabled = 1")
-        .run(this.after(Math.max(MIN_WATCH_MINUTES, w.everyMinutes)), w.id);
+        .run(this.after(Math.max(minWatchMinutes(w.source), w.everyMinutes)), w.id);
       let found: { value: string; untrusted: boolean };
       try {
         found = await this.read(w.source, w.botId);
@@ -387,7 +401,8 @@ export class Watchers {
   }
 
   /** It counted: you're told, or its bot works on it. */
-  private fire(w: Watcher, previous: string | null, value: string, untrusted: boolean) {
+  private fire(watcher: Watcher, previous: string | null, value: string, untrusted: boolean) {
+    const w = { ...watcher, botId: liveBot(this.d.db, watcher.botId) };
     const change =
       previous === null
         ? `Now: ${value}`
@@ -435,16 +450,27 @@ export class Watchers {
     if (source.kind === "page") {
       if (!this.d.desktop.configured)
         throw new WatchError("Pages are fetched from the desktop, which isn't set up.");
-      let r: Awaited<ReturnType<DesktopAgent["fetch"]>>;
+      if (source.render && source.path)
+        throw new WatchError(
+          "A JSON path can't be used when the page's scripts run: the page comes back as HTML. Use a selector or a pattern.",
+        );
+      let body: string;
+      let contentType: string;
       try {
-        r = await this.d.desktop.fetch(source.url ?? "");
+        if (source.render) {
+          body = (await this.d.desktop.render(source.url ?? "")).html;
+          contentType = "text/html";
+        } else {
+          const r = await this.d.desktop.fetch(source.url ?? "");
+          if (r.status >= 400) throw new WatchError(`The page answered ${r.status}.`);
+          ({ body, contentType } = r);
+        }
       } catch (err) {
         if (err instanceof DesktopError) throw new WatchError(err.message);
         throw err;
       }
-      if (r.status >= 400) throw new WatchError(`The page answered ${r.status}.`);
-      // Web pages are written by strangers (PLAN.md §6.1).
-      return { value: await pick(r.body, r.contentType, source), untrusted: true };
+      // Web pages are written by strangers (PLAN.md §6.1), and so are their scripts.
+      return { value: await pick(body, contentType, source), untrusted: true };
     }
     const bot = this.d.bots.get(botId) ?? this.d.bots.hatbot();
     const t = this.d.plugins.tools(bot.plugins).find((x) => x.name === source.tool);
@@ -482,6 +508,7 @@ export function watcherLine(w: Watcher): string {
       ? w.source.url
       : `${w.source.tool} ${JSON.stringify(w.source.input ?? {})}`;
   const picks = [
+    w.source.kind === "page" && w.source.render && "runs its scripts",
     w.source.selector && `selector ${w.source.selector}`,
     w.source.path && `path ${w.source.path}`,
     w.source.pattern && `pattern /${w.source.pattern}/`,

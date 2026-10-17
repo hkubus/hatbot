@@ -1,6 +1,10 @@
 import Foundation
 import XCTest
 
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
+
 // The core is its own module in Package.swift and part of the app in Xcode.
 #if canImport(HatbotCore)
   @testable import HatbotCore
@@ -168,6 +172,13 @@ final class MarkdownTests: XCTestCase {
     XCTAssertEqual(
       Markdown.parse("Look:\n```\nstill typing"), [.paragraph("Look:"), .code(language: nil, code: "still typing")])
   }
+
+  func testCachedBlocksAreTheParsedOnes() {
+    let md = "# Hi\n\n- one\n- two"
+    XCTAssertEqual(Markdown.cached(md), Markdown.parse(md))
+    XCTAssertEqual(Markdown.cached(md), Markdown.parse(md))
+    XCTAssertEqual(Markdown.cached("other"), [.paragraph("other")])
+  }
 }
 
 // Not a @MainActor class: Linux XCTest can't run those.
@@ -184,6 +195,16 @@ final class StoreTests: XCTestCase {
     await MainActor.run { Self.countsWhatNeedsYou() }
   }
 
+  func testOpeningAgainAfterStoppingIsAReconnect() async {
+    await MainActor.run {
+      let socket = Socket { URLSession.shared.webSocketTask(with: URL(string: "wss://h.example")!) }
+      XCTAssertFalse(socket.opened())
+      // In the background the stream stops; back in front it starts again.
+      socket.stop()
+      XCTAssertTrue(socket.opened())
+    }
+  }
+
   @MainActor private static func appliesStreamingEvents() {
     let store = store()
     let m = ThreadMessage(
@@ -192,12 +213,14 @@ final class StoreTests: XCTestCase {
     store.apply(.messageDelta(id: 7, text: "Hel"))
     store.apply(.messageDelta(id: 7, text: "lo"))
     store.apply(.messageProgress(id: 7, text: "thinking"))
-    XCTAssertEqual(store.messages.first?.text, "Hello")
-    XCTAssertEqual(store.progress[7], "thinking")
+    // The deltas go to the live reply, not the message list.
+    XCTAssertEqual(store.reply(7)?.text, "Hello")
+    XCTAssertEqual(store.messages.first.map(store.text), "Hello")
+    XCTAssertEqual(store.reply(7)?.progress, "thinking")
     store.apply(.messageDone(id: 7, text: "Hello.", status: .done))
     XCTAssertEqual(store.messages.first?.text, "Hello.")
     XCTAssertEqual(store.messages.first?.status, .done)
-    XCTAssertNil(store.progress[7])
+    XCTAssertNil(store.reply(7))
   }
 
   @MainActor private static func countsWhatNeedsYou() {
@@ -256,8 +279,14 @@ final class ScheduleAndMemoryTests: XCTestCase {
     XCTAssertEqual(link("hatbot://approvals/5"), .approval(5))
     XCTAssertEqual(link("hatbot://schedules/2"), .schedule(2))
     XCTAssertEqual(link("hatbot://triggers/3"), .trigger(3))
-    XCTAssertNil(link("hatbot://memory/1"))
+    XCTAssertEqual(link("hatbot://memory/notes/my%20servers.md"), .memory("notes/my servers.md"))
+    XCTAssertEqual(link("hatbot://new"), .newMessage)
+    XCTAssertEqual(link("hatbot://live"), .live)
+    XCTAssertEqual(link("hatbot://tasks"), .tasks)
+    XCTAssertNil(link("hatbot://memory"))
+    XCTAssertNil(link("hatbot://approvals"))
     XCTAssertNil(link("hatbot://tasks/1/2"))
+    for l in [AppLink.memory("notes/my servers.md"), .task(4), .newMessage] { XCTAssertEqual(AppLink(url: l.url), l) }
     XCTAssertNil(link("https://tasks/1"))
   }
 
@@ -298,6 +327,26 @@ final class FoldTests: XCTestCase {
   private func m(_ id: Int, _ episode: Int?, _ role: ThreadMessage.Role = .assistant) -> ThreadMessage {
     ThreadMessage(
       id: id, role: role, kind: .text, text: "message \(id)", status: .done, createdAt: "", episodeId: episode)
+  }
+
+  func testMergesTheLatestPageIntoWhatsLoaded() {
+    let ids = { (list: [ThreadMessage]) in list.map(\.id) }
+    // Earlier pages stay; 6 was deleted meanwhile and 9 is new; 10 came by event while it loaded.
+    var r = ThreadMerge.merge(
+      [1, 2, 3, 4, 5, 6, 7, 10].map { m($0, nil) }, hasEarlier: true, latest: [4, 5, 7, 8, 9].map { m($0, nil) },
+      page: 5)
+    XCTAssertEqual(ids(r.messages), [1, 2, 3, 4, 5, 7, 8, 9, 10])
+    XCTAssertTrue(r.hasEarlier)
+    // More than a page came while away: start again from the page.
+    r = ThreadMerge.merge([1, 2].map { m($0, nil) }, hasEarlier: false, latest: [5, 6, 7].map { m($0, nil) }, page: 3)
+    XCTAssertEqual(ids(r.messages), [5, 6, 7])
+    XCTAssertTrue(r.hasEarlier)
+    // A short page is everything.
+    r = ThreadMerge.merge([1, 2, 3].map { m($0, nil) }, hasEarlier: false, latest: [2, 3].map { m($0, nil) }, page: 5)
+    XCTAssertEqual(ids(r.messages), [2, 3])
+    XCTAssertFalse(r.hasEarlier)
+    r = ThreadMerge.merge([], hasEarlier: false, latest: [1].map { m($0, nil) }, page: 5)
+    XCTAssertEqual(ids(r.messages), [1])
   }
 
   func testFoldsFinishedConversations() {
@@ -489,6 +538,28 @@ final class IncognitoTests: XCTestCase {
 }
 
 final class LookingAfterThingsTests: XCTestCase {
+  func testAskingForAProposalStartsItOrAnswersWithIt() throws {
+    let started = try JSONDecoder().decode(ProposalStarted.self, from: Data(#"{"started":true}"#.utf8))
+    XCTAssertTrue(started.started)
+    XCTAssertNil(started.proposal)
+    let old = try JSONDecoder().decode(
+      ProposalStarted.self,
+      from: Data(
+        #"{"id":3,"kind":"tidy","title":"T","reason":"R","changes":[],"status":"pending","createdAt":"t"}"#.utf8))
+    XCTAssertFalse(old.started)
+    XCTAssertEqual(old.proposal?.id, 3)
+    let nothing = try JSONDecoder().decode(ProposalStarted.self, from: Data("{}".utf8))
+    XCTAssertNil(nothing.proposal)
+    XCTAssertFalse(nothing.started)
+    let event = try JSONDecoder().decode(
+      HatbotEvent.self,
+      from: Data(
+        #"{"type":"proposal.updated","proposal":{"id":4,"kind":"skill","title":"T","reason":"R","changes":[],"skill":"s","status":"pending","createdAt":"t"}}"#
+          .utf8))
+    guard case let .proposalUpdated(p) = event else { return XCTFail("not a proposal") }
+    XCTAssertEqual(p.skill, "s")
+  }
+
   func testDiffsProposalsLikeTheWeb() {
     let before = "# Home\na\nb\nc\nd\ne\nf\nRouter: old\n"
     let after = "# Home\na\nb\nc\nd\ne\nf\nRouter: new\nAlso\n"
@@ -516,7 +587,7 @@ final class LookingAfterThingsTests: XCTestCase {
     let m = #"{"id":%d,"role":"%@","kind":"text","text":"%@","status":"done","createdAt":"2026-10-15T08:00:00Z"}"#
     let json = """
       {"message":\(String(format: m, 1, "user", "Warm?")),
-       "replies":[\(String(format: m, 2, "assistant", "21 degrees."))],"finished":true}
+       "replies":[\(String(format: m, 2, "assistant", "**21** degrees."))],"finished":true}
       """
     let r = try JSONDecoder().decode(AskResult.self, from: Data(json.utf8))
     XCTAssertEqual(r.answer, "21 degrees.")
@@ -537,6 +608,18 @@ final class LookingAfterThingsTests: XCTestCase {
     XCTAssertEqual(watcher.source.text, "https://shop.test/gpu")
     XCTAssertEqual(Watcher.every(90), "Every 90 minutes")
     XCTAssertEqual(Watcher.every(120), "Every 2 hours")
+    XCTAssertNil(watcher.source.render)
+    let rendered = w.replacingOccurrences(of: #""selector""#, with: #""render":true,"selector""#)
+    XCTAssertEqual(try JSONDecoder().decode(Watcher.self, from: Data(rendered.utf8)).source.render, true)
+    // Running its scripts slows a watcher that looked more often; off leaves no render in the source.
+    var often = watcher
+    often.everyMinutes = 5
+    XCTAssertEqual(
+      often.render(true),
+      .init(source: .init(kind: .page, url: "https://shop.test/gpu", render: true, selector: ".price"), everyMinutes: 15))
+    XCTAssertNil(watcher.render(true).everyMinutes)
+    let off = String(decoding: try JSONEncoder().encode(watcher.render(false)), as: UTF8.self)
+    XCTAssertFalse(off.contains("render") || off.contains("everyMinutes"))
 
     let s = #"""
       {"limits":{"dailyUsd":5,"monthlyUsd":50,"taskUsd":1},"chatEffort":"low","owner":{"name":"K","email":"k@x"},
@@ -550,5 +633,273 @@ final class LookingAfterThingsTests: XCTestCase {
 
     let task = #"{"id":1,"title":"t","goal":"g","successCriteria":"","origin":"watch","lane":"background","model":"m","status":"done","tainted":false,"injectionSuspected":false,"costUsd":0,"steps":0,"createdAt":"2026-10-15T08:00:00Z"}"#
     XCTAssertEqual(try JSONDecoder().decode(AgentTask.self, from: Data(task.utf8)).origin, .watch)
+  }
+}
+
+final class DiskCacheTests: XCTestCase {
+  func testAStoreShowsWhatWasLastSeenUntilTheBrainAnswers() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let cache = DiskCache(dir: dir)
+    let bot = Bot(id: "hatbot", name: "Hatbot", instructions: "", createdAt: "2026-10-15T10:00:00.000Z")
+    let chat = Conversation(id: 2, kind: .direct, botIds: ["hatbot"], unread: 0)
+    let done = ThreadMessage(id: 5, role: .assistant, kind: .text, text: "Hi", status: .done, createdAt: "2026-10-15T10:00:00.000Z")
+    let writing = ThreadMessage(
+      id: 6, role: .assistant, kind: .text, text: "Wri", status: .streaming, createdAt: "2026-10-15T10:00:01.000Z")
+    let api = API(server: URL(string: "https://hatbot.test")!, token: "t")
+
+    await MainActor.run {
+      let store = AppStore(api: api, cache: cache)
+      store.bots = ["hatbot": bot]
+      store.botIds = ["hatbot"]
+      store.conversations = [chat]
+      store.messages = [done, writing]
+      store.persist()
+    }
+    // Written off the main thread.
+    for _ in 0..<50 where cache.page(1) == nil || cache.chats() == nil {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+
+    await MainActor.run {
+      let store = AppStore(api: api, cache: cache)
+      XCTAssertEqual(store.conversations, [chat])
+      XCTAssertEqual(store.bots["hatbot"]?.name, "Hatbot")
+      // Not the one still being written.
+      XCTAssertEqual(store.messages.map(\.id), [5])
+    }
+    cache.clear()
+    XCTAssertNil(cache.chats())
+  }
+}
+
+final class PlainTextTests: XCTestCase {
+  func testPlainTextHasNoMarkdown() {
+    let md = "# Done\n\nI **fixed** the `nginx` config, see [the docs](https://x.y) and _this_.\n\n- one\n- two\n\n1. first"
+    XCTAssertEqual(
+      Markdown.plain(md), "Done\n\nI fixed the nginx config, see the docs and this.\n\none\ntwo\n\n1. first")
+    XCTAssertEqual(Markdown.inline("snake_case_name and 2*3*4"), "snake_case_name and 2*3*4")
+  }
+}
+
+final class SpendTests: XCTestCase {
+  func testSpendChartsAreBarsAndRankings() throws {
+    let hours = [SpendHour(hour: "2026-10-15T13:00:00.000Z", usd: 0.5, tokens: 10)]
+    let hourly = try XCTUnwrap(SpendCharts.hourly(hours, timeZone: TimeZone(identifier: "UTC")!))
+    XCTAssertEqual(hourly.x, ["13:00"])
+    XCTAssertEqual(hourly.unit, "$")
+    XCTAssertEqual(SpendCharts.daily([SpendDay(date: "2026-10-05", usd: 1)])?.x, ["5 Oct"])
+    let models = try XCTUnwrap(
+      SpendCharts.byModel([
+        SpendByModel(model: "claude-haiku-5-5", usd: 1), SpendByModel(model: "claude-opus-5-5", usd: 3),
+        SpendByModel(model: "claude-sonnet-5", usd: 0),
+      ]))
+    XCTAssertTrue(models.horizontal)
+    XCTAssertEqual(models.x, ["Opus 5.5", "Haiku 5.5"])
+    XCTAssertEqual(models.series[0].data, [3, 1])
+    XCTAssertEqual(SpendCharts.byPurpose([SpendByPurpose(purpose: "thread", costUsd: 2)])?.x, ["Chat"])
+    XCTAssertNil(SpendCharts.byBot([], names: [:]))
+    let tokens = #"[{"id":3,"name":"iPhone (Hatbot iOS) 15 Oct 2026","createdAt":"2026-10-15T10:00:00.000Z","lastUsedAt":null}]"#
+    XCTAssertEqual(try JSONDecoder().decode([ApiToken].self, from: Data(tokens.utf8)).first?.id, 3)
+  }
+
+  func testHeartbeatRunsAndRefetchEventsDecode() throws {
+    let info = #"""
+      {"at":"2026-10-15T10:00:00.000Z","found":[],"action":"nothing","note":"","taskId":null,
+       "recent":[{"at":"2026-10-15T09:00:00.000Z","found":["Kuma: nas down"],"action":"task"}]}
+      """#
+    let hb = try JSONDecoder().decode(HeartbeatInfo.self, from: Data(info.utf8))
+    XCTAssertEqual(hb.recent?.first?.found, ["Kuma: nas down"])
+    XCTAssertEqual(hb.recent?.first?.action, .task)
+    let old = #"{"at":null,"found":[],"note":""}"#
+    XCTAssertNil(try JSONDecoder().decode(HeartbeatInfo.self, from: Data(old.utf8)).recent)
+    for (json, settings) in [(#"{"type":"settings.updated","settings":{}}"#, true), (#"{"type":"heartbeat.updated"}"#, false)] {
+      switch try JSONDecoder().decode(HatbotEvent.self, from: Data(json.utf8)) {
+      case .settingsUpdated: XCTAssertTrue(settings)
+      case .heartbeatUpdated: XCTAssertFalse(settings)
+      default: XCTFail(json)
+      }
+    }
+  }
+
+  func testWatcherEventsDecode() throws {
+    let deleted = #"{"type":"watcher.deleted","id":4}"#
+    guard case .watcherDeleted(4) = try JSONDecoder().decode(HatbotEvent.self, from: Data(deleted.utf8)) else {
+      return XCTFail("not a deleted watcher")
+    }
+  }
+
+  func testNegotiationsDecode() throws {
+    let updated = #"""
+      {"type":"negotiation.updated","negotiation":{"id":3,"botId":"haggler","wantId":1,"want":"RTX 3070",
+      "role":"buy","listingKey":"OLX:1001","listingUrl":"https://www.olx.pl/d/oferta/x-ID1001.html",
+      "title":"RTX 3070","asking":1500,"mandate":{"currency":"PLN","opening":1060,"target":1250,"limit":1400,
+      "delivery":"OLX","expiresAt":"2026-10-16T12:00:00Z","allow":[]},"appraisal":null,"conversationUrl":null,
+      "claims":{"max":null,"otherOffers":null,"timing":null,"other":[]},"status":"open","agreedPrice":null,
+      "approvalId":null,"conversationId":2,"nextFollowUpAt":null,"lastMessage":null,
+      "createdAt":"2026-10-09T12:00:00Z","updatedAt":"2026-10-09T12:00:00Z","closedAt":null}}
+      """#
+    guard case let .negotiationUpdated(n) = try JSONDecoder().decode(HatbotEvent.self, from: Data(updated.utf8))
+    else { return XCTFail("not a negotiation") }
+    XCTAssertEqual(n.id, 3)
+    XCTAssertEqual(n.status, "open")
+    let message = #"{"id":9,"role":"assistant","kind":"text","text":"On it.","status":"done","createdAt":"2026-10-09T12:00:00Z","negotiationId":3}"#
+    XCTAssertEqual(try JSONDecoder().decode(ThreadMessage.self, from: Data(message.utf8)).negotiationId, 3)
+    let shown = #"{"type":"message.negotiation","id":9,"negotiationId":3}"#
+    guard case .messageNegotiation(9, 3) = try JSONDecoder().decode(HatbotEvent.self, from: Data(shown.utf8)) else {
+      return XCTFail("not a message's negotiation")
+    }
+    let mandate = #"""
+      {"id":5,"botId":"haggler","taskId":null,"conversationId":2,"kind":"mandate",
+      "summary":"Negotiate for RTX 3070: open at 1,060 zł, aim for 1,250 zł, pay at most 1,400 zł","reason":"",
+      "sources":[],"screenshotStepId":null,"status":"pending","decidedVia":null,"costUsd":0,
+      "createdAt":"2026-10-09T12:00:00Z","expiresAt":"2026-10-10T12:00:00Z","decidedAt":null,"note":null}
+      """#
+    let approval = try JSONDecoder().decode(Approval.self, from: Data(mandate.utf8))
+    XCTAssertEqual(approval.kind, "mandate")
+    XCTAssertTrue(approval.takesNote)
+  }
+}
+
+final class ZoomTests: XCTestCase {
+  func testZoomingKeepsThePointUnderTheFingersAndTheScreenCovered() {
+    let size = CGSize(width: 400, height: 250)
+    let z = Zoom().zoomed(by: 2, at: CGPoint(x: 100, y: 50), in: size)
+    XCTAssertEqual(z.scale, 2)
+    let p = z.unzoomed(CGPoint(x: 100, y: 50))
+    XCTAssertEqual(p.x, 100, accuracy: 0.001)
+    XCTAssertEqual(p.y, 50, accuracy: 0.001)
+    // Moved past the edge, it stops at it.
+    let moved = z.moved(by: CGPoint(x: 1000, y: -1000), in: size)
+    XCTAssertEqual(moved.offset.x, 0)
+    XCTAssertEqual(moved.offset.y, -250)
+    XCTAssertEqual(moved.unzoomed(CGPoint(x: 400, y: 250)).x, 200, accuracy: 0.001)
+    // Out past 1, it's back to the whole screen.
+    XCTAssertEqual(z.zoomed(by: 0.1, at: .zero, in: size), Zoom())
+    XCTAssertEqual(Zoom().zoomed(by: 100, at: .zero, in: size).scale, Zoom.most)
+  }
+}
+
+/// Answers from a table after a delay, like a phone's round trip to the brain.
+final class SlowBrain: URLProtocol, @unchecked Sendable {
+  static let delay: TimeInterval = 0.15
+  nonisolated(unsafe) static var routes: [String: String] = [:]
+  private static let lock = NSLock()
+  nonisolated(unsafe) private static var paths: [String] = []
+
+  static var requested: [String] { lock.withLock { paths } }
+  static func reset() { lock.withLock { paths = [] } }
+
+  override class func canInit(with request: URLRequest) -> Bool { true }
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+  override func startLoading() {
+    let url = request.url!
+    let path = url.path.replacingOccurrences(of: API.prefix, with: "") + (url.query.map { "?\($0)" } ?? "")
+    Self.lock.withLock { Self.paths.append("\(request.httpMethod ?? "GET") \(path)") }
+    let body = Self.routes[path]
+    DispatchQueue.global().asyncAfter(deadline: .now() + Self.delay) { [self] in
+      let res = HTTPURLResponse(
+        url: url, statusCode: body == nil ? 404 : 200, httpVersion: "HTTP/1.1",
+        headerFields: ["Content-Type": "application/json"])!
+      client?.urlProtocol(self, didReceive: res, cacheStoragePolicy: .notAllowed)
+      client?.urlProtocol(self, didLoad: Data((body ?? #"{"error":"not found"}"#).utf8))
+      client?.urlProtocolDidFinishLoading(self)
+    }
+  }
+
+  override func stopLoading() {}
+
+  static func session() -> URLSession {
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [SlowBrain.self]
+    return URLSession(configuration: config)
+  }
+}
+
+final class NetworkTests: XCTestCase {
+  private static func task(_ id: Int) -> String {
+    #"{"id":\#(id),"title":"t","goal":"g","successCriteria":"","origin":"chat","lane":"background","model":"m","status":"running","tainted":false,"injectionSuspected":false,"costUsd":0,"steps":0,"createdAt":"2026-10-15T08:00:00Z"}"#
+  }
+
+  @MainActor private static func store() throws -> AppStore {
+    SlowBrain.routes = [
+      "/bots": "[]",
+      "/conversations": "[]",
+      "/approvals?pending=1": "[]",
+      "/thread/unread": "[3]",
+    ]
+    for id in 1...3 { SlowBrain.routes["/tasks/\(id)"] = #"{"task":\#(task(id)),"steps":[]}"# }
+    SlowBrain.reset()
+    let store = AppStore(api: API(server: URL(string: "https://h.example")!, token: "t", session: SlowBrain.session()))
+    // Three running tasks the chat has shown: a reconnect brings them up to date.
+    for id in 1...3 {
+      store.tasks[id] = try JSONDecoder().decode(AgentTask.self, from: Data(task(id).utf8))
+      store.steps[id] = []
+    }
+    return store
+  }
+
+  /// What a reconnect loads, side by side: about one round trip, not one per request.
+  func testAReconnectLoadsEverythingAtOnce() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    let start = Date()
+    try await store.loadLive()
+    let took = Date().timeIntervalSince(start)
+    let requested = SlowBrain.requested
+    print("loadLive: \(requested.count) requests in \(Int(took * 1000)) ms at \(Int(SlowBrain.delay * 1000)) ms each")
+    XCTAssertEqual(requested.count, 8)
+    XCTAssertLessThan(took, SlowBrain.delay * 3)
+    let unread = await MainActor.run { store.unread }
+    XCTAssertEqual(unread, [3])
+  }
+
+  /// Rows that come into view together are one request.
+  func testSeenMessagesGoTogether() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    SlowBrain.routes["/thread/seen"] = #"{"ok":true}"#
+    try await store.loadLive()
+    await MainActor.run {
+      store.unread = [10, 11, 12, 13]
+      SlowBrain.reset()
+      for id in [10, 11, 12] { store.markSeen([id]) }
+      XCTAssertEqual(store.unread, [13])
+    }
+    try await Task.sleep(for: .milliseconds(600))
+    XCTAssertEqual(SlowBrain.requested, ["POST /thread/seen"])
+  }
+
+  /// A chat's task rows: one request for the tasks, without their steps. The live view still loads steps.
+  func testTaskRowsLoadTogether() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    SlowBrain.routes["/tasks?ids=20,21,22"] = "[\(Self.task(20)),\(Self.task(22))]"
+    SlowBrain.routes["/tasks/30"] = #"{"task":\#(Self.task(30)),"steps":[]}"#
+    await MainActor.run {
+      for id in [20, 21, 22, 20, 1] { store.ensureTask(id) }
+      store.ensureSteps(30)
+    }
+    try await Task.sleep(for: .milliseconds(400))
+    XCTAssertEqual(SlowBrain.requested.sorted(), ["GET /tasks/30", "GET /tasks?ids=20,21,22"])
+    await MainActor.run {
+      XCTAssertEqual(store.tasks[22]?.id, 22)
+      XCTAssertNil(store.steps[22])
+      XCTAssertNotNil(store.steps[30])
+    }
+  }
+
+  /// A brain from before ids= sends its newest tasks: the rows it left out load one at a time.
+  func testTaskRowsFromAnOlderBrain() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    SlowBrain.routes["/tasks?ids=2,40"] = "[\(Self.task(99)),\(Self.task(2))]"
+    SlowBrain.routes["/tasks/40"] = #"{"task":\#(Self.task(40)),"steps":[]}"#
+    await MainActor.run {
+      store.tasks[2] = nil
+      store.ensureTask(2)
+      store.ensureTask(40)
+    }
+    try await Task.sleep(for: .milliseconds(600))
+    XCTAssertEqual(SlowBrain.requested, ["GET /tasks?ids=2,40", "GET /tasks/40"])
+    let loaded = await MainActor.run { store.tasks[40]?.id }
+    XCTAssertEqual(loaded, 40)
   }
 }

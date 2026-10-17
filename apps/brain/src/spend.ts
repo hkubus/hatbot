@@ -1,4 +1,5 @@
 // Spend ledger and limits (PLAN.md §6.3).
+import type { SpendByPurpose } from "@hatbot/shared";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
 import type { SettingsStore } from "./settings";
@@ -76,6 +77,42 @@ export function costOf(model: string, t: Tokens): number {
     1_000_000
   );
 }
+
+/**
+ * Rough prompt tokens in a conversation, for the estimate before a request: text by length, images at
+ * their typical size, PDFs by their size. Base64 bytes don't count as text.
+ */
+export function estimateTokens(messages: unknown): number {
+  let chars = 0;
+  let images = 0;
+  let pdfTokens = 0;
+  const walk = (v: unknown) => {
+    if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      if (o.type === "image") {
+        images++;
+        return;
+      }
+      const source = o.source as { type?: string; data?: unknown } | undefined;
+      if (o.type === "document" && source?.type === "base64") {
+        // A page or two per 100 KB; about 1,500 tokens a page.
+        const kb = (String(source.data ?? "").length * 0.75) / 1024;
+        pdfTokens += Math.max(1500, kb * 25);
+        return;
+      }
+      for (const [k, x] of Object.entries(o)) {
+        if (typeof x !== "string") walk(x);
+        else if (!(k === "data" && o.type === "base64") && k !== "signature") chars += x.length;
+      }
+    }
+  };
+  walk(messages);
+  return chars / 3.5 + images * 1600 + pdfTokens;
+}
+
+/** Work that may spend the reserve kept at the end of the limits: alerts, and the heartbeat. */
+export const usesReserve = (origin: string) => origin === "alert" || origin === "heartbeat";
 
 export class BudgetError extends Error {
   constructor(
@@ -241,19 +278,47 @@ export class Spend {
     return this.sumSince(new Date(0), "AND task_id = ?", taskId);
   }
 
-  /** Throws BudgetError if a request estimated at `estimateUsd` would cross a limit. */
-  check(estimateUsd: number, task?: { id: number; limitUsd: number }) {
-    const { todayUsd, monthUsd, limits } = this.summary();
-    if (task && this.taskSpend(task.id) + estimateUsd > task.limitUsd) {
+  /**
+   * Throws BudgetError if a request estimated at `estimateUsd` would cross a limit. Only work with
+   * `reserve` may spend the last `alertReserveUsd` of the daily and monthly limits.
+   */
+  check(estimateUsd: number, task?: { id: number; limitUsd: number }, { reserve = false } = {}) {
+    const now = this.clock();
+    const limits = this.settings.get().limits;
+    // Before every model request: today, the month and the task in one read of the ledger.
+    const row = this.db
+      .query<
+        { today: number | null; month: number | null; task: number | null },
+        [string, number, string]
+      >(
+        `SELECT sum(CASE WHEN created_at >= ?1 THEN cost_usd END) AS today,
+         sum(CASE WHEN created_at >= ?3 THEN cost_usd END) AS month,
+         sum(CASE WHEN task_id = ?2 THEN cost_usd END) AS task
+         FROM spend_ledger WHERE created_at >= ?3 OR task_id = ?2`,
+      )
+      .get(
+        startOfLocalDay(now).toISOString(),
+        task?.id ?? -1,
+        startOfLocalMonth(now).toISOString(),
+      );
+    const todayUsd = row?.today ?? 0;
+    const monthUsd = row?.month ?? 0;
+    if (task && (row?.task ?? 0) + estimateUsd > task.limitUsd) {
       throw new BudgetError("task", `This task would go over its $${task.limitUsd} limit.`);
     }
-    if (todayUsd + estimateUsd > limits.dailyUsd) {
-      throw new BudgetError("daily", `Today's $${limits.dailyUsd} limit would be exceeded.`);
+    const kept = reserve ? 0 : limits.alertReserveUsd;
+    const why = (spent: number, limit: number) =>
+      spent + estimateUsd > limit ? "" : ` (its last $${kept} is kept for alerts)`;
+    if (todayUsd + estimateUsd > limits.dailyUsd - kept) {
+      throw new BudgetError(
+        "daily",
+        `Today's $${limits.dailyUsd} limit would be exceeded${why(todayUsd, limits.dailyUsd)}.`,
+      );
     }
-    if (monthUsd + estimateUsd > limits.monthlyUsd) {
+    if (monthUsd + estimateUsd > limits.monthlyUsd - kept) {
       throw new BudgetError(
         "monthly",
-        `This month's $${limits.monthlyUsd} limit would be exceeded.`,
+        `This month's $${limits.monthlyUsd} limit would be exceeded${why(monthUsd, limits.monthlyUsd)}.`,
       );
     }
   }
@@ -263,6 +328,17 @@ export class Spend {
     return this.db
       .query<{ model: string; usd: number }, [string]>(
         "SELECT model, sum(cost_usd) AS usd FROM spend_ledger WHERE created_at >= ? GROUP BY model ORDER BY usd DESC",
+      )
+      .all(from.toISOString());
+  }
+
+  /** Spend per purpose (chat, task, heartbeat, tidy…), the most first, for Spend's breakdown. */
+  byPurpose(days: number): SpendByPurpose[] {
+    const from = startOfLocalDay(this.clock() - (days - 1) * 86400_000);
+    return this.db
+      .query<SpendByPurpose, [string]>(
+        `SELECT purpose, sum(cost_usd) AS costUsd FROM spend_ledger
+         WHERE created_at >= ? GROUP BY purpose ORDER BY costUsd DESC`,
       )
       .all(from.toISOString());
   }

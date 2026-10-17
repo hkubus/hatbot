@@ -18,7 +18,9 @@ import type { Config } from "../config";
 import type { Db } from "../db";
 import type { Desktop } from "../desktop/service";
 import type { EventBus } from "../events";
+import type { Proposals } from "../memory/proposals";
 import type { MemoryStore } from "../memory/store";
+import type { Negotiations } from "../negotiate/service";
 import type { Notifier } from "../notify";
 import type { Plugins } from "../plugins/registry";
 import type { SettingsStore } from "../settings";
@@ -46,6 +48,8 @@ export type TasksDeps = {
   memory: MemoryStore;
   plugins: Plugins;
   skills: Skills;
+  /** Set once it exists; it needs the tasks too. */
+  proposals?: Proposals;
   clock?: () => number;
 };
 
@@ -133,10 +137,13 @@ const ACTIVE: typeof ACTIVE_TASK_STATUSES = [
   "waiting_takeover",
 ];
 const FINAL: TaskStatus[] = ["done", "failed", "cancelled"];
+const RESTARTED = "Stopped: the brain restarted.";
 
 export class Tasks {
   readonly lane = new ScreenLane();
   readonly pool = new Pool(BACKGROUND_SLOTS);
+  /** Set once it exists: negotiation's tools, and the send gate on its desktop tasks (PLAN.md §16). */
+  negotiations?: Negotiations;
   private running = new Map<number, AbortController>();
   /** Events for running tasks, delivered with their next tool results. */
   private inbox = new Map<number, string[]>();
@@ -144,20 +151,51 @@ export class Tasks {
   private wakers = new Map<number, () => void>();
   private runs = new Set<Promise<void>>();
   readonly clock: () => number;
+  /** Tasks the last run of the brain left in flight, until `recover` reports them. */
+  private interrupted: number[];
 
   constructor(readonly d: TasksDeps) {
     this.clock = d.clock ?? Date.now;
     // A restart ends every task that was in flight; their runs can't be resumed.
+    this.interrupted = d.db
+      .query<{ id: number }, TaskStatus[]>(
+        `SELECT id FROM tasks WHERE status IN (${ACTIVE.map(() => "?").join(", ")}) ORDER BY id`,
+      )
+      .all(...ACTIVE)
+      .map((r) => r.id);
     d.db
       .query(
-        `UPDATE tasks SET status = 'failed', summary = coalesce(summary, 'Stopped: the brain restarted.'),
+        `UPDATE tasks SET status = 'failed', summary = coalesce(summary, ?),
          finished_at = ? WHERE status IN (${ACTIVE.map(() => "?").join(", ")})`,
       )
-      .run(this.now(), ...ACTIVE);
+      .run(RESTARTED, this.now(), ...ACTIVE);
   }
 
   now() {
     return new Date(this.clock()).toISOString();
+  }
+
+  /**
+   * Once the chats are up after a restart: the tasks it stopped end like failed ones, each where it
+   * was started, and one notification lists them. Each can be run again from its page.
+   */
+  recover() {
+    const stopped = this.interrupted.flatMap((id) => this.get(id) ?? []);
+    this.interrupted = [];
+    for (const t of stopped)
+      this.finish(t.id, "failed", t.summary ?? RESTARTED, true, { ntfy: false });
+    const shown = stopped.filter((t) => !t.parentId);
+    if (!shown.length) return;
+    const list = shown.map((t) => `#${t.id} ${t.title}`).join("\n");
+    void this.d.notifier.send({
+      title: `The brain restarted: ${shown.length > 1 ? `${shown.length} tasks` : "a task"} stopped`,
+      message: `${list}\nRun ${shown.length > 1 ? "them" : "it"} again from Tasks.`.slice(0, 1000),
+      priority: 4,
+      click:
+        shown.length > 1
+          ? `${this.d.config.publicUrl}/tasks`
+          : `${this.d.config.publicUrl}/tasks/${shown[0]?.id}`,
+    });
   }
 
   get(id: number): Task | null {
@@ -172,10 +210,18 @@ export class Tasks {
       triggerId?: number;
       watcherId?: number;
       limit?: number;
+      /** Only tasks older than this one: the next page. */
+      before?: number;
+      botId?: string;
+      origin?: string;
+      /** A LIKE pattern, backslash-escaped, for the title, goal or summary: Search. */
+      like?: string;
+      /** Just these: a chat's task cards. */
+      ids?: number[];
     } = {},
   ): Task[] {
     const where: string[] = [];
-    const args: number[] = [];
+    const args: (number | string)[] = [];
     if (opts.status === "active")
       where.push(`t.status IN (${ACTIVE.map((s) => `'${s}'`).join(", ")})`);
     if (opts.status === "done")
@@ -193,8 +239,30 @@ export class Tasks {
       where.push("t.watcher_id = ? AND t.parent_id IS NULL");
       args.push(opts.watcherId);
     }
+    if (opts.before !== undefined) {
+      where.push("t.id < ?");
+      args.push(opts.before);
+    }
+    if (opts.botId !== undefined) {
+      where.push("t.bot_id = ?");
+      args.push(opts.botId);
+    }
+    if (opts.origin !== undefined) {
+      where.push("t.origin = ?");
+      args.push(opts.origin);
+    }
+    if (opts.like !== undefined) {
+      where.push(
+        "(t.title LIKE ? ESCAPE '\\' OR t.goal LIKE ? ESCAPE '\\' OR coalesce(t.summary, '') LIKE ? ESCAPE '\\')",
+      );
+      args.push(opts.like, opts.like, opts.like);
+    }
+    if (opts.ids !== undefined) {
+      where.push(`t.id IN (${opts.ids.map(() => "?").join(", ")})`);
+      args.push(...opts.ids);
+    }
     return this.d.db
-      .query<Row, number[]>(
+      .query<Row, (number | string)[]>(
         `${SELECT} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY t.id DESC LIMIT ?`,
       )
       .all(...args, opts.limit ?? 50)
@@ -211,7 +279,12 @@ export class Tasks {
   }
 
   step(taskId: number, stepId: number): TaskStep | null {
-    return this.steps(taskId).find((s) => s.id === stepId) ?? null;
+    return this.d.db
+      .query<TaskStep, [number, number]>(
+        `SELECT id, task_id AS taskId, kind, name, detail, screenshot, url, created_at AS createdAt
+         FROM task_steps WHERE id = ? AND task_id = ?`,
+      )
+      .get(stepId, taskId);
   }
 
   /**
@@ -232,6 +305,8 @@ export class Tasks {
     botId?: string;
     /** The chat it reports to; the bot's own by default. */
     conversationId?: number;
+    /** Called with its id before it starts, e.g. to record what it's for. */
+    created?: (id: number) => void;
   }): Task {
     const p = input.parent;
     const botId = input.botId ?? p?.botId ?? HATBOT_ID;
@@ -257,6 +332,7 @@ export class Tasks {
       this.d.chats.addCard(conversationId, botId, "task", `Task #${id}: ${input.title}`, {
         taskId: id,
       });
+    input.created?.(id);
     this.emit(id);
     this.start(id);
     return this.get(id) as Task;
@@ -268,7 +344,7 @@ export class Tasks {
   }
 
   /** The chat a task reports to. */
-  private conversationOf(id: number | undefined): number | null {
+  conversationOf(id: number | undefined): number | null {
     if (id === undefined) return null;
     return (
       this.d.db
@@ -520,6 +596,11 @@ export class Tasks {
     });
   }
 
+  /** Called once the services that need the tasks exist. */
+  attach(parts: Pick<TasksDeps, "proposals">) {
+    Object.assign(this.d, parts);
+  }
+
   /** What a background task's tools need. */
   toolContext(task: Task): ToolContext {
     return {
@@ -532,6 +613,9 @@ export class Tasks {
       plugins: this.d.plugins,
       attachments: this.d.attachments,
       desktop: this.d.desktop.agent,
+      proposals: this.d.proposals,
+      // The run marks `task` as it reads untrusted content.
+      tainted: () => (task.tainted ? task.taintedBy || "What started it" : null),
     };
   }
 
@@ -578,6 +662,14 @@ export class Tasks {
     this.d.db
       .query("UPDATE tasks SET tainted = 1, tainted_by = coalesce(tainted_by, ?) WHERE id = ?")
       .run(by, id);
+    this.emit(id);
+  }
+
+  /** A desktop task carrying on on another model after the first one failed (PLAN.md §5.4). */
+  setModel(id: number, model: string, from: string) {
+    this.d.db
+      .query("UPDATE tasks SET model = ?, escalated_from = ? WHERE id = ?")
+      .run(model, from, id);
     this.emit(id);
   }
 
@@ -683,7 +775,13 @@ export class Tasks {
    * write that reply again, to say what came of it. A background task's card is added now; with
    * `notify` false (a routine result), a finished one gets neither card nor notification.
    */
-  finish(id: number, status: "done" | "failed" | "cancelled", summary: string, notify = true) {
+  finish(
+    id: number,
+    status: "done" | "failed" | "cancelled",
+    summary: string,
+    notify = true,
+    { ntfy = true } = {},
+  ) {
     this.d.db
       .query("UPDATE tasks SET status = ?, summary = ?, finished_at = ? WHERE id = ?")
       .run(status, summary, this.now(), id);
@@ -713,7 +811,7 @@ export class Tasks {
     else if (tell && task.lane === "background")
       this.d.chats.addCard(conversationId, reporter, "task", text, { taskId: id });
     this.emit(id);
-    if (!tell) return;
+    if (!tell || !ntfy) return;
     void this.d.notifier.send({
       title: this.titled(task, `${word}: ${task.title}`),
       message: summary || word,

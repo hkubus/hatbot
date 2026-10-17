@@ -1,6 +1,8 @@
 import { API_PREFIX, type Health } from "@hatbot/shared";
 import { Hono } from "hono";
 import { getConnInfo } from "hono/bun";
+import { HTTPException } from "hono/http-exception";
+import { compressJson } from "./compress";
 import type { AppEnv, Deps } from "./context";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
@@ -9,6 +11,7 @@ import { checkRoutes } from "./routes/checks";
 import { desktopRoutes } from "./routes/desktop";
 import { heartbeatRoutes } from "./routes/heartbeat";
 import { memoryRoutes } from "./routes/memory";
+import { negotiationRoutes } from "./routes/negotiations";
 import { pluginRoutes } from "./routes/plugins";
 import { proposalRoutes } from "./routes/proposals";
 import { hookRoutes, scheduleRoutes } from "./routes/schedules";
@@ -24,6 +27,7 @@ export const VERSION = "0.1.0";
 export function createApp(deps: Deps) {
   const app = new Hono<AppEnv>().basePath(API_PREFIX);
 
+  app.use(compressJson);
   app.use(async (c, next) => {
     for (const [k, v] of Object.entries(deps)) c.set(k as keyof Deps, v as never);
     c.set("clientIp", clientIp(c, deps.config.trustedProxies));
@@ -45,6 +49,7 @@ export function createApp(deps: Deps) {
   app.route("/", pluginRoutes);
   app.route("/", teachRoutes);
   app.route("/", checkRoutes);
+  app.route("/", negotiationRoutes);
   app.route("/", watcherRoutes);
   app.route("/", searchRoutes);
   app.route("/", heartbeatRoutes);
@@ -52,6 +57,9 @@ export function createApp(deps: Deps) {
 
   app.notFound((c) => c.json({ error: "not found" }, 404));
   app.onError((err, c) => {
+    // Hono's own refusals, such as malformed JSON, keep their status, in the usual shape.
+    if (err instanceof HTTPException)
+      return err.res ?? c.json({ error: err.message || "invalid request" }, err.status);
     console.error(err);
     return c.json({ error: "internal error" }, 500);
   });

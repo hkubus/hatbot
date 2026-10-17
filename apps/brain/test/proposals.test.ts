@@ -1,7 +1,19 @@
 import { expect, test } from "bun:test";
 import type { Proposal, SkillStatus } from "@hatbot/shared";
 import { HATBOT } from "../src/memory/store";
-import { setUpOwner, testApp } from "./helpers";
+import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
+
+/** Starts a tidy-up and waits for the proposal it writes. */
+async function tidy(t: TestApp, cookie: string): Promise<Proposal> {
+  const before = t.proposals.list()[0]?.id ?? 0;
+  const res = await t.call("POST", "/proposals/tidy", undefined, { cookie });
+  expect(res.status).toBe(202);
+  expect(await res.json()).toEqual({ started: true });
+  return waitFor(() => {
+    const p = t.proposals.list()[0];
+    return p && p.id > before ? p : null;
+  });
+}
 
 test("a tidy-up is proposed as a diff, and applied as you in one commit", async () => {
   const t = await testApp();
@@ -26,19 +38,22 @@ test("a tidy-up is proposed as a diff, and applied as you in one commit", async 
       ],
     });
   };
-  const res = await t.call("POST", "/proposals/tidy", undefined, { cookie });
-  expect(res.status).toBe(201);
-  const p = (await res.json()) as Proposal;
+  const p = await tidy(t, cookie);
+  expect(t.events.some((e) => e.type === "proposal.updated" && e.proposal.id === p.id)).toBe(true);
   expect(p.changes.map((c) => [c.path, c.before !== null, c.after !== null])).toEqual([
     ["network.md", true, false],
     ["home.md", true, true],
   ]);
   expect(t.taskModel.creates.at(-1)?.model).toBe("claude-opus-5-5");
+  const found = async () => [...new Set((await t.memory.search("router")).map((h) => h.path))];
+  expect(await found()).toEqual(expect.arrayContaining(["home.md", "network.md"]));
 
   const applied = await t.call("POST", `/proposals/${p.id}/apply`, undefined, { cookie });
   expect(applied.status).toBe(200);
   expect(await t.memory.exists("network.md")).toBe(false);
   expect(await t.memory.read("home.md")).toContain("also the network notes");
+  // Search follows it.
+  expect(await found()).toEqual(["home.md"]);
   const [last] = await t.memory.log(1);
   expect(last).toMatchObject({ author: "You", message: "Tidy: Merge the router notes" });
   expect((await t.call("POST", `/proposals/${p.id}/apply`, undefined, { cookie })).status).toBe(
@@ -52,16 +67,24 @@ test("a proposal goes stale when memory changes under it; nothing to tidy is no 
   await t.memory.write("a.md", "# A\nold\n", HATBOT, "A");
   t.taskModel.onCreate = () =>
     JSON.stringify({ title: "T", reason: "R", changes: [{ path: "a.md", content: "# A\nnew\n" }] });
-  const p = (await (
-    await t.call("POST", "/proposals/tidy", undefined, { cookie })
-  ).json()) as Proposal;
+  const p = await tidy(t, cookie);
   await t.memory.write("a.md", "# A\nedited by hand\n", HATBOT, "Edit");
   const res = await t.call("POST", `/proposals/${p.id}/apply`, undefined, { cookie });
   expect(res.status).toBe(409);
   expect(t.proposals.get(p.id)?.status).toBe("stale");
 
+  // Nothing to tidy, or a failure: you're told.
   t.taskModel.onCreate = () => JSON.stringify({ title: "Nothing", reason: "Tidy.", changes: [] });
-  expect((await t.call("POST", "/proposals/tidy", undefined, { cookie })).status).toBe(204);
+  expect((await t.call("POST", "/proposals/tidy", undefined, { cookie })).status).toBe(202);
+  await waitFor(() => t.notifier.sent.find((n) => n.title === "Memory is tidy"));
+  t.taskModel.onCreate = () => {
+    throw new Error("overloaded");
+  };
+  expect((await t.call("POST", "/proposals/tidy", undefined, { cookie })).status).toBe(202);
+  const told = await waitFor(() =>
+    t.notifier.sent.find((n) => n.title === "The tidy-up of memory failed"),
+  );
+  expect(told.message).toContain("overloaded");
 });
 
 test("a skill whose tasks failed or needed you is flagged, and its fix replaces it", async () => {
@@ -117,8 +140,8 @@ test("a skill whose tasks failed or needed you is flagged, and its fix replaces 
     });
   };
   const res = await t.call("POST", "/skills/order-pizza/fix", undefined, { cookie });
-  expect(res.status).toBe(201);
-  const p = (await res.json()) as Proposal;
+  expect(res.status).toBe(202);
+  const p = await waitFor(() => t.proposals.list()[0]);
   expect(p).toMatchObject({ kind: "skill", skill: "order-pizza" });
   await Bun.sleep(1100);
   await t.call("POST", `/proposals/${p.id}/apply`, undefined, { cookie });

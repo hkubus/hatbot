@@ -1,10 +1,21 @@
-import { latestNoteOnly, type Task } from "@hatbot/shared";
-import { useEffect, useState } from "react";
+import { latestNoteOnly, OPEN_NEGOTIATION_STATUSES, type Task } from "@hatbot/shared";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, api } from "../api";
 import { Icon } from "../icons";
+import { Link } from "../link";
 import { LiveView, StepIcon } from "../live";
+import { LoadError, loadErrorText } from "../load";
+import { NegotiationChip } from "../negotiations";
 import { navigate } from "../router";
-import { cancelTask, loadTask, loadTasks, useStore } from "../store";
+import {
+  cancelTask,
+  HATBOT_CHAT,
+  loadNegotiations,
+  loadTask,
+  loadTasks,
+  negotiationOf,
+  useStore,
+} from "../store";
 import { ApprovalCard, isActive, Shot, StatusChip, taskLine } from "../tasks";
 import { AssistantBody } from "./Chat";
 
@@ -22,15 +33,63 @@ const stamp = (iso: string) =>
     ? time(iso)
     : `${when(iso)}, ${time(iso)}`;
 
+/** A page of finished tasks; the list pages back from the oldest shown. */
+const TASK_PAGE = 50;
+
 export function Tasks() {
   const [filter, setFilter] = useState<"active" | "done">("active");
   const [ids, setIds] = useState<number[] | null>(null);
+  const [hasOlder, setHasOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [attempt, setAttempt] = useState(0);
   const tasks = useStore((s) => s.tasks);
+  const approvals = useStore((s) => s.approvals);
+  const request = useStore((s) => s.desktop?.request ?? null);
+  const negotiations = useStore((s) => s.negotiations);
+  const waiting = useMemo(
+    () =>
+      Object.values(approvals)
+        .filter((a) => a.status === "pending")
+        .sort((a, b) => a.id - b.id),
+    [approvals],
+  );
+  const talking = useMemo(
+    () =>
+      Object.values(negotiations)
+        .filter((n) => OPEN_NEGOTIATION_STATUSES.includes(n.status))
+        .sort((a, b) => b.id - a.id),
+    [negotiations],
+  );
+  useEffect(() => void loadNegotiations().catch(() => {}), []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Retry loads again
   useEffect(() => {
     setIds(null);
-    loadTasks({ status: filter }).then(setIds, () => setIds([]));
-  }, [filter]);
+    setHasOlder(false);
+    setLoadError("");
+    loadTasks({ status: filter, limit: TASK_PAGE }).then(
+      (list) => {
+        setIds(list);
+        setHasOlder(list.length === TASK_PAGE);
+      },
+      (err) => setLoadError(loadErrorText(err)),
+    );
+  }, [filter, attempt]);
+
+  const older = async () => {
+    const before = ids?.length ? Math.min(...ids) : undefined;
+    if (!before) return;
+    setLoadingOlder(true);
+    try {
+      const list = await loadTasks({ status: filter, before, limit: TASK_PAGE });
+      setIds((s) => [...(s ?? []), ...list]);
+      setHasOlder(list.length === TASK_PAGE);
+    } catch (err) {
+      setLoadError(loadErrorText(err));
+    }
+    setLoadingOlder(false);
+  };
 
   // Tasks that start or finish while the list is open move between the two lists.
   const shown = Object.values(tasks)
@@ -41,6 +100,60 @@ export function Tasks() {
   return (
     <section className="view">
       <div className="page">
+        {(waiting.length > 0 || request) && (
+          <section className="group">
+            <h2>Waiting for you</h2>
+            <div className="group-box">
+              {request && (
+                <Link className="row row-link" to={`/tasks/${request.taskId}?live=1`}>
+                  <div className="txt">
+                    <b>Take over the desktop</b>
+                  </div>
+                  <span className="val">{request.reason}</span>
+                </Link>
+              )}
+              {waiting.map((a) => {
+                const n = a.kind === "mandate" ? negotiationOf({ negotiations }, a.id) : undefined;
+                return (
+                  <Link
+                    key={a.id}
+                    className="row row-link"
+                    to={
+                      a.taskId
+                        ? `/tasks/${a.taskId}`
+                        : n
+                          ? `/negotiations/${n.id}`
+                          : a.conversationId && a.conversationId !== HATBOT_CHAT
+                            ? `/chat/${a.conversationId}`
+                            : "/"
+                    }
+                  >
+                    <div className="txt">
+                      <b>Can I go ahead? {a.summary}</b>
+                    </div>
+                    <Icon name="chevron" />
+                  </Link>
+                );
+              })}
+            </div>
+          </section>
+        )}
+        {talking.length > 0 && (
+          <section className="group">
+            <h2>Negotiations</h2>
+            <div className="group-box">
+              {talking.map((n) => (
+                <Link key={n.id} className="row row-link" to={`/negotiations/${n.id}`}>
+                  <div className="txt">
+                    <b>{n.title}</b>
+                  </div>
+                  <NegotiationChip status={n.status} />
+                  <Icon name="chevron" />
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
         <div className="page-head">
           <div className="seg">
             <button
@@ -59,6 +172,7 @@ export function Tasks() {
             </button>
           </div>
         </div>
+        {loadError && <LoadError error={loadError} retry={() => setAttempt((n) => n + 1)} />}
         {ids && !shown.length && (
           <div className="empty">{filter === "active" ? "Nothing running." : "No tasks yet."}</div>
         )}
@@ -75,9 +189,12 @@ export function Tasks() {
               </thead>
               <tbody>
                 {shown.map((t) => (
-                  <tr key={t.id} onClick={() => navigate(`/tasks/${t.id}`)}>
+                  <tr key={t.id} className="link-row">
                     <td className="wrap">
-                      <span className="task-title">{t.title}</span>
+                      {/* The link covers the whole row. */}
+                      <Link className="task-title" to={`/tasks/${t.id}`}>
+                        {t.title}
+                      </Link>
                     </td>
                     <td>
                       <StatusChip status={t.status} />
@@ -89,6 +206,16 @@ export function Tasks() {
               </tbody>
             </table>
           </div>
+        )}
+        {filter === "done" && hasOlder && !loadError && (
+          <button
+            type="button"
+            className="btn sm ghost load-earlier"
+            disabled={loadingOlder}
+            onClick={older}
+          >
+            Older
+          </button>
         )}
       </div>
     </section>
@@ -177,17 +304,32 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   const approvals = useStore((s) => s.approvals);
   const [watch, setWatch] = useState(live);
   const [missing, setMissing] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [error, setError] = useState("");
   /** The goal being edited to run it again; null when that form is closed. */
   const [again, setAgain] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    loadTask(id).catch(() => setMissing(true));
+  const load = useCallback(() => {
+    setLoadError("");
+    loadTask(id).catch((err) => {
+      if (err instanceof ApiError && err.status === 404) setMissing(true);
+      else setLoadError(loadErrorText(err));
+    });
   }, [id]);
+  useEffect(load, [load]);
 
   if (missing) return <div className="empty">This task doesn't exist.</div>;
-  if (!task) return <section className="view" />;
+  if (!task)
+    return (
+      <section className="view">
+        {loadError && (
+          <div className="page narrow">
+            <LoadError error={loadError} retry={load} />
+          </div>
+        )}
+      </section>
+    );
 
   const active = isActive(task);
   const pending = Object.values(approvals).filter((a) => a.taskId === id && a.status === "pending");

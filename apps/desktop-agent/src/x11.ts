@@ -7,23 +7,64 @@ export class ActionError extends Error {}
 
 const display = process.env.DISPLAY ?? ":1";
 
-async function run(cmd: string[], stdin?: string): Promise<string> {
+/** Every xdotool and ffmpeg gets this long, plus what it's asked to spend, before it's killed. */
+const DEADLINE_MS = 10_000;
+
+/** Runs `cmd` and kills it at the deadline, so one hung process can't hold up the input queue. */
+export async function spawn(cmd: string[], extraMs = 0, base = DEADLINE_MS) {
   const p = Bun.spawn(cmd, {
-    stdin: stdin === undefined ? "ignore" : new TextEncoder().encode(stdin),
+    stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
     env: { ...process.env, DISPLAY: display },
   });
-  const [out, err, code] = await Promise.all([
-    new Response(p.stdout).text(),
-    new Response(p.stderr).text(),
-    p.exited,
-  ]);
-  if (code !== 0) throw new Error(`${cmd[0]} exited ${code}: ${err.trim().slice(0, 300)}`);
-  return out;
+  const limit = base + extraMs;
+  let killed = false;
+  const timer = setTimeout(() => {
+    killed = true;
+    p.kill("SIGKILL");
+  }, limit);
+  try {
+    const [out, err, code] = await Promise.all([
+      new Response(p.stdout).bytes(),
+      new Response(p.stderr).text(),
+      p.exited,
+    ]);
+    if (killed) throw new Error(`${cmd[0]} didn't finish in ${Math.round(limit / 1000)} s`);
+    return { out, err, code };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
-export const xdotool = (...args: string[]) => run(["xdotool", ...args]);
+async function run(cmd: string[], extraMs = 0): Promise<string> {
+  const { out, err, code } = await spawn(cmd, extraMs);
+  if (code !== 0) throw new Error(`${cmd[0]} exited ${code}: ${err.trim().slice(0, 300)}`);
+  return new TextDecoder().decode(out);
+}
+
+/** About how long xdotool's own sleeps and delays take for these arguments, in ms. */
+export function pacing(args: string[]): number {
+  let ms = 0;
+  args.forEach((a, i) => {
+    const n = Number(args[i + 1]) || 0;
+    if (a === "sleep") ms += n * 1000;
+    else if (a === "--delay") {
+      // Our calls put it after --repeat (key, click), or before "--" and the text (type).
+      const times =
+        args[i - 2] === "--repeat"
+          ? Number(args[i - 1])
+          : args[i + 2] === "--"
+            ? (args[i + 3] ?? "").length
+            : 1;
+      ms += n * (times || 1);
+    }
+  });
+  return ms;
+}
+
+// Half again on top: xdotool's delays come on top of its own round trips to the X server.
+export const xdotool = (...args: string[]) => run(["xdotool", ...args], pacing(args) * 1.5);
 
 export async function screenSize(): Promise<{ width: number; height: number }> {
   const [w, h] = (await xdotool("getdisplaygeometry")).trim().split(/\s+/).map(Number);
@@ -31,19 +72,52 @@ export async function screenSize(): Promise<{ width: number; height: number }> {
   return { width: w, height: h };
 }
 
+/** One frame. x11grab waits a frame interval before grabbing; at its default 30 fps that's most of the time. */
 async function grab(args: string[]): Promise<Uint8Array> {
-  const p = Bun.spawn(["ffmpeg", "-loglevel", "error", "-f", "x11grab", ...args], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [out, err, code] = await Promise.all([
-    new Response(p.stdout).bytes(),
-    new Response(p.stderr).text(),
-    p.exited,
+  const { out, err, code } = await spawn([
+    "ffmpeg",
+    "-loglevel",
+    "error",
+    "-f",
+    "x11grab",
+    "-framerate",
+    "1000",
+    ...args,
   ]);
   if (code !== 0 || !out.length)
     throw new Error(`ffmpeg exited ${code}: ${err.trim().slice(0, 300)}`);
   return out;
+}
+
+/** Whether one frame can be grabbed, for GET /health?deep=1. */
+export async function displayUp(): Promise<boolean> {
+  try {
+    const { out, code } = await spawn(
+      [
+        "ffmpeg",
+        "-loglevel",
+        "error",
+        "-f",
+        "x11grab",
+        "-framerate",
+        "1000",
+        "-video_size",
+        "1x1",
+        "-i",
+        display,
+        "-frames:v",
+        "1",
+        "-f",
+        "rawvideo",
+        "-",
+      ],
+      0,
+      3000,
+    );
+    return code === 0 && out.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 // Lossless WebP: exact pixels for the model, and about a third of PNG's size in the archive.
@@ -139,6 +213,11 @@ const REPEATS = {
   triple_click: 3,
 } as const;
 const WHEEL = { up: "4", down: "5", left: "6", right: "7" } as const;
+/** Live view frame rates: while the owner has control, and while they (or nobody) only watch. */
+export const LIVE_FPS_CONTROL = 15;
+export const LIVE_FPS_WATCHING = 5;
+/** Longer text than this is typed fast, in chunks this long; the brain's timeout for `type` assumes it. */
+const HUMAN_TYPING_CHARS = 200;
 
 /** Runs one computer toolset member (not screenshot or zoom). */
 export async function act(
@@ -212,10 +291,22 @@ async function actInner(
       await xdotool("keydown", k, "sleep", String(secs), "keyup", k);
       return {};
     }
-    case "type":
-      // A person's pace, roughly; xdotool keeps one delay for the whole string.
-      await xdotool("type", "--delay", String(between(45, 75)), "--", str(input.text, "text"));
+    case "type": {
+      const text = str(input.text, "text");
+      const chars = Array.from(text);
+      if (chars.length <= HUMAN_TYPING_CHARS) {
+        // A person's pace, roughly; xdotool keeps one delay for the whole string.
+        await xdotool("type", "--delay", String(between(45, 75)), "--", text);
+        return {};
+      }
+      // Pasting a long text in, more or less: at a person's pace 5000 characters would take minutes.
+      for (let i = 0; i < chars.length; i += HUMAN_TYPING_CHARS) {
+        if (i) await Bun.sleep(between(80, 200));
+        const chunk = chars.slice(i, i + HUMAN_TYPING_CHARS).join("");
+        await xdotool("type", "--delay", "8", "--", chunk);
+      }
       return {};
+    }
     case "cursor_position": {
       const out = await xdotool("getmouselocation", "--shell");
       const x = Number(/X=(\d+)/.exec(out)?.[1]);
@@ -297,25 +388,39 @@ async function actInner(
 }
 
 /**
- * The live view: one ffmpeg reading the display as MJPEG while anyone watches. Frames go to every subscriber.
- * ffmpeg's mpjpeg output frames each JPEG with a Content-length header.
+ * The live view: one ffmpeg reading the display as MJPEG while anyone watches. Frames go to every subscriber,
+ * except one that's the same as the last (an idle screen sends nothing). ffmpeg's mpjpeg output frames
+ * each JPEG with a Content-length header.
  */
 export class LiveCapture {
   private proc: ReturnType<typeof Bun.spawn> | null = null;
   private subscribers = new Set<(frame: Uint8Array) => void>();
+  private last: Uint8Array | null = null;
 
   constructor(
     private size: { width: number; height: number },
-    private fps = 15,
+    private fps = LIVE_FPS_WATCHING,
   ) {}
 
   subscribe(fn: (frame: Uint8Array) => void): () => void {
     this.subscribers.add(fn);
     if (!this.proc) this.start();
+    // A new watcher of a screen that isn't changing would otherwise wait for the next change.
+    else if (this.last) fn(this.last);
     return () => {
       this.subscribers.delete(fn);
       if (!this.subscribers.size) this.stop();
     };
+  }
+
+  /** Smoother while the owner has control, lighter while they only watch. */
+  setFps(fps: number) {
+    if (fps === this.fps) return;
+    this.fps = fps;
+    if (this.proc) {
+      this.stop();
+      this.start();
+    }
   }
 
   private start() {
@@ -349,6 +454,7 @@ export class LiveCapture {
   private stop() {
     this.proc?.kill();
     this.proc = null;
+    if (!this.subscribers.size) this.last = null;
   }
 
   private async read(proc: ReturnType<typeof Bun.spawn>) {
@@ -363,6 +469,8 @@ export class LiveCapture {
         const frame = takeFrame(buf);
         if (!frame) break;
         buf = buf.slice(frame.end);
+        if (this.last && Buffer.from(frame.jpeg).equals(this.last)) continue;
+        this.last = frame.jpeg;
         for (const fn of this.subscribers) fn(frame.jpeg);
       }
     }

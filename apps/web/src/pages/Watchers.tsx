@@ -2,6 +2,8 @@
 import {
   describeEvery,
   HATBOT_ID,
+  MIN_RENDER_WATCH_MINUTES,
+  minWatchMinutes,
   type WatchCondition,
   type Watcher,
   type WatcherValue,
@@ -78,6 +80,7 @@ type Form = {
   name: string;
   kind: WatchSource["kind"];
   url: string;
+  render: boolean;
   tool: string;
   input: string;
   pick: Pick;
@@ -97,6 +100,7 @@ const blank: Form = {
   name: "",
   kind: "page",
   url: "",
+  render: false,
   tool: "",
   input: "{}",
   pick: "selector",
@@ -116,6 +120,7 @@ const formOf = (w: Watcher): Form => ({
   name: w.name,
   kind: w.source.kind,
   url: w.source.url ?? "",
+  render: Boolean(w.source.render),
   tool: w.source.tool ?? "",
   input: JSON.stringify(w.source.input ?? {}, null, 2),
   pick: w.source.selector ? "selector" : w.source.path ? "path" : "page",
@@ -143,7 +148,9 @@ function bodyOf(f: Form): { source: WatchSource; condition: WatchCondition } | s
   }
   const source: WatchSource = {
     kind: f.kind,
-    ...(f.kind === "page" ? { url: f.url.trim() } : { tool: f.tool, input }),
+    ...(f.kind === "page"
+      ? { url: f.url.trim(), ...(f.render ? { render: true } : {}) }
+      : { tool: f.tool, input }),
     ...(f.pick === "selector" && f.selector.trim() ? { selector: f.selector.trim() } : {}),
     ...(f.pick === "path" && f.path.trim() ? { path: f.path.trim() } : {}),
     ...(f.pattern ? { pattern: f.pattern } : {}),
@@ -201,6 +208,9 @@ export function WatcherEdit({ id }: { id: number | null }) {
       p.tools.filter((t) => t.access === "read").map((t) => ({ ...t, plugin: p.name })),
     );
   const body = bodyOf(form);
+  // Read after its scripts run, a page comes back as HTML (no JSON path) and looks less often.
+  const rendered = form.kind === "page" && form.render;
+  const every = EVERY.filter((m) => m >= minWatchMinutes(form));
   const fields = {
     name: form.name.trim(),
     prompt: form.prompt.trim(),
@@ -343,10 +353,6 @@ export function WatcherEdit({ id }: { id: number | null }) {
                 placeholder="https://frame.work/products/laptop16"
                 onChange={(e) => set({ url: e.target.value })}
               />
-              <span className="muted hint">
-                Fetched from the desktop as plain HTML. A page that only fills in with JavaScript
-                needs a schedule instead.
-              </span>
             </label>
           ) : (
             <>
@@ -380,6 +386,23 @@ export function WatcherEdit({ id }: { id: number | null }) {
               </label>
             </>
           )}
+          {form.kind === "page" && (
+            <div className="form-row">
+              <span className="label">Run the page's scripts</span>
+              <Switch
+                on={form.render}
+                onChange={(render) =>
+                  set({
+                    render,
+                    ...(render && form.pick === "path" ? { pick: "selector" as const } : {}),
+                    ...(render && form.everyMinutes < MIN_RENDER_WATCH_MINUTES
+                      ? { everyMinutes: MIN_RENDER_WATCH_MINUTES }
+                      : {}),
+                  })
+                }
+              />
+            </div>
+          )}
           <div className="form-row">
             <span className="label">Value</span>
             <div className="seg">
@@ -389,16 +412,18 @@ export function WatcherEdit({ id }: { id: number | null }) {
                   ["path", "JSON path"],
                   ["page", form.kind === "page" ? "Whole page" : "Whole answer"],
                 ] as const
-              ).map(([pick, label]) => (
-                <button
-                  type="button"
-                  key={pick}
-                  className={form.pick === pick ? "active" : ""}
-                  onClick={() => set({ pick })}
-                >
-                  {label}
-                </button>
-              ))}
+              )
+                .filter(([pick]) => !(rendered && pick === "path"))
+                .map(([pick, label]) => (
+                  <button
+                    type="button"
+                    key={pick}
+                    className={form.pick === pick ? "active" : ""}
+                    onClick={() => set({ pick })}
+                  >
+                    {label}
+                  </button>
+                ))}
             </div>
           </div>
           {form.pick === "selector" && (
@@ -479,7 +504,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
               value={form.everyMinutes}
               onChange={(e) => set({ everyMinutes: Number(e.target.value) })}
             >
-              {(EVERY.includes(form.everyMinutes) ? EVERY : [...EVERY, form.everyMinutes])
+              {(every.includes(form.everyMinutes) ? every : [...every, form.everyMinutes])
                 .sort((a, b) => a - b)
                 .map((m) => (
                   <option key={m} value={m}>
