@@ -1,6 +1,7 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { ApiToken, Session } from "@hatbot/shared";
 import type { Db } from "../db";
+import { sameText, secretKey } from "./keys";
 import { newTotpSecret, totpUri, verifyTotp } from "./totp";
 
 export const SESSION_DAYS = 30;
@@ -8,11 +9,6 @@ export const SESSION_DAYS = 30;
 const LAST_USED_MS = 5 * 60_000;
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 const randomToken = (prefix: string) => prefix + randomBytes(32).toString("base64url");
-const sameText = (a: string, b: string) => {
-  const x = Buffer.from(a);
-  const y = Buffer.from(b);
-  return x.length === y.length && timingSafeEqual(x, y);
-};
 
 export type Principal = { kind: "session"; id: number } | { kind: "token"; id: number };
 
@@ -191,15 +187,7 @@ export class AuthService {
   }
 
   private signDevice(id: string): string {
-    if (!this.deviceKey) {
-      this.db
-        .query("INSERT INTO settings (key, value) VALUES ('device_key', ?) ON CONFLICT DO NOTHING")
-        .run(randomBytes(32).toString("hex"));
-      const row = this.db
-        .query<{ value: string }, []>("SELECT value FROM settings WHERE key = 'device_key'")
-        .get();
-      this.deviceKey = Buffer.from(row?.value ?? "", "hex");
-    }
+    this.deviceKey ??= secretKey(this.db, "device_key");
     return createHmac("sha256", this.deviceKey).update(id).digest("base64url");
   }
 

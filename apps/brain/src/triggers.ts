@@ -1,5 +1,5 @@
 // Triggers (PLAN.md §4.1, §8): signed webhooks and Uptime Kuma alerts start background tasks.
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import {
   API_PREFIX,
   HATBOT_ID,
@@ -7,6 +7,7 @@ import {
   type Trigger,
   type TriggerWithSecret,
 } from "@hatbot/shared";
+import { sameText } from "./auth/keys";
 import { orphaned } from "./bots";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
@@ -221,7 +222,7 @@ export class Triggers {
         header("x-gitea-signature");
       want = mac(body);
     }
-    if (!sig || !same(sig.toLowerCase(), want)) return { ok: false as const };
+    if (!sig || !sameText(sig.toLowerCase(), want)) return { ok: false as const };
     // The same signed body again is a replay. A forge's delivery id isn't signed, so it can't make a
     // body new; it also catches a forge sending one delivery again. Real events differ in their own
     // ids and times, so two never share a body.
@@ -235,7 +236,7 @@ export class Triggers {
   verifyKuma(id: number, authorization: string | undefined): boolean {
     const secret = this.secretOf(id, "kuma");
     const got = authorization?.replace(/^Bearer\s+/i, "").trim();
-    return Boolean(secret && got && same(got, secret));
+    return Boolean(secret && got && sameText(got, secret));
   }
 
   /**
@@ -560,12 +561,6 @@ export class Triggers {
 }
 
 const newSecret = () => randomBytes(24).toString("base64url");
-
-function same(a: string, b: string): boolean {
-  const x = Buffer.from(a);
-  const y = Buffer.from(b);
-  return x.length === y.length && timingSafeEqual(x, y);
-}
 
 /**
  * An Uptime Kuma alert in two parts: what Kuma itself says (the monitor, its type and address, the
