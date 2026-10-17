@@ -165,7 +165,8 @@ const whose = (botId: string, bot?: Bot, bots?: Bots) =>
  */
 function authorOf(ctx: ToolContext, path: string) {
   const id = ctx.bot?.id ?? HATBOT_ID;
-  const theirs = /^bots\/([^/]+)\//.exec(path.replace(/^\.\//, ""))?.[1];
+  // The path as it lands, so "notes/../bots/x/…" counts as bots/x.
+  const theirs = /^bots\/([^/]+)\//.exec(ctx.memory.resolve(path).rel)?.[1];
   if (theirs && `bots/${theirs}` !== botFolder(id))
     throw new MemoryError(
       `${path} is in ${ctx.bots?.nameOf(theirs) ?? theirs}'s own memory folder; leave it to them.`,

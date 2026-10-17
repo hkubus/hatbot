@@ -1,9 +1,12 @@
 // Untrusted content (PLAN.md §6.1): what taints a chat or task, and the wrappers it's read in.
 import { expect, test } from "bun:test";
+import type { Bot } from "@hatbot/shared";
 import { z } from "zod";
 import { safeToRun } from "../src/agent/review";
 import { screenPage } from "../src/agent/screening";
+import { runTool } from "../src/agent/tools";
 import { tagJson, tagText, untrustedBlock } from "../src/agent/untrusted";
+import { EventBus } from "../src/events";
 import { definePlugin, PluginError, ready, tool } from "../src/plugins/plugin";
 import { runPluginTool } from "../src/plugins/registry";
 import { FakeModel, toolUse } from "./fake-model";
@@ -110,4 +113,48 @@ test("the heartbeat's findings can't close their block", async () => {
   await t.heartbeat.run();
   const triage = String(t.taskModel.creates.at(-1)?.messages[0]?.content);
   expect(count(triage, "</findings_json>")).toBe(1);
+});
+
+test("another bot's folder can't be written through a path that isn't normalised", async () => {
+  const t = await testApp();
+  const coder = t.bots.create({
+    name: "Coder",
+    instructions: "You work on code.",
+    chatModel: null,
+    chatEffort: null,
+    plugins: null,
+  });
+  const as = (bot: Bot) => ({
+    db: t.db,
+    memory: t.memory,
+    events: new EventBus(),
+    bot,
+    bots: t.bots,
+  });
+  for (const path of [
+    "notes/../bots/coder/rules.md",
+    "./bots/coder/rules.md",
+    ".//bots/coder/rules.md",
+    "bots//coder/rules.md",
+  ]) {
+    const write = await runTool(
+      "memory_write",
+      { path, content: "x", reason: "r" },
+      as(t.bots.hatbot()),
+    );
+    expect(write.isError).toBe(true);
+    expect(write.content).toContain("Coder's own memory folder");
+    expect(
+      (await runTool("memory_delete", { path, reason: "r" }, as(t.bots.hatbot()))).isError,
+    ).toBe(true);
+  }
+  expect(await t.memory.exists("bots/coder/rules.md")).toBe(false);
+  // Its own folder, however it's written.
+  const own = await runTool(
+    "memory_write",
+    { path: "notes/../bots/coder/rules.md", content: "x", reason: "r" },
+    as(coder),
+  );
+  expect(own.isError).toBe(false);
+  expect(await t.memory.read("bots/coder/rules.md")).toBe("x\n");
 });
