@@ -243,6 +243,15 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     };
     void (n ? nav.setAppBadge?.(n) : nav.clearAppBadge?.())?.catch(() => {});
   }, [unread, pending]);
+  // Signed out: nothing is waiting for you any more.
+  useEffect(
+    () => () => {
+      (navigator as Navigator & { clearAppBadge?: () => Promise<void> })
+        .clearAppBadge?.()
+        .catch(() => {});
+    },
+    [],
+  );
 
   // Cmd/Ctrl-K: Search. Escape: closes the chat switcher, else the live panel.
   useEffect(() => {

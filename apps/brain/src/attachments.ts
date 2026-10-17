@@ -181,6 +181,24 @@ export class Attachments {
     return row ? plain(row) : null;
   }
 
+  /**
+   * Whether the file may be kept in the browser's cache: not one from an incognito conversation, nor
+   * one uploaded and not yet sent, which may be going to one.
+   */
+  cacheable(id: number): boolean {
+    const row = this.d.db
+      .query<
+        { message_id: number | null; task_id: number | null; incognito: number | null },
+        [number]
+      >(
+        `SELECT a.message_id, a.task_id, m.incognito FROM attachments a
+         LEFT JOIN messages m ON m.id = a.message_id WHERE a.id = ?`,
+      )
+      .get(id);
+    if (!row) return false;
+    return row.message_id !== null ? row.incognito === 0 : row.task_id !== null;
+  }
+
   /** The file's bytes on disk, or null. */
   file(id: number) {
     const row = this.row(id);

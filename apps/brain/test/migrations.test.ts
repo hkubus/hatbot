@@ -44,6 +44,44 @@ test("migration 20 (bots) runs on a database with a thread, tasks and approvals"
   });
 });
 
+test("migration 34 keeps attachments, and their ids aren't given out again", () => {
+  const fresh = at(33);
+  migrate(fresh);
+  expect(
+    fresh
+      .query<{ id: number }, []>(
+        `INSERT INTO attachments (name, media_type, size, path, sender, created_at)
+         VALUES ('c', 'text/plain', 1, '', 'owner', 'now') RETURNING id`,
+      )
+      .get()?.id,
+  ).toBe(1);
+
+  const db = at(33);
+  const now = "2026-10-01T00:00:00Z";
+  db.exec(`INSERT INTO messages (role, text, status, created_at, kind)
+    VALUES ('user', 'hi', 'done', '${now}', 'text')`);
+  db.exec(`INSERT INTO attachments (id, name, media_type, size, path, sender, created_at, for_chat)
+    VALUES (1, 'a.png', 'image/png', 3, 'files/a', 'owner', '${now}', 0),
+      (2, 'b.pdf', 'application/pdf', 4, 'files/b', 'hatbot', '${now}', 1)`);
+  migrate(db);
+  expect(db.query("SELECT id, name, for_chat FROM attachments ORDER BY id").all()).toEqual([
+    { id: 1, name: "a.png", for_chat: 0 },
+    { id: 2, name: "b.pdf", for_chat: 1 },
+  ]);
+  const add = () =>
+    db
+      .query<{ id: number }, []>(
+        `INSERT INTO attachments (name, media_type, size, path, sender, created_at)
+         VALUES ('c', 'text/plain', 1, '', 'owner', '${now}') RETURNING id`,
+      )
+      .get()?.id ?? 0;
+  // Ones deleted before the migration may have had higher ids: new ones start well past.
+  const first = add();
+  expect(first).toBeGreaterThan(1000);
+  db.exec(`DELETE FROM attachments WHERE id = ${first}`);
+  expect(add()).toBe(first + 1);
+});
+
 test("migration 22 puts an ended task's result in the place of the reply that started it", () => {
   const db = at(21);
   const now = "2026-10-01T00:00:00Z";

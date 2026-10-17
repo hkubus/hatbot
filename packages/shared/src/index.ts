@@ -46,6 +46,26 @@ export type CreateTokenResponse = ApiToken & { token: string };
 
 export type Me = { setupDone: boolean; authenticated: boolean };
 
+/** Your password and a current code: what changing the password or the authenticator needs. */
+export const ConfirmOwner = z.object({
+  password: z.string().min(1).max(1024),
+  totp: z.string().regex(/^\d{6}$/),
+});
+export const ChangePassword = ConfirmOwner.extend({ newPassword: z.string().min(12).max(1024) });
+/** A code from the new authenticator, which makes it the one Hatbot asks for. */
+export const FinishTotpChange = z.object({ totp: z.string().regex(/^\d{6}$/) });
+/** A browser signed in with the session cookie. */
+export type Session = {
+  id: number;
+  userAgent: string | null;
+  createdAt: string;
+  expiresAt: string;
+  /** The one asking. */
+  current: boolean;
+};
+/** How many other sessions and tokens a change signed out. */
+export type SignedOutOthers = { ok: true; ended: number };
+
 export type ApiError = { error: string };
 
 export const PostMessage = z
@@ -480,8 +500,11 @@ export type UpdateStatus = {
   notes: string[];
 };
 export type UpdateInfo = {
-  /** Where updates come from; null until deploy.sh sets it up. */
-  source: { url: string; branch: string } | null;
+  /**
+   * Where updates come from; null until deploy.sh sets it up. `signed`: only commits signed by your key
+   * are deployed (HATBOT_UPDATE_SIGNERS); absent from a brain-deploy.sh older than that.
+   */
+  source: { url: string; branch: string; signed?: boolean } | null;
   /** The running release. */
   current: { sha?: string; subject?: string; deployedAt?: string } | null;
   /** The last or current update. */

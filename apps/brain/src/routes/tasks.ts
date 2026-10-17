@@ -4,9 +4,11 @@ import { z } from "zod";
 import { approvableFromNotification } from "../approvals";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
+import { pauseAll } from "./admin";
 import { json, query } from "./util";
 
 const Rerun = z.object({ goal: z.string().max(8000).optional() });
+const TokenPause = z.object({ exp: z.number().int(), sig: z.string().min(1).max(200) });
 
 export const taskRoutes = new Hono<AppEnv>()
   .use("/tasks", requireAuth)
@@ -75,6 +77,8 @@ export const taskRoutes = new Hono<AppEnv>()
       headers: {
         "content-type": "image/webp",
         "cache-control": "private, max-age=31536000, immutable",
+        "x-content-type-options": "nosniff",
+        "cross-origin-resource-policy": "same-origin",
       },
     });
   });
@@ -93,6 +97,14 @@ export const approvalRoutes = new Hono<AppEnv>()
     const approval = c.var.approvals.decide(approvalId, decision, "ntfy");
     if (!approval) return c.json({ error: "already decided" }, 409);
     return c.json({ ok: true, status: approval.status });
+  })
+  // A notification's Pause all: no session either. Pausing is always safe, and resuming needs you.
+  .post("/pause-all/token", json(TokenPause), (c) => {
+    const { exp, sig } = c.req.valid("json");
+    if (!c.var.approvals.verifyPause(exp, sig)) return c.json({ error: "invalid or expired" }, 403);
+    pauseAll(c.var);
+    console.log("paused from a notification");
+    return c.json({ paused: true });
   })
   .use("/approvals", requireAuth)
   .use("/approvals/*", requireAuth)

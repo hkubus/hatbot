@@ -260,6 +260,18 @@ export class Approvals {
     return got.length === want.length && timingSafeEqual(got, want);
   }
 
+  /** The Pause all button's token, signed apart from any decision so it can't stand for one. */
+  signPause(exp: number): string {
+    return createHmac("sha256", this.key).update(`pause-all:${exp}`).digest("base64url");
+  }
+
+  verifyPause(exp: number, sig: string): boolean {
+    if (exp * 1000 < this.clock()) return false;
+    const want = Buffer.from(this.signPause(exp));
+    const got = Buffer.from(sig);
+    return got.length === want.length && timingSafeEqual(got, want);
+  }
+
   private async notify(a: Approval) {
     const open = `${this.publicUrl}/?approval=${a.id}`;
     const exp = Math.floor(Date.parse(a.expiresAt) / 1000);
@@ -272,6 +284,15 @@ export class Approvals {
       body: JSON.stringify({ decision, exp, sig: this.sign(a.id, decision, exp) }),
       clear: true,
     });
+    // Stopping everything is always safe, so it's offered on every approval, even where deciding isn't.
+    const pause = {
+      action: "http" as const,
+      label: "Pause all",
+      url: `${this.publicUrl}/api/v1/pause-all/token`,
+      method: "POST" as const,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ exp, sig: this.signPause(exp) }),
+    };
     // A long summary (a whole command) is cut in the title, so the message has it in full.
     const who = a.botId === HATBOT_ID ? "" : `${this.bots?.nameOf(a.botId) ?? a.botId} · `;
     const title = `${who}Approve: ${a.summary}`;
@@ -288,8 +309,8 @@ export class Approvals {
       priority: 4,
       click: open,
       actions: approvableFromNotification(a.kind)
-        ? [button("approve"), button("deny")]
-        : [{ action: "view", label: "Open in Hatbot", url: open }, button("deny")],
+        ? [button("approve"), button("deny"), pause]
+        : [{ action: "view", label: "Open in Hatbot", url: open }, button("deny"), pause],
     });
   }
 }

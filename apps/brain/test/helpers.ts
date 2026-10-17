@@ -242,6 +242,7 @@ export async function testApp(
     proxmox,
     updates,
     ntfy: null,
+    auth,
     ping,
     fetch: async (url) =>
       url === `${ORIGIN}/api/v1/health`
@@ -295,6 +296,7 @@ export async function testApp(
     app,
     db,
     auth,
+    loginLimits,
     memory,
     model,
     taskModel,
@@ -324,6 +326,8 @@ export async function testApp(
     checks,
     ping,
     storage,
+    updates,
+    proxmox,
     updateDir,
     events: seen,
     call,

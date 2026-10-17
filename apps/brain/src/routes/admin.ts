@@ -1,9 +1,18 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware";
-import type { AppEnv } from "../context";
+import type { AppEnv, Deps } from "../context";
 import { SettingsPatch } from "../settings";
 import { json, query } from "./util";
+
+/** The kill switch (PLAN.md §6.5): from Settings, or a notification's Pause all. */
+export function pauseAll(v: Pick<Deps, "settings" | "chats" | "tasks" | "desktop" | "events">) {
+  v.settings.update({ paused: true });
+  v.chats.abortAll();
+  v.tasks.cancelAll();
+  void v.desktop.setPaused(true);
+  v.events.emit({ type: "paused", paused: true });
+}
 
 export const adminRoutes = new Hono<AppEnv>()
   .use("/spend/*", requireAuth)
@@ -40,11 +49,7 @@ export const adminRoutes = new Hono<AppEnv>()
   })
   // Kill switch (PLAN.md §6.5). Resume is a separate, deliberate call.
   .post("/pause-all", (c) => {
-    c.var.settings.update({ paused: true });
-    c.var.chats.abortAll();
-    c.var.tasks.cancelAll();
-    void c.var.desktop.setPaused(true);
-    c.var.events.emit({ type: "paused", paused: true });
+    pauseAll(c.var);
     return c.json({ paused: true });
   })
   .post("/resume", (c) => {

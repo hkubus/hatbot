@@ -59,14 +59,18 @@ export const streamRoutes = new Hono<AppEnv>().get(
     if (principal.kind === "session" && c.req.header("origin") !== c.var.config.publicUrl) {
       return c.json({ error: "bad origin" }, 403);
     }
+    c.set("principal", principal);
     await next();
   },
   upgradeWebSocket((c) => {
-    const { events, settings } = (c as Context<AppEnv>).var;
+    const { events, settings, auth, principal } = (c as Context<AppEnv>).var;
     let off: (() => void) | undefined;
     let batch: ReturnType<typeof batchText> | undefined;
+    let forget: (() => void) | undefined;
     return {
       onOpen(_, ws) {
+        // Signing out or revoking the token ends the socket too.
+        forget = auth.onEnd(principal, () => ws.close(1008, "Signed out"));
         // Compressed where the client takes it (main.ts): JSON shrinks to a fraction.
         const send = (e: unknown) => ws.send(JSON.stringify(e), { compress: true });
         send({ type: "paused", paused: settings.get().paused });
@@ -76,6 +80,7 @@ export const streamRoutes = new Hono<AppEnv>().get(
       onClose() {
         off?.();
         batch?.stop();
+        forget?.();
       },
     };
   }),

@@ -51,7 +51,8 @@ else
   def_url=${HATBOT_PUBLIC_URL:-}
   def_proxies=${HATBOT_TRUSTED_PROXIES:-}
   url='' proxies=''
-  until [[ ${url:-$def_url} == http*://* ]]; do
+  # Only the scheme and host: the brain compares it with browsers' Origin, and refuses a path.
+  until [[ ${url:-$def_url} =~ ^https?://[^/?#@]+/?$ ]]; do
     read -r -p "   Public URL of the web app, e.g. https://hatbot.example.com${def_url:+ [$def_url]}: " url ||
       die "the web app's public URL is needed"
   done
@@ -90,14 +91,27 @@ fi
 if [[ -z ${NTFY_URL:-} ]] && pct exec "$BRAIN_ID" -- sh -c \
   'grep -qs "^NTFY_URL=" /etc/hatbot/ntfy.env && ! grep -qs "^NTFY_URL=http://127.0.0.1:8081" /etc/hatbot/ntfy.env'; then
   ok "keeping /etc/hatbot/ntfy.env (set NTFY_URL to change it)"
+  if pct exec "$BRAIN_ID" -- grep -qsxE 'NTFY_TOPIC=(hatbot)?' /etc/hatbot/ntfy.env; then
+    warn "the ntfy topic is the old shared default; run deploy.sh with NTFY_URL set to pick a random one"
+  fi
 else
   ntfy_url='' topic='' token=''
   read -r -p "   URL of your ntfy server (empty to skip) [${NTFY_URL:-}]: " ntfy_url || true
   ntfy_url=${ntfy_url:-${NTFY_URL:-}}
   ntfy_url=${ntfy_url%/}
   if [[ -n $ntfy_url ]]; then
-    read -r -p "   ntfy topic [hatbot]: " topic || true
-    read -r -s -p "   ntfy access token of a user that may publish to it (empty for none): " token || true
+    # Whoever reads the topic sees every notification and can press its Approve buttons, so the
+    # suggestion is one nobody can guess.
+    def_topic=hatbot-$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')
+    read -r -p "   ntfy topic [$def_topic]: " topic || true
+    until [[ ${topic:-$def_topic} =~ ^[-_A-Za-z0-9]{1,64}$ ]]; do
+      read -r -p "   only letters, digits, - and _ [$def_topic]: " topic || true
+    done
+    topic=${topic:-$def_topic}
+    if ((${#topic} < 20)); then
+      warn "a short topic can be guessed; on a server that lets anyone read, anyone could approve for you"
+    fi
+    read -r -s -p "   ntfy access token of a user that may publish to it (recommended): " token || true
     echo
     # Checked from the brain, which is what has to reach it. The token goes over stdin.
     if [[ -n $token ]]; then
@@ -112,9 +126,14 @@ else
     else
       warn "the brain can't reach $ntfy_url; saving it anyway"
     fi
+    [[ -n $token ]] || warn "no token: the server must let anyone publish to the topic, so a notification that looks like Hatbot's may not be"
+    # A server that lets anyone read the topic shows them every notification, Approve buttons included.
+    if pct exec "$BRAIN_ID" -- curl -fsS -m 10 -o /dev/null "$ntfy_url/$topic/json?poll=1&since=$(date +%s)" 2>/dev/null; then
+      warn "$ntfy_url lets anyone read the topic; allow only your ntfy user to read it (ntfy's access control)"
+    fi
     push_secret "$BRAIN_ID" /etc/hatbot/ntfy.env <<EOF
 NTFY_URL=$ntfy_url
-NTFY_TOPIC=${topic:-hatbot}
+NTFY_TOPIC=$topic
 NTFY_TOKEN=$token
 EOF
     unset token
@@ -127,6 +146,9 @@ fi
 # service never sees the token).
 if [[ -z ${HATBOT_GIT_URL:-} ]] && ct_has_file "$BRAIN_ID" /etc/hatbot/update.env; then
   ok "keeping /etc/hatbot/update.env (set HATBOT_GIT_URL to change it)"
+  if ! pct exec "$BRAIN_ID" -- grep -qs '^HATBOT_UPDATE_SIGNERS=.' /etc/hatbot/update.env; then
+    warn "Update deploys any commit on the branch; run deploy.sh with HATBOT_GIT_URL set to give it your signing key"
+  fi
 else
   def_git=${HATBOT_GIT_URL:-$src_remote}
   git_url='' git_branch='' git_user='' git_token=''
@@ -155,11 +177,27 @@ else
     else
       warn "the brain can't read $git_branch from $git_url; saving it anyway"
     fi
+    # An update runs the new commit's brain-deploy.sh as root, so only commits signed with your key
+    # are deployed once there is one (README.md, "Signed commits only").
+    signers=$(pct exec "$BRAIN_ID" -- sh -c 'grep -s "^HATBOT_UPDATE_SIGNERS=." /etc/hatbot/update.env || true')
+    if [[ -n $signers ]]; then
+      ok "keeping the commit signature check ($signers)"
+    else
+      signing_key=''
+      read -r -p "   SSH public key you sign commits with, so only those are deployed (empty: any commit): " signing_key || true
+      if [[ $signing_key =~ ^(ssh-|ecdsa-|sk-)[^[:space:]]+[[:space:]]+[A-Za-z0-9+/=]+ ]]; then
+        printf 'owner namespaces="git" %s\n' "$signing_key" | push_secret "$BRAIN_ID" /etc/hatbot/allowed_signers
+        signers=HATBOT_UPDATE_SIGNERS=/etc/hatbot/allowed_signers
+      elif [[ -n $signing_key ]]; then
+        warn "that isn't an SSH public key; Update deploys any commit on $git_branch"
+      else
+        warn "Update deploys any commit on $git_branch, so whoever can push to it can run code on the brain"
+      fi
+    fi
     {
       printf 'HATBOT_GIT_URL=%q\nHATBOT_GIT_BRANCH=%q\nHATBOT_GIT_USER=%q\nHATBOT_GIT_TOKEN=%q\n' \
         "$git_url" "$git_branch" "$git_user" "$git_token"
-      # Kept from the file this replaces: commit signature checks (README.md).
-      pct exec "$BRAIN_ID" -- sh -c 'grep -s "^HATBOT_UPDATE_SIGNERS=" /etc/hatbot/update.env || true'
+      [[ -z $signers ]] || printf '%s\n' "$signers"
     } | push_secret "$BRAIN_ID" /etc/hatbot/update.env
     unset git_token
   elif [[ -n $git_url ]]; then

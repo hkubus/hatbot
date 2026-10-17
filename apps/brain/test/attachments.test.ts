@@ -155,6 +155,61 @@ test("the estimate before a request counts images and PDFs by size, not their ba
   expect(tokens).toBeLessThan(expected + 50);
 });
 
+test("a file is checked again each time it's shown, and an incognito one isn't kept", async () => {
+  const chat = new FakeModel([{ content: [text("A cat.")] }, { content: [text("Shh.")] }]);
+  const t = await testApp(chat);
+  const { cookie } = await setUpOwner(t);
+  const get = (id: number, headers: Record<string, string> = {}) =>
+    t.app.request(`/api/v1/attachments/${id}`, { headers: { cookie, ...headers } });
+  const send = async (incognito: boolean) => {
+    const a = (await (await upload(t, cookie, new File([PNG], "cat.png"))).json()) as Attachment;
+    // Not sent yet: it may be going to an incognito conversation.
+    expect((await get(a.id)).headers.get("cache-control")).toBe("no-store");
+    await t.call(
+      "POST",
+      "/thread/messages",
+      { text: "", attachmentIds: [a.id], incognito },
+      { cookie },
+    );
+    await t.thread.idle();
+    return a;
+  };
+
+  const kept = await send(false);
+  const first = await get(kept.id);
+  expect(first.headers.get("cache-control")).toBe("private, no-cache");
+  const etag = first.headers.get("etag") ?? "";
+  expect(etag).toStartWith(`"${kept.id}-`);
+  const again = await get(kept.id, { "if-none-match": etag });
+  expect(again.status).toBe(304);
+
+  const secret = await send(true);
+  const shown = await get(secret.id);
+  expect(shown.headers.get("cache-control")).toBe("no-store");
+  expect(shown.headers.get("etag")).toBeNull();
+  // Leaving incognito deletes it, and the id isn't given to the next file.
+  await t.call("DELETE", "/thread/incognito", undefined, { cookie });
+  expect((await get(secret.id)).status).toBe(404);
+  const next = (await (await upload(t, cookie, new File([PNG], "dog.png"))).json()) as Attachment;
+  expect(next.id).toBeGreaterThan(secret.id);
+});
+
+test("a name in any language is kept in the download's filename*", async () => {
+  const t = await testApp();
+  const { cookie } = await setUpOwner(t);
+  const name = "Zażółć 'gęślą' (1).pdf";
+  const a = (await (
+    await upload(t, cookie, new File(["%PDF-1.4"], name, { type: "application/pdf" }))
+  ).json()) as Attachment;
+  const res = await t.app.request(`/api/v1/attachments/${a.id}?download`, { headers: { cookie } });
+  const header = res.headers.get("content-disposition") ?? "";
+  expect(header).toStartWith(`attachment; filename="Za____ 'g__l_' (1).pdf"`);
+  const encoded = /filename\*=UTF-8''(\S+)$/.exec(header)?.[1] ?? "";
+  expect(encoded).toBe("Za%C5%BC%C3%B3%C5%82%C4%87%20%27g%C4%99%C5%9Bl%C4%85%27%20%281%29.pdf");
+  expect(decodeURIComponent(encoded)).toBe(name);
+  expect(res.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+});
+
 test("downloads: images inline, anything else as a file, never sniffed", async () => {
   const t = await testApp();
   const { cookie } = await setUpOwner(t);

@@ -172,8 +172,11 @@ EOF
     (
       # shellcheck source=/dev/null
       source /etc/hatbot/update.env
+      signed=false
+      [[ -z ${HATBOT_UPDATE_SIGNERS:-} ]] || signed=true
       jq -n --arg url "${HATBOT_GIT_URL:-}" --arg branch "${HATBOT_GIT_BRANCH:-main}" \
-        '{url: $url, branch: $branch} | with_entries(select(.value != ""))'
+        --argjson signed "$signed" \
+        '{url: $url, branch: $branch, signed: $signed} | with_entries(select(.value != ""))'
     ) >/var/lib/hatbot-update/source.json
   else
     rm -f /var/lib/hatbot-update/source.json

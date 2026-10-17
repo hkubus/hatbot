@@ -56,10 +56,12 @@ Run this on the host for the first install, and whenever the host-side scripts c
 The first run asks for:
 - the web app's public URL and your reverse proxy's IP,
 - the Anthropic API key,
-- your ntfy server's URL, topic and access token (the token's user needs write access to the topic),
-- the git repository the Update button pulls from: an https URL and a branch (the repository is public, so leave the token empty; a private one needs a token with `read:repository`).
+- your ntfy server's URL, topic and access token (the token's user needs write access to the topic). It suggests a random topic: whoever can read the topic sees every notification and can press its Approve buttons, so on your ntfy server allow only your own user to read it,
+- the git repository the Update button pulls from: an https URL and a branch (the repository is public, so leave the token empty; a private one needs a token with `read:repository`), and the SSH public key you sign commits with (see "Signed commits only" below).
 
  Then it prints a setup code. Open `https://<your hatbot host>/setup` and enter the code to set your password and TOTP. The code changes whenever the brain restarts before setup is done. To read the current one, run `pct exec <brain> -- journalctl -u hatbot-brain | grep 'setup code'`.
+
+To change the password or the authenticator, use **Settings → Password and sign-ins**; either change signs out every other browser and app. If you've lost them, `./reset-login.sh` on the host forgets both, signs out everything, restarts the brain and prints a new setup code.
 
 Each deploy is a new release in `/var/lib/hatbot/releases` inside the brain, and `/var/lib/hatbot/app` links to the live one. Before switching, the brain stops and its database is copied into the new release (`hatbot.sqlite.before`). If the new release fails its health check, the previous one goes back live with that copy of the database, so a migration it can't read is undone. The last 3 are kept. To change the URL or proxy later, run with `HATBOT_PUBLIC_URL=… HATBOT_TRUSTED_PROXIES=… ./deploy.sh …`; for ntfy, set `NTFY_URL=…`; for updates, `HATBOT_GIT_URL=…`.
 
@@ -73,16 +75,16 @@ After that, **Settings → Updates → Update** pulls the branch and deploys it:
 - It doesn't touch the host. If a commit changes host-side scripts (`host-setup.sh`, `deploy.sh`, `desktop-deploy.sh` and so on), Settings says so; run `deploy.sh` on the host for those.
 - Logs: `/var/lib/hatbot-update/last.log` on the brain, and `journalctl -u hatbot-desktop-agent-update` on the desktop.
 
-### Signed commits only (optional)
+### Signed commits only
 
-An update runs the new commit's `brain-deploy.sh` as root on the brain, so whoever can push to the branch can run code there. To deploy only commits you signed with an SSH key, put the key in an allowed signers file on the brain and point `update.env` at it:
+An update runs the new commit's `brain-deploy.sh` as root on the brain, so whoever can push to the branch can run code there. To deploy only commits you signed with an SSH key, give `deploy.sh` that key's public half when it asks (or run it with `HATBOT_GIT_URL=…` to be asked again). It writes `/etc/hatbot/allowed_signers` on the brain and points `update.env` at it; to do it by hand:
 
 ```sh
 pct exec <brain> -- sh -c 'echo "you@example.com namespaces=\"git\" ssh-ed25519 AAAA…" > /etc/hatbot/allowed_signers'
 pct exec <brain> -- sh -c 'echo HATBOT_UPDATE_SIGNERS=/etc/hatbot/allowed_signers >> /etc/hatbot/update.env'
 ```
 
-Sign your commits (`git config gpg.format ssh`, `git config user.signingkey ~/.ssh/id_ed25519.pub`, `git config commit.gpgsign true`). From then on an update whose newest commit fails `git verify-commit` stops before deploying anything, and Settings says why. The check is in `hatbot-update` itself, so it starts working after the next update (or deploy) installs this version of it. `deploy.sh` keeps the line when it rewrites `update.env`.
+Until there's a key, Check everything warns under "Last update". Sign your commits (`git config gpg.format ssh`, `git config user.signingkey ~/.ssh/id_ed25519.pub`, `git config commit.gpgsign true`). From then on an update whose newest commit fails `git verify-commit` stops before deploying anything, and Settings says why. The check is in `hatbot-update` itself, so it starts working after the next update (or deploy) installs this version of it. `deploy.sh` keeps the line when it rewrites `update.env`.
 
 ## Commands in your containers (optional)
 

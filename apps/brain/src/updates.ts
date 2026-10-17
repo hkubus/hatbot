@@ -23,11 +23,17 @@ export class Updates {
   ) {}
 
   info(): UpdateInfo {
-    const source = readJson<{ url?: string; branch?: string }>(
+    const source = readJson<{ url?: string; branch?: string; signed?: boolean }>(
       join(this.config.updateDir, "source.json"),
     );
     return {
-      source: source?.url ? { url: source.url, branch: source.branch ?? "main" } : null,
+      source: source?.url
+        ? {
+            url: source.url,
+            branch: source.branch ?? "main",
+            ...(typeof source.signed === "boolean" ? { signed: source.signed } : {}),
+          }
+        : null,
       current: readJson(this.config.releaseFile),
       status: readJson<UpdateStatus>(join(this.config.updateDir, "status.json")),
       requested: existsSync(this.config.updateRequest),

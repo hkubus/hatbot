@@ -57,3 +57,27 @@ test("won't restart the brain under a running task", async () => {
   expect(res.status).toBe(409);
   expect(((await res.json()) as { error: string }).error).toMatch(/task is running/);
 });
+
+test("Check everything warns while Update deploys commits nobody signed", async () => {
+  const { t, write, get } = await setup();
+  const check = async () =>
+    (await t.checks.run()).results.find((r) => r.id === "updates") as {
+      state: string;
+      detail: string;
+    };
+  write("source.json", { url: "https://git.example/me/hatbot.git", branch: "main", signed: false });
+  expect((await get()).source).toEqual({
+    url: "https://git.example/me/hatbot.git",
+    branch: "main",
+    signed: false,
+  });
+  const unsigned = await check();
+  expect(unsigned.state).toBe("warn");
+  expect(unsigned.detail).toContain("whoever can push to it can run code on the brain");
+  write("source.json", { url: "https://git.example/me/hatbot.git", branch: "main", signed: true });
+  expect((await check()).state).toBe("ok");
+  // An older brain-deploy.sh doesn't say, which isn't taken for either.
+  write("source.json", { url: "https://git.example/me/hatbot.git", branch: "main" });
+  expect((await get()).source?.signed).toBeUndefined();
+  expect((await check()).state).toBe("ok");
+});

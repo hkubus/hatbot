@@ -115,4 +115,8 @@ test("the web app's files go out precompressed, and unchanged ones as a 304", as
   expect(again.headers.get("content-security-policy")).toContain("default-src 'self'");
   writeFileSync(join(dir, "index.html"), "<!doctype html><title>Hatbot 2</title>");
   expect(get("/", { "if-none-match": etag }).status).toBe(200);
+  // A path that doesn't decode is a bad request, not an error page with a stack trace.
+  const bad = get("/%E0%A4%A");
+  expect(bad.status).toBe(400);
+  expect(await bad.text()).toBe("Bad request");
 });

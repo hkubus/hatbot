@@ -4,6 +4,7 @@ import type { Approval, CheckReport, CheckResult, ChecksInfo, StorageInfo } from
 import { type ModelClient, modelErrorText } from "./agent/model";
 import type { Approvals } from "./approvals";
 import type { Archive } from "./archive";
+import type { AuthService } from "./auth/service";
 import type { Config } from "./config";
 import type { Db } from "./db";
 import { migrations } from "./db/migrations";
@@ -11,6 +12,7 @@ import { inWorker } from "./db/worker";
 import { DesktopError } from "./desktop/client";
 import type { Desktop } from "./desktop/service";
 import type { MemoryStore } from "./memory/store";
+import { guessableTopic, type NtfyNotifier } from "./notify";
 import type { DeadManPing } from "./ping";
 import type { Plugins } from "./plugins/registry";
 import type { Proxmox } from "./proxmox";
@@ -45,7 +47,12 @@ export type ChecksDeps = {
   proxmox: Proxmox;
   updates: Updates;
   /** Your ntfy server; null when it isn't set up. */
-  ntfy: { configured: boolean; health(): Promise<void> } | null;
+  ntfy: Pick<
+    NtfyNotifier,
+    "configured" | "topic" | "hasToken" | "health" | "readableByAnyone"
+  > | null;
+  /** For a reverse proxy that isn't in HATBOT_TRUSTED_PROXIES. */
+  auth?: Pick<AuthService, "untrustedProxy">;
   /** The dead-man ping; absent in tests that don't need it. */
   ping?: Pick<DeadManPing, "configured" | "lastPing">;
   /** False when ANTHROPIC_API_KEY is missing. */
@@ -214,6 +221,11 @@ export class Checks {
       );
     }
     if (!res.ok) return fail(`${url}/api/v1/health answered ${res.status}.`);
+    const proxy = this.d.auth?.untrustedProxy;
+    if (proxy)
+      return warn(
+        `${url} reaches the brain through ${proxy}, which isn't in HATBOT_TRUSTED_PROXIES, so sign-in limits count everyone as one address. Add it to /etc/hatbot/brain.env.`,
+      );
     return ok(`${url} reaches the brain.`);
   }
 
@@ -264,10 +276,15 @@ export class Checks {
     const info = this.d.updates.info();
     if (!info.source) return skip("Updates aren't set up; deploy.sh sets them up.");
     const s = info.status;
-    if (!s) return ok("No update has run yet.");
-    if (s.state === "failed") return fail(`The last update failed: ${s.error ?? s.step}.`);
-    if (s.state === "done" && s.notes.length)
+    if (s?.state === "failed") return fail(`The last update failed: ${s.error ?? s.step}.`);
+    if (s?.state === "done" && s.notes.length)
       return warn(`Still to do by hand after the last update: ${s.notes.join(" ")}`);
+    // Update runs the new commit's deploy script as root on the brain.
+    if (info.source.signed === false)
+      return warn(
+        `Update deploys whatever ${info.source.branch} holds, so whoever can push to it can run code on the brain. Run deploy.sh with HATBOT_GIT_URL set to give it the key you sign commits with.`,
+      );
+    if (!s) return ok("No update has run yet.");
     return ok(info.current?.sha ? `Running ${info.current.sha.slice(0, 7)}.` : "Up to date.");
   }
 
@@ -275,8 +292,28 @@ export class Checks {
     const ntfy = this.d.ntfy;
     if (!ntfy?.configured)
       return warn("NTFY_URL isn't set, so approvals and results only show in the app.");
+    if (!ntfy.topic)
+      return fail(
+        "NTFY_TOPIC isn't set, so nothing is sent. Run deploy.sh with NTFY_URL set to pick a random one.",
+      );
     await ntfy.health();
-    return ok("Your ntfy server answers. Send a test approval to try the buttons.");
+    // Whoever reads the topic sees every notification, and can press its Approve buttons.
+    const open = await ntfy.readableByAnyone().catch(() => null);
+    if (open && guessableTopic(ntfy.topic))
+      return fail(
+        "Anyone can read your notifications, Approve buttons included: the server lets anyone read the topic, and its name is easy to guess. Run deploy.sh with NTFY_URL set to pick a random one, and allow only your ntfy user to read it.",
+      );
+    if (open)
+      return warn(
+        "Your ntfy server lets anyone read the topic; only its random name keeps the notifications and their Approve buttons private. Allow only your ntfy user to read it.",
+      );
+    if (!ntfy.hasToken)
+      return warn(
+        "NTFY_TOKEN isn't set, so the server lets anyone send to the topic, and a notification that looks like Hatbot's may not be. Give Hatbot an ntfy user and token that may publish to it.",
+      );
+    return ok(
+      "Your ntfy server answers, and only its users can read the topic. Send a test approval to try the buttons.",
+    );
   }
 
   private ping() {
@@ -424,8 +461,15 @@ export class Checks {
         run: ifUp(async () => {
           const s = await agent.browserState();
           const tab = s.tabs.find((t) => t.active) ?? s.tabs[0];
+          // Only the site: the report is kept, and a page's address can carry what you typed or a token.
+          let site = "";
+          try {
+            site = tab?.url ? new URL(tab.url).host : "";
+          } catch {
+            // Not an address with a host, like about:blank.
+          }
           return ok(
-            `${s.tabs.length} tab${s.tabs.length === 1 ? "" : "s"} open${tab?.url ? `, on ${tab.url}` : ""}.`,
+            `${s.tabs.length} tab${s.tabs.length === 1 ? "" : "s"} open${site ? `, on ${site}` : ""}.`,
           );
         }),
       },

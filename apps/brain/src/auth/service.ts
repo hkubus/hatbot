@@ -1,13 +1,24 @@
-import { createHash, randomBytes } from "node:crypto";
-import type { ApiToken } from "@hatbot/shared";
-import { type Db, now } from "../db";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import type { ApiToken, Session } from "@hatbot/shared";
+import type { Db } from "../db";
 import { newTotpSecret, totpUri, verifyTotp } from "./totp";
 
-const SESSION_DAYS = 30;
+export const SESSION_DAYS = 30;
+/** A token's last use is written at most this often, not on every request. */
+const LAST_USED_MS = 5 * 60_000;
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 const randomToken = (prefix: string) => prefix + randomBytes(32).toString("base64url");
+const sameText = (a: string, b: string) => {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+};
 
 export type Principal = { kind: "session"; id: number } | { kind: "token"; id: number };
+
+const keyOf = (p: Principal) => `${p.kind} ${p.id}`;
+/** How long a new authenticator has to be confirmed. */
+const TOTP_CHANGE_MS = 10 * 60_000;
 
 type OwnerRow = { password_hash: string; totp_secret: string; totp_last_step: number };
 
@@ -15,6 +26,16 @@ export class AuthService {
   /** One-time code that unlocks first-run setup; printed to the log while no owner exists. */
   readonly setupCode = randomBytes(6).toString("hex");
   private pendingSecret: string | null = null;
+  private deviceKey: Buffer | null = null;
+  /**
+   * A private address that passed on X-Forwarded-For without being in HATBOT_TRUSTED_PROXIES: your
+   * reverse proxy, most likely, which makes every sign-in count as coming from one address.
+   */
+  untrustedProxy: string | null = null;
+  /** Live sockets, by the session or token that opened them, to close when it ends. */
+  private sockets = new Map<string, Set<() => void>>();
+  /** A new authenticator secret waiting for its first code, and who asked for it. */
+  private totpChange: { secret: string; for: string; until: number; tries: number } | null = null;
 
   constructor(
     private db: Db,
@@ -26,13 +47,13 @@ export class AuthService {
   }
 
   startSetup(code: string): { secret: string; uri: string } | null {
-    if (this.isSetUp() || code !== this.setupCode) return null;
+    if (this.isSetUp() || !sameText(code, this.setupCode)) return null;
     this.pendingSecret ??= newTotpSecret();
     return { secret: this.pendingSecret, uri: totpUri(this.pendingSecret) };
   }
 
   async finishSetup(code: string, password: string, totp: string): Promise<boolean> {
-    if (this.isSetUp() || code !== this.setupCode || !this.pendingSecret) return false;
+    if (this.isSetUp() || !sameText(code, this.setupCode) || !this.pendingSecret) return false;
     const step = verifyTotp(this.pendingSecret, totp, this.clock());
     if (step === null) return false;
     const hash = await Bun.password.hash(password, { algorithm: "argon2id" });
@@ -63,7 +84,118 @@ export class AuthService {
     return res.changes === 1;
   }
 
+  /** A new password. Check the old one and a code first (checkCredentials). */
+  async changePassword(password: string) {
+    const hash = await Bun.password.hash(password, { algorithm: "argon2id" });
+    this.db.query("UPDATE owner SET password_hash = ? WHERE id = 1").run(hash);
+  }
+
+  /**
+   * A new authenticator secret for `p` to scan. It takes over only once a code from it comes back
+   * (finishTotpChange), so a mistyped scan doesn't lock you out. Check the password and a code first.
+   */
+  startTotpChange(p: Principal): { secret: string; uri: string } {
+    const secret = newTotpSecret();
+    this.totpChange = { secret, for: keyOf(p), until: this.clock() + TOTP_CHANGE_MS, tries: 0 };
+    return { secret, uri: totpUri(secret) };
+  }
+
+  finishTotpChange(p: Principal, code: string): boolean {
+    const change = this.totpChange;
+    if (!change || change.for !== keyOf(p) || change.until < this.clock()) return false;
+    const step = verifyTotp(change.secret, code, this.clock());
+    if (step === null) {
+      // Codes can't be guessed at: a few wrong ones and it starts again.
+      if (++change.tries >= 5) this.totpChange = null;
+      return false;
+    }
+    this.db
+      .query("UPDATE owner SET totp_secret = ?, totp_last_step = ? WHERE id = 1")
+      .run(change.secret, step);
+    this.totpChange = null;
+    return true;
+  }
+
+  /** Signed-in browsers, newest first. */
+  listSessions(current?: Principal): Session[] {
+    return this.db
+      .query<Omit<Session, "current">, [string]>(
+        `SELECT id, user_agent AS userAgent, created_at AS createdAt, expires_at AS expiresAt
+         FROM sessions WHERE expires_at > ? ORDER BY id DESC`,
+      )
+      .all(new Date(this.clock()).toISOString())
+      .map((r) => ({ ...r, current: current?.kind === "session" && current.id === r.id }));
+  }
+
+  endSession(id: number): boolean {
+    if (this.db.query("DELETE FROM sessions WHERE id = ?").run(id).changes !== 1) return false;
+    this.ended("session", [id]);
+    return true;
+  }
+
+  /** Signs out every browser and app but the one asking. Returns how many. */
+  endOthers(keep: Principal): number {
+    const sessions = this.db
+      .query<{ id: number }, [number]>("DELETE FROM sessions WHERE id != ? RETURNING id")
+      .all(keep.kind === "session" ? keep.id : -1)
+      .map((r) => r.id);
+    const tokens = this.db
+      .query<{ id: number }, [number]>("DELETE FROM api_tokens WHERE id != ? RETURNING id")
+      .all(keep.kind === "token" ? keep.id : -1)
+      .map((r) => r.id);
+    this.ended("session", sessions);
+    this.ended("token", tokens);
+    return sessions.length + tokens.length;
+  }
+
+  /** A browser or app that has signed in here: a random id, signed so one can't be made up. */
+  newDevice(): string {
+    const id = randomBytes(16).toString("base64url");
+    return `${id}.${this.signDevice(id)}`;
+  }
+
+  /** The id in a cookie newDevice() made, or null. */
+  knownDevice(cookie: string | undefined): string | null {
+    const [id, sig, ...rest] = cookie?.split(".") ?? [];
+    return id && sig && !rest.length && sameText(sig, this.signDevice(id)) ? id : null;
+  }
+
+  private signDevice(id: string): string {
+    if (!this.deviceKey) {
+      this.db
+        .query("INSERT INTO settings (key, value) VALUES ('device_key', ?) ON CONFLICT DO NOTHING")
+        .run(randomBytes(32).toString("hex"));
+      const row = this.db
+        .query<{ value: string }, []>("SELECT value FROM settings WHERE key = 'device_key'")
+        .get();
+      this.deviceKey = Buffer.from(row?.value ?? "", "hex");
+    }
+    return createHmac("sha256", this.deviceKey).update(id).digest("base64url");
+  }
+
+  /** Closes a live socket when the session or token it was opened with ends. Returns how to forget it. */
+  onEnd(p: Principal, close: () => void): () => void {
+    const key = keyOf(p);
+    const set = this.sockets.get(key) ?? new Set();
+    set.add(close);
+    this.sockets.set(key, set);
+    return () => {
+      set.delete(close);
+      if (!set.size && this.sockets.get(key) === set) this.sockets.delete(key);
+    };
+  }
+
+  private ended(kind: Principal["kind"], ids: number[]) {
+    for (const id of ids) {
+      const key = keyOf({ kind, id });
+      const set = this.sockets.get(key);
+      this.sockets.delete(key);
+      for (const close of set ?? []) close();
+    }
+  }
+
   createSession(userAgent: string | null): string {
+    this.prune();
     const token = randomToken("hbs_");
     const expires = new Date(this.clock() + SESSION_DAYS * 86400_000).toISOString();
     this.db
@@ -73,10 +205,28 @@ export class AuthService {
   }
 
   deleteSession(token: string) {
-    this.db.query("DELETE FROM sessions WHERE token_hash = ?").run(sha256(token));
+    const rows = this.db
+      .query<{ id: number }, [string]>("DELETE FROM sessions WHERE token_hash = ? RETURNING id")
+      .all(sha256(token));
+    this.ended(
+      "session",
+      rows.map((r) => r.id),
+    );
   }
 
-  resolveSession(token: string): Principal | null {
+  /** Deletes expired sessions; the brain calls it hourly. */
+  prune() {
+    const rows = this.db
+      .query<{ id: number }, [string]>("DELETE FROM sessions WHERE expires_at <= ? RETURNING id")
+      .all(new Date(this.clock()).toISOString());
+    this.ended(
+      "session",
+      rows.map((r) => r.id),
+    );
+  }
+
+  /** The session, and whether its expiry moved on, so its cookie should too. */
+  resolveSession(token: string): (Principal & { renewed?: true }) | null {
     const row = this.db
       .query<{ id: number; expires_at: string }, [string]>(
         "SELECT id, expires_at FROM sessions WHERE token_hash = ?",
@@ -86,12 +236,14 @@ export class AuthService {
     const nowMs = this.clock();
     if (Date.parse(row.expires_at) <= nowMs) {
       this.db.query("DELETE FROM sessions WHERE id = ?").run(row.id);
+      this.ended("session", [row.id]);
       return null;
     }
     // Sliding expiry, refreshed at most daily.
     if (Date.parse(row.expires_at) - nowMs < (SESSION_DAYS - 1) * 86400_000) {
       const expires = new Date(nowMs + SESSION_DAYS * 86400_000).toISOString();
       this.db.query("UPDATE sessions SET expires_at = ? WHERE id = ?").run(expires, row.id);
+      return { kind: "session", id: row.id, renewed: true };
     }
     return { kind: "session", id: row.id };
   }
@@ -116,15 +268,23 @@ export class AuthService {
   }
 
   deleteToken(id: number): boolean {
-    return this.db.query("DELETE FROM api_tokens WHERE id = ?").run(id).changes === 1;
+    if (this.db.query("DELETE FROM api_tokens WHERE id = ?").run(id).changes !== 1) return false;
+    this.ended("token", [id]);
+    return true;
   }
 
   resolveToken(token: string): Principal | null {
     const row = this.db
-      .query<{ id: number }, [string]>("SELECT id FROM api_tokens WHERE token_hash = ?")
+      .query<{ id: number; last_used_at: string | null }, [string]>(
+        "SELECT id, last_used_at FROM api_tokens WHERE token_hash = ?",
+      )
       .get(sha256(token));
     if (!row) return null;
-    this.db.query("UPDATE api_tokens SET last_used_at = ? WHERE id = ?").run(now(), row.id);
+    const nowMs = this.clock();
+    if (!row.last_used_at || nowMs - Date.parse(row.last_used_at) >= LAST_USED_MS)
+      this.db
+        .query("UPDATE api_tokens SET last_used_at = ? WHERE id = ?")
+        .run(new Date(nowMs).toISOString(), row.id);
     return { kind: "token", id: row.id };
   }
 }
@@ -137,6 +297,8 @@ export class FailureLimiter {
     private max: number,
     private windowMs: number,
     private clock: () => number = Date.now,
+    /** Told when a key reaches the limit. */
+    private onBlocked?: (key: string) => void,
   ) {}
 
   blocked(key: string): boolean {
@@ -147,6 +309,15 @@ export class FailureLimiter {
     const list = this.recent(key);
     list.push(this.clock());
     this.failures.set(key, list);
+    if (list.length === this.max) this.onBlocked?.(key);
+  }
+
+  /** Takes back one failure: an attempt counted before it was checked, which turned out right. */
+  forgive(key: string) {
+    const list = this.recent(key);
+    list.pop();
+    if (list.length) this.failures.set(key, list);
+    else this.failures.delete(key);
   }
 
   reset(key: string) {

@@ -7,6 +7,7 @@ import {
   type DesktopState,
   type Episode,
   type HatbotEvent,
+  type Me,
   type Negotiation,
   type NegotiationDetail,
   type NegotiationMessage,
@@ -915,9 +916,11 @@ export function connect() {
   const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${API_PREFIX}/stream`;
   const ws = new WebSocket(url);
   socket = ws;
+  let wasOpen = false;
   // A socket that's been replaced (StrictMode opens two) says nothing more.
   ws.onopen = () => {
     if (ws !== socket) return;
+    wasOpen = true;
     void catchUp(opened);
     opened = true;
     void loadLive().catch(() => {});
@@ -932,8 +935,15 @@ export function connect() {
     socket = null;
     set({ connected: false });
     if (stopped) return;
+    // A refused socket looks the same whether the brain is down or you're signed out; ask which.
+    if (!wasOpen) void checkSignedIn();
     retryTimer = setTimeout(connect, Math.min(30_000, 1000 * 2 ** retry++));
   };
+}
+
+async function checkSignedIn() {
+  const me = await api<Me>("/auth/me").catch(() => null);
+  if (me && !me.authenticated) window.dispatchEvent(new Event("hatbot:unauthorized"));
 }
 
 /** Reconnects now if the stream is down and waiting to try again. */

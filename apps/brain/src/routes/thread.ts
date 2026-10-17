@@ -14,6 +14,10 @@ import { BotError } from "../bots";
 import type { AppEnv } from "../context";
 import { json, query } from "./util";
 
+/** RFC 5987's encoding for filename*: encodeURIComponent leaves ' ( ) * as they are, which it doesn't allow. */
+const rfc5987 = (s: string) =>
+  encodeURIComponent(s).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+
 /** Types shown in the page: anything else downloads, so a file can't run script on the app's origin. */
 const INLINE = [
   "image/jpeg",
@@ -62,14 +66,21 @@ export const threadRoutes = new Hono<AppEnv>()
     if (!a || !file || !(await file.exists())) return c.json({ error: "not found" }, 404);
     const inline = INLINE.includes(a.mediaType) && c.req.query("download") === undefined;
     const ascii = a.name.replace(/[^\x20-\x7e]|["\\]/g, "_");
+    // Checked each time rather than kept for a year: an incognito one isn't kept at all.
+    const etag = `"${a.id}-${Date.parse(a.createdAt).toString(36)}-${a.size.toString(36)}"`;
+    const cache = c.var.attachments.cacheable(id) ? "private, no-cache" : "no-store";
+    if (cache !== "no-store" && c.req.header("if-none-match") === etag)
+      return new Response(null, { status: 304, headers: { etag, "cache-control": cache } });
     return new Response(file, {
       headers: {
         "content-type": inline ? a.mediaType : "application/octet-stream",
-        "content-disposition": `${inline ? "inline" : "attachment"}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(a.name)}`,
+        "content-disposition": `${inline ? "inline" : "attachment"}; filename="${ascii}"; filename*=UTF-8''${rfc5987(a.name)}`,
         "x-content-type-options": "nosniff",
+        "cross-origin-resource-policy": "same-origin",
         // Chromium won't open a PDF in a sandboxed page; a PDF can't reach the app either way.
         "content-security-policy": `${a.mediaType === "application/pdf" ? "" : "sandbox; "}default-src 'none'; img-src 'self'; style-src 'unsafe-inline'`,
-        "cache-control": "private, max-age=31536000, immutable",
+        "cache-control": cache,
+        ...(cache === "no-store" ? {} : { etag }),
       },
     });
   })

@@ -35,16 +35,20 @@ export const desktopRoutes = new Hono<AppEnv>()
       }
       if (!c.var.desktop.agent.configured)
         return c.json({ error: "the desktop isn't set up" }, 503);
+      c.set("principal", principal);
       await next();
     },
     // The live view (PLAN.md §10.5): JPEG frames from desktop-agent out, your input in while you have control.
     upgradeWebSocket((c) => {
-      const { desktop, teach } = (c as Context<AppEnv>).var;
+      const { desktop, teach, auth, principal } = (c as Context<AppEnv>).var;
       let upstream: WebSocket | null = null;
       let behind: ArrayBuffer | null = null;
       let waiting: ReturnType<typeof setTimeout> | undefined;
+      let forget: (() => void) | undefined;
       return {
         onOpen(_, ws) {
+          // Signing out or revoking the token ends the live view too.
+          forget = auth.onEnd(principal, () => ws.close(1008, "Signed out"));
           const { url, headers } = desktop.agent.liveSocket();
           const raw = ws.raw as { getBufferedAmount?: () => number } | undefined;
           // On a slow connection, skip frames rather than fall behind the desktop. The newest goes out
@@ -82,6 +86,7 @@ export const desktopRoutes = new Hono<AppEnv>()
         onClose() {
           clearTimeout(waiting);
           upstream?.close();
+          forget?.();
         },
       };
     }),

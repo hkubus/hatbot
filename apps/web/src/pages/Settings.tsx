@@ -8,6 +8,7 @@ import {
 } from "@hatbot/shared";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api";
+import { clearDrafts } from "../drafts";
 import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
 import { navigate } from "../router";
@@ -17,6 +18,7 @@ import { getTheme, setTheme, type Theme } from "../theme";
 import type { Toast } from "../toast";
 import { PluginPage, PluginsGroup } from "./Plugins";
 
+const Account = lazy(() => import("./Account").then((m) => ({ default: m.Account })));
 const Checks = lazy(() => import("./Checks").then((m) => ({ default: m.Checks })));
 const HeartbeatPage = lazy(() => import("./Heartbeat").then((m) => ({ default: m.HeartbeatPage })));
 
@@ -35,6 +37,8 @@ export function Settings({
   const plugin = /^\/settings\/plugins\/([a-z0-9]+)$/.exec(path)?.[1];
   const page = plugin ? (
     <PluginPage key={plugin} id={plugin} toast={toast} />
+  ) : path === "/settings/account" ? (
+    <Account toast={toast} />
   ) : path === "/settings/checks" ? (
     <Checks />
   ) : path === "/settings/heartbeat" ? (
@@ -102,6 +106,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
 
   const signOut = async () => {
     await api("/auth/logout", { body: {} }).catch(() => {});
+    clearDrafts();
     onSignOut();
   };
 
@@ -395,6 +400,16 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
         <section className="group">
           <h2>Account</h2>
           <div className="group-box">
+            <button
+              type="button"
+              className="row link"
+              onClick={() => navigate("/settings/account")}
+            >
+              <div className="txt">
+                <b>Password and sign-ins</b>
+              </div>
+              <Icon name="chevron" className="chev" />
+            </button>
             <div className="row">
               <div className="txt">
                 <b>API tokens</b>

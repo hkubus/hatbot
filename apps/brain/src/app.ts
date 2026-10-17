@@ -1,7 +1,9 @@
 import { API_PREFIX, type Health } from "@hatbot/shared";
-import { Hono } from "hono";
+import { type Context, Hono, type Next } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { getConnInfo } from "hono/bun";
 import { HTTPException } from "hono/http-exception";
+import type { AuthService } from "./auth/service";
 import { compressJson } from "./compress";
 import type { AppEnv, Deps } from "./context";
 import { adminRoutes } from "./routes/admin";
@@ -30,8 +32,21 @@ export function createApp(deps: Deps) {
   app.use(compressJson);
   app.use(async (c, next) => {
     for (const [k, v] of Object.entries(deps)) c.set(k as keyof Deps, v as never);
-    c.set("clientIp", clientIp(c, deps.config.trustedProxies));
+    c.set("clientIp", clientIp(c, deps.config.trustedProxies, deps.auth));
     await next();
+  });
+  // Bun takes bodies up to the 25 MB an attachment needs. Sign-in and the notification buttons answer
+  // strangers, so they read 16 KB at most; everything else 5 MB, which a memory file fits in.
+  const small = bodyLimit({
+    maxSize: 16 * 1024,
+    onError: (c) => c.json({ error: TOO_LARGE }, 413),
+  });
+  app.use("/auth/*", small);
+  app.use("/approvals/:id/token-decision", small);
+  app.use("/pause-all/token", small);
+  app.use(async (c, next) => {
+    if (c.req.method === "POST" && c.req.path === `${API_PREFIX}/attachments`) return next();
+    return limitBody(c, next, 5 * 1024 * 1024);
   });
 
   app.get("/health", (c) => c.json<Health>({ ok: true, version: VERSION }));
@@ -58,6 +73,8 @@ export function createApp(deps: Deps) {
   app.notFound((c) => c.json({ error: "not found" }, 404));
   app.onError((err, c) => {
     // Hono's own refusals, such as malformed JSON, keep their status, in the usual shape.
+    // A body cut off part way reads as malformed JSON to the validator.
+    if (overflowed.has(c.req.raw)) return c.json({ error: TOO_LARGE }, 413);
     if (err instanceof HTTPException)
       return err.res ?? c.json({ error: err.message || "invalid request" }, err.status);
     console.error(err);
@@ -66,8 +83,43 @@ export function createApp(deps: Deps) {
   return app;
 }
 
+const TOO_LARGE = "That's too large.";
+/** Requests whose body was cut off by limitBody. */
+const overflowed = new WeakSet<Request>();
+
+/**
+ * Refuses a body over `max` bytes: at once by its length, or, sent in chunks, once that much has come.
+ * Nothing is read ahead, so a route that checks who you are first still does so before any of it.
+ */
+function limitBody(c: Context, next: Next, max: number): Response | Promise<void> {
+  const raw = c.req.raw;
+  if (!raw.body) return next();
+  const length = raw.headers.get("content-length");
+  if (length !== null && !raw.headers.has("transfer-encoding"))
+    return Number(length) > max ? c.json({ error: TOO_LARGE }, 413) : next();
+  let size = 0;
+  let req: Request;
+  const counted = raw.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, out) {
+        size += chunk.byteLength;
+        if (size <= max) return out.enqueue(chunk);
+        overflowed.add(req);
+        out.error(new HTTPException(413, { message: TOO_LARGE }));
+      },
+    }),
+  );
+  req = new Request(raw, { body: counted, duplex: "half" } as RequestInit);
+  c.req.raw = req;
+  return next();
+}
+
 // The socket peer, or the client your reverse proxy reports if the peer is the proxy.
-function clientIp(c: Parameters<typeof getConnInfo>[0], trusted: string[]): string {
+function clientIp(
+  c: Parameters<typeof getConnInfo>[0],
+  trusted: string[],
+  auth: Pick<AuthService, "untrustedProxy">,
+): string {
   let peer = "unknown";
   try {
     peer = getConnInfo(c).remote.address ?? "unknown";
@@ -75,9 +127,26 @@ function clientIp(c: Parameters<typeof getConnInfo>[0], trusted: string[]): stri
     // app.request() in tests has no socket.
   }
   peer = peer.replace(/^::ffff:/, "");
+  const forwarded = c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim();
   if (trusted.includes(peer)) {
-    const forwarded = c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim();
     if (forwarded) return forwarded;
+  } else if (forwarded && isPrivate(peer) && auth.untrustedProxy !== peer) {
+    // Your proxy, not listed: every sign-in would count as coming from it, and lock out the rest.
+    auth.untrustedProxy = peer;
+    console.warn(
+      `${peer} forwards requests but isn't in HATBOT_TRUSTED_PROXIES, so sign-in limits count every client as ${peer}`,
+    );
   }
   return peer;
+}
+
+/** Loopback, private and link-local addresses: where a reverse proxy on your network would be. */
+function isPrivate(ip: string): boolean {
+  return (
+    /^(127|10)\./.test(ip) ||
+    /^192\.168\./.test(ip) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(ip) ||
+    /^169\.254\./.test(ip) ||
+    /^(::1$|f[cd][0-9a-f]{2}:|fe[89ab][0-9a-f]:)/i.test(ip)
+  );
 }

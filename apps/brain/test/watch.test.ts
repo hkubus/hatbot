@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Task, Watcher, WatcherValue } from "@hatbot/shared";
+import { type Task, type Watcher, type WatcherValue, WatchSourceInput } from "@hatbot/shared";
 import { counts, numberIn, pick } from "../src/watch/extract";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
@@ -32,6 +32,12 @@ test("values are picked by selector, path, pattern, or the page's text", async (
   await expect(pick(html, "text/html", { kind: "page", pattern: "(" })).rejects.toThrow(
     "isn't a regular expression",
   );
+});
+
+test("a page without a full address says what to write", () => {
+  const r = WatchSourceInput.safeParse({ kind: "page", url: "example.com/shop" });
+  expect(r.success).toBe(false);
+  expect(r.error?.issues[0]?.message).toBe("Use a full address starting with https://");
 });
 
 test("numbers are read in either style, and only a move into the condition counts", () => {
