@@ -376,8 +376,9 @@ struct TriggerDetailView: View {
       get: { setting[keyPath: key] ?? value },
       set: { new in
         setting[keyPath: key] = new
-        var change = AppStore.TriggerChange()
-        change[keyPath: key] = new
+        var just = AppStore.TriggerChange()
+        just[keyPath: key] = new
+        let change = just
         Task {
           await act { _ = try await store.saveTrigger(id, change) }
           // Saved, or put back: the trigger shows which.

@@ -214,8 +214,9 @@ struct SettingsView: View {
 
   private func change(_ edit: (inout AppSettings) -> Void, save: @escaping (AppSettings) async throws -> AppSettings) {
     guard let before = settings else { return }
-    var next = before
-    edit(&next)
+    var edited = before
+    edit(&edited)
+    let next = edited
     settings = next
     changes += 1
     let mine = changes

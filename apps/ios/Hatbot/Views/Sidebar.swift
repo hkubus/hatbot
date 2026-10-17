@@ -106,7 +106,6 @@ struct Sidebar<Content: View>: View {
   /// One layout, docked or not, so the sections keep what they hold when the phone turns.
   var body: some View {
     GeometryReader { geo in
-      let docked = docked
       let panelWidth = docked ? 300 : min(300, geo.size.width * 0.82)
       let shown = docked ? 0 : min(1, max(0, (open ? 1 : 0) + (drag + edge) / panelWidth))
       let openSidebar: (() -> Void)? = docked ? nil : { setOpen(true) }
