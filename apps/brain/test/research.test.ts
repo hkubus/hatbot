@@ -774,6 +774,55 @@ test("a brief may name only links the task already has, exactly", async () => {
   expect(task.status).toBe("done");
 });
 
+test("research's desktop tasks and other bots may be given only links the task has", async () => {
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("run_desktop_task", {
+          title: "Stock",
+          goal: "Open https://stock-check.example/v?addr=ul-Dluga-5 and check stock.",
+          success_criteria: "",
+        }),
+      ],
+    },
+    {
+      content: [
+        toolUse("ask_bot", {
+          bot: "Chef",
+          request: "Open stock-check.example/v?addr=Dluga5 and tell me the stock.",
+        }),
+      ],
+    },
+    // A link from the question.
+    {
+      content: [
+        toolUse("ask_bot", { bot: "Chef", request: "Is it in stock at https://shop.example/p?" }),
+      ],
+    },
+    { content: [toolUse("finish_task", { outcome: "done", summary: "In stock.", notify: false })] },
+    finish("It's in stock.", "Chef says it's in stock."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.bots.create({
+    name: "Chef",
+    instructions: "You cook.",
+    chatModel: null,
+    chatEffort: null,
+    plugins: null,
+  });
+  const task = await startResearch(t, "Is the DS925+ in stock at https://shop.example/p?");
+  expect(resultsIn(work.requests[1])).toBe(
+    "Not started: a brief may name only links this task already has, from the question, search results, pages read or findings, exactly as they appeared. These aren't: https://stock-check.example/v?addr=ul-Dluga-5. Tell the desktop task what to search for or the site's name instead.",
+  );
+  expect(resultsIn(work.requests[2])).toContain(
+    "These aren't: stock-check.example/v?addr=Dluga5. Tell the bot what to search for",
+  );
+  // Only the request with the question's link started a task.
+  const started = t.tasks.list({}).filter((x) => x.id !== task.id);
+  expect(started.map((x) => x.title)).toEqual(["Is it in stock at https://shop.example/p?"]);
+  expect(task.status).toBe("done");
+});
+
 /** A helper's request that must report. */
 const forced = (p: Params | undefined) =>
   (p?.tool_choice as { name?: string } | undefined)?.name === "report_findings";

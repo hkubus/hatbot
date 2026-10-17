@@ -52,6 +52,7 @@ import {
   RESEARCH_TOKENS,
   RESEARCH_TOOLS,
   ResearchState,
+  refusedLinks,
   researchPrompt,
 } from "./research";
 import { SEND_TO_CHAT_DESCRIPTION, SendToChat, sendToChat } from "./send-to-chat";
@@ -347,6 +348,16 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const desktopTask = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
     const p = DesktopTaskInput.safeParse(call.input);
     if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+    const { title, goal, success_criteria } = p.data;
+    const refused =
+      research &&
+      refusedLinks(
+        run,
+        found.sources,
+        `${title}\n${goal}\n${success_criteria}`,
+        "the desktop task",
+      );
+    if (refused) return result(call, refused, true);
     const missing = await missingSkill(d.memory, p.data.skill);
     if (missing) return result(call, missing, true);
     const child = tasks.createDesktopTask({
@@ -379,6 +390,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const askBot = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
     const p = AskBotInput.safeParse(call.input);
     if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+    const refused = research && refusedLinks(run, found.sources, p.data.request, "the bot");
+    if (refused) return result(call, refused, true);
     const child = tasks.askBot({
       from: bot,
       to: p.data.bot,

@@ -582,6 +582,29 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
   return stopped(`Stopped after ${MAX_WORKER_STEPS} steps without reporting.`);
 }
 
+/**
+ * A brief for a helper, a desktop task or another bot may name only links the task already has. Each
+ * may open any link it's given, which web_fetch's own rule would refuse the lead: a link written from
+ * what the task read could carry it out. The refusal, or null.
+ */
+export function refusedLinks(
+  run: ResearchRun,
+  sources: ResearchSources,
+  brief: string,
+  who: string,
+): string | null {
+  const seen = linksSeen(run.messages, sources);
+  const unseen = linksIn(brief).filter((l) => !isSeen(l, seen));
+  if (!unseen.length) return null;
+  run.tasks.addStep(run.task.id, {
+    kind: "note",
+    name: "Refused a brief",
+    detail: `It named links the task hadn't come across: ${unseen.join(", ")}`,
+    url: null,
+  });
+  return `Not started: a brief may name only links this task already has, from the question, search results, pages read or findings, exactly as they appeared. These aren't: ${unseen.join(", ")}. Tell ${who} what to search for or the site's name instead.`;
+}
+
 /** investigate: the parts at once, their findings numbered by source. */
 export async function investigate(
   run: ResearchRun,
@@ -591,24 +614,13 @@ export async function investigate(
   const p = Investigate.safeParse(input);
   if (!p.success) return { content: `Invalid input: ${z.prettifyError(p.error)}`, isError: true };
   const { parts } = p.data;
-  // A helper may fetch any link in its brief, which web_fetch's own rule would refuse the lead: a
-  // link written from what the task read could carry it out.
-  const seen = linksSeen(run.messages, sources);
-  const unseen = linksIn(parts.map((part) => part.brief).join("\n")).filter(
-    (l) => !isSeen(l, seen),
+  const refused = refusedLinks(
+    run,
+    sources,
+    parts.map((part) => part.brief).join("\n"),
+    "the helper",
   );
-  if (unseen.length) {
-    run.tasks.addStep(run.task.id, {
-      kind: "note",
-      name: "Refused a brief",
-      detail: `It named links the task hadn't come across: ${unseen.join(", ")}`,
-      url: null,
-    });
-    return {
-      content: `Not started: a brief may name only links this task already has, from the question, search results, pages read or findings, exactly as they appeared. These aren't: ${unseen.join(", ")}. Tell the helper what to search for or the site's name instead.`,
-      isError: true,
-    };
-  }
+  if (refused) return { content: refused, isError: true };
   for (const part of parts)
     run.tasks.addStep(run.task.id, {
       kind: "action",
