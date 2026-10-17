@@ -204,29 +204,16 @@ struct WatcherDetailView: View {
       Section {
         Toggle(
           "On",
-          isOn: Binding(
-            get: { enabled ?? w.enabled },
-            set: { on in
-              enabled = on
-              Task {
-                await act { _ = try await store.setWatcherEnabled(id, on) }
-                // Saved, or put back: the watcher shows which. Unless it's been switched again meanwhile.
-                if enabled == on { enabled = nil }
-              }
-            }))
+          isOn: .saving(w.enabled, shown: $enabled) { on in
+            await act { _ = try await store.setWatcherEnabled(id, on) }
+          })
         LabeledContent(w.source.kind == .page ? "Page" : "Tool", value: w.source.text)
         if w.source.kind == .page {
           Toggle(
             "Run the page's scripts",
-            isOn: Binding(
-              get: { render ?? (w.source.render == true) },
-              set: { on in
-                render = on
-                Task {
-                  await act { _ = try await store.setWatcherRender(id, on) }
-                  render = nil
-                }
-              }))
+            isOn: .saving(w.source.render == true, shown: $render) { on in
+              await act { _ = try await store.setWatcherRender(id, on) }
+            })
           .disabled(render != nil)
         }
         if let s = w.source.selector { LabeledContent("Selector", value: s) }

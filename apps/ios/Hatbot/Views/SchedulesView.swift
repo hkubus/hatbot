@@ -371,21 +371,13 @@ struct TriggerDetailView: View {
     }
   }
 
-  /// A switch or picker that saves as soon as it's changed, and shows the change while it saves.
+  /// A switch or picker that saves as soon as it's changed; then the trigger shows what was saved.
   private func saving<V: Equatable>(_ value: V, _ key: WritableKeyPath<AppStore.TriggerChange, V?>) -> Binding<V> {
-    Binding(
-      get: { setting[keyPath: key] ?? value },
-      set: { new in
-        setting[keyPath: key] = new
-        var just = AppStore.TriggerChange()
-        just[keyPath: key] = new
-        let change = just
-        Task {
-          await act { _ = try await store.saveTrigger(id, change) }
-          // Saved, or put back: the trigger shows which.
-          if setting[keyPath: key] == new { setting[keyPath: key] = nil }
-        }
-      })
+    .saving(value, shown: $setting[dynamicMember: key]) { new in
+      var change = AppStore.TriggerChange()
+      change[keyPath: key] = new
+      await act { _ = try await store.saveTrigger(id, change) }
+    }
   }
 
   private func act(_ work: () async throws -> Void) async {

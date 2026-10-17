@@ -109,6 +109,23 @@ func message(for error: Error) -> String {
   (error as? APIError)?.message ?? "Couldn't reach Hatbot."
 }
 
+extension Binding where Value: Equatable {
+  /// A switch or picker that saves as soon as it's changed. `shown` holds the change while it saves;
+  /// then `value` shows again, saved or put back, unless it's been changed again meanwhile.
+  @MainActor
+  static func saving(_ value: Value, shown: Binding<Value?>, save: @escaping (Value) async -> Void) -> Binding<Value> {
+    Binding(
+      get: { shown.wrappedValue ?? value },
+      set: { new in
+        shown.wrappedValue = new
+        Task {
+          await save(new)
+          if shown.wrappedValue == new { shown.wrappedValue = nil }
+        }
+      })
+  }
+}
+
 extension String {
   /// "14:05", in the phone's own time format.
   var timeText: String {
