@@ -256,6 +256,59 @@ test("a desktop task from a tainted chat or task starts tainted", async () => {
   await t.thread.idle();
 });
 
+test("Enter with the keyboard in the address bar is held, and script addresses aren't typed", async () => {
+  const work = new FakeModel([
+    { content: [computer("key", { text: "ctrl+l" })] },
+    { content: [computer("type", { text: "javascript:document.forms[0].submit()" })] },
+    { content: [computer("type", { text: "evil.example/pay" })] },
+    { content: [computer("key", { text: "Return" })] },
+    { content: [computer("type", { text: "olx pl\n" })] },
+    // Chromium isn't answering: the keyboard is somewhere else on the desktop.
+    { content: [computer("key", { text: "Return" })] },
+    { content: [computer("left_click", { coordinate: [300, 500] })] },
+    { content: [computer("key", { text: "Return" })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const url = "https://example.com/form";
+  const page = (pageFocus: boolean): AgentElement => ({
+    tag: "body",
+    role: null,
+    type: null,
+    label: "",
+    inForm: false,
+    url,
+    editable: false,
+    fields: [],
+    pageFocus,
+  });
+  let clicked = false;
+  Object.defineProperty(t.agent, "element", {
+    // The sixth turn's Return finds no page answering.
+    get: () => (clicked ? page(true) : work.requests.length === 6 ? null : page(false)),
+    configurable: true,
+  });
+  t.agent.afterAction = (name) => {
+    if (name === "left_click") clicked = true;
+  };
+  const result = (i: number) => JSON.stringify(work.requests[i]?.messages.at(-1));
+  const task = startTask(t, "Fill in the form");
+  await t.tasks.idle();
+  expect(result(2)).toContain("javascript:, data: or vbscript:");
+  expect(result(4)).toContain("the keyboard isn't on the page");
+  expect(result(4)).toContain("use the browser's navigate");
+  expect(result(5)).toContain("the keyboard isn't on the page");
+  expect(result(6)).toContain("the keyboard isn't on the page");
+  // Back on the page, Enter is checked as usual.
+  expect(t.agent.actions.map((a) => [a.name, a.input.text ?? ""])).toEqual([
+    ["key", "ctrl+l"],
+    ["type", "evil.example/pay"],
+    ["left_click", ""],
+    ["key", "Return"],
+  ]);
+  expect(t.tasks.get(task.id)?.status).toBe("done");
+});
+
 test("an approved desktop task waiting for the screen shows as queued", async () => {
   const work = new FakeModel([
     { content: [toolUse("confirm_intent", { kind: "send", summary: "Send the email" })] },

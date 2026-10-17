@@ -102,6 +102,17 @@ test("empty boxes take the usual check; a click into a box passes; pay buttons s
   });
 });
 
+test("Enter with the keyboard off the page is held, though the box holds the approved text", () => {
+  const box = send({ tag: "textarea", editable: true, buttonsAfter: ["Wyślij"] });
+  expect(gateCheck(gate, { ...ready, typed: true }, "enter", box, "Wyślij")).toEqual({
+    action: "send",
+  });
+  const why = JSON.stringify(
+    gateCheck(gate, { ...ready, typed: true }, "enter", { ...box, pageFocus: false }, "Wyślij"),
+  );
+  expect(why).toContain("keyboard isn't on the page");
+});
+
 test("an unknown element or an old desktop-agent is held", () => {
   expect(gateCheck(gate, ready, "click", null, null).action).toBe("hold");
   const old = send();

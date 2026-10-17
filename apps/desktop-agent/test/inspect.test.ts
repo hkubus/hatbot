@@ -127,6 +127,18 @@ test.skipIf(!chromium)("the screen's inspect sees the focused control the same w
 });
 
 test.skipIf(!chromium)(
+  "with nothing focused, the screen's inspect still says whether the page has the keyboard",
+  async () => {
+    await browser.call("navigate", { url: `${base}/chat` });
+    expect(await inspectScreen(browser)).toMatchObject({
+      tag: "body",
+      url: `${base}/chat`,
+      pageFocus: expect.any(Boolean),
+    });
+  },
+);
+
+test.skipIf(!chromium)(
   "a chat box says which buttons come after it, through shadow roots",
   async () => {
     await browser.call("navigate", { url: `${base}/chat` });

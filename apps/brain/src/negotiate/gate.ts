@@ -114,6 +114,12 @@ export function gateCheck(
       action: "hold",
       why: "The desktop is out of date and can't show what's in the text boxes, so nothing is sent. The owner needs to update desktop-agent.",
     };
+  // The page's box may hold the approved text while Enter goes to an address typed in the address bar.
+  if (el.pageFocus === false)
+    return {
+      action: "hold",
+      why: "The keyboard isn't on the page: it's in the address bar or another window. Click into the conversation's message box first.",
+    };
   if (el.href && offSite(el.href, gate))
     return {
       action: "hold",

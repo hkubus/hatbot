@@ -646,8 +646,13 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       const typing = call.name === "type" && typeof input.text === "string" ? input.text : "";
       let hold =
         els
-          .map((e): Hold | null => {
+          .map((e, i): Hold | null => {
             if (e === undefined) return { unseen: true };
+            // The screen's keyboard goes where the desktop's focus is: with no page answering, or the
+            // page saying it hasn't the keyboard, that's the address bar or another window.
+            const w = check.at[i];
+            if (!isBrowser && w && "focused" in w && (e === null || e.pageFocus === false))
+              return { outside: true };
             const h = consequential(check.press, e);
             if (gate || (h && "label" in h)) return h;
             // Outside a negotiation, anything that could message a seller asks first, and says why

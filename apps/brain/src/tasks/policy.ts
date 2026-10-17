@@ -221,6 +221,12 @@ export function checkFor(
     return { press, at: [{ focused: true }] };
   }
   if (name === "type") {
+    // Typed into the address bar, these run in the page that's open, logged in.
+    if (/^\s*(?:javascript|data|vbscript):/i.test(text))
+      return {
+        refuse:
+          "Hatbot doesn't type javascript:, data: or vbscript: addresses: in the address bar they run in the page. Use the browser's navigate to open a web address.",
+      };
     if (/\t[\s\S]*[ \r\n]/.test(text))
       return {
         refuse:
@@ -277,7 +283,9 @@ export type Hold =
   | { unlabelled: "button" | "beside" }
   | { checkout: string }
   | { frame: string }
-  | { unseen: true };
+  | { unseen: true }
+  /** Enter or Space with the keyboard off the page: in the address bar, where it opens what's typed. */
+  | { outside: true };
 
 /** A button that does something, as opposed to a text box, a link or plain text. */
 const buttonLike = (el: AgentElement) =>
@@ -338,6 +346,7 @@ export function heldWhat(hold: Hold): string {
   if ("checkout" in hold) return `on a checkout page (${hold.checkout})`;
   if ("frame" in hold) return "in an embedded frame";
   if ("unseen" in hold) return "on something Hatbot couldn't see";
+  if ("outside" in hold) return "with the keyboard off the page";
   return hold.unlabelled === "beside"
     ? "beside a button with no label"
     : "on a button with no label";
@@ -356,6 +365,8 @@ export function heldBack(press: Press, hold: Hold): string {
     return `this ${act} lands in an embedded frame${hold.frame ? ` ("${hold.frame}")` : ""} that Hatbot can't see into, so it can't tell what it does; payment and chat widgets live in frames. If it pays, sends, books or deletes anything, call confirm_intent first. If it doesn't, reach the same place another way.`;
   if ("unseen" in hold)
     return `Hatbot couldn't see what this ${act} would act on, so it can't tell whether it's safe. Take a screenshot or read the page again and retry; if it still can't, and this pays, sends, books or deletes anything, call confirm_intent first.`;
+  if ("outside" in hold)
+    return `the keyboard isn't on the page: it's in the browser's address bar or another window, where ${act} opens what was typed or presses something Hatbot can't see. To open a page, use the browser's navigate; to type in the page, click into its box first. If this answers a dialog you mean to answer, call confirm_intent first.`;
   if (hold.unlabelled === "beside")
     return `Enter here could press the button next to this box, which has no label, so Hatbot can't tell whether it sends. If it sends, buys, pays, books or deletes anything, call confirm_intent first.${newLine}`;
   return `this ${act} is on a button with no label, so Hatbot can't tell what it does: it could send or pay as easily as open a menu. If it sends, buys, pays, books or deletes anything, call confirm_intent first. If it doesn't, reach the same place another way: Escape to close something, scrolling, or a labelled control.`;

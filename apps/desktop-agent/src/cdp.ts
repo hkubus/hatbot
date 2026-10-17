@@ -85,6 +85,11 @@ export const ELEMENT_JS = `(o) => {
   const top = window.screenY + window.outerHeight - window.innerHeight * dpr;
   const at = o.focused ? focusedAt() : elementAt((o.x - left) / dpr, (o.y - top) / dpr);
   const el = at.el;
+  // Nothing focused is the page itself, which still says whether it has the keyboard: when it doesn't,
+  // Enter goes to the address bar or another window.
+  if ((!el || el === el.ownerDocument.body) && o.focused)
+    return { tag: 'body', role: null, type: null, label: '', inForm: false, url: location.href,
+      editable: false, fields: fieldsFor(document.body), secret: false, pageFocus: document.hasFocus() };
   if (!el || el === el.ownerDocument.body) return null;
   // Teach mode drops what's typed here. A frame's focus can't be seen from the page, so it counts too.
   const secret = isFrame(el) || isSecret(el);
