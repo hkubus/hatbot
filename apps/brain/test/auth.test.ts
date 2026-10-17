@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Session, SignedOutOthers } from "@hatbot/shared";
-import { FailureLimiter } from "../src/auth/service";
+import { AuthService, FailureLimiter } from "../src/auth/service";
 import { resetLogin } from "../src/reset-login";
 import { ORIGIN, setUpOwner, testApp } from "./helpers";
 
@@ -642,12 +642,65 @@ describe("your account", () => {
     expect(await works({ cookie })).toBe(true);
   });
 
+  test("a new password or authenticator, or signing out everywhere else, forgets the other browsers", async () => {
+    const { t, secret, password, cookie } = await signedInTwice();
+    const known = (mark: string | undefined) => t.auth.knownDevice(mark?.split("=")[1]) !== null;
+    /** Someone else signing in: the mark their browser is given. */
+    const other = async () => {
+      t.advance(30_000);
+      const res = await t.call("POST", "/auth/login", { password, totp: t.code(secret) });
+      return cookieOf(res, "hatbot_device");
+    };
+    const before = await other();
+    expect(known(before)).toBe(true);
+    const all = await t.call("POST", "/auth/sign-out-others", {}, { cookie });
+    expect(known(before)).toBe(false);
+    // The browser that asked is marked again.
+    expect(known(cookieOf(all, "hatbot_device"))).toBe(true);
+
+    const second = await other();
+    t.advance(30_000);
+    const res = await t.call(
+      "POST",
+      "/auth/password",
+      { password, totp: t.code(secret), newPassword: "a whole new password" },
+      { cookie },
+    );
+    expect(res.status).toBe(200);
+    expect(known(second)).toBe(false);
+    expect(known(cookieOf(res, "hatbot_device"))).toBe(true);
+
+    t.advance(30_000);
+    const third = await t.call("POST", "/auth/login", {
+      password: "a whole new password",
+      totp: t.code(secret),
+    });
+    expect(known(cookieOf(third, "hatbot_device"))).toBe(true);
+    t.advance(30_000);
+    const start = await t.call(
+      "POST",
+      "/auth/totp/start",
+      { password: "a whole new password", totp: t.code(secret) },
+      { cookie },
+    );
+    const next = (await start.json()) as { secret: string };
+    const done = await t.call("POST", "/auth/totp", { totp: t.code(next.secret) }, { cookie });
+    expect(done.status).toBe(200);
+    expect(known(cookieOf(third, "hatbot_device"))).toBe(false);
+  });
+
   test("the reset forgets the password and authenticator and signs out everything", async () => {
-    const { t, cookie, token, works } = await signedInTwice();
+    const { t, secret, password, cookie, token, works } = await signedInTwice();
+    t.advance(30_000);
+    const browser = await t.call("POST", "/auth/login", { password, totp: t.code(secret) });
+    const mark = cookieOf(browser, "hatbot_device")?.split("=")[1];
+    expect(t.auth.knownDevice(mark)).not.toBeNull();
     resetLogin(t.db);
     expect(t.auth.isSetUp()).toBe(false);
     expect(await works({ cookie })).toBe(false);
     expect(await works({ authorization: `Bearer ${token}` })).toBe(false);
+    // The brain restarts after the reset, and no browser is one it knows.
+    expect(new AuthService(t.db).knownDevice(mark)).toBeNull();
     const start = await t.call("POST", "/auth/setup/start", { code: t.auth.setupCode });
     expect(start.status).toBe(200);
   });

@@ -137,8 +137,14 @@ export class AuthService {
     return true;
   }
 
-  /** Signs out every browser and app but the one asking. Returns how many. */
+  /**
+   * Signs out every browser and app but the one asking, and forgets which ones signed in here before:
+   * one that isn't yours would keep a sign-in limit of its own. A change of password or authenticator
+   * comes here too. Returns how many.
+   */
   endOthers(keep: Principal): number {
+    this.db.query("DELETE FROM settings WHERE key = 'device_key'").run();
+    this.deviceKey = null;
     const sessions = this.db
       .query<{ id: number }, [number]>("DELETE FROM sessions WHERE id != ? RETURNING id")
       .all(keep.kind === "session" ? keep.id : -1)
