@@ -42,7 +42,7 @@ Acceptance tests for parts that have never run live. The owner runs them; write 
 
 - **Built:** M0–M5, the iOS app, more than one bot (§14), looking after things (§15) and negotiation's N1 and N2 (§16). M4 onwards is built and committed but not yet deployed or tried live.
 - **Not yet tried live** (the owner does these): the M2 lock-screen approval, the M3 morning schedule, Forgejo webhook and Kuma alert, all of M4 and M5, the first iOS install from SideStore, and everything from the gaps pass. The renderer was tried only with Playwright's Chromium here, not Debian's on the desktop.
-- **Checks:** 445 tests (brain, desktop-agent and web) and 52 iOS core tests pass, Biome and `tsc -b` are clean, and `bun run licenses` passes.
+- **Checks:** 446 tests (brain, desktop-agent and web) and 53 iOS core tests pass, Biome and `tsc -b` are clean, and `bun run licenses` passes.
 
 ## How to work here
 
@@ -139,7 +139,7 @@ The owner asked for performance work, mostly on the network, with each change me
 - **For the owner to decide:** desktop tasks send every screenshot again, as base64, with each step: a 30-screenshot task uploads about 56 MB in all. The Files API would upload each once and refer to it by id. It costs a round trip per screenshot and keeps screenshots at Anthropic until they're deleted.
 
 ## Negotiation, N1 and N2 (built 2026-10-16, not tried live)
-PLAN §16: Haggler haggles with a seller inside a mandate you approve. §16.7 says how it's built, and §16.8 has Haggler's instructions to paste. Nothing could be tried live without a marketplace account; it's tested against a stand-in desktop-agent and a stand-in Scout.
+PLAN §16: Haggler haggles with a seller inside a mandate you approve. §16.7 says how it's built; Haggler is a template on New bot (§14.6). Nothing could be tried live without a marketplace account; it's tested against a stand-in desktop-agent and a stand-in Scout.
 - **Built:**
   - **Records:** migration 27 (wants, negotiations, their messages).
   - **Tools:** the negotiate tools (`apps/brain/src/negotiate/`). The appraisal falls back to `scout_watch_analytics` until Scout has `scout_price_reference` and `scout_comparables`.
@@ -155,7 +155,7 @@ PLAN §16: Haggler haggles with a seller inside a mandate you approve. §16.7 sa
      - Set these to **Chat:** `scout_search`, `scout_listings`, `scout_listing_detail` and `scout_watch_analytics`, plus `scout_price_reference` and `scout_comparables` once they exist.
      - Set `scout_record_outcome` to **Allow** once it exists, if Scout should learn final prices.
      - Scout limits `/mcp` to 30 requests a minute.
-  3. **Haggler:** make the bot (New bot) with the MCP plugin as its only plugin, and paste §16.8 as its instructions.
+  3. **Haggler:** New bot, Template → Haggler, Create. It fills in the instructions and the MCP plugin as its only plugin.
      - Any bot with Scout gets the negotiate tools. Hatbot too, if it has the MCP plugin.
      - The MCP plugin is allowed as a whole, so Haggler also gets any other MCP server you've added.
   4. **Account:** log in to the marketplace in Haggler's own browser profile. Ask Haggler to open olx.pl and take over when it asks you to log in.

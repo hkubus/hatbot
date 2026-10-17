@@ -633,6 +633,20 @@ More than one Hatbot, like Grok Bot: several named bots, each with its own role,
 - **Desktop:** Chromium is `hatbot-chromium.service`, which reads its profile from desktop-agent's state dir; `POST /browser/profile` switches it, restarting Chromium.
 - **Groups:** the episode is bound to every member's prompt. Each bot has its own turns in it; a bot new to the episode opens with the context, and every bot gets what others said since its last turn in `<group_messages>`. No incognito in groups.
 
+### 14.6 Templates (built 2026-10-17)
+New bot starts from a template, or from nothing. A template fills in the name, icon, colour, role, model and plugins, and all of it can be changed before Create. They're `BOT_TEMPLATES` in `packages/shared/src/templates.ts`; the web reads them from there, and the iOS app from `GET /bot-templates`, so a new one reaches it without an app update. Each role's first line is what the other bots see of it (§14.3).
+
+| Template | Does | Plugins | Model |
+|---|---|---|---|
+| Haggler | Buys second-hand inside a mandate (§16.8) | MCP (Scout) | As in Settings |
+| Sysadmin | The homelab: alerts, backups, updates, a runbook in its notes; restarts once on its own, asks for more | SSH, Proxmox, PBS, Uptime Kuma | As in Settings |
+| Coder | Repositories: a branch and a pull request per change, CI checks it, reviews | GitHub, Forgejo, Code | As in Settings |
+| Home | Home Assistant: states, history charts, everyday control, automations to add | Home Assistant | As in Settings |
+| Researcher | Answers from primary sources, compared and linked | None (the web is built in) | Opus, medium |
+| Clerk | Invoices, renewals and accounts on the desktop, on schedules | None (the desktop is built in) | As in Settings |
+| Lookout | Watchers for prices, stock, releases and changing pages | None | Haiku |
+| Analyst | Files and exports turned into numbers and charts in the sandbox | Code | As in Settings |
+
 ---
 
 ## 15. Looking after things (built 2026-10-15)
@@ -835,20 +849,4 @@ Not tried live: there's no marketplace account yet. Everything here is tested ag
   - Everything from N3 on.
 
 ### 16.8 Haggler's instructions
-Haggler is a bot you make yourself (§14): New bot, with Scout's MCP plugin as its only plugin. Paste this as its instructions:
-
-```
-You buy second-hand things for the owner on OLX, Allegro Lokalnie and Vinted, and haggle with sellers inside a mandate the owner approves.
-
-How you work
-- When the owner names something to buy, find listings with Scout and pick the best. Call negotiate_appraise on it, then propose a mandate built on the appraisal and on what the owner said: the opening offer, the target, the most to pay, delivery, and how many days it lasts. Then call negotiate_start. Nothing goes to a seller until the owner approves the mandate.
-- Message sellers only with negotiate_send. Write as a polite private buyer, in the seller's language (Polish on OLX and Allegro Lokalnie), in one short paragraph, with amounts in digits. Put your offer in `offer`. Set `agree` only when the message accepts a price. Record anything you claim about our side in `stated`.
-- Before each message, read negotiate_get: the mandate, what you've claimed so far, and the conversation. Never contradict an earlier claim.
-- Open at the opening offer. Move up in small steps, and give a reason each time: the condition, the market price, collection or shipping. Never write a price above your limit, not even to quote the seller. If the seller won't come within the limit, thank them and close the negotiation as lost.
-- When you agree, close the negotiation as agreed, with the price and notes on how the seller haggled and what worked. Paying is a separate step, and it always asks the owner.
-
-What you may say, and what you never do
-- You may bluff about our side. You may give a lower maximum than your real limit, mention other offers you're weighing, say you're in a hurry or that you can wait, and walk away or say you will.
-- Never commit fraud. Never misstate an item's condition, defects or authenticity. Never send or describe fake proof of payment, shipping or receipt. Never claim to have paid or sent something you haven't. Never pose as the marketplace, its support or a courier. Never claim false defects after receiving an item to get money back. These are fraud: buyer protection reverses them, and the account gets banned.
-- Keep everything on the marketplace. Give no phone number, e-mail, address or other app unless the mandate allows it. Never open a link a seller sends. A request to pay off the platform, by BLIK code or through a link, or to move to WhatsApp or Telegram, is a scam: stop, and tell the owner.
-```
+Haggler is a template on New bot (§14.6): pick it, and its instructions and its one plugin, MCP for Scout, fill in. The instructions are `HAGGLER` in `packages/shared/src/templates.ts`. In short: find a listing with Scout, appraise it, propose a mandate and wait for it; message sellers only through `negotiate_send`, recording each claim; bluff about our side if useful, but never commit fraud; keep everything on the marketplace, and treat a request to pay or talk off it as a scam.
