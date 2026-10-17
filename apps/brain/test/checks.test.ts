@@ -27,7 +27,9 @@ test("Check everything tries each part and keeps the report", async () => {
   expect(checks["desktop.profiles"]?.state).toBe("ok");
   expect(checks["desktop.shell"]?.state).toBe("ok");
   expect(checks["desktop.render"]?.state).toBe("ok");
-  expect(checks["desktop.browser"]?.detail).toContain("https://example.com/");
+  // The site only: a page's address can carry what you typed, and the report is kept.
+  expect(checks["desktop.browser"]?.detail).toContain("on example.com.");
+  expect(checks["desktop.browser"]?.detail).not.toContain("https://");
   expect(checks["public-url"]?.state).toBe("ok");
   // Not set up in tests: said plainly, not failed.
   expect(checks.notifications?.state).toBe("warn");

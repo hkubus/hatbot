@@ -151,6 +151,22 @@ test("a file is checked again each time it's shown, and an incognito one isn't k
   expect(next.id).toBeGreaterThan(secret.id);
 });
 
+test("a name in any language is kept in the download's filename*", async () => {
+  const t = await testApp();
+  const { cookie } = await setUpOwner(t);
+  const name = "Zażółć 'gęślą' (1).pdf";
+  const a = (await (
+    await upload(t, cookie, new File(["%PDF-1.4"], name, { type: "application/pdf" }))
+  ).json()) as Attachment;
+  const res = await t.app.request(`/api/v1/attachments/${a.id}?download`, { headers: { cookie } });
+  const header = res.headers.get("content-disposition") ?? "";
+  expect(header).toStartWith(`attachment; filename="Za____ 'g__l_' (1).pdf"`);
+  const encoded = /filename\*=UTF-8''(\S+)$/.exec(header)?.[1] ?? "";
+  expect(encoded).toBe("Za%C5%BC%C3%B3%C5%82%C4%87%20%27g%C4%99%C5%9Bl%C4%85%27%20%281%29.pdf");
+  expect(decodeURIComponent(encoded)).toBe(name);
+  expect(res.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+});
+
 test("downloads: images inline, anything else as a file, never sniffed", async () => {
   const t = await testApp();
   const { cookie } = await setUpOwner(t);

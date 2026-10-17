@@ -461,8 +461,15 @@ export class Checks {
         run: ifUp(async () => {
           const s = await agent.browserState();
           const tab = s.tabs.find((t) => t.active) ?? s.tabs[0];
+          // Only the site: the report is kept, and a page's address can carry what you typed or a token.
+          let site = "";
+          try {
+            site = tab?.url ? new URL(tab.url).host : "";
+          } catch {
+            // Not an address with a host, like about:blank.
+          }
           return ok(
-            `${s.tabs.length} tab${s.tabs.length === 1 ? "" : "s"} open${tab?.url ? `, on ${tab.url}` : ""}.`,
+            `${s.tabs.length} tab${s.tabs.length === 1 ? "" : "s"} open${site ? `, on ${site}` : ""}.`,
           );
         }),
       },

@@ -75,6 +75,17 @@ describe("login", () => {
     expect((await t.call("POST", "/auth/login", { password, totp })).status).toBe(401);
   });
 
+  test("one code signs in once, even from two devices at the same moment", async () => {
+    const t = await testApp();
+    const { secret, password } = await setUpOwner(t);
+    const totp = t.code(secret);
+    const [web, app] = await Promise.all([
+      t.call("POST", "/auth/login", { password, totp }),
+      t.call("POST", "/auth/login", { password, totp, client: "app", device: "iPhone" }),
+    ]);
+    expect([web.status, app.status].sort()).toEqual([200, 401]);
+  });
+
   test("wrong password fails, and says so plainly", async () => {
     const t = await testApp();
     const { secret } = await setUpOwner(t);
@@ -532,6 +543,27 @@ describe("your account", () => {
 });
 
 describe("tokens", () => {
+  test("a token's last use is written every few minutes, not on every request", async () => {
+    const t = await testApp();
+    const { cookie } = await setUpOwner(t);
+    const { token } = (await (
+      await t.call("POST", "/tokens", { name: "cli" }, { cookie })
+    ).json()) as {
+      token: string;
+    };
+    const bearer = { authorization: `Bearer ${token}` };
+    const lastUsed = () => t.auth.listTokens()[0]?.lastUsedAt;
+    await t.call("GET", "/tokens", undefined, bearer);
+    const first = lastUsed();
+    expect(first).toBe("2026-10-09T12:00:30.000Z");
+    t.advance(60_000);
+    await t.call("GET", "/tokens", undefined, bearer);
+    expect(lastUsed()).toBe(first);
+    t.advance(5 * 60_000);
+    await t.call("GET", "/tokens", undefined, bearer);
+    expect(lastUsed()).toBe("2026-10-09T12:06:30.000Z");
+  });
+
   test("create, use, revoke", async () => {
     const t = await testApp();
     const { cookie } = await setUpOwner(t);

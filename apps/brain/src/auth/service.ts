@@ -1,9 +1,11 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { ApiToken, Session } from "@hatbot/shared";
-import { type Db, now } from "../db";
+import type { Db } from "../db";
 import { newTotpSecret, totpUri, verifyTotp } from "./totp";
 
 export const SESSION_DAYS = 30;
+/** A token's last use is written at most this often, not on every request. */
+const LAST_USED_MS = 5 * 60_000;
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 const randomToken = (prefix: string) => prefix + randomBytes(32).toString("base64url");
 const sameText = (a: string, b: string) => {
@@ -269,10 +271,16 @@ export class AuthService {
 
   resolveToken(token: string): Principal | null {
     const row = this.db
-      .query<{ id: number }, [string]>("SELECT id FROM api_tokens WHERE token_hash = ?")
+      .query<{ id: number; last_used_at: string | null }, [string]>(
+        "SELECT id, last_used_at FROM api_tokens WHERE token_hash = ?",
+      )
       .get(sha256(token));
     if (!row) return null;
-    this.db.query("UPDATE api_tokens SET last_used_at = ? WHERE id = ?").run(now(), row.id);
+    const nowMs = this.clock();
+    if (!row.last_used_at || nowMs - Date.parse(row.last_used_at) >= LAST_USED_MS)
+      this.db
+        .query("UPDATE api_tokens SET last_used_at = ? WHERE id = ?")
+        .run(new Date(nowMs).toISOString(), row.id);
     return { kind: "token", id: row.id };
   }
 }

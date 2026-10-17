@@ -76,6 +76,8 @@ export const taskRoutes = new Hono<AppEnv>()
       headers: {
         "content-type": "image/webp",
         "cache-control": "private, max-age=31536000, immutable",
+        "x-content-type-options": "nosniff",
+        "cross-origin-resource-policy": "same-origin",
       },
     });
   });
