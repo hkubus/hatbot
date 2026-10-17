@@ -466,7 +466,9 @@ test("the running summary of a conversation that read untrusted content taints t
   // /new leaves the recent messages behind, but not the summary.
   await t.thread.post("/new").done;
   await t.thread.post("hi").done;
-  expect(textOf(chat.requests[1])).toContain("Proxmox 9.2 is out.");
+  expect(textOf(chat.requests[1])).toContain(
+    '<summary_of_earlier_conversations trusted="false">\n"Proxmox 9.2 is out."\n</summary_of_earlier_conversations>',
+  );
   expect(episodeTaint(t)).toEqual({
     tainted: 1,
     tainted_by:

@@ -1358,7 +1358,10 @@ export class Thread {
       ...(incognito
         ? []
         : [
-            `<summary_of_earlier_conversations>\n${this.threadSummary() || "(none yet)"}\n</summary_of_earlier_conversations>`,
+            // One written from conversations that read untrusted content is data, like what they read.
+            this.summaryTaint()
+              ? untrustedBlock("summary_of_earlier_conversations", this.threadSummary())
+              : `<summary_of_earlier_conversations>\n${this.threadSummary() || "(none yet)"}\n</summary_of_earlier_conversations>`,
           ]),
       `<recent_messages>\n${recent || "(none)"}\n</recent_messages>`,
       "</context>",
