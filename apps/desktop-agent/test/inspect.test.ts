@@ -38,6 +38,20 @@ const pages: Record<string, string> = {
       });
     </script>
   </body>`,
+  // A chat whose box is in a shadow root, a same-origin frame's box, and a link from the seller.
+  "/deep": `<!doctype html><body style="margin:0">
+    <button style="${box(0)}">${icon}</button>
+    <a href="/out?to=x" style="${box(1)};display:block">kliknij</a>
+    <deep-box></deep-box>
+    <iframe srcdoc="<textarea>Kupię za 2000 zł</textarea>" style="position:absolute;top:300px"></iframe>
+    <script>
+      customElements.define("deep-box", class extends HTMLElement {
+        connectedCallback() {
+          this.attachShadow({ mode: "open" }).innerHTML = '<textarea>Dzień dobry</textarea>';
+        }
+      });
+    </script>
+  </body>`,
 };
 
 /** A payment widget, as a shop embeds it from another address. */
@@ -153,5 +167,18 @@ test.skipIf(!chromium)(
     await browser.call("left_click", { target: { type: "coordinate", x: 200, y: 25 } });
     expect(await browser.inspect({})).toMatchObject({ tag: "input", editable: true });
     expect(await inspectScreen(browser)).toMatchObject({ tag: "input", secret: true });
+  },
+);
+
+test.skipIf(!chromium)(
+  "text boxes are seen in shadow roots and frames, and links say where they go",
+  async () => {
+    await browser.call("navigate", { url: `${base}/deep` });
+    const seen = (el: unknown) => ((el as { fields?: string[] } | null)?.fields?.length ?? 0) === 2;
+    expect(await settled(at(0), seen)).toMatchObject({
+      tag: "button",
+      fields: ["Dzień dobry", "Kupię za 2000 zł"],
+    });
+    expect(await browser.inspect(at(1))).toMatchObject({ tag: "a", href: `${base}/out?to=x` });
   },
 );

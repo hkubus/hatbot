@@ -6,8 +6,9 @@
 /** Shared by the scripts below: element references, roles, names and visibility. */
 /**
  * The text boxes a click or Enter could send, for the brain's exact-text check (PLAN.md §16.3): what each
- * visible one holds, whitespace collapsed, in the element's form when that has any, otherwise in its page.
- * A box inside another (an editable region in a role=textbox) counts once.
+ * visible one holds, whitespace collapsed, in the element's form when that has any, otherwise in its page,
+ * open shadow roots and same-origin frames included. A box inside another (an editable region in a
+ * role=textbox) counts once.
  */
 export const FIELDS = `
   const TEXT_BOX = 'textarea, input:not([type]), input[type=text], input[type=search], input[type=email], input[type=tel], input[type=url], input[type=number], [contenteditable=""], [contenteditable=true], [contenteditable=plaintext-only], [role=textbox]';
@@ -16,8 +17,20 @@ export const FIELDS = `
     && (e.ownerDocument.defaultView || window).getComputedStyle(e).visibility !== 'hidden';
   const boxValue = (e) => String((e.matches('input, textarea') ? e.value : e.innerText) || '')
     .replace(/\\s+/g, ' ').trim().slice(0, 4000);
+  const boxesIn = (root, out = []) => {
+    for (const e of root.querySelectorAll('*')) {
+      if (e.matches(TEXT_BOX)) out.push(e);
+      if (e.shadowRoot) boxesIn(e.shadowRoot, out);
+      if (e.tagName === 'IFRAME' || e.tagName === 'FRAME') {
+        let d = null;
+        try { d = e.contentDocument; } catch {}
+        if (d) boxesIn(d, out);
+      }
+    }
+    return out;
+  };
   const fieldsFor = (el) => {
-    const all = (root) => [...root.querySelectorAll(TEXT_BOX)].filter(shownBox);
+    const all = (root) => boxesIn(root).filter(shownBox);
     const form = el.closest('form');
     const inForm = form ? all(form) : [];
     const boxes = inForm.length ? inForm : all(el.ownerDocument);
@@ -85,6 +98,10 @@ export const ELEMENT = `
       if (submit) out.submitLabel = nameFor(submit);
     }
     if (editable) out.buttonsAfter = buttonsAfter(el);
+    const link = el.closest('a[href], area[href]');
+    if (link) {
+      try { out.href = new URL(link.getAttribute('href'), link.baseURI).href.slice(0, 2000); } catch {}
+    }
     return out;
   };
   const isFrame = (e) => !!e && (e.tagName === 'IFRAME' || e.tagName === 'FRAME');

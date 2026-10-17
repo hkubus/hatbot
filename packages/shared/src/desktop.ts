@@ -103,6 +103,8 @@ export type AgentElement = {
   buttonsAfter?: string[];
   /** It's inside a frame from another address (a payment widget, say), this one. With "gates". */
   frameUrl?: string;
+  /** For a link, or something inside one: where it goes, resolved. With "gates". */
+  href?: string;
 };
 
 /** POST /exec: a command run by the desktop's shell, which can't see the browser profile or the screen. */

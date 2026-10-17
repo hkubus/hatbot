@@ -10,6 +10,7 @@ import {
   refused,
   type SendGate,
   sameAddress,
+  typesText,
 } from "../src/negotiate/gate";
 
 const LISTING = "https://www.olx.pl/d/oferta/karta-rtx-3070-CID99-ID1001abc.html";
@@ -107,6 +108,62 @@ test("an unknown element or an old desktop-agent is held", () => {
   delete old.fields;
   delete old.url;
   expect(JSON.stringify(gateCheck(gate, ready, "click", old, null))).toContain("out of date");
+});
+
+test("a seller's link is never opened, however it's written or reached", () => {
+  for (const url of [
+    "evil.example/pay",
+    "//evil.example",
+    "https://bit.ly/pay-here",
+    " http://olx.pl.evil.example/ ",
+    "javascript:alert(1)",
+  ])
+    expect([url, refused(gate, "navigate", { url })]).toEqual([
+      url,
+      expect.stringContaining("Never open a link"),
+    ]);
+  for (const url of ["olx.pl/d/oferta/x", "www.olx.pl/myaccount/answers", "back", "reload"])
+    expect([url, refused(gate, "navigate", { url })]).toEqual([url, null]);
+  // The address bar and new windows are another way there.
+  for (const text of ["ctrl+l", "alt+d", "F6", "ctrl+t", "ctrl+shift+n"])
+    expect(refused(gate, "key", { text })).toContain("Use navigate");
+  expect(refused(gate, "key", { text: "ctrl+a" })).toBeNull();
+
+  // A link in the chat: off the site, through the site's redirect, or another kind of address.
+  const link = (href: string) => send({ tag: "a", type: null, label: "kliknij", href });
+  for (const href of [
+    "https://evil.example/olx-pay",
+    "https://www.olx.pl/redirect?url=https%3A%2F%2Fevil.example%2F",
+    "mailto:seller@example.com",
+  ]) {
+    expect(gateCheck(gate, ready, "click", link(href), null).action).toBe("hold");
+    expect(gateCheck(gate, ready, "enter", link(href), null).action).toBe("hold");
+  }
+  expect(gateCheck(gate, ready, "click", link(LISTING), null)).toEqual({ action: "send" });
+  expect(gateCheck(gate, ready, "click", send({ href: "javascript:void(0)" }), "Wyślij")).toEqual({
+    action: "send",
+  });
+});
+
+test("once something's typed, a click or Enter that sees no text box is held", () => {
+  const typed: GateState = { ...ready, typed: true };
+  const blind = send({ fields: [] });
+  expect(JSON.stringify(gateCheck(gate, typed, "click", blind, null))).toContain(
+    "can't see the text box",
+  );
+  expect(
+    gateCheck(gate, typed, "enter", { ...blind, tag: "div", editable: true }, null).action,
+  ).toBe("hold");
+  // A link on the listing's site needs no box; before typing, or after the send, the usual check decides.
+  const back = send({ fields: [], tag: "a", href: "https://www.olx.pl/myaccount/answers" });
+  expect(gateCheck(gate, typed, "click", back, null)).toEqual({ action: "usual" });
+  expect(gateCheck(gate, ready, "click", blind, null)).toEqual({ action: "usual" });
+  expect(gateCheck(gate, { ...typed, sent: true }, "click", blind, null)).toEqual({
+    action: "usual",
+  });
+  expect(typesText("type", { text: "a" })).toBe(true);
+  expect(typesText("key", { text: "ctrl+v" })).toBe(true);
+  expect(typesText("key", { text: "Tab" })).toBe(false);
 });
 
 test("a click in a frame isn't the send; a click on the page itself sends nothing", () => {

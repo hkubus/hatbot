@@ -23,6 +23,8 @@ export type GateState = {
   sent: boolean;
   /** Why nothing may be sent any more, e.g. the seller wrote since the message was approved. */
   stopped?: string | null;
+  /** Something has been typed or pasted: from here a send needs a text box Hatbot can see. */
+  typed?: boolean;
 };
 
 export type GateCheck =
@@ -104,11 +106,25 @@ export function gateCheck(
       action: "hold",
       why: "The desktop is out of date and can't show what's in the text boxes, so nothing is sent. The owner needs to update desktop-agent.",
     };
+  if (el.href && offSite(el.href, gate))
+    return {
+      action: "hold",
+      why: `This link goes to ${el.href.slice(0, 120)}. A negotiation stays on ${hostOf(gate.listingUrl)}: never open a link from the seller.`,
+    };
   // Clicking into a text box, or on the page itself, sends nothing; Enter in a box may.
   if (kind === "click" && (el.editable || el.tag === "body")) return { action: "pass" };
   const text = gate.text ? collapse(gate.text) : null;
   const fields = el.fields.map(collapse).filter(Boolean);
-  if (!fields.length) return { action: "usual" };
+  if (!fields.length) {
+    // Typed text in a box Hatbot can't see into (a closed shadow root, another site's frame) would go
+    // without being compared. Only a link elsewhere on the listing's site needs no box.
+    if (gate.mode === "send" && state.typed && !state.sent && !(kind === "click" && el.href))
+      return {
+        action: "hold",
+        why: "Hatbot can't see the text box this would send from, so it can't check the message. Type it into the conversation's own message box, or open the conversation again.",
+      };
+    return { action: "usual" };
+  }
   if (gate.mode === "read" || !text)
     return {
       action: "hold",
@@ -184,9 +200,37 @@ export function refused(
       .some((c) => pressOf(c) === "newline")
   )
     return "The message is one paragraph: no new lines. Send it with the Send button or Enter.";
-  if (name === "navigate" && typeof input.url === "string" && /^https?:/i.test(input.url)) {
-    if (!sameHost(input.url, gate.listingUrl))
-      return `A negotiation stays on ${hostOf(gate.listingUrl)}. Never open a link from the seller.`;
+  const stay = `A negotiation stays on ${hostOf(gate.listingUrl)}. Never open a link from the seller.`;
+  if (name === "navigate" && typeof input.url === "string") {
+    const where = input.url.trim();
+    // Read as desktop-agent reads it: an address with no scheme is https.
+    const url = /^[a-z][a-z0-9+.-]*:/i.test(where) ? where : `https://${where}`;
+    if (!["back", "forward", "reload"].includes(where) && !sameHost(url, gate.listingUrl))
+      return stay;
   }
+  // The address bar and new windows are ways to an address navigate would refuse.
+  if (
+    (name === "key" || name === "hold_key") &&
+    /(^|\s)((ctrl|control)\+(shift\+)?[ltn]|alt\+d|f6)(\s|$)/i.test(typed)
+  )
+    return `${stay} Use navigate to open a page.`;
   return null;
+}
+
+/** Whether an action puts text in a box: typing, form_input, or a paste. */
+export const typesText = (name: string, input: Record<string, unknown>) =>
+  name === "type" ||
+  name === "form_input" ||
+  (name === "key" &&
+    typeof input.text === "string" &&
+    /(^|\s)((ctrl|control|super|meta|cmd)\+v|shift\+insert)(\s|$)/i.test(input.text));
+
+/** Where a link goes, when that's off the listing's site: another host, or another kind of address. */
+export function offSite(href: string, gate: SendGate): boolean {
+  if (/^javascript:/i.test(href)) return false;
+  if (!sameHost(href, gate.listingUrl)) return true;
+  // The site's own redirect, to an address in its query.
+  for (const v of new URL(href).searchParams.values())
+    if (/^https?:/i.test(v) && !sameHost(v, gate.listingUrl)) return true;
+  return false;
 }

@@ -18,7 +18,7 @@ import { localStamp } from "../agent/thread";
 import { type Outcome, ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
-import { collapse, type GateState, gateCheck, refused } from "../negotiate/gate";
+import { collapse, type GateState, gateCheck, refused, typesText } from "../negotiate/gate";
 import { destructive } from "../plugins/ssh/policy";
 import { BudgetError, estimateTokens, priceOf, usesReserve } from "../spend";
 import { skillPath } from "../teach/skills";
@@ -620,6 +620,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       }
       if (hold) armed = false;
     }
+    if (gate && typesText(call.name, input)) gateState.typed = true;
     const step = tasks.addStep(id, {
       kind: call.name === "screenshot" ? "screenshot" : "action",
       name: call.name,
