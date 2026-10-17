@@ -312,8 +312,41 @@ test("write_file writes exactly the content, quotes and all; read_file reads it 
     `Wrote ${path} on nas`,
   );
   expect(readFileSync(path, "utf8")).toBe(content);
-  expect(await sshTool("ssh_read_file").run({ host: "nas", path }, call)).toBe(
-    `Exit code 0\n${content.trimEnd()}`,
+  expect(await sshTool("ssh_read_file").run({ host: "nas", path }, call)).toBe(content.trimEnd());
+  // Past the system's limit on a command's arguments: the content goes on stdin.
+  const big = `${"x".repeat(99)}\n`.repeat(4000);
+  expect(await sshTool("ssh_write_file").run({ host: "nas", path, content: big }, call)).toBe(
+    `Wrote ${path} on nas (400000 bytes).`,
+  );
+  expect(readFileSync(path, "utf8")).toBe(big);
+});
+
+test("read_file reads a stretch of lines at a time and says where to read on", async () => {
+  const { sshTool } = await started();
+  const read = (input: object) => sshTool("ssh_read_file").run({ host: "nas", ...input }, call);
+  const path = join(dir, "long.log");
+  writeFileSync(path, Array.from({ length: 1200 }, (_, i) => `line ${i + 1}`).join("\n"));
+
+  const first = await read({ path });
+  expect(first).toStartWith("line 1\nline 2\n");
+  expect(first).toEndWith("line 500\n… (lines 1 to 500; read on with offset 501)");
+  expect(await read({ path, offset: 1101 })).toEndWith("line 1199\nline 1200");
+  expect(await read({ path, offset: 1101, lines: 2 })).toBe(
+    "line 1101\nline 1102\n… (lines 1101 to 1102; read on with offset 1103)",
+  );
+  expect(await read({ path, offset: 5000 })).toBe(`${path} has no line 5000.`);
+
+  // Long lines stop it at 15,000 characters, at a line's end.
+  const wide = join(dir, "wide.txt");
+  writeFileSync(wide, `${"y".repeat(99)}\n`.repeat(300));
+  const some = await read({ path: wide });
+  expect(some).toEndWith("… (lines 1 to 150; read on with offset 151)");
+  expect(some.length).toBeLessThan(15_100);
+  writeFileSync(wide, "z".repeat(20_000));
+  expect(await read({ path: wide })).toContain("line 1 is longer than 15,000 characters");
+
+  await expect(read({ path: join(dir, "nope.txt") })).rejects.toThrow(
+    `Couldn't read ${join(dir, "nope.txt")} on nas: sed: `,
   );
 });
 
