@@ -671,7 +671,18 @@ export function fileDrops(
   setDropping: (on: boolean) => void,
 ): [string, (e: Event) => void][] {
   const files = (e: DragEvent) => !!e.dataTransfer?.types.includes("Files");
+  // Each element the drag enters, it leaves again: once it has left as many as it entered, it's out
+  // of the window or given up. Not relatedTarget, which Safari leaves null on every dragleave.
+  let depth = 0;
   return [
+    [
+      "dragenter",
+      (e) => {
+        if (!files(e as DragEvent)) return;
+        depth++;
+        setDropping(true);
+      },
+    ],
     [
       "dragover",
       (e) => {
@@ -680,14 +691,20 @@ export function fileDrops(
         setDropping(true);
       },
     ],
-    // Out of the window, or the drag given up.
-    ["dragleave", (e) => !(e as DragEvent).relatedTarget && setDropping(false)],
+    [
+      "dragleave",
+      () => {
+        depth = Math.max(0, depth - 1);
+        if (!depth) setDropping(false);
+      },
+    ],
     [
       "drop",
       (e) => {
         const list = (e as DragEvent).dataTransfer?.files;
         if (!files(e as DragEvent)) return;
         e.preventDefault();
+        depth = 0;
         setDropping(false);
         if (list?.length) attach(list);
       },

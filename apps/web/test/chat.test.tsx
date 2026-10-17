@@ -164,12 +164,15 @@ test("files dropped anywhere in the window go into the composer, not over the ap
   const fire = (type: string, e: ReturnType<typeof event>) => on.get(type)?.(e as unknown as Event);
 
   // Over the sidebar or the toolbar: the browser is told the drop is taken.
+  fire("dragenter", event(["Files"]));
   const over = event(["Files"]);
   fire("dragover", over);
   expect(over.defaultPrevented).toBe(true);
   expect(dropping).toBe(true);
-  // Leaving one element for another inside the window keeps it showing.
-  fire("dragleave", event(["Files"], [], {}));
+  // Leaving one element for another inside the window keeps it showing, though Safari doesn't say
+  // where it went.
+  fire("dragenter", event(["Files"]));
+  fire("dragleave", event(["Files"]));
   expect(dropping).toBe(true);
   const files = [new File(["x"], "a.txt")];
   const drop = event(["Files"], files);
@@ -184,6 +187,7 @@ test("files dropped anywhere in the window go into the composer, not over the ap
   expect(text.defaultPrevented).toBe(false);
   expect(attached).toHaveLength(1);
   // Out of the window: no longer showing.
+  fire("dragenter", event(["Files"]));
   fire("dragover", event(["Files"]));
   fire("dragleave", event(["Files"]));
   expect(dropping).toBe(false);
