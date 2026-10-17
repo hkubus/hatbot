@@ -8,15 +8,8 @@ import { isIP } from "node:net";
 import { checkServerIdentity, connect } from "node:tls";
 import { PluginError } from "./plugins/plugin";
 
-/** Its message is fine to show the owner and the model. */
-export class ProxmoxError extends PluginError {
-  constructor(
-    message: string,
-    readonly status = 0,
-  ) {
-    super(message);
-  }
-}
+/** What Proxmox calls throw, as the desktop's routes know it. */
+export { PluginError as ProxmoxError };
 
 export type Snapshot = { name: string; description: string; createdAt: string | null };
 
@@ -76,7 +69,7 @@ export async function pinnedRequest(
     });
   } catch (err) {
     socket.destroy();
-    throw new ProxmoxError(`Can't reach ${api.name}: ${(err as Error).message}`);
+    throw new PluginError(`Can't reach ${api.name}: ${(err as Error).message}`);
   }
   const cert = socket.getPeerCertificate();
   const seen = cert.fingerprint256 ?? "";
@@ -84,7 +77,7 @@ export async function pinnedRequest(
   const publicCa = socket.authorized && !checkServerIdentity(api.host, cert);
   if (!pinned && !publicCa) {
     socket.destroy();
-    throw new ProxmoxError(
+    throw new PluginError(
       `${api.name}'s certificate doesn't match the pinned fingerprint. It now shows ${seen || "no certificate"}. If its certificate was renewed, put that in ${api.setting} and restart the brain; if not, something else may be answering in its place.`,
     );
   }
@@ -115,20 +108,20 @@ export async function pinnedRequest(
   try {
     await done;
   } catch (err) {
-    throw new ProxmoxError(`${api.name} request failed: ${(err as Error).message}`);
+    throw new PluginError(`${api.name} request failed: ${(err as Error).message}`);
   } finally {
     socket.destroy();
   }
 
   const raw = Buffer.concat(chunks);
   const split = raw.indexOf("\r\n\r\n");
-  if (split < 0) throw new ProxmoxError(`${api.name} sent a malformed response.`);
+  if (split < 0) throw new PluginError(`${api.name} sent a malformed response.`);
   const head = raw.subarray(0, split).toString();
   let payload: Buffer = raw.subarray(split + 4);
   if (/^transfer-encoding:\s*chunked/im.test(head)) payload = decodeChunked(payload);
   const status = /^HTTP\/1\.[01] (\d{3}) ?(.*)$/m.exec(head);
   const code = Number(status?.[1] ?? 0);
-  if (code !== 200) throw new ProxmoxError(`${api.name}: ${status?.[2] || `HTTP ${code}`}`, code);
+  if (code !== 200) throw new PluginError(`${api.name}: ${status?.[2] || `HTTP ${code}`}`, code);
   return (JSON.parse(payload.toString() || "{}") as { data: unknown }).data;
 }
 
@@ -175,7 +168,7 @@ export class Proxmox {
   }
 
   private request(method: "GET" | "POST", path: string, form?: Record<string, string>) {
-    if (!this.hasApi) throw new ProxmoxError("Proxmox isn't set up (no /etc/hatbot/proxmox.env).");
+    if (!this.hasApi) throw new PluginError("Proxmox isn't set up (no /etc/hatbot/proxmox.env).");
     return pinnedRequest(
       {
         name: "Proxmox",
@@ -214,16 +207,16 @@ export class Proxmox {
 
   /** Rolls the desktop back to a snapshot and starts it again; resolves when Proxmox is done. */
   async rollbackDesktop(name: string, timeoutMs = 180_000) {
-    if (!/^[A-Za-z][\w-]{0,39}$/.test(name)) throw new ProxmoxError("Not a snapshot name.", 400);
-    if (!this.configured) throw new ProxmoxError("The desktop's id isn't set.");
+    if (!/^[A-Za-z][\w-]{0,39}$/.test(name)) throw new PluginError("Not a snapshot name.", 400);
+    if (!this.configured) throw new PluginError("The desktop's id isn't set.");
     const upid = (await this.request(
       "POST",
       `${this.lxc}/snapshot/${encodeURIComponent(name)}/rollback`,
       { start: "1" },
     )) as string;
     const exit = await this.waitTask(upid, timeoutMs);
-    if (exit === null) throw new ProxmoxError("The rollback is taking too long; check Proxmox.");
-    if (exit !== "OK") throw new ProxmoxError(`Rollback failed: ${exit}`);
+    if (exit === null) throw new PluginError("The rollback is taking too long; check Proxmox.");
+    if (exit !== "OK") throw new PluginError(`Rollback failed: ${exit}`);
   }
 
   /** Waits for a Proxmox task to end: its exit status ("OK" when it worked), or null on timeout. */

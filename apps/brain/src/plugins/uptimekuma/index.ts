@@ -1,7 +1,7 @@
 // Uptime Kuma: look at monitors, read-only. Kuma's own API is socket.io, so this reads its Prometheus
 // endpoint (/metrics) instead, signed in with an API key. Alerts come in separately, as triggers.
 import { z } from "zod";
-import { definePlugin, needsSetup, PluginError, ready, tool } from "../plugin";
+import { definePlugin, httpApi, needsSetup, PluginError, ready, tool } from "../plugin";
 
 /** monitor_status's values, from Kuma's UP, DOWN, PENDING and MAINTENANCE. */
 const STATUS: Record<number, Status> = { 0: "down", 1: "up", 2: "pending", 3: "maintenance" };
@@ -160,22 +160,18 @@ export const uptimeKumaPlugin = definePlugin({
         "Create an API key in Uptime Kuma (Settings → API Keys) and put UPTIME_KUMA_URL and UPTIME_KUMA_API_KEY in /etc/hatbot/uptimekuma.env on the brain, then restart it.",
       );
 
+    // Kuma takes an API key as basic auth's password, with no username.
+    const { send } = httpApi("Uptime Kuma", base, {
+      authorization: `Basic ${Buffer.from(`:${key}`).toString("base64")}`,
+    });
     const monitors = async (): Promise<Monitor[]> => {
-      let res: Response;
-      try {
-        res = await fetch(`${base}/metrics`, {
-          // Kuma takes an API key as basic auth's password, with no username.
-          headers: { authorization: `Basic ${Buffer.from(`:${key}`).toString("base64")}` },
-          signal: AbortSignal.timeout(30_000),
-        });
-      } catch (err) {
-        throw new PluginError(`Can't reach Uptime Kuma: ${(err as Error).message}`);
-      }
-      if (res.status === 401 || res.status === 403)
-        throw new PluginError(
-          `Uptime Kuma refused the API key (${res.status}). Check UPTIME_KUMA_API_KEY in /etc/hatbot/uptimekuma.env: the key may be expired or turned off.`,
-        );
-      if (!res.ok) throw new PluginError(`Uptime Kuma said ${res.status} for /metrics.`);
+      const res = await send("GET", "/metrics").catch((err) => {
+        if (err instanceof PluginError && (err.status === 401 || err.status === 403))
+          throw new PluginError(
+            `Uptime Kuma refused the API key (${err.status}). Check UPTIME_KUMA_API_KEY in /etc/hatbot/uptimekuma.env: the key may be expired or turned off.`,
+          );
+        throw err;
+      });
       const text = await res.text();
       if (/^\s*</.test(text))
         throw new PluginError(

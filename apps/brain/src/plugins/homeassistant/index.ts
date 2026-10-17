@@ -8,6 +8,7 @@ import {
   ask,
   askAlways,
   definePlugin,
+  httpApi,
   needsSetup,
   PluginError,
   ready,
@@ -196,35 +197,10 @@ export const homeassistantPlugin = definePlugin({
         "Create a long-lived access token in Home Assistant (your profile, Security) and put HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN in /etc/hatbot/homeassistant.env on the brain, then restart it.",
       );
 
-    const api = async <T>(method: string, path: string, body?: unknown): Promise<T> => {
-      let res: Response;
-      try {
-        res = await fetch(`${base}/api${path}`, {
-          method,
-          headers: {
-            authorization: `Bearer ${token}`,
-            accept: "application/json",
-            ...(body === undefined ? {} : { "content-type": "application/json" }),
-          },
-          body: body === undefined ? undefined : JSON.stringify(body),
-          signal: AbortSignal.timeout(30_000),
-        });
-      } catch (err) {
-        throw new PluginError(`Can't reach Home Assistant: ${(err as Error).message}`);
-      }
-      if (!res.ok) {
-        // HA answers {"message": ...} for most errors, plain text ("401: Unauthorized") for some.
-        const text = await res.text().catch(() => "");
-        let detail = text;
-        try {
-          detail = (JSON.parse(text) as { message?: string }).message ?? text;
-        } catch {}
-        throw new PluginError(
-          `Home Assistant said ${res.status}${detail ? `: ${String(detail).slice(0, 300)}` : ""}`,
-        );
-      }
-      return (await res.json()) as T;
-    };
+    const { api } = httpApi("Home Assistant", `${base}/api`, {
+      authorization: `Bearer ${token}`,
+      accept: "application/json",
+    });
 
     /** `whole`: the state as it is, for output already marked untrusted. */
     const stateLine = (s: State, whole = false) => {

@@ -5,7 +5,7 @@
 import { posix } from "node:path";
 import { z } from "zod";
 import { Branch, Path, Ref, Repo as RepoOf, runsInCi, sameBranch } from "../forge";
-import { allow, ask, definePlugin, needsSetup, PluginError, ready, tool } from "../plugin";
+import { allow, ask, definePlugin, httpApi, needsSetup, PluginError, ready, tool } from "../plugin";
 
 const Repo = RepoOf("hkubus/hatbot");
 const Num = z.number().int().positive().describe("The issue or pull request number");
@@ -119,58 +119,12 @@ export const githubPlugin = definePlugin({
         "Create a fine-grained token for Hatbot's GitHub bot account (contents, issues and pull requests read/write; commit statuses, checks and actions read) and put GITHUB_TOKEN in /etc/hatbot/github.env on the brain, then restart it. GITHUB_API_URL is only for GitHub Enterprise.",
       );
 
-    /** A request to the API. With redirect "manual", a redirect comes back as it is, not followed. */
-    const send = async (
-      method: string,
-      path: string,
-      body?: unknown,
-      accept = "application/vnd.github+json",
-      redirect: RequestInit["redirect"] = "follow",
-    ): Promise<Response> => {
-      let res: Response;
-      try {
-        res = await fetch(`${base}${path}`, {
-          method,
-          headers: {
-            authorization: `Bearer ${token}`,
-            accept,
-            "x-github-api-version": "2022-11-28",
-            "user-agent": "hatbot",
-            ...(body === undefined ? {} : { "content-type": "application/json" }),
-          },
-          body: body === undefined ? undefined : JSON.stringify(body),
-          redirect,
-          signal: AbortSignal.timeout(30_000),
-        });
-      } catch (err) {
-        throw new PluginError(`Can't reach GitHub: ${(err as Error).message}`);
-      }
-      if (redirect === "manual" && res.status >= 300 && res.status < 400) return res;
-      if (!res.ok) {
-        const detail = await res
-          .json()
-          .then((j) => {
-            const e = j as { message?: string; errors?: { message?: string }[] };
-            const more = e.errors?.map((x) => x.message).filter(Boolean) ?? [];
-            return [e.message, ...more].filter(Boolean).join(": ");
-          })
-          .catch(() => "");
-        throw new PluginError(
-          `GitHub said ${res.status}${detail ? `: ${String(detail).slice(0, 300)}` : ""}`,
-        );
-      }
-      return res;
-    };
-    const api = async <T>(
-      method: string,
-      path: string,
-      body?: unknown,
-      accept = "application/vnd.github+json",
-    ): Promise<T> => {
-      const res = await send(method, path, body, accept);
-      if (!accept.endsWith("json")) return (await res.text()) as T;
-      return (res.status === 204 ? null : await res.json()) as T;
-    };
+    const { send, api } = httpApi("GitHub", base, {
+      authorization: `Bearer ${token}`,
+      accept: "application/vnd.github+json",
+      "x-github-api-version": "2022-11-28",
+      "user-agent": "hatbot",
+    });
     const repoPath = (repo: string) => {
       const [owner, name] = repo.split("/") as [string, string];
       return `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;

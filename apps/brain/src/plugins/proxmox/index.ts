@@ -1,8 +1,18 @@
 // Proxmox (PLAN.md §5.5, §9.3): see every guest, start and reboot them, and ask before shutting one
 // down. Uses the scoped token from /etc/hatbot/proxmox.env, which can't change configs or destroy.
 import { z } from "zod";
-import { Proxmox, ProxmoxError } from "../../proxmox";
-import { allow, ask, askAlways, block, definePlugin, needsSetup, ready, tool } from "../plugin";
+import { Proxmox } from "../../proxmox";
+import {
+  allow,
+  ask,
+  askAlways,
+  block,
+  definePlugin,
+  needsSetup,
+  PluginError,
+  ready,
+  tool,
+} from "../plugin";
 
 /** How long a power action may take before the tool stops waiting. */
 const POWER_TIMEOUT_MS = 3 * 60_000;
@@ -76,7 +86,7 @@ export const proxmoxPlugin = definePlugin({
     const refused = (vmid: number) => vmid === brain || (own.has(vmid) && vmid !== desktop);
     const find = async (vmid: number): Promise<Resource> => {
       const r = (await guests()).find((g) => g.vmid === vmid);
-      if (!r) throw new ProxmoxError(`There's no guest ${vmid}.`);
+      if (!r) throw new PluginError(`There's no guest ${vmid}.`);
       return r;
     };
     const path = (r: Resource) => `/nodes/${encodeURIComponent(r.node)}/${r.type}/${r.vmid}`;
@@ -216,7 +226,7 @@ export const proxmoxPlugin = definePlugin({
                 const r = await find(vmid);
                 // Checked again on the fresh listing: the policy saw the last one.
                 if (refused(vmid))
-                  throw new ProxmoxError(
+                  throw new PluginError(
                     `${label(r)} is one of the guests you run on (tagged hatbot); it isn't powered from here.`,
                   );
                 const upid = (await pve.post(`${path(r)}/status/${action}`)) as string;
@@ -225,7 +235,7 @@ export const proxmoxPlugin = definePlugin({
                 if (exit === null)
                   return `${ACTION[action]} ${label(r)} is still going after 3 minutes; it's ${now.status} now.`;
                 if (exit !== "OK")
-                  throw new ProxmoxError(
+                  throw new PluginError(
                     `${ACTION[action]} ${label(r)} failed: ${exit}. It's ${now.status}.`,
                   );
                 return `${ACTION[action]} ${label(r)}: done. It's ${now.status} now.`;
@@ -255,7 +265,7 @@ export const proxmoxPlugin = definePlugin({
           })) as string;
           const exit = await pve.waitTask(upid, POWER_TIMEOUT_MS, signal);
           if (exit !== "OK")
-            throw new ProxmoxError(`The snapshot of ${label(r)} failed: ${exit ?? "timed out"}.`);
+            throw new PluginError(`The snapshot of ${label(r)} failed: ${exit ?? "timed out"}.`);
           return `Took snapshot ${name} of ${label(r)}.`;
         },
       }),

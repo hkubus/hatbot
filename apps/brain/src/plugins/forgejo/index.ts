@@ -3,7 +3,7 @@
 // add the bot as a collaborator to the repos it should work on.
 import { z } from "zod";
 import { Branch, Path, Ref, Repo as RepoOf, runsInCi, sameBranch } from "../forge";
-import { allow, ask, definePlugin, needsSetup, PluginError, ready, tool } from "../plugin";
+import { allow, ask, definePlugin, httpApi, needsSetup, PluginError, ready, tool } from "../plugin";
 
 const Repo = RepoOf("kubus/hatbot");
 const Num = z.number().int().positive().describe("The issue or pull request number");
@@ -55,39 +55,10 @@ export const forgejoPlugin = definePlugin({
         "Create a token for Hatbot's Forgejo bot account (repository and issue read/write) and put FORGEJO_URL and FORGEJO_TOKEN in /etc/hatbot/forgejo.env on the brain, then restart it.",
       );
 
-    const api = async <T>(
-      method: string,
-      path: string,
-      body?: unknown,
-      accept = "application/json",
-    ): Promise<T> => {
-      let res: Response;
-      try {
-        res = await fetch(`${base}/api/v1${path}`, {
-          method,
-          headers: {
-            authorization: `token ${token}`,
-            accept,
-            ...(body === undefined ? {} : { "content-type": "application/json" }),
-          },
-          body: body === undefined ? undefined : JSON.stringify(body),
-          signal: AbortSignal.timeout(30_000),
-        });
-      } catch (err) {
-        throw new PluginError(`Can't reach Forgejo: ${(err as Error).message}`);
-      }
-      if (!res.ok) {
-        const detail = await res
-          .json()
-          .then((j) => (j as { message?: string }).message)
-          .catch(() => "");
-        throw new PluginError(
-          `Forgejo said ${res.status}${detail ? `: ${String(detail).slice(0, 300)}` : ""}`,
-        );
-      }
-      if (accept !== "application/json") return (await res.text()) as T;
-      return (res.status === 204 ? null : await res.json()) as T;
-    };
+    const { api } = httpApi("Forgejo", `${base}/api/v1`, {
+      authorization: `token ${token}`,
+      accept: "application/json",
+    });
     const repoPath = (repo: string) => {
       const [owner, name] = repo.split("/") as [string, string];
       return `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
@@ -128,7 +99,7 @@ export const forgejoPlugin = definePlugin({
           throw new PluginError(`${path} is a ${c.type}; you can't change those here.`);
         return c.sha;
       } catch (err) {
-        if (err instanceof PluginError && err.message.startsWith("Forgejo said 404")) return null;
+        if (err instanceof PluginError && err.status === 404) return null;
         throw err;
       }
     };
