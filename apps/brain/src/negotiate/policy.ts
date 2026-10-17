@@ -670,7 +670,6 @@ function read(text: string, title: string, asking: number | null): Reading {
         : [];
     }),
   );
-  const titleNumbers = new Set([...models].map((m) => m.split(" ")[1] ?? ""));
   const pre = clean(text);
   const unclear: Unclear[] = lookAlikes(pre).map((raw) => ({ raw, spaced: false }));
   let s = blankDates(plain(text));
@@ -689,15 +688,17 @@ function read(text: string, title: string, asking: number | null): Reading {
     // The asking price is a price wherever it stands, even after a model's name.
     const asked = asking !== null && values.includes(asking);
     if (!money && !asked) {
-      // RTX3070, iPhone12, i7, b550: glued to a model's letters, unless they're a price word (za1500).
+      // RTX3070, iPhone12, i7, b550: glued to a model's letters, unless they're a price word (za1500)
+      // or say "about" (ok450, CA450).
       const glued = /\p{L}+$/u.exec(before)?.[0];
       if (
         glued &&
         !priceWord(glued) &&
+        !/^(?:ok|ca)$/i.test(glued) &&
         !priceWord(lastWord(before.slice(0, -glued.length))) &&
         (modelLike(glued) ||
           models.has(`${glued.toLowerCase()} ${raw}`) ||
-          (glued.length <= 2 && values.every((v) => v < 1000)))
+          (glued.length === 1 && values.every((v) => v < 1000)))
       )
         return;
       // i7-12700, RX-580: after a hyphen glued to a model's letters. Not "oferta-1500" or "PLN-1500".
@@ -727,9 +728,8 @@ function read(text: string, title: string, asking: number | null): Reading {
       // 1080p: a resolution.
       if (/^p(?![\p{L}])/u.test(after) && /^(?:480|720|1080|1440|2160)$/.test(raw)) return;
       const word = /(\p{L}+)[\s-]$/u.exec(before)?.[1];
+      // Only with the title's word before it: the title's number on its own ("Mogę 6800") is a price.
       if (word && !asked && !priceWord(word) && models.has(`${word.toLowerCase()} ${raw}`)) return;
-      // "zwykła 3070": the title's model number on its own, not after a price word.
-      if (!asked && !priceWord(lastWord(before)) && titleNumbers.has(raw)) return;
       const year = Number(raw);
       if (
         !asked &&
