@@ -10,6 +10,9 @@ prefix=${BUNDLE_PREFIX:-$(sed -n 's/^ *BUNDLE_PREFIX: *//p' project.yml | head -
 command -v xcodegen >/dev/null || { echo "XcodeGen is missing: brew install xcodegen" >&2; exit 1; }
 xcodegen generate --quiet
 
+# xcbeautify tidies the log when it's installed.
+if command -v xcbeautify >/dev/null; then log=xcbeautify; else log=cat; fi
+
 rm -rf build
 xcodebuild build \
   -project Hatbot.xcodeproj \
@@ -21,7 +24,7 @@ xcodebuild build \
   BUNDLE_PREFIX="$prefix" \
   ${VERSION:+MARKETING_VERSION=$VERSION} \
   ${BUILD:+CURRENT_PROJECT_VERSION=$BUILD} \
-  | { command -v xcbeautify >/dev/null && xcbeautify || cat; }
+  | "$log"
 
 mkdir -p build/Payload
 cp -R build/derived/Build/Products/Release-iphoneos/Hatbot.app build/Payload/
