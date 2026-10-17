@@ -40,13 +40,16 @@ export const authRoutes = new Hono<AppEnv>()
     if (loginLimits.perIp.blocked(clientIp) || loginLimits.global.blocked("*")) {
       return c.json({ error: "too many attempts, try again later" }, 429);
     }
+    // Counted as failed before the check, so a burst can't all get past blocked() while the first is
+    // still being checked; taken back if it was right.
+    loginLimits.perIp.fail(clientIp);
+    loginLimits.global.fail("*");
     const { password, totp, client, device } = c.req.valid("json");
     if (!(await auth.checkCredentials(password, totp))) {
-      loginLimits.perIp.fail(clientIp);
-      loginLimits.global.fail("*");
       return c.json({ error: "wrong password or code" }, 401);
     }
     loginLimits.perIp.reset(clientIp);
+    loginLimits.global.forgive("*");
     if (client === "app") {
       const { token } = auth.createToken(device ?? "App");
       return c.json({ ok: true, token });

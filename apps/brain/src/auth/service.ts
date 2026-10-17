@@ -149,6 +149,14 @@ export class FailureLimiter {
     this.failures.set(key, list);
   }
 
+  /** Takes back one failure: an attempt counted before it was checked, which turned out right. */
+  forgive(key: string) {
+    const list = this.recent(key);
+    list.pop();
+    if (list.length) this.failures.set(key, list);
+    else this.failures.delete(key);
+  }
+
   reset(key: string) {
     this.failures.delete(key);
   }

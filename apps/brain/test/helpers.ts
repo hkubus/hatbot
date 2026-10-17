@@ -295,6 +295,7 @@ export async function testApp(
     app,
     db,
     auth,
+    loginLimits,
     memory,
     model,
     taskModel,

@@ -88,6 +88,37 @@ describe("login", () => {
     );
   });
 
+  test("a burst of attempts at once is held to the limit, not let through while the first is checked", async () => {
+    const t = await testApp();
+    const { secret, password } = await setUpOwner(t);
+    const statuses = await Promise.all(
+      Array.from(
+        { length: 30 },
+        async () =>
+          (await t.call("POST", "/auth/login", { password: "nope", totp: "000000" })).status,
+      ),
+    );
+    expect(statuses.filter((s) => s === 401)).toHaveLength(10);
+    expect(statuses.filter((s) => s === 429)).toHaveLength(20);
+    expect((await t.call("POST", "/auth/login", { password, totp: t.code(secret) })).status).toBe(
+      429,
+    );
+  });
+
+  test("a right attempt is taken back off the overall count", async () => {
+    const t = await testApp();
+    const { secret, password } = await setUpOwner(t);
+    for (let i = 0; i < 3; i++)
+      await t.call("POST", "/auth/login", { password: "nope", totp: "000000" });
+    expect((await t.call("POST", "/auth/login", { password, totp: t.code(secret) })).status).toBe(
+      200,
+    );
+    for (let i = 0; i < 46; i++) t.loginLimits.global.fail("*");
+    expect(t.loginLimits.global.blocked("*")).toBe(false);
+    t.loginLimits.global.fail("*");
+    expect(t.loginLimits.global.blocked("*")).toBe(true);
+  });
+
   test("app login returns a bearer token", async () => {
     const t = await testApp();
     const { secret, password } = await setUpOwner(t);
