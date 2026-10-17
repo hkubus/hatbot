@@ -304,7 +304,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   const { d } = tasks;
   const task = tasks.get(id);
   if (!task) return;
-  const agent = d.desktop.agent;
+  // Its requests end when the task is cancelled, not when they would have.
+  const agent = d.desktop.agent.withSignal?.(signal) ?? d.desktop.agent;
   /** Haiku's, until it fails and Opus carries on. */
   let model = task.model;
 
@@ -332,7 +333,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     tasks.setStatus(id, "running");
     // Its bot's logins, not another's. Another task may have switched it while this one was away.
     try {
-      await d.desktop.agent.useProfile(task.botId);
+      await agent.useProfile(task.botId);
     } catch (err) {
       release();
       throw new Stop(
@@ -917,7 +918,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       const halted = new Set<string>();
       for (const call of calls) {
         const toolset = call.toolset_name ?? "";
-        if (cutOff(res)) {
+        if (signal.aborted) {
+          results.push(textResult(call, "Not run: the task was cancelled.", true));
+        } else if (cutOff(res)) {
           results.push(
             textResult(call, "Input was cut off at max_tokens. Retry with a shorter input.", true),
           );
@@ -971,6 +974,10 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           finished.outcome === "failed" && { account: "" },
         );
       }
+      if (signal.aborted) {
+        record("user", results);
+        throw signal.reason;
+      }
       await observePage();
       record("user", results);
     }
@@ -1023,7 +1030,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         : "";
     await acquire();
     // Tabs an earlier task left open would be in this one's way, and in its context.
-    await d.desktop.agent.resetBrowser().catch((err) => {
+    await agent.resetBrowser().catch((err) => {
       if (signal.aborted) throw err;
       console.error(`task ${id}: couldn't close the old tabs`, err);
     });

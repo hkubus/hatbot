@@ -719,6 +719,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         return !untrusted && `${t.name.split("_")[0]}:${t.target(parsed.data)}`;
       };
       const results: BlockParam[] = await inBatches(calls, lookup, async (call) => {
+        if (signal.aborted) return result(call, "Not run: the task was cancelled.", true);
         if (cutOff(res))
           return result(call, "Input was cut off at max_tokens. Retry with a shorter input.", true);
         if (finished) return result(call, "Not run: the task already finished.", true);

@@ -835,6 +835,69 @@ test("the weekly report counts desktop tasks by the model they started on", asyn
   expect(text).toContain("- Desktop on Opus 5.5: 1 done, 0 failed.");
 });
 
+test("cancelling a desktop task stops the rest of the actions in its turn", async () => {
+  const work = new FakeModel([
+    {
+      content: [
+        computer("left_click", { coordinate: [10, 10] }),
+        computer("type", { text: "hello" }),
+        computer("key", { text: "Return" }),
+      ],
+    },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = startTask(t);
+  t.agent.afterAction = (name) => {
+    if (name === "left_click") t.tasks.cancel(task.id);
+  };
+  await t.tasks.idle();
+  expect(t.agent.actions.map((a) => a.name)).toEqual(["left_click"]);
+  expect(t.tasks.get(task.id)?.status).toBe("cancelled");
+  const turns = t.db
+    .query<{ content: string }, [number]>(
+      "SELECT content FROM task_turns WHERE task_id = ? AND role = 'user' ORDER BY id DESC LIMIT 1",
+    )
+    .get(task.id)?.content;
+  expect(turns).toContain("Not run: the task was cancelled.");
+});
+
+test("cancelling a background task stops the rest of the calls in its turn", async () => {
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("notify_owner", { message: "Starting." }),
+        toolUse("memory_write", { path: "notes/late.md", content: "late" }),
+      ],
+    },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.tasks.notifyOwner = (id: number) => void t.tasks.cancel(id);
+  const task = t.tasks.createBackgroundTask({ title: "Two", goal: "Do two", origin: "chat" });
+  await t.tasks.idle();
+  expect(t.tasks.get(task?.id ?? 0)?.status).toBe("cancelled");
+  expect(await t.memory.exists("notes/late.md")).toBe(false);
+});
+
+test("a desktop client request ends as soon as its task's signal aborts", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: () => new Promise<Response>((r) => setTimeout(() => r(Response.json({})), 5000)),
+  });
+  try {
+    const stop = new AbortController();
+    const agent = new HttpDesktopAgent(`http://localhost:${server.port}`, "token").withSignal(
+      stop.signal,
+    );
+    const started = Date.now();
+    const pending = agent.action({ name: "wait", input: { duration: 5 } });
+    setTimeout(() => stop.abort(new Error("cancelled")), 20);
+    await expect(pending).rejects.toThrow("cancelled");
+    expect(Date.now() - started).toBeLessThan(2000);
+  } finally {
+    server.stop(true);
+  }
+});
+
 test("a task whose reply hit the context window stops as failed, without running its calls", async () => {
   const work = new FakeModel([
     {

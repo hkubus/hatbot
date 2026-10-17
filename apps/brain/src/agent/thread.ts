@@ -1839,6 +1839,13 @@ export class Thread {
           (LOOKUP_TOOLS.includes(call.name) ||
             pluginTools.find((t) => t.name === call.name)?.access === "read");
         const results = await inBatches(toolUses, lookup, async (call): Promise<BlockParam> => {
+          if (abort.signal.aborted)
+            return {
+              type: "tool_result",
+              tool_use_id: call.id,
+              is_error: true,
+              content: "Not run: the reply was stopped.",
+            };
           if (cutOff(res))
             return {
               type: "tool_result",
@@ -1911,6 +1918,7 @@ export class Thread {
           };
         });
         this.appendTurn(episode.id, bot.id, "user", results);
+        abort.signal.throwIfAborted();
       }
     } catch (err) {
       if (abort.signal.aborted)

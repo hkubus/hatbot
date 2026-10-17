@@ -64,6 +64,8 @@ export interface DesktopAgent {
   unlock(): Promise<void>;
   /** WebSocket URL and headers for the live view. */
   liveSocket(): { url: string; headers: Record<string, string> };
+  /** The same desktop, its requests ending as soon as `signal` aborts: a task's, once it's cancelled. */
+  withSignal?(signal: AbortSignal): DesktopAgent;
 }
 
 /**
@@ -82,8 +84,13 @@ export class HttpDesktopAgent implements DesktopAgent {
   constructor(
     private baseUrl = process.env.DESKTOP_AGENT_URL ?? "",
     private token = process.env.DESKTOP_AGENT_TOKEN ?? "",
+    private signal?: AbortSignal,
   ) {
     this.configured = Boolean(baseUrl && token);
+  }
+
+  withSignal(signal: AbortSignal): DesktopAgent {
+    return new HttpDesktopAgent(this.baseUrl, this.token, signal);
   }
 
   private async req(
@@ -104,9 +111,12 @@ export class HttpDesktopAgent implements DesktopAgent {
           "content-type": raw ? "application/octet-stream" : "application/json",
         },
         body: raw ?? (body === undefined ? undefined : JSON.stringify(body)),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: this.signal
+          ? AbortSignal.any([AbortSignal.timeout(timeoutMs), this.signal])
+          : AbortSignal.timeout(timeoutMs),
       });
     } catch {
+      this.signal?.throwIfAborted();
       throw new DesktopError("The desktop isn't answering.", 0);
     }
     if (!res.ok) {
