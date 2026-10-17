@@ -1263,6 +1263,15 @@ export class Browser {
     return { url: t.url, title: t.title, value };
   }
 
+  /**
+   * What `script` returns in every other tab that was on screen at the last look: a popup's window (a
+   * sign-in, 3-D Secure) shows beside the active tab's. Null for one that couldn't be asked.
+   */
+  async alsoShown<T>(script: string, arg: unknown = {}): Promise<(T | null)[]> {
+    const others = this.shown.filter((t) => t !== this.active && this.targets.has(t));
+    return Promise.all(others.map((t) => this.run<T>(t, script, arg).catch(() => null)));
+  }
+
   /** The open tabs, and what changed since the last report. */
   async state(): Promise<BrowserState> {
     await this.ready();

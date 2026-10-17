@@ -301,3 +301,24 @@ test.skipIf(!real)(
     });
   },
 );
+
+pages["/opener"] = `<!doctype html><body style="margin:0">
+  <button style="width:100px;height:40px" onclick="window.open('/area', 'pay', 'width=400,height=300')">Pay</button></body>`;
+
+test.skipIf(!real)(
+  "a secret in a popup's window shows, though the tab under it is the active one",
+  async () => {
+    const browser = real as Browser;
+    expect(await shown("/opener")).toBe(false);
+    await browser.call("left_click", { target: { type: "coordinate", x: 20, y: 20 } });
+    let page = await context(browser, false, true);
+    for (let i = 0; !page.secretShown && i < 50; i++) {
+      await Bun.sleep(100);
+      page = await context(browser, false, true);
+    }
+    expect(page).toMatchObject({ url: `${base}/opener`, secretShown: true });
+    const popup = (await browser.state()).tabs.find((t) => t.url.endsWith("/area"));
+    await browser.call("close_tab", { tab_id: popup?.tab_id });
+    expect((await context(browser, false, true)).secretShown).toBe(false);
+  },
+);

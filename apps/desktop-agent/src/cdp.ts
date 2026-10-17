@@ -115,11 +115,15 @@ export async function context(
         return bare && { ...bare, value: { secretShown: true } };
       });
     if (!tab) return { url: null, title: null };
+    // A popup's window shows too, and one that can't be read may be showing a secret.
+    const others = secrets ? await browser.alsoShown<Page["value"]>(CONTEXT_JS, { secrets }) : [];
+    const secretShown =
+      (tab.value?.secretShown ?? true) || others.some((o) => o?.secretShown !== false);
     return {
       url: tab.url,
       title: tab.title,
       ...(withText ? { text: tab.value?.text ?? "" } : {}),
-      ...(secrets ? { secretShown: tab.value?.secretShown ?? true } : {}),
+      ...(secrets ? { secretShown } : {}),
     };
   } catch (err) {
     // Chromium isn't running, so it shows nothing; anything else may be a page showing one.
