@@ -6,10 +6,6 @@ import type { Attachments } from "../../attachments";
 import { type DesktopAgent, DesktopError } from "../../desktop/client";
 import { allow, definePlugin, needsSetup, PluginError, ready, tool } from "../plugin";
 
-/** Commands that fetch from outside: what they print is untrusted (PLAN.md §6.1). */
-const FETCHES =
-  /\b(curl|wget|git\s+(clone|pull|fetch)|pip3?\s+install|npm\s+(i|install)|apt(-get)?|ssh|scp|rsync|nc)\b|https?:\/\/|\burllib|\brequests\./;
-
 export const codePlugin = (d: { desktop: DesktopAgent; attachments: Attachments }) =>
   definePlugin({
     id: "code",
@@ -41,7 +37,9 @@ export const codePlugin = (d: { desktop: DesktopAgent; attachments: Attachments 
               .default([])
               .describe("Attachment ids to copy into in/ before running"),
           }),
-          untrusted: ({ command }) => FETCHES.test(command),
+          // The sandbox reaches the internet and keeps its files across chats and tasks, so what a
+          // command prints may be what some page said, today or last week (PLAN.md §6.1).
+          untrusted: true,
           describe: ({ command }) => {
             const line = command.trim().split("\n")[0] ?? "";
             return line.length > 120 ? `${line.slice(0, 119)}…` : line;

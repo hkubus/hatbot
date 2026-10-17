@@ -1,5 +1,6 @@
-// The share sheet's Hatbot: what you share, with a note, goes to Hatbot's chat as you. It reads the
-// token the app keeps in the App Group's Keychain access group.
+// The share sheet's Hatbot: what you share, with a note, goes to Hatbot's chat; text someone else wrote
+// goes as a file, not as your words. It reads the token the app keeps in the App Group's Keychain
+// access group.
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -99,7 +100,7 @@ struct ShareView: View {
         ToolbarItem(placement: .cancellationAction) { Button("Cancel") { done(false) } }
         ToolbarItem(placement: .confirmationAction) {
           Button(sending ? "Sending…" : "Send") { Task { await send() } }
-            .disabled(api == nil || loading || sending || (draft.text.isEmpty && files.isEmpty))
+            .disabled(api == nil || loading || sending || (draft.isEmpty && files.isEmpty))
         }
       }
     }
@@ -137,7 +138,13 @@ struct ShareView: View {
     error = nil
     do {
       var ids: [Int] = []
-      for f in files {
+      // What was shared is someone else's words: a file, which Hatbot reads as untrusted.
+      if !draft.shared.isEmpty {
+        let a: Attachment = try await api.upload(
+          "/attachments", data: Data(draft.shared.utf8), name: ShareDraft.sharedName, mediaType: "text/plain")
+        ids.append(a.id)
+      }
+      for f in files.prefix(10 - ids.count) {
         let a: Attachment = try await api.upload("/attachments", data: try f.data(), name: f.name, mediaType: f.mediaType)
         ids.append(a.id)
       }

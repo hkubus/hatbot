@@ -7,8 +7,9 @@ import { setUpOwner, type TestApp, testApp } from "./helpers";
 const bot = (t: TestApp, name: string) =>
   t.bots.create({ name, instructions: "", chatModel: null, chatEffort: null, plugins: null });
 
+/** The last turn, and the app's note after it if there is one. */
 const lastText = (req: { messages: { content: unknown }[] } | undefined) =>
-  JSON.stringify(req?.messages.at(-1)?.content);
+  JSON.stringify(req?.messages.slice(-2));
 
 async function group(t: TestApp, cookie: string, botIds: string[]) {
   const res = await t.call("POST", "/conversations", { title: "Kitchen", botIds }, { cookie });
@@ -46,8 +47,12 @@ test("@name picks who answers, else the last bot to speak, and a bot can bring a
   ]);
   const system = JSON.stringify(model.requests[0]?.system);
   expect(system).toContain("is a group chat with the owner and these bots: Chef, Hatbot");
-  expect(lastText(model.requests[1])).toContain("Chef: Soup. @Hatbot");
-  expect(lastText(model.requests[1])).toContain("Owner: what's for dinner?");
+  expect(lastText(model.requests[1])).toContain(
+    '<message from=\\"Chef\\" at=\\"Fri 2026-10-09 12:00\\">Soup. @Hatbot',
+  );
+  expect(lastText(model.requests[1])).toContain(
+    `<message from=\\"Owner\\" at=\\"Fri 2026-10-09 12:00\\">what's for dinner?</message>`,
+  );
   expect(lastText(model.requests[1])).toContain("you were mentioned");
 
   // No mention: Hatbot spoke last.
@@ -60,9 +65,13 @@ test("@name picks who answers, else the last bot to speak, and a bot can bring a
       .slice(-4)
       .map((m) => m.botId),
   ).toEqual([null, "hatbot", null, "chef"]);
-  const chefSaw = lastText(model.requests[3]);
-  expect(chefSaw).toContain("Hatbot: It is.");
-  expect(chefSaw).toContain("Owner: @chef and bread?");
+  const chefSaw = JSON.stringify(model.requests[3]?.messages.at(-1));
+  expect(chefSaw).toContain(
+    '<message from=\\"Hatbot\\" at=\\"Fri 2026-10-09 12:00\\">It is.</message>',
+  );
+  expect(chefSaw).toContain(
+    '<message from=\\"Owner\\" at=\\"Fri 2026-10-09 12:00\\">@chef and bread?</message>',
+  );
   expect(chefSaw).not.toContain("Soup.");
   // Each bot keeps its own turns.
   expect(model.requests[3]?.messages.length).toBe(3);

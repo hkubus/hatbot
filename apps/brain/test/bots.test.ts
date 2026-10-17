@@ -261,7 +261,7 @@ test("from the chat, ask_bot starts the other bot's task, and the asker reports"
   expect(JSON.stringify(work.requests[0]?.messages)).toContain("Asked by Hatbot");
   expect(systemOf(work.requests[0])).toContain("You are Chef");
   // Hatbot hears how it ended and tells you.
-  expect(JSON.stringify(model.requests[2]?.messages.at(-1))).toContain("by Chef, which you asked");
+  expect(JSON.stringify(model.requests[2]?.messages.at(-2))).toContain("by Chef, which you asked");
   expect(t.thread.list().at(-1)?.text).toBe("Chef says: soup.");
   expect(t.chats.direct("chef").list()).toEqual([]);
 });
@@ -287,7 +287,9 @@ test("from a task, ask_bot waits for the other bot, and taint goes both ways", a
   await t.tasks.idle();
   const child = t.tasks.list({}).find((x) => x.botId === "chef");
   expect(child).toMatchObject({ parentId: parent.id, requestedBy: "hatbot", tainted: true });
-  expect(JSON.stringify(work.requests[2]?.messages.at(-1))).toContain('<summary from=\\"Chef\\">');
+  expect(JSON.stringify(work.requests[2]?.messages.at(-1))).toContain(
+    '<summary from=\\"Chef\\" trusted=\\"false\\">',
+  );
   expect(t.tasks.get(parent.id)?.summary).toBe("Chef: soup.");
 });
 

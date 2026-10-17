@@ -4,6 +4,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { HeartbeatInfo, HeartbeatRun } from "@hatbot/shared";
 import type { Chats } from "./agent/chats";
 import type { ModelClient } from "./agent/model";
+import { tagJson } from "./agent/untrusted";
 import type { Bots } from "./bots";
 import type { Db } from "./db";
 import type { Desktop } from "./desktop/service";
@@ -208,7 +209,8 @@ export class Heartbeat {
     }
     if (choice.action === "nothing") return { ...base, action: "nothing", note: choice.message };
     const message = choice.message || list;
-    this.d.chats.note(botId, `**Heartbeat**: ${message}`);
+    // Written from logs, monitors and pages, like the task it would have started.
+    this.d.chats.note(botId, `**Heartbeat**: ${message}`, "What the heartbeat found");
     void this.d.notifier.send({
       title: "Heartbeat",
       message: message.slice(0, 1000),
@@ -229,7 +231,7 @@ export class Heartbeat {
       messages: [
         {
           role: "user",
-          content: `The owner's instructions:\n${instructions}\n\n<findings_json>\n${JSON.stringify(list)}\n</findings_json>`,
+          content: `The owner's instructions:\n${instructions}\n\n<findings_json>\n${tagJson(list)}\n</findings_json>`,
         },
       ],
     });

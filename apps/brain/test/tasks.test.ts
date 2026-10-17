@@ -74,7 +74,9 @@ test("chat starts a desktop task that runs, archives screenshots and reports bac
   // The chat model hears how it ended right away, and writes the reply that started it again: no
   // message of its own. The edited reply is unread until you've seen it.
   await t.thread.idle();
-  const told = JSON.stringify(chat.requests.at(-1)?.messages.at(-1));
+  // The task's news, then the app's note to the bot, as a system message.
+  const told = JSON.stringify(chat.requests.at(-1)?.messages.slice(-2));
+  expect(chat.requests.at(-1)?.messages.at(-1)?.role).toBe("system");
   expect(told).toContain("<task_updates>");
   expect(told).toContain("replaces your reply that started it");
   const after = t.thread.list().filter((m) => m.role === "assistant");
@@ -880,7 +882,7 @@ test("a Haiku desktop task out of steps carries on, once, on Opus, with Haiku's 
     expect(asked?.model).toBe("claude-haiku-5-5");
     const opus = JSON.stringify(work.requests[3]?.messages);
     expect(work.requests[3]?.messages.length).toBe(1);
-    expect(opus).toContain("<earlier_attempt>");
+    expect(opus).toContain('<earlier_attempt trusted=\\"false\\">');
     expect(opus).toContain("Stopped after 3 steps without finishing.");
     expect(opus).toContain("the date picker didn't take a click");
     expect(t.tasks.steps(task.id).some((s) => s.name === "Trying again on Opus")).toBe(true);

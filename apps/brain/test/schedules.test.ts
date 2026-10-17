@@ -317,7 +317,13 @@ test("Uptime Kuma: down starts a trusted alert task per monitor; later events go
   for (let i = 0; i < 3; i++) t.tasks.pool.release();
 
   const task = await ended(t, taskId);
-  expect(task).toMatchObject({ origin: "alert", title: "Forgejo is down", tainted: false });
+  // Kuma's fields are trusted; its message quotes the service, so it taints the task.
+  expect(task).toMatchObject({
+    origin: "alert",
+    title: "Forgejo is down",
+    tainted: true,
+    taintedBy: 'The message in the alert for "Forgejo"',
+  });
   expect(JSON.parse(task.payload as string)).toMatchObject({ monitor: "Forgejo", status: "down" });
   const notes = t.tasks.steps(taskId).map((s) => s.name);
   expect(notes).toContain("Forgejo is still down");

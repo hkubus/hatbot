@@ -6,6 +6,7 @@ import type { Verdict } from "../plugins/plugin";
 import type { Spend } from "../spend";
 import type { ModelClient } from "./model";
 import { REVIEW_PROMPT } from "./prompt";
+import { tagJson } from "./untrusted";
 
 const REVIEW_MODEL = "claude-haiku-5-5";
 
@@ -18,9 +19,12 @@ const ALWAYS_ASK: ApprovalKind[] = [
   "injection_warning",
 ];
 
-/** Whether Haiku may let this through: not money or accounts, and not one you said to always ask about. */
-export const mayReview = (verdict: Extract<Verdict, { action: "ask" }>) =>
-  !verdict.always && !ALWAYS_ASK.includes(verdict.kind ?? "other");
+/**
+ * Whether Haiku may let this through: not money or accounts, not one you said to always ask about,
+ * and not while something the chat or task read is suspected of being a prompt injection.
+ */
+export const mayReview = (verdict: Extract<Verdict, { action: "ask" }>, suspected = false) =>
+  !suspected && !verdict.always && !ALWAYS_ASK.includes(verdict.kind ?? "other");
 
 /**
  * Asks Haiku whether a change is safe to make without you: nothing destructive or dangerous, and
@@ -46,8 +50,8 @@ export async function safeToRun(
           content: [
             `<owner_said>\n${context.ownerSaid ?? "(nothing the owner wrote is available for this task)"}\n</owner_said>`,
             `<task_goal>\n${context.goal}\n</task_goal>`,
-            `<untrusted_sources>\n${JSON.stringify(context.sources)}\n</untrusted_sources>`,
-            `<action>\n${JSON.stringify({ tool: action.tool, input: action.input, summary: action.what, would_ask_because: action.why })}\n</action>`,
+            `<untrusted_sources>\n${tagJson(context.sources)}\n</untrusted_sources>`,
+            `<action>\n${tagJson({ tool: action.tool, input: action.input, summary: action.what, would_ask_because: action.why })}\n</action>`,
           ].join("\n\n"),
         },
       ],

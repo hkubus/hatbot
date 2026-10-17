@@ -15,20 +15,27 @@ struct AskResult: Decodable, Sendable {
   }
 }
 
-/// What the share sheet hands over, as one message: your note, then the text and links shared.
+/// What the share sheet hands over: your note and the links shared, as your message; the text shared,
+/// which someone else wrote, goes with it as a file, so Hatbot treats it as untrusted, not as your words.
 struct ShareDraft: Equatable, Sendable {
+  /// The file the shared text goes in.
+  static let sharedName = "Shared text.txt"
+
   var note = ""
   var texts: [String] = []
   var urls: [URL] = []
 
   var text: String {
-    var parts = [note.trimmingCharacters(in: .whitespacesAndNewlines)]
-    for t in texts {
-      let t = t.trimmingCharacters(in: .whitespacesAndNewlines)
-      // Safari shares a page's title as text with its link; the link says it.
-      if !t.isEmpty && !urls.contains(where: { $0.absoluteString == t }) { parts.append(t) }
-    }
-    parts += urls.map(\.absoluteString)
+    let parts = [note.trimmingCharacters(in: .whitespacesAndNewlines)] + urls.map(\.absoluteString)
     return parts.filter { !$0.isEmpty }.joined(separator: "\n\n")
   }
+
+  var shared: String {
+    texts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      // Safari shares a page's title as text with its link; the link says it.
+      .filter { t in !t.isEmpty && !urls.contains(where: { $0.absoluteString == t }) }
+      .joined(separator: "\n\n")
+  }
+
+  var isEmpty: Bool { text.isEmpty && shared.isEmpty }
 }

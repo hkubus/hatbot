@@ -173,7 +173,7 @@ test("what the model gets: text inline, PDFs as documents, the rest through the 
   );
 });
 
-test("code_run copies files into the sandbox and runs; fetching makes it untrusted", async () => {
+test("code_run copies files into the sandbox and runs; its output is untrusted", async () => {
   const t = await testApp();
   await t.plugins.update("code", { enabled: true });
   const run = t.plugins.tools().find((x) => x.name === "code_run");
@@ -194,9 +194,8 @@ test("code_run copies files into the sandbox and runs; fetching makes it untrust
   await expect(run.run({ command: "ls", timeout_s: 60, files: [999] }, call)).rejects.toThrow(
     "There's no attachment #999.",
   );
-  const untrusted = run.untrusted as (i: { command: string }) => boolean;
-  expect(untrusted({ command: "curl -s https://example.com" })).toBe(true);
-  expect(untrusted({ command: "python3 -c 'print(1+1)'" })).toBe(false);
+  // The sandbox keeps what it fetched: any command's output may be a page's.
+  expect(run.untrusted).toBe(true);
 });
 
 test("send_file puts the sandbox's file under the reply", async () => {
@@ -270,7 +269,7 @@ test("a background task hands the chat a JSON file; the bot reads it and the cha
   ]);
   expect(t.tasks.steps(task?.id as number).filter((s) => s.name === "send_to_chat").length).toBe(2);
   // The bot gets them with the task's result, and writes its reply again with the chart.
-  const told = JSON.stringify(chat.requests.at(-1)?.messages.at(-1));
+  const told = JSON.stringify(chat.requests.at(-1)?.messages.at(-2));
   expect(told).toContain('handed you, below: #1 \\"cpu.json\\", #2 \\"cpu.png\\"');
   expect(told).toContain(JSON.stringify(series).slice(1, -1));
   expect(told).toContain('"type":"image"');

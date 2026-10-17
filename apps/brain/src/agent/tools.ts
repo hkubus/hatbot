@@ -27,6 +27,7 @@ import type { Tasks } from "../tasks/service";
 import { skillPath } from "../teach/skills";
 import type { Triggers } from "../triggers";
 import { conditionOf, WatchError, type Watchers, watcherLine } from "../watch/service";
+import { messageTag } from "./untrusted";
 
 export type ToolContext = {
   db: Db;
@@ -62,8 +63,14 @@ export type ToolContext = {
    * (PLAN.md §6.1).
    */
   tainted?: () => string | null;
-  /** Marks the conversation as having read untrusted content: `by`. */
-  taint?: (by: string) => void;
+  /** Marks the conversation as having read untrusted content: `by`, and `text` to screen. */
+  taint?: (by: string, text?: string) => void;
+  /**
+   * Whether something the conversation read is suspected of being a prompt injection, once what it
+   * read so far is screened: work it starts is marked so, and Haiku's review doesn't let its changes
+   * through.
+   */
+  suspected?: () => Promise<boolean>;
   /** Your own latest messages in this conversation, for a task's approval check. */
   ownerSaid?: () => string;
   /** Runs a plugin tool that changes something, after its checks and your approval if it needs one. */
@@ -165,7 +172,8 @@ const whose = (botId: string, bot?: Bot, bots?: Bots) =>
  */
 function authorOf(ctx: ToolContext, path: string) {
   const id = ctx.bot?.id ?? HATBOT_ID;
-  const theirs = /^bots\/([^/]+)\//.exec(path.replace(/^\.\//, ""))?.[1];
+  // The path as it lands, so "notes/../bots/x/…" counts as bots/x.
+  const theirs = /^bots\/([^/]+)\//.exec(ctx.memory.resolve(path).rel)?.[1];
   if (theirs && `bots/${theirs}` !== botFolder(id))
     throw new MemoryError(
       `${path} is in ${ctx.bots?.nameOf(theirs) ?? theirs}'s own memory folder; leave it to them.`,
@@ -173,8 +181,11 @@ function authorOf(ctx: ToolContext, path: string) {
   return ctx.bots?.author(id) ?? HATBOT;
 }
 
-/** Files every later chat and task reads and trusts: skills, and the memory indexes. */
-const TRUSTED_FILE = /^(skills\/.+|INDEX\.md|bots\/[^/]+\/INDEX\.md)$/;
+/**
+ * Files every later chat and task reads and trusts: skills, the memory indexes, and homelab.md, the
+ * map of the homelab that every bot shares and alert tasks act on.
+ */
+const TRUSTED_FILE = /^(skills\/.+|INDEX\.md|bots\/[^/]+\/INDEX\.md|homelab\.md)$/;
 
 /**
  * A write (or, content null, a delete) to a trusted file after reading untrusted content becomes a
@@ -197,7 +208,7 @@ async function held(
     return content === null
       ? `Nothing to delete: ${rel} doesn't exist.`
       : "No change: the file already had this content.";
-  return "Saved as a proposal; the owner applies it. After reading untrusted content, changes to skills and INDEX.md wait for them.";
+  return "Saved as a proposal; the owner applies it. After reading untrusted content, changes to skills, INDEX.md and homelab.md wait for them.";
 }
 
 /** Why a task the chat starts is tainted, from what the chat had read. */
@@ -338,17 +349,30 @@ export const TOOLS = [
       after: z.string().optional().describe("Only messages on or after this date, YYYY-MM-DD"),
       before: z.string().optional().describe("Only messages before this date, YYYY-MM-DD"),
     }),
-    run: async ({ query, after, before }, { db, episodeId, bot, bots }) => {
+    run: async ({ query, after, before }, { db, episodeId, bot, bots, taint }) => {
       const terms = query.match(/[\p{L}\p{N}_]+/gu) ?? [];
       if (!terms.length) return "No searchable words in the query.";
       // Not the conversation you're in: the message asking would otherwise be the best match. Only
-      // the chats this bot is in.
+      // the chats this bot is in. What a message drew on: its conversation's or task's untrusted
+      // content, or a note's.
       const rows = db
         .query<
-          { role: string; bot_id: string | null; text: string; created_at: string },
+          {
+            role: string;
+            bot_id: string | null;
+            text: string;
+            created_at: string;
+            tainted_by: string | null;
+          },
           [string, string, string, number, string]
         >(
-          `SELECT m.role, m.bot_id, m.text, m.created_at FROM messages_fts f JOIN messages m ON m.id = f.rowid
+          `SELECT m.role, m.bot_id, m.text, m.created_at,
+             CASE WHEN e.tainted = 1 THEN coalesce(e.tainted_by, 'Untrusted content')
+               WHEN t.tainted = 1 THEN 'Task #' || t.id || ' "' || t.title || '"'
+               ELSE m.tainted_by END AS tainted_by
+           FROM messages_fts f JOIN messages m ON m.id = f.rowid
+           LEFT JOIN episodes e ON e.id = m.episode_id
+           LEFT JOIN tasks t ON t.id = m.task_id
            WHERE messages_fts MATCH ? AND m.created_at >= ? AND m.created_at < ?
            AND m.episode_id IS NOT ?
            AND m.conversation_id IN (SELECT conversation_id FROM conversation_bots WHERE bot_id = ?)
@@ -362,12 +386,19 @@ export const TOOLS = [
           bot?.id ?? HATBOT_ID,
         );
       if (!rows.length) return "No matches.";
+      // What those messages carried is in this conversation or task now.
+      const from = rows.find((r) => r.tainted_by)?.tainted_by;
+      if (from) taint?.(from);
       return rows
-        .map(
-          (r) =>
-            `[${r.created_at.slice(0, 16).replace("T", " ")}] ${r.role === "user" ? "owner" : (bots?.nameOf(r.bot_id ?? HATBOT_ID) ?? "assistant")}: ${r.text.slice(0, 1500)}`,
+        .map((r) =>
+          messageTag(
+            r.role === "user" ? "Owner" : (bots?.nameOf(r.bot_id ?? HATBOT_ID) ?? "Assistant"),
+            r.created_at.slice(0, 16).replace("T", " "),
+            r.text.slice(0, 1500),
+            { taintedBy: r.tainted_by },
+          ),
         )
-        .join("\n\n");
+        .join("\n");
     },
   }),
   def({
@@ -424,9 +455,10 @@ export const TOOLS = [
     schema: RunTaskInput,
     run: async (
       { title, goal, effort },
-      { tasks, messageId, tainted, ownerSaid, bot, conversationId },
+      { tasks, messageId, tainted, ownerSaid, bot, conversationId, suspected },
     ) => {
       if (!tasks) return "Tasks aren't available.";
+      const suspect = await suspected?.();
       const task = tasks.createBackgroundTask({
         title,
         goal,
@@ -439,6 +471,7 @@ export const TOOLS = [
         request: ownerSaid?.(),
       });
       if (!task) return "The task couldn't start.";
+      if (suspect) tasks.mark(task.id, "injection_suspected");
       return `Started task #${task.id}. It's running in the background; the owner sees its progress and result under this reply. Don't wait for it.`;
     },
   }),
@@ -449,11 +482,12 @@ export const TOOLS = [
     schema: ResearchInput,
     run: async (
       { title, question, previous },
-      { tasks, memory, messageId, tainted, ownerSaid, bot, conversationId },
+      { tasks, memory, messageId, tainted, ownerSaid, bot, conversationId, suspected },
     ) => {
       if (!tasks) return "Tasks aren't available.";
       if (previous && !(await memory.exists(previous)))
         return `There's no report at ${previous}. Check the path, or leave previous out.`;
+      const suspect = await suspected?.();
       const task = tasks.createBackgroundTask({
         title,
         goal: refreshing(question, previous ?? null),
@@ -466,6 +500,7 @@ export const TOOLS = [
         research: true,
       });
       if (!task) return "The research couldn't start.";
+      if (suspect) tasks.mark(task.id, "injection_suspected");
       return `Started research task #${task.id}. It runs in the background for a few minutes; the owner sees its progress and answer under this reply. Don't wait for it.`;
     },
   }),
@@ -476,9 +511,10 @@ export const TOOLS = [
     schema: AskBotInput,
     run: async (
       { bot: to, request },
-      { tasks, messageId, tainted, ownerSaid, bot, conversationId },
+      { tasks, messageId, tainted, ownerSaid, bot, conversationId, suspected },
     ) => {
       if (!tasks || !bot) return "Other bots aren't available.";
+      const suspect = await suspected?.();
       const task = tasks.askBot({
         from: bot,
         to,
@@ -489,6 +525,7 @@ export const TOOLS = [
         ownerSaid: ownerSaid?.(),
       });
       if (typeof task === "string") return task;
+      if (suspect) tasks.mark(task.id, "injection_suspected");
       return `Asked ${tasks.d.bots.nameOf(task.botId)}: task #${task.id}. The owner sees its progress under this reply.`;
     },
   }),
@@ -771,7 +808,7 @@ export async function runTool(
     }
     if (plugin) {
       const r = await runPluginTool(plugin, input, { task: null, signal });
-      if (r.untrusted) ctx.taint?.(describeCall(plugin, input));
+      if (r.untrusted) ctx.taint?.(describeCall(plugin, input), r.text);
       return r;
     }
     const names = [...TOOLS, ...offered].map((t) => t.name);
@@ -950,10 +987,12 @@ const readLine = (c: WebCall) =>
       ? `Searched the web for "${c.search}"`
       : "Searched the web"
     : `Read ${c.read || "a web page"}`;
+const CODE_READ = "Ran code that can search and read the web";
 
 /**
  * What a reply looked up on the web, in a line each: `Searched the web for "x"`, `Read https://…`.
- * Code whose own calls came back with it (a paused turn's) is told by those.
+ * Code whose own calls came back with it (a paused turn's) is told by those. Code the web tools run
+ * counts as a read even when no call shows in it: a URL in a variable or a helper function hides one.
  */
 export function webReads(content: Anthropic.Beta.BetaContentBlock[]): string[] {
   const told = new Set(
@@ -961,9 +1000,12 @@ export function webReads(content: Anthropic.Beta.BetaContentBlock[]): string[] {
       b.type === "server_tool_use" && b.caller && "tool_id" in b.caller ? [b.caller.tool_id] : [],
     ),
   );
-  return content.flatMap((b) =>
-    b.type === "server_tool_use" && !told.has(b.id) ? webCalls(b.name, b.input).map(readLine) : [],
-  );
+  return content.flatMap((b) => {
+    if (b.type !== "server_tool_use" || told.has(b.id)) return [];
+    const calls = webCalls(b.name, b.input);
+    if (!calls.length && CODE_TOOLS.includes(b.name)) return [CODE_READ];
+    return calls.map(readLine);
+  });
 }
 
 /**
@@ -1008,6 +1050,32 @@ export function addSources(
         cited.push(source);
     }
   }
+}
+
+/**
+ * The untrusted text a response's server tools brought in, to screen: pages fetched, the titles of
+ * search results (their text comes encrypted), and what the web tools' code printed.
+ */
+export function webTexts(
+  content: Anthropic.Beta.BetaContentBlock[],
+): { source: string; text: string }[] {
+  const out: { source: string; text: string }[] = [];
+  for (const b of content) {
+    if (b.type === "web_fetch_tool_result" && b.content.type === "web_fetch_result") {
+      const { source, title } = b.content.content;
+      if (source.type === "text")
+        out.push({ source: `Read ${b.content.url}`, text: `${title ?? ""}\n${source.data}` });
+    } else if (b.type === "web_search_tool_result" && Array.isArray(b.content)) {
+      const titles = b.content.map((r) => `${r.title} (${r.url})`).join("\n");
+      out.push({ source: "Web search results", text: titles });
+    } else if (
+      (b.type === "code_execution_tool_result" && b.content.type === "code_execution_result") ||
+      (b.type === "bash_code_execution_tool_result" &&
+        b.content.type === "bash_code_execution_result")
+    )
+      out.push({ source: CODE_READ, text: `${b.content.stdout}\n${b.content.stderr}` });
+  }
+  return out;
 }
 
 export const containerOf = (res: Anthropic.Beta.BetaMessage, before?: string) =>

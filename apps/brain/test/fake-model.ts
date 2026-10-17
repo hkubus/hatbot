@@ -1,5 +1,8 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { CreateParams, ModelClient, StreamHandlers, StreamParams } from "../src/agent/model";
+import { SCREENING_PROMPT } from "../src/agent/prompt";
+
+const NOT_SUSPECTED = '{"suspected": false, "excerpt": ""}';
 
 type Block = Anthropic.Beta.BetaContentBlock;
 export type Scripted = {
@@ -79,7 +82,12 @@ export class FakeModel implements ModelClient {
 
   async create(params: CreateParams) {
     this.creates.push(structuredClone(params));
-    const reply = this.onCreate?.(params) ?? this.summaries.shift() ?? "summary";
+    // Injection screening finds nothing unless a test says otherwise; it takes no summary's place.
+    const reply =
+      this.onCreate?.(params) ??
+      (params.system === SCREENING_PROMPT ? NOT_SUSPECTED : undefined) ??
+      this.summaries.shift() ??
+      "summary";
     // A forced tool call: the reply is its input, as JSON.
     if (params.tool_choice?.type === "tool")
       return message(
