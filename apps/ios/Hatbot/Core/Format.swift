@@ -13,6 +13,13 @@ enum Format {
     String(format: "$%.2f", usd)
   }
 
+  /// "Opus 5.5" for claude-opus-5-5, "Opus 4.8" for a fallback's claude-opus-4-8, worked out from the id
+  /// so a new model has a name too; an id of another shape stays as it is. The web's modelName.
+  static func modelName(_ id: String) -> String {
+    guard let m = id.wholeMatch(of: #/claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?/#) else { return id }
+    return m.1.prefix(1).uppercased() + m.1.dropFirst() + " \(m.2)" + (m.3.map { ".\($0)" } ?? "")
+  }
+
   /// A money field's text, read as it's typed: "5", "2.50", or "2,50" where a comma is the decimal mark.
   /// Grouping, spaces and a currency sign are left out; nil when there's no number.
   static func amount(_ text: String, locale: Locale = .current) -> Double? {

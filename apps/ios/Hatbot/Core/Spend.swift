@@ -95,14 +95,6 @@ extension ChartSpec {
 }
 
 enum SpendCharts {
-  static let modelNames = [
-    "claude-opus-5-5": "Opus 5.5",
-    "claude-sonnet-5-5": "Sonnet 5.5",
-    "claude-sonnet-5": "Sonnet 5",
-    "claude-haiku-5-5": "Haiku 5.5",
-    "claude-haiku-4-5": "Haiku 4.5",
-  ]
-
   static let purposeNames = [
     "thread": "Chat",
     "task": "Tasks",
@@ -131,7 +123,7 @@ enum SpendCharts {
 
   /// Biggest first; ones that cost nothing left out.
   static func byModel(_ rows: [SpendByModel]) -> ChartSpec? {
-    ranking(rows.map { (modelNames[$0.model] ?? $0.model, $0.usd) })
+    ranking(rows.map { (Format.modelName($0.model), $0.usd) })
   }
 
   static func byBot(_ rows: [SpendByBot], names: [String: String]) -> ChartSpec? {

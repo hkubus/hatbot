@@ -950,6 +950,16 @@ final class PlainTextTests: XCTestCase {
 }
 
 final class SpendTests: XCTestCase {
+  /// Every model the brain bills has a name, the fallbacks too, and a dated id goes by its model's.
+  func testModelsHaveNames() {
+    XCTAssertEqual(Format.modelName("claude-opus-5-5"), "Opus 5.5")
+    XCTAssertEqual(Format.modelName("claude-opus-5"), "Opus 5")
+    XCTAssertEqual(Format.modelName("claude-opus-4-8"), "Opus 4.8")
+    XCTAssertEqual(Format.modelName("claude-haiku-4-5-20251001"), "Haiku 4.5")
+    XCTAssertEqual(Format.modelName("some-new-model"), "some-new-model")
+    XCTAssertEqual(SpendCharts.byModel([SpendByModel(model: "claude-opus-4-8", usd: 1)])?.x, ["Opus 4.8"])
+  }
+
   func testSpendChartsAreBarsAndRankings() throws {
     let hours = [SpendHour(hour: "2026-10-15T13:00:00.000Z", usd: 0.5, tokens: 10)]
     let hourly = try XCTUnwrap(SpendCharts.hourly(hours, timeZone: TimeZone(identifier: "UTC")!))
