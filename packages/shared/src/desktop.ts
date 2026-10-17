@@ -80,6 +80,7 @@ export type AgentContext = {
 /** POST /inspect: the element under a point, or the focused one, for the click policy (PLAN.md §6.1). */
 export type AgentElement = {
   tag: string;
+  /** Its ARIA role; "clickable" for a div or icon the page made clickable without one. */
   role: string | null;
   type: string | null;
   label: string;
@@ -96,17 +97,18 @@ export type AgentElement = {
   editable?: boolean;
   /**
    * What the visible text boxes hold, whitespace collapsed, empty ones left out: the form's when the
-   * element is in one that has any, otherwise the page's. For the exact-text send check (PLAN.md §16.3).
-   * With the "fields" feature.
+   * element is in one that has any, otherwise the page's; search boxes left out. For the exact-text send
+   * check (PLAN.md §16.3). With the "fields" feature.
    */
   fields?: string[];
   /** It opens or closes part of the page (aria-expanded, aria-pressed, a menu or a tab). With "gates". */
   toggle?: boolean;
-  /** It's a search box, or in a search or filter form. With "gates". */
+  /** It's a search box, in a search or filter form, or beside search boxes only. With "gates". */
   search?: boolean;
   /**
-   * For a text box: the names of the buttons after it in the nearest part of the page that has any (a
-   * chat box's Send, say), "" for one with no name. Enter there may press one. With "gates".
+   * For a text box: the names of the buttons by it in the nearest part of the page that has any, the
+   * ones after it first (a chat box's Send, say), "" for one with no name. Enter there may press one.
+   * With "gates".
    */
   buttonsAfter?: string[];
   /** It's inside a frame from another address (a payment widget, say), this one. With "gates". */

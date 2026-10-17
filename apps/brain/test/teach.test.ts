@@ -3,14 +3,15 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { TeachSession } from "@hatbot/shared";
 import type { LiveInput } from "@hatbot/shared/desktop";
+import { websocket } from "hono/bun";
 import { TEACH_PROMPT } from "../src/agent/prompt";
 import type { EventBus } from "../src/events";
 import { HATBOT } from "../src/memory/store";
-import { describeSteps, Recorder } from "../src/teach/recorder";
+import { describeSteps, type FieldCheck, OffPage, Recorder } from "../src/teach/recorder";
 import { Teach } from "../src/teach/service";
 import { describeSkill, withSkillsSection } from "../src/teach/skills";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
+import { ORIGIN, setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
 
 const SKILL = `---
 name: renew-library-books
@@ -41,19 +42,31 @@ const click = (x: number, y: number): LiveInput[] => [
   { t: "button", button: 1, down: false, x, y },
 ];
 
+/** A field check's answer, or a screenshot, with or without the address it was on. */
 function recorder(
-  secret: () => Promise<boolean> = async () => false,
-  screen: () => Promise<Uint8Array | null> = async () => new Uint8Array([1]),
+  secret: () => Promise<boolean | FieldCheck> = async () => false,
+  screen: () => Promise<Uint8Array | { bytes: Uint8Array; url: string } | null> = async () =>
+    new Uint8Array([1]),
 ) {
   let now = 0;
   let shots = 0;
+  const saved: string[] = [];
   const r = new Recorder({
     clock: () => now,
-    secretField: secret,
-    screen,
-    save: async (label) => `screens/teach/${++shots}-${label}.webp`,
+    secretField: async () => {
+      const s = await secret();
+      return typeof s === "boolean" ? { secret: s } : s;
+    },
+    screen: async () => {
+      const s = await screen();
+      return s instanceof Uint8Array ? { bytes: s } : s;
+    },
+    save: async (label) => {
+      saved.push(label);
+      return `screens/teach/${++shots}-${label}.webp`;
+    },
   });
-  return { r, tick: (ms: number) => (now += ms) };
+  return { r, saved, tick: (ms: number) => (now += ms) };
 }
 
 const keys = (r: Recorder, ...ms: [string, boolean][]) => {
@@ -175,12 +188,43 @@ test("a stuck modifier doesn't leave a password in clear", async () => {
     "[0.0s] pressed a key with a modifier in a password or code field (not recorded)",
   );
 
-  // Outside the page (the address bar), shortcuts are kept.
+  // Outside the page (the address bar), a shortcut is kept; a run of them is typing with a stuck
+  // modifier (in Chromium's own sign-in prompt, say), and isn't.
   const outside = recorder(async () => {
-    throw new Error("no focused element");
+    throw new OffPage("the keyboard isn't on a page");
   });
   keys(outside.r, ["Control", true], ["l", true], ["l", false], ["Control", false]);
   expect(await outside.r.finish()).toEqual([{ t: 0, kind: "key", key: "ctrl+l" }]);
+  const prompt = recorder(async () => {
+    throw new OffPage("the keyboard isn't on a page");
+  });
+  keys(prompt.r, ["Control", true]);
+  for (const m of typeText("hunter2")) prompt.r.input(m);
+  const typedThere = await prompt.r.finish();
+  expect(typedThere.map((s) => s.kind === "key" && s.key)).toEqual([
+    "ctrl+h",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+  ]);
+  expect(JSON.stringify(typedThere)).not.toContain("ctrl+u");
+
+  // Where the field couldn't be checked (the desktop slow to answer), none of them is kept.
+  const failed = recorder(async () => {
+    throw new Error("The operation timed out.");
+  });
+  keys(failed.r, ["Control", true]);
+  for (const m of typeText("hunter2")) failed.r.input(m);
+  const unchecked = await failed.r.finish();
+  expect(unchecked.every((s) => s.kind === "key" && s.key === "" && s.hidden === "unknown")).toBe(
+    true,
+  );
+  expect(describeSteps(unchecked).lines[0]).toBe(
+    "[0.0s] pressed a key with a modifier (not recorded: the field couldn't be checked)",
+  );
 
   // Between two hidden runs, a character with a modifier is hidden even if its own check said no.
   const answers = [true, false, true];
@@ -197,7 +241,7 @@ test("a stuck modifier doesn't leave a password in clear", async () => {
 test("no screenshot is kept after hidden typing on the page, or while a secret field holds something", async () => {
   let secretShown = false;
   const { r } = recorder(
-    async () => true,
+    async () => ({ secret: true, url: "https://bank.example/pay" }),
     async () => (secretShown ? null : new Uint8Array([1])),
   );
   r.page("https://bank.example/pay", "Pay");
@@ -217,6 +261,120 @@ test("no screenshot is kept after hidden typing on the page, or while a secret f
   expect(shots).toEqual([true, false, false, true, false]);
   const enter = steps.find((s) => s.kind === "key");
   expect(enter).toEqual({ t: 0, kind: "key", key: "Enter" });
+});
+
+test("hidden typing keeps its page's screenshots out, however the address came and went", async () => {
+  const checkout = "https://shop.example/checkout";
+  const typeOn = async (steps: (r: Recorder) => void) => {
+    const { r, saved } = recorder(async () => ({ secret: true, url: checkout }));
+    r.page(checkout, "Checkout");
+    steps(r);
+    for (const m of click(50, 50)) r.input(m);
+    await r.finish();
+    return saved;
+  };
+  const card = (r: Recorder) => {
+    for (const m of typeText("4242424242424242")) r.input(m);
+  };
+  // A look at another tab and back; the page adding a query; a moment the address couldn't be read.
+  expect(
+    await typeOn((r) => {
+      card(r);
+      r.page("https://mail.example/inbox", "Inbox");
+      r.page(checkout, "Checkout");
+    }),
+  ).toEqual([]);
+  expect(
+    await typeOn((r) => {
+      card(r);
+      r.page(`${checkout}?step=confirm`, "Checkout");
+    }),
+  ).toEqual([]);
+  expect(
+    await typeOn((r) => {
+      card(r);
+      r.page(null, null);
+      r.page(checkout, "Checkout");
+    }),
+  ).toEqual([]);
+  // A paste into the card's frame is typing too.
+  expect(
+    await typeOn((r) => {
+      keys(r, ["Control", true], ["v", true], ["v", false], ["Control", false]);
+    }),
+  ).toEqual([]);
+  // Another page is fine, once the address has changed.
+  expect(
+    await typeOn((r) => {
+      card(r);
+      r.page("https://shop.example/thanks", "Thanks");
+    }),
+  ).toEqual(["5-click"]);
+});
+
+test("a search typed in the address bar holds screenshots back only until the address changes", async () => {
+  let url = "https://www.google.com/search?q=a";
+  let onPage = true;
+  const { r, saved, tick } = recorder(
+    async () => {
+      if (!onPage) throw new OffPage("the keyboard isn't on a page");
+      return { secret: false, url };
+    },
+    async () => ({ bytes: new Uint8Array([1]), url }),
+  );
+  r.page(url, "a");
+  onPage = false;
+  for (const m of click(1, 1)) r.input(m);
+  for (const m of typeText("dune")) r.input(m);
+  for (const m of press("Enter")) r.input(m);
+  tick(2000);
+  // The same path, another query: a new address all the same.
+  url = "https://www.google.com/search?q=dune";
+  onPage = true;
+  r.page(url, "dune - Google");
+  for (const m of click(100, 100)) r.input(m);
+  for (const m of click(100, 200)) r.input(m);
+  await r.finish();
+  expect(saved).toEqual(["3-click", "9-click", "12-click"]);
+});
+
+test("typing on a page the address poll hasn't seen yet counts for that page", async () => {
+  // The field check knows where it was typed.
+  const known = recorder(async () => ({ secret: true, url: "https://shop.example/blik" }));
+  known.r.page("https://shop.example/cart", "Cart");
+  for (const m of typeText("123456")) known.r.input(m);
+  known.r.page("https://shop.example/blik", "BLIK");
+  known.tick(60_000);
+  for (const m of click(50, 50)) known.r.input(m);
+  known.r.page("https://shop.example/cart", "Cart");
+  for (const m of click(60, 60)) known.r.input(m);
+  await known.r.finish();
+  expect(known.saved).toEqual(["9-click"]);
+  // Or the screenshot does: the address on screen when it was taken.
+  const late = recorder(
+    async () => ({ secret: true, url: "https://shop.example/blik" }),
+    async () => ({ bytes: new Uint8Array([1]), url: "https://shop.example/blik" }),
+  );
+  late.r.page("https://shop.example/cart", "Cart");
+  for (const m of typeText("123456")) late.r.input(m);
+  late.r.page("https://shop.example/cart?x=1", "Cart");
+  late.tick(60_000);
+  for (const m of click(50, 50)) late.r.input(m);
+  await late.r.finish();
+  expect(late.saved).toEqual([]);
+
+  // A check that couldn't say: the next address, seen soon after, counts too.
+  const unsure = recorder(async () => {
+    throw new Error("timed out");
+  });
+  unsure.r.page("https://shop.example/cart", "Cart");
+  for (const m of click(10, 10)) unsure.r.input(m);
+  for (const m of typeText("123456")) unsure.r.input(m);
+  unsure.tick(1000);
+  unsure.r.page("https://shop.example/blik", "BLIK");
+  for (const m of click(50, 50)) unsure.r.input(m);
+  await unsure.r.finish();
+  expect(unsure.saved).toEqual(["3-click"]);
 });
 
 test("a press and release apart is a drag", () => {
@@ -294,7 +452,7 @@ async function teachApp() {
   const { cookie } = await setUpOwner(t);
   const call = (method: string, path: string, body?: unknown) =>
     t.call(method, path, body, { cookie });
-  return { t, work, call };
+  return { t, work, call, cookie };
 }
 
 type Call = (method: string, path: string, body?: unknown) => Response | Promise<Response>;
@@ -432,6 +590,65 @@ test("typing while the page hasn't the keyboard isn't kept, nor a screenshot whi
   expect(body).toContain("left click at (600, 300)\\n");
   expect(body).not.toContain("my-pin");
   expect(body).toContain("typed 11 characters (not recorded: the field couldn't be checked)");
+});
+
+test("a screenshot the page can't vouch for isn't kept", async () => {
+  const { t, work, call } = await teachApp();
+  const context = t.agent.context.bind(t.agent);
+  const session = await record(t, call, async () => {
+    // The page is too busy to say whether a card number shows.
+    t.agent.context = async (withText = false, secrets = false) => {
+      if (secrets) throw new Error("The operation timed out.");
+      return context(withText, secrets);
+    };
+    for (const m of click(600, 300)) t.teach.input(m);
+    await Bun.sleep(1);
+  });
+  await call("POST", "/teach/stop");
+  await waitFor(() => t.teach.get(session.id)?.status === "draft");
+  const body = JSON.stringify(work.creates.find((p) => p.system === TEACH_PROMPT)?.messages);
+  expect(body).toContain("left click at (400, 300) [screenshot 1]");
+  expect(body).toContain("left click at (600, 300)\\n");
+  expect(screensOf(t, session.id)).toHaveLength(1);
+});
+
+test("a live view that closes with a modifier down leaves none held in the recording", async () => {
+  const { t, work, call, cookie } = await teachApp();
+  const agent = Bun.serve({
+    port: 0,
+    fetch: (req, srv) => (srv.upgrade(req) ? undefined : new Response(null, { status: 400 })),
+    websocket: { message() {} },
+  });
+  t.agent.liveSocket = () => ({ url: `ws://127.0.0.1:${agent.port}/live`, headers: {} });
+  const brain = Bun.serve({ port: 0, fetch: (req, srv) => t.app.fetch(req, srv), websocket });
+  const open = async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${brain.port}/api/v1/desktop/live`, {
+      headers: { cookie, origin: ORIGIN },
+    } as unknown as string[]);
+    await new Promise((r) => (ws.onopen = r));
+    return ws;
+  };
+  try {
+    const session = await record(t, call, async () => {
+      const first = await open();
+      await Bun.sleep(50);
+      // Ctrl goes down, then the view's link drops: its key up never comes.
+      first.send(JSON.stringify({ t: "key", key: "Control", down: true }));
+      await Bun.sleep(50);
+      first.close();
+      await Bun.sleep(50);
+      t.agent.element = { tag: "input", role: null, type: "text", label: "Search", inForm: true };
+      for (const m of typeText("dune")) t.teach.input(m);
+    });
+    await call("POST", "/teach/stop");
+    await waitFor(() => t.teach.get(session.id)?.status === "draft");
+    const body = JSON.stringify(work.creates.find((p) => p.system === TEACH_PROMPT)?.messages);
+    expect(body).toContain('typed \\"dune\\"');
+    expect(body).not.toContain("ctrl+d");
+  } finally {
+    brain.stop(true);
+    agent.stop(true);
+  }
 });
 
 test("discarding a recording deletes its screenshots, a restart's too", async () => {

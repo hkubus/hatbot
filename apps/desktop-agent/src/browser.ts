@@ -50,6 +50,13 @@ type Pending = {
 };
 type Listener = (method: string, params: Json, sessionId?: string) => void;
 type TargetInfo = { targetId: string; type: string; url: string; title: string };
+type WindowBounds = {
+  left?: number;
+  top?: number;
+  width?: number;
+  height?: number;
+  windowState?: string;
+};
 type Lifecycle = { seq: number; sessionId: string; name: string; loaderId?: string };
 
 /** One WebSocket to the browser endpoint; tab commands carry their session id (flat mode). */
@@ -255,7 +262,10 @@ function charKey(ch: string): KeyDef {
 }
 
 function keyDef(name: string): KeyDef {
-  if ([...name].length === 1) return charKey(name);
+  if ([...name].length === 1) {
+    if (!/^[\p{L}\p{N}\p{P}\p{S}]$/u.test(name)) throw new BrowserError(`Unknown key "${name}".`);
+    return charKey(name);
+  }
   const lower = name.toLowerCase();
   const named = NAMED_KEYS[KEY_ALIASES[lower] ?? lower];
   if (named) return named;
@@ -275,6 +285,11 @@ function chord(text: string): { mods: (KeyDef & { bit: number })[]; key: KeyDef 
   let key: KeyDef | null = null;
   for (const p of parts) {
     const m = MODIFIER_ALIASES[p.toLowerCase()];
+    // Modifiers first, as on the screen, where xdotool presses them in order.
+    if (m && p.length > 1 && key)
+      throw new BrowserError(
+        `"${text}": put the modifiers first and one key last, like ctrl+shift+t.`,
+      );
     if (m && p.length > 1) mods.push(MODIFIER_KEYS[m] as KeyDef & { bit: number });
     else if (key) throw new BrowserError(`"${text}" names more than one key.`);
     else key = keyDef(p);
@@ -312,8 +327,15 @@ export class Browser {
   /** Per tab, the next element reference: never reused, so a stale ref can't hit a new element. */
   private nextRef = new Map<string, number>();
   private active: string | null = null;
-  /** Whether the tab on screen may have changed since syncActive last asked every tab. */
-  private lookAgain = true;
+  /**
+   * Counts the times the tab on screen may have changed; syncActive asks every tab again once this is
+   * past what the last finished check started from.
+   */
+  private touches = 1;
+  private checked = 0;
+  private checking: Promise<void> | null = null;
+  /** The tabs that said they're on screen at the last check: one per window. */
+  private shown: string[] = [];
   /** Tabs in the last state report: a tab that's new since then was opened by the last call. */
   private reported = new Set<string>();
   private changes: BrowserStateChange[] = [];
@@ -391,17 +413,18 @@ export class Browser {
       case "closed":
         this.sessions.clear();
         this.worlds.clear();
-        this.lookAgain = true;
+        this.touches++;
         return;
       case "Target.targetCreated":
       case "Target.targetInfoChanged": {
         const t = p.targetInfo as TargetInfo;
         this.targets.set(t.targetId, t);
-        if (method === "Target.targetCreated") this.lookAgain = true;
+        // A page can bring a tab it named to the front, and only its info changes.
+        if (method === "Target.targetCreated" || t.type === "page") this.touches++;
         return;
       }
       case "Target.targetDestroyed": {
-        this.lookAgain = true;
+        this.touches++;
         const id = p.targetId as string;
         this.targets.delete(id);
         this.sessions.delete(id);
@@ -516,39 +539,57 @@ export class Browser {
 
   /** Input that didn't come through here (the owner's, the computer toolset's) may have switched tabs. */
   screenTouched() {
-    this.lookAgain = true;
+    this.touches++;
   }
 
   /**
    * The active tab follows what's on screen, so it's right after the owner switches tabs during a takeover.
-   * Every tab is asked only when that may have changed: input from elsewhere, or tabs opening and closing.
+   * Every tab is asked only when that may have changed: input from elsewhere, or tabs opening, closing or
+   * changing. A caller waits for a check that started after the last such change, not one already
+   * under way, which may have asked before the switch.
    */
   private async syncActive() {
-    if (!this.lookAgain && this.active && this.targets.has(this.active)) return;
-    this.lookAgain = false;
-    const pages = this.pages();
-    const visible: string[] = [];
-    await Promise.all(
-      pages.map(async (t) => {
-        try {
-          const s = await this.session(t.targetId);
-          const r = await this.cdp.send<{ result: { value?: string } }>(
-            "Runtime.evaluate",
-            { expression: "document.visibilityState", returnByValue: true },
-            s,
-            1500,
-          );
-          if (r.result.value === "visible") visible.push(t.targetId);
-        } catch {
-          // A tab that's loading, frozen or gone.
-        }
-      }),
-    );
-    // No clear answer (a tab didn't say, or two windows show one each): ask again next time.
-    if (visible.length !== 1) this.lookAgain = true;
-    if (visible.length === 1) this.active = visible[0] as string;
-    else if (!this.active || !this.targets.has(this.active))
-      this.active = pages[0]?.targetId ?? null;
+    const want = this.touches;
+    while (this.checked < want || !this.active || !this.targets.has(this.active)) {
+      this.checking ??= this.checkShown();
+      await this.checking;
+      if (!this.pages().length) return;
+    }
+  }
+
+  private async checkShown() {
+    const from = this.touches;
+    try {
+      const pages = this.pages();
+      const visible: string[] = [];
+      await Promise.all(
+        pages.map(async (t) => {
+          try {
+            const s = await this.session(t.targetId);
+            const r = await this.cdp.send<{ result: { value?: string } }>(
+              "Runtime.evaluate",
+              { expression: "document.visibilityState", returnByValue: true },
+              s,
+              1500,
+            );
+            if (r.result.value === "visible") visible.push(t.targetId);
+          } catch {
+            // A tab that's loading, frozen or gone.
+          }
+        }),
+      );
+      this.shown = visible;
+      // No clear answer (a tab didn't say, or two windows show one each): ask again next time.
+      if (visible.length === 1) this.active = visible[0] as string;
+      else {
+        this.touches++;
+        if (!this.active || !this.targets.has(this.active))
+          this.active = pages[0]?.targetId ?? null;
+      }
+    } finally {
+      this.checked = Math.max(this.checked, from);
+      this.checking = null;
+    }
   }
 
   private async session(targetId: string): Promise<string> {
@@ -905,7 +946,9 @@ export class Browser {
     const tab = () => this.targetOf(input.tab_id);
     switch (name) {
       case "navigate":
-        return this.navigate(tab(), String(input.url ?? ""));
+        // Not String() of anything else: the brain checked the address as the model gave it.
+        if (typeof input.url !== "string") throw new BrowserError("url must be a string.");
+        return this.navigate(tab(), input.url);
       case "screenshot":
         return this.capture(tab());
       case "zoom": {
@@ -1253,11 +1296,61 @@ export class Browser {
       .catch(() => null);
   }
 
-  /** The screen's /inspect: cdp.ts's element script in the tab on screen, followed into frames. */
-  async screenElement(script: string, arg: unknown): Promise<AgentElement | null> {
-    const tab = await this.onScreen<Inspected | null>(script, arg);
-    if (!tab || !this.active) return null;
-    return this.intoFrames(this.active, tab.value ?? null);
+  /**
+   * The screen's /inspect: cdp.ts's element script in the tab under the point, or the one with the
+   * keyboard, followed into frames.
+   */
+  async screenElement(
+    script: string,
+    arg: { x: number; y: number; focused: boolean },
+  ): Promise<AgentElement | null> {
+    await this.ready();
+    await this.refresh();
+    await this.syncActive();
+    const t = await this.screenTab(arg);
+    if (!t) return null;
+    return this.intoFrames(t, await this.run<Inspected | null>(t, script, arg));
+  }
+
+  /**
+   * The tab a screen point or the keyboard is in: with one tab on screen, that one. With more (a popup
+   * window: on X11 Chromium doesn't track which window covers which, so each window's tab says it's
+   * visible), the one whose window holds the point, or whose page has the keyboard. When that's more than
+   * one, or a window won't say where it is, it throws: the brain holds a step it can't see.
+   */
+  private async screenTab(arg: { x: number; y: number; focused: boolean }) {
+    const shown = this.shown.filter((t) => this.targets.has(t));
+    if (shown.length <= 1) return this.active;
+    const unclear = () =>
+      new BrowserError(
+        arg.focused
+          ? "Several browser windows are open, and Hatbot can't tell which has the keyboard."
+          : `Browser windows overlap at (${arg.x}, ${arg.y}), and Hatbot can't tell which is on top.`,
+      );
+    const holding: string[] = [];
+    for (const t of shown) {
+      if (arg.focused) {
+        const has = await this.run<boolean>(t, "() => document.hasFocus()").catch(() => null);
+        if (has === null) throw unclear();
+        if (has) holding.push(t);
+        continue;
+      }
+      const w = await this.cdp
+        .send<{ bounds?: WindowBounds }>("Browser.getWindowForTarget", { targetId: t })
+        .catch(() => null);
+      const b = w?.bounds;
+      if (!b) throw unclear();
+      if (b.windowState === "minimized") continue;
+      // A maximised window's bounds may be the ones it goes back to: it covers the screen.
+      const whole = b.windowState === "maximized" || b.windowState === "fullscreen";
+      const { left = 0, top = 0, width = 0, height = 0 } = b;
+      if (whole || (arg.x >= left && arg.x < left + width && arg.y >= top && arg.y < top + height))
+        holding.push(t);
+    }
+    // The keyboard in none of them is the address bar or another window: the page says so itself.
+    if (arg.focused && !holding.length) return this.active;
+    if (holding.length > 1) throw unclear();
+    return holding[0] ?? null;
   }
 }
 

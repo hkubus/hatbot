@@ -14,18 +14,33 @@ export type RecStep =
       screen?: string;
     }
   | { t: number; kind: "wheel"; dx: number; dy: number; x: number; y: number }
-  /** `hidden`: a character with a modifier, typed into a field that takes a secret; not recorded. */
-  | { t: number; kind: "key"; key: string; screen?: string; hidden?: "secret" }
+  /**
+   * `hidden`: a character with a modifier, typed into a field that takes a secret or couldn't be checked;
+   * not recorded.
+   */
+  | { t: number; kind: "key"; key: string; screen?: string; hidden?: "secret" | "unknown" }
   /** Typing. `hidden`: not recorded, because the field takes a secret or couldn't be checked. */
   | { t: number; kind: "text"; text: string; hidden?: "secret" | "unknown"; chars: number }
   | { t: number; kind: "page"; url: string | null; title: string | null };
 
+/** The focused field: whether it takes a secret, and the address of the page it's in. */
+export type FieldCheck = { secret: boolean; url?: string | null };
+
+/** What the field check throws when the keyboard isn't on a page: the address bar, another window. */
+export class OffPage extends Error {}
+
 export type RecorderHooks = {
   clock: () => number;
-  /** Whether the focused field takes a secret. Throwing, or no answer, counts as yes. */
-  secretField: () => Promise<boolean>;
-  /** The screen now, or null when it may show a secret (a secret field on the page holds something). */
-  screen: () => Promise<Uint8Array | null>;
+  /**
+   * The focused field. Throwing, or no answer, counts as a secret; OffPage too, though characters with a
+   * modifier there may be shortcuts like ctrl+l.
+   */
+  secretField: () => Promise<FieldCheck>;
+  /**
+   * The screen now and the address on it, or null when it may show a secret: a secret field on the page
+   * holds something, or the page couldn't say.
+   */
+  screen: () => Promise<{ bytes: Uint8Array; url?: string | null } | null>;
   /** Keeps a screenshot; its archive path. */
   save: (label: string, bytes: Uint8Array) => Promise<string | null>;
 };
@@ -34,11 +49,41 @@ export type RecorderHooks = {
 export const MAX_STEPS = 3000;
 /** Screenshots per recording. */
 export const MAX_SCREENS = 200;
+/** How often the address on screen is asked for: a new one is seen up to this late, and the asking. */
+export const PAGE_POLL_MS = 1500;
 
 const MODIFIERS: Record<string, string> = { Control: "ctrl", Alt: "alt", Meta: "super" };
 
 type TextStep = Extract<RecStep, { kind: "text" }>;
 type KeyStep = Extract<RecStep, { kind: "key" }>;
+
+/**
+ * Typing, or characters with a modifier (a paste), and where it went. Once hidden, a screenshot of that
+ * page may show it (a card number in a payment frame stays there when you click Pay), for the rest of the
+ * recording; and so may any screenshot until the address next changes.
+ */
+type Typed = {
+  hidden: () => boolean;
+  checked: Promise<unknown>;
+  t: number;
+  /** The address it went to, origin and path: the field's own, else the one known on screen then. */
+  pages: Set<string>;
+  /** Address changes seen before it, a new query too. */
+  visit: number;
+  /** Its own address is still to come: the next one seen soon after may be where it went. */
+  open: boolean;
+};
+
+/** An address as a page: origin and path, so a new query or fragment is the same page. */
+function pageKey(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return url;
+  }
+}
 
 /** A key step whose last key is a character: ctrl+a, not ctrl+Tab. */
 const charKey = (s: RecStep | undefined): s is KeyStep => {
@@ -66,10 +111,14 @@ export class Recorder {
   private held = new Set<string>();
   private altGraph = false;
   private typing: TextStep | null = null;
-  /** Characters with a modifier in a row, and whether the field they went to takes a secret. */
-  private combos: { steps: KeyStep[]; secret?: boolean } | null = null;
-  /** Typing since the address last changed, with its field checks: a screenshot waits for them. */
-  private typedHere: { step: TextStep; checked: Promise<unknown> }[] = [];
+  /** Characters with a modifier in a row, and which of them to hide once their field is checked. */
+  private combos: { steps: KeyStep[]; hide?: (i: number) => KeyStep["hidden"] } | null = null;
+  /** All typing so far, with its field checks: a screenshot waits for them. */
+  private typed: Typed[] = [];
+  /** The address on screen, whole and as a page, and how many times it has changed. */
+  private url: string | null = null;
+  private here: string | null = null;
+  private visit = 0;
   private pending: Promise<unknown>[] = [];
   private screens = 0;
   private started: number;
@@ -88,22 +137,26 @@ export class Recorder {
 
   /**
    * Takes a screenshot for `step`, kept only when it can't show a secret: not while a secret field on the
-   * page holds something, and not after typing on this page that turned out hidden (a card number or a
-   * code may still be on screen when you click Pay).
+   * page holds something, not on a page where typing turned out hidden (a card number or a code may still
+   * be on screen when you click Pay), and not after hidden typing until the address changes.
    */
   private snap(step: { screen?: string }, label: string) {
     if (this.screens >= MAX_SCREENS) return;
     this.screens++;
-    const typed = [...this.typedHere];
+    const typed = [...this.typed];
+    const { here, visit } = this;
     this.pending.push(
       (async () => {
-        const bytes = await this.hooks.screen();
+        const shot = await this.hooks.screen();
         await Promise.all(typed.map((r) => r.checked));
-        if (!bytes || typed.some((r) => r.step.hidden)) {
+        const on = [here, pageKey(shot?.url)];
+        const shows = (r: Typed) =>
+          r.hidden() && (r.visit === visit || on.some((p) => p !== null && r.pages.has(p)));
+        if (!shot || typed.some(shows)) {
           this.screens--;
           return;
         }
-        const path = await this.hooks.save(label, bytes);
+        const path = await this.hooks.save(label, shot.bytes);
         if (path) step.screen = path;
       })().catch((err) => console.error("teach screenshot failed", err)),
     );
@@ -115,24 +168,61 @@ export class Recorder {
     this.combos = null;
   }
 
+  /**
+   * Checks the focused field for typing that starts now, as the first character arrives, before focus can
+   * move on; what's typed waits in memory until it answers, and leaves only through finish().
+   */
+  private check(
+    hidden: () => boolean,
+    found: (c: FieldCheck) => void,
+    failed: (offPage: boolean) => void,
+  ) {
+    const typed: Typed = {
+      hidden,
+      checked: Promise.resolve(),
+      t: this.now(),
+      pages: new Set(this.here ? [this.here] : []),
+      visit: this.visit,
+      open: true,
+    };
+    typed.checked = this.hooks.secretField().then(
+      (c) => {
+        found(c);
+        const page = pageKey(c.url);
+        if (page) {
+          typed.pages = new Set([page]);
+          typed.open = false;
+        }
+      },
+      (err) => {
+        const offPage = err instanceof OffPage;
+        // Typed off the page, it isn't on it.
+        if (offPage) {
+          typed.pages.clear();
+          typed.open = false;
+        }
+        failed(offPage);
+      },
+    );
+    this.pending.push(typed.checked);
+    this.typed.push(typed);
+  }
+
   private type(ch: string) {
     this.combos = null;
     if (!this.typing) {
       const step: TextStep = { t: this.now(), kind: "text", text: "", chars: 0 };
       this.typing = step;
       this.push(step);
-      // The check runs as the first character arrives, before focus can move on; what's typed waits in
-      // memory until it answers, and leaves only through finish().
-      const checked = this.hooks.secretField().then(
-        (secret) => {
-          if (secret) step.hidden = "secret";
+      this.check(
+        () => !!step.hidden,
+        (c) => {
+          if (c.secret) step.hidden = "secret";
         },
         () => {
           step.hidden = "unknown";
         },
       );
-      this.pending.push(checked);
-      this.typedHere.push({ step, checked });
     }
     this.typing.text += ch;
     this.typing.chars++;
@@ -140,27 +230,35 @@ export class Recorder {
 
   /**
    * A character with a modifier: a shortcut, unless the field takes a secret. A modifier stuck down, or
-   * one that types characters on a layout this doesn't know, mustn't leave a password in clear.
+   * one that types characters on a layout this doesn't know, mustn't leave a password in clear: where
+   * the field can't be checked, none is kept, and off the page (the address bar, where ctrl+l is a
+   * shortcut) only the first of a run.
    */
   private combo(step: KeyStep) {
     if (!this.combos) {
-      const run: { steps: KeyStep[]; secret?: boolean } = { steps: [] };
+      const run: { steps: KeyStep[]; hide?: (i: number) => KeyStep["hidden"] } = { steps: [] };
       this.combos = run;
-      this.pending.push(
-        this.hooks.secretField().then(
-          (secret) => {
-            run.secret = secret;
-            if (secret) for (const s of run.steps) s.hidden = "secret";
-          },
-          () => {
-            // Outside the page (the address bar, say), where shortcuts like ctrl+l are kept.
-            run.secret = false;
-          },
-        ),
+      const decide = (hide: (i: number) => KeyStep["hidden"]) => {
+        run.hide = hide;
+        run.steps.forEach((s, i) => {
+          s.hidden = hide(i) ?? s.hidden;
+        });
+      };
+      this.check(
+        () => run.steps.some((s) => s.hidden),
+        (c) => decide(() => (c.secret ? "secret" : undefined)),
+        (offPage) => decide((i) => (offPage && i === 0 ? undefined : "unknown")),
       );
     }
-    this.combos.steps.push(step);
-    if (this.combos.secret) step.hidden = "secret";
+    const run = this.combos;
+    run.steps.push(step);
+    step.hidden = run.hide?.(run.steps.length - 1) ?? step.hidden;
+  }
+
+  /** The viewer went away, and desktop-agent let go of what it held: so are the modifiers here. */
+  keysUp() {
+    this.held.clear();
+    this.altGraph = false;
   }
 
   /**
@@ -232,8 +330,22 @@ export class Recorder {
     if (last?.kind === "page" && last.url === url && last.title === title) return;
     if (!url && !last) return;
     this.endTyping();
-    // A new address, not just a new title: what was typed on the last page is off the screen.
-    if (last?.kind !== "page" || last.url !== url) this.typedHere = [];
+    // A new address, not a new title or a moment none could be read: typing from before is off the
+    // screen, unless it was typed on this page (a new query keeps the page). Typing whose own page isn't
+    // known yet may have been on a new one, when it came soon before: the poll sees a new page late.
+    if (url && url !== this.url) {
+      this.url = url;
+      this.visit++;
+    }
+    const page = pageKey(url);
+    if (page && page !== this.here) {
+      this.here = page;
+      for (const r of this.typed) {
+        if (!r.open) continue;
+        if (this.now() - r.t < 2 * PAGE_POLL_MS) r.pages.add(page);
+        r.open = false;
+      }
+    }
     this.push({ t: this.now(), kind: "page", url, title });
   }
 
@@ -303,9 +415,11 @@ export function describeSteps(steps: RecStep[]): { lines: string[]; screens: str
         break;
       case "key":
         lines.push(
-          s.hidden
+          s.hidden === "secret"
             ? `${at} pressed a key with a modifier in a password or code field (not recorded)`
-            : `${at} key ${s.key}${shot(s.screen)}`,
+            : s.hidden === "unknown"
+              ? `${at} pressed a key with a modifier (not recorded: the field couldn't be checked)`
+              : `${at} key ${s.key}${shot(s.screen)}`,
         );
         break;
       case "text":

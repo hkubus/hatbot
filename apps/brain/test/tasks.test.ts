@@ -4,7 +4,7 @@ import type { AgentElement } from "@hatbot/shared/desktop";
 import { inBatches } from "../src/agent/tools";
 import { DesktopError, HttpDesktopAgent } from "../src/desktop/client";
 import { marketplaceSend } from "../src/negotiate/marketplace";
-import { approvalKind } from "../src/tasks/approval-kind";
+import { approvalKind, notCovered } from "../src/tasks/approval-kind";
 import { limits } from "../src/tasks/desktop-run";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
@@ -210,6 +210,20 @@ test("outside a negotiation, a click or Enter that could message a seller asks f
   // Off the marketplaces, the ordinary check decides.
   expect(marketplaceSend("enter", { ...box(), url: "https://example.com/" }, null)).toBeNull();
   expect(marketplaceSend("enter", box(), null)).toBeNull();
+  // Searching and filtering send nothing, whatever the boxes hold; desktop-agent leaves the site's
+  // search box out of them, so its query doesn't hold up other buttons either.
+  fields = ["rtx 3070"];
+  const search = { ...box(), tag: "input", type: "search", inForm: false, search: true };
+  expect(marketplaceSend("enter", search, null)).toBeNull();
+  expect(marketplaceSend("click", { ...send(), label: "Szukaj" }, null)).toBeNull();
+  fields = ["1000", "1500"];
+  expect(marketplaceSend("click", { ...send(), label: "Pokaż wyniki" }, null)).toBeNull();
+  expect(marketplaceSend("click", { ...send(), label: "Filtry", toggle: true }, null)).toBeNull();
+  fields = [];
+  expect(marketplaceSend("click", { ...send(), label: "Obserwuj" }, null)).toBeNull();
+  // A message in the box still asks.
+  fields = ["Czy aktualne?"];
+  expect(marketplaceSend("click", { ...send(), label: "Obserwuj" }, null)).toContain("Obserwuj");
 });
 
 test("a desktop task from a tainted chat or task starts tainted", async () => {
@@ -254,6 +268,59 @@ test("a desktop task from a tainted chat or task starts tainted", async () => {
   expect(child.taintedBy).toBe(`Task #${read.id}, which had read: A web page`);
   await t.tasks.idle();
   await t.thread.idle();
+});
+
+test("Enter with the keyboard in the address bar is held, and script addresses aren't typed", async () => {
+  const work = new FakeModel([
+    { content: [computer("key", { text: "ctrl+l" })] },
+    { content: [computer("type", { text: "javascript:document.forms[0].submit()" })] },
+    { content: [computer("type", { text: "evil.example/pay" })] },
+    { content: [computer("key", { text: "Return" })] },
+    { content: [computer("type", { text: "olx pl\n" })] },
+    // Chromium isn't answering: the keyboard is somewhere else on the desktop.
+    { content: [computer("key", { text: "Return" })] },
+    { content: [computer("left_click", { coordinate: [300, 500] })] },
+    { content: [computer("key", { text: "Return" })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const url = "https://example.com/form";
+  const page = (pageFocus: boolean): AgentElement => ({
+    tag: "body",
+    role: null,
+    type: null,
+    label: "",
+    inForm: false,
+    url,
+    editable: false,
+    fields: [],
+    pageFocus,
+  });
+  let clicked = false;
+  Object.defineProperty(t.agent, "element", {
+    // The sixth turn's Return finds no page answering.
+    get: () => (clicked ? page(true) : work.requests.length === 6 ? null : page(false)),
+    configurable: true,
+  });
+  t.agent.afterAction = (name) => {
+    if (name === "left_click") clicked = true;
+  };
+  const result = (i: number) => JSON.stringify(work.requests[i]?.messages.at(-1));
+  const task = startTask(t, "Fill in the form");
+  await t.tasks.idle();
+  expect(result(2)).toContain("javascript:, data: or vbscript:");
+  expect(result(4)).toContain("the keyboard isn't on the page");
+  expect(result(4)).toContain("use the browser's navigate");
+  expect(result(5)).toContain("the keyboard isn't on the page");
+  expect(result(6)).toContain("the keyboard isn't on the page");
+  // Back on the page, Enter is checked as usual.
+  expect(t.agent.actions.map((a) => [a.name, a.input.text ?? ""])).toEqual([
+    ["key", "ctrl+l"],
+    ["type", "evil.example/pay"],
+    ["left_click", ""],
+    ["key", "Return"],
+  ]);
+  expect(t.tasks.get(task.id)?.status).toBe("done");
 });
 
 test("an approved desktop task waiting for the screen shows as queued", async () => {
@@ -348,6 +415,123 @@ test("purchases, payments, mandates and budget raises can't be approved from a n
     expect(denied.status).toBe(200);
     expect(t.approvals.get(a.id)).toMatchObject({ status: "denied", decidedVia: "ntfy" });
   }
+});
+
+test("a checkout page, a payment host or the held step raises the kind, whatever the summary says", () => {
+  const blank = { summary: "Continue to the next step" };
+  const at = (url: string) => ({ url, text: "" });
+  expect(approvalKind("other", blank, at("https://www.mediaexpert.pl/checkout/summary"))).toBe(
+    "purchase",
+  );
+  expect(approvalKind("other", blank, at("https://sklep.example.pl/zamowienie/podsumowanie"))).toBe(
+    "purchase",
+  );
+  expect(approvalKind("other", blank, at("https://gate.gopay.cz/gw/v3/123"))).toBe("payment");
+  expect(approvalKind("other", blank, at("https://pay.google.com/x"))).toBe("payment");
+  const listing = at("https://www.olx.pl/d/oferta/rower-CID1-ID77.html");
+  expect(approvalKind("send", { summary: "Ask the seller" }, listing)).toBe("send");
+  expect(approvalKind("send", { summary: "Ask the seller" }, listing, { label: "Kup teraz" })).toBe(
+    "purchase",
+  );
+  expect(approvalKind("other", blank, listing, { label: "Zaproponuj cenę" })).toBe("purchase");
+  expect(approvalKind("other", blank, listing, { frame: "Secure payment input frame" })).toBe(
+    "purchase",
+  );
+  expect(approvalKind("send", blank, listing, { label: "Wyślij" })).toBe("send");
+  expect(approvalKind("other", { summary: "Order it now" }, listing)).toBe("purchase");
+});
+
+test("an approval covers the step it was asked for; one from the lock screen never buys", () => {
+  const page = "https://www.olx.pl/d/oferta/rower-CID1-ID77.html";
+  const send = { page, kind: "send" as const, hold: { label: "Wyślij" } };
+  expect(notCovered(send, { label: "Wyślij" }, page)).toBeNull();
+  expect(notCovered(send, { label: "wyślij" }, `${page}#x`)).toBeNull();
+  expect(notCovered(send, { label: "Kup teraz" }, page)).toContain('the step on "Wyślij"');
+  expect(notCovered(send, { label: "Wyślij" }, "https://www.olx.pl/")).toContain("not this page");
+  // Asked before trying: it covers the next held step, but not one that buys, unless it was a purchase.
+  const ahead = { page, kind: "send" as const, hold: null };
+  expect(notCovered(ahead, { unlabelled: "button" }, page)).toBeNull();
+  expect(notCovered(ahead, { label: "Kup teraz" }, page)).toContain("kind purchase or payment");
+  expect(notCovered(ahead, { checkout: "www.olx.pl" }, page)).toContain("kind purchase");
+  expect(notCovered({ ...ahead, kind: "purchase" }, { label: "Kup teraz" }, page)).toBeNull();
+});
+
+test("a lock-screen approval for a message doesn't buy, and the held step is on the card", async () => {
+  const url = "https://www.olx.pl/d/oferta/rower-CID1-ID77.html";
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("confirm_intent", {
+          kind: "send",
+          summary: "Ask the seller whether the bike is still for sale",
+        }),
+      ],
+    },
+    { content: [computer("left_click", { coordinate: [300, 520] })] },
+    { content: [toolUse("confirm_intent", { kind: "send", summary: "Ask the seller again" })] },
+    { content: [computer("left_click", { coordinate: [300, 520] })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.agent.page = { url, title: "Rower", text: "Rower. 500 zł. Kup teraz." };
+  t.agent.element = {
+    tag: "button",
+    role: null,
+    type: "button",
+    label: "Kup teraz",
+    inForm: false,
+    url,
+    editable: false,
+    fields: [],
+  };
+  startTask(t, "Ask about the bike");
+  const first = await pending(t);
+  expect(first.kind).toBe("send");
+  expect(t.approvals.decide(first.id, "approve", "ntfy")).not.toBeNull();
+  // The click it was spent on buys: held again, and asking again names it and needs the app.
+  const second = await waitFor(() => t.approvals.list(true)[0]);
+  expect(JSON.stringify(work.requests[2]?.messages.at(-1))).toContain(
+    "wasn't for buying or paying",
+  );
+  expect(second.kind).toBe("purchase");
+  expect(second.reason).toContain('Hatbot held: left_click on "Kup teraz"');
+  expect(t.approvals.decide(second.id, "approve", "ntfy")).toBeNull();
+  t.approvals.decide(second.id, "approve", "web");
+  await t.tasks.idle();
+  expect(t.agent.actions.filter((a) => a.name === "left_click")).toHaveLength(1);
+});
+
+test("a held step the model moved on from isn't what its next approval is for", async () => {
+  const url = "https://www.olx.pl/d/oferta/rower-CID1-ID77.html";
+  const work = new FakeModel([
+    { content: [computer("left_click", { coordinate: [300, 520] })] },
+    { content: [computer("type", { text: "Czy aktualne?" })] },
+    {
+      content: [toolUse("confirm_intent", { kind: "send", summary: "Send the seller a question" })],
+    },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.agent.page = { url, title: "Rower", text: "" };
+  const button: AgentElement = {
+    tag: "button",
+    role: null,
+    type: "button",
+    label: "Usuń ogłoszenie",
+    inForm: false,
+    url,
+    editable: false,
+    fields: [],
+  };
+  // The point is on the button; typing goes to the message box.
+  const box: AgentElement = { ...button, tag: "textarea", label: "", editable: true };
+  t.agent.inspect = async (x?: number) => (x === undefined ? box : button);
+  startTask(t, "Ask about the bike");
+  const a = await pending(t);
+  expect(t.agent.actions.map((x) => x.name)).toEqual(["type"]);
+  expect(a.reason ?? "").not.toContain("Hatbot held");
+  t.approvals.decide(a.id, "deny", "web");
+  await t.tasks.idle();
 });
 
 test("a step that buys or pays asks as a purchase or a payment, whatever the model called it", async () => {
@@ -512,6 +696,39 @@ test("an unanswered takeover leaves the screen to other tasks; Take over gives i
     "another task had the desktop",
   );
   expect(t.desktop.get().request).toBeNull();
+});
+
+test("a Take over the desktop can't lock gives the screen back, and the next gives it again", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("request_takeover", { reason: "Solve the captcha" })] },
+    finish("B done."),
+    finish("A done."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const { cookie } = await setUpOwner(t);
+  const lock = t.agent.lock.bind(t.agent);
+  let down = true;
+  t.agent.lock = async () => {
+    if (down) throw new DesktopError("desktop-agent isn't answering", 502);
+    return lock();
+  };
+  const a = startTask(t, "A");
+  await waitFor(() => t.tasks.get(a.id)?.status === "waiting_takeover");
+  const failed = await t.call("POST", "/desktop/takeover", undefined, { cookie });
+  expect(failed.status).toBe(503);
+  expect(t.desktop.get()).toMatchObject({ control: "hatbot", request: { taskId: a.id } });
+  // A doesn't sit on the screen waiting for a hand-back: B runs meanwhile.
+  await waitFor(() => t.tasks.lane.holderId === null);
+  expect(t.tasks.get(a.id)?.status).toBe("waiting_takeover");
+  const b = startTask(t, "B");
+  await waitFor(() => t.tasks.get(b.id)?.status === "done");
+
+  down = false;
+  expect((await t.call("POST", "/desktop/takeover", undefined, { cookie })).status).toBe(200);
+  expect(t.tasks.lane.holderId).toBe(a.id);
+  expect((await t.call("POST", "/desktop/handback", undefined, { cookie })).status).toBe(200);
+  await t.tasks.idle();
+  expect(t.tasks.get(a.id)?.summary).toBe("A done.");
 });
 
 test("Take over says to try again while another task won't let go of the screen in time", async () => {
@@ -946,9 +1163,9 @@ test("Space, mouse up, a drag, Enter after Tab and Enter in a chat box don't sli
   startTask(t, "Write to the seller");
   await t.tasks.idle();
 
-  // Nothing ran: each was held or refused.
+  // Nothing ran but the text before the line break: each was held or refused.
   expect(t.agent.actions.filter((a) => a.name !== "cursor_position")).toEqual([]);
-  expect(t.agent.browserCalls).toEqual([]);
+  expect(t.agent.browserCalls).toEqual([{ name: "type", input: { text: "Dzień dobry" } }]);
   const said = (n: number) => JSON.stringify(work.requests[n]?.messages.at(-1)?.content);
   expect(said(1)).toContain('press \\"Zapłać\\"');
   expect(said(2)).toContain('click \\"Zapłać\\"');
@@ -958,6 +1175,40 @@ test("Space, mouse up, a drag, Enter after Tab and Enter in a chat box don't sli
   expect(said(6)).toContain("Holding Enter or Space repeats it");
   expect(said(7)).toContain('submit with \\"Wyślij\\"');
   expect(said(8)).toContain('submit with \\"Wyślij\\"');
+  expect(said(8)).toContain("The text before the line break was typed.");
+});
+
+test("a line break typed into a chat box is checked with the text before it in the box", async () => {
+  const work = new FakeModel([
+    { content: [computer("type", { text: "Hi there\nsecond line" })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  // Like WhatsApp's: a voice message button while the box is empty, Send once it holds text.
+  let fields: string[] = [];
+  Object.defineProperty(t.agent, "element", {
+    get: (): AgentElement => ({
+      tag: "div",
+      role: "textbox",
+      type: null,
+      label: "",
+      inForm: false,
+      url: "https://chat.example/c/1",
+      editable: true,
+      fields,
+      buttonsAfter: fields.length ? ["Send"] : ["Voice message"],
+    }),
+    configurable: true,
+  });
+  t.agent.afterAction = (name, input) => {
+    if (name === "type") fields = [...fields, String(input.text)];
+  };
+  startTask(t, "Write to Ann");
+  await t.tasks.idle();
+  expect(t.agent.actions.map((a) => a.input.text)).toEqual(["Hi there"]);
+  const said = JSON.stringify(work.requests[1]?.messages.at(-1)?.content);
+  expect(said).toContain("The text before the line break was typed.");
+  expect(said).toContain('submit with \\"Send\\"');
 });
 
 test("lookups in a row run at once; everything else runs on its own, in order", async () => {

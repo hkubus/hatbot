@@ -37,9 +37,9 @@ export interface DesktopAgent {
   inspect(x?: number, y?: number): Promise<AgentElement | null>;
   /** A command in the desktop's shell, which can't see the browser profile or the screen. */
   exec(command: string, timeoutS: number): Promise<ShellResult>;
-  /** Puts a file in the shell's home (a relative path) or anywhere it may write. */
+  /** Puts a file in the shell's home; the path is relative to it, and one that leaves it is refused. */
   putFile(path: string, bytes: Uint8Array): Promise<void>;
-  /** A file the shell can read, up to 25 MB. */
+  /** A file in the shell's home, by a path relative to it, up to 25 MB. */
   getFile(path: string): Promise<Uint8Array>;
   /** A browser download that finished, by the id the model saw (dl-3). */
   getDownload(id: string): Promise<{ name: string; bytes: Uint8Array }>;

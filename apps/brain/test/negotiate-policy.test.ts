@@ -117,7 +117,7 @@ describe("inside the mandate, it goes without asking", () => {
 describe("an offer above the ceiling, or below the floor when selling, asks", () => {
   test("buying: above the ceiling", () => {
     const v = verdict("Mogę dać 1450 zł.", { offer: 1450 });
-    expect(v).toMatchObject({ action: "ask", kind: "send", always: true });
+    expect(v).toMatchObject({ action: "ask", kind: "purchase", always: true });
     expect(why(v)).toContain("Offering 1,450 zł is above the ceiling of 1,400 zł.");
   });
 
@@ -721,5 +721,30 @@ describe("pace limits and quiet hours", () => {
     expect(
       verdict("Halo?", {}, negotiation(), facts({ unansweredSince: NOW - 3 * 60_000 })).action,
     ).toBe("allow");
+  });
+});
+
+describe("money outside the mandate is approved in the app; a link or contact detail can be from the lock screen", () => {
+  test("agreeing, offering or stating past the limit, or a mandate that ran out, asks as a purchase", () => {
+    for (const v of [
+      verdict("Dobrze, biorę za 2000 zł.", { offer: 2000, agree: true }),
+      verdict("Więcej niż 1600 nie dam.", { offer: 1100, stated: { max: 1600 } }),
+      verdict("Mogę dać 1600 zł.", {}),
+      verdict(
+        "Dam 1100 zł.",
+        { offer: 1100 },
+        negotiation(),
+        facts({ now: Date.parse("2026-10-20T12:00:00Z") }),
+      ),
+    ])
+      expect(v).toMatchObject({ action: "ask", kind: "purchase" });
+  });
+
+  test("only a link or a phone number asks as a send", () => {
+    expect(verdict("Zdjęcia: https://imgur.com/a/x", {})).toMatchObject({
+      action: "ask",
+      kind: "send",
+    });
+    expect(verdict("Mój numer 600 100 200", {})).toMatchObject({ action: "ask", kind: "send" });
   });
 });

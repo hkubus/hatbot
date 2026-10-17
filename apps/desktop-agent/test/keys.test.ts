@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { browserKey, combo, KeyError, modifiers } from "../src/keys";
+import { KEY_NAMES, MODIFIER_NAMES, readKey } from "@hatbot/shared/keys";
+import { browserKey, combo, KeyError, keysym, MODIFIERS, modifiers, NAMED } from "../src/keys";
 import { takeFrame } from "../src/x11";
 
 test("model key names become xdotool keysyms", () => {
@@ -17,6 +18,69 @@ test("model key names become xdotool keysyms", () => {
   expect(combo("ctrl+/")).toBe("ctrl+slash");
   expect(() => combo("ctrl+")).toThrow(KeyError);
   expect(() => combo("a b")).toThrow(KeyError);
+});
+
+test("only listed names are pressed: no keycodes, hex or Unicode keysyms, or modifiers after the key", () => {
+  for (const name of [
+    "36",
+    "104",
+    "0xff0d",
+    "0x20",
+    "U0020",
+    "KP_Space",
+    "Linefeed",
+    "ISO_Enter",
+    "3270_Enter",
+    "XF86Back",
+    "Return+shift",
+    "KP_Enter+a",
+    "space+Tab",
+    "\u0085",
+  ])
+    expect(() => combo(name)).toThrow(KeyError);
+  expect(combo("Control_L+l")).toBe("ctrl+l");
+  expect(combo("KP_Enter")).toBe("KP_Enter");
+  expect(combo("Next")).toBe("Next");
+});
+
+test("desktop-agent presses exactly the names the brain's checks read, as the same keys", () => {
+  const names = [
+    ...Object.keys(NAMED),
+    ...Object.keys(MODIFIERS),
+    ...Object.keys(MODIFIER_NAMES),
+    ...Object.keys(KEY_NAMES),
+    "F1",
+    "f24",
+    "F25",
+    "a",
+    "Z",
+    "5",
+    "+",
+    "ą",
+    "€",
+    "36",
+    "0xff0d",
+    "U0020",
+    "KP_Space",
+    "Linefeed",
+    "ISO_Left_Tab",
+  ];
+  for (const name of names) {
+    const read = readKey(name);
+    let sym: string | null;
+    try {
+      sym = keysym(name);
+    } catch {
+      sym = null;
+    }
+    // Both take it or neither does.
+    expect([name, sym !== null]).toEqual([name, read !== null]);
+    if (!read || sym === null) continue;
+    // Return, KP_Enter and space are what the brain reads as Enter and Space; nothing else is.
+    const key = "key" in read ? read.key : null;
+    expect([name, ["Return", "KP_Enter"].includes(sym)]).toEqual([name, key === "enter"]);
+    expect([name, sym === "space"]).toEqual([name, key === "space"]);
+  }
 });
 
 test("click modifiers must be modifiers", () => {

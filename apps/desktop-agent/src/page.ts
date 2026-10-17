@@ -8,13 +8,20 @@
  * The text boxes a click or Enter could send, for the brain's exact-text check (PLAN.md §16.3): what each
  * visible one holds, whitespace collapsed, in the element's form when that has any, otherwise in its page,
  * open shadow roots and same-origin frames included. A box inside another (an editable region in a
- * role=textbox) counts once.
+ * role=textbox) counts once. A site's search box isn't one: its query stays in it on every page.
  */
 export const FIELDS = `
   const TEXT_BOX = 'textarea, input:not([type]), input[type=text], input[type=search], input[type=email], input[type=tel], input[type=url], input[type=number], [contenteditable=""], [contenteditable=true], [contenteditable=plaintext-only], [role=textbox]';
   const isTextBox = (e) => !!e && e.nodeType === 1 && (e.matches(TEXT_BOX) || e.isContentEditable);
   const shownBox = (e) => e.getClientRects().length > 0
     && (e.ownerDocument.defaultView || window).getComputedStyle(e).visibility !== 'hidden';
+  // A search box says so in its type or role, its search landmark, a search (GET) form, or its own name.
+  const SEARCH_HINT = /search|szuka|wyszuk|hleda|vyhled|suche|recherche/i;
+  const isSearchBox = (e) => e.matches('input[type=search], [role=searchbox]') || !!e.closest('[role=search]')
+    || ((e.form?.getAttribute('method') || '').toLowerCase() === 'get')
+    || (e.matches('input:not([type]), input[type=text]') && (e.getAttribute('name') === 'q'
+      || SEARCH_HINT.test([e.getAttribute('placeholder'), e.getAttribute('aria-label'), e.getAttribute('name'),
+        e.id, e.getAttribute('title')].join(' '))));
   const boxValue = (e) => String((e.matches('input, textarea') ? e.value : e.innerText) || '')
     .replace(/\\s+/g, ' ').trim().slice(0, 4000);
   const boxesIn = (root, out = []) => {
@@ -30,7 +37,7 @@ export const FIELDS = `
     return out;
   };
   const fieldsFor = (el) => {
-    const all = (root) => boxesIn(root).filter(shownBox);
+    const all = (root) => boxesIn(root).filter((b) => shownBox(b) && !isSearchBox(b));
     const form = el.closest('form');
     const inForm = form ? all(form) : [];
     const boxes = inForm.length ? inForm : all(el.ownerDocument);
@@ -65,31 +72,69 @@ export const ELEMENT = `
     || TOGGLE_ROLES.includes(e.getAttribute('role'))
     || (e.tagName === 'INPUT' && ['checkbox', 'radio'].includes(e.type))
     || (e.tagName === 'LABEL' && !!e.control && e.control !== e && isToggle(e.control));
-  // A search box, or a control in a search or filter form: Enter or a click there narrows a list.
-  const isSearch = (e, form) => !!(e.closest('[role=search]')
-    || (e.matches('input[type=search], [role=searchbox], [role=combobox]'))
-    || (form && ((form.getAttribute('method') || '').toLowerCase() === 'get'
-      || form.querySelector('input[type=search], [role=searchbox]'))));
-  const BUTTON = 'button, [role=button], input[type=submit], input[type=button], input[type=image]';
-  // The buttons after a text box in the nearest part of the page around it that has any: a chat box's Send,
-  // which Enter in the box may press. Up through open shadow roots to their hosts.
-  const buttonsAfter = (el) => {
-    let up = el.parentNode;
-    for (let i = 0; i < 5 && up && up !== el.ownerDocument.body && up.nodeType !== 9; i++) {
-      const after = [...up.querySelectorAll(BUTTON)].filter((b) => !el.contains(b) && shownBox(b)
-        && el.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
-      if (after.length) return after.slice(0, 5).map(nameFor);
-      up = up.nodeType === 11 ? up.host : up.parentNode;
+  // The visible text boxes in the nearest part of the page around a control that has any.
+  const boxesNear = (e) => {
+    for (let up = e.parentElement, i = 0; up && up !== e.ownerDocument.body && i < 4; up = up.parentElement, i++) {
+      const boxes = boxesIn(up).filter(shownBox);
+      if (boxes.length) return boxes;
     }
     return [];
+  };
+  // A search box, or a control in a search or filter form, or beside search boxes and no other box (the
+  // magnifier by a site's search box): Enter or a click there narrows a list. In any other form, Enter or
+  // a button submits all of it, whatever box it's in: a page built as one form has its search box in it.
+  const isSearch = (e, form) => {
+    if (e.closest('[role=search]')) return true;
+    if (form) return (form.getAttribute('method') || '').toLowerCase() === 'get';
+    if (e.matches('[role=combobox]')) return true;
+    if (isTextBox(e)) return isSearchBox(e);
+    const boxes = boxesNear(e);
+    return boxes.length > 0 && boxes.every(isSearchBox);
+  };
+  const BUTTON = 'button, [role=button], input[type=submit], input[type=button], input[type=image]';
+  // The buttons by a text box: a chat box's Send, which Enter in the box may press. The ones after it in
+  // the nearest part of the page around it that has any, however far up; then, laid out in reverse, the
+  // ones before it in the nearest part below the page itself that has any. Up through open shadow roots.
+  const buttonsAfter = (el) => {
+    const body = el.ownerDocument.body;
+    const before = [];
+    let up = el.parentNode;
+    while (up && up.nodeType !== 9) {
+      const near = [...up.querySelectorAll(BUTTON)].filter((b) => !el.contains(b) && shownBox(b));
+      const after = near.filter((b) => el.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+      if (!before.length && up !== body) before.push(...near.filter((b) => !after.includes(b)).reverse());
+      if (after.length) return [...after.slice(0, 5), ...before.slice(0, 3)].map(nameFor);
+      if (up === body) break;
+      up = up.nodeType === 11 ? up.host : up.parentNode;
+    }
+    return before.slice(0, 3).map(nameFor);
+  };
+  // A div or icon a page made clickable with a handler, no role: the outermost part around it with a
+  // pointer cursor or a tab stop, unless that's most of the page.
+  const clickableAround = (el) => {
+    const doc = el.ownerDocument, view = doc.defaultView || window;
+    let found = null;
+    for (let e = el; e && e.nodeType === 1 && e !== doc.body && e !== doc.documentElement; e = e.parentElement) {
+      const tab = e.getAttribute('tabindex');
+      if (view.getComputedStyle(e).cursor !== 'pointer' && !(tab !== null && Number(tab) >= 0)) continue;
+      const r = e.getBoundingClientRect();
+      if (r.width * r.height > 0.4 * view.innerWidth * view.innerHeight) break;
+      found = e;
+    }
+    return found;
   };
   const elementInfo = (el) => {
     if (!el || el === el.ownerDocument.body) return null;
     const c = el.closest(CONTROL);
+    let clickable = false;
     if (c) el = c;
+    else if (!isTextBox(el)) {
+      const k = clickableAround(el);
+      if (k) { el = k; clickable = true; }
+    }
     const form = el.closest('form');
     const editable = isTextBox(el);
-    const out = { tag: el.tagName.toLowerCase(), role: el.getAttribute('role'), type: el.getAttribute('type'),
+    const out = { tag: el.tagName.toLowerCase(), role: el.getAttribute('role') || (clickable ? 'clickable' : null), type: el.getAttribute('type'),
       label: el.tagName === 'INPUT' && !['submit', 'button', 'image', 'reset'].includes(el.type) ? (el.placeholder || el.name || '') : nameFor(el),
       inForm: !!form, url: location.href, editable, fields: fieldsFor(el),
       toggle: isToggle(el), search: isSearch(el, form) };
@@ -458,10 +503,17 @@ export const INSPECT = `(o) => {
   if (o.ref) {
     const el = byRef(o.ref);
     if (!el) return null;
-    if (!isFrame(el)) return info({ el });
-    // A click on a frame's ref lands in its middle.
-    const r = el.getBoundingClientRect();
-    return info({ el, frame: { x: r.width / 2 - el.clientLeft, y: r.height / 2 - el.clientTop } });
+    // A click on a ref lands in its middle, as RESOLVE_REF works it out, scrolled into view first: what's
+    // there is what it presses (for a dialog or a card, the button in its middle; for a frame, inside it).
+    let r = rectOf(el);
+    if (!(r.top >= 0 && r.left >= 0 && r.bottom <= innerHeight && r.right <= innerWidth)) {
+      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+      r = rectOf(el);
+    }
+    if (r.width === 0 && r.height === 0) return info({ el });
+    const x = Math.round(Math.min(Math.max(r.left + r.width / 2, 0), innerWidth - 1));
+    const y = Math.round(Math.min(Math.max(r.top + r.height / 2, 0), innerHeight - 1));
+    return info(elementAt(x, y));
   }
   if (typeof o.x === 'number' && typeof o.y === 'number') return info(elementAt(o.x, o.y));
   return info(focusedAt());

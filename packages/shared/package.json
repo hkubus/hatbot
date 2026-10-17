@@ -4,7 +4,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./desktop": "./src/desktop.ts"
+    "./desktop": "./src/desktop.ts",
+    "./keys": "./src/keys.ts"
   },
   "dependencies": {
     "zod": "^4.6.5"

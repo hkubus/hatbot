@@ -8,6 +8,7 @@ import {
   consequentialLabel,
   fold,
   heldBack,
+  pressOf,
 } from "../src/tasks/policy";
 
 const button = (label: string, over: Partial<AgentElement> = {}): AgentElement => ({
@@ -175,6 +176,39 @@ test("Enter in a form asks when its submit button would", () => {
   expect(consequential("enter", { ...field, submitLabel: "Szukaj" })).toBeNull();
 });
 
+test("paying, ordering and accepting a price under other common words are held", () => {
+  for (const label of [
+    "Płacę",
+    "Płacę BLIKiem",
+    "Płacę kartą",
+    "Przejdź do kasy",
+    "Do kasy",
+    "Complete payment",
+    "Make payment",
+    "Payment",
+    "Wykonaj przelew",
+    "Zleć przelew",
+    "Zatwierdź przelew",
+    "Przyjmuję ofertę",
+    "Akceptuję cenę",
+    "Zaakceptuj propozycję",
+    "Wysyłam",
+    // A zero-width space inside the word.
+    "Ku\u200bp teraz",
+    "Zap\u00adłać",
+  ])
+    expect([label, consequentialLabel(label)]).toEqual([label, true]);
+  for (const label of ["Kasa fiskalna", "Placement", "Payments history"])
+    expect([label, consequentialLabel(label)]).toEqual([label, false]);
+});
+
+test("a div or icon the page made clickable is held like a button", () => {
+  const div = button("", { tag: "div", role: "clickable", type: null });
+  expect(consequential("click", div)).toEqual({ unlabelled: "button" });
+  expect(consequential("click", { ...div, label: "Kup teraz" })).toEqual({ label: "Kup teraz" });
+  expect(consequential("click", { ...div, label: "Galeria" })).toBeNull();
+});
+
 test("labels are compared folded and with Unicode word edges", () => {
   expect(fold("  ZAPŁAĆ\n teraz ")).toBe("zaplac teraz");
   // \b would see a word edge inside "płać" and "Usuń".
@@ -207,6 +241,18 @@ test("on a checkout or payment page every button asks; typing and choosing don't
     ["https://go.przelewy24.pl/trnRequest/1", "go.przelewy24.pl"],
     ["https://www.olx.pl/d/delivery/checkout/abc", "www.olx.pl"],
     ["https://www.alza.cz/pokladna", "www.alza.cz"],
+    // Shopify, PrestaShop, IdoSell, Amazon and OpenCart.
+    ["https://shop.example/checkouts/cn/Z2Nw", "shop.example"],
+    ["https://shop.myshopify.com/12345/checkouts/abc", "shop.myshopify.com"],
+    ["https://shop.example/order", "shop.example"],
+    ["https://shop.example/order/confirm", "shop.example"],
+    ["https://sklep.example.pl/order1.php", "sklep.example.pl"],
+    ["https://www.amazon.pl/gp/buy/spc/handlers/display.html", "www.amazon.pl"],
+    ["https://shop.example/index.php?route=checkout/confirm", "shop.example"],
+    ["https://shop.example/index.php?controller=order", "shop.example"],
+    ["https://shop.example/index.php?controller=order-history", null],
+    ["https://shop.example/orders", null],
+    ["https://shop.example/account/orders/12", null],
     ["https://allegro.pl/oferta/rtx-3070-123", null],
     ["https://allegro.pl/moje-allegro/zakupy/zamowienia", null],
     ["https://www.paypal.com.evil.example/", null],
@@ -245,6 +291,60 @@ test("Enter, Space and Tab can't slip past: sequences are refused, single presse
   expect(type("Jan\tKowalski")).toBeNull();
   expect(type("Jan\tul. Polna 5")).toHaveProperty("refuse");
   expect(type("Jan\t\n")).toHaveProperty("refuse");
+});
+
+test("a key Hatbot can't read is refused, so Enter can't go under another name", () => {
+  const key = (text: string) => checkFor("computer", "key", { text });
+  // Keycodes, hex and Unicode keysyms, keypad and line-feed keys xdotool would press as Return or space,
+  // a modifier after the key (xdotool presses it after), and two keys at once.
+  for (const text of [
+    "36",
+    "104",
+    "0xff0d",
+    "0x20",
+    "U0020",
+    "U000D",
+    "KP_Space",
+    "Linefeed",
+    "ISO_Enter",
+    "3270_Enter",
+    "Return+shift",
+    "Return+ctrl",
+    "KP_Enter+a",
+    "space+Tab",
+    "ctrl+a 0xff0d",
+  ])
+    expect([text, key(text)]).toEqual([text, { refuse: expect.stringContaining("can't read") }]);
+  expect(checkFor("computer", "hold_key", { text: "36", duration: 1 })).toHaveProperty("refuse");
+  expect(checkFor("browser", "key", { text: "U0020" })).toHaveProperty("refuse");
+  // Names in any case, X's modifier names, and characters read as they are.
+  expect(key("RETURN")).toEqual({ press: "enter", at: [{ focused: true }] });
+  expect(key("Control_L+Return")).toEqual({ press: "enter", at: [{ focused: true }] });
+  expect(key("Shift_L+Return")).toEqual({ press: "newline", at: [{ focused: true }] });
+  expect(key("ctrl+shift+Return")).toEqual({ press: "enter", at: [{ focused: true }] });
+  expect(key("Next")).toBeNull();
+  expect(key("ctrl++")).toBeNull();
+  expect(key("5")).toBeNull();
+  expect(key("ą")).toBeNull();
+  expect(pressOf("0xff0d")).toBeNull();
+});
+
+test("a right click is refused: its menu is a window Hatbot can't see into", () => {
+  expect(checkFor("computer", "right_click", { coordinate: [3, 4] })).toHaveProperty("refuse");
+  expect(
+    checkFor("browser", "right_click", { target: { type: "ref", ref: "ref_2" } }),
+  ).toHaveProperty("refuse");
+});
+
+test("a middle click is checked where it lands", () => {
+  expect(checkFor("computer", "middle_click", { coordinate: [3, 4] })).toEqual({
+    press: "click",
+    at: [{ x: 3, y: 4 }],
+  });
+  expect(checkFor("browser", "middle_click", { target: { type: "ref", ref: "ref_2" } })).toEqual({
+    press: "click",
+    at: [{ ref: "ref_2" }],
+  });
 });
 
 test("mouse down, up and drags are checked where they land", () => {
@@ -308,7 +408,13 @@ test("Enter in a chat box asks when the button after it sends, or has no name", 
     unlabelled: "beside",
   });
   expect(consequential("enter", box({ buttonsAfter: ["Dodaj zdjęcie", "Emoji"] }))).toBeNull();
-  expect(consequential("enter", box())).toBeNull();
+  // No button by it at all (Discord's composer): Enter there may send as easily as not. In a form it
+  // submits the form, which has no submit button.
+  expect(consequential("enter", box())).toEqual({ unlabelled: "beside" });
+  expect(consequential("enter", box({ tag: "div", role: "textbox", buttonsAfter: [] }))).toEqual({
+    unlabelled: "beside",
+  });
+  expect(consequential("enter", box({ inForm: true, buttonsAfter: [] }))).toBeNull();
   // shift+Enter is a new line there; in a one-line field it still submits.
   expect(consequential("newline", box({ buttonsAfter: ["Wyślij"] }))).toBeNull();
   const field = box({ tag: "input", type: "text", inForm: true, submitLabel: "Zapłać" });
@@ -327,7 +433,19 @@ test("Space or Enter on a focused button or link presses it", () => {
   expect(consequential("enter", button("Dalej"))).toBeNull();
   expect(consequential("space", { ...button(""), tag: "body" })).toBeNull();
   expect(heldBack("space", { label: "Kup teraz" })).toContain('press "Kup teraz"');
-  expect(heldBack("enter", { unlabelled: "beside" })).toContain("shift+Return");
+  // A new line is shift+Return only in a box that has lines.
+  const area: AgentElement = { ...button(""), tag: "textarea", type: null, editable: true };
+  const line: AgentElement = { ...area, tag: "input", type: "text" };
+  expect(heldBack("enter", { unlabelled: "beside" }, area)).toContain("shift+Return");
+  expect(heldBack("enter", { label: "Wyślij" }, area)).toContain("shift+Return");
+  expect(heldBack("enter", { unlabelled: "beside" }, line)).not.toContain("shift+Return");
+  expect(heldBack("enter", { label: "Zapłać" }, line)).not.toContain("shift+Return");
+  expect(heldBack("click", { label: "Wyślij" }, area)).not.toContain("shift+Return");
+  // Each says what to do when the step doesn't send or pay, too.
+  for (const hold of [{ unlabelled: "beside" as const }, { unseen: true as const }])
+    expect(heldBack("enter", hold, area)).toMatch(
+      /if it doesn't, reach the same place another way/i,
+    );
 });
 
 test("a frame Hatbot couldn't enter can't be told apart from a Pay button, so it's held", () => {
