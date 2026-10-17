@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import Anthropic from "@anthropic-ai/sdk";
+import type { ThreadMessage } from "@hatbot/shared";
+import { Chats } from "../src/agent/chats";
 import {
   AnthropicModelClient,
   retryAfterMs,
@@ -7,6 +9,7 @@ import {
   retryDelays,
   withRetries,
 } from "../src/agent/model";
+import { EventBus } from "../src/events";
 import type { BudgetError } from "../src/spend";
 import { Tasks } from "../src/tasks/service";
 import { FakeModel, text, toolUse } from "./fake-model";
@@ -271,6 +274,70 @@ test("a reply whose stream failed partway bills that try too", async () => {
   await t.thread.post("hi").done;
   const rows = t.db.query("SELECT input_tokens FROM spend_ledger WHERE purpose = 'thread'").all();
   expect(rows).toHaveLength(2);
+});
+
+test("a reply being written shows its text so far, is saved as it goes, and a restart keeps it", async () => {
+  let release = () => {};
+  let release2 = () => {};
+  const model = new FakeModel([
+    {
+      content: [text("Checking the disks."), toolUse("memory_list", {})],
+      wait: new Promise<void>((r) => {
+        release = r;
+      }),
+    },
+    {
+      content: [text("All fine.")],
+      wait: new Promise<void>((r) => {
+        release2 = r;
+      }),
+    },
+  ]);
+  const t = await testApp(model);
+  const { done } = t.thread.post("check the disks");
+  await waitFor(() => model.requests.length);
+  t.advance(5000);
+  release();
+  await waitFor(() => model.requests.length === 2);
+  const reply = t.thread.list().at(-1) as ThreadMessage;
+  expect(reply).toMatchObject({ status: "streaming", text: "Checking the disks." });
+  const saved = () =>
+    t.db
+      .query<{ text: string; status: string }, [number]>(
+        "SELECT text, status FROM messages WHERE id = ?",
+      )
+      .get(reply.id);
+  expect(saved()?.text).toBe("Checking the disks.");
+  // Each delta says where it starts, so an app that loaded the reply mid-way doesn't add it twice.
+  const first = t.events.find((e) => e.type === "message.delta" && e.id === reply.id);
+  expect(first).toMatchObject({ at: 0, text: "Checking the disks." });
+
+  // The brain restarts now: the reply keeps what was saved, and says it was cut off.
+  t.db
+    .query(
+      "INSERT INTO messages (conversation_id, role, kind, text, status, created_at) VALUES (1, 'assistant', 'text', '', 'streaming', ?)",
+    )
+    .run(new Date().toISOString());
+  new Chats({
+    db: t.db,
+    memory: t.memory,
+    events: new EventBus(),
+    spend: t.spend,
+    settings: t.settings,
+    model,
+    plugins: t.plugins,
+    bots: t.bots,
+  });
+  expect(saved()).toEqual({
+    text: "Checking the disks.\n\n---\n\n_This reply was cut off._",
+    status: "error",
+  });
+  const empty = t.db
+    .query<{ text: string }, []>("SELECT text FROM messages ORDER BY id DESC LIMIT 1")
+    .get();
+  expect(empty?.text).toBe("_This reply was cut off._");
+  release2();
+  await done;
 });
 
 test("a reply whose stream is tried again drops what it had streamed", async () => {

@@ -283,7 +283,8 @@ export type DesktopState = {
 /** Live events on /api/v1/stream. */
 export type HatbotEvent =
   | { type: "message.created"; message: ThreadMessage }
-  | { type: "message.delta"; id: number; text: string }
+  /** `at`: where `text` starts in the reply, so text a client already has isn't added twice. */
+  | { type: "message.delta"; id: number; text: string; at?: number }
   | { type: "message.progress"; id: number; text: string }
   | {
       type: "message.done";

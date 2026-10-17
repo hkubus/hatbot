@@ -23,6 +23,7 @@ import {
 } from "@hatbot/shared";
 import { useSyncExternalStore } from "react";
 import { ApiError, api } from "./api";
+import { withDelta } from "./delta";
 
 type State = {
   /** The chat that's showing: a bot's own, or a group. */
@@ -575,7 +576,7 @@ const patchMessage = (id: number, fn: (m: ThreadMessage) => ThreadMessage) =>
   patchMessages((m) => (m.id === id ? fn(m) : m));
 
 // A reply streams in many small deltas: they're added up and shown once per frame.
-const deltas = new Map<number, string>();
+const deltas = new Map<number, { text: string; at?: number }>();
 let deltaFrame = 0;
 function flushDeltas() {
   if (deltaFrame) cancelAnimationFrame(deltaFrame);
@@ -585,14 +586,16 @@ function flushDeltas() {
   deltas.clear();
   const messages = patchMessages((m) => {
     const d = added.get(m.id);
-    return d === undefined ? m : { ...m, text: m.text + d };
+    const text = d === undefined ? m.text : withDelta(m.text, d);
+    return text === m.text ? m : { ...m, text };
   });
   if (messages !== state.messages) set({ messages });
 }
 
 function apply(e: HatbotEvent) {
   if (e.type === "message.delta") {
-    deltas.set(e.id, (deltas.get(e.id) ?? "") + e.text);
+    const d = deltas.get(e.id);
+    deltas.set(e.id, d ? { ...d, text: d.text + e.text } : { text: e.text, at: e.at });
     if (!deltaFrame) deltaFrame = requestAnimationFrame(flushDeltas);
     return;
   }

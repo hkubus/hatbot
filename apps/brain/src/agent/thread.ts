@@ -74,6 +74,8 @@ const LONG_EPISODE_TOKENS = 90_000;
 const RECENT_MESSAGES = 10;
 const MAX_STEPS = 25;
 const MAX_TURN_MS = 10 * 60_000;
+/** How often a reply being written is saved, so one a restart cuts off keeps what it had. */
+const SAVE_TEXT_MS = 3000;
 /** Commands one reply runs itself; past this, the work belongs in a background task (run_task). */
 const MAX_CHAT_COMMANDS = 2;
 /** Why a reply was cut off: /stop, rather than Pause all. */
@@ -189,6 +191,8 @@ export class Thread {
   private currentIncognito = false;
   /** The approval the reply in progress waits for; your next message cancels it. */
   private waiting: number | null = null;
+  /** The text of the reply being written, by message id, as it is now: for a chat opened mid-reply. */
+  private live = new Map<number, string>();
   private clock: () => number;
 
   constructor(
@@ -252,7 +256,11 @@ export class Thread {
       )
       .all(this.conversationId, before ?? Number.MAX_SAFE_INTEGER, incognito ? 1 : 0, limit)
       .reverse()
-      .map(messageOf);
+      .map(messageOf)
+      .map((m) => {
+        const text = m.status === "streaming" ? this.live.get(m.id) : undefined;
+        return text === undefined ? m : { ...m, text };
+      });
     return this.d.attachments?.fill(rows) ?? rows;
   }
 
@@ -1536,6 +1544,17 @@ export class Thread {
     this.touch(episode.id);
     let text = "";
     let separate = false;
+    let savedAt = this.clock();
+    /** Keeps the text as it is now: in memory for the apps, and every few seconds in the database. */
+    const keep = () => {
+      this.live.set(out.id, text);
+      if (this.clock() - savedAt < SAVE_TEXT_MS) return;
+      savedAt = this.clock();
+      db.query("UPDATE messages SET text = ? WHERE id = ? AND status = 'streaming'").run(
+        text,
+        out.id,
+      );
+    };
     /** Charts in the reply that don't draw, while the model writes them again, out of view. */
     let chartFix: { broken: { start: number; end: number }[]; text: string } | null = null;
     let fixedCharts = false;
@@ -1553,8 +1572,10 @@ export class Thread {
         delta = `\n\n---\n\n${delta}`;
       }
       separate = false;
+      // `at`: where it goes in the text, so an app that loaded the reply mid-way doesn't add it twice.
+      events.emit({ type: "message.delta", id: out.id, text: delta, at: text.length });
       text += delta;
-      events.emit({ type: "message.delta", id: out.id, text: delta });
+      keep();
     };
     /** The pages the reply cites, and the titles of those it fetched (`addSources`). */
     const cited: Source[] = [];
@@ -1569,6 +1590,7 @@ export class Thread {
         separate = true;
         say(note);
       }
+      this.live.delete(out.id);
       db.query("UPDATE messages SET text = ?, status = ?, sources = ? WHERE id = ?").run(
         text,
         status,
@@ -1601,8 +1623,9 @@ export class Thread {
         text = at.text;
         separate = at.separate;
         if (chartFix && at.fix !== undefined) chartFix.text = at.fix;
+        keep();
         events.emit({ type: "message.rewrite", id: out.id });
-        if (text) events.emit({ type: "message.delta", id: out.id, text });
+        if (text) events.emit({ type: "message.delta", id: out.id, text, at: 0 });
       };
     };
 
@@ -1936,6 +1959,7 @@ export class Thread {
       );
     } finally {
       this.current = null;
+      this.live.delete(out.id);
     }
   }
 }
