@@ -210,7 +210,8 @@ struct WatcherDetailView: View {
               enabled = on
               Task {
                 await act { _ = try await store.setWatcherEnabled(id, on) }
-                enabled = nil
+                // Saved, or put back: the watcher shows which. Unless it's been switched again meanwhile.
+                if enabled == on { enabled = nil }
               }
             }))
         LabeledContent(w.source.kind == .page ? "Page" : "Tool", value: w.source.text)
