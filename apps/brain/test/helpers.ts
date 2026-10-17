@@ -326,6 +326,8 @@ export async function testApp(
     checks,
     ping,
     storage,
+    updates,
+    proxmox,
     updateDir,
     events: seen,
     call,

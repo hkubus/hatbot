@@ -90,14 +90,27 @@ fi
 if [[ -z ${NTFY_URL:-} ]] && pct exec "$BRAIN_ID" -- sh -c \
   'grep -qs "^NTFY_URL=" /etc/hatbot/ntfy.env && ! grep -qs "^NTFY_URL=http://127.0.0.1:8081" /etc/hatbot/ntfy.env'; then
   ok "keeping /etc/hatbot/ntfy.env (set NTFY_URL to change it)"
+  if pct exec "$BRAIN_ID" -- grep -qsxE 'NTFY_TOPIC=(hatbot)?' /etc/hatbot/ntfy.env; then
+    warn "the ntfy topic is the old shared default; run deploy.sh with NTFY_URL set to pick a random one"
+  fi
 else
   ntfy_url='' topic='' token=''
   read -r -p "   URL of your ntfy server (empty to skip) [${NTFY_URL:-}]: " ntfy_url || true
   ntfy_url=${ntfy_url:-${NTFY_URL:-}}
   ntfy_url=${ntfy_url%/}
   if [[ -n $ntfy_url ]]; then
-    read -r -p "   ntfy topic [hatbot]: " topic || true
-    read -r -s -p "   ntfy access token of a user that may publish to it (empty for none): " token || true
+    # Whoever reads the topic sees every notification and can press its Approve buttons, so the
+    # suggestion is one nobody can guess.
+    def_topic=hatbot-$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')
+    read -r -p "   ntfy topic [$def_topic]: " topic || true
+    until [[ ${topic:-$def_topic} =~ ^[-_A-Za-z0-9]{1,64}$ ]]; do
+      read -r -p "   only letters, digits, - and _ [$def_topic]: " topic || true
+    done
+    topic=${topic:-$def_topic}
+    if ((${#topic} < 20)); then
+      warn "a short topic can be guessed; on a server that lets anyone read, anyone could approve for you"
+    fi
+    read -r -s -p "   ntfy access token of a user that may publish to it (recommended): " token || true
     echo
     # Checked from the brain, which is what has to reach it. The token goes over stdin.
     if [[ -n $token ]]; then
@@ -112,9 +125,14 @@ else
     else
       warn "the brain can't reach $ntfy_url; saving it anyway"
     fi
+    [[ -n $token ]] || warn "no token: the server must let anyone publish to the topic, so a notification that looks like Hatbot's may not be"
+    # A server that lets anyone read the topic shows them every notification, Approve buttons included.
+    if pct exec "$BRAIN_ID" -- curl -fsS -m 10 -o /dev/null "$ntfy_url/$topic/json?poll=1&since=$(date +%s)" 2>/dev/null; then
+      warn "$ntfy_url lets anyone read the topic; allow only your ntfy user to read it (ntfy's access control)"
+    fi
     push_secret "$BRAIN_ID" /etc/hatbot/ntfy.env <<EOF
 NTFY_URL=$ntfy_url
-NTFY_TOPIC=${topic:-hatbot}
+NTFY_TOPIC=$topic
 NTFY_TOKEN=$token
 EOF
     unset token

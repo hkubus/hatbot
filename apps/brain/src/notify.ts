@@ -27,32 +27,62 @@ export interface Notifier {
   send(n: Notification): Promise<void>;
 }
 
+/** A topic this short could be guessed, and on a server that lets anyone read, read. */
+export const guessableTopic = (topic: string) => topic.length < 20;
+
 export class NtfyNotifier implements Notifier {
   private url: string;
-  private topic: string;
+  /** No shared default: whoever reads the topic sees every notification, Approve buttons included. */
+  readonly topic: string;
   private token: string;
 
-  constructor(env: Record<string, string | undefined> = process.env) {
+  constructor(
+    env: Record<string, string | undefined> = process.env,
+    private fetcher: typeof fetch = fetch,
+    private clock: () => number = Date.now,
+  ) {
     this.url = (env.NTFY_URL ?? "").replace(/\/$/, "");
-    this.topic = env.NTFY_TOPIC || "hatbot";
+    this.topic = env.NTFY_TOPIC ?? "";
     this.token = env.NTFY_TOKEN ?? "";
+    if (this.url && !this.topic) console.warn("NTFY_TOPIC isn't set, so no notifications are sent");
   }
 
   get configured() {
     return Boolean(this.url);
   }
 
+  get hasToken() {
+    return Boolean(this.token);
+  }
+
   /** The server's own health check, for the self-check. Throws with what went wrong. */
   async health(): Promise<void> {
-    const res = await fetch(`${this.url}/v1/health`, { signal: AbortSignal.timeout(10_000) });
+    const res = await this.fetcher(`${this.url}/v1/health`, {
+      signal: AbortSignal.timeout(10_000),
+    });
     const body = (await res.json().catch(() => ({}))) as { healthy?: boolean };
     if (!res.ok || body.healthy !== true) throw new Error(`ntfy answered ${res.status}`);
   }
 
+  /**
+   * Whether someone with no account can read the topic: true, false, or null when the server's answer
+   * doesn't say. Asks only for messages from now on, so nothing that was sent comes back.
+   */
+  async readableByAnyone(): Promise<boolean | null> {
+    const since = Math.floor(this.clock() / 1000);
+    const res = await this.fetcher(
+      `${this.url}/${encodeURIComponent(this.topic)}/json?poll=1&since=${since}`,
+      { signal: AbortSignal.timeout(10_000) },
+    );
+    await res.body?.cancel().catch(() => {});
+    if (res.ok) return true;
+    return res.status === 401 || res.status === 403 ? false : null;
+  }
+
   async send(n: Notification) {
-    if (!this.url) return;
+    if (!this.url || !this.topic) return;
     try {
-      const res = await fetch(this.url, {
+      const res = await this.fetcher(this.url, {
         method: "POST",
         headers: {
           "content-type": "application/json",

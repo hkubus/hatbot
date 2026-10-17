@@ -12,6 +12,7 @@ import { inWorker } from "./db/worker";
 import { DesktopError } from "./desktop/client";
 import type { Desktop } from "./desktop/service";
 import type { MemoryStore } from "./memory/store";
+import { guessableTopic, type NtfyNotifier } from "./notify";
 import type { DeadManPing } from "./ping";
 import type { Plugins } from "./plugins/registry";
 import type { Proxmox } from "./proxmox";
@@ -46,7 +47,10 @@ export type ChecksDeps = {
   proxmox: Proxmox;
   updates: Updates;
   /** Your ntfy server; null when it isn't set up. */
-  ntfy: { configured: boolean; health(): Promise<void> } | null;
+  ntfy: Pick<
+    NtfyNotifier,
+    "configured" | "topic" | "hasToken" | "health" | "readableByAnyone"
+  > | null;
   /** For a reverse proxy that isn't in HATBOT_TRUSTED_PROXIES. */
   auth?: Pick<AuthService, "untrustedProxy">;
   /** The dead-man ping; absent in tests that don't need it. */
@@ -283,8 +287,28 @@ export class Checks {
     const ntfy = this.d.ntfy;
     if (!ntfy?.configured)
       return warn("NTFY_URL isn't set, so approvals and results only show in the app.");
+    if (!ntfy.topic)
+      return fail(
+        "NTFY_TOPIC isn't set, so nothing is sent. Run deploy.sh with NTFY_URL set to pick a random one.",
+      );
     await ntfy.health();
-    return ok("Your ntfy server answers. Send a test approval to try the buttons.");
+    // Whoever reads the topic sees every notification, and can press its Approve buttons.
+    const open = await ntfy.readableByAnyone().catch(() => null);
+    if (open && guessableTopic(ntfy.topic))
+      return fail(
+        "Anyone can read your notifications, Approve buttons included: the server lets anyone read the topic, and its name is easy to guess. Run deploy.sh with NTFY_URL set to pick a random one, and allow only your ntfy user to read it.",
+      );
+    if (open)
+      return warn(
+        "Your ntfy server lets anyone read the topic; only its random name keeps the notifications and their Approve buttons private. Allow only your ntfy user to read it.",
+      );
+    if (!ntfy.hasToken)
+      return warn(
+        "NTFY_TOKEN isn't set, so the server lets anyone send to the topic, and a notification that looks like Hatbot's may not be. Give Hatbot an ntfy user and token that may publish to it.",
+      );
+    return ok(
+      "Your ntfy server answers, and only its users can read the topic. Send a test approval to try the buttons.",
+    );
   }
 
   private ping() {
