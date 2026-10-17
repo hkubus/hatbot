@@ -267,7 +267,18 @@ export const pbsPlugin = definePlugin({
         const need = NEEDS[t.name];
         return !need || Boolean(may?.[need].length);
       });
-    await check();
+    // A server that doesn't answer mustn't hold up Settings; it's checked again later.
+    let wait: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      check(),
+      new Promise<void>((resolve) => {
+        wait = setTimeout(() => {
+          if (!may) unchecked ??= "it didn't answer in 10 seconds";
+          resolve();
+        }, 10_000);
+      }),
+    ]);
+    clearTimeout(wait);
     let current = offered();
 
     const can = () => {

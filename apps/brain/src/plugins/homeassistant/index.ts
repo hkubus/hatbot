@@ -207,9 +207,16 @@ export const homeassistantPlugin = definePlugin({
       for (const s of all)
         if (domainOf(s.entity_id) === "scene") scenes.set(s.entity_id, membersOf(s));
     };
-    void api<State[]>("GET", "/states")
-      .then(learn)
-      .catch(() => {});
+    let looked = 0;
+    /** Looks at every state in the background, at most once a minute. */
+    const relearn = () => {
+      if (Date.now() - looked < 60_000) return;
+      looked = Date.now();
+      void api<State[]>("GET", "/states")
+        .then(learn)
+        .catch(() => {});
+    };
+    relearn();
     /** The entities a call names, wherever it names them. */
     const targetsOf = (entityId: unknown, data: Record<string, unknown> | undefined) => {
       const target = (data?.target ?? {}) as Record<string, unknown>;
@@ -348,10 +355,13 @@ export const homeassistantPlugin = definePlugin({
               "It acts on a whole area, device, label or floor, which can include a lock, the alarm, a door or a gate.",
             );
           const unseen = targets.filter((t) => domainOf(t) === "scene" && !scenes.has(t));
-          if (unseen.length)
+          if (unseen.length) {
+            // So the next call knows it, if Home Assistant was down when this one started.
+            relearn();
             return askAlways(
               `It isn't known yet what ${unseen.join(", ")} sets, and a scene can open a door.`,
             );
+          }
           if (domain === "recorder" && service === "purge")
             return ask("It deletes recorded history.", "delete");
           if (CAREFUL[domain]) return careful(domain);
