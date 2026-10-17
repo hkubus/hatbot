@@ -2232,8 +2232,30 @@ export function mentionsIn(text: string, bots: Bot[]): Bot[] {
     .map((m) => m.b);
 }
 
-/** Blocks a cache breakpoint can go on. */
-const CACHEABLE = ["text", "image", "document", "tool_use", "tool_result"];
+/**
+ * Blocks a cache breakpoint can go on: all but thinking and a few markers. A reply paused mid-search
+ * ends on a search's result, where its request's breakpoint went.
+ */
+const CACHEABLE = [
+  "text",
+  "image",
+  "document",
+  "search_result",
+  "tool_use",
+  "tool_result",
+  "server_tool_use",
+  "web_search_tool_result",
+  "web_fetch_tool_result",
+  "code_execution_tool_result",
+  "bash_code_execution_tool_result",
+  "text_editor_code_execution_tool_result",
+  "tool_search_tool_result",
+  "advisor_tool_result",
+  "mcp_tool_use",
+  "mcp_tool_result",
+  "container_upload",
+  "compaction",
+];
 
 /**
  * The turns with a 1-hour breakpoint where the last request ended, on the turn before the latest

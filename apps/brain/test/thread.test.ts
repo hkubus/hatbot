@@ -7,7 +7,7 @@ import {
   threadGroups,
 } from "@hatbot/shared";
 import type { StreamHandlers, StreamParams } from "../src/agent/model";
-import { activity, parseSummary, titleOf, withNote } from "../src/agent/thread";
+import { activity, markPrevious, parseSummary, titleOf, withNote } from "../src/agent/thread";
 import { runTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
 import { costOf, FALLBACK_MODELS, PRICES } from "../src/spend";
@@ -218,6 +218,24 @@ test("each request marks where the last one ended, so a long reply still reads t
   // The stored turns don't keep it.
   const stored = t.db.query<{ content: string }, []>("SELECT content FROM episode_turns").all();
   expect(stored.some((r) => r.content.includes("cache_control"))).toBe(false);
+});
+
+test("after a reply paused mid-search, the mark goes on the search result its request ended with", () => {
+  const paused = [
+    text("Looking."),
+    { type: "server_tool_use", id: "srv1", name: "web_search", input: { query: "a" } },
+    { type: "web_search_tool_result", tool_use_id: "srv1", content: [] },
+    { type: "thinking", thinking: "", signature: "sig" },
+  ];
+  const turns = [
+    { role: "user", content: [text("search lots")] },
+    { role: "assistant", content: paused },
+    { role: "assistant", content: [text("more"), toolUse("x", {}, "t1")] },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
+  ] as Parameters<typeof markPrevious>[0];
+  const marked = markPrevious(turns)[1]?.content as { type: string; cache_control?: unknown }[];
+  expect(marked.map((b) => Boolean(b.cache_control))).toEqual([false, false, true, false]);
+  expect(marked[2]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
 });
 
 test("spend is recorded, and the daily limit stops replies", async () => {
