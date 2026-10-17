@@ -84,41 +84,7 @@ struct ScheduleDetailView: View {
   @State private var error: String?
   @State private var started: Int?
 
-  struct Form: Equatable {
-    var name = ""
-    var repeats = true
-    var cron = "0 8 * * *"
-    var at = Date().addingTimeInterval(3600)
-    var prompt = ""
-    var enabled = true
-    var botId = Bot.hatbot
-
-    init() {}
-    init(_ s: Schedule) {
-      name = s.name
-      repeats = s.cron != nil
-      cron = s.cron ?? "0 8 * * *"
-      at = Format.date(s.runAt) ?? Date().addingTimeInterval(3600)
-      prompt = s.prompt
-      enabled = s.enabled
-      botId = s.botId ?? Bot.hatbot
-    }
-
-    var change: AppStore.ScheduleChange {
-      AppStore.ScheduleChange(
-        name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-        prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines),
-        enabled: enabled,
-        cron: repeats ? cron.trimmingCharacters(in: .whitespaces) : nil,
-        at: repeats ? nil : at.formatted(.iso8601),
-        botId: botId)
-    }
-
-    var valid: Bool {
-      !name.trimmingCharacters(in: .whitespaces).isEmpty && !prompt.trimmingCharacters(in: .whitespaces).isEmpty
-        && (!repeats || !cron.trimmingCharacters(in: .whitespaces).isEmpty)
-    }
-  }
+  typealias Form = ScheduleForm
 
   private var stored: Schedule? { id.flatMap { store.schedules[$0] } }
 

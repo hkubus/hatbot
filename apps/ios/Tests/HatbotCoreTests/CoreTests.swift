@@ -283,6 +283,29 @@ final class StoreTests: XCTestCase {
 }
 
 final class ScheduleAndMemoryTests: XCTestCase {
+  /// A schedule's page has changes only when you've made some, repeating or not.
+  func testAScheduleUnchangedIsUnchanged() throws {
+    let json = { (when: String) in
+      #"{"id":2,"name":"Morning","\#(when),"prompt":"Brief me","enabled":true,"createdVia":"chat","createdAt":"2026-10-10T08:00:00.000Z"}"#
+    }
+    let repeating = try JSONDecoder().decode(Schedule.self, from: Data(json(#"cron":"0 8 * * *""#).utf8))
+    let first = ScheduleForm(repeating)
+    Thread.sleep(forTimeInterval: 0.01)
+    XCTAssertEqual(ScheduleForm(repeating), first)
+    var edited = first
+    edited.cron = "0 9 * * *"
+    XCTAssertNotEqual(edited, first)
+    edited = first
+    edited.prompt = "Brief me, briefly"
+    XCTAssertNotEqual(edited, first)
+
+    let once = try JSONDecoder().decode(Schedule.self, from: Data(json(#"runAt":"2026-10-20T07:00:00.000Z""#).utf8))
+    XCTAssertEqual(ScheduleForm(once), ScheduleForm(once))
+    var later = ScheduleForm(once)
+    later.at = later.at.addingTimeInterval(3600)
+    XCTAssertNotEqual(later, ScheduleForm(once))
+  }
+
   func testDecodesTriggersAndTheirSecret() throws {
     let json = #"""
       {"type":"trigger.updated","trigger":{"id":3,"name":"Kuma","kind":"kuma","trusted":true,"prompt":"Fix it",
