@@ -1085,11 +1085,11 @@ test("a seller's message that looks like a scam holds the negotiation until you 
     "The seller wrote: “Wyślę przez OLX, ale najpierw podaj kod BLIK.”",
   );
   expect(hold.reason).toContain("payment or talk off the platform (“BLIK”)");
-  // It's approved in the app, not from the lock screen.
+  // It's approved in the app, not from the lock screen; Pause all is on every approval.
   const note = await waitFor(() =>
     t.notifier.sent.find((x) => x.title.includes("Keep negotiating")),
   );
-  expect(note.actions?.map((a) => a.label)).toEqual(["Open in Hatbot", "Deny"]);
+  expect(note.actions?.map((a) => a.label)).toEqual(["Open in Hatbot", "Deny", "Pause all"]);
   expect(t.negotiations.get(n.id)?.approvalId).toBe(hold.id);
   // The bot hears it's held, and can't send meanwhile.
   expect(said).toContain("is held: the seller's message looked like a scam");
