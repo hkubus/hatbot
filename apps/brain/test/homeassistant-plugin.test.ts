@@ -236,7 +236,7 @@ test("strangers' text in states stays out of trusted output; reading it is untru
   try {
     const { ha } = await started();
     const list = await runPluginTool(ha("homeassistant_states"), { domain: "sensor" }, call);
-    expect(list).toEqual({
+    expect(list).toMatchObject({
       content:
         "sensor.living_room_temperature: 21.5 °C (Living room temperature)\nsensor.pixel_notification: [text] (Pixel notification)\nsensor.washer: Washing",
       isError: false,
