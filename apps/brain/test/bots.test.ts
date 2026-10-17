@@ -178,14 +178,29 @@ test("a bot's tasks report in its chat, and deleting it hands its schedules to H
     },
     "owner",
   );
+  const trigger = t.triggers.create({
+    name: "Pantry",
+    kind: "webhook",
+    prompt: "x",
+    botId: "chef",
+  });
   const before = t.events.length;
   expect((await t.call("DELETE", "/bots/chef", undefined, { cookie })).status).toBe(200);
-  expect(t.schedules.get(schedule.id)?.botId).toBe("hatbot");
-  expect(t.watchers.get(watcher.id)?.botId).toBe("hatbot");
+  // Hatbot may have plugins Chef didn't: they move over switched off, for you to look over.
+  expect(t.schedules.get(schedule.id)).toMatchObject({
+    botId: "hatbot",
+    enabled: false,
+    nextRunAt: null,
+  });
+  expect(t.watchers.get(watcher.id)).toMatchObject({ botId: "hatbot", enabled: false });
+  expect(t.triggers.get(trigger.id)).toMatchObject({ botId: "hatbot", enabled: false });
   // Their pages hear that they moved.
   const moved = t.events.slice(before).map((e) => e.type);
   expect(moved).toContain("schedule.updated");
   expect(moved).toContain("watcher.updated");
+  expect(moved).toContain("trigger.updated");
+  // Turned back on, a schedule works out when it's next due.
+  expect(t.schedules.update(schedule.id, { enabled: true })?.nextRunAt).not.toBeNull();
   const chats = (await (
     await t.call("GET", "/conversations", undefined, { cookie })
   ).json()) as Conversation[];

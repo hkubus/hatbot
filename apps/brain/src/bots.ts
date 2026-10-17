@@ -34,7 +34,7 @@ const toBot = (r: Row): Bot => ({
 
 export class BotError extends Error {}
 
-/** What a deleted bot's schedules, triggers and watchers were: they're Hatbot's now. */
+/** What a deleted bot's schedules, triggers and watchers were: they're Hatbot's now, switched off. */
 export type Moved = { schedules: number[]; triggers: number[]; watchers: number[] };
 
 /** A bot's id from its name: "Home lab" → "home-lab". */
@@ -149,17 +149,24 @@ export class Bots {
 
   /**
    * Deletes a bot. Its chat, tasks and memory folder stay; its schedules, triggers and watchers go to
-   * Hatbot, so they keep running. Hatbot can't be deleted. Null if there's no such bot; otherwise the
-   * ids of what moved, so their pages can be told.
+   * Hatbot switched off, since Hatbot may have plugins the bot didn't: you look them over and turn
+   * them back on. Hatbot can't be deleted. Null if there's no such bot; otherwise the ids of what
+   * moved, so their pages can be told.
    */
   delete(id: string): Moved | null {
     if (id === HATBOT_ID) throw new BotError("Hatbot can't be deleted.");
     if (!this.active(id)) return null;
     const now = new Date(this.clock()).toISOString();
-    const move = (table: "schedules" | "triggers" | "watchers") =>
+    // Turning one back on works out when it's next due.
+    const off = {
+      schedules: "enabled = 0, next_run_at = NULL",
+      triggers: "enabled = 0",
+      watchers: "enabled = 0, next_check_at = NULL",
+    };
+    const move = (table: keyof typeof off) =>
       this.db
         .query<{ id: number }, [string, string]>(
-          `UPDATE ${table} SET bot_id = ? WHERE bot_id = ? RETURNING id`,
+          `UPDATE ${table} SET bot_id = ?, ${off[table]} WHERE bot_id = ? RETURNING id`,
         )
         .all(HATBOT_ID, id)
         .map((r) => r.id);
