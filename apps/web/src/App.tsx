@@ -92,13 +92,24 @@ export function App() {
   const [unreachable, setUnreachable] = useState(false);
   // Only a 401 means you're signed out; anything else is the brain or the network being down.
   const refresh = useCallback(() => {
-    setUnreachable(false);
-    api<Me>("/auth/me").then(setMe, (err) => {
-      if (err instanceof ApiError && err.status === 401)
-        setMe({ setupDone: true, authenticated: false });
-      else setUnreachable(true);
-    });
+    api<Me>("/auth/me").then(
+      (m) => {
+        setUnreachable(false);
+        setMe(m);
+      },
+      (err) => {
+        const out = err instanceof ApiError && err.status === 401;
+        if (out) setMe({ setupDone: true, authenticated: false });
+        setUnreachable(!out);
+      },
+    );
   }, []);
+  // A restart, say: it tries again on its own every 5 s, keeping the message up meanwhile.
+  useEffect(() => {
+    if (!unreachable || me) return;
+    const t = setInterval(refresh, 5000);
+    return () => clearInterval(t);
+  }, [unreachable, me, refresh]);
 
   useEffect(() => {
     refresh();
