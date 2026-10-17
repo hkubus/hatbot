@@ -503,6 +503,8 @@ struct MemoryCommit: Codable, Identifiable, Equatable, Hashable, Sendable {
 
 struct Limits: Codable, Equatable, Sendable {
   var taskUsd: Double
+  /// A research task's starting limit; nil from brains before it.
+  var researchUsd: Double?
   var dailyUsd: Double
   var monthlyUsd: Double
   /// The last of the daily and monthly limits, which only alerts and the heartbeat spend; nil from

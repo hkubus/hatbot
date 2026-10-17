@@ -37,15 +37,33 @@ export class BotError extends Error {}
 /** What a deleted bot's schedules, triggers and watchers were: they're Hatbot's now. */
 export type Moved = { schedules: number[]; triggers: number[]; watchers: number[] };
 
+/** Letters that don't decompose into a plain one and an accent. */
+const FOLDED: Record<string, string> = {
+  ł: "l",
+  đ: "d",
+  ð: "d",
+  ø: "o",
+  ß: "ss",
+  æ: "ae",
+  œ: "oe",
+  þ: "th",
+  ı: "i",
+};
+
+/** Lowercase ASCII words joined by hyphens: "Głośny NAS" → "glosny-nas". */
+export function slugWords(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[łđðøßæœþı]/g, (c) => FOLDED[c] ?? c)
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 /** A bot's id from its name: "Home lab" → "home-lab". */
 export function slugOf(name: string): string {
-  const slug = name
-    .normalize("NFKD")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 24)
-    .replace(/-+$/, "");
+  const slug = slugWords(name).slice(0, 24).replace(/-+$/, "");
   return /^[a-z]/.test(slug) ? slug : `bot-${slug}`.replace(/-+$/, "");
 }
 
@@ -209,7 +227,12 @@ export const botIndex = (id: string) => {
  * One of the stable prompts as `bot`: its name, its role, its memory and the other bots. Hatbot on its
  * own gets the prompt as it is, so the cache and its conversation carry on.
  */
-export function promptFor(base: string, bot: Bot, others: Bot[]): string {
+export function promptFor(
+  base: string,
+  bot: Bot,
+  others: Bot[],
+  handOver = "For work in another bot's line, hand it over with ask_bot rather than doing it yourself.",
+): string {
   const named = bot.id === HATBOT_ID ? base : base.replace(/\bHatbot\b/g, bot.name);
   const parts: string[] = [];
   if (bot.instructions.trim())
@@ -223,7 +246,7 @@ export function promptFor(base: string, bot: Bot, others: Bot[]): string {
         "The owner's other bots",
         ...others.map((o) => `- ${o.name} (${o.id})${roleLine(o) ? `: ${roleLine(o)}` : ""}`),
         "- Each bot has its own chat with the owner, and its own plugins and browser profile.",
-        "- For work in another bot's line, hand it over with ask_bot rather than doing it yourself.",
+        `- ${handOver}`,
         folder
           ? `- Memory outside bots/ is shared by every bot: keep what any of them would need there (the owner, their homelab, their projects). Your own notes go in ${folder}/, with ${folder}/INDEX.md mapping them. Leave other bots' folders alone.`
           : "- Memory outside bots/ is shared by every bot, you included. Each other bot keeps its own notes in bots/<its id>/; leave those alone.",

@@ -29,7 +29,8 @@ import type { Skills } from "../teach/skills";
 import { runAgentTask } from "./agent-run";
 import { runDesktopTask } from "./desktop-run";
 import { Pool, ScreenLane } from "./lane";
-import { RESEARCH_MODEL, refreshing } from "./research-goal";
+import { keepAfterRestart } from "./research";
+import { earlierReport, RESEARCH_MODEL, refreshing } from "./research-goal";
 
 export type TasksDeps = {
   db: Db;
@@ -147,6 +148,18 @@ const FINAL: TaskStatus[] = ["done", "failed", "cancelled"];
 const RESTARTED = "Stopped: the brain restarted.";
 const errorText = (err: unknown) =>
   err instanceof Error ? err.message.slice(0, 200) : "unknown error";
+/** ntfy takes up to 4,096 bytes of message; a summary with long links is cut, whole on the task. */
+const NOTIFY_BYTES = 3500;
+
+/** `text` in at most `max` bytes of UTF-8, cut with "…" if it's longer. */
+function clipBytes(text: string, max: number): string {
+  const bytes = Buffer.from(text);
+  if (bytes.length <= max) return text;
+  return `${bytes
+    .subarray(0, max - 3)
+    .toString("utf8")
+    .replace(/�+$/, "")}…`;
+}
 
 export class Tasks {
   readonly lane = new ScreenLane();
@@ -191,8 +204,13 @@ export class Tasks {
   recover() {
     const stopped = this.interrupted.flatMap((id) => this.get(id) ?? []);
     this.interrupted = [];
+    // Research keeps what it had, read back from its turns, which takes a moment.
     for (const t of stopped)
-      this.finish(t.id, "failed", t.summary ?? RESTARTED, true, { ntfy: false });
+      if (t.research && !t.reportPath)
+        void keepAfterRestart(this, t, t.summary ?? RESTARTED).then((summary) =>
+          this.finish(t.id, "failed", summary, true, { ntfy: false }),
+        );
+      else this.finish(t.id, "failed", t.summary ?? RESTARTED, true, { ntfy: false });
     const shown = stopped.filter((t) => !t.parentId);
     if (!shown.length) return;
     const list = shown.map((t) => `#${t.id} ${t.title}`).join("\n");
@@ -446,6 +464,7 @@ export class Tasks {
       request: input.request ?? null,
       tainted: taintedBy ? 1 : 0,
       tainted_by: taintedBy,
+      ...(input.research ? { budget_usd: this.d.settings.get().limits.researchUsd } : {}),
     });
     if (
       input.origin === "chat" &&
@@ -470,7 +489,7 @@ export class Tasks {
     const cols = {
       ...row,
       status: "queued",
-      budget_usd: this.d.settings.get().limits.taskUsd,
+      budget_usd: row.budget_usd ?? this.d.settings.get().limits.taskUsd,
       created_at: this.now(),
     };
     const names = Object.keys(cols);
@@ -552,8 +571,10 @@ export class Tasks {
       .get(id);
     return this.createBackgroundTask({
       title: t.title,
-      // Research again says what changed since its last report.
-      goal: t.research ? refreshing(goal?.trim() || t.goal, t.reportPath) : goal?.trim() || t.goal,
+      // Research again says what changed since its last report, or the one it was refreshing.
+      goal: t.research
+        ? refreshing(goal?.trim() || t.goal, t.reportPath ?? earlierReport(t.goal))
+        : goal?.trim() || t.goal,
       origin: t.origin,
       source: t.source ?? undefined,
       scheduleId: t.scheduleId ?? undefined,
@@ -568,6 +589,8 @@ export class Tasks {
       request: r?.request ?? undefined,
       botId: t.botId,
       conversationId: r?.conversation_id ?? undefined,
+      // The bot that asked for it hears how this one ends too.
+      requestedBy: t.requestedBy ?? undefined,
       research: t.research,
     });
   }
@@ -897,7 +920,7 @@ export class Tasks {
     if (!tell || !ntfy) return;
     void this.d.notifier.send({
       title: this.titled(task, `${word}: ${task.title}`),
-      message: summary || word,
+      message: clipBytes(summary || word, NOTIFY_BYTES),
       priority: status === "done" ? 3 : 4,
       click: `${this.d.config.publicUrl}/tasks/${id}`,
     });

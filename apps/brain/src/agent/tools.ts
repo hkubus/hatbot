@@ -187,6 +187,19 @@ function authorOf(ctx: ToolContext, path: string) {
  */
 const TRUSTED_FILE = /^(skills\/.+|INDEX\.md|bots\/[^/]+\/INDEX\.md|homelab\.md)$/;
 
+/** Research's reports and notes, in research/ or a bot's own: written from what it read on the web. */
+const RESEARCH_FILE = /^(bots\/[^/]+\/)?research\//;
+
+/** Untrusted text as a JSON string, with nothing in it that can close the tag around it. */
+const untrustedJson = (text: string) =>
+  JSON.stringify(text).replace(/[<>&]/g, (c) => `\\u00${c.charCodeAt(0).toString(16)}`);
+
+/** What research wrote, read back: untrusted, and the reader is tainted by it (PLAN.md §6.1). */
+function researchNotes(ctx: ToolContext, tool: string, path: string, text: string): string {
+  ctx.taint?.(`Research notes: ${path}`);
+  return `<tool_output tool="${tool}" trusted="false">\n${untrustedJson(text)}\n</tool_output>`;
+}
+
 /**
  * A write (or, content null, a delete) to a trusted file after reading untrusted content becomes a
  * proposal you apply, so injected text can't make itself trusted (PLAN.md §6.1). The tool's reply,
@@ -296,7 +309,11 @@ export const TOOLS = [
     schema: z.object({
       path: z.string().describe("Path relative to the repo root, e.g. projects/hatbot.md"),
     }),
-    run: async ({ path }, { memory }) => memory.read(path),
+    run: async ({ path }, ctx) => {
+      const content = await ctx.memory.read(path);
+      const { rel } = ctx.memory.resolve(path);
+      return RESEARCH_FILE.test(rel) ? researchNotes(ctx, "memory_read", rel, content) : content;
+    },
   }),
   def({
     name: "memory_write",
@@ -336,9 +353,12 @@ export const TOOLS = [
     description:
       "Search your memory by words, in any form (runs finds run). The best-matching sections first, each as file:line: excerpt.",
     schema: z.object({ query: z.string().min(1) }),
-    run: async ({ query }, { memory }) =>
-      (await memory.search(query)).map((h) => `${h.path}:${h.line}: ${h.text}`).join("\n") ||
-      "No matches.",
+    run: async ({ query }, ctx) => {
+      const hits = await ctx.memory.search(query);
+      const out = hits.map((h) => `${h.path}:${h.line}: ${h.text}`).join("\n") || "No matches.";
+      const research = hits.find((h) => RESEARCH_FILE.test(h.path));
+      return research ? researchNotes(ctx, "memory_search", research.path, out) : out;
+    },
   }),
   def({
     name: "search_history",
@@ -478,7 +498,7 @@ export const TOOLS = [
   def({
     name: "research",
     description:
-      "Start a research task, for a question that needs many searches and pages: comparing products or options, prices across shops, a technical question whose sources disagree. Opus plans it and hands parts to helpers that search at once, the numbers are checked against their sources, and it ends in a report with numbered sources, saved in memory and attached. It takes a few minutes and costs about $1–3. Its short answer shows under your reply. It can't see this conversation, so put everything that bears on the question in it. For a fact or two, search yourself instead.",
+      "Start a research task, for a question that needs many searches and pages: comparing products or options, prices across shops, a technical question whose sources disagree. Opus plans it and hands parts to helpers that search at once, the numbers it cites are checked against the quotes the helpers copied from the pages, and it ends in a report with numbered sources, saved in memory and attached. It takes a few minutes and costs about $2–5. Its short answer shows under your reply. It can't see this conversation, so put everything that bears on the question in it. For a fact or two, search yourself instead.",
     schema: ResearchInput,
     run: async (
       { title, question, previous },

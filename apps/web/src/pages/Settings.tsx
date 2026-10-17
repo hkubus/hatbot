@@ -175,6 +175,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
                 ["dailyUsd", "Per day"],
                 ["monthlyUsd", "Per month"],
                 ["taskUsd", "Per task"],
+                ["researchUsd", "Per research task"],
                 ["alertReserveUsd", "Kept for alerts"],
               ] as const
             ).map(([key, label]) => (
