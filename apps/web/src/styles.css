@@ -1090,10 +1090,10 @@ html[data-theme="dark"] .seg button.active {
 .table td.wrap {
   white-space: normal;
 }
-.table tbody tr {
+.table tbody tr.link-row {
   cursor: pointer;
 }
-.table tbody tr:hover {
+.table tbody tr.link-row:hover {
   background: rgba(127, 127, 127, 0.06);
 }
 .table tbody tr.sel {

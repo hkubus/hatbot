@@ -172,8 +172,8 @@ export function Search({ query }: { query: string }) {
                       <b>{r.name}</b>
                     </div>
                     <span className="val">{r.kind[0]?.toUpperCase() + r.kind.slice(1)}</span>
+                    <Icon name="chevron" className="chev" />
                   </button>
-                  <Icon name="chevron" className="chev" />
                 </div>
               ))}
             </div>

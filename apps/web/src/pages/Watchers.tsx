@@ -56,6 +56,7 @@ export function WatcherList({ onError }: { onError: (error: string) => void }) {
               ) : (
                 <span className="val">{w.enabled ? (w.lastValue ?? "") : "Off"}</span>
               )}
+              <Icon name="chevron" className="chev" />
             </button>
             <Switch
               on={w.enabled}
@@ -63,7 +64,6 @@ export function WatcherList({ onError }: { onError: (error: string) => void }) {
                 patchWatcher(w.id, { enabled }).catch((err) => onError(errorText(err)))
               }
             />
-            <Icon name="chevron" className="chev" />
           </div>
         ))}
         {!shown.length && (
