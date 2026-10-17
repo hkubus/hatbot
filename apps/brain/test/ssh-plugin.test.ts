@@ -177,6 +177,8 @@ test("the destructive-command check", () => {
   expect(destructive("useradd -m backdoor")?.kind).toBe("account_security");
   expect(destructive("rm /srv/old -rf")?.kind).toBe("delete");
   expect(destructive("passwd hatbot")?.kind).toBe("account_security");
+  // Like ssh_write_file: anything in .ssh is about keys, ~/.ssh/rc runs at every login.
+  expect(destructive("echo sh ~/x >> ~/.ssh/rc")?.kind).toBe("account_security");
   // Inside a container a reboot is like restarting a service; shutting it down still asks.
   expect(destructive("reboot", "container")).toBeNull();
   expect(destructive("systemctl reboot", "container")).toBeNull();
@@ -618,6 +620,21 @@ test("ssh_pct_exec runs a command in a container through a Proxmox host, quoted,
     });
   expect(verdictFor(exec, { host: "pve", command: "uptime" }, call).action).toBe("allow");
   expect(verdictFor(exec, { host: "nas", command: "sh ~/upgrade.sh" }, call).action).toBe("allow");
+  // A look that writes a file isn't only a look: the file can run at the next login. In a tainted
+  // task it would otherwise be a plain ask, which the review can answer.
+  const tainted = { ...call, task: { id: 1, tainted: true } };
+  for (const command of [
+    "echo x > ~/.bashrc",
+    "uptime | sort -o/home/hatbot/.bashrc",
+    "echo 'p=pct; sudo -n /usr/local/sbin/hatbot-$p-exec 105 apt-get -y dist-upgrade' > ~/.ssh/rc",
+  ])
+    expect(verdictFor(exec, { host: "pve", command }, tainted), command).toMatchObject({
+      action: "ask",
+      always: true,
+    });
+  expect(verdictFor(exec, { host: "pve", command: "uptime >/dev/null 2>&1" }, call).action).toBe(
+    "allow",
+  );
   // A file the host's shell runs at login, such as ~/.bashrc, is one more way in.
   const write = sshTool("ssh_write_file");
   expect(verdictFor(write, { host: "pve", path: "~/.bashrc", content: "x" }, call)).toMatchObject({
@@ -784,8 +801,43 @@ test("only status commands' output is trusted", () => {
     "systemctl -p is-active status nginx",
     "docker -H tcp://10.0.0.9 ps",
     "ip -b /var/mail/root a",
+    // Variables that change what runs or what's asked; a locale is fine.
+    "DOCKER_HOST=tcp://10.0.0.9 docker ps",
+    `PERL5OPT=-d PERL5DB='BEGIN{print "hi"}' pct list`,
+    "LD_PRELOAD=/tmp/x.so uptime",
   ])
     expect(statusOnly(cmd), cmd).toBe(false);
+});
+
+test("a status command passes where changes wait for the owner only if it writes nothing", () => {
+  for (const cmd of [
+    "uptime",
+    "LC_ALL=C df -h 2>/dev/null | head -n 5",
+    "uptime >/dev/null 2>&1",
+    "df -h 2>& 1 | sort -k 3",
+    "ip -br addr",
+    "ip addr show dev eth0",
+    "ip route list",
+  ])
+    expect(statusOnly(cmd, { writes: false }), cmd).toBe(true);
+  for (const cmd of [
+    "uptime > /tmp/up.txt",
+    "echo x > ~/.bashrc",
+    "echo x >> ~/.ssh/rc",
+    "uptime >&/tmp/up.txt",
+    "uptime &>> /tmp/up.txt",
+    "uptime | sort -o/home/hatbot/.bashrc",
+    "uptime | sort -ro /tmp/x",
+    "uptime | sort --output=/tmp/x",
+    "uptime | sort --compress-program=sh",
+    "uptime | uniq -c - 5",
+    "ip addr add 10.0.0.9/24 dev eth0",
+    "ip r a default via 10.0.0.1",
+    "ip link s vmbr0 down",
+  ])
+    expect(statusOnly(cmd, { writes: false }), cmd).toBe(false);
+  // Its output is still the machine's own.
+  expect(statusOnly("uptime > /tmp/up.txt")).toBe(true);
 });
 
 test("command output is untrusted unless it only checks status: a log line can't steer the task", async () => {

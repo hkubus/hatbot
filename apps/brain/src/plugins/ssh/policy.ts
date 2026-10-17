@@ -85,7 +85,7 @@ const RULES: Rule[] = [
   },
   { re: /\b(userdel|groupdel|deluser|delgroup)\b/, why: "deletes accounts", kind: "delete" },
   {
-    re: /\b(passwd|chpasswd|usermod|chage|visudo|useradd|adduser|groupadd|addgroup|gpasswd)\b|authorized_keys|\/etc\/(sudoers|shadow|passwd)\b|\bssh-keygen\b|\bpveum\b[^|;&\n]*\s(add|modify|delete|remove|passwd)\b/,
+    re: /\b(passwd|chpasswd|usermod|chage|visudo|useradd|adduser|groupadd|addgroup|gpasswd)\b|authorized_keys|\.ssh\/|\/etc\/(sudoers|shadow|passwd)\b|\bssh-keygen\b|\bpveum\b[^|;&\n]*\s(add|modify|delete|remove|passwd)\b/,
     why: "changes accounts, passwords or keys",
     kind: "account_security",
   },
@@ -188,20 +188,35 @@ const FILTERS: Record<string, number> = { head: 0, tail: 0, wc: 0, sort: 0, uniq
  * Whether a command's output can be trusted: every part is a status command from the short list
  * above, piped at most into filters that read no files. Anything else (logs, files, a command
  * substitution, input from a file) may carry what strangers wrote, so its output is untrusted.
+ * `writes: false`: it must also change nothing, so output to a file (other than /dev/null), sort -o
+ * and ip's changes don't pass: a status command may then go where changes wait for the owner.
  */
-export function statusOnly(command: string): boolean {
-  const lines = pipelines(command);
-  return Boolean(
-    lines?.length &&
-      lines.every((p) =>
-        p.every((words, i) => {
-          const w = plain(words);
-          // df --files0-from=F, wc --files0-from=F: names read from a file come back in errors.
-          if (w.some((a) => a.startsWith("-") && /file|from/i.test(a))) return false;
-          return (i === 0 ? isStatus : isFilter)(w);
-        }),
-      ),
+export function statusOnly(command: string, { writes = true } = {}): boolean {
+  const parsed = pipelines(command);
+  if (!parsed?.lines.length) return false;
+  if (!writes && parsed.files.some((f) => f !== "/dev/null")) return false;
+  return parsed.lines.every((p) =>
+    p.every((words, i) => {
+      const w = plain(words);
+      // df --files0-from=F, wc --files0-from=F: names read from a file come back in errors.
+      if (w.some((a) => a.startsWith("-") && /file|from/i.test(a))) return false;
+      if (!writes && changes(w)) return false;
+      return (i === 0 ? isStatus : isFilter)(w);
+    }),
   );
+}
+
+/** A status command or filter that writes all the same: sort -o FILE, ip addr add. */
+function changes(words: string[]): boolean {
+  const [prog = "", ...args] = words;
+  const name = prog.split("/").pop();
+  // -o in any cluster (-uo F), --output, and --compress-program, which runs a program.
+  if (name === "sort") return args.some((a) => /^-[^-]*o|^--(o|co)/.test(a));
+  if (name !== "ip") return false;
+  // After the object (addr, route…): nothing, or a word that only shows. ip takes abbreviations
+  // (ip link s is set), so only whole words.
+  const verb = args[args.findIndex((a) => !a.startsWith("-")) + 1];
+  return verb !== undefined && !["show", "list", "ls", "lst"].includes(verb);
 }
 
 function isStatus(words: string[]): boolean {
@@ -226,17 +241,22 @@ function isFilter(words: string[]): boolean {
       args.every((a) => !a.startsWith("-") || /^-[icvEFwxnqo]+$/.test(a)) &&
       args.filter((a) => !a.startsWith("-")).length <= most
     );
-  // A number right after an option is its value (head -n 5); any other word is a file to read.
+  // A number right after an option is its value (head -n 5); any other word is a file to read,
+  // or for uniq one to write (uniq -c - 5).
   const operands = args.filter(
-    (a, i) => !a.startsWith("-") && !(/^[+-]?\d+$/.test(a) && args[i - 1]?.startsWith("-")),
+    (a, i) => !a.startsWith("-") && !(/^[+-]?\d+$/.test(a) && /^--?[a-z]/i.test(args[i - 1] ?? "")),
   );
   return operands.length <= most;
 }
 
-/** A command's words without leading VAR=value assignments, and without sudo and its options. */
+/**
+ * A command's words without leading locale settings (LC_ALL=C), and without sudo and its options.
+ * Other variables stay, so the command doesn't pass: they can change what it runs or reads
+ * (PERL5OPT for pct, LD_PRELOAD, DOCKER_HOST).
+ */
 function plain(words: string[]): string[] {
   let w = words;
-  while (w[0] && /^[A-Za-z_]\w*=/.test(w[0])) w = w.slice(1);
+  while (w[0] && /^(LANG|LANGUAGE|TZ|LC_[A-Z]+)=/.test(w[0])) w = w.slice(1);
   if (w[0] === "sudo") {
     w = w.slice(1);
     while (w[0]?.startsWith("-")) w = w.slice(w[0] === "-u" || w[0] === "-g" ? 2 : 1);
@@ -247,11 +267,12 @@ function plain(words: string[]): string[] {
 /**
  * A shell line's plain commands as words, grouped into pipelines; null when it does more than run
  * plain commands with literal words (substitutions, variables, globs, input from files, subshells,
- * groups, here-documents). Output redirections to a plain file are dropped: they change where
- * output goes, not what it says.
+ * groups, here-documents). Output redirections to a plain file are left out of the words: they
+ * change where output goes, not what it says. `files`: the files they write.
  */
-function pipelines(line: string): string[][][] | null {
+function pipelines(line: string): { lines: string[][][]; files: string[] } | null {
   const out: string[][][] = [[[]]];
+  const files: string[] = [];
   let word: string | null = null;
   const end = () => {
     if (word !== null) out.at(-1)?.at(-1)?.push(word);
@@ -264,15 +285,16 @@ function pipelines(line: string): string[][][] | null {
   const target = (i: number): number => {
     let j = i;
     if (line[j + 1] === ">") j++;
-    if (line[j + 1] === "&") {
-      j++;
-      while (/[\d-]/.test(line[j + 1] ?? "")) j++;
-      return j;
-    }
+    const copy = line[j + 1] === "&";
+    if (copy) j++;
     while (/[ \t]/.test(line[j + 1] ?? "")) j++;
     const from = j + 1;
     while (j + 1 < line.length && !/[\s;&|]/.test(line[j + 1] ?? "")) j++;
-    return /[()$`<>'"\\*?[{]/.test(line.slice(from, j + 1)) ? -1 : j;
+    const name = line.slice(from, j + 1);
+    if (/[()$`<>'"\\*?[{]/.test(name)) return -1;
+    // >&2 copies a stream; >&FILE writes a file like &>.
+    if (!(copy && /^(\d+-?|-)$/.test(name))) files.push(name);
+    return j;
   };
   for (let i = 0; i < line.length; i++) {
     const c = line[i] ?? "";
@@ -319,5 +341,5 @@ function pipelines(line: string): string[][][] | null {
     else word = (word ?? "") + c;
   }
   end();
-  return out.map((p) => p.filter((cmd) => cmd.length)).filter((p) => p.length);
+  return { lines: out.map((p) => p.filter((cmd) => cmd.length)).filter((p) => p.length), files };
 }

@@ -526,7 +526,10 @@ export const sshPlugin = definePlugin({
             );
           const d = destructive(command);
           // A careful host waits for the owner whatever the command; the pattern's reason still shows.
-          const careful = carefulOf(host) ?? (statusOnly(command) ? null : reachesCareful(host));
+          // On a Proxmox host only a look that writes nothing passes: a file can run later (~/.bashrc).
+          const careful =
+            carefulOf(host) ??
+            (statusOnly(command, { writes: false }) ? null : reachesCareful(host));
           if (careful) return askAlways(d ? `${careful} This command ${d.why}.` : careful, d?.kind);
           return d ? ask(`This command ${d.why}.`, d.kind) : allow();
         },
