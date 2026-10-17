@@ -209,3 +209,39 @@ test("a reconnect reloads settings, memory, the heartbeat, proposals and plugins
   expect(after.plugins.ssh?.enabled).toBe(true);
   store.disconnect();
 });
+
+test("a reconnect finds a proposal made while Memory had none, and an open negotiation's messages", async () => {
+  const store = await freshStore("reconnect-empty");
+  let away = false;
+  serve(
+    () => [],
+    (r) => {
+      if (r.path === "/proposals?status=pending")
+        return away ? [{ id: 8, status: "pending" } as Proposal] : [];
+      if (r.path === "/proposals") return away ? [{ id: 8, status: "pending" } as Proposal] : [];
+      if (r.path === "/negotiations/4")
+        return {
+          negotiation: { id: 4, status: "open" },
+          messages: away ? [{ id: 1 }, { id: 2 }] : [{ id: 1 }],
+        };
+      return [];
+    },
+  );
+  store.connect();
+  FakeSocket.last.open();
+  // Memory loaded no proposals; a negotiation's page is open.
+  await store.loadProposals();
+  await store.loadNegotiation(4);
+  expect(store.getState().proposals).toEqual({});
+  // While the stream was down, one was made and the seller answered.
+  away = true;
+  FakeSocket.last.close();
+  store.reconnectNow();
+  FakeSocket.last.open();
+  await settle();
+  await settle();
+  const after = store.getState();
+  expect(after.proposals[8]?.status).toBe("pending");
+  expect(after.negotiationMessages[4]).toHaveLength(2);
+  store.disconnect();
+});
