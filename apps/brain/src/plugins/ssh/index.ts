@@ -53,23 +53,34 @@ const CHECKS = {
   top: "top -b -n 1 -o %CPU | head -n 25",
 } as const;
 
+/** The most output kept from each stream; past it, its first and last halves. */
+const KEEP_BYTES = 1024 * 1024;
+/** A command that writes more than this is stopped: nothing useful is that long. */
+const FLOOD_BYTES = 256 * 1024 * 1024;
+/** Printed on the host before the command runs, so a failed command isn't taken for a failed login. */
+const CONNECTED = "hatbot-ssh-connected\n";
+
 export type Run = (
   args: string[],
-  /** `input`: what the command reads on stdin. */
-  opts: { timeoutMs: number; signal?: AbortSignal; input?: Uint8Array },
+  /** `input`: what the command reads on stdin. `keepBytes`: the most of stdout kept whole. */
+  opts: { timeoutMs: number; signal?: AbortSignal; input?: Uint8Array; keepBytes?: number },
 ) => Promise<{
   code: number;
   stdout: string;
-  /** stdout as it came, for files. */
+  /** stdout as it came, for files: its first and last parts if `cut`. */
   bytes: Uint8Array;
+  /** How many bytes of stdout were left out of the middle. */
+  cut: number;
   stderr: string;
   timedOut: boolean;
+  /** Stopped for writing more than FLOOD_BYTES. */
+  flooded: boolean;
 }>;
 
-/** Runs a program and collects its output; kills it on timeout or abort. */
+/** Runs a program and collects its output; kills it on timeout, abort, or endless output. */
 export const spawnRun =
   (bin: string): Run =>
-  async (args, { timeoutMs, signal, input }) => {
+  async (args, { timeoutMs, signal, input, keepBytes = KEEP_BYTES }) => {
     const proc = Bun.spawn([bin, ...args], {
       stdin: input ?? "ignore",
       stdout: "pipe",
@@ -77,48 +88,95 @@ export const spawnRun =
       env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? homedir() },
     });
     let timedOut = false;
+    let flooded = false;
     const timer = setTimeout(() => {
       timedOut = true;
       proc.kill();
     }, timeoutMs);
     const abort = () => proc.kill();
     signal?.addEventListener("abort", abort, { once: true });
-    const out = collect(proc.stdout);
-    const err = collect(proc.stderr);
+    const flood = () => {
+      flooded = true;
+      proc.kill();
+    };
+    const out = collect(proc.stdout, keepBytes, flood);
+    const err = collect(proc.stderr, KEEP_BYTES, flood);
     try {
       const code = await proc.exited;
       // Something the command started may still hold the pipes; don't wait on it for long.
       await Promise.race([Promise.all([out.done, err.done]), Bun.sleep(1000)]);
       out.stop();
       err.stop();
-      return { code, stdout: out.text(), bytes: out.bytes(), stderr: err.text(), timedOut };
+      return {
+        code,
+        stdout: out.text(),
+        bytes: out.bytes(),
+        cut: out.cut(),
+        stderr: err.text(),
+        timedOut,
+        flooded,
+      };
     } finally {
       clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
     }
   };
 
-/** Reads a stream as it comes, so the output so far is there even if it never ends. */
-function collect(stream: ReadableStream<Uint8Array>) {
-  const chunks: Uint8Array[] = [];
+/**
+ * Reads a stream as it comes, so the output so far is there even if it never ends. Up to `keep`
+ * bytes are kept whole; past that only the first and last halves, so a command that writes
+ * gigabytes doesn't fill the brain's memory.
+ */
+function collect(stream: ReadableStream<Uint8Array>, keep: number, flood: () => void) {
+  const half = Math.floor(keep / 2);
+  let chunks: Uint8Array[] = [];
+  /** Once past `keep`: the first half, and the chunks that hold at least the last half. */
+  let head: Buffer | null = null;
+  let tail: Uint8Array[] = [];
+  let tailBytes = 0;
+  let total = 0;
   const reader = stream.getReader();
   const done = (async () => {
     for (;;) {
       const r = await reader.read().catch(() => ({ done: true as const, value: undefined }));
       if (r.done) return;
-      chunks.push(r.value);
+      total += r.value.byteLength;
+      if (total > FLOOD_BYTES) flood();
+      if (!head) {
+        chunks.push(r.value);
+        if (total <= keep) continue;
+        const all = Buffer.concat(chunks);
+        chunks = [];
+        head = all.subarray(0, half);
+        tail = [all.subarray(half)];
+        tailBytes = all.byteLength - half;
+      } else {
+        tail.push(r.value);
+        tailBytes += r.value.byteLength;
+      }
+      while (tail.length > 1 && tailBytes - (tail[0]?.byteLength ?? 0) >= half)
+        tailBytes -= tail.shift()?.byteLength ?? 0;
     }
   })();
+  const last = () => Buffer.concat(tail).subarray(Math.max(0, tailBytes - half));
+  const cut = () => (head ? total - head.byteLength - last().byteLength : 0);
   return {
     done,
     stop: () => void reader.cancel().catch(() => {}),
-    text: () => Buffer.concat(chunks).toString("utf8"),
-    bytes: () => new Uint8Array(Buffer.concat(chunks)),
+    text: () =>
+      head
+        ? `${head.toString("utf8")}\n… (${sizeText(cut())} left out) …\n${last().toString("utf8")}`
+        : Buffer.concat(chunks).toString("utf8"),
+    bytes: () => new Uint8Array(head ? Buffer.concat([head, last()]) : Buffer.concat(chunks)),
+    cut,
   };
 }
 
+/** Output for the model: long output keeps its start and its end, where errors usually are. */
 const cut = (s: string) =>
-  s.length > OUTPUT_CHARS ? `${s.slice(0, OUTPUT_CHARS)}\n… (cut; ${s.length} characters)` : s;
+  s.length > OUTPUT_CHARS
+    ? `${s.slice(0, OUTPUT_CHARS - 5000)}\n… (${s.length - OUTPUT_CHARS} characters left out) …\n${s.slice(-5000)}`
+    : s;
 
 export const sshPlugin = definePlugin({
   id: "ssh",
@@ -149,7 +207,7 @@ export const sshPlugin = definePlugin({
     const connect = async (
       h: Host,
       command: string,
-      opts: { timeoutMs: number; signal?: AbortSignal; input?: Uint8Array },
+      opts: { timeoutMs: number; signal?: AbortSignal; input?: Uint8Array; keepBytes?: number },
     ) => {
       const r = await ssh(
         [
@@ -175,19 +233,30 @@ export const sshPlugin = definePlugin({
           h.user,
           "--",
           h.address,
-          command,
+          `echo ${CONNECTED.trim()}; ${command}`,
         ],
         opts,
       );
-      if (/REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed/.test(r.stderr))
+      // Once the marker is there, ssh connected: the command's own errors (and exit code 255) are
+      // its own, whatever they say.
+      const at = r.stdout.indexOf(CONNECTED);
+      if (at < 0) {
+        if (/REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed/.test(r.stderr))
+          throw new PluginError(
+            `${h.name}'s host key changed, so Hatbot won't connect: it could be someone else. If the owner rebuilt it, they can forget its key in Settings → Plugins → SSH.`,
+          );
         throw new PluginError(
-          `${h.name}'s host key changed, so Hatbot won't connect: it could be someone else. If the owner rebuilt it, they can forget its key in Settings → Plugins → SSH.`,
+          `Couldn't connect to ${h.name} (${h.user}@${h.address}): ${r.stderr.trim().slice(0, 300) || (r.timedOut ? "it took too long" : "ssh failed")}`,
         );
-      if (r.code === 255 && !r.stdout)
-        throw new PluginError(
-          `Couldn't connect to ${h.name} (${h.user}@${h.address}): ${r.stderr.trim().slice(0, 300) || "ssh failed"}`,
-        );
-      return r;
+      }
+      const from = Buffer.from(r.bytes.buffer, r.bytes.byteOffset, r.bytes.byteLength).indexOf(
+        CONNECTED,
+      );
+      return {
+        ...r,
+        stdout: r.stdout.slice(at + CONNECTED.length),
+        bytes: r.bytes.subarray(from + CONNECTED.length),
+      };
     };
 
     /** Runs a command on a host; the result as text for the model. */
@@ -199,13 +268,15 @@ export const sshPlugin = definePlugin({
     ): Promise<{ text: string; ok: boolean }> => {
       const r = await connect(h, command, { timeoutMs, signal });
       const parts = [
-        r.timedOut
-          ? `Stopped after ${Math.round(timeoutMs / 1000)}s (exit code ${r.code})`
-          : `Exit code ${r.code}`,
+        r.flooded
+          ? `Stopped: it wrote over ${FLOOD_BYTES / 1024 / 1024} MB (exit code ${r.code})`
+          : r.timedOut
+            ? `Stopped after ${Math.round(timeoutMs / 1000)}s (exit code ${r.code})`
+            : `Exit code ${r.code}`,
       ];
       if (r.stdout.trim()) parts.push(cut(r.stdout.trimEnd()));
       if (r.stderr.trim()) parts.push(`stderr:\n${cut(r.stderr.trimEnd())}`);
-      return { text: parts.join("\n"), ok: r.code === 0 && !r.timedOut };
+      return { text: parts.join("\n"), ok: r.code === 0 && !r.timedOut && !r.flooded };
     };
 
     /** The Proxmox plugin's guests whose power actions always ask, read live from its settings. */
@@ -242,9 +313,14 @@ export const sshPlugin = definePlugin({
       const h = placeOf(r);
       // One byte past the limit tells a file that's too big from one that just fits.
       const cmd = `head -c ${MAX_ATTACHMENT_BYTES + 1} -- ${shellPath(r.path)}`;
-      const res = await connect(h, inPlace(r, cmd), { timeoutMs: COPY_TIMEOUT_MS, signal });
+      const res = await connect(h, inPlace(r, cmd), {
+        timeoutMs: COPY_TIMEOUT_MS,
+        signal,
+        // Room for the file whole, and for anything the login prints first.
+        keepBytes: MAX_ATTACHMENT_BYTES + 64 * 1024,
+      });
       if (res.code !== 0 || res.timedOut) throw failed(r, "read", res);
-      if (res.bytes.byteLength > MAX_ATTACHMENT_BYTES)
+      if (res.cut || res.bytes.byteLength > MAX_ATTACHMENT_BYTES)
         throw new PluginError(`${where(r)} is over 25 MB.`);
       return res.bytes;
     };

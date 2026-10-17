@@ -6,7 +6,7 @@ import type { Task } from "@hatbot/shared";
 import { REVIEW_PROMPT } from "../src/agent/prompt";
 import type { CallContext } from "../src/plugins/plugin";
 import { verdictFor } from "../src/plugins/registry";
-import { sshPlugin } from "../src/plugins/ssh";
+import { spawnRun, sshPlugin } from "../src/plugins/ssh";
 import { commandCount, destructive, statusOnly } from "../src/plugins/ssh/policy";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { tempDirs, testApp, waitFor } from "./helpers";
@@ -193,7 +193,7 @@ test("checks run fixed commands with the pinned-key options; the chat gets them"
   const args = readFileSync(join(dir, "ssh.log"), "utf8").trim().split("\n").at(-1) ?? "";
   expect(args).toContain("StrictHostKeyChecking=accept-new");
   expect(args).toContain(`UserKnownHostsFile=${join(dir, "known_hosts")}`);
-  expect(args).toContain("-l hatbot -- 10.0.0.5 uptime;");
+  expect(args).toContain("-l hatbot -- 10.0.0.5 echo hatbot-ssh-connected; uptime;");
 
   await expect(sshTool("ssh_check").run({ host: "nas", what: "logs" }, call)).rejects.toThrow(
     '"logs" needs a unit.',
@@ -220,7 +220,47 @@ test("exec reports exit codes and output; connection failures and changed keys a
   );
   const slow = await exec.run({ host: "nas", command: "sleep 5", timeout_s: 1 }, call);
   expect(slow).toStartWith("Stopped after 1s");
+  // Once connected, the command's own exit code 255 and its stderr are its own.
+  expect(await exec.run({ host: "nas", command: "exit 255" }, call)).toBe("Exit code 255");
+  expect(
+    await exec.run(
+      { host: "nas", command: "echo 'Host key verification failed.' >&2; exit 255" },
+      call,
+    ),
+  ).toBe("Exit code 255\nstderr:\nHost key verification failed.");
 });
+
+test("a command's output is kept to its start and end, and endless output is stopped", async () => {
+  const run = spawnRun("sh");
+  const big = await run(["-c", "head -c 3000000 /dev/zero | tr '\\0' a; echo; echo the end"], {
+    timeoutMs: 20_000,
+  });
+  expect(big.cut).toBeGreaterThan(1_900_000);
+  expect(big.bytes.byteLength).toBe(1024 * 1024);
+  expect(big.stdout).toContain("left out) …\n");
+  expect(big.stdout).toEndWith("a\nthe end\n");
+  // A copy keeps a whole file when asked to.
+  const whole = await run(["-c", "head -c 3000000 /dev/zero"], {
+    timeoutMs: 20_000,
+    keepBytes: 4_000_000,
+  });
+  expect(whole).toMatchObject({ cut: 0, flooded: false });
+  expect(whole.bytes.byteLength).toBe(3_000_000);
+
+  const endless = await run(["-c", "yes"], { timeoutMs: 60_000 });
+  expect(endless.flooded).toBe(true);
+  expect(endless.timedOut).toBe(false);
+  expect(endless.bytes.byteLength).toBe(1024 * 1024);
+
+  const { sshTool } = await started();
+  const out = await sshTool("ssh_exec").run(
+    { host: "nas", command: "head -c 100000 /dev/zero | tr '\\0' a; echo; echo the end" },
+    call,
+  );
+  expect(out.length).toBeLessThan(16_000);
+  expect(out).toContain("characters left out) …");
+  expect(out).toEndWith("the end");
+}, 60_000);
 
 test("policy: restarts run, destructive commands and careful hosts ask, writes outside home ask", async () => {
   const { sshTool } = await started();
@@ -471,7 +511,7 @@ test("ssh_pct_exec runs a command in a container through a Proxmox host, quoted,
   await pct.run({ host: "pve", guest: 105, command: "systemctl restart nginx && echo 'ok'" }, call);
   const args = readFileSync(join(dir, "ssh.log"), "utf8").trim().split("\n").at(-1) ?? "";
   expect(args).toContain(
-    String.raw`-l hatbot -- 10.0.0.2 sudo -n /usr/local/sbin/hatbot-pct-exec 105 'systemctl restart nginx && echo '\''ok'\'''`,
+    String.raw`-l hatbot -- 10.0.0.2 echo hatbot-ssh-connected; sudo -n /usr/local/sbin/hatbot-pct-exec 105 'systemctl restart nginx && echo '\''ok'\'''`,
   );
   await expect(pct.run({ host: "nas", guest: 105, command: "ls" }, call)).rejects.toThrow(
     "isn't set up as a Proxmox host",
