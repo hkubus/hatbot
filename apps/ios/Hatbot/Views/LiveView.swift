@@ -143,6 +143,7 @@ struct LiveView: View {
         if control {
           Button("Keyboard", systemImage: "keyboard") { typing.toggle() }
             .glassButton(prominent: typing)
+            .tint(.attention)
         } else if desktop?.request == nil && desktop?.online == true {
           Button("Take over", systemImage: "hand.raised") { run { try await store.takeover() } }
             .glassButton()
