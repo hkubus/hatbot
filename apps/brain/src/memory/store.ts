@@ -220,40 +220,51 @@ export class MemoryStore {
     author: Author,
     message: string,
   ) {
-    // Every path checked before anything is written.
-    const resolved = files.map((f) => ({ ...this.resolve(f.path, { markdown: true }), ...f }));
-    const touched: string[] = [];
+    // Every path checked before anything is written; any file can be deleted.
+    const resolved = files.map((f) => ({
+      ...this.resolve(f.path, { markdown: f.content !== null }),
+      ...f,
+    }));
+    // Each file as it was, edits not committed too, to put back if the change fails partway.
+    const before = new Map<string, Buffer | null>();
+    const staged: string[] = [];
     try {
       for (const { rel, abs, content } of resolved) {
+        const was = await readFile(abs).catch(() => null);
+        if (content === null && was === null) continue;
+        before.set(rel, was);
         if (content === null) {
-          if (!(await this.exists(rel))) continue;
-          touched.push(rel);
           await rm(abs);
-          await this.git(["add", "-A", "--", rel]);
+          // A file that was never committed (made by hand) has nothing to stage.
+          if ((await this.git(["rm", "--cached", "--ignore-unmatch", "--", rel])).stdout.trim())
+            staged.push(rel);
         } else {
-          touched.push(rel);
           await mkdir(dirname(abs), { recursive: true });
           await writeFile(abs, content.endsWith("\n") ? content : `${content}\n`);
           await this.git(["add", "--", rel]);
+          staged.push(rel);
         }
       }
-      return await this.commitAs(author, message, touched);
+      return await this.commitAs(author, message, staged);
     } catch (err) {
-      await this.restore(touched);
+      await this.restore(before);
       throw err;
     }
   }
 
   /**
-   * After a change that failed partway: the files it touched as the last commit has them, and none
-   * of it staged, so the next commit doesn't carry half of it.
+   * After a change that failed partway: the files it touched as they were before it, and none of it
+   * staged, so the next commit doesn't carry half of it.
    */
-  private async restore(paths: string[]) {
-    for (const rel of paths) {
+  private async restore(before: Map<string, Buffer | null>) {
+    for (const [rel, content] of before) {
       await this.git(["reset", "-q", "--", rel], { allowFail: true });
-      if ((await this.git(["cat-file", "-e", `HEAD:${rel}`], { allowFail: true })).code === 0)
-        await this.git(["checkout", "-q", "HEAD", "--", rel], { allowFail: true });
-      else await rm(join(this.dir, rel), { force: true });
+      const abs = join(this.dir, rel);
+      if (content === null) await rm(abs, { force: true });
+      else {
+        await mkdir(dirname(abs), { recursive: true });
+        await writeFile(abs, content);
+      }
     }
   }
 
@@ -311,16 +322,9 @@ export class MemoryStore {
 
   delete(path: string, author: Author, message: string): Promise<string | null> {
     return this.serial(async () => {
-      const { rel, abs } = this.resolve(path);
+      const { rel } = this.resolve(path);
       if (!(await this.exists(rel))) throw new MemoryError(`not found: ${path}`);
-      try {
-        await rm(abs);
-        await this.git(["add", "-A", "--", rel]);
-        return await this.commitAs(author, message, [rel]);
-      } catch (err) {
-        await this.restore([rel]);
-        throw err;
-      }
+      return this.apply([{ path: rel, content: null }], author, message);
     });
   }
 
@@ -449,7 +453,13 @@ export class MemoryStore {
         throw new MemoryError("can't revert: later changes touch the same lines");
       }
       const subject = (await this.git(["log", "-1", "--format=%s", sha])).stdout.trim();
-      return this.commitAs(author, `Revert "${subject}"`, files);
+      try {
+        return await this.commitAs(author, `Revert "${subject}"`, files);
+      } catch (err) {
+        // Not left applied and staged, for the next commit to carry.
+        await this.git(["revert", "--abort"], { allowFail: true });
+        throw err;
+      }
     });
   }
 

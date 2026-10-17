@@ -86,6 +86,31 @@ test("a write of several files that fails partway leaves nothing behind for the 
   expect((await mem.log(1))[0]?.files).toEqual(["other.md"]);
 });
 
+test("a file never committed can be deleted, and a change that fails puts the files back as they were", async () => {
+  // Made by hand on the brain, never committed.
+  writeFileSync(join(dir, "hand.md"), "by hand\n");
+  expect(await mem.delete("hand.md", YOU, "Delete hand.md")).toBeNull();
+  expect(await mem.exists("hand.md")).toBe(false);
+
+  await mem.write("prefs.md", "tea", YOU, "prefs");
+  const sha = (await mem.write("prefs.md", "coffee", YOU, "coffee")) as string;
+  writeFileSync(join(dir, "prefs.md"), "green tea\n");
+  // Every commit fails from here.
+  const hook = join(dir, ".git", "hooks", "pre-commit");
+  writeFileSync(hook, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  await expect(mem.write("prefs.md", "milk", YOU, "milk")).rejects.toThrow();
+  expect(await mem.read("prefs.md")).toBe("green tea\n");
+  await expect(mem.delete("prefs.md", YOU, "forget")).rejects.toThrow();
+  expect(await mem.read("prefs.md")).toBe("green tea\n");
+  writeFileSync(join(dir, "prefs.md"), "coffee\n");
+  await expect(mem.revert(sha, YOU)).rejects.toThrow();
+  expect(await mem.read("prefs.md")).toBe("coffee\n");
+  expect(await mem.uncommitted()).toEqual([]);
+  rmSync(hook);
+  await mem.write("other.md", "other", YOU, "other");
+  expect((await mem.log(1))[0]?.files).toEqual(["other.md"]);
+});
+
 test("a stale index.lock is cleared at start, and a revert names a file edited by hand", async () => {
   const sha = (await mem.write("prefs.md", "tea", YOU, "prefs")) as string;
   // A git killed mid-write left its lock behind.
