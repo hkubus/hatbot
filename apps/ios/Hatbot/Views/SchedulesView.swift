@@ -286,7 +286,8 @@ struct TriggerDetailView: View {
           )
           .font(.footnote)
           let value = t.kind == .kuma ? secret.postURL : secret.secret
-          Text(value).font(.footnote.monospaced()).textSelection(.enabled)
+          // Not selectable: the system's Copy would put it on every device's pasteboard, for good.
+          Text(value).font(.footnote.monospaced())
           // Kept off your other devices' pasteboards, and only for two minutes.
           Button("Copy", systemImage: "doc.on.doc") {
             UIPasteboard.general.setItems(
