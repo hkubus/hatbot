@@ -80,6 +80,19 @@ test("migration 34 keeps attachments, and their ids aren't given out again", () 
   expect(first).toBeGreaterThan(1000);
   db.exec(`DELETE FROM attachments WHERE id = ${first}`);
   expect(add()).toBe(first + 1);
+
+  // Set up, with no messages left: only incognito chats, which went with their files.
+  const used = at(33);
+  used.exec(`INSERT INTO owner (id, password_hash, totp_secret) VALUES (1, 'h', 's')`);
+  migrate(used);
+  expect(
+    used
+      .query<{ id: number }, []>(
+        `INSERT INTO attachments (name, media_type, size, path, sender, created_at)
+         VALUES ('c', 'text/plain', 1, '', 'owner', '${now}') RETURNING id`,
+      )
+      .get()?.id,
+  ).toBeGreaterThan(1000);
 });
 
 test("migration 22 puts an ended task's result in the place of the reply that started it", () => {
