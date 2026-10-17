@@ -1,5 +1,7 @@
-import { expect, test } from "bun:test";
-import { CONTEXT_JS, ELEMENT_JS, SECRET } from "../src/cdp";
+import { afterAll, expect, test } from "bun:test";
+import { Browser, ChromiumDown } from "../src/browser";
+import { CONTEXT_JS, context, ELEMENT_JS, inspect, SECRET } from "../src/cdp";
+import { startChromium } from "./chromium";
 
 type Field = {
   type?: string;
@@ -64,6 +66,36 @@ test("Teach knows password, code and card fields by their names, in English and 
     { inputMode: "numeric", maxLength: 6 },
     { type: "tel", maxLength: 6 },
     { pattern: "[0-9]*", maxLength: 6 },
+    // Capitals and digits run together, and more ways to name a code, a card or a password.
+    { name: "OTPCode" },
+    { name: "MFACode" },
+    { name: "2FACode" },
+    { name: "PINCode" },
+    { id: "OTPInput" },
+    { name: "otp1", maxLength: 1 },
+    { name: "pin1" },
+    { name: "code1" },
+    { name: "digit-1", maxLength: 1 },
+    { name: "securitycode" },
+    { name: "numerKarty", maxLength: 19 },
+    { name: "nr_karty" },
+    { placeholder: "Numer karty" },
+    { label: "Numer karty" },
+    { name: "cardNo" },
+    { name: "card_no" },
+    { name: "ccnum" },
+    { name: "ccnumber" },
+    { name: "creditcard" },
+    { placeholder: "1234 1234 1234 1234", inputMode: "numeric", maxLength: 19 },
+    { name: "x", inputMode: "numeric", maxLength: 19 },
+    { name: "pwd" },
+    { name: "pw" },
+    { name: "api_key" },
+    // A text area that takes a key or a phrase.
+    { tag: "TEXTAREA", name: "secret_value" },
+    { tag: "TEXTAREA", name: "private_key" },
+    { tag: "TEXTAREA", name: "password" },
+    { tag: "TEXTAREA", name: "recovery_phrase" },
   ])
     expect([f, isSecret(input(f))]).toEqual([f, true]);
 });
@@ -107,6 +139,104 @@ test("ordinary fields aren't taken for secrets", () => {
     { name: "quantity", type: "number" },
     { name: "token", type: "hidden" },
     { tag: "TEXTAREA", name: "message" },
+    { name: "cardholder" },
+    { name: "zip", maxLength: 6, placeholder: "00-000" },
+    { name: "date", placeholder: "2026-10-17" },
   ])
     expect([f, isSecret(input(f))]).toEqual([f, false]);
 });
+
+test("a page that can't be read when asked about secrets counts as showing one", async () => {
+  const browser = (fail: Error) =>
+    ({
+      onScreen: async () => {
+        throw fail;
+      },
+    }) as unknown as Browser;
+  expect(await context(browser(new Error("Runtime.evaluate timed out")), false, true)).toEqual({
+    url: null,
+    title: null,
+    secretShown: true,
+  });
+  expect(await context(browser(new Error("busy")), true, true)).toMatchObject({
+    secretShown: true,
+  });
+  // With Chromium not running, it shows nothing; nor does a question without secrets say anything.
+  expect(await context(browser(new ChromiumDown("down")), false, true)).toEqual({
+    url: null,
+    title: null,
+  });
+  expect(await context(browser(new Error("busy")), true)).toEqual({ url: null, title: null });
+});
+
+const chromium = await startChromium();
+const real = chromium && new Browser(null, chromium.endpoint);
+const server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  fetch(req) {
+    const page = pages[new URL(req.url).pathname];
+    return page
+      ? new Response(page, { headers: { "content-type": "text/html; charset=utf-8" } })
+      : new Response("no", { status: 404 });
+  },
+});
+const base = `http://127.0.0.1:${server.port}`;
+afterAll(() => {
+  server.stop(true);
+  chromium?.stop();
+});
+const pages: Record<string, string> = {
+  "/shadow": `<!doctype html><body><div id="h"></div><script>
+    document.getElementById("h").attachShadow({ mode: "open" }).innerHTML =
+      "<input type=password value=hunter2>";</script></body>`,
+  "/frame": `<!doctype html><body>
+    <iframe srcdoc="<input name=cardnumber autocomplete=cc-number value=4242424242424242>"></iframe></body>`,
+  "/area": `<!doctype html><body><textarea name="private_key">-----BEGIN KEY-----</textarea></body>`,
+  "/stripe": `<!doctype html><body>
+    <iframe src="http://localhost:${server.port}/blank" title="Secure card payment input frame"></iframe></body>`,
+  "/plain": `<!doctype html><body><input name="q" value="dune">
+    <iframe src="http://localhost:${server.port}/blank" title="Map"></iframe></body>`,
+  "/blank": "<!doctype html><body></body>",
+  // A widget whose password box is in a closed shadow root, focused: the page sees only the widget.
+  "/closed": `<!doctype html><body><pw-box></pw-box><script>
+    customElements.define("pw-box", class extends HTMLElement {
+      connectedCallback() {
+        const root = this.attachShadow({ mode: "closed" });
+        root.innerHTML = "<input type=password name=password>";
+        root.querySelector("input").focus();
+      }
+    });</script></body>`,
+};
+
+/** Asks until the page has loaded what the test looks for. */
+async function shown(path: string): Promise<boolean | undefined> {
+  await real?.call("navigate", { url: `${base}${path}` });
+  for (let i = 0; ; i++) {
+    const page = await context(real as Browser, false, true);
+    if (page.secretShown || i === 20) return page.secretShown;
+    await Bun.sleep(100);
+  }
+}
+
+test.skipIf(!real)(
+  "a secret shows in an open shadow root, a same-origin frame, a text area or a payment frame",
+  async () => {
+    expect(await shown("/shadow")).toBe(true);
+    expect(await shown("/frame")).toBe(true);
+    expect(await shown("/area")).toBe(true);
+    expect(await shown("/stripe")).toBe(true);
+    expect(await shown("/plain")).toBe(false);
+  },
+);
+
+test.skipIf(!real)(
+  "typing into a closed shadow root counts as secret: its input can't be seen",
+  async () => {
+    await real?.call("navigate", { url: `${base}/closed` });
+    await real?.call("left_click", { target: { type: "coordinate", x: 5, y: 5 } });
+    await real?.call("key", { text: "Tab" });
+    const el = await inspect(real as Browser);
+    expect(el).toMatchObject({ tag: "pw-box", secret: true });
+  },
+);
