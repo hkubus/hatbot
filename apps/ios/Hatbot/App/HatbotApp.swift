@@ -26,6 +26,8 @@ struct HatbotApp: App {
         }
       }
       .environment(session)
+      // Links in replies, sources and task steps: only the kinds that can't start anything else.
+      .environment(\.openURL, OpenURLAction { url in AppLink.opens(url) ? .systemAction : .discarded })
       .tint(.brand)
       .onChange(of: session.store == nil) { _, out in
         if out {

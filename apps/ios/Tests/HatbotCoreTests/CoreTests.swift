@@ -334,6 +334,19 @@ final class ScheduleAndMemoryTests: XCTestCase {
     XCTAssertNil(link("https://tasks/1"))
   }
 
+  /// A link in a reply opens only if it can't start something: no shortcut, call or other app.
+  func testOpensOnlySafeLinks() {
+    for s in ["https://pve.proxmox.com/wiki", "http://example.com", "mailto:me@example.com", "hatbot://tasks/3", "HTTPS://A.B"] {
+      XCTAssertTrue(AppLink.opens(URL(string: s)!), s)
+    }
+    for s in [
+      "shortcuts://run-shortcut?name=Wipe", "tel:+48123456789", "sms:123", "facetime:x@y", "file:///etc/hosts",
+      "javascript:alert(1)", "itms-services://?action=download-manifest", "notes", "x-apple-health://",
+    ] {
+      XCTAssertFalse(AppLink.opens(URL(string: s)!), s)
+    }
+  }
+
   func testGroupsMemoryFilesByFolder() {
     let files = ["skills/b.md", "INDEX.md", "projects/x.md", "about-you.md", "skills/a.md"]
       .map { MemoryFile(path: $0, size: 1) }
