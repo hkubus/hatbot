@@ -10,6 +10,7 @@ import {
   allow,
   ask,
   askAlways,
+  block,
   definePlugin,
   PluginError,
   ready,
@@ -193,7 +194,19 @@ export const sshPlugin = definePlugin({
     const keygen = spawnRun(env.HATBOT_SSH_KEYGEN_BIN ?? "ssh-keygen");
     const hosts = new Map(config.hosts.map((h) => [h.name, h]));
     const hostNames = config.hosts.map((h) => h.name);
-    const pctHosts = config.hosts.filter((h) => h.proxmox).map((h) => h.name);
+    // Containers are reached only while the brain knows its own guests' IDs, so it can refuse them
+    // here as well as in the host's wrapper.
+    const brainId = Number(env.HATBOT_BRAIN_ID) || null;
+    const desktopId = Number(env.HATBOT_DESKTOP_ID) || null;
+    const marked = config.hosts.filter((h) => h.proxmox).map((h) => h.name);
+    const pctHosts = brainId ? marked : [];
+    /** Why a container can't be reached from here, if it can't. */
+    const guestRefused = (guest: number): string | null =>
+      !brainId
+        ? `Containers are off until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env.`
+        : guest === brainId || guest === desktopId
+          ? `CT ${guest} is one of Hatbot's own containers; it isn't reached from here.`
+          : null;
 
     const hostOf = (name: string): Host => {
       const h = hosts.get(name);
@@ -295,10 +308,13 @@ export const sshPlugin = definePlugin({
     /** A file's host and path; with `guest`, inside that Proxmox host's container. */
     const placeOf = (r: Remote): Host => {
       const h = hostOf(r.host);
-      if (r.guest !== undefined && !h.proxmox)
+      if (r.guest === undefined) return h;
+      if (!h.proxmox)
         throw new PluginError(
           `${r.host} isn't set up as a Proxmox host, so it can't reach CT ${r.guest}. Use: ${pctHosts.join(", ") || "none yet"}.`,
         );
+      const refused = guestRefused(r.guest);
+      if (refused) throw new PluginError(refused);
       return h;
     };
     /** A command for the file's place: in the container through its wrapper, or on the host. */
@@ -350,6 +366,8 @@ export const sshPlugin = definePlugin({
 
     /** Writing a file on a host: its own files run, the rest asks. */
     const writePolicy = (r: Remote): Verdict => {
+      const refused = r.guest === undefined ? null : guestRefused(r.guest);
+      if (refused) return block(refused);
       const h = hosts.get(r.host);
       const inGuest = r.guest !== undefined;
       const home = inGuest ? "/root/" : `/home/${h?.user}/`;
@@ -518,6 +536,8 @@ export const sshPlugin = definePlugin({
               target: ({ host, guest }) => `${host}/${guest}`,
               commands: ({ command }) => commandCount(command),
               policy: ({ host, guest, command }) => {
+                const refused = guestRefused(guest);
+                if (refused) return block(refused);
                 const d = destructive(command, "container");
                 // A careful guest is careful about everything, not only power actions.
                 const careful = carefulOf(host, guest);
@@ -526,11 +546,7 @@ export const sshPlugin = definePlugin({
                 return d ? ask(`This command ${d.why}.`, d.kind) : allow();
               },
               run: async ({ host, guest, command, timeout_s }, { signal }) => {
-                const h = hostOf(host);
-                if (!h.proxmox)
-                  throw new PluginError(
-                    `${host} isn't set up as a Proxmox host. Use: ${pctHosts.join(", ")}.`,
-                  );
+                const h = placeOf({ host, guest, path: "/" });
                 const cmd = `sudo -n /usr/local/sbin/hatbot-pct-exec ${guest} ${quote(command)}`;
                 return (await exec(h, cmd, (timeout_s ?? 120) * 1000, signal)).text;
               },
@@ -650,7 +666,7 @@ export const sshPlugin = definePlugin({
 
     return ready(tools, {
       guidance: hostNames.length
-        ? `You can reach these hosts over SSH: ${config.hosts.map((h) => `${h.name} (${h.user}@${h.address}${h.careful ? ", every command asks the owner" : ""})`).join("; ")}. Read memory for what runs where. Look with ssh_check and ssh_read_file; ssh_exec and ssh_write_file change things, and destructive commands ask the owner first. Restarting a service (systemctl restart) runs right away.${pctHosts.length ? ` ${pctHosts.join(" and ")} ${pctHosts.length > 1 ? "are Proxmox hosts" : "is a Proxmox host"}: ssh_pct_exec runs a command inside one of its containers, by ID.` : ""} ssh_copy_file moves files between hosts${pctHosts.length ? ", containers" : ""}, the sandbox and the chat: the owner's attachments onto a host, a host's file to the owner or into the sandbox to work on.`
+        ? `You can reach these hosts over SSH: ${config.hosts.map((h) => `${h.name} (${h.user}@${h.address}${h.careful ? ", every command asks the owner" : ""})`).join("; ")}. Read memory for what runs where. Look with ssh_check and ssh_read_file; ssh_exec and ssh_write_file change things, and destructive commands ask the owner first. Restarting a service (systemctl restart) runs right away.${pctHosts.length ? ` ${pctHosts.join(" and ")} ${pctHosts.length > 1 ? "are Proxmox hosts" : "is a Proxmox host"}: ssh_pct_exec runs a command inside one of its containers, by ID.` : marked.length ? ` Its containers can't be reached until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env.` : ""} ssh_copy_file moves files between hosts${pctHosts.length ? ", containers" : ""}, the sandbox and the chat: the owner's attachments onto a host, a host's file to the owner or into the sandbox to work on.`
         : undefined,
       test: async () => {
         if (!hostNames.length) throw new PluginError("Add a host first.");
@@ -664,6 +680,8 @@ export const sshPlugin = definePlugin({
             }
           }),
         );
+        if (marked.length && !brainId)
+          lines.push("Containers: off until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env.");
         return lines.join("\n");
       },
       actions,

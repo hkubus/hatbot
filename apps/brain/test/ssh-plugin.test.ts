@@ -17,6 +17,8 @@ const env = () => ({
   HATBOT_SSH_KEYGEN_BIN: join(dir, "ssh-keygen"),
   HATBOT_SSH_KEY: join(dir, "id_ed25519"),
   HATBOT_SSH_KNOWN_HOSTS: join(dir, "known_hosts"),
+  HATBOT_BRAIN_ID: "125",
+  HATBOT_DESKTOP_ID: "126",
 });
 
 // A stand-in for ssh: logs its arguments and runs the command here, unless the command asks to fail.
@@ -69,8 +71,9 @@ const HOSTS = [
   { name: "router", address: "10.0.0.1", port: 2222, careful: true },
 ];
 
-async function started(model = new FakeModel(), hosts: unknown[] = HOSTS) {
-  const t = await testApp(new FakeModel(), model, {}, [sshPlugin], env());
+async function started(model = new FakeModel(), hosts: unknown[] = HOSTS, unset: string[] = []) {
+  const pluginEnv = Object.fromEntries(Object.entries(env()).filter(([k]) => !unset.includes(k)));
+  const t = await testApp(new FakeModel(), model, {}, [sshPlugin], pluginEnv);
   await t.plugins.update("ssh", { enabled: true, config: { hosts } });
   const sshTool = (name: string) => {
     const found = t.plugins.tools().find((x) => x.name === name);
@@ -593,6 +596,39 @@ test("ssh_pct_exec runs a command in a container through a Proxmox host, quoted,
   expect(t.plugins.tools().some((x) => x.name === "ssh_pct_exec")).toBe(true);
   const plain = await started();
   expect(plain.t.plugins.tools().some((x) => x.name === "ssh_pct_exec")).toBe(false);
+});
+
+test("the brain's and the desktop's containers are refused here too, and none is reached without HATBOT_BRAIN_ID", async () => {
+  const hosts = [...HOSTS, { name: "pve", address: "10.0.0.2", proxmox: true }];
+  const { t, sshTool } = await started(new FakeModel(), hosts);
+  const pct = sshTool("ssh_pct_exec");
+  const copy = sshTool("ssh_copy_file");
+  for (const guest of [125, 126]) {
+    expect(verdictFor(pct, { host: "pve", guest, command: "uptime" }, call)).toMatchObject({
+      action: "block",
+      why: `CT ${guest} is one of Hatbot's own containers; it isn't reached from here.`,
+    });
+    const to = { host: "pve", guest, path: "/root/x" };
+    expect(verdictFor(copy, { from: { sandbox: "x" }, to }, call).action).toBe("block");
+    await expect(pct.run({ host: "pve", guest, command: "uptime" }, call)).rejects.toThrow(
+      "one of Hatbot's own containers",
+    );
+  }
+  expect(await t.plugins.test("ssh")).not.toContain("Containers");
+
+  const unset = await started(new FakeModel(), hosts, ["HATBOT_BRAIN_ID"]);
+  expect(unset.t.plugins.tools().some((x) => x.name === "ssh_pct_exec")).toBe(false);
+  expect(JSON.stringify(unset.t.plugins.guidance())).toContain(
+    "Its containers can't be reached until HATBOT_BRAIN_ID is set",
+  );
+  const into = { from: { sandbox: "x" }, to: { host: "pve", guest: 105, path: "/root/x" } };
+  expect(verdictFor(unset.sshTool("ssh_copy_file"), into, call)).toMatchObject({
+    action: "block",
+    why: "Containers are off until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env.",
+  });
+  expect(await unset.t.plugins.test("ssh")).toContain(
+    "Containers: off until HATBOT_BRAIN_ID is set",
+  );
 });
 
 test("a note on an approval steers the task: it reads it, and the review counts it as yours", async () => {
