@@ -303,6 +303,8 @@ export class Browser {
   /** Per tab, the next element reference: never reused, so a stale ref can't hit a new element. */
   private nextRef = new Map<string, number>();
   private active: string | null = null;
+  /** Whether the tab on screen may have changed since syncActive last asked every tab. */
+  private lookAgain = true;
   /** Tabs in the last state report: a tab that's new since then was opened by the last call. */
   private reported = new Set<string>();
   private changes: BrowserStateChange[] = [];
@@ -373,14 +375,17 @@ export class Browser {
       case "closed":
         this.sessions.clear();
         this.worlds.clear();
+        this.lookAgain = true;
         return;
       case "Target.targetCreated":
       case "Target.targetInfoChanged": {
         const t = p.targetInfo as TargetInfo;
         this.targets.set(t.targetId, t);
+        if (method === "Target.targetCreated") this.lookAgain = true;
         return;
       }
       case "Target.targetDestroyed": {
+        this.lookAgain = true;
         const id = p.targetId as string;
         this.targets.delete(id);
         this.sessions.delete(id);
@@ -493,8 +498,18 @@ export class Browser {
     };
   }
 
-  /** The active tab follows what's on screen, so it's right after the owner switches tabs during a takeover. */
+  /** Input that didn't come through here (the owner's, the computer toolset's) may have switched tabs. */
+  screenTouched() {
+    this.lookAgain = true;
+  }
+
+  /**
+   * The active tab follows what's on screen, so it's right after the owner switches tabs during a takeover.
+   * Every tab is asked only when that may have changed: input from elsewhere, or tabs opening and closing.
+   */
   private async syncActive() {
+    if (!this.lookAgain && this.active && this.targets.has(this.active)) return;
+    this.lookAgain = false;
     const pages = this.pages();
     const visible: string[] = [];
     await Promise.all(
@@ -513,6 +528,8 @@ export class Browser {
         }
       }),
     );
+    // No clear answer (a tab didn't say, or two windows show one each): ask again next time.
+    if (visible.length !== 1) this.lookAgain = true;
     if (visible.length === 1) this.active = visible[0] as string;
     else if (!this.active || !this.targets.has(this.active))
       this.active = pages[0]?.targetId ?? null;

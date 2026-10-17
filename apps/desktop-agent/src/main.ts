@@ -178,7 +178,9 @@ async function liveInput(m: LiveInput) {
   }
 }
 
-const liveQueue = new LiveQueue((m) => serial(() => liveInput(m)));
+/** Input from the screen side may have switched tabs; the browser asks them again before its next call. */
+const touched = () => browser.screenTouched();
+const liveQueue = new LiveQueue((m) => serial(() => liveInput(m).finally(touched)));
 
 const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
   hostname: host,
@@ -213,7 +215,8 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
         case "POST /action": {
           if (locked) return json({ error: "The owner has control of the desktop." }, 423);
           const { name, input } = (await req.json()) as AgentAction;
-          return json(await serial(() => act(size, name, input ?? {})));
+          // After it, not before: a look at the tabs in the meantime would see them as they were.
+          return json(await serial(() => act(size, name, input ?? {}).finally(touched)));
         }
         case "POST /exec": {
           // Not serialised with input: the shell doesn't touch the screen.
