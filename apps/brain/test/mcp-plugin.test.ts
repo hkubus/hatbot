@@ -6,7 +6,8 @@ import type { Task } from "@hatbot/shared";
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { mcpPlugin, toolName, unsent } from "../src/plugins/mcp";
+import { mayReview } from "../src/agent/review";
+import { mcpPlugin, moneyKind, toolName, unsent } from "../src/plugins/mcp";
 import { type CallContext, definePlugin, PluginError, ready } from "../src/plugins/plugin";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { FakeModel, toolUse } from "./fake-model";
@@ -87,6 +88,46 @@ test("per-tool modes: allowed in chat, allowed in tasks, off; trusted servers ar
   const status = (await t.plugins.action("mcp", "status", {})) as { tools: { mode: string }[] }[];
   expect(status[0]?.tools.map((x) => x.mode)).toEqual(["chat", "off", "allow"]);
   await t.plugins.stopAll();
+});
+
+test("always ask, and tools that look like they pay or buy always ask unless set otherwise", async () => {
+  const object = { type: "object" };
+  const list = [
+    { name: "echo", description: "Echo text back", inputSchema: object },
+    { name: "place_order", description: "Places an order with the shop", inputSchema: object },
+    { name: "settle", description: "Pays an invoice", inputSchema: object },
+    { name: "search", description: "Search listings in order to compare", inputSchema: object },
+  ];
+  const { t } = await started({
+    ...fixture,
+    env: { ...fixture.env, MCP_LIST: JSON.stringify(list) },
+    tools: { echo: "always", settle: "ask" },
+  });
+  const v = (name: string) => {
+    const found = t.plugins.tools().find((x) => x.name === name);
+    if (!found) throw new Error(`no ${name}`);
+    const verdict = verdictFor(found, {}, call);
+    if (verdict.action !== "ask") throw new Error(`${name} doesn't ask`);
+    return { ...verdict, reviewable: mayReview(verdict) };
+  };
+  expect(v("mcp_fix_echo")).toMatchObject({ always: true, reviewable: false });
+  expect(v("mcp_fix_place_order")).toMatchObject({ kind: "purchase", reviewable: false });
+  // Set to ask first, it still never goes to the safety review: it moves money.
+  expect(v("mcp_fix_settle")).toMatchObject({ kind: "payment", reviewable: false });
+  expect(v("mcp_fix_search")).toMatchObject({ reviewable: true });
+  const status = (await t.plugins.action("mcp", "status", {})) as { tools: { mode: string }[] }[];
+  expect(status[0]?.tools.map((x) => x.mode)).toEqual(["always", "always", "ask", "ask"]);
+  await t.plugins.stopAll();
+});
+
+test("money words in a tool's name or description", () => {
+  expect(moneyKind("create_order")).toBe("purchase");
+  expect(moneyKind("buyNow")).toBe("purchase");
+  expect(moneyKind("payInvoice")).toBe("payment");
+  expect(moneyKind("transfer.funds")).toBe("payment");
+  expect(moneyKind("start_checkout")).toBe("payment");
+  expect(moneyKind("get_listing", "Results come in sort order, newest first")).toBeNull();
+  expect(moneyKind("scout_search", "Search listings in order to compare prices")).toBeNull();
 });
 
 test("a write whose server dies during the call isn't sent again; the next call reconnects", async () => {

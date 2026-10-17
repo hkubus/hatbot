@@ -1,7 +1,8 @@
 // MCP (PLAN.md §4.5, §5.5): tools from Model Context Protocol servers, over streamable HTTP or as a
-// local process (stdio). Each tool is "ask first" until you allow it in Settings; output is untrusted
-// unless you trust the server. A stdio server runs on the brain as the hatbot user, so prefer HTTP
-// servers that run elsewhere for anything you didn't write.
+// local process (stdio). Each tool is "ask first" until you allow it in Settings, and one that looks
+// like it pays or buys always asks; output is untrusted unless you trust the server. A stdio server
+// runs on the brain as the hatbot user, so prefer HTTP servers that run elsewhere for anything you
+// didn't write.
 import { createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -14,6 +15,7 @@ import { z } from "zod";
 import {
   allow,
   ask,
+  askAlways,
   definePlugin,
   PluginError,
   type PluginInstance,
@@ -24,9 +26,30 @@ import {
 const CONNECT_TIMEOUT_MS = 20_000;
 const CALL_TIMEOUT_MS = 120_000;
 
-/** chat: the chat may call it directly (you vouch that it only reads). allow: tasks run it. ask: tasks ask you each time. off: not offered. */
-const Mode = z.enum(["chat", "allow", "ask", "off"]);
+/**
+ * chat: the chat may call it directly, without asking (you vouch that it only reads). allow: tasks run
+ * it. ask: tasks ask first, and the safety review may answer for you. always: tasks always ask you.
+ * off: not offered.
+ */
+const Mode = z.enum(["chat", "allow", "ask", "always", "off"]);
 type Mode = z.infer<typeof Mode>;
+
+const PAYS =
+  /\b(pay|pays|paid|paying|payments?|payouts?|checkout|check out|transfers?|transferring|refunds?|withdraw|withdrawals?)\b/i;
+const BUYS =
+  /\b(buy|buys|buying|purchase|purchases|purchasing|orders?|ordering|bid|bids|bidding)\b/i;
+
+/** Whether a tool looks like it moves money, from its name and description: what it'd be approving. */
+export function moneyKind(name: string, description = ""): "payment" | "purchase" | null {
+  const words = name.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_.-]+/g, " ");
+  const text = `${words} ${description}`.replace(
+    /\b(in order (to|that|for)|sort(ing)? order)\b/gi,
+    "",
+  );
+  if (PAYS.test(text)) return "payment";
+  if (BUYS.test(text)) return "purchase";
+  return null;
+}
 
 const Server = z.object({
   name: z.string().regex(/^[a-z][a-z0-9]{0,15}$/, "Lowercase letters and digits, e.g. github"),
@@ -41,7 +64,7 @@ const Server = z.object({
   /** Its output counts as trusted content (PLAN.md §6.1). */
   trusted: z.boolean().default(false),
   enabled: z.boolean().default(true),
-  /** Per tool; tools not listed are "ask". */
+  /** Per tool; tools not listed are "ask", or "always" when they look like they pay or buy. */
   tools: z.record(z.string(), Mode).default({}),
 });
 type Server = z.infer<typeof Server>;
@@ -189,11 +212,13 @@ export const mcpPlugin = definePlugin({
     };
     await Promise.all(conns.map(connect));
 
+    const modeOf = (c: Conn, t: Listed): Mode =>
+      c.server.tools[t.name] ?? (moneyKind(t.name, t.description) ? "always" : "ask");
     const toolsOf = (c: Conn): PluginTool[] =>
       c.tools
-        .map((t) => ({ t, mode: c.server.tools[t.name] ?? ("ask" as Mode) }))
+        .map((t) => ({ t, mode: modeOf(c, t), kind: moneyKind(t.name, t.description) }))
         .filter(({ mode }) => mode !== "off")
-        .map(({ t, mode }) =>
+        .map(({ t, mode, kind }) =>
           tool({
             name: toolName(c.server.name, t.name),
             description: `${(t.description ?? t.name).slice(0, 1000)} (from the MCP server "${c.server.name}")`,
@@ -207,10 +232,18 @@ export const mcpPlugin = definePlugin({
             ...(mode === "chat"
               ? {}
               : {
+                  // Money is never left to the safety review: its kind keeps the review out.
                   policy: () =>
                     mode === "allow"
                       ? allow()
-                      : ask(`MCP tools ask first unless the owner allows them in Settings.`),
+                      : kind
+                        ? askAlways(
+                            `It may ${kind === "payment" ? "pay or move money" : "buy or order something"}, so it always asks.`,
+                            kind,
+                          )
+                        : mode === "always"
+                          ? askAlways("The owner asked to always be asked before this tool runs.")
+                          : ask(`MCP tools ask first unless the owner allows them in Settings.`),
                 }),
             run: async (input, { signal }) => {
               // Through request, not callTool: callTool also checks the result against the tool's
@@ -288,7 +321,7 @@ export const mcpPlugin = definePlugin({
           tools: (c?.tools ?? []).map((t) => ({
             name: t.name,
             description: (t.description ?? "").slice(0, 300),
-            mode: s.tools[t.name] ?? "ask",
+            mode: c ? modeOf(c, t) : "ask",
           })),
         };
       });

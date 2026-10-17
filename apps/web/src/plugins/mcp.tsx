@@ -4,7 +4,7 @@ import { ApiError } from "../api";
 import { Switch } from "../switch";
 import type { PluginSettingsProps } from ".";
 
-type Mode = "chat" | "allow" | "ask" | "off";
+type Mode = "chat" | "allow" | "ask" | "always" | "off";
 type Server = {
   name: string;
   transport: "http" | "stdio";
@@ -26,10 +26,11 @@ type Status = {
 };
 
 const MODES: [Mode, string][] = [
-  ["ask", "Ask first"],
-  ["allow", "Allow"],
-  ["chat", "Read-only"],
   ["off", "Off"],
+  ["ask", "Ask first"],
+  ["always", "Always ask"],
+  ["allow", "Allow"],
+  ["chat", "Chat, no asking"],
 ];
 const blank = (): Server => ({
   name: "",
@@ -208,7 +209,7 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
                       <b className="mono">{t.name}</b>
                     </div>
                     <select
-                      value={s.tools[t.name] ?? "ask"}
+                      value={s.tools[t.name] ?? t.mode}
                       onChange={(e) =>
                         set(i, { tools: { ...s.tools, [t.name]: e.target.value as Mode } })
                       }
