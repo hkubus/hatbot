@@ -885,6 +885,34 @@ final class DiskCacheTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
   }
 
+  /// A chat still loading when you sign out doesn't write its page back afterwards.
+  func testALoadThatEndsAfterSigningOutKeepsNothing() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    SlowBrain.routes = [
+      "/auth/logout": "{}",
+      "/thread/messages?limit=50":
+        #"[{"id":7,"role":"user","kind":"text","text":"secret","status":"done","createdAt":"2026-10-15T10:00:00Z"}]"#,
+    ]
+    SlowBrain.slower = ["/thread/messages?limit=50": 0.5]
+    defer { SlowBrain.slower = [:] }
+    let vault = MemoryVault("t")
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+    defaults.set("https://h.example", forKey: Session.serverKey)
+    let session = await MainActor.run {
+      Session(vault: vault, defaults: defaults, cacheDir: dir, urlSession: SlowBrain.session())
+    }
+    // As the sidebar does: the store lives on in a task of its own.
+    await MainActor.run {
+      let store = session.store!
+      Task { await store.openConversation(2) }
+    }
+    try await Task.sleep(for: .milliseconds(50))
+    await session.signOut()
+    try await Task.sleep(for: .milliseconds(800))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
+  }
+
   /// A 401 that answers a request the old token made, after you've signed in again, leaves you signed in.
   func testALate401FromTheOldTokenDoesntSignYouOut() async throws {
     SlowBrain.routes = [

@@ -113,6 +113,8 @@ enum Spotlight {
         entries.append(Entry(link: .schedule(s.id), domain: "schedules", title: s.name, detail: "Schedule"))
       }
     }
+    // Signing out cancels this, and clears the index: what was gathered mustn't go back in.
+    guard !Task.isCancelled else { return }
     await replace(entries)
   }
 
@@ -120,6 +122,7 @@ enum Spotlight {
     // What older versions put in the default index, with schedules' prompts and its weaker protection.
     try? await CSSearchableIndex.default().deleteAllSearchableItems()
     try? await searchIndex.deleteAllSearchableItems()
+    guard !Task.isCancelled else { return }
     try? await searchIndex.indexSearchableItems(entries.map(item))
   }
 

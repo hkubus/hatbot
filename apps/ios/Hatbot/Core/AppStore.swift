@@ -92,6 +92,8 @@ final class AppStore {
 
   /// Where what was last seen is kept; nil keeps nothing.
   @ObservationIgnored let cache: DiskCache?
+  /// Signed out: a load still on its way mustn't write the cache back.
+  @ObservationIgnored private var closed = false
 
   init(api: API, cache: DiskCache? = nil) {
     self.api = api
@@ -115,7 +117,7 @@ final class AppStore {
 
   /// Keeps the open chat's latest page, and the bots and chats, for next time. Never incognito.
   func persist() {
-    guard let cache else { return }
+    guard !closed, let cache else { return }
     if !conversations.isEmpty {
       cache.save(
         DiskCache.Chats(
@@ -155,6 +157,12 @@ final class AppStore {
     connected = false
     unreachableCheck?.cancel()
     unreachable = false
+  }
+
+  /// Signed out: the stream stops and nothing more is kept, though tasks may still hold this store.
+  func close() {
+    closed = true
+    disconnect()
   }
 
   /// "Can't reach Hatbot." only after a few seconds: a reconnect is usually quicker.
