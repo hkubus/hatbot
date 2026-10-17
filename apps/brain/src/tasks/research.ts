@@ -143,7 +143,8 @@ const folderOf = (bot: { id: string }) => {
   return folder ? `${folder}/research` : "research";
 };
 
-type Source = { n: number; url: string; title: string; date?: string };
+/** `read`: a helper read the page, so its link is one the task has (PLAN.md §17). */
+type Source = { n: number; url: string; title: string; date?: string; read?: boolean };
 
 /** Untrusted text as a JSON string, with nothing in it that can close the tag around it. */
 const untrustedJson = (text: string) =>
@@ -221,6 +222,24 @@ function readIn(content: Anthropic.Beta.BetaContentBlock[]): string[] {
   });
 }
 
+/** The pages a helper's searches and fetches came back with, as sources' URLs. */
+function pagesIn(content: Anthropic.Beta.BetaContentBlock[]): string[] {
+  const urls = content.flatMap((b) => {
+    if (b.type === "web_search_tool_result" && Array.isArray(b.content))
+      return b.content.map((r) => r.url);
+    if (b.type === "web_fetch_tool_result" && b.content.type === "web_fetch_result")
+      return [b.content.url];
+    return [];
+  });
+  return urls.flatMap((url) => {
+    try {
+      return [pageUrl(url)];
+    } catch {
+      return [];
+    }
+  });
+}
+
 /**
  * What a helper read that can't be read here: pages fetched as PDFs, and whether its code's output
  * came encrypted (code that searches), which may hold any page.
@@ -257,7 +276,7 @@ export class ResearchSources {
   readonly list: Source[] = [];
   readonly findings: Quoted[] = [];
 
-  add(f: z.infer<typeof Finding>, confirmed = true, unchecked = false): number {
+  add(f: z.infer<typeof Finding>, confirmed = true, unchecked = false, read = false): number {
     const url = pageUrl(f.url);
     let s = this.list.find((x) => x.url === url);
     if (!s) {
@@ -265,6 +284,7 @@ export class ResearchSources {
       if (f.date?.trim()) s.date = f.date.trim();
       this.list.push(s);
     }
+    if (read) s.read = true;
     this.findings.push({
       n: s.n,
       claim: f.claim,
@@ -309,10 +329,27 @@ export type ResearchRun = {
 };
 
 const LINK = /https?:\/\/[^\s"'`<>\\)\]}]+/gi;
-/** A link without its scheme: a host with a path or query, which can carry data. */
-const BARE_LINK = /(?<![\w./@-])(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?[/?][^\s"'`<>\\)\]}]+/gi;
+/** A host: a name, whose last label may be an IDN's xn--, or an IPv4 address. */
+const HOST = String.raw`(?:(?:[a-z0-9-]+\.)+(?:[a-z]{2,}|xn--[a-z0-9-]+)|\d{1,3}(?:\.\d{1,3}){3})`;
+/** A link without its scheme: a host, maybe after a user name, with a path or query, which can carry data. */
+const BARE_LINK = new RegExp(
+  String.raw`(?<![\w./@-])(?:[^\s"'\x60<>\\/@]+@)?${HOST}(?::\d+)?[/?][^\s"'\x60<>\\)\]}]+`,
+  "gi",
+);
+/**
+ * A host on its own below a site's name, which can carry data too: "dluga-5.stock-check.example".
+ * "x-kom.pl" or "www.x-kom.pl" is a site's name, which a brief may give.
+ */
+const BARE_HOST =
+  /(?<![\w./@-])(?!www\.)(?:[a-z0-9-]+\.){2,}(?:[a-z]{2,}|xn--[a-z0-9-]+)(?![\w/@-]|\.[\w-]|:\d)/gi;
 /** A link as compared: without its scheme or anything trailing that can't carry data. */
 const linkKey = (link: string) => link.replace(/^https?:\/\//i, "").replace(/[.,;:!?/]+$/, "");
+/** A link's host, as compared: one case, no user name or port. */
+const hostKey = (link: string) =>
+  (linkKey(link).split(/[/?#]/)[0] ?? "")
+    .replace(/^[^@]*@/, "")
+    .replace(/:\d+$/, "")
+    .toLowerCase();
 
 /**
  * The links the task has from outside: in its own messages (the goal, events), search results and
@@ -322,7 +359,10 @@ const linkKey = (link: string) => link.replace(/^https?:\/\//i, "").replace(/[.,
 function linksSeen(messages: Anthropic.Beta.BetaMessageParam[], sources: ResearchSources) {
   const seen = new Set<string>();
   const add = (text: string) => {
-    for (const m of text.matchAll(LINK)) seen.add(linkKey(m[0]));
+    for (const m of text.matchAll(LINK)) {
+      seen.add(linkKey(m[0]));
+      seen.add(hostKey(m[0]));
+    }
   };
   for (const m of messages) {
     if (typeof m.content === "string") {
@@ -340,16 +380,23 @@ function linksSeen(messages: Anthropic.Beta.BetaMessageParam[], sources: Researc
       }
     }
   }
-  for (const s of sources.list) add(s.url);
+  // Only pages a helper read: a link it only typed into its findings could carry what it was told.
+  for (const s of sources.list) if (s.read) add(s.url);
   return seen;
 }
 
-/** Links in a brief, with or without a scheme. */
+/** Links in a brief, with or without a scheme, and hosts that could carry data. */
 function linksIn(brief: string): string[] {
   const full = brief.match(LINK) ?? [];
-  const bare = brief.replace(LINK, " ").match(BARE_LINK) ?? [];
-  return [...new Set([...full, ...bare].map((l) => l.replace(/[.,;:!?]+$/, "")))];
+  const rest = brief.replace(LINK, " ");
+  const bare = rest.match(BARE_LINK) ?? [];
+  const hosts = rest.replace(BARE_LINK, " ").match(BARE_HOST) ?? [];
+  return [...new Set([...full, ...bare, ...hosts].map((l) => l.replace(/[.,;:!?]+$/, "")))];
 }
+
+/** Whether a link in a brief is one the task has; a host on its own is compared in one case. */
+const isSeen = (link: string, seen: Set<string>) =>
+  seen.has(linkKey(link)) || (!/[/?]/.test(linkKey(link)) && seen.has(hostKey(link)));
 
 /**
  * A helper's next request at most: its prompt, all that its searches and fetches may add within the
@@ -366,13 +413,14 @@ const estimate = (messages: Anthropic.Beta.BetaMessageParam[]) =>
   });
 
 /**
- * A helper's findings, why it stopped short if it did, what it read, as `plain` text, and what it read
- * that can't be read here.
+ * A helper's findings, why it stopped short if it did, what it read, as `plain` text, what it read that
+ * can't be read here, and the pages its searches and fetches came back with.
  */
 type HelperReport = Findings & {
   note?: string;
   read: string;
   unreadable?: { pages: Set<string>; code: boolean };
+  visited?: Set<string>;
 };
 
 const REPORT_NOW: Anthropic.Beta.BetaToolChoiceTool = { type: "tool", name: "report_findings" };
@@ -387,10 +435,12 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
   const { d } = tasks;
   const texts: string[] = [];
   const unreadable = { pages: new Set<string>(), code: false };
+  const visited = new Set<string>();
   const done = (r: Findings & { note?: string }): HelperReport => ({
     ...r,
     read: plain(texts.join("\n")),
     unreadable,
+    visited,
   });
   const stopped = (note: string) => done({ findings: [], gaps: "", note });
   const messages: Anthropic.Beta.BetaMessageParam[] = [
@@ -476,6 +526,7 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
     messages.push({ role: "assistant", content: res.content as BlockParam[] });
     container = containerOf(res, container);
     texts.push(...readIn(res.content));
+    for (const url of pagesIn(res.content)) visited.add(url);
     const unread = unreadableIn(res.content);
     for (const page of unread.pages) unreadable.pages.add(page);
     unreadable.code ||= unread.code;
@@ -544,7 +595,7 @@ export async function investigate(
   // link written from what the task read could carry it out.
   const seen = linksSeen(run.messages, sources);
   const unseen = linksIn(parts.map((part) => part.brief).join("\n")).filter(
-    (l) => !seen.has(linkKey(l)),
+    (l) => !isSeen(l, seen),
   );
   if (unseen.length) {
     run.tasks.addStep(run.task.id, {
@@ -590,7 +641,7 @@ export async function investigate(
       const unchecked =
         !confirmed &&
         Boolean(r.unreadable && (r.unreadable.code || r.unreadable.pages.has(pageUrl(f.url))));
-      const n = sources.add(f, confirmed, unchecked);
+      const n = sources.add(f, confirmed, unchecked, r.visited?.has(pageUrl(f.url)));
       bySource.set(n, [
         ...(bySource.get(n) ?? []),
         `- ${untrustedJson(f.claim)}\n  Quote: ${untrustedJson(f.quote)}${confirmed ? "" : unchecked ? `\n  ${UNCHECKED}` : "\n  Unconfirmed: the quote isn't in what the helper read."}`,

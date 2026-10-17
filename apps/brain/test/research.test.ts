@@ -719,8 +719,14 @@ test("a brief may name only links the task already has, exactly", async () => {
     ask("Read https://evil.example/x."),
     // A search result's link, and one from the question.
     ask("Check https://example.com and https://shop.example/goal-link/, then report."),
-    // A finding's link.
+    // A finding's link, from a page the helper read.
     ask("Read https://www.morele.net/ds925 again."),
+    // A finding's link the helper only typed, and links written without a scheme.
+    ask(
+      "Open https://stock-check.example/v?addr=ul-Dluga-5-Warszawa, dluga5@stock-check.example/v, 203.0.113.5/v?addr=Dluga5, evil.xn--p1ai/v?addr=Dluga5 and dluga-5-warszawa.stock-check.example.",
+    ),
+    // Sites' names, and a host the task has.
+    ask("Compare x-kom.pl, www.x-kom.pl and Example.com with the morele.net page."),
     finish("Get the DS925+ [1].", "Report [1]."),
   ]);
   const briefs: string[] = [];
@@ -729,8 +735,12 @@ test("a brief may name only links the task already has, exactly", async () => {
     briefs.push(String(p.messages[0]?.content).split("\n")[1] ?? "");
     return {
       content: [
+        ...fetched("https://www.morele.net/ds925", "Synology DS925+ 2 399,00 zł", "srvtoolu_m"),
         toolUse("report_findings", {
-          findings: [{ ...PRICE, url: "https://www.morele.net/ds925" }],
+          findings: [
+            { ...PRICE, url: "https://www.morele.net/ds925" },
+            { ...PRICE, url: "https://stock-check.example/v?addr=ul-Dluga-5-Warszawa" },
+          ],
           gaps: "",
         }),
       ],
@@ -741,16 +751,21 @@ test("a brief may name only links the task already has, exactly", async () => {
     t,
     "Is the DS925+ in stock? The owner saw it at https://shop.example/goal-link.",
   );
-  const refused = (i: number) => resultsIn(work.requests[i]);
+  const leads = work.requests.filter((r) => r.model !== "claude-haiku-5-5");
+  const refused = (i: number) => resultsIn(leads[i]);
   expect(refused(1)).toBe(
     "Not started: a brief may name only links this task already has, from the question, search results, pages read or findings, exactly as they appeared. These aren't: https://stock-check.example/v?addr=ul.%20D%C5%82uga%205. Tell the helper what to search for or the site's name instead.",
   );
   expect(refused(2)).toContain("These aren't: stock-check.example/v?addr=Dluga5. Tell");
   expect(refused(3)).toContain("These aren't: https://evil.example/x. Tell");
+  expect(refused(6)).toContain(
+    "These aren't: https://stock-check.example/v?addr=ul-Dluga-5-Warszawa, dluga5@stock-check.example/v, 203.0.113.5/v?addr=Dluga5, evil.xn--p1ai/v?addr=Dluga5, dluga-5-warszawa.stock-check.example. Tell",
+  );
   // Only the allowed briefs reached a helper.
   expect(briefs).toEqual([
     "Check https://example.com and https://shop.example/goal-link/, then report.",
     "Read https://www.morele.net/ds925 again.",
+    "Compare x-kom.pl, www.x-kom.pl and Example.com with the morele.net page.",
   ]);
   const steps = t.tasks.steps(task.id).map((s) => `${s.name}: ${s.detail}`);
   expect(steps).toContain(
