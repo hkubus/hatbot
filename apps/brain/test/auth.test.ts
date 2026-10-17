@@ -631,6 +631,10 @@ describe("your account", () => {
       (await t.call("DELETE", `/auth/sessions/${other?.id}`, undefined, { cookie })).status,
     ).toBe(200);
     expect(await works({ cookie: otherCookie })).toBe(false);
+    // Signed out already, from another tab say: said plainly.
+    const twice = await t.call("DELETE", `/auth/sessions/${other?.id}`, undefined, { cookie });
+    expect(twice.status).toBe(404);
+    expect(await twice.json()).toEqual({ error: "That browser is already signed out." });
     expect(await works({ authorization: `Bearer ${token}` })).toBe(true);
     const all = await t.call("POST", "/auth/sign-out-others", {}, { cookie });
     expect((await all.json()) as SignedOutOthers).toEqual({ ok: true, ended: 1 });

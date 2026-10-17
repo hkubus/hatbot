@@ -64,7 +64,7 @@ export const threadRoutes = new Hono<AppEnv>()
     const id = Number(c.req.param("id"));
     const a = Number.isInteger(id) ? c.var.attachments.get(id) : null;
     const file = a && c.var.attachments.file(id);
-    if (!a || !file || !(await file.exists())) return c.json({ error: "not found" }, 404);
+    if (!a || !file || !(await file.exists())) return c.json({ error: "That's gone." }, 404);
     const inline = INLINE.includes(a.mediaType) && c.req.query("download") === undefined;
     const ascii = a.name.replace(/[^\x20-\x7e]|["\\]/g, "_");
     // Checked each time rather than kept for a year: an incognito one isn't kept at all.
@@ -94,13 +94,13 @@ export const threadRoutes = new Hono<AppEnv>()
   .patch("/conversations/:id", json(UpdateGroup), (c) =>
     groupError(() => {
       const group = c.var.chats.updateGroup(Number(c.req.param("id")), c.req.valid("json"));
-      return group ? c.json(group) : c.json({ error: "not found" }, 404);
+      return group ? c.json(group) : c.json({ error: "That's gone." }, 404);
     }, c),
   )
   .delete("/conversations/:id", (c) =>
     c.var.chats.deleteGroup(Number(c.req.param("id")))
       ? c.json({ ok: true })
-      : c.json({ error: "not found" }, 404),
+      : c.json({ error: "That's gone." }, 404),
   )
   .get("/thread/messages", query(ListMessages), (c) => listMessages(c, c.var.chats.hatbot()))
   .get("/conversations/:id/messages", query(ListMessages), (c) =>
@@ -157,7 +157,7 @@ function groupError(f: () => Response, c: Ctx): Response {
 function withThread(c: Ctx, f: (t: Thread) => Response | Promise<Response>) {
   const id = Number(c.req.param("id"));
   const thread = Number.isInteger(id) ? c.var.chats.thread(id) : null;
-  return thread ? f(thread) : c.json({ error: "not found" }, 404);
+  return thread ? f(thread) : c.json({ error: "That's gone." }, 404);
 }
 
 /** A deleted bot's chat is gone from the app; a page still showing it can't start the bot again. */
@@ -192,7 +192,7 @@ async function deleteEpisode(c: Ctx, t: Thread) {
   try {
     return Number.isInteger(id) && (await t.deleteEpisode(id))
       ? c.json({ ok: true })
-      : c.json({ error: "not found" }, 404);
+      : c.json({ error: "That's gone." }, 404);
   } catch (err) {
     console.error("deleting a conversation failed", err);
     return c.json({ error: "Couldn't take it out of the summary. Nothing was deleted." }, 502);

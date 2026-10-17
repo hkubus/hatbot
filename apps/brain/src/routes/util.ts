@@ -6,7 +6,7 @@ import type { AppEnv } from "../context";
 /** 400 with zod's first issue: what's wrong, and in which field. */
 export const badRequest = (c: Context, error?: { issues: readonly z.core.$ZodIssue[] }) => {
   const issue = error?.issues[0];
-  if (!issue) return c.json({ error: "invalid request" }, 400);
+  if (!issue) return c.json({ error: "Something in that request isn't right." }, 400);
   const field = issue.path.map(String).join(".");
   return c.json(field ? { error: issue.message, field } : { error: issue.message }, 400);
 };

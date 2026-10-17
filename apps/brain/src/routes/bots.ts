@@ -27,12 +27,12 @@ export const botRoutes = new Hono<AppEnv>()
   })
   .get("/bots/:id", (c) => {
     const bot = c.var.bots.active(c.req.param("id"));
-    return bot ? c.json(bot) : c.json({ error: "not found" }, 404);
+    return bot ? c.json(bot) : c.json({ error: "That's gone." }, 404);
   })
   .patch("/bots/:id", json(UpdateBot), (c) => {
     try {
       const bot = c.var.bots.update(c.req.param("id"), c.req.valid("json"));
-      return bot ? c.json(bot) : c.json({ error: "not found" }, 404);
+      return bot ? c.json(bot) : c.json({ error: "That's gone." }, 404);
     } catch (err) {
       if (err instanceof BotError) return c.json({ error: err.message }, 400);
       throw err;
@@ -41,7 +41,7 @@ export const botRoutes = new Hono<AppEnv>()
   .delete("/bots/:id", (c) => {
     try {
       const moved = c.var.bots.delete(c.req.param("id"));
-      if (!moved) return c.json({ error: "not found" }, 404);
+      if (!moved) return c.json({ error: "That's gone." }, 404);
       const { events, schedules, triggers, watchers } = c.var;
       for (const id of moved.schedules) {
         const schedule = schedules.get(id);

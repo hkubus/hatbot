@@ -70,15 +70,18 @@ export function createApp(deps: Deps) {
   app.route("/", heartbeatRoutes);
   app.route("/", proposalRoutes);
 
-  app.notFound((c) => c.json({ error: "not found" }, 404));
+  app.notFound((c) => c.json({ error: "That's gone." }, 404));
   app.onError((err, c) => {
     // Hono's own refusals, such as malformed JSON, keep their status, in the usual shape.
     // A body cut off part way reads as malformed JSON to the validator.
     if (overflowed.has(c.req.raw)) return c.json({ error: TOO_LARGE }, 413);
     if (err instanceof HTTPException)
-      return err.res ?? c.json({ error: err.message || "invalid request" }, err.status);
+      return (
+        err.res ??
+        c.json({ error: err.message || "Something in that request isn't right." }, err.status)
+      );
     console.error(err);
-    return c.json({ error: "internal error" }, 500);
+    return c.json({ error: "Something went wrong." }, 500);
   });
   return app;
 }

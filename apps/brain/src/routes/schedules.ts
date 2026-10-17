@@ -32,23 +32,23 @@ export const scheduleRoutes = new Hono<AppEnv>()
   })
   .get("/schedules/:id", (c) => {
     const s = c.var.schedules.get(id(c));
-    return s ? c.json(s) : c.json({ error: "not found" }, 404);
+    return s ? c.json(s) : c.json({ error: "That's gone." }, 404);
   })
   .patch("/schedules/:id", json(UpdateSchedule), (c) => {
     if (!knownBot(c, c.req.valid("json").botId)) return c.json({ error: "No such bot." }, 400);
     try {
       const s = c.var.schedules.update(id(c), c.req.valid("json"));
-      return s ? c.json(s) : c.json({ error: "not found" }, 404);
+      return s ? c.json(s) : c.json({ error: "That's gone." }, 404);
     } catch (err) {
       if (err instanceof ScheduleError) return c.json({ error: err.message }, 400);
       throw err;
     }
   })
   .delete("/schedules/:id", (c) =>
-    c.var.schedules.delete(id(c)) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404),
+    c.var.schedules.delete(id(c)) ? c.json({ ok: true }) : c.json({ error: "That's gone." }, 404),
   )
   .post("/schedules/:id/run", (c) => {
-    if (!c.var.schedules.get(id(c))) return c.json({ error: "not found" }, 404);
+    if (!c.var.schedules.get(id(c))) return c.json({ error: "That's gone." }, 404);
     if (c.var.settings.get().paused) return c.json({ error: "Hatbot is paused." }, 409);
     const task = c.var.schedules.runNow(id(c));
     return task ? c.json(task, 201) : c.json({ error: "Its last run is still going." }, 409);
@@ -60,19 +60,19 @@ export const scheduleRoutes = new Hono<AppEnv>()
   })
   .get("/triggers/:id", (c) => {
     const t = c.var.triggers.get(id(c));
-    return t ? c.json(t) : c.json({ error: "not found" }, 404);
+    return t ? c.json(t) : c.json({ error: "That's gone." }, 404);
   })
   .patch("/triggers/:id", json(UpdateTrigger), (c) => {
     if (!knownBot(c, c.req.valid("json").botId)) return c.json({ error: "No such bot." }, 400);
     const t = c.var.triggers.update(id(c), c.req.valid("json"));
-    return t ? c.json(t) : c.json({ error: "not found" }, 404);
+    return t ? c.json(t) : c.json({ error: "That's gone." }, 404);
   })
   .post("/triggers/:id/secret", (c) => {
     const t = c.var.triggers.rotate(id(c));
-    return t ? c.json(t) : c.json({ error: "not found" }, 404);
+    return t ? c.json(t) : c.json({ error: "That's gone." }, 404);
   })
   .delete("/triggers/:id", (c) =>
-    c.var.triggers.delete(id(c)) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404),
+    c.var.triggers.delete(id(c)) ? c.json({ ok: true }) : c.json({ error: "That's gone." }, 404),
   );
 
 const answer = (r: Received) =>

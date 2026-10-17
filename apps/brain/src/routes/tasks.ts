@@ -42,7 +42,7 @@ export const taskRoutes = new Hono<AppEnv>()
   .get("/tasks/:id", (c) => {
     const taskId = Number(c.req.param("id"));
     const task = c.var.tasks.get(taskId);
-    if (!task) return c.json({ error: "not found" }, 404);
+    if (!task) return c.json({ error: "That's gone." }, 404);
     return c.json({
       task,
       steps: c.var.tasks.steps(taskId),
@@ -52,7 +52,7 @@ export const taskRoutes = new Hono<AppEnv>()
   // Runs an ended task again, with its goal as you edited it.
   .post("/tasks/:id/rerun", json(Rerun), (c) => {
     const old = c.var.tasks.get(Number(c.req.param("id")));
-    if (!old) return c.json({ error: "not found" }, 404);
+    if (!old) return c.json({ error: "That's gone." }, 404);
     if (old.parentId || old.lane !== "background")
       return c.json({ error: "Run the task that started it again." }, 400);
     if (c.var.settings.get().paused) return c.json({ error: "Hatbot is paused." }, 409);
@@ -66,13 +66,13 @@ export const taskRoutes = new Hono<AppEnv>()
   })
   .post("/tasks/:id/cancel", (c) => {
     if (!c.var.tasks.cancel(Number(c.req.param("id"))))
-      return c.json({ error: "not running" }, 409);
+      return c.json({ error: "That task isn't running." }, 409);
     return c.json({ ok: true });
   })
   .get("/tasks/:id/screens/:stepId", (c) => {
     const step = c.var.tasks.step(Number(c.req.param("id")), Number(c.req.param("stepId")));
     const file = step?.screenshot ? c.var.archive.file(step.screenshot) : null;
-    if (!file) return c.json({ error: "not found" }, 404);
+    if (!file) return c.json({ error: "That's gone." }, 404);
     return new Response(file, {
       headers: {
         "content-type": "image/webp",
@@ -89,19 +89,20 @@ export const approvalRoutes = new Hono<AppEnv>()
     const approvalId = Number(c.req.param("id"));
     const { decision, exp, sig } = c.req.valid("json");
     if (!c.var.approvals.verify(approvalId, decision, exp, sig))
-      return c.json({ error: "invalid or expired" }, 403);
+      return c.json({ error: "This link has expired." }, 403);
     // Money, mandates and the like are approved in the app, not from a locked phone.
     const kind = c.var.approvals.get(approvalId)?.kind;
     if (decision === "approve" && kind && !approvableFromNotification(kind))
       return c.json({ error: "Open Hatbot to approve this." }, 403);
     const approval = c.var.approvals.decide(approvalId, decision, "ntfy");
-    if (!approval) return c.json({ error: "already decided" }, 409);
+    if (!approval) return c.json({ error: "That was already answered." }, 409);
     return c.json({ ok: true, status: approval.status });
   })
   // A notification's Pause all: no session either. Pausing is always safe, and resuming needs you.
   .post("/pause-all/token", json(TokenPause), (c) => {
     const { exp, sig } = c.req.valid("json");
-    if (!c.var.approvals.verifyPause(exp, sig)) return c.json({ error: "invalid or expired" }, 403);
+    if (!c.var.approvals.verifyPause(exp, sig))
+      return c.json({ error: "This link has expired." }, 403);
     pauseAll(c.var);
     console.log("paused from a notification");
     return c.json({ paused: true });
@@ -123,11 +124,11 @@ export const approvalRoutes = new Hono<AppEnv>()
   )
   .get("/approvals/:id", (c) => {
     const approval = c.var.approvals.get(Number(c.req.param("id")));
-    return approval ? c.json(approval) : c.json({ error: "not found" }, 404);
+    return approval ? c.json(approval) : c.json({ error: "That's gone." }, 404);
   })
   .post("/approvals/:id", json(DecideApproval), (c) => {
     const { decision, note } = c.req.valid("json");
     const approval = c.var.approvals.decide(Number(c.req.param("id")), decision, "web", note);
-    if (!approval) return c.json({ error: "already decided" }, 409);
+    if (!approval) return c.json({ error: "That was already answered." }, 409);
     return c.json(approval);
   });

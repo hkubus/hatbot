@@ -35,10 +35,10 @@ export const watcherRoutes = new Hono<AppEnv>()
   })
   .get("/watchers/:id", (c) => {
     const w = c.var.watchers.get(id(c));
-    return w ? c.json(w) : c.json({ error: "not found" }, 404);
+    return w ? c.json(w) : c.json({ error: "That's gone." }, 404);
   })
   .get("/watchers/:id/values", (c) => {
-    if (!c.var.watchers.get(id(c))) return c.json({ error: "not found" }, 404);
+    if (!c.var.watchers.get(id(c))) return c.json({ error: "That's gone." }, 404);
     const limit = Math.min(500, Math.max(1, Number(c.req.query("limit") ?? 100) || 100));
     return c.json(c.var.watchers.values(id(c), limit));
   })
@@ -46,17 +46,17 @@ export const watcherRoutes = new Hono<AppEnv>()
     if (!knownBot(c, c.req.valid("json").botId)) return c.json({ error: "No such bot." }, 400);
     try {
       const w = await c.var.watchers.update(id(c), c.req.valid("json"));
-      return w ? c.json(w) : c.json({ error: "not found" }, 404);
+      return w ? c.json(w) : c.json({ error: "That's gone." }, 404);
     } catch (err) {
       if (err instanceof WatchError) return c.json({ error: err.message }, 400);
       throw err;
     }
   })
   .post("/watchers/:id/check", async (c) => {
-    if (!c.var.watchers.get(id(c))) return c.json({ error: "not found" }, 404);
+    if (!c.var.watchers.get(id(c))) return c.json({ error: "That's gone." }, 404);
     if (c.var.settings.get().paused) return c.json({ error: "Hatbot is paused." }, 409);
     return c.json(await c.var.watchers.checkNow(id(c)));
   })
   .delete("/watchers/:id", (c) =>
-    c.var.watchers.delete(id(c)) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404),
+    c.var.watchers.delete(id(c)) ? c.json({ ok: true }) : c.json({ error: "That's gone." }, 404),
   );

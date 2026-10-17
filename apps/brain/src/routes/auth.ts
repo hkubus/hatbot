@@ -153,7 +153,7 @@ export const authRoutes = new Hono<AppEnv>()
   .delete("/auth/sessions/:id{[0-9]+}", requireAuth, (c) =>
     c.var.auth.endSession(Number(c.req.param("id")))
       ? c.json({ ok: true })
-      : c.json({ error: "not found" }, 404),
+      : c.json({ error: "That browser is already signed out." }, 404),
   )
   .post("/auth/sign-out-others", requireAuth, (c) =>
     c.json<SignedOutOthers>({ ok: true, ended: c.var.auth.endOthers(c.var.principal) }),
@@ -166,5 +166,5 @@ export const authRoutes = new Hono<AppEnv>()
   .delete("/tokens/:id{[0-9]+}", requireAuth, (c) =>
     c.var.auth.deleteToken(Number(c.req.param("id")))
       ? c.json({ ok: true })
-      : c.json({ error: "not found" }, 404),
+      : c.json({ error: "That token is already revoked." }, 404),
   );

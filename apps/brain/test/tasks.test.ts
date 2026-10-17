@@ -310,6 +310,7 @@ test("ntfy buttons carry single-use signed tokens", async () => {
   expect(ok.status).toBe(200);
   const again = await t.call("POST", `/approvals/${approval.id}/token-decision`, body);
   expect(again.status).toBe(409);
+  expect(await again.json()).toEqual({ error: "That was already answered." });
   expect((t.approvals.get(approval.id) as Approval).decidedVia).toBe("ntfy");
   await t.tasks.idle();
 });

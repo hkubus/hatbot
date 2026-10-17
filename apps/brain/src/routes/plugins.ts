@@ -12,12 +12,12 @@ export const pluginRoutes = new Hono<AppEnv>()
   .get("/plugins", (c) => c.json(c.var.plugins.list()))
   .get("/plugins/:id", (c) => {
     const p = c.var.plugins.get(c.req.param("id"));
-    return p ? c.json(p) : c.json({ error: "not found" }, 404);
+    return p ? c.json(p) : c.json({ error: "That's gone." }, 404);
   })
   .patch("/plugins/:id", json(UpdatePlugin), async (c) => {
     const { plugins } = c.var;
     const id = c.req.param("id");
-    if (!plugins.get(id)) return c.json({ error: "not found" }, 404);
+    if (!plugins.get(id)) return c.json({ error: "That's gone." }, 404);
     try {
       return c.json(await plugins.update(id, c.req.valid("json")));
     } catch (err) {
