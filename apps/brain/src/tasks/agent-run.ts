@@ -203,6 +203,10 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     ...[...pluginTools.values()].map(toolParam),
     ...WEB_TOOLS,
   ];
+  /** Results never cleared: a research task's findings are what it cites. Only tools sent. */
+  const keptTools = ["finish_task", "finish_research", "investigate"].filter((n) =>
+    tools.some((t) => "name" in t && t.name === n),
+  );
   const guidance = d.plugins.guidance(bot.plugins);
   const prompt = promptFor(research ? researchPrompt(bot) : AGENT_PROMPT, bot, others);
   const system = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
@@ -636,8 +640,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
                 trigger: { type: "input_tokens", value: 70_000 },
                 keep: { type: "tool_uses", value: 6 },
                 clear_at_least: { type: "input_tokens", value: 20_000 },
-                // A research task's findings are what it cites.
-                exclude_tools: ["finish_task", "finish_research", "investigate"],
+                exclude_tools: keptTools,
               },
             ],
           },

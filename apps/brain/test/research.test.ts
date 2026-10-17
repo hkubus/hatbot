@@ -10,6 +10,10 @@ type Block = Anthropic.Beta.BetaContentBlock;
 type Params = Parameters<FakeModel["stream"]>[0];
 const toolNames = (req: { tools?: unknown[] } | undefined) =>
   (req?.tools ?? []).map((t) => (t as { name: string }).name);
+/** The tools whose results the request's context editing never clears. */
+const kept = (req: Params | undefined) =>
+  (req?.context_management?.edits?.[0] as { exclude_tools?: string[] } | undefined)
+    ?.exclude_tools ?? [];
 const DAY = new Date(Date.parse("2026-10-09T12:00:00Z")).toLocaleDateString("sv-SE");
 
 const search = (query: string, id: string): Block[] => [
@@ -106,6 +110,8 @@ test("research runs on Opus at high effort, with helpers, a token budget and its
   const lead = work.requests.find((r) => r.model === "claude-opus-5-5");
   expect(toolNames(lead)).toEqual(expect.arrayContaining(["investigate", "finish_research"]));
   expect(toolNames(lead)).not.toContain("finish_task");
+  // Only tools the request sends are named as kept.
+  expect(kept(lead)).toEqual(["finish_research", "investigate"]);
   expect(lead?.betas).toContain("task-budgets-2026-03-13");
   expect(lead?.output_config).toMatchObject({
     effort: "high",
@@ -207,4 +213,16 @@ test("running research again refreshes its report, and the chat can name one to 
   expect(r.content).toBe(
     "There's no report at research/none.md. Check the path, or leave previous out.",
   );
+});
+
+test("a plain task keeps only finish_task's results, a tool it sends", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Done.", notify: false })] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.tasks.createBackgroundTask({ title: "Check", goal: "Check the disks.", origin: "chat" });
+  await t.tasks.idle();
+  const req = work.requests[0];
+  expect(kept(req)).toEqual(["finish_task"]);
+  for (const name of kept(req)) expect(toolNames(req)).toContain(name);
 });
