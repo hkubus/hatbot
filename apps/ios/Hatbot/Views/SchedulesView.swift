@@ -2,6 +2,7 @@
 // Uptime Kuma triggers are set up on the web, where their URL gets pasted into the sender.
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 struct SchedulesView: View {
   @Environment(AppStore.self) private var store
@@ -318,7 +319,12 @@ struct TriggerDetailView: View {
           .font(.footnote)
           let value = t.kind == .kuma ? secret.postURL : secret.secret
           Text(value).font(.footnote.monospaced()).textSelection(.enabled)
-          Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = value }
+          // Kept off your other devices' pasteboards, and only for two minutes.
+          Button("Copy", systemImage: "doc.on.doc") {
+            UIPasteboard.general.setItems(
+              [[UTType.plainText.identifier: value]],
+              options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(120)])
+          }
         } header: {
           Text("New secret")
         }

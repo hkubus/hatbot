@@ -14,6 +14,7 @@ struct HatbotApp: App {
     let vault = KeychainVault()
     AppGroup.migrate(vault: vault)
     _session = State(initialValue: Session(vault: vault, defaults: AppGroup.defaults, cacheDir: AppGroup.cacheDir))
+    PrivacyCover.shared.start()
   }
 
   var body: some Scene {

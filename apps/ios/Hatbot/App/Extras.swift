@@ -1,5 +1,6 @@
 // What the app does outside itself, with no push: home-screen quick actions, Spotlight results for
 // memory, tasks and schedules, and the needs-you count on the app icon. Each opens a hatbot:// link.
+// And what the app switcher shows of it: nothing.
 import CoreSpotlight
 import SwiftUI
 import UIKit
@@ -43,6 +44,42 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate {
   }
 }
 
+/// Covers the app while it isn't active, so the app switcher's picture of it shows no secrets, desktop or
+/// approvals. A window of its own, over sheets too.
+@MainActor
+final class PrivacyCover {
+  static let shared = PrivacyCover()
+  private var windows: [ObjectIdentifier: UIWindow] = [:]
+
+  func start() {
+    let center = NotificationCenter.default
+    center.addObserver(forName: UIScene.willDeactivateNotification, object: nil, queue: .main) { note in
+      guard let scene = note.object as? UIWindowScene else { return }
+      MainActor.assumeIsolated { PrivacyCover.shared.cover(scene) }
+    }
+    center.addObserver(forName: UIScene.didActivateNotification, object: nil, queue: .main) { note in
+      guard let scene = note.object as? UIWindowScene else { return }
+      MainActor.assumeIsolated { PrivacyCover.shared.uncover(scene) }
+    }
+  }
+
+  private func cover(_ scene: UIWindowScene) {
+    let id = ObjectIdentifier(scene)
+    if windows[id] != nil { return }
+    let window = UIWindow(windowScene: scene)
+    let blank = UIViewController()
+    blank.view.backgroundColor = .systemBackground
+    window.rootViewController = blank
+    window.windowLevel = .alert + 1
+    window.isHidden = false
+    windows[id] = window
+  }
+
+  private func uncover(_ scene: UIWindowScene) {
+    windows.removeValue(forKey: ObjectIdentifier(scene))?.isHidden = true
+  }
+}
+
 enum Spotlight {
   private struct Entry: Sendable {
     var link: AppLink
@@ -51,7 +88,10 @@ enum Spotlight {
     var detail: String
   }
 
-  /// Memory files by name, tasks by title and schedules by name, in place of what was indexed before.
+  /// Hatbot's own index, readable only while the phone is unlocked.
+  nonisolated(unsafe) private static let searchIndex = CSSearchableIndex(name: "Hatbot", protectionClass: .complete)
+
+  /// Memory files, tasks and schedules by name only, in place of what was indexed before.
   @MainActor
   static func index(_ store: AppStore) async {
     guard CSSearchableIndex.isIndexingAvailable() else { return }
@@ -70,21 +110,23 @@ enum Spotlight {
     }
     if (try? await store.loadSchedules()) != nil {
       for s in store.schedules.values {
-        entries.append(Entry(link: .schedule(s.id), domain: "schedules", title: s.name, detail: s.prompt))
+        entries.append(Entry(link: .schedule(s.id), domain: "schedules", title: s.name, detail: "Schedule"))
       }
     }
     await replace(entries)
   }
 
   private static func replace(_ entries: [Entry]) async {
-    let index = CSSearchableIndex.default()
-    try? await index.deleteAllSearchableItems()
-    try? await index.indexSearchableItems(entries.map(item))
+    // What older versions put in the default index, with schedules' prompts and its weaker protection.
+    try? await CSSearchableIndex.default().deleteAllSearchableItems()
+    try? await searchIndex.deleteAllSearchableItems()
+    try? await searchIndex.indexSearchableItems(entries.map(item))
   }
 
   /// Signed out: nothing of Hatbot's stays searchable.
   static func clear() {
     CSSearchableIndex.default().deleteAllSearchableItems(completionHandler: nil)
+    searchIndex.deleteAllSearchableItems(completionHandler: nil)
   }
 
   /// The link of a Spotlight result that opened the app.
