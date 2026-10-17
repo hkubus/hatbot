@@ -265,6 +265,15 @@ export class Plugins {
       const generation = s.generation;
       await instance.recover().catch((err) => console.error(`plugin ${s.plugin.id}: recover`, err));
       if (generation !== s.generation) return;
+      // What came back is checked like what it started with: a bad tool would fail every request.
+      try {
+        this.checkTools(s.plugin, instance.tools);
+      } catch (err) {
+        console.error(`plugin ${s.plugin.id}: after recovering`, err);
+        await this.stop(s);
+        s.state = "error";
+        s.message = "Its tools changed into ones Hatbot can't offer; see the brain's log.";
+      }
       this.emit(s);
       this.later(s);
       return;

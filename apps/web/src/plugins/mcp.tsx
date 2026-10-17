@@ -22,7 +22,8 @@ type Status = {
   name: string;
   state: "connected" | "failed" | "off";
   error: string | null;
-  tools: { name: string; description: string; mode: Mode }[];
+  /** problem: why it can't be offered, e.g. a schema Claude's API wouldn't take. */
+  tools: { name: string; description: string; mode: Mode; problem: string | null }[];
 };
 
 const MODES: [Mode, string][] = [
@@ -207,6 +208,7 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
                   <div className="row" key={t.name}>
                     <div className="txt">
                       <b className="mono">{t.name}</b>
+                      {t.problem && <span>{t.problem}</span>}
                     </div>
                     <select
                       value={s.tools[t.name] ?? t.mode}

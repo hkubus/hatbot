@@ -8,7 +8,7 @@ import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { mayReview } from "../src/agent/review";
 import { mcpPlugin, moneyKind, toolName, unsent } from "../src/plugins/mcp";
-import { type CallContext, definePlugin, PluginError, ready } from "../src/plugins/plugin";
+import { type CallContext, definePlugin, PluginError, ready, tool } from "../src/plugins/plugin";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { FakeModel, toolUse } from "./fake-model";
 import { testApp, waitFor } from "./helpers";
@@ -130,6 +130,70 @@ test("money words in a tool's name or description", () => {
   expect(moneyKind("scout_search", "Search listings in order to compare prices")).toBeNull();
 });
 
+test("tool definitions the API wouldn't take are left out with the reason; clashing names are kept apart", async () => {
+  const text = { type: "object", properties: { q: { type: "string" } } };
+  const list = [
+    { name: "echo", description: "Echo text back", inputSchema: text },
+    { name: "get.user", inputSchema: text },
+    { name: "get_user", inputSchema: text },
+    { name: "union", inputSchema: { type: "object", anyOf: [text, text] } },
+    // Without a type the SDK's own listing would refuse the whole server.
+    { name: "loose", inputSchema: { anyOf: [text, text] } },
+    {
+      name: "huge",
+      inputSchema: {
+        type: "object",
+        properties: { q: { type: "string", description: "x".repeat(17_000) } },
+      },
+    },
+    { name: "later", inputSchema: text, execution: { taskSupport: "required" } },
+  ];
+  const { t } = await started({
+    ...fixture,
+    env: { ...fixture.env, MCP_LIST: JSON.stringify(list) },
+  });
+  const names = t.plugins.tools().map((x) => x.name);
+  expect(names).toEqual(["mcp_fix_echo", "mcp_fix_get_user", toolName("fix", "get_user", true)]);
+  expect(names[2]).toMatch(/^mcp_fix_get_user_[0-9a-f]{6}$/);
+  const status = (await t.plugins.action("mcp", "status", {})) as {
+    tools: { name: string; problem: string | null }[];
+  }[];
+  expect(Object.fromEntries(status[0]?.tools.map((x) => [x.name, x.problem]) ?? [])).toEqual({
+    echo: null,
+    "get.user": null,
+    get_user: null,
+    union: "Its input schema has anyOf at the top level, which Claude's API doesn't accept.",
+    loose: "Its input schema has anyOf at the top level, which Claude's API doesn't accept.",
+    huge: "Its input schema is too big (17071 characters; at most 16000).",
+    later: "It only runs as a long-running MCP task, which Hatbot doesn't support.",
+  });
+  expect(await t.plugins.test("mcp")).toBe("fix: connected, 7 tools, 4 of them can't be used");
+  await t.plugins.stopAll();
+});
+
+test("at most 50 tools are offered from a server; ones switched off don't count", async () => {
+  const list = Array.from({ length: 52 }, (_, i) => ({
+    name: `t${i}`,
+    inputSchema: { type: "object" },
+  }));
+  const { t } = await started({
+    ...fixture,
+    env: { ...fixture.env, MCP_LIST: JSON.stringify(list) },
+    tools: { t0: "off" },
+  });
+  const names = t.plugins.tools().map((x) => x.name);
+  expect(names).toHaveLength(50);
+  expect(names).not.toContain("mcp_fix_t0");
+  expect(names).not.toContain("mcp_fix_t51");
+  const status = (await t.plugins.action("mcp", "status", {})) as {
+    tools: { name: string; problem: string | null }[];
+  }[];
+  expect(status[0]?.tools.find((x) => x.name === "t51")?.problem).toBe(
+    "The server has more than 50 tools: switch some off to use this one.",
+  );
+  await t.plugins.stopAll();
+});
+
 test("a write whose server dies during the call isn't sent again; the next call reconnects", async () => {
   const count = join(mkdtempSync(join(tmpdir(), "hatbot-mcp-")), "count");
   const { t } = await started({ ...fixture, env: { ...fixture.env, MCP_COUNT: count } });
@@ -228,6 +292,39 @@ test("a plugin that fails to start is started again later", async () => {
   expect((await t.plugins.update("flaky", { enabled: true })).state).toBe("error");
   await waitFor(() => t.plugins.get("flaky")?.state === "ready");
   expect(starts).toBe(3);
+  await t.plugins.stopAll();
+});
+
+test("the tools a plugin brings back when it recovers are checked too", async () => {
+  let back = false;
+  const odd = tool({
+    name: "elsewhere_x",
+    description: "",
+    access: "read",
+    schema: z.object({}),
+    run: async () => "",
+  });
+  const shifty = definePlugin({
+    id: "shifty",
+    name: "Shifty",
+    description: "",
+    config: z.object({}),
+    start: () => ({
+      status: { state: "ready" },
+      get tools() {
+        return back ? [odd] : [];
+      },
+      down: () => (back ? null : "a part is down"),
+      recover: async () => {
+        back = true;
+      },
+    }),
+  });
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [shifty]);
+  t.plugins.retryMs = [10, 60_000];
+  expect((await t.plugins.update("shifty", { enabled: true })).state).toBe("ready");
+  await waitFor(() => t.plugins.get("shifty")?.state === "error");
+  expect(t.plugins.tools().map((x) => x.name)).not.toContain("elsewhere_x");
   await t.plugins.stopAll();
 });
 

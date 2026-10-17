@@ -80,7 +80,21 @@ const Config = z.object({
     ),
 });
 
-type Listed = { name: string; description?: string; inputSchema: Record<string, unknown> };
+/** The most tools offered from one server, the biggest input schema (as JSON), and pages listed. */
+const MAX_TOOLS = 50;
+const MAX_SCHEMA_CHARS = 16_000;
+const MAX_PAGES = 10;
+
+/** A tool listing, read loosely: one definition the API wouldn't take mustn't lose the others. */
+const Listing = z.object({ tools: z.array(z.unknown()), nextCursor: z.string().optional() });
+
+type Listed = {
+  name: string;
+  description?: string;
+  inputSchema: Record<string, unknown>;
+  /** Why it can't be offered, for Settings. */
+  problem: string | null;
+};
 type Conn = {
   server: Server;
   client: Client | null;
@@ -108,12 +122,38 @@ function expand(values: Record<string, string>, env: Record<string, string | und
   return out;
 }
 
-/** A tool name the API accepts: mcp_<server>_<tool>, at most 64 characters. */
-export function toolName(server: string, name: string): string {
+/**
+ * A tool name the API accepts: mcp_<server>_<tool>, at most 64 characters. `unique` adds a hash of the
+ * real name, for one that another tool's name already took once cleaned up.
+ */
+export function toolName(server: string, name: string, unique = false): string {
   const full = `mcp_${server}_${name.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
-  if (full.length <= 64) return full;
+  if (full.length <= 64 && !unique) return full;
   const hash = createHash("sha256").update(name).digest("hex").slice(0, 6);
   return `${full.slice(0, 57)}_${hash}`;
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** Why the API wouldn't take this tool's definition, or why Hatbot can't run it; null if it's fine. */
+export function problemOf(t: Record<string, unknown>): string | null {
+  const s = t.inputSchema;
+  if (!isObject(s)) return "Its input schema isn't a JSON object.";
+  if (s.type !== undefined && s.type !== "object") return "Its input schema isn't for an object.";
+  const combinator = ["anyOf", "oneOf", "allOf", "not", "if"].find((k) => k in s);
+  if (combinator)
+    return `Its input schema has ${combinator} at the top level, which Claude's API doesn't accept.`;
+  if (s.properties !== undefined && !isObject(s.properties))
+    return "Its input schema's properties aren't an object.";
+  const size = JSON.stringify(s).length;
+  if (size > MAX_SCHEMA_CHARS)
+    return `Its input schema is too big (${size} characters; at most ${MAX_SCHEMA_CHARS}).`;
+  if (t.description !== undefined && typeof t.description !== "string")
+    return "Its description isn't text.";
+  if (isObject(t.execution) && t.execution.taskSupport === "required")
+    return "It only runs as a long-running MCP task, which Hatbot doesn't support.";
+  return null;
 }
 
 /** The schema as the API wants it: no $schema or $id. */
@@ -197,12 +237,32 @@ export const mcpPlugin = definePlugin({
                 stderr: "inherit",
               });
         await client.connect(transport, { timeout: CONNECT_TIMEOUT_MS });
-        const listed = await client.listTools(undefined, { timeout: CONNECT_TIMEOUT_MS });
+        const listed: Listed[] = [];
+        let cursor: string | undefined;
+        for (let page = 0; page < MAX_PAGES; page++) {
+          const r = await client.request(
+            { method: "tools/list", params: cursor ? { cursor } : {} },
+            Listing,
+            { timeout: CONNECT_TIMEOUT_MS },
+          );
+          for (const t of r.tools) {
+            // Without a name there's nothing to call it by, or to show.
+            if (!isObject(t) || typeof t.name !== "string" || !t.name) continue;
+            listed.push({
+              name: t.name,
+              description: typeof t.description === "string" ? t.description : undefined,
+              inputSchema: isObject(t.inputSchema) ? t.inputSchema : {},
+              problem: problemOf(t),
+            });
+          }
+          cursor = r.nextCursor;
+          if (!cursor) break;
+        }
         if (stopped) {
           await client.close().catch(() => {});
           return;
         }
-        c.tools = listed.tools as Listed[];
+        c.tools = listed;
         c.client = client;
       } catch (err) {
         await client.close().catch(() => {});
@@ -214,13 +274,32 @@ export const mcpPlugin = definePlugin({
 
     const modeOf = (c: Conn, t: Listed): Mode =>
       c.server.tools[t.name] ?? (moneyKind(t.name, t.description) ? "always" : "ask");
+    /**
+     * A server's tools with their names for the API, and why any can't be offered. Names are given in
+     * the server's order whatever the modes, so switching one tool off doesn't rename another.
+     */
+    const checked = (c: Conn) => {
+      const taken = new Set<string>();
+      let offered = 0;
+      return c.tools.map((t) => {
+        const mode = modeOf(c, t);
+        let problem = t.problem;
+        let name = toolName(c.server.name, t.name);
+        if (!problem && taken.has(name)) name = toolName(c.server.name, t.name, true);
+        if (!problem && taken.has(name)) problem = "Its name is the same as another tool's.";
+        if (!problem) taken.add(name);
+        if (!problem && mode !== "off" && ++offered > MAX_TOOLS)
+          problem = `The server has more than ${MAX_TOOLS} tools: switch some off to use this one.`;
+        return { t, name, mode, problem };
+      });
+    };
     const toolsOf = (c: Conn): PluginTool[] =>
-      c.tools
-        .map((t) => ({ t, mode: modeOf(c, t), kind: moneyKind(t.name, t.description) }))
-        .filter(({ mode }) => mode !== "off")
-        .map(({ t, mode, kind }) =>
+      checked(c)
+        .filter(({ mode, problem }) => mode !== "off" && !problem)
+        .map(({ t, name, mode }) => ({ t, name, mode, kind: moneyKind(t.name, t.description) }))
+        .map(({ t, name, mode, kind }) =>
           tool({
-            name: toolName(c.server.name, t.name),
+            name,
             description: `${(t.description ?? t.name).slice(0, 1000)} (from the MCP server "${c.server.name}")`,
             access: mode === "chat" ? "read" : "write",
             untrusted: !c.server.trusted,
@@ -318,10 +397,11 @@ export const mcpPlugin = definePlugin({
           name: s.name,
           state: !s.enabled ? "off" : c?.client ? "connected" : "failed",
           error: c?.error ?? null,
-          tools: (c?.tools ?? []).map((t) => ({
+          tools: (c ? checked(c) : []).map(({ t, mode, problem }) => ({
             name: t.name,
             description: (t.description ?? "").slice(0, 300),
-            mode: c ? modeOf(c, t) : "ask",
+            mode,
+            problem,
           })),
         };
       });
@@ -344,11 +424,12 @@ export const mcpPlugin = definePlugin({
       },
       test: async () =>
         status()
-          .map((s) =>
-            s.state === "connected"
-              ? `${s.name}: connected, ${s.tools.length} tools`
-              : `${s.name}: ${s.state}${s.error ? ` (${s.error})` : ""}`,
-          )
+          .map((s) => {
+            if (s.state !== "connected")
+              return `${s.name}: ${s.state}${s.error ? ` (${s.error})` : ""}`;
+            const bad = s.tools.filter((t) => t.problem).length;
+            return `${s.name}: connected, ${s.tools.length} tools${bad ? `, ${bad} of them can't be used` : ""}`;
+          })
           .join("\n") || "No servers.",
       actions: { status: async () => status() },
       // Servers that were down at the start, or dropped and couldn't be reconnected.
