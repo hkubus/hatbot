@@ -79,10 +79,10 @@ pages["/shop"] = `<!doctype html><body style="margin:0">
   ${frame(`http://127.0.0.1:${widgets.port}/pay`, 1)}
   ${frame("/pay", 2)}
 </body>`;
-afterAll(() => {
+afterAll(async () => {
   server.stop(true);
   widgets.stop(true);
-  chromium?.stop();
+  await chromium?.stop();
 });
 
 /** Inspects until `ready` holds: frames load after their page. */

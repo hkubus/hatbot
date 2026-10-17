@@ -226,9 +226,9 @@ const server = Bun.serve({
   },
 });
 const base = `http://127.0.0.1:${server.port}`;
-afterAll(() => {
+afterAll(async () => {
   server.stop(true);
-  chromium?.stop();
+  await chromium?.stop();
 });
 const pages: Record<string, string> = {
   "/shadow": `<!doctype html><body><div id="h"></div><script>

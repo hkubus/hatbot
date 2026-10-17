@@ -19,7 +19,7 @@ function candidates(): string[] {
   ].filter((p): p is string => Boolean(p && existsSync(p)));
 }
 
-export type Chromium = { endpoint: string; stop: () => void };
+export type Chromium = { endpoint: string; stop: () => Promise<void> };
 
 /** Starts one, and resolves with its DevTools address; null when none starts here. */
 export async function startChromium(): Promise<Chromium | null> {
@@ -37,13 +37,15 @@ export async function startChromium(): Promise<Chromium | null> {
       ],
       { stdout: "ignore", stderr: "pipe" },
     );
-    const stop = () => {
+    // Its profile goes once it has exited: before that, it's still writing there.
+    const stop = async () => {
       proc.kill("SIGKILL");
+      await proc.exited;
       rmSync(dir, { recursive: true, force: true });
     };
     const port = await listening(proc.stderr);
     if (port) return { endpoint: `http://127.0.0.1:${port}`, stop };
-    stop();
+    await stop();
   }
   return null;
 }
