@@ -57,7 +57,7 @@ export function WatcherList({ onError }: { onError: (error: string) => void }) {
                 <b>{w.name}</b>
               </div>
               {w.lastError ? (
-                <span className="val bad">{trouble(w)?.short}</span>
+                <span className={w.errors ? "val bad" : "val"}>{trouble(w)?.short}</span>
               ) : (
                 <span className="val">{w.enabled ? (w.lastValue ?? "") : "Off"}</span>
               )}
@@ -190,7 +190,7 @@ const fieldsOf = (f: Form) => ({
 
 /**
  * What's wrong, for its row and its page: it can't read what it looks at, or it counted so often
- * that it was switched off. That last read worked, so it isn't a failed one.
+ * that it was switched off. That last read worked, so it isn't a failed one, and isn't shown as one.
  */
 export function trouble(w: Watcher): { short: string; long: string } | null {
   if (!w.lastError) return null;
@@ -358,7 +358,9 @@ export function WatcherEdit({ id }: { id: number | null }) {
             </>
           )}
         </div>
-        {stored?.lastError && <div className="form-error">{trouble(stored)?.long}</div>}
+        {stored?.lastError && (
+          <div className={stored.errors ? "form-error" : "muted"}>{trouble(stored)?.long}</div>
+        )}
 
         <div className="panel form">
           <label>
