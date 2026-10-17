@@ -245,23 +245,38 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
                 <span className="label">Every plugin that's on</span>
                 <Switch
                   on={form.plugins === null}
-                  onChange={(on) => set({ plugins: on ? null : pluginList.map((p) => p.id) })}
+                  onChange={(on) =>
+                    set({
+                      plugins: on ? null : pluginList.filter((p) => p.enabled).map((p) => p.id),
+                    })
+                  }
                 />
               </div>
               {form.plugins !== null &&
                 pluginList.map((p) => (
                   <div className="form-row" key={p.id}>
                     <span>{p.name}</span>
-                    <Switch
-                      on={form.plugins?.includes(p.id) ?? false}
-                      onChange={(on) =>
-                        set({
-                          plugins: on
-                            ? [...(form.plugins ?? []), p.id]
-                            : (form.plugins ?? []).filter((x) => x !== p.id),
-                        })
-                      }
-                    />
+                    {/* Only plugins that are on reach a bot; the others link to where they're turned on. */}
+                    {p.enabled ? (
+                      <Switch
+                        on={form.plugins?.includes(p.id) ?? false}
+                        onChange={(on) =>
+                          set({
+                            plugins: on
+                              ? [...(form.plugins ?? []), p.id]
+                              : (form.plugins ?? []).filter((x) => x !== p.id),
+                          })
+                        }
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        className="text-link"
+                        onClick={() => navigate(`/settings/plugins/${p.id}`)}
+                      >
+                        Off in Settings
+                      </button>
+                    )}
                   </div>
                 ))}
             </>
