@@ -295,6 +295,12 @@ final class AppStore {
       put(c)
     case let .conversationDeleted(id):
       conversations.removeAll { $0.id == id }
+      cache?.forget(id)
+      // The group you're in was deleted elsewhere: back to Hatbot's own chat, keeping none of it.
+      if conversationId == id {
+        messages = []
+        Task { await openConversation(1) }
+      }
     case let .proposalUpdated(p):
       proposals[p.id] = p
     case let .watcherUpdated(w):
@@ -572,6 +578,8 @@ final class AppStore {
 
   func loadEarlier() async throws {
     guard let first = messages.first, !loadingEarlier else { return }
+    let shown = conversationId
+    let wasIncognito = incognito
     loadingEarlier = true
     prepending = true
     defer {
@@ -580,6 +588,8 @@ final class AppStore {
     }
     let older: [ThreadMessage] = try await api.get(page(before: first.id))
     try? await loadEpisodes(older)
+    // Another chat, or in or out of incognito, while it loaded: the page belongs to the one you left.
+    guard shown == conversationId, wasIncognito == incognito, messages.first?.id == first.id else { return }
     messages = older + messages
     hasEarlier = older.count == Self.page
   }

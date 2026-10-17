@@ -34,6 +34,12 @@ struct DiskCache: Sendable {
 
   func save(_ page: Page, for conversationId: Int) { write(page, "page-\(conversationId).json") }
 
+  /// A chat that was deleted.
+  func forget(_ conversationId: Int) {
+    let url = dir.appendingPathComponent("page-\(conversationId).json")
+    Self.queue.async { try? FileManager.default.removeItem(at: url) }
+  }
+
   /// Signing out leaves nothing behind. Done once the writes before it are.
   func clear() {
     let dir = dir

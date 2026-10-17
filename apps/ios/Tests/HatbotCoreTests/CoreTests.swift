@@ -927,6 +927,8 @@ final class ZoomTests: XCTestCase {
 final class SlowBrain: URLProtocol, @unchecked Sendable {
   static let delay: TimeInterval = 0.15
   nonisolated(unsafe) static var routes: [String: String] = [:]
+  /// Paths that answer more slowly than `delay`.
+  nonisolated(unsafe) static var slower: [String: TimeInterval] = [:]
   private static let lock = NSLock()
   nonisolated(unsafe) private static var paths: [String] = []
 
@@ -941,7 +943,7 @@ final class SlowBrain: URLProtocol, @unchecked Sendable {
     let path = url.path.replacingOccurrences(of: API.prefix, with: "") + (url.query.map { "?\($0)" } ?? "")
     Self.lock.withLock { Self.paths.append("\(request.httpMethod ?? "GET") \(path)") }
     let body = Self.routes[path]
-    DispatchQueue.global().asyncAfter(deadline: .now() + Self.delay) { [self] in
+    DispatchQueue.global().asyncAfter(deadline: .now() + (Self.slower[path] ?? Self.delay)) { [self] in
       let res = HTTPURLResponse(
         url: url, statusCode: body == nil ? 404 : 200, httpVersion: "HTTP/1.1",
         headerFields: ["Content-Type": "application/json"])!
@@ -1044,6 +1046,57 @@ final class NetworkTests: XCTestCase {
     XCTAssertEqual(SlowBrain.requested, ["GET /tasks?ids=2,40", "GET /tasks/40"])
     let loaded = await MainActor.run { store.tasks[40]?.id }
     XCTAssertEqual(loaded, 40)
+  }
+
+  private static func message(_ id: Int, in conversation: Int) -> String {
+    #"{"id":\#(id),"role":"assistant","kind":"text","text":"m\#(id)","status":"done","createdAt":"2026-10-15T08:00:00Z","conversationId":\#(conversation)}"#
+  }
+
+  @MainActor private static func twoChats(_ store: AppStore) {
+    store.conversations = [
+      Conversation(id: 1, kind: .direct, botIds: ["hatbot"], unread: 0),
+      Conversation(id: 2, kind: .group, title: "Home", botIds: ["hatbot", "haggler"], unread: 0),
+    ]
+  }
+
+  /// An earlier page that arrives after you've gone to another chat stays out of that one.
+  func testAnEarlierPageForAChatYouLeftIsDropped() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    SlowBrain.routes["/conversations/1/messages?limit=50&before=60"] = "[\(Self.message(5, in: 1))]"
+    SlowBrain.routes["/conversations/2/messages?limit=50"] = "[\(Self.message(70, in: 2))]"
+    // The earlier page answers after the other chat has loaded.
+    SlowBrain.slower = ["/conversations/1/messages?limit=50&before=60": 0.4]
+    defer { SlowBrain.slower = [:] }
+    try await MainActor.run {
+      Self.twoChats(store)
+      store.messages = [try JSONDecoder().decode(ThreadMessage.self, from: Data(Self.message(60, in: 1).utf8))]
+      store.hasEarlier = true
+    }
+    async let earlier: Void = store.loadEarlier()
+    try await Task.sleep(for: .milliseconds(30))
+    await store.openConversation(2)
+    try await earlier
+    let ids = await MainActor.run { store.messages.map(\.id) }
+    XCTAssertEqual(ids, [70])
+  }
+
+  /// The group you're in, deleted elsewhere: the chat goes back to Hatbot's own.
+  func testAGroupDeletedElsewhereCloses() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    SlowBrain.routes["/conversations/1/messages?limit=50"] = "[\(Self.message(60, in: 1))]"
+    SlowBrain.routes["/conversations/2/messages?limit=50"] = "[\(Self.message(70, in: 2))]"
+    await MainActor.run { Self.twoChats(store) }
+    await store.openConversation(2)
+    await MainActor.run {
+      XCTAssertEqual(store.messages.map(\.id), [70])
+      store.apply(.conversationDeleted(id: 2))
+      XCTAssertEqual(store.messages, [])
+    }
+    try await Task.sleep(for: .milliseconds(400))
+    let (shown, ids, chats) = await MainActor.run { (store.conversationId, store.messages.map(\.id), store.conversations.map(\.id)) }
+    XCTAssertEqual(shown, 1)
+    XCTAssertEqual(ids, [60])
+    XCTAssertEqual(chats, [1])
   }
 }
 
