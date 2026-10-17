@@ -142,7 +142,7 @@ const ACTIVE: typeof ACTIVE_TASK_STATUSES = [
   "waiting_takeover",
 ];
 const FINAL: TaskStatus[] = ["done", "failed", "cancelled"];
-const RESTARTED = "Stopped: the brain restarted.";
+export const RESTARTED = "Stopped: the brain restarted.";
 
 export class Tasks {
   readonly lane = new ScreenLane();

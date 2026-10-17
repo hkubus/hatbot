@@ -12,14 +12,22 @@ import type { Notifier } from "./notify";
 import type { Plugins } from "./plugins/registry";
 import type { SettingsStore } from "./settings";
 import type { Spend } from "./spend";
-import type { Tasks } from "./tasks/service";
+import { RESTARTED, type Tasks } from "./tasks/service";
 
 export const HEARTBEAT_MODEL = "claude-haiku-5-5";
 const STATE_KEY = "heartbeat:state";
 /** Looks that found something, kept for Settings. */
 const KEEP_RUNS = 20;
 
-export type Signal = { key: string; text: string };
+/** Failed runs in a row of one schedule, trigger or watcher that are worth a word. */
+const REPEATS = 3;
+
+export type Signal = {
+  key: string;
+  text: string;
+  /** You were told already, or it's being looked into: kept as seen, so it isn't told later either. */
+  known?: boolean;
+};
 
 type Last = Omit<HeartbeatInfo, "recent">;
 
@@ -107,7 +115,7 @@ export class Heartbeat {
     // Saved first, so a look that crashes or hangs isn't started again every few seconds.
     this.save({ ...state, lastRunAt: now });
     const signals = await this.gather(since);
-    const fresh = signals.filter((s) => !(s.key in state.seen));
+    const fresh = signals.filter((s) => !s.known && !(s.key in state.seen));
     // A problem that's gone is forgotten, so it's told again if it comes back.
     const seen = Object.fromEntries(signals.map((s) => [s.key, state.seen[s.key] ?? now]));
     let last: Last = { at: now, found: [], action: "nothing", note: "", taskId: null };
@@ -126,17 +134,40 @@ export class Heartbeat {
   async gather(since: string): Promise<Signal[]> {
     const db = this.d.db;
     const out: Signal[] = [];
-    const failed = db
-      .query<{ id: number; title: string; summary: string | null }, [string]>(
-        `SELECT id, title, summary FROM tasks WHERE status = 'failed' AND parent_id IS NULL
-         AND origin != 'heartbeat' AND finished_at > ? ORDER BY id`,
+    // Each failed task was told when it ended, and the ones a restart stopped in one notification.
+    // What's new is a schedule, trigger or watcher whose runs keep failing.
+    const week = new Date(this.clock() - 7 * 86400_000).toISOString();
+    const runs = db
+      .query<
+        {
+          run_key: string;
+          id: number;
+          title: string;
+          status: string;
+          summary: string | null;
+          finished_at: string;
+        },
+        [string, string]
+      >(
+        `SELECT run_key, id, title, status, summary, finished_at FROM tasks
+         WHERE run_key IN (SELECT run_key FROM tasks WHERE status = 'failed' AND finished_at > ?)
+         AND parent_id IS NULL AND origin != 'heartbeat' AND status IN ('done', 'failed')
+         AND coalesce(summary, '') != ? ORDER BY run_key, id DESC`,
       )
-      .all(since);
-    for (const t of failed)
+      .all(week, RESTARTED);
+    const byRun = new Map<string, typeof runs>();
+    for (const r of runs) byRun.set(r.run_key, [...(byRun.get(r.run_key) ?? []), r]);
+    for (const [runKey, list] of byRun) {
+      const streak = list.findIndex((r) => r.status !== "failed");
+      const n = streak < 0 ? list.length : streak;
+      const last = list[0];
+      if (n < REPEATS || !last) continue;
       out.push({
-        key: `task:${t.id}`,
-        text: `Task #${t.id} "${t.title}" failed${t.summary ? `: ${t.summary.slice(0, 300)}` : ""}`,
+        key: `failing:${runKey}`,
+        text: `"${last.title}" has failed ${n} times in a row; the last, task #${last.id}${last.summary ? `: ${last.summary.slice(0, 300)}` : ""}`,
+        known: last.finished_at <= since,
       });
+    }
     const expired = db
       .query<{ id: number; summary: string }, [string]>(
         "SELECT id, summary FROM approvals WHERE status = 'expired' AND decided_at > ? ORDER BY id",
@@ -144,16 +175,7 @@ export class Heartbeat {
       .all(since);
     for (const a of expired)
       out.push({ key: `approval:${a.id}`, text: `An approval expired unanswered: ${a.summary}` });
-    const watchers = db
-      .query<{ id: number; name: string; last_error: string; errors: number }, []>(
-        "SELECT id, name, last_error, errors FROM watchers WHERE enabled = 1 AND errors >= 3",
-      )
-      .all();
-    for (const w of watchers)
-      out.push({
-        key: `watcher:${w.id}`,
-        text: `The watcher "${w.name}" has failed ${w.errors} checks in a row: ${w.last_error}`,
-      });
+    // A watcher that keeps failing tells you itself (watch/service.ts).
     for (const p of this.d.plugins.list())
       if (p.enabled && p.state === "error")
         out.push({
