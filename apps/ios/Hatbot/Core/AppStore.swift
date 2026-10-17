@@ -213,7 +213,8 @@ final class AppStore {
 
   func apply(_ event: HatbotEvent) {
     switch event {
-    case .messageRewrite, .messageDelta, .messageDone:
+    // An older brain's delta doesn't say where it goes, so it can't tell whether the page has it.
+    case .messageRewrite, .messageDelta(_, _, _?), .messageDone:
       for load in missed.keys { missed[load]?.append(event) }
     default: break
     }

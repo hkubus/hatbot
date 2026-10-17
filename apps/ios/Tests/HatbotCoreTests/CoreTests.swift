@@ -1344,6 +1344,23 @@ final class NetworkTests: XCTestCase {
     }
   }
 
+  /// An older brain's delta doesn't say where it goes: one that came while the chat loaded isn't added
+  /// again to the page.
+  func testAnOlderBrainsDeltaIsntDoubledByALoad() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    SlowBrain.routes["/thread/messages?limit=50"] =
+      #"[{"id":9,"role":"assistant","kind":"text","text":"Hello","status":"streaming","createdAt":"2026-10-15T08:00:00Z"}]"#
+    try await MainActor.run {
+      store.messages = [try JSONDecoder().decode(ThreadMessage.self, from: Data(#"{"id":9,"role":"assistant","kind":"text","text":"Hel","status":"streaming","createdAt":"2026-10-15T08:00:00Z"}"#.utf8))]
+    }
+    async let loaded: Void = store.loadThread()
+    try await Task.sleep(for: .milliseconds(50))
+    await MainActor.run { store.apply(.messageDelta(id: 9, text: "lo")) }
+    try await loaded
+    let text = await MainActor.run { store.reply(9)?.text }
+    XCTAssertEqual(text, "Hello")
+  }
+
   /// A save goes on top of the version that was read; one saved meanwhile comes back as a conflict
   /// with the newer copy, and nothing is written.
   func testMemorySavesSayWhichVersionTheyEdit() async throws {
