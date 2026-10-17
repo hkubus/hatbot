@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { MATCH_END, MATCH_START } from "@hatbot/shared";
+import { PRICES } from "../../brain/src/spend";
 import { modelName, plainText, usd } from "../src/format";
 
 describe("usd", () => {
@@ -17,7 +18,14 @@ describe("usd", () => {
 test("modelName", () => {
   expect(modelName("claude-opus-5-5")).toBe("Opus 5.5");
   expect(modelName("claude-haiku-5-5")).toBe("Haiku 5.5");
+  expect(modelName("claude-opus-4-8")).toBe("Opus 4.8");
+  expect(modelName("claude-opus-5")).toBe("Opus 5");
+  expect(modelName("claude-haiku-4-5-20251001")).toBe("Haiku 4.5");
   expect(modelName("some-new-model")).toBe("some-new-model");
+});
+
+test("every model the brain bills has a name, fallbacks too", () => {
+  for (const id of Object.keys(PRICES)) expect(modelName(id)).not.toBe(id);
 });
 
 describe("plainText", () => {
@@ -38,6 +46,9 @@ describe("plainText", () => {
     ["strikethrough", "~~$1,299~~ $999", "$1,299 $999"],
     ["snake_case and sums stay", "my_var_name is 2*3*4", "my_var_name is 2*3*4"],
     ["a cut-off snippet", "…the **disk was nearly", "…the disk was nearly"],
+    ["cut off after a mark", "was nearly full** and `tank", "was nearly full and tank"],
+    ["powers stay", "2**10 = 1024", "2**10 = 1024"],
+    ["spaced marks stay", "x ** 2, a ~~ b, use ` to quote", "x ** 2, a ~~ b, use ` to quote"],
   ];
   for (const [name, input, out] of cases) test(name, () => expect(plainText(input)).toBe(out));
 
