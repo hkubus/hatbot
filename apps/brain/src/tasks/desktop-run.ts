@@ -944,50 +944,67 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       priority: 4,
       click: `${d.config.publicUrl}/tasks/${id}?live=1`,
     });
-    if (d.desktop.get().control === "hatbot") {
-      // Until you take over, other tasks may use the screen; when you do, it's this task's first.
-      release();
-      tasks.setStatus(id, "waiting_takeover");
-      let failed: unknown = null;
-      let taken = () => {};
-      const asked = new Promise<void>((resolve) => {
-        taken = resolve;
-      });
-      const off = d.desktop.onTakeover(id, async () => {
-        try {
-          if (!holding)
-            await acquire(
-              true,
-              AbortSignal.any([signal, AbortSignal.timeout(limits.takeoverReadyMs)]),
-            );
-          taken();
-        } catch (err) {
-          // Another task kept the screen past the wait: you can try again. Anything else ends this one.
-          if (err instanceof Stop) {
-            failed = err;
+    // Ready for a Take over until you've handed back: one that fails after giving this task the screen
+    // gives it back, and the next gives it again.
+    let off = () => {};
+    try {
+      if (d.desktop.get().control === "hatbot") {
+        // Until you take over, other tasks may use the screen; when you do, it's this task's first.
+        release();
+        tasks.setStatus(id, "waiting_takeover");
+        let failed: unknown = null;
+        let taken = () => {};
+        const asked = new Promise<void>((resolve) => {
+          taken = resolve;
+        });
+        off = d.desktop.onTakeover(id, async () => {
+          try {
+            const had = holding;
+            if (!had)
+              await acquire(
+                true,
+                AbortSignal.any([signal, AbortSignal.timeout(limits.takeoverReadyMs)]),
+              );
             taken();
+            if (had) return undefined;
+            return () => {
+              // Its time was counted when it began waiting for you.
+              since = tasks.clock();
+              release();
+              tasks.setStatus(id, "waiting_takeover");
+            };
+          } catch (err) {
+            // Another task kept the screen past the wait: you can try again. Anything else ends this one.
+            if (err instanceof Stop) {
+              failed = err;
+              taken();
+            }
+            throw err;
           }
+        });
+        const timeout = AbortSignal.timeout(TAKEOVER_TIMEOUT_MS);
+        const until = AbortSignal.any([signal, timeout]);
+        try {
+          await new Promise<void>((resolve, reject) => {
+            if (until.aborted) return reject(until.reason);
+            until.addEventListener("abort", () => reject(until.reason), { once: true });
+            void asked.then(resolve);
+          });
+        } catch (err) {
+          if (timeout.aborted && !signal.aborted)
+            throw new Stop("cancelled", "Nobody took over the desktop within 24 hours.");
           throw err;
         }
-      });
-      const timeout = AbortSignal.timeout(TAKEOVER_TIMEOUT_MS);
-      const until = AbortSignal.any([signal, timeout]);
-      try {
-        await new Promise<void>((resolve, reject) => {
-          if (until.aborted) return reject(until.reason);
-          until.addEventListener("abort", () => reject(until.reason), { once: true });
-          void asked.then(resolve);
-        });
-      } catch (err) {
-        if (timeout.aborted && !signal.aborted)
-          throw new Stop("cancelled", "Nobody took over the desktop within 24 hours.");
-        throw err;
-      } finally {
-        off();
+        if (failed) throw failed;
       }
-      if (failed) throw failed;
+      await waitForOwner();
+    } finally {
+      off();
     }
-    await waitForOwner();
+    if (!holding) {
+      tasks.setStatus(id, "queued");
+      await acquire();
+    }
     d.desktop.clearRequest(id);
     tasks.addStep(id, { kind: "takeover", name: "You handed back", detail: "", url: lastUrl });
     return textResult(call, await look("After takeover", "The owner handed the desktop back."));

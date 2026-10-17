@@ -664,6 +664,39 @@ test("an unanswered takeover leaves the screen to other tasks; Take over gives i
   expect(t.desktop.get().request).toBeNull();
 });
 
+test("a Take over the desktop can't lock gives the screen back, and the next gives it again", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("request_takeover", { reason: "Solve the captcha" })] },
+    finish("B done."),
+    finish("A done."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const { cookie } = await setUpOwner(t);
+  const lock = t.agent.lock.bind(t.agent);
+  let down = true;
+  t.agent.lock = async () => {
+    if (down) throw new DesktopError("desktop-agent isn't answering", 502);
+    return lock();
+  };
+  const a = startTask(t, "A");
+  await waitFor(() => t.tasks.get(a.id)?.status === "waiting_takeover");
+  const failed = await t.call("POST", "/desktop/takeover", undefined, { cookie });
+  expect(failed.status).toBe(503);
+  expect(t.desktop.get()).toMatchObject({ control: "hatbot", request: { taskId: a.id } });
+  // A doesn't sit on the screen waiting for a hand-back: B runs meanwhile.
+  await waitFor(() => t.tasks.lane.holderId === null);
+  expect(t.tasks.get(a.id)?.status).toBe("waiting_takeover");
+  const b = startTask(t, "B");
+  await waitFor(() => t.tasks.get(b.id)?.status === "done");
+
+  down = false;
+  expect((await t.call("POST", "/desktop/takeover", undefined, { cookie })).status).toBe(200);
+  expect(t.tasks.lane.holderId).toBe(a.id);
+  expect((await t.call("POST", "/desktop/handback", undefined, { cookie })).status).toBe(200);
+  await t.tasks.idle();
+  expect(t.tasks.get(a.id)?.summary).toBe("A done.");
+});
+
 test("Take over says to try again while another task won't let go of the screen in time", async () => {
   limits.takeoverReadyMs = 100;
   let done = () => {};

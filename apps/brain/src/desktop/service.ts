@@ -7,6 +7,9 @@ import type { DesktopAgent } from "./client";
 /** Take over couldn't give the task that asked the screen in time: another task is mid-step. */
 export class DesktopBusy extends Error {}
 
+/** Gives a waiting task the screen for Take over; what it returns gives it back if Take over fails. */
+type Readying = () => Promise<(() => void) | undefined>;
+
 export class Desktop {
   private state: DesktopState = {
     online: false,
@@ -20,7 +23,7 @@ export class Desktop {
   /** Tasks asking for you, in turn. */
   private requests: { taskId: number; reason: string }[] = [];
   private served: number | null = null;
-  private readying = new Map<number, () => Promise<void>>();
+  private readying = new Map<number, Readying>();
 
   constructor(
     readonly agent: DesktopAgent,
@@ -79,11 +82,18 @@ export class Desktop {
   async takeover(forRequest = false) {
     const asked = forRequest && this.state.control !== "owner" ? this.state.request : null;
     const ready = asked ? this.readying.get(asked.taskId) : undefined;
-    if (ready)
-      await ready().catch(() => {
-        throw new DesktopBusy("Another task is using the desktop. Try again in a moment.");
-      });
-    await this.agent.lock();
+    const undo = ready
+      ? await ready().catch(() => {
+          throw new DesktopBusy("Another task is using the desktop. Try again in a moment.");
+        })
+      : undefined;
+    try {
+      await this.agent.lock();
+    } catch (err) {
+      // The task would hold the screen waiting for a hand-back that can't come.
+      undo?.();
+      throw err;
+    }
     this.served = asked?.taskId ?? null;
     this.set({ control: "owner" });
   }
@@ -112,10 +122,11 @@ export class Desktop {
   }
 
   /**
-   * While a task waits for you without the screen: `ready` gives it the screen when you take over for it,
-   * and rejects when it can't in time. Returns the way to stop.
+   * While a task waits for you: `ready` gives it the screen when you take over for it, and rejects when
+   * it can't in time; what it returns gives the screen back if Take over then fails. Returns the way to
+   * stop.
    */
-  onTakeover(taskId: number, ready: () => Promise<void>): () => void {
+  onTakeover(taskId: number, ready: Readying): () => void {
     this.readying.set(taskId, ready);
     return () => {
       if (this.readying.get(taskId) === ready) this.readying.delete(taskId);
