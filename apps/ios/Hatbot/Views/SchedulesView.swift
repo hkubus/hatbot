@@ -276,6 +276,8 @@ struct TriggerDetailView: View {
   @State private var confirmSecret = false
   @State private var confirmDelete = false
   @State private var error: String?
+  /// What a switch or picker was set to, until the brain has saved it.
+  @State private var setting = AppStore.TriggerChange()
 
   var body: some View {
     Group {
@@ -331,22 +333,17 @@ struct TriggerDetailView: View {
       }
       Section {
         TextField("Name", text: $name)
-        Toggle("On", isOn: binding(t.enabled) { AppStore.TriggerChange(enabled: $0) })
+        Toggle("On", isOn: saving(t.enabled, \.enabled))
         if store.botIds.count > 1 {
-          Picker(
-            "Runs as",
-            selection: Binding(
-              get: { t.botId ?? Bot.hatbot },
-              set: { new in Task { await act { _ = try await store.saveTrigger(id, AppStore.TriggerChange(botId: new)) } } })
-          ) {
+          Picker("Runs as", selection: saving(t.botId ?? Bot.hatbot, \.botId)) {
             ForEach(store.botIds, id: \.self) { Text(store.botName($0)).tag($0) }
           }
         }
         if t.kind == .webhook {
-          Toggle("Trust its payloads", isOn: binding(t.trusted) { AppStore.TriggerChange(trusted: $0) })
+          Toggle("Trust its payloads", isOn: saving(t.trusted, \.trusted))
         }
         if t.kind == .kuma, let checks = t.confirmChecks {
-          Picker("Start a task after", selection: confirmBinding(checks)) {
+          Picker("Start a task after", selection: saving(checks, \.confirmChecks)) {
             Text("First failure").tag(0)
             Text("2 failures").tag(1)
             Text("3 failures").tag(2)
@@ -407,19 +404,19 @@ struct TriggerDetailView: View {
     }
   }
 
-  /// A switch that saves as soon as it's flipped.
-  private func binding(_ value: Bool, _ change: @escaping (Bool) -> AppStore.TriggerChange) -> Binding<Bool> {
+  /// A switch or picker that saves as soon as it's changed, and shows the change while it saves.
+  private func saving<V: Equatable>(_ value: V, _ key: WritableKeyPath<AppStore.TriggerChange, V?>) -> Binding<V> {
     Binding(
-      get: { value },
-      set: { new in Task { await act { _ = try await store.saveTrigger(id, change(new)) } } })
-  }
-
-  /// Failed checks before a down alert starts a task; saves as soon as it's picked.
-  private func confirmBinding(_ value: Int) -> Binding<Int> {
-    Binding(
-      get: { value },
+      get: { setting[keyPath: key] ?? value },
       set: { new in
-        Task { await act { _ = try await store.saveTrigger(id, AppStore.TriggerChange(confirmChecks: new)) } }
+        setting[keyPath: key] = new
+        var change = AppStore.TriggerChange()
+        change[keyPath: key] = new
+        Task {
+          await act { _ = try await store.saveTrigger(id, change) }
+          // Saved, or put back: the trigger shows which.
+          if setting[keyPath: key] == new { setting[keyPath: key] = nil }
+        }
       })
   }
 

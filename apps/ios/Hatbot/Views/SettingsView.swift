@@ -11,6 +11,8 @@ struct SettingsView: View {
   @State private var confirmPause = false
   @State private var confirmSignOut = false
   @State private var error: String?
+  /// Changes made here; an answer for one that a later change has overtaken isn't shown.
+  @State private var changes = 0
 
   var body: some View {
     NavigationStack(path: $path) {
@@ -63,53 +65,71 @@ struct SettingsView: View {
           if let tidy = settings?.memoryTidy {
             Toggle(
               "Propose a memory tidy-up weekly",
-              isOn: Binding(
-                get: { tidy },
-                set: { on in Task { await act { settings = try await store.setMemoryTidy(on) } } }))
+              isOn: newerSetting(tidy, \.memoryTidy) { try await store.setMemoryTidy($0.memoryTidy ?? tidy) })
           }
         }
         if let settings {
           Section("Chat") {
             if let model = settings.chatModel {
-              Picker("Model", selection: chatModel(model)) {
+              Picker(
+                "Model", selection: newerSetting(model, \.chatModel) { try await store.setChatModel($0.chatModel ?? model) }
+              ) {
                 Text("Haiku 5.5, asks Opus for hard parts").tag(AppSettings.ChatModel.haiku)
                 Text("Opus 5.5").tag(AppSettings.ChatModel.opus)
+                // One set elsewhere that this app doesn't know: shown as it is.
+                if !AppSettings.ChatModel.known.contains(model) { Text(model.rawValue).tag(model) }
               }
             }
-            Picker("Effort", selection: effort(settings)) {
+            Picker(
+              "Effort", selection: setting(settings.chatEffort, \.chatEffort) { try await store.setChatEffort($0.chatEffort) }
+            ) {
               Text("Low").tag(AppSettings.Effort.low)
               Text("Medium").tag(AppSettings.Effort.medium)
+              if !AppSettings.Effort.known.contains(settings.chatEffort) {
+                Text(settings.chatEffort.rawValue.capitalized).tag(settings.chatEffort)
+              }
             }
           }
           if let model = settings.taskModel {
             Section("Tasks") {
-              Picker("Model for background tasks", selection: taskModel(model)) {
+              Picker(
+                "Model for background tasks",
+                selection: newerSetting(model, \.taskModel) { try await store.setTaskModel($0.taskModel ?? model) }
+              ) {
                 Text("Haiku 5.5").tag(AppSettings.TaskModel.haiku)
                 Text("Opus 5.5").tag(AppSettings.TaskModel.opus)
+                if !AppSettings.TaskModel.known.contains(model) { Text(model.rawValue).tag(model) }
               }
             }
           }
           if let model = settings.desktopModel {
             Section("Desktop") {
-              Picker("Model for desktop tasks", selection: desktopModel(model)) {
+              Picker(
+                "Model for desktop tasks",
+                selection: newerSetting(model, \.desktopModel) { try await store.setDesktopModel($0.desktopModel ?? model) }
+              ) {
                 Text("Haiku 5.5").tag(AppSettings.DesktopModel.haiku)
                 Text("Opus 5.5").tag(AppSettings.DesktopModel.opus)
+                if !AppSettings.DesktopModel.known.contains(model) { Text(model.rawValue).tag(model) }
               }
               if model == .haiku, let escalate = settings.desktopEscalate {
                 Toggle(
                   "Try again on Opus when Haiku fails",
-                  isOn: Binding(
-                    get: { escalate },
-                    set: { on in
-                      Task { await act { self.settings = try await store.setDesktopEscalate(on) } }
-                    }))
+                  isOn: newerSetting(escalate, \.desktopEscalate) {
+                    try await store.setDesktopEscalate($0.desktopEscalate ?? escalate)
+                  })
               }
             }
           }
           // Brains from before the setting don't have it.
           if let opens = settings.notificationsOpen {
             Section {
-              Picker("Tapping one opens", selection: notificationsOpen(opens)) {
+              Picker(
+                "Tapping one opens",
+                selection: newerSetting(opens, \.notificationsOpen) {
+                  try await store.setNotificationsOpen($0.notificationsOpen ?? opens)
+                }
+              ) {
                 Text("The web app").tag(AppSettings.Opens.web)
                 Text("This app").tag(AppSettings.Opens.app)
               }
@@ -124,9 +144,7 @@ struct SettingsView: View {
           if let review = settings?.reviewChanges {
             Toggle(
               "Let Haiku allow safe changes",
-              isOn: Binding(
-                get: { review },
-                set: { on in Task { await act { settings = try await store.setReviewChanges(on) } } }))
+              isOn: newerSetting(review, \.reviewChanges) { try await store.setReviewChanges($0.reviewChanges ?? review) })
           }
           if store.paused {
             Button("Resume") { Task { await act { try await store.setPaused(false) } } }
@@ -161,56 +179,57 @@ struct SettingsView: View {
     return "\(Format.money(usd)) of \(Format.money(limit))"
   }
 
-  private func effort(_ current: AppSettings) -> Binding<AppSettings.Effort> {
+  /// A setting's control. A change shows at once, as the switch or picker moved, and is saved behind it;
+  /// if saving fails, it goes back and says why.
+  private func setting<V>(
+    _ current: V, _ key: WritableKeyPath<AppSettings, V>, save: @escaping (AppSettings) async throws -> AppSettings
+  ) -> Binding<V> {
     Binding(
-      get: { current.chatEffort },
-      set: { value in
-        Task { await act { settings = try await store.setChatEffort(value) } }
-      })
+      get: { settings?[keyPath: key] ?? current },
+      set: { value in change({ $0[keyPath: key] = value }, save: save) })
   }
 
-  private func chatModel(_ current: AppSettings.ChatModel) -> Binding<AppSettings.ChatModel> {
+  /// The same, for a setting older brains don't have.
+  private func newerSetting<V>(
+    _ current: V, _ key: WritableKeyPath<AppSettings, V?>, save: @escaping (AppSettings) async throws -> AppSettings
+  ) -> Binding<V> {
     Binding(
-      get: { current },
-      set: { value in
-        Task { await act { settings = try await store.setChatModel(value) } }
-      })
-  }
-
-  private func taskModel(_ current: AppSettings.TaskModel) -> Binding<AppSettings.TaskModel> {
-    Binding(
-      get: { current },
-      set: { value in
-        Task { await act { settings = try await store.setTaskModel(value) } }
-      })
-  }
-
-  private func desktopModel(_ current: AppSettings.DesktopModel) -> Binding<AppSettings.DesktopModel> {
-    Binding(
-      get: { current },
-      set: { value in
-        Task { await act { settings = try await store.setDesktopModel(value) } }
-      })
-  }
-
-  private func notificationsOpen(_ current: AppSettings.Opens) -> Binding<AppSettings.Opens> {
-    Binding(
-      get: { current },
-      set: { value in
-        Task { await act { settings = try await store.setNotificationsOpen(value) } }
-      })
+      get: { settings?[keyPath: key] ?? current },
+      set: { value in change({ $0[keyPath: key] = value }, save: save) })
   }
 
   private func weeklyReport<V>(
     _ current: AppSettings.WeeklyReport, _ key: WritableKeyPath<AppSettings.WeeklyReport, V>
   ) -> Binding<V> {
     Binding(
-      get: { current[keyPath: key] },
+      get: { (settings?.weeklyReport ?? current)[keyPath: key] },
       set: { value in
-        var next = current
-        next[keyPath: key] = value
-        Task { await act { settings = try await store.setWeeklyReport(next) } }
+        change({ s in
+          var report = s.weeklyReport ?? current
+          report[keyPath: key] = value
+          s.weeklyReport = report
+        }) { try await store.setWeeklyReport($0.weeklyReport ?? current) }
       })
+  }
+
+  private func change(_ edit: (inout AppSettings) -> Void, save: @escaping (AppSettings) async throws -> AppSettings) {
+    guard let before = settings else { return }
+    var next = before
+    edit(&next)
+    settings = next
+    changes += 1
+    let mine = changes
+    Task {
+      error = nil
+      do {
+        let saved = try await save(next)
+        // A later change is on its way, and its answer has this one in it.
+        if mine == changes { settings = saved }
+      } catch {
+        if mine == changes { settings = before }
+        self.error = message(for: error)
+      }
+    }
   }
 
   private func load() async {

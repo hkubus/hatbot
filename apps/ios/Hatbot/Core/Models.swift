@@ -537,9 +537,14 @@ struct AppSettings: Codable, Equatable, Sendable {
     var email: String
   }
 
-  enum Effort: String, LenientEnum, CaseIterable {
-    case low, medium
-    static let fallback = Effort.low
+  /// Open, like the models below: an effort this app doesn't know yet stays as the brain sent it, so
+  /// saving a bot or a setting doesn't quietly turn it into one it knows.
+  struct Effort: RawRepresentable, Codable, Hashable, Sendable {
+    let rawValue: String
+    init(rawValue: String) { self.rawValue = rawValue }
+    static let low = Effort(rawValue: "low")
+    static let medium = Effort(rawValue: "medium")
+    static let known = [low, medium]
   }
 
   /// What tapping a notification opens.
@@ -585,22 +590,28 @@ struct AppSettings: Codable, Equatable, Sendable {
     var hour: Int
   }
 
-  enum ChatModel: String, LenientEnum, CaseIterable {
-    case haiku = "claude-haiku-5-5"
-    case opus = "claude-opus-5-5"
-    static let fallback = ChatModel.haiku
+  struct ChatModel: RawRepresentable, Codable, Hashable, Sendable {
+    let rawValue: String
+    init(rawValue: String) { self.rawValue = rawValue }
+    static let haiku = ChatModel(rawValue: "claude-haiku-5-5")
+    static let opus = ChatModel(rawValue: "claude-opus-5-5")
+    static let known = [haiku, opus]
   }
 
-  enum DesktopModel: String, LenientEnum, CaseIterable {
-    case opus = "claude-opus-5-5"
-    case haiku = "claude-haiku-5-5"
-    static let fallback = DesktopModel.opus
+  struct DesktopModel: RawRepresentable, Codable, Hashable, Sendable {
+    let rawValue: String
+    init(rawValue: String) { self.rawValue = rawValue }
+    static let opus = DesktopModel(rawValue: "claude-opus-5-5")
+    static let haiku = DesktopModel(rawValue: "claude-haiku-5-5")
+    static let known = [opus, haiku]
   }
 
-  enum TaskModel: String, LenientEnum, CaseIterable {
-    case haiku = "claude-haiku-5-5"
-    case opus = "claude-opus-5-5"
-    static let fallback = TaskModel.haiku
+  struct TaskModel: RawRepresentable, Codable, Hashable, Sendable {
+    let rawValue: String
+    init(rawValue: String) { self.rawValue = rawValue }
+    static let haiku = TaskModel(rawValue: "claude-haiku-5-5")
+    static let opus = TaskModel(rawValue: "claude-opus-5-5")
+    static let known = [haiku, opus]
   }
 }
 

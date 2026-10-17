@@ -521,6 +521,26 @@ final class FoldTests: XCTestCase {
     XCTAssertFalse(json.contains("\"icon\""))
   }
 
+  /// A model or effort from a newer brain stays itself, and saving the bot or setting sends it back so.
+  func testKeepsModelsAndEffortsItDoesntKnow() throws {
+    let json = #"""
+      {"id":"coder","name":"Coder","instructions":"","chatModel":"claude-sonnet-6","chatEffort":"high",
+       "plugins":null,"createdAt":"2026-10-14T08:00:00.000Z"}
+      """#
+    let b = try JSONDecoder().decode(Bot.self, from: Data(json.utf8))
+    XCTAssertEqual(b.chatModel?.rawValue, "claude-sonnet-6")
+    XCTAssertEqual(b.chatEffort?.rawValue, "high")
+    XCTAssertFalse(AppSettings.ChatModel.known.contains(b.chatModel!))
+    let change = AppStore.BotChange(
+      name: nil, instructions: "", chatModel: b.chatModel, chatEffort: b.chatEffort, plugins: nil)
+    let sent = String(decoding: try JSONEncoder().encode(change), as: UTF8.self)
+    XCTAssertTrue(sent.contains(#""chatModel":"claude-sonnet-6""#))
+    XCTAssertTrue(sent.contains(#""chatEffort":"high""#))
+    // Known ones are the same values as before.
+    XCTAssertEqual(try JSONDecoder().decode(AppSettings.DesktopModel.self, from: Data(#""claude-haiku-5-5""#.utf8)), .haiku)
+    XCTAssertEqual(String(decoding: try JSONEncoder().encode(AppSettings.TaskModel.opus), as: UTF8.self), #""claude-opus-5-5""#)
+  }
+
   func testDecodesEpisodeEvents() throws {
     let json = #"{"type":"episode.updated","episode":{"id":4,"startedAt":"a","lastActivityAt":"b","recap":"R"}}"#
     guard case let .episodeUpdated(e) = try JSONDecoder().decode(HatbotEvent.self, from: Data(json.utf8)) else {

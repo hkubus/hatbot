@@ -172,6 +172,8 @@ struct WatcherDetailView: View {
   private var watcher: Watcher? { store.watchers[id] }
   private var missing: Bool { notFound || store.deletedWatchers.contains(id) }
   @State private var busy = false
+  /// On or off as switched, until the brain has saved it.
+  @State private var enabled: Bool?
   /// Running the page's scripts, as switched, until the brain has read the page that way.
   @State private var render: Bool?
   @State private var confirmDelete = false
@@ -203,8 +205,14 @@ struct WatcherDetailView: View {
         Toggle(
           "On",
           isOn: Binding(
-            get: { w.enabled },
-            set: { on in Task { await act { _ = try await store.setWatcherEnabled(id, on) } } }))
+            get: { enabled ?? w.enabled },
+            set: { on in
+              enabled = on
+              Task {
+                await act { _ = try await store.setWatcherEnabled(id, on) }
+                enabled = nil
+              }
+            }))
         LabeledContent(w.source.kind == .page ? "Page" : "Tool", value: w.source.text)
         if w.source.kind == .page {
           Toggle(

@@ -125,11 +125,18 @@ struct BotView: View {
           Text("As in Settings").tag(AppSettings.ChatModel?.none)
           Text("Haiku 5.5").tag(AppSettings.ChatModel?.some(.haiku))
           Text("Opus 5.5").tag(AppSettings.ChatModel?.some(.opus))
+          // One set elsewhere that this app doesn't know: shown, and kept, as it is.
+          if let m = form.chatModel, !AppSettings.ChatModel.known.contains(m) {
+            Text(m.rawValue).tag(AppSettings.ChatModel?.some(m))
+          }
         }
         Picker("Effort", selection: $form.chatEffort) {
           Text("As in Settings").tag(AppSettings.Effort?.none)
           Text("Low").tag(AppSettings.Effort?.some(.low))
           Text("Medium").tag(AppSettings.Effort?.some(.medium))
+          if let e = form.chatEffort, !AppSettings.Effort.known.contains(e) {
+            Text(e.rawValue.capitalized).tag(AppSettings.Effort?.some(e))
+          }
         }
       }
       if !plugins.isEmpty {
