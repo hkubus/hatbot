@@ -139,10 +139,14 @@ const CAREFUL: Record<string, string> = {
   rest_command: "It sends a request to another service.",
 };
 
-/** Who can get in: these always ask, whatever Haiku's review says. */
+/**
+ * Who can get in: these always ask, whatever Haiku's review says, and as "access", which a locked
+ * phone's notification can't approve.
+ */
 const ACCESS = new Set(["lock", "alarm_control_panel", "cover"]);
+const askAccess = (why: string) => askAlways(why, "access");
 const careful = (domain: string) =>
-  ACCESS.has(domain) ? askAlways(CAREFUL[domain] ?? "") : ask(CAREFUL[domain] ?? "");
+  ACCESS.has(domain) ? askAccess(CAREFUL[domain] ?? "") : ask(CAREFUL[domain] ?? "");
 
 /** Targets that stand for many entities: Home Assistant resolves them, so they can hide a lock. */
 const INDIRECT = ["area_id", "device_id", "label_id", "floor_id"];
@@ -401,12 +405,12 @@ export const homeassistantPlugin = definePlugin({
           const targets = targetsOf(entity_id, data);
           const odd = targets.find((t) => !ENTITY_ID.test(t) && t !== "all" && t !== "none");
           if (odd)
-            return askAlways(
+            return askAccess(
               `${JSON.stringify(odd)} isn't an entity id as Home Assistant writes them, so what it reaches isn't known.`,
             );
           const reached = expand(targets);
           const door = reached.find(isAccess);
-          if (door) return askAlways(accessWhy(door));
+          if (door) return askAccess(accessWhy(door));
           // Home Assistant resolves areas, devices, labels, floors and "all" itself. A service only
           // acts on its own domain's entities, so they matter where a door could be among them.
           const target = (data?.target ?? {}) as Record<string, unknown>;
@@ -419,7 +423,7 @@ export const homeassistantPlugin = definePlugin({
               ["homeassistant", "scene"].includes(domain) ||
               [...marked].some((id) => domainOf(id) === domain))
           )
-            return askAlways(
+            return askAccess(
               "It acts on a whole area, device, label or floor, which can include a lock, the alarm, a door or a gate.",
             );
           // A switch group can hold a gate on a switch: until the states are known, any entity in
@@ -432,7 +436,7 @@ export const homeassistantPlugin = definePlugin({
           if (unseen.length) {
             // So the next call knows it, if Home Assistant was down when this one started.
             relearn();
-            return askAlways(
+            return askAccess(
               `It isn't known yet what ${unseen.join(", ")} sets or holds, and a scene or group can open a door.`,
             );
           }

@@ -19,11 +19,12 @@ const VERDICT = {
   additionalProperties: false,
 };
 
-/** These always ask: money, accounts, spending more, and suspected injection. */
+/** These always ask: money, accounts, who can get in, spending more, and suspected injection. */
 const ALWAYS_ASK: ApprovalKind[] = [
   "payment",
   "purchase",
   "account_security",
+  "access",
   "budget",
   "injection_warning",
 ];

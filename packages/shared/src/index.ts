@@ -255,6 +255,8 @@ export type ApprovalKind =
   | "payment"
   | "delete"
   | "account_security"
+  /** Who can get into the house: a lock, the alarm, a door or gate, or a scene or group with one. */
+  | "access"
   | "injection_warning"
   | "budget"
   /** A negotiation's mandate (PLAN.md §16.1): what the bot may do on its own with one seller. */
