@@ -138,7 +138,8 @@ test("the request goes to the address that was checked, not to a second lookup",
 });
 
 test("redirects are followed up to five, each hop checked", async () => {
-  const r = await fetchPage(`${base}/hop?n=5`, { resolve });
+  // A scheme in capitals is still http.
+  const r = await fetchPage(`HTTP://127.0.0.1:${server.port}/hop?n=5`, { resolve });
   expect(r.body).toBe("arrived");
   expect(r.url).toBe(`${base}/hop?n=0`);
   await expect(fetchPage(`${base}/hop?n=6`, { resolve })).rejects.toThrow("redirects");

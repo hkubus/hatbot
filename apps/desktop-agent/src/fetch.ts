@@ -83,36 +83,37 @@ export function privateAddress(ip: string): boolean {
   );
 }
 
-/** Where `host` may be fetched from: its addresses when every one is on the internet, or why not. */
-async function addressesOf(
-  host: string,
-  own: string[],
-): Promise<{ addresses: string[] } | { refused: string }> {
+/** `target` as a URL, when it's an http or https one. */
+export function webUrl(target: string): URL {
+  let url: URL;
+  try {
+    url = new URL(target);
+  } catch {
+    throw new FetchError(`"${target}" isn't a URL.`, 400);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:")
+    throw new FetchError("Only http and https.", 400);
+  return url;
+}
+
+/**
+ * The address to connect to for `host`, IPv4 first (the desktop has no IPv6 route). It refuses a host
+ * that is, or resolves to, an address off the internet or one of the desktop's own (`own`).
+ */
+export async function resolveHost(host: string, own: string[]): Promise<string> {
   const bare = host.replace(/^\[|\]$/g, "");
-  let addrs: string[];
+  let addrs: string[] = [];
   try {
     addrs = isIP(bare) ? [bare] : (await lookup(bare, { all: true })).map((a) => a.address);
-  } catch {
-    return { refused: `Couldn't find ${host}.` };
-  }
-  if (!addrs.length) return { refused: `Couldn't find ${host}.` };
+  } catch {}
+  if (!addrs.length) throw new FetchError(`Couldn't find ${host}.`, 400);
   const bad = addrs.find((a) => privateAddress(a) || own.includes(a));
   if (bad)
-    return { refused: `${host} is a local address (${bad}); only the internet can be fetched.` };
-  return { addresses: addrs };
-}
-
-/** Refuses a host that is, or resolves to, an address off the internet or the desktop's own. */
-export async function checkHost(host: string, own: string[]): Promise<string | null> {
-  const r = await addressesOf(host, own);
-  return "refused" in r ? r.refused : null;
-}
-
-/** The checked address to connect to for `host`, IPv4 first (the desktop has no IPv6 route). */
-export async function resolveHost(host: string, own: string[]): Promise<string> {
-  const r = await addressesOf(host, own);
-  if ("refused" in r) throw new FetchError(r.refused, 400);
-  return (r.addresses.find((a) => isIP(a) === 4) ?? r.addresses[0]) as string;
+    throw new FetchError(
+      `${host} is a local address (${bad}); only the internet can be fetched.`,
+      400,
+    );
+  return (addrs.find((a) => isIP(a) === 4) ?? addrs[0]) as string;
 }
 
 export type FetchOptions = {
@@ -128,14 +129,7 @@ export async function fetchPage(target: string, opts: FetchOptions = {}): Promis
   const signal = AbortSignal.timeout(opts.timeoutMs ?? 20_000);
   let url = target;
   for (let hop = 0; ; hop++) {
-    let parsed: URL;
-    try {
-      parsed = new URL(url);
-    } catch {
-      throw new FetchError(`"${url}" isn't a URL.`, 400);
-    }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
-      throw new FetchError("Only http and https.", 400);
+    const parsed = webUrl(url);
     let address: string;
     try {
       address = await resolve(parsed.hostname);

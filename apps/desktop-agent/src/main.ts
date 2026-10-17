@@ -249,8 +249,6 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array; input?: boolea
           // For watchers: the desktop's firewall lets it reach only the internet, so the brain fetches
           // pages from here instead of from the LAN. Not serialised: it doesn't touch the screen.
           const { url: target } = (await req.json()) as { url: string };
-          if (!/^https?:\/\//.test(target ?? ""))
-            return json({ error: "Only http and https." }, 400);
           try {
             return json(await fetchPage(target, { own: [host ?? ""] }));
           } catch (err) {

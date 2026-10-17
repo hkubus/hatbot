@@ -71,7 +71,7 @@ const server = Bun.serve({
 afterAll(() => server.stop(true));
 const base = `http://127.0.0.1:${server.port}`;
 // The test server is on loopback, which the real check refuses.
-const opts = { chromium: chromium ?? "", check: async () => null };
+const opts = { chromium: chromium ?? "", check: async () => {} };
 const call = (path: string, body: unknown, o: object = opts) =>
   handle(
     new Request(`http://render${path}`, { method: "POST", body: JSON.stringify(body) }),
@@ -113,6 +113,7 @@ test("only the internet, over http and https", async () => {
   );
   for (const url of [
     "http://localhost:9222/json/version",
+    "HTTP://LOCALHOST:9222/json/version",
     "http://[::ffff:127.0.0.1]:9222/json/list",
     "http://[::127.0.0.1]:9222/json/list",
     "http://0.0.0.0:9222/json/list",

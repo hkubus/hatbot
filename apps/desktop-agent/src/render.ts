@@ -10,7 +10,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RenderResult } from "@hatbot/shared/desktop";
-import { checkHost, FetchError, MAX_FETCH_CHARS, readCapped, USER_AGENT } from "./fetch";
+import { FetchError, MAX_FETCH_CHARS, readCapped, resolveHost, USER_AGENT, webUrl } from "./fetch";
 
 export const RENDER_SOCKET = process.env.HATBOT_RENDER_SOCKET ?? "/run/hatbot-render/render.sock";
 /** Chromium is killed after this, whatever it's doing. */
@@ -25,24 +25,15 @@ const TEST_PAGE = `data:text/html,${encodeURIComponent(
 export type RenderOptions = {
   /** Debian's binary is chromium. */
   chromium?: string;
-  /** Says why a host may not be rendered, or null; tests replace the DNS check. */
-  check?: (host: string) => Promise<string | null>;
+  /** Throws a FetchError for a host that may not be rendered; tests replace the DNS check. */
+  check?: (host: string) => Promise<unknown>;
   timeoutMs?: number;
 };
 
 /** The page at `target` after its scripts ran. Throws FetchError. */
 export async function renderPage(target: string, opts: RenderOptions = {}): Promise<RenderResult> {
-  let url: URL;
-  try {
-    url = new URL(target);
-  } catch {
-    throw new FetchError(`"${target}" isn't a URL.`, 400);
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:")
-    throw new FetchError("Only http and https.", 400);
-  const check = opts.check ?? ((host: string) => checkHost(host, ownAddresses()));
-  const refused = await check(url.hostname);
-  if (refused) throw new FetchError(refused, 400);
+  const url = webUrl(target);
+  await (opts.check ?? ((host: string) => resolveHost(host, ownAddresses())))(url.hostname);
   const html = await dumpDom(url.href, opts);
   const failed = loadError(html);
   if (failed) throw new FetchError(`Couldn't load it: ${failed}.`, 502);
