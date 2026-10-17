@@ -27,7 +27,7 @@ const PURPOSE_NAMES: Record<string, string> = {
   task: "Tasks",
   summary: "Summaries",
   expert: "Asking Opus",
-  research: "Research helpers",
+  research: "Research",
   review: "Reviewing changes",
   screening: "Checking pages",
   heartbeat: "Heartbeat",
