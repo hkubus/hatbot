@@ -23,8 +23,9 @@ test("the composer says it has a menu, and which line in it is picked", () => {
   };
   const open = html("/");
   const box = /<textarea[^>]*>/.exec(open)?.[0] ?? "";
-  expect(box).toContain('role="combobox"');
-  expect(box).toContain('aria-expanded="true"');
+  // A textarea keeps its own role, a multi-line text box; a combobox role isn't allowed on one.
+  expect(box).not.toContain("role=");
+  expect(box).not.toContain("aria-expanded");
   expect(box).toContain('aria-autocomplete="list"');
   const menu = /aria-controls="([^"]+)"/.exec(box)?.[1];
   const picked = /aria-activedescendant="([^"]+)"/.exec(box)?.[1];
@@ -33,7 +34,7 @@ test("the composer says it has a menu, and which line in it is picked", () => {
     new RegExp(`id="${picked}"[^>]*role="option"[^>]*tabindex="-1"[^>]*aria-selected="true"`),
   );
   const closed = /<textarea[^>]*>/.exec(html("hello"))?.[0] ?? "";
-  expect(closed).toContain('aria-expanded="false"');
+  expect(closed).not.toContain("aria-controls");
   expect(closed).not.toContain("aria-activedescendant");
   drafts.saveDraftText("7", "");
 });

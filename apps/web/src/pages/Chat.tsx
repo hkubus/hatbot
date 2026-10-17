@@ -1273,11 +1273,10 @@ export function Composer({ chat, onSend }: { chat: string; onSend: () => void })
         <textarea
           ref={textarea}
           rows={1}
-          // The menu over it: commands after "/", a group's bots after "@".
-          role="combobox"
+          // The menu over it: commands after "/", a group's bots after "@". A textarea keeps its own
+          // role (combobox isn't allowed on one), which takes all of these but aria-expanded.
           aria-label={`Message ${name}`}
           aria-autocomplete="list"
-          aria-expanded={options.length > 0}
           aria-controls={options.length > 0 ? menuId : undefined}
           aria-activedescendant={picked ? `${menuId}-${picked.key}` : undefined}
           placeholder={incognito ? `Message ${name} incognito…` : `Message ${name}…`}
