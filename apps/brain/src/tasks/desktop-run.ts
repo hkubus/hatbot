@@ -585,6 +585,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       // Outside a negotiation, anything that could message a seller asks first.
       if (!gate && !label) label = marketplaceSend(check, el, lastUrl);
       if (gate) {
+        // Closed, or its mandate ran out, since the task started.
+        gateState.stopped ||= tasks.negotiations?.sendStopped(id) ?? null;
         const g = gateCheck(gate, gateState, check, el, label);
         if (g.action === "hold") {
           tasks.addStep(id, { kind: "note", name: "Held back", detail: g.why, url: lastUrl });

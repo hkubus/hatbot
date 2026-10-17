@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Mandate, Negotiation } from "@hatbot/shared";
+import type { Mandate, Negotiation, NegotiationDetail } from "@hatbot/shared";
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { Approvals } from "../src/approvals";
 import { EventBus } from "../src/events";
@@ -13,7 +13,7 @@ import type { CallContext, PluginTool } from "../src/plugins/plugin";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { sendConfirm } from "../src/tasks/desktop-run";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
-import { ORIGIN, type TestApp, testApp, waitFor } from "./helpers";
+import { ORIGIN, setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
 
 sendConfirm.everyMs = 1;
 
@@ -583,6 +583,94 @@ test("closing writes the bot's notes; agreeing outside the mandate asks", async 
   expect(t.approvals.get(a.id)?.status).toBe("cancelled");
   expect(t.negotiations.get(waiting.id)?.status).toBe("abandoned");
   await t.plugins.stopAll();
+});
+
+test("closing a negotiation cancels a send that's queued; one closed meanwhile isn't sent", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
+  await withScout(t, false);
+  messageBox(t);
+  const n = openNegotiation(t);
+  // Another task has the screen, so the send waits for it.
+  await t.tasks.lane.acquire(-5, new AbortController().signal);
+  await t.negotiations.send(n, { text: TEXT, offer: 1060, agree: false, stated: null }, call());
+  expect(t.tasks.get(1)?.status).toBe("queued");
+  const close = named(negotiateTools(t), "negotiate_close");
+  await runPluginTool(close, { negotiation: n.id, outcome: "lost" }, call());
+  t.tasks.lane.release(-5);
+  await t.tasks.idle();
+  expect(t.tasks.get(1)?.status).toBe("cancelled");
+  expect(t.negotiations.messages(n.id)[0]?.status).toBe("failed");
+  expect(t.agent.actions).toEqual([]);
+
+  // Closed while its task runs: the record says so, and the click is held.
+  const work = new FakeModel([
+    { content: [toolUse("record_conversation", { messages: [] })] },
+    { content: [computer("type", { text: TEXT })] },
+    { content: [computer("left_click", { coordinate: [300, 500] })] },
+    { content: [toolUse("record_conversation", { messages: [] })] },
+    finish("It was closed."),
+  ]);
+  const u = await testApp(new FakeModel(), work);
+  messageBox(u);
+  const m = openNegotiation(u);
+  const typed = u.agent.afterAction;
+  u.agent.afterAction = (name, input) => {
+    typed?.(name, input);
+    if (name === "type") u.negotiations.update(m.id, { status: "lost" });
+  };
+  await u.negotiations.send(m, { text: TEXT, offer: 1060, agree: false, stated: null }, call());
+  await u.tasks.idle();
+  expect(results(work, 3)).toContain("Negotiation #1 is lost: nothing more is sent.");
+  expect(results(work, 4)).toContain("Negotiation #1 is lost: nothing more is sent.");
+  expect(u.agent.actions.some((a) => a.name === "left_click")).toBe(false);
+  expect(u.negotiations.messages(m.id)[0]?.status).toBe("failed");
+  // A send task for a closed negotiation only reads.
+  expect(u.negotiations.gateFor(1)).toMatchObject({ mode: "read", text: null });
+  await t.plugins.stopAll();
+});
+
+test("a negotiation whose mandate runs out expires, and its tasks stop", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel());
+  messageBox(t);
+  const n = openNegotiation(t);
+  await t.tasks.lane.acquire(-5, new AbortController().signal);
+  await t.negotiations.check(n, call());
+  t.negotiations.due();
+  expect(t.negotiations.get(n.id)?.status).toBe("open");
+  t.advance(Date.parse(MANDATE.expiresAt) - Date.parse("2026-10-09T12:00:00Z"));
+  t.negotiations.due();
+  expect(t.negotiations.get(n.id)).toMatchObject({ status: "expired" });
+  expect(t.negotiations.get(n.id)?.closedAt).toBeTruthy();
+  t.tasks.lane.release(-5);
+  await t.tasks.idle();
+  expect(t.tasks.get(1)?.status).toBe("cancelled");
+});
+
+test("you can stop a negotiation; two closes at once both keep their notes", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel());
+  const { cookie } = await setUpOwner(t);
+  const n = openNegotiation(t);
+  t.negotiations.update(n.id, { status: "awaiting_mandate" });
+  const a = t.negotiations.askMandate(t.negotiations.get(n.id) as Negotiation);
+  const res = await t.call("POST", `/negotiations/${n.id}/close`, {}, { cookie });
+  expect(res.status).toBe(200);
+  expect(((await res.json()) as NegotiationDetail).negotiation.status).toBe("abandoned");
+  expect(t.approvals.get(a.id)?.status).toBe("cancelled");
+  expect(await t.memory.read("negotiations.md")).toContain("Stopped by the owner.");
+  expect((await t.call("POST", `/negotiations/${n.id}/close`, {}, { cookie })).status).toBe(409);
+  expect((await t.call("POST", "/negotiations/99/close", {}, { cookie })).status).toBe(404);
+  expect((await t.call("POST", `/negotiations/${n.id}/close`, {})).status).toBe(401);
+
+  const first = openNegotiation(t);
+  const second = openNegotiation(t);
+  const bot = t.bots.hatbot().id;
+  await Promise.all([
+    t.negotiations.close(bot, first, "lost", null, "First seller sold it."),
+    t.negotiations.close(bot, second, "abandoned", null, "Second seller went quiet."),
+  ]);
+  const notes = await t.memory.read("negotiations.md");
+  expect(notes).toContain("First seller sold it.");
+  expect(notes).toContain("Second seller went quiet.");
 });
 
 test("the send gate: exactly the approved text, once, on the conversation, after it's recorded", async () => {

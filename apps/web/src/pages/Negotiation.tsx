@@ -1,7 +1,7 @@
 // A negotiation's page (PLAN.md §16.5): its mandate, what's been said, and every message with the seller.
-import type { NegotiationMessage } from "@hatbot/shared";
+import { type NegotiationMessage, OPEN_NEGOTIATION_STATUSES } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
-import { ApiError } from "../api";
+import { ApiError, api } from "../api";
 import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
 import { money, NegotiationChip, negotiationText } from "../negotiations";
@@ -28,6 +28,8 @@ export function NegotiationPage({ id }: { id: number }) {
   const bot = useStore((s) => (n ? botName(s, n.botId) : ""));
   const [missing, setMissing] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
   const load = useCallback(() => {
     setLoadError("");
@@ -54,6 +56,20 @@ export function NegotiationPage({ id }: { id: number }) {
   const a = n.appraisal;
   const c = n.claims;
   const said = c.max !== null || c.otherOffers || c.timing || c.other.length > 0;
+
+  // Abandons it: nothing more goes to the seller, and its tasks stop.
+  const stop = async () => {
+    if (!confirm("Stop this negotiation? Nothing more goes to the seller.")) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/negotiations/${id}/close`, { body: {} });
+      await loadNegotiation(id);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
+    }
+    setBusy(false);
+  };
   return (
     <section className="view">
       <div className="page narrow">
@@ -73,7 +89,13 @@ export function NegotiationPage({ id }: { id: number }) {
               Conversation
             </a>
           )}
+          {OPEN_NEGOTIATION_STATUSES.includes(n.status) && (
+            <button type="button" className="btn sm danger-text" disabled={busy} onClick={stop}>
+              Stop
+            </button>
+          )}
         </div>
+        {error && <div className="form-error">{error}</div>}
 
         {n.approvalId !== null && <ApprovalCard approvalId={n.approvalId} showDetails={false} />}
 

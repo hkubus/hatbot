@@ -295,9 +295,16 @@ export function negotiateTools(
             )
           : covered("Within the mandate");
       },
-      run: async (i) => {
+      run: async (i, call) => {
         const n = neg.mine(bot, i.negotiation);
-        const path = await neg.close(bot, n, i.outcome, i.price ?? null, i.notes ?? null);
+        const path = await neg.close(
+          bot.id,
+          n,
+          i.outcome,
+          i.price ?? null,
+          i.notes ?? null,
+          call.task?.id ?? null,
+        );
         const scout = await neg.recordOutcome(available, n, i.outcome, i.price ?? null);
         return `Negotiation #${n.id} is ${i.outcome}. Notes are in ${path}.${scout ? ` ${scout}` : ""}${i.outcome === "agreed" ? " Paying is a separate desktop task, which stops at the checkout and asks the owner." : ""}`;
       },

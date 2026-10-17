@@ -471,8 +471,8 @@ export class Negotiations {
   }
 
   /**
-   * Every minute: decisions on mandates the brain missed, and opening messages that are due. Nothing
-   * else wakes a negotiation until N3's inbox poller.
+   * Every minute: decisions on mandates the brain missed, mandates that ran out, and opening messages
+   * that are due. Nothing else wakes a negotiation until N3's inbox poller.
    */
   due() {
     const waiting = this.d.db
@@ -483,6 +483,15 @@ export class Negotiations {
     for (const w of waiting) {
       const a = this.d.approvals.get(w.approval_id);
       if (a && a.status !== "pending") void this.mandateDecided(a);
+    }
+    const lapsed = this.d.db
+      .query<{ id: number }, [string]>(
+        "SELECT id FROM negotiations WHERE status = 'open' AND json_extract(mandate, '$.expiresAt') <= ?",
+      )
+      .all(this.now());
+    for (const { id } of lapsed) {
+      this.update(id, { status: "expired", closed_at: this.now(), next_follow_up_at: null });
+      this.stopTasks(id);
     }
     const ready = this.d.db
       .query<Row, [string]>(
@@ -629,7 +638,10 @@ export class Negotiations {
     }
   }
 
-  /** What a negotiation's desktop task may do: send one message, or read. Null for other tasks. */
+  /**
+   * What a negotiation's desktop task may do: send one message, or read. Null for other tasks. Once the
+   * negotiation isn't open or its mandate ran out, a send task only reads.
+   */
   gateFor(taskId: number): SendGate | null {
     const r = this.d.db
       .query<
@@ -648,13 +660,47 @@ export class Negotiations {
       )
       .get(taskId);
     if (!r) return null;
+    const send = r.message_id !== null && this.sendStopped(taskId) === null;
     return {
-      mode: r.message_id ? "send" : "read",
-      text: r.text,
+      mode: send ? "send" : "read",
+      text: send ? r.text : null,
       listingUrl: r.listing_url,
       listingId: parseKey(r.listing_key)?.id ?? "",
       conversationUrl: r.conversation_url,
     };
+  }
+
+  /** Why a negotiation's desktop task may send nothing now, or null while it may. */
+  sendStopped(taskId: number): string | null {
+    const row = this.taskRow(taskId);
+    const n = row && this.get(row.negotiation_id);
+    if (!n) return null;
+    if (n.status !== "open") return `Negotiation #${n.id} is ${n.status}: nothing more is sent.`;
+    if (Date.parse(n.mandate.expiresAt) <= this.clock())
+      return `Negotiation #${n.id}'s mandate ran out: nothing more is sent.`;
+    return null;
+  }
+
+  /**
+   * Cancels a negotiation's unfinished tasks: the opening task and the desktop tasks that send or read.
+   * `except`: the task asking, with the tasks above it, which carry on.
+   */
+  stopTasks(id: number, except: number | null = null) {
+    const keep = new Set<number>();
+    for (let t = except === null ? null : this.d.tasks.get(except); t; ) {
+      keep.add(t.id);
+      t = t.parentId ? this.d.tasks.get(t.parentId) : null;
+    }
+    const ids = this.d.db
+      .query<{ task_id: number }, [number]>(
+        `SELECT nt.task_id FROM negotiation_tasks nt JOIN tasks t ON t.id = nt.task_id
+         WHERE nt.negotiation_id = ? AND t.status NOT IN ('done', 'failed', 'cancelled')`,
+      )
+      .all(id)
+      .map((r) => r.task_id);
+    const opening = this.d.tasks.activeFor(`negotiation:${id}`);
+    if (opening) ids.push(opening.id);
+    for (const t of ids) if (!keep.has(t)) this.d.tasks.cancel(t);
   }
 
   private taskRow(taskId: number) {
@@ -734,8 +780,14 @@ export class Negotiations {
     )
       this.update(n.id, { conversation_url: tabUrl.split("#")[0] ?? tabUrl });
     else this.update(n.id, {});
+    // Closed, or its mandate ran out, since the message was approved: it doesn't go either.
+    const stopped = mode === "send" && !state.sent ? this.sendStopped(taskId) : null;
     const stale =
-      mode === "send" && !state.sent && !alreadySent && after > 0 && outgoing?.status === "sending";
+      mode === "send" &&
+      !state.sent &&
+      !alreadySent &&
+      (after > 0 || stopped !== null) &&
+      outgoing?.status === "sending";
     if (stale && outgoing) this.setStatus(outgoing.id, "failed");
     const got = added
       ? `Recorded ${added} new message${added === 1 ? "" : "s"} from the seller.`
@@ -748,7 +800,10 @@ export class Negotiations {
       };
     if (stale)
       return {
-        text: `${got} The seller wrote since this message was approved, so it isn't sent: don't send it. Finish the task, saying the seller wrote first.`,
+        text:
+          after > 0
+            ? `${got} The seller wrote since this message was approved, so it isn't sent: don't send it. Finish the task, saying the seller wrote first.`
+            : `${got} ${stopped} Don't send it; finish the task.`,
         stale,
         alreadySent,
       };
@@ -805,15 +860,17 @@ export class Negotiations {
   }
 
   /**
-   * Ends a negotiation: its status and price, the want agreed when it is, and notes on the seller and
-   * what worked in the bot's memory.
+   * Ends a negotiation: its status and price, the want agreed when it is, its unfinished tasks
+   * cancelled (but `from`, the task closing it), and notes on the seller and what worked in the bot's
+   * memory.
    */
   async close(
-    bot: Bot,
+    botId: string,
     n: Negotiation,
     outcome: "agreed" | "lost" | "abandoned",
     price: number | null,
     notes: string | null,
+    from: number | null = null,
   ): Promise<string> {
     const now = this.now();
     this.update(n.id, {
@@ -824,6 +881,8 @@ export class Negotiations {
     });
     if (outcome === "agreed")
       this.d.db.query("UPDATE wants SET status = 'agreed' WHERE id = ?").run(n.wantId);
+    // A send already queued mustn't go now.
+    this.stopTasks(n.id, from);
     // Its mandate no longer needs an answer.
     if (n.status === "awaiting_mandate" && n.approvalId) this.d.approvals.cancel(n.approvalId);
     const lines = [
@@ -832,15 +891,13 @@ export class Negotiations {
       `${outcome}${price !== null ? ` at ${price} ${n.mandate.currency}` : ""}; asking ${n.asking ?? "?"}, opened ${n.mandate.opening}, aimed ${n.mandate.target}, limit ${n.mandate.limit}.`,
       ...(notes ? [notes.trim()] : []),
     ];
-    const folder = botFolder(bot.id);
+    const folder = botFolder(botId);
     const path = folder ? `${folder}/negotiations.md` : "negotiations.md";
-    const before = (await this.d.memory.exists(path))
-      ? await this.d.memory.read(path)
-      : "# Negotiations\n";
-    const sha = await this.d.memory.write(
+    // Read and written in one go, so two closes at once both keep their notes.
+    const sha = await this.d.memory.update(
       path,
-      `${before.trimEnd()}\n\n${lines.join("\n")}\n`,
-      this.d.bots.author(bot.id),
+      (current) => `${(current ?? "# Negotiations\n").trimEnd()}\n\n${lines.join("\n")}\n`,
+      this.d.bots.author(botId),
       `Negotiation #${n.id}: ${outcome}`,
     );
     if (sha)
@@ -848,9 +905,17 @@ export class Negotiations {
         type: "memory.committed",
         sha,
         message: `Negotiation #${n.id}: ${outcome}`,
-        author: this.d.bots.nameOf(bot.id),
+        author: this.d.bots.nameOf(botId),
       });
     return path;
+  }
+
+  /** The owner stops a negotiation: abandoned, and nothing more goes. Null if it had ended already. */
+  async stop(id: number): Promise<Negotiation | null> {
+    const n = this.get(id);
+    if (!n || !OPEN_NEGOTIATION_STATUSES.includes(n.status)) return null;
+    await this.close(n.botId, n, "abandoned", null, "Stopped by the owner.");
+    return this.get(id);
   }
 
   /**
