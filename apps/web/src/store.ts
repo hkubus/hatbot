@@ -78,11 +78,13 @@ type State = {
 /** Hatbot's own chat: the first one, made with the database. */
 export const HATBOT_CHAT = 1;
 
+/** The chat that's incognito in this tab, so a reload stays incognito in it and only in it. */
 const INCOGNITO_KEY = "hatbot:incognito";
+const incognitoChat = Number(sessionStorage.getItem(INCOGNITO_KEY)) || 0;
 
 let state: State = {
-  conversationId: HATBOT_CHAT,
-  incognito: sessionStorage.getItem(INCOGNITO_KEY) === "1",
+  conversationId: incognitoChat || HATBOT_CHAT,
+  incognito: incognitoChat > 0,
   messages: [],
   episodes: {},
   progress: {},
@@ -193,7 +195,7 @@ export async function deleteEpisode(id: number) {
 /** Into incognito, or out of it, which deletes its conversation. */
 export async function setIncognito(on: boolean) {
   if (on === state.incognito) return;
-  if (on) sessionStorage.setItem(INCOGNITO_KEY, "1");
+  if (on) sessionStorage.setItem(INCOGNITO_KEY, String(state.conversationId));
   else sessionStorage.removeItem(INCOGNITO_KEY);
   set({ incognito: on, messages: [], hasEarlier: false });
   // The chat loads the conversation it switched to.
@@ -203,7 +205,10 @@ export async function setIncognito(on: boolean) {
     );
 }
 
-/** Shows another chat. Leaving one in incognito deletes its conversation. */
+/**
+ * Shows another chat. Leaving one in incognito deletes its conversation; the one this tab was
+ * incognito in, reloaded, stays so.
+ */
 export async function openConversation(id: number) {
   if (id === state.conversationId) return;
   const left = state.conversationId;
