@@ -34,6 +34,31 @@ test("values are picked by selector, path, pattern, or the page's text", async (
   );
 });
 
+test("a pattern that backtracks without end is stopped, and the brain keeps answering", async () => {
+  // Catastrophic backtracking: on the main thread this would take far longer than the test.
+  const body = `${"a".repeat(40)}!`;
+  let ticks = 0;
+  const timer = setInterval(() => ticks++, 10);
+  const started = performance.now();
+  try {
+    await expect(
+      pick(body, "text/plain", { kind: "page", pattern: "^(a+)+$" }, 300),
+    ).rejects.toThrow('The pattern "^(a+)+$" took too long');
+  } finally {
+    clearInterval(timer);
+  }
+  expect(performance.now() - started).toBeLessThan(3000);
+  expect(ticks).toBeGreaterThan(5);
+  // A plain one still answers, and sees only the first 200,000 characters.
+  const long = `${"x".repeat(200_000)}price 42`;
+  await expect(pick(long, "text/plain", { kind: "page", pattern: "price (\\d+)" })).rejects.toThrow(
+    "matched nothing",
+  );
+  expect(await pick("price 42", "text/plain", { kind: "page", pattern: "price (\\d+)" })).toBe(
+    "42",
+  );
+});
+
 test("numbers are read in either style, and only a move into the condition counts", () => {
   expect(numberIn("€1.299,00")).toBe(1299);
   expect(numberIn("$1,299.00")).toBe(1299);

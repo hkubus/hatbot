@@ -1,11 +1,15 @@
 // Picks a watcher's value out of a page or a tool's output, without the model.
 import type { WatchCondition, WatchSource } from "@hatbot/shared";
+import type { PatternJob } from "./pattern";
 
 /** A check that didn't find a value; the message is for the owner and the model. */
 export class WatchError extends Error {}
 
 /** Values are compared and stored at most this long. */
 const MAX_VALUE_CHARS = 4000;
+/** A pattern looks at most at this much text, for at most this long. */
+const MAX_PATTERN_CHARS = 200_000;
+const PATTERN_MS = 5000;
 const SKIPPED = "head, script, style, noscript, template, svg";
 
 const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
@@ -97,11 +101,39 @@ function atPath(data: unknown, path: string): unknown {
   return v;
 }
 
+/**
+ * The pattern's first group or its whole match, null for none. It runs on a worker that is stopped
+ * after `ms`, since a pattern can backtrack for hours on the wrong text.
+ */
+function firstMatch(pattern: string, text: string, ms: number): Promise<string | null> {
+  return new Promise((resolve, reject) => {
+    const w = new Worker(new URL("./pattern.ts", import.meta.url).href);
+    const done = () => {
+      clearTimeout(timer);
+      w.terminate();
+    };
+    const timer = setTimeout(() => {
+      done();
+      reject(new WatchError(`The pattern "${pattern}" took too long. Make it simpler.`));
+    }, ms);
+    w.onmessage = (e: MessageEvent<string | null>) => {
+      done();
+      resolve(e.data);
+    };
+    w.onerror = (e) => {
+      done();
+      reject(new WatchError(`The pattern "${pattern}" failed: ${e.message}`));
+    };
+    w.postMessage({ pattern, text: text.slice(0, MAX_PATTERN_CHARS) } satisfies PatternJob);
+  });
+}
+
 /** Picks the value out of what was fetched or returned. */
 export async function pick(
   body: string,
   contentType: string,
   source: WatchSource,
+  patternMs = PATTERN_MS,
 ): Promise<string> {
   let text: string;
   if (source.path) {
@@ -124,15 +156,14 @@ export async function pick(
     text = looksHtml(body, contentType) ? await pageText(body) : body;
   }
   if (source.pattern) {
-    let re: RegExp;
     try {
-      re = new RegExp(source.pattern, "i");
+      new RegExp(source.pattern, "i");
     } catch {
       throw new WatchError(`"${source.pattern}" isn't a regular expression.`);
     }
-    const m = re.exec(text);
-    if (!m) throw new WatchError(`The pattern "${source.pattern}" matched nothing.`);
-    text = m[1] ?? m[0];
+    const m = await firstMatch(source.pattern, text, patternMs);
+    if (m === null) throw new WatchError(`The pattern "${source.pattern}" matched nothing.`);
+    text = m;
   }
   return collapse(text).slice(0, MAX_VALUE_CHARS);
 }
