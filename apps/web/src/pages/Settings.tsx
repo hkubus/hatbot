@@ -3,6 +3,7 @@ import {
   type AppSettings,
   type CreateTokenResponse,
   describeEvery,
+  type Limits,
   type UpdateInfo,
 } from "@hatbot/shared";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
@@ -25,6 +26,12 @@ const HeartbeatPage = lazy(() => import("./Heartbeat").then((m) => ({ default: m
 
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/**
+ * A change to the settings. The brain merges limits into the saved ones, so only the one edited is
+ * sent, and two quick edits don't undo each other.
+ */
+type Patch = Partial<Omit<AppSettings, "limits">> & { limits?: Partial<Limits> };
 
 export function Settings({
   path,
@@ -75,7 +82,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
   useEffect(load, [load]);
 
   /** Rejects with the brain's message, for a field to show beside itself. */
-  const put = async (patch: Partial<AppSettings>) => {
+  const put = async (patch: Patch) => {
     setSettings(await api<AppSettings>("/settings", { method: "PUT", body: patch }));
     toast("Saved");
   };
@@ -204,7 +211,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
                 saved={settings.limits[key]}
                 // Nothing kept for alerts is allowed; a limit of nothing isn't.
                 parse={(text) => parseLimit(text, key === "alertReserveUsd")}
-                save={(n) => put({ limits: { ...settings.limits, [key]: n } })}
+                save={(n) => put({ limits: { [key]: n } })}
                 prefix="$"
                 input={{
                   type: "number",
