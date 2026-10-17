@@ -650,6 +650,8 @@ private struct MessageRow: View, Equatable {
   @Environment(\.openRoute) private var router
   @Environment(AppStore.self) private var store
   @Environment(\.scenePhase) private var scenePhase
+  /// The chat is kept, hidden, while another section shows: nothing in it is seen then.
+  @Environment(\.sectionShown) private var sectionShown
   @State private var onScreen = false
 
   var body: some View {
@@ -712,9 +714,9 @@ private struct MessageRow: View, Equatable {
         return shown.height >= me.height * 0.5 || shown.height >= screen.height * 0.6
           || (me.maxY > screen.minY && me.maxY <= screen.maxY)
       } action: { onScreen = $0 }
-      // On screen for a moment, with the app in front: seen.
-      .task(id: unread && onScreen && scenePhase == .active) {
-        guard unread && onScreen && scenePhase == .active else { return }
+      // On screen for a moment, with the app and the chat in front: seen.
+      .task(id: unread && onScreen && scenePhase == .active && sectionShown) {
+        guard unread && onScreen && scenePhase == .active && sectionShown else { return }
         try? await Task.sleep(for: .seconds(1.5))
         if !Task.isCancelled { store.markSeen([m.id]) }
       }

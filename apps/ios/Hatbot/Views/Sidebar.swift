@@ -2,6 +2,7 @@
 // aside to show it, following your finger: swipe in from the left edge, or tap the button at the
 // top left of each section, which counts what needs you. On an iPad's full width it stays beside them.
 import SwiftUI
+import UIKit
 
 enum AppTab: Hashable, CaseIterable {
   case chat, search, tasks, live, memory, settings
@@ -34,6 +35,8 @@ extension EnvironmentValues {
   /// A section's first page tells the drawer when it shows, so the edge swipe stays the back
   /// gesture on the pages pushed over it.
   @Entry var sidebarRoot: ((Bool) -> Void)?
+  /// Whether this section is the one showing. The others stay, hidden, with what you'd typed in them.
+  @Entry var sectionShown = true
 }
 
 extension View {
@@ -83,59 +86,60 @@ private struct Count: View {
 struct Sidebar<Content: View>: View {
   @Binding var tab: AppTab
   @Binding var open: Bool
+  /// The open section shows its first page, where an edge swipe opens the drawer instead of going back.
+  var atRoot: Bool
   @ViewBuilder var content: Content
   @Environment(AppStore.self) private var store
   @GestureState(resetTransaction: Transaction(animation: .snappy)) private var drag: CGFloat = 0
-  @State private var roots = 0
+  /// How far the edge swipe has pulled the drawer out.
+  @State private var edge: CGFloat = 0
   @State private var newBot = false
   @State private var newGroup = false
   @Environment(\.horizontalSizeClass) private var width
+  @Environment(\.verticalSizeClass) private var height
 
+  /// Beside the sections on an iPad's full width. A drawer otherwise, in landscape on the largest
+  /// iPhones too, where the live desktop needs the width.
+  private var docked: Bool { width == .regular && height == .regular }
+
+  /// One layout, docked or not, so the sections keep what they hold when the phone turns.
   var body: some View {
-    if width == .regular {
-      HStack(spacing: 0) {
-        panel.frame(width: 300)
-        Divider().ignoresSafeArea()
-        content.environment(\.sidebarRoot) { _ in }
-      }
-    } else {
-      drawer
-    }
-  }
-
-  private var drawer: some View {
     GeometryReader { geo in
-      let width = min(300, geo.size.width * 0.82)
-      let shown = min(1, max(0, (open ? 1 : 0) + drag / width))
+      let docked = docked
+      let panelWidth = docked ? 300 : min(300, geo.size.width * 0.82)
+      let shown = docked ? 0 : min(1, max(0, (open ? 1 : 0) + (drag + edge) / panelWidth))
+      let openSidebar: (() -> Void)? = docked ? nil : { setOpen(true) }
       ZStack(alignment: .leading) {
         content
-          .environment(\.openSidebar) { setOpen(true) }
-          .environment(\.sidebarRoot) { roots = max(0, roots + ($0 ? 1 : -1)) }
+          .environment(\.openSidebar, openSidebar)
           .overlay {
             Color.black.opacity(0.25 * shown)
               .ignoresSafeArea()
-              .allowsHitTesting(open)
+              .allowsHitTesting(open && !docked)
               .onTapGesture { setOpen(false) }
           }
-          .overlay(alignment: .leading) {
-            if !open && roots > 0 {
-              Color.clear
-                .frame(width: 16)
-                .contentShape(.rect)
-                .ignoresSafeArea()
-                .gesture(swipe(width))
+          .gesture(
+            EdgePan(enabled: !docked && !open && atRoot, moved: { edge = max(0, $0) }) { landing in
+              withAnimation(.snappy) {
+                edge = 0
+                open = landing > panelWidth / 2
+              }
             }
-          }
-          .accessibilityHidden(open)
-          .offset(x: shown * width)
+          )
+          .accessibilityHidden(open && !docked)
+          .padding(.leading, docked ? panelWidth : 0)
+          .offset(x: shown * panelWidth)
         panel
-          .frame(width: width)
-          .offset(x: (shown - 1) * width)
-          .accessibilityHidden(!open)
-          .accessibilityAddTraits(.isModal)
+          .frame(width: panelWidth)
+          .overlay(alignment: .trailing) {
+            if docked { HStack(spacing: 0) { Divider() }.ignoresSafeArea() }
+          }
+          .offset(x: docked ? 0 : (shown - 1) * panelWidth)
+          .accessibilityHidden(!open && !docked)
+          .accessibilityAddTraits(docked ? [] : .isModal)
           .accessibilityAction(.escape) { setOpen(false) }
       }
-      .gesture(swipe(width), including: open ? .all : .subviews)
+      .gesture(swipe(panelWidth), including: open && !docked ? .all : .subviews)
     }
   }
 
@@ -238,5 +242,34 @@ struct Sidebar<Content: View>: View {
 
   private func setOpen(_ value: Bool) {
     withAnimation(.snappy) { open = value }
+  }
+}
+
+/// The drawer's swipe in from the left edge: UIKit's screen-edge pan, which leaves taps near the edge to
+/// what's under them.
+private struct EdgePan: UIGestureRecognizerRepresentable {
+  var enabled: Bool
+  /// How far the finger has come in from the edge.
+  var moved: (CGFloat) -> Void
+  /// Where the throw would land.
+  var ended: (CGFloat) -> Void
+
+  func makeUIGestureRecognizer(context: Context) -> UIScreenEdgePanGestureRecognizer {
+    let pan = UIScreenEdgePanGestureRecognizer()
+    pan.edges = .left
+    return pan
+  }
+
+  func updateUIGestureRecognizer(_ recognizer: UIScreenEdgePanGestureRecognizer, context: Context) {
+    recognizer.isEnabled = enabled
+  }
+
+  func handleUIGestureRecognizerAction(_ recognizer: UIScreenEdgePanGestureRecognizer, context: Context) {
+    let x = recognizer.translation(in: recognizer.view).x
+    switch recognizer.state {
+    case .began, .changed: moved(x)
+    case .ended: ended(x + recognizer.velocity(in: recognizer.view).x * 0.2)
+    default: ended(0)
+    }
   }
 }
