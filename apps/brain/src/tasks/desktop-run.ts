@@ -19,6 +19,7 @@ import { type Outcome, ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import { collapse, type GateState, gateCheck, refused, sendsWith } from "../negotiate/gate";
+import { marketplaceSend } from "../negotiate/marketplace";
 import { destructive } from "../plugins/ssh/policy";
 import { BudgetError, estimateTokens, priceOf, usesReserve } from "../spend";
 import { skillPath } from "../teach/skills";
@@ -581,6 +582,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       }
       el = await inspectAgain();
       let label = consequential(check, el);
+      // Outside a negotiation, anything that could message a seller asks first.
+      if (!gate && !label) label = marketplaceSend(check, el, lastUrl);
       if (gate) {
         const g = gateCheck(gate, gateState, check, el, label);
         if (g.action === "hold") {

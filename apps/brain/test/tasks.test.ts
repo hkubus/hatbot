@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import { type Approval, latestNoteOnly, type Task, type TaskStep } from "@hatbot/shared";
+import type { AgentElement } from "@hatbot/shared/desktop";
 import { inBatches } from "../src/agent/tools";
 import { HttpDesktopAgent } from "../src/desktop/client";
+import { marketplaceSend } from "../src/negotiate/marketplace";
 import { approvalKind } from "../src/tasks/approval-kind";
 import { limits } from "../src/tasks/desktop-run";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
@@ -127,6 +129,116 @@ test("a consequential click is held back until confirm_intent is approved", asyn
   const held = JSON.stringify(work.requests[0 + 4]?.messages.at(-1));
   expect(held).toContain("confirm_intent first");
   expect(t.tasks.get(task.id)?.status).toBe("done");
+});
+
+test("outside a negotiation, a click or Enter that could message a seller asks first", async () => {
+  const work = new FakeModel([
+    { content: [computer("left_click", { coordinate: [300, 500] })] },
+    { content: [computer("type", { text: "Czy aktualne? Dam 500." })] },
+    { content: [computer("key", { text: "Return" })] },
+    { content: [browser("left_click", { target: { type: "ref", ref: "ref_2" } })] },
+    { content: [browser("left_click", { target: { type: "ref", ref: "ref_3" } })] },
+    {
+      content: [toolUse("confirm_intent", { kind: "send", summary: "Send the seller a question" })],
+    },
+    { content: [browser("left_click", { target: { type: "ref", ref: "ref_2" } })] },
+    { content: [browser("left_click", { target: { type: "ref", ref: "ref_2" } })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const url = "https://www.olx.pl/d/oferta/rower-CID1-ID77.html";
+  t.agent.page = { url, title: "Rower", text: "" };
+  let fields: string[] = [];
+  const box = (): AgentElement => ({
+    tag: "textarea",
+    role: null,
+    type: null,
+    label: "Wiadomość",
+    inForm: true,
+    url,
+    editable: true,
+    fields,
+  });
+  // The Send button has only an icon, so no label marks it as a send.
+  const send = (): AgentElement => ({ ...box(), tag: "button", label: "", editable: false });
+  const link = (): AgentElement => ({ ...box(), tag: "a", label: "Inne ogłoszenia" });
+  Object.defineProperty(t.agent, "element", {
+    get: () => {
+      const ref = t.agent.inspected.at(-1)?.ref;
+      return ref === "ref_2" ? send() : ref === "ref_3" ? link() : box();
+    },
+    configurable: true,
+  });
+  t.agent.afterAction = (name, input) => {
+    if (name === "type") fields = [String(input.text)];
+    if (name === "left_click" && t.agent.inspected.at(-1)?.ref === "ref_2") fields = [];
+  };
+  startTask(t, "Ask the seller if the bike is still for sale");
+  const approval = await pending(t);
+  expect(approval.summary).toBe("Send the seller a question");
+  t.approvals.decide(approval.id, "approve", "web");
+  await t.tasks.idle();
+
+  const result = (i: number) => JSON.stringify(work.requests[i]?.messages.at(-1));
+  // Clicking into the box and typing go; Enter and the icon-only Send wait for confirm_intent.
+  expect(result(3)).toContain("Enter, with text in a box on olx.pl");
+  expect(result(3)).toContain("call confirm_intent first");
+  expect(result(4)).toContain("with text in a box on olx.pl");
+  expect(t.agent.actions.map((a) => a.name)).toEqual(["left_click", "type"]);
+  // A link isn't a send; the approved click goes once; with the box empty, nothing asks.
+  expect(t.agent.browserCalls.map((c) => (c.input.target as { ref: string }).ref)).toEqual([
+    "ref_3",
+    "ref_2",
+    "ref_2",
+  ]);
+  expect(t.approvals.list(false)).toHaveLength(1);
+  // Off the marketplaces, the ordinary check decides.
+  expect(marketplaceSend("enter", { ...box(), url: "https://example.com/" }, null)).toBeNull();
+  expect(marketplaceSend("enter", box(), null)).toBeNull();
+});
+
+test("a desktop task from a tainted chat or task starts tainted", async () => {
+  const chat = new FakeModel([
+    { content: [text("Noted.")] },
+    {
+      content: [
+        toolUse("run_desktop_task", { title: "Do it", goal: "Act on it", success_criteria: "" }),
+      ],
+    },
+    { content: [text("Started.")] },
+    { content: [text("Done.")] },
+  ]);
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "done", summary: "ok", notify: false })] },
+    finish("ok"),
+    finish("ok"),
+  ]);
+  const t = await testApp(chat, work);
+  const read = t.tasks.createBackgroundTask({
+    title: "Read a PR",
+    goal: "Read it",
+    origin: "chat",
+    taintedBy: "A web page",
+  }) as Task;
+  await t.tasks.idle();
+  t.thread.post("ok");
+  await t.thread.idle();
+  t.thread.post("now do it");
+  await t.thread.idle();
+  const desk = t.tasks.list().find((x) => x.title === "Do it");
+  expect(desk?.taintedBy).toBe(`The chat had read: Task #${read.id} "Read a PR"`);
+  expect(t.tasks.requestOf(desk?.id as number)).toContain("now do it");
+  // One a tainted background task starts carries its mark.
+  const child = t.tasks.createDesktopTask({
+    title: "Child",
+    goal: "Go on",
+    successCriteria: "",
+    origin: "chat",
+    parent: t.tasks.get(read.id) as Task,
+  });
+  expect(child.taintedBy).toBe(`Task #${read.id}, which had read: A web page`);
+  await t.tasks.idle();
+  await t.thread.idle();
 });
 
 test("an approved desktop task waiting for the screen shows as queued", async () => {
