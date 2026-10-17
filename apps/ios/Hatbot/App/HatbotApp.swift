@@ -32,6 +32,9 @@ struct HatbotApp: App {
       .environment(\.openURL, OpenURLAction { url in AppLink.opens(url) ? .systemAction : .discarded })
       .tint(.brandText)
       .onChange(of: session.store == nil) { _, out in
+        // The widget and the control read the brain as you, or say to sign in.
+        WidgetCenter.shared.reloadAllTimelines()
+        ControlCenter.shared.reloadAllControls()
         if out {
           Spotlight.clear()
           AttachmentCache.shared.clear()
