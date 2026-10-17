@@ -1,4 +1,5 @@
 import {
+  API_PREFIX,
   type Approval,
   type Attachment,
   matchingCommands,
@@ -34,6 +35,7 @@ import {
   useDraftFiles,
 } from "../drafts";
 import { Icon } from "../icons";
+import { Link } from "../link";
 import { LoadError, loadErrorText } from "../load";
 import { touchScreen } from "../media";
 import { negotiationText } from "../negotiations";
@@ -119,9 +121,49 @@ const Streaming = createContext(false);
 type Node = { type: string; value?: string; children?: Node[] };
 const textOf = (n: Node): string => n.value ?? (n.children ?? []).map(textOf).join("");
 
-// Links open in a new tab; raw HTML in replies is never rendered (react-markdown's default).
+/** Where a link goes in the app itself: its path, or null for other sites and the API's files. */
+export function appPath(href: string, origin = location.origin): string | null {
+  let url: URL;
+  try {
+    url = new URL(href, origin);
+  } catch {
+    return null;
+  }
+  if (url.origin !== origin || url.pathname.startsWith(`${API_PREFIX}/`)) return null;
+  return url.pathname + url.search + url.hash;
+}
+
+/** Whether a picture is served by Hatbot: the page may load nothing else (web.ts). */
+const ownPicture = (src: string, origin = location.origin) => {
+  try {
+    return new URL(src, origin).origin === origin;
+  } catch {
+    return false;
+  }
+};
+
+// Other sites open in a new tab, and the app's own pages in this one; raw HTML in replies is never
+// rendered (react-markdown's default).
 const MD_COMPONENTS: Components = {
-  a: ({ node: _, ...props }) => <a {...props} target="_blank" rel="noreferrer noopener" />,
+  a: ({ node: _, href, ...props }) => {
+    if (href?.startsWith("#")) return <a {...props} href={href} />;
+    const to = href ? appPath(href) : null;
+    return to ? (
+      <Link {...props} to={to} />
+    ) : (
+      <a {...props} href={href} target="_blank" rel="noreferrer noopener" />
+    );
+  },
+  // A picture from another site would only show broken: it's a link to it instead.
+  img: ({ node: _, src, alt }) => {
+    if (typeof src !== "string" || !src) return alt || null;
+    if (ownPicture(src)) return <img src={src} alt={alt ?? ""} loading="lazy" />;
+    return (
+      <a href={src} target="_blank" rel="noreferrer noopener">
+        {alt || src}
+      </a>
+    );
+  },
   pre: function Pre({ node, children }) {
     const streaming = useContext(Streaming);
     const code = node?.children.find((c) => c.type === "element" && c.tagName === "code");
