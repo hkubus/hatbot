@@ -225,7 +225,7 @@ test("checks run fixed commands with the pinned-key options; the chat gets them"
     '"nope" isn\'t one of your hosts',
   );
   expect(JSON.stringify(t.plugins.guidance())).toContain(
-    "router (hatbot@10.0.0.1, every command asks",
+    "router (hatbot@10.0.0.1, every change asks",
   );
 });
 

@@ -34,7 +34,7 @@ const Host = z.object({
     .regex(/^[a-z_][a-z0-9_-]{0,31}$/, "A Unix user name")
     .default("hatbot"),
   port: z.number().int().min(1).max(65535).default(22),
-  /** Every command on it asks you first. */
+  /** Every change on it asks you first. */
   careful: z.boolean().default(false),
   /** A Proxmox host with infra/pct-exec-setup.sh run: ssh_pct_exec reaches its containers. */
   proxmox: z.boolean().default(false),
@@ -691,7 +691,7 @@ export const sshPlugin = definePlugin({
 
     return ready(tools, {
       guidance: hostNames.length
-        ? `You can reach these hosts over SSH: ${config.hosts.map((h) => `${h.name} (${h.user}@${h.address}${h.careful ? ", every command asks the owner" : ""})`).join("; ")}. Read memory for what runs where. Look with ssh_check and ssh_read_file; ssh_exec and ssh_write_file change things. Commands that look destructive need approval (the safety review or the owner); a restart (systemctl restart) needs none of its own.${pctHosts.length ? ` ${pctHosts.join(" and ")} ${pctHosts.length > 1 ? "are Proxmox hosts" : "is a Proxmox host"}: ssh_pct_exec runs a command inside one of its containers, by ID. While a container is careful, changes on its host wait for the owner too.` : marked.length ? ` Its containers can't be reached until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env.` : ""} ssh_copy_file moves files between hosts${pctHosts.length ? ", containers" : ""}, the sandbox and the chat: the owner's attachments onto a host, a host's file to the owner or into the sandbox to work on.`
+        ? `You can reach these hosts over SSH: ${config.hosts.map((h) => `${h.name} (${h.user}@${h.address}${h.careful ? ", every change asks the owner" : ""})`).join("; ")}. Read memory for what runs where. Look with ssh_check and ssh_read_file; ssh_exec and ssh_write_file change things. Commands that look destructive need approval (the safety review or the owner); a restart (systemctl restart) needs none of its own.${pctHosts.length ? ` ${pctHosts.join(" and ")} ${pctHosts.length > 1 ? "are Proxmox hosts" : "is a Proxmox host"}: ssh_pct_exec runs a command inside one of its containers, by ID. While a container is careful, changes on its host wait for the owner too.` : marked.length ? ` Its containers can't be reached until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env.` : ""} ssh_copy_file moves files between hosts${pctHosts.length ? ", containers" : ""}, the sandbox and the chat: the owner's attachments onto a host, a host's file to the owner or into the sandbox to work on.`
         : undefined,
       test: async () => {
         if (!hostNames.length) throw new PluginError("Add a host first.");
