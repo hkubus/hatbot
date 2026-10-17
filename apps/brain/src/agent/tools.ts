@@ -174,8 +174,11 @@ function authorOf(ctx: ToolContext, path: string) {
   return ctx.bots?.author(id) ?? HATBOT;
 }
 
-/** Files every later chat and task reads and trusts: skills, and the memory indexes. */
-const TRUSTED_FILE = /^(skills\/.+|INDEX\.md|bots\/[^/]+\/INDEX\.md)$/;
+/**
+ * Files every later chat and task reads and trusts: skills, the memory indexes, and homelab.md, the
+ * map of the homelab that every bot shares and alert tasks act on.
+ */
+const TRUSTED_FILE = /^(skills\/.+|INDEX\.md|bots\/[^/]+\/INDEX\.md|homelab\.md)$/;
 
 /**
  * A write (or, content null, a delete) to a trusted file after reading untrusted content becomes a
@@ -198,7 +201,7 @@ async function held(
     return content === null
       ? `Nothing to delete: ${rel} doesn't exist.`
       : "No change: the file already had this content.";
-  return "Saved as a proposal; the owner applies it. After reading untrusted content, changes to skills and INDEX.md wait for them.";
+  return "Saved as a proposal; the owner applies it. After reading untrusted content, changes to skills, INDEX.md and homelab.md wait for them.";
 }
 
 /** Why a task the chat starts is tainted, from what the chat had read. */
