@@ -6,9 +6,11 @@ import type { Verdict } from "../plugins/plugin";
 import { fixedTokens, requestCeiling, type Spend } from "../spend";
 import type { ModelClient } from "./model";
 import { REVIEW_PROMPT } from "./prompt";
-import { tagJson } from "./untrusted";
+import { tagJson, tagText } from "./untrusted";
 
 const REVIEW_MODEL = "claude-haiku-5-5";
+// Room for thinking, so it can't crowd out the verdict.
+const REVIEW_MAX_TOKENS = 4000;
 
 const VERDICT = {
   type: "object",
@@ -45,9 +47,11 @@ export async function safeToRun(
   action: { tool: string; input: unknown; what: string; why: string },
 ): Promise<{ safe: boolean; why: string }> {
   try {
+    // The goal may be written from untrusted content, so neither it nor the owner's words can close
+    // their tag and open another.
     const content = [
-      `<owner_said>\n${context.ownerSaid ?? "(nothing the owner wrote is available for this task)"}\n</owner_said>`,
-      `<task_goal>\n${context.goal}\n</task_goal>`,
+      `<owner_said>\n${context.ownerSaid === null ? "(nothing the owner wrote is available for this task)" : tagText(context.ownerSaid)}\n</owner_said>`,
+      `<task_goal>\n${tagText(context.goal)}\n</task_goal>`,
       `<untrusted_sources>\n${tagJson(context.sources)}\n</untrusted_sources>`,
       `<action>\n${tagJson({ tool: action.tool, input: action.input, summary: action.what, would_ask_because: action.why })}\n</action>`,
     ].join("\n\n");
@@ -55,13 +59,12 @@ export async function safeToRun(
     d.spend.check(
       requestCeiling(REVIEW_MODEL, {
         prompt: fixedTokens(REVIEW_PROMPT, content),
-        maxTokens: 2000,
+        maxTokens: REVIEW_MAX_TOKENS,
       }),
     );
     const res = await d.model.create({
       model: REVIEW_MODEL,
-      // Room for thinking, so it can't crowd out the verdict.
-      max_tokens: 4000,
+      max_tokens: REVIEW_MAX_TOKENS,
       thinking: { type: "adaptive" },
       output_config: { effort: "low", format: { type: "json_schema", schema: VERDICT } },
       system: REVIEW_PROMPT,
