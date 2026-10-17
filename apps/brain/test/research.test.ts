@@ -958,3 +958,39 @@ test("another bot's research keeps to its own folder, and asks other bots only f
   const [commit] = await t.memory.log(1, task?.reportPath as string);
   expect(commit?.author).toBe("Scout");
 });
+
+test("a report never overwrites another, even two of the same name at once", async () => {
+  const work = new FakeModel();
+  helpers(work);
+  const helperReplies = work.route;
+  // Each lead investigates, then finishes, by how far its own conversation has got.
+  work.route = (p) =>
+    isHelper(p)
+      ? helperReplies?.(p)
+      : p.messages.length === 1
+        ? INVESTIGATE
+        : finish("Get the DS925+ [1].", "Report [1].");
+  const t = await testApp(new FakeModel(), work);
+  const base = `research/${DAY}-quiet-nas-for-four-drives`;
+  const started = [1, 2].map(() =>
+    t.tasks.createBackgroundTask({
+      title: "Quiet NAS for four drives",
+      goal: "Which quiet four-bay NAS?",
+      origin: "chat",
+      research: true,
+    }),
+  );
+  await t.tasks.idle();
+  const paths = started.map((x) => t.tasks.get(x?.id as number)?.reportPath).sort();
+  expect(paths).toEqual([`${base}-2.md`, `${base}.md`]);
+  for (const x of started)
+    expect(await t.memory.read(t.tasks.get(x?.id as number)?.reportPath as string)).toContain(
+      `task #${x?.id}.`,
+    );
+
+  // Past the numbered names, the task's id.
+  for (let i = 3; i <= 9; i++) await t.memory.write(`${base}-${i}.md`, "Earlier.", HATBOT, "x");
+  const third = await startResearch(t);
+  expect(third.reportPath).toBe(`${base}-task-${third.id}.md`);
+  expect(await t.memory.read(`${base}-9.md`)).toBe("Earlier.\n");
+});

@@ -10,6 +10,7 @@ import { RESEARCH_CHECK_PROMPT, RESEARCH_PROMPT, RESEARCH_WORKER_PROMPT } from "
 import { localStamp } from "../agent/thread";
 import { containerOf, serverToolWaiting, toolParam, webReads, webTools } from "../agent/tools";
 import { botFolder } from "../bots";
+import { MemoryConflict } from "../memory/store";
 import { BudgetError, estimateTokens, priceOf } from "../spend";
 import { refreshing } from "./research-goal";
 import type { Tasks } from "./service";
@@ -817,16 +818,28 @@ async function saveReport(run: { tasks: Tasks; task: Task }, content: string): P
   const { tasks, task } = run;
   const { d } = tasks;
   const slug = slugOf(task.title);
-  const folder = folderOf({ id: task.botId });
-  const day = dayOf(tasks.clock());
-  let path: string | null = `${folder}/${day}-${slug}.md`;
-  for (let i = 2; (await d.memory.exists(path)) && i < 50; i++)
-    path = `${folder}/${day}-${slug}-${i}.md`;
+  const base = `${folderOf({ id: task.botId })}/${dayOf(tasks.clock())}-${slug}`;
+  // A new file, never one already there: another run may save one by the same name meanwhile.
+  const names = [
+    `${base}.md`,
+    ...Array.from({ length: 8 }, (_, i) => `${base}-${i + 2}.md`),
+    `${base}-task-${task.id}.md`,
+  ];
+  let path: string | null = null;
   try {
     const author = d.bots.author(task.botId);
     const message = `Research: ${task.title}`;
-    const sha = await d.memory.write(path, `${content}\n`, author, message);
-    if (sha) d.events.emit({ type: "memory.committed", sha, message, author: author.name });
+    for (const name of names) {
+      try {
+        const sha = await d.memory.writeIf(name, `${content}\n`, "", author, message);
+        if (sha) d.events.emit({ type: "memory.committed", sha, message, author: author.name });
+        path = name;
+        break;
+      } catch (err) {
+        if (!(err instanceof MemoryConflict)) throw err;
+      }
+    }
+    if (!path) throw new Error(`every name for ${base} is taken`);
     tasks.setReportPath(task.id, path);
   } catch (err) {
     console.error(`research task ${task.id}: the report couldn't be saved`, err);
