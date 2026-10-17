@@ -11,7 +11,7 @@ import type { BetaBrowserMemberInput } from "@anthropic-ai/sdk/resources/beta";
 import type { ApprovalKind } from "@hatbot/shared";
 import type { AgentElement, BrowserState, ComputerMember } from "@hatbot/shared/desktop";
 import { z } from "zod";
-import { modelErrorText, type StreamParams } from "../agent/model";
+import { cutOff, modelErrorText, type StreamParams } from "../agent/model";
 import { DESKTOP_PROMPT } from "../agent/prompt";
 import { type Screening, screenPage } from "../agent/screening";
 import { localStamp } from "../agent/thread";
@@ -883,13 +883,14 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         throw new Stop("failed", "The model declined to carry on with this task.", true, {
           account: "",
         });
+      if (res.stop_reason === "model_context_window_exceeded")
+        throw new Stop("failed", "Stopped: the task's conversation got too long.", true, ASK);
       if (res.stop_reason === "pause_turn") continue;
       const calls = res.content.filter(
         (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use",
       );
       if (!calls.length) {
-        if (res.stop_reason === "max_tokens")
-          throw new Stop("failed", "Stopped: a reply was cut off.", true, ASK);
+        if (cutOff(res)) throw new Stop("failed", "Stopped: a reply was cut off.", true, ASK);
         const text = res.content
           .map((b) => (b.type === "text" ? b.text : ""))
           .join("")
@@ -903,7 +904,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       const halted = new Set<string>();
       for (const call of calls) {
         const toolset = call.toolset_name ?? "";
-        if (res.stop_reason === "max_tokens") {
+        if (cutOff(res)) {
           results.push(
             textResult(call, "Input was cut off at max_tokens. Retry with a shorter input.", true),
           );

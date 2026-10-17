@@ -791,3 +791,18 @@ test("the weekly report counts desktop tasks by the model they started on", asyn
   expect(text).toContain("- Desktop on Haiku 5.5: 2 done, 3 failed, 1 of them then done on Opus.");
   expect(text).toContain("- Desktop on Opus 5.5: 1 done, 0 failed.");
 });
+
+test("a task whose reply hit the context window stops as failed, without running its calls", async () => {
+  const work = new FakeModel([
+    {
+      content: [toolUse("memory_write", { path: "notes/z.md", content: "z" })],
+      stop_reason: "model_context_window_exceeded",
+    },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = t.tasks.createBackgroundTask({ title: "Long", goal: "Read it all", origin: "chat" });
+  await t.tasks.idle();
+  expect(t.tasks.get(task?.id ?? 0)).toMatchObject({ status: "failed" });
+  expect(t.tasks.get(task?.id ?? 0)?.summary).toContain("too long");
+  expect(await t.memory.exists("notes/z.md")).toBe(false);
+});

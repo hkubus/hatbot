@@ -117,6 +117,10 @@ export function retryable(err: unknown): boolean {
   );
 }
 
+/** A response that stopped at a length limit: its text, and its last tool call's input, may be cut short. */
+export const cutOff = (res: Pick<Anthropic.Beta.BetaMessage, "stop_reason">) =>
+  res.stop_reason === "max_tokens" || res.stop_reason === "model_context_window_exceeded";
+
 /**
  * A response that fell back to another model partway, as it's kept and acted on. Before the last
  * fallback block only text, and server tool calls with their results, stay: the declined model's

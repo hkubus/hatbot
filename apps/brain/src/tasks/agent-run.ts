@@ -5,7 +5,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { type ApprovalKind, chartBlocks, chartProblem, type Task } from "@hatbot/shared";
 import { z } from "zod";
-import { modelErrorText } from "../agent/model";
+import { cutOff, modelErrorText } from "../agent/model";
 import { AGENT_PROMPT } from "../agent/prompt";
 import { mayReview, safeToRun } from "../agent/review";
 import { localStamp, memoryIndex } from "../agent/thread";
@@ -673,13 +673,14 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
       if (res.stop_reason === "refusal")
         throw new Stop("failed", "The model declined to carry on with this task.");
+      if (res.stop_reason === "model_context_window_exceeded")
+        throw new Stop("failed", "Stopped: the task's conversation got too long.");
       if (res.stop_reason === "pause_turn") continue;
       const calls = res.content.filter(
         (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use",
       );
       if (!calls.length) {
-        if (res.stop_reason === "max_tokens")
-          throw new Stop("failed", "Stopped: a reply was cut off.");
+        if (cutOff(res)) throw new Stop("failed", "Stopped: a reply was cut off.");
         const text = res.content
           .map((b) => (b.type === "text" ? b.text : ""))
           .join("")
@@ -691,7 +692,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       // Lookups in a row run at once, and so do changes allowed without asking, each on a different
       // thing (checking updates on every host); anything that asks runs on its own.
       const lookup = (call: Anthropic.Beta.BetaToolUseBlock): boolean | string => {
-        if (res.stop_reason === "max_tokens") return false;
+        if (cutOff(res)) return false;
         const t = pluginTools.get(call.name);
         if (LOOKUP_TOOLS.includes(call.name) || t?.access === "read") return true;
         if (!t?.target) return false;
@@ -704,7 +705,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         return !untrusted && `${t.name.split("_")[0]}:${t.target(parsed.data)}`;
       };
       const results: BlockParam[] = await inBatches(calls, lookup, async (call) => {
-        if (res.stop_reason === "max_tokens")
+        if (cutOff(res))
           return result(call, "Input was cut off at max_tokens. Retry with a shorter input.", true);
         if (finished) return result(call, "Not run: the task already finished.", true);
         if (call.name === "finish_task") {

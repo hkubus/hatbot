@@ -39,7 +39,7 @@ import { BudgetError, estimateTokens, priceOf, type Spend, tokenCount, tokensOf 
 import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
 import type { Watchers } from "../watch/service";
-import { afterFallback, type ModelClient, modelErrorText } from "./model";
+import { afterFallback, cutOff, type ModelClient, modelErrorText } from "./model";
 import {
   EXPERT_PROMPT,
   FORGET_PROMPT,
@@ -1670,7 +1670,7 @@ export class Thread {
       // The answer itself too, so what comes after it can follow on from it.
       return result(
         `${
-          res.stop_reason === "max_tokens"
+          cutOff(res)
             ? "Opus's answer was cut off; it's in your reply as far as it got. Tell the owner, briefly."
             : "Opus's answer is now in your reply, shown to the owner as is. Don't repeat, summarise or rewrite it. Add at most a line if something needs saying; otherwise end your reply."
         }\n\n<opus_answer>\n${answer.trim()}\n</opus_answer>`,
@@ -1793,8 +1793,11 @@ export class Thread {
             text ? "_(I stopped there: I can't help with the rest.)_" : "I can't help with that.",
           );
         }
+        // Nothing more fits: its calls may be cut short, and another request would fail the same way.
+        if (res.stop_reason === "model_context_window_exceeded")
+          return finish("error", "_(My reply was cut off: this conversation got too long.)_");
         if (!toolUses.length) {
-          if (res.stop_reason === "max_tokens") return finish("error", "_(My reply was cut off.)_");
+          if (cutOff(res)) return finish("error", "_(My reply was cut off.)_");
           if (chartFix) {
             // Each chart that now draws takes the broken one's place; one that still doesn't stays code.
             const fixes = chartBlocks(chartFix.text);
@@ -1832,11 +1835,11 @@ export class Thread {
 
         // Every tool_use needs a result, or the episode can't continue. Lookups in a row run at once.
         const lookup = (call: Anthropic.Beta.BetaToolUseBlock) =>
-          res.stop_reason !== "max_tokens" &&
+          !cutOff(res) &&
           (LOOKUP_TOOLS.includes(call.name) ||
             pluginTools.find((t) => t.name === call.name)?.access === "read");
         const results = await inBatches(toolUses, lookup, async (call): Promise<BlockParam> => {
-          if (res.stop_reason === "max_tokens")
+          if (cutOff(res))
             return {
               type: "tool_result",
               tool_use_id: call.id,

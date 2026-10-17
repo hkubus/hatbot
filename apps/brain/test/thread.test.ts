@@ -232,6 +232,24 @@ test("after a fallback partway, the declined model's tool calls don't run and ar
   expect(types).toEqual(["text", "server_tool_use", "web_search_tool_result", "fallback", "text"]);
 });
 
+test("a reply that hit the context window ends as cut off, and its tool calls don't run", async () => {
+  const model = new FakeModel([
+    {
+      content: [text("Saving it"), toolUse("memory_write", { path: "notes/y.md", content: "y" })],
+      stop_reason: "model_context_window_exceeded",
+    },
+    { content: [text("All of it")], stop_reason: "model_context_window_exceeded" },
+  ]);
+  const t = await testApp(model);
+  await t.thread.post("save a note").done;
+  expect(model.requests).toHaveLength(1);
+  expect(await t.memory.exists("notes/y.md")).toBe(false);
+  expect(t.thread.list().at(-1)).toMatchObject({ status: "error" });
+  expect(t.thread.list().at(-1)?.text).toContain("cut off");
+  await t.thread.post("again").done;
+  expect(t.thread.list().at(-1)).toMatchObject({ status: "error" });
+});
+
 test("a reply a fallback model wrote is kept, and billed at that model's price", async () => {
   const usage = { input_tokens: 1_000_000, output_tokens: 0 };
   const t = await testApp(
