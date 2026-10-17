@@ -26,6 +26,30 @@ export function refill<F>({ form, base, seen }: Filled<F>, seed: F | undefined):
 }
 
 /**
+ * The form once a save of `sent` came back as `result`: clean at `result`, unless you went on typing
+ * while it was on its way. Then what you typed stays, unsaved.
+ */
+export function afterSave<F>(s: Filled<F>, sent: F, result: F): Filled<F> {
+  return { form: same(s.form, sent) ? result : s.form, base: result, seen: result };
+}
+
+/**
+ * `list` with `id` switched on or off, kept in one order (the saved list's, then `all`'s), so
+ * switching one off and on again leaves the form as it was.
+ */
+export function toggled(
+  list: string[],
+  id: string,
+  on: boolean,
+  saved: string[],
+  all: string[],
+): string[] {
+  return [...new Set([...saved, ...all, ...list])].filter((x) =>
+    x === id ? on : list.includes(x),
+  );
+}
+
+/**
  * A form, `dirty` while it differs from what it was last filled with. `seed` is the stored item as
  * the form holds it (undefined until it's loaded); `fill` fills it from something else, e.g. a
  * template.
@@ -42,10 +66,14 @@ export function useStoredForm<F>(seed: F | undefined) {
   }, [key, dirty]);
   return {
     form,
+    /** What it was last filled with, or saved as. */
+    base,
     dirty,
     set: (patch: Partial<F>) =>
       setState((s) => (s.form ? { ...s, form: { ...s.form, ...patch } } : s)),
     fill: (f: F) => setState((s) => ({ ...s, form: f, base: f })),
+    /** Your save of `sent` came back as `result`. */
+    saved: (sent: F, result: F) => setState((s) => afterSave(s, sent, result)),
   };
 }
 
