@@ -6,6 +6,7 @@ import { deviceName } from "../device";
 import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
 import { navigate } from "../router";
+import type { Toast } from "../toast";
 import { OtpInput } from "./Login";
 
 const errorText = (err: unknown) =>
@@ -15,7 +16,7 @@ const changed = (what: string, ended: number) =>
 const since = (iso: string) =>
   `Since ${new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`;
 
-export function Account({ toast }: { toast: (t: string) => void }) {
+export function Account({ toast }: { toast: Toast }) {
   // A change signs out the other sessions, so the list loads again.
   const [version, setVersion] = useState(0);
   const reload = useCallback(() => setVersion((v) => v + 1), []);
@@ -36,7 +37,7 @@ export function Account({ toast }: { toast: (t: string) => void }) {
   );
 }
 
-function PasswordForm({ toast, onChanged }: { toast: (t: string) => void; onChanged: () => void }) {
+function PasswordForm({ toast, onChanged }: { toast: Toast; onChanged: () => void }) {
   const [password, setPassword] = useState("");
   const [next, setNext] = useState("");
   const [again, setAgain] = useState("");
@@ -115,13 +116,7 @@ function PasswordForm({ toast, onChanged }: { toast: (t: string) => void; onChan
   );
 }
 
-function AuthenticatorForm({
-  toast,
-  onChanged,
-}: {
-  toast: (t: string) => void;
-  onChanged: () => void;
-}) {
+function AuthenticatorForm({ toast, onChanged }: { toast: Toast; onChanged: () => void }) {
   const [password, setPassword] = useState("");
   const [totp, setTotp] = useState("");
   const [next, setNext] = useState<SetupStartResponse | null>(null);
@@ -226,7 +221,7 @@ function AuthenticatorForm({
   );
 }
 
-function Sessions({ toast, version }: { toast: (t: string) => void; version: number }) {
+function Sessions({ toast, version }: { toast: Toast; version: number }) {
   const [sessions, setSessions] = useState<Session[] | null>(null);
   const [loadError, setLoadError] = useState("");
 
@@ -241,7 +236,7 @@ function Sessions({ toast, version }: { toast: (t: string) => void; version: num
     try {
       await api(`/auth/sessions/${s.id}`, { method: "DELETE" });
     } catch (err) {
-      toast(errorText(err));
+      toast(errorText(err), "error");
     }
     load();
   };
@@ -250,9 +245,10 @@ function Sessions({ toast, version }: { toast: (t: string) => void; version: num
     if (!confirm("Sign out every other browser and app? Apps will need to sign in again.")) return;
     try {
       const r = await api<SignedOutOthers>("/auth/sign-out-others", { body: {} });
-      toast(r.ended ? "Signed out everywhere else" : "Nowhere else was signed in");
+      if (r.ended) toast("Signed out everywhere else");
+      else toast("Nowhere else was signed in", "info");
     } catch (err) {
-      toast(errorText(err));
+      toast(errorText(err), "error");
     }
     load();
   };
