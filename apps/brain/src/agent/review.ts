@@ -3,7 +3,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ApprovalKind } from "@hatbot/shared";
 import type { Verdict } from "../plugins/plugin";
-import type { Spend } from "../spend";
+import { fixedTokens, requestCeiling, type Spend } from "../spend";
 import type { ModelClient } from "./model";
 import { REVIEW_PROMPT } from "./prompt";
 
@@ -34,23 +34,26 @@ export async function safeToRun(
   action: { tool: string; input: unknown; what: string; why: string },
 ): Promise<{ safe: boolean; why: string }> {
   try {
+    const content = [
+      `<owner_said>\n${context.ownerSaid ?? "(nothing the owner wrote is available for this task)"}\n</owner_said>`,
+      `<task_goal>\n${context.goal}\n</task_goal>`,
+      `<untrusted_sources>\n${JSON.stringify(context.sources)}\n</untrusted_sources>`,
+      `<action>\n${JSON.stringify({ tool: action.tool, input: action.input, summary: action.what, would_ask_because: action.why })}\n</action>`,
+    ].join("\n\n");
+    // Past a limit it throws, and the change asks you instead.
+    d.spend.check(
+      requestCeiling(REVIEW_MODEL, {
+        prompt: fixedTokens(REVIEW_PROMPT, content),
+        maxTokens: 2000,
+      }),
+    );
     const res = await d.model.create({
       model: REVIEW_MODEL,
       max_tokens: 2000,
       thinking: { type: "adaptive" },
       output_config: { effort: "low" },
       system: REVIEW_PROMPT,
-      messages: [
-        {
-          role: "user",
-          content: [
-            `<owner_said>\n${context.ownerSaid ?? "(nothing the owner wrote is available for this task)"}\n</owner_said>`,
-            `<task_goal>\n${context.goal}\n</task_goal>`,
-            `<untrusted_sources>\n${JSON.stringify(context.sources)}\n</untrusted_sources>`,
-            `<action>\n${JSON.stringify({ tool: action.tool, input: action.input, summary: action.what, would_ask_because: action.why })}\n</action>`,
-          ].join("\n\n"),
-        },
-      ],
+      messages: [{ role: "user", content }],
     });
     d.spend.recordResponse({ model: REVIEW_MODEL, purpose: "review", usage: res.usage, ...ref });
     if (res.stop_reason !== "end_turn") return { safe: false, why: "" };

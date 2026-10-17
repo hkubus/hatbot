@@ -27,7 +27,14 @@ import { type Outcome, ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import type { CallContext, PluginTool, Verdict } from "../plugins/plugin";
 import { describeCall, runPluginTool, untrustedDefinitions, verdictFor } from "../plugins/registry";
-import { BudgetError, estimateTokens, priceOf, usesReserve } from "../spend";
+import {
+  BudgetError,
+  estimateTokens,
+  fixedTokens,
+  requestCeiling,
+  searchesIn,
+  usesReserve,
+} from "../spend";
 import { Stop, UPDATES_MODELS } from "./desktop-run";
 import {
   FinishResearch,
@@ -147,13 +154,6 @@ const CORE_TOOLS: Anthropic.Beta.BetaTool[] = [
   }),
 ];
 
-/** Rough upper estimate before a request: cached prefix at read price, plus room for a reply. */
-function estimateCost(messages: Anthropic.Beta.BetaMessageParam[], model: string): number {
-  const p = priceOf(model);
-  const tokens = estimateTokens(messages) + 4000;
-  return (tokens * p.input * 0.3 + 2000 * p.output) / 1_000_000;
-}
-
 const STARTED_BY = {
   schedule: (s: string) => `the schedule "${s}"`,
   webhook: (s: string) => `the webhook "${s}"`,
@@ -188,6 +188,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const sources = new Set<string>();
   let slot = false;
   let notified = 0;
+  /** Lets go of what the request in flight holds against the limits. */
+  let held = () => {};
   /** When it got its first slot, and the time since spent waiting for the owner or its own tasks. */
   let startedAt = 0;
   let awayMs = 0;
@@ -575,6 +577,10 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     let container: string | undefined;
     /** It was asked once to end with finish_task after a reply that called no tool. */
     let nudged = false;
+    // Code work writes whole files into tool calls, and research its report.
+    const maxTokens = research ? 64000 : task.effort ? 32000 : 16000;
+    /** What the last request left in the cache, and when it started: entries last 5 minutes. */
+    let cache = { tokens: 0, at: 0 };
     for (let step = 0; ; step++) {
       if (signal.aborted) throw signal.reason;
       const maxSteps = research ? MAX_RESEARCH_STEPS : task.effort ? MAX_CODE_STEPS : MAX_STEPS;
@@ -585,9 +591,17 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           "failed",
           `Stopped: it ran for ${MAX_RUN_MS / 3600_000} hours without finishing.`,
         );
+      // What it may cost at most, held against the limits until it's recorded.
+      const cached = tasks.clock() - cache.at < 5 * 60_000 ? cache.tokens : 0;
       try {
-        d.spend.check(
-          estimateCost(messages, task.model),
+        held = d.spend.hold(
+          requestCeiling(task.model, {
+            prompt: Math.max(estimateTokens(messages) + fixedTokens(system, tools), cached),
+            cached,
+            write: "5m",
+            maxTokens,
+            webSearches: searchesIn(tools),
+          }),
           { id, limitUsd: tasks.budget(id) },
           { reserve: usesReserve(task.origin) },
         );
@@ -604,11 +618,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         continue;
       }
 
+      const sent = tasks.clock();
       const res = await d.model.stream(
         {
           model: task.model,
-          // Code work writes whole files into tool calls, and research its report.
-          max_tokens: research ? 64000 : task.effort ? 32000 : 16000,
+          max_tokens: maxTokens,
           betas: research ? [...BETAS, RESEARCH_BETA] : BETAS,
           // Tools and system end here, the same for each of this bot's tasks, so they share the entry; the
           // top-level breakpoint follows the conversation. Two of the four breakpoints allowed.
@@ -651,6 +665,12 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           signal,
         },
       );
+      held();
+      cache = {
+        tokens:
+          (res.usage.cache_read_input_tokens ?? 0) + (res.usage.cache_creation_input_tokens ?? 0),
+        at: sent,
+      };
       d.spend.recordResponse({
         model: task.model,
         purpose: "task",
@@ -828,6 +848,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       );
     }
   } finally {
+    held();
     if (slot) tasks.pool.release();
     for (const child of children) tasks.cancel(child);
     d.approvals.cancelForTask(id);

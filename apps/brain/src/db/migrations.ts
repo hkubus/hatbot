@@ -601,4 +601,7 @@ export const migrations: string[] = [
   ALTER TABLE tasks ADD COLUMN report_path TEXT;
   ALTER TABLE messages ADD COLUMN sources TEXT;
   `,
+  /* 32: the ledger by conversation, which the chat reads before each request */ `
+  CREATE INDEX IF NOT EXISTS spend_ledger_episode ON spend_ledger (episode_id, id);
+  `,
 ];

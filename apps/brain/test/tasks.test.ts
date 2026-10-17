@@ -903,7 +903,7 @@ test("an answered background task waiting for a slot shows as queued, not waitin
     { content: [toolUse("finish_task", { outcome: "done", summary: "Fine.", notify: false })] },
   ]);
   const t = await testApp(new FakeModel(), work);
-  t.settings.update({ limits: { taskUsd: 0.001, dailyUsd: 10, monthlyUsd: 200 } });
+  t.settings.update({ limits: { taskUsd: 0.05, dailyUsd: 10, monthlyUsd: 200 } });
   const task = t.tasks.createBackgroundTask({ title: "Check", goal: "Check", origin: "chat" });
   const approval = await pending(t);
   expect(t.tasks.get(task?.id ?? 0)?.status).toBe("waiting_approval");

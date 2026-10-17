@@ -131,6 +131,48 @@ export function estimateTokens(messages: unknown): number {
   return chars / 3.5 + images * 1600 + pdfTokens;
 }
 
+/** Rough tokens in a request's system prompt and tools, which estimateTokens leaves out. */
+export const fixedTokens = (system: unknown, tools: unknown) =>
+  JSON.stringify([system, tools]).length / 3;
+
+/** The most web searches a request with these tools may make: each search tool's max_uses. */
+export const searchesIn = (tools: readonly unknown[]) =>
+  tools.reduce<number>((n, t) => {
+    const tool = t as { name?: string; max_uses?: number };
+    return n + (tool.name === "web_search" ? (tool.max_uses ?? 0) : 0);
+  }, 0);
+
+/**
+ * The most one request may cost, for the check before it's made (PLAN.md §6.3): the prompt not known
+ * to be in the cache priced as a cache write (`write`, the TTL its breakpoints use) or plain input, the
+ * part that is at the read price, all of max_tokens as output, and every web search it may make.
+ */
+export function requestCeiling(
+  model: string,
+  r: {
+    /** Prompt tokens, estimated. */
+    prompt: number;
+    /** Of those, ones the last request left in the cache, still within its TTL. */
+    cached?: number;
+    write?: "5m" | "1h";
+    maxTokens: number;
+    webSearches?: number;
+  },
+): number {
+  const cached = Math.min(r.cached ?? 0, r.prompt);
+  const fresh = r.prompt - cached;
+  return (
+    costOf(model, {
+      input: r.write ? 0 : fresh,
+      cacheWrite5m: r.write === "5m" ? fresh : 0,
+      cacheWrite1h: r.write === "1h" ? fresh : 0,
+      cacheRead: cached,
+      output: r.maxTokens,
+    }) +
+    (r.webSearches ?? 0) * WEB_SEARCH_USD
+  );
+}
+
 /** Work that may spend the reserve kept at the end of the limits: alerts, and the heartbeat. */
 export const usesReserve = (origin: string) => origin === "alert" || origin === "heartbeat";
 
@@ -166,6 +208,11 @@ const localDate = (d: Date) =>
 const WEB_SEARCH_USD = 0.01;
 
 export class Spend {
+  /** Requests in flight: the most each may cost, and its task. */
+  private held = new Map<symbol, { usd: number; taskId?: number }>();
+  /** Today's and the month's spend, brought up to date from the rows added since, not summed again. */
+  private totals = { day: "", month: "", lastId: 0, todayUsd: 0, monthUsd: 0 };
+
   constructor(
     private db: Db,
     private settings: SettingsStore,
@@ -281,12 +328,55 @@ export class Spend {
     return row?.total ?? 0;
   }
 
+  /** Today's and this month's spend: summed once a day, then only the rows added since. */
+  private spent(): { todayUsd: number; monthUsd: number } {
+    const now = this.clock();
+    const day = startOfLocalDay(now).toISOString();
+    const month = startOfLocalMonth(now).toISOString();
+    const t = this.totals;
+    if (t.day !== day || t.month !== month) {
+      const row = this.db
+        .query<
+          { today: number | null; month: number | null; last: number | null },
+          [string, string]
+        >(
+          `SELECT sum(CASE WHEN created_at >= ?1 THEN cost_usd END) AS today, sum(cost_usd) AS month,
+           (SELECT max(id) FROM spend_ledger) AS last FROM spend_ledger WHERE created_at >= ?2`,
+        )
+        .get(day, month);
+      this.totals = {
+        day,
+        month,
+        lastId: row?.last ?? 0,
+        todayUsd: row?.today ?? 0,
+        monthUsd: row?.month ?? 0,
+      };
+    } else {
+      const row = this.db
+        .query<
+          { today: number | null; month: number | null; last: number | null },
+          [string, string, number]
+        >(
+          `SELECT sum(CASE WHEN created_at >= ?1 THEN cost_usd END) AS today,
+           sum(CASE WHEN created_at >= ?2 THEN cost_usd END) AS month, max(id) AS last
+           FROM spend_ledger WHERE id > ?3`,
+        )
+        .get(day, month, t.lastId);
+      if (row?.last) {
+        t.lastId = row.last;
+        t.todayUsd += row.today ?? 0;
+        t.monthUsd += row.month ?? 0;
+      }
+    }
+    return { todayUsd: this.totals.todayUsd, monthUsd: this.totals.monthUsd };
+  }
+
   summary() {
     const now = this.clock();
     const today = this.windowSince(startOfLocalDay(now));
     return {
       todayUsd: today.usd,
-      monthUsd: this.sumSince(startOfLocalMonth(now)),
+      monthUsd: this.spent().monthUsd,
       limits: this.settings.get().limits,
       todayTokens: today.tokens,
       lastHour: this.windowSince(new Date(now - 3600_000)),
@@ -299,48 +389,56 @@ export class Spend {
   }
 
   /**
-   * Throws BudgetError if a request estimated at `estimateUsd` would cross a limit. Only work with
-   * `reserve` may spend the last `alertReserveUsd` of the daily and monthly limits.
+   * Throws BudgetError if a request estimated at `estimateUsd` would cross a limit, counting what the
+   * requests in flight may still cost. Only work with `reserve` may spend the last `alertReserveUsd`
+   * of the daily and monthly limits.
    */
   check(estimateUsd: number, task?: { id: number; limitUsd: number }, { reserve = false } = {}) {
-    const now = this.clock();
     const limits = this.settings.get().limits;
-    // Before every model request: today, the month and the task in one read of the ledger.
-    const row = this.db
-      .query<
-        { today: number | null; month: number | null; task: number | null },
-        [string, number, string]
-      >(
-        `SELECT sum(CASE WHEN created_at >= ?1 THEN cost_usd END) AS today,
-         sum(CASE WHEN created_at >= ?3 THEN cost_usd END) AS month,
-         sum(CASE WHEN task_id = ?2 THEN cost_usd END) AS task
-         FROM spend_ledger WHERE created_at >= ?3 OR task_id = ?2`,
-      )
-      .get(
-        startOfLocalDay(now).toISOString(),
-        task?.id ?? -1,
-        startOfLocalMonth(now).toISOString(),
-      );
-    const todayUsd = row?.today ?? 0;
-    const monthUsd = row?.month ?? 0;
-    if (task && (row?.task ?? 0) + estimateUsd > task.limitUsd) {
+    const { todayUsd, monthUsd } = this.spent();
+    let inFlight = 0;
+    let taskInFlight = 0;
+    for (const h of this.held.values()) {
+      inFlight += h.usd;
+      if (task && h.taskId === task.id) taskInFlight += h.usd;
+    }
+    if (task && this.taskSpend(task.id) + taskInFlight + estimateUsd > task.limitUsd) {
       throw new BudgetError("task", `This task would go over its $${task.limitUsd} limit.`);
     }
+    const need = estimateUsd + inFlight;
     const kept = reserve ? 0 : limits.alertReserveUsd;
     const why = (spent: number, limit: number) =>
-      spent + estimateUsd > limit ? "" : ` (its last $${kept} is kept for alerts)`;
-    if (todayUsd + estimateUsd > limits.dailyUsd - kept) {
+      spent + need > limit ? "" : ` (its last $${kept} is kept for alerts)`;
+    if (todayUsd + need > limits.dailyUsd - kept) {
       throw new BudgetError(
         "daily",
         `Today's $${limits.dailyUsd} limit would be exceeded${why(todayUsd, limits.dailyUsd)}.`,
       );
     }
-    if (monthUsd + estimateUsd > limits.monthlyUsd - kept) {
+    if (monthUsd + need > limits.monthlyUsd - kept) {
       throw new BudgetError(
         "monthly",
         `This month's $${limits.monthlyUsd} limit would be exceeded${why(monthUsd, limits.monthlyUsd)}.`,
       );
     }
+  }
+
+  /**
+   * check(), then holds `estimateUsd` against the limits while the request is in flight, so requests
+   * made at once can't pass a limit together. Call what it returns once the request has ended and its
+   * cost is recorded.
+   */
+  hold(
+    estimateUsd: number,
+    task?: { id: number; limitUsd: number },
+    opts?: { reserve?: boolean },
+  ): () => void {
+    this.check(estimateUsd, task, opts);
+    const key = Symbol();
+    this.held.set(key, { usd: estimateUsd, taskId: task?.id });
+    return () => {
+      this.held.delete(key);
+    };
   }
 
   byModel(days: number): { model: string; usd: number }[] {

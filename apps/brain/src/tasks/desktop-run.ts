@@ -20,7 +20,7 @@ import { promptFor } from "../bots";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import { collapse, type GateState, gateCheck, refused, sendsWith } from "../negotiate/gate";
 import { destructive } from "../plugins/ssh/policy";
-import { BudgetError, estimateTokens, priceOf, usesReserve } from "../spend";
+import { BudgetError, estimateTokens, fixedTokens, requestCeiling, usesReserve } from "../spend";
 import { skillPath } from "../teach/skills";
 import { checkFor, consequential } from "./policy";
 import { DesktopSendToChat, SEND_TO_CHAT_DESCRIPTION, sendToChat } from "./send-to-chat";
@@ -293,11 +293,18 @@ const describe = (name: string, input: Record<string, unknown>): string => {
   }
 };
 
-/** Rough upper estimate before a request: text by length, images at their typical size. */
-function estimateCost(messages: Anthropic.Beta.BetaMessageParam[], model: string): number {
-  const p = priceOf(model);
-  const tokens = estimateTokens(messages) + 3000;
-  return (tokens * p.input * 0.3 + 1500 * p.output) / 1_000_000;
+/**
+ * The most a request may cost, for the check before it: images at their typical size, and the part
+ * the last request left in the cache (`cached`) at the read price.
+ */
+function ceilingOf(params: Omit<StreamParams, "stream">, cached = 0): number {
+  const prompt = estimateTokens(params.messages) + fixedTokens(params.system, params.tools);
+  return requestCeiling(params.model, {
+    prompt: Math.max(prompt, cached),
+    cached,
+    write: "5m",
+    maxTokens: params.max_tokens,
+  });
 }
 
 export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSignal): Promise<void> {
@@ -308,6 +315,10 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   const agent = d.desktop.agent.withSignal?.(signal) ?? d.desktop.agent;
   /** Haiku's, until it fails and Opus carries on. */
   let model = task.model;
+  /** Lets go of what the request in flight holds against the limits. */
+  let held = () => {};
+  /** What the last request left in the cache, and when it started: entries last 5 minutes. */
+  let cache = { tokens: 0, at: 0 };
 
   let holding = false;
   let activeMs = 0;
@@ -843,9 +854,11 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         );
       if (activeMs + (holding ? tasks.clock() - since : 0) > MAX_ACTIVE_MS)
         throw new Stop("failed", "Stopped: it ran for 30 minutes without finishing.", true, ASK);
+      const params = request(messages);
       try {
-        d.spend.check(
-          estimateCost(messages, model),
+        const cached = tasks.clock() - cache.at < 5 * 60_000 ? cache.tokens : 0;
+        held = d.spend.hold(
+          ceilingOf(params, cached),
           { id, limitUsd: tasks.budget(id) },
           { reserve: usesReserve(task.origin) },
         );
@@ -863,13 +876,20 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         continue;
       }
 
-      const res = await d.model.stream(request(messages), {
+      const sent = tasks.clock();
+      const res = await d.model.stream(params, {
         onText: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
         onThinking: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
         onFailedUsage: (m, usage) =>
           d.spend.recordResponse({ model: m, purpose: "task", usage, taskId: id }),
         signal,
       });
+      held();
+      cache = {
+        tokens:
+          (res.usage.cache_read_input_tokens ?? 0) + (res.usage.cache_creation_input_tokens ?? 0),
+        at: sent,
+      };
       d.spend.recordResponse({
         model,
         purpose: "task",
@@ -1003,12 +1023,13 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           ]
         : [...messages, { role: "user", content: [ask] }];
     try {
-      d.spend.check(
-        estimateCost(asked, model),
+      const params = { ...request(asked), max_tokens: 4000 };
+      const done = d.spend.hold(
+        ceilingOf(params, tasks.clock() - cache.at < 5 * 60_000 ? cache.tokens : 0),
         { id, limitUsd: tasks.budget(id) },
         { reserve: usesReserve(task.origin) },
       );
-      const res = await d.model.create({ ...request(asked), max_tokens: 4000 });
+      const res = await d.model.create(params).finally(done);
       d.spend.recordResponse({ model, purpose: "task", usage: res.usage, taskId: id });
       return res.content
         .map((b) => (b.type === "text" ? b.text : ""))
@@ -1079,6 +1100,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       );
     }
   } finally {
+    held();
     release();
     d.approvals.cancelForTask(id);
     d.desktop.clearRequest(id);

@@ -35,7 +35,16 @@ import {
 } from "../plugins/registry";
 import type { Schedules } from "../schedules";
 import type { SettingsStore } from "../settings";
-import { BudgetError, estimateTokens, priceOf, type Spend, tokenCount, tokensOf } from "../spend";
+import {
+  BudgetError,
+  estimateTokens,
+  fixedTokens,
+  requestCeiling,
+  type Spend,
+  searchesIn,
+  tokenCount,
+  tokensOf,
+} from "../spend";
 import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
 import type { Watchers } from "../watch/service";
@@ -73,6 +82,8 @@ const MAX_SUMMARY_TRIES = 3;
 const LONG_EPISODE_TOKENS = 90_000;
 const RECENT_MESSAGES = 10;
 const MAX_STEPS = 25;
+/** A chat request's output limit, and ask_opus's: the check before each counts on all of it. */
+const MAX_TOKENS = 32000;
 const MAX_TURN_MS = 10 * 60_000;
 /** How often a reply being written is saved, so one a restart cuts off keeps what it had. */
 const SAVE_TEXT_MS = 3000;
@@ -904,6 +915,17 @@ export class Thread {
     return { id: row.id, isNew: true, fresh, long };
   }
 
+  /** Prompt tokens the bot's last request in the episode left in the cache, while its hour lasts. */
+  private cachedTokens(episodeId: number, botId: string): number {
+    const last = this.d.db
+      .query<{ tokens: number; created_at: string }, [number, string]>(
+        `SELECT cache_read_tokens + cache_write_5m_tokens + cache_write_1h_tokens AS tokens, created_at
+         FROM spend_ledger WHERE episode_id = ? AND bot_id = ? AND purpose = 'thread' ORDER BY id DESC LIMIT 1`,
+      )
+      .get(episodeId, botId);
+    return last && this.clock() - Date.parse(last.created_at) < 3600_000 ? last.tokens : 0;
+  }
+
   /** How long the episode's last chat request was, in prompt tokens. */
   private promptTokens(episodeId: number): number {
     return (
@@ -965,6 +987,8 @@ export class Thread {
         await this.summarize(e.id);
         this.summaryFailures.delete(e.id);
       } catch (err) {
+        // A spent limit isn't the summary's failure: it's written once there's room again.
+        if (err instanceof BudgetError) continue;
         const failures = (this.summaryFailures.get(e.id) ?? 0) + 1;
         this.summaryFailures.set(e.id, failures);
         if (failures < MAX_SUMMARY_TRIES) {
@@ -1137,6 +1161,13 @@ export class Thread {
       .map((m) => `[${localStamp(new Date(m.created_at))}] ${this.speaker(m)}: ${m.text}`)
       .join("\n\n");
     const names = this.members().map((b) => b.name);
+    const content = `<summary>\n${this.threadSummary()}\n</summary>\n\n<deleted_conversation>\n${transcript}\n</deleted_conversation>`;
+    this.d.spend.check(
+      requestCeiling(SUMMARY_MODEL, {
+        prompt: fixedTokens(FORGET_PROMPT, content),
+        maxTokens: 4000,
+      }),
+    );
     const res = await this.d.model.create({
       model: SUMMARY_MODEL,
       max_tokens: 4000,
@@ -1146,12 +1177,7 @@ export class Thread {
         names.length === 1 && names[0] === "Hatbot"
           ? FORGET_PROMPT
           : FORGET_PROMPT.replace(/\bHatbot\b/g, names.join(" and ")),
-      messages: [
-        {
-          role: "user",
-          content: `<summary>\n${this.threadSummary()}\n</summary>\n\n<deleted_conversation>\n${transcript}\n</deleted_conversation>`,
-        },
-      ],
+      messages: [{ role: "user", content }],
     });
     this.d.spend.recordResponse({
       model: SUMMARY_MODEL,
@@ -1184,6 +1210,13 @@ export class Thread {
     // One with only commands in it (/new and nothing after) has nothing to summarize.
     if (transcript && this.hasTurns(episodeId)) {
       const names = this.members().map((b) => b.name);
+      const content = `<previous_summary>\n${this.threadSummary() || "(none)"}\n</previous_summary>\n\n<conversation>\n${transcript}\n</conversation>`;
+      this.d.spend.check(
+        requestCeiling(SUMMARY_MODEL, {
+          prompt: fixedTokens(SUMMARY_PROMPT, content),
+          maxTokens: 4000,
+        }),
+      );
       const res = await this.d.model.create({
         model: SUMMARY_MODEL,
         max_tokens: 4000,
@@ -1193,12 +1226,7 @@ export class Thread {
           names.length === 1 && names[0] === "Hatbot"
             ? SUMMARY_PROMPT
             : SUMMARY_PROMPT.replace(/\bHatbot\b/g, names.join(" and ")),
-        messages: [
-          {
-            role: "user",
-            content: `<previous_summary>\n${this.threadSummary() || "(none)"}\n</previous_summary>\n\n<conversation>\n${transcript}\n</conversation>`,
-          },
-        ],
+        messages: [{ role: "user", content }],
       });
       this.d.spend.recordResponse({
         model: SUMMARY_MODEL,
@@ -1629,6 +1657,17 @@ export class Thread {
       };
     };
 
+    /** What this reply's requests in flight hold against the limits; all let go when it ends. */
+    const holding = new Set<() => void>();
+    const hold = (usd: number) => {
+      const release = spend.hold(usd);
+      holding.add(release);
+      return () => {
+        release();
+        holding.delete(release);
+      };
+    };
+
     let askedOpus = false;
     /** ask_opus: one Opus 5.5 call, its answer streamed into this reply as is. */
     const askOpus = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
@@ -1644,15 +1683,19 @@ export class Thread {
         return result("Opus was already asked once in this reply. Work with its answer.", true);
       askedOpus = true;
       const content = `<question>\n${p.data.question}\n</question>\n\n<context>\n${p.data.context || "(none)"}\n</context>`;
-      const price = priceOf(EXPERT_MODEL);
-      spend.check(((content.length / 3 + 2000) * price.input + 8000 * price.output) / 1_000_000);
+      const held = hold(
+        requestCeiling(EXPERT_MODEL, {
+          prompt: fixedTokens(EXPERT_PROMPT, content),
+          maxTokens: MAX_TOKENS,
+        }),
+      );
       separate = true;
       let answer = "";
       const restore = checkpoint();
       const res = await model.stream(
         {
           model: EXPERT_MODEL,
-          max_tokens: 32000,
+          max_tokens: MAX_TOKENS,
           betas: ["server-side-fallback-2026-07-01"],
           fallbacks: "default",
           system: EXPERT_PROMPT,
@@ -1681,6 +1724,7 @@ export class Thread {
           signal: abort.signal,
         },
       );
+      held();
       used.costUsd += spend.recordResponse({
         model: EXPERT_MODEL,
         purpose: "expert",
@@ -1720,8 +1764,19 @@ export class Thread {
         }
 
         const { turns: messages, effort } = await this.loadTurns(episode.id, bot.id, files);
+        // What it may cost at most, held against the limits until it's recorded.
+        const cached = this.cachedTokens(episode.id, bot.id);
+        let held: () => void;
         try {
-          spend.check(estimateCost(messages, chatModel));
+          held = hold(
+            requestCeiling(chatModel, {
+              prompt: Math.max(estimateTokens(messages) + fixedTokens(system, tools), cached),
+              cached,
+              write: "1h",
+              maxTokens: MAX_TOKENS,
+              webSearches: searchesIn(tools),
+            }),
+          );
         } catch (err) {
           if (err instanceof BudgetError) return finish("error", `_Stopped: ${err.message}_`);
           throw err;
@@ -1731,7 +1786,7 @@ export class Thread {
         const res = await model.stream(
           {
             model: chatModel,
-            max_tokens: 32000,
+            max_tokens: MAX_TOKENS,
             betas: BETAS,
             // Haiku 5.5 has no server-side fallback; a refusal there ends the reply with a note.
             ...(onHaiku ? {} : { fallbacks: "default" as const }),
@@ -1782,6 +1837,7 @@ export class Thread {
             signal: abort.signal,
           },
         );
+        held();
         // A paused turn picks up mid-thought; only text after tools starts a new part.
         separate = res.stop_reason !== "pause_turn";
         container = containerOf(res, container);
@@ -1960,6 +2016,7 @@ export class Thread {
     } finally {
       this.current = null;
       this.live.delete(out.id);
+      for (const release of holding) release();
     }
   }
 }
@@ -2091,13 +2148,6 @@ export function activity(label: string, input: unknown): string {
   const detail = parts.join(", ");
   if (!detail) return label;
   return `${label}: ${detail.length > 80 ? `${detail.slice(0, 79)}…` : detail}`;
-}
-
-/** Rough upper estimate before a request: cached prefix at read price, plus room for a reply. */
-function estimateCost(messages: Turn[], model: string): number {
-  const p = priceOf(model);
-  const tokens = estimateTokens(messages) + 4000;
-  return (tokens * p.input * 0.25 + 2000 * p.output) / 1_000_000;
 }
 
 /** "Thu 2026-10-09 18:04", in the brain's local time. */

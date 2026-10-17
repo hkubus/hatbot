@@ -9,8 +9,9 @@ import {
   retryDelays,
   withRetries,
 } from "../src/agent/model";
+import { safeToRun } from "../src/agent/review";
 import { EventBus } from "../src/events";
-import type { BudgetError } from "../src/spend";
+import { type BudgetError, requestCeiling, searchesIn } from "../src/spend";
 import { Tasks } from "../src/tasks/service";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, testApp, waitFor } from "./helpers";
@@ -530,6 +531,99 @@ test("the spending check reads today, the month and the task's spend, and keeps 
   t.settings.update({ limits: { alertReserveUsd: 0.5 } });
   expect(stop(0.2)).toBe("monthly");
   expect(stop(0.5, false, true)).toBeNull();
+});
+
+test("the most a request may cost: uncached input as a cache write, all of max_tokens, every search", () => {
+  // Opus 5.5: 100k prompt, 60k of it cached, written for an hour; 32k out; 8 searches.
+  const usd = requestCeiling("claude-opus-5-5", {
+    prompt: 100_000,
+    cached: 60_000,
+    write: "1h",
+    maxTokens: 32_000,
+    webSearches: 8,
+  });
+  expect(usd).toBeCloseTo((40_000 * 8 + 60_000 * 0.2 + 32_000 * 20) / 1e6 + 0.08, 9);
+  // No cache breakpoints: plain input.
+  expect(requestCeiling("claude-haiku-5-5", { prompt: 1000, maxTokens: 4000 })).toBeCloseTo(
+    (1000 * 0.1 + 4000 * 0.5) / 1e6,
+    9,
+  );
+  expect(
+    searchesIn([
+      { name: "web_search", max_uses: 8 },
+      { name: "web_fetch", max_uses: 8 },
+    ]),
+  ).toBe(8);
+});
+
+test("requests in flight hold what they may cost, so ones made at once can't pass a limit together", async () => {
+  const t = await testApp();
+  t.settings.update({ limits: { taskUsd: 3, dailyUsd: 1, monthlyUsd: 200, alertReserveUsd: 0 } });
+  const first = t.spend.hold(0.6);
+  expect(() => t.spend.hold(0.6)).toThrow("Today's $1 limit");
+  first();
+  const second = t.spend.hold(0.6);
+  second();
+  // A task's own requests in flight count against its limit too.
+  const task = { id: 7, limitUsd: 0.5 };
+  const one = t.spend.hold(0.3, task);
+  expect(() => t.spend.hold(0.3, task)).toThrow("over its $0.5 limit");
+  one();
+});
+
+test("the check keeps today's and the month's spend up to date without summing them again", async () => {
+  const t = await testApp();
+  t.settings.update({ limits: { taskUsd: 3, dailyUsd: 1, monthlyUsd: 200, alertReserveUsd: 0 } });
+  t.spend.check(0.5);
+  // A row the ledger gets some other way is counted on the next check.
+  t.db
+    .query(
+      `INSERT INTO spend_ledger (created_at, model, purpose, input_tokens, cache_write_5m_tokens,
+       cache_write_1h_tokens, cache_read_tokens, output_tokens, cost_usd) VALUES (?, 'x', 'test', 0, 0, 0, 0, 0, 0.8)`,
+    )
+    .run(new Date(Date.parse("2026-10-09T12:00:00Z")).toISOString());
+  expect(() => t.spend.check(0.5)).toThrow("Today's $1 limit");
+  expect(t.spend.summary().monthUsd).toBeCloseTo(0.8, 9);
+  // A new day starts from nothing.
+  t.advance(86_400_000);
+  t.spend.check(0.5);
+});
+
+test("an Opus reply that could pass the limit with all its output isn't started", async () => {
+  const model = new FakeModel([{ content: [text("ok")] }]);
+  const t = await testApp(model);
+  t.settings.update({
+    chatModel: "claude-opus-5-5",
+    limits: { taskUsd: 3, dailyUsd: 0.5, monthlyUsd: 200, alertReserveUsd: 0 },
+  });
+  await t.thread.post("hi").done;
+  // 32k output tokens at $20 a million is $0.64 alone.
+  expect(model.requests).toHaveLength(0);
+  expect(t.thread.list().at(-1)?.text).toContain("Today's $0.5 limit");
+});
+
+test("summaries and Haiku's reviews wait while the limits are spent", async () => {
+  const model = new FakeModel([{ content: [text("one")] }], ["<summary>S</summary>"]);
+  const t = await testApp(model);
+  await t.thread.post("first").done;
+  t.settings.update({
+    limits: { taskUsd: 3, dailyUsd: 0.000001, monthlyUsd: 200, alertReserveUsd: 0 },
+  });
+  t.advance(31 * 60_000);
+  for (let i = 0; i < 4; i++) await t.thread.sweep();
+  expect(model.creates).toHaveLength(0);
+  expect(summarized(t)).toEqual([{ id: 1, summarized: 0 }]);
+  const review = await safeToRun(
+    { model, spend: t.spend },
+    {},
+    { ownerSaid: "restart it", goal: "restart nginx", sources: [] },
+    { tool: "ssh_exec", input: {}, what: "Restart nginx", why: "It changes a host." },
+  );
+  expect(review.safe).toBe(false);
+  expect(model.creates).toHaveLength(0);
+  t.settings.update({ limits: { taskUsd: 3, dailyUsd: 10, monthlyUsd: 200, alertReserveUsd: 0 } });
+  await t.thread.sweep();
+  expect(summarized(t)).toEqual([{ id: 1, summarized: 1 }]);
 });
 
 test("a background task waiting on a desktop task doesn't hold a slot", async () => {
