@@ -142,7 +142,8 @@ struct ShareView: View {
         take(await Self.copy(p, type, name: name))
       }
     }
-    files = Array(files.prefix(10))
+    // What's listed is what's sent.
+    files = Array(files.prefix(draft.fileRoom))
     loading = false
   }
 
@@ -166,7 +167,7 @@ struct ShareView: View {
           "/attachments", data: Data(draft.shared.utf8), name: ShareDraft.sharedName, mediaType: "text/plain")
         ids.append(a.id)
       }
-      for f in files.prefix(10 - ids.count) {
+      for f in files {
         let a: Attachment
         switch f.content {
         case let .data(data): a = try await api.upload("/attachments", data: data, name: f.name, mediaType: f.mediaType)

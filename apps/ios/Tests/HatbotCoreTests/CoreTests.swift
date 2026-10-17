@@ -748,6 +748,9 @@ final class LookingAfterThingsTests: XCTestCase {
     XCTAssertEqual(ShareDraft(urls: [url]).shared, "")
     XCTAssertFalse(ShareDraft(texts: ["Only text"]).isEmpty)
     XCTAssertTrue(ShareDraft(note: " ").isEmpty)
+    // The shared text takes one of a message's 10 attachments.
+    XCTAssertEqual(draft.fileRoom, 9)
+    XCTAssertEqual(ShareDraft(urls: [url]).fileRoom, 10)
   }
 
   func testAskAnswersWithTheRepliesOrSaysItsStillGoing() throws {
