@@ -22,14 +22,21 @@ const VERDICT = {
 /** About what a fetched page can be; past it, the text is cut. */
 const MAX_SCREENED_CHARS = 150_000;
 
+/** What's read: text, or a PDF (base64), which Haiku reads as a document. */
+export type Readable = string | { pdf: string };
+
 export async function screenPage(
   model: ModelClient,
   spend: Spend,
   ref: number | { taskId?: number; episodeId?: number },
-  page: { url: string | null; title: string | null; text: string },
+  page: { url: string | null; title: string | null; text: Readable },
 ): Promise<Screening> {
-  if (!page.text.trim()) return { suspected: false, excerpt: "" };
+  const pdf = typeof page.text === "string" ? null : page.text.pdf;
+  if (typeof page.text === "string" && !page.text.trim()) return { suspected: false, excerpt: "" };
   const where = typeof ref === "number" ? { taskId: ref } : ref;
+  // JSON-encoded and labelled with its source, so the page can't pose as the prompt. A PDF goes as a
+  // document before its label.
+  const label = `<page_json>\n${tagJson({ url: page.url, title: page.title, text: pdf === null ? (page.text as string).slice(0, MAX_SCREENED_CHARS) : "(the PDF document above)" })}\n</page_json>`;
   try {
     const res = await model.create({
       model: SCREENING_MODEL,
@@ -38,11 +45,19 @@ export async function screenPage(
       thinking: { type: "adaptive" },
       output_config: { effort: "low", format: { type: "json_schema", schema: VERDICT } },
       system: SCREENING_PROMPT,
-      // JSON-encoded and labelled with its source, so the page can't pose as the prompt.
       messages: [
         {
           role: "user",
-          content: `<page_json>\n${tagJson({ url: page.url, title: page.title, text: page.text.slice(0, MAX_SCREENED_CHARS) })}\n</page_json>`,
+          content:
+            pdf === null
+              ? label
+              : [
+                  {
+                    type: "document",
+                    source: { type: "base64", media_type: "application/pdf", data: pdf },
+                  },
+                  { type: "text", text: label },
+                ],
         },
       ],
     });
@@ -92,9 +107,11 @@ export class Screener {
   ) {}
 
   /** `source` says where `text` came from, e.g. "Read https://…" or a tool call. */
-  add(source: string, text: string) {
-    if (!text.trim()) return;
-    const key = createHash("sha256").update(text).digest("hex");
+  add(source: string, text: Readable) {
+    if (typeof text === "string" ? !text.trim() : !text.pdf) return;
+    const key = createHash("sha256")
+      .update(typeof text === "string" ? text : `pdf:${text.pdf}`)
+      .digest("hex");
     const cache = known.get(this.d.model) ?? new Map<string, Screening>();
     known.set(this.d.model, cache);
     const seen = cache.get(key);

@@ -27,6 +27,7 @@ import type { Tasks } from "../tasks/service";
 import { skillPath } from "../teach/skills";
 import type { Triggers } from "../triggers";
 import { conditionOf, WatchError, type Watchers, watcherLine } from "../watch/service";
+import type { Readable } from "./screening";
 import { messageTag } from "./untrusted";
 
 export type ToolContext = {
@@ -196,7 +197,7 @@ const untrustedJson = (text: string) =>
 
 /** What research wrote, read back: untrusted, and the reader is tainted by it (PLAN.md §6.1). */
 function researchNotes(ctx: ToolContext, tool: string, path: string, text: string): string {
-  ctx.taint?.(`Research notes: ${path}`);
+  ctx.taint?.(`Research notes: ${path}`, text);
   return `<tool_output tool="${tool}" trusted="false">\n${untrustedJson(text)}\n</tool_output>`;
 }
 
@@ -264,6 +265,20 @@ async function asked(
   if (r.isError) throw new NotChanged(r.content);
   return r.content;
 }
+
+/**
+ * A schedule or watcher made after something the conversation read was suspected of being a prompt
+ * injection waits for you: its runs would act on what that text wrote, and Haiku's review isn't asked.
+ */
+async function askedIfSuspected(
+  ctx: ToolContext,
+  signal: AbortSignal,
+  call: { name: string; input: unknown; what: string },
+): Promise<string> {
+  return (await ctx.suspected?.()) ? asked(ctx, signal, call) : "";
+}
+
+const cut = (s: string, n = 300) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 /** Switching a trigger off, or changing how many failed checks it waits for, asks as above. */
 function stoppingTrigger(
@@ -647,16 +662,22 @@ export const TOOLS = [
         ),
       ...scheduleWhen,
     }),
-    run: async ({ name, prompt, cron, at }, { schedules, scheduleCard, tainted, bot }) => {
+    run: async ({ name, prompt, cron, at }, ctx, signal) => {
+      const { schedules, scheduleCard, tainted, bot } = ctx;
       if (!schedules) return "Schedules aren't available.";
       if (Boolean(cron) === Boolean(at)) return "Give either cron or at.";
+      const note = await askedIfSuspected(ctx, signal, {
+        name: "schedule_create",
+        input: { name, prompt, cron, at },
+        what: `Create the schedule "${name}", ${cron ? describeCron(cron).toLowerCase() : `once at ${at}`}: ${cut(prompt)}`,
+      });
       const s = schedules.create(
         { name, prompt, cron, at, botId: bot?.id ?? HATBOT_ID },
         "chat",
         tainted?.() ?? null,
       );
       scheduleCard?.(s);
-      return `Created schedule ${scheduleLine(s)}`;
+      return `Created schedule ${scheduleLine(s)}${note}`;
     },
   }),
   def({
@@ -727,11 +748,18 @@ export const TOOLS = [
       tool_input: z.record(z.string(), z.unknown()).optional().describe("The tool's input"),
       ...watchFields,
     }),
-    run: async (input, { watchers, tainted, bot }) => {
+    run: async (input, ctx, signal) => {
+      const { watchers, tainted, bot } = ctx;
       if (!watchers) return "Watchers aren't available.";
       if (Boolean(input.url) === Boolean(input.tool)) return "Give either url or tool.";
       const condition = conditionOf(input);
       if (typeof condition === "string") return condition;
+      const prompt = input.prompt?.trim() ?? "";
+      const note = await askedIfSuspected(ctx, signal, {
+        name: "watch_create",
+        input,
+        what: `Create the watcher "${input.name}" on ${input.url ?? input.tool}${prompt ? `: ${cut(prompt)}` : ""}`,
+      });
       const source: WatchSource = {
         kind: input.url ? "page" : "tool",
         ...(input.url
@@ -747,7 +775,7 @@ export const TOOLS = [
             name: input.name,
             source,
             condition,
-            prompt: input.prompt?.trim() ?? "",
+            prompt,
             everyMinutes: Math.max(minWatchMinutes(source), input.every_minutes ?? 60),
             once: input.once ?? false,
             enabled: true,
@@ -756,7 +784,7 @@ export const TOOLS = [
           "chat",
           tainted?.() ?? null,
         );
-        return `Created watcher ${watcherLine(w)}`;
+        return `Created watcher ${watcherLine(w)}${note}`;
       } catch (err) {
         if (err instanceof WatchError) return `Not created: ${err.message}`;
         throw err;
@@ -1023,7 +1051,8 @@ export const CORE_TOOL_NAMES = [
 ];
 
 /** The code the API runs for the web tools' dynamic filtering, by its server tool names. */
-const CODE_TOOLS = ["code_execution", "bash_code_execution"];
+// The text editor views and writes files in the same container as the code.
+const CODE_TOOLS = ["code_execution", "bash_code_execution", "text_editor_code_execution"];
 
 /**
  * Anthropic's web search and fetch, run by the API itself (PLAN.md §5.5), in the versions with dynamic
@@ -1187,18 +1216,26 @@ export function addSources(
 }
 
 /**
- * The untrusted text a response's server tools brought in, to screen: pages fetched, the titles of
- * search results (their text comes encrypted), and what the web tools' code printed.
+ * The untrusted text a response's server tools brought in, to screen: pages fetched (a PDF as it
+ * came), the titles of search results (their text comes encrypted), what the web tools' code printed,
+ * and files viewed in its container.
  */
 export function webTexts(
   content: Anthropic.Beta.BetaContentBlock[],
-): { source: string; text: string }[] {
-  const out: { source: string; text: string }[] = [];
+): { source: string; text: Readable }[] {
+  const out: { source: string; text: Readable }[] = [];
   for (const b of content) {
     if (b.type === "web_fetch_tool_result" && b.content.type === "web_fetch_result") {
       const { source, title } = b.content.content;
-      if (source.type === "text")
-        out.push({ source: `Read ${b.content.url}`, text: `${title ?? ""}\n${source.data}` });
+      out.push({
+        source: `Read ${b.content.url}`,
+        text: source.type === "text" ? `${title ?? ""}\n${source.data}` : { pdf: source.data },
+      });
+    } else if (
+      b.type === "text_editor_code_execution_tool_result" &&
+      b.content.type === "text_editor_code_execution_view_result"
+    ) {
+      out.push({ source: CODE_READ, text: b.content.content });
     } else if (b.type === "web_search_tool_result" && Array.isArray(b.content)) {
       const titles = b.content.map((r) => `${r.title} (${r.url})`).join("\n");
       out.push({ source: "Web search results", text: titles });

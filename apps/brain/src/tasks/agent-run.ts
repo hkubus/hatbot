@@ -379,6 +379,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const askBot = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
     const p = AskBotInput.safeParse(call.input);
     if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+    // What this task read is screened first: a suspicion goes with the request.
+    await screener.settled();
     const child = tasks.askBot({
       from: bot,
       to: p.data.bot,
@@ -391,6 +393,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       ownerSaid: withNotes(ownerWords()) ?? undefined,
     });
     if (typeof child === "string") return result(call, child, true);
+    if (tasks.get(id)?.injectionSuspected) tasks.mark(child.id, "injection_suspected");
     const name = d.bots.nameOf(child.botId);
     children.add(child.id);
     tasks.addStep(id, {
@@ -653,6 +656,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const skills = d.skills.prompt();
     const source = task.source ?? "";
     const alert = task.origin === "alert" && task.payload ? alertParts(task.payload) : null;
+    // What started it is screened like what it reads: an alert's message, or an untrusted event.
+    if (alert?.message)
+      screener.add(alertMessageSource(String(JSON.parse(alert.alert).monitor)), alert.message);
+    else if (task.tainted && task.payload)
+      screener.add(task.taintedBy ?? "What started it", task.payload);
     const payload = alert
       ? alertEvent(alert, tagJson)
       : task.payload

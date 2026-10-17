@@ -59,7 +59,7 @@ import {
   SYSTEM_PROMPT,
 } from "./prompt";
 import { mayReview, safeToRun } from "./review";
-import { Screener, type Screening } from "./screening";
+import { type Readable, Screener, type Screening } from "./screening";
 import {
   addSources,
   CHAT_WEB_TOOLS,
@@ -1746,6 +1746,15 @@ export class Thread {
       if (user?.attachments?.length && this.d.attachments) {
         userBlocks.push(...this.d.attachments.refs(user.attachments));
         this.taint(episode.id, `Attached file "${user.attachments[0]?.name}"`);
+        // And screened, as what the model reads of them.
+        if (!incognito)
+          for (const a of user.attachments)
+            for (const b of await this.d.attachments.blocks([a]))
+              if (b.type === "document" && (b.source.type === "text" || b.source.type === "base64"))
+                this.screenerFor(episode.id).add(
+                  `Attached file "${a.name}"`,
+                  b.source.type === "text" ? b.source.data : { pdf: b.source.data },
+                );
       }
       // A system message follows a user turn; with nothing else to say, the note is that turn.
       if (note && !userBlocks.length) {
@@ -1948,7 +1957,7 @@ export class Thread {
     // What the reply reads from outside, screened for prompt injection while it goes on (PLAN.md
     // §6.1). Incognito can't change anything, so there's nothing to screen for.
     const screener = incognito ? null : this.screenerFor(episode.id);
-    const screen = (source: string, text: string) => screener?.add(source, text);
+    const screen = (source: string, text: Readable) => screener?.add(source, text);
     this.current = abort;
     this.currentIncognito = incognito;
     try {
