@@ -393,7 +393,7 @@ export const TOOLS = [
   def({
     name: "run_desktop_task",
     description:
-      "Start a task on your Linux desktop (Chromium, plus a shell for commands and experiments), for anything that needs a browser or a sandbox to try things in: booking, buying, filling in forms, pages that need a login, running a script. To look something up, web_search and web_fetch are quicker. It runs in the background on a separate model and its progress and result show under your reply; the owner can watch it live and approves consequential steps. You're told how it ended at the start of a later turn. Give it everything it needs to know: it can't see this conversation.",
+      "Start a task on your Linux desktop (Chromium, plus a shell), for anything that needs a real browser: booking, buying, filling in forms, pages that need a login. To compute or run a script, use code_run when the Code plugin is on; to look something up, web_search and web_fetch are quicker. It runs in the background on a separate model and its progress and result show under your reply; the owner can watch it live and approves consequential steps. You're told how it ended at the start of a later turn. Give it everything it needs to know: it can't see this conversation.",
     schema: DesktopTaskInput,
     run: async (
       { title, goal, success_criteria, skill },
