@@ -227,16 +227,13 @@ test("it's on by default, and runs only when it's on and due", async () => {
   const t = await testApp();
   expect(t.settings.get().heartbeat.enabled).toBe(true);
   t.settings.update({ heartbeat: { ...t.settings.get().heartbeat, enabled: false } });
-  t.heartbeat.tick();
-  await Bun.sleep(5);
+  expect(t.heartbeat.tick()).toBeUndefined();
   expect(t.heartbeat.info().at).toBeNull();
   await on(t);
-  t.heartbeat.tick();
-  await waitFor(() => t.heartbeat.info().at);
-  const at = t.heartbeat.info().at;
+  const at = (await t.heartbeat.tick())?.at ?? null;
+  expect(at).not.toBeNull();
   t.advance(10 * 60_000);
-  t.heartbeat.tick();
-  await Bun.sleep(5);
+  expect(t.heartbeat.tick()).toBeUndefined();
   expect(t.heartbeat.info().at).toBe(at);
 });
 

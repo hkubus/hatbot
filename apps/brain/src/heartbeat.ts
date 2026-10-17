@@ -100,13 +100,13 @@ export class Heartbeat {
     return { ...s.last, recent: s.recent };
   }
 
-  /** Runs when it's due; the brain calls it every few seconds. */
-  tick() {
+  /** Runs when it's due, and returns that look; the brain calls it every few seconds. */
+  tick(): Promise<HeartbeatInfo> | undefined {
     const s = this.d.settings.get();
     if (s.paused || !s.heartbeat.enabled || this.running) return;
     const last = this.state().lastRunAt;
     if (last && this.clock() - Date.parse(last) < s.heartbeat.everyMinutes * 60_000) return;
-    void this.run().catch((err) => console.error("heartbeat failed", err));
+    return this.run();
   }
 
   /** A look now: Settings' Run now, and tests. */
