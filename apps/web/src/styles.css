@@ -1561,6 +1561,9 @@ html[data-theme="dark"] .seg button.active {
 .toast svg.i {
   color: var(--success-text);
 }
+.toast.error svg.i {
+  color: var(--danger-text);
+}
 
 /* ---------- Tab bar (phone) ---------- */
 .tabbar {

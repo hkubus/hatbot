@@ -5,6 +5,7 @@ import { lineDiff } from "../diff";
 import { Icon } from "../icons";
 import { navigate, setLeaveGuard } from "../router";
 import { bumpMemory, loadProposals, putProposal, startTeach, useStore } from "../store";
+import type { Toast } from "../toast";
 
 type Selection =
   | { kind: "file"; path: string }
@@ -76,7 +77,7 @@ function ProposalView({ p }: { p: Proposal }) {
   );
 }
 
-export function Memory({ toast, open }: { toast: (t: string) => void; open?: string }) {
+export function Memory({ toast, open }: { toast: Toast; open?: string }) {
   const version = useStore((s) => s.memoryVersion);
   const allProposals = useStore((s) => s.proposals);
   const pending = useMemo(
@@ -181,14 +182,14 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
       });
       setConflict(null);
       setSaved(content);
-      toast(r.sha ? `Saved (${r.sha.slice(0, 7)})` : "No changes");
+      toast(r.sha ? `Saved (${r.sha.slice(0, 7)})` : "No changes", r.sha ? "done" : "info");
       bumpMemory();
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         const now = err.data as { sha: string; content: string };
         return setConflict({ sha: now.sha, content: now.content });
       }
-      toast(err instanceof ApiError ? err.message : "Couldn't save");
+      toast(err instanceof ApiError ? err.message : "Couldn't save", "error");
     }
   };
   // Your edit goes; the file as it's now saved comes in.
@@ -220,7 +221,7 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
       setSel({ kind: "file", path: "INDEX.md" });
       bumpMemory();
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Couldn't delete");
+      toast(err instanceof ApiError ? err.message : "Couldn't delete", "error");
     }
   };
 
@@ -228,10 +229,13 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
     if (!confirm(`Revert "${c.message}"?`)) return;
     try {
       const r = await api<{ sha: string | null }>(`/memory/revert/${c.sha}`, { body: {} });
-      toast(r.sha ? `Reverted. New commit ${r.sha.slice(0, 7)}` : "Nothing to revert");
+      toast(
+        r.sha ? `Reverted. New commit ${r.sha.slice(0, 7)}` : "Nothing to revert",
+        r.sha ? "done" : "info",
+      );
       bumpMemory();
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Couldn't revert");
+      toast(err instanceof ApiError ? err.message : "Couldn't revert", "error");
     }
   };
 
@@ -246,13 +250,14 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
     try {
       // It's worked out in the background now; the proposal arrives as an event.
       const p = await api<Proposal | { started: true } | null>("/proposals/tidy", { body: {} });
-      if (p && "started" in p) toast("Tidying up. It shows under To look over when it's ready");
+      if (p && "started" in p)
+        toast("Tidying up. It shows under To look over when it's ready", "info");
       else if (p) {
         putProposal(p);
         setSel({ kind: "proposal", id: p.id });
-      } else toast("Nothing to tidy");
+      } else toast("Nothing to tidy", "info");
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot");
+      toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot", "error");
     }
     setBusy(false);
   };
@@ -263,13 +268,13 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
         body: {},
       });
       if (p && "started" in p)
-        toast("Looking for a fix. It shows under To look over when it's ready");
+        toast("Looking for a fix. It shows under To look over when it's ready", "info");
       else if (p) {
         putProposal(p);
         setSel({ kind: "proposal", id: p.id });
-      } else toast("No fix found in what went wrong");
+      } else toast("No fix found in what went wrong", "info");
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot");
+      toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot", "error");
     }
     setBusy(false);
   };
@@ -278,7 +283,7 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
       await startTeach(name);
       navigate("/live");
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Couldn't start recording");
+      toast(err instanceof ApiError ? err.message : "Couldn't start recording", "error");
     }
   };
   const answer = async (p: Proposal, how: "apply" | "dismiss") => {
@@ -291,7 +296,7 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
       if (how === "apply") bumpMemory();
       setSel({ kind: "file", path: p.changes[0]?.path ?? "INDEX.md" });
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot");
+      toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot", "error");
     }
   };
 

@@ -36,6 +36,7 @@ import {
   useStore,
 } from "./store";
 import { getTheme, setTheme, type Theme } from "./theme";
+import { TOAST_ICON, type Toast, type ToastKind } from "./toast";
 
 // Pages you open now and then load when first opened; chat and tasks come with the app.
 const NegotiationPage = lazy(() =>
@@ -158,7 +159,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     const t = setTimeout(() => setDown(true), 4000);
     return () => clearTimeout(t);
   }, [connected]);
-  const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
+  const [toasts, setToasts] = useState<{ id: number; text: string; kind: ToastKind }[]>([]);
   const [insp, setInsp] = useState(() => localStorage.getItem("hatbot:insp") === "1");
   const view = viewOf(path);
   // The side panel is hidden on a phone; it isn't drawn either, or its live view would stream unseen.
@@ -195,9 +196,9 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     );
   }, [approvalId]);
 
-  const toast = useCallback((text: string) => {
+  const toast = useCallback<Toast>((text, kind = "done") => {
     const id = Date.now() + Math.random();
-    setToasts((t) => [...t, { id, text }]);
+    setToasts((t) => [...t, { id, text, kind }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2800);
   }, []);
 
@@ -520,12 +521,15 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
       </nav>
 
       <div className="toasts" aria-live="polite">
-        {toasts.map((t) => (
-          <div className="toast" key={t.id}>
-            <Icon name="check" />
-            {t.text}
-          </div>
-        ))}
+        {toasts.map((t) => {
+          const icon = TOAST_ICON[t.kind];
+          return (
+            <div className={`toast ${t.kind}`} key={t.id}>
+              {icon && <Icon name={icon} />}
+              {t.text}
+            </div>
+          );
+        })}
       </div>
     </>
   );

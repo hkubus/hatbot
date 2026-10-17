@@ -14,6 +14,7 @@ import { navigate } from "../router";
 import { setPaused, useStore } from "../store";
 import { Switch } from "../switch";
 import { getTheme, setTheme, type Theme } from "../theme";
+import type { Toast } from "../toast";
 import { PluginPage, PluginsGroup } from "./Plugins";
 
 const Checks = lazy(() => import("./Checks").then((m) => ({ default: m.Checks })));
@@ -28,7 +29,7 @@ export function Settings({
   onSignOut,
 }: {
   path: string;
-  toast: (t: string) => void;
+  toast: Toast;
   onSignOut: () => void;
 }) {
   const plugin = /^\/settings\/plugins\/([a-z0-9]+)$/.exec(path)?.[1];
@@ -43,7 +44,7 @@ export function Settings({
   return <SettingsHome toast={toast} onSignOut={onSignOut} />;
 }
 
-function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSignOut: () => void }) {
+function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => void }) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [tokens, setTokens] = useState<ApiToken[]>([]);
   const [newToken, setNewToken] = useState<CreateTokenResponse | null>(null);
@@ -73,7 +74,7 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
       setSettings(await api<AppSettings>("/settings", { method: "PUT", body: patch }));
       toast("Saved");
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Couldn't save");
+      toast(err instanceof ApiError ? err.message : "Couldn't save", "error");
     }
   };
 
@@ -327,7 +328,7 @@ function SettingsHome({ toast, onSignOut }: { toast: (t: string) => void; onSign
                   onClick={() =>
                     api("/report/send", { body: {} }).then(
                       () => toast("Sent to Hatbot's chat"),
-                      () => toast("Couldn't send"),
+                      () => toast("Couldn't send", "error"),
                     )
                   }
                 >
@@ -500,7 +501,7 @@ const snapLabel = (s: Snapshot) =>
     : s.name;
 
 /** Rolls the desktop back to a nightly snapshot through the Proxmox API (PLAN.md §8). */
-function RollbackRow({ toast }: { toast: (t: string) => void }) {
+function RollbackRow({ toast }: { toast: Toast }) {
   const [snaps, setSnaps] = useState<Snapshot[] | null>(null);
   const [error, setError] = useState("");
   const [picked, setPicked] = useState("");
@@ -531,7 +532,7 @@ function RollbackRow({ toast }: { toast: (t: string) => void }) {
       await api("/desktop/rollback", { body: { name: snap.name } });
       toast("Desktop rolled back");
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Couldn't roll back");
+      toast(err instanceof ApiError ? err.message : "Couldn't roll back", "error");
     } finally {
       setBusy(false);
     }
@@ -566,7 +567,7 @@ function RollbackRow({ toast }: { toast: (t: string) => void }) {
 const short = (sha?: string) => sha?.slice(0, 7) ?? "";
 
 /** Pulls from git and redeploys the desktop and the brain (infra/hatbot-update.sh). */
-function UpdateGroup({ toast }: { toast: (t: string) => void }) {
+function UpdateGroup({ toast }: { toast: Toast }) {
   const [info, setInfo] = useState<UpdateInfo | null>(null);
   const [error, setError] = useState("");
   // The update being watched: the status that was there before it started.
@@ -597,7 +598,7 @@ function UpdateGroup({ toast }: { toast: (t: string) => void }) {
           watching.current = null;
           setBusy(false);
           if (s.state === "failed") setError(s.error ?? "The update failed.");
-          else if (s.state === "current") toast("Already up to date");
+          else if (s.state === "current") toast("Already up to date", "info");
           else if (next.current?.sha !== w.sha) {
             // The brain restarted on new code; load the new web app too.
             toast(`Updated to ${short(next.current?.sha)}`);
