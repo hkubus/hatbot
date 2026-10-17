@@ -154,6 +154,10 @@ test("outside a negotiation, a click or Enter that could message a seller asks f
       content: [toolUse("confirm_intent", { kind: "send", summary: "Send the seller a question" })],
     },
     { content: [browser("left_click", { target: { type: "ref", ref: "ref_2" } })] },
+    {
+      content: [toolUse("confirm_intent", { kind: "send", summary: "Send the seller a question" })],
+    },
+    { content: [browser("left_click", { target: { type: "ref", ref: "ref_2" } })] },
     { content: [browser("left_click", { target: { type: "ref", ref: "ref_2" } })] },
     finish(),
   ]);
@@ -189,6 +193,9 @@ test("outside a negotiation, a click or Enter that could message a seller asks f
   const approval = await pending(t);
   expect(approval.summary).toBe("Send the seller a question");
   t.approvals.decide(approval.id, "approve", "web");
+  // Asked before trying, it doesn't cover a Send with no label: asked again once it's held.
+  const again = await pending(t);
+  t.approvals.decide(again.id, "approve", "web");
   await t.tasks.idle();
 
   const result = (i: number) => JSON.stringify(work.requests[i]?.messages.at(-1));
@@ -197,16 +204,17 @@ test("outside a negotiation, a click or Enter that could message a seller asks f
   expect(result(3)).toContain("call confirm_intent first");
   expect(result(4)).toContain("with text in a box on olx.pl");
   expect(t.agent.actions.map((a) => a.name)).toEqual(["left_click", "type"]);
+  expect(result(7)).toContain('The owner approved \\"Send the seller a question\\", not this step');
   // A link isn't a send; the approved click goes once. With the box empty the marketplace check doesn't
   // ask, but a button with no label still does.
   expect(t.agent.browserCalls.map((c) => (c.input.target as { ref: string }).ref)).toEqual([
     "ref_3",
     "ref_2",
   ]);
-  expect(result(8)).toContain("a button with no label");
-  expect(result(8)).not.toContain("with text in a box");
+  expect(result(10)).toContain("a button with no label");
+  expect(result(10)).not.toContain("with text in a box");
   expect(marketplaceSend("click", send(), null)).toBeNull();
-  expect(t.approvals.list(false)).toHaveLength(1);
+  expect(t.approvals.list(false)).toHaveLength(2);
   // Off the marketplaces, the ordinary check decides.
   expect(marketplaceSend("enter", { ...box(), url: "https://example.com/" }, null)).toBeNull();
   expect(marketplaceSend("enter", box(), null)).toBeNull();
@@ -495,17 +503,79 @@ test("a held step in a payment frame, or at checkout, can't be approved from the
 
 test("an approval covers the step it was asked for; one from the lock screen never buys", () => {
   const page = "https://www.olx.pl/d/oferta/rower-CID1-ID77.html";
-  const send = { page, kind: "send" as const, hold: { label: "Wyślij" } };
+  const send = { page, kind: "send" as const, summary: "Send it", hold: { label: "Wyślij" } };
   expect(notCovered(send, { label: "Wyślij" }, page)).toBeNull();
   expect(notCovered(send, { label: "wyślij" }, `${page}#x`)).toBeNull();
   expect(notCovered(send, { label: "Kup teraz" }, page)).toContain('the step on "Wyślij"');
   expect(notCovered(send, { label: "Wyślij" }, "https://www.olx.pl/")).toContain("not this page");
-  // Asked before trying: it covers the next held step, but not one that buys, unless it was a purchase.
-  const ahead = { page, kind: "send" as const, hold: null };
-  expect(notCovered(ahead, { unlabelled: "button" }, page)).toBeNull();
+  // Asked before trying: it covers a step whose label it names, but not one that buys, unless it was a
+  // purchase, and never one with no label.
+  const ahead = {
+    page,
+    kind: "send" as const,
+    summary: "Click Wyślij to ask the seller",
+    hold: null,
+  };
+  expect(notCovered(ahead, { label: "WYŚLIJ" }, page)).toBeNull();
+  expect(notCovered(ahead, { label: "Usuń ogłoszenie" }, page)).toContain(
+    'not this step on "Usuń ogłoszenie"',
+  );
+  expect(notCovered(ahead, { unlabelled: "button" }, page)).toContain("not this step");
   expect(notCovered(ahead, { label: "Kup teraz" }, page)).toContain("kind purchase or payment");
   expect(notCovered(ahead, { checkout: "www.olx.pl" }, page)).toContain("kind purchase");
-  expect(notCovered({ ...ahead, kind: "purchase" }, { label: "Kup teraz" }, page)).toBeNull();
+  const buy = { ...ahead, kind: "purchase" as const, summary: "Click Kup teraz" };
+  expect(notCovered(buy, { label: "Kup teraz" }, page)).toBeNull();
+  expect(notCovered(buy, { checkout: "www.olx.pl" }, page)).toContain("not this step");
+});
+
+test("an approval asked before trying covers only the step it names, once, on its page", async () => {
+  const url = "https://mail.example/inbox/ann";
+  const step = (label: string): AgentElement => ({
+    tag: "button",
+    role: null,
+    type: "button",
+    label,
+    inForm: false,
+    url,
+    editable: false,
+    fields: [],
+  });
+  const ask = () =>
+    toolUse("confirm_intent", { kind: "send", summary: "Click Send to message Ann" });
+  const send = () => computer("left_click", { coordinate: [300, 520] });
+  const work = new FakeModel([
+    { content: [ask()] },
+    // Not the step approved: it asks, and the approval is spent.
+    { content: [computer("left_click", { coordinate: [300, 100] })] },
+    { content: [computer("type", { text: "ok" })] },
+    { content: [ask()] },
+    // The step it names runs, once.
+    { content: [send()] },
+    { content: [send()] },
+    { content: [computer("type", { text: "ok" })] },
+    { content: [ask()] },
+    // It goes when the page changes, even if the model comes back.
+    { content: [browser("navigate", { url: `${url}/sent` })] },
+    { content: [browser("navigate", { url })] },
+    { content: [send()] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.agent.page = { url, title: "Ann", text: "" };
+  t.agent.inspect = async (_x?: number, y?: number) => step(y === 100 ? "Delete account" : "Send");
+  t.agent.afterAction = (name, input) => {
+    if (name === "navigate") t.agent.page = { url: String(input.url), title: "Mail", text: "" };
+  };
+  startTask(t, "Write to Ann");
+  for (let i = 0; i < 3; i++) t.approvals.decide((await pending(t)).id, "approve", "web");
+  await t.tasks.idle();
+  const said = (n: number) => JSON.stringify(work.requests[n]?.messages.at(-1)?.content);
+  expect(said(2)).toContain('not this step on \\"Delete account\\"');
+  expect(said(5)).toContain("Clicked.");
+  expect(said(6)).toContain('click \\"Send\\"');
+  expect(said(11)).toContain('click \\"Send\\"');
+  expect(t.agent.actions.filter((a) => a.name === "left_click")).toHaveLength(1);
+  expect(t.approvals.list(false)).toHaveLength(3);
 });
 
 test("a lock-screen approval for a message doesn't buy, and the held step is on the card", async () => {
@@ -1057,7 +1127,9 @@ test("an approval holds only on its page, and a task waiting for one keeps its t
   expect(t.tasks.get(a.id)?.summary).toBe("A stopped.");
   const said = (n: number) => JSON.stringify(work.requests[n]?.messages.at(-1)?.content);
   expect(said(2)).toContain(`the page you asked about (${order}) isn't on screen now`);
-  expect(said(3)).toContain(`The owner's approval was for a step on ${order}, not this page.`);
+  expect(said(2)).toContain("Go back to it, then call confirm_intent again.");
+  // Asked before trying, it went with its page.
+  expect(said(3)).toContain("call confirm_intent first");
   expect(t.agent.actions.filter((x) => x.name === "left_click")).toEqual([]);
 });
 

@@ -348,7 +348,10 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   let since = 0;
   let seq = 0;
   let lastUrl: string | null = null;
-  /** An approved confirm_intent: it covers the held step it was asked for, on the page it was asked on. */
+  /**
+   * An approved confirm_intent: it covers the held step it was asked for, on the page it was asked on. One
+   * asked before trying is spent on the next held step, and dropped when the page changes.
+   */
   let armed: Armed | null = null;
   /** The last step held for confirm_intent, and where: what an approval asked next is for. */
   let lastHeld: { hold: Hold; page: string | null; what: string } | null = null;
@@ -528,6 +531,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     const url = ctx?.url?.split("#")[0] ?? null;
     if (!url || url === lastUrl) return;
     lastUrl = url;
+    if (armed && !armed.hold && !samePage(url, armed.page)) armed = null;
     if (!/^https?:/.test(url)) return;
     sources.add(url.slice(0, 300));
     tasks.addStep(id, { kind: "page", name: ctx?.title || url, detail: "", url });
@@ -703,10 +707,13 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         if (g.action !== "usual") hold = null;
         sending = g.action === "send";
       }
-      // An approval covers the step it was asked for, on the page it was given for.
+      // An approval covers the step it was asked for, on the page it was given for. One asked before
+      // trying is spent on the first held step, covered or not.
       const here = el?.url ?? lastUrl;
-      const uncovered = hold && armed ? notCovered(armed, hold, here) : null;
-      if (hold && (!armed || uncovered)) {
+      const was = armed;
+      const uncovered = hold && was ? notCovered(was, hold, here) : null;
+      if (hold && was && (!uncovered || !was.hold)) armed = null;
+      if (hold && (!was || uncovered)) {
         const what = `${call.name} ${heldWhat(hold)}`;
         tasks.addStep(id, {
           kind: "note",
@@ -722,7 +729,6 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           true,
         );
       }
-      if (hold) armed = null;
     }
     // The model went on to something else: an approval it asks for next isn't for the held step.
     if (check || typesText(call.name, input) || call.name === "navigate") lastHeld = null;
@@ -865,13 +871,15 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           : "The owner denied this. Don't do it. Finish the task, or carry on another way that doesn't need it.",
       );
     }
-    armed = { page, kind, hold: held?.hold ?? null };
-    // While this waited, another task may have had the browser and left it elsewhere.
+    // While this waited, another task may have had the browser and left it elsewhere. One asked before
+    // trying holds only while its page stays.
     const now = (await agent.context(false).catch(() => null))?.url ?? null;
-    const moved =
-      page && !samePage(now, page)
-        ? ` While you waited, another task used the browser: the page you asked about (${page}) isn't on screen now${now ? ` (${now})` : ""}. Go back to it first; the approval holds only there.`
-        : "";
+    const away = page !== null && !samePage(now, page);
+    armed =
+      away && !held ? null : { page, kind, summary: p.data.summary, hold: held?.hold ?? null };
+    const moved = away
+      ? ` While you waited, another task used the browser: the page you asked about (${page}) isn't on screen now${now ? ` (${now})` : ""}. ${held ? "Go back to it first; the approval holds only there." : "Go back to it, then call confirm_intent again."}`
+      : "";
     return textResult(
       call,
       await look(
