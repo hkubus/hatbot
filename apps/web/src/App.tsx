@@ -184,6 +184,22 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const groupPage = /^\/groups\/(new|\d+)$/.exec(path)?.[1];
   const manyBots = useStore((s) => s.botIds.length > 1);
   const chatId = path === "/" ? HATBOT_CHAT : Number(/^\/chat\/(\d+)$/.exec(path)?.[1] ?? 0);
+  // A bot's or group's page is titled with its name and keeps its chat lit in the sidebar; a
+  // negotiation's with its listing.
+  const pageChat = useStore((s) =>
+    botPage
+      ? s.conversations.find((c) => c.kind === "direct" && c.botIds[0] === botPage)
+      : s.conversations.find((c) => c.kind === "group" && String(c.id) === groupPage),
+  );
+  const pageTitle = useStore((s) =>
+    botPage && botPage !== "new"
+      ? s.bots[botPage]?.name
+      : pageChat
+        ? chatName(s, pageChat)
+        : negotiationId
+          ? s.negotiations[Number(negotiationId)]?.title
+          : undefined,
+  );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: closes on every navigation
   useEffect(() => setChatMenu(false), [path]);
@@ -301,7 +317,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               <button
                 type="button"
                 key={c.id}
-                className={`nav-item ${chatId === c.id ? "active" : ""}`}
+                className={`nav-item ${(chatId || pageChat?.id) === c.id ? "active" : ""}`}
                 onClick={() => navigate(chatPath(c.id))}
               >
                 <ChatIcon chat={c} />
@@ -377,12 +393,12 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
                 {botPage
                   ? botPage === "new"
                     ? "New bot"
-                    : "Bot"
+                    : (pageTitle ?? "Bot")
                   : groupPage
                     ? groupPage === "new"
                       ? "New group"
-                      : "Group"
-                    : view.title}
+                      : (pageTitle ?? "Group")
+                    : (pageTitle ?? view.title)}
               </h1>
             )}
             <span className="spacer" />

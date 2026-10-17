@@ -207,6 +207,43 @@ test("a bot's tasks report in its chat, and deleting it hands its schedules to H
   expect(chats.map((c) => c.botIds)).toEqual([["hatbot"]]);
 });
 
+test("a deleted bot's chat leaves the list and takes no new messages", async () => {
+  const t = await testApp(new FakeModel([{ content: [text("Hi, I'm Chef.")] }]));
+  const { cookie } = await setUpOwner(t);
+  t.bots.create({
+    name: "Chef",
+    instructions: "",
+    chatModel: null,
+    chatEffort: null,
+    plugins: null,
+  });
+  const chat = t.chats.direct("chef");
+  await chat.post("hello").done;
+  expect(t.chats.closed(chat.conversationId)).toBe(false);
+  expect((await t.call("DELETE", "/bots/chef", undefined, { cookie })).status).toBe(200);
+  expect(t.chats.closed(chat.conversationId)).toBe(true);
+  expect(t.chats.closed(t.thread.conversationId)).toBe(false);
+
+  // A page or phone still showing it can't start Chef again, nor have Hatbot answer there.
+  const asked = t.model.requests.length;
+  const url = `/conversations/${chat.conversationId}`;
+  const reply = chat.list().at(-1);
+  for (const [path, body] of [
+    ["/messages", { text: "still there?" }],
+    ["/ask", { text: "still there?" }],
+    [`/messages/${reply?.id}/retry`, undefined],
+  ] as const) {
+    const res = await t.call("POST", `${url}${path}`, body, { cookie });
+    expect(res.status).toBe(410);
+    expect(await res.json()).toEqual({
+      error: "That bot was deleted, so its chat takes no new messages.",
+    });
+  }
+  await t.chats.idle();
+  expect(t.model.requests.length).toBe(asked);
+  expect(chat.list().map((m) => m.text)).toEqual(["hello", "Hi, I'm Chef."]);
+});
+
 test("a bot has an icon and a colour, a new one in a colour no other bot has", async () => {
   const t = await testApp(new FakeModel());
   const { cookie } = await setUpOwner(t);

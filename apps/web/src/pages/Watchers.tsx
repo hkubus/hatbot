@@ -54,10 +54,11 @@ export function WatcherList({ onError }: { onError: (error: string) => void }) {
                 <b>{w.name}</b>
               </div>
               {w.lastError ? (
-                <span className="val">Can't read</span>
+                <span className="val bad">Can't read</span>
               ) : (
                 <span className="val">{w.enabled ? (w.lastValue ?? "") : "Off"}</span>
               )}
+              <Icon name="chevron" className="chev" />
             </button>
             <Switch
               on={w.enabled}
@@ -65,7 +66,6 @@ export function WatcherList({ onError }: { onError: (error: string) => void }) {
                 patchWatcher(w.id, { enabled }).catch((err) => onError(errorText(err)))
               }
             />
-            <Icon name="chevron" className="chev" />
           </div>
         ))}
         {!shown.length && (
@@ -350,6 +350,12 @@ export function WatcherEdit({ id }: { id: number | null }) {
             </>
           )}
         </div>
+        {stored?.lastError && (
+          <div className="form-error">
+            Can't read it: {stored.lastError}
+            {stored.errors > 1 ? ` (${stored.errors} times in a row)` : ""}
+          </div>
+        )}
 
         <div className="panel form">
           <label>
@@ -591,14 +597,6 @@ export function WatcherEdit({ id }: { id: number | null }) {
             <dl className="kv">
               <dt>Now</dt>
               <dd>{stored.lastValue ?? "Not checked yet"}</dd>
-              {stored.lastError && (
-                <>
-                  <dt>Can't read</dt>
-                  <dd>
-                    {stored.lastError} ({stored.errors} in a row)
-                  </dd>
-                </>
-              )}
               <dt>Last checked</dt>
               <dd>{stored.lastCheckedAt ? stamp(stored.lastCheckedAt) : "Never"}</dd>
               <dt>Last counted</dt>

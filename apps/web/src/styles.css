@@ -424,6 +424,10 @@ svg.i {
   font-weight: 650;
   margin: 0;
   letter-spacing: -0.01em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .toolbar .spacer {
   flex: 1;
@@ -1028,10 +1032,10 @@ html[data-theme="dark"] .seg button.active {
 .table td.wrap {
   white-space: normal;
 }
-.table tbody tr {
+.table tbody tr.link-row {
   cursor: pointer;
 }
-.table tbody tr:hover {
+.table tbody tr.link-row:hover {
   background: rgba(127, 127, 127, 0.06);
 }
 .table .num {
@@ -1106,6 +1110,9 @@ html[data-theme="dark"] .seg button.active {
   color: var(--muted);
   font-size: 12.5px;
   text-align: right;
+}
+.row .val.bad {
+  color: var(--danger-text);
 }
 .row .chev {
   color: var(--soft);

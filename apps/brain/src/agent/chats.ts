@@ -116,6 +116,19 @@ export class Chats {
     return this.list().find((c) => c.id === id) ?? null;
   }
 
+  /** A deleted bot's own chat: kept, but out of the list, and it takes no new messages. */
+  closed(conversationId: number): boolean {
+    return Boolean(
+      this.d.db
+        .query(
+          `SELECT 1 FROM conversations c JOIN conversation_bots cb ON cb.conversation_id = c.id
+           JOIN bots b ON b.id = cb.bot_id
+           WHERE c.id = ? AND c.kind = 'direct' AND b.deleted_at IS NOT NULL`,
+        )
+        .get(conversationId),
+    );
+  }
+
   private toConversation(r: Row): Conversation {
     return {
       id: r.id,

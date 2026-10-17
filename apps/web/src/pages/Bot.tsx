@@ -138,7 +138,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
     if (!stored) return;
     if (
       !(await ask({
-        text: `Delete ${stored.name}? Its chat and notes stay readable; its schedules, triggers and watchers go to Hatbot, switched off until you turn them back on.`,
+        text: `Delete ${stored.name}? Its chat goes away. Its notes stay in Memory, and its schedules, triggers and watchers go to Hatbot, switched off until you turn them back on.`,
         ok: "Delete",
       }))
     )
@@ -275,24 +275,39 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
                 <span className="label">Every plugin that's on</span>
                 <Switch
                   on={form.plugins === null}
-                  onChange={(on) => set({ plugins: on ? null : pluginList.map((p) => p.id) })}
+                  onChange={(on) =>
+                    set({
+                      plugins: on ? null : pluginList.filter((p) => p.enabled).map((p) => p.id),
+                    })
+                  }
                 />
               </div>
               {form.plugins !== null &&
                 pluginList.map((p) => (
                   <div className="form-row" key={p.id}>
                     <span>{p.name}</span>
-                    <Switch
-                      label={p.name}
-                      on={form.plugins?.includes(p.id) ?? false}
-                      onChange={(on) =>
-                        set({
-                          plugins: on
-                            ? [...(form.plugins ?? []), p.id]
-                            : (form.plugins ?? []).filter((x) => x !== p.id),
-                        })
-                      }
-                    />
+                    {/* Only plugins that are on reach a bot; the others link to where they're turned on. */}
+                    {p.enabled ? (
+                      <Switch
+                        label={p.name}
+                        on={form.plugins?.includes(p.id) ?? false}
+                        onChange={(on) =>
+                          set({
+                            plugins: on
+                              ? [...(form.plugins ?? []), p.id]
+                              : (form.plugins ?? []).filter((x) => x !== p.id),
+                          })
+                        }
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        className="text-link"
+                        onClick={() => navigate(`/settings/plugins/${p.id}`)}
+                      >
+                        Off in Settings
+                      </button>
+                    )}
                   </div>
                 ))}
             </>

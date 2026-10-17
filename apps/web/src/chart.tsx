@@ -48,7 +48,6 @@ function Columns({ spec }: { spec: ChartSpec }) {
   const plot = useRef<HTMLDivElement>(null);
   const width = useWidth(plot);
   const [at, setAt] = useState<number | null>(null);
-  const names = seriesNames(spec);
   const labels = spec.x.map(String);
   const n = labels.length;
   const bar = spec.type === "bar";
@@ -202,7 +201,8 @@ function Columns({ spec }: { spec: ChartSpec }) {
               )}
             {!bar &&
               spec.series.map((s, si) => (
-                <g key={names[si]}>
+                // biome-ignore lint/suspicious/noArrayIndexKey: series are positional, and two can share a name
+                <g key={si}>
                   <path d={linePath(s.data, x, y)} stroke={color(si)} className="line" />
                   {s.data.map((v, i) =>
                     v !== null && s.data[i - 1] == null && s.data[i + 1] == null ? (
@@ -223,7 +223,8 @@ function Columns({ spec }: { spec: ChartSpec }) {
                 if (v == null) return null;
                 return (
                   <circle
-                    key={names[si]}
+                    // biome-ignore lint/suspicious/noArrayIndexKey: series are positional, and two can share a name
+                    key={si}
                     cx={x(i)}
                     cy={y(v)}
                     r={4}
@@ -262,7 +263,6 @@ function Rows({ spec }: { spec: ChartSpec }) {
   const plot = useRef<HTMLDivElement>(null);
   const width = useWidth(plot);
   const [at, setAt] = useState<number | null>(null);
-  const names = seriesNames(spec);
   const labels = spec.x.map(String);
   const n = labels.length;
   const stacked = isStacked(spec);
@@ -367,7 +367,8 @@ function Rows({ spec }: { spec: ChartSpec }) {
                       if (Math.abs(base - v(to)) < 1) return null;
                       return (
                         <path
-                          key={names[si]}
+                          // biome-ignore lint/suspicious/noArrayIndexKey: series are positional, and two can share a name
+                          key={si}
                           d={hbarPath(rowTop(i), thick, base, v(to), outer ? 4 : 0)}
                           fill={color(si)}
                         />
@@ -387,7 +388,8 @@ function Rows({ spec }: { spec: ChartSpec }) {
                     if (val == null) return null;
                     const top = rowTop(i) + si * (thick + 2);
                     return (
-                      <g key={names[si]}>
+                      // biome-ignore lint/suspicious/noArrayIndexKey: series are positional, and two can share a name
+                      <g key={si}>
                         {val !== 0 && (
                           <path d={hbarPath(top, thick, v(0), v(val), 4)} fill={color(si)} />
                         )}
@@ -426,7 +428,8 @@ function Frame({ spec, children }: { spec: ChartSpec; children: ReactNode }) {
       {spec.series.length > 1 && (
         <div className="chart-legend">
           {names.map((name, i) => (
-            <span key={name}>
+            // biome-ignore lint/suspicious/noArrayIndexKey: series are positional, and two can share a name
+            <span key={i}>
               <i
                 className={spec.type === "bar" ? "swatch" : "key"}
                 style={{ background: color(i) }}
@@ -441,8 +444,9 @@ function Frame({ spec, children }: { spec: ChartSpec; children: ReactNode }) {
         <thead>
           <tr>
             <th />
-            {names.map((name) => (
-              <th key={name}>{name}</th>
+            {names.map((name, si) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: series are positional, and two can share a name
+              <th key={si}>{name}</th>
             ))}
           </tr>
         </thead>
@@ -452,7 +456,8 @@ function Frame({ spec, children }: { spec: ChartSpec; children: ReactNode }) {
             <tr key={i}>
               <th>{l}</th>
               {spec.series.map((s, si) => (
-                <td key={names[si]}>{s.data[i] === null ? "" : fmt(s.data[i] as number)}</td>
+                // biome-ignore lint/suspicious/noArrayIndexKey: series are positional, and two can share a name
+                <td key={si}>{s.data[i] === null ? "" : fmt(s.data[i] as number)}</td>
               ))}
             </tr>
           ))}
@@ -472,7 +477,8 @@ function Readout({ spec, i, style }: { spec: ChartSpec; i: number; style: React.
     <div className="chart-tip" style={style}>
       <div className="chart-tip-x">{String(spec.x[i])}</div>
       {spec.series.map((s, si) => (
-        <div key={names[si]} className="chart-tip-row">
+        // biome-ignore lint/suspicious/noArrayIndexKey: series are positional, and two can share a name
+        <div key={si} className="chart-tip-row">
           <i className="key" style={{ background: color(si) }} />
           <strong>{s.data[i] == null ? "–" : fmt(s.data[i] as number)}</strong>
           {!single && <span>{names[si]}</span>}

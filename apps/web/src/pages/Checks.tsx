@@ -11,9 +11,9 @@ const errorText = (err: unknown) =>
 
 const CHIP: Record<CheckState, { label: string; className: string }> = {
   ok: { label: "OK", className: "chip ok" },
-  warn: { label: "Check", className: "chip attn" },
+  warn: { label: "Warning", className: "chip attn" },
   fail: { label: "Failed", className: "chip bad" },
-  skip: { label: "Skipped", className: "val" },
+  skip: { label: "Skipped", className: "chip" },
 };
 
 const ANSWER: Record<Approval["status"], string> = {

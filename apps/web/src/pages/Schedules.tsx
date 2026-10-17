@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm } from "../form";
+import { plainText } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { navigate } from "../router";
@@ -147,6 +148,7 @@ function List() {
                         <b>{s.name}</b>
                       </div>
                       <span className="val">{s.enabled ? whenText(s) : "Off"}</span>
+                      <Icon name="chevron" className="chev" />
                     </button>
                     <Switch
                       on={s.enabled}
@@ -154,7 +156,6 @@ function List() {
                         saveSchedule(s.id, { enabled }).catch((err) => setError(errorText(err)))
                       }
                     />
-                    <Icon name="chevron" className="chev" />
                   </div>
                 ))}
                 {!shownSchedules.length && (
@@ -179,9 +180,9 @@ function List() {
                         <b>{t.name}</b>
                       </div>
                       <span className="val">{t.enabled ? KIND[t.kind] : "Off"}</span>
+                      <Icon name="chevron" className="chev" />
                     </button>
                     <Switch on={t.enabled} onChange={(enabled) => toggleTrigger(t, enabled)} />
-                    <Icon name="chevron" className="chev" />
                   </div>
                 ))}
                 {!shownTriggers.length && (
@@ -238,7 +239,7 @@ export function Runs({
                 <tr key={t.id} className="link-row">
                   <td className="wrap">
                     {/* The link covers the whole row, and the keyboard reaches it. */}
-                    <Link to={`/tasks/${t.id}`}>{t.summary ?? t.title}</Link>
+                    <Link to={`/tasks/${t.id}`}>{t.summary ? plainText(t.summary) : t.title}</Link>
                   </td>
                   <td>
                     <StatusChip status={t.status} />

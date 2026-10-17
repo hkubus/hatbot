@@ -9,6 +9,7 @@ import {
 } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { ApiError } from "./api";
+import { plainText } from "./format";
 import { Icon } from "./icons";
 import { navigate } from "./router";
 import { decideApproval, ensureApproval, useStore } from "./store";
@@ -51,8 +52,14 @@ export function Shot({ taskId, stepId, alt }: { taskId: number; stepId: number; 
   );
 }
 
-/** The last line Hatbot wrote or thought, for a running task. */
-const lastLine = (text?: string) => text?.trim().split("\n").filter(Boolean).at(-1);
+/** The last line Hatbot wrote or thought, for a running task, without its Markdown. */
+function lastLine(text?: string) {
+  const lines = text?.split("\n") ?? [];
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = plainText(lines[i] as string);
+    if (line) return line;
+  }
+}
 
 export function taskLine(t: Task, progress?: string): string {
   if (t.summary && !isActive(t)) return t.summary;

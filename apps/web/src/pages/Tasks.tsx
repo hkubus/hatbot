@@ -2,6 +2,7 @@ import { latestNoteOnly, OPEN_NEGOTIATION_STATUSES, type Task } from "@hatbot/sh
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, api } from "../api";
 import { ask } from "../confirm";
+import { modelName, plainText, usd } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LiveView, StepIcon } from "../live";
@@ -20,7 +21,6 @@ import {
 import { ApprovalCard, isActive, Shot, StatusChip, taskLine } from "../tasks";
 import { AssistantBody } from "./Chat";
 
-const money = (usd: number) => `$${usd.toFixed(2)}`;
 const time = (iso: string) =>
   new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 function when(iso: string) {
@@ -203,7 +203,7 @@ export function Tasks() {
                       <StatusChip status={t.status} />
                     </td>
                     <td className="muted">{when(t.startedAt ?? t.createdAt)}</td>
-                    <td className="num">{money(t.costUsd)}</td>
+                    <td className="num">{usd(t.costUsd)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -261,7 +261,7 @@ function Details({ task }: { task: Task }) {
       <dt>Started</dt>
       <dd>{task.startedAt ? stamp(task.startedAt) : "–"}</dd>
       <dt>Model</dt>
-      <dd>{task.model}</dd>
+      <dd>{modelName(task.model)}</dd>
       <dt>Trust</dt>
       <dd>
         {task.injectionSuspected ? (
@@ -286,7 +286,7 @@ function Details({ task }: { task: Task }) {
         </>
       )}
       <dt>Cost</dt>
-      <dd className="tnum">{money(task.costUsd)}</dd>
+      <dd className="tnum">{usd(task.costUsd)}</dd>
       {task.reportPath && (
         <>
           <dt>Report</dt>
@@ -477,7 +477,9 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
                     ) : (
                       <div>{s.detail && s.kind !== "note" ? s.detail : s.name}</div>
                     )}
-                    {s.kind === "note" && s.detail && <div className="muted">{s.detail}</div>}
+                    {s.kind === "note" && s.detail && (
+                      <div className="muted">{plainText(s.detail)}</div>
+                    )}
                     {s.screenshot && <Shot taskId={id} stepId={s.id} alt={s.name} />}
                   </div>
                 </li>
