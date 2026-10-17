@@ -1274,11 +1274,15 @@ export class Thread {
     const transcript = rows.map((m) => this.transcript(m)).join("\n");
     const names = this.members().map((b) => b.name);
     const content = `<summary>\n${this.threadSummary()}\n</summary>\n\n<deleted_conversation>\n${transcript}\n</deleted_conversation>`;
+    // The owner asked for it, and it's small: it may use what's kept for alerts, so a busy day
+    // doesn't stop a deletion.
     this.d.spend.check(
       requestCeiling(SUMMARY_MODEL, {
         prompt: fixedTokens(FORGET_PROMPT, content),
         maxTokens: 4000,
       }),
+      undefined,
+      { reserve: true },
     );
     const res = await this.d.model.create({
       model: SUMMARY_MODEL,

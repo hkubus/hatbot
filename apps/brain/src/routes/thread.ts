@@ -12,6 +12,7 @@ import { MAX_ATTACHMENT_BYTES } from "../attachments";
 import { requireAuth } from "../auth/middleware";
 import { BotError } from "../bots";
 import type { AppEnv } from "../context";
+import { BudgetError } from "../spend";
 import { json, query, signedOut } from "./util";
 
 /** RFC 5987's encoding for filename*: encodeURIComponent leaves ' ( ) * as they are, which it doesn't allow. */
@@ -194,6 +195,13 @@ async function deleteEpisode(c: Ctx, t: Thread) {
       ? c.json({ ok: true })
       : c.json({ error: "That's gone." }, 404);
   } catch (err) {
+    if (err instanceof BudgetError)
+      return c.json(
+        {
+          error: `${err.limit === "monthly" ? "This month's" : "Today's"} spending limit is used up, so it couldn't be taken out of the summary. Nothing was deleted.`,
+        },
+        429,
+      );
     console.error("deleting a conversation failed", err);
     return c.json({ error: "Couldn't take it out of the summary. Nothing was deleted." }, 502);
   }

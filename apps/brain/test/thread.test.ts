@@ -1073,6 +1073,42 @@ test("deleting a conversation takes it out of the chat, search, files and the su
   expect(t.thread.list().map((m) => m.text)).toEqual(["still there?", "Yes."]);
 });
 
+test("deleting a summarized conversation may use what's kept for alerts, and a spent limit says so", async () => {
+  const model = new FakeModel(
+    [{ content: [text("Noted.")] }, { content: [text("Hi.")] }, { content: [text("Sure.")] }],
+    ["<summary>WireGuard runs on 51820.</summary>", "<summary>Hello.</summary>"],
+  );
+  const t = await testApp(model);
+  const { cookie } = await setUpOwner(t);
+  await t.thread.post("my wireguard port is 51820").done;
+  t.advance(31 * 60_000);
+  await t.thread.sweep();
+  await t.thread.post("hello").done;
+  t.advance(31 * 60_000);
+  await t.thread.sweep();
+  await t.thread.post("and now?").done;
+  const [first, , second] = t.thread.list();
+  const del = (episode: number) =>
+    t.call("DELETE", `/thread/episodes/${episode}`, undefined, { cookie });
+
+  // Only what's kept for alerts is left today: the owner's deletion may use it.
+  const today = t.spend.summary().todayUsd;
+  t.settings.update({ limits: { dailyUsd: today + 0.5, alertReserveUsd: 1 } });
+  model.onCreate = () => "<summary>Hello.</summary>";
+  expect((await del(first?.episodeId as number)).status).toBe(200);
+  expect(t.thread.list().map((m) => m.text)).not.toContain("my wireguard port is 51820");
+
+  // Nothing at all is left: it says why, and nothing is deleted.
+  t.settings.update({ limits: { dailyUsd: 0.000001, alertReserveUsd: 0 } });
+  const res = await del(second?.episodeId as number);
+  expect(res.status).toBe(429);
+  expect(await res.json()).toEqual({
+    error:
+      "Today's spending limit is used up, so it couldn't be taken out of the summary. Nothing was deleted.",
+  });
+  expect(t.thread.list().map((m) => m.text)).toContain("hello");
+});
+
 test("ask posts a message and answers with the reply once it's done", async () => {
   const t = await testApp(new FakeModel([{ content: [text("It's 21 degrees.")] }]));
   const { cookie } = await setUpOwner(t);
