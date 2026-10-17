@@ -30,7 +30,7 @@ import { runAgentTask } from "./agent-run";
 import { runDesktopTask } from "./desktop-run";
 import { Pool, ScreenLane } from "./lane";
 import { keepAfterRestart } from "./research";
-import { RESEARCH_MODEL, refreshing } from "./research-goal";
+import { earlierReport, RESEARCH_MODEL, refreshing } from "./research-goal";
 
 export type TasksDeps = {
   db: Db;
@@ -545,8 +545,10 @@ export class Tasks {
       .get(id);
     return this.createBackgroundTask({
       title: t.title,
-      // Research again says what changed since its last report.
-      goal: t.research ? refreshing(goal?.trim() || t.goal, t.reportPath) : goal?.trim() || t.goal,
+      // Research again says what changed since its last report, or the one it was refreshing.
+      goal: t.research
+        ? refreshing(goal?.trim() || t.goal, t.reportPath ?? earlierReport(t.goal))
+        : goal?.trim() || t.goal,
       origin: t.origin,
       source: t.source ?? undefined,
       scheduleId: t.scheduleId ?? undefined,
@@ -561,6 +563,8 @@ export class Tasks {
       request: r?.request ?? undefined,
       botId: t.botId,
       conversationId: r?.conversation_id ?? undefined,
+      // The bot that asked for it hears how this one ends too.
+      requestedBy: t.requestedBy ?? undefined,
       research: t.research,
     });
   }

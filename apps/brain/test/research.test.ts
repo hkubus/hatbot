@@ -995,6 +995,34 @@ test("a report never overwrites another, even two of the same name at once", asy
   expect(await t.memory.read(`${base}-9.md`)).toBe("Earlier.\n");
 });
 
+test("a rerun keeps the report it was refreshing, and the bot that asked for it", async () => {
+  const work = new FakeModel([{ content: [text("Hm.")] }, { content: [text("Hm.")] }]);
+  const t = await testApp(new FakeModel(), work);
+  const scout = t.bots.create({
+    name: "Scout",
+    instructions: "",
+    chatModel: null,
+    chatEffort: null,
+    plugins: null,
+  });
+  const goal = "Is the DS925+ still the one?\n\nEarlier report to refresh: research/old.md";
+  const created = t.tasks.createBackgroundTask({
+    title: "NAS again",
+    goal,
+    origin: "chat",
+    research: true,
+    requestedBy: scout.id,
+  });
+  await t.tasks.idle();
+  // It saved no report of its own.
+  expect(t.tasks.get(created?.id as number)?.reportPath).toBeNull();
+  const again = t.tasks.rerun(created?.id as number);
+  expect(again?.goal).toBe(goal);
+  expect(again?.requestedBy).toBe("scout");
+  t.tasks.cancel(again?.id as number);
+  await t.tasks.idle();
+});
+
 test("a report's name keeps Polish letters as plain ones", async () => {
   const work = new FakeModel([INVESTIGATE, finish("Weź DS925+ [1].", "Raport [1].")]);
   helpers(work);
