@@ -157,6 +157,11 @@ export class Chats {
     for (const t of this.threads.values()) t.abortCurrent();
   }
 
+  /** Stops the replies `botId` is writing: it was deleted. */
+  abortBot(botId: string) {
+    for (const t of this.threads.values()) t.abortCurrent(botId);
+  }
+
   /** Summaries and incognito endings, every minute. */
   async sweep() {
     for (const t of this.open()) await t.sweep();

@@ -203,6 +203,8 @@ export class Thread {
   /** Summaries that failed, by episode, so the sweep gives up on one after a few tries. */
   private summaryFailures = new Map<number, number>();
   private current: AbortController | null = null;
+  /** The bot writing the reply in progress. */
+  private currentBot: string | null = null;
   /** The reply in progress is in the incognito conversation. */
   private currentIncognito = false;
   /** The approval the reply in progress waits for; your next message cancels it. */
@@ -663,9 +665,9 @@ export class Thread {
     return { content: note ? `${r.content}\n\n${ownerNote(note)}` : r.content, isError: r.isError };
   }
 
-  /** Pause all: stops the reply in progress. */
-  abortCurrent() {
-    this.current?.abort();
+  /** Pause all: stops the reply in progress; with `botId`, only that bot's. */
+  abortCurrent(botId?: string) {
+    if (botId === undefined || botId === this.currentBot) this.current?.abort();
   }
 
   /**
@@ -1989,6 +1991,7 @@ export class Thread {
     const screener = incognito ? null : this.screenerFor(episode.id);
     const screen = (source: string, text: Readable) => screener?.add(source, text);
     this.current = abort;
+    this.currentBot = bot.id;
     this.currentIncognito = incognito;
     try {
       for (let step = 0; ; step++) {
@@ -2278,6 +2281,7 @@ export class Thread {
       );
     } finally {
       this.current = null;
+      this.currentBot = null;
       this.live.delete(out.id);
       for (const release of holding) release();
     }

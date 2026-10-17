@@ -10,7 +10,7 @@ import {
 import { slugOf } from "../src/bots";
 import { PLUGINS } from "../src/plugins";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { setUpOwner, type TestApp, testApp } from "./helpers";
+import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
 
 const systemOf = (req: { system?: unknown } | undefined) => JSON.stringify(req?.system);
 
@@ -447,4 +447,107 @@ test("cancelling a task that asked another bot cancels the task it asked for", a
   await t.tasks.idle();
   expect(t.tasks.get(parent.id)?.status).toBe("cancelled");
   expect(t.tasks.get(child.id)?.status).toBe("cancelled");
+});
+
+test("what a deleted bot left running doesn't run as Hatbot: it's switched off, and so is its heartbeat", async () => {
+  let go = () => {};
+  const chat = new FakeModel([
+    {
+      content: [
+        toolUse("schedule_create", {
+          name: "Nightly",
+          prompt: "Do coder things",
+          cron: "0 3 * * *",
+        }),
+      ],
+      wait: new Promise<void>((r) => {
+        go = r;
+      }),
+    },
+    { content: [text("Made it.")] },
+  ]);
+  const t = await testApp(chat);
+  const { cookie } = await setUpOwner(t);
+  t.bots.create({
+    name: "Coder",
+    instructions: "",
+    chatModel: null,
+    chatEffort: null,
+    plugins: [],
+  });
+  t.settings.update({
+    heartbeat: { ...t.settings.get().heartbeat, enabled: true, botId: "coder" },
+  });
+  // Its reply is stopped, and what it makes on the way isn't made.
+  const reply = t.chats.direct("coder").post("make a nightly schedule");
+  await waitFor(() => chat.requests.length === 1);
+  expect((await t.call("DELETE", "/bots/coder", undefined, { cookie })).status).toBe(200);
+  go();
+  await reply.done;
+  expect(t.schedules.list()).toEqual([]);
+  expect(t.settings.get().heartbeat).toMatchObject({ enabled: false, botId: "hatbot" });
+  // A reply that goes on anyway doesn't make one either.
+  let next = () => {};
+  chat.script.push(
+    {
+      content: [
+        toolUse("schedule_create", { name: "Nightly", prompt: "Do it", cron: "0 3 * * *" }),
+      ],
+      wait: new Promise<void>((r) => {
+        next = r;
+      }),
+    },
+    { content: [text("Made it.")] },
+  );
+  t.bots.create({ name: "Ops", instructions: "", chatModel: null, chatEffort: null, plugins: [] });
+  const again = t.chats.direct("ops").post("make a nightly schedule");
+  await waitFor(() => chat.requests.length === 2);
+  t.bots.delete("ops");
+  next();
+  await again.done;
+  expect(t.schedules.list()).toEqual([]);
+
+  // One made as it was deleted, that the move missed: switched off and moved when it comes due.
+  t.bots.create({ name: "Chef", instructions: "", chatModel: null, chatEffort: null, plugins: [] });
+  const s = t.schedules.create(
+    { name: "Menu", prompt: "Plan", cron: "0 8 * * 1", botId: "chef" },
+    "owner",
+  );
+  t.agent.pages.set("https://menu.example/", "soup");
+  const w = await t.watchers.create(
+    {
+      name: "Menu",
+      source: { kind: "page", url: "https://menu.example/" },
+      condition: { when: "changed" },
+      prompt: "Cook it",
+      everyMinutes: 60,
+      once: false,
+      enabled: true,
+      botId: "chef",
+    },
+    "owner",
+  );
+  const trigger = t.triggers.create({
+    name: "Pantry",
+    kind: "webhook",
+    prompt: "x",
+    botId: "chef",
+  });
+  t.db.query("UPDATE bots SET deleted_at = '2026-10-09T12:00:00Z' WHERE id = 'chef'").run();
+  expect(t.schedules.runNow(s.id)).toBeNull();
+  expect(t.schedules.get(s.id)).toMatchObject({ botId: "hatbot", enabled: false });
+  expect(t.triggers.receiveWebhook(trigger.id, "{}", false)).toEqual({
+    status: "skipped",
+    reason: "disabled",
+  });
+  expect(t.triggers.get(trigger.id)).toMatchObject({ botId: "hatbot", enabled: false });
+  t.agent.pages.set("https://menu.example/", "stew");
+  await t.watchers.checkNow(w.id);
+  expect(t.watchers.get(w.id)).toMatchObject({ botId: "hatbot", enabled: false });
+  expect(t.tasks.list()).toEqual([]);
+
+  // A heartbeat whose bot went another way is switched off rather than run as Hatbot.
+  t.settings.update({ heartbeat: { ...t.settings.get().heartbeat, enabled: true, botId: "chef" } });
+  await t.heartbeat.run();
+  expect(t.settings.get().heartbeat).toMatchObject({ enabled: false, botId: "hatbot" });
 });

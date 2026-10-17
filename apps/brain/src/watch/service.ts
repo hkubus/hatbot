@@ -16,7 +16,7 @@ import {
 import type { z } from "zod";
 import type { Chats } from "../agent/chats";
 import { tagJson } from "../agent/untrusted";
-import { type Bots, liveBot } from "../bots";
+import { type Bots, orphaned } from "../bots";
 import type { Db } from "../db";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import type { EventBus } from "../events";
@@ -338,6 +338,10 @@ export class Watchers {
 
   private async check(w: Watcher) {
     if (this.checking.has(w.id)) return;
+    if (orphaned(this.d.db, "watchers", w.id, w.botId)) {
+      this.changed(w.id);
+      return;
+    }
     this.checking.add(w.id);
     try {
       // The next check counts from this one, so an outage doesn't queue up a check per missed time.
@@ -462,8 +466,11 @@ export class Watchers {
   }
 
   /** It counted: you're told, or its bot works on it. */
-  private fire(watcher: Watcher, previous: string | null, value: string, untrusted: boolean) {
-    const w = { ...watcher, botId: liveBot(this.d.db, watcher.botId) };
+  private fire(w: Watcher, previous: string | null, value: string, untrusted: boolean) {
+    if (orphaned(this.d.db, "watchers", w.id, w.botId)) {
+      this.changed(w.id);
+      return;
+    }
     const change =
       previous === null
         ? `Now: ${value}`

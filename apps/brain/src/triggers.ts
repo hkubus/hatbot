@@ -7,7 +7,7 @@ import {
   type Trigger,
   type TriggerWithSecret,
 } from "@hatbot/shared";
-import { liveBot } from "./bots";
+import { orphaned } from "./bots";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
 import type { Notifier } from "./notify";
@@ -256,7 +256,7 @@ export class Triggers {
       origin: "webhook",
       source: t.name,
       triggerId: t.id,
-      botId: liveBot(this.db, t.botId),
+      botId: t.botId,
       runKey: `trigger:${t.id}`,
       payload: pretty(body),
       trusted: t.trusted,
@@ -428,7 +428,7 @@ export class Triggers {
       origin: "alert",
       source: t.name,
       triggerId: t.id,
-      botId: liveBot(this.db, t.botId),
+      botId: t.botId,
       runKey,
       payload,
       // Kuma's own fields are trusted; its message often quotes the service's response.
@@ -442,6 +442,11 @@ export class Triggers {
 
   private blocked(t: Trigger): Received | null {
     if (!t.enabled) return { status: "skipped", reason: "disabled" };
+    if (orphaned(this.db, "triggers", t.id, t.botId)) {
+      const trigger = this.get(t.id);
+      if (trigger) this.events.emit({ type: "trigger.updated", trigger });
+      return { status: "skipped", reason: "disabled" };
+    }
     if (this.settings.get().paused) return { status: "skipped", reason: "paused" };
     return null;
   }

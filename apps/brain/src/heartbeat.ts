@@ -1,7 +1,7 @@
 // The heartbeat: every few minutes, a look at what went wrong without the model. Only something new
 // goes to Haiku, which tells you, starts a task, or lets it be (PLAN.md §16).
 import type Anthropic from "@anthropic-ai/sdk";
-import type { HeartbeatInfo, HeartbeatRun } from "@hatbot/shared";
+import { HATBOT_ID, type HeartbeatInfo, type HeartbeatRun } from "@hatbot/shared";
 import type { Chats } from "./agent/chats";
 import type { ModelClient } from "./agent/model";
 import { tagJson } from "./agent/untrusted";
@@ -116,6 +116,13 @@ export class Heartbeat {
 
   private async beat() {
     const settings = this.d.settings.get();
+    // Its bot was deleted: it's switched off rather than run as Hatbot, which may have other plugins.
+    if (settings.heartbeat.botId !== HATBOT_ID && !this.d.bots.active(settings.heartbeat.botId)) {
+      this.d.settings.update({
+        heartbeat: { ...settings.heartbeat, enabled: false, botId: HATBOT_ID },
+      });
+      return;
+    }
     const now = new Date(this.clock()).toISOString();
     const state = this.state();
     // After a long time off, only what's recent: not a week of failures at once.
@@ -244,8 +251,10 @@ export class Heartbeat {
       console.error("heartbeat triage failed", err);
       choice = { action: "notify", title: "", message: list };
     }
-    const botId = this.d.bots.active(heartbeat.botId) ? heartbeat.botId : "hatbot";
-    if (choice.action === "task") {
+    // Deleted meanwhile: Hatbot tells you, and starts nothing with plugins the bot didn't have.
+    const live = this.d.bots.active(heartbeat.botId);
+    const botId = live ? heartbeat.botId : HATBOT_ID;
+    if (choice.action === "task" && live) {
       const task = this.d.tasks.createBackgroundTask({
         title: (choice.title || "Heartbeat").slice(0, 80),
         goal: heartbeat.instructions,

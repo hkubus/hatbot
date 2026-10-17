@@ -182,6 +182,10 @@ function seenLine(ctx: ToolContext, w: Watcher): string {
   return watcherLine(w, untrusted);
 }
 
+/** The bot was deleted while it wrote this reply: what it makes now would run as nobody's. */
+const gone = (ctx: ToolContext) => Boolean(ctx.bot && ctx.bots && !ctx.bots.active(ctx.bot.id));
+const GONE = "Not made: the owner deleted you.";
+
 /** "Runs as Coder", for a schedule or trigger another bot runs. */
 const whose = (botId: string, bot?: Bot, bots?: Bots) =>
   bots && botId !== (bot?.id ?? HATBOT_ID) ? `\n  Runs as: ${bots.nameOf(botId)}` : "";
@@ -705,6 +709,7 @@ export const TOOLS = [
     run: async ({ name, prompt, cron, at }, ctx, signal) => {
       const { schedules, scheduleCard, tainted, bot } = ctx;
       if (!schedules) return "Schedules aren't available.";
+      if (gone(ctx)) return GONE;
       if (Boolean(cron) === Boolean(at)) return "Give either cron or at.";
       const note = await askedIfSuspected(ctx, signal, {
         name: "schedule_create",
@@ -811,6 +816,7 @@ export const TOOLS = [
     run: async (input, ctx, signal) => {
       const { watchers, tainted, bot } = ctx;
       if (!watchers) return "Watchers aren't available.";
+      if (gone(ctx)) return GONE;
       if (Boolean(input.url) === Boolean(input.tool)) return "Give either url or tool.";
       const condition = conditionOf(input);
       if (typeof condition === "string") return condition;

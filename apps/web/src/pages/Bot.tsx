@@ -138,7 +138,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
     if (!stored) return;
     if (
       !(await ask({
-        text: `Delete ${stored.name}? Its chat goes away. Its notes stay in Memory, and its schedules, triggers and watchers go to Hatbot, switched off until you turn them back on.`,
+        text: `Delete ${stored.name}? Its chat goes away. Its notes stay in Memory, and its schedules, triggers and watchers go to Hatbot, switched off until you turn them back on. If the heartbeat runs as it, it's switched off too.`,
         ok: "Delete",
       }))
     )
