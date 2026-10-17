@@ -59,26 +59,19 @@ enum PickedFile {
     return (data, url.lastPathComponent, mediaType(url))
   }
 
-  /// A file lent for a moment (the share sheet's), copied somewhere it stays until it's uploaded.
-  static func copy(_ url: URL, name: String? = nil) -> URL? {
+  /// A file lent for a moment (the share sheet's), copied somewhere it stays until it's uploaded. One over
+  /// `limit` bytes isn't copied or read: that throws CocoaError.fileReadTooLarge.
+  static func copy(_ url: URL, name: String? = nil, limit: Int? = nil) throws -> URL {
     let scoped = url.startAccessingSecurityScopedResource()
     defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+    if let limit, let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > limit {
+      throw CocoaError(.fileReadTooLarge)
+    }
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     let copy = dir.appendingPathComponent((name ?? url.lastPathComponent).replacingOccurrences(of: "/", with: "_"))
-    do {
-      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-      try FileManager.default.copyItem(at: url, to: copy)
-      return copy
-    } catch {
-      return nil
-    }
-  }
-
-  /// A file's size in bytes, without reading it.
-  static func size(_ url: URL) -> Int? {
-    let scoped = url.startAccessingSecurityScopedResource()
-    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-    return try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    try FileManager.default.copyItem(at: url, to: copy)
+    return copy
   }
 
   static func mediaType(_ url: URL) -> String {

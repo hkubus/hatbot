@@ -145,8 +145,7 @@ struct PickedPhoto: Transferable {
   static var transferRepresentation: some TransferRepresentation {
     FileRepresentation(importedContentType: .image) { received in
       // The file is the picker's only until this returns.
-      guard let copy = PickedFile.copy(received.file) else { throw CocoaError(.fileReadUnknown) }
-      return PickedPhoto(url: copy)
+      try PickedPhoto(url: PickedFile.copy(received.file))
     }
   }
 }

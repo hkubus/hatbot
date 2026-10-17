@@ -39,6 +39,11 @@ struct SharedFile: Identifiable {
   var name: String
   var mediaType: String
   var preview: UIImage?
+
+  /// Its copy, sent or left out.
+  func deleteCopy() {
+    if case let .file(url) = content { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+  }
 }
 
 /// What came of a file the share sheet lends.
@@ -57,6 +62,8 @@ struct ShareView: View {
   @State private var files: [SharedFile] = []
   /// Files left out for their size.
   @State private var tooBig: [String] = []
+  /// Files past the ones a message takes.
+  @State private var leftOut = 0
   @State private var loading = true
   @State private var sending = false
   @State private var error: String?
@@ -77,15 +84,16 @@ struct ShareView: View {
           )
           .foregroundStyle(.red)
         }
+        if leftOut > 0 {
+          Text("\(leftOut) more left out: a message takes 10 files.").foregroundStyle(.red)
+        }
         Section {
           TextField("Add a note", text: $draft.note, axis: .vertical).lineLimit(2...8)
         }
-        if !draft.texts.isEmpty || !draft.urls.isEmpty {
+        if !draft.sharedTexts.isEmpty || !draft.urls.isEmpty {
           Section {
             ForEach(draft.urls, id: \.self) { Text($0.absoluteString).lineLimit(2) }
-            ForEach(draft.texts.filter { t in !draft.urls.contains { $0.absoluteString == t } }, id: \.self) {
-              Text($0).lineLimit(6)
-            }
+            ForEach(draft.sharedTexts, id: \.self) { Text($0).lineLimit(6) }
           }
         }
         if !files.isEmpty {
@@ -116,12 +124,7 @@ struct ShareView: View {
       }
     }
     .task { await load() }
-    // The copies, sent or not.
-    .onDisappear {
-      for f in files {
-        if case let .file(url) = f.content { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-      }
-    }
+    .onDisappear { files.forEach { $0.deleteCopy() } }
   }
 
   private func load() async {
@@ -144,7 +147,10 @@ struct ShareView: View {
       }
     }
     // What's listed is what's sent.
-    files = Array(files.prefix(draft.fileRoom))
+    let extra = files.dropFirst(draft.fileRoom)
+    extra.forEach { $0.deleteCopy() }
+    leftOut = extra.count
+    files.removeLast(extra.count)
     loading = false
   }
 
@@ -233,11 +239,15 @@ struct ShareView: View {
     }
   }
 
-  /// The size is checked before anything is copied or read.
   private static func lend(_ url: URL?, name: String, mediaType: String) -> Lent {
     guard let url else { return .unreadable }
-    if (PickedFile.size(url) ?? 0) > API.maxUpload { return .tooBig(name) }
-    guard let copy = PickedFile.copy(url, name: name) else { return .unreadable }
-    return .file(SharedFile(content: .file(copy), name: name, mediaType: mediaType))
+    do {
+      let copy = try PickedFile.copy(url, name: name, limit: API.maxUpload)
+      return .file(SharedFile(content: .file(copy), name: name, mediaType: mediaType))
+    } catch let e as CocoaError where e.code == .fileReadTooLarge {
+      return .tooBig(name)
+    } catch {
+      return .unreadable
+    }
   }
 }
