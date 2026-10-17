@@ -84,6 +84,9 @@ test("numbers are read in either style, and only a move into the condition count
   expect(numberIn("0,99 zł")).toBe(0.99);
   // A badge or a model number before the price doesn't win.
   expect(numberIn("-20% 1 299 zł")).toBe(1299);
+  expect(numberIn("-300 zł 1 299 zł")).toBe(1299);
+  expect(numberIn("Rabat -300 zł\n1 299 zł")).toBe(1299);
+  expect(numberIn("-300 zł")).toBe(-300);
   expect(numberIn("Taniej o 15 % 849,00 zł")).toBe(849);
   expect(numberIn("Laptop 16 GB 3 999 zł")).toBe(3999);
   // Neighbouring prices aren't read as one number.

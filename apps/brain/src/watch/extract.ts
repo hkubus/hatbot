@@ -208,7 +208,7 @@ function parseNumber(written: string, money: boolean): number {
 
 /**
  * The price or number in a value: the first one next to a currency if there is one, else the first,
- * leaving out percentages ("-20%"). "1 299,99 zł" is 1299.99, "1.299 zł" is 1299, "€1.299,00" is
+ * leaving out percentages ("-20%"). A negative one next to a currency is a discount, not the price. "1 299,99 zł" is 1299.99, "1.299 zł" is 1299, "€1.299,00" is
  * 1299, "$1,299.00" is 1299, "-3.5 °C" is -3.5. NaN when there's none.
  */
 export function numberIn(value: string): number {
@@ -225,7 +225,8 @@ export function numberIn(value: string): number {
     const money = MONEY_AFTER.test(value.slice(end, end + 12)) || MONEY_BEFORE.test(before);
     const n = parseNumber(written, money);
     if (Number.isNaN(n)) continue;
-    if (money) return n;
+    // A price is never negative: "-300 zł" is a discount badge.
+    if (money && n >= 0) return n;
     first ??= n;
   }
   return first ?? Number.NaN;
