@@ -769,3 +769,39 @@ test("a task's reply that fails as it's written again still says how the task we
   expect(reply?.text).toStartWith("Example.com is up.");
   expect(reply?.text).toContain("Something went wrong");
 });
+
+test("a task a deleted bot started ends with its result; the bot isn't asked again", async () => {
+  const slow = Promise.withResolvers<void>();
+  const chat = new FakeModel([
+    { content: [toolUse("run_task", { title: "Look", goal: "Look at the NAS" })] },
+    { content: [text("On it.")] },
+  ]);
+  const work = new FakeModel([
+    {
+      wait: slow.promise,
+      content: [
+        toolUse("finish_task", { outcome: "done", summary: "The NAS is fine.", notify: true }),
+      ],
+    },
+  ]);
+  const t = await testApp(chat, work);
+  const coder = t.bots.create({
+    name: "Coder",
+    instructions: "",
+    chatModel: null,
+    chatEffort: null,
+    plugins: null,
+  });
+  const thread = t.chats.direct(coder.id);
+  await thread.post("look at the nas").done;
+  const reply = thread.list().at(-1) as ThreadMessage;
+  t.bots.delete(coder.id);
+  slow.resolve();
+  await t.tasks.idle();
+  await thread.idle();
+  expect(chat.requests).toHaveLength(2);
+  expect(thread.list().find((m) => m.id === reply.id)?.text).toStartWith("The NAS is fine.");
+  // Nor can a failed reply of its be written again.
+  t.db.query("UPDATE messages SET status = 'error' WHERE id = ?").run(reply.id);
+  expect(thread.retry(reply.id)).toBeNull();
+});

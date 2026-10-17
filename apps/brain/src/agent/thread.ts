@@ -1509,11 +1509,12 @@ export class Thread {
   /**
    * A task you started from the chat ended: the bot that started it (`botId`) writes the reply that
    * started it again, to tell you what came of it with the conversation in mind. In turn with replies.
+   * A bot deleted since doesn't: the task's result takes that reply's place.
    */
   taskEnded(botId = this.bot().id) {
     const done = this.chain
       .then(async () => {
-        const bot = this.d.bots.get(botId);
+        const bot = this.d.bots.active(botId);
         if (!bot) return;
         if (this.group()) await this.round(null, [bot]);
         else await this.reply(null, bot);
@@ -1532,7 +1533,7 @@ export class Thread {
     const done = this.chain.then(async () => {
       // Something may have come first in the queue.
       const again = this.retryable(messageId);
-      const bot = again && this.d.bots.get(again.botId ?? HATBOT_ID);
+      const bot = again && this.d.bots.active(again.botId ?? HATBOT_ID);
       if (again && bot) await this.reply(null, bot, null, again);
     });
     this.chain = done.catch((err) => console.error("thread turn failed", err));
@@ -1540,8 +1541,8 @@ export class Thread {
   }
 
   /**
-   * A reply that can be written again: it failed, nothing was said after it, and its episode is the
-   * one still going, so its turns are where the next request picks up.
+   * A reply that can be written again: it failed, its bot wasn't deleted, nothing was said after it,
+   * and its episode is the one still going, so its turns are where the next request picks up.
    */
   private retryable(messageId: number): ThreadMessage | null {
     const { db } = this.d;
@@ -1551,7 +1552,7 @@ export class Thread {
       )
       .get(messageId, this.conversationId);
     if (row?.role !== "assistant" || row.kind !== "text" || row.status !== "error") return null;
-    if (row.episodeId === null) return null;
+    if (row.episodeId === null || !this.d.bots.active(row.botId ?? HATBOT_ID)) return null;
     const later = db
       .query<unknown, [number, number, number]>(
         `SELECT 1 FROM messages WHERE conversation_id = ? AND incognito = ? AND id > ?
