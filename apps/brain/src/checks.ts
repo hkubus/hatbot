@@ -276,10 +276,15 @@ export class Checks {
     const info = this.d.updates.info();
     if (!info.source) return skip("Updates aren't set up; deploy.sh sets them up.");
     const s = info.status;
-    if (!s) return ok("No update has run yet.");
-    if (s.state === "failed") return fail(`The last update failed: ${s.error ?? s.step}.`);
-    if (s.state === "done" && s.notes.length)
+    if (s?.state === "failed") return fail(`The last update failed: ${s.error ?? s.step}.`);
+    if (s?.state === "done" && s.notes.length)
       return warn(`Still to do by hand after the last update: ${s.notes.join(" ")}`);
+    // Update runs the new commit's deploy script as root on the brain.
+    if (info.source.signed === false)
+      return warn(
+        `Update deploys whatever ${info.source.branch} holds, so whoever can push to it can run code on the brain. Run deploy.sh with HATBOT_GIT_URL set to give it the key you sign commits with.`,
+      );
+    if (!s) return ok("No update has run yet.");
     return ok(info.current?.sha ? `Running ${info.current.sha.slice(0, 7)}.` : "Up to date.");
   }
 

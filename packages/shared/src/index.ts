@@ -494,8 +494,11 @@ export type UpdateStatus = {
   notes: string[];
 };
 export type UpdateInfo = {
-  /** Where updates come from; null until deploy.sh sets it up. */
-  source: { url: string; branch: string } | null;
+  /**
+   * Where updates come from; null until deploy.sh sets it up. `signed`: only commits signed by your key
+   * are deployed (HATBOT_UPDATE_SIGNERS); absent from a brain-deploy.sh older than that.
+   */
+  source: { url: string; branch: string; signed?: boolean } | null;
   /** The running release. */
   current: { sha?: string; subject?: string; deployedAt?: string } | null;
   /** The last or current update. */

@@ -146,6 +146,9 @@ fi
 # service never sees the token).
 if [[ -z ${HATBOT_GIT_URL:-} ]] && ct_has_file "$BRAIN_ID" /etc/hatbot/update.env; then
   ok "keeping /etc/hatbot/update.env (set HATBOT_GIT_URL to change it)"
+  if ! pct exec "$BRAIN_ID" -- grep -qs '^HATBOT_UPDATE_SIGNERS=.' /etc/hatbot/update.env; then
+    warn "Update deploys any commit on the branch; run deploy.sh with HATBOT_GIT_URL set to give it your signing key"
+  fi
 else
   def_git=${HATBOT_GIT_URL:-$src_remote}
   git_url='' git_branch='' git_user='' git_token=''
@@ -174,11 +177,27 @@ else
     else
       warn "the brain can't read $git_branch from $git_url; saving it anyway"
     fi
+    # An update runs the new commit's brain-deploy.sh as root, so only commits signed with your key
+    # are deployed once there is one (README.md, "Signed commits only").
+    signers=$(pct exec "$BRAIN_ID" -- sh -c 'grep -s "^HATBOT_UPDATE_SIGNERS=." /etc/hatbot/update.env || true')
+    if [[ -n $signers ]]; then
+      ok "keeping the commit signature check ($signers)"
+    else
+      signing_key=''
+      read -r -p "   SSH public key you sign commits with, so only those are deployed (empty: any commit): " signing_key || true
+      if [[ $signing_key =~ ^(ssh-|ecdsa-|sk-)[^[:space:]]+[[:space:]]+[A-Za-z0-9+/=]+ ]]; then
+        printf 'owner namespaces="git" %s\n' "$signing_key" | push_secret "$BRAIN_ID" /etc/hatbot/allowed_signers
+        signers=HATBOT_UPDATE_SIGNERS=/etc/hatbot/allowed_signers
+      elif [[ -n $signing_key ]]; then
+        warn "that isn't an SSH public key; Update deploys any commit on $git_branch"
+      else
+        warn "Update deploys any commit on $git_branch, so whoever can push to it can run code on the brain"
+      fi
+    fi
     {
       printf 'HATBOT_GIT_URL=%q\nHATBOT_GIT_BRANCH=%q\nHATBOT_GIT_USER=%q\nHATBOT_GIT_TOKEN=%q\n' \
         "$git_url" "$git_branch" "$git_user" "$git_token"
-      # Kept from the file this replaces: commit signature checks (README.md).
-      pct exec "$BRAIN_ID" -- sh -c 'grep -s "^HATBOT_UPDATE_SIGNERS=" /etc/hatbot/update.env || true'
+      [[ -z $signers ]] || printf '%s\n' "$signers"
     } | push_secret "$BRAIN_ID" /etc/hatbot/update.env
     unset git_token
   elif [[ -n $git_url ]]; then
