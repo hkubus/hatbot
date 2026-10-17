@@ -96,14 +96,25 @@ export const forgejoPlugin = definePlugin({
       `${repoPath(repo)}/contents/${path.split("/").filter(Boolean).map(encodeURIComponent).join("/")}`;
     /** Default branches, so policy can tell a commit to main from one to a new branch. */
     const defaults = new Map<string, string>();
+    /** Repositories whose default branch holds only what was merged there: not forks or mirrors. */
+    const own = new Set<string>();
+    type Listed = { full_name: string; default_branch: string; fork?: boolean; mirror?: boolean };
+    const learn = (list: Listed[]) => {
+      for (const r of list) {
+        defaults.set(r.full_name, r.default_branch);
+        if (r.fork || r.mirror) own.delete(r.full_name);
+        else own.add(r.full_name);
+      }
+    };
     /**
      * Whether what's read at this ref may hold anyone's text: anything but the default branch of a
      * repository the bot account can see, which holds what was merged there. A stranger's repository,
-     * or one whose default branch isn't known yet, counts too.
+     * a fork or a pull mirror (upstream's code), or one whose default branch isn't known yet, counts
+     * too.
      */
     const offDefault = (repo: string, ref?: string) => {
       const main = defaults.get(repo);
-      return !main || (ref !== undefined && ref !== main);
+      return !main || !own.has(repo) || (ref !== undefined && ref !== main);
     };
     const existing = async (repo: string, path: string, ref: string): Promise<string | null> => {
       try {
@@ -114,7 +125,7 @@ export const forgejoPlugin = definePlugin({
         if (Array.isArray(c)) return null;
         // Written through the contents API, they'd become plain files.
         if (c.type === "symlink" || c.type === "submodule")
-          throw new PluginError(`${path} is a ${c.type}; Hatbot doesn't change those.`);
+          throw new PluginError(`${path} is a ${c.type}; you can't change those here.`);
         return c.sha;
       } catch (err) {
         if (err instanceof PluginError && err.message.startsWith("Forgejo said 404")) return null;
@@ -134,14 +145,9 @@ export const forgejoPlugin = definePlugin({
         schema: z.object({}),
         run: async () => {
           const list = await api<
-            {
-              full_name: string;
-              default_branch: string;
-              description: string;
-              permissions?: { push: boolean };
-            }[]
+            (Listed & { description: string; permissions?: { push: boolean } })[]
           >("GET", "/user/repos?limit=100");
-          for (const r of list) defaults.set(r.full_name, r.default_branch);
+          learn(list);
           return (
             list
               .map(
@@ -228,7 +234,7 @@ export const forgejoPlugin = definePlugin({
       tool({
         name: "forgejo_file",
         description:
-          "Read a file from a repository, or list a directory (path empty for the top). ref is a branch, tag or commit; the default branch if left out. Anything but the default branch may hold other people's code: untrusted.",
+          "Read a file from a repository, or list a directory (path empty for the top). ref is a branch, tag or commit; the default branch if left out. Trusted only on the default branch of a repository your bot account can see that isn't a fork or a mirror; other branches and other people's repositories are untrusted.",
         access: "read",
         untrusted: ({ repo, ref }) => offDefault(repo, ref),
         label: "Reading code",
@@ -348,10 +354,17 @@ export const forgejoPlugin = definePlugin({
             return ask(
               "It changes CI workflows or the actions they use, which run with the repository's secrets.",
             );
-          if (new_branch) return allow();
           const main = defaults.get(repo);
-          if (!main || sameBranch(branch, main))
-            return ask(`It commits straight to ${branch}${main ? ", the default branch" : ""}.`);
+          // Forgejo commits to branch itself when new_branch is the same name.
+          if (
+            new_branch &&
+            !sameBranch(new_branch, branch) &&
+            !(main && sameBranch(new_branch, main))
+          )
+            return allow();
+          const to = new_branch ?? branch;
+          if (!main || sameBranch(to, main))
+            return ask(`It commits straight to ${to}${main ? ", the default branch" : ""}.`);
           return allow();
         },
         run: async ({ repo, branch, new_branch, message, files }) => {
@@ -434,10 +447,8 @@ export const forgejoPlugin = definePlugin({
       }),
     ];
 
-    void api<{ full_name: string; default_branch: string }[]>("GET", "/user/repos?limit=100")
-      .then((list) => {
-        for (const r of list) defaults.set(r.full_name, r.default_branch);
-      })
+    void api<Listed[]>("GET", "/user/repos?limit=100")
+      .then(learn)
       .catch(() => {});
 
     return ready(tools, {
