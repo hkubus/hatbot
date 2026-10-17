@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test";
 import type Anthropic from "@anthropic-ai/sdk";
+import { z } from "zod";
 import { RESEARCH_CHECK_PROMPT } from "../src/agent/prompt";
 import { runTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
+import { definePlugin, ready, tool } from "../src/plugins/plugin";
 import { FakeModel, type Scripted, text, toolUse } from "./fake-model";
-import { testApp } from "./helpers";
+import { type TestApp, testApp } from "./helpers";
 
 type Block = Anthropic.Beta.BetaContentBlock;
 type Params = Parameters<FakeModel["stream"]>[0];
@@ -225,4 +227,77 @@ test("a plain task keeps only finish_task's results, a tool it sends", async () 
   const req = work.requests[0];
   expect(kept(req)).toEqual(["finish_task"]);
   for (const name of kept(req)) expect(toolNames(req)).toContain(name);
+});
+
+/** A research task started directly, as the chat's research tool does. */
+async function startResearch(t: TestApp, goal = "Which quiet four-bay NAS, under 3,000 zł?") {
+  const task = t.tasks.createBackgroundTask({
+    title: "Quiet NAS for four drives",
+    goal,
+    origin: "chat",
+    research: true,
+  });
+  await t.tasks.idle();
+  return t.tasks.get(task?.id as number) as NonNullable<typeof task>;
+}
+
+test("research gets lookups and memory, and no tool that changes things", async () => {
+  const restarted: string[] = [];
+  const lab = definePlugin({
+    id: "lab",
+    name: "Lab",
+    description: "A fake homelab",
+    config: z.object({}),
+    start: () =>
+      ready([
+        tool({
+          name: "lab_status",
+          description: "Guest status",
+          access: "read",
+          schema: z.object({}),
+          run: async () => "All guests running.",
+        }),
+        tool({
+          name: "lab_restart",
+          description: "Restart a guest",
+          access: "write",
+          schema: z.object({ guest: z.string() }),
+          run: async ({ guest }) => {
+            restarted.push(guest);
+            return "Restarted.";
+          },
+        }),
+      ]),
+  });
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("lab_restart", { guest: "web" }),
+        toolUse("memory_delete", { path: "INDEX.md", reason: "x" }),
+      ],
+    },
+    finish("Nothing to report.", ""),
+  ]);
+  const t = await testApp(new FakeModel(), work, {}, [lab]);
+  await t.plugins.update("lab", { enabled: true });
+  const task = await startResearch(t);
+  expect(toolNames(work.requests[0])).toEqual([
+    "memory_list",
+    "memory_read",
+    "memory_write",
+    "memory_search",
+    "run_desktop_task",
+    "investigate",
+    "finish_research",
+    "lab_status",
+    "web_search",
+    "web_fetch",
+  ]);
+  // Called anyway, they don't run.
+  const results = JSON.stringify(work.requests[1]?.messages.at(-1)?.content);
+  expect(results).toContain('Unknown tool \\"lab_restart\\".');
+  expect(results).toContain('Unknown tool \\"memory_delete\\".');
+  expect(restarted).toEqual([]);
+  expect(await t.memory.exists("INDEX.md")).toBe(true);
+  expect(task.status).toBe("done");
 });

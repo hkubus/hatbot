@@ -80,6 +80,19 @@ export const FinishResearch = z.object({
 });
 export type ResearchResult = z.infer<typeof FinishResearch>;
 
+/**
+ * The task tools research keeps: memory without deleting, the desktop for pages that need a browser,
+ * and other bots. Nothing that sends, waits or deletes.
+ */
+export const RESEARCH_CORE_TOOLS = [
+  "memory_list",
+  "memory_read",
+  "memory_search",
+  "memory_write",
+  "run_desktop_task",
+  "ask_bot",
+];
+
 /** The research loop's own tools; finish_research takes finish_task's place. */
 export const RESEARCH_TOOLS: Anthropic.Beta.BetaTool[] = [
   toolParam({

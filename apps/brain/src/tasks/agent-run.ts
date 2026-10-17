@@ -35,6 +35,7 @@ import {
   investigate,
   MAX_RESEARCH_STEPS,
   RESEARCH_BETA,
+  RESEARCH_CORE_TOOLS,
   RESEARCH_TOKENS,
   RESEARCH_TOOLS,
   ResearchSources,
@@ -186,27 +187,28 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   // Fixed for the whole run: the tool list is part of the prompt cache.
   // A bot gets only the plugins it may use.
   const own = d.plugins.tools(bot.plugins);
+  // Research only reads and writes up, so it gets the plugins' lookups and no tool that changes
+  // anything; it ends with finish_research (PLAN.md §17).
+  const { research } = task;
   const pluginTools = new Map<string, PluginTool>(
-    [...own, ...(tasks.negotiations?.tools(bot, own, { conversationId: null }) ?? [])].map((t) => [
-      t.name,
-      t,
-    ]),
+    [...own, ...(tasks.negotiations?.tools(bot, own, { conversationId: null }) ?? [])]
+      .filter((t) => !research || t.access === "read")
+      .map((t) => [t.name, t]),
   );
   const others = d.bots.list().filter((b) => b.id !== bot.id);
-  // Research ends with finish_research instead (PLAN.md §17).
-  const { research } = task;
   const tools = [
     ...CORE_TOOLS.filter(
-      (t) => (others.length || t.name !== "ask_bot") && !(research && t.name === "finish_task"),
+      (t) =>
+        (others.length || t.name !== "ask_bot") &&
+        (!research || RESEARCH_CORE_TOOLS.includes(t.name)),
     ),
     ...(research ? RESEARCH_TOOLS : []),
     ...[...pluginTools.values()].map(toolParam),
     ...WEB_TOOLS,
   ];
+  const sent = new Set(tools.flatMap((t) => ("name" in t ? [t.name] : [])));
   /** Results never cleared: a research task's findings are what it cites. Only tools sent. */
-  const keptTools = ["finish_task", "finish_research", "investigate"].filter((n) =>
-    tools.some((t) => "name" in t && t.name === n),
-  );
+  const keptTools = ["finish_task", "finish_research", "investigate"].filter((n) => sent.has(n));
   const guidance = d.plugins.guidance(bot.plugins);
   const prompt = promptFor(research ? researchPrompt(bot) : AGENT_PROMPT, bot, others);
   const system = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
@@ -708,6 +710,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         if (res.stop_reason === "max_tokens")
           return result(call, "Input was cut off at max_tokens. Retry with a shorter input.", true);
         if (finished) return result(call, "Not run: the task already finished.", true);
+        if (!sent.has(call.name)) return result(call, `Unknown tool "${call.name}".`, true);
         if (call.name === "finish_task") {
           const p = FinishTask.safeParse(call.input);
           // A chart that doesn't draw shows the owner a wall of numbers: send it back once.
