@@ -283,7 +283,7 @@ export function negotiateTools(
     tool({
       name: "negotiate_close",
       description:
-        "End a negotiation: agreed (at `price`), lost (the seller sold it or said no) or abandoned (you gave up). Put what's worth remembering in `notes`: how the seller haggled, what worked and what didn't. It doesn't message the seller; paying comes after, and always asks.",
+        "End a negotiation: agreed (at `price`), lost (the seller sold it, said no, or won't come within the limit) or abandoned (you or the owner gave up on it). Put what's worth remembering in `notes`: how the seller haggled, what worked and what didn't. It doesn't message the seller; paying comes after, and always asks.",
       schema: z.object({
         negotiation: Id,
         outcome: z.enum(["agreed", "lost", "abandoned"]),
