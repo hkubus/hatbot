@@ -458,5 +458,19 @@ test("a frame Hatbot couldn't enter can't be told apart from a Pay button, so it
     frameUrl: "https://secure.payu.com/front/widget",
   });
   expect(consequential("click", inside)).toEqual({ checkout: "secure.payu.com" });
+  // There the frame says more than a label: the tab's address doesn't show the payment.
+  const confirm = button("Confirm", {
+    url: "https://fundacja.example/wesprzyj",
+    frameUrl: "https://js.stripe.com/v3/elements-inner",
+  });
+  expect(consequential("click", confirm)).toEqual({ checkout: "js.stripe.com" });
+  const box = button("", {
+    tag: "input",
+    type: "text",
+    editable: true,
+    url: inside.url,
+    frameUrl: inside.frameUrl,
+  });
+  expect(consequential("enter", box)).toEqual({ checkout: "secure.payu.com" });
   expect(heldBack("click", { frame: "" })).toContain("lands in an embedded frame that");
 });
