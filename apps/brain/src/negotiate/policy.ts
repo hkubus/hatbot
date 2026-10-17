@@ -100,6 +100,20 @@ export function outside(n: Negotiation, input: SendInput, now: number): string[]
     why.push(
       `The text says ${amounts.map((a) => `"${a.raw}"`).join(", ")}, ${buying ? "above" : "below"} ${limit}.`,
     );
+  const extra = allowance(m.delivery);
+  for (const t of totalsIn(text, n.title, n.asking)) {
+    if (t.kind === "each")
+      why.push(
+        `It prices each item ("${t.raw}"), so what it comes to can't be checked against the mandate.`,
+      );
+    // Selling, a total only adds up to more, so it's the parts that can be below the floor.
+    else if (buying && t.kind === "product" && t.total > m.limit)
+      why.push(`It comes to ${zl(t.total, m.currency)} ("${t.raw}"), above ${limit}.`);
+    else if (buying && t.kind === "sum" && t.total > m.limit + extra)
+      why.push(
+        `It adds up to ${zl(t.total, m.currency)} ("${t.raw}"), above ${limit}${extra ? ` and the ${zl(extra, m.currency)} the delivery terms allow on top` : ""}.`,
+      );
+  }
   const words = numberWords(text);
   if (words.length)
     why.push(
@@ -207,6 +221,14 @@ const lastWord = (s: string) => /(\p{L}+)[^\p{L}\p{N}]*$/u.exec(s)?.[1];
  * format.
  */
 export function amountsIn(text: string, title: string, asking: number | null = null): Amount[] {
+  return read(text, title, asking).found.map(({ raw, values }) => ({ raw, values }));
+}
+
+/** An amount and where it stands in the text it was read from. */
+type Found = Amount & { index: number; end: number; money: boolean };
+
+/** The amounts in `text`, where they stand in `s`: the text as read, dates and phone numbers blanked. */
+function read(text: string, title: string, asking: number | null): { s: string; found: Found[] } {
   const words = title.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   /** "hexagon 2000": a word in the title and the number after it, unless that's a price ("cena 1500"). */
   const models = new Set(
@@ -221,7 +243,7 @@ export function amountsIn(text: string, title: string, asking: number | null = n
   let s = blankDates(plain(text));
   for (const p of phonesIn(s)) s = s.replace(p, " ".repeat(p.length));
 
-  const out: Amount[] = [];
+  const out: Found[] = [];
   /** One number at `index`: an amount unless something around it says it isn't. */
   const judge = (raw: string, index: number, values: number[], parts: number) => {
     const before = s.slice(0, index);
@@ -270,10 +292,14 @@ export function amountsIn(text: string, title: string, asking: number | null = n
     out.push({
       raw: raw + (thousands ?? ""),
       values: values.map((v) => Math.round(v * scale * 100) / 100),
+      index,
+      end: index + raw.length + (thousands?.length ?? 0),
+      money,
     });
   };
 
-  // Digits joined by . , ' \u2019 ` _ \u00b7, or by a space before exactly three more: 1 400, 1.400,50, 1\u2019500.
+  // Digits joined by . , ' _ a middle dot or another apostrophe, or by a space before exactly three
+  // more: 1 400, 1.400,50, 1'500.
   const re = /\d+(?:(?:[.,'\u2019`\u00b4_\u00b7]|[ ](?=\d{3}(?!\d)))\d+)*/g;
   for (let m = re.exec(s); m; m = re.exec(s)) {
     const raw = m[0];
@@ -292,7 +318,7 @@ export function amountsIn(text: string, title: string, asking: number | null = n
       at = i + g.length;
     }
   }
-  return out;
+  return { s, found: out };
 }
 
 /**
@@ -319,6 +345,94 @@ function readings(groups: string[], seps: string[]): number[] {
   if ((last === "." || last === ",") && tail.length <= 3 && wholeOk)
     values.add(Number(`${whole.join("")}.${tail}`));
   return [...values];
+}
+
+/** Between two amounts, makes them one sum: 1100+400, 1100 teraz i 400 przy odbiorze, dorzucę 400. */
+const JOIN =
+  /\+|(?<![\p{L}])(?:plus|i|oraz|dorzuc\p{L}*|do[łl]o[żz]\p{L}*|dop[łl]ac\p{L}*|do\s+tego|ponadto|jeszcze|and|extra|on\s+top)(?![\p{L}])/iu;
+/** Between two amounts, keeps them apart: they're alternatives, not a sum. */
+const APART = /(?<![\p{L}])(?:albo|lub|czy|or|zamiast|instead|nie|not)(?![\p{L}])/iu;
+/** A number times another: 2 x 750, 2×750, 2 razy po 750, 2 sztuki po 750, 750 x 2. */
+const MULTIPLY =
+  /(?<![\d.,])(\d+(?:[.,]\d+)*)\s*(?:x|×|\*|razy(?:\s+po)?|times|szt\.?(?:\s+po)?|sztuk\p{L}*(?:\s+po)?|pcs\.?|pieces?)\s*(?:po\s+|à\s*|@\s*)?(\d+(?:[.,]\d+)*)/giu;
+/** After an amount: it's the price of each item, so the total depends on how many. */
+const EACH =
+  /^\s?(?:(?:zł|zl|pln|złotych)\.?\s?)?(?:za\s+(?:sztuk[eęi]|szt\.?|każd\p{L}*|jedn\p{L}*)|\/\s?szt\.?|każd[aey]|each|apiece|per\s+(?:item|piece|unit|one))(?![\p{L}])/iu;
+/** More than one item, so "po 750" is a price each. */
+const SEVERAL =
+  /(?<![\p{L}])(?:obie|oba|obydw\p{L}*|dwie|dwa|trzy|cztery|both|two|three|four)(?![\p{L}])/iu;
+
+/** Amounts in one message that make one total: added up, multiplied, or a price for each of several. */
+export type Total = { raw: string; total: number; kind: "sum" | "product" | "each" };
+
+/** What the amounts in a message come to together, where they're joined into one total. */
+export function totalsIn(text: string, title: string, asking: number | null = null): Total[] {
+  const { s, found } = read(text, title, asking);
+  const out: Total[] = [];
+  const most = (a: Amount) => Math.max(...a.values);
+  const quote = (from: number, to: number) => s.slice(from, to).replace(/\s+/g, " ").trim();
+
+  let group: Found[] = [];
+  const flush = () => {
+    const first = group[0];
+    const last = group.at(-1);
+    if (group.length > 1 && first && last)
+      out.push({
+        raw: quote(first.index, last.end).slice(0, 80),
+        total: group.reduce((sum, a) => sum + most(a), 0),
+        kind: "sum",
+      });
+  };
+  for (const a of found) {
+    const prev = group.at(-1);
+    const between = prev ? s.slice(prev.end, a.index) : "";
+    if (prev && JOIN.test(between) && !APART.test(between)) group.push(a);
+    else {
+      flush();
+      group = [a];
+    }
+  }
+  flush();
+
+  for (const m of s.matchAll(MULTIPLY)) {
+    const after = s.slice((m.index ?? 0) + m[0].length);
+    const thousands = THOUSANDS.test(after);
+    // 30x40 cm, 2x8GB: sizes and parts, not money. RTX 3070 x 2: a model, twice.
+    if (!thousands && (UNIT.test(after) || (/^\p{L}/u.test(after) && !CURRENCY.test(after))))
+      continue;
+    const model = /(\p{L}+)[\s-]?$/u.exec(s.slice(0, m.index))?.[1];
+    if (model && modelLike(model) && !priceWord(model)) continue;
+    const factor = (x: string) => {
+      const groups = x.split(/[.,]/);
+      return Math.max(
+        Number(x.replace(",", ".")) || 0,
+        ...readings(groups, x.match(/[.,]/g) ?? []),
+      );
+    };
+    out.push({
+      raw: m[0],
+      total: factor(m[1] ?? "0") * factor(m[2] ?? "0") * (thousands ? 1000 : 1),
+      kind: "product",
+    });
+  }
+
+  for (const a of found) {
+    const each =
+      EACH.test(s.slice(a.end)) ||
+      (/(?<![\p{L}])po\s$/iu.test(s.slice(0, a.index)) && (a.money || SEVERAL.test(s)));
+    if (each) out.push({ raw: quote(a.index, a.end), total: most(a), kind: "each" });
+  }
+  return out;
+}
+
+/** Shipping on top of the price that the mandate's delivery terms allow: "OLX delivery, up to 20 zł". */
+export function allowance(delivery: string): number {
+  return Math.max(
+    0,
+    ...read(delivery, "", null)
+      .found.filter((a) => a.money)
+      .flatMap((a) => a.values),
+  );
 }
 
 /** Amounts written out in words, in English or Polish, slang included. */

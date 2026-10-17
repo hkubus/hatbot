@@ -291,6 +291,55 @@ describe("an amount written in the text, however it's written", () => {
   });
 });
 
+describe("amounts that add up or multiply past the ceiling ask, though each is under it", () => {
+  test.each([
+    ["Dam 1100+400.", "adds up to 1,500 zł"],
+    ["Dam 1100 zł + 400 zł.", "adds up to 1,500 zł"],
+    ["Dam 1100 teraz i 400 przy odbiorze.", "adds up to 1,500 zł"],
+    ["Dam 1100 plus 400 za wysyłkę.", "adds up to 1,500 zł"],
+    ["Dam 1100 oraz 400 przy odbiorze.", "adds up to 1,500 zł"],
+    ["Dam 1100, dorzucę 400.", "adds up to 1,500 zł"],
+    ["Dam 1100, a do tego 400.", "adds up to 1,500 zł"],
+    ["I'll pay 1100 and 400 on pickup.", "adds up to 1,500 zł"],
+    ["Biorę 2 x 750.", "comes to 1,500 zł"],
+    ["Biorę 2x750.", "comes to 1,500 zł"],
+    ["Biorę 2×750 zł.", "comes to 1,500 zł"],
+    ["Biorę 2 razy po 750.", "comes to 1,500 zł"],
+    ["Biorę 2 sztuki po 750.", "comes to 1,500 zł"],
+    ["Biorę 750 x 2.", "comes to 1,500 zł"],
+    ["Biorę obie po 700.", "prices each item"],
+    ["Dam 700 zł za sztukę.", "prices each item"],
+    ["I'll pay 700 each.", "prices each item"],
+  ])("%s", (text, says) => {
+    const v = verdict(text, { offer: 1100 });
+    expect(v.action).toBe("ask");
+    expect(why(v)).toContain(says);
+  });
+
+  test("alternatives, sizes and parts aren't totals", () => {
+    for (const text of [
+      "Dam 1100 albo 1300 z wysyłką.",
+      "Czy wymiary to 30x40 cm? Dam 1100.",
+      "Czy ma 2x8GB? Dam 1100.",
+      "Czy RTX 3070 x 2 to ta sama karta? Dam 1100.",
+      "Dam 1100 zł i to moje ostatnie słowo.",
+    ])
+      expect(verdict(text, { offer: 1100 }).action).toBe("allow");
+  });
+
+  test("shipping on top counts against what the delivery terms allow", () => {
+    const text = "Dam 1380 + 50 zł za wysyłkę.";
+    expect(why(verdict(text, { offer: 1380 }))).toContain("adds up to 1,430 zł");
+    const shipping = negotiation({
+      mandate: { ...negotiation().mandate, delivery: "OLX delivery, up to 100 zł on top" },
+    });
+    expect(verdict(text, { offer: 1380 }, shipping).action).toBe("allow");
+    expect(why(verdict("Dam 1380 + 150 zł za wysyłkę.", { offer: 1380 }, shipping))).toContain(
+      "and the 100 zł the delivery terms allow on top",
+    );
+  });
+});
+
 describe("contact details and other apps ask unless the mandate allows them", () => {
   test.each([
     ["Mój numer: 600 700 800.", "phone"],
