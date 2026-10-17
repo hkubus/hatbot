@@ -1,4 +1,4 @@
-import type { Approval, Conversation, Me } from "@hatbot/shared";
+import type { Conversation, Me } from "@hatbot/shared";
 import {
   lazy,
   Suspense,
@@ -25,9 +25,9 @@ import {
   connect,
   currentChat,
   disconnect,
-  ensureApproval,
   getState,
   HATBOT_CHAT,
+  loadApproval,
   loadNegotiations,
   needsYou,
   negotiationOf,
@@ -209,8 +209,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   // An approval notification opens /?approval=<id>: show it on its task.
   useEffect(() => {
     if (!approvalId) return;
-    ensureApproval(approvalId);
-    api<Approval>(`/approvals/${approvalId}`).then(
+    loadApproval(approvalId).then(
       async (a) => {
         if (a.taskId) return navigate(`/tasks/${a.taskId}`, true);
         // A mandate: on its negotiation's page.

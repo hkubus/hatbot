@@ -406,10 +406,12 @@ export function ensureSteps(id: number) {
 export function ensureApproval(id: number) {
   if (state.approvals[id] || requested.has(`a${id}`)) return;
   requested.add(`a${id}`);
-  api<Approval>(`/approvals/${id}`).then(
-    (a) => set({ approvals: { ...state.approvals, [a.id]: a } }),
-    () => requested.delete(`a${id}`),
-  );
+  loadApproval(id).catch(() => requested.delete(`a${id}`));
+}
+export async function loadApproval(id: number) {
+  const a = await api<Approval>(`/approvals/${id}`);
+  set({ approvals: { ...state.approvals, [a.id]: a } });
+  return a;
 }
 
 export async function loadTasks(
