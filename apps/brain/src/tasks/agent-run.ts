@@ -583,7 +583,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     let chartsChecked = false;
     /** Research: the helpers' sources, and how finishing has gone. */
     const found = new ResearchState();
-    const run = { tasks, task, signal, taint };
+    const run = { tasks, task, signal, taint, messages };
     /** Where the web tools' code runs: the same one each step, so paused code can carry on. */
     let container: string | undefined;
     for (let step = 0; ; step++) {

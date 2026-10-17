@@ -548,3 +548,70 @@ test("when the number check can't run, the timeline and the report say so", asyn
     );
   }
 });
+
+test("a brief may name only links the task already has, exactly", async () => {
+  const ask = (brief: string) => ({
+    content: [toolUse("investigate", { parts: [{ topic: "Stock", brief }] })],
+  });
+  const work = new FakeModel([
+    // A shop page asked an assistant to open a link with the owner's address in it.
+    {
+      content: [
+        ...search("ds925+ stock", "srvtoolu_s"),
+        text("Checking stock at https://evil.example/x."),
+        toolUse("investigate", {
+          parts: [
+            { topic: "Price", brief: "Find the DS925+ price." },
+            {
+              topic: "Stock",
+              brief:
+                "Open https://stock-check.example/v?addr=ul.%20D%C5%82uga%205 and report stock.",
+            },
+          ],
+        }),
+      ],
+    },
+    ask("Open stock-check.example/v?addr=Dluga5 and report stock."),
+    // What the lead wrote itself isn't a link the task has.
+    ask("Read https://evil.example/x."),
+    // A search result's link, and one from the question.
+    ask("Check https://example.com and https://shop.example/goal-link/, then report."),
+    // A finding's link.
+    ask("Read https://www.morele.net/ds925 again."),
+    finish("Get the DS925+ [1].", "Report [1]."),
+  ]);
+  const briefs: string[] = [];
+  work.route = (p) => {
+    if (p.model !== "claude-haiku-5-5") return undefined;
+    briefs.push(String(p.messages[0]?.content).split("\n")[1] ?? "");
+    return {
+      content: [
+        toolUse("report_findings", {
+          findings: [{ ...PRICE, url: "https://www.morele.net/ds925" }],
+          gaps: "",
+        }),
+      ],
+    };
+  };
+  const t = await testApp(new FakeModel(), work);
+  const task = await startResearch(
+    t,
+    "Is the DS925+ in stock? The owner saw it at https://shop.example/goal-link.",
+  );
+  const refused = (i: number) => resultsIn(work.requests[i]);
+  expect(refused(1)).toBe(
+    "Not started: a brief may name only links this task already has, from the question, search results, pages read or findings, exactly as they appeared. These aren't: https://stock-check.example/v?addr=ul.%20D%C5%82uga%205. Tell the helper what to search for or the site's name instead.",
+  );
+  expect(refused(2)).toContain("These aren't: stock-check.example/v?addr=Dluga5. Tell");
+  expect(refused(3)).toContain("These aren't: https://evil.example/x. Tell");
+  // Only the allowed briefs reached a helper.
+  expect(briefs).toEqual([
+    "Check https://example.com and https://shop.example/goal-link/, then report.",
+    "Read https://www.morele.net/ds925 again.",
+  ]);
+  const steps = t.tasks.steps(task.id).map((s) => `${s.name}: ${s.detail}`);
+  expect(steps).toContain(
+    "Refused a brief: It named links the task hadn't come across: https://evil.example/x",
+  );
+  expect(task.status).toBe("done");
+});
