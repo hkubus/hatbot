@@ -1333,6 +1333,26 @@ html[data-theme="dark"] .seg button.active {
   font-size: 11.5px;
   color: var(--muted);
 }
+.history .load-earlier {
+  justify-self: center;
+}
+/* The file gets the height; its history is below it. */
+.memory .editor > .editor-text,
+.memory .editor > .load-error {
+  flex: 1 0 auto;
+  min-height: max(220px, 65%);
+}
+/* The folder is a heading on a wide screen, and part of the chip on a phone. */
+.tree .tree-dir {
+  display: none;
+}
+@media (max-width: 899px) {
+  .tree .tree-dir {
+    display: inline;
+    margin-right: -7px;
+    color: var(--muted);
+  }
+}
 
 /* ---------- Spend ---------- */
 .kpis {

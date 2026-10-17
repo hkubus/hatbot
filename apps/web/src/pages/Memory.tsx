@@ -4,6 +4,8 @@ import { ApiError, api } from "../api";
 import { ask, askText, useLeaveGuard } from "../confirm";
 import { lineDiff } from "../diff";
 import { Icon } from "../icons";
+import { LoadError } from "../load";
+import { type Doc, isDirty, loading, newDoc, readDoc, readFailed } from "../memory-doc";
 import { navigate } from "../router";
 import { bumpMemory, loadProposals, putProposal, startTeach, useStore } from "../store";
 
@@ -13,6 +15,8 @@ type Selection =
   | { kind: "proposal"; id: number };
 
 const enc = encodeURIComponent;
+/** Commits in a page of History. */
+const PAGE = 50;
 const when = (iso: string) =>
   new Date(iso).toLocaleString("en-GB", {
     day: "numeric",
@@ -98,61 +102,97 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
     [teach],
   );
   const [files, setFiles] = useState<MemoryFile[]>([]);
-  const [log, setLog] = useState<Commit[]>([]);
   const [sel, setSel] = useState<Selection>({ kind: "file", path: open || "INDEX.md" });
-  const [content, setContent] = useState("");
-  const [saved, setSaved] = useState("");
-  /** The version your edit started from; "" for a new file. */
-  const [baseSha, setBaseSha] = useState("");
+  /** The file in the editor, with any unsaved edits. */
+  const [doc, setDoc] = useState<Doc | null>(null);
   /** Someone else saved the file while you were editing it. */
   const [conflict, setConflict] = useState<{ sha: string; content: string } | null>(null);
   const [diff, setDiff] = useState("");
+  /** History is the last file you opened's. */
+  const [histPath, setHistPath] = useState(open || "INDEX.md");
+  const [log, setLog] = useState<Commit[]>([]);
+  const [older, setOlder] = useState(false);
 
-  const dirty = sel.kind === "file" && content !== saved;
+  const dirty = isDirty(doc);
 
   // Leaving with unsaved changes asks first: the sidebar, Back, closing the tab.
   useLeaveGuard(dirty);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reload when memory changes anywhere
   useEffect(() => {
-    api<MemoryFile[]>("/memory/tree").then(setFiles);
-    api<Commit[]>("/memory/log?limit=50").then(setLog);
+    api<MemoryFile[]>("/memory/tree").then(setFiles, () => {});
     api<SkillStatus[]>("/skills").then(setSkills, () => setSkills([]));
   }, [version]);
   useEffect(() => {
     void loadProposals().catch(() => {});
   }, []);
-
-  const openFile = useCallback(
-    async (path: string) => {
-      if (dirty && !(await ask({ text: "Discard your unsaved changes?", ok: "Discard" }))) return;
-      setConflict(null);
-      setSel({ kind: "file", path });
-    },
-    [dirty],
-  );
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reload the open file when memory changes, unless you're editing it
+  // biome-ignore lint/correctness/useExhaustiveDependencies: again when memory changes anywhere
   useEffect(() => {
-    if (sel.kind !== "file" || dirty) return;
-    api<{ content: string; sha: string }>(`/memory/file?path=${enc(sel.path)}`).then(
-      (r) => {
-        setContent(r.content);
-        setSaved(r.content);
-        setBaseSha(r.sha ?? "");
+    let stale = false;
+    api<Commit[]>(`/memory/log?path=${enc(histPath)}&limit=${PAGE}`).then(
+      (l) => {
+        if (stale) return;
+        setLog(l);
+        setOlder(l.length === PAGE);
       },
-      () => {
-        setContent("");
-        setSaved("");
-        setBaseSha("");
-      },
+      () => {},
     );
-  }, [sel, version]);
+    return () => {
+      stale = true;
+    };
+  }, [histPath, version]);
+  const loadOlder = () =>
+    api<Commit[]>(`/memory/log?path=${enc(histPath)}&limit=${PAGE}&skip=${log.length}`).then(
+      (l) => {
+        setLog((had) => [...had, ...l.filter((c) => !had.some((x) => x.sha === c.sha))]);
+        setOlder(l.length === PAGE);
+      },
+      (err) => toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot"),
+    );
+
+  /** Reads a file into the editor; `quiet` refreshes the one shown without blanking it. */
+  const read = useCallback((path: string, quiet = false) => {
+    if (!quiet) setDoc(loading(path));
+    api<{ content: string; sha: string }>(`/memory/file?path=${enc(path)}`).then(
+      (r) => setDoc((d) => readDoc(d, path, { content: r.content, sha: r.sha ?? "" })),
+      (err) =>
+        setDoc((d) =>
+          readFailed(
+            d,
+            path,
+            err instanceof ApiError && err.status === 400 && err.message.startsWith("not found"),
+            err instanceof ApiError ? err.message : "Couldn't reach Hatbot.",
+          ),
+        ),
+    );
+  }, []);
+  // The file you chose, once.
+  useEffect(() => {
+    if (sel.kind === "file" && doc?.path !== sel.path) read(sel.path);
+  }, [sel, doc?.path, read]);
+  // Memory changed somewhere: the file again, keeping your edits.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only when memory changes
+  useEffect(() => {
+    if (doc && doc.state !== "loading") read(doc.path, true);
+  }, [version]);
+
+  /** Everything that changes what's shown goes through here: a draft isn't dropped unasked. */
+  const select = async (next: Selection) => {
+    if (dirty && !(await ask({ text: "Discard your unsaved changes?", ok: "Discard" }))) return;
+    setConflict(null);
+    if (dirty) setDoc(null);
+    if (next.kind === "file") setHistPath(next.path);
+    if (next.kind === "diff") setDiff("");
+    setSel(next);
+  };
 
   useEffect(() => {
     if (sel.kind === "diff")
-      api<{ diff: string }>(`/memory/diff/${sel.commit.sha}`).then((r) => setDiff(r.diff));
-  }, [sel]);
+      api<{ diff: string }>(`/memory/diff/${sel.commit.sha}`).then(
+        (r) => setDiff(r.diff),
+        (err) => toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot"),
+      );
+  }, [sel, toast]);
 
   const groups = useMemo(() => {
     const g = new Map<string, MemoryFile[]>();
@@ -164,15 +204,18 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
   }, [files]);
 
   /** `over`: the version to replace, after you've chosen to overwrite one saved meanwhile. */
-  const save = async (over = baseSha) => {
-    if (sel.kind !== "file") return;
+  const save = async (over?: string) => {
+    // Only what's in the editor, into the file it was opened from.
+    if (!doc || (doc.state !== "ready" && doc.state !== "new")) return;
+    const { path, content } = doc;
     try {
-      const r = await api<{ sha: string | null }>(`/memory/file?path=${enc(sel.path)}`, {
+      const r = await api<{ sha: string | null }>(`/memory/file?path=${enc(path)}`, {
         method: "PUT",
-        body: { content, message: `Edit ${sel.path}`, baseSha: over },
+        body: { content, message: `Edit ${path}`, baseSha: over ?? doc.baseSha },
       });
       setConflict(null);
-      setSaved(content);
+      // Its new version comes with the refresh that follows.
+      setDoc((d) => (d?.path === path ? { ...d, saved: content, state: "ready" } : d));
       toast(r.sha ? `Saved (${r.sha.slice(0, 7)})` : "No changes");
       bumpMemory();
     } catch (err) {
@@ -186,9 +229,16 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
   // Your edit goes; the file as it's now saved comes in.
   const takeTheirs = () => {
     if (!conflict) return;
-    setContent(conflict.content);
-    setSaved(conflict.content);
-    setBaseSha(conflict.sha);
+    setDoc(
+      (d) =>
+        d && {
+          ...d,
+          content: conflict.content,
+          saved: conflict.content,
+          baseSha: conflict.sha,
+          state: "ready",
+        },
+    );
     setConflict(null);
   };
 
@@ -200,12 +250,13 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
     });
     if (!path) return;
     const p = path.endsWith(".md") ? path : `${path}.md`;
-    setSel({ kind: "file", path: p });
-    setBaseSha("");
+    // One that's there already opens, rather than being started again.
+    if (files.some((f) => f.path === p)) return select({ kind: "file", path: p });
+    if (dirty && !(await ask({ text: "Discard your unsaved changes?", ok: "Discard" }))) return;
     setConflict(null);
-    const title = p.split("/").pop()?.replace(/\.md$/, "").replace(/-/g, " ") ?? "";
-    setContent(`# ${title.charAt(0).toUpperCase()}${title.slice(1)}\n`);
-    setSaved("");
+    setDoc(newDoc(p));
+    setHistPath(p);
+    setSel({ kind: "file", path: p });
   };
 
   const remove = async () => {
@@ -217,6 +268,9 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
     try {
       await api(`/memory/file?path=${enc(sel.path)}`, { method: "DELETE" });
       toast(`Deleted ${sel.path}`);
+      setConflict(null);
+      setDoc(null);
+      setHistPath("INDEX.md");
       setSel({ kind: "file", path: "INDEX.md" });
       bumpMemory();
     } catch (err) {
@@ -249,7 +303,7 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
       if (p && "started" in p) toast("Tidying up. It shows under To look over when it's ready");
       else if (p) {
         putProposal(p);
-        setSel({ kind: "proposal", id: p.id });
+        void select({ kind: "proposal", id: p.id });
       } else toast("Nothing to tidy");
     } catch (err) {
       toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot");
@@ -266,7 +320,7 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
         toast("Looking for a fix. It shows under To look over when it's ready");
       else if (p) {
         putProposal(p);
-        setSel({ kind: "proposal", id: p.id });
+        void select({ kind: "proposal", id: p.id });
       } else toast("No fix found in what went wrong");
     } catch (err) {
       toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot");
@@ -289,7 +343,7 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
       putProposal("proposal" in r ? r.proposal : r);
       toast(how === "apply" ? "Applied" : "Dismissed");
       if (how === "apply") bumpMemory();
-      setSel({ kind: "file", path: p.changes[0]?.path ?? "INDEX.md" });
+      void select({ kind: "file", path: p.changes[0]?.path ?? "INDEX.md" });
     } catch (err) {
       toast(err instanceof ApiError ? err.message : "Couldn't reach Hatbot");
     }
@@ -312,9 +366,12 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
                   type="button"
                   key={f.path}
                   className={sel.kind === "file" && sel.path === f.path ? "active" : ""}
-                  onClick={() => openFile(f.path)}
+                  aria-current={sel.kind === "file" && sel.path === f.path ? "page" : undefined}
+                  onClick={() => select({ kind: "file", path: f.path })}
                 >
                   <Icon name="file" />
+                  {/* Phones show no folders: the chip says which INDEX.md it is. */}
+                  {dir && <span className="tree-dir">{dir}/</span>}
                   {f.path.split("/").pop()}
                 </button>
               ))}
@@ -339,7 +396,7 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
                   type="button"
                   key={p.id}
                   className={sel.kind === "proposal" && sel.id === p.id ? "active" : ""}
-                  onClick={() => setSel({ kind: "proposal", id: p.id })}
+                  onClick={() => select({ kind: "proposal", id: p.id })}
                 >
                   <Icon name="file" />
                   {p.title}
@@ -398,7 +455,14 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
                 <button
                   type="button"
                   className="btn sm"
-                  onClick={() => setSel({ kind: "file", path: sel.commit.files[0] ?? "INDEX.md" })}
+                  onClick={() =>
+                    select({
+                      kind: "file",
+                      path: sel.commit.files.includes(histPath)
+                        ? histPath
+                        : (sel.commit.files[0] ?? "INDEX.md"),
+                    })
+                  }
                 >
                   Back to file
                 </button>
@@ -469,12 +533,18 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
             <div style={{ padding: "16px 20px" }}>
               <DiffView diff={diff} />
             </div>
-          ) : (
+          ) : doc?.path === sel.path && doc.state === "failed" ? (
+            <LoadError error={doc.error ?? "Couldn't read it."} retry={() => read(sel.path)} />
+          ) : doc?.path === sel.path && doc.state !== "loading" ? (
             <textarea
               className="editor-text"
+              aria-label={sel.path}
               spellCheck={false}
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
+              value={doc.content}
+              onChange={(e) => {
+                const content = e.target.value;
+                setDoc((d) => d && { ...d, content });
+              }}
               onKeyDown={(e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === "s") {
                   e.preventDefault();
@@ -482,9 +552,12 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
                 }
               }}
             />
+          ) : (
+            <div className="editor-text" />
           )}
           <div className="history">
             <h3 className="section-title">History</h3>
+            {!log.length && <div className="muted">No changes yet.</div>}
             {log.map((c) => (
               <div className="commit" key={c.sha}>
                 <span className="sha">{c.sha.slice(0, 7)}</span>
@@ -498,7 +571,7 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
                   <button
                     type="button"
                     className="btn sm ghost"
-                    onClick={() => setSel({ kind: "diff", commit: c })}
+                    onClick={() => select({ kind: "diff", commit: c })}
                   >
                     Diff
                   </button>
@@ -508,6 +581,11 @@ export function Memory({ toast, open }: { toast: (t: string) => void; open?: str
                 </div>
               </div>
             ))}
+            {older && (
+              <button type="button" className="btn sm ghost load-earlier" onClick={loadOlder}>
+                Older
+              </button>
+            )}
           </div>
         </div>
       </div>
