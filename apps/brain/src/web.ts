@@ -34,6 +34,18 @@ export function webHandler(dir: string): (req: Request) => Response {
         : "no-cache";
       return send(req, file, stat, cache);
     }
+    // A file that isn't there, such as an older build's chunk after an update, is a 404. The app in
+    // its place would be run as that script, and kept by the service worker as it.
+    if (path.startsWith("/assets/") || /\.[a-z0-9]+$/i.test(path)) {
+      return new Response("Not found", {
+        status: 404,
+        headers: {
+          ...HEADERS,
+          "content-type": "text/plain; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      });
+    }
     // Client-side routes fall back to the app.
     return send(req, index, statSync(index), "no-cache");
   };

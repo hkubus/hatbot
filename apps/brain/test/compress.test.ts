@@ -48,6 +48,38 @@ test("JSON answers come compressed; small ones and other types as they are", asy
   expect(await missing.json()).toEqual({ error: "not found" });
 });
 
+test("a missing asset or file is a 404, not the app; routes still get the app", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "hatbot-web-"));
+  tempDirs.push(dir);
+  mkdirSync(join(dir, "assets"));
+  writeFileSync(join(dir, "index.html"), "<!doctype html><title>Hatbot</title>");
+  writeFileSync(join(dir, "assets/index-NEW.js"), "console.log('new build');");
+  const web = webHandler(dir);
+  const get = (path: string) => web(new Request(`http://hatbot.test${path}`));
+
+  // An older build's chunk, asked for by a tab opened before an update.
+  for (const path of [
+    "/assets/Memory-OLD.js",
+    "/assets/index-OLD.css",
+    "/assets/",
+    "/favicon.ico",
+    "/icon-1024.png",
+    "/manifest.json",
+  ]) {
+    const res = get(path);
+    expect(res.status).toBe(404);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("content-type")).toContain("text/plain");
+    expect(await res.text()).not.toContain("<title>");
+  }
+  expect(await get("/assets/index-NEW.js").text()).toBe("console.log('new build');");
+  for (const path of ["/", "/tasks/3", "/chat/2", "/bots/haggler", "/memory/teach/4"]) {
+    const res = get(path);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("<title>Hatbot</title>");
+  }
+});
+
 test("the web app's files go out precompressed, and unchanged ones as a 304", async () => {
   const dir = mkdtempSync(join(tmpdir(), "hatbot-web-"));
   tempDirs.push(dir);
