@@ -340,6 +340,39 @@ describe("amounts that add up or multiply past the ceiling ask, though each is u
   });
 });
 
+describe("another currency asks: its amounts can't be compared at face value", () => {
+  test.each([
+    ["Dam 300 EUR.", '"300 EUR"'],
+    ["Dam 300 euro.", '"300 euro"'],
+    ["Dam €300.", '"€300"'],
+    ["I'll pay $350.", '"$350"'],
+    ["Dam 350 dolarów.", '"350 dolarów"'],
+    ["Dam 250 funtów.", '"250 funtów"'],
+    ["Dam 7000 Kč.", '"7000 Kč"'],
+    ["Mogę zapłacić w euro.", '"euro"'],
+    ["Dam 0,01 BTC.", '"0,01 BTC"'],
+  ])("%s", (text, raw) => {
+    const v = verdict(text, { offer: 1100 });
+    expect(v.action).toBe("ask");
+    expect(why(v)).toContain(`It names another currency (${raw})`);
+  });
+
+  test("the mandate's own currency, and a shop called Euro, don't", () => {
+    for (const text of [
+      "Dam 1100 zł.",
+      "Dam 1100 PLN.",
+      "Dam 1100 złotych.",
+      "Czy paragon z Euro RTV AGD?",
+    ])
+      expect(verdict(text, { offer: 1100 }).action).toBe("allow");
+    const euro = negotiation({
+      mandate: { ...negotiation().mandate, currency: "EUR", limit: 400 },
+    });
+    expect(verdict("Dam 300 EUR.", { offer: 300 }, euro).action).toBe("allow");
+    expect(why(verdict("Dam 300 zł.", { offer: 300 }, euro))).toContain('"300 zł"');
+  });
+});
+
 describe("contact details and other apps ask unless the mandate allows them", () => {
   test.each([
     ["Mój numer: 600 700 800.", "phone"],

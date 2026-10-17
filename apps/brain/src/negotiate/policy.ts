@@ -114,6 +114,13 @@ export function outside(n: Negotiation, input: SendInput, now: number): string[]
         `It adds up to ${zl(t.total, m.currency)} ("${t.raw}"), above ${limit}${extra ? ` and the ${zl(extra, m.currency)} the delivery terms allow on top` : ""}.`,
       );
   }
+  const foreign = [
+    ...new Set(currenciesIn(text).flatMap((c) => (c.code === m.currency ? [] : [`"${c.raw}"`]))),
+  ];
+  if (foreign.length)
+    why.push(
+      `It names another currency (${foreign.join(", ")}), and the mandate's amounts are in ${m.currency}.`,
+    );
   const words = numberWords(text);
   if (words.length)
     why.push(
@@ -140,9 +147,50 @@ const CONTACT_NAMES: Record<MandateContact, string> = {
 
 // ——— Amounts ———
 
+/** Currencies by code: the words (regex) and signs they're written with. */
+const MONEY: { code: string; words: string; signs?: string }[] = [
+  { code: "PLN", words: "zł|zl|złot\\p{L}*|zlot\\p{L}*|pln|zeta" },
+  // Euro RTV AGD is a shop, where receipts come from.
+  { code: "EUR", words: "eur|euro(?!\\s*(?:rtv|agd|net))|eurasów|ojro", signs: "€" },
+  { code: "USD", words: "usd|dolar\\p{L}*|dollar\\p{L}*|bucks", signs: "\\$" },
+  { code: "GBP", words: "gbp|funt\\p{L}*|pounds?|quid", signs: "£" },
+  { code: "CZK", words: "czk|kč|korun\\p{L}*" },
+  { code: "CHF", words: "chf|frank(?:i|a|ów|ach|ami)?|francs?" },
+  { code: "UAH", words: "uah|hrywn\\p{L}*", signs: "₴" },
+  { code: "HUF", words: "huf|forint\\p{L}*" },
+  { code: "DKK", words: "dkk" },
+  { code: "RUB", words: "rubl\\p{L}*", signs: "₽" },
+  { code: "JPY", words: "jpy", signs: "¥" },
+  { code: "BTC", words: "btc|bitcoin\\p{L}*", signs: "₿" },
+  { code: "ETH", words: "eth|ethereum" },
+  { code: "USDT", words: "usdt|tether" },
+];
+const moneyWords = MONEY.map((c) => c.words).join("|");
+const moneySigns = MONEY.flatMap((c) => (c.signs ? [c.signs] : [])).join("|");
 /** Currency next to a number: it's money, whatever else it looks like. */
-const CURRENCY = /^\s?(?:zł|zl|złotych|złote|złoty|pln|eur|euro|€|\$|usd)(?![\p{L}])/iu;
-const CURRENCY_BEFORE = /(?:(?<![\p{L}])(?:zł|zl|pln|eur)|€|\$|usd)\s?$/iu;
+const CURRENCY = new RegExp(`^\\s?(?:(?:${moneyWords})(?![\\p{L}])|${moneySigns})`, "iu");
+const CURRENCY_BEFORE = new RegExp(`(?:(?<![\\p{L}])(?:${moneyWords})|${moneySigns})\\s?$`, "iu");
+
+/** Currencies a message names, by code, with the amount next to each when there is one. */
+export function currenciesIn(text: string): { code: string; raw: string }[] {
+  const s = plain(text);
+  const out: { code: string; raw: string }[] = [];
+  for (const c of MONEY) {
+    const re = new RegExp(
+      `(?<![\\p{L}])(?:${c.words})(?![\\p{L}])${c.signs ? `|${c.signs}` : ""}`,
+      "giu",
+    );
+    for (const m of s.matchAll(re)) {
+      const at = m.index ?? 0;
+      const before = /\d+(?:[.,' ]\d+)*\s?$/.exec(s.slice(0, at))?.[0] ?? "";
+      const after = before
+        ? ""
+        : (/^\s?\d+(?:[.,']\d+)*/.exec(s.slice(at + m[0].length))?.[0] ?? "");
+      out.push({ code: c.code, raw: `${before}${m[0]}${after}`.trim() });
+    }
+  }
+  return out;
+}
 /** Thousands after a number: 1,4k, 1.5 tys., 2 grand, 2 koła, 3 kafle. */
 const THOUSANDS =
   /^\s?(?:k|tys\.?|tyś\.?|tysi[ąa]c\p{L}*|tysi[ęe]cy|tysiak\p{L}*|thousands?|grand|kafl\p{L}*|kafel|patyk\p{L}*|patol\p{L}*|ko[łl][ao]|k[óo][łl])(?![\p{L}])/iu;

@@ -161,7 +161,7 @@ export function negotiateTools(
           bot,
           wantId,
           listing,
-          mandate: toMandate(i.mandate, r?.appraisal.currency ?? "PLN", neg.clock()),
+          mandate: toMandate(i.mandate, r?.appraisal.currency ?? listing.currency, neg.clock()),
           appraisal: r?.appraisal ?? null,
           status: "awaiting_mandate",
           conversationId:

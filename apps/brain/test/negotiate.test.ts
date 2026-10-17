@@ -90,6 +90,7 @@ function openNegotiation(t: TestApp, over: Partial<Negotiation> = {}): Negotiati
       title: "Karta graficzna RTX 3070 8GB",
       url: LISTING_URL,
       asking: 1500,
+      currency: "PLN",
       typical: null,
       watchId: null,
       negotiable: true,
@@ -203,6 +204,30 @@ test("the appraisal uses Scout's price reference and comparables once they're th
     "scout_price_reference",
     "scout_comparables",
   ]);
+  await t.plugins.stopAll();
+});
+
+test("the appraisal is in the listing's currency when Scout gives one", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
+  await withScout(t, false);
+  const out = await named(negotiateTools(t), "negotiate_appraise").run(
+    { listing: "Vinted:2002" },
+    call(),
+  );
+  expect(out).toContain("Asking 300 EUR.");
+  expect(out).toContain("walk away above 300 EUR.");
+  expect(out).not.toContain("zł");
+  // The mandate is in euro too, so negotiate_send checks euro amounts against it.
+  const started = await runPluginTool(
+    named(negotiateTools(t), "negotiate_start"),
+    {
+      listing: "Vinted:2002",
+      mandate: { opening: 220, target: 260, limit: 290, delivery: "Vinted shipping" },
+    },
+    call(),
+  );
+  expect(started.isError).toBe(false);
+  expect(t.negotiations.list()[0]?.mandate.currency).toBe("EUR");
   await t.plugins.stopAll();
 });
 
