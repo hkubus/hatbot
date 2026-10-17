@@ -16,6 +16,8 @@ export type DraftFile = {
   preview?: string;
   attachment?: Attachment;
   error?: string;
+  /** How much of it has gone up, from 0 to 1, while it uploads. */
+  sent?: number;
   /** Stops its upload when it's taken off. */
   abort?: AbortController;
 };
@@ -66,7 +68,8 @@ export function setDraftFiles(chat: string, fn: (list: DraftFile[]) => DraftFile
 }
 
 export function useDraftFiles(chat: string): DraftFile[] {
-  return useSyncExternalStore(subscribe, () => draftFiles(chat));
+  const snapshot = () => draftFiles(chat);
+  return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 
 let fileKey = 0;
@@ -83,13 +86,14 @@ export function attachFiles(chat: string, list: FileList | File[]) {
     setDraftFiles(chat, (f) => [...f, { key, name: file.name, preview, abort }]);
     const put = (patch: Partial<DraftFile>) =>
       setDraftFiles(chat, (f) => f.map((d) => (d.key === key ? { ...d, ...patch } : d)));
-    upload(file, abort.signal).then(
-      (attachment) => put({ attachment, abort: undefined }),
+    upload(file, abort.signal, (sent) => put({ sent })).then(
+      (attachment) => put({ attachment, abort: undefined, sent: undefined }),
       (err) => {
         if (abort.signal.aborted) return;
         put({
           error: err instanceof ApiError ? err.message : "Couldn't upload.",
           abort: undefined,
+          sent: undefined,
         });
       },
     );

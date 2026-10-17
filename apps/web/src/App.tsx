@@ -33,6 +33,7 @@ import {
   onToast,
   reconnectNow,
   setIncognito,
+  setPaused,
   useStore,
 } from "./store";
 import { getTheme, setTheme, type Theme } from "./theme";
@@ -218,6 +219,19 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     connect();
     return disconnect;
   }, [toast]);
+
+  // A file dropped where nothing takes it would replace the app with the file; a chat takes it.
+  useEffect(() => {
+    const keep = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+    };
+    window.addEventListener("dragover", keep);
+    window.addEventListener("drop", keep);
+    return () => {
+      window.removeEventListener("dragover", keep);
+      window.removeEventListener("drop", keep);
+    };
+  }, []);
 
   // What's waiting shows in the tab's title, and on the app's icon where the system has badges.
   useEffect(() => {
@@ -418,6 +432,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               </button>
             </div>
           )}
+          <PausedBanner />
           {chatMenu && chatId > 0 && (
             <div className="chat-menu" ref={chatMenuEl}>
               {chats.map((c) => (
@@ -543,6 +558,36 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
         })}
       </div>
     </>
+  );
+}
+
+/**
+ * Pause all, however it was set (here, on another device, or from ntfy), on every page: schedules and
+ * watchers still look on while it skips them.
+ */
+export function PausedBanner() {
+  const paused = useStore((s) => s.paused);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  if (!paused) return null;
+  const resume = () => {
+    setBusy(true);
+    setError("");
+    setPaused(false)
+      .catch((err) =>
+        setError(err instanceof ApiError ? `Couldn't resume: ${err.message}` : "Couldn't resume."),
+      )
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="paused-banner offline-banner">
+      <Icon name="pause" />
+      {error ? `All activity is paused. ${error}` : "All activity is paused."}
+      <span style={{ flex: 1 }} />
+      <button type="button" className="btn sm" disabled={busy} onClick={resume}>
+        Resume
+      </button>
+    </div>
   );
 }
 

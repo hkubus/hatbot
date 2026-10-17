@@ -829,11 +829,6 @@ html[data-theme="dark"] .seg button.active {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* An approval's summary can be a whole command: all of it shows. */
-.card-head .title.full {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
 .field.approval-note {
   display: block;
   width: 100%;
@@ -936,6 +931,11 @@ html[data-theme="dark"] .seg button.active {
   border-radius: 16px;
   background: var(--surface);
   border: 0.5px solid var(--line-strong);
+}
+/* The box itself shows where the focus is: its field has no outline of its own. */
+.composer:has(textarea:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 1px;
 }
 .composer textarea {
   flex: 1;
@@ -1668,6 +1668,11 @@ html[data-theme="dark"] .seg button.active {
 .msg .md em:only-child {
   color: var(--muted);
 }
+.msg .md img {
+  max-width: 100%;
+  max-height: 360px;
+  border-radius: 8px;
+}
 .msg .md hr,
 .msg .body > .result-rule {
   width: 100%;
@@ -2188,9 +2193,15 @@ html[data-theme="dark"] .seg button.active {
 }
 .approval-text p {
   margin: 0;
-  white-space: pre-line;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   font-size: 13px;
   line-height: 1.45;
+}
+/* What it would do, often a command: every character as it is. */
+.approval-text .approval-what {
+  font-family: var(--mono);
+  font-size: 12.5px;
 }
 .page.narrow {
   max-width: 760px;
@@ -2430,14 +2441,18 @@ pre.payload {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.msg-buttons {
-  display: flex;
-  gap: 8px;
-}
 .msg .resolved {
   overflow-wrap: anywhere;
   font-family: var(--font-text);
   font-size: 13px;
+}
+/* A card whose task or schedule hasn't loaded: its one line. */
+.msg .card-pending {
+  font-family: var(--font-text);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .msg .shot {
   max-width: 280px;
@@ -2465,33 +2480,66 @@ pre.payload {
   }
 }
 
-/* Approvals waiting for you, above the composer */
+/* An approval waiting for you: a card on its task's page, and in the chat's tray (tasks.tsx). */
+.approval {
+  display: grid;
+  gap: 8px;
+  font-family: var(--font-text);
+}
+.approval .approval-note {
+  margin-top: 0;
+}
+.approval-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.approval-actions .spacer {
+  flex: 1;
+}
+.card > .approval {
+  padding: 10px 12px 0;
+}
+.card > .approval .approval-actions {
+  margin: 4px -12px 0;
+  padding: 9px 12px;
+  border-top: 0.5px solid var(--line);
+  background: var(--surface-2);
+}
+
+/* Approvals waiting for you, above the composer: never more than a modest part of the screen. */
 .approval-tray {
   max-width: 760px;
-  max-height: 45vh;
+  max-height: min(30vh, 260px);
   overflow-y: auto;
   margin: 0 auto 8px;
   display: grid;
   gap: 8px;
 }
 /* Plain, not a card: a line above each one. */
-.pending-approval {
-  display: grid;
-  gap: 8px;
+.approval-tray .approval {
   padding: 10px 4px 2px;
   border-top: 0.5px solid var(--line-strong);
 }
-.pending-approval .shot {
+.approval-tray .shot {
   max-width: 280px;
 }
-.pending-approval .msg-buttons {
-  align-items: center;
+/* Approvals waiting in other chats: one line that goes there. */
+.tray-more {
+  justify-self: start;
+  padding: 2px 4px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
 }
-.pending-approval .spacer {
-  flex: 1;
-}
-.pending-approval .approval-note {
-  margin-top: 0;
+.tray-more:hover {
+  color: var(--text);
 }
 
 /* Files on messages and in the composer. */
@@ -2588,6 +2636,20 @@ pre.payload {
 }
 .composer-file.loading {
   opacity: 0.55;
+  overflow: hidden;
+}
+/* How much of it has gone up. */
+.composer-file .upload-bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+.composer-error {
+  max-width: 760px;
+  margin: 0 auto 6px;
 }
 .composer-file.failed {
   border-color: var(--danger);
@@ -2967,15 +3029,16 @@ mark {
   outline-offset: -2px;
 }
 
-/* Back to the latest messages, when you've scrolled well up. */
+/* Back to the latest messages, when you've scrolled well up: at the column's right edge, above the
+   composer, clear of most of the text. */
 .composer-wrap {
   position: relative;
 }
 .to-bottom {
   position: absolute;
-  top: -36px;
-  left: 50%;
-  transform: translateX(-50%);
+  top: -40px;
+  right: max(20px, calc((100% - 760px) / 2));
+  z-index: 1;
   width: 32px;
   height: 32px;
   border-radius: 50%;

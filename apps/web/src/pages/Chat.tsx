@@ -1,4 +1,5 @@
 import {
+  API_PREFIX,
   type Approval,
   type Attachment,
   matchingCommands,
@@ -13,6 +14,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -34,7 +36,9 @@ import {
   useDraftFiles,
 } from "../drafts";
 import { Icon } from "../icons";
+import { Link } from "../link";
 import { LoadError, loadErrorText } from "../load";
+import { splitBlocks } from "../md-blocks";
 import { touchScreen } from "../media";
 import { negotiationText } from "../negotiations";
 import { navigate, useRoute } from "../router";
@@ -42,12 +46,12 @@ import {
   botName,
   chatName,
   currentChat,
-  decideApproval,
   deleteEpisode,
   ensureNegotiation,
   ensureSchedule,
   ensureTask,
   getState,
+  HATBOT_CHAT,
   loadEarlier,
   loadThread,
   markSeen,
@@ -55,10 +59,10 @@ import {
   openConversation,
   retryReply,
   sendMessage,
-  setPaused,
   useStore,
 } from "../store";
-import { isActive, MANDATE_NOTE, Shot, taskLine, tokenText, whenText } from "../tasks";
+import { isActive, PendingApproval, taskLine, tokenText, whenText } from "../tasks";
+import { splitWaiting } from "../waiting";
 
 /** How long an unread message stays on screen before it counts as seen. */
 const SEEN_AFTER_MS = 1500;
@@ -66,19 +70,39 @@ const SEEN_AFTER_MS = 1500;
 const time = (iso: string) =>
   new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
-function dayLabel(iso: string): string {
-  const d = new Date(iso);
-  const today = new Date();
-  const yesterday = new Date();
-  yesterday.setDate(today.getDate() - 1);
-  if (d.toDateString() === today.toDateString()) return "Today";
-  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
-  return d.toLocaleDateString("en-GB", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: d.getFullYear() === today.getFullYear() ? undefined : "numeric",
-  });
+const DAY = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" });
+const DAY_YEAR = new Intl.DateTimeFormat("en-GB", {
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+});
+// Each message's day, worked out once: the thread asks for every message's on every render. Kept for
+// one day, as "Today" becomes "Yesterday" at midnight.
+const days = new Map<string, string>();
+let daysOn = "";
+
+/** "Today", "Yesterday", "Saturday 17 October", or with the year when it isn't this one. */
+export function dayLabel(iso: string, now: Date): string {
+  const today = now.toDateString();
+  if (daysOn !== today) {
+    days.clear();
+    daysOn = today;
+  }
+  let label = days.get(iso);
+  if (label === undefined) {
+    const d = new Date(iso);
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    label =
+      d.toDateString() === today
+        ? "Today"
+        : d.toDateString() === yesterday.toDateString()
+          ? "Yesterday"
+          : (d.getFullYear() === now.getFullYear() ? DAY : DAY_YEAR).format(d);
+    days.set(iso, label);
+  }
+  return label;
 }
 
 /** Copies `text`; `copied` is true for a moment after. */
@@ -119,9 +143,49 @@ const Streaming = createContext(false);
 type Node = { type: string; value?: string; children?: Node[] };
 const textOf = (n: Node): string => n.value ?? (n.children ?? []).map(textOf).join("");
 
-// Links open in a new tab; raw HTML in replies is never rendered (react-markdown's default).
+/** Where a link goes in the app itself: its path, or null for other sites and the API's files. */
+export function appPath(href: string, origin = location.origin): string | null {
+  let url: URL;
+  try {
+    url = new URL(href, origin);
+  } catch {
+    return null;
+  }
+  if (url.origin !== origin || url.pathname.startsWith(`${API_PREFIX}/`)) return null;
+  return url.pathname + url.search + url.hash;
+}
+
+/** Whether a picture is served by Hatbot: the page may load nothing else (web.ts). */
+const ownPicture = (src: string, origin = location.origin) => {
+  try {
+    return new URL(src, origin).origin === origin;
+  } catch {
+    return false;
+  }
+};
+
+// Other sites open in a new tab, and the app's own pages in this one; raw HTML in replies is never
+// rendered (react-markdown's default).
 const MD_COMPONENTS: Components = {
-  a: ({ node: _, ...props }) => <a {...props} target="_blank" rel="noreferrer noopener" />,
+  a: ({ node: _, href, ...props }) => {
+    if (href?.startsWith("#")) return <a {...props} href={href} />;
+    const to = href ? appPath(href) : null;
+    return to ? (
+      <Link {...props} to={to} />
+    ) : (
+      <a {...props} href={href} target="_blank" rel="noreferrer noopener" />
+    );
+  },
+  // A picture from another site would only show broken: it's a link to it instead.
+  img: ({ node: _, src, alt }) => {
+    if (typeof src !== "string" || !src) return alt || null;
+    if (ownPicture(src)) return <img src={src} alt={alt ?? ""} loading="lazy" />;
+    return (
+      <a href={src} target="_blank" rel="noreferrer noopener">
+        {alt || src}
+      </a>
+    );
+  },
   pre: function Pre({ node, children }) {
     const streaming = useContext(Streaming);
     const code = node?.children.find((c) => c.type === "element" && c.tagName === "code");
@@ -141,6 +205,14 @@ const MD_COMPONENTS: Components = {
 
 const REMARK = [remarkGfm];
 
+const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
+  return (
+    <Markdown remarkPlugins={REMARK} components={MD_COMPONENTS}>
+      {text}
+    </Markdown>
+  );
+});
+
 export const AssistantBody = memo(function AssistantBody({
   text,
   streaming = false,
@@ -151,9 +223,15 @@ export const AssistantBody = memo(function AssistantBody({
   return (
     <div className="md">
       <Streaming.Provider value={streaming}>
-        <Markdown remarkPlugins={REMARK} components={MD_COMPONENTS}>
-          {text}
-        </Markdown>
+        {/* While it streams, only the block still growing is parsed again. */}
+        {streaming ? (
+          splitBlocks(text).map((block, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: blocks only grow at the end
+            <MarkdownBlock key={i} text={block} />
+          ))
+        ) : (
+          <MarkdownBlock text={text} />
+        )}
       </Streaming.Provider>
     </div>
   );
@@ -233,7 +311,16 @@ function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
   const progress = useStore((s) => s.taskProgress[taskId]);
   const control = useStore((s) => s.desktop?.control);
   useEffect(() => ensureTask(taskId), [taskId]);
-  if (!task) return null;
+  // Until it loads (it's fetched again after a reconnect if it failed), the card's own line.
+  if (!task)
+    return (
+      <>
+        <div className="body">
+          <div className="muted card-pending">{m.text || `Task #${taskId}`}</div>
+        </div>
+        <Meta m={m} open={{ to: `/tasks/${taskId}`, label: "Open task" }} />
+      </>
+    );
   const active = isActive(task);
   let text: string;
   let result = "";
@@ -272,7 +359,7 @@ function TaskResult({ taskId }: { taskId: number }) {
   const progress = useStore((s) => s.taskProgress[taskId]);
   const control = useStore((s) => s.desktop?.control);
   useEffect(() => ensureTask(taskId), [taskId]);
-  if (!task) return null;
+  if (!task) return <div className="muted card-pending">Task #{taskId}</div>;
   if (isActive(task)) {
     const note =
       control === "owner" && task.status === "running"
@@ -377,53 +464,15 @@ function ReplyMessage({
   );
 }
 
-/**
- * An approval waiting for you, above the composer, with Approve and Deny under it. A negotiation's
- * mandate takes a note here too: it can change the numbers.
- */
-function PendingApproval({ a }: { a: Approval }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [note, setNote] = useState("");
-  const mandate = a.kind === "mandate";
-  const negotiation = useStore((s) => (mandate ? negotiationOf(s, a.id) : undefined));
-  const decide = async (decision: "approve" | "deny") => {
-    setBusy(true);
-    setError("");
-    try {
-      await decideApproval(a.id, decision, note);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
-      setBusy(false);
-    }
-  };
-  const text = [
-    `**Can I go ahead?** ${a.summary}`,
-    // Its lines stay lines.
-    a.reason.replace(/\n/g, "  \n"),
-    a.sources.length ? `_After reading ${a.sources.join(", ")}_` : "",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+/** An approval waiting for you, in the tray above the composer: what it asks, and where it came from. */
+function TrayApproval({ a }: { a: Approval }) {
+  const negotiation = useStore((s) => (a.kind === "mandate" ? negotiationOf(s, a.id) : undefined));
   return (
-    <div className="pending-approval">
-      <AssistantBody text={text} />
-      {a.taskId && a.screenshotStepId && (
-        <Shot taskId={a.taskId} stepId={a.screenshotStepId} alt="The screen before this step" />
-      )}
-      {mandate && (
-        <textarea
-          className="field approval-note"
-          rows={2}
-          maxLength={4000}
-          value={note}
-          placeholder={MANDATE_NOTE}
-          onChange={(e) => setNote(e.target.value)}
-        />
-      )}
-      {error && <div className="form-error">{error}</div>}
-      <div className="msg-buttons">
-        {a.taskId && (
+    <PendingApproval
+      a={a}
+      compact
+      links={
+        a.taskId ? (
           <button
             type="button"
             className="btn sm ghost"
@@ -431,8 +480,7 @@ function PendingApproval({ a }: { a: Approval }) {
           >
             Open task
           </button>
-        )}
-        {negotiation && (
+        ) : negotiation ? (
           <button
             type="button"
             className="btn sm ghost"
@@ -440,21 +488,9 @@ function PendingApproval({ a }: { a: Approval }) {
           >
             Open negotiation
           </button>
-        )}
-        <span className="spacer" />
-        <button type="button" className="btn sm" disabled={busy} onClick={() => decide("deny")}>
-          Deny
-        </button>
-        <button
-          type="button"
-          className="btn sm primary"
-          disabled={busy}
-          onClick={() => decide("approve")}
-        >
-          Approve
-        </button>
-      </div>
-    </div>
+        ) : null
+      }
+    />
   );
 }
 
@@ -462,7 +498,15 @@ function PendingApproval({ a }: { a: Approval }) {
 function ScheduleMessage({ m, scheduleId }: { m: ThreadMessage; scheduleId: number }) {
   const s = useStore((st) => st.schedules[scheduleId]);
   useEffect(() => ensureSchedule(scheduleId), [scheduleId]);
-  if (s === undefined) return null;
+  if (s === undefined)
+    return (
+      <>
+        <div className="body">
+          <div className="muted card-pending">{m.text}</div>
+        </div>
+        <Meta m={m} open={{ to: `/schedules/${scheduleId}`, label: "Open schedule" }} />
+      </>
+    );
   const text = s
     ? `Scheduled **${s.name}**: ${whenText(s).replace(/^\w/, (c) => c.toLowerCase())}.`
     : "Made a schedule that's since been deleted.";
@@ -616,23 +660,71 @@ function Fold({
   );
 }
 
+/**
+ * Window listeners that take files dragged anywhere over the app: the browser would otherwise open a
+ * file dropped outside the chat in the app's place.
+ */
+export function fileDrops(
+  attach: (files: FileList) => void,
+  setDropping: (on: boolean) => void,
+): [string, (e: Event) => void][] {
+  const files = (e: DragEvent) => !!e.dataTransfer?.types.includes("Files");
+  return [
+    [
+      "dragover",
+      (e) => {
+        if (!files(e as DragEvent)) return;
+        e.preventDefault();
+        setDropping(true);
+      },
+    ],
+    // Out of the window, or the drag given up.
+    ["dragleave", (e) => !(e as DragEvent).relatedTarget && setDropping(false)],
+    [
+      "drop",
+      (e) => {
+        const list = (e as DragEvent).dataTransfer?.files;
+        if (!files(e as DragEvent)) return;
+        e.preventDefault();
+        setDropping(false);
+        if (list?.length) attach(list);
+      },
+    ],
+  ];
+}
+
+/**
+ * Whether the thread follows the newest message after a scroll: any scroll up, however small, stops it
+ * (reading back while a reply streams), and only reaching the bottom again starts it.
+ */
+export function follows(was: boolean, lastTop: number, top: number, below: number): boolean {
+  if (below < 4) return true;
+  return top < lastTop ? false : was;
+}
+
 /** `id`: the chat to show. It's opened here, before loading, so a message asked for is looked for in it. */
 export function Chat({ id }: { id: number }) {
   const messages = useStore((s) => s.messages);
   const episodes = useStore((s) => s.episodes);
   const approvals = useStore((s) => s.approvals);
-  const pending = useMemo(
+  const chat = useStore(currentChat);
+  const chats = useStore((s) => s.conversations);
+  // This chat's approvals, and a line for the rest: each chat's bots ask in their own.
+  const waiting = useMemo(
     () =>
-      Object.values(approvals)
-        .filter((a) => a.status === "pending")
-        .sort((a, b) => a.id - b.id),
-    [approvals],
+      splitWaiting(
+        Object.values(approvals)
+          .filter((a) => a.status === "pending")
+          .sort((a, b) => a.id - b.id),
+        chat,
+        chats,
+      ),
+    [approvals, chat, chats],
   );
   const [unfolded, setUnfolded] = useState<Set<number>>(() => new Set());
   const progress = useStore((s) => s.progress);
   const unread = useStore((s) => s.unread);
   const hasEarlier = useStore((s) => s.hasEarlier);
-  const paused = useStore((s) => s.paused);
   const incognito = useStore((s) => s.incognito);
   const name = useStore((s) => chatName(s, currentChat(s)));
   const members = useStore(groupMembers);
@@ -657,24 +749,15 @@ export function Chat({ id }: { id: number }) {
     stick.current = true;
   }, []);
   const chatKey = `${id}${incognito ? ":incognito" : ""}`;
-  // Files dropped anywhere on the chat go into the composer.
+  // Files dropped anywhere in the window go into the composer.
   const [dropping, setDropping] = useState(false);
-  const drop = {
-    onDragOver: (e: React.DragEvent) => {
-      if (!e.dataTransfer.types.includes("Files")) return;
-      e.preventDefault();
-      setDropping(true);
-    },
-    onDragLeave: (e: React.DragEvent) => {
-      if (!e.currentTarget.contains(e.relatedTarget as HTMLElement | null)) setDropping(false);
-    },
-    onDrop: (e: React.DragEvent) => {
-      if (!e.dataTransfer.files.length) return;
-      e.preventDefault();
-      setDropping(false);
-      attachFiles(chatKey, e.dataTransfer.files);
-    },
-  };
+  useEffect(() => {
+    const on = fileDrops((list) => attachFiles(chatKey, list), setDropping);
+    for (const [type, f] of on) window.addEventListener(type, f);
+    return () => {
+      for (const [type, f] of on) window.removeEventListener(type, f);
+    };
+  }, [chatKey]);
 
   // Opening the chat, or going to or from incognito, loads its conversation in the store.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset the animation on each switch
@@ -732,7 +815,8 @@ export function Chat({ id }: { id: number }) {
     const el = scroller.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   });
-  // Cards and screenshots load after the messages and grow the thread; keep following.
+  // Cards and screenshots load after the messages and grow the thread, and a growing composer or tray
+  // shrinks the view; keep following.
   useEffect(() => {
     const el = scroller.current;
     const content = thread.current;
@@ -741,6 +825,7 @@ export function Chat({ id }: { id: number }) {
       if (stick.current) el.scrollTop = el.scrollHeight;
     });
     ro.observe(content);
+    ro.observe(el);
     return () => ro.disconnect();
   }, []);
 
@@ -765,11 +850,13 @@ export function Chat({ id }: { id: number }) {
     return () => clearInterval(timer);
   }, [unread]);
 
+  const lastTop = useRef(0);
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
     const below = el.scrollHeight - el.scrollTop - el.clientHeight;
-    stick.current = below < 80;
+    stick.current = follows(stick.current, lastTop.current, el.scrollTop, below);
+    lastTop.current = el.scrollTop;
     setFar(below > Math.max(400, el.clientHeight));
   };
   const toBottom = () => {
@@ -792,10 +879,16 @@ export function Chat({ id }: { id: number }) {
   // Only the latest reply can be tried again, and only if it errored.
   const lastReply = messages.findLast((m) => m.role === "assistant" && m.kind !== "command");
   const retryableId = lastReply?.status === "error" ? lastReply.id : 0;
+  // A screen reader hears each new reply once it's finished, not every streamed word.
+  const said =
+    lastReply && lastReply.status !== "streaming" && lastReply.id >= animateFrom.current
+      ? spoken(lastReply, botName(getState(), lastReply.botId))
+      : "";
 
   let lastDay = "";
+  const now = new Date();
   const dayBefore = (m: ThreadMessage) => {
-    const day = dayLabel(m.createdAt);
+    const day = dayLabel(m.createdAt, now);
     const show = day !== lastDay;
     lastDay = day;
     return show ? <div className="day">{day}</div> : null;
@@ -841,19 +934,12 @@ export function Chat({ id }: { id: number }) {
         className={`view ${dropping ? "dropping" : ""}`}
         ref={scroller}
         onScroll={onScroll}
-        {...drop}
+        // A wheel turned up stops following at once, before the next streamed line pulls it back.
+        onWheel={(e) => {
+          if (e.deltaY < 0) stick.current = false;
+        }}
       >
         <div className="chat-scroll">
-          {paused && (
-            <div className="paused-banner">
-              <Icon name="pause" />
-              All activity is paused.
-              <span style={{ flex: 1 }} />
-              <button type="button" className="btn sm" onClick={() => setPaused(false)}>
-                Resume
-              </button>
-            </div>
-          )}
           <div className="thread" ref={thread}>
             {hasEarlier && (
               <button type="button" className="btn sm ghost load-earlier" onClick={earlier}>
@@ -900,17 +986,35 @@ export function Chat({ id }: { id: number }) {
           </div>
         </div>
       </section>
-      <div className="composer-wrap" {...drop}>
+      <div className="composer-wrap">
         {far && (
           <button type="button" className="to-bottom" title="Latest messages" onClick={toBottom}>
             <Icon name="down" />
           </button>
         )}
-        {pending.length > 0 && (
+        {(waiting.here.length > 0 || waiting.rest > 0) && (
           <div className="approval-tray">
-            {pending.map((a) => (
-              <PendingApproval key={a.id} a={a} />
+            {waiting.here.map((a) => (
+              <TrayApproval key={a.id} a={a} />
             ))}
+            {waiting.rest > 0 && (
+              <button
+                type="button"
+                className="tray-more"
+                onClick={() =>
+                  navigate(
+                    !waiting.elsewhere
+                      ? "/tasks"
+                      : waiting.elsewhere.id === HATBOT_CHAT
+                        ? "/"
+                        : `/chat/${waiting.elsewhere.id}`,
+                  )
+                }
+              >
+                {waiting.here.length ? `${waiting.rest} more` : waiting.rest} waiting in{" "}
+                {waiting.elsewhere ? chatName(getState(), waiting.elsewhere) : "other chats"}
+              </button>
+            )}
           </div>
         )}
         {error && (
@@ -920,8 +1024,21 @@ export function Chat({ id }: { id: number }) {
         )}
         <Composer key={chatKey} chat={chatKey} onSend={onSend} />
       </div>
+      <div className="sr-only" aria-live="polite">
+        {said}
+      </div>
     </>
   );
+}
+
+/** A reply as a screen reader says it: who, then its text without Markdown's marks, cut short. */
+export function spoken(m: ThreadMessage, name: string): string {
+  const text = m.text
+    .replace(/[*_`#>|~]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return "";
+  return `${name}: ${text.length > 400 ? `${text.slice(0, 399)}…` : text}`;
 }
 
 /** A group's bots, for the names above their messages and @ in the composer. */
@@ -930,8 +1047,14 @@ const groupMembers = (s: ReturnType<typeof getState>) => {
   return c?.kind === "group" ? c.botIds : null;
 };
 
+/** A random id for a send. Not crypto.randomUUID, which needs https, and a LAN address may not have it. */
+const randomId = () =>
+  Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
+
 /** What you're writing, its files and the menu over it; apart from the thread, so typing redraws only this. */
-function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
+export function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
   const incognito = useStore((s) => s.incognito);
   const name = useStore((s) => chatName(s, currentChat(s)));
   const members = useStore(groupMembers);
@@ -951,6 +1074,9 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
   const setFiles = (fn: (f: DraftFile[]) => DraftFile[]) => setDraftFiles(chat, fn);
   const picker = useRef<HTMLInputElement>(null);
   const [sending, setSending] = useState(false);
+  // A send whose answer never came: the same message sent again keeps its id, so it's posted once.
+  const unsure = useRef<{ what: string; clientId: string } | null>(null);
+  const menuId = useId();
   const [error, setError] = useState("");
   const textarea = useRef<HTMLTextAreaElement>(null);
   // While a reply streams, an empty composer's button stops it.
@@ -974,6 +1100,8 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
   const unattach = (key: number) => removeFile(chat, key);
   const uploading = files.some((d) => !d.attachment && !d.error);
   const ready = files.filter((d) => d.attachment);
+  // A file that didn't upload holds the message until it's taken off: it would go without it.
+  const failed = files.filter((d) => d.error);
 
   // Incognito keeps nothing, so commands that would outlast it aren't offered.
   const commands = menuClosed
@@ -1019,7 +1147,7 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
 
   const send = async (command?: string) => {
     const text = (command ?? draft).trim();
-    if ((!text && !ready.length) || sending || uploading) return;
+    if ((!text && !ready.length) || sending || uploading || failed.length) return;
     setSending(true);
     setError("");
     onSend();
@@ -1028,23 +1156,27 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
     setDraft("");
     setFiles(() => []);
     requestAnimationFrame(resize);
+    const ids = ready.map((d) => (d.attachment as Attachment).id);
+    const what = JSON.stringify([text, ids]);
+    const clientId = unsure.current?.what === what ? unsure.current.clientId : randomId();
     try {
-      await sendMessage(
-        text,
-        ready.map((d) => (d.attachment as Attachment).id),
-      );
+      await sendMessage(text, ids, clientId);
+      unsure.current = null;
       for (const d of sent) if (d.preview) URL.revokeObjectURL(d.preview);
     } catch (err) {
       setFiles((f) => (f.length ? f : sent));
       setDraft((d) => d || text);
       requestAnimationFrame(resize);
+      // The brain said no: it wasn't posted. No answer, or a failure on the way: it may have been.
+      const refused = err instanceof ApiError && err.status < 500;
+      unsure.current = refused ? null : { what, clientId };
       setError(
-        err instanceof ApiError
+        refused
           ? err.message
           : !navigator.onLine
             ? "You're offline. It wasn't sent."
             : getState().connected
-              ? "Couldn't send. Try again."
+              ? "It may not have been sent. Sending it again won't send it twice."
               : "Can't reach Hatbot. It wasn't sent.",
       );
     } finally {
@@ -1060,12 +1192,15 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
         </div>
       )}
       {options.length > 0 && (
-        <div className="command-menu" role="listbox">
+        <div className="command-menu" role="listbox" id={menuId} aria-label="Suggestions">
           {options.map((o) => (
             <button
               key={o.key}
+              id={`${menuId}-${o.key}`}
               type="button"
               role="option"
+              // The composer keeps the focus and says which is picked.
+              tabIndex={-1}
               aria-selected={o === picked}
               className={o === picked ? "on" : ""}
               // Keeps the focus in the composer.
@@ -1083,7 +1218,7 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
           {files.map((d) => (
             <span
               key={d.key}
-              className={`composer-file ${d.attachment ? "" : "loading"} ${d.error ? "failed" : ""}`}
+              className={`composer-file ${d.error ? "failed" : d.attachment ? "" : "loading"}`}
               title={d.error ?? d.name}
             >
               {d.preview ? <img src={d.preview} alt="" /> : <Icon name="file" />}
@@ -1091,8 +1226,17 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
               <button type="button" title="Remove" onClick={() => unattach(d.key)}>
                 <Icon name="x" />
               </button>
+              {!d.attachment && !d.error && (
+                <span className="upload-bar" style={{ width: `${(d.sent ?? 0) * 100}%` }} />
+              )}
             </span>
           ))}
+        </div>
+      )}
+      {failed.length > 0 && (
+        <div className="form-error composer-error">
+          {failed.map((d) => `${d.name}: ${d.error}`).join(" ")}{" "}
+          {failed.length > 1 ? "Take them off to send." : "Take it off to send."}
         </div>
       )}
       <div className="composer">
@@ -1117,6 +1261,13 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
         <textarea
           ref={textarea}
           rows={1}
+          // The menu over it: commands after "/", a group's bots after "@".
+          role="combobox"
+          aria-label={`Message ${name}`}
+          aria-autocomplete="list"
+          aria-expanded={options.length > 0}
+          aria-controls={options.length > 0 ? menuId : undefined}
+          aria-activedescendant={picked ? `${menuId}-${picked.key}` : undefined}
           placeholder={incognito ? `Message ${name} incognito…` : `Message ${name}…`}
           value={draft}
           onChange={(e) => {
@@ -1185,7 +1336,7 @@ function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
             type="button"
             className="icon-btn send"
             title="Send"
-            disabled={(!draft.trim() && !ready.length) || sending || uploading}
+            disabled={(!draft.trim() && !ready.length) || sending || uploading || failed.length > 0}
             onClick={() => send()}
           >
             <Icon name="up" />

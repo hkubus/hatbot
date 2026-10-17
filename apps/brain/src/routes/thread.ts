@@ -1,4 +1,10 @@
-import { CreateGroup, PostMessage, SeenMessages, UpdateGroup } from "@hatbot/shared";
+import {
+  CreateGroup,
+  PostMessage,
+  SeenMessages,
+  type ThreadMessage,
+  UpdateGroup,
+} from "@hatbot/shared";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
 import type { Thread } from "../agent/thread";
@@ -173,14 +179,31 @@ async function deleteEpisode(c: Ctx, t: Thread) {
   }
 }
 
+/** How long a message posted with a client id is remembered by it. */
+export const SENT_FOR_MS = 10 * 60_000;
+// Each chat's messages posted with a client id, by that id: one sent again because its answer was lost
+// gets the same answer, and isn't posted (and replied to) twice.
+const sentIn = new WeakMap<Thread, Map<string, { message: ThreadMessage; at: number }>>();
+
 function post(c: Ctx, t: Thread) {
-  const { text, attachmentIds, incognito } = c.req.valid("json" as never) as z.infer<
+  const { text, attachmentIds, incognito, clientId } = c.req.valid("json" as never) as z.infer<
     typeof PostMessage
   >;
+  const sent = sentIn.get(t) ?? new Map<string, { message: ThreadMessage; at: number }>();
+  sentIn.set(t, sent);
+  const now = Date.now();
+  // Oldest first: the expired ones, and any past 200.
+  for (const [id, s] of sent) {
+    if (now - s.at < SENT_FOR_MS && sent.size <= 200) break;
+    sent.delete(id);
+  }
+  const before = clientId ? sent.get(clientId) : undefined;
+  if (before) return c.json(before.message, 202);
   if (attachmentIds.some((id) => c.var.attachments.get(id)?.from !== "owner"))
     return c.json({ error: "unknown attachment" }, 400);
   if (incognito && t.group()) return c.json({ error: "Group chats have no incognito." }, 400);
   const { message } = t.post(text, attachmentIds, incognito);
+  if (clientId) sent.set(clientId, { message, at: now });
   return c.json(message, 202);
 }
 
