@@ -155,7 +155,9 @@ export class Plugins {
   /** A call from the plugin's settings form. Works while it's starting up or needs setup, too. */
   async action(id: string, name: string, args: unknown): Promise<unknown> {
     const s = this.slots.get(id);
-    const fn = s?.instance?.actions?.[name];
+    const actions = s?.instance?.actions;
+    // Its own actions only: not what every object has, such as "constructor".
+    const fn = actions && Object.hasOwn(actions, name) ? actions[name] : undefined;
     if (!s || !fn) throw new PluginError(`${s?.plugin.name ?? id} can't do "${name}" right now.`);
     return fn(args);
   }

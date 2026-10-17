@@ -331,6 +331,24 @@ test("a plugin that fails to start is started again later", async () => {
   await t.plugins.stopAll();
 });
 
+test("a settings form reaches only a plugin's own actions, not what every object has", async () => {
+  const formed = definePlugin({
+    id: "formed",
+    name: "Formed",
+    description: "",
+    config: z.object({}),
+    start: () => ready([], { actions: { hello: async () => "hi" } }),
+  });
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [formed]);
+  await t.plugins.update("formed", { enabled: true });
+  expect(await t.plugins.action("formed", "hello", {})).toBe("hi");
+  for (const name of ["constructor", "toString", "__proto__", "hasOwnProperty"])
+    await expect(t.plugins.action("formed", name, {})).rejects.toThrow(
+      `Formed can't do "${name}" right now.`,
+    );
+  await t.plugins.stopAll();
+});
+
 test("the tools a plugin brings back when it recovers are checked too", async () => {
   let back = false;
   const odd = tool({
