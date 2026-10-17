@@ -145,6 +145,7 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
             <div className="form-row">
               <input
                 className="field"
+                aria-label="Name"
                 placeholder="Name, e.g. github"
                 value={s.name}
                 onChange={(e) => set(i, { name: e.target.value.toLowerCase() })}
@@ -274,6 +275,7 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
                       </details>
                     </div>
                     <select
+                      aria-label={`Mode for ${t.name}`}
                       value={s.tools[t.name] ?? t.mode}
                       onChange={(e) =>
                         set(i, { tools: { ...s.tools, [t.name]: e.target.value as Mode } })

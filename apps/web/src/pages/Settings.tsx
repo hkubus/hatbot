@@ -230,6 +230,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
                 <b>Model</b>
               </div>
               <select
+                aria-label="Chat model"
                 value={settings.chatModel}
                 onChange={(e) => update({ chatModel: e.target.value as AppSettings["chatModel"] })}
               >
@@ -242,6 +243,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
                 <b>Effort</b>
               </div>
               <select
+                aria-label="Chat effort"
                 value={settings.chatEffort}
                 onChange={(e) =>
                   update({ chatEffort: e.target.value as AppSettings["chatEffort"] })
@@ -269,6 +271,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
                 <b>Model for background tasks</b>
               </div>
               <select
+                aria-label="Model for background tasks"
                 value={settings.taskModel}
                 onChange={(e) => update({ taskModel: e.target.value as AppSettings["taskModel"] })}
               >
@@ -320,6 +323,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
                   <b>Sent on</b>
                 </div>
                 <select
+                  aria-label="Sent on"
                   value={settings.weeklyReport.weekday}
                   onChange={(e) =>
                     update({
@@ -334,6 +338,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
                   ))}
                 </select>
                 <select
+                  aria-label="Sent at"
                   value={settings.weeklyReport.hour}
                   onChange={(e) =>
                     update({
@@ -372,6 +377,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
                 <b>Model for desktop tasks</b>
               </div>
               <select
+                aria-label="Model for desktop tasks"
                 value={settings.desktopModel}
                 onChange={(e) =>
                   update({ desktopModel: e.target.value as AppSettings["desktopModel"] })
@@ -403,6 +409,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
                 <b>Tapping one opens</b>
               </div>
               <select
+                aria-label="Tapping one opens"
                 value={settings.notificationsOpen}
                 onChange={(e) =>
                   update({
@@ -581,7 +588,12 @@ function RollbackRow({ toast }: { toast: Toast }) {
       </div>
       {snaps.length > 0 ? (
         <>
-          <select value={picked} onChange={(e) => setPicked(e.target.value)} disabled={busy}>
+          <select
+            aria-label="Snapshot"
+            value={picked}
+            onChange={(e) => setPicked(e.target.value)}
+            disabled={busy}
+          >
             {snaps.map((s) => (
               <option key={s.name} value={s.name}>
                 {snapLabel(s)}

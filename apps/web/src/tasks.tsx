@@ -189,6 +189,7 @@ export function PendingApproval({
       {more && takesNote(a) && (
         <textarea
           className="field approval-note"
+          aria-label="Note"
           rows={2}
           maxLength={4000}
           value={note}
