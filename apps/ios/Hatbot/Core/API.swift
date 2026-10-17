@@ -40,17 +40,21 @@ final class API: Sendable {
     onUnauthorized()
   }
 
-  /// "https://host/" or "host" → https://host; a pasted ".../api/v1" is dropped. Plain http only when typed.
+  /// "https://host/" or "host" → https://host; a pasted ".../api/v1" is dropped. Never plain http: the
+  /// token goes with every request, and a phone joins networks you don't control.
   static func serverURL(from input: String) -> URL? {
     var s = input.trimmingCharacters(in: .whitespacesAndNewlines)
     if s.isEmpty { return nil }
     if !s.contains("://") { s = "https://" + s }
     while s.hasSuffix("/") { s.removeLast() }
     if s.hasSuffix(prefix) { s.removeLast(prefix.count) }
-    guard let url = URL(string: s), let scheme = url.scheme, ["http", "https"].contains(scheme),
-      url.host != nil
-    else { return nil }
+    guard let url = URL(string: s), url.scheme?.lowercased() == "https", url.host != nil else { return nil }
     return url
+  }
+
+  /// An address typed with http://, which the app won't use.
+  static func isPlainHTTP(_ input: String) -> Bool {
+    input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("http://")
   }
 
   func url(_ path: String) -> URL {

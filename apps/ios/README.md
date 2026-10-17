@@ -50,9 +50,15 @@ SwiftUI isn't there on Linux: `swiftc -parse Hatbot/Views/*.swift` checks the vi
 
 ## Sign in
 
-Enter the brain's address (`hatbot.example.com`, or `http://192.168.55.<id>:8080` on the LAN),
-your password and a TOTP code. The app gets its own API token, named after the device; it shows in
-Settings → API tokens on the web, and signing out of the app deletes it.
+Enter the brain's address (`hatbot.example.com`), your password and a TOTP code. The app gets its
+own API token, named after the device; it shows in Settings → API tokens on the web, and signing out
+of the app deletes it.
+
+The address must be https, on the LAN too: the token goes with every request, and a phone joins
+networks you don't control. The app, the widget and the share extension refuse http. For a brain
+reached only on the LAN, put it behind a certificate the iPhone trusts: Caddy's internal CA (install
+its root certificate as a profile, then turn on full trust in Settings → General → About →
+Certificate Trust Settings), or Tailscale with `tailscale cert` for the brain's `*.ts.net` name.
 
 ## Siri, Shortcuts and the share sheet
 

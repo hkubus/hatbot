@@ -35,6 +35,10 @@ final class Session {
 
   func signIn(password: String, code: String, device: String) async throws {
     guard let url = API.serverURL(from: server) else {
+      if API.isPlainHTTP(server) {
+        throw APIError(
+          status: 0, message: "Use your Hatbot's https address. Over http, your password and token would travel unencrypted.")
+      }
       throw APIError(status: 0, message: "Enter your Hatbot's address.")
     }
     let anonymous = API(server: url, token: nil)

@@ -71,9 +71,35 @@ final class ModelTests: XCTestCase {
   func testNormalisesServerAddresses() {
     XCTAssertEqual(API.serverURL(from: "hatbot.example.com")?.absoluteString, "https://hatbot.example.com")
     XCTAssertEqual(API.serverURL(from: " https://h.example/api/v1/ ")?.absoluteString, "https://h.example")
-    XCTAssertEqual(
-      API.serverURL(from: "http://192.168.55.230:8080")?.absoluteString, "http://192.168.55.230:8080")
+    XCTAssertEqual(API.serverURL(from: "https://192.168.55.230:8443")?.absoluteString, "https://192.168.55.230:8443")
     XCTAssertNil(API.serverURL(from: ""))
+  }
+
+  /// The token goes with every request, so never over plain http, typed or saved by an older app.
+  func testRefusesPlainHTTP() async throws {
+    XCTAssertNil(API.serverURL(from: "http://192.168.55.230:8080"))
+    XCTAssertNil(API.serverURL(from: "HTTP://hatbot.example.com"))
+    XCTAssertNil(API.serverURL(from: "ws://hatbot.example.com"))
+    XCTAssertTrue(API.isPlainHTTP(" http://192.168.55.230:8080"))
+    XCTAssertFalse(API.isPlainHTTP("hatbot.example.com"))
+    try await MainActor.run {
+      let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+      defaults.set("http://192.168.55.230:8080", forKey: Session.serverKey)
+      let session = Session(vault: MemoryVault("old"), defaults: defaults)
+      XCTAssertNil(session.store)
+    }
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+    let session = await MainActor.run {
+      let s = Session(vault: MemoryVault(), defaults: defaults)
+      s.server = "http://192.168.55.230:8080"
+      return s
+    }
+    do {
+      try await session.signIn(password: "p", code: "123456", device: "test")
+      XCTFail("signed in over http")
+    } catch let e as APIError {
+      XCTAssertTrue(e.message.contains("https"))
+    }
   }
 }
 
@@ -939,4 +965,16 @@ final class NetworkTests: XCTestCase {
     let loaded = await MainActor.run { store.tasks[40]?.id }
     XCTAssertEqual(loaded, 40)
   }
+}
+
+/// The token in memory, where the app keeps it in the Keychain.
+final class MemoryVault: TokenVault, @unchecked Sendable {
+  private let lock = NSLock()
+  private var token: String?
+
+  init(_ token: String? = nil) { self.token = token }
+
+  func load() -> String? { lock.withLock { token } }
+  func save(_ token: String) { lock.withLock { self.token = token } }
+  func clear() { lock.withLock { token = nil } }
 }
