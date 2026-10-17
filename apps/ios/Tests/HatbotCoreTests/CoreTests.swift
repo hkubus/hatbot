@@ -661,6 +661,18 @@ final class LookingAfterThingsTests: XCTestCase {
     XCTAssertEqual(LineDiff.of("x\ny\n", nil).map(\.text), ["-x", "-y"])
   }
 
+  /// The heartbeat's pickers have a row for what's set now, even when it's not one of theirs.
+  func testHeartbeatPickersKeepAValueSetElsewhere() {
+    XCTAssertEqual(AppSettings.Heartbeat.everyChoices(with: 15), [5, 10, 15, 30, 60, 120, 240])
+    XCTAssertEqual(AppSettings.Heartbeat.everyChoices(with: 20), [5, 10, 15, 20, 30, 60, 120, 240])
+    XCTAssertEqual(AppSettings.Heartbeat.everyChoices(with: 1440).last, 1440)
+    XCTAssertEqual(
+      [5, 60, 90, 120].map(AppSettings.Heartbeat.every), ["5 minutes", "Hour", "90 minutes", "2 hours"])
+    let hb = AppSettings.Heartbeat(enabled: true, everyMinutes: 15, botId: "sysadmin", instructions: "")
+    XCTAssertEqual(hb.botChoices(["hatbot", "sysadmin"]), ["hatbot", "sysadmin"])
+    XCTAssertEqual(hb.botChoices(["hatbot"]), ["hatbot", "sysadmin"])
+  }
+
   func testSplitsSearchSnippetsAtTheMarks() {
     let parts = Search.parts("the \u{02}router\u{03} is at \u{02}.1\u{03}")
     XCTAssertEqual(parts.map(\.text), ["the ", "router", " is at ", ".1"])

@@ -440,13 +440,13 @@ struct HeartbeatView: View {
         Section {
           Toggle("On", isOn: s.enabled).onChange(of: s.wrappedValue.enabled) { save() }
           Picker("Every", selection: s.everyMinutes) {
-            ForEach([5, 10, 15, 30, 60, 120, 240], id: \.self) { m in
-              Text(m < 60 ? "\(m) minutes" : m == 60 ? "Hour" : "\(m / 60) hours").tag(m)
+            ForEach(AppSettings.Heartbeat.everyChoices(with: s.wrappedValue.everyMinutes), id: \.self) { m in
+              Text(AppSettings.Heartbeat.every(m)).tag(m)
             }
           }
           .onChange(of: s.wrappedValue.everyMinutes) { save() }
           Picker("Bot", selection: s.botId) {
-            ForEach(store.botIds, id: \.self) { id in Text(store.botName(id)).tag(id) }
+            ForEach(s.wrappedValue.botChoices(store.botIds), id: \.self) { id in Text(store.botName(id)).tag(id) }
           }
           .onChange(of: s.wrappedValue.botId) { save() }
         }
