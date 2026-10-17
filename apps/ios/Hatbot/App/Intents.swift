@@ -1,5 +1,6 @@
 // Siri and Shortcuts (App Intents): ask Hatbot, or another bot or group, and hear the answer, give
-// Hatbot a task, or send it text and files. They run in the app, as you, through the chats.
+// Hatbot a task, or send it text and files. They run in the app, as you, through the chats, and only on
+// an unlocked phone: whoever holds a locked one isn't necessarily you.
 import AppIntents
 import Foundation
 import UniformTypeIdentifiers
@@ -54,6 +55,7 @@ struct ChatQuery: EntityQuery {
 
 struct AskHatbotIntent: AppIntent {
   static let title: LocalizedStringResource = "Ask Hatbot"
+  static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
   static let description = IntentDescription(
     "Asks Hatbot, or another bot or a group, in its chat and answers with the reply.")
 
@@ -77,6 +79,7 @@ struct AskHatbotIntent: AppIntent {
 
 struct StartTaskIntent: AppIntent {
   static let title: LocalizedStringResource = "Give Hatbot a Task"
+  static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
   static let description = IntentDescription("Starts a background task with this goal; it tells you when it's done.")
 
   @Parameter(title: "Goal", inputOptions: String.IntentInputOptions(multiline: true))
@@ -93,6 +96,7 @@ struct StartTaskIntent: AppIntent {
 
 struct SendToHatbotIntent: AppIntent {
   static let title: LocalizedStringResource = "Send to Hatbot"
+  static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
   static let description = IntentDescription("Sends text and files to Hatbot's chat, like writing it yourself.")
 
   @Parameter(title: "Text", inputOptions: String.IntentInputOptions(multiline: true))

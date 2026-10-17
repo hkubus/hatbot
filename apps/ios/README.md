@@ -63,6 +63,8 @@ Shortcuts has three Hatbot actions, and Siri knows them without setup:
 - **Give Hatbot a Task** ("Give Hatbot a task"): starts a background task, like `/task` in the chat.
 - **Send to Hatbot**: text and files into the chat. Photos go up as JPEG.
 
+On a locked iPhone they ask you to unlock it first, and so does Pause Hatbot.
+
 **Hatbot** in the share sheet sends text, links, photos and files (up to 10) with a note. It reads
 the token from the App Group the app shares with it (`group.<prefix>.hatbot`; SideStore adds your
 team ID to the name), so open the app once after updating. If the share sheet says to sign in, the
