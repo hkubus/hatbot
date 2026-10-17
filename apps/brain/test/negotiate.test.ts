@@ -4,16 +4,17 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Mandate, Negotiation } from "@hatbot/shared";
+import type { Approval, Mandate, Negotiation, NegotiationDetail } from "@hatbot/shared";
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { Approvals } from "../src/approvals";
 import { EventBus } from "../src/events";
+import { scamSignals } from "../src/negotiate/scam";
 import { mcpPlugin } from "../src/plugins/mcp";
 import type { CallContext, PluginTool } from "../src/plugins/plugin";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { sendConfirm } from "../src/tasks/desktop-run";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
-import { ORIGIN, type TestApp, testApp, waitFor } from "./helpers";
+import { ORIGIN, setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
 
 sendConfirm.everyMs = 1;
 
@@ -269,9 +270,11 @@ test("negotiate_start asks for the mandate; once approved, the negotiation runs 
         }),
       ],
     },
-    // Its desktop task.
+    // Its desktop task. The desktop prompt says to confirm a send; the message is approved already.
     { content: [toolUse("record_conversation", { messages: [] })] },
     { content: [computer("type", { text: TEXT })] },
+    { content: [toolUse("confirm_intent", { kind: "send", summary: "Send the offer" })] },
+    { content: [toolUse("confirm_intent", { kind: "purchase", summary: "Buy it now" })] },
     { content: [computer("left_click", { coordinate: [300, 500] })] },
     finish(),
     // The opening task again.
@@ -293,11 +296,14 @@ test("negotiate_start asks for the mandate; once approved, the negotiation runs 
   expect(approval?.taskId).toBeNull();
   expect(approval?.conversationId).toBe(t.thread.conversationId);
   expect(approval?.summary).toBe(
-    "Negotiate for Karta graficzna RTX 3070 8GB: open at 1,060 zł, aim for 1,250 zł, pay at most 1,400 zł",
+    "Negotiate for “Karta graficzna RTX 3070 8GB”: open at 1,060 zł, aim for 1,250 zł, pay at most 1,400 zł",
   );
   expect(approval?.reason).toContain("Asking 1,500 zł.");
   expect(approval?.reason).toContain("walk away above 1,400 zł");
   expect(approval?.reason).toContain("Inside this, Hatbot sends and agrees on its own");
+  // Dates and money as the app shows them, and no listing key.
+  expect(approval?.reason).toContain("Until 16 Oct. Contact details: none.");
+  expect(approval?.reason).not.toContain("OLX:1001");
   // Nothing went before it was approved.
   expect(results(chat, 3)).toContain("waits for the owner to approve its mandate");
   // The appraisal was made once: negotiate_start used it.
@@ -330,8 +336,21 @@ test("negotiate_start asks for the mandate; once approved, the negotiation runs 
   expect(t.thread.list().find((m) => m.id === reply?.id)?.taskId).toBe(1);
   expect(t.tasks.get(2)?.parentId).toBe(1);
   expect(t.approvals.list(false).map((a) => a.kind)).toEqual(["mandate"]);
+  // confirm_intent didn't ask: the send needs none, and nothing else is the task's to do.
+  expect(results(work, 5)).toContain("Not needed: the message is approved already");
+  expect(results(work, 6)).toContain("this task only sends the approved message");
+  expect(JSON.stringify(work.requests[2]?.messages[0])).toContain(
+    "don't call confirm_intent for it",
+  );
+  // The seller wrote the listing's title: it's in neither brief, nor among what the owner said.
+  expect(t.tasks.get(2)?.goal).toContain(`<message>${TEXT}</message>`);
+  expect(t.tasks.get(2)?.goal).not.toContain("Karta graficzna");
+  expect(t.tasks.get(1)?.goal).toContain("offering exactly the mandate's opening price");
+  expect(t.tasks.requestOf(1)).toBe(
+    `The owner approved the mandate for negotiation #1 (${LISTING_URL}): open at 1,060 zł, aim for 1,250 zł, pay at most 1,400 zł.`,
+  );
   // The opening task waited for its desktop task and heard how it went.
-  expect(JSON.stringify(work.requests[6]?.messages.at(-1))).toContain("Sent.");
+  expect(JSON.stringify(work.requests[8]?.messages.at(-1))).toContain("Sent.");
   const [m] = t.negotiations.messages(1);
   expect(m).toMatchObject({ status: "sent", offer: 1060, stated: { max: 1200 } });
   // What it claimed is kept, so later messages keep to it.
@@ -406,9 +425,11 @@ test("a note on the mandate changes its numbers; one Haiku can't apply asks agai
     limit: 1300,
     expiresAt: MANDATE.expiresAt,
   });
-  // Haiku read the note and the mandate, and nothing from the seller.
+  // Haiku read the note, the mandate and the asking price, and nothing from the seller.
   expect(notes[0]).toContain("Max 1300, not more.");
   expect(notes[0]).toContain('"limit":1400');
+  expect(notes[0]).toContain("Buying; asking 1500 PLN");
+  expect(notes[0]).not.toContain("Karta graficzna");
 
   const second = openNegotiation(t);
   t.db.query("UPDATE negotiations SET listing_key = 'OLX:1002' WHERE id = ?").run(second.id);
@@ -437,6 +458,105 @@ test("a note on the mandate changes its numbers; one Haiku can't apply asks agai
   await waitFor(() => t.negotiations.get(third.id)?.status === "expired");
   expect(t.approvals.get(c.id)?.status).toBe("expired");
   await t.tasks.idle();
+});
+
+test("a note that gives the mandate more room is shown to you again before it takes effect", async () => {
+  const work = new FakeModel();
+  work.onCreate = (p) =>
+    p.tool_choice?.type === "tool"
+      ? '{"opening": 1060, "target": 1300, "limit": 1450, "delivery": "Pickup in Kraków", "expires_in_days": 7, "allow": ["phone"]}'
+      : '{"suspected": false, "excerpt": ""}';
+  work.script.push({
+    content: [toolUse("finish_task", { outcome: "done", summary: "Later.", notify: false })],
+  });
+  const t = await testApp(new FakeModel(), work);
+  const n = openNegotiation(t);
+  t.negotiations.update(n.id, { status: "awaiting_mandate" });
+  const a = t.negotiations.askMandate(t.negotiations.get(n.id) as Negotiation);
+  t.approvals.decide(
+    a.id,
+    "approve",
+    "web",
+    "Go to 1450 if they collect in Kraków; share my phone.",
+  );
+  const again = await waitFor(() => t.approvals.list(true)[0]);
+  expect(again.kind).toBe("mandate");
+  expect(again.summary).toContain("pay at most 1,450 zł");
+  expect(again.reason).toContain(
+    [
+      "Your note gives it more room than before. Approve to go ahead with this, or deny to end the negotiation.",
+      "Pay at most: 1,400 zł → 1,450 zł",
+      "Delivery: OLX delivery with buyer protection → Pickup in Kraków",
+      "Contact details: none → phone",
+      "Your note: Go to 1450 if they collect in Kraków; share my phone.",
+    ].join("\n"),
+  );
+  // Nothing opened meanwhile.
+  expect(t.negotiations.get(n.id)?.status).toBe("awaiting_mandate");
+  expect(t.tasks.list()).toEqual([]);
+  t.approvals.decide(again.id, "approve", "web");
+  await waitFor(() => t.negotiations.get(n.id)?.status === "open");
+  expect(t.negotiations.get(n.id)?.mandate).toMatchObject({ limit: 1450, allow: ["phone"] });
+  await t.tasks.idle();
+});
+
+test("a mandate approval with a note is applied once, however often it's seen", async () => {
+  const work = new FakeModel();
+  let asked = 0;
+  work.onCreate = (p) => {
+    if (p.tool_choice?.type !== "tool") return '{"suspected": false, "excerpt": ""}';
+    asked++;
+    return '{"opening": 1000, "target": 1150, "limit": 1300, "delivery": "OLX delivery with buyer protection", "expires_in_days": 7, "allow": []}';
+  };
+  work.script.push({
+    content: [toolUse("finish_task", { outcome: "done", summary: "Later.", notify: false })],
+  });
+  const t = await testApp(new FakeModel(), work);
+  const n = openNegotiation(t);
+  t.negotiations.update(n.id, { status: "awaiting_mandate" });
+  const a = t.negotiations.askMandate(t.negotiations.get(n.id) as Negotiation);
+  t.approvals.decide(a.id, "approve", "web", "Max 1300.");
+  // The minute tick sees it too while Haiku is still applying the note.
+  t.negotiations.due();
+  await t.negotiations.mandateDecided(t.approvals.get(a.id) as Approval);
+  await waitFor(() => t.negotiations.get(n.id)?.status === "open");
+  await t.tasks.idle();
+  expect(asked).toBe(1);
+  expect(t.tasks.list()).toHaveLength(1);
+  expect(t.approvals.list(true)).toEqual([]);
+});
+
+test("two sends at once: the second is blocked; one the desktop can't take is marked failed", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
+  await withScout(t, false);
+  messageBox(t);
+  const n = openNegotiation(t);
+  // Another task has the screen, so neither send's task runs.
+  await t.tasks.lane.acquire(-5, new AbortController().signal);
+  const send = named(negotiateTools(t), "negotiate_send");
+  const input = send.schema.parse({ negotiation: n.id, text: TEXT, offer: 1060 });
+  const both = await Promise.all([
+    runPluginTool(send, input, call()),
+    runPluginTool(send, input, call()),
+  ]);
+  expect(both.map((r) => r.isError)).toEqual([false, true]);
+  expect(both[1]?.content).toContain("is being sent already");
+  expect(t.negotiations.messages(n.id).map((m) => m.status)).toEqual(["sending"]);
+  await t.negotiations.close(t.bots.hatbot().id, n, "abandoned", null, null);
+  t.tasks.lane.release(-5);
+  await t.tasks.idle();
+
+  const m = openNegotiation(t);
+  t.agent.health = { features: ["profiles", "exec", "files"] };
+  const old = await runPluginTool(
+    send,
+    send.schema.parse({ negotiation: m.id, text: TEXT, offer: 1060 }),
+    call(),
+  );
+  expect(old.content).toContain("run Update first");
+  expect(t.negotiations.messages(m.id).map((x) => x.status)).toEqual(["failed"]);
+  expect(t.negotiations.inFlight(m.id)).toBeNull();
+  await t.plugins.stopAll();
 });
 
 test("a mandate waiting for you outlasts a restart; a task's approval doesn't", async () => {
@@ -559,15 +679,116 @@ test("closing writes the bot's notes; agreeing outside the mandate asks", async 
   expect(notes).toContain("Took 1300 after two rounds.");
   expect(verdictFor(close, within, call(), true)).toMatchObject({ action: "block" });
 
-  // Closing one that waits for its mandate withdraws the approval.
+  // Closing one that waits for its mandate withdraws the approval; nothing can be agreed yet.
   const waiting = openNegotiation(t);
   t.db.query("UPDATE negotiations SET listing_key = 'OLX:1003' WHERE id = ?").run(waiting.id);
   t.negotiations.update(waiting.id, { status: "awaiting_mandate" });
   const a = t.negotiations.askMandate(t.negotiations.get(waiting.id) as Negotiation);
+  const early = close.schema.parse({ negotiation: waiting.id, outcome: "agreed", price: 1100 });
+  expect(verdictFor(close, early, call(), true)).toMatchObject({
+    action: "block",
+    why: "Its mandate isn't approved yet, so nothing can have been agreed. Close it as lost or abandoned.",
+  });
   await runPluginTool(close, { negotiation: waiting.id, outcome: "abandoned" }, call());
   expect(t.approvals.get(a.id)?.status).toBe("cancelled");
   expect(t.negotiations.get(waiting.id)?.status).toBe("abandoned");
   await t.plugins.stopAll();
+});
+
+test("closing a negotiation cancels a send that's queued; one closed meanwhile isn't sent", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
+  await withScout(t, false);
+  messageBox(t);
+  const n = openNegotiation(t);
+  // Another task has the screen, so the send waits for it.
+  await t.tasks.lane.acquire(-5, new AbortController().signal);
+  await t.negotiations.send(n, { text: TEXT, offer: 1060, agree: false, stated: null }, call());
+  expect(t.tasks.get(1)?.status).toBe("queued");
+  const close = named(negotiateTools(t), "negotiate_close");
+  await runPluginTool(close, { negotiation: n.id, outcome: "lost" }, call());
+  t.tasks.lane.release(-5);
+  await t.tasks.idle();
+  expect(t.tasks.get(1)?.status).toBe("cancelled");
+  expect(t.negotiations.messages(n.id)[0]?.status).toBe("failed");
+  expect(t.agent.actions).toEqual([]);
+
+  // Closed while its task runs: the record says so, and the click is held.
+  const work = new FakeModel([
+    { content: [toolUse("record_conversation", { messages: [] })] },
+    { content: [computer("type", { text: TEXT })] },
+    { content: [computer("left_click", { coordinate: [300, 500] })] },
+    { content: [toolUse("record_conversation", { messages: [] })] },
+    finish("It was closed."),
+  ]);
+  const u = await testApp(new FakeModel(), work);
+  messageBox(u);
+  const m = openNegotiation(u);
+  const typed = u.agent.afterAction;
+  u.agent.afterAction = (name, input) => {
+    typed?.(name, input);
+    if (name === "type") u.negotiations.update(m.id, { status: "lost" });
+  };
+  await u.negotiations.send(m, { text: TEXT, offer: 1060, agree: false, stated: null }, call());
+  await u.tasks.idle();
+  expect(results(work, 3)).toContain("Negotiation #1 is lost: nothing more is sent.");
+  expect(results(work, 4)).toContain("Negotiation #1 is lost: nothing more is sent.");
+  expect(u.agent.actions.some((a) => a.name === "left_click")).toBe(false);
+  expect(u.negotiations.messages(m.id)[0]?.status).toBe("failed");
+  // A send task for a closed negotiation only reads.
+  expect(u.negotiations.gateFor(1)).toMatchObject({ mode: "read", text: null });
+  await t.plugins.stopAll();
+});
+
+test("a negotiation whose mandate runs out expires, and its tasks stop", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel());
+  messageBox(t);
+  const n = openNegotiation(t);
+  await t.tasks.lane.acquire(-5, new AbortController().signal);
+  await t.negotiations.check(n, call());
+  // Held for the owner, who hasn't answered.
+  const hold = t.approvals.create({
+    taskId: null,
+    kind: "injection_warning",
+    summary: "Keep going?",
+  });
+  t.negotiations.update(n.id, { approval_id: hold.id });
+  t.negotiations.due();
+  expect(t.negotiations.get(n.id)?.status).toBe("open");
+  t.advance(Date.parse(MANDATE.expiresAt) - Date.parse("2026-10-09T12:00:00Z"));
+  t.negotiations.due();
+  expect(t.negotiations.get(n.id)).toMatchObject({ status: "expired" });
+  expect(t.negotiations.get(n.id)?.closedAt).toBeTruthy();
+  expect(t.approvals.get(hold.id)?.status).toBe("cancelled");
+  t.tasks.lane.release(-5);
+  await t.tasks.idle();
+  expect(t.tasks.get(1)?.status).toBe("cancelled");
+});
+
+test("you can stop a negotiation; two closes at once both keep their notes", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel());
+  const { cookie } = await setUpOwner(t);
+  const n = openNegotiation(t);
+  t.negotiations.update(n.id, { status: "awaiting_mandate" });
+  const a = t.negotiations.askMandate(t.negotiations.get(n.id) as Negotiation);
+  const res = await t.call("POST", `/negotiations/${n.id}/close`, {}, { cookie });
+  expect(res.status).toBe(200);
+  expect(((await res.json()) as NegotiationDetail).negotiation.status).toBe("abandoned");
+  expect(t.approvals.get(a.id)?.status).toBe("cancelled");
+  expect(await t.memory.read("negotiations.md")).toContain("Stopped by the owner.");
+  expect((await t.call("POST", `/negotiations/${n.id}/close`, {}, { cookie })).status).toBe(409);
+  expect((await t.call("POST", "/negotiations/99/close", {}, { cookie })).status).toBe(404);
+  expect((await t.call("POST", `/negotiations/${n.id}/close`, {})).status).toBe(401);
+
+  const first = openNegotiation(t);
+  const second = openNegotiation(t);
+  const bot = t.bots.hatbot().id;
+  await Promise.all([
+    t.negotiations.close(bot, first, "lost", null, "First seller sold it."),
+    t.negotiations.close(bot, second, "abandoned", null, "Second seller went quiet."),
+  ]);
+  const notes = await t.memory.read("negotiations.md");
+  expect(notes).toContain("First seller sold it.");
+  expect(notes).toContain("Second seller went quiet.");
 });
 
 test("the send gate: exactly the approved text, once, on the conversation, after it's recorded", async () => {
@@ -708,6 +929,64 @@ test("a message already in the conversation counts as sent; a click that leaves 
   expect(u.tasks.steps(1).map((s) => s.name)).toContain("Not sure the message went");
 });
 
+test("text in the box isn't taken for a sent message, and another conversation's address isn't kept", async () => {
+  // A draft an earlier task left in the box, which the model lists as ours.
+  const leftover = new FakeModel([
+    { content: [toolUse("record_conversation", { messages: [{ from: "us", text: TEXT }] })] },
+    { content: [computer("left_click", { coordinate: [300, 500] })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), leftover);
+  messageBox(t).set([TEXT]);
+  const n = openNegotiation(t);
+  await t.negotiations.send(n, { text: TEXT, offer: 1060, agree: false, stated: null }, call());
+  await t.tasks.idle();
+  expect(results(leftover, 1)).toContain("Now type exactly the approved message");
+  expect(t.agent.actions.filter((a) => a.name === "left_click")).toHaveLength(1);
+  expect(t.negotiations.messages(n.id)[0]?.status).toBe("sent");
+
+  // Text it typed itself, listed as ours before it's sent, when the box can't be seen into.
+  const typed = new FakeModel([
+    { content: [toolUse("record_conversation", { messages: [] })] },
+    { content: [computer("type", { text: TEXT })] },
+    { content: [toolUse("record_conversation", { messages: [{ from: "us", text: TEXT }] })] },
+    { content: [browser("left_click", { target: { type: "ref", ref: "ref_1" } })] },
+    finish(),
+  ]);
+  const u = await testApp(new FakeModel(), typed);
+  messageBox(u);
+  u.agent.inspect = async () => null;
+  const m = openNegotiation(u);
+  await u.negotiations.send(m, { text: TEXT, offer: 1060, agree: false, stated: null }, call());
+  await u.tasks.idle();
+  expect(results(typed, 3)).toContain("Now type exactly the approved message");
+  expect(u.agent.browserCalls.map((c) => c.name)).toEqual(["left_click"]);
+  expect(u.negotiations.messages(m.id)[0]?.status).toBe("sent");
+  // It went from the listing page; the tab right after is the conversation.
+  expect(u.negotiations.get(m.id)?.conversationUrl).toBe(CHAT_URL);
+
+  // A read that lands on another conversation on the site doesn't keep its address.
+  const read = new FakeModel([
+    {
+      content: [
+        toolUse("record_conversation", { messages: [{ from: "seller", text: "Sprzedane." }] }),
+      ],
+    },
+    finish(),
+  ]);
+  const v = await testApp(new FakeModel(), read);
+  messageBox(v, "https://www.olx.pl/myaccount/answers/777");
+  v.agent.page = {
+    url: "https://www.olx.pl/myaccount/answers/777",
+    title: "OLX",
+    text: "Rower górski · Sprzedane.",
+  };
+  const r = openNegotiation(v);
+  await v.negotiations.check(r, call());
+  await v.tasks.idle();
+  expect(v.negotiations.get(r.id)?.conversationUrl).toBeNull();
+});
+
 test("a read-only task records the seller and the conversation, and types and sends nothing", async () => {
   const work = new FakeModel([
     { content: [computer("type", { text: "hello" })] },
@@ -735,6 +1014,8 @@ test("a read-only task records the seller and the conversation, and types and se
   const t = await testApp(new FakeModel(), work);
   const box = messageBox(t, CHAT_URL);
   box.set(["leftover draft"]);
+  // The conversation names the listing, so its address is kept.
+  t.agent.page = { url: CHAT_URL, title: "OLX", text: "Karta graficzna RTX 3070 8GB · 1500 zł" };
   const n = openNegotiation(t);
   const said = await t.negotiations.check(n, call());
   expect(said).toContain("Reading the conversation in desktop task #1");
@@ -751,6 +1032,76 @@ test("a read-only task records the seller and the conversation, and types and se
     "Mogę zejść do 1350.",
   ]);
   expect(t.negotiations.get(n.id)?.conversationUrl).toBe(CHAT_URL);
+});
+
+test("a seller's message that looks like a scam holds the negotiation until you decide", async () => {
+  expect(scamSignals("Ok, 1200 może być.", [])).toEqual([]);
+  expect(scamSignals("Napisz na WhatsApp 600 100 200", [])).toEqual([
+    "payment or talk off the platform (“WhatsApp”)",
+    "a phone number (“600 100 200”)",
+  ]);
+  expect(scamSignals("Odbiór osobisty, ul. Długa 10", ["address"])).toEqual([]);
+  expect(scamSignals("Zapłać tu: https://olx-pay.example/123", [])).toContain(
+    "a link (“https://olx-pay.example/123”)",
+  );
+
+  const reading = (text: string) =>
+    new FakeModel([
+      {
+        content: [toolUse("record_conversation", { messages: [{ from: "seller", text }] })],
+      },
+      finish(),
+    ]);
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
+  await withScout(t, false);
+  messageBox(t, CHAT_URL);
+  const n = openNegotiation(t, { conversationUrl: CHAT_URL });
+  t.taskModel.script.push(...reading("Wyślę przez OLX, ale najpierw podaj kod BLIK.").script);
+  const said = await t.negotiations.check(n, {
+    ...call(),
+    waitForTask: (id) => t.tasks.waitFor(id, new AbortController().signal),
+  });
+  const hold = t.approvals.list(true)[0] as Approval;
+  expect(hold).toMatchObject({
+    kind: "injection_warning",
+    summary: "Keep negotiating for “Karta graficzna RTX 3070 8GB”?",
+  });
+  expect(hold.reason).toContain(
+    "The seller wrote: “Wyślę przez OLX, ale najpierw podaj kod BLIK.”",
+  );
+  expect(hold.reason).toContain("payment or talk off the platform (“BLIK”)");
+  // It's approved in the app, not from the lock screen.
+  const note = await waitFor(() =>
+    t.notifier.sent.find((x) => x.title.includes("Keep negotiating")),
+  );
+  expect(note.actions?.map((a) => a.label)).toEqual(["Open in Hatbot", "Deny"]);
+  expect(t.negotiations.get(n.id)?.approvalId).toBe(hold.id);
+  // The bot hears it's held, and can't send meanwhile.
+  expect(said).toContain("is held: the seller's message looked like a scam");
+  const send = named(negotiateTools(t), "negotiate_send");
+  const input = send.schema.parse({ negotiation: n.id, text: TEXT, offer: 1060 });
+  expect(verdictFor(send, input, call(), true)).toMatchObject({ action: "block" });
+  const get = await named(negotiateTools(t), "negotiate_get").run({ negotiation: n.id }, call());
+  expect(get).toContain("Don't reply to the seller");
+  // A restart keeps it waiting.
+  new Approvals(t.db, new EventBus(), { send: async () => {} }, ORIGIN);
+  expect(t.approvals.get(hold.id)?.status).toBe("pending");
+
+  // Carry on: sends go again.
+  t.approvals.decide(hold.id, "approve", "web");
+  expect(verdictFor(send, input, call(), true)).toMatchObject({ action: "allow" });
+
+  // Another one, denied: the negotiation ends.
+  t.taskModel.script.push(...reading("Albo napisz na Telegram, tam szybciej.").script);
+  await t.negotiations.check(n, call());
+  await t.tasks.idle();
+  const second = await waitFor(() => t.approvals.list(true)[0]);
+  expect(second.reason).toContain("Telegram");
+  t.approvals.decide(second.id, "deny", "web");
+  await waitFor(() => t.negotiations.get(n.id)?.status === "abandoned");
+  await waitFor(() => t.events.some((e) => e.type === "memory.committed"));
+  expect(await t.memory.read("negotiations.md")).toContain("the owner ended it");
+  await t.plugins.stopAll();
 });
 
 test("an older desktop-agent can't send", async () => {

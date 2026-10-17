@@ -48,7 +48,9 @@ export function negotiationText(n: Negotiation): string {
     case "abandoned":
       return "Abandoned.";
     case "expired":
-      return "The mandate wasn't approved in time.";
+      return n.closedAt && Date.parse(n.mandate.expiresAt) <= Date.parse(n.closedAt)
+        ? "The mandate ran out."
+        : "The mandate wasn't approved in time.";
     case "paid":
       return n.agreedPrice !== null ? `Paid ${money(n.agreedPrice, c)}.` : "Paid.";
     case "received":

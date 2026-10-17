@@ -29,8 +29,9 @@ import type { Spend } from "../spend";
 import type { Tasks } from "../tasks/service";
 import { type ListingFacts, parseKey, scoutTool } from "./appraise";
 import { collapse, type SendGate, sameAddress, sameHost } from "./gate";
-import { applyNote, mandateReason, mandateSummary } from "./mandate";
-import { QUIET_HOURS, type SendFacts } from "./policy";
+import { applyNote, mandateReason, mandateSummary, mandateTerms, widened } from "./mandate";
+import { QUIET_HOURS, type SendFacts, type SendInput } from "./policy";
+import { scamSignals } from "./scam";
 import { negotiateTools } from "./tools";
 
 export type NegotiationsDeps = {
@@ -108,6 +109,7 @@ const toMessage = (r: MessageRow): NegotiationMessage => ({
 
 /** A message's words as the record compares them: letters and digits only, lowercased. */
 const keyOf = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** What the desktop model read in a conversation, oldest first. */
 export type ConversationReport = { from: "seller" | "us"; text: string }[];
@@ -121,6 +123,8 @@ export const MAX_TEXT = 1000;
 
 export class Negotiations {
   readonly clock: () => number;
+  /** Mandate approvals whose decision is being applied now. */
+  private applying = new Set<number>();
 
   constructor(readonly d: NegotiationsDeps) {
     this.clock = d.clock ?? Date.now;
@@ -137,6 +141,10 @@ export class Negotiations {
       if (e.type === "approval.resolved" && e.approval.kind === "mandate")
         void this.mandateDecided(e.approval).catch((err) =>
           console.error(`mandate approval ${e.approval.id} failed`, err),
+        );
+      if (e.type === "approval.resolved" && e.approval.kind === "injection_warning")
+        void this.holdDecided(e.approval).catch((err) =>
+          console.error(`hold approval ${e.approval.id} failed`, err),
         );
     });
   }
@@ -426,12 +434,23 @@ export class Negotiations {
    * one, and a task sends the opening message. Denied or cancelled: abandoned. Unanswered: expired.
    */
   async mandateDecided(a: Approval) {
+    if (this.applying.has(a.id)) return;
     const r = this.d.db
       .query<Row, [number]>(`${SELECT} WHERE n.approval_id = ? AND n.status = 'awaiting_mandate'`)
       .get(a.id);
     if (!r) return;
     const n = this.toNegotiation(r);
     if (a.status === "pending") return;
+    // The event and the minute tick can both bring it while Haiku applies the note.
+    this.applying.add(a.id);
+    try {
+      await this.applyDecision(n, a);
+    } finally {
+      this.applying.delete(a.id);
+    }
+  }
+
+  private async applyDecision(n: Negotiation, a: Approval) {
     if (a.status !== "approved") {
       this.update(n.id, {
         status: a.status === "expired" ? "expired" : "abandoned",
@@ -450,6 +469,16 @@ export class Negotiations {
         return;
       }
       mandate = applied.mandate;
+      // Haiku read the note: anything that gives more room than you approved comes back to you first.
+      const more = widened(n, mandate);
+      if (more.length) {
+        this.update(n.id, { mandate: JSON.stringify(mandate) });
+        this.askMandate(
+          this.get(n.id) as Negotiation,
+          `Your note gives it more room than before. Approve to go ahead with this, or deny to end the negotiation.\n${more.join("\n")}\nYour note: ${a.note}`,
+        );
+        return;
+      }
     }
     this.update(n.id, {
       status: "open",
@@ -471,8 +500,8 @@ export class Negotiations {
   }
 
   /**
-   * Every minute: decisions on mandates the brain missed, and opening messages that are due. Nothing
-   * else wakes a negotiation until N3's inbox poller.
+   * Every minute: decisions on mandates the brain missed, mandates that ran out, and opening messages
+   * that are due. Nothing else wakes a negotiation until N3's inbox poller.
    */
   due() {
     const waiting = this.d.db
@@ -483,6 +512,29 @@ export class Negotiations {
     for (const w of waiting) {
       const a = this.d.approvals.get(w.approval_id);
       if (a && a.status !== "pending") void this.mandateDecided(a);
+    }
+    const holds = this.d.db
+      .query<{ approval_id: number }, []>(
+        "SELECT approval_id FROM negotiations WHERE status = 'open' AND approval_id IS NOT NULL",
+      )
+      .all();
+    for (const h of holds) {
+      const a = this.d.approvals.get(h.approval_id);
+      // Denied or unanswered while the brain was away; an approved one needs nothing more.
+      if (a?.kind === "injection_warning" && a.status !== "pending" && a.status !== "approved")
+        void this.holdDecided(a);
+    }
+    const lapsed = this.d.db
+      .query<{ id: number }, [string]>(
+        "SELECT id FROM negotiations WHERE status = 'open' AND json_extract(mandate, '$.expiresAt') <= ?",
+      )
+      .all(this.now());
+    for (const { id } of lapsed) {
+      this.update(id, { status: "expired", closed_at: this.now(), next_follow_up_at: null });
+      this.stopTasks(id);
+      // A hold waiting for you is moot now.
+      const held = this.get(id)?.approvalId;
+      if (held && this.d.approvals.get(held)?.status === "pending") this.d.approvals.cancel(held);
     }
     const ready = this.d.db
       .query<Row, [string]>(
@@ -499,7 +551,7 @@ export class Negotiations {
   /** The background task that writes and sends the opening message, under the reply that started it. */
   private startOpening(n: Negotiation) {
     const approval = n.approvalId ? this.d.approvals.get(n.approvalId) : null;
-    const note = approval?.note ?? null;
+    const note = approval?.kind === "mandate" ? approval.note : null;
     const card = this.d.db
       .query<{ id: number }, [number]>("SELECT id FROM messages WHERE negotiation_id = ? LIMIT 1")
       .get(n.id)?.id;
@@ -511,7 +563,8 @@ export class Negotiations {
       conversationId: n.conversationId ?? undefined,
       message: card,
       runKey: `negotiation:${n.id}`,
-      request: `The owner approved the mandate for negotiation #${n.id}: ${mandateSummary(n)}.${note ? `\nTheir note on it: ${note}` : ""}`,
+      // The listing's title is the seller's words, so it isn't among the owner's.
+      request: `The owner approved the mandate for negotiation #${n.id} (${n.listingUrl}): ${mandateTerms(n)}.${note ? `\nTheir note on it: ${note}` : ""}`,
     });
   }
 
@@ -531,24 +584,13 @@ export class Negotiations {
    */
   async send(
     n: Negotiation,
-    input: { text: string; offer: number | null; agree: boolean; stated: Stated | null },
+    input: SendInput,
     call: CallContext,
+    /** A message claimed for it already. */
+    claimed: number | null = null,
   ): Promise<string> {
     const text = collapse(input.text);
-    const msg = this.d.db
-      .query<{ id: number }, (string | number | null)[]>(
-        `INSERT INTO negotiation_messages (negotiation_id, direction, text, offer, agree, stated, status, created_at)
-         VALUES (?, 'out', ?, ?, ?, ?, 'sending', ?) RETURNING id`,
-      )
-      .get(
-        n.id,
-        text,
-        input.offer,
-        input.agree ? 1 : 0,
-        input.stated ? JSON.stringify(input.stated) : null,
-        this.now(),
-      )?.id;
-    if (!msg) throw new Error("message insert failed");
+    const msg = claimed ?? this.claimSend(n, input);
     const task = this.desktopTask(n, call, {
       title: `Message the seller: ${n.title}`.slice(0, 80),
       goal: sendGoal(n, text),
@@ -560,6 +602,33 @@ export class Negotiations {
       return `Sending it in desktop task #${task.id}, which shows under your reply. You'll hear how it went.`;
     const ended = await call.waitForTask(task.id);
     return this.sendOutcome(n.id, msg, ended);
+  }
+
+  /**
+   * Records a message as being sent, which blocks a second send in the negotiation from here on: call it
+   * right after the policy, before anything waits.
+   */
+  claimSend(n: Negotiation, input: SendInput): number {
+    const msg = this.d.db
+      .query<{ id: number }, (string | number | null)[]>(
+        `INSERT INTO negotiation_messages (negotiation_id, direction, text, offer, agree, stated, status, created_at)
+         VALUES (?, 'out', ?, ?, ?, ?, 'sending', ?) RETURNING id`,
+      )
+      .get(
+        n.id,
+        collapse(input.text),
+        input.offer,
+        input.agree ? 1 : 0,
+        input.stated ? JSON.stringify(input.stated) : null,
+        this.now(),
+      )?.id;
+    if (!msg) throw new Error("message insert failed");
+    return msg;
+  }
+
+  /** A claimed message that never got as far as its task. */
+  dropSend(messageId: number) {
+    this.setStatus(messageId, "failed");
   }
 
   /** Starts the desktop task that reads the conversation and records the seller's messages. */
@@ -578,9 +647,13 @@ export class Negotiations {
       .slice(before)
       .filter((m) => m.direction === "in");
     const head = `Desktop task #${ended.id} ended: ${ended.status}.`;
-    return fresh.length
-      ? `${head} New from the seller:\n${fresh.map((m) => `- ${m.text}`).join("\n")}`
-      : `${head} Nothing new from the seller.`;
+    const latest = this.get(n.id);
+    const held = latest ? this.held(latest) : null;
+    return `${
+      fresh.length
+        ? `${head} New from the seller:\n${fresh.map((m) => `- ${m.text}`).join("\n")}`
+        : `${head} Nothing new from the seller.`
+    }${held ? `\n${held}` : ""}`;
   }
 
   private desktopTask(
@@ -615,9 +688,13 @@ export class Negotiations {
     const fresh = this.messages(negotiationId).filter(
       (x) => x.direction === "in" && x.id > messageId,
     );
-    const replies = fresh.length
-      ? `\nThe seller wrote meanwhile:\n${fresh.map((x) => `- ${x.text}`).join("\n")}`
-      : "";
+    const n = this.get(negotiationId);
+    const held = n ? this.held(n) : null;
+    const replies = `${
+      fresh.length
+        ? `\nThe seller wrote meanwhile:\n${fresh.map((x) => `- ${x.text}`).join("\n")}`
+        : ""
+    }${held ? `\n${held}` : ""}`;
     switch (m?.status) {
       case "sent":
         return `Sent.${replies}`;
@@ -628,7 +705,10 @@ export class Negotiations {
     }
   }
 
-  /** What a negotiation's desktop task may do: send one message, or read. Null for other tasks. */
+  /**
+   * What a negotiation's desktop task may do: send one message, or read. Null for other tasks. Once the
+   * negotiation isn't open or its mandate ran out, a send task only reads.
+   */
   gateFor(taskId: number): SendGate | null {
     const r = this.d.db
       .query<
@@ -647,13 +727,92 @@ export class Negotiations {
       )
       .get(taskId);
     if (!r) return null;
+    const send = r.message_id !== null && this.sendStopped(taskId) === null;
     return {
-      mode: r.message_id ? "send" : "read",
-      text: r.text,
+      mode: send ? "send" : "read",
+      text: send ? r.text : null,
       listingUrl: r.listing_url,
       listingId: parseKey(r.listing_key)?.id ?? "",
       conversationUrl: r.conversation_url,
     };
+  }
+
+  /** Why a negotiation's desktop task may send nothing now, or null while it may. */
+  sendStopped(taskId: number): string | null {
+    const row = this.taskRow(taskId);
+    const n = row && this.get(row.negotiation_id);
+    if (!n) return null;
+    if (n.status !== "open") return `Negotiation #${n.id} is ${n.status}: nothing more is sent.`;
+    if (Date.parse(n.mandate.expiresAt) <= this.clock())
+      return `Negotiation #${n.id}'s mandate ran out: nothing more is sent.`;
+    return this.held(n);
+  }
+
+  /**
+   * Why a negotiation is held for the owner, or null: a seller's message looked like a scam, and
+   * nothing goes to the seller until the owner says to carry on.
+   */
+  held(n: Negotiation): string | null {
+    if (n.status !== "open" || !n.approvalId) return null;
+    const a = this.d.approvals.get(n.approvalId);
+    if (a?.kind !== "injection_warning" || a.status !== "pending") return null;
+    return `Negotiation #${n.id} is held: the seller's message looked like a scam, and the owner decides whether to carry on. Don't reply to the seller, open anything they sent, or close the negotiation; wait for the owner.`;
+  }
+
+  /** Holds a negotiation on a seller's message that looks like a scam, and asks the owner. */
+  private hold(n: Negotiation, text: string, signals: string[]) {
+    const title = n.title.length > 60 ? `${n.title.slice(0, 59)}…` : n.title;
+    const quoted = text.length > 500 ? `${text.slice(0, 499)}…` : text;
+    const approval = this.d.approvals.create({
+      taskId: null,
+      botId: n.botId,
+      conversationId: n.conversationId ?? undefined,
+      kind: "injection_warning",
+      summary: `Keep negotiating for “${title}”?`,
+      reason: `The seller wrote: “${quoted}”\nIt has ${signals.join("; ")}, which is how scams on marketplaces often start. Nothing more goes to the seller until you decide. Approve to carry on, or deny to end the negotiation.`,
+    });
+    this.update(n.id, { approval_id: approval.id });
+  }
+
+  /** The owner decided on a hold: carry on, or end the negotiation. */
+  async holdDecided(a: Approval) {
+    const r = this.d.db
+      .query<Row, [number]>(`${SELECT} WHERE n.approval_id = ? AND n.status = 'open'`)
+      .get(a.id);
+    if (!r || a.status === "pending") return;
+    const n = this.toNegotiation(r);
+    if (a.status === "approved") return this.emit(n.id);
+    await this.close(
+      n.botId,
+      n,
+      "abandoned",
+      null,
+      a.status === "denied"
+        ? "The seller's message looked like a scam, and the owner ended it."
+        : "The seller's message looked like a scam, and nobody said to carry on.",
+    );
+  }
+
+  /**
+   * Cancels a negotiation's unfinished tasks: the opening task and the desktop tasks that send or read.
+   * `except`: the task asking, with the tasks above it, which carry on.
+   */
+  stopTasks(id: number, except: number | null = null) {
+    const keep = new Set<number>();
+    for (let t = except === null ? null : this.d.tasks.get(except); t; ) {
+      keep.add(t.id);
+      t = t.parentId ? this.d.tasks.get(t.parentId) : null;
+    }
+    const ids = this.d.db
+      .query<{ task_id: number }, [number]>(
+        `SELECT nt.task_id FROM negotiation_tasks nt JOIN tasks t ON t.id = nt.task_id
+         WHERE nt.negotiation_id = ? AND t.status NOT IN ('done', 'failed', 'cancelled')`,
+      )
+      .all(id)
+      .map((r) => r.task_id);
+    const opening = this.d.tasks.activeFor(`negotiation:${id}`);
+    if (opening) ids.push(opening.id);
+    for (const t of ids) if (!keep.has(t)) this.d.tasks.cancel(t);
   }
 
   private taskRow(taskId: number) {
@@ -673,7 +832,15 @@ export class Negotiations {
     taskId: number,
     tabUrl: string | null,
     report: ConversationReport,
-    state: { sent: boolean },
+    state: {
+      sent: boolean;
+      /** Something was typed in this task: the approved text may be a draft in the box. */
+      typed?: boolean;
+      /** What the text boxes hold now. */
+      drafts?: string[];
+      /** The page's text, which may name the listing. */
+      pageText?: string | null;
+    },
   ): Recorded {
     const row = this.taskRow(taskId);
     const n = row && this.get(row.negotiation_id);
@@ -690,6 +857,7 @@ export class Negotiations {
         .map((m) => keyOf(m.text)),
     );
     const lastOurs = report.findLastIndex((m) => m.from === "us");
+    const drafts = new Set((state.drafts ?? []).map(keyOf));
     let added = 0;
     let after = 0;
     let alreadySent = false;
@@ -703,8 +871,13 @@ export class Negotiations {
           outgoing.status !== "sent" &&
           !sentBefore.has(key)
         ) {
-          alreadySent = !state.sent;
-          this.setStatus(outgoing.id, "sent");
+          // The send went through the gate: it shows now.
+          if (state.sent) this.setStatus(outgoing.id, "sent");
+          // An earlier task's send shows, unless it's text typed here, or a draft still in the box.
+          else if (!state.typed && !drafts.has(key)) {
+            alreadySent = true;
+            this.setStatus(outgoing.id, "sent");
+          }
         }
         return;
       }
@@ -713,28 +886,38 @@ export class Negotiations {
         stored.set(key, seen - 1);
         return;
       }
+      const text = collapse(m.text).slice(0, 4000);
       this.d.db
         .query(
           `INSERT INTO negotiation_messages (negotiation_id, direction, text, status, created_at)
            VALUES (?, 'in', ?, 'received', ?)`,
         )
-        .run(n.id, collapse(m.text).slice(0, 4000), this.now());
+        .run(n.id, text, this.now());
       added++;
       if (i > lastOurs) after++;
+      const signals = scamSignals(text, n.mandate.allow);
+      const current = signals.length ? this.get(n.id) : null;
+      if (current && !this.held(current)) this.hold(current, text, signals);
     });
-    // The conversation's own address, once a message has gone there or a read found it.
+    // The conversation's own address, once a read finds one that names this listing; a send records
+    // where it went in sendPassed.
     const mode = row.message_id ? "send" : "read";
     if (
       tabUrl &&
       !n.conversationUrl &&
-      (mode === "read" || state.sent) &&
-      sameHost(tabUrl, n.listingUrl) &&
-      !sameAddress(tabUrl, n.listingUrl)
+      mode === "read" &&
+      this.conversationFor(n, tabUrl, state.pageText ?? null)
     )
       this.update(n.id, { conversation_url: tabUrl.split("#")[0] ?? tabUrl });
     else this.update(n.id, {});
+    // Closed, or its mandate ran out, since the message was approved: it doesn't go either.
+    const stopped = mode === "send" && !state.sent ? this.sendStopped(taskId) : null;
     const stale =
-      mode === "send" && !state.sent && !alreadySent && after > 0 && outgoing?.status === "sending";
+      mode === "send" &&
+      !state.sent &&
+      !alreadySent &&
+      (after > 0 || stopped !== null) &&
+      outgoing?.status === "sending";
     if (stale && outgoing) this.setStatus(outgoing.id, "failed");
     const got = added
       ? `Recorded ${added} new message${added === 1 ? "" : "s"} from the seller.`
@@ -747,7 +930,10 @@ export class Negotiations {
       };
     if (stale)
       return {
-        text: `${got} The seller wrote since this message was approved, so it isn't sent: don't send it. Finish the task, saying the seller wrote first.`,
+        text:
+          after > 0
+            ? `${got} The seller wrote since this message was approved, so it isn't sent: don't send it. Finish the task, saying the seller wrote first.`
+            : `${got} ${stopped} Don't send it; finish the task.`,
         stale,
         alreadySent,
       };
@@ -762,12 +948,45 @@ export class Negotiations {
   }
 
   /** The gate let the send through: whether the text then left the box. */
-  sendPassed(taskId: number, confirmed: boolean) {
+  /**
+   * The gate let the send through: whether the text then left the box, and the tab's address then,
+   * which is the conversation it went to.
+   */
+  sendPassed(taskId: number, confirmed: boolean, tabUrl: string | null = null) {
     const row = this.taskRow(taskId);
     if (!row?.message_id) return;
     const m = this.message(row.message_id);
     if (m?.status !== "sending") return;
+    const n = this.get(row.negotiation_id);
+    if (
+      confirmed &&
+      tabUrl &&
+      n &&
+      !n.conversationUrl &&
+      sameHost(tabUrl, n.listingUrl) &&
+      !sameAddress(tabUrl, n.listingUrl)
+    )
+      this.d.db
+        .query("UPDATE negotiations SET conversation_url = ? WHERE id = ?")
+        .run(tabUrl.split("#")[0] ?? tabUrl, n.id);
     this.setStatus(row.message_id, confirmed ? "sent" : "unconfirmed");
+  }
+
+  /**
+   * A page a read found is this negotiation's conversation: on the listing's site, not the listing, and
+   * naming the listing, in its address (the listing's id) or on the page (its title).
+   */
+  private conversationFor(n: Negotiation, url: string, pageText: string | null): boolean {
+    if (!sameHost(url, n.listingUrl) || sameAddress(url, n.listingUrl)) return false;
+    const id = parseKey(n.listingKey)?.id ?? "";
+    const where = (() => {
+      const u = new URL(url);
+      return `${u.pathname}${u.search}`;
+    })();
+    if (id.length >= 5 && new RegExp(`[/=-]${escapeRe(id)}(?:[/?&#.-]|$)`, "i").test(where))
+      return true;
+    const title = keyOf(n.title).slice(0, 30);
+    return title.length >= 6 && pageText !== null && keyOf(pageText).includes(title);
   }
 
   private setStatus(messageId: number, status: NegotiationMessage["status"]) {
@@ -804,15 +1023,17 @@ export class Negotiations {
   }
 
   /**
-   * Ends a negotiation: its status and price, the want agreed when it is, and notes on the seller and
-   * what worked in the bot's memory.
+   * Ends a negotiation: its status and price, the want agreed when it is, its unfinished tasks
+   * cancelled (but `from`, the task closing it), and notes on the seller and what worked in the bot's
+   * memory.
    */
   async close(
-    bot: Bot,
+    botId: string,
     n: Negotiation,
     outcome: "agreed" | "lost" | "abandoned",
     price: number | null,
     notes: string | null,
+    from: number | null = null,
   ): Promise<string> {
     const now = this.now();
     this.update(n.id, {
@@ -823,23 +1044,24 @@ export class Negotiations {
     });
     if (outcome === "agreed")
       this.d.db.query("UPDATE wants SET status = 'agreed' WHERE id = ?").run(n.wantId);
-    // Its mandate no longer needs an answer.
-    if (n.status === "awaiting_mandate" && n.approvalId) this.d.approvals.cancel(n.approvalId);
+    // A send already queued mustn't go now.
+    this.stopTasks(n.id, from);
+    // Its mandate, or a hold, no longer needs an answer.
+    if (n.approvalId && this.d.approvals.get(n.approvalId)?.status === "pending")
+      this.d.approvals.cancel(n.approvalId);
     const lines = [
       `## ${now.slice(0, 10)} · ${n.title}`,
       `${n.listingKey} ${n.listingUrl}`,
       `${outcome}${price !== null ? ` at ${price} ${n.mandate.currency}` : ""}; asking ${n.asking ?? "?"}, opened ${n.mandate.opening}, aimed ${n.mandate.target}, limit ${n.mandate.limit}.`,
       ...(notes ? [notes.trim()] : []),
     ];
-    const folder = botFolder(bot.id);
+    const folder = botFolder(botId);
     const path = folder ? `${folder}/negotiations.md` : "negotiations.md";
-    const before = (await this.d.memory.exists(path))
-      ? await this.d.memory.read(path)
-      : "# Negotiations\n";
-    const sha = await this.d.memory.write(
+    // Read and written in one go, so two closes at once both keep their notes.
+    const sha = await this.d.memory.update(
       path,
-      `${before.trimEnd()}\n\n${lines.join("\n")}\n`,
-      this.d.bots.author(bot.id),
+      (current) => `${(current ?? "# Negotiations\n").trimEnd()}\n\n${lines.join("\n")}\n`,
+      this.d.bots.author(botId),
       `Negotiation #${n.id}: ${outcome}`,
     );
     if (sha)
@@ -847,9 +1069,17 @@ export class Negotiations {
         type: "memory.committed",
         sha,
         message: `Negotiation #${n.id}: ${outcome}`,
-        author: this.d.bots.nameOf(bot.id),
+        author: this.d.bots.nameOf(botId),
       });
     return path;
+  }
+
+  /** The owner stops a negotiation: abandoned, and nothing more goes. Null if it had ended already. */
+  async stop(id: number): Promise<Negotiation | null> {
+    const n = this.get(id);
+    if (!n || !OPEN_NEGOTIATION_STATUSES.includes(n.status)) return null;
+    await this.close(n.botId, n, "abandoned", null, "Stopped by the owner.");
+    return this.get(id);
   }
 
   /**
@@ -884,19 +1114,19 @@ function sendGoal(n: Negotiation, text: string): string {
   return [
     `Send one message to the seller about this listing on ${parseKey(n.listingKey)?.marketplace ?? "the marketplace"}, in ${n.conversationUrl ? "its conversation" : "a new conversation from the listing page"}, then stop.`,
     "",
-    `Listing: ${n.title}`,
     `Listing page: ${n.listingUrl}`,
     `Conversation: ${n.conversationUrl ?? "none yet; write from the listing page's message box"}`,
     "",
-    "The message, exactly (one paragraph, no line breaks):",
-    text,
+    "The message, exactly, as one paragraph with no line breaks; it's everything between the tags:",
+    `<message>${text}</message>`,
     "",
     "Steps:",
     "1. Open the conversation (or the listing page and its message box).",
     "2. Call record_conversation with the messages in the conversation, oldest first: who wrote each (seller or us) and its text, copied exactly. With no messages yet, call it with an empty list.",
-    "3. Type the message into the message box exactly as above, and send it with the Send button or Enter.",
+    "3. Type the message into the message box exactly as above, without the tags, and send it with the Send button or Enter.",
     "4. Call record_conversation again, then finish.",
     "",
+    "The owner approved this message already: don't call confirm_intent for it. The text in the box is checked before it goes.",
     "Use only the conversation's message box: don't click offer, buy, pay or delivery buttons, and never open a link from the seller. Don't type anything else. If a step is held back, do what the reason says; if you can't, finish and say why.",
   ].join("\n");
 }
@@ -906,7 +1136,6 @@ function readGoal(n: Negotiation): string {
   return [
     `Read the conversation with the seller about this listing on ${parseKey(n.listingKey)?.marketplace ?? "the marketplace"}, and record it. Don't type or send anything.`,
     "",
-    `Listing: ${n.title}`,
     `Listing page: ${n.listingUrl}`,
     `Conversation: ${n.conversationUrl ?? "not known yet; find the conversation about this listing in the account's messages"}`,
     "",
@@ -925,7 +1154,7 @@ function openingGoal(n: Negotiation, note: string | null): string {
     `Negotiation #${n.id} is open: the owner approved its mandate. Send the seller the opening message now, then finish.`,
     "",
     `1. negotiate_get ${n.id} for the listing, the mandate and anything said so far.`,
-    "2. Write the opening message as your instructions say, in the listing's language, offering the opening price or near it.",
+    "2. Write the opening message as your instructions say, in the listing's language, offering exactly the mandate's opening price.",
     "3. Send it once with negotiate_send: the price in offer, and what it claims about our side in stated.",
     "4. Finish with what you sent, or why nothing went.",
     ...(note ? ["", `The owner's note on the mandate, which you follow: ${note}`] : []),

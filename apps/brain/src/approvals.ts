@@ -7,8 +7,13 @@ import type { EventBus } from "./events";
 import type { Notifier } from "./notify";
 
 const TTL_MS = 24 * 3600_000;
-/** Kinds whose notification only offers "Open in Hatbot" (PLAN.md §6.2). */
-const WEB_ONLY: ApprovalKind[] = ["payment", "account_security"];
+/**
+ * Kinds a notification's Approve button may decide, from a locked phone (PLAN.md §6.2). The rest
+ * (money, accounts, mandates, budget raises, suspected injections) are approved in the app; a
+ * notification offers them "Open in Hatbot" and Deny.
+ */
+const NOTIFY_APPROVES: ApprovalKind[] = ["send", "submit_personal_data", "delete", "other"];
+export const approvableFromNotification = (kind: ApprovalKind) => NOTIFY_APPROVES.includes(kind);
 
 export type Outcome = "approved" | "denied" | "expired" | "cancelled";
 
@@ -84,10 +89,11 @@ export class Approvals {
     private bots?: Bots,
   ) {
     this.key = this.signingKey();
-    // Nothing waits on approvals from before a restart: their tasks were stopped. A mandate waits for
-    // no task: its negotiation takes the answer whenever it comes (PLAN.md §16.1).
+    // Nothing waits on approvals from before a restart: their tasks were stopped. A negotiation's
+    // mandate or hold waits for no task: it takes the answer whenever it comes (PLAN.md §16.1).
     db.query(
-      "UPDATE approvals SET status = 'cancelled', decided_at = ? WHERE status = 'pending' AND kind != 'mandate'",
+      `UPDATE approvals SET status = 'cancelled', decided_at = ? WHERE status = 'pending' AND kind != 'mandate'
+       AND id NOT IN (SELECT approval_id FROM negotiations WHERE approval_id IS NOT NULL)`,
     ).run(this.now());
   }
 
@@ -202,13 +208,20 @@ export class Approvals {
     return approval;
   }
 
-  /** Your decision, with what you told the task. Null if the approval isn't pending any more. */
+  /**
+   * Your decision, with what you told the task. Null if the approval isn't pending any more, or it's
+   * one a notification can't approve.
+   */
   decide(
     id: number,
     decision: "approve" | "deny",
     via: "web" | "ntfy",
     note?: string,
   ): Approval | null {
+    if (via === "ntfy" && decision === "approve") {
+      const a = this.get(id);
+      if (!a || !approvableFromNotification(a.kind)) return null;
+    }
     return this.resolve(id, decision === "approve" ? "approved" : "denied", via, note || null);
   }
 
@@ -274,9 +287,9 @@ export class Approvals {
         .join("\n"),
       priority: 4,
       click: open,
-      actions: WEB_ONLY.includes(a.kind)
-        ? [{ action: "view", label: "Open in Hatbot", url: open }]
-        : [button("approve"), button("deny")],
+      actions: approvableFromNotification(a.kind)
+        ? [button("approve"), button("deny")]
+        : [{ action: "view", label: "Open in Hatbot", url: open }, button("deny")],
     });
   }
 }

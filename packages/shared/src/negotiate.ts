@@ -13,7 +13,7 @@ export type Mandate = {
   target: number;
   /** Buying: the most it pays (the ceiling). Selling: the least it takes (the floor). */
   limit: number;
-  /** Delivery terms, e.g. "OLX shipping with buyer protection, or pickup in Prague". */
+  /** Delivery terms, e.g. "OLX shipping with buyer protection, or pickup in Kraków". */
   delivery: string;
   /** After this, nothing more is sent without asking. */
   expiresAt: string;

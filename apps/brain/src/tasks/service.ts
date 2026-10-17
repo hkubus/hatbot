@@ -312,8 +312,15 @@ export class Tasks {
     conversationId?: number;
     /** Called with its id before it starts, e.g. to record what it's for. */
     created?: (id: number) => void;
+    /** It starts tainted: the chat that started it had read untrusted content, this. */
+    taintedBy?: string | null;
+    /** Your own recent chat messages, when you started it from the chat. */
+    request?: string;
   }): Task {
     const p = input.parent;
+    const taintedBy =
+      input.taintedBy ||
+      (p?.tainted ? `Task #${p.id}, which had read: ${p.taintedBy ?? "untrusted content"}` : null);
     const botId = input.botId ?? p?.botId ?? HATBOT_ID;
     const conversationId = input.conversationId ?? this.conversationOf(p?.id) ?? this.home(botId);
     const id = this.insert({
@@ -332,6 +339,9 @@ export class Tasks {
       schedule_id: p?.scheduleId ?? null,
       trigger_id: p?.triggerId ?? null,
       watcher_id: p?.watcherId ?? null,
+      request: input.request ?? null,
+      tainted: taintedBy ? 1 : 0,
+      tainted_by: taintedBy,
     });
     if (!p && !(input.message && this.d.chats.attachTask(input.message, id)))
       this.d.chats.addCard(conversationId, botId, "task", `Task #${id}: ${input.title}`, {

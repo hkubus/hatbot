@@ -39,6 +39,8 @@ function negotiationText(neg: Negotiations, n: Negotiation): string {
     `Conversation: ${n.conversationUrl ?? "none recorded yet"}`,
     `Mandate${n.status === "awaiting_mandate" ? " (waiting for the owner's approval)" : ""}: open at ${zl(m.opening)}, aim for ${zl(m.target)}, ${n.role === "buy" ? "pay at most" : "take at least"} ${zl(m.limit)}; delivery: ${m.delivery}; until ${m.expiresAt.slice(0, 16).replace("T", " ")} UTC; contact details allowed: ${m.allow.length ? m.allow.join(", ") : "none"}.`,
   ];
+  const held = neg.held(n);
+  if (held) head.push(held);
   const c = n.claims;
   const claims = [
     c.max !== null ? `your stated max ${zl(c.max)}` : null,
@@ -232,15 +234,27 @@ export function negotiateTools(
       policy: (i) => {
         const n = neg.get(i.negotiation);
         if (!n || n.botId !== bot.id) return block(`There's no negotiation #${i.negotiation}.`);
+        const held = neg.held(n);
+        if (held) return block(held);
         return sendPolicy(n, toSend(i), neg.facts(n));
       },
       run: async (i, call) => {
         const n = neg.mine(bot, i.negotiation);
+        const input = toSend(i);
+        const held = neg.held(n);
+        if (held) throw new PluginError(held);
         // Again, since an approval may have taken hours: quiet hours and the pace still hold.
-        const v = sendPolicy(n, toSend(i), neg.facts(n));
+        const v = sendPolicy(n, input, neg.facts(n));
         if (v.action === "block") throw new PluginError(v.why);
-        await neg.desktopReady();
-        return neg.send(n, toSend(i), call);
+        // In flight from here, before anything waits, so a second send at once is blocked.
+        const msg = neg.claimSend(n, input);
+        try {
+          await neg.desktopReady();
+        } catch (err) {
+          neg.dropSend(msg);
+          throw err;
+        }
+        return neg.send(n, input, call, msg);
       },
     }),
 
@@ -258,9 +272,10 @@ export function negotiateTools(
       policy: () => covered("It only reads the conversation"),
       run: async ({ negotiation }, call) => {
         const n = neg.mine(bot, negotiation);
+        await neg.desktopReady();
+        // After the wait, so the check and the task's record go together.
         const busy = neg.checking(n.id) ?? neg.inFlight(n.id)?.taskId;
         if (busy) throw new PluginError(`Desktop task #${busy} is in that conversation already.`);
-        await neg.desktopReady();
         return neg.check(n, call);
       },
     }),
@@ -268,7 +283,7 @@ export function negotiateTools(
     tool({
       name: "negotiate_close",
       description:
-        "End a negotiation: agreed (at `price`), lost (the seller sold it or said no) or abandoned (you gave up). Put what's worth remembering in `notes`: how the seller haggled, what worked and what didn't. It doesn't message the seller; paying comes after, and always asks.",
+        "End a negotiation: agreed (at `price`), lost (the seller sold it, said no, or won't come within the limit) or abandoned (you or the owner gave up on it). Put what's worth remembering in `notes`: how the seller haggled, what worked and what didn't. It doesn't message the seller; paying comes after, and always asks.",
       schema: z.object({
         negotiation: Id,
         outcome: z.enum(["agreed", "lost", "abandoned"]),
@@ -285,6 +300,10 @@ export function negotiateTools(
         if (!n || n.botId !== bot.id) return block(`There's no negotiation #${i.negotiation}.`);
         if (n.status !== "open" && n.status !== "awaiting_mandate")
           return block(`Negotiation #${n.id} is ${n.status} already.`);
+        if (n.status === "awaiting_mandate" && i.outcome === "agreed")
+          return block(
+            "Its mandate isn't approved yet, so nothing can have been agreed. Close it as lost or abandoned.",
+          );
         if (i.outcome !== "agreed") return covered("Ending it sends nothing");
         if (i.price === undefined) return block("Give the agreed price.");
         const outside = n.role === "buy" ? i.price > n.mandate.limit : i.price < n.mandate.limit;
@@ -295,9 +314,16 @@ export function negotiateTools(
             )
           : covered("Within the mandate");
       },
-      run: async (i) => {
+      run: async (i, call) => {
         const n = neg.mine(bot, i.negotiation);
-        const path = await neg.close(bot, n, i.outcome, i.price ?? null, i.notes ?? null);
+        const path = await neg.close(
+          bot.id,
+          n,
+          i.outcome,
+          i.price ?? null,
+          i.notes ?? null,
+          call.task?.id ?? null,
+        );
         const scout = await neg.recordOutcome(available, n, i.outcome, i.price ?? null);
         return `Negotiation #${n.id} is ${i.outcome}. Notes are in ${path}.${scout ? ` ${scout}` : ""}${i.outcome === "agreed" ? " Paying is a separate desktop task, which stops at the checkout and asks the owner." : ""}`;
       },

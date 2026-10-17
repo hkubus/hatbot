@@ -19,9 +19,11 @@ import { type Outcome, ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import { collapse, type GateState, gateCheck, refused, sendsWith } from "../negotiate/gate";
+import { marketplaceSend } from "../negotiate/marketplace";
 import { destructive } from "../plugins/ssh/policy";
 import { BudgetError, estimateTokens, priceOf, usesReserve } from "../spend";
 import { skillPath } from "../teach/skills";
+import { approvalKind } from "./approval-kind";
 import { checkFor, consequential } from "./policy";
 import { DesktopSendToChat, SEND_TO_CHAT_DESCRIPTION, sendToChat } from "./send-to-chat";
 import type { Tasks } from "./service";
@@ -314,6 +316,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   /** A negotiation's task: it may send one approved message, or only read (PLAN.md §16.3). */
   const gate = tasks.negotiations?.gateFor(id) ?? null;
   const gateState: GateState = { recorded: false, sent: false, stopped: null };
+  /** Text was typed or pasted in this task: what's in a box may be ours, not sent. */
+  let typed = false;
   const sources = new Set<string>();
   const trustedHosts = new Set<string>();
   const messages: Anthropic.Beta.BetaMessageParam[] = [];
@@ -556,6 +560,13 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       tasks.addStep(id, { kind: "note", name: "Held back", detail: no, url: lastUrl });
       return textResult(call, `Not run: ${no}`, true);
     }
+    if (
+      call.name === "type" ||
+      call.name === "form_input" ||
+      ((call.name === "key" || call.name === "hold_key") &&
+        /(ctrl|super)\+v|shift\+insert/i.test(String(input.text ?? "")))
+    )
+      typed = true;
     const check = gate ? sendsWith(call.name, input) : checkFor(call.name, input);
     /** Looks again at what the check looked at, to see whether a send left the text box. */
     let inspectAgain: (() => Promise<AgentElement | null>) | null = null;
@@ -580,7 +591,11 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       }
       el = await inspectAgain();
       let label = consequential(check, el);
+      // Outside a negotiation, anything that could message a seller asks first.
+      if (!gate && !label) label = marketplaceSend(check, el, lastUrl);
       if (gate) {
+        // Closed, or its mandate ran out, since the task started.
+        gateState.stopped ||= tasks.negotiations?.sendStopped(id) ?? null;
         const g = gateCheck(gate, gateState, check, el, label);
         if (g.action === "hold") {
           tasks.addStep(id, { kind: "note", name: "Held back", detail: g.why, url: lastUrl });
@@ -622,7 +637,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       // One message, once: whether it went or not, nothing more goes from this task.
       gateState.sent = true;
       const went = await sentFrom(inspectAgain);
-      tasks.negotiations?.sendPassed(id, went);
+      // Where it went: the tab right after, before the model can move it.
+      const tab = went ? await agent.context(false).catch(() => null) : null;
+      tasks.negotiations?.sendPassed(id, went, tab?.url ?? null);
       const note = went
         ? "The message went: the text box is empty now. Call record_conversation, then finish."
         : "Send was clicked, but the text is still in the box, so it may not have gone. Don't try again: call record_conversation, then finish.";
@@ -661,8 +678,14 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     if (!p.success) return textResult(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
     if (!gate || !tasks.negotiations)
       return textResult(call, "This task has no negotiation.", true);
-    const tab = await agent.context(false).catch(() => null);
-    const r = tasks.negotiations.record(id, tab?.url ?? null, p.data.messages, gateState);
+    const tab = await agent.context(true).catch(() => null);
+    const box = await agent.inspect().catch(() => null);
+    const r = tasks.negotiations.record(id, tab?.url ?? null, p.data.messages, {
+      sent: gateState.sent,
+      typed,
+      drafts: box?.fields ?? [],
+      pageText: tab?.text ?? null,
+    });
     gateState.recorded = true;
     if (r.stale || r.alreadySent) gateState.stopped = r.text;
     tasks.addStep(id, {
@@ -683,6 +706,16 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         "Not asked: this task only reads the conversation. Record it and finish.",
         true,
       );
+    // The message was approved with its mandate, and the gate checks the box before it goes. Nothing
+    // else is for this task to do, so nothing is asked and nothing is armed.
+    if (gate)
+      return textResult(
+        call,
+        p.data.kind === "send"
+          ? "Not needed: the message is approved already, and the text in the box is checked before it goes. Type it exactly and send it with the Send button or Enter."
+          : "Not asked: this task only sends the approved message. Don't click offer, buy, pay or delivery buttons; if one is in the way, finish and say why.",
+        p.data.kind !== "send",
+      );
     const bytes = await agent.screenshot();
     const step = tasks.addStep(id, {
       kind: "screenshot",
@@ -691,7 +724,12 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       url: lastUrl,
     });
     await capture(bytes, "Before approval", "screenshot", step.id);
-    const { outcome, note } = await askApproval({ ...p.data, screenshotStepId: step.id });
+    const page = await agent.context(true).catch(() => null);
+    const kind = approvalKind(p.data.kind, p.data, {
+      url: page?.url ?? lastUrl,
+      text: page?.text ?? null,
+    });
+    const { outcome, note } = await askApproval({ ...p.data, kind, screenshotStepId: step.id });
     if (outcome !== "approved") {
       return textResult(
         call,

@@ -397,7 +397,7 @@ export const TOOLS = [
     schema: DesktopTaskInput,
     run: async (
       { title, goal, success_criteria, skill },
-      { tasks, messageId, memory, bot, conversationId },
+      { tasks, messageId, memory, bot, conversationId, tainted, ownerSaid },
     ) => {
       if (!tasks) return "Desktop tasks aren't available.";
       const missing = await missingSkill(memory, skill);
@@ -411,6 +411,8 @@ export const TOOLS = [
         botId: bot?.id,
         conversationId,
         message: messageId,
+        taintedBy: chatTaint(tainted?.()),
+        request: ownerSaid?.(),
       });
       return `Started task #${task.id}. It's running in the background; the owner sees its progress and result under this reply. Don't wait for it.`;
     },
