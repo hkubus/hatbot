@@ -229,7 +229,8 @@ html[data-theme="dark"] {
 html,
 body {
   margin: 0;
-  height: 100%;
+  /* What's visible above a phone's keyboard (viewport.ts). */
+  height: var(--app-h, 100%);
   background: var(--bg);
   color: var(--text);
 }
@@ -289,7 +290,7 @@ svg.i {
   --sb-w: 232px;
   display: grid;
   grid-template-columns: var(--sb-w) minmax(0, 1fr);
-  height: 100dvh;
+  height: var(--app-h, 100dvh);
 }
 
 /* Sidebar — translucent, macOS source list */
@@ -2380,6 +2381,15 @@ html[data-theme="dark"] .seg button.active {
   }
   .show-phone {
     display: grid;
+  }
+  /* Typing, so the on-screen keyboard is up: the tab bar steps aside for the field. */
+  body:has(:is(textarea, input:not([type="checkbox"], [type="radio"], [type="range"])):focus)
+  .tabbar {
+    display: none;
+  }
+  body:has(:is(textarea, input:not([type="checkbox"], [type="radio"], [type="range"])):focus)
+    .main {
+    padding-bottom: 0;
   }
 }
 

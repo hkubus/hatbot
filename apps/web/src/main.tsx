@@ -4,6 +4,9 @@ import { App } from "./App";
 import { ErrorBoundary } from "./boundary";
 import { reloadOnce } from "./reload";
 import "./styles.css";
+import { followViewport } from "./viewport";
+
+followViewport();
 
 // A tab opened before an Update asks for the old build's chunks, which are gone: load the new build.
 window.addEventListener("vite:preloadError", (e) => {
