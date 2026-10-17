@@ -77,10 +77,14 @@ export class AuthService {
     const passwordOk = await Bun.password.verify(password, owner.password_hash);
     const step = verifyTotp(owner.totp_secret, totp, this.clock());
     if (!passwordOk || step === null || step <= owner.totp_last_step) return false;
-    // Only advance if nobody used this step concurrently.
+    // Only advance if nobody used this step concurrently, and the password and authenticator are still
+    // the ones checked: a change while the check ran signs out everything but the changer.
     const res = this.db
-      .query("UPDATE owner SET totp_last_step = ? WHERE id = 1 AND totp_last_step < ?")
-      .run(step, step);
+      .query(
+        `UPDATE owner SET totp_last_step = ? WHERE id = 1 AND totp_last_step < ?
+         AND password_hash = ? AND totp_secret = ?`,
+      )
+      .run(step, step, owner.password_hash, owner.totp_secret);
     return res.changes === 1;
   }
 

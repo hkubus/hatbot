@@ -567,6 +567,27 @@ describe("your account", () => {
     ).toBe(200);
   });
 
+  test("a sign-in still being checked when the authenticator changes doesn't get in", async () => {
+    const t = await testApp();
+    const { secret, password, cookie } = await setUpOwner(t);
+    const start = await t.call(
+      "POST",
+      "/auth/totp/start",
+      { password, totp: t.code(secret) },
+      { cookie },
+    );
+    const next = (await start.json()) as { secret: string };
+    // The old authenticator's next code, which is still let in.
+    t.advance(30_000);
+    const ahead = t.code(secret);
+    t.advance(-30_000);
+    const intruder = t.call("POST", "/auth/login", { password, totp: ahead });
+    const done = await t.call("POST", "/auth/totp", { totp: t.code(next.secret) }, { cookie });
+    expect(done.status).toBe(200);
+    expect((await intruder).status).toBe(401);
+    expect(t.auth.listSessions()).toHaveLength(1);
+  });
+
   test("a new authenticator not confirmed in 10 minutes is dropped", async () => {
     const { t, secret, password, cookie } = await signedInTwice();
     const start = await t.call(
