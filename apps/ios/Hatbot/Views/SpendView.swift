@@ -53,6 +53,8 @@ struct LimitsView: View {
   @State private var saved: Limits?
   @State private var saving = false
   @State private var error: String?
+  /// Fields that are blank or aren't a number: they keep the last number, which Save mustn't send.
+  @State private var unreadable: Set<String> = []
 
   var body: some View {
     Form {
@@ -107,7 +109,7 @@ struct LimitsView: View {
   }
 
   private var valid: Bool {
-    guard let l = limits else { return false }
+    guard let l = limits, unreadable.isEmpty else { return false }
     return l.taskUsd > 0 && (l.researchUsd ?? 1) > 0 && l.dailyUsd > 0 && l.monthlyUsd > 0
       && (l.alertReserveUsd ?? 0) >= 0
   }
@@ -121,7 +123,7 @@ struct LimitsView: View {
   }
 
   private func field(_ label: String, _ value: Binding<Double>) -> some View {
-    LabeledContent(label) { MoneyField(label: label, value: value) }
+    LabeledContent(label) { MoneyField(label: label, value: value, unreadable: $unreadable) }
   }
 
   private func save() async {
@@ -143,6 +145,7 @@ struct LimitsView: View {
 private struct MoneyField: View {
   let label: String
   @Binding var value: Double
+  @Binding var unreadable: Set<String>
   @State private var text = ""
   @FocusState private var focused: Bool
 
@@ -156,7 +159,12 @@ private struct MoneyField: View {
     }
     .onAppear { text = Format.amountText(value) }
     .onChange(of: text) { _, typed in
-      if let amount = Format.amount(typed) { value = amount }
+      if let amount = Format.amount(typed) {
+        value = amount
+        unreadable.remove(label)
+      } else {
+        unreadable.insert(label)
+      }
     }
     // Loaded or saved meanwhile: shown, unless you're typing.
     .onChange(of: value) { _, v in if !focused { text = Format.amountText(v) } }
