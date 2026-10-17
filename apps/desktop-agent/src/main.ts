@@ -181,6 +181,8 @@ const liveQueue = new LiveQueue((m) => serial(() => liveInput(m)));
 const server = Bun.serve<{ off?: () => void; behind?: Uint8Array }>({
   hostname: host,
   port: Number(port),
+  // A render, a script or a file copy answers after minutes, not Bun's default 10 seconds.
+  idleTimeout: 0,
   async fetch(req, srv) {
     const url = new URL(req.url);
     if (!authorized(req)) return json({ error: "unauthorized" }, 401);

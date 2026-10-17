@@ -275,6 +275,9 @@ const server = Bun.serve({
   port: config.port,
   // Attachments are at most 25 MB; a little over for the multipart framing.
   maxRequestBodySize: 26 * 1024 * 1024,
+  // Bun drops a request whose answer takes over 10 seconds, and Check everything or deleting a
+  // conversation can wait that long on the desktop or a model. 255 is the most Bun allows.
+  idleTimeout: 255,
   fetch: (req, srv) =>
     new URL(req.url).pathname.startsWith("/api/") ? app.fetch(req, srv) : web(req),
   // Only what's sent with `compress` (routes/stream.ts) is compressed: live frames are JPEG already.
