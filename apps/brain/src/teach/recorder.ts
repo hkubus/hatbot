@@ -56,6 +56,14 @@ const MODIFIERS: Record<string, string> = { Control: "ctrl", Alt: "alt", Meta: "
 
 type TextStep = Extract<RecStep, { kind: "text" }>;
 type KeyStep = Extract<RecStep, { kind: "key" }>;
+/** Characters with a modifier in a row, and how to hide them, by how many, once their field is checked. */
+type Combos = { steps: KeyStep[]; hide?: (n: number) => KeyStep["hidden"] };
+
+/** Hides a run as its field check decided, for as many as it has now; a hidden step stays hidden. */
+function hideRun(run: Combos) {
+  const hidden = run.hide?.(run.steps.length);
+  if (hidden) for (const s of run.steps) s.hidden = hidden;
+}
 
 /**
  * Typing, or characters with a modifier (a paste), and where it went. Once hidden, a screenshot of that
@@ -111,8 +119,7 @@ export class Recorder {
   private held = new Set<string>();
   private altGraph = false;
   private typing: TextStep | null = null;
-  /** Characters with a modifier in a row, and which of them to hide once their field is checked. */
-  private combos: { steps: KeyStep[]; hide?: (i: number) => KeyStep["hidden"] } | null = null;
+  private combos: Combos | null = null;
   /** All typing so far, with its field checks: a screenshot waits for them. */
   private typed: Typed[] = [];
   /** The address on screen, whole and as a page, and how many times it has changed. */
@@ -232,27 +239,24 @@ export class Recorder {
    * A character with a modifier: a shortcut, unless the field takes a secret. A modifier stuck down, or
    * one that types characters on a layout this doesn't know, mustn't leave a password in clear: where
    * the field can't be checked, none is kept, and off the page (the address bar, where ctrl+l is a
-   * shortcut) only the first of a run.
+   * shortcut) one is kept only while it's alone: a run there may be a password typed with Ctrl stuck.
    */
   private combo(step: KeyStep) {
     if (!this.combos) {
-      const run: { steps: KeyStep[]; hide?: (i: number) => KeyStep["hidden"] } = { steps: [] };
+      const run: Combos = { steps: [] };
       this.combos = run;
-      const decide = (hide: (i: number) => KeyStep["hidden"]) => {
+      const decide = (hide: Combos["hide"]) => {
         run.hide = hide;
-        run.steps.forEach((s, i) => {
-          s.hidden = hide(i) ?? s.hidden;
-        });
+        hideRun(run);
       };
       this.check(
         () => run.steps.some((s) => s.hidden),
         (c) => decide(() => (c.secret ? "secret" : undefined)),
-        (offPage) => decide((i) => (offPage && i === 0 ? undefined : "unknown")),
+        (offPage) => decide((n) => (offPage && n === 1 ? undefined : "unknown")),
       );
     }
-    const run = this.combos;
-    run.steps.push(step);
-    step.hidden = run.hide?.(run.steps.length - 1) ?? step.hidden;
+    this.combos.steps.push(step);
+    hideRun(this.combos);
   }
 
   /** The viewer went away, and desktop-agent let go of what it held: so are the modifiers here. */

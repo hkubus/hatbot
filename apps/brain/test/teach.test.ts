@@ -201,16 +201,21 @@ test("a stuck modifier doesn't leave a password in clear", async () => {
   keys(prompt.r, ["Control", true]);
   for (const m of typeText("hunter2")) prompt.r.input(m);
   const typedThere = await prompt.r.finish();
-  expect(typedThere.map((s) => s.kind === "key" && s.key)).toEqual([
-    "ctrl+h",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-  ]);
-  expect(JSON.stringify(typedThere)).not.toContain("ctrl+u");
+  expect(typedThere.map((s) => s.kind === "key" && s.key)).toEqual(["", "", "", "", "", "", ""]);
+  expect(JSON.stringify(typedThere)).not.toContain("ctrl+");
+  // The same when the check answers after the first key: the run is decided again as it grows.
+  let answer = (_: unknown) => {};
+  const late = recorder(
+    () =>
+      new Promise((_, reject) => {
+        answer = reject;
+      }),
+  );
+  keys(late.r, ["Control", true], ["h", true]);
+  answer(new OffPage("the keyboard isn't on a page"));
+  await Bun.sleep(0);
+  for (const m of typeText("unter2")) late.r.input(m);
+  expect(JSON.stringify(await late.r.finish())).not.toContain("ctrl+");
 
   // Where the field couldn't be checked (the desktop slow to answer), none of them is kept.
   const failed = recorder(async () => {
