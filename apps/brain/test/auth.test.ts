@@ -261,21 +261,47 @@ describe("login", () => {
     expect(after.status).toBe(429);
   });
 
-  test("the overall limit says once when it trips", () => {
+  test("the overall limit tells when it trips, and hourly while someone keeps it tripped", () => {
+    let now = 0;
     const tripped: string[] = [];
     const limit = new FailureLimiter(
-      3,
-      60_000,
-      () => 0,
+      50,
+      15 * 60_000,
+      () => now,
       (key) => tripped.push(key),
     );
+    for (let i = 0; i < 49; i++) {
+      limit.fail("*");
+      limit.stood("*");
+    }
+    // A right attempt at 49 is counted while it's checked, then taken back.
     limit.fail("*");
-    limit.fail("*");
+    limit.forgive("*");
     expect(tripped).toEqual([]);
-    limit.fail("*");
-    expect(limit.blocked("*")).toBe(true);
-    expect(tripped).toEqual(["*"]);
-    limit.fail("*");
+    // One wrong try every 18 seconds for two hours, as fast as the window lets them through.
+    for (; now < 2 * 3600_000 - 1000; now += 18_000) {
+      if (limit.blocked("*")) continue;
+      limit.fail("*");
+      limit.stood("*");
+    }
+    expect(tripped).toEqual(["*", "*"]);
+  });
+
+  test("a right sign-in at the overall limit doesn't say it tripped; a wrong one does", async () => {
+    const t = await testApp();
+    const { secret, password } = await setUpOwner(t);
+    const tripped: string[] = [];
+    t.loginLimits.global = new FailureLimiter(50, 15 * 60_000, Date.now, (key) =>
+      tripped.push(key),
+    );
+    for (let i = 0; i < 49; i++) t.loginLimits.global.fail("*");
+    expect((await t.call("POST", "/auth/login", { password, totp: t.code(secret) })).status).toBe(
+      200,
+    );
+    expect(tripped).toEqual([]);
+    expect((await t.call("POST", "/auth/login", { password: "nope", totp: "000000" })).status).toBe(
+      401,
+    );
     expect(tripped).toEqual(["*"]);
   });
 

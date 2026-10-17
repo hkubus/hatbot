@@ -289,15 +289,19 @@ export class AuthService {
   }
 }
 
+/** How often onBlocked may be told about one key. */
+const TELL_EVERY_MS = 3600_000;
+
 /** Counts failed logins per key in a sliding window. */
 export class FailureLimiter {
   private failures = new Map<string, number[]>();
+  private toldAt = new Map<string, number>();
 
   constructor(
     private max: number,
     private windowMs: number,
     private clock: () => number = Date.now,
-    /** Told when a key reaches the limit. */
+    /** Told when a failure that stood brings a key to the limit, at most once an hour. */
     private onBlocked?: (key: string) => void,
   ) {}
 
@@ -305,11 +309,23 @@ export class FailureLimiter {
     return this.recent(key).length >= this.max;
   }
 
+  /** Counts a failure; one counted before it's checked is taken back with forgive() or kept with stood(). */
   fail(key: string) {
     const list = this.recent(key);
     list.push(this.clock());
     this.failures.set(key, list);
-    if (list.length === this.max) this.onBlocked?.(key);
+  }
+
+  /**
+   * A failure that stood once it was checked. Someone failing as fast as the window lets them keeps
+   * the key at its limit, so onBlocked hears about it hourly, not each time.
+   */
+  stood(key: string) {
+    if (!this.onBlocked || !this.blocked(key)) return;
+    const now = this.clock();
+    if (now - (this.toldAt.get(key) ?? -Infinity) < TELL_EVERY_MS) return;
+    this.toldAt.set(key, now);
+    this.onBlocked(key);
   }
 
   /** Takes back one failure: an attempt counted before it was checked, which turned out right. */
