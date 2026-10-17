@@ -719,6 +719,26 @@ final class LookingAfterThingsTests: XCTestCase {
     XCTAssertEqual(LineDiff.of("a\nb\nc", "a\nc").map(\.text), [" a", "-b", " c"])
   }
 
+  /// Two edits far apart in a long file are two edits; moved lines still line up; a rewrite too big to
+  /// work out is shown whole.
+  func testDiffsFewEditsFarApart() {
+    let lines = (0..<20_000).map { "line \($0)" }
+    var edited = lines
+    edited[50] = "changed top"
+    edited[3050] = "changed bottom"
+    let start = Date()
+    let diff = LineDiff.of(lines.joined(separator: "\n"), edited.joined(separator: "\n"))
+    XCTAssertLessThan(Date().timeIntervalSince(start), 1)
+    XCTAssertEqual(diff.filter { $0.kind != .context && $0.kind != .hunk }.map(\.text), [
+      "-line 50", "+changed top", "-line 3050", "+changed bottom",
+    ])
+    XCTAssertEqual(
+      LineDiff.of("x\na\nb\na\ny", "x\nb\na\nb\ny").map(\.text), [" x", "-a", " b", " a", "+b", " y"])
+    let rewrite = LineDiff.of(lines[..<3000].joined(separator: "\n"), lines[5000..<8000].joined(separator: "\n"))
+    XCTAssertEqual(rewrite.filter { $0.kind == .removed }.count, 3000)
+    XCTAssertEqual(rewrite.first?.text, "-line 0")
+  }
+
   /// The heartbeat's pickers have a row for what's set now, even when it's not one of theirs.
   func testHeartbeatPickersKeepAValueSetElsewhere() {
     XCTAssertEqual(AppSettings.Heartbeat.everyChoices(with: 15), [5, 10, 15, 30, 60, 120, 240])

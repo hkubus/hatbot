@@ -227,10 +227,12 @@ extension AppSettings.Heartbeat {
 enum LineDiff {
   /// Lines kept around a change; longer runs of unchanged lines fold into a gap.
   static let context = 2
+  /// Past this many lines deleted or added, the middle is shown as a whole replacement.
+  static let mostEdits = 2_000
 
-  /// The longest common subsequence of lines, then the changes with a little context, deletions
-  /// before what replaces them; lines start "+", "-" or " " like a commit's diff, and a hunk line
-  /// stands for unchanged ones left out. The same as apps/web/src/diff.ts.
+  /// The fewest lines deleted and added, then the changes with a little context, deletions before
+  /// what replaces them; lines start "+", "-" or " " like a commit's diff, and a hunk line stands for
+  /// unchanged ones left out. The same as apps/web/src/diff.ts.
   static func of(_ before: String?, _ after: String?) -> [DiffLine] {
     func lines(_ s: String?) -> [String] {
       guard var s else { return [] }
@@ -238,8 +240,7 @@ enum LineDiff {
       return s.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     }
     let whole = (a: lines(before), b: lines(after))
-    // The lines both versions start and end with stay out of the table, so an edit to a long file costs
-    // its changed middle squared, not the whole file's.
+    // The lines both versions start and end with are set aside first.
     var head = 0
     while head < min(whole.a.count, whole.b.count) && whole.a[head] == whole.b[head] { head += 1 }
     var tail = 0
@@ -251,30 +252,11 @@ enum LineDiff {
     let a = Array(whole.a[head..<(whole.a.count - tail)])
     let b = Array(whole.b[head..<(whole.b.count - tail)])
     var all = whole.a[..<head].map { DiffLine(kind: .context, text: " " + $0) }
-    if a.count * b.count > 4_000_000 {
-      all += a.map { DiffLine(kind: .removed, text: "-" + $0) } + b.map { DiffLine(kind: .added, text: "+" + $0) }
+    if let middle = edits(a, b) {
+      all += middle
     } else {
-      var lcs = Array(repeating: Array(repeating: 0, count: b.count + 1), count: a.count + 1)
-      for i in stride(from: a.count - 1, through: 0, by: -1) {
-        for j in stride(from: b.count - 1, through: 0, by: -1) {
-          lcs[i][j] = a[i] == b[j] ? lcs[i + 1][j + 1] + 1 : max(lcs[i + 1][j], lcs[i][j + 1])
-        }
-      }
-      var i = 0
-      var j = 0
-      while i < a.count || j < b.count {
-        if i < a.count && j < b.count && a[i] == b[j] {
-          all.append(DiffLine(kind: .context, text: " " + a[i]))
-          i += 1
-          j += 1
-        } else if i < a.count && (j >= b.count || lcs[i + 1][j] >= lcs[i][j + 1]) {
-          all.append(DiffLine(kind: .removed, text: "-" + a[i]))
-          i += 1
-        } else {
-          all.append(DiffLine(kind: .added, text: "+" + b[j]))
-          j += 1
-        }
-      }
+      // A huge rewrite: whole replacement rather than a slow search.
+      all += a.map { DiffLine(kind: .removed, text: "-" + $0) } + b.map { DiffLine(kind: .added, text: "+" + $0) }
     }
     all += whole.a[(whole.a.count - tail)...].map { DiffLine(kind: .context, text: " " + $0) }
     var out: [DiffLine] = []
@@ -285,6 +267,74 @@ enum LineDiff {
       } else if out.last?.kind != .hunk {
         out.append(DiffLine(kind: .hunk, text: "…"))
       }
+    }
+    return out
+  }
+
+  /// Myers' diff: its time grows with the lines times the edits, not with the lines squared, so a few
+  /// edits far apart in a long file are cheap. nil past `mostEdits`.
+  static func edits(_ a: [String], _ b: [String]) -> [DiffLine]? {
+    let n = a.count
+    let m = b.count
+    let most = min(n + m, mostEdits)
+    // v[k + off] is how far along `a` the path on diagonal k (x - y) has got; one snapshot per step.
+    let off = most + 1
+    var v = [Int](repeating: 0, count: 2 * off + 1)
+    var trace: [[Int]] = []
+    var found: Int?
+    var d = 0
+    while d <= most && found == nil {
+      for k in stride(from: -d, through: d, by: 2) {
+        // Down from k + 1 is an added line, right from k - 1 a deleted one; on a tie, the deletion.
+        var x = (k == -d || (k != d && v[off + k - 1] < v[off + k + 1])) ? v[off + k + 1] : v[off + k - 1] + 1
+        var y = x - k
+        while x < n && y < m && a[x] == b[y] {
+          x += 1
+          y += 1
+        }
+        v[off + k] = x
+        if x >= n && y >= m {
+          found = d
+          break
+        }
+      }
+      trace.append(Array(v[(off - d)...(off + d)]))
+      d += 1
+    }
+    guard let found else { return nil }
+    // Back from the end, step by step.
+    var all: [DiffLine] = []
+    var x = n
+    var y = m
+    for d in stride(from: found, to: 0, by: -1) {
+      let prev = trace[d - 1]
+      let at = { (k: Int) in prev[k + d - 1] }
+      let k = x - y
+      let down = k == -d || (k != d && at(k - 1) < at(k + 1))
+      let px = down ? at(k + 1) : at(k - 1)
+      let py = px - (down ? k + 1 : k - 1)
+      // The unchanged run after this step's edit, then the edit.
+      while x > (down ? px : px + 1) {
+        x -= 1
+        all.append(DiffLine(kind: .context, text: " " + a[x]))
+      }
+      all.append(down ? DiffLine(kind: .added, text: "+" + b[py]) : DiffLine(kind: .removed, text: "-" + a[px]))
+      x = px
+      y = py
+    }
+    all += a[..<x].reversed().map { DiffLine(kind: .context, text: " " + $0) }
+    all.reverse()
+    // What goes, before what replaces it.
+    var out: [DiffLine] = []
+    var run: [DiffLine] = []
+    for l in all + [DiffLine(kind: .hunk, text: "")] {
+      if l.kind == .added || l.kind == .removed {
+        run.append(l)
+        continue
+      }
+      out += run.filter { $0.kind == .removed } + run.filter { $0.kind == .added }
+      run = []
+      if l.kind == .context { out.append(l) }
     }
     return out
   }
