@@ -120,9 +120,16 @@ export class Plugins {
   async test(id: string): Promise<string> {
     const s = this.slots.get(id);
     if (!s) throw new PluginError(`No plugin "${id}".`);
-    if (s.state !== "ready" || !s.instance) throw new PluginError(`${s.plugin.name} isn't ready.`);
-    if (!s.instance.test) throw new PluginError(`${s.plugin.name} has no test.`);
-    return s.instance.test();
+    const { instance, generation } = s;
+    if (s.state !== "ready" || !instance) throw new PluginError(`${s.plugin.name} isn't ready.`);
+    if (!instance.test) throw new PluginError(`${s.plugin.name} has no test.`);
+    try {
+      return await instance.test();
+    } finally {
+      // A test can change what it offers (PBS checks its token again), as recovering can.
+      if (generation === s.generation && !(await this.recheck(s, instance, "after its test")))
+        this.later(s);
+    }
   }
 
   /** What the ready plugins find wrong now, for the heartbeat. One that can't be asked says so. */
@@ -268,21 +275,28 @@ export class Plugins {
       const generation = s.generation;
       await instance.recover().catch((err) => console.error(`plugin ${s.plugin.id}: recover`, err));
       if (generation !== s.generation) return;
-      // What came back is checked like what it started with: a bad tool would fail every request.
-      try {
-        this.checkTools(s.plugin, instance.tools);
-      } catch (err) {
-        console.error(`plugin ${s.plugin.id}: after recovering`, err);
-        await this.stop(s);
-        s.state = "error";
-        s.message = "Its tools changed into ones Hatbot can't offer; see the brain's log.";
-      }
-      this.emit(s);
+      await this.recheck(s, instance, "after recovering");
       this.later(s);
       return;
     }
     console.log(`plugin ${s.plugin.id}: starting again (try ${s.retries})`);
     await this.restart(s);
+  }
+
+  /** What a ready plugin offers now is checked like what it started with: a bad tool would fail every request. */
+  private async recheck(s: Slot, instance: PluginInstance, after: string): Promise<boolean> {
+    try {
+      this.checkTools(s.plugin, instance.tools);
+      this.emit(s);
+      return true;
+    } catch (err) {
+      console.error(`plugin ${s.plugin.id}: ${after}`, err);
+      await this.stop(s);
+      s.state = "error";
+      s.message = "Its tools changed into ones Hatbot can't offer; see the brain's log.";
+      this.emit(s);
+      return false;
+    }
   }
 
   private async stop(s: Slot) {
