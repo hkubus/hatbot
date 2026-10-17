@@ -1,6 +1,7 @@
 // Proxmox's settings: guests whose power actions always ask first.
 import { useState } from "react";
 import { ApiError } from "../api";
+import { useLeaveGuard } from "../confirm";
 import type { PluginSettingsProps } from ".";
 
 type Config = { careful: number[] };
@@ -15,6 +16,7 @@ export function ProxmoxSettings({ config, save }: PluginSettingsProps<Config>) {
     .map(Number);
   const valid = ids.every((n) => Number.isInteger(n) && n > 0);
   const changed = ids.join(",") !== config.careful.join(",");
+  useLeaveGuard(changed);
 
   const submit = async () => {
     setBusy(true);

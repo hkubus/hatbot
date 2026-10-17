@@ -1,6 +1,7 @@
 // Teach-by-showing's review step (PLAN.md §10.5): the skill Opus drafted from your recording, to edit and save.
 import { useEffect, useState } from "react";
 import { ApiError } from "../api";
+import { ask, useLeaveGuard } from "../confirm";
 import { Icon } from "../icons";
 import { navigate } from "../router";
 import { discardTeach, loadTeach, redraftTeach, saveSkill, useStore } from "../store";
@@ -26,6 +27,9 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
     setContent(draft);
     setName(session?.name ?? "");
   }, [draft, session?.name]);
+  const release = useLeaveGuard(
+    draft !== null && (content !== draft || name !== (session?.name ?? "")),
+  );
 
   if (missing) return <div className="empty">This recording doesn't exist.</div>;
   if (!session) return <section className="view" />;
@@ -50,16 +54,17 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
       } catch (err) {
         if (!(err instanceof ApiError && err.status === 409 && err.message.includes("already")))
           throw err;
-        if (!confirm(`${err.message} Replace it?`)) return;
+        if (!(await ask({ text: `${err.message} Replace it?`, ok: "Replace" }))) return;
         path = await saveSkill(id, { name, content, replace: true });
       }
       toast(`Saved ${path}`);
     });
 
-  const discard = () => {
-    if (confirm("Throw this draft away?"))
+  const discard = async () => {
+    if (await ask({ text: "Throw this draft away?", ok: "Throw away" }))
       void run(async () => {
         await discardTeach(id);
+        release();
         navigate("/memory");
       });
   };

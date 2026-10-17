@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { ErrorBoundary } from "./boundary";
+import { Dialogs } from "./confirm";
 import { reloadOnce } from "./reload";
 import "./styles.css";
 import { followViewport } from "./viewport";
@@ -19,6 +20,7 @@ if (root) {
     <StrictMode>
       <ErrorBoundary>
         <App />
+        <Dialogs />
       </ErrorBoundary>
     </StrictMode>,
   );

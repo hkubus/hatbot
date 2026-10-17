@@ -12,11 +12,13 @@ import {
 } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { ask, useLeaveGuard } from "../confirm";
+import { NoForm } from "../form";
 import { Icon } from "../icons";
 import { navigate } from "../router";
-import { loadPlugins, loadSchedules, putWatcher, useStore } from "../store";
+import { loadPlugins, putWatcher, useStore } from "../store";
 import { Switch } from "../switch";
-import { BotPicker, errorText, Runs, stamp } from "./Schedules";
+import { BotPicker, errorText, Runs, stamp, useListed } from "./Schedules";
 
 const EVERY = [5, 15, 30, 60, 180, 360, 720, 1440];
 const WHEN: { when: WatchCondition["when"]; label: string }[] = [
@@ -168,19 +170,49 @@ function bodyOf(f: Form): { source: WatchSource; condition: WatchCondition } | s
   return { source, condition };
 }
 
+/** The form as the API takes it, without the trimming and order a save would change. */
+const fieldsOf = (f: Form) => ({
+  name: f.name.trim(),
+  prompt: f.prompt.trim(),
+  everyMinutes: f.everyMinutes,
+  once: f.once,
+  botId: f.botId,
+});
+
+/** Whether the form says something other than what's saved (a new one: than the blank form). */
+function editedFrom(form: Form, stored: Watcher | undefined) {
+  if (!stored) return JSON.stringify(form) !== JSON.stringify(blank);
+  const body = bodyOf(form);
+  return (
+    typeof body === "string" ||
+    JSON.stringify({ ...fieldsOf(form), ...body }) !==
+      JSON.stringify({
+        name: stored.name,
+        prompt: stored.prompt,
+        everyMinutes: stored.everyMinutes,
+        once: stored.once,
+        botId: stored.botId,
+        source: stored.source,
+        condition: stored.condition,
+      })
+  );
+}
+
 export function WatcherEdit({ id }: { id: number | null }) {
   const stored = useStore((s) => (id === null ? undefined : s.watchers[id]));
   const plugins = useStore((s) => s.plugins);
   const [form, setForm] = useState<Form | null>(id === null ? blank : null);
   const [preview, setPreview] = useState<WatchPreview | null>(null);
+  /** What went wrong with Try it, shown beside it. */
+  const [previewError, setPreviewError] = useState("");
   const [values, setValues] = useState<WatcherValue[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const listed = useListed("watchers", id, stored);
+  const edited = !!form && editedFrom(form, stored ?? undefined);
+  const release = useLeaveGuard(edited);
 
-  useEffect(() => {
-    if (id !== null && stored === undefined)
-      loadSchedules().catch((err) => setError(errorText(err)));
-  }, [id, stored]);
   useEffect(() => {
     if (stored && !form) setForm(formOf(stored));
   }, [stored, form]);
@@ -195,12 +227,20 @@ export function WatcherEdit({ id }: { id: number | null }) {
       api<WatcherValue[]>(`/watchers/${id}/values?limit=50`).then(setValues, () => setValues([]));
   }, [id, lastValue]);
 
-  if (stored === null) return <div className="empty">This watcher doesn't exist.</div>;
-  if (!form) return <section className="view" />;
+  if (listed.missing || !form)
+    return (
+      <NoForm
+        error={listed.error}
+        missing={listed.missing ? "This watcher doesn't exist." : ""}
+        retry={listed.load}
+        back={{ label: "Watchers", go: () => navigate("/schedules") }}
+      />
+    );
 
   const set = (patch: Partial<Form>) => {
     setForm({ ...form, ...patch });
     setPreview(null);
+    setPreviewError("");
   };
   const readTools = Object.values(plugins)
     .filter((p) => p.enabled && p.state === "ready")
@@ -211,33 +251,15 @@ export function WatcherEdit({ id }: { id: number | null }) {
   // Read after its scripts run, a page comes back as HTML (no JSON path) and looks less often.
   const rendered = form.kind === "page" && form.render;
   const every = EVERY.filter((m) => m >= minWatchMinutes(form));
-  const fields = {
-    name: form.name.trim(),
-    prompt: form.prompt.trim(),
-    everyMinutes: form.everyMinutes,
-    once: form.once,
-    botId: form.botId,
-  };
-  const changed =
-    !stored ||
-    stored.tainted ||
-    typeof body === "string" ||
-    JSON.stringify({ ...fields, ...body }) !==
-      JSON.stringify({
-        name: stored.name,
-        prompt: stored.prompt,
-        everyMinutes: stored.everyMinutes,
-        once: stored.once,
-        botId: stored.botId,
-        source: stored.source,
-        condition: stored.condition,
-      });
+  const fields = fieldsOf(form);
+  const changed = !stored || stored.tainted || edited;
   const ready =
     Boolean(fields.name) && (form.kind === "page" ? Boolean(form.url.trim()) : Boolean(form.tool));
 
   const tryIt = async () => {
-    if (typeof body === "string") return setError(body);
-    setError("");
+    setPreview(null);
+    if (typeof body === "string") return setPreviewError(body);
+    setPreviewError("");
     setBusy(true);
     try {
       setPreview(
@@ -246,7 +268,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
         }),
       );
     } catch (err) {
-      setError(errorText(err));
+      setPreviewError(errorText(err));
     }
     setBusy(false);
   };
@@ -260,6 +282,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
       } else {
         const w = await api<Watcher>("/watchers", { body: { ...fields, ...body } });
         putWatcher(w);
+        release();
         navigate(`/watchers/${w.id}`, true);
       }
     } catch (err) {
@@ -267,18 +290,30 @@ export function WatcherEdit({ id }: { id: number | null }) {
     }
     setBusy(false);
   };
+  // Checks what's saved: off while you have unsaved changes, and while it's checking.
   const checkNow = async () => {
     if (!stored) return;
+    setChecking(true);
+    setError("");
     try {
       putWatcher(await api<Watcher>(`/watchers/${stored.id}/check`, { body: {} }));
     } catch (err) {
       setError(errorText(err));
     }
+    setChecking(false);
   };
   const remove = async () => {
-    if (!stored || !confirm(`Delete "${stored.name}"? The tasks it started stay in Tasks.`)) return;
+    if (
+      !stored ||
+      !(await ask({
+        text: `Delete "${stored.name}"? The tasks it started stay in Tasks.`,
+        ok: "Delete",
+      }))
+    )
+      return;
     try {
       await api(`/watchers/${stored.id}`, { method: "DELETE" });
+      release();
       navigate("/schedules");
     } catch (err) {
       setError(errorText(err));
@@ -300,8 +335,14 @@ export function WatcherEdit({ id }: { id: number | null }) {
           <span className="spacer" />
           {stored && (
             <>
-              <button type="button" className="btn sm" onClick={checkNow}>
-                Check now
+              <button
+                type="button"
+                className="btn sm"
+                disabled={edited || checking}
+                title={edited ? "Save your changes first" : undefined}
+                onClick={checkNow}
+              >
+                {checking ? "Checking…" : "Check now"}
               </button>
               <button type="button" className="btn sm danger-text" onClick={remove}>
                 Delete
@@ -327,6 +368,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
               <button
                 type="button"
                 className={form.kind === "page" ? "active" : ""}
+                aria-pressed={form.kind === "page"}
                 onClick={() => set({ kind: "page" })}
               >
                 A page
@@ -334,6 +376,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
               <button
                 type="button"
                 className={form.kind === "tool" ? "active" : ""}
+                aria-pressed={form.kind === "tool"}
                 onClick={() =>
                   set({ kind: "tool", pick: form.pick === "selector" ? "path" : form.pick })
                 }
@@ -419,6 +462,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
                     type="button"
                     key={pick}
                     className={form.pick === pick ? "active" : ""}
+                    aria-pressed={form.pick === pick}
                     onClick={() => set({ pick })}
                   >
                     {label}
@@ -430,6 +474,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
             <input
               className="field mono"
               value={form.selector}
+              aria-label="CSS selector"
               spellCheck={false}
               placeholder=".price"
               onChange={(e) => set({ selector: e.target.value })}
@@ -439,6 +484,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
             <input
               className="field mono"
               value={form.path}
+              aria-label="JSON path"
               spellCheck={false}
               placeholder="items.0.price"
               onChange={(e) => set({ path: e.target.value })}
@@ -464,12 +510,14 @@ export function WatcherEdit({ id }: { id: number | null }) {
               ) : (
                 <span className="form-error">{preview.error}</span>
               ))}
+            {previewError && <span className="form-error">{previewError}</span>}
           </div>
 
           <div className="form-row">
             <span className="label">Counts when it</span>
             <select
               className="field"
+              aria-label="Counts when it"
               value={form.when}
               onChange={(e) => set({ when: e.target.value as WatchCondition["when"] })}
             >
@@ -484,6 +532,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
             <input
               className="field"
               value={form.text}
+              aria-label="Text"
               placeholder="In stock"
               onChange={(e) => set({ text: e.target.value })}
             />
@@ -493,6 +542,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
               className="field"
               inputMode="decimal"
               value={form.value}
+              aria-label="Number"
               placeholder="1000"
               onChange={(e) => set({ value: e.target.value })}
             />
@@ -501,6 +551,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
             <span className="label">Look</span>
             <select
               className="field"
+              aria-label="Look"
               value={form.everyMinutes}
               onChange={(e) => set({ everyMinutes: Number(e.target.value) })}
             >

@@ -1,6 +1,7 @@
 import { latestNoteOnly, OPEN_NEGOTIATION_STATUSES, type Task } from "@hatbot/shared";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, api } from "../api";
+import { ask } from "../confirm";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LiveView, StepIcon } from "../live";
@@ -159,6 +160,7 @@ export function Tasks() {
             <button
               type="button"
               className={filter === "active" ? "active" : ""}
+              aria-pressed={filter === "active"}
               onClick={() => setFilter("active")}
             >
               Active
@@ -166,6 +168,7 @@ export function Tasks() {
             <button
               type="button"
               className={filter === "done" ? "active" : ""}
+              aria-pressed={filter === "done"}
               onClick={() => setFilter("done")}
             >
               Finished
@@ -352,7 +355,8 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   const showLive = screen && active && (watch || request?.taskId === id);
 
   const cancel = async () => {
-    if (!confirm(`Cancel "${task.title}"?`)) return;
+    if (!(await ask({ text: `Cancel "${task.title}"?`, ok: "Cancel task", cancel: "Keep it" })))
+      return;
     try {
       await cancelTask(id);
     } catch (err) {

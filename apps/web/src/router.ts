@@ -8,8 +8,8 @@ const subscribe = (l: () => void) => {
 const snapshot = () => location.pathname + location.search;
 
 /** Asked before leaving the page that set it, e.g. an editor with unsaved changes: true to go. */
-let leaveGuard: (() => boolean) | null = null;
-export function setLeaveGuard(guard: () => boolean) {
+let leaveGuard: (() => Promise<boolean>) | null = null;
+export function setLeaveGuard(guard: () => Promise<boolean>) {
   leaveGuard = guard;
   return () => {
     if (leaveGuard === guard) leaveGuard = null;
@@ -17,15 +17,24 @@ export function setLeaveGuard(guard: () => boolean) {
 }
 let shown = snapshot();
 let ours = false;
-// Back and Forward have already moved the address when we hear of them: put it back if the page says
-// stay. Registered before anything renders, so it runs before the routes read the address.
+/** Going again where Back or Forward went, once you've said leave. */
+let passing = false;
+// Back and Forward have already moved the address when we hear of them: put it back while the page
+// asks. Registered before anything renders, so it runs before the routes read the address.
 window.addEventListener("popstate", (e) => {
   if (ours) return;
-  if (leaveGuard && !leaveGuard()) {
+  if (leaveGuard && !passing) {
     e.stopImmediatePropagation();
     history.pushState(null, "", shown);
+    // The entry just before the one pushed is where Back or Forward went.
+    void leaveGuard().then((go) => {
+      if (!go) return;
+      passing = true;
+      history.back();
+    });
     return;
   }
+  passing = false;
   shown = snapshot();
 });
 
@@ -38,7 +47,14 @@ export function useRoute(): Route {
 }
 
 export function navigate(to: string, replace = false) {
-  if (to !== snapshot() && leaveGuard && !leaveGuard()) return;
+  if (to !== snapshot() && leaveGuard) {
+    void leaveGuard().then((go) => go && move(to, replace));
+    return;
+  }
+  move(to, replace);
+}
+
+function move(to: string, replace: boolean) {
   if (to !== snapshot()) history[replace ? "replaceState" : "pushState"](null, "", to);
   shown = snapshot();
   ours = true;

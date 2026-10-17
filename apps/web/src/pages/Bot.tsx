@@ -1,10 +1,13 @@
 // A bot's page (PLAN.md §14): its name, role, model and plugins. "new" makes one, from a template or not.
 import { BOT_COLORS, BOT_ICONS, BOT_TEMPLATES, type Bot, HATBOT_ID } from "@hatbot/shared";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ApiError } from "../api";
+import { ask, useLeaveGuard } from "../confirm";
+import { NoForm, useStoredForm } from "../form";
 import { BotMark, Icon } from "../icons";
+import { loadErrorText } from "../load";
 import { navigate } from "../router";
-import { createBot, deleteBot, loadPlugins, saveBot, useStore } from "../store";
+import { createBot, deleteBot, loadBots, loadPlugins, saveBot, useStore } from "../store";
 import { Switch } from "../switch";
 
 type Form = {
@@ -31,9 +34,20 @@ const EMPTY: Form = {
 const errorText = (err: unknown) =>
   err instanceof ApiError ? err.message : "Couldn't reach Hatbot.";
 
+const formOf = (b: Form): Form => ({
+  name: b.name,
+  icon: b.icon,
+  color: b.color,
+  instructions: b.instructions,
+  chatModel: b.chatModel,
+  chatEffort: b.chatEffort,
+  plugins: b.plugins,
+});
+
 export function BotPage({ id, toast }: { id: string; toast: (t: string) => void }) {
   const isNew = id === "new";
   const stored = useStore((s) => (isNew ? undefined : s.bots[id]));
+  const listed = useStore((s) => s.botIds.includes(id));
   const chat = useStore((s) =>
     s.conversations.find((c) => c.kind === "direct" && c.botIds[0] === id),
   );
@@ -44,45 +58,58 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
     const count = (c: Bot["color"]) => used.filter((u) => u === c).length;
     return BOT_COLORS.reduce((best, c) => (count(c) < count(best) ? c : best));
   });
-  const [form, setForm] = useState<Form>(EMPTY);
+  const [start] = useState<Form>(() => ({ ...EMPTY, color: freeColor }));
+  const { form, dirty, set, fill } = useStoredForm<Form>(isNew ? start : stored && formOf(stored));
   const [template, setTemplate] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const release = useLeaveGuard(dirty);
+  // The bots again, to tell one that's gone from one not loaded yet.
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const load = useCallback(() => {
+    setLoadError("");
+    loadBots().then(
+      () => setLoaded(true),
+      (err) => setLoadError(loadErrorText(err)),
+    );
+  }, []);
 
   useEffect(() => {
     void loadPlugins().catch(() => {});
   }, []);
   useEffect(() => {
-    if (stored) setForm({ ...stored });
-  }, [stored]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only when the page opens, not as bots change
-  useEffect(() => {
-    if (isNew) {
-      setForm({ ...EMPTY, color: freeColor });
-      setTemplate("");
-    }
-  }, [isNew]);
+    if (!isNew) load();
+  }, [isNew, load]);
 
-  if (!isNew && !stored) return <section className="view" />;
-  const set = (patch: Partial<Form>) => setForm((f) => ({ ...f, ...patch }));
-  const pickTemplate = (key: string) => {
+  const back = () => navigate(chat ? (chat.id === 1 ? "/" : `/chat/${chat.id}`) : "/");
+  if (!isNew && (!stored || !listed || !form))
+    return (
+      <NoForm
+        error={loadError}
+        missing={loaded && !listed ? "This bot doesn't exist." : ""}
+        retry={load}
+        back={{ label: "Chat", go: back }}
+      />
+    );
+  if (!form) return null;
+  const pickTemplate = async (key: string) => {
     const t = BOT_TEMPLATES.find((x) => x.id === key);
+    // What you've written isn't thrown away unasked.
+    if (
+      dirty &&
+      !(await ask({
+        text: t
+          ? `Replace what you've written with the ${t.name} template?`
+          : "Clear what you've written?",
+        ok: t ? "Replace" : "Clear",
+      }))
+    )
+      return;
     setTemplate(key);
-    if (t) {
-      const { id: _, ...fields } = t;
-      setForm(fields);
-    } else setForm({ ...EMPTY, color: freeColor });
+    fill(t ? formOf(t) : start);
   };
-  const changed =
-    isNew ||
-    (stored !== undefined &&
-      (form.name !== stored.name ||
-        form.icon !== stored.icon ||
-        form.color !== stored.color ||
-        form.instructions !== stored.instructions ||
-        form.chatModel !== stored.chatModel ||
-        form.chatEffort !== stored.chatEffort ||
-        JSON.stringify(form.plugins) !== JSON.stringify(stored.plugins)));
+  const changed = isNew || dirty;
   const isHatbot = id === HATBOT_ID;
   const pluginList = Object.values(plugins).sort((a, b) => a.name.localeCompare(b.name));
 
@@ -93,10 +120,12 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
       const body = { ...form, name: form.name.trim() };
       if (isNew) {
         const bot = await createBot(body);
+        release();
         navigate(`/bots/${bot.id}`, true);
         toast(`Made ${bot.name}`);
       } else {
-        await saveBot(id, isHatbot ? { ...body, name: undefined } : body);
+        // What was saved: the form is clean again.
+        fill(formOf(await saveBot(id, isHatbot ? { ...body, name: undefined } : body)));
         toast("Saved");
       }
     } catch (err) {
@@ -108,13 +137,15 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
   const remove = async () => {
     if (!stored) return;
     if (
-      !confirm(
-        `Delete ${stored.name}? Its chat and notes stay readable; its schedules, triggers and watchers go to Hatbot, switched off until you turn them back on.`,
-      )
+      !(await ask({
+        text: `Delete ${stored.name}? Its chat and notes stay readable; its schedules, triggers and watchers go to Hatbot, switched off until you turn them back on.`,
+        ok: "Delete",
+      }))
     )
       return;
     try {
       await deleteBot(id);
+      release();
       navigate("/");
     } catch (err) {
       setError(errorText(err));
@@ -125,11 +156,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
     <section className="view">
       <div className="page narrow">
         <div className="page-head">
-          <button
-            type="button"
-            className="btn sm ghost back"
-            onClick={() => navigate(chat ? (chat.id === 1 ? "/" : `/chat/${chat.id}`) : "/")}
-          >
+          <button type="button" className="btn sm ghost back" onClick={back}>
             <Icon name="chevron" />
             Chat
           </button>
@@ -147,6 +174,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
               <span className="label">Template</span>
               <select
                 className="field"
+                aria-label="Template"
                 value={template}
                 onChange={(e) => pickTemplate(e.target.value)}
               >
@@ -219,6 +247,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
             <span className="label">Model</span>
             <select
               className="field"
+              aria-label="Model"
               value={form.chatModel ?? ""}
               onChange={(e) => set({ chatModel: (e.target.value || null) as Form["chatModel"] })}
             >
@@ -231,6 +260,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
             <span className="label">Effort</span>
             <select
               className="field"
+              aria-label="Effort"
               value={form.chatEffort ?? ""}
               onChange={(e) => set({ chatEffort: (e.target.value || null) as Form["chatEffort"] })}
             >
@@ -253,6 +283,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
                   <div className="form-row" key={p.id}>
                     <span>{p.name}</span>
                     <Switch
+                      label={p.name}
                       on={form.plugins?.includes(p.id) ?? false}
                       onChange={(on) =>
                         set({

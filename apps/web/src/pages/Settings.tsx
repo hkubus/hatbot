@@ -3,15 +3,16 @@ import {
   type AppSettings,
   type CreateTokenResponse,
   describeEvery,
-  type Limits,
   type UpdateInfo,
 } from "@hatbot/shared";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api";
+import { ask, askText } from "../confirm";
 import { clearDrafts } from "../drafts";
 import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
 import { navigate } from "../router";
+import { parseLimit, parseName, SavedRow } from "../saved-row";
 import { setPaused, useStore } from "../store";
 import { Switch } from "../switch";
 import { getTheme, setTheme, type Theme } from "../theme";
@@ -73,35 +74,55 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
   }, []);
   useEffect(load, [load]);
 
-  const update = async (patch: Partial<AppSettings>) => {
+  /** Rejects with the brain's message, for a field to show beside itself. */
+  const put = async (patch: Partial<AppSettings>) => {
+    setSettings(await api<AppSettings>("/settings", { method: "PUT", body: patch }));
+    toast("Saved");
+  };
+  const update = (patch: Partial<AppSettings>) =>
+    put(patch).catch((err) => toast(err instanceof ApiError ? err.message : "Couldn't save"));
+
+  const [tokenError, setTokenError] = useState("");
+  const [pauseError, setPauseError] = useState("");
+  const createToken = async () => {
+    const name = await askText({
+      text: "Name for the new token",
+      placeholder: "iPhone",
+      ok: "Create",
+    });
+    if (!name) return;
+    setTokenError("");
     try {
-      setSettings(await api<AppSettings>("/settings", { method: "PUT", body: patch }));
-      toast("Saved");
+      const t = await api<CreateTokenResponse>("/tokens", { body: { name } });
+      setNewToken(t);
+      setTokens(await api<ApiToken[]>("/tokens"));
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : "Couldn't save", "error");
+      setTokenError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
     }
   };
 
-  const setLimit = (key: keyof Limits, value: string) => {
-    const n = Number(value);
-    // Nothing kept for alerts is allowed; a limit of nothing isn't.
-    const ok = key === "alertReserveUsd" ? n >= 0 : n > 0;
-    if (!settings || !ok || n === settings.limits[key]) return;
-    void update({ limits: { ...settings.limits, [key]: n } });
-  };
-
-  const createToken = async () => {
-    const name = prompt("Name for the new token, e.g. iPhone")?.trim();
-    if (!name) return;
-    const t = await api<CreateTokenResponse>("/tokens", { body: { name } });
-    setNewToken(t);
-    setTokens(await api<ApiToken[]>("/tokens"));
-  };
-
   const revoke = async (t: ApiToken) => {
-    if (!confirm(`Revoke "${t.name}"? Apps using it will be signed out.`)) return;
-    await api(`/tokens/${t.id}`, { method: "DELETE" });
-    setTokens(await api<ApiToken[]>("/tokens"));
+    if (
+      !(await ask({ text: `Revoke "${t.name}"? Apps using it will be signed out.`, ok: "Revoke" }))
+    )
+      return;
+    setTokenError("");
+    try {
+      await api(`/tokens/${t.id}`, { method: "DELETE" });
+      setTokens(await api<ApiToken[]>("/tokens"));
+    } catch (err) {
+      setTokenError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
+    }
+  };
+
+  const pause = async () => {
+    setPauseError("");
+    try {
+      await setPaused(!paused);
+      toast(paused ? "Resumed" : "All activity paused");
+    } catch (err) {
+      setPauseError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
+    }
   };
 
   const signOut = async () => {
@@ -137,6 +158,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
                     type="button"
                     key={t}
                     className={theme === t ? "active" : ""}
+                    aria-pressed={theme === t}
                     onClick={() => {
                       setTheme(t);
                       setThemeState(t);
@@ -179,19 +201,21 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
                 ["alertReserveUsd", "Kept for alerts"],
               ] as const
             ).map(([key, label]) => (
-              <div className="row" key={key}>
-                <div className="txt">
-                  <b>{label}</b>
-                </div>
-                $
-                <input
-                  type="number"
-                  min={key === "alertReserveUsd" ? "0" : "0.01"}
-                  step="0.01"
-                  defaultValue={settings.limits[key]}
-                  onBlur={(e) => setLimit(key, e.target.value)}
-                />
-              </div>
+              <SavedRow
+                key={key}
+                label={label}
+                saved={settings.limits[key]}
+                // Nothing kept for alerts is allowed; a limit of nothing isn't.
+                parse={(text) => parseLimit(text, key === "alertReserveUsd")}
+                save={(n) => put({ limits: { ...settings.limits, [key]: n } })}
+                prefix="$"
+                input={{
+                  type: "number",
+                  inputMode: "decimal",
+                  min: key === "alertReserveUsd" ? "0" : "0.01",
+                  step: "0.01",
+                }}
+              />
             ))}
           </div>
         </section>
@@ -225,20 +249,13 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
                 <option value="medium">Medium</option>
               </select>
             </div>
-            <div className="row">
-              <div className="txt">
-                <b>Your name on memory edits</b>
-              </div>
-              <input
-                type="text"
-                defaultValue={settings.owner.name}
-                onBlur={(e) => {
-                  const name = e.target.value.trim();
-                  if (name && name !== settings.owner.name)
-                    void update({ owner: { ...settings.owner, name } });
-                }}
-              />
-            </div>
+            <SavedRow
+              label="Your name on memory edits"
+              saved={settings.owner.name}
+              parse={parseName}
+              save={(name) => put({ owner: { ...settings.owner, name } })}
+              input={{ type: "text" }}
+            />
           </div>
         </section>
 
@@ -414,6 +431,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
             <div className="row">
               <div className="txt">
                 <b>API tokens</b>
+                {tokenError && <span className="form-error">{tokenError}</span>}
               </div>
               <button type="button" className="btn sm" onClick={createToken}>
                 New token
@@ -461,14 +479,9 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
             <div className="row">
               <div className="txt">
                 <b>Pause all activity</b>
+                {pauseError && <span className="form-error">{pauseError}</span>}
               </div>
-              <button
-                type="button"
-                className={`btn sm ${paused ? "" : "danger"}`}
-                onClick={() =>
-                  setPaused(!paused).then(() => toast(paused ? "Resumed" : "All activity paused"))
-                }
-              >
+              <button type="button" className={`btn sm ${paused ? "" : "danger"}`} onClick={pause}>
                 {paused ? "Resume" : "Pause all"}
               </button>
             </div>
@@ -540,7 +553,12 @@ function RollbackRow({ toast }: { toast: Toast }) {
   const rollback = async () => {
     const snap = snaps.find((s) => s.name === picked);
     if (!snap) return;
-    if (!confirm(`Roll the desktop back to ${snapLabel(snap)}? Everything since then is lost.`))
+    if (
+      !(await ask({
+        text: `Roll the desktop back to ${snapLabel(snap)}? Everything since then is lost.`,
+        ok: "Roll back",
+      }))
+    )
       return;
     setBusy(true);
     try {
