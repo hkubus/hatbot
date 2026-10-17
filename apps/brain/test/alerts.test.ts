@@ -146,3 +146,59 @@ test("the last dollar of the day is kept for alerts; past it, you still hear wha
     alertReserveUsd: 0,
   });
 });
+
+test("a flapping monitor goes on its last task's timeline for an hour; a trigger starts 24 tasks a day at most", async () => {
+  const done = {
+    content: [toolUse("finish_task", { outcome: "done", summary: "Looked.", notify: false })],
+  };
+  const work = new FakeModel([done, done, done, done]);
+  const t = await testApp(new FakeModel(), work);
+  const triggerId = t.triggers.create({ name: "Kuma", kind: "kuma", prompt: "Fix it" }).id;
+  const first = t.triggers.receiveKuma(triggerId, down);
+  if (first.status !== "started") throw new Error(first.status);
+  await waitFor(() => t.tasks.get(first.task.id)?.finishedAt);
+
+  // Back up and down again ten minutes later: on that task's timeline, not a new task.
+  t.advance(10 * 60_000);
+  expect(t.triggers.receiveKuma(triggerId, up)).toEqual({ status: "skipped", reason: "ignored" });
+  expect(t.triggers.receiveKuma(triggerId, down)).toEqual({ status: "skipped", reason: "recent" });
+  expect(t.tasks.steps(first.task.id).map((s) => s.name)).toEqual(
+    expect.arrayContaining(["Jellyfin is back up", "Jellyfin is down again"]),
+  );
+  expect(t.tasks.list()).toHaveLength(1);
+  // An hour after the task ended, a new one.
+  t.advance(60 * 60_000);
+  const second = t.triggers.receiveKuma(triggerId, down);
+  expect(second.status).toBe("started");
+  await t.tasks.idle();
+
+  // 22 more today, as if other monitors had gone down: the 24th is the last, and you're told.
+  for (let i = 0; i < 21; i++)
+    t.db
+      .query(
+        `INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, finished_at, trigger_id, run_key)
+         VALUES ('Other is down', 'g', '', 'alert', 'background', 'm', 'done', 1, ?, ?, ?, ?)`,
+      )
+      .run(
+        new Date(Date.parse("2026-10-09T13:00:00Z")).toISOString(),
+        "2026-10-09T13:00:00.000Z",
+        triggerId,
+        `kuma:${triggerId}:${100 + i}`,
+      );
+  const other = (id: number) => ({
+    heartbeat: { status: 0, msg: "timeout" },
+    monitor: { id, name: `Monitor ${id}` },
+  });
+  expect(t.triggers.receiveKuma(triggerId, other(7)).status).toBe("started");
+  expect(t.notifier.sent.filter((n) => n.title === "Kuma is at its limit")).toHaveLength(1);
+  expect(t.triggers.receiveKuma(triggerId, other(8))).toEqual({
+    status: "skipped",
+    reason: "limit",
+  });
+  expect(t.notifier.sent.filter((n) => n.title === "Kuma is at its limit")).toHaveLength(1);
+  // A day later it starts tasks again.
+  await t.tasks.idle();
+  t.advance(24 * 3600_000);
+  expect(t.triggers.receiveKuma(triggerId, other(8)).status).toBe("started");
+  await t.tasks.idle();
+});

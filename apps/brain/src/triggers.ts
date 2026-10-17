@@ -26,6 +26,10 @@ const MAX_PAYLOAD_CHARS = 20_000;
 const KUMA_INTERVAL_S = { fallback: 60, min: 20, max: 900 };
 /** Time for the check after the wait to run and its "up" to reach us. */
 const KUMA_SLACK_MS = 30_000;
+/** A monitor down again this soon after its last alert task ended goes on that task's timeline. */
+const ALERT_COOLDOWN_MS = 3600_000;
+/** Tasks one trigger may start in 24 hours, so a flapping monitor or a busy forge can't run up a bill. */
+const MAX_TASKS_PER_DAY = 24;
 
 type Row = {
   id: number;
@@ -47,7 +51,11 @@ const SELECT = `SELECT g.*, (SELECT max(id) FROM tasks t WHERE t.trigger_id = g.
 
 export type Received =
   | { status: "started"; task: Task }
-  | { status: "skipped"; reason: "paused" | "running" | "disabled" | "duplicate" | "ignored" }
+  | {
+      status: "skipped";
+      /** recent: on the timeline of the monitor's last task; limit: the trigger's tasks for the day. */
+      reason: "paused" | "running" | "disabled" | "duplicate" | "ignored" | "recent" | "limit";
+    }
   /** A down alert waiting for the monitor's next checks before it starts a task. */
   | { status: "waiting"; until: string }
   | { status: "test" };
@@ -230,7 +238,7 @@ export class Triggers {
     if (!t) return { status: "skipped", reason: "disabled" };
     if (replay) return { status: "skipped", reason: "duplicate" };
     this.fired(id);
-    const blocked = this.blocked(t);
+    const blocked = this.blocked(t) ?? this.limited(t);
     if (blocked) return blocked;
     const task = this.tasks.createBackgroundTask({
       title: t.name,
@@ -243,7 +251,9 @@ export class Triggers {
       payload: pretty(body),
       trusted: t.trusted,
     });
-    return task ? { status: "started", task } : { status: "skipped", reason: "running" };
+    if (!task) return { status: "skipped", reason: "running" };
+    this.started(t);
+    return { status: "started", task };
   }
 
   /**
@@ -289,6 +299,7 @@ export class Triggers {
       if (this.db.query("DELETE FROM kuma_waiting WHERE run_key = ?").run(runKey).changes)
         console.log(`kuma: ${name} came back up in time; dropped its alert`);
       if (active) update(active.id, "is back up");
+      else this.again(runKey, `${name} is back up`, message);
       return { status: "skipped", reason: "ignored" };
     }
     if (hb.status !== 0) return { status: "skipped", reason: "ignored" };
@@ -302,6 +313,8 @@ export class Triggers {
       .query<{ due_at: string }, [string]>("SELECT due_at FROM kuma_waiting WHERE run_key = ?")
       .get(runKey);
     if (waiting) return { status: "waiting", until: waiting.due_at };
+    const again = this.again(runKey, `${name} is down again`, message);
+    if (again) return again;
     const alert = {
       monitor: name,
       type: monitor.type,
@@ -340,12 +353,61 @@ export class Triggers {
       if (!t || this.blocked(t)) continue;
       const r = this.startAlert(t, w.run_key, w.name, w.alert);
       console.log(
-        `kuma: ${w.name} is still down; ${r.status === "started" ? `started task #${r.task.id}` : "a task is already on it"}`,
+        `kuma: ${w.name} is still down; ${r.status === "started" ? `started task #${r.task.id}` : `skipped (${r.status === "skipped" ? r.reason : r.status})`}`,
       );
     }
   }
 
+  /**
+   * A monitor's news soon after its last alert task ended: on that task's timeline, rather than a new
+   * task each time a flapping monitor goes down. Null when there's no such task.
+   */
+  private again(runKey: string, what: string, message: string): Received | null {
+    const cutoff = new Date(this.clock() - ALERT_COOLDOWN_MS).toISOString();
+    const last = this.db
+      .query<{ id: number }, [string, string]>(
+        "SELECT id FROM tasks WHERE run_key = ? AND finished_at > ? ORDER BY id DESC LIMIT 1",
+      )
+      .get(runKey, cutoff);
+    if (!last) return null;
+    this.tasks.addStep(last.id, { kind: "note", name: what, detail: message, url: null });
+    return { status: "skipped", reason: "recent" };
+  }
+
+  /** Whether the trigger started its most tasks for a day already. */
+  private limited(t: Trigger): Received | null {
+    return this.startedToday(t.id) >= MAX_TASKS_PER_DAY
+      ? { status: "skipped", reason: "limit" }
+      : null;
+  }
+
+  private startedToday(id: number): number {
+    const since = new Date(this.clock() - 86400_000).toISOString();
+    return (
+      this.db
+        .query<{ n: number }, [number, string]>(
+          "SELECT count(*) AS n FROM tasks WHERE trigger_id = ? AND parent_id IS NULL AND created_at > ?",
+        )
+        .get(id, since)?.n ?? 0
+    );
+  }
+
+  /** After the task that reached the day's limit: told once, since later events start nothing. */
+  private started(t: Trigger) {
+    if (this.startedToday(t.id) !== MAX_TASKS_PER_DAY) return;
+    void this.notifier.send({
+      title: `${t.name} is at its limit`.slice(0, 120),
+      message: `It started ${MAX_TASKS_PER_DAY} tasks in the last 24 hours, the most it may. Its events start nothing more until fewer did.`,
+      priority: 3,
+      click: `${this.publicUrl}/triggers/${t.id}`,
+    });
+  }
+
   private startAlert(t: Trigger, runKey: string, name: string, payload: string): Received {
+    const again = this.again(runKey, `${name} is down again`, "");
+    if (again) return again;
+    const limited = this.limited(t);
+    if (limited) return limited;
     const task = this.tasks.createBackgroundTask({
       title: `${name} is down`,
       goal: t.prompt,
@@ -357,7 +419,9 @@ export class Triggers {
       payload,
       trusted: true,
     });
-    return task ? { status: "started", task } : { status: "skipped", reason: "running" };
+    if (!task) return { status: "skipped", reason: "running" };
+    this.started(t);
+    return { status: "started", task };
   }
 
   private blocked(t: Trigger): Received | null {
