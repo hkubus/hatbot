@@ -425,6 +425,7 @@ export function verdictFor(
       action: "ask",
       why: `This ${call.task ? "task" : "conversation"} has read untrusted content, so changes need your approval.`,
       tainted: true,
+      ...(t.kind ? { kind: t.kind } : {}),
     };
   return own;
 }

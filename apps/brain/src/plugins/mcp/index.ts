@@ -12,6 +12,7 @@ import {
   StreamableHTTPError,
 } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { CallToolResultSchema, ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import Ajv2020 from "ajv/dist/2020.js";
 import { z } from "zod";
 import {
   allow,
@@ -36,20 +37,53 @@ const Mode = z.enum(["chat", "allow", "ask", "always", "off"]);
 type Mode = z.infer<typeof Mode>;
 
 const PAYS =
-  /\b(pay|pays|paid|paying|payments?|payouts?|checkout|check out|transfers?|transferring|refunds?|withdraw|withdrawals?)\b/i;
+  /\b(pay|pays|paid|paying|payments?|payouts?|checkout|check out|transfers?|transferring|refunds?|withdraw|withdrawals?|money|funds|charges?|spend|spends|spending|donate|donates|donating|donations?|tip|invoices?|wire|deposits?|swap|swaps|swapping|trade|trades|trading|(credit|debit|saved|gift|payment) cards?)\b/i;
 const BUYS =
-  /\b(buy|buys|buying|purchase|purchases|purchasing|orders?|ordering|bid|bids|bidding)\b/i;
+  /\b(buy|buys|buying|purchase|purchases|purchasing|orders?|ordering|bid|bids|bidding|subscribe|subscriptions?|book|books|booking|reserve|reserves|reserving|reservations?|sell|sells|selling|(make|makes|send|submit|accept)s? offers?)\b/i;
+/** Words that look like money but aren't, here: a branch checked out, issues in order, a repo moved. */
+const NOT_MONEY =
+  /\b(in order( to| that| for)?|(sort|sorting|sorted|ascending|descending|reverse|alphabetical|chronological|natural|same|random) order|order (by|of)|out of order|free of charge|in charge)\b|\b(check ?outs?|switch(es)?|transfers?|transferring)\b(?=[^.]*\b(branch|branches|commit|commits|revision|tag|repo|repository|repositories|ownership|issue|issues)\b)/gi;
+/** A name written as one word: placeorder, buynow, makepayment. */
+const ONE_WORD_PAYS = /^(pay|checkout|charge|donate)|payment|sendmoney|transfer(funds|money)/;
+const ONE_WORD_BUYS = /^(buy|purchase|order|subscribe|book|reserve)|placeorder|buynow|purchase/;
 
 /** Whether a tool looks like it moves money, from its name and description: what it'd be approving. */
 export function moneyKind(name: string, description = ""): "payment" | "purchase" | null {
   const words = name.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_.-]+/g, " ");
-  const text = `${words} ${description}`.replace(
-    /\b(in order (to|that|for)|sort(ing)? order)\b/gi,
-    "",
-  );
+  const text = `${words} ${description}`.replace(NOT_MONEY, "");
   if (PAYS.test(text)) return "payment";
   if (BUYS.test(text)) return "purchase";
+  if (/^[a-z]+$/.test(name)) {
+    if (ONE_WORD_PAYS.test(name)) return "payment";
+    if (ONE_WORD_BUYS.test(name)) return "purchase";
+  }
   return null;
+}
+
+/** What a tool's calls are, if they move money or change accounts: the owner's say, or a guess. */
+const Kind = z.enum(["payment", "purchase", "account_security", "none"]);
+type Kind = Exclude<z.infer<typeof Kind>, "none">;
+const KIND_WHY: Record<Kind, string> = {
+  payment: "It may pay or move money, so it always asks.",
+  purchase: "It may buy or order something, so it always asks.",
+  account_security: "It may change accounts, passwords or keys, so it always asks.",
+};
+
+/**
+ * Characters that show as nothing: format controls (zero-width, bidi), Unicode tags, variation
+ * selectors and fillers. Text in them would reach the model without the owner seeing it.
+ */
+const INVISIBLE =
+  // biome-ignore lint/suspicious/noMisleadingCharacterClass: each one is removed on its own.
+  /[\p{Cf}\u{E0000}-\u{E007F}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}\u115F\u1160\u3164\uFFA0]/gu;
+export const visible = (text: string) => text.replace(INVISIBLE, "");
+/** A schema with every string in it, names included, as Settings shows it. */
+function visibleAll(value: unknown): unknown {
+  if (typeof value === "string") return visible(value);
+  if (Array.isArray(value)) return value.map(visibleAll);
+  if (isObject(value))
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [visible(k), visibleAll(v)]));
+  return value;
 }
 
 const Server = z.object({
@@ -67,6 +101,10 @@ const Server = z.object({
   enabled: z.boolean().default(true),
   /** Per tool; tools not listed are "ask", or "always" when they look like they pay or buy. */
   tools: z.record(z.string(), Mode).default({}),
+  /** Per tool, the definition its Chat or Allow mode was chosen for: a changed one asks again. */
+  pinned: z.record(z.string(), z.string()).default({}),
+  /** Per tool, what its calls are when the owner says so; otherwise guessed from its words. */
+  kinds: z.record(z.string(), Kind).default({}),
   /**
    * Per tool, the definition the owner read and accepted (definitionHash): an untrusted server's
    * tool doesn't taint what it's offered in until its name, description or schema change.
@@ -167,6 +205,27 @@ export function toolName(server: string, name: string, unique = false): string {
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
+/** Property names Claude's API takes in an input schema. */
+const PROPERTY_NAME = /^[a-zA-Z0-9_.-]{1,64}$/;
+/** The first property name anywhere in a schema that the API wouldn't take. */
+function badName(schema: unknown): string | null {
+  if (Array.isArray(schema)) {
+    for (const s of schema) {
+      const bad = badName(s);
+      if (bad !== null) return bad;
+    }
+    return null;
+  }
+  if (!isObject(schema)) return null;
+  if (isObject(schema.properties))
+    for (const name of Object.keys(schema.properties)) if (!PROPERTY_NAME.test(name)) return name;
+  for (const v of Object.values(schema)) {
+    const bad = badName(v);
+    if (bad !== null) return bad;
+  }
+  return null;
+}
+
 /** Why the API wouldn't take this tool's definition, or why Hatbot can't run it; null if it's fine. */
 export function problemOf(t: Record<string, unknown>): string | null {
   const s = t.inputSchema;
@@ -184,6 +243,20 @@ export function problemOf(t: Record<string, unknown>): string | null {
     return "Its description isn't text.";
   if (isObject(t.execution) && t.execution.taskSupport === "required")
     return "It only runs as a long-running MCP task, which Hatbot doesn't support.";
+  const name = badName(s);
+  if (name !== null)
+    return `Its input schema has a property named ${JSON.stringify(name)}; Claude's API takes only letters, digits, _, . and -, up to 64.`;
+  // The API checks the whole schema against JSON Schema 2020-12 and refuses every request that
+  // carries one it doesn't take. A fresh validator each time: schemas may reuse each other's $ids.
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const schema = withoutMeta(s);
+  if (!ajv.validateSchema(schema))
+    return `Its input schema isn't valid JSON Schema: ${ajv.errorsText(ajv.errors, { dataVar: "schema" }).slice(0, 200)}.`;
+  try {
+    ajv.compile(schema);
+  } catch (err) {
+    return `Its input schema refers to something it doesn't define: ${(err as Error).message.slice(0, 200)}.`;
+  }
   return null;
 }
 
@@ -199,6 +272,31 @@ export function definitionHash(t: Pick<Listed, "name" | "description" | "inputSc
 function withoutMeta(schema: Record<string, unknown>): Record<string, unknown> {
   const { $schema: _, $id: __, ...rest } = schema;
   return rest;
+}
+
+/** Whether the server answered the call itself, so it's known not to have run (or what it said). */
+const answered = (err: unknown) =>
+  (err instanceof McpError && err.code !== ErrorCode.ConnectionClosed) ||
+  // A 5xx is often a proxy's, after the server took the call; -1 is an answer that isn't MCP.
+  (err instanceof StreamableHTTPError && (err.code ?? -1) >= 400 && (err.code ?? -1) < 500);
+
+/** What a call that failed after it may have reached the server says to the model. */
+export function callFailure(server: string, err: unknown): PluginError {
+  if (err instanceof McpError && err.code === ErrorCode.RequestTimeout)
+    return new PluginError(
+      `${server} didn't answer in ${CALL_TIMEOUT_MS / 1000} s. It may have done it anyway: check before trying again.`,
+    );
+  if (err instanceof StreamableHTTPError && !answered(err))
+    return new PluginError(
+      `${server} gave ${(err.code ?? -1) < 0 ? "an answer that isn't MCP" : `HTTP ${err.code}`} after the call was sent, so it may or may not have run: check before trying again.`,
+    );
+  if (!answered(err))
+    return new PluginError(
+      `The connection to ${server} broke during the call, so it may or may not have run: check before trying again.`,
+    );
+  return new PluginError(
+    `${server} failed: ${err instanceof Error ? err.message.slice(0, 300) : "error"}`,
+  );
 }
 
 /** What fetch says when it couldn't open a connection at all. */
@@ -289,11 +387,17 @@ export const mcpPlugin = definePlugin({
           for (const t of r.tools) {
             // Without a name there's nothing to call it by, or to show.
             if (!isObject(t) || typeof t.name !== "string" || !t.name) continue;
+            // As the owner will see it: what can't be seen is left out of what the model reads.
+            const shown = {
+              ...t,
+              description: typeof t.description === "string" ? visible(t.description) : undefined,
+              inputSchema: isObject(t.inputSchema) ? visibleAll(t.inputSchema) : {},
+            };
             listed.push({
               name: t.name,
-              description: typeof t.description === "string" ? t.description : undefined,
-              inputSchema: isObject(t.inputSchema) ? t.inputSchema : {},
-              problem: problemOf(t),
+              description: shown.description,
+              inputSchema: shown.inputSchema as Record<string, unknown>,
+              problem: problemOf(shown),
             });
           }
           cursor = r.nextCursor;
@@ -313,8 +417,27 @@ export const mcpPlugin = definePlugin({
     };
     await Promise.all(conns.map(connect));
 
-    const modeOf = (c: Conn, t: Listed): Mode =>
-      c.server.tools[t.name] ?? (moneyKind(t.name, t.description) ? "always" : "ask");
+    const kindOf = (c: Conn, t: Listed): Kind | null => {
+      const set = c.server.kinds[t.name];
+      return set === "none" ? null : (set ?? moneyKind(t.name, t.description));
+    };
+    /**
+     * A Chat or Allow mode was chosen for the definition the owner saw then (or accepted): once it
+     * changes, a tool that read could now pay or write, so it asks again until the owner chooses.
+     */
+    const lapsed = (c: Conn, t: Listed) => {
+      const set = c.server.tools[t.name];
+      if (set !== "chat" && set !== "allow") return false;
+      return (c.server.pinned[t.name] ?? c.server.accepted[t.name]) !== definitionHash(t);
+    };
+    /** Money and accounts never skip asking: Ask first is Always ask, and Chat is Allow. */
+    const modeOf = (c: Conn, t: Listed): Mode => {
+      const kind = kindOf(c, t);
+      const mode = (lapsed(c, t) ? undefined : c.server.tools[t.name]) ?? (kind ? "always" : "ask");
+      if (kind && mode === "ask") return "always";
+      if (kind && mode === "chat") return "allow";
+      return mode;
+    };
     /**
      * A server's tools with their names for the API, and why any can't be offered. Names are given in
      * the server's order whatever the modes, so switching one tool off doesn't rename another.
@@ -338,12 +461,13 @@ export const mcpPlugin = definePlugin({
     const toolsOf = (c: Conn): PluginTool[] =>
       checked(c)
         .filter(({ mode, problem }) => mode !== "off" && !problem)
-        .map(({ t, name, mode }) => ({ t, name, mode, kind: moneyKind(t.name, t.description) }))
+        .map(({ t, name, mode }) => ({ t, name, mode, kind: kindOf(c, t) }))
         .map(({ t, name, mode, kind }) =>
           tool({
             name,
             description: `${(t.description ?? t.name).slice(0, 1000)} (from the MCP server "${c.server.name}")`,
             access: mode === "chat" ? "read" : "write",
+            ...(kind ? { kind } : {}),
             untrusted: !c.server.trusted,
             untrustedDefinition: !c.server.trusted && !accepted(c, t),
             label: `Using ${c.server.name}`,
@@ -354,14 +478,12 @@ export const mcpPlugin = definePlugin({
               ? {}
               : {
                   // Money is never left to the safety review: its kind keeps the review out.
+                  // Allowed, it still asks with its kind after untrusted content (verdictFor).
                   policy: () =>
                     mode === "allow"
                       ? allow()
                       : kind
-                        ? askAlways(
-                            `It may ${kind === "payment" ? "pay or move money" : "buy or order something"}, so it always asks.`,
-                            kind,
-                          )
+                        ? askAlways(KIND_WHY[kind], kind)
                         : mode === "always"
                           ? askAlways("The owner asked to always be asked before this tool runs.")
                           : ask(`MCP tools ask first unless the owner allows them in Settings.`),
@@ -387,22 +509,10 @@ export const mcpPlugin = definePlugin({
                 r = await call();
               } catch (err) {
                 if (signal.aborted || err instanceof PluginError) throw err;
-                const answered =
-                  (err instanceof McpError && err.code !== ErrorCode.ConnectionClosed) ||
-                  err instanceof StreamableHTTPError;
                 // A call that may have reached the server is sent again only if it only reads (the
                 // owner said so): a write could run twice.
-                if (!unsent(err) && (mode !== "chat" || answered)) {
-                  if (err instanceof McpError && err.code === ErrorCode.RequestTimeout)
-                    throw new PluginError(
-                      `${c.server.name} didn't answer in ${CALL_TIMEOUT_MS / 1000} s. It may have done it anyway: check before trying again.`,
-                    );
-                  if (!answered)
-                    throw new PluginError(
-                      `The connection to ${c.server.name} broke during the call, so it may or may not have run: check before trying again.`,
-                    );
-                  throw failed(err);
-                }
+                if (!unsent(err) && (mode !== "chat" || answered(err)))
+                  throw callFailure(c.server.name, err);
                 // The server restarted, dropped the session or the connection: reconnect once.
                 await reconnect(c);
                 try {
@@ -440,14 +550,21 @@ export const mcpPlugin = definePlugin({
           state: !s.enabled ? "off" : c?.client ? "connected" : "failed",
           error: c?.error ?? null,
           // What the model would read of each tool, so the owner can accept it knowingly.
-          tools: (c ? checked(c) : []).map(({ t, mode, problem }) => ({
-            name: t.name,
-            description: (t.description ?? "").slice(0, 1000),
-            schema: JSON.stringify(withoutMeta(t.inputSchema), null, 2),
-            mode,
-            problem,
-            hash: definitionHash(t),
-          })),
+          tools: c
+            ? checked(c).map(({ t, mode, problem }) => ({
+                name: t.name,
+                description: (t.description ?? "").slice(0, 1000),
+                schema: JSON.stringify(withoutMeta(t.inputSchema), null, 2),
+                mode,
+                problem,
+                hash: definitionHash(t),
+                /** What its calls are now, and what its words suggest. */
+                kind: kindOf(c, t),
+                guess: moneyKind(t.name, t.description),
+                /** Its Chat or Allow mode no longer holds: the definition changed since. */
+                changed: lapsed(c, t),
+              }))
+            : [],
         };
       });
 

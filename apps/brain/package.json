@@ -11,6 +11,7 @@
     "@hatbot/shared": "workspace:*",
     "@hono/zod-validator": "^0.9.1",
     "@modelcontextprotocol/sdk": "^1.32.1",
+    "ajv": "^8.20.0",
     "croner": "^10.0.1",
     "hono": "^4.13.13",
     "zod": "^4.6.5"
