@@ -13,7 +13,7 @@ import {
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
-import { NoForm } from "../form";
+import { NoForm, useStoredForm } from "../form";
 import { Icon } from "../icons";
 import { navigate } from "../router";
 import { loadPlugins, putWatcher, useStore } from "../store";
@@ -30,8 +30,11 @@ const WHEN: { when: WatchCondition["when"]; label: string }[] = [
 ];
 type Pick = "page" | "selector" | "path";
 
-const patchWatcher = (id: number, body: object) =>
-  api<Watcher>(`/watchers/${id}`, { method: "PATCH", body }).then(putWatcher);
+const patchWatcher = async (id: number, body: object) => {
+  const w = await api<Watcher>(`/watchers/${id}`, { method: "PATCH", body });
+  putWatcher(w);
+  return w;
+};
 
 /** The Watchers group on the Schedules page. */
 export function WatcherList({ onError }: { onError: (error: string) => void }) {
@@ -54,7 +57,7 @@ export function WatcherList({ onError }: { onError: (error: string) => void }) {
                 <b>{w.name}</b>
               </div>
               {w.lastError ? (
-                <span className="val bad">Can't read</span>
+                <span className="val bad">{trouble(w)?.short}</span>
               ) : (
                 <span className="val">{w.enabled ? (w.lastValue ?? "") : "Off"}</span>
               )}
@@ -98,7 +101,7 @@ type Form = {
   botId: string;
 };
 
-const blank: Form = {
+export const blank: Form = {
   name: "",
   kind: "page",
   url: "",
@@ -138,8 +141,8 @@ const formOf = (w: Watcher): Form => ({
   botId: w.botId,
 });
 
-/** The form as the API takes it, or what's wrong with it. */
-function bodyOf(f: Form): { source: WatchSource; condition: WatchCondition } | string {
+/** Where the form looks, or what's wrong with it: all Try it needs. */
+export function sourceOf(f: Form): WatchSource | string {
   let input: Record<string, unknown> = {};
   if (f.kind === "tool") {
     try {
@@ -148,7 +151,7 @@ function bodyOf(f: Form): { source: WatchSource; condition: WatchCondition } | s
       return "The tool's input isn't JSON.";
     }
   }
-  const source: WatchSource = {
+  return {
     kind: f.kind,
     ...(f.kind === "page"
       ? { url: f.url.trim(), ...(f.render ? { render: true } : {}) }
@@ -157,6 +160,12 @@ function bodyOf(f: Form): { source: WatchSource; condition: WatchCondition } | s
     ...(f.pick === "path" && f.path.trim() ? { path: f.path.trim() } : {}),
     ...(f.pattern ? { pattern: f.pattern } : {}),
   };
+}
+
+/** The form as the API takes it, or what's wrong with it. */
+export function bodyOf(f: Form): { source: WatchSource; condition: WatchCondition } | string {
+  const source = sourceOf(f);
+  if (typeof source === "string") return source;
   let condition: WatchCondition;
   if (f.when === "changed") condition = { when: "changed" };
   else if (f.when === "contains" || f.when === "missing") {
@@ -170,7 +179,7 @@ function bodyOf(f: Form): { source: WatchSource; condition: WatchCondition } | s
   return { source, condition };
 }
 
-/** The form as the API takes it, without the trimming and order a save would change. */
+/** The form's other fields as the API takes them. */
 const fieldsOf = (f: Form) => ({
   name: f.name.trim(),
   prompt: f.prompt.trim(),
@@ -179,29 +188,27 @@ const fieldsOf = (f: Form) => ({
   botId: f.botId,
 });
 
-/** Whether the form says something other than what's saved (a new one: than the blank form). */
-function editedFrom(form: Form, stored: Watcher | undefined) {
-  if (!stored) return JSON.stringify(form) !== JSON.stringify(blank);
-  const body = bodyOf(form);
-  return (
-    typeof body === "string" ||
-    JSON.stringify({ ...fieldsOf(form), ...body }) !==
-      JSON.stringify({
-        name: stored.name,
-        prompt: stored.prompt,
-        everyMinutes: stored.everyMinutes,
-        once: stored.once,
-        botId: stored.botId,
-        source: stored.source,
-        condition: stored.condition,
-      })
-  );
+/**
+ * What's wrong, for its row and its page: it can't read what it looks at, or it counted so often
+ * that it was switched off. That last read worked, so it isn't a failed one.
+ */
+export function trouble(w: Watcher): { short: string; long: string } | null {
+  if (!w.lastError) return null;
+  if (w.errors === 0) return { short: "Off", long: w.lastError };
+  const times = w.errors > 1 ? ` (${w.errors} times in a row)` : "";
+  return { short: "Can't read", long: `Can't read it: ${w.lastError}${times}` };
 }
 
 export function WatcherEdit({ id }: { id: number | null }) {
   const stored = useStore((s) => (id === null ? undefined : s.watchers[id]));
   const plugins = useStore((s) => s.plugins);
-  const [form, setForm] = useState<Form | null>(id === null ? blank : null);
+  // A change made elsewhere comes in while you haven't edited it.
+  const {
+    form,
+    dirty,
+    set: setFields,
+    saved,
+  } = useStoredForm<Form>(id === null ? blank : stored ? formOf(stored) : undefined);
   const [preview, setPreview] = useState<WatchPreview | null>(null);
   /** What went wrong with Try it, shown beside it. */
   const [previewError, setPreviewError] = useState("");
@@ -210,12 +217,10 @@ export function WatcherEdit({ id }: { id: number | null }) {
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
   const listed = useListed("watchers", id, stored);
-  const edited = !!form && editedFrom(form, stored ?? undefined);
+  // Deleted elsewhere: there's nothing left to save.
+  const edited = dirty && stored !== null;
   const release = useLeaveGuard(edited);
 
-  useEffect(() => {
-    if (stored && !form) setForm(formOf(stored));
-  }, [stored, form]);
   useEffect(() => {
     void loadPlugins().catch(() => {});
   }, []);
@@ -238,7 +243,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
     );
 
   const set = (patch: Partial<Form>) => {
-    setForm({ ...form, ...patch });
+    setFields(patch);
     setPreview(null);
     setPreviewError("");
   };
@@ -258,13 +263,15 @@ export function WatcherEdit({ id }: { id: number | null }) {
 
   const tryIt = async () => {
     setPreview(null);
-    if (typeof body === "string") return setPreviewError(body);
+    // Only where it looks: the condition isn't tried, and its errors wait for Save.
+    const source = sourceOf(form);
+    if (typeof source === "string") return setPreviewError(source);
     setPreviewError("");
     setBusy(true);
     try {
       setPreview(
         await api<WatchPreview>("/watchers/preview", {
-          body: { source: body.source, botId: form.botId },
+          body: { source, botId: form.botId },
         }),
       );
     } catch (err) {
@@ -278,7 +285,8 @@ export function WatcherEdit({ id }: { id: number | null }) {
     setError("");
     try {
       if (stored) {
-        await patchWatcher(stored.id, { ...fields, ...body });
+        const w = await patchWatcher(stored.id, { ...fields, ...body });
+        saved(form, formOf(w));
       } else {
         const w = await api<Watcher>("/watchers", { body: { ...fields, ...body } });
         putWatcher(w);
@@ -350,12 +358,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
             </>
           )}
         </div>
-        {stored?.lastError && (
-          <div className="form-error">
-            Can't read it: {stored.lastError}
-            {stored.errors > 1 ? ` (${stored.errors} times in a row)` : ""}
-          </div>
-        )}
+        {stored?.lastError && <div className="form-error">{trouble(stored)?.long}</div>}
 
         <div className="panel form">
           <label>
