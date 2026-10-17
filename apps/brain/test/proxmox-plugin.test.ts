@@ -201,6 +201,10 @@ test("reads guests, a guest, the host and recent tasks", async () => {
   expect(failed).not.toContain("vzdump 105");
 
   expect(await t.plugins.test("proxmox")).toBe("Connected to pve: 3 guests, 3 running.");
+  // A bot can have another name: what the model reads doesn't call it Hatbot.
+  const read = [t.plugins.guidance(), ...t.plugins.tools().map((x) => x.description)].join("\n");
+  expect(read).toContain("Guest 125 is the brain you run on");
+  expect(read).not.toContain("Hatbot");
 });
 
 test("reboot runs right away; shutdown, careful guests and the desktop ask; the brain is refused", async () => {
@@ -243,7 +247,7 @@ test("Hatbot's own guests are refused by their tag too; without HATBOT_BRAIN_ID 
   const power = t.plugins.tools().find((x) => x.name === "proxmox_power");
   if (!power) throw new Error("no proxmox_power");
   await expect(power.run({ vmid: 125, action: "reboot" }, call)).rejects.toThrow(
-    "CT 125 (hatbot-brain) is one of Hatbot's own guests (tagged hatbot)",
+    "CT 125 (hatbot-brain) is one of the guests you run on (tagged hatbot)",
   );
   expect(posts.some((p) => p.path.includes("/125/status/"))).toBe(false);
   expect(verdictFor(power, { vmid: 125, action: "reboot" }, call).action).toBe("block");
@@ -289,5 +293,5 @@ test("an alert task reboots a guest and reports; shutting down waits for you", a
   const steps = t.tasks.steps(task.id).map((s) => s.detail);
   expect(steps).toContain("Reboot CT 105 (jellyfin)");
   // The system prompt says which guest is the brain.
-  expect(JSON.stringify(work.requests[0]?.system)).toContain("Guest 125 is Hatbot's own brain");
+  expect(JSON.stringify(work.requests[0]?.system)).toContain("Guest 125 is the brain you run on");
 });

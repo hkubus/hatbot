@@ -186,7 +186,7 @@ export const proxmoxPlugin = definePlugin({
             tool({
               name: "proxmox_power",
               description:
-                "Start, reboot, shut down (clean) or stop (hard power-off) a guest, and wait until Proxmox is done. Starting and rebooting run right away; shutting down or stopping asks the owner first.",
+                "Start, reboot, shut down (clean) or stop (hard power-off) a guest, and wait until Proxmox is done. Shutting down or stopping needs approval (the safety review or the owner); any power action on a careful guest waits for the owner.",
               access: "write",
               schema: z.object({
                 vmid: Vmid,
@@ -197,8 +197,8 @@ export const proxmoxPlugin = definePlugin({
                 if (refused(vmid))
                   return block(
                     vmid === brain
-                      ? "That's Hatbot's own brain: powering it would end this task. Ask the owner to do it."
-                      : "That's one of Hatbot's own guests (tagged hatbot). Ask the owner to do it.",
+                      ? "That's the brain you run on: powering it would end this task. Ask the owner to do it."
+                      : "That's one of the guests you run on (tagged hatbot). Ask the owner to do it.",
                   );
                 const off =
                   action === "shutdown" || action === "stop"
@@ -217,7 +217,7 @@ export const proxmoxPlugin = definePlugin({
                 // Checked again on the fresh listing: the policy saw the last one.
                 if (refused(vmid))
                   throw new ProxmoxError(
-                    `${label(r)} is one of Hatbot's own guests (tagged hatbot); it isn't powered from here.`,
+                    `${label(r)} is one of the guests you run on (tagged hatbot); it isn't powered from here.`,
                   );
                 const upid = (await pve.post(`${path(r)}/status/${action}`)) as string;
                 const exit = await pve.waitTask(upid, POWER_TIMEOUT_MS, signal);
@@ -236,7 +236,7 @@ export const proxmoxPlugin = definePlugin({
       tool({
         name: "proxmox_snapshot",
         description:
-          "Take a snapshot of one of Hatbot's own guests (the brain or the desktop), e.g. before a risky change. Other guests are refused by Proxmox.",
+          "Take a snapshot of the brain you run on or of your desktop, e.g. before a risky change to them. Proxmox refuses other guests: for those, check they have a recent backup (pbs_backups).",
         access: "write",
         schema: z.object({
           vmid: Vmid,
@@ -263,7 +263,7 @@ export const proxmoxPlugin = definePlugin({
 
     const special = [
       brain
-        ? `Guest ${brain} is Hatbot's own brain; never power it.`
+        ? `Guest ${brain} is the brain you run on; never power it.`
         : "Powering guests is off until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env, so the brain can't be powered off by mistake.",
       desktop ? `Guest ${desktop} is your desktop.` : null,
       careful.size
@@ -272,7 +272,7 @@ export const proxmoxPlugin = definePlugin({
     ].filter(Boolean);
     return ready(tools, {
       guidance:
-        `Proxmox host "${pve.node}". proxmox_guests lists every guest; read memory for what each one runs. Starting and rebooting a guest runs right away; shutting one down or stopping it asks the owner first. ${special.join(" ")}`.trim(),
+        `Proxmox host "${pve.node}". proxmox_guests lists every guest; read memory for what each one runs. Shutting a guest down or stopping it needs approval (the safety review or the owner). ${special.join(" ")}`.trim(),
       test: async () => {
         const list = await guests();
         const running = list.filter((g) => g.status === "running").length;

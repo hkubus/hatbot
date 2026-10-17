@@ -592,6 +592,9 @@ test("ssh_pct_exec runs a command in a container through a Proxmox host, quoted,
     `In CT 105 on pve: ${long}`,
   );
   expect(JSON.stringify(t.plugins.guidance())).toContain("pve is a Proxmox host");
+  // A bot can have another name: what the model reads doesn't call it Hatbot.
+  const read = [t.plugins.guidance(), ...t.plugins.tools().map((x) => x.description)].join("\n");
+  expect(read).not.toContain("Hatbot");
   // Without a Proxmox host there's no such tool.
   expect(t.plugins.tools().some((x) => x.name === "ssh_pct_exec")).toBe(true);
   const plain = await started();
@@ -606,12 +609,12 @@ test("the brain's and the desktop's containers are refused here too, and none is
   for (const guest of [125, 126]) {
     expect(verdictFor(pct, { host: "pve", guest, command: "uptime" }, call)).toMatchObject({
       action: "block",
-      why: `CT ${guest} is one of Hatbot's own containers; it isn't reached from here.`,
+      why: `CT ${guest} is the brain you run on or your desktop; it isn't reached from here.`,
     });
     const to = { host: "pve", guest, path: "/root/x" };
     expect(verdictFor(copy, { from: { sandbox: "x" }, to }, call).action).toBe("block");
     await expect(pct.run({ host: "pve", guest, command: "uptime" }, call)).rejects.toThrow(
-      "one of Hatbot's own containers",
+      "is the brain you run on or your desktop",
     );
   }
   expect(await t.plugins.test("ssh")).not.toContain("Containers");

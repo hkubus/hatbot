@@ -205,7 +205,7 @@ export const sshPlugin = definePlugin({
       !brainId
         ? `Containers are off until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env.`
         : guest === brainId || guest === desktopId
-          ? `CT ${guest} is one of Hatbot's own containers; it isn't reached from here.`
+          ? `CT ${guest} is the brain you run on or your desktop; it isn't reached from here.`
           : null;
 
     const hostOf = (name: string): Host => {
@@ -258,7 +258,7 @@ export const sshPlugin = definePlugin({
       if (at < 0) {
         if (/REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed/.test(r.stderr))
           throw new PluginError(
-            `${h.name}'s host key changed, so Hatbot won't connect: it could be someone else. If the owner rebuilt it, they can forget its key in Settings → Plugins → SSH.`,
+            `${h.name}'s host key changed, so it isn't connected to: it could be someone else. If the owner rebuilt it, they can forget its key in Settings → Plugins → SSH.`,
           );
         throw new PluginError(
           `Couldn't connect to ${h.name} (${h.user}@${h.address}): ${r.stderr.trim().slice(0, 300) || (r.timedOut ? "it took too long" : "ssh failed")}`,
@@ -516,7 +516,7 @@ export const sshPlugin = definePlugin({
             tool({
               name: "ssh_pct_exec",
               description:
-                "Run a shell command inside a Proxmox container (LXC), as root in the container, through its Proxmox host. Find the container's ID with proxmox_guests. Hatbot's own brain and desktop are refused. Destructive commands ask the owner first, and its output is untrusted unless the command only checks status, as with ssh_exec. In a task, calls for different containers in the same turn run at once.",
+                "Run a shell command inside a Proxmox container (LXC), as root in the container, through its Proxmox host. Find the container's ID with proxmox_guests. The brain you run on and your desktop are refused. As with ssh_exec, commands that look destructive need approval, and its output is untrusted unless the command only checks status; in a careful guest, every command waits for the owner. In a task, calls for different containers in the same turn run at once.",
               access: "write",
               untrusted: ({ command }) => !statusOnly(command),
               schema: z.object({
@@ -556,7 +556,7 @@ export const sshPlugin = definePlugin({
       tool({
         name: "ssh_write_file",
         description:
-          "Create or replace a text file on a host with the content you give. Files outside the user's home directory and /tmp ask the owner first.",
+          "Create or replace a text file on a host with the content you give. Files outside the user's home directory and /tmp need approval (the safety review or the owner); SSH keys, and anything on a careful host, wait for the owner.",
         access: "write",
         schema: z.object({
           host: hostField,
@@ -575,7 +575,7 @@ export const sshPlugin = definePlugin({
       }),
       tool({
         name: "ssh_copy_file",
-        description: `Copy a file of any kind, up to 25 MB, between your hosts, the containers on a Proxmox host, the desktop's sandbox and the chat. from: a file on a host ({host, path}, plus guest for a container), in the sandbox ({sandbox}), or in the chat ({attachment}: one the owner attached or you sent). to: a host, the sandbox, or the owner ({owner: true}), who gets it under your reply. A path ending in / keeps the file's name. Writing on a host outside the user's home and /tmp asks the owner first; in a container, outside /root and /tmp. To look at a text file, ssh_read_file is quicker; copy it to the sandbox to work on it with code_run.`,
+        description: `Copy a file of any kind, up to 25 MB, between your hosts, the containers on a Proxmox host, the desktop's sandbox and the chat. from: a file on a host ({host, path}, plus guest for a container), in the sandbox ({sandbox}), or in the chat ({attachment}: one the owner attached or you sent). to: a host, the sandbox, or the owner ({owner: true}), who gets it under your reply. A path ending in / keeps the file's name. Writing on a host outside the user's home and /tmp needs approval, as with ssh_write_file; in a container, outside /root and /tmp. To look at a text file, ssh_read_file is quicker; copy it to the sandbox to work on it with code_run.`,
         access: "write",
         label: "Copying a file",
         schema: z.object({
@@ -666,7 +666,7 @@ export const sshPlugin = definePlugin({
 
     return ready(tools, {
       guidance: hostNames.length
-        ? `You can reach these hosts over SSH: ${config.hosts.map((h) => `${h.name} (${h.user}@${h.address}${h.careful ? ", every command asks the owner" : ""})`).join("; ")}. Read memory for what runs where. Look with ssh_check and ssh_read_file; ssh_exec and ssh_write_file change things, and destructive commands ask the owner first. Restarting a service (systemctl restart) runs right away.${pctHosts.length ? ` ${pctHosts.join(" and ")} ${pctHosts.length > 1 ? "are Proxmox hosts" : "is a Proxmox host"}: ssh_pct_exec runs a command inside one of its containers, by ID.` : marked.length ? ` Its containers can't be reached until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env.` : ""} ssh_copy_file moves files between hosts${pctHosts.length ? ", containers" : ""}, the sandbox and the chat: the owner's attachments onto a host, a host's file to the owner or into the sandbox to work on.`
+        ? `You can reach these hosts over SSH: ${config.hosts.map((h) => `${h.name} (${h.user}@${h.address}${h.careful ? ", every command asks the owner" : ""})`).join("; ")}. Read memory for what runs where. Look with ssh_check and ssh_read_file; ssh_exec and ssh_write_file change things. Commands that look destructive need approval (the safety review or the owner); a restart (systemctl restart) needs none of its own.${pctHosts.length ? ` ${pctHosts.join(" and ")} ${pctHosts.length > 1 ? "are Proxmox hosts" : "is a Proxmox host"}: ssh_pct_exec runs a command inside one of its containers, by ID.` : marked.length ? ` Its containers can't be reached until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env.` : ""} ssh_copy_file moves files between hosts${pctHosts.length ? ", containers" : ""}, the sandbox and the chat: the owner's attachments onto a host, a host's file to the owner or into the sandbox to work on.`
         : undefined,
       test: async () => {
         if (!hostNames.length) throw new PluginError("Add a host first.");
