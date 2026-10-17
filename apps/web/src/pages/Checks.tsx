@@ -88,11 +88,7 @@ export function Checks() {
 
         {report && (
           <section className="group">
-            <h2>
-              {problems.length
-                ? `${problems.length} to look at · ${when(report.finishedAt)}`
-                : `All good · ${when(report.finishedAt)}`}
-            </h2>
+            <h2>{problems.length ? `${problems.length} to look at` : "All good"}</h2>
             <div className="group-box">
               {[...report.results]
                 .sort((a, b) => rank(a.state) - rank(b.state))

@@ -395,30 +395,6 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
         <section className="group">
           <h2>Account</h2>
           <div className="group-box">
-            {tokens.map((t) => (
-              <div className="row" key={t.id}>
-                <div className="txt">
-                  <b>{t.name}</b>
-                  <span>
-                    API token ·{" "}
-                    {t.lastUsedAt
-                      ? `last used ${new Date(t.lastUsedAt).toLocaleDateString("en-GB")}`
-                      : "never used"}
-                  </span>
-                </div>
-                <button type="button" className="btn sm danger-text" onClick={() => revoke(t)}>
-                  Revoke
-                </button>
-              </div>
-            ))}
-            {newToken && (
-              <div className="row" style={{ display: "grid", gap: 6 }}>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  Copy this token now. It won't be shown again.
-                </div>
-                <div className="token-new">{newToken.token}</div>
-              </div>
-            )}
             <div className="row">
               <div className="txt">
                 <b>API tokens</b>
@@ -427,6 +403,29 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
                 New token
               </button>
             </div>
+            {newToken && (
+              <div className="row" style={{ display: "grid", gap: 6 }}>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Copy this token now. It won't be shown again.
+                </div>
+                <div className="token-new">{newToken.token}</div>
+              </div>
+            )}
+            {tokens.map((t) => (
+              <div className="row" key={t.id}>
+                <div className="txt">
+                  <b>{t.name}</b>
+                </div>
+                <span className="val">
+                  {t.lastUsedAt
+                    ? `Used ${new Date(t.lastUsedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`
+                    : "Never used"}
+                </span>
+                <button type="button" className="btn sm danger-text" onClick={() => revoke(t)}>
+                  Revoke
+                </button>
+              </div>
+            ))}
             <div className="row">
               <div className="txt">
                 <b>Sign out</b>

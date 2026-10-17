@@ -315,7 +315,6 @@ export function Spend() {
             <div className={`meter ${todayUsd >= limits.dailyUsd ? "hot" : ""}`}>
               <span style={{ width: `${Math.min(100, (todayUsd / limits.dailyUsd) * 100)}%` }} />
             </div>
-            <div className="label tnum">{tokenText(summary.todayTokens)} tokens</div>
           </div>
           <div className="tile">
             <div className="label">This month</div>
@@ -329,12 +328,10 @@ export function Spend() {
           <div className="tile">
             <div className="label">Last hour</div>
             <div className="value tnum">{fineMoney(summary.lastHour.usd)}</div>
-            <div className="label tnum">{tokenText(summary.lastHour.tokens)} tokens</div>
           </div>
           <div className="tile">
             <div className="label">Last minute</div>
             <div className="value tnum">{fineMoney(summary.lastMinute.usd)}</div>
-            <div className="label tnum">{tokenText(summary.lastMinute.tokens)} tokens</div>
           </div>
         </div>
 

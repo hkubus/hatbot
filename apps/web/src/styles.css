@@ -1127,11 +1127,9 @@ html[data-theme="dark"] .seg button.active {
   gap: 6px;
 }
 .group > h2 {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  color: var(--text-2);
   margin: 0 12px;
 }
 .group-box {
@@ -2144,11 +2142,9 @@ html[data-theme="dark"] .seg button.active {
   color: var(--text-2);
 }
 .section-title {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  color: var(--text-2);
   margin: 0;
 }
 .live-task {
@@ -2557,13 +2553,12 @@ pre.payload {
   display: grid;
   gap: 8px;
 }
+/* Plain, not a card: a line above each one. */
 .pending-approval {
   display: grid;
   gap: 8px;
-  padding: 10px 12px;
-  border-radius: 14px;
-  background: var(--surface);
-  border: 0.5px solid var(--line-strong);
+  padding: 10px 4px 2px;
+  border-top: 0.5px solid var(--line-strong);
 }
 .pending-approval .shot {
   max-width: 280px;
