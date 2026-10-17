@@ -1291,6 +1291,38 @@ test("a line break typed into a chat box is checked with the text before it in t
   expect(said).toContain('submit with \\"Send\\"');
 });
 
+test("each line break in typed text is checked on its own: one approved send sends one message", async () => {
+  const work = new FakeModel([
+    { content: [computer("type", { text: "Hi Ann" })] },
+    { content: [computer("key", { text: "Return" })] },
+    { content: [toolUse("confirm_intent", { kind: "send", summary: "Send Ann a hello" })] },
+    { content: [computer("type", { text: "\nsecond message\nthird message\n" })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const url = "https://chat.example/c/1";
+  t.agent.page = { url, title: "Ann", text: "" };
+  t.agent.element = {
+    tag: "textarea",
+    role: null,
+    type: null,
+    label: "Message",
+    inForm: false,
+    url,
+    editable: true,
+    buttonsAfter: ["Send"],
+  };
+  startTask(t, "Write to Ann");
+  t.approvals.decide((await pending(t)).id, "approve", "web");
+  await t.tasks.idle();
+  // The approved Enter, then the text after it; the next Enter waits for another approval.
+  expect(t.agent.actions.map((a) => a.input.text)).toEqual(["Hi Ann", "\n", "second message"]);
+  const said = JSON.stringify(work.requests[4]?.messages.at(-1)?.content);
+  expect(said).toContain("The text before the line break was typed.");
+  expect(said).toContain('submit with \\"Send\\"');
+  expect(t.approvals.list(false)).toHaveLength(1);
+});
+
 test("lookups in a row run at once; everything else runs on its own, in order", async () => {
   const log: string[] = [];
   const run = async (c: string) => {
