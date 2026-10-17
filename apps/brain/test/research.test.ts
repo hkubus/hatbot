@@ -1081,3 +1081,25 @@ test("a done research needs its report, and a second finish in one turn isn't ru
   expect(task.status).toBe("done");
   expect(task.summary).toStartWith("It's **22.4 dB(A)** [[1]]");
 });
+
+test("a summary long with links is cut to fit a notification, and kept whole on the task", async () => {
+  const shop = `https://www.x-kom.pl/p/${"ds925-".repeat(150)}`;
+  const answer = Array.from({ length: 30 }, (_, i) => `Zółć ${i} [1].`).join(" ");
+  const work = new FakeModel([
+    { content: [toolUse("investigate", { parts: [{ topic: "Price", brief: "The price." }] })] },
+    finish(answer, "Report [1]."),
+  ]);
+  work.route = (p) =>
+    isHelper(p)
+      ? {
+          content: [toolUse("report_findings", { findings: [{ ...PRICE, url: shop }], gaps: "" })],
+        }
+      : undefined;
+  const t = await testApp(new FakeModel(), work);
+  const task = await startResearch(t);
+  expect(new TextEncoder().encode(task.summary ?? "").length).toBeGreaterThan(20_000);
+  const sent = t.notifier.sent.at(-1)?.message ?? "";
+  expect(new TextEncoder().encode(sent).length).toBeLessThanOrEqual(3500);
+  expect(sent).toEndWith("…");
+  expect(task.summary).toStartWith(sent.slice(0, -1));
+});

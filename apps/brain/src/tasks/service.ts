@@ -144,6 +144,18 @@ const ACTIVE: typeof ACTIVE_TASK_STATUSES = [
 ];
 const FINAL: TaskStatus[] = ["done", "failed", "cancelled"];
 const RESTARTED = "Stopped: the brain restarted.";
+/** ntfy takes up to 4,096 bytes of message; a summary with long links is cut, whole on the task. */
+const NOTIFY_BYTES = 3500;
+
+/** `text` in at most `max` bytes of UTF-8, cut with "…" if it's longer. */
+function clipBytes(text: string, max: number): string {
+  const bytes = Buffer.from(text);
+  if (bytes.length <= max) return text;
+  return `${bytes
+    .subarray(0, max - 3)
+    .toString("utf8")
+    .replace(/�+$/, "")}…`;
+}
 
 export class Tasks {
   readonly lane = new ScreenLane();
@@ -841,7 +853,7 @@ export class Tasks {
     if (!tell || !ntfy) return;
     void this.d.notifier.send({
       title: this.titled(task, `${word}: ${task.title}`),
-      message: summary || word,
+      message: clipBytes(summary || word, NOTIFY_BYTES),
       priority: status === "done" ? 3 : 4,
       click: `${this.d.config.publicUrl}/tasks/${id}`,
     });
