@@ -63,7 +63,7 @@ import {
   webCalls,
   webReads,
 } from "./tools";
-import { tagJson, tagText } from "./untrusted";
+import { messageTag } from "./untrusted";
 
 /** What ask_opus consults when the chat runs on Haiku 5.5. */
 export const EXPERT_MODEL = "claude-opus-5-5";
@@ -1342,11 +1342,7 @@ export class Thread {
     return m.role === "user" ? "Owner" : this.d.bots.nameOf(m.bot_id ?? HATBOT_ID);
   }
 
-  /**
-   * A message in a transcript the model reads: who wrote it and when, its text escaped so that a line
-   * in it can't pass for another message. A note whose text came from untrusted content says so, and
-   * its text is quoted.
-   */
+  /** A message in a transcript the model reads (`messageTag`). */
   private transcript(
     m: {
       role: string;
@@ -1357,10 +1353,10 @@ export class Thread {
     },
     attrs = "",
   ): string {
-    const head = `<message from=${tagJson(this.speaker(m))} at="${localStamp(new Date(m.created_at))}"${attrs}`;
-    return m.tainted_by
-      ? `${head} trusted="false" source=${tagJson(m.tainted_by)}>${tagJson(m.text)}</message>`
-      : `${head}>${tagText(m.text)}</message>`;
+    return messageTag(this.speaker(m), localStamp(new Date(m.created_at)), m.text, {
+      taintedBy: m.tainted_by,
+      attrs,
+    });
   }
 
   /**

@@ -25,3 +25,20 @@ export function untrustedBlock(
 export function tagText(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;");
 }
+
+/**
+ * A message in a transcript the model reads: who wrote it and when, its text escaped so that a line in
+ * it can't pass for another message. One whose text came from untrusted content (`taintedBy`) says so,
+ * and its text is quoted. `attrs`: more of the tag, e.g. ` task="12"`.
+ */
+export function messageTag(
+  from: string,
+  at: string,
+  text: string,
+  { taintedBy = null, attrs = "" }: { taintedBy?: string | null; attrs?: string } = {},
+): string {
+  const head = `<message from=${tagJson(from)} at="${at}"${attrs}`;
+  return taintedBy
+    ? `${head} trusted="false" source=${tagJson(taintedBy)}>${tagJson(text)}</message>`
+    : `${head}>${tagText(text)}</message>`;
+}

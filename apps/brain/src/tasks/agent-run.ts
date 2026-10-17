@@ -785,7 +785,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
             detail: describe(call.name, call.input),
             url: null,
           });
-          const r = await runTool(call.name, call.input, ctx);
+          // History search taints the task with what the messages it found had read.
+          const r = await runTool(call.name, call.input, { ...ctx, taint });
           return result(call, r.content, r.isError);
         }
         return result(call, `Unknown tool "${call.name}".`, true);

@@ -27,6 +27,7 @@ import type { Tasks } from "../tasks/service";
 import { skillPath } from "../teach/skills";
 import type { Triggers } from "../triggers";
 import { conditionOf, WatchError, type Watchers, watcherLine } from "../watch/service";
+import { messageTag } from "./untrusted";
 
 export type ToolContext = {
   db: Db;
@@ -342,17 +343,30 @@ export const TOOLS = [
       after: z.string().optional().describe("Only messages on or after this date, YYYY-MM-DD"),
       before: z.string().optional().describe("Only messages before this date, YYYY-MM-DD"),
     }),
-    run: async ({ query, after, before }, { db, episodeId, bot, bots }) => {
+    run: async ({ query, after, before }, { db, episodeId, bot, bots, taint }) => {
       const terms = query.match(/[\p{L}\p{N}_]+/gu) ?? [];
       if (!terms.length) return "No searchable words in the query.";
       // Not the conversation you're in: the message asking would otherwise be the best match. Only
-      // the chats this bot is in.
+      // the chats this bot is in. What a message drew on: its conversation's or task's untrusted
+      // content, or a note's.
       const rows = db
         .query<
-          { role: string; bot_id: string | null; text: string; created_at: string },
+          {
+            role: string;
+            bot_id: string | null;
+            text: string;
+            created_at: string;
+            tainted_by: string | null;
+          },
           [string, string, string, number, string]
         >(
-          `SELECT m.role, m.bot_id, m.text, m.created_at FROM messages_fts f JOIN messages m ON m.id = f.rowid
+          `SELECT m.role, m.bot_id, m.text, m.created_at,
+             CASE WHEN e.tainted = 1 THEN coalesce(e.tainted_by, 'Untrusted content')
+               WHEN t.tainted = 1 THEN 'Task #' || t.id || ' "' || t.title || '"'
+               ELSE m.tainted_by END AS tainted_by
+           FROM messages_fts f JOIN messages m ON m.id = f.rowid
+           LEFT JOIN episodes e ON e.id = m.episode_id
+           LEFT JOIN tasks t ON t.id = m.task_id
            WHERE messages_fts MATCH ? AND m.created_at >= ? AND m.created_at < ?
            AND m.episode_id IS NOT ?
            AND m.conversation_id IN (SELECT conversation_id FROM conversation_bots WHERE bot_id = ?)
@@ -366,12 +380,19 @@ export const TOOLS = [
           bot?.id ?? HATBOT_ID,
         );
       if (!rows.length) return "No matches.";
+      // What those messages carried is in this conversation or task now.
+      const from = rows.find((r) => r.tainted_by)?.tainted_by;
+      if (from) taint?.(from);
       return rows
-        .map(
-          (r) =>
-            `[${r.created_at.slice(0, 16).replace("T", " ")}] ${r.role === "user" ? "owner" : (bots?.nameOf(r.bot_id ?? HATBOT_ID) ?? "assistant")}: ${r.text.slice(0, 1500)}`,
+        .map((r) =>
+          messageTag(
+            r.role === "user" ? "Owner" : (bots?.nameOf(r.bot_id ?? HATBOT_ID) ?? "Assistant"),
+            r.created_at.slice(0, 16).replace("T", " "),
+            r.text.slice(0, 1500),
+            { taintedBy: r.tainted_by },
+          ),
         )
-        .join("\n\n");
+        .join("\n");
     },
   }),
   def({

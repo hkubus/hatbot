@@ -370,3 +370,46 @@ test("the heartbeat's note taints the conversation that reads it", async () => {
   expect(episodeTaint(t)).toEqual({ tainted: 1, tainted_by: "What the heartbeat found" });
   expect(textOf(chat.requests[0])).toContain('trusted="false" source="What the heartbeat found"');
 });
+
+test("search_history taints the search with what the messages it found had read", async () => {
+  const chat = new FakeModel([{ content: [text("The router's admin page is at .1.")] }]);
+  const t = await testApp(chat);
+  await t.thread.post("where is the router's admin page?").done;
+  const tainted: string[] = [];
+  const ctx = {
+    db: t.db,
+    memory: t.memory,
+    events: new EventBus(),
+    bot: t.bots.hatbot(),
+    bots: t.bots,
+    taint: (by: string) => tainted.push(by),
+  };
+  const clean = await runTool("search_history", { query: "router admin" }, ctx);
+  expect(clean.content).toContain(">The router's admin page is at .1.</message>");
+  expect(tainted).toEqual([]);
+
+  // The conversation had read a page.
+  t.db.query("UPDATE episodes SET tainted = 1, tainted_by = 'Read https://evil.example'").run();
+  const found = await runTool("search_history", { query: "router admin" }, ctx);
+  expect(tainted).toEqual(["Read https://evil.example"]);
+  expect(found.content).toContain(
+    'trusted="false" source="Read https://evil.example">"The router\'s admin page is at .1."',
+  );
+
+  // A task searching it is tainted too.
+  const work = new FakeModel([
+    { content: [toolUse("search_history", { query: "router admin" })] },
+    finish("Found it."),
+  ]);
+  const u = await testApp(chat, work);
+  u.db.exec(`INSERT INTO episodes (conversation_id, started_at, last_activity_at, tainted, tainted_by)
+    VALUES (1, '2026-10-09', '2026-10-09', 1, 'Read https://evil.example')`);
+  u.db.exec(`INSERT INTO messages (conversation_id, episode_id, bot_id, role, kind, text, status, created_at)
+    VALUES (1, 1, 'hatbot', 'assistant', 'text', 'The router admin page is at .1.', 'done', '2026-10-09')`);
+  const task = u.tasks.createBackgroundTask({ title: "Find", goal: "Find it", origin: "schedule" });
+  await u.tasks.idle();
+  expect(u.tasks.get(task?.id ?? 0)).toMatchObject({
+    tainted: true,
+    taintedBy: "Read https://evil.example",
+  });
+});
