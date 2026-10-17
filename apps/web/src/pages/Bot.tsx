@@ -109,7 +109,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
     if (!stored) return;
     if (
       !confirm(
-        `Delete ${stored.name}? Its chat and notes stay readable; its schedules and triggers go to Hatbot.`,
+        `Delete ${stored.name}? Its chat goes away. Its notes stay in Memory, and its schedules, triggers and watchers go to Hatbot.`,
       )
     )
       return;

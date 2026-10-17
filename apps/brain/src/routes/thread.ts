@@ -142,7 +142,15 @@ function withThread(c: Ctx, f: (t: Thread) => Response | Promise<Response>) {
   return thread ? f(thread) : c.json({ error: "not found" }, 404);
 }
 
+/** A deleted bot's chat is gone from the app; a page still showing it can't start the bot again. */
+const closed = (c: Ctx, t: Thread) =>
+  c.var.chats.closed(t.conversationId)
+    ? c.json({ error: "That bot was deleted, so its chat takes no new messages." }, 410)
+    : null;
+
 function retry(c: Ctx, t: Thread) {
+  const gone = closed(c, t);
+  if (gone) return gone;
   const id = Number(c.req.param("messageId"));
   if (!Number.isInteger(id) || !t.retry(id))
     return c.json({ error: "Only the latest reply, when it failed, can be tried again." }, 409);
@@ -180,6 +188,8 @@ function post(c: Ctx, t: Thread) {
   if (attachmentIds.some((id) => c.var.attachments.get(id)?.from !== "owner"))
     return c.json({ error: "unknown attachment" }, 400);
   if (incognito && t.group()) return c.json({ error: "Group chats have no incognito." }, 400);
+  const gone = closed(c, t);
+  if (gone) return gone;
   const { message } = t.post(text, attachmentIds, incognito);
   return c.json(message, 202);
 }
@@ -194,6 +204,8 @@ async function ask(c: Ctx, t: Thread) {
   if (attachmentIds.some((id) => c.var.attachments.get(id)?.from !== "owner"))
     return c.json({ error: "unknown attachment" }, 400);
   if (incognito && t.group()) return c.json({ error: "Group chats have no incognito." }, 400);
+  const gone = closed(c, t);
+  if (gone) return gone;
   const { message, done } = t.post(text, attachmentIds, incognito);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const finished = await Promise.race([
