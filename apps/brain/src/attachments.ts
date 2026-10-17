@@ -297,7 +297,7 @@ export class Attachments {
         if (a && size && inline + size > inlineLimit.bytes) {
           content.push({
             type: "text",
-            text: `${labelOf(a)}: not read here, since the conversation's files already fill what a request can carry. code_run can copy it into the sandbox (files: [${a.id}]) to work on it.`,
+            text: `${labelOf(a)}: not read here, as it would take this conversation's files past what one request can carry. code_run can copy it into the sandbox (files: [${a.id}]) to work on it.`,
           });
           continue;
         }
