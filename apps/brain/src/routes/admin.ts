@@ -5,6 +5,11 @@ import type { AppEnv, Deps } from "../context";
 import { SettingsPatch } from "../settings";
 import { json, query } from "./util";
 
+/** How many days of spend to show. */
+export const spendDays = query(
+  z.object({ days: z.coerce.number().int().min(1).max(366).default(30) }),
+);
+
 /** The kill switch (PLAN.md §6.5): from Settings, or a notification's Pause all. */
 export function pauseAll(v: Pick<Deps, "settings" | "chats" | "tasks" | "desktop" | "events">) {
   v.settings.update({ paused: true });
@@ -26,20 +31,10 @@ export const adminRoutes = new Hono<AppEnv>()
     query(z.object({ hours: z.coerce.number().int().min(1).max(168).default(24) })),
     (c) => c.json(c.var.spend.hourly(c.req.valid("query").hours)),
   )
-  .get(
-    "/spend/daily",
-    query(z.object({ days: z.coerce.number().int().min(1).max(366).default(30) })),
-    (c) => c.json(c.var.spend.daily(c.req.valid("query").days)),
-  )
-  .get(
-    "/spend/by-model",
-    query(z.object({ days: z.coerce.number().int().min(1).max(366).default(30) })),
-    (c) => c.json(c.var.spend.byModel(c.req.valid("query").days)),
-  )
-  .get(
-    "/spend/by-purpose",
-    query(z.object({ days: z.coerce.number().int().min(1).max(366).default(30) })),
-    (c) => c.json(c.var.spend.byPurpose(c.req.valid("query").days)),
+  .get("/spend/daily", spendDays, (c) => c.json(c.var.spend.daily(c.req.valid("query").days)))
+  .get("/spend/by-model", spendDays, (c) => c.json(c.var.spend.byModel(c.req.valid("query").days)))
+  .get("/spend/by-purpose", spendDays, (c) =>
+    c.json(c.var.spend.byPurpose(c.req.valid("query").days)),
   )
   .get("/settings", (c) => c.json(c.var.settings.get()))
   .put("/settings", json(SettingsPatch.omit({ paused: true })), (c) => {

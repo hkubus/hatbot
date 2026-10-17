@@ -329,15 +329,6 @@ export class Spend {
     return out;
   }
 
-  private sumSince(since: Date, where = "", ...args: (string | number)[]): number {
-    const row = this.db
-      .query<{ total: number | null }, (string | number)[]>(
-        `SELECT sum(cost_usd) AS total FROM spend_ledger WHERE created_at >= ? ${where}`,
-      )
-      .get(since.toISOString(), ...args);
-    return row?.total ?? 0;
-  }
-
   /** Today's and this month's spend: summed once a day, then only the rows added since. */
   private spent(): { todayUsd: number; monthUsd: number } {
     const now = this.clock();
@@ -394,10 +385,6 @@ export class Spend {
     };
   }
 
-  taskSpend(taskId: number): number {
-    return this.sumSince(new Date(0), "AND task_id = ?", taskId);
-  }
-
   /** What a task's tree, which shares its limit, has spent: the task that started it and all under it. */
   treeSpend(taskId: number): number {
     return this.tree(taskId).usd;
@@ -405,7 +392,8 @@ export class Spend {
 
   /**
    * A task's tree: the task that started it (or it), and every task started under that one, which
-   * share its limit; and what they have spent together.
+   * share its limit; and what they have spent together. A task the ledger knows but the tasks table
+   * doesn't is on its own.
    */
   private tree(taskId: number): { root: number; usd: number } {
     const row = this.db
@@ -416,14 +404,11 @@ export class Spend {
          tree(id) AS (
            SELECT id FROM up WHERE parent IS NULL
            UNION ALL SELECT t.id FROM tasks t JOIN tree ON t.parent_id = tree.id)
-         SELECT (SELECT id FROM up WHERE parent IS NULL) AS root,
-           (SELECT sum(cost_usd) FROM spend_ledger WHERE task_id IN tree) AS usd`,
+         SELECT coalesce((SELECT id FROM up WHERE parent IS NULL), ?1) AS root,
+           (SELECT sum(cost_usd) FROM spend_ledger WHERE task_id IN (SELECT id FROM tree UNION SELECT ?1)) AS usd`,
       )
       .get(taskId);
-    // A task the ledger knows but the tasks table doesn't: on its own.
-    return row?.root == null
-      ? { root: taskId, usd: this.taskSpend(taskId) }
-      : { root: row.root, usd: row.usd ?? 0 };
+    return { root: row?.root ?? taskId, usd: row?.usd ?? 0 };
   }
 
   /**
@@ -487,33 +472,29 @@ export class Spend {
     };
   }
 
-  byModel(days: number): { model: string; usd: number }[] {
-    const from = startOfLocalDay(this.clock() - (days - 1) * 86400_000);
-    return this.db
-      .query<{ model: string; usd: number }, [string]>(
-        "SELECT model, sum(cost_usd) AS usd FROM spend_ledger WHERE created_at >= ? GROUP BY model ORDER BY usd DESC",
-      )
-      .all(from.toISOString());
+  byModel(days: number) {
+    return this.breakdown<{ model: string; usd: number }>("model, sum(cost_usd) AS usd", days);
   }
 
-  /** Spend per purpose (chat, task, heartbeat, tidy…), the most first, for Spend's breakdown. */
-  byPurpose(days: number): SpendByPurpose[] {
-    const from = startOfLocalDay(this.clock() - (days - 1) * 86400_000);
-    return this.db
-      .query<SpendByPurpose, [string]>(
-        `SELECT purpose, sum(cost_usd) AS costUsd FROM spend_ledger
-         WHERE created_at >= ? GROUP BY purpose ORDER BY costUsd DESC`,
-      )
-      .all(from.toISOString());
+  /** Spend per purpose (chat, task, heartbeat, tidy…), for Spend's breakdown. */
+  byPurpose(days: number) {
+    return this.breakdown<SpendByPurpose>("purpose, sum(cost_usd) AS costUsd", days);
   }
 
   /** Spend per bot, for Spend's breakdown. */
-  byBot(days: number): { botId: string; usd: number }[] {
+  byBot(days: number) {
+    return this.breakdown<{ botId: string; usd: number }>(
+      "coalesce(bot_id, 'hatbot') AS botId, sum(cost_usd) AS usd",
+      days,
+    );
+  }
+
+  /** The last `days` days' spend grouped by the first of `columns`, the most first. */
+  private breakdown<T>(columns: string, days: number): T[] {
     const from = startOfLocalDay(this.clock() - (days - 1) * 86400_000);
     return this.db
-      .query<{ botId: string; usd: number }, [string]>(
-        `SELECT coalesce(bot_id, 'hatbot') AS botId, sum(cost_usd) AS usd FROM spend_ledger
-         WHERE created_at >= ? GROUP BY coalesce(bot_id, 'hatbot') ORDER BY usd DESC`,
+      .query<T, [string]>(
+        `SELECT ${columns} FROM spend_ledger WHERE created_at >= ? GROUP BY 1 ORDER BY 2 DESC`,
       )
       .all(from.toISOString());
   }
