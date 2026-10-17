@@ -93,7 +93,7 @@ export function outside(n: Negotiation, input: SendInput, now: number): string[]
       `It tells the seller ${zl(max, m.currency)} is our ${buying ? "most" : "least"}, ${buying ? "above" : "below"} ${limit}.`,
     );
   const text = plain(input.text);
-  const amounts = amountsIn(text, n.title).filter((a) =>
+  const amounts = amountsIn(text, n.title, n.asking).filter((a) =>
     buying ? Math.max(...a.values) > m.limit : Math.min(...a.values) < m.limit,
   );
   if (amounts.length)
@@ -186,19 +186,38 @@ export function spacedDigits(text: string): string[] {
 /** A number written in the text, with every value its separators could mean. */
 export type Amount = { raw: string; values: number[] };
 
+/** Words that make the number after them, or after the model name that follows them, a price. */
+const PRICE_WORDS = new Set(
+  "za do od po cena cenę cene ceny cenie cenka koszt kosztuje kwota kwotę kwote kwocie dam daję daje dać dac płacę place zapłacę zaplace oferuję oferuje proponuję proponuje biorę biore wezmę wezme max maks maksymalnie najwyżej najwyzej budżet budzet razem łącznie lacznie for pay price offer at only tylko total".split(
+    " ",
+  ),
+);
+const priceWord = (w: string | undefined) => w !== undefined && PRICE_WORDS.has(w.toLowerCase());
+/** Letters that look like a model's name: RTX, B, iPhone; not a word that merely starts a sentence. */
+const modelLike = (w: string) => /^\p{Lu}+$/u.test(w) || /\p{Lu}/u.test(w.slice(1));
+/** The last word in `s`, if only spaces and punctuation follow it. */
+const lastWord = (s: string) => /(\p{L}+)[^\p{L}\p{N}]*$/u.exec(s)?.[1];
+
 /**
- * The amounts in a message: numbers that could be prices. Not: numbers glued to letters (RTX3070, 16GB,
- * i7-12700), a model number after the word it follows in the title or after a capitalised word from it (RTX 3080),
- * units (8 GB, 3 dni), times, dates, phone numbers and likely years. Each separator is read every way it
- * could be (1.500 is 1500 or 1.5), so the cap can't be dodged by the format.
+ * The amounts in a message: numbers that could be prices. Not: numbers glued to a model's letters
+ * (RTX3070, 16GB, i7-12700), a model number after the word it follows in the title or after a capitalised
+ * word from it (RTX 3080), units (8 GB, 3 dni), times, dates, phone numbers and likely years. A model
+ * number stays an amount when it's the asking price or follows a price word ("za RTX 1500", "cena 1500").
+ * Each separator is read every way it could be (1.500 is 1500 or 1.5), so the cap can't be dodged by the
+ * format.
  */
-export function amountsIn(text: string, title: string): Amount[] {
+export function amountsIn(text: string, title: string, asking: number | null = null): Amount[] {
   const words = title.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
-  /** "hexagon 2000": a word in the title and the number after it. */
+  /** "hexagon 2000": a word in the title and the number after it, unless that's a price ("cena 1500"). */
   const models = new Set(
-    words.slice(1).flatMap((w, i) => (/^\d+$/.test(w) ? [`${words[i]?.toLowerCase()} ${w}`] : [])),
+    words.slice(1).flatMap((w, i) => {
+      const word = words[i] ?? "";
+      return /^\d+$/.test(w) && !priceWord(word) && Number(w) !== asking
+        ? [`${word.toLowerCase()} ${w}`]
+        : [];
+    }),
   );
-  const caps = new Set(words.filter((w) => w.length >= 2 && /^\p{Lu}+$/u.test(w)));
+  const caps = new Set(words.filter((w) => w.length >= 2 && /^\p{Lu}+$/u.test(w) && !priceWord(w)));
   let s = blankDates(plain(text));
   for (const p of phonesIn(s)) s = s.replace(p, " ".repeat(p.length));
 
@@ -207,19 +226,39 @@ export function amountsIn(text: string, title: string): Amount[] {
   const judge = (raw: string, index: number, values: number[], parts: number) => {
     const before = s.slice(0, index);
     const after = s.slice(index + raw.length);
-    if (/\p{L}$/u.test(before) && !CURRENCY_BEFORE.test(before)) return;
-    // i7-12700, RX-580: after a hyphen glued to a model's letters.
-    if (/(?<![\p{L}\p{N}])\p{L}[\p{L}\p{N}]*-$/u.test(before)) return;
     const money = CURRENCY.test(after) || CURRENCY_BEFORE.test(before);
+    // The asking price is a price wherever it stands, even after a model's name.
+    const asked = asking !== null && values.includes(asking);
+    if (!money && !asked) {
+      // RTX3070, iPhone12, i7, b550: glued to a model's letters, unless they're a price word (za1500).
+      const glued = /\p{L}+$/u.exec(before)?.[0];
+      if (
+        glued &&
+        !priceWord(glued) &&
+        !priceWord(lastWord(before.slice(0, -glued.length))) &&
+        (modelLike(glued) ||
+          models.has(`${glued.toLowerCase()} ${raw}`) ||
+          (glued.length <= 2 && values.every((v) => v < 1000)))
+      )
+        return;
+      // i7-12700, RX-580: after a hyphen glued to a model's letters.
+      const hyphened = /(?<![\p{L}\p{N}])(\p{L}[\p{L}\p{N}]*)-$/u.exec(before)?.[1];
+      if (hyphened && !priceWord(hyphened)) return;
+    }
     const thousands = THOUSANDS.exec(after)?.[0] ?? HUNDREDS.exec(after)?.[0] ?? null;
     const scale = thousands === null ? 1 : HUNDREDS.test(thousands) ? 100 : 1000;
     if (/^\p{L}/u.test(after) && !money && thousands === null) return;
     if (!money && thousands === null) {
       if (UNIT.test(after)) return;
       const word = /(\p{L}+)[\s-]$/u.exec(before)?.[1];
-      if (word && (caps.has(word) || models.has(`${word.toLowerCase()} ${raw}`))) return;
+      if (word && !asked && !priceWord(word)) {
+        if (models.has(`${word.toLowerCase()} ${raw}`)) return;
+        const prev = lastWord(before.slice(0, before.lastIndexOf(word)));
+        if (caps.has(word) && !priceWord(prev)) return;
+      }
       const year = Number(raw);
       if (
+        !asked &&
         parts === 1 &&
         /^\d{4}$/.test(raw) &&
         year >= 1990 &&

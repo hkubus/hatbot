@@ -252,6 +252,35 @@ describe("an amount written in the text, however it's written", () => {
     expect(verdict("Dam 1 100 zł.", { offer: 1100 }).action).toBe("allow");
   });
 
+  test("a price in the listing's title doesn't make our number a model number", () => {
+    const phone = negotiation({ title: "iPhone 12 128GB cena 1500", asking: 1500 });
+    for (const text of ["Ok, biorę za 1500.", "Ok, biorę, cena 1500.", "Biorę, iPhone 1500."])
+      expect(why(verdict(text, { offer: 1100 }, phone))).toContain('"1500"');
+    expect(verdict("Czy iPhone 12 ma 128GB? Dam 1100.", { offer: 1100 }, phone).action).toBe(
+      "allow",
+    );
+    // Our RTX listing asks 1,500 zł.
+    for (const [text, raw] of [
+      ["Biorę za RTX 1500.", "1500"],
+      ["Biorę za RTX1500.", "1500"],
+      ["Biorę za RTX 1450.", "1450"],
+      ["Czy to RTX 1500?", "1500"],
+      ["Dam za1500.", "1500"],
+      ["Dam1500.", "1500"],
+    ])
+      expect(why(verdict(text ?? "", { offer: 1100 }))).toContain(`"${raw}"`);
+    expect(verdict("Czy to RTX 1600 czy RTX 3070?", { offer: 1100 }).action).toBe("allow");
+    expect(why(verdict("Dam ok1500.", { offer: 1100 }))).toContain('"1500"');
+    expect(verdict("Dam 1100 zł za RTX 3070.", { offer: 1100 }).action).toBe("allow");
+    const shouty = negotiation({ title: "RTX 3070 CENA 1500 OKAZJA", asking: 1500 });
+    expect(why(verdict("Dam 1100, nie CENA 1600.", { offer: 1100 }, shouty))).toContain('"1600"');
+    const bike = negotiation({ title: "Rower Kross Hexagon 2000 cena 1800", asking: 1900 });
+    expect(why(verdict("Biorę, cena 1800.", { offer: 1100 }, bike))).toContain('"1800"');
+    expect(verdict("Czy Hexagon 2000 ma hamulce? Dam 1100.", { offer: 1100 }, bike).action).toBe(
+      "allow",
+    );
+  });
+
   test("every reading of the separators counts", () => {
     expect(amountsIn("1.500", "")).toEqual([{ raw: "1.500", values: [1500, 1.5] }]);
     expect(amountsIn("1,4k", "")).toEqual([{ raw: "1,4k", values: [1400] }]);
