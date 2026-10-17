@@ -313,7 +313,8 @@ export class Watchers {
       .all(this.now())
       .map(toWatcher)
       .filter((w) => !this.checking.has(w.id));
-    for (const w of due.slice(0, Math.max(0, PARALLEL - this.checking.size))) void this.check(w);
+    for (const w of due.slice(0, Math.max(0, PARALLEL - this.checking.size)))
+      void this.check(w).catch((err) => console.error(`watcher ${w.id}: check failed`, err));
   }
 
   /** Waits for the checks in flight (tests). */
@@ -345,9 +346,11 @@ export class Watchers {
 
   private failed(w: Watcher, error: string) {
     const errors = w.errors + 1;
-    this.d.db
+    const updated = this.d.db
       .query("UPDATE watchers SET last_checked_at = ?, last_error = ?, errors = ? WHERE id = ?")
-      .run(this.now(), error, errors, w.id);
+      .run(this.now(), error, errors, w.id).changes;
+    // Deleted while it was being read.
+    if (!updated) return;
     this.changed(w.id);
     if (errors === TELL_AFTER_ERRORS)
       void this.d.notifier.send({
@@ -359,7 +362,10 @@ export class Watchers {
   }
 
   /** A value it found: kept if it's new, and acted on if it counts. */
-  private async saw(w: Watcher, value: string, untrusted: boolean) {
+  private async saw(seen: Watcher, value: string, untrusted: boolean) {
+    // As it is now: it may have been deleted, or given a new source, while its page was read.
+    const w = this.get(seen.id);
+    if (!w || saved(w.source) !== saved(seen.source)) return;
     const previous = w.lastValue;
     const fired = counts(w.condition, previous, value);
     const now = this.now();

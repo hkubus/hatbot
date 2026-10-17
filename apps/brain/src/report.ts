@@ -42,6 +42,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 export class WeeklyReport {
   private clock: () => number;
   private sending = false;
+  private failedAt = Number.NEGATIVE_INFINITY;
 
   constructor(private d: ReportDeps) {
     this.clock = d.clock ?? Date.now;
@@ -56,7 +57,12 @@ export class WeeklyReport {
     const due = lastDue(now, weekday, hour);
     const last = this.lastSent();
     if ((last !== null && last >= due) || now - due > 86400_000) return;
-    void this.send();
+    // One that failed is tried again an hour later, not on every tick.
+    if (now - this.failedAt < 3600_000) return;
+    void this.send().catch((err) => {
+      this.failedAt = this.clock();
+      console.error("weekly report failed", err);
+    });
   }
 
   async send(): Promise<string> {

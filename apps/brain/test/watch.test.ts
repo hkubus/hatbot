@@ -195,6 +195,63 @@ test("a page that can't be read isn't made, and failing checks are told once", a
   expect(t.watchers.list()).toHaveLength(0);
 });
 
+test("a watcher deleted while its page is read is let go, and the checks carry on", async () => {
+  const t = await testApp();
+  const api = await owner(t);
+  const url = "https://shop.example/gone";
+  t.agent.pages.set(url, page(`<p class="price">€10</p>`));
+  const make = async (name: string) =>
+    (await (
+      await api("POST", "/watchers", {
+        name,
+        source: { kind: "page", url, selector: ".price" },
+        everyMinutes: 5,
+      })
+    ).json()) as Watcher;
+  const a = await make("A");
+  const b = await make("B");
+  // The owner deletes A while the desktop reads its page, the first time with a new value, then
+  // while a read fails.
+  const fetch = t.agent.fetch.bind(t.agent);
+  t.agent.fetch = async (u) => {
+    const r = await fetch(u);
+    t.watchers.delete(a.id);
+    return r;
+  };
+  t.agent.pages.set(url, page(`<p class="price">€9</p>`));
+  t.advance(5 * 60_000);
+  const logged: unknown[][] = [];
+  const log = console.error;
+  console.error = (...args: unknown[]) => logged.push(args);
+  try {
+    t.watchers.tick();
+    await t.watchers.idle();
+  } finally {
+    console.error = log;
+  }
+  expect(logged).toEqual([]);
+  expect(t.watchers.get(a.id)).toBeNull();
+  expect(
+    t.db.query("SELECT count(*) AS n FROM watcher_values WHERE watcher_id = ?").get(a.id),
+  ).toEqual({ n: 0 });
+  // The other one carried on.
+  expect(t.watchers.get(b.id)?.lastValue).toBe("€9");
+
+  const c = await make("C");
+  t.agent.fetch = async (u) => {
+    t.watchers.delete(c.id);
+    return fetch(u);
+  };
+  t.agent.pages.set(url, page(`<p>moved</p>`));
+  for (let i = 0; i < 6; i++) {
+    t.advance(60 * 60_000);
+    t.watchers.tick();
+    await t.watchers.idle();
+  }
+  expect(t.watchers.get(c.id)).toBeNull();
+  expect(t.notifier.sent.map((n) => n.title)).not.toContain("Can't check C");
+});
+
 test("the chat makes a watcher from what it saw first", async () => {
   const chat = new FakeModel([
     {

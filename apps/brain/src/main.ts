@@ -182,25 +182,37 @@ await chats.endIncognito();
 tasks.recover();
 await desktop.setPaused(settings.get().paused);
 await desktop.refresh();
-setInterval(() => void desktop.refresh(), 30_000);
-setInterval(() => approvals.expireDue(), 60_000);
-setInterval(() => negotiations.due(), 60_000);
-setInterval(() => void chats.sweep(), 60_000);
+// The last line of defence: a failure nothing waited for is logged, rather than restarting the brain
+// and stopping every task in flight.
+process.on("unhandledRejection", (err) => console.error("unhandled rejection", err));
+/** Each timer's job on its own: one that throws is logged, and the others still run. */
+const safely = (name: string, fn: () => unknown) => {
+  try {
+    const out = fn();
+    if (out instanceof Promise) out.catch((err) => console.error(`${name} failed`, err));
+  } catch (err) {
+    console.error(`${name} failed`, err);
+  }
+};
+setInterval(() => safely("desktop refresh", () => desktop.refresh()), 30_000);
+setInterval(() => safely("approvals", () => approvals.expireDue()), 60_000);
+setInterval(() => safely("negotiations", () => negotiations.due()), 60_000);
+setInterval(() => safely("chat sweep", () => chats.sweep()), 60_000);
 const ping = new DeadManPing({ db, url: process.env.HATBOT_PING_URL });
 // Runs missed while the brain was down start once plugins are up, so they get their tools.
 void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {
-  schedules.tick();
-  triggers.tick();
-  watchers.tick();
+  safely("schedules", () => schedules.tick());
+  safely("triggers", () => triggers.tick());
+  safely("watchers", () => watchers.tick());
   setInterval(() => {
-    ping.tick();
-    schedules.tick();
-    triggers.tick();
-    watchers.tick();
-    heartbeat.tick();
-    report.tick();
-    proposals.tick();
-    storage.tick();
+    safely("ping", () => ping.tick());
+    safely("schedules", () => schedules.tick());
+    safely("triggers", () => triggers.tick());
+    safely("watchers", () => watchers.tick());
+    safely("heartbeat", () => heartbeat.tick());
+    safely("weekly report", () => report.tick());
+    safely("proposals", () => proposals.tick());
+    safely("storage", () => storage.tick());
   }, 10_000);
 });
 const proxmox = new Proxmox();

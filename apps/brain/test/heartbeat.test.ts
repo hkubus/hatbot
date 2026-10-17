@@ -178,3 +178,26 @@ test("the weekly report sums up the week without the model, once, when it's due"
   await Bun.sleep(5);
   expect(t.notifier.sent).toHaveLength(1);
 });
+
+test("a weekly report that fails is logged and tried again later, not on every tick", async () => {
+  const t = await testApp();
+  const local = new Date(Date.parse("2026-10-09T12:00:00Z"));
+  t.settings.update({
+    weeklyReport: { enabled: true, weekday: local.getDay(), hour: local.getHours() },
+  });
+  let tries = 0;
+  t.memory.log = async () => {
+    tries++;
+    throw new Error("disk full");
+  };
+  t.report.tick();
+  await Bun.sleep(5);
+  t.report.tick();
+  await Bun.sleep(5);
+  expect(tries).toBe(1);
+  expect(t.notifier.sent).toHaveLength(0);
+  t.advance(61 * 60_000);
+  t.report.tick();
+  await Bun.sleep(5);
+  expect(tries).toBe(2);
+});

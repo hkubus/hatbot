@@ -76,7 +76,7 @@ export class Heartbeat {
     if (s.paused || !s.heartbeat.enabled || this.running) return;
     const last = this.state().lastRunAt;
     if (last && this.clock() - Date.parse(last) < s.heartbeat.everyMinutes * 60_000) return;
-    void this.run();
+    void this.run().catch((err) => console.error("heartbeat failed", err));
   }
 
   /** A look now: Settings' Run now, and tests. */
