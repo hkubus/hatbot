@@ -2892,6 +2892,19 @@ pre.payload {
 .panel.form .form-row select.field {
   width: auto;
 }
+/* Phones: a label above its field, not squeezed beside one at 16px. A switch stays beside its label. */
+@media (max-width: 899px) {
+  .form-row:not(:has(.switch)) {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+  }
+  .form-row:not(:has(.switch)) > .field,
+  .panel.form .form-row select.field {
+    align-self: stretch;
+    width: 100%;
+  }
+}
 
 /* Search */
 @media (max-width: 899px) {
