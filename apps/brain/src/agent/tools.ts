@@ -209,15 +209,15 @@ class NotChanged extends Error {}
 /**
  * Deleting or switching off a schedule, watcher or trigger after reading untrusted content waits for
  * approval (Haiku's review, or you), as a plugin's change does (PLAN.md §6.1): injected text mustn't
- * quietly stop what looks after the homelab. `change` runs at once otherwise.
+ * quietly stop what looks after the homelab. Untainted, it goes ahead at once. Resolves to your note
+ * on the approval, if any, for the tool's result; throws NotChanged when it mustn't go ahead.
  */
-async function approved(
+async function asked(
   ctx: ToolContext,
   signal: AbortSignal,
   call: { name: string; input: unknown; what: string },
-  change: () => string | Promise<string>,
 ): Promise<string> {
-  if (!ctx.tainted?.()) return change();
+  if (!ctx.tainted?.()) return "";
   if (!ctx.gated)
     throw new NotChanged(
       "Not changed: after reading untrusted content this needs the owner's approval, which can't be asked here.",
@@ -238,8 +238,32 @@ async function approved(
     signal,
   );
   if (r.isError) throw new NotChanged(r.content);
-  // With your note, if you wrote one.
-  return `${await change()}${r.content}`;
+  return r.content;
+}
+
+/** Switching a trigger off, or changing how many failed checks it waits for, asks as above. */
+function stoppingTrigger(
+  ctx: ToolContext,
+  signal: AbortSignal,
+  id: number,
+  patch: { enabled?: boolean; confirmChecks?: number },
+): Promise<string> {
+  const t = ctx.triggers?.get(id);
+  const off = t?.enabled && patch.enabled === false;
+  const checks = t && patch.confirmChecks !== undefined && patch.confirmChecks !== t.confirmChecks;
+  if (!t || (!off && !checks)) return Promise.resolve("");
+  const n = patch.confirmChecks ?? 0;
+  const what = [
+    ...(off ? ["switch it off"] : []),
+    ...(checks
+      ? [n ? `wait for ${n} more failed check${n > 1 ? "s" : ""}` : "act on a down alert at once"]
+      : []),
+  ].join(", and ");
+  return asked(ctx, signal, {
+    name: "trigger_update",
+    input: { id, ...patch },
+    what: `Change the trigger #${id} "${t.name}": ${what}`,
+  });
 }
 
 const watchFields = {
@@ -599,22 +623,16 @@ export const TOOLS = [
       const { schedules, tainted } = ctx;
       if (patch.cron && patch.at) return "Give either cron or at, not both.";
       const current = schedules?.get(id);
-      if (!schedules || !current) return `No schedule #${id}.`;
-      const update = () => {
-        const s = schedules.update(id, patch, { via: "chat", taintedBy: tainted?.() ?? null });
-        return s ? `Updated schedule ${scheduleLine(s)}` : `No schedule #${id}.`;
-      };
-      if (patch.enabled !== false || !current.enabled) return update();
-      return approved(
-        ctx,
-        signal,
-        {
-          name: "schedule_update",
-          input: { id, ...patch },
-          what: `Switch off the schedule #${id} "${current.name}"`,
-        },
-        update,
-      );
+      const note =
+        current?.enabled && patch.enabled === false
+          ? await asked(ctx, signal, {
+              name: "schedule_update",
+              input: { id, ...patch },
+              what: `Switch off the schedule #${id} "${current.name}"`,
+            })
+          : "";
+      const s = schedules?.update(id, patch, { via: "chat", taintedBy: tainted?.() ?? null });
+      return s ? `Updated schedule ${scheduleLine(s)}${note}` : `No schedule #${id}.`;
     },
   }),
   def({
@@ -622,14 +640,16 @@ export const TOOLS = [
     description: "Delete a schedule. Its past runs stay in the Tasks list.",
     schema: z.object({ id: z.number().int() }),
     run: async ({ id }, ctx, signal) => {
-      const s = ctx.schedules?.get(id);
-      if (!ctx.schedules || !s) return `No schedule #${id}.`;
-      return approved(
-        ctx,
-        signal,
-        { name: "schedule_delete", input: { id }, what: `Delete the schedule #${id} "${s.name}"` },
-        () => (ctx.schedules?.delete(id) ? `Deleted schedule #${id}.` : `No schedule #${id}.`),
-      );
+      const { schedules } = ctx;
+      const s = schedules?.get(id);
+      const note = s
+        ? await asked(ctx, signal, {
+            name: "schedule_delete",
+            input: { id },
+            what: `Delete the schedule #${id} "${s.name}"`,
+          })
+        : "";
+      return schedules?.delete(id) ? `Deleted schedule #${id}.${note}` : `No schedule #${id}.`;
     },
   }),
   def({
@@ -722,38 +742,33 @@ export const TOOLS = [
       // Running the page's scripts looks less often, so a shorter time is raised to that.
       const min = minWatchMinutes(source ?? w.source);
       const every = input.every_minutes ?? (w.everyMinutes < min ? min : undefined);
-      const update = async () => {
-        try {
-          const updated = await watchers.update(
-            id,
-            {
-              name: input.name,
-              enabled: input.enabled,
-              condition,
-              prompt: input.prompt?.trim(),
-              everyMinutes: every === undefined ? undefined : Math.max(min, every),
-              once: input.once,
-              source,
-            },
-            { via: "chat", taintedBy: tainted?.() ?? null },
-          );
-          return updated ? `Updated watcher ${watcherLine(updated)}` : `No watcher #${id}.`;
-        } catch (err) {
-          if (err instanceof WatchError) return `Not changed: ${err.message}`;
-          throw err;
-        }
-      };
-      if (input.enabled !== false || !w.enabled) return update();
-      return approved(
-        ctx,
-        signal,
-        {
-          name: "watch_update",
-          input: { id, ...input },
-          what: `Switch off the watcher #${id} "${w.name}"`,
-        },
-        update,
-      );
+      const note =
+        w.enabled && input.enabled === false
+          ? await asked(ctx, signal, {
+              name: "watch_update",
+              input: { id, ...input },
+              what: `Switch off the watcher #${id} "${w.name}"`,
+            })
+          : "";
+      try {
+        const updated = await watchers.update(
+          id,
+          {
+            name: input.name,
+            enabled: input.enabled,
+            condition,
+            prompt: input.prompt?.trim(),
+            everyMinutes: every === undefined ? undefined : Math.max(min, every),
+            once: input.once,
+            source,
+          },
+          { via: "chat", taintedBy: tainted?.() ?? null },
+        );
+        return updated ? `Updated watcher ${watcherLine(updated)}${note}` : `No watcher #${id}.`;
+      } catch (err) {
+        if (err instanceof WatchError) return `Not changed: ${err.message}`;
+        throw err;
+      }
     },
   }),
   def({
@@ -761,14 +776,16 @@ export const TOOLS = [
     description: "Delete a watcher. The tasks it started stay in the Tasks list.",
     schema: z.object({ id: z.number().int() }),
     run: async ({ id }, ctx, signal) => {
-      const w = ctx.watchers?.get(id);
-      if (!ctx.watchers || !w) return `No watcher #${id}.`;
-      return approved(
-        ctx,
-        signal,
-        { name: "watch_delete", input: { id }, what: `Delete the watcher #${id} "${w.name}"` },
-        () => (ctx.watchers?.delete(id) ? `Deleted watcher #${id}.` : `No watcher #${id}.`),
-      );
+      const { watchers } = ctx;
+      const w = watchers?.get(id);
+      const note = w
+        ? await asked(ctx, signal, {
+            name: "watch_delete",
+            input: { id },
+            what: `Delete the watcher #${id} "${w.name}"`,
+          })
+        : "";
+      return watchers?.delete(id) ? `Deleted watcher #${id}.${note}` : `No watcher #${id}.`;
     },
   }),
   def({
@@ -809,32 +826,9 @@ export const TOOLS = [
       // A trigger's runs trust its instructions; untrusted content mustn't get to write them.
       if (patch.prompt !== undefined && tainted?.())
         return "Not changed: this conversation has read untrusted content, so it can't rewrite what a trigger does. Ask the owner to change it in Schedules & Triggers.";
-      const current = triggers?.get(id);
-      if (!triggers || !current) return `No trigger #${id}.`;
-      const update = () => {
-        const t = triggers.update(id, patch);
-        return t ? `Updated trigger #${t.id} "${t.name}".` : `No trigger #${id}.`;
-      };
-      const off = patch.enabled === false && current.enabled;
-      const checks =
-        patch.confirmChecks !== undefined && patch.confirmChecks !== current.confirmChecks;
-      if (!off && !checks) return update();
-      const waits = (n: number) =>
-        n ? `wait for ${n} more failed check${n > 1 ? "s" : ""}` : "act on a down alert at once";
-      const what = [
-        ...(off ? ["switch it off"] : []),
-        ...(checks ? [waits(patch.confirmChecks ?? 0)] : []),
-      ].join(", and ");
-      return approved(
-        ctx,
-        signal,
-        {
-          name: "trigger_update",
-          input: { id, ...patch },
-          what: `Change the trigger #${id} "${current.name}": ${what}`,
-        },
-        update,
-      );
+      const note = await stoppingTrigger(ctx, signal, id, patch);
+      const t = triggers?.update(id, patch);
+      return t ? `Updated trigger #${t.id} "${t.name}".${note}` : `No trigger #${id}.`;
     },
   }),
 ];
