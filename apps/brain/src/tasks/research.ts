@@ -7,8 +7,16 @@ import type { Bot, Task } from "@hatbot/shared";
 import { z } from "zod";
 import { modelErrorText } from "../agent/model";
 import { RESEARCH_CHECK_PROMPT, RESEARCH_PROMPT, RESEARCH_WORKER_PROMPT } from "../agent/prompt";
+import type { Readable } from "../agent/screening";
 import { localStamp } from "../agent/thread";
-import { containerOf, serverToolWaiting, toolParam, webReads, webTools } from "../agent/tools";
+import {
+  containerOf,
+  serverToolWaiting,
+  toolParam,
+  webReads,
+  webTexts,
+  webTools,
+} from "../agent/tools";
 import { tagJson, untrustedFields } from "../agent/untrusted";
 import { botFolder, slugWords } from "../bots";
 import { MemoryConflict } from "../memory/store";
@@ -319,8 +327,8 @@ export type ResearchRun = {
   tasks: Tasks;
   task: Task;
   signal: AbortSignal;
-  /** Marks the task as having read untrusted content. */
-  taint: (source: string) => void;
+  /** Marks the task as having read untrusted content; `text`, when given, is screened. */
+  taint: (source: string, text?: Readable) => void;
   /** The lead's conversation so far: where the links a brief may name come from. */
   messages: Anthropic.Beta.BetaMessageParam[];
   /** What the lead's next request may cost: the helpers leave room for it, to write the report. */
@@ -538,6 +546,8 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
       });
       run.taint(read);
     }
+    // Screened for prompt injection like what the lead reads.
+    for (const page of webTexts(res.content)) run.taint(page.source, page.text);
     paused = res.stop_reason === "pause_turn";
     if (paused) continue;
     if (res.stop_reason === "refusal") return stopped("The helper declined this part.");

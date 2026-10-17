@@ -8,7 +8,7 @@ import { z } from "zod";
 import { cutOff, modelErrorText } from "../agent/model";
 import { AGENT_PROMPT, RESEARCH_ASK_BOT } from "../agent/prompt";
 import { mayReview, safeToRun } from "../agent/review";
-import { Screener } from "../agent/screening";
+import { type Readable, Screener } from "../agent/screening";
 import { localStamp, memoryIndex } from "../agent/thread";
 import {
   AskBotInput,
@@ -302,7 +302,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     });
   });
   /** It read untrusted content, `source`; `text`, when given, is screened. */
-  const taint = (source: string, text?: string) => {
+  const taint = (source: string, text?: Readable) => {
     if (text !== undefined) screener.add(source, text);
     sources.add(source);
     if (task.tainted) return;
