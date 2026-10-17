@@ -936,6 +936,10 @@ describe("ordinary haggling goes on its own (N1)", () => {
         ["Kiedy mogę spodziewać się odbioru paczki?"],
         ["I'll collect it from the parcel locker on Monday."],
         ["Proszę dać znać, kiedy paczka zostanie nadana."],
+        ["Czy karta może zostać wysłana jutro?"],
+        ["Czy paczka została nadana?"],
+        ["Czy zdjęcia zostały już wysłane?"],
+        ["Wolałbym, żeby była wysłana kurierem przez OLX."],
       ],
     },
     {
@@ -1322,6 +1326,11 @@ describe("every known way around the check asks", () => {
         ["Kupiłem już przez OLX, proszę nadać"],
         ["I've completed the payment, please ship"],
         ["Kasa jest już u Pana"],
+        ["Paczka została wysłana."],
+        ["Wysłałem paczkę."],
+        ["Czy wiesz, że przelew został wysłany?"],
+        ["Ok. Zapłaciłem, czy Pan wyśle?"],
+        ["Czy może Pan nadać dziś, pieniądze przelane"],
       ],
     },
     {
