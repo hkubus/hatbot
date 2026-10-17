@@ -443,14 +443,14 @@ final class FoldTests: XCTestCase {
   func testDecodesBotTemplates() throws {
     let json = #"""
       [{"id":"haggler","name":"Haggler","icon":"cart","color":"green","instructions":"You buy.","chatModel":null,"chatEffort":null,"plugins":["mcp"]},
-       {"id":"lookout","name":"Lookout","icon":"globe","color":"pink","instructions":"","chatModel":"claude-haiku-5-5","chatEffort":null,"plugins":[]}]
+       {"id":"researcher","name":"Researcher","icon":"book","color":"blue","instructions":"","chatModel":"claude-opus-5-5","chatEffort":"medium","plugins":[]}]
       """#
     let templates = try JSONDecoder().decode([BotTemplate].self, from: Data(json.utf8))
-    XCTAssertEqual(templates.map(\.id), ["haggler", "lookout"])
+    XCTAssertEqual(templates.map(\.id), ["haggler", "researcher"])
     XCTAssertEqual(templates[0].icon, .cart)
     XCTAssertEqual(templates[0].plugins, ["mcp"])
     XCTAssertNil(templates[0].chatModel)
-    XCTAssertEqual(templates[1].chatModel, .haiku)
+    XCTAssertEqual(templates[1].chatModel, .opus)
     XCTAssertEqual(templates[1].plugins, [])
   }
 

@@ -641,11 +641,7 @@ New bot starts from a template, or from nothing. A template fills in the name, i
 | Haggler | Buys second-hand inside a mandate (§16.8) | MCP (Scout) | As in Settings |
 | Sysadmin | The homelab: alerts, backups, updates, a runbook in its notes; restarts once on its own, asks for more | SSH, Proxmox, PBS, Uptime Kuma | As in Settings |
 | Coder | Repositories: a branch and a pull request per change, CI checks it, reviews | GitHub, Forgejo, Code | As in Settings |
-| Home | Home Assistant: states, history charts, everyday control, automations to add | Home Assistant | As in Settings |
 | Researcher | Answers from primary sources, compared and linked | None (the web is built in) | Opus, medium |
-| Clerk | Invoices, renewals and accounts on the desktop, on schedules | None (the desktop is built in) | As in Settings |
-| Lookout | Watchers for prices, stock, releases and changing pages | None | Haiku |
-| Analyst | Files and exports turned into numbers and charts in the sandbox | Code | As in Settings |
 
 ---
 
