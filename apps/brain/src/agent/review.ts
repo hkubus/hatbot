@@ -10,6 +10,13 @@ import { tagJson } from "./untrusted";
 
 const REVIEW_MODEL = "claude-haiku-5-5";
 
+const VERDICT = {
+  type: "object",
+  properties: { safe: { type: "boolean" }, why: { type: "string" } },
+  required: ["safe", "why"],
+  additionalProperties: false,
+};
+
 /** These always ask: money, accounts, spending more, and suspected injection. */
 const ALWAYS_ASK: ApprovalKind[] = [
   "payment",
@@ -53,9 +60,10 @@ export async function safeToRun(
     );
     const res = await d.model.create({
       model: REVIEW_MODEL,
-      max_tokens: 2000,
+      // Room for thinking, so it can't crowd out the verdict.
+      max_tokens: 4000,
       thinking: { type: "adaptive" },
-      output_config: { effort: "low" },
+      output_config: { effort: "low", format: { type: "json_schema", schema: VERDICT } },
       system: REVIEW_PROMPT,
       messages: [{ role: "user", content }],
     });
@@ -65,7 +73,7 @@ export async function safeToRun(
       .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
       .map((b) => b.text)
       .join("");
-    const json = JSON.parse(/\{[\s\S]*\}/.exec(out)?.[0] ?? "{}") as Record<string, unknown>;
+    const json = JSON.parse(out) as Record<string, unknown>;
     return { safe: json.safe === true, why: typeof json.why === "string" ? json.why : "" };
   } catch (err) {
     console.error("approval review failed; asking instead", err);

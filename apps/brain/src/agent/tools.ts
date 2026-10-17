@@ -227,6 +227,69 @@ async function held(
 /** Why a task the chat starts is tainted, from what the chat had read. */
 const chatTaint = (by: string | null | undefined) => by && `The chat had read: ${by}`;
 
+/** A change that wasn't made: its message is for the model. */
+class NotChanged extends Error {}
+
+/**
+ * Deleting or switching off a schedule, watcher or trigger after reading untrusted content waits for
+ * approval (Haiku's review, or you), as a plugin's change does (PLAN.md §6.1): injected text mustn't
+ * quietly stop what looks after the homelab. Untainted, it goes ahead at once. Resolves to your note
+ * on the approval, if any, for the tool's result; throws NotChanged when it mustn't go ahead.
+ */
+async function asked(
+  ctx: ToolContext,
+  signal: AbortSignal,
+  call: { name: string; input: unknown; what: string },
+): Promise<string> {
+  if (!ctx.tainted?.()) return "";
+  if (!ctx.gated)
+    throw new NotChanged(
+      "Not changed: after reading untrusted content this needs the owner's approval, which can't be asked here.",
+    );
+  const r = await ctx.gated(
+    {
+      name: call.name,
+      description: "",
+      schema: z.unknown(),
+      access: "write",
+      label: call.what,
+      describe: () => call.what,
+      // Not a command on the homelab: it doesn't count towards the chat's limit.
+      commands: () => 0,
+      run: async () => "",
+    },
+    call.input,
+    signal,
+  );
+  if (r.isError) throw new NotChanged(r.content);
+  return r.content;
+}
+
+/** Switching a trigger off, or changing how many failed checks it waits for, asks as above. */
+function stoppingTrigger(
+  ctx: ToolContext,
+  signal: AbortSignal,
+  id: number,
+  patch: { enabled?: boolean; confirmChecks?: number },
+): Promise<string> {
+  const t = ctx.triggers?.get(id);
+  const off = t?.enabled && patch.enabled === false;
+  const checks = t && patch.confirmChecks !== undefined && patch.confirmChecks !== t.confirmChecks;
+  if (!t || (!off && !checks)) return Promise.resolve("");
+  const n = patch.confirmChecks ?? 0;
+  const what = [
+    ...(off ? ["switch it off"] : []),
+    ...(checks
+      ? [n ? `wait for ${n} more failed check${n > 1 ? "s" : ""}` : "act on a down alert at once"]
+      : []),
+  ].join(", and ");
+  return asked(ctx, signal, {
+    name: "trigger_update",
+    input: { id, ...patch },
+    what: `Change the trigger #${id} "${t.name}": ${what}`,
+  });
+}
+
 const watchFields = {
   render: z
     .boolean()
@@ -290,7 +353,7 @@ type ToolDef<S extends z.ZodType> = {
   name: string;
   description: string;
   schema: S;
-  run: (input: z.infer<S>, ctx: ToolContext) => Promise<string>;
+  run: (input: z.infer<S>, ctx: ToolContext, signal: AbortSignal) => Promise<string>;
 };
 
 const def = <S extends z.ZodType>(t: ToolDef<S>) => t;
@@ -444,7 +507,7 @@ export const TOOLS = [
   def({
     name: "run_desktop_task",
     description:
-      "Start a task on your Linux desktop (Chromium, plus a shell for commands and experiments), for anything that needs a browser or a sandbox to try things in: booking, buying, filling in forms, pages that need a login, running a script. To look something up, web_search and web_fetch are quicker. It runs in the background on a separate model and its progress and result show under your reply; the owner can watch it live and approves consequential steps. You're told how it ended at the start of a later turn. Give it everything it needs to know: it can't see this conversation.",
+      "Start a task on your Linux desktop (Chromium, plus a shell), for anything that needs a real browser: booking, buying, filling in forms, pages that need a login. To compute or run a script, use code_run when the Code plugin is on; to look something up, web_search and web_fetch are quicker. It runs in the background on a separate model and its progress and result show under your reply; the owner can watch it live and approves consequential steps. You're told how it ended at the start of a later turn. Give it everything it needs to know: it can't see this conversation.",
     schema: DesktopTaskInput,
     run: async (
       { title, goal, success_criteria, skill },
@@ -527,7 +590,7 @@ export const TOOLS = [
   def({
     name: "ask_bot",
     description:
-      "Hand something to another of the owner's bots, for work in its line: it does it as its own task, with its own role, memory folder and plugins. Its progress shows under your reply, and you're told how it ended at the start of a later turn; then tell the owner what came of it. It can't see this conversation, so give it everything it needs. Don't wait for it.",
+      "Hand work to another of the owner's bots when it needs that bot's plugins, logins or notes: it does it as its own task, with its own role, memory folder and plugins. Its progress shows under your reply, and you're told how it ended at the start of a later turn; then tell the owner what came of it. It can't see this conversation, so give it everything it needs. Don't wait for it.",
     schema: AskBotInput,
     run: async (
       { bot: to, request },
@@ -615,18 +678,38 @@ export const TOOLS = [
       enabled: z.boolean().optional(),
       ...scheduleWhen,
     }),
-    run: async ({ id, ...patch }, { schedules, tainted }) => {
+    run: async ({ id, ...patch }, ctx, signal) => {
+      const { schedules, tainted } = ctx;
       if (patch.cron && patch.at) return "Give either cron or at, not both.";
+      const current = schedules?.get(id);
+      const note =
+        current?.enabled && patch.enabled === false
+          ? await asked(ctx, signal, {
+              name: "schedule_update",
+              input: { id, ...patch },
+              what: `Switch off the schedule #${id} "${current.name}"`,
+            })
+          : "";
       const s = schedules?.update(id, patch, { via: "chat", taintedBy: tainted?.() ?? null });
-      return s ? `Updated schedule ${scheduleLine(s)}` : `No schedule #${id}.`;
+      return s ? `Updated schedule ${scheduleLine(s)}${note}` : `No schedule #${id}.`;
     },
   }),
   def({
     name: "schedule_delete",
     description: "Delete a schedule. Its past runs stay in the Tasks list.",
     schema: z.object({ id: z.number().int() }),
-    run: async ({ id }, { schedules }) =>
-      schedules?.delete(id) ? `Deleted schedule #${id}.` : `No schedule #${id}.`,
+    run: async ({ id }, ctx, signal) => {
+      const { schedules } = ctx;
+      const s = schedules?.get(id);
+      const note = s
+        ? await asked(ctx, signal, {
+            name: "schedule_delete",
+            input: { id },
+            what: `Delete the schedule #${id} "${s.name}"`,
+          })
+        : "";
+      return schedules?.delete(id) ? `Deleted schedule #${id}.${note}` : `No schedule #${id}.`;
+    },
   }),
   def({
     name: "watch_create",
@@ -698,7 +781,8 @@ export const TOOLS = [
       enabled: z.boolean().optional(),
       ...watchFields,
     }),
-    run: async ({ id, ...input }, { watchers, tainted }) => {
+    run: async ({ id, ...input }, ctx, signal) => {
+      const { watchers, tainted } = ctx;
       const w = watchers?.get(id);
       if (!watchers || !w) return `No watcher #${id}.`;
       const condition = input.when ? conditionOf(input) : undefined;
@@ -720,6 +804,14 @@ export const TOOLS = [
       // Running the page's scripts looks less often, so a shorter time is raised to that.
       const min = minWatchMinutes(source ?? w.source);
       const every = input.every_minutes ?? (w.everyMinutes < min ? min : undefined);
+      const note =
+        w.enabled && input.enabled === false
+          ? await asked(ctx, signal, {
+              name: "watch_update",
+              input: { id, ...input },
+              what: `Switch off the watcher #${id} "${w.name}"`,
+            })
+          : "";
       try {
         const updated = await watchers.update(
           id,
@@ -734,7 +826,7 @@ export const TOOLS = [
           },
           { via: "chat", taintedBy: tainted?.() ?? null },
         );
-        return updated ? `Updated watcher ${watcherLine(updated)}` : `No watcher #${id}.`;
+        return updated ? `Updated watcher ${watcherLine(updated)}${note}` : `No watcher #${id}.`;
       } catch (err) {
         if (err instanceof WatchError) return `Not changed: ${err.message}`;
         throw err;
@@ -745,8 +837,18 @@ export const TOOLS = [
     name: "watch_delete",
     description: "Delete a watcher. The tasks it started stay in the Tasks list.",
     schema: z.object({ id: z.number().int() }),
-    run: async ({ id }, { watchers }) =>
-      watchers?.delete(id) ? `Deleted watcher #${id}.` : `No watcher #${id}.`,
+    run: async ({ id }, ctx, signal) => {
+      const { watchers } = ctx;
+      const w = watchers?.get(id);
+      const note = w
+        ? await asked(ctx, signal, {
+            name: "watch_delete",
+            input: { id },
+            what: `Delete the watcher #${id} "${w.name}"`,
+          })
+        : "";
+      return watchers?.delete(id) ? `Deleted watcher #${id}.${note}` : `No watcher #${id}.`;
+    },
   }),
   def({
     name: "trigger_list",
@@ -781,12 +883,14 @@ export const TOOLS = [
           "Uptime Kuma only: wait for this many more of the monitor's checks before acting on a down alert, so a blip that recovers starts nothing. 0 acts at once.",
         ),
     }),
-    run: async ({ id, ...patch }, { triggers, tainted }) => {
+    run: async ({ id, ...patch }, ctx, signal) => {
+      const { triggers, tainted } = ctx;
       // A trigger's runs trust its instructions; untrusted content mustn't get to write them.
       if (patch.prompt !== undefined && tainted?.())
         return "Not changed: this conversation has read untrusted content, so it can't rewrite what a trigger does. Ask the owner to change it in Schedules & Triggers.";
+      const note = await stoppingTrigger(ctx, signal, id, patch);
       const t = triggers?.update(id, patch);
-      return t ? `Updated trigger #${t.id} "${t.name}".` : `No trigger #${id}.`;
+      return t ? `Updated trigger #${t.id} "${t.name}".${note}` : `No trigger #${id}.`;
     },
   }),
 ];
@@ -842,9 +946,14 @@ export async function runTool(
     return { content: `Invalid input: ${z.prettifyError(parsed.error)}`, isError: true };
   try {
     // biome-ignore lint/suspicious/noExplicitAny: each tool's run matches its own schema
-    return { content: await tool.run(parsed.data as any, ctx), isError: false };
+    return { content: await tool.run(parsed.data as any, ctx, signal), isError: false };
   } catch (err) {
-    if (err instanceof MemoryError || err instanceof ScheduleError || err instanceof DesktopError)
+    if (
+      err instanceof MemoryError ||
+      err instanceof ScheduleError ||
+      err instanceof DesktopError ||
+      err instanceof NotChanged
+    )
       return { content: err.message, isError: true };
     console.error(`tool ${name} failed`, err);
     return { content: "The tool failed with an internal error.", isError: true };

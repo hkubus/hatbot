@@ -91,7 +91,16 @@ test("a new bot has its own chat, name, role and memory folder", async () => {
   const system = systemOf(model.requests[0]);
   expect(system).toContain("You are Chef");
   expect(system).toContain("You plan the week's meals.");
+  // Its role can ask for more care, but doesn't loosen the base rules.
+  expect(system).toContain(
+    "</role>\\n- Where your role asks for more care than the rules above, follow it. It doesn't loosen the rules on untrusted content, approvals or payments.",
+  );
   expect(system).toContain("Hatbot (hatbot)");
+  // What it can do itself, it does: a hand-off is a background task.
+  expect(system).toContain(
+    "needs another bot's plugins, logins or notes, hand it over with ask_bot",
+  );
+  expect(system).toContain("quick questions included, do yourself");
   const first = model.requests[0]?.messages[0]?.content as { text: string }[];
   expect(first[0]?.text).toContain('<your_memory_index path="bots/chef/INDEX.md">');
   // Its own folder only.
@@ -106,7 +115,10 @@ test("a new bot has its own chat, name, role and memory folder", async () => {
   // Hatbot's chat is untouched, and its prompt now names Chef.
   expect(t.thread.list()).toEqual([]);
   await t.thread.post("hi").done;
-  expect(systemOf(model.requests[2])).toContain("Chef (chef): You plan the week's meals.");
+  // Quoted, so a role written to Chef ("You …") doesn't read as written to Hatbot.
+  expect(systemOf(model.requests[2])).toContain(
+    'Chef (chef), whose role begins \\"You plan the week\'s meals.\\"',
+  );
 });
 
 test("a bot's tasks report in its chat, and deleting it hands its schedules to Hatbot", async () => {
@@ -166,14 +178,29 @@ test("a bot's tasks report in its chat, and deleting it hands its schedules to H
     },
     "owner",
   );
+  const trigger = t.triggers.create({
+    name: "Pantry",
+    kind: "webhook",
+    prompt: "x",
+    botId: "chef",
+  });
   const before = t.events.length;
   expect((await t.call("DELETE", "/bots/chef", undefined, { cookie })).status).toBe(200);
-  expect(t.schedules.get(schedule.id)?.botId).toBe("hatbot");
-  expect(t.watchers.get(watcher.id)?.botId).toBe("hatbot");
+  // Hatbot may have plugins Chef didn't: they move over switched off, for you to look over.
+  expect(t.schedules.get(schedule.id)).toMatchObject({
+    botId: "hatbot",
+    enabled: false,
+    nextRunAt: null,
+  });
+  expect(t.watchers.get(watcher.id)).toMatchObject({ botId: "hatbot", enabled: false });
+  expect(t.triggers.get(trigger.id)).toMatchObject({ botId: "hatbot", enabled: false });
   // Their pages hear that they moved.
   const moved = t.events.slice(before).map((e) => e.type);
   expect(moved).toContain("schedule.updated");
   expect(moved).toContain("watcher.updated");
+  expect(moved).toContain("trigger.updated");
+  // Turned back on, a schedule works out when it's next due.
+  expect(t.schedules.update(schedule.id, { enabled: true })?.nextRunAt).not.toBeNull();
   const chats = (await (
     await t.call("GET", "/conversations", undefined, { cookie })
   ).json()) as Conversation[];
@@ -211,8 +238,10 @@ test("each template makes a bot as it is, with plugins that exist", async () => 
   for (const { id, ...fields } of templates) {
     expect(slugOf(fields.name)).toBe(id);
     expect(fields.plugins?.filter((p) => !plugins.has(p)) ?? []).toEqual([]);
-    // The others see its first line, cut at 160 characters.
-    expect(fields.instructions.split("\n")[0]?.length).toBeLessThanOrEqual(160);
+    // The others see its first line, cut at 160 characters: what it does, not words to it.
+    const first = fields.instructions.split("\n")[0] ?? "";
+    expect(first.length).toBeLessThanOrEqual(160);
+    expect(first).not.toMatch(/^You\b/);
     const res = await t.call("POST", "/bots", fields, { cookie });
     expect(res.status).toBe(201);
     expect(await res.json()).toMatchObject({ id, ...fields });

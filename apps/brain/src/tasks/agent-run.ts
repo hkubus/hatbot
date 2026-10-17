@@ -134,7 +134,7 @@ const CORE_TOOLS: Anthropic.Beta.BetaTool[] = [
   toolParam({
     name: "ask_bot",
     description:
-      "Hand part of this task to another of the owner's bots, for work in its line: it does it as its own task, with its own role, memory folder and plugins. This waits until it ends and returns its summary. It can't see this task, so give it everything it needs.",
+      "Hand part of this task to another of the owner's bots when it needs that bot's plugins, logins or notes: it does it as its own task, with its own role, memory folder and plugins. This waits until it ends and returns its summary. It can't see this task, so give it everything it needs.",
     schema: AskBotInput,
   }),
   toolParam({
@@ -239,11 +239,38 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   // Research only reads and writes up, so it gets the plugins' lookups and no tool that changes
   // anything; it ends with finish_research (PLAN.md §17).
   const { research } = task;
+  const negotiating = (from: PluginTool[]) => ({
+    from,
+    tools: tasks.negotiations?.tools(bot, from, { conversationId: null }) ?? [],
+  });
+  let negotiation = negotiating(own);
   const pluginTools = new Map<string, PluginTool>(
-    [...own, ...(tasks.negotiations?.tools(bot, own, { conversationId: null }) ?? [])]
+    [...own, ...negotiation.tools]
       .filter((t) => !research || t.access === "read")
       .map((t) => [t.name, t]),
   );
+  /**
+   * A plugin tool the task was offered, as it is now: the definitions sent stay fixed for the cache,
+   * but a call runs on the plugin's current instance and policy. Why not, when the plugin was
+   * switched off or taken from the bot since the task began, or now describes the tool differently.
+   */
+  const current = (name: string): PluginTool | string => {
+    const offered = pluginTools.get(name);
+    if (!offered) return `Unknown tool "${name}".`;
+    const mine = d.plugins.tools((d.bots.get(bot.id) ?? bot).plugins);
+    // Negotiation's tools keep what they learned in this task while Scout's stay the same.
+    if (mine.length !== negotiation.from.length || mine.some((t, i) => t !== negotiation.from[i]))
+      negotiation = negotiating(mine);
+    const now = [...mine, ...negotiation.tools].find((t) => t.name === name);
+    if (!now)
+      return `Not run: ${name} isn't available any more. Its plugin was switched off, or taken from ${bot.name}, after this task started.`;
+    if (JSON.stringify(toolParam(now)) !== JSON.stringify(toolParam(offered)))
+      return `Not run: ${name} has changed since this task started.`;
+    // Research gets lookups only: a tool that has come to change things since doesn't run in it.
+    if (research && now.access !== "read")
+      return `Not run: ${name} changes things now, and research only looks things up.`;
+    return now;
+  };
   const others = d.bots.list().filter((b) => b.id !== bot.id);
   const tools = [
     ...CORE_TOOLS.filter(
@@ -567,6 +594,15 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
               : "The owner denied this. Don't try it another way.",
             true,
           );
+        // What was approved was the plugin as it was: one restarted meanwhile may act differently.
+        const after = current(t.name);
+        if (typeof after === "string") return result(call, after, true);
+        if (after !== t && d.plugins.pluginOf(t.name))
+          return result(
+            call,
+            `Not run: ${t.name}'s plugin restarted while this waited for approval. Call it again if it's still needed.`,
+            true,
+          );
       }
     }
     tasks.addStep(id, { kind: "action", name: t.name, detail: what, url: null });
@@ -797,9 +833,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       // thing (checking updates on every host); anything that asks runs on its own.
       const lookup = (call: Anthropic.Beta.BetaToolUseBlock): boolean | string => {
         if (cutOff(res)) return false;
-        const t = pluginTools.get(call.name);
-        if (LOOKUP_TOOLS.includes(call.name) || t?.access === "read") return true;
-        if (!t?.target) return false;
+        if (LOOKUP_TOOLS.includes(call.name)) return true;
+        const t = pluginTools.has(call.name) ? current(call.name) : null;
+        if (!t || typeof t === "string") return false;
+        if (t.access === "read") return true;
+        if (!t.target) return false;
         const parsed = t.schema.safeParse(call.input);
         if (!parsed.success) return false;
         const cc = { task: { id, tainted: task.tainted }, signal };
@@ -885,8 +923,17 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           tasks.notifyOwner(id, p.data.message);
           return result(call, "Sent.");
         }
-        const plugin = pluginTools.get(call.name);
-        if (plugin) return pluginCall(plugin, call);
+        if (pluginTools.has(call.name)) {
+          const plugin = current(call.name);
+          if (typeof plugin === "string") {
+            tasks.addStep(id, { kind: "note", name: "Refused", detail: plugin, url: null });
+            return result(call, plugin, true);
+          }
+          // Its description is in the prompt: a server untrusted now, though not at the start, taints too.
+          const foreign = untrustedDefinitions([plugin]);
+          if (foreign) taint(foreign);
+          return pluginCall(plugin, call);
+        }
         if (SHARED_TOOLS.includes(call.name)) {
           tasks.addStep(id, {
             kind: "action",

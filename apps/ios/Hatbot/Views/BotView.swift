@@ -165,7 +165,7 @@ struct BotView: View {
         Section {
           Button("Delete \(stored?.name ?? "bot")", role: .destructive) { confirmDelete = true }
         } footer: {
-          Text("Its chat and notes stay readable; its schedules and triggers go to Hatbot.")
+          Text("Its chat and notes stay readable; its schedules, triggers and watchers go to Hatbot, switched off until you turn them back on.")
         }
       }
     }

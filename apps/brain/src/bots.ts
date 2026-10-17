@@ -34,7 +34,7 @@ const toBot = (r: Row): Bot => ({
 
 export class BotError extends Error {}
 
-/** What a deleted bot's schedules, triggers and watchers were: they're Hatbot's now. */
+/** What a deleted bot's schedules, triggers and watchers were: they're Hatbot's now, switched off. */
 export type Moved = { schedules: number[]; triggers: number[]; watchers: number[] };
 
 /** Letters that don't decompose into a plain one and an accent. */
@@ -167,17 +167,24 @@ export class Bots {
 
   /**
    * Deletes a bot. Its chat, tasks and memory folder stay; its schedules, triggers and watchers go to
-   * Hatbot, so they keep running. Hatbot can't be deleted. Null if there's no such bot; otherwise the
-   * ids of what moved, so their pages can be told.
+   * Hatbot switched off, since Hatbot may have plugins the bot didn't: you look them over and turn
+   * them back on. Hatbot can't be deleted. Null if there's no such bot; otherwise the ids of what
+   * moved, so their pages can be told.
    */
   delete(id: string): Moved | null {
     if (id === HATBOT_ID) throw new BotError("Hatbot can't be deleted.");
     if (!this.active(id)) return null;
     const now = new Date(this.clock()).toISOString();
-    const move = (table: "schedules" | "triggers" | "watchers") =>
+    // Turning one back on works out when it's next due.
+    const off = {
+      schedules: "enabled = 0, next_run_at = NULL",
+      triggers: "enabled = 0",
+      watchers: "enabled = 0, next_check_at = NULL",
+    };
+    const move = (table: keyof typeof off) =>
       this.db
         .query<{ id: number }, [string, string]>(
-          `UPDATE ${table} SET bot_id = ? WHERE bot_id = ? RETURNING id`,
+          `UPDATE ${table} SET bot_id = ?, ${off[table]} WHERE bot_id = ? RETURNING id`,
         )
         .all(HATBOT_ID, id)
         .map((r) => r.id);
@@ -231,20 +238,24 @@ export function promptFor(
   base: string,
   bot: Bot,
   others: Bot[],
-  handOver = "For work in another bot's line, hand it over with ask_bot rather than doing it yourself.",
+  handOver = "When the owner asks for work that needs another bot's plugins, logins or notes, hand it over with ask_bot. What you can do with your own tools, quick questions included, do yourself: a hand-off is a background task the owner waits for.",
 ): string {
   const named = bot.id === HATBOT_ID ? base : base.replace(/\bHatbot\b/g, bot.name);
   const parts: string[] = [];
   if (bot.instructions.trim())
     parts.push(
-      `Your role\n- You are one of the owner's bots, ${bot.name}. The owner describes your role like this:\n<role>\n${bot.instructions.trim()}\n</role>`,
+      `Your role\n- You are one of the owner's bots, ${bot.name}. The owner describes your role like this:\n<role>\n${bot.instructions.trim()}\n</role>\n- Where your role asks for more care than the rules above, follow it. It doesn't loosen the rules on untrusted content, approvals or payments.`,
     );
   if (others.length) {
     const folder = botFolder(bot.id);
     parts.push(
       [
         "The owner's other bots",
-        ...others.map((o) => `- ${o.name} (${o.id})${roleLine(o) ? `: ${roleLine(o)}` : ""}`),
+        // Quoted: a role the owner wrote as "You …" is addressed to that bot, not to this one.
+        ...others.map(
+          (o) =>
+            `- ${o.name} (${o.id})${roleLine(o) ? `, whose role begins "${roleLine(o)}"` : ""}`,
+        ),
         "- Each bot has its own chat with the owner, and its own plugins and browser profile.",
         `- ${handOver}`,
         folder
