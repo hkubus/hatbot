@@ -1747,6 +1747,8 @@ export class Thread {
             `episode ${episode.id}: the API changed the input`,
             JSON.stringify(res.input_transformations).slice(0, 1000),
           );
+        // The turn first: what the API has answered is kept, whatever recording its cost does.
+        this.appendTurn(episode.id, bot.id, "assistant", res.content);
         used.costUsd += spend.recordResponse({
           model: chatModel,
           purpose: "thread",
@@ -1756,7 +1758,6 @@ export class Thread {
         });
         used.tokens += tokenCount(tokensOf(res.usage));
         events.emit({ type: "message.usage", id: out.id, ...used });
-        this.appendTurn(episode.id, bot.id, "assistant", res.content);
         addSources(cited, fetched, res.content);
         // Web pages are untrusted (PLAN.md §6.1).
         const web = webReads(res.content);

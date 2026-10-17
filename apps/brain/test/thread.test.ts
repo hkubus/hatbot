@@ -8,7 +8,7 @@ import {
 } from "@hatbot/shared";
 import type { StreamHandlers, StreamParams } from "../src/agent/model";
 import { activity, parseSummary, titleOf, withNote } from "../src/agent/thread";
-import { costOf } from "../src/spend";
+import { costOf, FALLBACK_MODELS, PRICES } from "../src/spend";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, testApp } from "./helpers";
 
@@ -179,6 +179,47 @@ test("fallback iterations are billed per model", async () => {
     },
   });
   expect(t.spend.summary().todayUsd).toBeCloseTo(3, 6);
+});
+
+test("every model a request may be answered by has a price; an unknown one costs the most", () => {
+  const models = [
+    "claude-opus-5-5",
+    "claude-haiku-5-5",
+    ...Object.keys(FALLBACK_MODELS),
+    ...Object.values(FALLBACK_MODELS).flat(),
+  ];
+  for (const m of models) expect(PRICES[m] ?? m).toBeObject();
+  const million = { input: 1_000_000, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0, output: 0 };
+  expect(costOf("claude-opus-4-8-20260101", million)).toBeCloseTo(5, 6);
+  expect(costOf("claude-unheard-of", million)).toBeCloseTo(10, 6);
+});
+
+test("a reply a fallback model wrote is kept, and billed at that model's price", async () => {
+  const usage = { input_tokens: 1_000_000, output_tokens: 0 };
+  const t = await testApp(
+    new FakeModel([
+      {
+        model: "claude-opus-4-8",
+        content: [text("Here are the firewall rules.")],
+        usage: {
+          ...usage,
+          iterations: [
+            { type: "message", model: "claude-opus-5-5", ...usage, input_tokens: 0 },
+            { type: "fallback_message", model: "claude-opus-4-8", ...usage },
+          ] as never,
+        },
+      },
+    ]),
+  );
+  t.settings.update({ chatModel: "claude-opus-5-5" });
+  await t.thread.post("which firewall rules?").done;
+  expect(t.thread.list().at(-1)).toMatchObject({
+    status: "done",
+    text: "Here are the firewall rules.",
+  });
+  expect(t.spend.summary().todayUsd).toBeCloseTo(5, 6);
+  const turns = t.db.query("SELECT role FROM episode_turns WHERE role = 'assistant'").all();
+  expect(turns.length).toBe(1);
 });
 
 test("search_history finds older conversations, not the one you're in", async () => {

@@ -13,6 +13,9 @@ type Price = { input: number; output: number; cacheRead: number };
  */
 export const PRICES: Record<string, Price & { longPrompt?: { above: number } & Price }> = {
   "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2 },
+  // What a declined Opus 5.5 request may be answered by (FALLBACK_MODELS).
+  "claude-opus-5": { input: 5, output: 25, cacheRead: 0.5 },
+  "claude-opus-4-8": { input: 5, output: 25, cacheRead: 0.5 },
   "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.2 },
   "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2 },
   // Haiku 5.5's long-prompt cache-read price isn't published separately; assumed 5x like the rest.
@@ -58,10 +61,27 @@ export function tokensOf(u: UsageLike): Tokens {
   };
 }
 
+/** The models `fallbacks: "default"` may answer with instead of the one asked, which each need a price. */
+export const FALLBACK_MODELS: Record<string, string[]> = {
+  "claude-opus-5-5": ["claude-opus-5", "claude-opus-4-8"],
+  "claude-sonnet-5-5": ["claude-sonnet-5"],
+};
+
+/**
+ * A model with no price here: Claude Fable's rates, the highest of any model, so the API's charge is
+ * still recorded and never under-counted.
+ */
+const UNKNOWN_PRICE: (typeof PRICES)[string] = { input: 10, output: 50, cacheRead: 1 };
+const unpriced = new Set<string>();
+
 export function priceOf(model: string) {
-  const p = PRICES[model];
-  if (!p) throw new Error(`no price for model ${model}`);
-  return p;
+  const p = PRICES[model] ?? PRICES[model.replace(/-\d{8}$/, "")];
+  if (p) return p;
+  if (!unpriced.has(model)) {
+    unpriced.add(model);
+    console.warn(`no price for model ${model}; it's billed at the highest rates`);
+  }
+  return UNKNOWN_PRICE;
 }
 
 export function costOf(model: string, t: Tokens): number {
