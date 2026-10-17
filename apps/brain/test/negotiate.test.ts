@@ -30,27 +30,27 @@ const finish = (summary = "Sent it.") => ({
 /** The MCP plugin with the stand-in Scout, its read tools set to Chat. */
 async function withScout(t: TestApp, full: boolean, modes: Record<string, string> = {}) {
   const log = join(mkdtempSync(join(tmpdir(), "hatbot-scout-")), "calls.jsonl");
-  const info = await t.plugins.update("mcp", {
-    enabled: true,
-    config: {
-      servers: [
-        {
-          name: "scout",
-          transport: "stdio",
-          command: process.execPath,
-          args: [join(import.meta.dir, "fixtures/scout-server.ts")],
-          env: { SCOUT_LOG: log, ...(full ? { SCOUT_FULL: "1" } : {}) },
-          tools: {
-            scout_listing_detail: "chat",
-            scout_watch_analytics: "chat",
-            scout_price_reference: "chat",
-            scout_comparables: "chat",
-            ...modes,
-          },
-        },
-      ],
+  const server = {
+    name: "scout",
+    transport: "stdio",
+    command: process.execPath,
+    args: [join(import.meta.dir, "fixtures/scout-server.ts")],
+    env: { SCOUT_LOG: log, ...(full ? { SCOUT_FULL: "1" } : {}) },
+    tools: {
+      scout_listing_detail: "chat",
+      scout_watch_analytics: "chat",
+      scout_price_reference: "chat",
+      scout_comparables: "chat",
+      ...modes,
     },
-  });
+  };
+  await t.plugins.update("mcp", { enabled: true, config: { servers: [server] } });
+  // Chat and Allow hold for the definitions they were chosen for, which Settings records.
+  const seen = (await t.plugins.action("mcp", "status", {})) as {
+    tools: { name: string; hash: string }[];
+  }[];
+  const pinned = Object.fromEntries(seen[0]?.tools.map((x) => [x.name, x.hash]) ?? []);
+  const info = await t.plugins.update("mcp", { config: { servers: [{ ...server, pinned }] } });
   expect(info.state).toBe("ready");
   const calls = () =>
     readFileSync(log, "utf8")
@@ -254,25 +254,14 @@ test("Scout's tools must be set to Chat; one that asks isn't used", async () => 
   expect(r.isError).toBe(true);
   expect(r.content).toContain("Set it to Chat");
   // An unknown listing says so.
-  await t.plugins.update("mcp", {
-    config: {
-      servers: [
-        {
-          name: "scout",
-          transport: "stdio",
-          command: process.execPath,
-          args: [join(import.meta.dir, "fixtures/scout-server.ts")],
-          tools: { scout_listing_detail: "chat" },
-        },
-      ],
-    },
-  });
+  await withScout(t, false);
   const missing = await runPluginTool(
     named(negotiateTools(t), "negotiate_appraise"),
     { listing: "OLX:9" },
     call(),
   );
   expect(missing.isError).toBe(true);
+  expect(missing.content).not.toContain("Set it to Chat");
   await t.plugins.stopAll();
 });
 
