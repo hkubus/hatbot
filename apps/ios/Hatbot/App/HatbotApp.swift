@@ -204,8 +204,9 @@ private struct Toast: View {
         .padding(.top, 4)
         .transition(.move(edge: .top).combined(with: .opacity))
         .task(id: text) {
-          try? await Task.sleep(for: .seconds(2.8))
-          withAnimation { store.toast = nil }
+          // A newer note ends this wait early; that one then gets its own 2.8 s.
+          do { try await Task.sleep(for: .seconds(2.8)) } catch { return }
+          if store.toast == text { withAnimation { store.toast = nil } }
         }
     }
   }
