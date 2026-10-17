@@ -50,6 +50,7 @@ import {
   SYSTEM_PROMPT,
 } from "./prompt";
 import { mayReview, safeToRun } from "./review";
+import { Screener, type Screening } from "./screening";
 import {
   addSources,
   CHAT_WEB_TOOLS,
@@ -62,6 +63,7 @@ import {
   toolParam,
   webCalls,
   webReads,
+  webTexts,
 } from "./tools";
 import { messageTag, tagText, untrustedBlock } from "./untrusted";
 
@@ -446,6 +448,29 @@ export class Thread {
       .join("\n\n");
   }
 
+  /** Something the episode read may be a prompt injection, or Haiku couldn't tell: the first kept. */
+  private suspect(episodeId: number, source: string, verdict: Screening) {
+    const what = verdict.failed
+      ? `${source}, which couldn't be checked`
+      : `${source}: "${verdict.excerpt}"`;
+    this.d.db
+      .query(
+        "UPDATE episodes SET injection_suspected = coalesce(injection_suspected, ?) WHERE id = ?",
+      )
+      .run(what, episodeId);
+  }
+
+  /** What the episode read that may be a prompt injection, or null. */
+  private suspected(episodeId: number): string | null {
+    return (
+      this.d.db
+        .query<{ s: string | null }, [number]>(
+          "SELECT injection_suspected AS s FROM episodes WHERE id = ?",
+        )
+        .get(episodeId)?.s ?? null
+    );
+  }
+
   /** What the episode first read that was untrusted, or null. */
   private tainted(episodeId: number): string | null {
     const e = this.d.db
@@ -469,9 +494,11 @@ export class Thread {
     signal: AbortSignal,
     progress: (line: string) => void,
     messageId: number,
+    screen?: (source: string, text: string) => void,
   ): Promise<{ content: string; isError: boolean }> {
     const { approvals, settings, attachments } = this.d;
     const taintedBy = this.tainted(episodeId);
+    const suspected = this.suspected(episodeId);
     const cc: CallContext = {
       task: null,
       signal,
@@ -489,7 +516,7 @@ export class Thread {
       const kind = verdict.kind ?? "other";
       let skip = false;
       let review = "";
-      if (settings.get().reviewChanges && mayReview(verdict)) {
+      if (settings.get().reviewChanges && mayReview(verdict, suspected !== null)) {
         progress("Checking it's safe");
         const check = await safeToRun(
           this.d,
@@ -513,7 +540,11 @@ export class Thread {
           conversationId: this.conversationId,
           kind,
           summary: what,
-          reason: review ? `${verdict.why} Haiku: ${review}` : verdict.why,
+          reason: suspected
+            ? `${verdict.why} Something this conversation read may be instructions aimed at ${bot.name}, so Haiku's review is skipped: ${suspected}`
+            : review
+              ? `${verdict.why} Haiku: ${review}`
+              : verdict.why,
           sources: taintedBy ? [taintedBy] : [],
         });
         progress("Waiting for your approval");
@@ -540,7 +571,10 @@ export class Thread {
     }
     progress(activity(t.label ?? `Using ${t.name}`, input));
     const r = await runPluginTool(t, input, cc);
-    if (r.untrusted) this.taint(episodeId, what);
+    if (r.untrusted) {
+      this.taint(episodeId, what);
+      screen?.(what, r.text);
+    }
     return { content: note ? `${r.content}\n\n${ownerNote(note)}` : r.content, isError: r.isError };
   }
 
@@ -1774,6 +1808,14 @@ export class Thread {
     let commands = 0;
     let container: string | undefined;
     const abort = new AbortController();
+    // What the reply reads from outside, screened for prompt injection while it goes on (PLAN.md
+    // §6.1). Incognito can't change anything, so there's nothing to screen for.
+    const screener = incognito
+      ? null
+      : new Screener(this.d, { episodeId: episode.id }, (source, verdict) =>
+          this.suspect(episode.id, source, verdict),
+        );
+    const screen = (source: string, text: string) => screener?.add(source, text);
     this.current = abort;
     this.currentIncognito = incognito;
     try {
@@ -1860,6 +1902,7 @@ export class Thread {
         // Web pages are untrusted (PLAN.md §6.1).
         const web = webReads(res.content);
         if (web.length) this.taint(episode.id, web[0] as string);
+        for (const page of webTexts(res.content)) screen(page.source, page.text);
 
         const toolUses = res.content.filter(
           (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use",
@@ -1947,7 +1990,14 @@ export class Thread {
               messageId: out.id,
               episodeId: episode.id,
               tainted: () => this.tainted(episode.id),
-              taint: (by: string) => this.taint(episode.id, by),
+              taint: (by: string, text?: string) => {
+                this.taint(episode.id, by);
+                if (text !== undefined) screen(by, text);
+              },
+              suspected: async () => {
+                await screener?.settled();
+                return this.suspected(episode.id) !== null;
+              },
               ownerSaid: () => this.ownerSaid(episode.id),
               gated: async (t, input, signal) => {
                 // The sandbox is scratch space; only commands on the homelab and accounts count.
@@ -1962,7 +2012,18 @@ export class Thread {
                 }
                 const from = this.clock();
                 try {
-                  return await this.gatedCall(episode.id, bot, t, input, signal, progress, out.id);
+                  // A change waits for what the reply read so far to be screened.
+                  await screener?.settled();
+                  return await this.gatedCall(
+                    episode.id,
+                    bot,
+                    t,
+                    input,
+                    signal,
+                    progress,
+                    out.id,
+                    screen,
+                  );
                 } finally {
                   // Time waiting for you doesn't count against the reply's limit.
                   waited += this.clock() - from;

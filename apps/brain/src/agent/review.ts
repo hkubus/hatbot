@@ -19,9 +19,12 @@ const ALWAYS_ASK: ApprovalKind[] = [
   "injection_warning",
 ];
 
-/** Whether Haiku may let this through: not money or accounts, and not one you said to always ask about. */
-export const mayReview = (verdict: Extract<Verdict, { action: "ask" }>) =>
-  !verdict.always && !ALWAYS_ASK.includes(verdict.kind ?? "other");
+/**
+ * Whether Haiku may let this through: not money or accounts, not one you said to always ask about,
+ * and not while something the chat or task read is suspected of being a prompt injection.
+ */
+export const mayReview = (verdict: Extract<Verdict, { action: "ask" }>, suspected = false) =>
+  !suspected && !verdict.always && !ALWAYS_ASK.includes(verdict.kind ?? "other");
 
 /**
  * Asks Haiku whether a change is safe to make without you: nothing destructive or dangerous, and

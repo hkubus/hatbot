@@ -63,8 +63,14 @@ export type ToolContext = {
    * (PLAN.md §6.1).
    */
   tainted?: () => string | null;
-  /** Marks the conversation as having read untrusted content: `by`. */
-  taint?: (by: string) => void;
+  /** Marks the conversation as having read untrusted content: `by`, and `text` to screen. */
+  taint?: (by: string, text?: string) => void;
+  /**
+   * Whether something the conversation read is suspected of being a prompt injection, once what it
+   * read so far is screened: work it starts is marked so, and Haiku's review doesn't let its changes
+   * through.
+   */
+  suspected?: () => Promise<boolean>;
   /** Your own latest messages in this conversation, for a task's approval check. */
   ownerSaid?: () => string;
   /** Runs a plugin tool that changes something, after its checks and your approval if it needs one. */
@@ -447,9 +453,10 @@ export const TOOLS = [
     schema: RunTaskInput,
     run: async (
       { title, goal, effort },
-      { tasks, messageId, tainted, ownerSaid, bot, conversationId },
+      { tasks, messageId, tainted, ownerSaid, bot, conversationId, suspected },
     ) => {
       if (!tasks) return "Tasks aren't available.";
+      const suspect = await suspected?.();
       const task = tasks.createBackgroundTask({
         title,
         goal,
@@ -462,6 +469,7 @@ export const TOOLS = [
         request: ownerSaid?.(),
       });
       if (!task) return "The task couldn't start.";
+      if (suspect) tasks.mark(task.id, "injection_suspected");
       return `Started task #${task.id}. It's running in the background; the owner sees its progress and result under this reply. Don't wait for it.`;
     },
   }),
@@ -472,11 +480,12 @@ export const TOOLS = [
     schema: ResearchInput,
     run: async (
       { title, question, previous },
-      { tasks, memory, messageId, tainted, ownerSaid, bot, conversationId },
+      { tasks, memory, messageId, tainted, ownerSaid, bot, conversationId, suspected },
     ) => {
       if (!tasks) return "Tasks aren't available.";
       if (previous && !(await memory.exists(previous)))
         return `There's no report at ${previous}. Check the path, or leave previous out.`;
+      const suspect = await suspected?.();
       const task = tasks.createBackgroundTask({
         title,
         goal: refreshing(question, previous ?? null),
@@ -489,6 +498,7 @@ export const TOOLS = [
         research: true,
       });
       if (!task) return "The research couldn't start.";
+      if (suspect) tasks.mark(task.id, "injection_suspected");
       return `Started research task #${task.id}. It runs in the background for a few minutes; the owner sees its progress and answer under this reply. Don't wait for it.`;
     },
   }),
@@ -499,9 +509,10 @@ export const TOOLS = [
     schema: AskBotInput,
     run: async (
       { bot: to, request },
-      { tasks, messageId, tainted, ownerSaid, bot, conversationId },
+      { tasks, messageId, tainted, ownerSaid, bot, conversationId, suspected },
     ) => {
       if (!tasks || !bot) return "Other bots aren't available.";
+      const suspect = await suspected?.();
       const task = tasks.askBot({
         from: bot,
         to,
@@ -512,6 +523,7 @@ export const TOOLS = [
         ownerSaid: ownerSaid?.(),
       });
       if (typeof task === "string") return task;
+      if (suspect) tasks.mark(task.id, "injection_suspected");
       return `Asked ${tasks.d.bots.nameOf(task.botId)}: task #${task.id}. The owner sees its progress under this reply.`;
     },
   }),
@@ -794,7 +806,7 @@ export async function runTool(
     }
     if (plugin) {
       const r = await runPluginTool(plugin, input, { task: null, signal });
-      if (r.untrusted) ctx.taint?.(describeCall(plugin, input));
+      if (r.untrusted) ctx.taint?.(describeCall(plugin, input), r.text);
       return r;
     }
     const names = [...TOOLS, ...offered].map((t) => t.name);
@@ -1036,6 +1048,32 @@ export function addSources(
         cited.push(source);
     }
   }
+}
+
+/**
+ * The untrusted text a response's server tools brought in, to screen: pages fetched, the titles of
+ * search results (their text comes encrypted), and what the web tools' code printed.
+ */
+export function webTexts(
+  content: Anthropic.Beta.BetaContentBlock[],
+): { source: string; text: string }[] {
+  const out: { source: string; text: string }[] = [];
+  for (const b of content) {
+    if (b.type === "web_fetch_tool_result" && b.content.type === "web_fetch_result") {
+      const { source, title } = b.content.content;
+      if (source.type === "text")
+        out.push({ source: `Read ${b.content.url}`, text: `${title ?? ""}\n${source.data}` });
+    } else if (b.type === "web_search_tool_result" && Array.isArray(b.content)) {
+      const titles = b.content.map((r) => `${r.title} (${r.url})`).join("\n");
+      out.push({ source: "Web search results", text: titles });
+    } else if (
+      (b.type === "code_execution_tool_result" && b.content.type === "code_execution_result") ||
+      (b.type === "bash_code_execution_tool_result" &&
+        b.content.type === "bash_code_execution_result")
+    )
+      out.push({ source: CODE_READ, text: `${b.content.stdout}\n${b.content.stderr}` });
+  }
+  return out;
 }
 
 export const containerOf = (res: Anthropic.Beta.BetaMessage, before?: string) =>

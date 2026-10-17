@@ -8,6 +8,7 @@ import { z } from "zod";
 import { modelErrorText } from "../agent/model";
 import { AGENT_PROMPT } from "../agent/prompt";
 import { mayReview, safeToRun } from "../agent/review";
+import { Screener } from "../agent/screening";
 import { localStamp, memoryIndex } from "../agent/thread";
 import {
   AskBotInput,
@@ -22,6 +23,7 @@ import {
   toolParam,
   WEB_TOOLS,
   webReads,
+  webTexts,
 } from "../agent/tools";
 import { tagJson, tagText, untrustedBlock } from "../agent/untrusted";
 import { type Outcome, ownerNote } from "../approvals";
@@ -160,6 +162,10 @@ const STARTED_BY = {
   chat: () => "the owner, from the chat",
 };
 
+/** Why a change asks without Haiku's review. */
+const SUSPECTED =
+  "Something it read may be instructions aimed at Hatbot, so Haiku's review is skipped.";
+
 /** An alert as the task reads it: Kuma's own fields trusted, its message as untrusted data. */
 const alertEvent = (
   { alert, message }: { alert: string; message: string },
@@ -215,7 +221,19 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const guidance = d.plugins.guidance(bot.plugins);
   const prompt = promptFor(research ? researchPrompt(bot) : AGENT_PROMPT, bot, others);
   const system = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
-  const taint = (source: string) => {
+  /** What the task reads from outside, screened for prompt injection while it goes on (PLAN.md §6.1). */
+  const screener = new Screener(d, { taskId: id }, (source, verdict) => {
+    if (!tasks.get(id)?.injectionSuspected) tasks.mark(id, "injection_suspected");
+    tasks.addStep(id, {
+      kind: "note",
+      name: verdict.failed ? "Couldn't check what it read" : "Possible prompt injection",
+      detail: verdict.failed ? source : `${source}: ${verdict.excerpt}`,
+      url: null,
+    });
+  });
+  /** It read untrusted content, `source`; `text`, when given, is screened. */
+  const taint = (source: string, text?: string) => {
+    if (text !== undefined) screener.add(source, text);
     sources.add(source);
     if (task.tainted) return;
     task.tainted = true;
@@ -472,8 +490,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     what: string,
     verdict: Extract<Verdict, { action: "ask" }>,
   ): Promise<{ safe: boolean; why: string }> => {
-    if (!d.settings.get().reviewChanges || !mayReview(verdict)) return { safe: false, why: "" };
-    if (tasks.get(id)?.injectionSuspected) return { safe: false, why: "" };
+    // What it read so far is screened first: suspected injection skips the review.
+    await screener.settled();
+    const suspected = tasks.get(id)?.injectionSuspected ?? false;
+    if (!d.settings.get().reviewChanges || !mayReview(verdict, suspected))
+      return { safe: false, why: suspected ? SUSPECTED : "" };
     const check = await safeToRun(
       d,
       { taskId: id },
@@ -526,7 +547,12 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         const answer = await askApproval({
           kind: verdict.kind ?? "other",
           summary: what,
-          reason: check.why ? `${verdict.why} Haiku: ${check.why}` : verdict.why,
+          reason:
+            check.why === SUSPECTED
+              ? `${verdict.why} ${SUSPECTED}`
+              : check.why
+                ? `${verdict.why} Haiku: ${check.why}`
+                : verdict.why,
         });
         note = answer.note;
         if (answer.outcome !== "approved")
@@ -541,7 +567,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     }
     tasks.addStep(id, { kind: "action", name: t.name, detail: what, url: null });
     const r = await runPluginTool(t, call.input, cc);
-    if (r.untrusted) taint(what);
+    if (r.untrusted) taint(what, r.text);
     return result(call, note ? `${r.content}\n\n${ownerNote(note)}` : r.content, r.isError);
   };
 
@@ -686,6 +712,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         tasks.addStep(id, { kind: "action", name: "web", detail: read, url: null });
         taint(read);
       }
+      for (const page of webTexts(res.content)) screener.add(page.source, page.text);
       for (const b of res.content) {
         const note = b.type === "text" ? b.text : b.type === "thinking" ? b.thinking : "";
         if (note.trim())
@@ -822,7 +849,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       if (!serverToolWaiting(res.content))
         for (const event of tasks.takeInbox(id)) {
           const alert = alertParts(event);
-          if (alert?.message) taint(alertMessageSource(String(JSON.parse(alert.alert).monitor)));
+          if (alert?.message)
+            taint(alertMessageSource(String(JSON.parse(alert.alert).monitor)), alert.message);
           results.push({
             type: "text",
             text: alert

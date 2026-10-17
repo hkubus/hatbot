@@ -330,20 +330,19 @@ export class Plugins {
 
 /**
  * Runs a plugin tool: checks its input, and labels untrusted output so it can't pose as instructions
- * (PLAN.md §6.1). Policy is the caller's job; this only runs it.
+ * (PLAN.md §6.1). Policy is the caller's job; this only runs it. `text`: the output without its label,
+ * for screening.
  */
 export async function runPluginTool(
   t: PluginTool,
   input: unknown,
   call: CallContext,
-): Promise<{ content: string; isError: boolean; untrusted: boolean }> {
+): Promise<{ content: string; isError: boolean; untrusted: boolean; text: string }> {
   const parsed = t.schema.safeParse(input);
-  if (!parsed.success)
-    return {
-      content: `Invalid input: ${z.prettifyError(parsed.error)}`,
-      isError: true,
-      untrusted: false,
-    };
+  if (!parsed.success) {
+    const content = `Invalid input: ${z.prettifyError(parsed.error)}`;
+    return { content, isError: true, untrusted: false, text: content };
+  }
   const untrusted =
     typeof t.untrusted === "function" ? t.untrusted(parsed.data) : Boolean(t.untrusted);
   const label = (text: string) =>
@@ -355,13 +354,14 @@ export async function runPluginTool(
     if (call.signal.aborted) throw err;
     // An untrusted source's error message is untrusted too.
     if (err instanceof PluginError)
-      return { content: label(err.message), isError: true, untrusted };
+      return { content: label(err.message), isError: true, untrusted, text: err.message };
     console.error(`tool ${t.name} failed`, err);
-    return { content: "The tool failed with an internal error.", isError: true, untrusted: false };
+    const content = "The tool failed with an internal error.";
+    return { content, isError: true, untrusted: false, text: content };
   }
   if (out.length > MAX_OUTPUT_CHARS)
     out = `${out.slice(0, MAX_OUTPUT_CHARS)}\n… (cut; ${out.length} characters in all)`;
-  return { content: label(out), isError: false, untrusted };
+  return { content: label(out), isError: false, untrusted, text: out };
 }
 
 /** What taints a prompt that has these tools in it, or null: untrusted MCP servers' descriptions. */
