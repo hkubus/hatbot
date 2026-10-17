@@ -47,6 +47,13 @@ export const collapse = (s: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
+/**
+ * A text box's text as the gate compares it with the approved message, which is collapsed already: only
+ * spacing and zero-width characters are let go. A bidi override, a compatibility form (⑩) or any other
+ * mark that could show the seller something else makes it a different text.
+ */
+const exact = (s: string) => s.normalize("NFC").replace(/[​-‍⁠﻿]/g, "").replace(/\s+/g, " ").trim();
+
 /** A host without "www.", lowercased; null for something that isn't a web address. */
 export function hostOf(url: string): string | null {
   try {
@@ -120,8 +127,8 @@ export function gateCheck(
     };
   // Clicking into a text box, or on the page itself, sends nothing; Enter in a box may.
   if (kind === "click" && (el.editable || el.tag === "body")) return { action: "pass" };
-  const text = gate.text ? collapse(gate.text) : null;
-  const fields = el.fields.map(collapse).filter(Boolean);
+  const text = gate.text ? exact(gate.text) : null;
+  const fields = el.fields.map(exact).filter(Boolean);
   if (!fields.length) {
     // Typed text in a box Hatbot can't see into (a closed shadow root, another site's frame) would go
     // without being compared. Only a link elsewhere on the listing's site needs no box.

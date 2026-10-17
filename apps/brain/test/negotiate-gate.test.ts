@@ -55,6 +55,13 @@ test("other text, more text, or the wrong place is held", () => {
   expect(extra.action).toBe("hold");
   const edited = gateCheck(gate, ready, "click", send({ fields: [`${TEXT} 1500?`] }), null);
   expect(edited.action).toBe("hold");
+  // Marks that show the seller other digits: a bidi override shows 1100 as 0011, ⑪ reads as 11.
+  for (const field of [
+    "Dzień dobry, czy przyjmie Pan ‮1100‬ zł?",
+    "Dzień dobry, czy przyjmie Pan ⁦‮1100⁩ zł?",
+    "Dzień dobry, czy przyjmie Pan ⑪00 zł?",
+  ])
+    expect(gateCheck(gate, ready, "click", send({ fields: [field] }), null).action).toBe("hold");
 
   const elsewhere = gateCheck(
     gate,
