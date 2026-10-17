@@ -581,6 +581,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const run = { tasks, task, signal, taint };
     /** Where the web tools' code runs: the same one each step, so paused code can carry on. */
     let container: string | undefined;
+    /** It was asked once to end with finish_task after a reply that called no tool. */
+    let nudged = false;
     for (let step = 0; ; step++) {
       if (signal.aborted) throw signal.reason;
       const maxSteps = research ? MAX_RESEARCH_STEPS : task.effort ? MAX_CODE_STEPS : MAX_STEPS;
@@ -685,7 +687,19 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           .map((b) => (b.type === "text" ? b.text : ""))
           .join("")
           .trim();
-        throw new Stop("done", text || "Finished.");
+        // Only finish_task (or finish_research) ends a task: asked once, then it has failed.
+        if (!nudged) {
+          nudged = true;
+          const finish = research ? "finish_research" : "finish_task";
+          record("user", [
+            {
+              type: "text",
+              text: `(No message from the owner: your reply called no tool, and only ${finish} ends the task. If it's done, or can't be done, call ${finish} with the outcome. Otherwise carry on.)`,
+            },
+          ]);
+          continue;
+        }
+        throw new Stop("failed", text || "Stopped: it ended without finishing.");
       }
 
       let finished: z.infer<typeof FinishTask> | null = null;

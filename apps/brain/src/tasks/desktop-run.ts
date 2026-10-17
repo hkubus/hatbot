@@ -155,6 +155,10 @@ const RECORD_TOOL: Anthropic.Beta.BetaTool = {
   eager_input_streaming: true,
 };
 
+/** The answer to a reply that called no tool. */
+const NUDGE =
+  "(No message from the owner: your reply called no tool, and only finish_task ends the task. If it's done, or can't be done, call finish_task with the outcome. Otherwise carry on with the next action.)";
+
 /** How a send the gate let through is confirmed: the text leaving the box. Tests shorten it. */
 export const sendConfirm = { tries: 6, everyMs: 500 };
 
@@ -825,6 +829,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     );
     await observePage();
     record("user", first);
+    let nudged = false;
 
     for (let step = 0; ; step++) {
       if (signal.aborted) throw signal.reason;
@@ -895,7 +900,15 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           .map((b) => (b.type === "text" ? b.text : ""))
           .join("")
           .trim();
-        throw new Stop("done", text || "Finished.");
+        // Only finish_task ends a task: asked once, then it has failed, and Opus may carry on.
+        if (!nudged) {
+          nudged = true;
+          record("user", [{ type: "text", text: NUDGE }]);
+          continue;
+        }
+        throw new Stop("failed", text || "Stopped: it ended without finishing.", true, {
+          account: text || null,
+        });
       }
 
       const results: BlockParam[] = [];

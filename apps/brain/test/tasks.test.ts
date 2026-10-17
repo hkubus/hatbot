@@ -16,6 +16,10 @@ function startTask(t: TestApp, goal = "Book a table") {
 
 const pending = (t: TestApp) => waitFor(() => t.approvals.list(true)[0]);
 
+/** What the last message of a request said. */
+const lastText = (req: { messages: { content: unknown }[] } | undefined) =>
+  JSON.stringify(req?.messages.at(-1)?.content);
+
 test("chat starts a desktop task that runs, archives screenshots and reports back", async () => {
   const chat = new FakeModel([
     {
@@ -719,6 +723,45 @@ test("a Haiku desktop task that gives up carries on on Opus with what it said", 
   expect(work.creates.some((c) => JSON.stringify(c.messages).includes("You were stopped"))).toBe(
     false,
   );
+});
+
+test("a desktop reply with no tool call is asked to finish once; again, and Opus carries on", async () => {
+  const work = new FakeModel([
+    { content: [text("I think that's it.")] },
+    { content: [text("The table is booked, I believe.")] },
+    finish("Checked: booked on Opus."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = startTask(t);
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)).toMatchObject({
+    status: "done",
+    summary: "Checked: booked on Opus.",
+    model: "claude-opus-5-5",
+  });
+  expect(lastText(work.requests[1])).toContain("only finish_task ends the task");
+  const opus = JSON.stringify(work.requests[2]?.messages);
+  expect(opus).toContain("The table is booked, I believe.");
+
+  // Asked once, it finishes.
+  const once = new FakeModel([{ content: [text("Done, I think.")] }, finish("Booked.")]);
+  const t2 = await testApp(new FakeModel(), once);
+  const b = startTask(t2);
+  await t2.tasks.idle();
+  expect(t2.tasks.get(b.id)).toMatchObject({ status: "done", summary: "Booked." });
+  expect(once.requests.map((r) => r.model)).toEqual(["claude-haiku-5-5", "claude-haiku-5-5"]);
+});
+
+test("a background reply with no tool call is asked to finish once; again, it has failed", async () => {
+  const work = new FakeModel([
+    { content: [text("All backups look fine.")] },
+    { content: [text("Yes, all fine.")] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = t.tasks.createBackgroundTask({ title: "Backups", goal: "Check", origin: "chat" });
+  await t.tasks.idle();
+  expect(t.tasks.get(task?.id ?? 0)).toMatchObject({ status: "failed", summary: "Yes, all fine." });
+  expect(lastText(work.requests[1])).toContain("only finish_task ends the task");
 });
 
 test("blocked, budget, cancelled and switched-off desktop tasks don't carry on on Opus", async () => {
