@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Task } from "@hatbot/shared";
 import { z } from "zod";
+import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { definePlugin, ready, tool } from "../src/plugins/plugin";
 import { FakeModel, toolUse } from "./fake-model";
 import { type TestApp, testApp, waitFor } from "./helpers";
@@ -53,6 +54,11 @@ test("a Kuma alert: the task investigates, restarts, and hears that the monitor 
       ],
     },
   ]);
+  // The alert's message taints the task, so Haiku reviews the restart, and lets it through.
+  work.onCreate = (p) =>
+    p.system === REVIEW_PROMPT
+      ? '{"safe": true, "why": "A restart."}'
+      : '{"suspected": false, "excerpt": ""}';
   const t = await testApp(new FakeModel(), work, {}, [lab]);
   app = t;
   await t.plugins.update("lab", { enabled: true });

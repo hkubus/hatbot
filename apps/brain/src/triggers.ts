@@ -355,7 +355,9 @@ export class Triggers {
       botId: liveBot(this.db, t.botId),
       runKey,
       payload,
+      // Kuma's own fields are trusted; its message often quotes the service's response.
       trusted: true,
+      taintedBy: alertParts(payload)?.message ? alertMessageSource(name) : null,
     });
     return task ? { status: "started", task } : { status: "skipped", reason: "running" };
   }
@@ -423,6 +425,28 @@ function same(a: string, b: string): boolean {
 }
 
 /** JSON indented for reading; anything else as it came. Cut to what a run gets to see. */
+/**
+ * An Uptime Kuma alert in two parts: what Kuma itself says (the monitor, its type and address, the
+ * status and the time), which is trusted, and its free-text message, which often quotes the monitored
+ * service's own response, so anyone who can reach the service can write it (PLAN.md §6.1). Null for
+ * anything that isn't an alert.
+ */
+export function alertParts(payload: string): { alert: string; message: string } | null {
+  try {
+    const { message, ...alert } = JSON.parse(payload) as Record<string, unknown>;
+    if (typeof alert.monitor !== "string") return null;
+    return {
+      alert: JSON.stringify(alert, null, 2),
+      message: typeof message === "string" ? message.trim() : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** What a task read when it read an alert's message. */
+export const alertMessageSource = (monitor: string) => `The message in the alert for "${monitor}"`;
+
 function pretty(body: string): string {
   let text = body;
   try {
