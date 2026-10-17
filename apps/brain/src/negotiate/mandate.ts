@@ -6,6 +6,7 @@ import { MANDATE_CONTACTS, type Mandate, type Negotiation } from "@hatbot/shared
 import { z } from "zod";
 import type { ModelClient } from "../agent/model";
 import type { Spend } from "../spend";
+import { allowance } from "./policy";
 
 /** The mandate as negotiate_start takes it, and as Haiku gives it back from a note. */
 export const MandateInput = z.object({
@@ -84,13 +85,14 @@ const contacts = (allow: string[]) => (allow.length ? allow.join(", ") : "none")
 export function mandateReason(n: Negotiation, botName: string): string {
   const m = n.mandate;
   const a = n.appraisal;
+  const extra = n.role === "buy" ? allowance(m.delivery, m.limit) : 0;
   return [
     n.listingUrl,
     `Asking ${n.asking !== null ? zl(n.asking, m.currency) : "unknown"}.`,
     a
       ? `Scout: open at ${zl(a.opening, a.currency)}, aim for ${zl(a.target, a.currency)}, walk away ${n.role === "buy" ? "above" : "below"} ${zl(a.walkAway, a.currency)}. ${a.basis}`
       : "No appraisal from Scout.",
-    `Delivery: ${m.delivery}. Until ${day(m.expiresAt)}. Contact details: ${contacts(m.allow)}.`,
+    `Delivery: ${m.delivery}.${extra ? ` Up to ${zl(extra, m.currency)} on top of the limit for shipping.` : ""} Until ${day(m.expiresAt)}. Contact details: ${contacts(m.allow)}.`,
     `Inside this, ${botName} sends and agrees on its own; outside it, it asks you. A note can change the numbers.`,
   ].join("\n");
 }
