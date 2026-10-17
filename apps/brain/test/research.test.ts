@@ -7,6 +7,7 @@ import { EventBus } from "../src/events";
 import { HATBOT } from "../src/memory/store";
 import { definePlugin, ready, tool } from "../src/plugins/plugin";
 import { plain as plainRead, quoteFound } from "../src/tasks/research";
+import { Tasks } from "../src/tasks/service";
 import { FakeModel, type Scripted, text, toolUse } from "./fake-model";
 import { type TestApp, testApp, waitFor } from "./helpers";
 
@@ -763,4 +764,151 @@ test("cancelled while the helpers search, the research ends cancelled with nothi
   expect(ended?.status).toBe("cancelled");
   expect(ended?.reportPath).toBeNull();
   expect(work.requests.filter((r) => !isHelper(r))).toHaveLength(1);
+});
+
+const REPORT_PATH = `research/${DAY}-quiet-nas-for-four-drives.md`;
+const DRAFT = finish(
+  "It's **2,399 zł** [2], see [7].",
+  "## Answer\n\nThe DS925+ costs 2,399 zł [2] and is quiet [1].",
+);
+
+test("research at its step cap is told to finish, and keeps its last draft if it doesn't", async () => {
+  const work = new FakeModel();
+  helpers(work);
+  const helperReplies = work.route;
+  let lead = 0;
+  work.route = (p) => {
+    if (isHelper(p)) return helperReplies?.(p);
+    lead++;
+    // A draft with a citation that's no source goes back; then it never finishes.
+    return lead === 1
+      ? INVESTIGATE
+      : lead === 2
+        ? DRAFT
+        : { content: [toolUse("memory_list", {})] };
+  };
+  work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
+  const t = await testApp(new FakeModel(), work);
+  const task = await startResearch(t);
+  const leads = work.requests.filter((r) => !isHelper(r));
+  expect(leads).toHaveLength(60);
+  expect(JSON.stringify(leads[58]?.messages.at(-1))).toContain(
+    "This task is near its step limit (2 steps left). Call finish_research now with what you have",
+  );
+  expect(task.status).toBe("failed");
+  expect(task.summary).toBe(
+    `Stopped after 60 steps without finishing.\n\nIts unfinished report is attached, and in memory as \`${REPORT_PATH}\`.`,
+  );
+  expect(task.reportPath).toBe(REPORT_PATH);
+  const report = await t.memory.read(REPORT_PATH);
+  expect(report).toContain(
+    `task #${task.id}. Unfinished: Stopped after 60 steps without finishing._`,
+  );
+  // Numbered as the helpers' sources were, which the draft cites.
+  expect(report).toContain(
+    "The DS925+ costs 2,399 zł [[2]](https://www.x-kom.pl/p/ds925) and is quiet [[1]](https://www.synology.com/ds925+/spec).",
+  );
+  expect(report).toContain(
+    "## Sources\n\n1. [DS925+ specifications](https://www.synology.com/ds925+/spec), 2025-04\n2. [Synology DS925+ | x-kom](https://www.x-kom.pl/p/ds925)",
+  );
+  expect(t.attachments.forTask(task.id).map((f) => f.name)).toEqual([
+    "quiet-nas-for-four-drives.md",
+  ]);
+});
+
+test("research near its spending limit is told to finish, and a denied raise keeps the findings", async () => {
+  const work = new FakeModel([
+    INVESTIGATE,
+    // About $16.50 of the $20: past 80%.
+    { content: [toolUse("memory_list", {})], usage: { input_tokens: 4_125_000 } },
+    // Past the limit.
+    { content: [toolUse("memory_list", {})], usage: { input_tokens: 1_200_000 } },
+  ]);
+  helpers(work);
+  const t = await testApp(new FakeModel(), work);
+  t.settings.update({ limits: { taskUsd: 20, dailyUsd: 1000, monthlyUsd: 1000 } });
+  const created = t.tasks.createBackgroundTask({
+    title: "Quiet NAS for four drives",
+    goal: "Which quiet four-bay NAS?",
+    origin: "chat",
+    research: true,
+  });
+  const approval = await waitFor(() => t.approvals.list(true)[0]);
+  expect(approval.kind).toBe("budget");
+  t.approvals.decide(approval.id, "deny", "web");
+  await t.tasks.idle();
+  const leads = work.requests.filter((r) => !isHelper(r));
+  expect(JSON.stringify(leads[2]?.messages.at(-1))).toMatch(
+    /This task is near its spending limit \(\$16\.5\d of \$20\)\. Call finish_research now/,
+  );
+  const task = t.tasks.get(created?.id as number);
+  expect(task?.status).toBe("failed");
+  expect(task?.summary).toBe(
+    `Stopped at its spending limit.\n\nWhat it found so far is attached, and in memory as \`${REPORT_PATH}\`.`,
+  );
+  const report = await t.memory.read(REPORT_PATH);
+  expect(report).toContain("Unfinished: Stopped at its spending limit._");
+  expect(report).toContain(
+    '## What the helpers found\n\n1. [DS925+ specifications](https://www.synology.com/ds925+/spec), 2025-04\n   - The DS925+ is 22.4 dB(A) idle. "Noise level: 22.4 dB(A)"\n   - Quiet. "Noise level: 22.4 dB(A)" (the quote wasn\'t found on the page)\n2. [Synology DS925+ | x-kom](https://www.x-kom.pl/p/ds925)\n   - The DS925+ costs 2,399 zł at x-kom. "Synology DS925+ 2 399,00 zł"',
+  );
+});
+
+test("research that ends without finish_research is asked once, then fails keeping its findings", async () => {
+  for (const second of [
+    finish("Get the DS925+ [1].", "Report [1]."),
+    { content: [text("Done.")] },
+  ]) {
+    const work = new FakeModel([INVESTIGATE, { content: [text("The DS925+.")] }, second]);
+    helpers(work);
+    work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
+    const t = await testApp(new FakeModel(), work);
+    const task = await startResearch(t);
+    const leads = work.requests.filter((r) => !isHelper(r));
+    expect(JSON.stringify(leads[2]?.messages.at(-1))).toContain(
+      "End the research with finish_research, with the answer and the report.",
+    );
+    if (second.content[0]?.type === "text") {
+      expect(task.status).toBe("failed");
+      expect(task.summary).toStartWith(
+        "Stopped: it ended without calling finish_research.\n\nWhat it found so far is attached",
+      );
+    } else expect(task.status).toBe("done");
+  }
+});
+
+test("research a restart stopped keeps what it had, read back from its turns", async () => {
+  const gate = new Promise<void>(() => {});
+  const work = new FakeModel([
+    INVESTIGATE,
+    DRAFT,
+    { content: [toolUse("memory_list", {})], wait: gate },
+  ]);
+  helpers(work);
+  work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
+  const t = await testApp(new FakeModel(), work);
+  const created = t.tasks.createBackgroundTask({
+    title: "Quiet NAS for four drives",
+    goal: "Which quiet four-bay NAS?",
+    origin: "chat",
+    research: true,
+  });
+  const id = created?.id as number;
+  await waitFor(() => work.requests.length === 5);
+  const restarted = new Tasks(t.tasks.d);
+  restarted.recover();
+  const task = await waitFor(() => {
+    const x = restarted.get(id);
+    return x?.summary?.includes("unfinished") ? x : null;
+  });
+  expect(task.status).toBe("failed");
+  expect(task.summary).toBe(
+    `Stopped: the brain restarted.\n\nIts unfinished report is attached, and in memory as \`${REPORT_PATH}\`.`,
+  );
+  const report = await t.memory.read(REPORT_PATH);
+  expect(report).toContain(
+    "The DS925+ costs 2,399 zł [[2]](https://www.x-kom.pl/p/ds925) and is quiet [[1]](https://www.synology.com/ds925+/spec).",
+  );
+  expect(report).toContain(
+    "## Sources\n\n1. [DS925+ specifications](https://www.synology.com/ds925+/spec), 2025-04\n2. [Synology DS925+ | x-kom](https://www.x-kom.pl/p/ds925)",
+  );
 });

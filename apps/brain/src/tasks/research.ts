@@ -226,6 +226,8 @@ export class ResearchSources {
 /** A research run's state between its steps. */
 export class ResearchState {
   readonly sources = new ResearchSources();
+  /** The last report it tried to finish with: kept if the run stops short. */
+  draft: ResearchResult | null = null;
   /** The numbers are checked when it first finishes; `unchecked` says why not, if the check failed. */
   checked = false;
   unchecked: string | null = null;
@@ -712,9 +714,9 @@ export async function finishResearch(
   result: ResearchResult,
 ): Promise<{ retry: string } | { summary: string }> {
   const { tasks, task } = run;
-  const { d } = tasks;
   const { sources } = state;
   const texts = [result.answer, result.report];
+  state.draft = result;
   if (!state.checked) {
     state.checked = true;
     const unknown = citedIn(texts).filter((n) => !sources.get(n));
@@ -771,51 +773,202 @@ export async function finishResearch(
   const answer = linked(result.answer.trim(), renumber);
   if (!result.report.trim()) return { summary: answer };
 
-  const now = tasks.clock();
-  const question = refreshing(task.goal, null);
-  const list = order.map((n, i) => {
-    const s = sources.get(n) as Source;
-    return `${i + 1}. [${s.title.replace(/[[\]]/g, "")}](${linkUrl(s.url)})${s.date ? `, ${s.date}` : ""}`;
-  });
   const unchecked = state.unchecked
     ? `The numbers weren't checked against their sources (${state.unchecked}).`
     : "";
   const content = [
-    `# ${task.title}`,
-    `_Researched ${localStamp(new Date(now))}, task #${task.id}.${unchecked ? ` ${unchecked}` : ""}_`,
-    `**Question:** ${question.replace(/\n+/g, " ")}`,
+    head(run, unchecked),
     linked(result.report.trim(), renumber),
-    ...(list.length ? ["## Sources", list.join("\n")] : []),
+    ...sourceList(sources, order),
   ].join("\n\n");
+  const saved = await saveReport(run, content);
+  return {
+    summary: `${answer}\n\n${savedLine(saved, "The full report")}${state.unchecked ? " Its numbers weren't checked against their sources." : ""}`,
+  };
+}
 
+/** A report's title, when and by which task, `note` if there's one, and the question. */
+function head(run: { tasks: Tasks; task: Task }, note: string): string {
+  const { tasks, task } = run;
+  const question = refreshing(task.goal, null).replace(/\n+/g, " ");
+  return [
+    `# ${task.title}`,
+    `_Researched ${localStamp(new Date(tasks.clock()))}, task #${task.id}.${note ? ` ${note}` : ""}_`,
+    `**Question:** ${question}`,
+  ].join("\n\n");
+}
+
+/** The sources `order` names, numbered in that order, as a report's list. */
+function sourceList(sources: ResearchSources, order: number[]): string[] {
+  const list = order.map((n, i) => {
+    const s = sources.get(n) as Source;
+    return `${i + 1}. [${s.title.replace(/[[\]]/g, "")}](${linkUrl(s.url)})${s.date ? `, ${s.date}` : ""}`;
+  });
+  return list.length ? ["## Sources", list.join("\n")] : [];
+}
+
+type Saved = { path: string | null; attached: boolean };
+
+/** Saves a report in the bot's notes and attaches it to the task, each as far as it goes. */
+async function saveReport(run: { tasks: Tasks; task: Task }, content: string): Promise<Saved> {
+  const { tasks, task } = run;
+  const { d } = tasks;
   const slug = slugOf(task.title);
   const folder = folderOf({ id: task.botId });
-  let path = `${folder}/${dayOf(now)}-${slug}.md`;
+  const day = dayOf(tasks.clock());
+  let path: string | null = `${folder}/${day}-${slug}.md`;
   for (let i = 2; (await d.memory.exists(path)) && i < 50; i++)
-    path = `${folder}/${dayOf(now)}-${slug}-${i}.md`;
-  let saved = false;
+    path = `${folder}/${day}-${slug}-${i}.md`;
   try {
     const author = d.bots.author(task.botId);
     const message = `Research: ${task.title}`;
     const sha = await d.memory.write(path, `${content}\n`, author, message);
     if (sha) d.events.emit({ type: "memory.committed", sha, message, author: author.name });
     tasks.setReportPath(task.id, path);
-    saved = true;
   } catch (err) {
     console.error(`research task ${task.id}: the report couldn't be saved`, err);
+    path = null;
   }
-  await d.attachments
-    ?.save({
-      bytes: new TextEncoder().encode(`${content}\n`),
-      name: `${slug}.md`,
-      mediaType: "text/markdown",
-      from: "hatbot",
-      taskId: task.id,
-    })
-    .catch((err) =>
-      console.error(`research task ${task.id}: the report couldn't be attached`, err),
-    );
-  return {
-    summary: `${answer}\n\n${saved ? `The full report is attached, and in memory as \`${path}\`.` : "The full report is attached; it couldn't be saved in memory."}${state.unchecked ? " Its numbers weren't checked against their sources." : ""}`,
-  };
+  let attached = false;
+  if (d.attachments)
+    try {
+      await d.attachments.save({
+        bytes: new TextEncoder().encode(`${content}\n`),
+        name: `${slug}.md`,
+        mediaType: "text/markdown",
+        from: "hatbot",
+        taskId: task.id,
+      });
+      attached = true;
+    } catch (err) {
+      console.error(`research task ${task.id}: the report couldn't be attached`, err);
+    }
+  return { path, attached };
+}
+
+/** Where `what` went, in a sentence. */
+function savedLine(saved: Saved, what: string): string {
+  if (saved.path && saved.attached)
+    return `${what} is attached, and in memory as \`${saved.path}\`.`;
+  if (saved.path) return `${what} is in memory as \`${saved.path}\`.`;
+  if (saved.attached) return `${what} is attached; it couldn't be saved in memory.`;
+  return `${what} couldn't be saved.`;
+}
+
+/**
+ * A research run that stops short keeps what it had: its last draft, or else what the helpers found,
+ * as an unfinished report, attached and in its notes. The task's summary: `why`, and where that went.
+ */
+export async function keepUnfinished(
+  run: { tasks: Tasks; task: Task },
+  state: ResearchState,
+  why: string,
+): Promise<string> {
+  const { sources, draft } = state;
+  if (!draft && !sources.findings.length) return why;
+  try {
+    // Numbered as the helpers' findings were, which the draft cites.
+    const all = sources.list.map((s) => s.n);
+    const body = draft
+      ? [
+          linked(
+            draft.report.trim() || draft.answer.trim(),
+            new Map(all.map((n) => [n, { k: n, url: (sources.get(n) as Source).url }])),
+          ),
+          ...sourceList(sources, all),
+        ]
+      : [
+          "## What the helpers found",
+          sources.list
+            .map((s) => {
+              const found = sources.findings
+                .filter((f) => f.n === s.n)
+                .map(
+                  (f) =>
+                    `   - ${f.claim} "${f.quote}"${f.confirmed ? "" : " (the quote wasn't found on the page)"}`,
+                );
+              return `${s.n}. [${s.title.replace(/[[\]]/g, "")}](${linkUrl(s.url)})${s.date ? `, ${s.date}` : ""}\n${found.join("\n")}`;
+            })
+            .join("\n"),
+        ];
+    const content = [head(run, `Unfinished: ${why}`), ...body].join("\n\n");
+    const saved = await saveReport(run, content);
+    return `${why}\n\n${savedLine(saved, draft ? "Its unfinished report" : "What it found so far")}`;
+  } catch (err) {
+    console.error(`research task ${run.task.id}: what it had couldn't be kept`, err);
+    return why;
+  }
+}
+
+const JSON_STRING = String.raw`"(?:[^"\\]|\\.)*"`;
+const SOURCE_LINE = new RegExp(String.raw`^\[\d+\] (${JSON_STRING}) (\S+)(?: (${JSON_STRING}))?$`);
+const CLAIM_LINE = new RegExp(`^- (${JSON_STRING})$`);
+const QUOTE_LINE = new RegExp(`^  Quote: (${JSON_STRING})$`);
+
+/**
+ * The findings in an investigate result, added to `sources` in the order they were numbered, so the
+ * numbers come out the same.
+ */
+function readFindings(result: string, sources: ResearchSources) {
+  let source: { title: string; url: string; date?: string } | null = null;
+  let claim: string | null = null;
+  for (const line of result.split("\n")) {
+    const s = SOURCE_LINE.exec(line);
+    const c = CLAIM_LINE.exec(line);
+    const q = QUOTE_LINE.exec(line);
+    if (s?.[1] && s[2])
+      source = { title: JSON.parse(s[1]), url: s[2], date: s[3] ? JSON.parse(s[3]) : undefined };
+    else if (c?.[1]) claim = JSON.parse(c[1]);
+    else if (q?.[1] && source && claim !== null) {
+      sources.add({ ...source, claim, quote: JSON.parse(q[1]) });
+      claim = null;
+    } else if (line.startsWith("  Unconfirmed:")) {
+      const last = sources.findings.at(-1);
+      if (last) last.confirmed = false;
+    }
+  }
+}
+
+/**
+ * After a restart: what an interrupted research task had, read back from its saved turns, kept as an
+ * unfinished report. The summary to end it with.
+ */
+export async function keepAfterRestart(tasks: Tasks, task: Task, why: string): Promise<string> {
+  const state = new ResearchState();
+  try {
+    const rows = tasks.d.db
+      .query<{ content: string }, [number]>(
+        "SELECT content FROM task_turns WHERE task_id = ? ORDER BY id",
+      )
+      .all(task.id);
+    /** Tool calls' names by id, to know which results are investigate's. */
+    const names = new Map<string, string>();
+    for (const row of rows) {
+      const blocks = JSON.parse(row.content) as {
+        type?: string;
+        id?: string;
+        name?: string;
+        input?: unknown;
+        tool_use_id?: string;
+        content?: unknown;
+      }[];
+      if (!Array.isArray(blocks)) continue;
+      for (const b of blocks) {
+        if (b.type === "tool_use" && b.id && b.name) {
+          names.set(b.id, b.name);
+          const draft = b.name === "finish_research" ? FinishResearch.safeParse(b.input) : null;
+          if (draft?.success) state.draft = draft.data;
+        }
+        if (
+          b.type === "tool_result" &&
+          names.get(b.tool_use_id ?? "") === "investigate" &&
+          typeof b.content === "string"
+        )
+          readFindings(b.content, state.sources);
+      }
+    }
+  } catch (err) {
+    console.error(`research task ${task.id}: its turns couldn't be read`, err);
+  }
+  return keepUnfinished({ tasks, task }, state, why);
 }

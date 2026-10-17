@@ -29,6 +29,7 @@ import type { Skills } from "../teach/skills";
 import { runAgentTask } from "./agent-run";
 import { runDesktopTask } from "./desktop-run";
 import { Pool, ScreenLane } from "./lane";
+import { keepAfterRestart } from "./research";
 import { RESEARCH_MODEL, refreshing } from "./research-goal";
 
 export type TasksDeps = {
@@ -187,8 +188,13 @@ export class Tasks {
   recover() {
     const stopped = this.interrupted.flatMap((id) => this.get(id) ?? []);
     this.interrupted = [];
+    // Research keeps what it had, read back from its turns, which takes a moment.
     for (const t of stopped)
-      this.finish(t.id, "failed", t.summary ?? RESTARTED, true, { ntfy: false });
+      if (t.research && !t.reportPath)
+        void keepAfterRestart(this, t, t.summary ?? RESTARTED).then((summary) =>
+          this.finish(t.id, "failed", summary, true, { ntfy: false }),
+        );
+      else this.finish(t.id, "failed", t.summary ?? RESTARTED, true, { ntfy: false });
     const shown = stopped.filter((t) => !t.parentId);
     if (!shown.length) return;
     const list = shown.map((t) => `#${t.id} ${t.title}`).join("\n");

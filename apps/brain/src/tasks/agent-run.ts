@@ -33,6 +33,7 @@ import {
   FinishResearch,
   finishResearch,
   investigate,
+  keepUnfinished,
   MAX_RESEARCH_STEPS,
   RESEARCH_BETA,
   RESEARCH_CORE_TOOLS,
@@ -554,6 +555,10 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     return result(call, woke ? "Woke early: an event arrived (below)." : `Waited ${minutes} min.`);
   };
 
+  /** Research: the helpers' sources, and how finishing has gone. */
+  const found = new ResearchState();
+  const run = { tasks, task, signal, taint, messages };
+
   try {
     await tasks.pool.acquire(signal);
     slot = true;
@@ -581,9 +586,9 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
     /** finish_task sends a summary whose charts don't draw back once, not every time. */
     let chartsChecked = false;
-    /** Research: the helpers' sources, and how finishing has gone. */
-    const found = new ResearchState();
-    const run = { tasks, task, signal, taint, messages };
+    /** Research is told once to finish when near its limits, and once to end with finish_research. */
+    let toldToFinish = false;
+    let askedToFinish = false;
     /** Where the web tools' code runs: the same one each step, so paused code can carry on. */
     let container: string | undefined;
     for (let step = 0; ; step++) {
@@ -682,6 +687,19 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       if (!calls.length) {
         if (res.stop_reason === "max_tokens")
           throw new Stop("failed", "Stopped: a reply was cut off.");
+        // Research ends with finish_research, which saves the report: it's asked for once.
+        if (research) {
+          if (askedToFinish)
+            throw new Stop("failed", "Stopped: it ended without calling finish_research.");
+          askedToFinish = true;
+          record("user", [
+            {
+              type: "text",
+              text: "End the research with finish_research, with the answer and the report.",
+            },
+          ]);
+          continue;
+        }
         const text = res.content
           .map((b) => (b.type === "text" ? b.text : ""))
           .join("")
@@ -802,21 +820,43 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       if (!serverToolWaiting(res.content))
         for (const event of tasks.takeInbox(id))
           results.push({ type: "text", text: `<event trusted="true">\n${event}\n</event>` });
+      // Research near its step cap or its limit finishes with what it has, rather than stopping short.
+      if (research && !toldToFinish && !serverToolWaiting(res.content)) {
+        const left = maxSteps - step - 1;
+        const spent = d.spend.taskSpend(id);
+        const limit = tasks.budget(id);
+        if (left <= 2 || spent >= 0.8 * limit) {
+          toldToFinish = true;
+          const near =
+            left <= 2
+              ? `its step limit (${left} steps left)`
+              : `its spending limit ($${spent.toFixed(2)} of $${limit})`;
+          results.push({
+            type: "text",
+            text: `This task is near ${near}. Call finish_research now with what you have, and say in the report what's left open.`,
+          });
+        }
+      }
       record("user", results);
     }
   } catch (err) {
-    if (err instanceof Stop) tasks.finish(id, err.status, err.summary, err.notify);
+    let ended: { status: "done" | "failed" | "cancelled"; summary: string; notify?: boolean };
+    if (err instanceof Stop)
+      ended = { status: err.status, summary: err.summary, notify: err.notify };
     else if (signal.aborted) {
       const paused = signal.reason instanceof Error && signal.reason.message === "paused";
-      tasks.finish(id, "cancelled", paused ? "Stopped by Pause all." : "Cancelled.");
+      ended = { status: "cancelled", summary: paused ? "Stopped by Pause all." : "Cancelled." };
     } else {
       console.error(`task ${id} failed`, err);
-      tasks.finish(
-        id,
-        "failed",
-        `Something went wrong talking to the model (${modelErrorText(err)}).`,
-      );
+      ended = {
+        status: "failed",
+        summary: `Something went wrong talking to the model (${modelErrorText(err)}).`,
+      };
     }
+    // Research that stops short keeps what it had (PLAN.md §17).
+    if (research && ended.status === "failed")
+      ended.summary = await keepUnfinished(run, found, ended.summary);
+    tasks.finish(id, ended.status, ended.summary, ended.notify);
   } finally {
     if (slot) tasks.pool.release();
     for (const child of children) tasks.cancel(child);
