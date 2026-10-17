@@ -79,7 +79,7 @@ export const minWatchMinutes = (s: Pick<WatchSource, "kind" | "render">) =>
 export const WatchSourceInput = z
   .object({
     kind: z.enum(["page", "tool"]),
-    url: z.string().trim().url().max(2000).optional(),
+    url: z.string().trim().url("Use a full address starting with https://").max(2000).optional(),
     render: z.boolean().optional(),
     tool: z.string().trim().min(1).max(64).optional(),
     input: z.record(z.string(), z.unknown()).optional(),

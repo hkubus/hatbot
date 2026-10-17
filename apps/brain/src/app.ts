@@ -1,5 +1,6 @@
 import { API_PREFIX, type Health } from "@hatbot/shared";
-import { Hono } from "hono";
+import { type Context, Hono, type Next } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { getConnInfo } from "hono/bun";
 import { HTTPException } from "hono/http-exception";
 import { compressJson } from "./compress";
@@ -33,6 +34,18 @@ export function createApp(deps: Deps) {
     c.set("clientIp", clientIp(c, deps.config.trustedProxies));
     await next();
   });
+  // Bun takes bodies up to the 25 MB an attachment needs. Sign-in and the notification buttons answer
+  // strangers, so they read 16 KB at most; everything else 5 MB, which a memory file fits in.
+  const small = bodyLimit({
+    maxSize: 16 * 1024,
+    onError: (c) => c.json({ error: TOO_LARGE }, 413),
+  });
+  app.use("/auth/*", small);
+  app.use("/approvals/:id/token-decision", small);
+  app.use(async (c, next) => {
+    if (c.req.method === "POST" && c.req.path === `${API_PREFIX}/attachments`) return next();
+    return limitBody(c, next, 5 * 1024 * 1024);
+  });
 
   app.get("/health", (c) => c.json<Health>({ ok: true, version: VERSION }));
   app.route("/", authRoutes);
@@ -58,12 +71,45 @@ export function createApp(deps: Deps) {
   app.notFound((c) => c.json({ error: "not found" }, 404));
   app.onError((err, c) => {
     // Hono's own refusals, such as malformed JSON, keep their status, in the usual shape.
+    // A body cut off part way reads as malformed JSON to the validator.
+    if (overflowed.has(c.req.raw)) return c.json({ error: TOO_LARGE }, 413);
     if (err instanceof HTTPException)
       return err.res ?? c.json({ error: err.message || "invalid request" }, err.status);
     console.error(err);
     return c.json({ error: "internal error" }, 500);
   });
   return app;
+}
+
+const TOO_LARGE = "That's too large.";
+
+/**
+ * Refuses a body over `max` bytes: at once by its length, or, sent in chunks, once that much has come.
+ * Nothing is read ahead, so a route that checks who you are first still does so before any of it.
+ */
+const overflowed = new WeakSet<Request>();
+
+function limitBody(c: Context, next: Next, max: number): Response | Promise<void> {
+  const raw = c.req.raw;
+  if (!raw.body) return next();
+  const length = raw.headers.get("content-length");
+  if (length !== null && !raw.headers.has("transfer-encoding"))
+    return Number(length) > max ? c.json({ error: TOO_LARGE }, 413) : next();
+  let size = 0;
+  let req: Request;
+  const counted = raw.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, out) {
+        size += chunk.byteLength;
+        if (size <= max) return out.enqueue(chunk);
+        overflowed.add(req);
+        out.error(new HTTPException(413, { message: TOO_LARGE }));
+      },
+    }),
+  );
+  req = new Request(raw, { body: counted, duplex: "half" } as RequestInit);
+  c.req.raw = req;
+  return next();
 }
 
 // The socket peer, or the client your reverse proxy reports if the peer is the proxy.

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { setUpOwner, testApp } from "./helpers";
+import { ORIGIN, setUpOwner, testApp } from "./helpers";
 
 describe("setup", () => {
   test("needs the setup code and a valid first TOTP code", async () => {
@@ -66,12 +66,92 @@ describe("login", () => {
     expect((await t.call("POST", "/auth/login", { password, totp })).status).toBe(401);
   });
 
-  test("wrong password fails", async () => {
+  test("wrong password fails, and says so plainly", async () => {
     const t = await testApp();
     const { secret } = await setUpOwner(t);
-    expect(
-      (await t.call("POST", "/auth/login", { password: "nope", totp: t.code(secret) })).status,
-    ).toBe(401);
+    const res = await t.call("POST", "/auth/login", { password: "nope", totp: t.code(secret) });
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "That password or code isn't right." });
+  });
+
+  test("bodies that aren't a login count as failed attempts", async () => {
+    const t = await testApp();
+    const { secret, password } = await setUpOwner(t);
+    for (const body of [{}, { password: "x" }, { password: "x", totp: "12" }, "not json"]) {
+      const res = await t.app.request("/api/v1/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: ORIGIN },
+        body: typeof body === "string" ? body : JSON.stringify(body),
+      });
+      expect(res.status).toBe(400);
+    }
+    for (let i = 0; i < 6; i++) await t.call("POST", "/auth/login", { password: "x" });
+    const res = await t.call("POST", "/auth/login", { password, totp: t.code(secret) });
+    expect(res.status).toBe(429);
+    expect(await res.json()).toEqual({ error: "Too many tries. Try again in 15 minutes." });
+  });
+
+  test("sign-in and the notification buttons read 16 KB at most", async () => {
+    const t = await testApp();
+    const big = "x".repeat(17 * 1024);
+    const login = await t.call("POST", "/auth/login", { password: big, totp: "123456" });
+    expect(login.status).toBe(413);
+    expect(await login.json()).toEqual({ error: "That's too large." });
+    expect((await t.call("POST", "/auth/setup/start", { code: big })).status).toBe(413);
+    const button = await t.call("POST", "/approvals/1/token-decision", {
+      decision: "approve",
+      exp: 1,
+      sig: big,
+    });
+    expect(button.status).toBe(413);
+    // A chunked body, with no length to go by, is cut off too.
+    const chunked = await t.app.request("/api/v1/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: ORIGIN },
+      body: new Blob([JSON.stringify({ password: big, totp: "123456" })]).stream(),
+    });
+    expect(chunked.status).toBe(413);
+  });
+
+  test("signed-in requests read 5 MB at most, apart from file uploads", async () => {
+    const t = await testApp();
+    const { cookie } = await setUpOwner(t);
+    const huge = "x".repeat(5 * 1024 * 1024 + 1);
+    const res = await t.call("PUT", "/memory/file?path=notes.md", { content: huge }, { cookie });
+    expect(res.status).toBe(413);
+    const form = new FormData();
+    form.append("file", new File([huge], "big.txt", { type: "text/plain" }));
+    const upload = await t.app.request("/api/v1/attachments", {
+      method: "POST",
+      headers: { cookie, origin: ORIGIN },
+      body: form,
+    });
+    expect(upload.status).toBe(201);
+    // In chunks: refused once 5 MB has come, and a stranger's isn't read at all.
+    let pulled = 0;
+    const chunks = () =>
+      new ReadableStream<Uint8Array>({
+        pull(ctl) {
+          pulled++;
+          if (pulled > 200) ctl.close();
+          else ctl.enqueue(new Uint8Array(64 * 1024).fill(120));
+        },
+      });
+    const chunked = await t.app.request("/api/v1/memory/file?path=notes.md", {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie, origin: ORIGIN },
+      body: chunks(),
+    });
+    expect(chunked.status).toBe(413);
+    expect(pulled).toBeLessThan(100);
+    pulled = 0;
+    const stranger = await t.app.request("/api/v1/memory/file?path=notes.md", {
+      method: "PUT",
+      headers: { "content-type": "application/json", origin: ORIGIN },
+      body: chunks(),
+    });
+    expect(stranger.status).toBe(401);
+    expect(pulled).toBeLessThan(5);
   });
 
   test("locks out after 10 failures", async () => {
