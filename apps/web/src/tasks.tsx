@@ -89,9 +89,6 @@ export function ApprovalCard({
   showDetails?: boolean;
 }) {
   const a = useStore((s) => s.approvals[approvalId]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [note, setNote] = useState("");
   useEffect(() => ensureApproval(approvalId), [approvalId]);
   if (!a) return null;
 
@@ -112,6 +109,52 @@ export function ApprovalCard({
     );
   }
 
+  return (
+    <div className="card attn">
+      <PendingApproval
+        a={a}
+        links={
+          showDetails &&
+          a.taskId && (
+            <button
+              type="button"
+              className="btn sm ghost"
+              onClick={() => navigate(`/tasks/${a.taskId}`)}
+            >
+              Details
+            </button>
+          )
+        }
+      />
+    </div>
+  );
+}
+
+/**
+ * An approval waiting for you, with Deny and Approve: a card on its task's page, and in the chat's
+ * tray. Every field is plain text, never Markdown, which could hide part of a command.
+ */
+export function PendingApproval({
+  a,
+  links,
+  compact = false,
+}: {
+  a: Approval;
+  /** Buttons to where it came from: its task, or its negotiation. */
+  links?: React.ReactNode;
+  /** The chat's tray: why it asks, the screenshot and the note wait behind More. */
+  compact?: boolean;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+  const [more, setMore] = useState(!compact);
+  const shot =
+    a.taskId && a.screenshotStepId ? (
+      <Shot taskId={a.taskId} stepId={a.screenshotStepId} alt="The screen before this step" />
+    ) : null;
+  const folds = compact && (a.reason || shot || takesNote(a));
+
   const decide = async (decision: "approve" | "deny") => {
     setBusy(true);
     setError("");
@@ -124,42 +167,38 @@ export function ApprovalCard({
   };
 
   return (
-    <div className="card attn">
-      <div className="card-head">
-        <div className="title full">{a.summary}</div>
-      </div>
-      <div className="card-body">
-        <div className={a.taskId && a.screenshotStepId ? "thumb-wrap" : ""}>
-          <div className="approval-text">
-            {a.reason && <p>{a.reason}</p>}
-            {a.sources.length > 0 && <p className="muted">After reading {a.sources.join(", ")}</p>}
-          </div>
-          {a.taskId && a.screenshotStepId && (
-            <Shot taskId={a.taskId} stepId={a.screenshotStepId} alt="The screen before this step" />
-          )}
+    <div className="approval">
+      <div className={more && shot ? "thumb-wrap" : undefined}>
+        <div className="approval-text">
+          <p className="approval-what">{a.summary}</p>
+          {more && a.reason && <p>{a.reason}</p>}
+          {a.sources.length > 0 && <p className="muted">After reading {a.sources.join(", ")}</p>}
         </div>
-        {takesNote(a) && (
-          <textarea
-            className="field approval-note"
-            rows={2}
-            maxLength={4000}
-            value={note}
-            placeholder={
-              a.kind === "mandate" ? MANDATE_NOTE : "Tell it what to do instead, or how to go ahead"
-            }
-            onChange={(e) => setNote(e.target.value)}
-          />
-        )}
-        {error && <div className="form-error">{error}</div>}
+        {more && shot}
       </div>
-      <div className="card-foot">
-        {showDetails && a.taskId && (
+      {more && takesNote(a) && (
+        <textarea
+          className="field approval-note"
+          rows={2}
+          maxLength={4000}
+          value={note}
+          placeholder={
+            a.kind === "mandate" ? MANDATE_NOTE : "Tell it what to do instead, or how to go ahead"
+          }
+          onChange={(e) => setNote(e.target.value)}
+        />
+      )}
+      {error && <div className="form-error">{error}</div>}
+      <div className="approval-actions">
+        {links}
+        {folds && (
           <button
             type="button"
             className="btn sm ghost"
-            onClick={() => navigate(`/tasks/${a.taskId}`)}
+            aria-expanded={more}
+            onClick={() => setMore((v) => !v)}
           >
-            Details
+            {more ? "Less" : "More"}
           </button>
         )}
         <span className="spacer" />

@@ -42,7 +42,6 @@ import {
   botName,
   chatName,
   currentChat,
-  decideApproval,
   deleteEpisode,
   ensureNegotiation,
   ensureSchedule,
@@ -58,7 +57,7 @@ import {
   setPaused,
   useStore,
 } from "../store";
-import { isActive, MANDATE_NOTE, Shot, taskLine, tokenText, whenText } from "../tasks";
+import { isActive, PendingApproval, taskLine, tokenText, whenText } from "../tasks";
 
 /** How long an unread message stays on screen before it counts as seen. */
 const SEEN_AFTER_MS = 1500;
@@ -377,53 +376,15 @@ function ReplyMessage({
   );
 }
 
-/**
- * An approval waiting for you, above the composer, with Approve and Deny under it. A negotiation's
- * mandate takes a note here too: it can change the numbers.
- */
-function PendingApproval({ a }: { a: Approval }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [note, setNote] = useState("");
-  const mandate = a.kind === "mandate";
-  const negotiation = useStore((s) => (mandate ? negotiationOf(s, a.id) : undefined));
-  const decide = async (decision: "approve" | "deny") => {
-    setBusy(true);
-    setError("");
-    try {
-      await decideApproval(a.id, decision, note);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Couldn't reach Hatbot.");
-      setBusy(false);
-    }
-  };
-  const text = [
-    `**Can I go ahead?** ${a.summary}`,
-    // Its lines stay lines.
-    a.reason.replace(/\n/g, "  \n"),
-    a.sources.length ? `_After reading ${a.sources.join(", ")}_` : "",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+/** An approval waiting for you, in the tray above the composer: what it asks, and where it came from. */
+function TrayApproval({ a }: { a: Approval }) {
+  const negotiation = useStore((s) => (a.kind === "mandate" ? negotiationOf(s, a.id) : undefined));
   return (
-    <div className="pending-approval">
-      <AssistantBody text={text} />
-      {a.taskId && a.screenshotStepId && (
-        <Shot taskId={a.taskId} stepId={a.screenshotStepId} alt="The screen before this step" />
-      )}
-      {mandate && (
-        <textarea
-          className="field approval-note"
-          rows={2}
-          maxLength={4000}
-          value={note}
-          placeholder={MANDATE_NOTE}
-          onChange={(e) => setNote(e.target.value)}
-        />
-      )}
-      {error && <div className="form-error">{error}</div>}
-      <div className="msg-buttons">
-        {a.taskId && (
+    <PendingApproval
+      a={a}
+      compact
+      links={
+        a.taskId ? (
           <button
             type="button"
             className="btn sm ghost"
@@ -431,8 +392,7 @@ function PendingApproval({ a }: { a: Approval }) {
           >
             Open task
           </button>
-        )}
-        {negotiation && (
+        ) : negotiation ? (
           <button
             type="button"
             className="btn sm ghost"
@@ -440,21 +400,9 @@ function PendingApproval({ a }: { a: Approval }) {
           >
             Open negotiation
           </button>
-        )}
-        <span className="spacer" />
-        <button type="button" className="btn sm" disabled={busy} onClick={() => decide("deny")}>
-          Deny
-        </button>
-        <button
-          type="button"
-          className="btn sm primary"
-          disabled={busy}
-          onClick={() => decide("approve")}
-        >
-          Approve
-        </button>
-      </div>
-    </div>
+        ) : null
+      }
+    />
   );
 }
 
@@ -909,7 +857,7 @@ export function Chat({ id }: { id: number }) {
         {pending.length > 0 && (
           <div className="approval-tray">
             {pending.map((a) => (
-              <PendingApproval key={a.id} a={a} />
+              <TrayApproval key={a.id} a={a} />
             ))}
           </div>
         )}
