@@ -9,7 +9,12 @@ const REBOOT = /\breboot\b|\binit\s+6\b/;
 type Rule = { re: RegExp; why: string; kind?: ApprovalKind; host?: boolean };
 
 const RULES: Rule[] = [
-  { re: /\brm\s+(-\S*\s+)*-\S*[rR]/, why: "deletes files recursively", kind: "delete" },
+  // Flags can come after the paths too: rm /srv/old -rf.
+  {
+    re: /\brm\b[^|;&\n]*\s(-(?!-)[a-zA-Z]*[rR]|--recursive\b)/,
+    why: "deletes files recursively",
+    kind: "delete",
+  },
   { re: /\brm\s+(-\S*\s+)*\S*(\/\*|\s\/\s*$|\s~\/?\s*$)/, why: "deletes files", kind: "delete" },
   {
     re: /\b(shred|wipefs|mkfs(\.\w+)?|mkswap|fdisk|sfdisk|parted|sgdisk|blkdiscard)\b/,
@@ -30,9 +35,25 @@ const RULES: Rule[] = [
   { re: /\b(lvremove|vgremove|pvremove|lvreduce)\b/, why: "removes LVM storage", kind: "delete" },
   { re: /\btruncate\b/, why: "truncates files", kind: "delete" },
   {
+    re: /\bfind\b[^|;&\n]*\s(-delete\b|-exec(dir)?\s+(sudo\s+)?(rm|shred|unlink)\b)/,
+    why: "deletes the files it finds",
+    kind: "delete",
+  },
+  { re: /\bxargs\b[^|;&\n]*\b(rm|shred|unlink|rmdir)\b/, why: "deletes files", kind: "delete" },
+  {
+    re: /\brsync\b[^|;&\n]*\s--(delete|remove-source-files)/,
+    why: "deletes files with rsync",
+    kind: "delete",
+  },
+  {
     re: /\b(pct|qm)\s+(destroy|stop|shutdown|rollback|delsnapshot)\b/,
     why: "destroys or stops a guest",
     kind: "delete",
+  },
+  { re: /\bpvesh\s+delete\b/, why: "deletes something in Proxmox", kind: "delete" },
+  {
+    re: /\bpvesh\s+(create|set)\b[^|;&\n]*\/status\/(stop|shutdown|suspend|reboot)\b/,
+    why: "stops or reboots a guest",
   },
   { re: /\b(shutdown|poweroff|halt)\b|\binit\s+0\b/, why: "shuts down {where}" },
   {
@@ -44,9 +65,13 @@ const RULES: Rule[] = [
   { re: REBOOT, why: "reboots the host", host: true },
   { re: /\bsystemctl\s+(\S+\s+)*(stop|disable|mask|kill)\b/, why: "stops or disables a service" },
   {
-    re: /\bdocker\s+(compose\s+)?(rm|rmi|down|kill|prune|system\s+prune|volume\s+(rm|prune)|network\s+rm|image\s+prune|container\s+prune)\b/,
+    re: /\b(docker(-compose)?|podman)\s+(compose\s+)?(rm|rmi|down|kill|prune|system\s+prune|volume\s+(rm|prune)|network\s+rm|image\s+prune|container\s+(prune|rm|kill))\b/,
     why: "removes Docker containers, images or volumes",
     kind: "delete",
+  },
+  {
+    re: /\b(docker(-compose)?|podman)\s+(compose\s+|container\s+)?(stop|pause)\b/,
+    why: "stops Docker containers",
   },
   {
     re: /\b(apt|apt-get|dpkg|dnf|yum|pacman|apk)\b[^|;&]*\s(remove|purge|autoremove|erase|del|-R\w*|-r)\b/,
@@ -55,13 +80,13 @@ const RULES: Rule[] = [
   },
   { re: /\b(userdel|groupdel|deluser|delgroup)\b/, why: "deletes accounts", kind: "delete" },
   {
-    re: /\b(passwd|chpasswd|usermod|chage|visudo)\b|authorized_keys|\/etc\/(sudoers|shadow|passwd)\b|\bssh-keygen\b/,
+    re: /\b(passwd|chpasswd|usermod|chage|visudo|useradd|adduser|groupadd|addgroup|gpasswd)\b|authorized_keys|\/etc\/(sudoers|shadow|passwd)\b|\bssh-keygen\b|\bpveum\b[^|;&\n]*\s(add|modify|delete|remove|passwd)\b/,
     why: "changes accounts, passwords or keys",
     kind: "account_security",
   },
   { re: /\b(chmod|chown|chgrp)\s+(-\S*\s+)*-\S*R/, why: "changes permissions recursively" },
   {
-    re: /\b(iptables|ip6tables|nft)\b[^|;&]*\s(-F|--flush|flush|-X|delete)\b|\bufw\s+(disable|reset|deny)\b/,
+    re: /\b(iptables|ip6tables)(-legacy|-nft)?\b[^|;&\n]*\s(-[AIDRPFX]\b|--(append|insert|delete|replace|policy|flush|delete-chain)\b)|\b(iptables|ip6tables)(-legacy|-nft)?-restore\b|\bnft\b[^|;&\n]*\s(add|insert|delete|flush|replace|destroy|-f)\b|\bufw\s+(--?\S+\s+)*(allow|deny|reject|limit|delete|insert|prepend|disable|enable|reset|default|route|reload)\b/,
     why: "changes the firewall",
   },
   {
@@ -70,7 +95,8 @@ const RULES: Rule[] = [
   },
   { re: /\bcrontab\s+(-\S*\s+)*-r\b/, why: "deletes a crontab", kind: "delete" },
   {
-    re: /\bgit\s+(push\s+[^|;&]*(-f\b|--force)|reset\s+--hard|clean\s+-\S*f|branch\s+-D)/,
+    // + and : refspecs force-push and delete: git push origin +main, git push origin :main.
+    re: /\bgit\s+(push\b[^|;&\n]*\s(-f\b|--force|--mirror|--delete|-d\b|\+\S|:\S)|reset\s+--hard|clean\s+-\S*f|branch\s+-D)/,
     why: "rewrites or discards git history",
     kind: "delete",
   },
@@ -78,10 +104,16 @@ const RULES: Rule[] = [
     re: /\b(curl|wget)\b[^|;&]*\|\s*(sudo\s+)?(ba|z|da)?sh\b/,
     why: "runs a script straight from the internet",
   },
+  // bash <(curl …), sh -c "$(curl …)", source <(wget …)
+  {
+    re: /[<$]\(\s*(sudo\s+)?(curl|wget)\b/,
+    why: "runs a script straight from the internet",
+  },
   {
     re: /\bkill(all)?\s+(-9\s+|-KILL\s+)?(-1|1)\b|\bpkill\s+(-9\s+)?(systemd|sshd|init)\b/,
     why: "kills essential processes",
   },
+  { re: /\b(killall|pkill)\b/, why: "kills processes by name" },
   { re: /:\(\)\s*\{/, why: "looks like a fork bomb" },
   { re: /\bmv\s+[^|;&]*\s(\/dev\/null|\/)\s*$/, why: "moves files away for good", kind: "delete" },
 ];

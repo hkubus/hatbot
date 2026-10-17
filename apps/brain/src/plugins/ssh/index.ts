@@ -350,7 +350,7 @@ export const sshPlugin = definePlugin({
       tool({
         name: "ssh_exec",
         description:
-          "Run a shell command on a host and return its exit code and output. Prefer ssh_check for looking around. Destructive commands (deleting data, stopping services, shutting down, changing accounts or the firewall) ask the owner first. Use sudo -n for root; the hatbot user's sudo rules decide what's allowed. For several hosts, call it once per host in the same turn: they run at once.",
+          "Run a shell command on a host and return its exit code and output. Prefer ssh_check for looking around. Commands that look destructive (deleting data, stopping services, shutting down, changing accounts or the firewall) need approval, but that check is a list of patterns and misses things: don't count on it to catch a mistake. Use sudo -n for root; the hatbot user's sudo rules decide what's allowed. For several hosts, call it once per host in the same turn: they run at once.",
         access: "write",
         schema: z.object({
           host: hostField,
