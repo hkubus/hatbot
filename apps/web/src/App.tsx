@@ -8,7 +8,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { ApiError, api } from "./api";
+import { ApiError, api, errorText } from "./api";
 import { BotMark, Icon, type IconName } from "./icons";
 import { LiveView } from "./live";
 import { useMedia } from "./media";
@@ -448,7 +448,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           {down && (
             <div className="paused-banner offline-banner">
               Can't reach Hatbot.
-              <span style={{ flex: 1 }} />
+              <span className="spacer" />
               <button type="button" className="btn sm" onClick={reconnectNow}>
                 Retry
               </button>
@@ -596,16 +596,14 @@ export function PausedBanner() {
     setBusy(true);
     setError("");
     setPaused(false)
-      .catch((err) =>
-        setError(err instanceof ApiError ? `Couldn't resume: ${err.message}` : "Couldn't resume."),
-      )
+      .catch((err) => setError(errorText(err, "Couldn't resume.")))
       .finally(() => setBusy(false));
   };
   return (
     <div className="paused-banner offline-banner">
       <Icon name="pause" />
       {error ? `All activity is paused. ${error}` : "All activity is paused."}
-      <span style={{ flex: 1 }} />
+      <span className="spacer" />
       <button type="button" className="btn sm" disabled={busy} onClick={resume}>
         Resume
       </button>

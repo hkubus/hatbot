@@ -280,6 +280,9 @@ svg.i {
 .tnum {
   font-variant-numeric: tabular-nums;
 }
+.spacer {
+  flex: 1;
+}
 [hidden] {
   display: none !important;
 }
@@ -428,9 +431,6 @@ svg.i {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.toolbar .spacer {
-  flex: 1;
 }
 .tb-btn {
   height: 28px;
@@ -968,9 +968,6 @@ html[data-theme="dark"] .seg button.active {
   gap: 10px;
   flex-wrap: wrap;
 }
-.page-head .spacer {
-  flex: 1;
-}
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -1174,9 +1171,6 @@ html[data-theme="dark"] .seg button.active {
   font-size: 12px;
   font-weight: 600;
 }
-.editor-bar .spacer {
-  flex: 1;
-}
 .editor-text {
   margin: 0;
   padding: 16px 20px;
@@ -1288,9 +1282,6 @@ html[data-theme="dark"] .seg button.active {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-}
-.chart-head .spacer {
-  flex: 1;
 }
 .chart {
   position: relative;
@@ -1947,9 +1938,6 @@ a.btn:hover {
   font-size: 13px;
   font-weight: 650;
 }
-.insp-head .spacer {
-  flex: 1;
-}
 .insp-body {
   flex: 1;
   overflow: auto;
@@ -2048,9 +2036,6 @@ a.btn:hover {
 }
 .control-banner.ask > svg.i {
   color: var(--attention);
-}
-.control-banner .spacer {
-  flex: 1;
 }
 .control-banner .actions {
   display: flex;
@@ -2501,9 +2486,6 @@ pre.payload {
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-}
-.approval-actions .spacer {
-  flex: 1;
 }
 .card > .approval {
   padding: 10px 12px 0;
@@ -2970,9 +2952,6 @@ mark {
   font-size: 13px;
   background: var(--accent-soft);
   border-bottom: 0.5px solid var(--line);
-}
-.skill-trouble .spacer {
-  flex: 1;
 }
 
 /* The brain or the network is down before anything has loaded. */
