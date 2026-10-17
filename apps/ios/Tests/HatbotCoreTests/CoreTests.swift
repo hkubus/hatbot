@@ -704,6 +704,21 @@ final class LookingAfterThingsTests: XCTestCase {
     XCTAssertEqual(LineDiff.of("x\ny\n", nil).map(\.text), ["-x", "-y"])
   }
 
+  /// One line changed in a long file is still one line changed, found quickly: the lines the two
+  /// versions share at the start and end stay out of the table.
+  func testDiffsALongFileByItsChangedMiddle() {
+    let lines = (0..<5000).map { "line \($0)" }
+    var edited = lines
+    edited[2500] = "changed"
+    let start = Date()
+    let diff = LineDiff.of(lines.joined(separator: "\n"), edited.joined(separator: "\n"))
+    XCTAssertLessThan(Date().timeIntervalSince(start), 1)
+    XCTAssertEqual(
+      diff.map(\.text), ["…", " line 2498", " line 2499", "-line 2500", "+changed", " line 2501", " line 2502", "…"])
+    XCTAssertEqual(LineDiff.of("a\nb\n", "a\nb\n").map(\.text), ["…"])
+    XCTAssertEqual(LineDiff.of("a\nb\nc", "a\nc").map(\.text), [" a", "-b", " c"])
+  }
+
   /// The heartbeat's pickers have a row for what's set now, even when it's not one of theirs.
   func testHeartbeatPickersKeepAValueSetElsewhere() {
     XCTAssertEqual(AppSettings.Heartbeat.everyChoices(with: 15), [5, 10, 15, 30, 60, 120, 240])

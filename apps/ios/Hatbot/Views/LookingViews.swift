@@ -542,6 +542,8 @@ struct ProposalView: View {
   @Environment(\.dismiss) private var dismiss
   @State private var busy = false
   @State private var error: String?
+  /// Each change's diff, worked out once and off the main thread, not on every redraw.
+  @State private var diffs: [String: [DiffLine]]?
 
   var body: some View {
     ScrollView {
@@ -553,12 +555,18 @@ struct ProposalView: View {
           VStack(alignment: .leading, spacing: 6) {
             Text(c.before == nil ? "\(c.path) (new)" : c.after == nil ? "\(c.path) (deleted)" : c.path)
               .font(.subheadline.weight(.semibold))
-            DiffLines(lines: LineDiff.of(c.before, c.after))
+            if let lines = diffs?[c.path] { DiffLines(lines: lines) } else { ProgressView() }
           }
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding()
+    }
+    .task(id: proposal.id) {
+      let changes = proposal.changes
+      diffs = await Task.detached(priority: .userInitiated) {
+        Dictionary(changes.map { ($0.path, LineDiff.of($0.before, $0.after)) }, uniquingKeysWith: { a, _ in a })
+      }.value
     }
     .navigationTitle(proposal.kind == .skill ? "Skill fix" : proposal.kind == .write ? "Memory change" : "Tidy-up")
     .navigationBarTitleDisplayMode(.inline)
