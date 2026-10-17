@@ -7,20 +7,12 @@ import type {
 } from "@hatbot/shared";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { modelName, usd } from "../format";
 import { LoadError, loadErrorText } from "../load";
+import { spendAxis, withToday } from "../spend";
 import { useStore } from "../store";
 import { tokenText } from "../tasks";
 
-const money = (v: number) => `$${v.toFixed(2)}`;
-/** Small amounts, like a minute's spend, need more than cents. */
-const fineMoney = (v: number) => (v > 0 && v < 0.1 ? `$${v.toFixed(3)}` : money(v));
-const MODEL_NAMES: Record<string, string> = {
-  "claude-opus-5-5": "Opus 5.5",
-  "claude-sonnet-5-5": "Sonnet 5.5",
-  "claude-sonnet-5": "Sonnet 5",
-  "claude-haiku-5-5": "Haiku 5.5",
-  "claude-haiku-4-5": "Haiku 4.5",
-};
 /** What the ledger's purposes are, in words. */
 const PURPOSE_NAMES: Record<string, string> = {
   thread: "Chat",
@@ -46,13 +38,6 @@ const fmtShort = (d: string) =>
 const fmtHour = (iso: string) =>
   new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
-/** A tick step from 1/2/5 × 10^n that gives about five gridlines. */
-function niceStep(max: number) {
-  const raw = max / 5;
-  const pow = 10 ** Math.floor(Math.log10(raw));
-  return ([1, 2, 5, 10].find((m) => m * pow >= raw) ?? 10) * pow;
-}
-
 /** One bar: its dollars, the label under it (if any), and what the tooltip and table say. */
 type Point = { key: string; usd: number; axis?: string; title: string; detail: string };
 
@@ -65,10 +50,10 @@ function BarChart({ points, limit, label }: { points: Point[]; limit?: number; l
   const R = 8;
   const T = 14;
   const B = 26;
-  const top = Math.max(limit ?? 0, ...points.map((p) => p.usd), 0.01);
-  const step = niceStep(top);
-  const max = Math.ceil(top / step) * step;
-  const ticks = Array.from({ length: Math.round(max / step) + 1 }, (_, i) => i * step);
+  const { max, ticks, tick, showLimit } = spendAxis(
+    points.map((p) => p.usd),
+    limit,
+  );
   const pw = W - L - R;
   const ph = H - T - B;
   const band = pw / points.length;
@@ -77,7 +62,6 @@ function BarChart({ points, limit, label }: { points: Point[]; limit?: number; l
   const peak = points.reduce((a, p, i) => (p.usd > (points[a]?.usd ?? 0) ? i : a), 0);
   // Only the peak gets a label: the tiles above have the latest figures, and a label on a short bar collides with its neighbours.
   const labelled = (points[peak]?.usd ?? 0) > 0 ? [peak] : [];
-  const tick = (t: number) => (t >= 1 ? `$${t % 1 ? t.toFixed(1) : t}` : `$${+t.toFixed(3)}`);
 
   const onMove = (e: React.MouseEvent<SVGRectElement>, i: number) => {
     const b = box.current?.getBoundingClientRect();
@@ -102,11 +86,11 @@ function BarChart({ points, limit, label }: { points: Point[]; limit?: number; l
             </text>
           </g>
         ))}
-        {limit !== undefined && (
+        {limit !== undefined && showLimit && (
           <>
             <line className="refline" x1={L} x2={W - R} y1={y(limit)} y2={y(limit)} />
             <text x={W - R} y={y(limit) - 5} textAnchor="end" style={{ fill: "var(--text-2)" }}>
-              Daily limit {money(limit)}
+              Daily limit {usd(limit)}
             </text>
           </>
         )}
@@ -139,7 +123,7 @@ function BarChart({ points, limit, label }: { points: Point[]; limit?: number; l
             textAnchor="middle"
             style={{ fill: "var(--text-2)", fontWeight: 600 }}
           >
-            {fineMoney(points[i]?.usd ?? 0)}
+            {usd(points[i]?.usd ?? 0)}
           </text>
         ))}
         {points.map(
@@ -234,8 +218,10 @@ export function Spend() {
   const live = useStore((s) => s.todayUsd);
   // New limits.
   const settingsVersion = useStore((s) => s.settingsVersion);
-  // A desktop task bills every step.
+  // A desktop task bills every step: today's figures follow within 10 s, the 30-day totals within
+  // 5 minutes.
   const billed = useThrottled(live, 10_000);
+  const billedLately = useThrottled(live, 300_000);
   const [tick, setTick] = useState(0);
   const [attempt, setAttempt] = useState(0);
   const [loadError, setLoadError] = useState("");
@@ -251,12 +237,20 @@ export function Spend() {
   const loadNow = () => {
     api<SpendSummary>("/spend/summary").then(setSummary, failed);
     api<SpendHour[]>("/spend/hourly?hours=24").then(setHours, failed);
+    api<SpendDay[]>("/spend/daily?days=1").then(
+      (today) => setDays((d) => withToday(d, today)),
+      failed,
+    );
   };
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: refresh when a request is billed or limits change
   useEffect(() => {
     setLoadError("");
     loadNow();
+  }, [billed, attempt, settingsVersion]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the 30-day totals, less often
+  useEffect(() => {
     api<SpendDay[]>("/spend/daily?days=30").then(setDays, failed);
     api<SpendByModel[]>("/spend/by-model?days=30").then(setModels, failed);
     api<{ botId: string; usd: number }[]>("/spend/by-bot?days=30").then(setByBot, failed);
@@ -265,7 +259,7 @@ export function Spend() {
       setByPurpose,
       () => {},
     );
-  }, [billed, attempt, settingsVersion]);
+  }, [billedLately, attempt]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: every 30 s
   useEffect(() => {
@@ -291,14 +285,14 @@ export function Spend() {
     usd: h.usd,
     axis: i % 6 === 0 ? fmtHour(h.hour) : undefined,
     title: `${fmtHour(h.hour)}–${fmtHour(new Date(Date.parse(h.hour) + 3600_000).toISOString())}`,
-    detail: `${fineMoney(h.usd)} · ${tokenText(h.tokens)} tokens`,
+    detail: `${usd(h.usd)} · ${tokenText(h.tokens)} tokens`,
   }));
   const dayPoints: Point[] = days.map((d, i) => ({
     key: d.date,
     usd: d.usd,
     axis: i % 7 === 0 ? fmtShort(d.date) : undefined,
     title: fmtDay(d.date),
-    detail: money(d.usd),
+    detail: usd(d.usd),
   }));
 
   return (
@@ -308,7 +302,7 @@ export function Spend() {
           <div className="tile">
             <div className="label">Today</div>
             <div className="value tnum">
-              {money(todayUsd)} <small>of {money(limits.dailyUsd)}</small>
+              {usd(todayUsd)} <small>of {usd(limits.dailyUsd)}</small>
             </div>
             <div className={`meter ${todayUsd >= limits.dailyUsd ? "hot" : ""}`}>
               <span style={{ width: `${Math.min(100, (todayUsd / limits.dailyUsd) * 100)}%` }} />
@@ -318,7 +312,7 @@ export function Spend() {
           <div className="tile">
             <div className="label">This month</div>
             <div className="value tnum">
-              {money(monthUsd)} <small>of {money(limits.monthlyUsd)}</small>
+              {usd(monthUsd)} <small>of {usd(limits.monthlyUsd)}</small>
             </div>
             <div className={`meter ${monthUsd >= limits.monthlyUsd ? "hot" : ""}`}>
               <span style={{ width: `${Math.min(100, (monthUsd / limits.monthlyUsd) * 100)}%` }} />
@@ -326,12 +320,12 @@ export function Spend() {
           </div>
           <div className="tile">
             <div className="label">Last hour</div>
-            <div className="value tnum">{fineMoney(summary.lastHour.usd)}</div>
+            <div className="value tnum">{usd(summary.lastHour.usd)}</div>
             <div className="label tnum">{tokenText(summary.lastHour.tokens)} tokens</div>
           </div>
           <div className="tile">
             <div className="label">Last minute</div>
-            <div className="value tnum">{fineMoney(summary.lastMinute.usd)}</div>
+            <div className="value tnum">{usd(summary.lastMinute.usd)}</div>
             <div className="label tnum">{tokenText(summary.lastMinute.tokens)} tokens</div>
           </div>
         </div>
@@ -347,11 +341,11 @@ export function Spend() {
             <div className="hbars">
               {models.map((m) => (
                 <div className="hbar" key={m.model}>
-                  <span>{MODEL_NAMES[m.model] ?? m.model}</span>
+                  <span>{modelName(m.model)}</span>
                   <div className="track">
                     <div className="fill" style={{ width: `${(m.usd / mMax) * 100}%` }} />
                   </div>
-                  <span className="v">{money(m.usd)}</span>
+                  <span className="v">{usd(m.usd)}</span>
                 </div>
               ))}
             </div>
@@ -372,7 +366,7 @@ export function Spend() {
                   <div className="track">
                     <div className="fill" style={{ width: `${(b.usd / bMax) * 100}%` }} />
                   </div>
-                  <span className="v">{money(b.usd)}</span>
+                  <span className="v">{usd(b.usd)}</span>
                 </div>
               ))}
             </div>
@@ -391,7 +385,7 @@ export function Spend() {
                   <div className="track">
                     <div className="fill" style={{ width: `${(p.costUsd / pMax) * 100}%` }} />
                   </div>
-                  <span className="v">{money(p.costUsd)}</span>
+                  <span className="v">{usd(p.costUsd)}</span>
                 </div>
               ))}
             </div>

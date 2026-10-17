@@ -1,6 +1,7 @@
 import { latestNoteOnly, OPEN_NEGOTIATION_STATUSES, type Task } from "@hatbot/shared";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, api } from "../api";
+import { usd } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LiveView, StepIcon } from "../live";
@@ -19,7 +20,6 @@ import {
 import { ApprovalCard, isActive, Shot, StatusChip, taskLine } from "../tasks";
 import { AssistantBody } from "./Chat";
 
-const money = (usd: number) => `$${usd.toFixed(2)}`;
 const time = (iso: string) =>
   new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 function when(iso: string) {
@@ -200,7 +200,7 @@ export function Tasks() {
                       <StatusChip status={t.status} />
                     </td>
                     <td className="muted">{when(t.startedAt ?? t.createdAt)}</td>
-                    <td className="num">{money(t.costUsd)}</td>
+                    <td className="num">{usd(t.costUsd)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -283,7 +283,7 @@ function Details({ task }: { task: Task }) {
         </>
       )}
       <dt>Cost</dt>
-      <dd className="tnum">{money(task.costUsd)}</dd>
+      <dd className="tnum">{usd(task.costUsd)}</dd>
       {task.reportPath && (
         <>
           <dt>Report</dt>
