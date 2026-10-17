@@ -837,8 +837,8 @@ async function refreshThread() {
   // The whole conversation, or a full page past everything loaded (a gap): it starts again from here.
   if (!first || latest.length < PAGE || !last || last.id < first.id)
     return set({ messages: caughtUp(latest, events), hasEarlier: latest.length === PAGE });
-  const earlier = state.messages.filter((m) => m.id < first.id);
-  set({ messages: [...earlier, ...caughtUp(latest, events)] });
+  const older = state.messages.filter((m) => m.id < first.id);
+  set({ messages: [...older, ...caughtUp(latest, events)] });
 }
 
 /**
