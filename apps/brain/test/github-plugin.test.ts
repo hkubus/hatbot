@@ -71,8 +71,25 @@ beforeAll(() => {
             permissions: { push: true },
           },
         ]);
+      // The most recently updated hundred are all pull requests; the issue is on the next page.
       if (path === `${r}/issues` && req.method === "GET")
-        return json([issue(7), issue(8, { pull_request: { merged_at: null } })]);
+        return json(
+          url.searchParams.get("page") === "1"
+            ? Array.from({ length: 100 }, (_, i) =>
+                issue(100 + i, { pull_request: { merged_at: null } }),
+              )
+            : [issue(7), issue(8, { pull_request: { merged_at: null } })],
+        );
+      if (path === "/repos/hkubus/busy/issues")
+        return json(
+          Array.from({ length: 100 }, (_, i) =>
+            issue(i + 1, { pull_request: { merged_at: null } }),
+          ),
+        );
+      if (path === `${r}/pulls` && req.method === "GET") {
+        const { comments: _, ...pr } = issue(8);
+        return json([{ ...pr, merged_at: null, draft: false }]);
+      }
       if (path === "/search/issues") return json({ items: [issue(5)] });
       if (path === `${r}/issues/8`) return json(issue(8, { pull_request: { merged_at: null } }));
       if (path === `${r}/issues/8/comments`)
@@ -109,6 +126,23 @@ beforeAll(() => {
       if (path === `${r}/git/ref/heads/main`) return json({ object: { sha: "head-sha" } });
       if (path === `${r}/git/commits/head-sha`) return json({ tree: { sha: "tree-sha" } });
       if (path === `${r}/git/trees`) return json({ sha: "new-tree" }, 201);
+      const entry = (path: string, mode: string, type = "blob", sha = `${path}-sha`) => ({
+        path,
+        mode,
+        type,
+        sha,
+      });
+      if (path === `${r}/git/trees/tree-sha`)
+        return json({
+          tree: [
+            entry("README.md", "100644"),
+            entry("run.sh", "100755"),
+            entry("link", "120000"),
+            entry("vendor", "160000", "commit"),
+            entry("docs", "040000", "tree"),
+          ],
+        });
+      if (path === `${r}/git/trees/docs-sha`) return json({ tree: [entry("build.sh", "100755")] });
       if (path === `${r}/git/commits` && req.method === "POST")
         return json(
           { sha: "0123456789abcdef", html_url: "https://github.test/hkubus/hatbot/commit/0123" },
@@ -187,11 +221,27 @@ test("reads issues as untrusted, pull requests with files, reviews, diff and com
     "#7 Issue 7 (open, by stranger, 1 comments, updated 2026-10-02) [bug]",
   );
   expect(list.content).not.toContain("#8");
+  expect(list.content).not.toContain("#100");
+  // A first page of only pull requests didn't hide the issue on the second.
+  expect(
+    seen.filter((s) => s.path.startsWith("/repos/hkubus/hatbot/issues?")).map((s) => s.path),
+  ).toEqual([
+    "/repos/hkubus/hatbot/issues?state=open&sort=updated&per_page=100&page=1",
+    "/repos/hkubus/hatbot/issues?state=open&sort=updated&per_page=100&page=2",
+  ]);
+  expect(
+    await gh("github_issues").run({ repo: "hkubus/busy", kind: "issues", state: "open" }, call),
+  ).toBe(
+    "No open issues among the 300 most recently updated issues and pull requests. Give query to search them all.",
+  );
   const pulls = await gh("github_issues").run(
     { repo: "hkubus/hatbot", kind: "pulls", state: "open" },
     call,
   );
-  expect(pulls).toContain("#8 Issue 8 (open, PR");
+  expect(pulls).toBe("#8 Issue 8 (open, PR, by stranger, updated 2026-10-02) [bug]");
+  expect(seen.at(-1)?.path).toBe(
+    "/repos/hkubus/hatbot/pulls?state=open&sort=updated&direction=desc&per_page=30",
+  );
   expect(
     await gh("github_issues").run(
       { repo: "hkubus/hatbot", kind: "issues", state: "open", query: "router" },
@@ -262,7 +312,7 @@ test("commits many files as one commit on a new branch, and won't delete what is
       message: "Docs",
       files: [
         { path: "docs/new.md", content: "new" },
-        { path: "./README.md", content: null },
+        { path: "/README.md", content: null },
       ],
     },
     call,
@@ -309,6 +359,44 @@ test("commits many files as one commit on a new branch, and won't delete what is
   expect(posted("/git/trees")).toBeUndefined();
 });
 
+test("a commit keeps each file's mode, and won't write over links or submodules", async () => {
+  const { gh } = await started();
+  const commit = (files: { path: string; content: string | null }[]) =>
+    gh("github_commit_files").run(
+      { repo: "hkubus/hatbot", branch: "main", new_branch: "hatbot/x", message: "M", files },
+      call,
+    );
+  const posted = () =>
+    seen.find((s) => s.method === "POST" && s.path === "/repos/hkubus/hatbot/git/trees")?.body;
+  seen.length = 0;
+  await commit([
+    { path: "run.sh", content: "#!/bin/sh\n" },
+    { path: "docs/build.sh", content: "#!/bin/sh\n" },
+    { path: "docs/new.md", content: "new" },
+    { path: "link", content: null },
+  ]);
+  expect((posted() as { tree: { path: string; mode: string }[] }).tree).toMatchObject([
+    { path: "run.sh", mode: "100755" },
+    { path: "docs/build.sh", mode: "100755" },
+    { path: "docs/new.md", mode: "100644" },
+    { path: "link", mode: "120000", sha: null },
+  ]);
+  // The top folder is read once for all four.
+  expect(seen.filter((s) => s.path.endsWith("/git/trees/tree-sha"))).toHaveLength(1);
+
+  seen.length = 0;
+  await expect(commit([{ path: "link", content: "/etc/passwd" }])).rejects.toThrow(
+    "link is a symbolic link; Hatbot doesn't write over those.",
+  );
+  await expect(commit([{ path: "vendor", content: "x" }])).rejects.toThrow(
+    "vendor is a submodule; Hatbot doesn't change those.",
+  );
+  await expect(commit([{ path: "docs", content: "x" }])).rejects.toThrow(
+    "docs is a folder on main.",
+  );
+  expect(posted()).toBeUndefined();
+});
+
 test("policy: new branches run, the default branch, workflows and merges ask", async () => {
   const { gh } = await started();
   const v = (name: string, input: unknown) => verdictFor(gh(name), input, call);
@@ -325,10 +413,17 @@ test("policy: new branches run, the default branch, workflows and merges ask", a
     action: "ask",
     why: "It commits straight to main, the default branch.",
   });
+  expect(v("github_commit_files", { repo, branch: "Main", message: "m", files })).toMatchObject({
+    action: "ask",
+  });
   for (const path of [
     ".github/workflows/ci.yml",
-    "./.GitHub//workflows/x.yml",
-    "a/../.github/workflows/x",
+    ".GitHub//workflows/x.yml",
+    "/.github/workflows/x.yml",
+    // Workflows run the actions they use, with the same secrets.
+    ".github/actions/setup/action.yml",
+    ".github/actions/setup/run.sh",
+    "tools/lint/action.yaml",
   ])
     expect(
       v("github_commit_files", {
@@ -358,4 +453,53 @@ test("policy: new branches run, the default branch, workflows and merges ask", a
     call,
   );
   expect(pr.untrusted).toBe(true);
+});
+
+test("branches git wouldn't take, and . or .. in names and paths, are refused before anything is sent", async () => {
+  const { gh } = await started();
+  const repo = "hkubus/hatbot";
+  const files = [{ path: "a.md", content: "x" }];
+  seen.length = 0;
+  const refused = async (name: string, input: Record<string, unknown>) => {
+    const r = await runPluginTool(gh(name), input, call);
+    expect(r.isError, JSON.stringify(input)).toBe(true);
+    expect(r.content).toStartWith("Invalid input");
+  };
+  // "main/" would land on main, past the default-branch check.
+  for (const branch of ["main/", "", "/main", "a//b", "a..b", "x.lock", "refs/heads/main", "-x"])
+    await refused("github_commit_files", { repo, branch, message: "m", files });
+  await refused("github_commit_files", {
+    repo,
+    branch: "main",
+    new_branch: "hatbot/../main",
+    message: "m",
+    files,
+  });
+  for (const path of ["a/../.github/workflows/x", "./README.md", "../../x"])
+    await refused("github_commit_files", {
+      repo,
+      branch: "main",
+      new_branch: "hatbot/x",
+      message: "m",
+      files: [{ path, content: "x" }],
+    });
+  // Each of these would leave the repository's endpoints once the URL is resolved.
+  await refused("github_file", { repo, path: "../../../../user/keys" });
+  await refused("github_file", { repo: "../..", path: "user" });
+  await refused("github_ci", { repo, ref: ".." });
+  await refused("github_issues", { repo: "../.." });
+  expect(seen).toEqual([]);
+});
+
+test("only the default branch of a repository the bot can see is trusted, in files and CI", async () => {
+  const { gh } = await started();
+  const repo = "hkubus/hatbot";
+  const untrusted = async (name: string, input: Record<string, unknown>) =>
+    (await runPluginTool(gh(name), input, call)).untrusted;
+  // A stranger's repository, on its default branch too.
+  expect(await untrusted("github_file", { repo: "stranger/repo", path: "README.md" })).toBe(true);
+  expect(await untrusted("github_ci", { repo, ref: "main" })).toBe(false);
+  // A pull request's branch, or another repository's, can name its jobs anything.
+  expect(await untrusted("github_ci", { repo, ref: "fix" })).toBe(true);
+  expect(await untrusted("github_ci", { repo: "stranger/repo", ref: "main" })).toBe(true);
 });

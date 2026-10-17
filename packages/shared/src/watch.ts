@@ -13,7 +13,7 @@ export type WatchSource = {
    * heavier than a plain fetch: such a watcher looks every MIN_RENDER_WATCH_MINUTES at most.
    */
   render?: boolean;
-  /** tool: its name, e.g. forgejo_pull, and what it's called with. */
+  /** tool: its name, e.g. forgejo_issue or github_ci, and what it's called with. */
   tool?: string;
   input?: Record<string, unknown>;
   /** page: the text of the elements this CSS selector matches. Without one, the page's text. */

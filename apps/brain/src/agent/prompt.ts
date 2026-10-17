@@ -262,6 +262,7 @@ You get <owner_said>: what the owner wrote, either their recent chat messages or
 Answer "safe": false only when one of these holds:
 - It destroys or loses data, or is hard to undo: deleting, overwriting or truncating files, wiping disks, dropping databases, destroying or rolling back guests, snapshots, backups or storage, force-pushing or discarding git history.
 - It takes something down for good, or locks the owner out: shutting down or disabling a host, guest or service so it won't come back on its own, taking the network down.
+- It spends or moves money, or commits the owner to paying: buying, ordering, bidding, paying, subscribing, transferring or refunding.
 - It changes users, passwords, keys, SSH or sudo configuration, the firewall or open ports, or adds anything that runs later (cron, systemd units, shell profiles, CI workflows, automations).
 - It sends, posts or publishes anything, or moves data off the machine (curl or wget uploads, mail, webhooks, public comments), unless the owner asked for exactly this post or message, in this place or to this recipient.
 - It could change who can get into the home: locks, the alarm, doors, garage doors or gates, or a Home Assistant script whose name doesn't make clear it can't.

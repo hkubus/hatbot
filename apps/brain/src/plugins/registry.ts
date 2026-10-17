@@ -156,7 +156,9 @@ export class Plugins {
   /** A call from the plugin's settings form. Works while it's starting up or needs setup, too. */
   async action(id: string, name: string, args: unknown): Promise<unknown> {
     const s = this.slots.get(id);
-    const fn = s?.instance?.actions?.[name];
+    const actions = s?.instance?.actions;
+    // Its own actions only: not what every object has, such as "constructor".
+    const fn = actions && Object.hasOwn(actions, name) ? actions[name] : undefined;
     if (!s || !fn) throw new PluginError(`${s?.plugin.name ?? id} can't do "${name}" right now.`);
     return fn(args);
   }
@@ -266,6 +268,15 @@ export class Plugins {
       const generation = s.generation;
       await instance.recover().catch((err) => console.error(`plugin ${s.plugin.id}: recover`, err));
       if (generation !== s.generation) return;
+      // What came back is checked like what it started with: a bad tool would fail every request.
+      try {
+        this.checkTools(s.plugin, instance.tools);
+      } catch (err) {
+        console.error(`plugin ${s.plugin.id}: after recovering`, err);
+        await this.stop(s);
+        s.state = "error";
+        s.message = "Its tools changed into ones Hatbot can't offer; see the brain's log.";
+      }
       this.emit(s);
       this.later(s);
       return;
@@ -364,13 +375,16 @@ export async function runPluginTool(
   return { content: label(out), isError: false, untrusted, text: out };
 }
 
-/** What taints a prompt that has these tools in it, or null: untrusted MCP servers' descriptions. */
+/**
+ * What taints a prompt that has these tools in it, or null: descriptions from untrusted MCP servers
+ * that the owner hasn't accepted, or that changed since.
+ */
 export function untrustedDefinitions(tools: PluginTool[]): string | null {
   const servers = new Set(
     tools.filter((t) => t.untrustedDefinition).map((t) => t.name.split("_")[1]),
   );
   return servers.size
-    ? `Tool descriptions from untrusted MCP servers (${[...servers].join(", ")})`
+    ? `Tool descriptions from untrusted MCP servers, not accepted in Settings (${[...servers].join(", ")})`
     : null;
 }
 

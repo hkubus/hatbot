@@ -635,7 +635,10 @@ export const TOOLS = [
     schema: z.object({
       name: z.string().min(1).max(80).describe('Short name, e.g. "Framework 16 price"'),
       url: z.string().optional().describe("A page or JSON API to fetch"),
-      tool: z.string().optional().describe("Or a plugin's read tool to call, e.g. forgejo_pull"),
+      tool: z
+        .string()
+        .optional()
+        .describe("Or a plugin's read tool to call, e.g. forgejo_issue or github_ci"),
       tool_input: z.record(z.string(), z.unknown()).optional().describe("The tool's input"),
       ...watchFields,
     }),

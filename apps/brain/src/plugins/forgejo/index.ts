@@ -1,14 +1,11 @@
 // Forgejo (PLAN.md §5.5): read repos, issues, pull requests, files and CI, and comment, open issues and
 // pull requests, and commit files, as Hatbot's own bot account. What it can reach is up to Forgejo:
 // add the bot as a collaborator to the repos it should work on.
-import { posix } from "node:path";
 import { z } from "zod";
+import { Branch, Path, Ref, Repo as RepoOf, runsInCi, sameBranch } from "../forge";
 import { allow, ask, definePlugin, needsSetup, PluginError, ready, tool } from "../plugin";
 
-const Repo = z
-  .string()
-  .regex(/^[\w.-]+\/[\w.-]+$/, "owner/name")
-  .describe('The repository as owner/name, e.g. "kubus/hatbot"');
+const Repo = RepoOf("kubus/hatbot");
 const Num = z.number().int().positive().describe("The issue or pull request number");
 
 type User = { login: string };
@@ -99,13 +96,26 @@ export const forgejoPlugin = definePlugin({
       `${repoPath(repo)}/contents/${path.split("/").filter(Boolean).map(encodeURIComponent).join("/")}`;
     /** Default branches, so policy can tell a commit to main from one to a new branch. */
     const defaults = new Map<string, string>();
+    /**
+     * Whether what's read at this ref may hold anyone's text: anything but the default branch of a
+     * repository the bot account can see, which holds what was merged there. A stranger's repository,
+     * or one whose default branch isn't known yet, counts too.
+     */
+    const offDefault = (repo: string, ref?: string) => {
+      const main = defaults.get(repo);
+      return !main || (ref !== undefined && ref !== main);
+    };
     const existing = async (repo: string, path: string, ref: string): Promise<string | null> => {
       try {
         const c = await api<Content | Content[]>(
           "GET",
           `${contentsPath(repo, path)}?ref=${encodeURIComponent(ref)}`,
         );
-        return Array.isArray(c) ? null : c.sha;
+        if (Array.isArray(c)) return null;
+        // Written through the contents API, they'd become plain files.
+        if (c.type === "symlink" || c.type === "submodule")
+          throw new PluginError(`${path} is a ${c.type}; Hatbot doesn't change those.`);
+        return c.sha;
       } catch (err) {
         if (err instanceof PluginError && err.message.startsWith("Forgejo said 404")) return null;
         throw err;
@@ -220,13 +230,12 @@ export const forgejoPlugin = definePlugin({
         description:
           "Read a file from a repository, or list a directory (path empty for the top). ref is a branch, tag or commit; the default branch if left out. Anything but the default branch may hold other people's code: untrusted.",
         access: "read",
-        // The default branch holds what the owner merged; other refs (pull request branches) may not.
-        untrusted: ({ repo, ref }) => ref !== undefined && ref !== defaults.get(repo),
+        untrusted: ({ repo, ref }) => offDefault(repo, ref),
         label: "Reading code",
         schema: z.object({
           repo: Repo,
-          path: z.string().max(500).default(""),
-          ref: z.string().max(200).optional(),
+          path: Path.default(""),
+          ref: Ref.optional(),
         }),
         describe: ({ repo, path }) => `Read ${repo}/${path}`,
         run: async ({ repo, path, ref }) => {
@@ -249,10 +258,12 @@ export const forgejoPlugin = definePlugin({
         name: "forgejo_ci",
         description: "The CI status of a branch or commit: each check's state and description.",
         access: "read",
+        // Off the default branch, a pull request from a fork can name its jobs and steps anything.
+        untrusted: ({ repo, ref }) => offDefault(repo, ref),
         label: "Checking CI",
         schema: z.object({
           repo: Repo,
-          ref: z.string().max(200).describe("Branch, tag or commit"),
+          ref: Ref.describe("Branch, tag or commit"),
         }),
         describe: ({ repo, ref }) => `Checked CI of ${repo}@${ref}`,
         run: async ({ repo, ref }) => {
@@ -311,20 +322,15 @@ export const forgejoPlugin = definePlugin({
         access: "write",
         schema: z.object({
           repo: Repo,
-          branch: z
-            .string()
-            .max(200)
-            .describe("The branch to commit to, or to start new_branch from"),
-          new_branch: z
-            .string()
-            .regex(/^[\w./-]{1,200}$/)
-            .optional()
-            .describe('A new branch for the commit, e.g. "hatbot/fix-ci"'),
+          branch: Branch.describe("The branch to commit to, or to start new_branch from"),
+          new_branch: Branch.optional().describe(
+            'A new branch for the commit, e.g. "hatbot/fix-ci"',
+          ),
           message: z.string().min(1).max(2000),
           files: z
             .array(
               z.object({
-                path: z.string().min(1).max(500),
+                path: Path.min(1),
                 content: z
                   .string()
                   .max(1_000_000)
@@ -338,13 +344,13 @@ export const forgejoPlugin = definePlugin({
         describe: ({ repo, branch, new_branch, files }) =>
           `Commit ${files.length} file${files.length === 1 ? "" : "s"} to ${repo}@${new_branch ?? branch}`,
         policy: ({ repo, branch, new_branch, files }) => {
-          // Forgejo cleans paths before writing, so check them the same way.
-          const clean = (p: string) => posix.normalize(`/${p}`).toLowerCase();
-          if (files.some((f) => /^\/\.(forgejo|gitea|github)\/workflows\//.test(clean(f.path))))
-            return ask("It changes CI workflows, which run with the repository's secrets.");
+          if (files.some((f) => runsInCi(f.path, ["forgejo", "gitea", "github"])))
+            return ask(
+              "It changes CI workflows or the actions they use, which run with the repository's secrets.",
+            );
           if (new_branch) return allow();
           const main = defaults.get(repo);
-          if (!main || branch === main)
+          if (!main || sameBranch(branch, main))
             return ask(`It commits straight to ${branch}${main ? ", the default branch" : ""}.`);
           return allow();
         },

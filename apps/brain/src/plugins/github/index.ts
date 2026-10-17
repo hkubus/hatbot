@@ -4,12 +4,10 @@
 // collaborator to the repos it should work on.
 import { posix } from "node:path";
 import { z } from "zod";
+import { Branch, Path, Ref, Repo as RepoOf, runsInCi, sameBranch } from "../forge";
 import { allow, ask, definePlugin, needsSetup, PluginError, ready, tool } from "../plugin";
 
-const Repo = z
-  .string()
-  .regex(/^[\w.-]+\/[\w.-]+$/, "owner/name")
-  .describe('The repository as owner/name, e.g. "hkubus/hatbot"');
+const Repo = RepoOf("hkubus/hatbot");
 const Num = z.number().int().positive().describe("The issue or pull request number");
 
 type User = { login: string };
@@ -20,7 +18,7 @@ type Issue = {
   state: string;
   user: User;
   labels?: { name: string }[];
-  comments: number;
+  comments?: number;
   created_at: string;
   updated_at: string;
   html_url: string;
@@ -42,6 +40,13 @@ type Content = {
   content?: string;
   encoding?: string;
 };
+/** mode: 100644 a file, 100755 an executable, 120000 a link, 040000 a folder, 160000 a submodule. */
+type TreeEntry = { path: string; mode: string; type: "blob" | "tree" | "commit"; sha: string };
+/** The folder a path is in, "" for the top. */
+const parentOf = (path: string) => (path.includes("/") ? posix.dirname(path) : "");
+
+/** Pages of 100 read at most when listing issues, which come mixed with pull requests. */
+const ISSUE_PAGES = 3;
 
 /** About how much of a CI log the model gets, in characters. */
 const LOG_CHARS = 20_000;
@@ -189,21 +194,19 @@ export const githubPlugin = definePlugin({
       for (const r of list) defaults.set(r.full_name, r.default_branch);
       return list;
     };
-    const exists = async (repo: string, path: string, ref: string) => {
-      try {
-        const c = await api<Content | Content[]>(
-          "GET",
-          `${contentsPath(repo, path)}?ref=${encodeURIComponent(ref)}`,
-        );
-        return !Array.isArray(c);
-      } catch (err) {
-        if (err instanceof PluginError && err.message.startsWith("GitHub said 404")) return false;
-        throw err;
-      }
+    /**
+     * Whether what's read at this ref may hold anyone's text: anything but the default branch of a
+     * repository the bot account can see, which holds what was merged there. A stranger's repository,
+     * or one whose default branch isn't known yet, counts too.
+     */
+    const offDefault = (repo: string, ref?: string) => {
+      const main = defaults.get(repo);
+      return !main || (ref !== undefined && ref !== main);
     };
 
+    // The pull request list has no comment count.
     const issueLine = (i: Issue) =>
-      `#${i.number} ${i.title} (${i.state}${i.pull_request ? (i.pull_request.merged_at ? ", merged" : ", PR") : ""}, by ${i.user.login}, ${i.comments} comments, updated ${i.updated_at.slice(0, 10)})${i.labels?.length ? ` [${i.labels.map((l) => l.name).join(", ")}]` : ""}`;
+      `#${i.number} ${i.title} (${i.state}${i.pull_request ? (i.pull_request.merged_at ? ", merged" : ", PR") : ""}, by ${i.user.login}${i.comments === undefined ? "" : `, ${i.comments} comments`}, updated ${i.updated_at.slice(0, 10)})${i.labels?.length ? ` [${i.labels.map((l) => l.name).join(", ")}]` : ""}`;
 
     const tools = [
       tool({
@@ -253,11 +256,37 @@ export const githubPlugin = definePlugin({
               `/search/issues?${new URLSearchParams({ q, sort: "updated", per_page: "30" })}`,
             );
             list = found.items;
+          } else if (kind === "pulls") {
+            const q = new URLSearchParams({
+              state,
+              sort: "updated",
+              direction: "desc",
+              per_page: "30",
+            });
+            const pulls = await api<(Issue & { merged_at: string | null })[]>(
+              "GET",
+              `${repoPath(repo)}/pulls?${q}`,
+            );
+            list = pulls.map((p) => ({ ...p, pull_request: { merged_at: p.merged_at } }));
           } else {
-            // The issues list has pull requests in it too; the issues kind leaves them out.
-            const q = new URLSearchParams({ state, sort: "updated", per_page: "50" });
-            const all = await api<Issue[]>("GET", `${repoPath(repo)}/issues?${q}`);
-            list = all.filter((i) => (kind === "pulls") === Boolean(i.pull_request)).slice(0, 30);
+            // The issues list has pull requests in it too, so a page may hold few issues: read on.
+            list = [];
+            let read = 0;
+            for (let page = 1; page <= ISSUE_PAGES && list.length < 30; page++) {
+              const q = new URLSearchParams({
+                state,
+                sort: "updated",
+                per_page: "100",
+                page: String(page),
+              });
+              const batch = await api<Issue[]>("GET", `${repoPath(repo)}/issues?${q}`);
+              list.push(...batch.filter((i) => !i.pull_request));
+              read += batch.length;
+              if (batch.length < 100) break;
+              if (page === ISSUE_PAGES && !list.length)
+                return `No ${state} issues among the ${read} most recently updated issues and pull requests. Give query to search them all.`;
+            }
+            list = list.slice(0, 30);
           }
           return list.map(issueLine).join("\n") || `No ${state} ${kind}.`;
         },
@@ -336,13 +365,12 @@ export const githubPlugin = definePlugin({
         description:
           "Read a file from a repository, or list a directory (path empty for the top). ref is a branch, tag or commit; the default branch if left out. Anything but the default branch may hold other people's code: untrusted.",
         access: "read",
-        // The default branch holds what the owner merged; other refs (pull request branches) may not.
-        untrusted: ({ repo, ref }) => ref !== undefined && ref !== defaults.get(repo),
+        untrusted: ({ repo, ref }) => offDefault(repo, ref),
         label: "Reading code",
         schema: z.object({
           repo: Repo,
-          path: z.string().max(500).default(""),
-          ref: z.string().max(200).optional(),
+          path: Path.default(""),
+          ref: Ref.optional(),
         }),
         describe: ({ repo, path }) => `Read ${repo}/${path}`,
         run: async ({ repo, path, ref }) => {
@@ -367,10 +395,12 @@ export const githubPlugin = definePlugin({
         description:
           "The CI of a branch or commit: each check run (GitHub Actions and apps) with its id, and each commit status, with its result. A GitHub Actions check's id is its job id, for github_ci_log.",
         access: "read",
+        // Off the default branch, a pull request from a fork can name its jobs and steps anything.
+        untrusted: ({ repo, ref }) => offDefault(repo, ref),
         label: "Checking CI",
         schema: z.object({
           repo: Repo,
-          ref: z.string().max(200).describe("Branch, tag or commit"),
+          ref: Ref.describe("Branch, tag or commit"),
         }),
         describe: ({ repo, ref }) => `Checked CI of ${repo}@${ref}`,
         run: async ({ repo, ref }) => {
@@ -484,20 +514,15 @@ export const githubPlugin = definePlugin({
         access: "write",
         schema: z.object({
           repo: Repo,
-          branch: z
-            .string()
-            .max(200)
-            .describe("The branch to commit to, or to start new_branch from"),
-          new_branch: z
-            .string()
-            .regex(/^[\w./-]{1,200}$/)
-            .optional()
-            .describe('A new branch for the commit, e.g. "hatbot/fix-ci"'),
+          branch: Branch.describe("The branch to commit to, or to start new_branch from"),
+          new_branch: Branch.optional().describe(
+            'A new branch for the commit, e.g. "hatbot/fix-ci"',
+          ),
           message: z.string().min(1).max(2000),
           files: z
             .array(
               z.object({
-                path: z.string().min(1).max(500),
+                path: Path.min(1),
                 content: z
                   .string()
                   .max(1_000_000)
@@ -511,13 +536,13 @@ export const githubPlugin = definePlugin({
         describe: ({ repo, branch, new_branch, files }) =>
           `Commit ${files.length} file${files.length === 1 ? "" : "s"} to ${repo}@${new_branch ?? branch}`,
         policy: ({ repo, branch, new_branch, files }) => {
-          // Git cleans paths before writing, so check them the same way.
-          const clean = (p: string) => posix.normalize(`/${p}`).toLowerCase();
-          if (files.some((f) => /^\/\.github\/workflows\//.test(clean(f.path))))
-            return ask("It changes CI workflows, which run with the repository's secrets.");
+          if (files.some((f) => runsInCi(f.path)))
+            return ask(
+              "It changes CI workflows or the actions they use, which run with the repository's secrets.",
+            );
           if (new_branch) return allow();
           const main = defaults.get(repo);
-          if (!main || branch === main)
+          if (!main || sameBranch(branch, main))
             return ask(`It commits straight to ${branch}${main ? ", the default branch" : ""}.`);
           return allow();
         },
@@ -533,17 +558,47 @@ export const githubPlugin = definePlugin({
             `${p}/git/commits/${head.object.sha}`,
           );
           const paths = files.map((f) => posix.normalize(f.path).replace(/^\/+/, ""));
-          await Promise.all(
-            files.map(async (f, i) => {
-              if (f.content === null && !(await exists(repo, paths[i] as string, branch)))
-                throw new PluginError(`${f.path} doesn't exist on ${branch}.`);
-            }),
+          // What's at each path now, from the folders they're in, so a script keeps its executable
+          // bit and links and submodules aren't overwritten as plain files.
+          const folders = new Map<string, Promise<Map<string, TreeEntry> | null>>();
+          const folder = (dir: string): Promise<Map<string, TreeEntry> | null> => {
+            let found = folders.get(dir);
+            if (!found) {
+              found = (async () => {
+                let sha = parent.tree.sha;
+                if (dir) {
+                  const up = await folder(parentOf(dir));
+                  const entry = up?.get(posix.basename(dir));
+                  if (entry?.type !== "tree") return null;
+                  sha = entry.sha;
+                }
+                const t = await api<{ tree: TreeEntry[] }>("GET", `${p}/git/trees/${sha}`);
+                return new Map(t.tree.map((e) => [e.path, e]));
+              })();
+              folders.set(dir, found);
+            }
+            return found;
+          };
+          const now = await Promise.all(
+            paths.map(async (path) => (await folder(parentOf(path)))?.get(posix.basename(path))),
           );
+          files.forEach((f, i) => {
+            const e = now[i];
+            if (!e && f.content === null)
+              throw new PluginError(`${f.path} doesn't exist on ${branch}.`);
+            if (e?.type === "tree") throw new PluginError(`${f.path} is a folder on ${branch}.`);
+            if (e?.type === "commit")
+              throw new PluginError(`${f.path} is a submodule; Hatbot doesn't change those.`);
+            if (e?.mode === "120000" && f.content !== null)
+              throw new PluginError(
+                `${f.path} is a symbolic link; Hatbot doesn't write over those.`,
+              );
+          });
           const tree = await api<{ sha: string }>("POST", `${p}/git/trees`, {
             base_tree: parent.tree.sha,
             tree: files.map((f, i) => ({
               path: paths[i],
-              mode: "100644",
+              mode: now[i]?.mode ?? "100644",
               type: "blob",
               ...(f.content === null ? { sha: null } : { content: f.content }),
             })),
