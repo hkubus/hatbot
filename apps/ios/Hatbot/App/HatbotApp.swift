@@ -206,10 +206,11 @@ private struct Toast: View {
         .glassSurface(in: .capsule)
         .padding(.top, 4)
         .transition(.move(edge: .top).combined(with: .opacity))
-        .task(id: text) {
-          // A newer note ends this wait early; that one then gets its own 2.8 s.
+        .task(id: store.toastId) {
+          // A newer note, or the same one again, ends this wait early; that one then gets its own 2.8 s.
+          let id = store.toastId
           do { try await Task.sleep(for: .seconds(2.8)) } catch { return }
-          if store.toast == text { withAnimation { store.toast = nil } }
+          if store.toastId == id { withAnimation { store.toast = nil } }
         }
     }
   }

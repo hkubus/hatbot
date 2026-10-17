@@ -273,6 +273,19 @@ final class StoreTests: XCTestCase {
     await MainActor.run { Self.countsWhatNeedsYou() }
   }
 
+  /// The same note twice is a new note: it gets its full time again.
+  func testARepeatedToastIsANewOne() async {
+    await MainActor.run {
+      let store = Self.store()
+      store.toast = "Saved"
+      let first = store.toastId
+      store.toast = "Saved"
+      XCTAssertNotEqual(store.toastId, first)
+      store.toast = nil
+      XCTAssertEqual(store.toastId, first + 1)
+    }
+  }
+
   func testOpeningAgainAfterStoppingIsAReconnect() async {
     await MainActor.run {
       let socket = Socket { URLSession.shared.webSocketTask(with: URL(string: "wss://h.example")!) }

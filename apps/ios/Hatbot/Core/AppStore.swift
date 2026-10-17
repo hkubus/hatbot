@@ -69,7 +69,11 @@ final class AppStore {
   /// Deleted while the app was open, so an open watcher says it's gone.
   var deletedWatchers = Set<Int>()
   /// A short note to show briefly, like a memory commit.
-  var toast: String?
+  var toast: String? {
+    didSet { if toast != nil { toastId += 1 } }
+  }
+  /// Each note's own, so the same one again is shown for its full time again.
+  private(set) var toastId = 0
   /// The chat that's showing: a bot's own, or a group. Hatbot's own is the first.
   private(set) var conversationId = 1
   /// Your bots, deleted ones too once seen: old messages still name them.
