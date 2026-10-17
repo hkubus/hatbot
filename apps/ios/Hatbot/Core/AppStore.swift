@@ -27,6 +27,9 @@ final class AppStore {
   var episodes: [Int: Episode] = [:]
   /// The replies being written, each in its own object: a delta then redraws only its bubble, not the chat.
   @ObservationIgnored private var replies: [Int: LiveReply] = [:]
+  /// Each load of the latest page in flight, with the replies' events that came meanwhile: the page may
+  /// have been read before them, so they go on it again, as on the web.
+  @ObservationIgnored private var missed: [UUID: [HatbotEvent]] = [:]
   var hasEarlier = false
   @ObservationIgnored private var loadingEarlier = false
   /// An earlier page is going in above.
@@ -206,6 +209,11 @@ final class AppStore {
 
   func apply(_ event: HatbotEvent) {
     switch event {
+    case .messageRewrite, .messageDelta, .messageDone:
+      for load in missed.keys { missed[load]?.append(event) }
+    default: break
+    }
+    switch event {
     case let .messageCreated(m):
       if m.isIncognito { incognitoIds.insert(m.id) }
       if m.role == .assistant { refreshConversations() }
@@ -220,13 +228,8 @@ final class AppStore {
       if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].editedAt = editedAt }
       addUnread(id)
       refreshConversations()
-    case let .messageRewrite(id):
-      // Its task ended: its bot is writing it again.
-      if let i = messages.firstIndex(where: { $0.id == id }) {
-        replies[id] = LiveReply(text: "")
-        messages[i].text = ""
-        messages[i].status = .streaming
-      }
+    case .messageRewrite, .messageDelta:
+      follow(event)
     case let .messageSeen(ids, seenAt):
       for i in messages.indices where ids.contains(messages[i].id) { messages[i].seenAt = seenAt }
       unread.removeAll { ids.contains($0) }
@@ -235,8 +238,6 @@ final class AppStore {
       for id in ids { replies[id] = nil }
       messages.removeAll { ids.contains($0.id) }
       unread.removeAll { ids.contains($0) }
-    case let .messageDelta(id, text):
-      if let r = live(id) { r.text += text }
     case let .messageProgress(id, text):
       if let r = live(id) { r.progress = String((r.progress + text).suffix(400)) }
     case let .messageTask(id, taskId):
@@ -249,13 +250,8 @@ final class AppStore {
       if let i = messages.firstIndex(where: { $0.id == id }), !(messages[i].attachments ?? []).contains(where: { $0.id == a.id }) {
         messages[i].attachments = (messages[i].attachments ?? []) + [a]
       }
-    case let .messageDone(id, text, status, sources):
-      replies[id] = nil
-      if let i = messages.firstIndex(where: { $0.id == id }) {
-        messages[i].text = text
-        messages[i].status = status
-        if let sources { messages[i].sources = sources }
-      }
+    case let .messageDone(id, _, _, _):
+      follow(event)
       addUnread(id)
       refreshConversations()
     case let .spendUpdated(today, month):
@@ -355,6 +351,30 @@ final class AppStore {
     return r
   }
 
+  /// What a reply's own events do to its text and state, also on a page read before they came: a delta
+  /// adds only what the reply doesn't have yet.
+  private func follow(_ event: HatbotEvent) {
+    switch event {
+    case let .messageRewrite(id):
+      // Its task ended: its bot is writing it again.
+      if let i = messages.firstIndex(where: { $0.id == id }) {
+        replies[id] = LiveReply(text: "")
+        messages[i].text = ""
+        messages[i].status = .streaming
+      }
+    case let .messageDelta(id, text, at):
+      if let r = live(id) { r.text = Delta.added(text, to: r.text, at: at) }
+    case let .messageDone(id, text, status, sources):
+      replies[id] = nil
+      if let i = messages.firstIndex(where: { $0.id == id }) {
+        messages[i].text = text
+        messages[i].status = status
+        if let sources { messages[i].sources = sources }
+      }
+    default: break
+    }
+  }
+
   /// After loading the latest page: its streaming replies start again from the text the brain sent.
   private func syncReplies(_ page: [ThreadMessage]) {
     for m in page {
@@ -422,12 +442,16 @@ final class AppStore {
   func loadThread() async throws {
     let wasIncognito = incognito
     let shown = conversationId
+    let load = UUID()
+    missed[load] = []
+    defer { missed[load] = nil }
     let list: [ThreadMessage] = try await api.get(page())
     try? await loadEpisodes(list)
     // Switched while it loaded: the other conversation's load wins.
     guard wasIncognito == incognito, shown == conversationId else { return }
     (messages, hasEarlier) = ThreadMerge.merge(messages, hasEarlier: hasEarlier, latest: list, page: Self.page)
     syncReplies(list)
+    for event in missed.removeValue(forKey: load) ?? [] { follow(event) }
     persist()
   }
 

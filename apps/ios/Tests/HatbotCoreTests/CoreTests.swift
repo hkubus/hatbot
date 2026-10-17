@@ -18,11 +18,15 @@ final class ModelTests: XCTestCase {
   }
 
   func testDecodesEventsAndIgnoresUnknownOnes() throws {
-    guard case let .messageDelta(id, text) = try event(#"{"type":"message.delta","id":4,"text":"Hi"}"#) else {
+    guard case let .messageDelta(id, text, at) = try event(#"{"type":"message.delta","id":4,"text":"Hi"}"#) else {
       return XCTFail("not a delta")
     }
     XCTAssertEqual(id, 4)
     XCTAssertEqual(text, "Hi")
+    XCTAssertNil(at)
+    guard case let .messageDelta(_, _, from) = try event(#"{"type":"message.delta","id":4,"text":"Hi","at":12}"#)
+    else { return XCTFail("not a delta") }
+    XCTAssertEqual(from, 12)
     guard case .unknown("teach.updated") = try event(#"{"type":"teach.updated","session":{}}"#) else {
       return XCTFail("not unknown")
     }
@@ -285,6 +289,26 @@ final class StoreTests: XCTestCase {
     XCTAssertEqual(store.messages.first?.text, "Hello.")
     XCTAssertEqual(store.messages.first?.status, .done)
     XCTAssertNil(store.reply(7))
+
+    // A reply loaded mid-way already has the start of a delta sent before it was read.
+    let page = ThreadMessage(
+      id: 8, role: .assistant, kind: .text, text: "Hello", status: .streaming, createdAt: "2026-10-10T08:00:00Z")
+    store.apply(.messageCreated(page))
+    store.apply(.messageDelta(id: 8, text: "lo world", at: 3))
+    XCTAssertEqual(store.reply(8)?.text, "Hello world")
+    store.apply(.messageDelta(id: 8, text: "!", at: 11))
+    XCTAssertEqual(store.reply(8)?.text, "Hello world!")
+  }
+
+  func testADeltaSkipsWhatsShownByTheBrainsCount() {
+    XCTAssertEqual(Delta.added("lo world", to: "Hello", at: 3), "Hello world")
+    XCTAssertEqual(Delta.added(" world", to: "Hello", at: nil), "Hello world")
+    XCTAssertEqual(Delta.added("lo", to: "Hello", at: 3), "Hello")
+    // Text the reply hasn't got yet stays a gap, as on the web: all of the delta is added.
+    XCTAssertEqual(Delta.added("world", to: "Hello", at: 9), "Helloworld")
+    // The brain counts as JavaScript does, in UTF-16 units: the wave is two.
+    XCTAssertEqual(Delta.added("👋 there", to: "Hi 👋", at: 3), "Hi 👋 there")
+    XCTAssertEqual(Delta.added("ść", to: "Cześć", at: 3), "Cześć")
   }
 
   @MainActor private static func countsWhatNeedsYou() {
@@ -1266,6 +1290,31 @@ final class NetworkTests: XCTestCase {
     try await earlier
     let ids = await MainActor.run { store.messages.map(\.id) }
     XCTAssertEqual(ids, [70])
+  }
+
+  /// A reply streaming while the chat loads: its text isn't doubled, and nothing sent after the page
+  /// was read is lost.
+  func testAReplyLoadedMidWayIsNeitherDoubledNorCut() async throws {
+    let store = try await MainActor.run { try Self.store() }
+    SlowBrain.routes["/thread/messages?limit=50"] =
+      #"[{"id":9,"role":"assistant","kind":"text","text":"Hello","status":"streaming","createdAt":"2026-10-15T08:00:00Z"}]"#
+    try await MainActor.run {
+      store.messages = [try JSONDecoder().decode(ThreadMessage.self, from: Data(#"{"id":9,"role":"assistant","kind":"text","text":"Hel","status":"streaming","createdAt":"2026-10-15T08:00:00Z"}"#.utf8))]
+    }
+    async let loaded: Void = store.loadThread()
+    try await Task.sleep(for: .milliseconds(50))
+    await MainActor.run {
+      // Sent before the page was read, and after.
+      store.apply(.messageDelta(id: 9, text: "lo", at: 3))
+      store.apply(.messageDelta(id: 9, text: " world", at: 5))
+    }
+    try await loaded
+    await MainActor.run {
+      XCTAssertEqual(store.reply(9)?.text, "Hello world")
+      // One sent before the page was read that comes after it.
+      store.apply(.messageDelta(id: 9, text: "world!", at: 6))
+      XCTAssertEqual(store.reply(9)?.text, "Hello world!")
+    }
   }
 
   /// A save goes on top of the version that was read; one saved meanwhile comes back as a conflict

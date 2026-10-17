@@ -21,6 +21,19 @@ enum ThreadMerge {
   }
 }
 
+/// A streaming reply's text with a delta added (withDelta in the web app).
+enum Delta {
+  /// `at` is where `text` starts in the reply, in UTF-16 units as the brain counts: the part already
+  /// shown, because the page was read after that text was sent, isn't added twice.
+  static func added(_ text: String, to shown: String, at: Int?) -> String {
+    guard let at else { return shown + text }
+    let skip = shown.utf16.count - at
+    guard skip > 0 else { return shown + text }
+    guard skip < text.utf16.count else { return shown }
+    return shown + String(decoding: text.utf16.dropFirst(skip), as: UTF16.self)
+  }
+}
+
 struct ThreadGroup: Identifiable, Equatable, Sendable {
   var episodeId: Int?
   var messages: [ThreadMessage]

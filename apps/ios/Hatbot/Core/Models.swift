@@ -633,7 +633,8 @@ struct Negotiation: Decodable, Identifiable, Equatable, Sendable {
 /// Live events on /api/v1/stream. Events this app doesn't know decode to `.unknown`.
 enum HatbotEvent: Decodable, Sendable {
   case messageCreated(ThreadMessage)
-  case messageDelta(id: Int, text: String)
+  /// `at`: where `text` starts in the reply, in UTF-16 units; an older brain doesn't say.
+  case messageDelta(id: Int, text: String, at: Int? = nil)
   case messageProgress(id: Int, text: String)
   case messageDone(id: Int, text: String, status: ThreadMessage.Status, sources: [Source]? = nil)
   case messageTask(id: Int, taskId: Int)
@@ -677,7 +678,7 @@ enum HatbotEvent: Decodable, Sendable {
   private enum Key: String, CodingKey {
     case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused, tokens, costUsd
     case task, step, approval, state, schedule, trigger, episode, editedAt, ids, seenAt, attachment
-    case bot, conversation, proposal, watcher, negotiation, negotiationId, sources
+    case bot, conversation, proposal, watcher, negotiation, negotiationId, sources, at
   }
 
   init(from decoder: Decoder) throws {
@@ -686,7 +687,10 @@ enum HatbotEvent: Decodable, Sendable {
     switch type {
     case "message.created": self = .messageCreated(try c.decode(ThreadMessage.self, forKey: .message))
     case "message.delta":
-      self = .messageDelta(id: try c.decode(Int.self, forKey: .id), text: try c.decode(String.self, forKey: .text))
+      self = .messageDelta(
+        id: try c.decode(Int.self, forKey: .id),
+        text: try c.decode(String.self, forKey: .text),
+        at: try c.decodeIfPresent(Int.self, forKey: .at))
     case "message.progress":
       self = .messageProgress(id: try c.decode(Int.self, forKey: .id), text: try c.decode(String.self, forKey: .text))
     case "message.done":
