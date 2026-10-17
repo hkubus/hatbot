@@ -143,6 +143,14 @@ test("bad schedule times are refused with a reason", async () => {
     const r = await call("POST", "/schedules", { name: "x", prompt: "y", ...body });
     return { status: r.status, error: ((await r.json()) as { error?: string }).error ?? "" };
   };
+  // The web app sends a once-off as the moment you picked, with its offset: it runs then, whatever
+  // the brain's own time zone.
+  const once = await call("POST", "/schedules", {
+    name: "x",
+    prompt: "y",
+    at: "2026-10-09T16:30:00.000Z",
+  });
+  expect(((await once.json()) as Schedule).runAt).toBe("2026-10-09T16:30:00.000Z");
   expect(await make({ cron: "every day" })).toMatchObject({ status: 400 });
   expect((await make({ cron: "* * * * *" })).error).toContain("every 5 minutes");
   expect((await make({ at: "2026-10-01T08:00" })).error).toContain("passed");
