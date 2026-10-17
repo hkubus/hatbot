@@ -11,6 +11,7 @@ import {
   HATBOT_ID,
   parseCommand,
   type Schedule,
+  type Source,
   type Task,
   type ThreadMessage,
 } from "@hatbot/shared";
@@ -50,6 +51,7 @@ import {
 } from "./prompt";
 import { mayReview, safeToRun } from "./review";
 import {
+  addSources,
   CHAT_WEB_TOOLS,
   containerOf,
   INCOGNITO_TOOLS,
@@ -77,11 +79,17 @@ const MAX_CHAT_COMMANDS = 2;
 /** Why a reply was cut off: /stop, rather than Pause all. */
 const STOPPED = "stopped";
 export const MESSAGE_COLUMNS =
-  "id, role, conversation_id AS conversationId, bot_id AS botId, kind, text, status, created_at AS createdAt, task_id AS taskId, schedule_id AS scheduleId, negotiation_id AS negotiationId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt, incognito";
-export type MessageRow = Omit<ThreadMessage, "incognito"> & { incognito: number };
-/** A message as the app gets it: `incognito` only on the ones that are. */
-export const messageOf = ({ incognito, ...m }: MessageRow): ThreadMessage =>
-  incognito ? { ...m, incognito: true } : m;
+  "id, role, conversation_id AS conversationId, bot_id AS botId, kind, text, status, created_at AS createdAt, task_id AS taskId, schedule_id AS scheduleId, negotiation_id AS negotiationId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt, incognito, sources";
+export type MessageRow = Omit<ThreadMessage, "incognito" | "sources"> & {
+  incognito: number;
+  sources: string | null;
+};
+/** A message as the app gets it: `incognito` and `sources` only on the ones that have them. */
+export const messageOf = ({ incognito, sources, ...m }: MessageRow): ThreadMessage => ({
+  ...m,
+  ...(incognito ? { incognito: true as const } : {}),
+  ...(sources ? { sources: JSON.parse(sources) as Source[] } : {}),
+});
 /** How a task ended, in the place of the reply that started it when its bot doesn't write that again. */
 export const resultText = (t: Pick<Task, "status" | "summary">) =>
   t.status === "failed" ? `**Didn't finish.** ${t.summary ?? ""}`.trim() : t.summary || "Done.";
@@ -1546,6 +1554,9 @@ export class Thread {
       text += delta;
       events.emit({ type: "message.delta", id: out.id, text: delta });
     };
+    /** The pages the reply cites, and the titles of those it fetched (`addSources`). */
+    const cited: Source[] = [];
+    const fetched = new Map<string, string>();
     const finish = (status: "done" | "error", note?: string): Said => {
       // A chart being fixed is out of view; the reply ends with what's shown.
       chartFix = null;
@@ -1556,9 +1567,20 @@ export class Thread {
         separate = true;
         say(note);
       }
-      db.query("UPDATE messages SET text = ?, status = ? WHERE id = ?").run(text, status, out.id);
+      db.query("UPDATE messages SET text = ?, status = ?, sources = ? WHERE id = ?").run(
+        text,
+        status,
+        cited.length ? JSON.stringify(cited) : null,
+        out.id,
+      );
       this.touch(episode.id);
-      events.emit({ type: "message.done", id: out.id, text, status });
+      events.emit({
+        type: "message.done",
+        id: out.id,
+        text,
+        status,
+        ...(cited.length ? { sources: cited } : {}),
+      });
       if (rewrite) {
         const editedAt = this.now();
         db.query("UPDATE messages SET edited_at = ? WHERE id = ?").run(editedAt, out.id);
@@ -1735,6 +1757,7 @@ export class Thread {
         used.tokens += tokenCount(tokensOf(res.usage));
         events.emit({ type: "message.usage", id: out.id, ...used });
         this.appendTurn(episode.id, bot.id, "assistant", res.content);
+        addSources(cited, fetched, res.content);
         // Web pages are untrusted (PLAN.md §6.1).
         const web = webReads(res.content);
         if (web.length) this.taint(episode.id, web[0] as string);

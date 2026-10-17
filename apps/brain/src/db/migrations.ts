@@ -596,4 +596,9 @@ export const migrations: string[] = [
   ALTER TABLE proposals_new RENAME TO proposals;
   CREATE INDEX proposals_status ON proposals (status, id);
   `,
+  /* 31: research tasks and their reports (PLAN.md §17); the pages a reply cites */ `
+  ALTER TABLE tasks ADD COLUMN research INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE tasks ADD COLUMN report_path TEXT;
+  ALTER TABLE messages ADD COLUMN sources TEXT;
+  `,
 ];

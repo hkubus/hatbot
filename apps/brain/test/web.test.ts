@@ -235,3 +235,67 @@ test("a task holds its news while the web tools' code is still running", async (
   expect(third.map((b) => b.type)).toEqual(["tool_result", "text"]);
   expect(third[1]?.text).toContain("Monitor back up");
 });
+
+test("a reply keeps the pages it cites, searched or fetched", async () => {
+  const cite = (t: string, citations: unknown[]): Block =>
+    ({ type: "text", text: t, citations }) as unknown as Block;
+  const chat = new FakeModel([
+    {
+      content: [
+        {
+          type: "web_fetch_tool_result",
+          tool_use_id: "srvtoolu_f",
+          content: {
+            type: "web_fetch_result",
+            url: "https://pve.proxmox.com/wiki/Roadmap",
+            retrieved_at: null,
+            content: {
+              type: "document",
+              title: "Roadmap - Proxmox VE",
+              citations: { enabled: true },
+              source: { type: "text", media_type: "text/plain", data: "..." },
+            },
+          },
+        } as unknown as Block,
+        cite("It's due in December", [
+          {
+            type: "web_search_result_location",
+            url: "https://forum.proxmox.com/t/9-3",
+            title: "9.3 release thread",
+            cited_text: "December",
+            encrypted_index: "x",
+          },
+          {
+            type: "char_location",
+            document_index: 0,
+            document_title: "Roadmap - Proxmox VE",
+            cited_text: "Q4",
+            start_char_index: 0,
+            end_char_index: 2,
+            file_id: null,
+          },
+        ]),
+        cite(", with kernel 7.1.", [
+          {
+            type: "web_search_result_location",
+            url: "https://forum.proxmox.com/t/9-3",
+            title: "9.3 release thread",
+            cited_text: "7.1",
+            encrypted_index: "y",
+          },
+        ]),
+      ],
+    },
+  ]);
+  const t = await testApp(chat);
+  await t.thread.post("when is proxmox 9.3 out?").done;
+  const sources = [
+    { url: "https://forum.proxmox.com/t/9-3", title: "9.3 release thread" },
+    { url: "https://pve.proxmox.com/wiki/Roadmap", title: "Roadmap - Proxmox VE" },
+  ];
+  expect(t.thread.list().at(-1)?.sources).toEqual(sources);
+  const done = t.events.find((e) => e.type === "message.done") as { sources?: unknown };
+  expect(done.sources).toEqual(sources);
+  // A reply that cites nothing has none.
+  expect(t.thread.list()[0]).not.toHaveProperty("sources");
+});

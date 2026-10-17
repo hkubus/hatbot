@@ -2,6 +2,7 @@ import {
   type Approval,
   type Attachment,
   matchingCommands,
+  type Source,
   type ThreadMessage,
   threadGroups,
 } from "@hatbot/shared";
@@ -352,6 +353,7 @@ function ReplyMessage({
             {tokenText(used.tokens)} tokens · ${used.costUsd.toFixed(3)}
           </div>
         )}
+        {!streaming && m.sources?.length ? <Sources list={m.sources} /> : null}
         {m.negotiationId && <NegotiationResult id={m.negotiationId} />}
         {ended && !finished && m.text && <hr className="result-rule" />}
         {m.taskId && !finished && <TaskResult taskId={m.taskId} />}
@@ -479,6 +481,23 @@ function ScheduleMessage({ m, scheduleId }: { m: ThreadMessage; scheduleId: numb
 }
 
 /** A message's files: pictures you can open, the rest to open or save. */
+/** The pages a reply cites, in a line. */
+function Sources({ list }: { list: Source[] }) {
+  return (
+    <div className="sources">
+      Sources:{" "}
+      {list.map((s, i) => (
+        <span key={s.url}>
+          {i > 0 && " · "}
+          <a href={s.url} target="_blank" rel="noreferrer" title={s.url}>
+            {s.title.length > 60 ? `${s.title.slice(0, 59)}…` : s.title}
+          </a>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function Files({ list }: { list: Attachment[] }) {
   return (
     <div className="files">

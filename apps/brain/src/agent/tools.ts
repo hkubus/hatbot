@@ -7,6 +7,7 @@ import {
   minWatchMinutes,
   type Schedule,
   SKILL_NAME,
+  type Source,
   type WatchSource,
 } from "@hatbot/shared";
 import { z } from "zod";
@@ -931,5 +932,32 @@ export function serverToolWaiting(content: Anthropic.Beta.BetaContentBlock[]): b
  * The container the API ran the model's code in, to send with the next request of the same reply or
  * task: code paused mid-run carries on in it, and what the code kept stays.
  */
+/**
+ * The web pages a response cites, adding them to `cited` in the order it first cites them. A fetched
+ * page's citations name its title, not its URL: `pages` maps the titles of what was fetched so far.
+ */
+export function addSources(
+  cited: Source[],
+  pages: Map<string, string>,
+  content: Anthropic.Beta.BetaContentBlock[],
+): void {
+  for (const b of content)
+    if (b.type === "web_fetch_tool_result" && b.content.type === "web_fetch_result")
+      pages.set(b.content.content.title || b.content.url, b.content.url);
+  for (const b of content) {
+    if (b.type !== "text") continue;
+    for (const c of b.citations ?? []) {
+      const source =
+        c.type === "web_search_result_location"
+          ? { url: c.url, title: c.title || c.url }
+          : "document_title" in c && c.document_title && pages.has(c.document_title)
+            ? { url: pages.get(c.document_title) as string, title: c.document_title }
+            : null;
+      if (source && /^https?:\/\//.test(source.url) && !cited.some((s) => s.url === source.url))
+        cited.push(source);
+    }
+  }
+}
+
 export const containerOf = (res: Anthropic.Beta.BetaMessage, before?: string) =>
   res.container?.id ?? before;

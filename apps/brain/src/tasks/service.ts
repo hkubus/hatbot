@@ -77,6 +77,8 @@ type Row = {
   model: string;
   skill: string | null;
   effort: Task["effort"];
+  research: number;
+  report_path: string | null;
   status: TaskStatus;
   tainted: number;
   tainted_by: string | null;
@@ -113,6 +115,8 @@ const toTask = (r: Row): Task => ({
   model: r.model,
   skill: r.skill,
   effort: r.effort,
+  research: Boolean(r.research),
+  reportPath: r.report_path,
   status: r.status,
   tainted: Boolean(r.tainted),
   taintedBy: r.tainted_by,

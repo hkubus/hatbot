@@ -241,11 +241,12 @@ final class AppStore {
       if let i = messages.firstIndex(where: { $0.id == id }), !(messages[i].attachments ?? []).contains(where: { $0.id == a.id }) {
         messages[i].attachments = (messages[i].attachments ?? []) + [a]
       }
-    case let .messageDone(id, text, status):
+    case let .messageDone(id, text, status, sources):
       replies[id] = nil
       if let i = messages.firstIndex(where: { $0.id == id }) {
         messages[i].text = text
         messages[i].status = status
+        if let sources { messages[i].sources = sources }
       }
       addUnread(id)
       refreshConversations()

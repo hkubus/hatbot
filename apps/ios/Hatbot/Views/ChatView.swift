@@ -728,6 +728,7 @@ private struct MessageRow: View, Equatable {
     case .schedule where m.scheduleId != nil: ScheduleMessage(scheduleId: m.scheduleId!)
     default: ReplyMessage(m: m)
     }
+    if m.status != .streaming, let list = m.sources, !list.isEmpty { MessageSources(list: list) }
     if let list = m.attachments, !list.isEmpty { MessageFiles(list: list, alignment: .leading) }
   }
 
@@ -1071,5 +1072,29 @@ private struct Bubble: Shape {
     p.closeSubpath()
     let flip = side == .leading ? CGAffineTransform(scaleX: -1, y: 1).translatedBy(x: -w, y: 0) : .identity
     return p.applying(flip.concatenating(CGAffineTransform(translationX: rect.minX, y: rect.minY)))
+  }
+}
+
+/// The pages a reply cites, in a line of links.
+private struct MessageSources: View {
+  let list: [Source]
+
+  var body: some View {
+    Text(line)
+      .font(.footnote)
+      .foregroundStyle(.secondary)
+      .tint(.secondary)
+  }
+
+  private var line: AttributedString {
+    var out = AttributedString("Sources: ")
+    for (i, s) in list.enumerated() {
+      if i > 0 { out += AttributedString(" · ") }
+      var title = AttributedString(s.title.count > 60 ? "\(s.title.prefix(59))…" : s.title)
+      title.link = URL(string: s.url)
+      title.underlineStyle = .single
+      out += title
+    }
+    return out
   }
 }

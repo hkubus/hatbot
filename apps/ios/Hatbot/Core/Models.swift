@@ -62,6 +62,8 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   var attachments: [Attachment]?
   /// In the incognito conversation, which isn't kept; missing otherwise.
   var incognito: Bool?
+  /// The web pages it cites, in the order it first cites them; missing when none.
+  var sources: [Source]?
   /// The chat it's in: a bot's own, or a group. Missing on brains from before bots.
   var conversationId: Int?
   /// The bot that wrote it; nil for yours.
@@ -74,14 +76,14 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case id, role, kind, text, status, createdAt, taskId, scheduleId, episodeId, editedAt, seenAt, attachments
-    case incognito, conversationId, botId, negotiationId
+    case incognito, conversationId, botId, negotiationId, sources
   }
 
   init(
     id: Int, role: Role, kind: Kind, text: String, status: Status, createdAt: String, taskId: Int? = nil,
     scheduleId: Int? = nil, episodeId: Int? = nil, editedAt: String? = nil, seenAt: String? = nil,
     attachments: [Attachment]? = nil, incognito: Bool? = nil, conversationId: Int? = nil, botId: String? = nil,
-    negotiationId: Int? = nil
+    negotiationId: Int? = nil, sources: [Source]? = nil
   ) {
     self.id = id
     self.role = role
@@ -100,6 +102,7 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
     self.conversationId = conversationId
     self.botId = botId
     self.negotiationId = negotiationId
+    self.sources = sources
   }
 
   init(from decoder: Decoder) throws {
@@ -120,8 +123,15 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
       incognito: c.decodeIfPresent(Bool.self, forKey: .incognito),
       conversationId: c.decodeIfPresent(Int.self, forKey: .conversationId),
       botId: c.decodeIfPresent(String.self, forKey: .botId),
-      negotiationId: c.decodeIfPresent(Int.self, forKey: .negotiationId))
+      negotiationId: c.decodeIfPresent(Int.self, forKey: .negotiationId),
+      sources: c.decodeIfPresent([Source].self, forKey: .sources))
   }
+}
+
+/// A web page a reply cites.
+struct Source: Codable, Equatable, Hashable, Sendable {
+  let url: String
+  let title: String
 }
 
 /// A file on a message: one you attached, or one Hatbot or a task sent you.
@@ -610,7 +620,7 @@ enum HatbotEvent: Decodable, Sendable {
   case messageCreated(ThreadMessage)
   case messageDelta(id: Int, text: String)
   case messageProgress(id: Int, text: String)
-  case messageDone(id: Int, text: String, status: ThreadMessage.Status)
+  case messageDone(id: Int, text: String, status: ThreadMessage.Status, sources: [Source]? = nil)
   case messageTask(id: Int, taskId: Int)
   /// A negotiation now shows under this reply.
   case messageNegotiation(id: Int, negotiationId: Int)
@@ -652,7 +662,7 @@ enum HatbotEvent: Decodable, Sendable {
   private enum Key: String, CodingKey {
     case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused, tokens, costUsd
     case task, step, approval, state, schedule, trigger, episode, editedAt, ids, seenAt, attachment
-    case bot, conversation, proposal, watcher, negotiation, negotiationId
+    case bot, conversation, proposal, watcher, negotiation, negotiationId, sources
   }
 
   init(from decoder: Decoder) throws {
@@ -668,7 +678,8 @@ enum HatbotEvent: Decodable, Sendable {
       self = .messageDone(
         id: try c.decode(Int.self, forKey: .id),
         text: try c.decode(String.self, forKey: .text),
-        status: try c.decode(ThreadMessage.Status.self, forKey: .status))
+        status: try c.decode(ThreadMessage.Status.self, forKey: .status),
+        sources: try c.decodeIfPresent([Source].self, forKey: .sources))
     case "message.task":
       self = .messageTask(id: try c.decode(Int.self, forKey: .id), taskId: try c.decode(Int.self, forKey: .taskId))
     case "message.negotiation":

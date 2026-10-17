@@ -37,6 +37,24 @@ final class ModelTests: XCTestCase {
     XCTAssertEqual(m.kind, .text)
   }
 
+  func testDecodesTheSourcesAReplyCites() throws {
+    let json = #"""
+      {"id":1,"role":"assistant","kind":"text","text":"x","status":"done","createdAt":"2026-10-17T08:00:00Z",
+       "sources":[{"url":"https://pve.proxmox.com/wiki/Roadmap","title":"Roadmap"}]}
+      """#
+    let m = try JSONDecoder().decode(ThreadMessage.self, from: Data(json.utf8))
+    XCTAssertEqual(m.sources, [Source(url: "https://pve.proxmox.com/wiki/Roadmap", title: "Roadmap")])
+    guard
+      case let .messageDone(_, _, _, sources) = try event(
+        #"{"type":"message.done","id":1,"text":"x","status":"done","sources":[{"url":"https://a.example","title":"A"}]}"#)
+    else { return XCTFail("not done") }
+    XCTAssertEqual(sources?.first?.title, "A")
+    // A brain from before sends none.
+    guard case let .messageDone(_, _, _, none) = try event(#"{"type":"message.done","id":1,"text":"x","status":"done"}"#)
+    else { return XCTFail("not done") }
+    XCTAssertNil(none)
+  }
+
   func testEncodesLiveInput() throws {
     let data = try JSONEncoder().encode(LiveInput.key("Enter", down: true))
     let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])

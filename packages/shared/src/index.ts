@@ -110,7 +110,12 @@ export type ThreadMessage = {
   attachments?: Attachment[];
   /** In the incognito conversation, which isn't kept. Absent otherwise. */
   incognito?: true;
+  /** The web pages it cites, in the order it first cites them. Absent when none. */
+  sources?: Source[];
 };
+
+/** A web page a reply cites. */
+export type Source = { url: string; title: string };
 
 /** POST /thread/ask: your message, and the replies to it once they're done or the wait ran out. */
 export type AskResult = { message: ThreadMessage; replies: ThreadMessage[]; finished: boolean };
@@ -177,6 +182,10 @@ export type Task = {
   skill: string | null;
   /** Background tasks: null runs at the chat's effort. */
   effort: "low" | "medium" | "high" | null;
+  /** A research task (PLAN.md §17): Opus with helpers, ending in a report. */
+  research: boolean;
+  /** A research task's report, in memory. */
+  reportPath: string | null;
   status: TaskStatus;
   /** It has read untrusted content (PLAN.md §6.1). */
   tainted: boolean;
@@ -276,7 +285,13 @@ export type HatbotEvent =
   | { type: "message.created"; message: ThreadMessage }
   | { type: "message.delta"; id: number; text: string }
   | { type: "message.progress"; id: number; text: string }
-  | { type: "message.done"; id: number; text: string; status: "done" | "error" }
+  | {
+      type: "message.done";
+      id: number;
+      text: string;
+      status: "done" | "error";
+      sources?: Source[];
+    }
   /** A task now shows under this reply. */
   | { type: "message.task"; id: number; taskId: number }
   /** A negotiation now shows under this reply (PLAN.md §16.5). */

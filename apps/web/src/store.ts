@@ -674,7 +674,12 @@ function apply(e: HatbotEvent) {
         progress,
         usage,
         unread: addUnread(e.id),
-        messages: patchMessage(e.id, (m) => ({ ...m, text: e.text, status: e.status })),
+        messages: patchMessage(e.id, (m) => ({
+          ...m,
+          text: e.text,
+          status: e.status,
+          ...(e.sources ? { sources: e.sources } : {}),
+        })),
       });
     }
     case "spend.updated":
