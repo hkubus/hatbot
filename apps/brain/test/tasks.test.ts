@@ -712,6 +712,17 @@ test("a step that buys or pays asks as a purchase or a payment, whatever the mod
   expect(approvalKind("account_security", { summary: "Pay" }, { url: null, text: "" })).toBe(
     "account_security",
   );
+  // Without Polish letters too, as the gate reads labels.
+  for (const summary of ["Zaplace za zamowienie", "Zlozyc zamowienie"])
+    expect(approvalKind("other", { summary }, { url: null, text: "" })).toBe("purchase");
+  // A shop's footer lists BLIK on every page; only a BLIK code field makes it a payment.
+  const footer = "Kontakt · Płatności: BLIK, Visa, Mastercard · Regulamin";
+  const shop = { url: "https://shop.example/kontakt", text: footer };
+  expect(approvalKind("send", { summary: "Send the reply to Anna" }, shop)).toBe("send");
+  // What a step is about can't be told from what it does: the safe side, at the cost of the lock screen.
+  expect(approvalKind("send", { summary: "Reply to Anna about the payment date" }, shop)).toBe(
+    "purchase",
+  );
 
   // In a task: a checkout click the model calls "send" gets no Approve button on the phone.
   const work = new FakeModel([

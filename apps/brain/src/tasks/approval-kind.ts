@@ -13,13 +13,12 @@ import {
   samePage,
 } from "./policy";
 
-/** Card and BLIK fields, as their labels read on a page. */
+/**
+ * Card and BLIK fields, as their labels read on a page. BLIK alone is a way to pay that a shop's footer
+ * lists on every page; only its code field asks for one.
+ */
 const PAYMENT_FIELDS =
-  /(?<!\p{L})(card number|numer karty|cvv2?|cvc2?|security code|kod cvv|kod blik|blik code|blik|expiry date|data ważności karty)(?!\p{L})/iu;
-
-/** Buying or paying, in what the model says it's about to do: English, Polish and Czech. */
-const PURCHASE_WORDS =
-  /(?<!\p{L})(buy|buying|purchase|purchasing|checkout|check out|pay|paying|payment|place (?:the |an |my )?order|order(?: it)? now|deposit|kup\p{L}*|zamów\p{L}*|zamawia\p{L}*|zapła\p{L}*|opłac\p{L}*|opłać|płać|płac\p{L}*|zaliczk\p{L}*|zadatek|koupit|zaplat\p{L}*|objedn(?:at|ej|ejte|[aá]v[aá]m|[aá]vk[au])|dokon[cč]it (?:n[aá]kup|objedn[aá]vk\p{L}*))(?!\p{L})/iu;
+  /(?<!\p{L})(card number|numer karty|cvv2?|cvc2?|security code|kod cvv|kod blik|blik code|expiry date|data ważności karty)(?!\p{L})/iu;
 
 const hostOf = (url: string | null) => {
   try {
@@ -55,7 +54,7 @@ export function approvalKind(
   if (held && "checkout" in held && paymentHost(held.checkout)) return "payment";
   if (
     kind === "purchase" ||
-    PURCHASE_WORDS.test(`${step.summary} ${step.reason ?? ""}`) ||
+    buyingLabel(`${step.summary} ${step.reason ?? ""}`) ||
     checkoutHost(page.url ?? undefined) ||
     (held && buysOrPays(held))
   )
