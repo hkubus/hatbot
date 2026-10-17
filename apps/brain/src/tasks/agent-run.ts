@@ -38,7 +38,7 @@ import {
   RESEARCH_CORE_TOOLS,
   RESEARCH_TOKENS,
   RESEARCH_TOOLS,
-  ResearchSources,
+  ResearchState,
   researchPrompt,
 } from "./research";
 import { SEND_TO_CHAT_DESCRIPTION, SendToChat, sendToChat } from "./send-to-chat";
@@ -581,9 +581,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
     /** finish_task sends a summary whose charts don't draw back once, not every time. */
     let chartsChecked = false;
-    /** Research: the helpers' sources, and whether finish_research has been checked yet. */
-    const found = new ResearchSources();
-    let reportChecked = false;
+    /** Research: the helpers' sources, and how finishing has gone. */
+    const found = new ResearchState();
     const run = { tasks, task, signal, taint };
     /** Where the web tools' code runs: the same one each step, so paused code can carry on. */
     let container: string | undefined;
@@ -740,14 +739,13 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
               `Not finished: ${broken} Call finish_research again with it fixed. Don't guess where a value belongs; if you can't tell, leave the chart out.`,
               true,
             );
-          const r = await finishResearch(run, found, p.data, reportChecked);
-          reportChecked = true;
+          const r = await finishResearch(run, found, p.data);
           if ("retry" in r) return result(call, r.retry, true);
           finished = { outcome: p.data.outcome, summary: r.summary, notify: p.data.notify };
           return result(call, "Finished.");
         }
         if (call.name === "investigate") {
-          const r = await investigate(run, found, call.input);
+          const r = await investigate(run, found.sources, call.input);
           return result(call, r.content, r.isError);
         }
         if (call.name === "run_desktop_task") return desktopTask(call);

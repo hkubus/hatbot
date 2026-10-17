@@ -463,7 +463,7 @@ export const TOOLS = [
   def({
     name: "research",
     description:
-      "Start a research task, for a question that needs many searches and pages: comparing products or options, prices across shops, a technical question whose sources disagree. Opus plans it and hands parts to helpers that search at once, the numbers are checked against their sources, and it ends in a report with numbered sources, saved in memory and attached. It takes a few minutes and costs about $1–3. Its short answer shows under your reply. It can't see this conversation, so put everything that bears on the question in it. For a fact or two, search yourself instead.",
+      "Start a research task, for a question that needs many searches and pages: comparing products or options, prices across shops, a technical question whose sources disagree. Opus plans it and hands parts to helpers that search at once, the numbers it cites are checked against the quotes the helpers copied from the pages, and it ends in a report with numbered sources, saved in memory and attached. It takes a few minutes and costs about $1–3. Its short answer shows under your reply. It can't see this conversation, so put everything that bears on the question in it. For a fact or two, search yourself instead.",
     schema: ResearchInput,
     run: async (
       { title, question, previous },
