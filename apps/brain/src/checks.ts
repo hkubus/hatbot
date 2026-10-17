@@ -298,7 +298,19 @@ export class Checks {
       );
     await ntfy.health();
     // Whoever reads the topic sees every notification, and can press its Approve buttons.
-    const open = await ntfy.readableByAnyone().catch(() => null);
+    let open: boolean;
+    try {
+      open = await ntfy.readableByAnyone();
+    } catch (err) {
+      const why =
+        (err as Error).name === "TimeoutError" ? "ntfy didn't answer" : (err as Error).message;
+      const fix = "Allow only your ntfy user to read the topic.";
+      return guessableTopic(ntfy.topic)
+        ? fail(
+            `Couldn't tell whether anyone can read your notifications (${why}), and the topic's name is easy to guess. Run deploy.sh with NTFY_URL set to pick a random one. ${fix}`,
+          )
+        : warn(`Couldn't tell whether anyone can read the topic (${why}). ${fix}`);
+    }
     if (open && guessableTopic(ntfy.topic))
       return fail(
         "Anyone can read your notifications, Approve buttons included: the server lets anyone read the topic, and its name is easy to guess. Run deploy.sh with NTFY_URL set to pick a random one, and allow only your ntfy user to read it.",

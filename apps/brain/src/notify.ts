@@ -27,8 +27,20 @@ export interface Notifier {
   send(n: Notification): Promise<void>;
 }
 
-/** A topic this short could be guessed, and on a server that lets anyone read, read. */
-export const guessableTopic = (topic: string) => topic.length < 20;
+/**
+ * A topic named by hand could be guessed, and on a server that lets anyone read, read. One is random
+ * only with a long run that looks it: 16 hex digits and letters (deploy.sh's hatbot-<24 hex>), or 22
+ * letters and digits of both cases.
+ */
+export function guessableTopic(topic: string): boolean {
+  const hex = (topic.match(/[0-9a-f]{16,}|[0-9A-F]{16,}/g) ?? []).some(
+    (run) => /[0-9]/.test(run) && /[a-f]/i.test(run),
+  );
+  const mixed = (topic.match(/[\w-]{22,}/g) ?? []).some((run) =>
+    [/[a-z]/, /[A-Z]/, /[0-9]/].every((kind) => kind.test(run)),
+  );
+  return !hex && !mixed;
+}
 
 export class NtfyNotifier implements Notifier {
   private url: string;
@@ -65,10 +77,10 @@ export class NtfyNotifier implements Notifier {
   }
 
   /**
-   * Whether someone with no account can read the topic: true, false, or null when the server's answer
-   * doesn't say. Asks only for messages from now on, so nothing that was sent comes back.
+   * Whether someone with no account can read the topic. Throws with what the server answered when
+   * that doesn't say. Asks only for messages from now on, so nothing that was sent comes back.
    */
-  async readableByAnyone(): Promise<boolean | null> {
+  async readableByAnyone(): Promise<boolean> {
     const since = Math.floor(this.clock() / 1000);
     const res = await this.fetcher(
       `${this.url}/${encodeURIComponent(this.topic)}/json?poll=1&since=${since}`,
@@ -76,7 +88,8 @@ export class NtfyNotifier implements Notifier {
     );
     await res.body?.cancel().catch(() => {});
     if (res.ok) return true;
-    return res.status === 401 || res.status === 403 ? false : null;
+    if (res.status === 401 || res.status === 403) return false;
+    throw new Error(`ntfy answered ${res.status}`);
   }
 
   async send(n: Notification) {
