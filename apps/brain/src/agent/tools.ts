@@ -160,6 +160,11 @@ export const ResearchInput = z.object({
 
 const local = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) : "–";
+/** A YYYY-MM-DD date as the moment its day starts here, in UTC like the times stored. */
+const dayStart = (date: string) => {
+  const d = new Date(`${date}T00:00`);
+  return Number.isNaN(d.getTime()) ? date : d.toISOString();
+};
 const scheduleLine = (s: Schedule) =>
   `#${s.id} "${s.name}": ${s.cron ? `${describeCron(s.cron)} (cron ${s.cron})` : `once, ${local(s.runAt)}`}; ${s.enabled ? `next run ${local(s.nextRunAt)}` : "off"}${s.lastRunAt ? `; last ran ${local(s.lastRunAt)}${s.lastTaskId ? ` (task #${s.lastTaskId})` : ""}` : ""}\n  Does: ${s.prompt}`;
 /** "Runs as Coder", for a schedule or trigger another bot runs. */
@@ -465,8 +470,9 @@ export const TOOLS = [
           // Any of the words, each also as the start of a longer one; rank puts messages with more
           // of them, and rarer ones, first.
           terms.map((t) => `"${t}"*`).join(" OR "),
-          after ?? "0000",
-          before ?? "9999",
+          // The dates are local, as the times shown are.
+          after ? dayStart(after) : "0000",
+          before ? dayStart(before) : "9999",
           episodeId ?? -1,
           bot?.id ?? HATBOT_ID,
         );

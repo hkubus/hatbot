@@ -8,6 +8,8 @@ import {
 } from "@hatbot/shared";
 import type { StreamHandlers, StreamParams } from "../src/agent/model";
 import { activity, parseSummary, titleOf, withNote } from "../src/agent/thread";
+import { runTool } from "../src/agent/tools";
+import { EventBus } from "../src/events";
 import { costOf, FALLBACK_MODELS, PRICES } from "../src/spend";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, testApp } from "./helpers";
@@ -393,6 +395,26 @@ test("search_history finds any of the words, in any form, and shows local times"
   expect(result).toContain(
     `<message from=\\"Owner\\" at=\\"${stamp}\\">I renamed the backups share to vault</message>`,
   );
+});
+
+test("search_history's dates are local days, like the times it shows", async () => {
+  const tz = process.env.TZ;
+  process.env.TZ = "Europe/Warsaw";
+  try {
+    const t = await testApp(new FakeModel([{ content: [text("Noted.")] }]));
+    await t.thread.post("The vault share moved to the NAS").done;
+    // Half past midnight on 17 October in Warsaw.
+    t.db
+      .query("UPDATE messages SET created_at = '2026-10-16T22:30:00.000Z' WHERE role = 'user'")
+      .run();
+    const ctx = { db: t.db, memory: t.memory, events: new EventBus(), bot: t.bots.hatbot() };
+    const search = async (dates: { after?: string; before?: string }) =>
+      (await runTool("search_history", { query: "vault", ...dates }, ctx)).content;
+    expect(await search({ after: "2026-10-17" })).toContain("17 Oct 2026, 00:30");
+    expect(await search({ before: "2026-10-17" })).toBe("No matches.");
+  } finally {
+    process.env.TZ = tz;
+  }
 });
 
 test("Haiku 5.5 bills the whole request at the long-prompt price past 100k prompt tokens", () => {
