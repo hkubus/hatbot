@@ -713,6 +713,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       }
 
       let finished: z.infer<typeof FinishTask> | null = null;
+      /** A second finish_research in one turn would skip the check the first one got. */
+      let researchFinishes = 0;
       // Lookups in a row run at once, and so do changes allowed without asking, each on a different
       // thing (checking updates on every host); anything that asks runs on its own.
       const lookup = (call: Anthropic.Beta.BetaToolUseBlock): boolean | string => {
@@ -752,6 +754,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           );
         }
         if (call.name === "finish_research") {
+          if (researchFinishes++)
+            return result(call, "Not run: call finish_research once a turn.", true);
           const p = FinishResearch.safeParse(call.input);
           if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
           const broken = chartsChecked ? "" : brokenCharts(`${p.data.answer}\n\n${p.data.report}`);

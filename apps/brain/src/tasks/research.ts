@@ -721,6 +721,12 @@ export async function finishResearch(
   const { sources } = state;
   const texts = [result.answer, result.report];
   state.draft = result;
+  // The chat was told research ends in a saved report.
+  if (result.outcome === "done" && !result.report.trim())
+    return {
+      retry:
+        "Not finished: the report is empty. Write the full report, then call finish_research again.",
+    };
   if (!state.checked) {
     state.checked = true;
     const unknown = citedIn(texts).filter((n) => !sources.get(n));

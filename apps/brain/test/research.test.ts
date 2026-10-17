@@ -337,7 +337,7 @@ test("research gets lookups and memory, and no tool that changes things", async 
         toolUse("memory_delete", { path: "INDEX.md", reason: "x" }),
       ],
     },
-    finish("Nothing to report.", ""),
+    finish("Nothing to report.", "Nothing found."),
   ]);
   const t = await testApp(new FakeModel(), work, {}, [lab]);
   await t.plugins.update("lab", { enabled: true });
@@ -993,4 +993,47 @@ test("a report never overwrites another, even two of the same name at once", asy
   const third = await startResearch(t);
   expect(third.reportPath).toBe(`${base}-task-${third.id}.md`);
   expect(await t.memory.read(`${base}-9.md`)).toBe("Earlier.\n");
+});
+
+test("a done research needs its report, and a second finish in one turn isn't run", async () => {
+  const work = new FakeModel([
+    INVESTIGATE,
+    finish("Get the DS925+ [1].", " "),
+    {
+      content: [
+        toolUse("finish_research", {
+          outcome: "done",
+          answer: "It's **19 dB** [1].",
+          report: "Report [1].",
+          notify: true,
+        }),
+        toolUse("finish_research", {
+          outcome: "done",
+          answer: "It's **18 dB** [1].",
+          report: "Report [1].",
+          notify: true,
+        }),
+      ],
+    },
+    finish("It's **22.4 dB(A)** [1].", "Report [1]."),
+  ]);
+  helpers(work);
+  let checks = 0;
+  work.onCreate = (p) => {
+    if (p.system !== RESEARCH_CHECK_PROMPT) return undefined;
+    checks++;
+    return '{"problems": [{"text": "19 dB [1]", "why": "The quote says 22.4 dB(A)."}]}';
+  };
+  const t = await testApp(new FakeModel(), work);
+  const task = await startResearch(t);
+  const leads = work.requests.filter((r) => !isHelper(r));
+  expect(resultsIn(leads[2])).toBe(
+    "Not finished: the report is empty. Write the full report, then call finish_research again.",
+  );
+  const both = resultsIn(leads[3]);
+  expect(both).toContain('<check trusted="false">');
+  expect(both).toContain("Not run: call finish_research once a turn.");
+  expect(checks).toBe(1);
+  expect(task.status).toBe("done");
+  expect(task.summary).toStartWith("It's **22.4 dB(A)** [[1]]");
 });
