@@ -209,6 +209,11 @@ export class Thread {
   private waiting: number | null = null;
   /** The text of the reply being written, by message id, as it is now: for a chat opened mid-reply. */
   private live = new Map<number, string>();
+  /**
+   * What each episode read, being screened (PLAN.md §6.1). Kept across replies: a verdict the last
+   * reply didn't wait for still holds back a change the next one makes.
+   */
+  private screeners = new Map<number, Screener>();
   private clock: () => number;
 
   constructor(
@@ -441,6 +446,15 @@ export class Thread {
             ? from.episode || "Untrusted content"
             : `Task #${from.task_id} "${from.title}"`),
       );
+    // What the earlier conversation was suspected of reading comes along with the messages.
+    const suspected = this.d.db
+      .query<{ s: string }, number[]>(
+        `SELECT e.injection_suspected AS s FROM messages m JOIN episodes e ON e.id = m.episode_id
+         WHERE m.id IN (${recent.map(() => "?").join(", ")}) AND e.injection_suspected IS NOT NULL
+         ORDER BY m.id LIMIT 1`,
+      )
+      .get(...recent)?.s;
+    if (suspected) this.markSuspected(episodeId, suspected);
   }
 
   /** Which of these messages are notes with untrusted text in them, and what it came from. */
@@ -469,14 +483,31 @@ export class Thread {
 
   /** Something the episode read may be a prompt injection, or Haiku couldn't tell: the first kept. */
   private suspect(episodeId: number, source: string, verdict: Screening) {
-    const what = verdict.failed
-      ? `${source}, which couldn't be checked`
-      : `${source}: "${verdict.excerpt}"`;
+    this.markSuspected(
+      episodeId,
+      verdict.failed ? `${source}, which couldn't be checked` : `${source}: "${verdict.excerpt}"`,
+    );
+  }
+
+  private markSuspected(episodeId: number, what: string) {
     this.d.db
       .query(
         "UPDATE episodes SET injection_suspected = coalesce(injection_suspected, ?) WHERE id = ?",
       )
       .run(what, episodeId);
+  }
+
+  /** The episode's screener, made on first use. */
+  private screenerFor(episodeId: number): Screener {
+    let screener = this.screeners.get(episodeId);
+    if (!screener) {
+      for (const [id, other] of this.screeners) if (other.idle) this.screeners.delete(id);
+      screener = new Screener(this.d, { episodeId }, (source, verdict) =>
+        this.suspect(episodeId, source, verdict),
+      );
+      this.screeners.set(episodeId, screener);
+    }
+    return screener;
   }
 
   /** What the episode read that may be a prompt injection, or null. */
@@ -1037,6 +1068,18 @@ export class Thread {
     return e
       ? `The summary of earlier conversations, which drew on: ${e.tainted_by ?? "untrusted content"}`
       : null;
+  }
+
+  /** What a conversation the running summary drew on was suspected of reading, or null. */
+  private summarySuspicion(): string | null {
+    if (!this.threadSummary()) return null;
+    const e = this.d.db
+      .query<{ s: string }, [number]>(
+        `SELECT injection_suspected AS s FROM episodes WHERE conversation_id = ? AND incognito = 0
+         AND summarized = 1 AND injection_suspected IS NOT NULL ORDER BY id LIMIT 1`,
+      )
+      .get(this.conversationId);
+    return e ? `The summary of earlier conversations, which drew on: ${e.s}` : null;
   }
 
   private threadSummary(): string {
@@ -1624,11 +1667,17 @@ export class Thread {
           type: "text",
           text: await this.episodeContext(bot, contextBefore, episode.id, episode.fresh, incognito),
         });
-        // /new and incognito leave the messages before, and what they had read, behind.
-        if (episode.isNew && !episode.fresh && !incognito) this.inheritTaint(episode.id, userId);
-        // The running summary carries on what the conversations folded into it read.
-        const carried = incognito ? null : this.summaryTaint();
-        if (carried) this.taint(episode.id, carried);
+        if (episode.isNew && !incognito) {
+          // What the earlier conversations read is screened before it's carried on.
+          await Promise.allSettled([...this.screeners.values()].map((s) => s.settled()));
+          // /new leaves the messages before, and what they had read, behind.
+          if (!episode.fresh) this.inheritTaint(episode.id, userId);
+          // The running summary carries on what the conversations folded into it read.
+          const carried = this.summaryTaint();
+          if (carried) this.taint(episode.id, carried);
+          const suspicion = this.summarySuspicion();
+          if (suspicion) this.markSuspected(episode.id, suspicion);
+        }
       } else {
         const commands = this.commandsSince(episode.id, userId);
         if (commands)
@@ -1898,11 +1947,7 @@ export class Thread {
     const abort = new AbortController();
     // What the reply reads from outside, screened for prompt injection while it goes on (PLAN.md
     // §6.1). Incognito can't change anything, so there's nothing to screen for.
-    const screener = incognito
-      ? null
-      : new Screener(this.d, { episodeId: episode.id }, (source, verdict) =>
-          this.suspect(episode.id, source, verdict),
-        );
+    const screener = incognito ? null : this.screenerFor(episode.id);
     const screen = (source: string, text: string) => screener?.add(source, text);
     this.current = abort;
     this.currentIncognito = incognito;

@@ -83,7 +83,7 @@ const MAX_KNOWN = 1000;
  * `suspect` hears of each text Haiku suspects, or couldn't check.
  */
 export class Screener {
-  private pending: Promise<void>[] = [];
+  private pending = new Set<Promise<void>>();
 
   constructor(
     private d: { model: ModelClient; spend: Spend },
@@ -108,19 +108,21 @@ export class Screener {
             return v;
           },
         );
-    this.pending.push(
-      verdict.then((v) => {
+    const done: Promise<void> = verdict
+      .then((v) => {
         if (v.suspected) this.suspect(source, v);
-      }),
-    );
+      })
+      .finally(() => this.pending.delete(done));
+    this.pending.add(done);
+  }
+
+  /** Whether no verdict is pending. */
+  get idle() {
+    return this.pending.size === 0;
   }
 
   /** Waits for every verdict so far. */
   async settled() {
-    while (this.pending.length) {
-      const now = this.pending;
-      this.pending = [];
-      await Promise.all(now);
-    }
+    while (this.pending.size) await Promise.all([...this.pending]);
   }
 }
