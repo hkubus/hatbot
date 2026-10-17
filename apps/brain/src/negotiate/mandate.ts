@@ -67,10 +67,21 @@ export function mandateTerms(n: Pick<Negotiation, "mandate" | "role">): string {
   return `open at ${zl(m.opening, m.currency)}, aim for ${zl(m.target, m.currency)}, ${n.role === "buy" ? "pay at most" : "take at least"} ${zl(m.limit, m.currency)}`;
 }
 
-/** The mandate approval's one line. The listing's title is the seller's words, so it's quoted. */
+/**
+ * The listing's title, which is the seller's words, ready to quote: without quote marks or line breaks,
+ * so it can't close the quote and read as ours, and cut short.
+ */
+export function quotedTitle(title: string): string {
+  const t = title
+    .replace(/["＂„‚\p{Pi}\p{Pf}]/gu, "")
+    .replace(/[\p{Cc}\p{Zl}\p{Zp}\s]+/gu, " ")
+    .trim();
+  return `“${t.length > 60 ? `${t.slice(0, 59)}…` : t}”`;
+}
+
+/** The mandate approval's one line: the terms first, so a cut notification still shows them. */
 export function mandateSummary(n: Negotiation): string {
-  const title = n.title.length > 60 ? `${n.title.slice(0, 59)}…` : n.title;
-  return `Negotiate for “${title}”: ${mandateTerms(n)}`;
+  return `Negotiate: ${mandateTerms(n)} · ${quotedTitle(n.title)}`;
 }
 
 /** "23 Oct", as the web shows dates. */
@@ -96,7 +107,7 @@ export function mandateReason(n: Negotiation, botName: string): string {
 
 /**
  * What a mandate made from a note allows beyond the one approved, a line each with the old value and
- * the new: a higher ceiling (or lower floor), other delivery terms, more contact details.
+ * the new: a higher ceiling (or lower floor), other delivery terms, more contact details, more time.
  */
 export function widened(n: Pick<Negotiation, "mandate" | "role">, after: Mandate): string[] {
   const b = n.mandate;
@@ -109,6 +120,8 @@ export function widened(n: Pick<Negotiation, "mandate" | "role">, after: Mandate
   if (after.delivery !== b.delivery) out.push(`Delivery: ${b.delivery} → ${after.delivery}`);
   if (after.allow.some((c) => !b.allow.includes(c)))
     out.push(`Contact details: ${contacts(b.allow)} → ${contacts(after.allow)}`);
+  if (Date.parse(after.expiresAt) > Date.parse(b.expiresAt))
+    out.push(`Until: ${day(b.expiresAt)} → ${day(after.expiresAt)}`);
   return out;
 }
 

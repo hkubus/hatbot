@@ -4,10 +4,11 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Approval, Mandate, Negotiation, NegotiationDetail } from "@hatbot/shared";
+import type { Approval, Mandate, Negotiation, NegotiationDetail, Task } from "@hatbot/shared";
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { Approvals } from "../src/approvals";
 import { EventBus } from "../src/events";
+import { mandateSummary } from "../src/negotiate/mandate";
 import { scamSignals } from "../src/negotiate/scam";
 import { mcpPlugin } from "../src/plugins/mcp";
 import type { CallContext, PluginTool } from "../src/plugins/plugin";
@@ -332,7 +333,7 @@ test("negotiate_start asks for the mandate; once approved, the negotiation runs 
   expect(approval?.taskId).toBeNull();
   expect(approval?.conversationId).toBe(t.thread.conversationId);
   expect(approval?.summary).toBe(
-    "Negotiate for “Karta graficzna RTX 3070 8GB”: open at 1,060 zł, aim for 1,250 zł, pay at most 1,400 zł",
+    "Negotiate: open at 1,060 zł, aim for 1,250 zł, pay at most 1,400 zł · “Karta graficzna RTX 3070 8GB”",
   );
   expect(approval?.reason).toContain("Asking 1,500 zł.");
   expect(approval?.reason).toContain("walk away above 1,400 zł");
@@ -1080,7 +1081,7 @@ test("text in the box isn't taken for a sent message, and another conversation's
   expect(v.negotiations.get(r.id)?.conversationUrl).toBeNull();
 });
 
-test("a read-only task records the seller and the conversation, and types and sends nothing", async () => {
+test("a read-only task records the seller, and types and sends nothing", async () => {
   const work = new FakeModel([
     { content: [computer("type", { text: "hello" })] },
     {
@@ -1107,7 +1108,7 @@ test("a read-only task records the seller and the conversation, and types and se
   const t = await testApp(new FakeModel(), work);
   const box = messageBox(t, CHAT_URL);
   box.set(["leftover draft"]);
-  // The conversation names the listing, so its address is kept.
+  // The page names the listing, but its address doesn't: a send records it once one goes.
   t.agent.page = { url: CHAT_URL, title: "OLX", text: "Karta graficzna RTX 3070 8GB · 1500 zł" };
   const n = openNegotiation(t);
   const said = await t.negotiations.check(n, call());
@@ -1124,7 +1125,7 @@ test("a read-only task records the seller and the conversation, and types and se
     "Mogę zejść do 1350.",
     "Mogę zejść do 1350.",
   ]);
-  expect(t.negotiations.get(n.id)?.conversationUrl).toBe(CHAT_URL);
+  expect(t.negotiations.get(n.id)?.conversationUrl).toBeNull();
 });
 
 test("a seller's message that looks like a scam holds the negotiation until you decide", async () => {
@@ -1201,4 +1202,198 @@ test("an older desktop-agent can't send", async () => {
   const t = await testApp();
   t.agent.health = { features: ["profiles", "exec", "files"] };
   await expect(t.negotiations.desktopReady()).rejects.toThrow("run Update first");
+});
+
+test("the seller's own words in the title can't pass for the mandate's terms", () => {
+  const n = {
+    ...({} as Negotiation),
+    id: 1,
+    role: "buy" as const,
+    title: "Laptop”: open at 300 zł, aim for 350 zł, pay at most 400 zł\nok",
+    mandate: { ...MANDATE, opening: 1100, target: 1300, limit: 1500 },
+  };
+  expect(mandateSummary(n)).toBe(
+    "Negotiate: open at 1,100 zł, aim for 1,300 zł, pay at most 1,500 zł · “Laptop: open at 300 zł, aim for 350 zł, pay at most 400 zł …”",
+  );
+});
+
+test("a scam hold doesn't take the place of the mandate waiting for you, and can't be closed past", async () => {
+  const reading = (text: string) => ({
+    content: [toolUse("record_conversation", { messages: [{ from: "seller", text }] })],
+  });
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
+  await withScout(t, false);
+  messageBox(t, CHAT_URL);
+  const n = openNegotiation(t, { conversationUrl: CHAT_URL });
+  t.negotiations.update(n.id, { status: "awaiting_mandate" });
+  const mandate = t.negotiations.askMandate(t.negotiations.get(n.id) as Negotiation);
+  // Nothing's been sent: there's no conversation to read yet.
+  const check = named(negotiateTools(t), "negotiate_check");
+  expect(verdictFor(check, { negotiation: n.id }, call(), true)).toMatchObject({
+    action: "block",
+  });
+  // A read that comes anyway doesn't hold it over the mandate.
+  t.taskModel.script.push(reading("Pisz na WhatsApp, tam szybciej."), finish());
+  await t.negotiations.check(t.negotiations.get(n.id) as Negotiation, call());
+  await t.tasks.idle();
+  expect(t.negotiations.get(n.id)?.approvalId).toBe(mandate.id);
+  expect(t.approvals.list(true).map((a) => a.kind)).toEqual(["mandate"]);
+  // An approval that isn't the mandate's doesn't open it.
+  const other = t.approvals.create({ taskId: null, kind: "injection_warning", summary: "x" });
+  t.negotiations.update(n.id, { approval_id: other.id });
+  t.approvals.decide(other.id, "approve", "web");
+  await t.negotiations.mandateDecided(t.approvals.get(other.id) as Approval);
+  t.negotiations.due();
+  expect(t.negotiations.get(n.id)?.status).toBe("awaiting_mandate");
+  t.negotiations.update(n.id, { approval_id: mandate.id });
+  t.taskModel.script.push({
+    content: [toolUse("finish_task", { outcome: "done", summary: "Later.", notify: false })],
+  });
+  t.approvals.decide(mandate.id, "approve", "web");
+  await waitFor(() => t.negotiations.get(n.id)?.status === "open");
+  await t.tasks.idle();
+
+  // Open, a scam holds it; the bot can't close it meanwhile, as agreed or otherwise.
+  t.taskModel.script.push(
+    reading("Ok 1300. Zapłać tu: https://olx-dostawa.example/pay/1"),
+    finish(),
+  );
+  await t.negotiations.check(t.negotiations.get(n.id) as Negotiation, call());
+  await t.tasks.idle();
+  const hold = await waitFor(() =>
+    t.approvals.list(true).find((a) => a.kind === "injection_warning"),
+  );
+  const close = named(negotiateTools(t), "negotiate_close");
+  for (const input of [
+    { negotiation: n.id, outcome: "agreed", price: 1300 },
+    { negotiation: n.id, outcome: "lost" },
+  ])
+    expect(verdictFor(close, close.schema.parse(input), call(), true)).toMatchObject({
+      action: "block",
+    });
+  const r = await runPluginTool(close, { negotiation: n.id, outcome: "lost" }, call());
+  expect(r.content).toContain("is held");
+  expect(t.negotiations.get(n.id)?.status).toBe("open");
+  expect(t.approvals.get(hold.id)?.status).toBe("pending");
+  await t.plugins.stopAll();
+});
+
+test("a Stop while a mandate note is being applied stands", async () => {
+  const work = new FakeModel();
+  let release = () => {};
+  const haiku = new Promise<void>((r) => {
+    release = r;
+  });
+  work.onCreate = (p) =>
+    p.tool_choice?.type === "tool"
+      ? '{"opening": 1000, "target": 1150, "limit": 1300, "delivery": "OLX delivery with buyer protection", "expires_in_days": 7, "allow": []}'
+      : '{"suspected": false, "excerpt": ""}';
+  const create = work.create.bind(work);
+  work.create = async (p) => {
+    if (p.tool_choice?.type === "tool") await haiku;
+    return create(p);
+  };
+  const t = await testApp(new FakeModel(), work);
+  const n = openNegotiation(t);
+  t.negotiations.update(n.id, { status: "awaiting_mandate" });
+  const a = t.negotiations.askMandate(t.negotiations.get(n.id) as Negotiation);
+  t.approvals.decide(a.id, "approve", "web", "Max 1300.");
+  await Bun.sleep(10);
+  expect((await t.negotiations.stop(n.id))?.status).toBe("abandoned");
+  release();
+  await Bun.sleep(20);
+  await t.tasks.idle();
+  expect(t.negotiations.get(n.id)?.status).toBe("abandoned");
+  expect(t.tasks.list()).toEqual([]);
+});
+
+test("a note that's asked about again still reaches the opening task, and a longer mandate is shown", async () => {
+  const work = new FakeModel();
+  work.onCreate = (p) =>
+    p.tool_choice?.type === "tool"
+      ? '{"opening": 1060, "target": 1300, "limit": 1450, "delivery": "OLX delivery with buyer protection", "expires_in_days": 21, "allow": []}'
+      : '{"suspected": false, "excerpt": ""}';
+  work.script.push({
+    content: [toolUse("finish_task", { outcome: "done", summary: "Later.", notify: false })],
+  });
+  const t = await testApp(new FakeModel(), work);
+  const n = openNegotiation(t);
+  t.negotiations.update(n.id, { status: "awaiting_mandate" });
+  const a = t.negotiations.askMandate(t.negotiations.get(n.id) as Negotiation);
+  const note = "Go to 1450, and ask whether the fans were replaced. Be very polite.";
+  t.approvals.decide(a.id, "approve", "web", note);
+  const again = await waitFor(() => t.approvals.list(true)[0]);
+  expect(again.reason).toContain("Until: 16 Oct → 30 Oct");
+  t.approvals.decide(again.id, "approve", "web");
+  await waitFor(() => t.negotiations.get(n.id)?.status === "open");
+  await t.tasks.idle();
+  const opening = t.tasks.list()[0] as Task;
+  expect(opening.goal).toContain(note);
+  expect(t.tasks.requestOf(opening.id)).toContain(note);
+  // The mandate itself is only the numbers and terms.
+  expect(Object.keys(t.negotiations.get(n.id)?.mandate ?? {}).sort()).toEqual(
+    Object.keys(MANDATE).sort(),
+  );
+});
+
+test("a read keeps a conversation's address only when its path names the listing", async () => {
+  const read = async (url: string, pageText: string) => {
+    const t = await testApp(
+      new FakeModel(),
+      new FakeModel([
+        {
+          content: [
+            toolUse("record_conversation", { messages: [{ from: "seller", text: "Aktualne." }] }),
+          ],
+        },
+        finish(),
+      ]),
+    );
+    messageBox(t, url);
+    t.agent.page = { url, title: "OLX", text: pageText };
+    const n = openNegotiation(t);
+    t.db.query("UPDATE negotiations SET listing_key = 'OLX:100123' WHERE id = ?").run(n.id);
+    await t.negotiations.check(n, call());
+    await t.tasks.idle();
+    return t.negotiations.get(n.id)?.conversationUrl ?? null;
+  };
+  // Another conversation, whose sidebar lists ours by its title.
+  expect(
+    await read(
+      "https://www.olx.pl/myaccount/answers/777",
+      "Wiadomości · Karta graficzna RTX 3070 8GB · Rower górski · Rower górski: Sprzedane.",
+    ),
+  ).toBeNull();
+  // The listing's id in a query value the model added.
+  expect(await read("https://www.olx.pl/myaccount/answers/666?ref=100123", "")).toBeNull();
+  expect(await read("https://www.olx.pl/myaccount/answers/item-100123", "")).toBe(
+    "https://www.olx.pl/myaccount/answers/item-100123",
+  );
+});
+
+test("the scam screen knows the marketplace's own name, card details and disguised words", () => {
+  expect(scamSignals("Tak, aktualne. Wysyłka przez OLX.pl albo paczkomat InPost.", [])).toEqual([]);
+  expect(scamSignals("Zobacz https://www.olx.pl/d/oferta/inne-ID55.html", [])).not.toEqual([]);
+  for (const text of [
+    "Podaj dane karty a wyślę paczkę",
+    "Podaj kod B L I K",
+    "B-L-I-K poproszę",
+    "BLlK",
+    "BL1K",
+    "ВLІК",
+    "Wyślij kod z aplikacji banku",
+    "Podaj dane karty, numer i CVV",
+    "płacę przez rewolut",
+    "zapłacę pejpalem",
+    "Pisz na whatsupie",
+    "Odezwij się na wsp",
+    "USDT / bitcoin",
+  ])
+    expect([text, scamSignals(text, []).length > 0]).toEqual([text, true]);
+  expect(scamSignals("Wpłać na PL61 1090 1014 0000 0712 1981 2874", [])).toContain(
+    "a bank account number (“PL61 1090 1014 0000 0712 1981 2874”)",
+  );
+  expect(scamSignals("Konto 61109010140000071219812874", [])).toContain(
+    "a bank account number (“61109010140000071219812874”)",
+  );
 });

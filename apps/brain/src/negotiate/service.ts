@@ -29,7 +29,14 @@ import type { Spend } from "../spend";
 import type { Tasks } from "../tasks/service";
 import { type ListingFacts, parseKey, scoutTool } from "./appraise";
 import { collapse, type SendGate, sameAddress, sameHost } from "./gate";
-import { applyNote, mandateReason, mandateSummary, mandateTerms, widened } from "./mandate";
+import {
+  applyNote,
+  mandateReason,
+  mandateSummary,
+  mandateTerms,
+  quotedTitle,
+  widened,
+} from "./mandate";
 import { QUIET_HOURS, type SendFacts, type SendInput } from "./policy";
 import { scamSignals } from "./scam";
 import { negotiateTools } from "./tools";
@@ -106,6 +113,15 @@ const toMessage = (r: MessageRow): NegotiationMessage => ({
   createdAt: r.created_at,
   sentAt: r.sent_at,
 });
+
+/**
+ * The mandate from its column, which also keeps the owner's note it was made from (see applyDecision):
+ * the opening task follows that, and it isn't part of the mandate.
+ */
+const mandateOf = (json: string): Mandate => {
+  const { note: _, ...mandate } = JSON.parse(json) as Mandate & { note?: string };
+  return mandate;
+};
 
 /** A message's words as the record compares them: letters and digits only, lowercased. */
 const keyOf = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
@@ -211,7 +227,7 @@ export class Negotiations {
       listingUrl: r.listing_url,
       title: r.title,
       asking: r.asking,
-      mandate: JSON.parse(r.mandate) as Mandate,
+      mandate: mandateOf(r.mandate),
       appraisal: r.appraisal ? (JSON.parse(r.appraisal) as Appraisal) : null,
       conversationUrl: r.conversation_url,
       claims: { ...NO_CLAIMS, ...(JSON.parse(r.claims) as Partial<Claims>) },
@@ -443,7 +459,7 @@ export class Negotiations {
    * one, and a task sends the opening message. Denied or cancelled: abandoned. Unanswered: expired.
    */
   async mandateDecided(a: Approval) {
-    if (this.applying.has(a.id)) return;
+    if (a.kind !== "mandate" || this.applying.has(a.id)) return;
     const r = this.d.db
       .query<Row, [number]>(`${SELECT} WHERE n.approval_id = ? AND n.status = 'awaiting_mandate'`)
       .get(a.id);
@@ -459,7 +475,8 @@ export class Negotiations {
     }
   }
 
-  private async applyDecision(n: Negotiation, a: Approval) {
+  private async applyDecision(first: Negotiation, a: Approval) {
+    let n = first;
     if (a.status !== "approved") {
       this.update(n.id, {
         status: a.status === "expired" ? "expired" : "abandoned",
@@ -468,8 +485,15 @@ export class Negotiations {
       return;
     }
     let mandate = n.mandate;
+    // A note asked about again (it gave more room) still guides the opening message once approved.
+    const earlier = this.mandateNote(n.id);
+    const note = [earlier, a.note].filter(Boolean).join("\n") || null;
     if (a.note) {
       const applied = await applyNote(this.d, n, a.note, this.clock());
+      // Stopped, closed or asked again while Haiku read the note: that stands.
+      const now = this.get(n.id);
+      if (now?.status !== "awaiting_mandate" || now.approvalId !== a.id) return;
+      n = now;
       if ("error" in applied) {
         this.askMandate(
           n,
@@ -481,7 +505,7 @@ export class Negotiations {
       // Haiku read the note: anything that gives more room than you approved comes back to you first.
       const more = widened(n, mandate);
       if (more.length) {
-        this.update(n.id, { mandate: JSON.stringify(mandate) });
+        this.update(n.id, { mandate: JSON.stringify({ ...mandate, note }) });
         this.askMandate(
           this.get(n.id) as Negotiation,
           `Your note gives it more room than before. Approve to go ahead with this, or deny to end the negotiation.\n${more.join("\n")}\nYour note: ${a.note}`,
@@ -491,10 +515,21 @@ export class Negotiations {
     }
     this.update(n.id, {
       status: "open",
-      mandate: JSON.stringify(mandate),
+      mandate: JSON.stringify(note ? { ...mandate, note } : mandate),
       next_follow_up_at: this.nextSendAt(),
     });
     this.due();
+  }
+
+  /** The owner's note the negotiation's mandate was made from, kept beside it. */
+  private mandateNote(id: number): string | null {
+    return (
+      this.d.db
+        .query<{ note: string | null }, [number]>(
+          "SELECT json_extract(mandate, '$.note') AS note FROM negotiations WHERE id = ?",
+        )
+        .get(id)?.note ?? null
+    );
   }
 
   /** Now, or the end of quiet hours if it's within them. */
@@ -522,7 +557,7 @@ export class Negotiations {
       .all();
     for (const w of waiting) {
       const a = this.d.approvals.get(w.approval_id);
-      if (a && a.status !== "pending") void this.mandateDecided(a);
+      if (a?.kind === "mandate" && a.status !== "pending") void this.mandateDecided(a);
     }
     const holds = this.d.db
       .query<{ approval_id: number }, []>(
@@ -562,7 +597,8 @@ export class Negotiations {
   /** The background task that writes and sends the opening message, under the reply that started it. */
   private startOpening(n: Negotiation) {
     const approval = n.approvalId ? this.d.approvals.get(n.approvalId) : null;
-    const note = approval?.kind === "mandate" ? approval.note : null;
+    // Opened before the note was kept beside the mandate: the approval's own.
+    const note = this.mandateNote(n.id) ?? (approval?.kind === "mandate" ? approval.note : null);
     const card = this.d.db
       .query<{ id: number }, [number]>("SELECT id FROM messages WHERE negotiation_id = ? LIMIT 1")
       .get(n.id)?.id;
@@ -772,14 +808,13 @@ export class Negotiations {
 
   /** Holds a negotiation on a seller's message that looks like a scam, and asks the owner. */
   private hold(n: Negotiation, text: string, signals: string[]) {
-    const title = n.title.length > 60 ? `${n.title.slice(0, 59)}…` : n.title;
     const quoted = text.length > 500 ? `${text.slice(0, 499)}…` : text;
     const approval = this.d.approvals.create({
       taskId: null,
       botId: n.botId,
       conversationId: n.conversationId ?? undefined,
       kind: "injection_warning",
-      summary: `Keep negotiating for “${title}”?`,
+      summary: `Keep negotiating for ${quotedTitle(n.title)}?`,
       reason: `The seller wrote: “${quoted}”\nIt has ${signals.join("; ")}, which is how scams on marketplaces often start. Nothing more goes to the seller until you decide. Approve to carry on, or deny to end the negotiation.`,
     });
     this.update(n.id, { approval_id: approval.id });
@@ -907,18 +942,14 @@ export class Negotiations {
       added++;
       if (i > lastOurs) after++;
       const signals = scamSignals(text, n.mandate.allow);
+      // Only an open one: a mandate waiting for the owner keeps its approval, and a closed one is over.
       const current = signals.length ? this.get(n.id) : null;
-      if (current && !this.held(current)) this.hold(current, text, signals);
+      if (current?.status === "open" && !this.held(current)) this.hold(current, text, signals);
     });
     // The conversation's own address, once a read finds one that names this listing; a send records
     // where it went in sendPassed.
     const mode = row.message_id ? "send" : "read";
-    if (
-      tabUrl &&
-      !n.conversationUrl &&
-      mode === "read" &&
-      this.conversationFor(n, tabUrl, state.pageText ?? null)
-    )
+    if (tabUrl && !n.conversationUrl && mode === "read" && this.conversationFor(n, tabUrl))
       this.update(n.id, { conversation_url: tabUrl.split("#")[0] ?? tabUrl });
     else this.update(n.id, {});
     // Closed, or its mandate ran out, since the message was approved: it doesn't go either.
@@ -985,19 +1016,16 @@ export class Negotiations {
 
   /**
    * A page a read found is this negotiation's conversation: on the listing's site, not the listing, and
-   * naming the listing, in its address (the listing's id) or on the page (its title).
+   * naming the listing's id in its path. Not by its query, which the model can add to, nor by the page's
+   * text, where other conversations list their listings' titles; a send records where it went.
    */
-  private conversationFor(n: Negotiation, url: string, pageText: string | null): boolean {
+  private conversationFor(n: Negotiation, url: string): boolean {
     if (!sameHost(url, n.listingUrl) || sameAddress(url, n.listingUrl)) return false;
     const id = parseKey(n.listingKey)?.id ?? "";
-    const where = (() => {
-      const u = new URL(url);
-      return `${u.pathname}${u.search}`;
-    })();
-    if (id.length >= 5 && new RegExp(`[/=-]${escapeRe(id)}(?:[/?&#.-]|$)`, "i").test(where))
-      return true;
-    const title = keyOf(n.title).slice(0, 30);
-    return title.length >= 6 && pageText !== null && keyOf(pageText).includes(title);
+    return (
+      id.length >= 5 &&
+      new RegExp(`[/=-]${escapeRe(id)}(?:[/.-]|$)`, "i").test(new URL(url).pathname)
+    );
   }
 
   private setStatus(messageId: number, status: NegotiationMessage["status"]) {

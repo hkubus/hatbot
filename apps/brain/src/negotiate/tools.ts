@@ -269,7 +269,18 @@ export function negotiateTools(
       label: "Reading the conversation",
       describe: ({ negotiation }) => `Read the seller's messages in negotiation #${negotiation}`,
       target: (i) => `negotiation:${i.negotiation}`,
-      policy: () => covered("It only reads the conversation"),
+      policy: (i) => {
+        const n = neg.get(i.negotiation);
+        if (!n || n.botId !== bot.id) return block(`There's no negotiation #${i.negotiation}.`);
+        // Before its mandate nothing has gone to the seller, and a scam hold would take the mandate's
+        // place; once it's closed, it's over.
+        if (n.status === "awaiting_mandate")
+          return block(
+            `Negotiation #${n.id} waits for its mandate: nothing has gone to the seller yet.`,
+          );
+        if (n.status !== "open") return block(`Negotiation #${n.id} is ${n.status}.`);
+        return covered("It only reads the conversation");
+      },
       run: async ({ negotiation }, call) => {
         const n = neg.mine(bot, negotiation);
         await neg.desktopReady();
@@ -300,6 +311,9 @@ export function negotiateTools(
         if (!n || n.botId !== bot.id) return block(`There's no negotiation #${i.negotiation}.`);
         if (n.status !== "open" && n.status !== "awaiting_mandate")
           return block(`Negotiation #${n.id} is ${n.status} already.`);
+        // A scam warning waits for the owner, who ends it or carries on; closing would clear it.
+        const held = neg.held(n);
+        if (held) return block(held);
         if (n.status === "awaiting_mandate" && i.outcome === "agreed")
           return block(
             "Its mandate isn't approved yet, so nothing can have been agreed. Close it as lost or abandoned.",
@@ -316,6 +330,9 @@ export function negotiateTools(
       },
       run: async (i, call) => {
         const n = neg.mine(bot, i.negotiation);
+        // Again, since asking may have taken hours.
+        const held = neg.held(n);
+        if (held) throw new PluginError(held);
         const path = await neg.close(
           bot.id,
           n,
