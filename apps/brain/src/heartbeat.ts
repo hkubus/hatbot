@@ -196,8 +196,27 @@ export class Heartbeat {
         key: `spend:month:${day.slice(0, 7)}`,
         text: `This month's spend is $${monthUsd.toFixed(2)} of the $${limits.monthlyUsd} limit.`,
       });
-    out.push(...(await this.d.plugins.signals()));
+    for (const s of await this.d.plugins.signals()) {
+      // A monitor Kuma's own alert started a task for: that task told you, or is on it.
+      const monitor = /^uptimekuma:down:(.+)$/.exec(s.key)?.[1];
+      out.push(monitor !== undefined && this.alerted(monitor) ? { ...s, known: true } : s);
+    }
     return out;
+  }
+
+  /** Whether a Kuma alert for this monitor waits for more checks, or its task runs or ended this hour. */
+  private alerted(monitor: string): boolean {
+    const hourAgo = new Date(this.clock() - 3600_000).toISOString();
+    return Boolean(
+      this.d.db.query("SELECT 1 FROM kuma_waiting WHERE name = ?").get(monitor) ||
+        this.d.db
+          .query(
+            `SELECT 1 FROM tasks WHERE origin = 'alert'
+             AND CASE WHEN json_valid(payload) THEN json_extract(payload, '$.monitor') END = ?
+             AND (finished_at IS NULL OR finished_at > ?)`,
+          )
+          .get(monitor, hourAgo),
+    );
   }
 
   private async act(fresh: Signal[], now: string): Promise<Last> {

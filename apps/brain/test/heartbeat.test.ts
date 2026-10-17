@@ -6,9 +6,9 @@ import { FakeModel, toolUse } from "./fake-model";
 import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
 
 /** A plugin whose monitors are down while `down` has them. */
-function kuma(down: string[]) {
+function kuma(down: string[], id = "kuma") {
   return definePlugin({
-    id: "kuma",
+    id,
     name: "Kuma",
     description: "",
     config: z.object({}),
@@ -81,6 +81,42 @@ function ran(
     )
     .run(title, status, finished, finished, runKey, summary);
 }
+
+test("a monitor whose Kuma alert has a task on it, or waits, isn't told again", async () => {
+  const down = ["Jellyfin", "Plex", "Forgejo"];
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("finish_task", { outcome: "done", summary: "Restarted it.", notify: true }),
+      ],
+    },
+  ]);
+  const t = await testApp(new FakeModel(), work, {}, [kuma(down, "uptimekuma")]);
+  await t.plugins.update("uptimekuma", { enabled: true });
+  await on(t);
+  const alert = (name: string, id: number) => ({
+    heartbeat: { status: 0, msg: "timeout" },
+    monitor: { id, name },
+  });
+  const now = t.triggers.create({ name: "Kuma", kind: "kuma", prompt: "Look into it." });
+  const started = t.triggers.receiveKuma(now.id, alert("Jellyfin", 1));
+  if (started.status !== "started") throw new Error(started.status);
+  await waitFor(() => t.tasks.get(started.task.id)?.finishedAt);
+  const later = t.triggers.create({
+    name: "Kuma, after two checks",
+    kind: "kuma",
+    prompt: "Look into it.",
+    confirmChecks: 2,
+  });
+  expect(t.triggers.receiveKuma(later.id, alert("Plex", 2)).status).toBe("waiting");
+
+  t.taskModel.onCreate = () => '{"action": "notify", "message": "Forgejo is down."}';
+  expect((await t.heartbeat.run()).found).toEqual(["Forgejo is down"]);
+  // Hours later, all three still down: nothing new.
+  t.advance(3 * 3600_000);
+  expect((await t.heartbeat.run()).action).toBe("nothing");
+  expect(t.notifier.sent.filter((n) => n.title === "Heartbeat")).toHaveLength(1);
+});
 
 test("after a long time off, the heartbeat only tells what's recent", async () => {
   const t = await testApp();
