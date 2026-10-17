@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { type Approval, latestNoteOnly, type Task, type TaskStep } from "@hatbot/shared";
 import { inBatches } from "../src/agent/tools";
 import { HttpDesktopAgent } from "../src/desktop/client";
+import { approvalKind } from "../src/tasks/approval-kind";
 import { limits } from "../src/tasks/desktop-run";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
@@ -106,8 +107,8 @@ test("a consequential click is held back until confirm_intent is approved", asyn
   expect(approval.sources).toEqual(["https://example.com/"]);
   expect(t.agent.actions).toEqual([]);
   expect(t.tasks.get(task.id)?.status).toBe("waiting_approval");
-  // Payments only offer "Open in Hatbot" on the phone.
-  expect(t.notifier.sent.at(-1)?.actions?.map((a) => a.label)).toEqual(["Open in Hatbot"]);
+  // A payment is approved in the app: the phone offers "Open in Hatbot", and Deny.
+  expect(t.notifier.sent.at(-1)?.actions?.map((a) => a.label)).toEqual(["Open in Hatbot", "Deny"]);
   // It waits above the composer, not in the thread.
   expect(t.thread.list().map((m) => m.kind as string)).not.toContain("approval");
 
@@ -183,6 +184,83 @@ test("ntfy buttons carry single-use signed tokens", async () => {
   const again = await t.call("POST", `/approvals/${approval.id}/token-decision`, body);
   expect(again.status).toBe(409);
   expect((t.approvals.get(approval.id) as Approval).decidedVia).toBe("ntfy");
+  await t.tasks.idle();
+});
+
+test("purchases, payments, mandates and budget raises can't be approved from a notification", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel());
+  const kinds = [
+    "purchase",
+    "payment",
+    "account_security",
+    "mandate",
+    "budget",
+    "injection_warning",
+  ] as const;
+  for (const kind of kinds) {
+    const a = t.approvals.create({ taskId: null, kind, summary: `A ${kind}` });
+    const n = await waitFor(() => t.notifier.sent.find((x) => x.title === `Approve: A ${kind}`));
+    expect(n.actions?.map((b) => b.label)).toEqual(["Open in Hatbot", "Deny"]);
+    // A signed Approve, as an older notification would carry, is refused, and so is decide().
+    const exp = Math.floor(Date.parse(a.expiresAt) / 1000);
+    const sig = t.approvals.sign(a.id, "approve", exp);
+    const approve = await t.call("POST", `/approvals/${a.id}/token-decision`, {
+      decision: "approve",
+      exp,
+      sig,
+    });
+    expect(approve.status).toBe(403);
+    expect(await approve.json()).toEqual({ error: "Open Hatbot to approve this." });
+    expect(t.approvals.decide(a.id, "approve", "ntfy")).toBeNull();
+    expect(t.approvals.get(a.id)?.status).toBe("pending");
+    // Denying from the lock screen is fine.
+    const button = n.actions?.[1];
+    const deny = JSON.parse(button?.action === "http" ? (button.body ?? "") : "");
+    const denied = await t.call("POST", `/approvals/${a.id}/token-decision`, deny);
+    expect(denied.status).toBe(200);
+    expect(t.approvals.get(a.id)).toMatchObject({ status: "denied", decidedVia: "ntfy" });
+  }
+});
+
+test("a step that buys or pays asks as a purchase or a payment, whatever the model called it", async () => {
+  expect(approvalKind("send", { summary: "Send the reply to Anna" }, { url: null, text: "" })).toBe(
+    "send",
+  );
+  expect(approvalKind("other", { summary: "Click Kup teraz" }, { url: null, text: "" })).toBe(
+    "purchase",
+  );
+  expect(approvalKind("send", { summary: "Zamów i zapłać" }, { url: null, text: "" })).toBe(
+    "purchase",
+  );
+  expect(
+    approvalKind(
+      "other",
+      { summary: "Click Next" },
+      { url: "https://secure.payu.com/x", text: "" },
+    ),
+  ).toBe("payment");
+  expect(
+    approvalKind(
+      "purchase",
+      { summary: "Confirm" },
+      { url: "https://shop.example/", text: "Podaj kod BLIK" },
+    ),
+  ).toBe("payment");
+  expect(approvalKind("account_security", { summary: "Pay" }, { url: null, text: "" })).toBe(
+    "account_security",
+  );
+
+  // In a task: a checkout click the model calls "send" gets no Approve button on the phone.
+  const work = new FakeModel([
+    { content: [toolUse("confirm_intent", { kind: "send", summary: "Click Buy now for $40" })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  startTask(t, "Buy the cable");
+  const approval = await pending(t);
+  expect(approval.kind).toBe("purchase");
+  expect(t.notifier.sent.at(-1)?.actions?.map((a) => a.label)).toEqual(["Open in Hatbot", "Deny"]);
+  t.approvals.decide(approval.id, "deny", "web");
   await t.tasks.idle();
 });
 

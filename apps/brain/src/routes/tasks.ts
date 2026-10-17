@@ -1,6 +1,7 @@
 import { DecideApproval, TokenDecision } from "@hatbot/shared";
 import { Hono } from "hono";
 import { z } from "zod";
+import { approvableFromNotification } from "../approvals";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
 import { json, query } from "./util";
@@ -85,6 +86,10 @@ export const approvalRoutes = new Hono<AppEnv>()
     const { decision, exp, sig } = c.req.valid("json");
     if (!c.var.approvals.verify(approvalId, decision, exp, sig))
       return c.json({ error: "invalid or expired" }, 403);
+    // Money, mandates and the like are approved in the app, not from a locked phone.
+    const kind = c.var.approvals.get(approvalId)?.kind;
+    if (decision === "approve" && kind && !approvableFromNotification(kind))
+      return c.json({ error: "Open Hatbot to approve this." }, 403);
     const approval = c.var.approvals.decide(approvalId, decision, "ntfy");
     if (!approval) return c.json({ error: "already decided" }, 409);
     return c.json({ ok: true, status: approval.status });

@@ -22,6 +22,7 @@ import { collapse, type GateState, gateCheck, refused, sendsWith } from "../nego
 import { destructive } from "../plugins/ssh/policy";
 import { BudgetError, estimateTokens, priceOf, usesReserve } from "../spend";
 import { skillPath } from "../teach/skills";
+import { approvalKind } from "./approval-kind";
 import { checkFor, consequential } from "./policy";
 import { DesktopSendToChat, SEND_TO_CHAT_DESCRIPTION, sendToChat } from "./send-to-chat";
 import type { Tasks } from "./service";
@@ -701,7 +702,12 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       url: lastUrl,
     });
     await capture(bytes, "Before approval", "screenshot", step.id);
-    const { outcome, note } = await askApproval({ ...p.data, screenshotStepId: step.id });
+    const page = await agent.context(true).catch(() => null);
+    const kind = approvalKind(p.data.kind, p.data, {
+      url: page?.url ?? lastUrl,
+      text: page?.text ?? null,
+    });
+    const { outcome, note } = await askApproval({ ...p.data, kind, screenshotStepId: step.id });
     if (outcome !== "approved") {
       return textResult(
         call,
