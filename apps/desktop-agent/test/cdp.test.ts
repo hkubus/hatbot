@@ -74,6 +74,8 @@ test("Teach knows password, code and card fields by their names, in English and 
     { id: "OTPInput" },
     { name: "otp1", maxLength: 1 },
     { name: "pin1" },
+    { name: "pincode" },
+    { name: "cardnumber" },
     { name: "code1" },
     { name: "digit-1", maxLength: 1 },
     { name: "securitycode" },
@@ -142,6 +144,17 @@ test("ordinary fields aren't taken for secrets", () => {
     { name: "cardholder" },
     { name: "zip", maxLength: 6, placeholder: "00-000" },
     { name: "date", placeholder: "2026-10-17" },
+    // Words that only start like a pin, an OTP or a card, and a card that isn't a payment card.
+    { name: "pink" },
+    { name: "ping_host" },
+    { name: "pinterest_url" },
+    { name: "card_title" },
+    { tag: "TEXTAREA", placeholder: "Enter a title for this card…" },
+    { name: "q", placeholder: "Szukaj np. karty graficzne" },
+    { label: "Pan / Pani" },
+    { name: "kod_pocztowy" },
+    { label: "ZIP code" },
+    { label: "Postal code" },
   ])
     expect([f, isSecret(input(f))]).toEqual([f, false]);
 });
@@ -197,6 +210,15 @@ const pages: Record<string, string> = {
     <iframe src="http://localhost:${server.port}/blank" title="Secure card payment input frame"></iframe></body>`,
   "/plain": `<!doctype html><body><input name="q" value="dune">
     <iframe src="http://localhost:${server.port}/blank" title="Map"></iframe></body>`,
+  // Stripe.js's controller frame, on every page that loads it: hidden, a pixel high.
+  "/stripejs": `<!doctype html><body><h1>Blog post</h1>
+    <iframe name="__privateStripeController1" allow="payment *" aria-hidden="true" tabindex="-1"
+      src="http://localhost:${server.port}/blank?js.stripe.com"
+      style="border:none;width:1px;min-width:100%;display:block;visibility:hidden;position:fixed;height:1px"></iframe></body>`,
+  "/video": `<!doctype html><body>
+    <iframe src="http://localhost:${server.port}/blank" title="Karty graficzne RTX 3060 - test"></iframe></body>`,
+  "/editor": `<!doctype html><body style="margin:0">
+    <trix-editor contenteditable="true" style="display:block;width:200px;height:40px">hello</trix-editor></body>`,
   "/blank": "<!doctype html><body></body>",
   // A widget whose password box is in a closed shadow root, focused: the page sees only the widget.
   "/closed": `<!doctype html><body><pw-box></pw-box><script>
@@ -227,16 +249,24 @@ test.skipIf(!real)(
     expect(await shown("/area")).toBe(true);
     expect(await shown("/stripe")).toBe(true);
     expect(await shown("/plain")).toBe(false);
+    expect(await shown("/stripejs")).toBe(false);
+    expect(await shown("/video")).toBe(false);
   },
+  20_000,
 );
 
 test.skipIf(!real)(
   "typing into a closed shadow root counts as secret: its input can't be seen",
   async () => {
     await real?.call("navigate", { url: `${base}/closed` });
-    await real?.call("left_click", { target: { type: "coordinate", x: 5, y: 5 } });
-    await real?.call("key", { text: "Tab" });
-    const el = await inspect(real as Browser);
-    expect(el).toMatchObject({ tag: "pw-box", secret: true });
+    expect(await inspect(real as Browser)).toMatchObject({ tag: "pw-box", secret: true });
+    // A custom element that is itself the box isn't hiding one.
+    await real?.call("navigate", { url: `${base}/editor` });
+    await real?.call("left_click", { target: { type: "coordinate", x: 20, y: 20 } });
+    expect(await inspect(real as Browser)).toMatchObject({
+      tag: "trix-editor",
+      editable: true,
+      secret: false,
+    });
   },
 );

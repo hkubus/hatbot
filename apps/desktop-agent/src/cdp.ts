@@ -15,7 +15,7 @@ const MAX_TEXT = 20_000;
  * so OTPCode, otp1 and nr_karty read as words. Text areas too: a key or a recovery phrase goes in one.
  */
 export const SECRET = `
-  const SECRET_HINT = /pass|has[lł]|\\bpwd?\\b|\\bcc(?: ?(?:num|no)|\\b)|\\bcard\\b|\\bcard ?(?:num|no)|credit ?card|\\bkart[aęy]?\\b|\\bpan\\b|\\bcvc|\\bcvv|\\bcsc\\b|\\botp|totp|\\b2 ?fa\\b|\\bmfa\\b|\\bpin|\\bkod|\\bcode\\b|security ?code|one time|\\btoken|\\bblik|\\bsms|verif|secret|private ?key|api ?key|recovery|mnemonic/;
+  const SECRET_HINT = /pass|has[lł]|\\bpwd?\\b|\\bcc(?: ?(?:num(?:ber)?|no)|\\b)|\\bcard ?(?:num(?:ber)?|no)\\b|(?:credit|debit) ?card|\\b(?:numer|nr) ?kart|\\bcvc|\\bcvv|\\bcsc\\b|\\b(?:otp|pin)(?:code)?\\b|totp|\\b2 ?fa\\b|\\bmfa\\b|\\bkod(?! ?poczt)|(?<!zip |post |postal )\\bcode\\b|security ?code|one time|\\btoken|\\bblik|\\bsms|verif|secret|private ?key|api ?key|recovery|mnemonic/;
   const CARD_SHAPE = /(?:[0-9x•*] ?){4}(?:[ -]?(?:[0-9x•*]){4}){2,}/i;
   const isSecret = (el) => {
     if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') || el.type === 'hidden') return false;
@@ -47,8 +47,26 @@ export const SECRET = `
 // can't be read, and autofill or a paste may have filled it without typing, so one that's showing counts.
 export const CONTEXT_JS = `(o) => {
   ${SECRET}
-  const PAY_FRAME = /card|kart[aey]|cvc|cvv|payment|p[lł]atno|stripe|adyen|braintree|payu|przelewy24|blik|3d ?secure|\\b3ds\\b/i;
+  // Card fields' frames, by who serves them or what they say they are: whole words, not "karty
+  // graficzne" in a video's title.
+  const PAY_HOST = /(?:^|\\.)(?:stripe\\.com|stripe\\.network|adyen\\.com|adyenpayments\\.com|braintreegateway\\.com|braintree-api\\.com|payu\\.com|przelewy24\\.pl|tpay\\.com|paynow\\.pl|imoje\\.pl|blik\\.com|checkout\\.com|squareup\\.com|klarna\\.com)$/i;
+  const PAY_WORDS = /\\b(?:card ?(?:number|num|no)|credit card|debit card|card payment|cvc|cvv|security code|numer karty|karty płatniczej|karta płatnicza|payment (?:input|frame|field|form|details)|3d ?secure|3ds)\\b/i;
   const shown = (e) => e.getClientRects().length > 0;
+  // A frame you could see: not hidden, and big enough on screen to hold a field (Stripe.js leaves an
+  // invisible one, a pixel high, on every page that loads it).
+  const onScreen = (e) => {
+    const view = e.ownerDocument.defaultView || window;
+    if (view.getComputedStyle(e).visibility === 'hidden' || e.closest('[aria-hidden=true]')) return false;
+    const r = e.getBoundingClientRect();
+    return r.width >= 20 && r.height >= 20 && r.right > 0 && r.bottom > 0
+      && r.left < view.innerWidth && r.top < view.innerHeight;
+  };
+  const payFrame = (e) => {
+    let host = '';
+    try { host = new URL(e.getAttribute('src') || '', e.baseURI).hostname; } catch {}
+    return PAY_HOST.test(host) || PAY_WORDS.test(['title', 'name', 'aria-label']
+      .map((a) => e.getAttribute(a) || '').join(' '));
+  };
   const secretIn = (root) => {
     for (const e of root.querySelectorAll('*')) {
       if ((e.tagName === 'INPUT' || e.tagName === 'TEXTAREA') && e.value && isSecret(e) && shown(e)) return true;
@@ -56,8 +74,7 @@ export const CONTEXT_JS = `(o) => {
       if (e.tagName === 'IFRAME' || e.tagName === 'FRAME') {
         let d = null;
         try { d = e.contentDocument; } catch {}
-        if (d ? secretIn(d) : shown(e) && PAY_FRAME.test(['title', 'name', 'id', 'src', 'allow', 'aria-label']
-          .map((a) => e.getAttribute(a) || '').join(' '))) return true;
+        if (d ? secretIn(d) : onScreen(e) && payFrame(e)) return true;
       }
     }
     return false;
@@ -126,8 +143,10 @@ export const ELEMENT_JS = `(o) => {
       editable: false, fields: fieldsFor(document.body), secret: false, pageFocus: document.hasFocus() };
   if (!el || el === el.ownerDocument.body) return null;
   // Teach mode drops what's typed here. A frame's focus can't be seen from the page, so it counts too, as
-  // does a custom element's whose shadow root is closed (or that has none): its input can't be seen.
-  const opaque = el.localName.includes('-') && !el.shadowRoot;
+  // does a custom element's whose shadow root is closed: it can't take the focus itself, unless it's the
+  // box (contenteditable) or a tab stop, so the focus is on an input inside it that can't be seen.
+  const opaque = el.localName.includes('-') && !el.shadowRoot && !el.isContentEditable
+    && !el.hasAttribute('tabindex');
   const secret = isFrame(el) || isSecret(el) || opaque;
   const out = { ...elementInfo(el), secret };
   // Typing goes to the focused element only while the page has the keyboard, not the address bar.

@@ -312,6 +312,32 @@ test("hidden typing keeps its page's screenshots out, however the address came a
   ).toEqual(["5-click"]);
 });
 
+test("a search typed in the address bar holds screenshots back only until the address changes", async () => {
+  let url = "https://www.google.com/search?q=a";
+  let onPage = true;
+  const { r, saved, tick } = recorder(
+    async () => {
+      if (!onPage) throw new OffPage("the keyboard isn't on a page");
+      return { secret: false, url };
+    },
+    async () => ({ bytes: new Uint8Array([1]), url }),
+  );
+  r.page(url, "a");
+  onPage = false;
+  for (const m of click(1, 1)) r.input(m);
+  for (const m of typeText("dune")) r.input(m);
+  for (const m of press("Enter")) r.input(m);
+  tick(2000);
+  // The same path, another query: a new address all the same.
+  url = "https://www.google.com/search?q=dune";
+  onPage = true;
+  r.page(url, "dune - Google");
+  for (const m of click(100, 100)) r.input(m);
+  for (const m of click(100, 200)) r.input(m);
+  await r.finish();
+  expect(saved).toEqual(["3-click", "9-click", "12-click"]);
+});
+
 test("typing on a page the address poll hasn't seen yet counts for that page", async () => {
   // The field check knows where it was typed.
   const known = recorder(async () => ({ secret: true, url: "https://shop.example/blik" }));
