@@ -214,9 +214,14 @@ export function loadEarlier(): Promise<void> {
   return earlier;
 }
 
-export async function sendMessage(text: string, attachmentIds: number[] = []) {
+/**
+ * Posts your message. `clientId` is the send's own id: sent again with it after the answer was lost,
+ * the brain posts it once.
+ */
+export async function sendMessage(text: string, attachmentIds: number[] = [], clientId?: string) {
   const m = await api<ThreadMessage>(`/conversations/${state.conversationId}/messages`, {
-    body: { text, attachmentIds, incognito: state.incognito },
+    body: { text, attachmentIds, incognito: state.incognito, clientId },
+    timeout: 30_000,
   });
   if (!!m.incognito === state.incognito && m.conversationId === state.conversationId)
     set({ messages: upsert(state.messages, m) });

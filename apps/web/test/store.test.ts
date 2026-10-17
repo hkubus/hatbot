@@ -110,6 +110,20 @@ test("Earlier messages loads once however often it's asked, and never into incog
   await first.setIncognito(false);
 });
 
+test("a send carries its own id, and gives up after a while", async () => {
+  const store = await freshStore("send");
+  serve(() => msg(9, { role: "user", botId: null, text: "hi" }));
+  await store.sendMessage("hi", [], "c0ffee");
+  const sent = dom.requests.at(-1);
+  expect(sent).toMatchObject({
+    method: "POST",
+    path: "/conversations/1/messages",
+    body: { text: "hi", attachmentIds: [], incognito: false, clientId: "c0ffee" },
+  });
+  expect(sent?.signal).toBeInstanceOf(AbortSignal);
+  expect(shown(store)).toEqual([[9, "hi", "done"]]);
+});
+
 const task = (id: number): Task => ({ id, title: "Check the NAS", status: "done" }) as Task;
 
 test("a card whose fetch failed is fetched again after a reconnect", async () => {

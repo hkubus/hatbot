@@ -14,13 +14,15 @@ export class ApiError extends Error {
 /** JSON request to the brain. Session cookie auth; 401 sends the app back to the login screen. */
 export async function api<T>(
   path: string,
-  init: { method?: string; body?: unknown } = {},
+  /** `timeout`: in ms, after which it gives up and throws. */
+  init: { method?: string; body?: unknown; timeout?: number } = {},
 ): Promise<T> {
   const res = await fetch(API_PREFIX + path, {
     method: init.method ?? (init.body === undefined ? "GET" : "POST"),
     headers: init.body === undefined ? {} : { "content-type": "application/json" },
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
     credentials: "same-origin",
+    signal: init.timeout ? AbortSignal.timeout(init.timeout) : undefined,
   });
   // 204: nothing to answer, e.g. no tidy-up to propose.
   const data = res.status === 204 ? null : await res.json().catch(() => ({}));

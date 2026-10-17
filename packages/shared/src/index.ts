@@ -55,6 +55,11 @@ export const PostMessage = z
     attachmentIds: z.array(z.number().int().positive()).max(10).default([]),
     /** In the incognito conversation: it sees no history and is deleted when it ends. */
     incognito: z.boolean().default(false),
+    /**
+     * The sender's own id for this message: sent again with the same one (its answer was lost), it's
+     * posted once.
+     */
+    clientId: z.string().min(1).max(64).optional(),
   })
   .refine((m) => m.text.length > 0 || m.attachmentIds.length > 0, {
     message: "A message needs text or a file.",

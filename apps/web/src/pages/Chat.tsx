@@ -1028,6 +1028,12 @@ const groupMembers = (s: ReturnType<typeof getState>) => {
   return c?.kind === "group" ? c.botIds : null;
 };
 
+/** A random id for a send. Not crypto.randomUUID, which needs https, and a LAN address may not have it. */
+const randomId = () =>
+  Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
+
 /** What you're writing, its files and the menu over it; apart from the thread, so typing redraws only this. */
 export function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
   const incognito = useStore((s) => s.incognito);
@@ -1049,6 +1055,8 @@ export function Composer({ chat, onSend }: { chat: string; onSend: () => void })
   const setFiles = (fn: (f: DraftFile[]) => DraftFile[]) => setDraftFiles(chat, fn);
   const picker = useRef<HTMLInputElement>(null);
   const [sending, setSending] = useState(false);
+  // A send whose answer never came: the same message sent again keeps its id, so it's posted once.
+  const unsure = useRef<{ what: string; clientId: string } | null>(null);
   const [error, setError] = useState("");
   const textarea = useRef<HTMLTextAreaElement>(null);
   // While a reply streams, an empty composer's button stops it.
@@ -1128,23 +1136,27 @@ export function Composer({ chat, onSend }: { chat: string; onSend: () => void })
     setDraft("");
     setFiles(() => []);
     requestAnimationFrame(resize);
+    const ids = ready.map((d) => (d.attachment as Attachment).id);
+    const what = JSON.stringify([text, ids]);
+    const clientId = unsure.current?.what === what ? unsure.current.clientId : randomId();
     try {
-      await sendMessage(
-        text,
-        ready.map((d) => (d.attachment as Attachment).id),
-      );
+      await sendMessage(text, ids, clientId);
+      unsure.current = null;
       for (const d of sent) if (d.preview) URL.revokeObjectURL(d.preview);
     } catch (err) {
       setFiles((f) => (f.length ? f : sent));
       setDraft((d) => d || text);
       requestAnimationFrame(resize);
+      // The brain said no: it wasn't posted. No answer, or a failure on the way: it may have been.
+      const refused = err instanceof ApiError && err.status < 500;
+      unsure.current = refused ? null : { what, clientId };
       setError(
-        err instanceof ApiError
+        refused
           ? err.message
           : !navigator.onLine
             ? "You're offline. It wasn't sent."
             : getState().connected
-              ? "Couldn't send. Try again."
+              ? "It may not have been sent. Sending it again won't send it twice."
               : "Can't reach Hatbot. It wasn't sent.",
       );
     } finally {

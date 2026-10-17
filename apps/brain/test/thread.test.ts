@@ -50,6 +50,34 @@ test("a message gets a streamed reply, stored and searchable", async () => {
   expect(lastUserText(req as never)).toContain("hello there");
 });
 
+test("a message sent again with the same client id, its answer lost, is posted and answered once", async () => {
+  const t = await testApp(
+    new FakeModel([{ content: [text("Once.")] }, { content: [text("Twice.")] }]),
+  );
+  const { cookie } = await setUpOwner(t);
+  const send = (clientId?: string, path = "/conversations/1/messages") =>
+    t.call("POST", path, { text: "hello", clientId }, { cookie });
+  const first = await send("tab-1-a");
+  expect(first.status).toBe(202);
+  const posted = (await first.json()) as { id: number };
+  const again = await send("tab-1-a");
+  expect(again.status).toBe(202);
+  expect(await again.json()).toEqual(posted);
+  // Hatbot's chat by its old path is the same chat.
+  const old = (await (await send("tab-1-a", "/thread/messages")).json()) as { id: number };
+  expect(old.id).toBe(posted.id);
+  await t.thread.idle();
+  const texts = () => t.thread.list().map((m) => [m.role, m.text] as [string, string]);
+  expect(texts()).toEqual([
+    ["user", "hello"],
+    ["assistant", "Once."],
+  ]);
+  // Another id, or none, is another message.
+  await send("tab-1-b");
+  await t.thread.idle();
+  expect(texts()).toHaveLength(4);
+});
+
 test("tool calls run and their results go back to the model", async () => {
   const model = new FakeModel([
     {
