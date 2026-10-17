@@ -959,7 +959,11 @@ private struct Spoken: ViewModifier {
 /// What Hatbot wants to do and why, the page it read, a screenshot, then Deny and Approve.
 struct ApprovalBody: View {
   let approval: Approval
+  /// Off on the task's own page.
+  var linksTask = true
   @Environment(AppStore.self) private var store
+  /// In the chat: the task opens on its stack.
+  @Environment(\.openRoute) private var router
   @State private var busy = false
   @State private var error: String?
   @State private var note = ""
@@ -982,17 +986,23 @@ struct ApprovalBody: View {
         .lineLimit(1...6)
         .textFieldStyle(.roundedBorder)
     }
+    if linksTask, let taskId = a.taskId, let router {
+      Button("Open task") { router.open(.task(taskId)) }
+        .font(.subheadline)
+        .buttonStyle(.borderless)
+    }
     if let error {
       Text(error).font(.footnote).foregroundStyle(.red)
     }
-    HStack {
-      Button("Deny", role: .destructive) { decide(.deny) }
+    // Full-size and well apart, so neither is pressed for the other.
+    HStack(spacing: 16) {
+      Button(role: .destructive) { decide(.deny) } label: { Text("Deny").frame(maxWidth: .infinity) }
         .glassButton()
-      Button("Approve") { decide(.approve) }
+      Button { decide(.approve) } label: { Text("Approve").frame(maxWidth: .infinity) }
         .glassButton(prominent: true)
         .tint(.attention)
     }
-    .controlSize(.small)
+    .controlSize(.large)
     .disabled(busy)
     .sensoryFeedback(trigger: decided) { _, decided in
       switch decided {

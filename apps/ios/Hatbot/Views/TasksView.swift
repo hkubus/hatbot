@@ -161,7 +161,8 @@ struct TaskDetailView: View {
       }
       ForEach(pending) { a in
         Section {
-          VStack(alignment: .leading, spacing: 10) { ApprovalBody(approval: a) }.padding(.vertical, 4)
+          VStack(alignment: .leading, spacing: 10) { ApprovalBody(approval: a, linksTask: false) }
+            .padding(.vertical, 4)
         }
       }
       if showLive {
