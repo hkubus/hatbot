@@ -2278,9 +2278,12 @@ html[data-theme="dark"] .seg button.active {
   .show-phone {
     display: grid;
   }
-  /* Typing, so the on-screen keyboard is up: the tab bar steps aside for the field. */
+}
+/* Typing on a touch screen, so the on-screen keyboard is up: the tab bar steps aside for the field.
+   With a mouse there's no keyboard to make room for, and the tab bar is the only way around. */
+@media (max-width: 899px) and (hover: none) {
   body:has(:is(textarea, input:not([type="checkbox"], [type="radio"], [type="range"])):focus)
-  .tabbar {
+    .tabbar {
     display: none;
   }
   body:has(:is(textarea, input:not([type="checkbox"], [type="radio"], [type="range"])):focus)
