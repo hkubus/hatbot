@@ -601,4 +601,30 @@ export const migrations: string[] = [
   ALTER TABLE tasks ADD COLUMN report_path TEXT;
   ALTER TABLE messages ADD COLUMN sources TEXT;
   `,
+  /* 32: an attachment's id is never given out again: a browser may still have the deleted file's */ `
+  ${REBUILD}
+  CREATE TABLE attachments_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER REFERENCES messages(id),
+    task_id INTEGER REFERENCES tasks(id),
+    name TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    sender TEXT NOT NULL CHECK (sender IN ('owner', 'hatbot')),
+    created_at TEXT NOT NULL,
+    for_chat INTEGER NOT NULL DEFAULT 0
+  );
+  INSERT INTO attachments_new SELECT * FROM attachments;
+  DROP TABLE attachments;
+  ALTER TABLE attachments_new RENAME TO attachments;
+  CREATE INDEX attachments_message ON attachments(message_id);
+  CREATE INDEX attachments_task ON attachments(task_id);
+  -- Ids deleted from the top before now were given out once already: in a database that has been
+  -- used, new ones start well past them.
+  DELETE FROM sqlite_sequence WHERE name = 'attachments';
+  INSERT INTO sqlite_sequence (name, seq)
+    SELECT 'attachments', coalesce((SELECT max(id) FROM attachments), 0) + 1000
+    WHERE EXISTS (SELECT 1 FROM messages);
+  `,
 ];

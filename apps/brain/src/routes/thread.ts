@@ -56,6 +56,11 @@ export const threadRoutes = new Hono<AppEnv>()
     if (!a || !file || !(await file.exists())) return c.json({ error: "not found" }, 404);
     const inline = INLINE.includes(a.mediaType) && c.req.query("download") === undefined;
     const ascii = a.name.replace(/[^\x20-\x7e]|["\\]/g, "_");
+    // Checked each time rather than kept for a year: an incognito one isn't kept at all.
+    const etag = `"${a.id}-${Date.parse(a.createdAt).toString(36)}-${a.size.toString(36)}"`;
+    const cache = c.var.attachments.cacheable(id) ? "private, no-cache" : "no-store";
+    if (cache !== "no-store" && c.req.header("if-none-match") === etag)
+      return new Response(null, { status: 304, headers: { etag, "cache-control": cache } });
     return new Response(file, {
       headers: {
         "content-type": inline ? a.mediaType : "application/octet-stream",
@@ -63,7 +68,8 @@ export const threadRoutes = new Hono<AppEnv>()
         "x-content-type-options": "nosniff",
         // Chromium won't open a PDF in a sandboxed page; a PDF can't reach the app either way.
         "content-security-policy": `${a.mediaType === "application/pdf" ? "" : "sandbox; "}default-src 'none'; img-src 'self'; style-src 'unsafe-inline'`,
-        "cache-control": "private, max-age=31536000, immutable",
+        "cache-control": cache,
+        ...(cache === "no-store" ? {} : { etag }),
       },
     });
   })
