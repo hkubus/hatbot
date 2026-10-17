@@ -25,6 +25,19 @@ const pages: Record<string, string> = {
     <button style="${box(6)}">➤</button>
     <label style="${box(7)}"><input type="radio" name="d"> Paczkomat</label>
   </body>`,
+  "/chat": `<!doctype html><body style="margin:0">
+    <div><div><button aria-label="Emoji">😀</button><textarea id="m" style="${box(0)}"></textarea></div>
+      <button style="${box(1)}">${icon}</button><button style="${box(2)}">Wyślij</button></div>
+    <chat-box style="${box(3)};height:100px"></chat-box>
+    <script>
+      customElements.define("chat-box", class extends HTMLElement {
+        connectedCallback() {
+          this.attachShadow({ mode: "open" }).innerHTML =
+            '<textarea style="width:100px;height:40px"></textarea><button>Odpowiedz</button>';
+        }
+      });
+    </script>
+  </body>`,
 };
 
 const server = Bun.serve({
@@ -73,3 +86,21 @@ test.skipIf(!chromium)("the screen's inspect sees the focused control the same w
   await browser.call("left_click", { target: { type: "coordinate", ...at(3) } });
   expect(await inspectScreen(browser)).toMatchObject({ tag: "button", label: "Kup teraz" });
 });
+
+test.skipIf(!chromium)(
+  "a chat box says which buttons come after it, through shadow roots",
+  async () => {
+    await browser.call("navigate", { url: `${base}/chat` });
+    await browser.call("left_click", { target: { type: "coordinate", ...at(0) } });
+    expect(await browser.inspect({})).toMatchObject({
+      tag: "textarea",
+      editable: true,
+      buttonsAfter: ["", "Wyślij"],
+    });
+    await browser.call("left_click", { target: { type: "coordinate", x: 50, y: 170 } });
+    expect(await browser.inspect({})).toMatchObject({
+      tag: "textarea",
+      buttonsAfter: ["Odpowiedz"],
+    });
+  },
+);

@@ -96,6 +96,11 @@ export type AgentElement = {
   toggle?: boolean;
   /** It's a search box, or in a search or filter form. With "gates". */
   search?: boolean;
+  /**
+   * For a text box: the names of the buttons after it in the nearest part of the page that has any (a
+   * chat box's Send, say), "" for one with no name. Enter there may press one. With "gates".
+   */
+  buttonsAfter?: string[];
 };
 
 /** POST /exec: a command run by the desktop's shell, which can't see the browser profile or the screen. */

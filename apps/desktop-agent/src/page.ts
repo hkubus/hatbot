@@ -57,19 +57,34 @@ export const ELEMENT = `
     || (e.matches('input[type=search], [role=searchbox], [role=combobox]'))
     || (form && ((form.getAttribute('method') || '').toLowerCase() === 'get'
       || form.querySelector('input[type=search], [role=searchbox]'))));
+  const BUTTON = 'button, [role=button], input[type=submit], input[type=button], input[type=image]';
+  // The buttons after a text box in the nearest part of the page around it that has any: a chat box's Send,
+  // which Enter in the box may press. Up through open shadow roots to their hosts.
+  const buttonsAfter = (el) => {
+    let up = el.parentNode;
+    for (let i = 0; i < 5 && up && up !== el.ownerDocument.body && up.nodeType !== 9; i++) {
+      const after = [...up.querySelectorAll(BUTTON)].filter((b) => !el.contains(b) && shownBox(b)
+        && el.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+      if (after.length) return after.slice(0, 5).map(nameFor);
+      up = up.nodeType === 11 ? up.host : up.parentNode;
+    }
+    return [];
+  };
   const elementInfo = (el) => {
     if (!el || el === el.ownerDocument.body) return null;
     const c = el.closest(CONTROL);
     if (c) el = c;
     const form = el.closest('form');
+    const editable = isTextBox(el);
     const out = { tag: el.tagName.toLowerCase(), role: el.getAttribute('role'), type: el.getAttribute('type'),
       label: el.tagName === 'INPUT' && !['submit', 'button', 'image', 'reset'].includes(el.type) ? (el.placeholder || el.name || '') : nameFor(el),
-      inForm: !!form, url: location.href, editable: isTextBox(el), fields: fieldsFor(el),
+      inForm: !!form, url: location.href, editable, fields: fieldsFor(el),
       toggle: isToggle(el), search: isSearch(el, form) };
     if (form) {
       const submit = form.querySelector('button[type=submit], input[type=submit], button:not([type])');
       if (submit) out.submitLabel = nameFor(submit);
     }
+    if (editable) out.buttonsAfter = buttonsAfter(el);
     return out;
   };
   // The deepest element at a viewport point, descending into same-origin iframes.

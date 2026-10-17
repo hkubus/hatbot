@@ -1,7 +1,14 @@
 // The desktop's click and Enter checks (PLAN.md §6.1), without a desktop.
 import { expect, test } from "bun:test";
 import type { AgentElement } from "@hatbot/shared/desktop";
-import { checkoutHost, consequential, consequentialLabel, fold } from "../src/tasks/policy";
+import {
+  checkFor,
+  checkoutHost,
+  consequential,
+  consequentialLabel,
+  fold,
+  heldBack,
+} from "../src/tasks/policy";
 
 const button = (label: string, over: Partial<AgentElement> = {}): AgentElement => ({
   tag: "button",
@@ -141,13 +148,13 @@ test("filter, sort and search buttons are exempt; buying in them isn't", () => {
 });
 
 test("icon-only buttons are held, unless they open or close something", () => {
-  expect(consequential("click", button(""))).toEqual({ unlabelled: true });
-  expect(consequential("click", button("➤"))).toEqual({ unlabelled: true });
+  expect(consequential("click", button(""))).toEqual({ unlabelled: "button" });
+  expect(consequential("click", button("➤"))).toEqual({ unlabelled: "button" });
   expect(consequential("click", button("", { tag: "div", role: "button" }))).toEqual({
-    unlabelled: true,
+    unlabelled: "button",
   });
   expect(consequential("click", button("", { tag: "input", type: "image" }))).toEqual({
-    unlabelled: true,
+    unlabelled: "button",
   });
   expect(consequential("click", button("", { toggle: true }))).toBeNull();
   // Not a button: a link with only an icon, or plain text.
@@ -207,4 +214,118 @@ test("on a checkout or payment page every button asks; typing and choosing don't
     ["not a url", null],
   ];
   for (const [url, host] of pages) expect([url, checkoutHost(url)]).toEqual([url, host]);
+});
+
+test("Enter, Space and Tab can't slip past: sequences are refused, single presses checked", () => {
+  const focused = [{ focused: true as const }];
+  const key = (text: string, more: Record<string, unknown> = {}) =>
+    checkFor("computer", "key", { text, ...more });
+  // The Enter after Tab, or after another Enter, acts on something the check never saw.
+  expect(key("Tab Enter")).toHaveProperty("refuse");
+  expect(key("Tab Return")).toHaveProperty("refuse");
+  expect(key("Return Return")).toHaveProperty("refuse");
+  expect(key("Tab space")).toHaveProperty("refuse");
+  expect(key("Return", { repeat: 2 })).toHaveProperty("refuse");
+  expect(checkFor("computer", "hold_key", { text: "Return", duration: 1 })).toHaveProperty(
+    "refuse",
+  );
+  expect(checkFor("browser", "hold_key", { text: "space", duration: 1 })).toHaveProperty("refuse");
+  expect(key("Return")).toEqual({ press: "enter", at: focused });
+  expect(key("ctrl+Return")).toEqual({ press: "enter", at: focused });
+  expect(key("KP_Enter")).toEqual({ press: "enter", at: focused });
+  expect(key("shift+Return")).toEqual({ press: "newline", at: focused });
+  expect(key("space")).toEqual({ press: "space", at: focused });
+  expect(key("Tab")).toBeNull();
+  expect(key("ctrl+a BackSpace")).toBeNull();
+  expect(checkFor("computer", "hold_key", { text: "shift", duration: 1 })).toBeNull();
+
+  const type = (text: string) => checkFor("browser", "type", { text });
+  expect(type("Dzień dobry\n")).toEqual({ press: "enter", at: focused });
+  expect(type("Dzień dobry")).toEqual({ press: "space", at: focused });
+  expect(type("Jan\tKowalski")).toBeNull();
+  expect(type("Jan\tul. Polna 5")).toHaveProperty("refuse");
+  expect(type("Jan\t\n")).toHaveProperty("refuse");
+});
+
+test("mouse down, up and drags are checked where they land", () => {
+  expect(checkFor("computer", "left_mouse_down", {})).toEqual({
+    press: "click",
+    at: [{ cursor: true }],
+  });
+  expect(checkFor("computer", "left_mouse_up", {})).toEqual({
+    press: "click",
+    at: [{ cursor: true }],
+  });
+  expect(
+    checkFor("computer", "left_click_drag", { start_coordinate: [10, 20], coordinate: [300, 520] }),
+  ).toEqual({
+    press: "click",
+    at: [
+      { x: 10, y: 20 },
+      { x: 300, y: 520 },
+    ],
+  });
+  const point = (x: number, y: number) => ({ type: "coordinate", x, y });
+  expect(checkFor("browser", "left_mouse_up", { target: point(5, 6) })).toEqual({
+    press: "click",
+    at: [{ x: 5, y: 6 }],
+  });
+  expect(
+    checkFor("browser", "left_click_drag", { from: point(1, 2), target: point(300, 520) }),
+  ).toEqual({
+    press: "click",
+    at: [
+      { x: 1, y: 2 },
+      { x: 300, y: 520 },
+    ],
+  });
+  expect(checkFor("browser", "left_click", { target: { type: "ref", ref: "ref_7" } })).toEqual({
+    press: "click",
+    at: [{ ref: "ref_7" }],
+  });
+  expect(checkFor("computer", "left_click", { coordinate: [3, 4] })).toEqual({
+    press: "click",
+    at: [{ x: 3, y: 4 }],
+  });
+  expect(checkFor("computer", "scroll", {})).toBeNull();
+});
+
+test("Enter in a chat box asks when the button after it sends, or has no name", () => {
+  const box = (over: Partial<AgentElement> = {}): AgentElement => ({
+    tag: "textarea",
+    role: null,
+    type: null,
+    label: "Napisz wiadomość",
+    inForm: false,
+    editable: true,
+    ...over,
+  });
+  // OLX, Vinted and Messenger send on Enter in a text area.
+  expect(consequential("enter", box({ buttonsAfter: ["", "Wyślij"] }))).toEqual({
+    label: "Wyślij",
+  });
+  expect(consequential("enter", box({ tag: "div", buttonsAfter: [""] }))).toEqual({
+    unlabelled: "beside",
+  });
+  expect(consequential("enter", box({ buttonsAfter: ["Dodaj zdjęcie", "Emoji"] }))).toBeNull();
+  expect(consequential("enter", box())).toBeNull();
+  // shift+Enter is a new line there; in a one-line field it still submits.
+  expect(consequential("newline", box({ buttonsAfter: ["Wyślij"] }))).toBeNull();
+  const field = box({ tag: "input", type: "text", inForm: true, submitLabel: "Zapłać" });
+  expect(consequential("newline", field)).toEqual({ label: "Zapłać" });
+  // A search box searches.
+  const search = box({ tag: "input", type: "search", search: true, buttonsAfter: [""] });
+  expect(consequential("enter", search)).toBeNull();
+  // Typing a space types it.
+  expect(consequential("space", box({ buttonsAfter: ["Wyślij"] }))).toBeNull();
+});
+
+test("Space or Enter on a focused button or link presses it", () => {
+  expect(consequential("space", button("Kup teraz"))).toEqual({ label: "Kup teraz" });
+  expect(consequential("enter", button("Usuń", { tag: "a" }))).toEqual({ label: "Usuń" });
+  expect(consequential("space", button(""))).toEqual({ unlabelled: "button" });
+  expect(consequential("enter", button("Dalej"))).toBeNull();
+  expect(consequential("space", { ...button(""), tag: "body" })).toBeNull();
+  expect(heldBack("space", { label: "Kup teraz" })).toContain('press "Kup teraz"');
+  expect(heldBack("enter", { unlabelled: "beside" })).toContain("shift+Return");
 });

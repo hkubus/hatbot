@@ -2,6 +2,7 @@
 // as the send only while the text boxes hold exactly the approved message and the tab is that
 // negotiation's conversation. Pure, so desktop-run and the tests share it.
 import type { AgentElement } from "@hatbot/shared/desktop";
+import { pressOf } from "../tasks/policy";
 
 /** What a negotiation's desktop task may do, from its record. */
 export type SendGate = {
@@ -146,19 +147,10 @@ export const pressesEnter = (keys: string) =>
   keys
     .trim()
     .split(/\s+/)
-    .some((combo) => /(^|\+)(return|enter|kp_enter|iso_enter)$/i.test(combo));
-
-/** Which check a negotiation task's action needs: a click, or Enter anywhere in a key press. */
-export function sendsWith(name: string, input: Record<string, unknown>): "click" | "enter" | null {
-  if (name === "left_click" || name === "double_click" || name === "triple_click") return "click";
-  if (
-    (name === "key" || name === "hold_key") &&
-    typeof input.text === "string" &&
-    pressesEnter(input.text)
-  )
-    return "enter";
-  return null;
-}
+    .some((combo) => {
+      const p = pressOf(combo);
+      return p === "enter" || p === "newline";
+    });
 
 /**
  * Actions a negotiation's desktop task may not take at all: they could send without the brain seeing
@@ -182,6 +174,14 @@ export function refused(
     Number(input.repeat ?? 1) > 1
   )
     return "Press Enter once.";
+  if (
+    name === "key" &&
+    typed
+      .trim()
+      .split(/\s+/)
+      .some((c) => pressOf(c) === "newline")
+  )
+    return "The message is one paragraph: no new lines. Send it with the Send button or Enter.";
   if (name === "navigate" && typeof input.url === "string" && /^https?:/i.test(input.url)) {
     if (!sameHost(input.url, gate.listingUrl))
       return `A negotiation stays on ${hostOf(gate.listingUrl)}. Never open a link from the seller.`;

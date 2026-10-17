@@ -18,11 +18,11 @@ import { localStamp } from "../agent/thread";
 import { type Outcome, ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
-import { collapse, type GateState, gateCheck, refused, sendsWith } from "../negotiate/gate";
+import { collapse, type GateState, gateCheck, refused } from "../negotiate/gate";
 import { destructive } from "../plugins/ssh/policy";
 import { BudgetError, estimateTokens, priceOf, usesReserve } from "../spend";
 import { skillPath } from "../teach/skills";
-import { checkFor, consequential, heldBack } from "./policy";
+import { checkFor, consequential, heldBack, type Where } from "./policy";
 import { DesktopSendToChat, SEND_TO_CHAT_DESCRIPTION, sendToChat } from "./send-to-chat";
 import type { Tasks } from "./service";
 
@@ -556,33 +556,38 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       tasks.addStep(id, { kind: "note", name: "Held back", detail: no, url: lastUrl });
       return textResult(call, `Not run: ${no}`, true);
     }
-    const check = gate ? sendsWith(call.name, input) : checkFor(call.name, input);
+    const check = checkFor(isBrowser ? "browser" : "computer", call.name, input);
+    if (check && "refuse" in check) {
+      tasks.addStep(id, { kind: "note", name: "Held back", detail: check.refuse, url: lastUrl });
+      return textResult(call, `Not run: ${check.refuse}`, true);
+    }
     /** Looks again at what the check looked at, to see whether a send left the text box. */
     let inspectAgain: (() => Promise<AgentElement | null>) | null = null;
     let sending = false;
     if (check) {
-      let el: AgentElement | null;
-      if (isBrowser) {
-        const t = input.target as
-          | { type?: string; ref?: string; x?: number; y?: number }
-          | undefined;
-        const at =
-          check === "enter" ? {} : t?.type === "ref" ? { ref: t.ref } : { x: t?.x, y: t?.y };
-        const tab = typeof input.tab_id === "string" ? { tab_id: input.tab_id } : {};
-        inspectAgain = () => agent.browserInspect({ ...at, ...tab }).catch(() => null);
-      } else {
-        let point = input.coordinate as number[] | undefined;
-        if (check === "click" && !point) {
+      const tab = typeof input.tab_id === "string" ? { tab_id: input.tab_id } : {};
+      const inspectAt = async (w: Where): Promise<() => Promise<AgentElement | null>> => {
+        if (isBrowser) {
+          const at = "ref" in w ? { ref: w.ref } : "x" in w ? { x: w.x, y: w.y } : {};
+          return () => agent.browserInspect({ ...at, ...tab }).catch(() => null);
+        }
+        let point = "x" in w ? [w.x, w.y] : null;
+        if ("cursor" in w) {
           const r = await agent.action({ name: "cursor_position", input: {} });
           point = [r.x ?? 0, r.y ?? 0];
         }
-        inspectAgain = () => agent.inspect(point?.[0], point?.[1]).catch(() => null);
-      }
-      el = await inspectAgain();
-      let hold = consequential(check, el);
+        return () => agent.inspect(point?.[0], point?.[1]).catch(() => null);
+      };
+      // Each end of a drag; one place for everything else.
+      const looks = await Promise.all(check.at.map(inspectAt));
+      const els = await Promise.all(looks.map((f) => f()));
+      inspectAgain = looks[0] ?? null;
+      const el = els[0] ?? null;
+      let hold = els.map((e) => consequential(check.press, e)).find((h) => h !== null) ?? null;
       if (gate) {
         const label = hold && "label" in hold ? hold.label : null;
-        const g = gateCheck(gate, gateState, check, el, label);
+        const kind = check.press === "click" || check.press === "space" ? "click" : "enter";
+        const g = gateCheck(gate, gateState, kind, el, label);
         if (g.action === "hold") {
           tasks.addStep(id, { kind: "note", name: "Held back", detail: g.why, url: lastUrl });
           return textResult(call, `Not run: ${g.why}`, true);
@@ -592,13 +597,21 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         sending = g.action === "send";
       }
       if (hold && !armed) {
+        const what =
+          "label" in hold
+            ? `on "${hold.label}"`
+            : "checkout" in hold
+              ? `on a checkout page (${hold.checkout})`
+              : hold.unlabelled === "beside"
+                ? "beside a button with no label"
+                : "on a button with no label";
         tasks.addStep(id, {
           kind: "note",
           name: "Held back",
-          detail: `${call.name} ${"label" in hold ? `on "${hold.label}"` : "on a button with no label"} needs approval`,
+          detail: `${call.name} ${what} needs approval`,
           url: lastUrl,
         });
-        return textResult(call, `Not run: ${heldBack(check, hold)}`, true);
+        return textResult(call, `Not run: ${heldBack(check.press, hold)}`, true);
       }
       if (hold) armed = false;
     }

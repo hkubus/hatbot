@@ -491,6 +491,56 @@ test("a consequential browser click is checked by its element reference", async 
   expect(results[1]?.content).toBe("Not executed: an earlier action in this turn failed.");
 });
 
+test("Space, mouse up, a drag, Enter after Tab and Enter in a chat box don't slip past", async () => {
+  const pay = { tag: "button", role: null, type: "button", label: "Zapłać", inForm: false };
+  const chat = {
+    tag: "textarea",
+    role: null,
+    type: null,
+    label: "Napisz wiadomość",
+    inForm: false,
+    editable: true,
+    buttonsAfter: ["", "Wyślij"],
+  };
+  const work = new FakeModel([
+    { content: [computer("key", { text: "space" })] },
+    { content: [computer("left_mouse_down")] },
+    { content: [computer("left_mouse_up")] },
+    {
+      content: [computer("left_click_drag", { start_coordinate: [5, 5], coordinate: [300, 520] })],
+    },
+    { content: [computer("key", { text: "Tab Return" })] },
+    { content: [computer("hold_key", { text: "Return", duration: 1 })] },
+    { content: [browser("key", { text: "Return" })] },
+    { content: [browser("type", { text: "Dzień dobry\n" })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  t.agent.element = pay;
+  const stream = work.stream.bind(work);
+  work.stream = async (p, h) => {
+    const res = await stream(p, h);
+    // The last two land in a chat box whose Send is after it.
+    if (work.requests.length >= 7) t.agent.element = chat;
+    return res;
+  };
+  startTask(t, "Write to the seller");
+  await t.tasks.idle();
+
+  // Nothing ran: each was held or refused.
+  expect(t.agent.actions.filter((a) => a.name !== "cursor_position")).toEqual([]);
+  expect(t.agent.browserCalls).toEqual([]);
+  const said = (n: number) => JSON.stringify(work.requests[n]?.messages.at(-1)?.content);
+  expect(said(1)).toContain('press \\"Zapłać\\"');
+  expect(said(2)).toContain('click \\"Zapłać\\"');
+  expect(said(3)).toContain('click \\"Zapłać\\"');
+  expect(said(4)).toContain('click \\"Zapłać\\"');
+  expect(said(5)).toContain("in a key action of its own");
+  expect(said(6)).toContain("Holding Enter or Space repeats it");
+  expect(said(7)).toContain('submit with \\"Wyślij\\"');
+  expect(said(8)).toContain('submit with \\"Wyślij\\"');
+});
+
 test("lookups in a row run at once; everything else runs on its own, in order", async () => {
   const log: string[] = [];
   const run = async (c: string) => {

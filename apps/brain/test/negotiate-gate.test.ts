@@ -10,7 +10,6 @@ import {
   refused,
   type SendGate,
   sameAddress,
-  sendsWith,
 } from "../src/negotiate/gate";
 
 const LISTING = "https://www.olx.pl/d/oferta/karta-rtx-3070-CID99-ID1001abc.html";
@@ -138,10 +137,9 @@ test("Enter anywhere in a key press is checked", () => {
   expect(pressesEnter("shift+Return")).toBe(true);
   expect(pressesEnter("a KP_Enter")).toBe(true);
   expect(pressesEnter("ctrl+a BackSpace")).toBe(false);
-  expect(sendsWith("key", { text: "ctrl+Return" })).toBe("enter");
-  expect(sendsWith("hold_key", { text: "Return", duration: 1 })).toBe("enter");
-  expect(sendsWith("triple_click", {})).toBe("click");
-  expect(sendsWith("scroll", {})).toBeNull();
+  // The message is one paragraph.
+  expect(refused(gate, "key", { text: "shift+Return" })).toContain("no new lines");
+  expect(refused(gate, "key", { text: "ctrl+Return" })).toBeNull();
 });
 
 test("addresses match by host, path and the query they need", () => {
