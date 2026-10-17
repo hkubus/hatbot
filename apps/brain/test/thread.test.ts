@@ -194,6 +194,44 @@ test("every model a request may be answered by has a price; an unknown one costs
   expect(costOf("claude-unheard-of", million)).toBeCloseTo(10, 6);
 });
 
+test("after a fallback partway, the declined model's tool calls don't run and aren't kept", async () => {
+  const search = { type: "server_tool_use", id: "srvtoolu_1", name: "web_search", input: {} };
+  const found = { type: "web_search_tool_result", tool_use_id: "srvtoolu_1", content: [] };
+  const lone = { type: "server_tool_use", id: "srvtoolu_2", name: "web_search", input: {} };
+  const model = new FakeModel([
+    {
+      model: "claude-opus-4-8",
+      content: [
+        { type: "thinking", thinking: "", signature: "sig" },
+        text("Let me save that. "),
+        search,
+        found,
+        lone,
+        toolUse("memory_write", { path: "notes/x.md", content: "x" }, "toolu_declined"),
+        {
+          type: "fallback",
+          from: { model: "claude-opus-5-5" },
+          to: { model: "claude-opus-4-8" },
+          trigger: { type: "refusal" },
+        },
+        text("Here's what I can say instead."),
+      ] as never,
+      stop_reason: "end_turn",
+    },
+  ]);
+  const t = await testApp(model);
+  t.settings.update({ chatModel: "claude-opus-5-5" });
+  await t.thread.post("save a note").done;
+  expect(model.requests).toHaveLength(1);
+  expect(t.thread.list().at(-1)).toMatchObject({ status: "done" });
+  expect(await t.memory.exists("notes/x.md")).toBe(false);
+  const stored = t.db
+    .query<{ content: string }, []>("SELECT content FROM episode_turns WHERE role = 'assistant'")
+    .get()?.content;
+  const types = (JSON.parse(stored ?? "[]") as { type: string }[]).map((b) => b.type);
+  expect(types).toEqual(["text", "server_tool_use", "web_search_tool_result", "fallback", "text"]);
+});
+
 test("a reply a fallback model wrote is kept, and billed at that model's price", async () => {
   const usage = { input_tokens: 1_000_000, output_tokens: 0 };
   const t = await testApp(

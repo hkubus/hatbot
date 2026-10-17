@@ -39,7 +39,7 @@ import { BudgetError, estimateTokens, priceOf, type Spend, tokenCount, tokensOf 
 import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
 import type { Watchers } from "../watch/service";
-import { type ModelClient, modelErrorText } from "./model";
+import { afterFallback, type ModelClient, modelErrorText } from "./model";
 import {
   EXPERT_PROMPT,
   FORGET_PROMPT,
@@ -1765,8 +1765,10 @@ export class Thread {
             `episode ${episode.id}: the API changed the input`,
             JSON.stringify(res.input_transformations).slice(0, 1000),
           );
+        // What the declined model did before a fallback partway isn't kept, and its calls don't run.
+        const content = afterFallback(res.content);
         // The turn first: what the API has answered is kept, whatever recording its cost does.
-        this.appendTurn(episode.id, bot.id, "assistant", res.content);
+        this.appendTurn(episode.id, bot.id, "assistant", content);
         used.costUsd += spend.recordResponse({
           model: chatModel,
           purpose: "thread",
@@ -1776,12 +1778,12 @@ export class Thread {
         });
         used.tokens += tokenCount(tokensOf(res.usage));
         events.emit({ type: "message.usage", id: out.id, ...used });
-        addSources(cited, fetched, res.content);
+        addSources(cited, fetched, content);
         // Web pages are untrusted (PLAN.md §6.1).
         const web = webReads(res.content);
         if (web.length) this.taint(episode.id, web[0] as string);
 
-        const toolUses = res.content.filter(
+        const toolUses = content.filter(
           (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use",
         );
         if (res.stop_reason === "pause_turn") continue;

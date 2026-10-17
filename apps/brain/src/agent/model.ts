@@ -117,6 +117,31 @@ export function retryable(err: unknown): boolean {
   );
 }
 
+/**
+ * A response that fell back to another model partway, as it's kept and acted on. Before the last
+ * fallback block only text, and server tool calls with their results, stay: the declined model's
+ * thinking and tool calls are dropped, as the API asks, so none of its calls run.
+ */
+export function afterFallback(
+  content: Anthropic.Beta.BetaContentBlock[],
+): Anthropic.Beta.BetaContentBlock[] {
+  const at = content.findLastIndex((b) => b.type === "fallback");
+  if (at <= 0) return content;
+  const before = content.slice(0, at);
+  const answered = new Set(before.flatMap((b) => ("tool_use_id" in b ? [b.tool_use_id] : [])));
+  const paired = new Set(
+    before.flatMap((b) => (b.type === "server_tool_use" && answered.has(b.id) ? [b.id] : [])),
+  );
+  const kept = before.filter(
+    (b) =>
+      b.type === "text" ||
+      b.type === "fallback" ||
+      (b.type === "server_tool_use" && paired.has(b.id)) ||
+      ("tool_use_id" in b && paired.has(b.tool_use_id)),
+  );
+  return [...kept, ...content.slice(at)];
+}
+
 /** How long the API asked to wait before trying again (retry-after-ms or retry-after), or null. */
 export function retryAfterMs(err: unknown, now = Date.now()): number | null {
   const headers = err instanceof Anthropic.APIError ? err.headers : undefined;
