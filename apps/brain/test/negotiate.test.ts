@@ -8,7 +8,7 @@ import type { Approval, Mandate, Negotiation, NegotiationDetail, Task } from "@h
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { Approvals } from "../src/approvals";
 import { EventBus } from "../src/events";
-import { mandateSummary } from "../src/negotiate/mandate";
+import { mandateSummary, NOTE_PROMPT } from "../src/negotiate/mandate";
 import { scamSignals } from "../src/negotiate/scam";
 import { mcpPlugin } from "../src/plugins/mcp";
 import type { CallContext, PluginTool } from "../src/plugins/plugin";
@@ -448,8 +448,7 @@ test("a note on the mandate changes its numbers; one Haiku can't apply asks agai
   const work = new FakeModel();
   const notes: string[] = [];
   work.onCreate = (p) => {
-    if (p.tool_choice?.type !== "tool" || p.tool_choice.name !== "set_mandate")
-      return '{"suspected": false, "excerpt": ""}';
+    if (p.system !== NOTE_PROMPT) return '{"suspected": false, "excerpt": ""}';
     notes.push(String(p.messages[0]?.content));
     return notes.length === 1
       ? '{"opening": 1000, "target": 1150, "limit": 1300, "delivery": "OLX delivery with buyer protection", "expires_in_days": 7, "allow": []}'
@@ -513,7 +512,7 @@ test("a note on the mandate changes its numbers; one Haiku can't apply asks agai
 test("a note that gives the mandate more room is shown to you again before it takes effect", async () => {
   const work = new FakeModel();
   work.onCreate = (p) =>
-    p.tool_choice?.type === "tool"
+    p.system === NOTE_PROMPT
       ? '{"opening": 1060, "target": 1300, "limit": 1450, "delivery": "Pickup in Kraków", "expires_in_days": 7, "allow": ["phone"]}'
       : '{"suspected": false, "excerpt": ""}';
   work.script.push({
@@ -554,7 +553,7 @@ test("a mandate approval with a note is applied once, however often it's seen", 
   const work = new FakeModel();
   let asked = 0;
   work.onCreate = (p) => {
-    if (p.tool_choice?.type !== "tool") return '{"suspected": false, "excerpt": ""}';
+    if (p.system !== NOTE_PROMPT) return '{"suspected": false, "excerpt": ""}';
     asked++;
     return '{"opening": 1000, "target": 1150, "limit": 1300, "delivery": "OLX delivery with buyer protection", "expires_in_days": 7, "allow": []}';
   };
@@ -1394,12 +1393,12 @@ test("a Stop while a mandate note is being applied stands", async () => {
     release = r;
   });
   work.onCreate = (p) =>
-    p.tool_choice?.type === "tool"
+    p.system === NOTE_PROMPT
       ? '{"opening": 1000, "target": 1150, "limit": 1300, "delivery": "OLX delivery with buyer protection", "expires_in_days": 7, "allow": []}'
       : '{"suspected": false, "excerpt": ""}';
   const create = work.create.bind(work);
   work.create = async (p) => {
-    if (p.tool_choice?.type === "tool") await haiku;
+    if (p.system === NOTE_PROMPT) await haiku;
     return create(p);
   };
   const t = await testApp(new FakeModel(), work);
@@ -1419,7 +1418,7 @@ test("a Stop while a mandate note is being applied stands", async () => {
 test("a note that's asked about again still reaches the opening task, and a longer mandate is shown", async () => {
   const work = new FakeModel();
   work.onCreate = (p) =>
-    p.tool_choice?.type === "tool"
+    p.system === NOTE_PROMPT
       ? '{"opening": 1060, "target": 1300, "limit": 1450, "delivery": "OLX delivery with buyer protection", "expires_in_days": 21, "allow": []}'
       : '{"suspected": false, "excerpt": ""}';
   work.script.push({
