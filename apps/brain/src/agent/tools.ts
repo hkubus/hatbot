@@ -26,6 +26,15 @@ import {
   withDone,
   withTodo,
 } from "@hatbot/shared";
+import {
+  BOX_CONFIG,
+  BOX_PAGE,
+  type BoxFile,
+  badFiles,
+  boxConfig,
+  MAX_BOX_FILES,
+  MAX_BOX_SOURCE,
+} from "@hatbot/shared/hatbox";
 import { z } from "zod";
 import type { Attachments } from "../attachments";
 import { type Bots, botFolder } from "../bots";
@@ -34,6 +43,7 @@ import { BoxError, type Boxes } from "../boxes";
 import type { Db } from "../db";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import type { EventBus } from "../events";
+import { type Backends, cronProblem, NO_GUEST } from "../hatbox/backends";
 import type { Proposals } from "../memory/proposals";
 import { type Author, HATBOT, MemoryError, type MemoryStore } from "../memory/store";
 import { NEGOTIATE_TOOL_NAMES } from "../negotiate/names";
@@ -427,13 +437,18 @@ function ownBox(ctx: ToolContext, id: number): Box {
 }
 
 /** The page with each exact replacement made in turn; each old text must be there once. */
-function edited(html: string, edits: { old: string; new: string }[]): string {
+function edited(
+  html: string,
+  edits: { old: string; new: string }[],
+  first = 0,
+  where = "the page",
+): string {
   return edits.reduce((page, e, i) => {
     const at = page.indexOf(e.old);
     const again = at >= 0 && page.indexOf(e.old, at + 1) >= 0;
     if (at < 0 || again)
       throw new BoxError(
-        `Not changed: edit ${i + 1}'s old text ${again ? "is in the page more than once; give more of it" : "isn't in the page"}.`,
+        `Not changed: edit ${first + i + 1}'s old text ${again ? `is in ${where} more than once; give more of it` : `isn't in ${where}`}.`,
       );
     return page.slice(0, at) + e.new + page.slice(at + e.old.length);
   }, html);
@@ -461,6 +476,84 @@ const feedLine = (f: BoxFeed) =>
 /** What a feed gave, in a word or two. */
 const kindOf = (v: unknown) =>
   typeof v === "string" ? "text" : Array.isArray(v) ? "a JSON array" : "a JSON object";
+const BOX_FILES = z
+  .array(
+    z.object({
+      path: z.string().min(1).max(100).describe('e.g. "index.html", "server.ts", "lib/chart.ts"'),
+      content: z.string().max(MAX_BOX_SOURCE),
+    }),
+  )
+  .min(1)
+  .max(MAX_BOX_FILES);
+
+/** The boxes guest, which builds boxes with files and runs their backends; one plain sentence if none. */
+function backends(ctx: ToolContext): Backends {
+  const b = ctx.boxes?.backends;
+  if (!b?.available) throw new BoxError(NO_GUEST);
+  return b;
+}
+
+/** Files in one order, to tell whether they changed. */
+const fileKey = (files: BoxFile[] | undefined) =>
+  JSON.stringify([...(files ?? [])].sort((a, b) => (a.path < b.path ? -1 : 1)));
+
+/** A box's files with box_edit's changes made: whole files first, then removals, then edits. */
+function changedFiles(
+  current: { html: string; files?: BoxFile[] },
+  c: {
+    edits?: { file?: string; old: string; new: string }[];
+    html?: string;
+    files?: BoxFile[];
+    remove?: string[];
+  },
+): BoxFile[] {
+  let list = current.files ?? [{ path: BOX_PAGE, content: current.html }];
+  const put = (f: BoxFile) => {
+    list = [...list.filter((x) => x.path !== f.path), f];
+  };
+  if (c.html !== undefined) put({ path: BOX_PAGE, content: c.html });
+  for (const f of c.files ?? []) put(f);
+  list = list.filter((f) => !c.remove?.includes(f.path));
+  (c.edits ?? []).forEach((e, i) => {
+    const path = e.file ?? BOX_PAGE;
+    const f = list.find((x) => x.path === path);
+    if (!f) throw new BoxError(`Not changed: edit ${i + 1}'s file, ${path}, isn't in the box.`);
+    put({ path, content: edited(f.content, [e], i, path) });
+  });
+  return list;
+}
+
+/**
+ * A box's files built on the boxes guest, once hosts its backend couldn't reach before are approved
+ * (in a tainted chat). The page built and the approval's note, or what the model is told instead: a
+ * failed build's output is untrusted, since npm packages' code and text are in it.
+ */
+async function builtBox(
+  ctx: ToolContext,
+  signal: AbortSignal,
+  b: { tool: string; id?: number; title: string; files: BoxFile[]; hosts: string[] },
+): Promise<{ id: number; page: string; note: string } | string> {
+  const guest = backends(ctx);
+  const bad = badFiles(b.files);
+  if (bad) return `Not saved: ${bad}`;
+  const config = boxConfig(b.files.find((f) => f.path === BOX_CONFIG)?.content);
+  const late = config.cron && cronProblem(config.cron, Date.now());
+  if (late) return `Not saved: ${late}`;
+  const added = config.hosts.filter((h) => !b.hosts.includes(h));
+  const note = added.length
+    ? await asked(ctx, signal, {
+        name: b.tool,
+        input: { box: b.id, hosts: added },
+        what: `Let ${b.id ? `box #${b.id}` : "a new box"} "${b.title}" reach ${added.join(", ")}`,
+      })
+    : "";
+  const id = b.id ?? (ctx.boxes as Boxes).reserve();
+  const version = b.id ? (ctx.boxes as Boxes).nextVersion(b.id) : 1;
+  const result = await guest.build(id, version, b.files);
+  if (!result.ok || result.page === undefined)
+    return `Not saved: the build failed. What it printed:\n\n${boxOutput(ctx, b.tool, result.output || "(nothing)", `What building box "${b.title}" printed`)}`;
+  return { id, page: result.page, note };
+}
 
 type ToolDef<S extends z.ZodType> = {
   name: string;
@@ -722,14 +815,34 @@ export const TOOLS = [
   def({
     name: "box_create",
     description:
-      "Make a box: a small web app the owner keeps and opens from the chat, such as a tracker, a calculator, a planner or a dashboard. Not for a one-off answer: reply instead, with a chart block if it helps. A box is one self-contained HTML page, its CSS and JavaScript inline. It can't load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don't work; show messages and confirmations in the page. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app's colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku's answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes, and hatbox.feed(name) for what a feed you give it with box_feed last read.",
+      'Make a box: a small web app the owner keeps and opens from the chat, such as a tracker, a calculator, a planner or a dashboard. Not for a one-off answer: reply instead, with a chart block if it helps. A box is one self-contained HTML page, its CSS and JavaScript inline. It can\'t load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don\'t work; show messages and confirmations in the page. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app\'s colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku\'s answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes, and hatbox.feed(name) for what a feed you give it with box_feed last read. For more than a page, give files instead, built on the boxes guest into one page: index.html, which loads its scripts and styles by path (<script type="module" src="./app.ts">), the modules they import, npm packages in box.json, and server.ts for a backend (`export default { fetch(req), scheduled?() }` on Bun, keeping data with bun:sqlite in its working folder), which the page calls with await hatbox.fetch(path, init), answered like fetch. The backend reaches only the hosts box.json lists, and cron runs scheduled(), at most every 5 minutes: {"hosts": ["shop.example.com"], "cron": "0 * * * *", "packages": {"chart.js": "^4"}}.',
     schema: z.object({
       title: BOX_TITLE,
-      html: z.string().min(1).max(MAX_BOX_HTML).describe("The whole page"),
+      html: z.string().min(1).max(MAX_BOX_HTML).optional().describe("The whole page"),
+      files: BOX_FILES.optional().describe("Or the box's files, index.html among them"),
     }),
-    run: async ({ title, html }, ctx) => {
+    run: async ({ title, html, files }, ctx, signal) => {
       if (!ctx.boxes) return "Boxes aren't available here.";
       if (gone(ctx)) return GONE;
+      if (!html === !files) return "Not made: give the page as html, or files, not both.";
+      if (files) {
+        const made = { messageId: ctx.messageId, taintedBy: chatTaint(ctx.tainted?.()) };
+        const b = await builtBox(ctx, signal, { tool: "box_create", title, files, hosts: [] });
+        if (typeof b === "string") return b.replace("Not saved", "Not made");
+        const box = ctx.boxes.create(
+          {
+            botId: ctx.bot?.id ?? HATBOT_ID,
+            conversationId: ctx.conversationId ?? null,
+            title,
+            html: b.page,
+            id: b.id,
+            files,
+          },
+          made,
+        );
+        return `Made it. ${shown(ctx, box)}${b.note}`;
+      }
+      if (!html) return "Not made: give the page as html.";
       const box = ctx.boxes.create(
         {
           botId: ctx.bot?.id ?? HATBOT_ID,
@@ -745,12 +858,16 @@ export const TOOLS = [
   def({
     name: "box_edit",
     description:
-      "Change one of your boxes, as a new version; the earlier ones are kept. Give edits for a few changes, or the whole new page as html.",
+      "Change one of your boxes, as a new version; the earlier ones are kept. Give edits for a few changes, or the whole new page as html. A box with files takes edits to any of them, whole files to add or replace, and files to remove.",
     schema: z.object({
       box: z.number().int().describe("The box's number"),
       edits: z
         .array(
           z.object({
+            file: z
+              .string()
+              .optional()
+              .describe("For a box with files: which; index.html if left out"),
             old: z.string().min(1).describe("Text in the page, exactly, found there once"),
             new: z.string().describe("What it becomes"),
           }),
@@ -759,12 +876,35 @@ export const TOOLS = [
         .optional()
         .describe("Replacements, made in turn"),
       html: z.string().min(1).max(MAX_BOX_HTML).optional().describe("The whole new page"),
+      files: BOX_FILES.optional().describe(
+        "Whole files to add or replace; a box of one page gets files",
+      ),
+      remove: z.array(z.string()).max(MAX_BOX_FILES).optional().describe("Files to remove"),
       title: BOX_TITLE.optional(),
     }),
-    run: async ({ box: id, edits, html, title }, ctx) => {
+    run: async ({ box: id, edits, html, files, remove, title }, ctx, signal) => {
       const box = ownBox(ctx, id);
       const current = ctx.boxes?.page(id);
       if (!ctx.boxes || !current) return `There's no box #${id}.`;
+      if (current.files || files || remove?.length) {
+        const list = changedFiles(current, { edits, html, files, remove });
+        const name = title ?? box.title;
+        const same = fileKey(list) === fileKey(current.files);
+        if (same && name === box.title) return "No change: the files and title are as they were.";
+        const made = { messageId: ctx.messageId, taintedBy: chatTaint(ctx.tainted?.()) };
+        const b = same
+          ? { page: current.html, note: "" }
+          : await builtBox(ctx, signal, {
+              tool: "box_edit",
+              id,
+              title: name,
+              files: list,
+              hosts: ctx.boxes.hosts(id),
+            });
+        if (typeof b === "string") return b;
+        const saved = ctx.boxes.save(id, name, b.page, made, list);
+        return saved ? `Saved. ${shown(ctx, saved)}${b.note}` : "No change.";
+      }
       const page = edited(html ?? current.html, edits ?? []);
       if (page.length > MAX_BOX_HTML) return "Not changed: the page would be too long.";
       const saved = ctx.boxes.save(id, title ?? box.title, page, {
@@ -793,17 +933,24 @@ export const TOOLS = [
   }),
   def({
     name: "box_read",
-    description: "Read one of your boxes' page: the one that opens, or an earlier version.",
+    description:
+      "Read one of your boxes' page (a box with files: its files): the one that opens, or an earlier version.",
     schema: z.object({
       box: z.number().int(),
       version: z.number().int().positive().optional(),
+      file: z.string().optional().describe("For a box with files: just this one"),
     }),
-    run: async ({ box: id, version }, ctx) => {
+    run: async ({ box: id, version, file }, ctx) => {
       const box = ownBox(ctx, id);
       const page = ctx.boxes?.page(id, version);
       if (!page) return `Box #${id} has no version ${version}.`;
       const by = ctx.boxes?.taintedBy(id);
-      const text = `Box #${id} "${page.title}", version ${page.n} (${version ? `version ${box.version} opens` : "the one that opens"}):\n\n${page.html}`;
+      const shownFiles = page.files?.filter((f) => !file || f.path === file);
+      if (file && !shownFiles?.length) return `Box #${id} has no file ${file}.`;
+      const source = shownFiles
+        ? shownFiles.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n")
+        : page.html;
+      const text = `Box #${id} "${page.title}", version ${page.n} (${version ? `version ${box.version} opens` : "the one that opens"}):\n\n${source}`;
       return boxOutput(
         ctx,
         "box_read",
@@ -816,8 +963,20 @@ export const TOOLS = [
     name: "box_revert",
     description: "Bring back an earlier version of one of your boxes, as a new version.",
     schema: z.object({ box: z.number().int(), version: z.number().int().positive() }),
-    run: async ({ box: id, version }, ctx) => {
-      ownBox(ctx, id);
+    run: async ({ box: id, version }, ctx, signal) => {
+      const box = ownBox(ctx, id);
+      const before = ctx.boxes?.hosts(id) ?? [];
+      const old = ctx.boxes?.files(id, version).find((f) => f.path === BOX_CONFIG);
+      let added: string[] = [];
+      try {
+        added = boxConfig(old?.content).hosts.filter((h) => !before.includes(h));
+      } catch {}
+      if (added.length)
+        await asked(ctx, signal, {
+          name: "box_revert",
+          input: { box: id, version, hosts: added },
+          what: `Let box #${id} "${box.title}" reach ${added.join(", ")} again`,
+        });
       const saved = ctx.boxes?.revert(id, version, {
         messageId: ctx.messageId,
         taintedBy: chatTaint(ctx.tainted?.()),
@@ -914,6 +1073,57 @@ export const TOOLS = [
       const first = await feeds.set(id, box.botId, { name, tool, input, everyMinutes: every });
       // Not what it gave: that's untrusted, and would make adding the next feed ask too.
       return `Added the feed "${name}": it ran and gave ${kindOf(first.value)}. It runs every ${every} min; the page reads it with await hatbox.feed(${JSON.stringify(name)}).${note}`;
+    },
+  }),
+  def({
+    name: "box_logs",
+    description:
+      "The end of what one of your boxes' backend printed (console.log, errors, scheduled() runs), with notes on fetches it wasn't let make.",
+    schema: z.object({ box: z.number().int() }),
+    run: async ({ box: id }, ctx) => {
+      const box = ownBox(ctx, id);
+      const text = await backends(ctx).logs(id);
+      if (!text.trim()) return "Its backend hasn't printed anything.";
+      // What the backend printed came from its code and whatever the hosts it reaches sent.
+      return boxOutput(ctx, "box_logs", text, `What box #${id} "${box.title}"'s backend printed`);
+    },
+  }),
+  def({
+    name: "box_call",
+    description:
+      "Send one of your boxes' backend a request, as its page's hatbox.fetch does, to try it.",
+    schema: z.object({
+      box: z.number().int(),
+      path: z.string().startsWith("/").max(2000).describe('e.g. "/api/prices?days=7"'),
+      method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).optional(),
+      body: z.string().max(100_000).optional().describe("JSON or text"),
+    }),
+    run: async ({ box: id, path, method, body }, ctx) => {
+      const box = ownBox(ctx, id);
+      let type = "application/json";
+      try {
+        JSON.parse(body ?? "");
+      } catch {
+        type = "text/plain; charset=utf-8";
+      }
+      const res = await backends(ctx).request(id, {
+        method: method ?? (body === undefined ? "GET" : "POST"),
+        path,
+        headers: body === undefined ? [] : [["content-type", type]],
+        body: body === undefined ? undefined : new TextEncoder().encode(body),
+      });
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      const kind = res.headers.get("content-type") ?? "";
+      const textual = !kind || /^text\/|json|xml|javascript/.test(kind);
+      const answer = textual
+        ? cut(new TextDecoder().decode(bytes), 30_000)
+        : `(${bytes.byteLength} bytes of ${kind})`;
+      return boxOutput(
+        ctx,
+        "box_call",
+        `${res.status}${kind ? `, ${kind}` : ""}\n\n${answer}`,
+        `What box #${id} "${box.title}"'s backend answered`,
+      );
     },
   }),
   def({

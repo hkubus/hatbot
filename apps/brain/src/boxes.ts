@@ -14,6 +14,13 @@ import {
   MAX_BOX_STORE,
   MAX_BOX_VALUE,
 } from "@hatbot/shared";
+import {
+  BOX_CONFIG,
+  BOX_SERVER,
+  type BoxConfig,
+  type BoxFile,
+  boxConfig,
+} from "@hatbot/shared/hatbox";
 import type { Chats } from "./agent/chats";
 import { type CreateParams, type ModelClient, modelErrorText, oneShot } from "./agent/model";
 import { sameText, secretKey } from "./auth/keys";
@@ -21,6 +28,7 @@ import type { BoxFeeds } from "./box-feeds";
 import type { Db } from "./db";
 import { UserError } from "./errors";
 import type { EventBus } from "./events";
+import type { Backends } from "./hatbox/backends";
 import type { SettingsStore } from "./settings";
 import { BudgetError, estimateTokens, fixedTokens, requestCeiling, type Spend } from "./spend";
 
@@ -52,6 +60,10 @@ const VERSION_COLUMNS = "n, title, created_at AS createdAt, message_id AS messag
 /** Where a version came from: the reply that made it, and what the conversation had read. */
 export type Made = { messageId?: number | null; taintedBy?: string | null };
 
+/** Files in one order, to tell whether they changed. */
+const sorted = (files: BoxFile[] | undefined) =>
+  files?.length ? [...files].sort((a, b) => (a.path < b.path ? -1 : 1)) : undefined;
+
 /** How long an address to open a box's page holds. */
 const OPEN_MS = 10 * 60_000;
 
@@ -76,6 +88,8 @@ export class Boxes {
   private d: BoxDeps | null = null;
   /** What hatbox.ask's answers on their way may still cost, held against the boxes' daily limit. */
   private asking = 0;
+  /** Server boxes' backends, on the boxes guest (PLAN.md §21.6). */
+  backends?: Backends;
 
   constructor(
     private db: Db,
@@ -96,14 +110,6 @@ export class Boxes {
 
   get feeds(): BoxFeeds | null {
     return this.d?.feeds ?? null;
-  }
-
-  /**
-   * The hosts a box's backend may reach, which an approval to give it a feed names. None until the
-   * boxes guest (X2) lets a box reach hosts.
-   */
-  hosts(_id: number): string[] {
-    return [];
   }
 
   /** The latest changed first; only `botId`'s, when it's given. */
@@ -138,12 +144,78 @@ export class Boxes {
       this.db.query<{ version: number }, [number]>("SELECT version FROM boxes WHERE id = ?").get(id)
         ?.version;
     if (v === undefined) return null;
+    const page = this.db
+      .query<BoxPage, [number, number]>(
+        `SELECT ${VERSION_COLUMNS}, html FROM box_versions WHERE box_id = ? AND n = ?`,
+      )
+      .get(id, v);
+    const files = page && this.files(id, v);
+    return page && (files?.length ? { ...page, files } : page);
+  }
+
+  /** A version's files, the current one's unless `n` is given; none for a box of one page. */
+  files(id: number, n?: number): BoxFile[] {
+    return this.db
+      .query<BoxFile, [number, number | null, number]>(
+        `SELECT path, content FROM box_files
+         WHERE box_id = ? AND n = COALESCE(?, (SELECT version FROM boxes WHERE id = ?)) ORDER BY path`,
+      )
+      .all(id, n ?? null, id);
+  }
+
+  /** What the current version's box.json says. */
+  config(id: number): BoxConfig {
+    try {
+      return boxConfig(this.files(id).find((f) => f.path === BOX_CONFIG)?.content);
+    } catch {
+      return { hosts: [], packages: {} };
+    }
+  }
+
+  /** The hosts the box's backend may reach, from its box.json. */
+  hosts(id: number): string[] {
+    return this.config(id).hosts;
+  }
+
+  /** Whether the current version has a backend. */
+  server(id: number): boolean {
+    return this.files(id).some((f) => f.path === BOX_SERVER);
+  }
+
+  /** Boxes whose backend has a schedule, and when it last ran (or since when it's had none). */
+  scheduled(): { id: number; cron: string; since: string; ranAt: string | null }[] {
+    return this.db
+      .query<{ id: number; since: string; ranAt: string | null }, []>(
+        `SELECT b.id, COALESCE(b.ran_at, b.updated_at) AS since, b.ran_at AS ranAt FROM boxes b
+         JOIN box_files f ON f.box_id = b.id AND f.n = b.version AND f.path = '${BOX_SERVER}'`,
+      )
+      .all()
+      .flatMap((b) => {
+        const { cron } = this.config(b.id);
+        return cron ? [{ ...b, cron }] : [];
+      });
+  }
+
+  /** The box's schedule ran at `at`. */
+  ran(id: number, at: string) {
+    this.db.query("UPDATE boxes SET ran_at = ? WHERE id = ?").run(at, id);
+  }
+
+  /** A number for a new box, which nothing has had: one with files is built under it first. */
+  reserve(): number {
+    return this.db
+      .query<{ id: number }, []>("INSERT INTO box_ids DEFAULT VALUES RETURNING id")
+      .get()?.id as number;
+  }
+
+  /** The number the box's next version gets. */
+  nextVersion(id: number): number {
     return (
-      this.db
-        .query<BoxPage, [number, number]>(
-          `SELECT ${VERSION_COLUMNS}, html FROM box_versions WHERE box_id = ? AND n = ?`,
+      (this.db
+        .query<{ n: number | null }, [number]>(
+          "SELECT MAX(n) AS n FROM box_versions WHERE box_id = ?",
         )
-        .get(id, v) ?? null
+        .get(id)?.n ?? 0) + 1
     );
   }
 
@@ -162,36 +234,48 @@ export class Boxes {
   }
 
   create(
-    b: { botId: string; conversationId: number | null; title: string; html: string },
+    b: {
+      botId: string;
+      conversationId: number | null;
+      title: string;
+      html: string;
+      /** A box with files: the number it was built under, and the files. */
+      id?: number;
+      files?: BoxFile[];
+    },
     made: Made,
   ): Box {
     const now = this.now();
     const id = this.db.transaction(() => {
       const row = this.db
-        .query<{ id: number }, [string, number | null, string, string, string]>(
-          `INSERT INTO boxes (bot_id, conversation_id, title, version, created_at, updated_at)
-           VALUES (?, ?, ?, 1, ?, ?) RETURNING id`,
+        .query<{ id: number }, [number, string, number | null, string, string, string]>(
+          `INSERT INTO boxes (id, bot_id, conversation_id, title, version, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 1, ?, ?) RETURNING id`,
         )
-        .get(b.botId, b.conversationId, b.title, now, now);
+        .get(b.id ?? this.reserve(), b.botId, b.conversationId, b.title, now, now);
       const id = row?.id ?? -1;
-      this.addVersion(id, 1, b.title, b.html, made, now);
+      this.addVersion(id, 1, b.title, b.html, made, now, b.files);
       return id;
     })();
     return this.changed(id);
   }
 
-  /** A new version with this title and page, which opens from now on; null when neither changed. */
-  save(id: number, title: string, html: string, made: Made): Box | null {
+  /**
+   * A new version with this title and page (and files, for a box with them), which opens from now on;
+   * null when nothing changed.
+   */
+  save(id: number, title: string, html: string, made: Made, files?: BoxFile[]): Box | null {
     const current = this.page(id);
     if (!current) throw new BoxError(`There's no box #${id}.`);
-    if (current.title === title && current.html === html) return null;
+    const sameFiles = JSON.stringify(sorted(current.files)) === JSON.stringify(sorted(files));
+    if (current.title === title && current.html === html && sameFiles) return null;
     const now = this.now();
     this.db.transaction(() => {
       const last = this.db
         .query<{ n: number }, [number]>("SELECT MAX(n) AS n FROM box_versions WHERE box_id = ?")
         .get(id);
       const n = (last?.n ?? 0) + 1;
-      this.addVersion(id, n, title, html, made, now);
+      this.addVersion(id, n, title, html, made, now, files);
       this.db
         .query("UPDATE boxes SET title = ?, version = ?, updated_at = ? WHERE id = ?")
         .run(title, n, now, id);
@@ -203,16 +287,28 @@ export class Boxes {
   revert(id: number, n: number, made: Made): Box | null {
     const old = this.page(id, n);
     if (!old) throw new BoxError(`Box #${id} has no version ${n}.`);
-    return this.save(id, old.title, old.html, made);
+    return this.save(id, old.title, old.html, made, old.files);
   }
 
-  private addVersion(id: number, n: number, title: string, html: string, made: Made, now: string) {
+  private addVersion(
+    id: number,
+    n: number,
+    title: string,
+    html: string,
+    made: Made,
+    now: string,
+    files: BoxFile[] = [],
+  ) {
     this.db
       .query(
         `INSERT INTO box_versions (box_id, n, title, html, message_id, tainted_by, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(id, n, title, html, made.messageId ?? null, made.taintedBy ?? null, now);
+    const file = this.db.query(
+      "INSERT INTO box_files (box_id, n, path, content) VALUES (?, ?, ?, ?)",
+    );
+    for (const f of files) file.run(id, n, f.path, f.content);
   }
 
   /** Every version and what its page saved go with it. */
@@ -222,6 +318,7 @@ export class Boxes {
       return this.db.query("DELETE FROM boxes WHERE id = ?").run(id).changes > 0;
     })();
     if (gone) this.events.emit({ type: "box.deleted", id });
+    if (gone) void this.backends?.remove(id);
     return gone;
   }
 
@@ -250,6 +347,9 @@ export class Boxes {
   /** A call from the box's page through the app (PLAN.md §21.2). */
   async call(id: number, c: BoxCall): Promise<BoxAnswer> {
     switch (c.op) {
+      case "fetch":
+        if (!this.backends) throw new BoxError("This box has no backend.");
+        return this.backends.fetch(id, c);
       case "get": {
         const r = this.db
           .query<{ value: string }, [number, string]>(
@@ -453,6 +553,29 @@ const HATBOX = `(() => {
     a.target = "_blank";
     a.rel = "noopener noreferrer";
   }, true);
+  // hatbox.fetch: the box's backend, as JSON through the app. A body that isn't UTF-8 text goes as base64.
+  const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  const encoded = (bytes) => {
+    if (!bytes.length) return {};
+    try {
+      return { body: utf8.decode(bytes) };
+    } catch {
+      let s = "";
+      for (let i = 0; i < bytes.length; i += 32768) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 32768));
+      return { body: btoa(s), base64: true };
+    }
+  };
+  const boxFetch = async (path, init) => {
+    path = String(path);
+    const req = new Request("https://box.invalid" + (path.startsWith("/") ? "" : "/") + path, init);
+    const url = new URL(req.url);
+    const headers = {};
+    req.headers.forEach((v, k) => { headers[k] = v; });
+    const bytes = new Uint8Array(await req.arrayBuffer());
+    const r = await call("fetch", { path: url.pathname + url.search, method: req.method, headers, ...encoded(bytes) });
+    const body = r.base64 ? Uint8Array.from(atob(r.body), (c) => c.charCodeAt(0)) : r.body;
+    return new Response([204, 205, 304].includes(r.status) ? null : body, { status: r.status, headers: r.headers });
+  };
   window.hatbox = Object.freeze({
     store: Object.freeze({
       get: (key) => call("get", { key: String(key) }),
@@ -469,6 +592,7 @@ const HATBOX = `(() => {
     },
     send: (text) => call("send", { text: String(text) }),
     feed: (name) => call("feed", { name: String(name) }),
+    fetch: boxFetch,
     theme,
   });
 })();`;

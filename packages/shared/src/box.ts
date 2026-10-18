@@ -1,5 +1,6 @@
 // Boxes (PLAN.md §21): small web apps a bot makes for you, opened from the chat and kept.
 import { z } from "zod";
+import type { BoxFile } from "./hatbox";
 
 export type Box = {
   id: number;
@@ -24,8 +25,11 @@ export type BoxVersion = {
 
 export type BoxDetail = Box & { versions: BoxVersion[] };
 
-/** A version's page, for its Code view. */
-export type BoxPage = BoxVersion & { html: string };
+/**
+ * A version's page, for its Code view. A box with files (PLAN.md §21.6) has them too, and its `html` is
+ * the page built from them.
+ */
+export type BoxPage = BoxVersion & { html: string; files?: BoxFile[] };
 
 /** A box's page, in characters. */
 export const MAX_BOX_HTML = 1_000_000;
@@ -54,6 +58,18 @@ export const BoxCall = z.discriminatedUnion("op", [
   z.object({ op: z.literal("set"), key: z.string().min(1).max(MAX_BOX_KEY), value: z.unknown() }),
   z.object({ op: z.literal("delete"), key: z.string().max(MAX_BOX_KEY) }),
   z.object({ op: z.literal("keys") }),
+  // hatbox.fetch: a request to the box's backend. A body that isn't UTF-8 text is base64.
+  z.object({
+    op: z.literal("fetch"),
+    path: z.string().startsWith("/").max(2000),
+    method: z
+      .string()
+      .regex(/^[A-Za-z]{1,10}$/)
+      .optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+    body: z.string().max(7_200_000).optional(),
+    base64: z.boolean().optional(),
+  }),
   // X4: Haiku with no tools, a note in the box's chat, and a feed's latest result.
   z.object({
     op: z.literal("ask"),
@@ -66,7 +82,7 @@ export const BoxCall = z.discriminatedUnion("op", [
 ]);
 export type BoxCall = z.infer<typeof BoxCall>;
 
-/** The answer: `value` for get (absent when there's none) and keys. */
+/** The answer: `value` for get (absent when there's none), keys, and fetch (a BoxResponse). */
 export type BoxAnswer = { value?: unknown };
 
 /**

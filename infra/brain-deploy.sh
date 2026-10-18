@@ -58,6 +58,7 @@ EnvironmentFile=/etc/hatbot/brain.env
 EnvironmentFile=-/etc/hatbot/secrets.env
 EnvironmentFile=-/etc/hatbot/proxmox.env
 EnvironmentFile=-/etc/hatbot/desktop.env
+EnvironmentFile=-/etc/hatbot/boxes.env
 EnvironmentFile=-/etc/hatbot/ntfy.env
 EnvironmentFile=-/etc/hatbot/forgejo.env
 EnvironmentFile=-/etc/hatbot/github.env

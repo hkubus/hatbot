@@ -3,9 +3,11 @@
 # Runs inside the brain as root. host-setup.sh or ssh-setup.sh pushes and starts it; safe to re-run.
 # The app and its service unit come later, from deploy.sh.
 #   DESKTOP_IP     the desktop's IP; it may not open connections to the brain (empty: no desktop)
+#   BOXES_IP       the boxes guest's IP; the same (empty: no boxes guest)
 
 set -euo pipefail
 DESKTOP_IP=${DESKTOP_IP:-}
+BOXES_IP=${BOXES_IP:-}
 BUN_VERSION=${BUN_VERSION:-1.4.2}
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
 
@@ -69,9 +71,10 @@ if [[ ! -f /var/lib/hatbot/.ssh/id_ed25519 ]]; then
 fi
 cat /var/lib/hatbot/.ssh/id_ed25519.pub
 
-say "Firewall: the desktop may only answer, never connect in"
-desktop_rule=''
+say "Firewall: the desktop and the boxes guest may only answer, never connect in"
+desktop_rule='' boxes_rule=''
 [[ -z $DESKTOP_IP ]] || desktop_rule="ip saddr $DESKTOP_IP ct state new counter drop"
+[[ -z $BOXES_IP ]] || boxes_rule="ip saddr $BOXES_IP ct state new counter drop"
 cat >/etc/nftables.conf <<EOF
 #!/usr/sbin/nft -f
 # Managed by hatbot infra/brain-provision.sh.
@@ -81,6 +84,7 @@ table inet filter {
   chain input {
     type filter hook input priority filter; policy accept;
     $desktop_rule
+    $boxes_rule
   }
 }
 EOF

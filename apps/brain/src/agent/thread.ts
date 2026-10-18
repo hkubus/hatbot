@@ -2397,6 +2397,8 @@ function toolLabel(name: string, plugins: Plugins): string {
     box_read: "Reading a box",
     box_revert: "Changing a box",
     box_data: "Reading what a box saved",
+    box_logs: "Reading a box's logs",
+    box_call: "Trying a box's backend",
     box_feed: "Giving a box a feed",
   };
   const plugin = plugins.pluginOf(name);

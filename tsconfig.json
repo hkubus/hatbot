@@ -11,6 +11,9 @@
       "path": "apps/desktop-agent"
     },
     {
+      "path": "apps/hatbox"
+    },
+    {
       "path": "apps/web"
     }
   ]

@@ -19,6 +19,8 @@ import type { Db } from "./db";
 import type { DesktopAgent } from "./desktop/client";
 import { Desktop } from "./desktop/service";
 import { EventBus } from "./events";
+import { Backends } from "./hatbox/backends";
+import { type HatboxAgent, HttpHatboxAgent } from "./hatbox/client";
 import { Heartbeat } from "./heartbeat";
 import { Proposals } from "./memory/proposals";
 import { MemoryStore } from "./memory/store";
@@ -54,6 +56,8 @@ export type Outside = {
   /** Answers tasks, Teach, screening and the other calls in the background; the brain's is `model`. */
   taskModel: ModelClient;
   agent: DesktopAgent;
+  /** The boxes guest (PLAN.md §21.6); none when left out. */
+  hatbox?: HatboxAgent;
   /** Where notifications go. */
   notifications: Notifier;
   /** Your ntfy server, for Check everything; null when there's none to check. */
@@ -105,6 +109,7 @@ export async function createServices(o: Outside) {
   });
   const bots = new Bots(db, events, clock);
   const boxes = new Boxes(db, events, clock);
+  boxes.backends = new Backends(boxes, o.hatbox ?? new HttpHatboxAgent("", ""), settings, clock);
   // Not given the rest at first: attach() hands it what needs the chats in turn.
   const chats = new Chats({
     db,

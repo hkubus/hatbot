@@ -52,6 +52,9 @@ export function createApp(deps: Deps) {
   app.use("/questions/:id/token-answer", small);
   app.use(async (c, next) => {
     if (c.req.method === "POST" && c.req.path === `${API_PREFIX}/attachments`) return next();
+    // hatbox.fetch carries up to 5 MB, as base64 in JSON.
+    if (/^\/api\/v1\/boxes\/\d+\/call$/.test(c.req.path))
+      return limitBody(c, next, 7.5 * 1024 * 1024);
     return limitBody(c, next, 5 * 1024 * 1024);
   });
 
