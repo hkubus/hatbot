@@ -25,7 +25,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 - **Looking after things**: a heartbeat that looks for problems and acts on them with your instructions, watchers, Check everything and a weekly report (§15).
 
 ### v1 is not
-- Email or calendar. You use Proton Mail and no calendar; this can come later via Proton Bridge.
+- Email or calendar. You use Proton Mail and no calendar.
 - Open-ended goals ("grow my newsletter"). The heartbeat follows your instructions about problems it finds; it doesn't set goals of its own.
 - Multiple users. It's single-operator by design.
 
@@ -603,10 +603,7 @@ Each milestone ends with a working, demo-able system.
 - [x] Search, watchers, Check everything, the heartbeat and weekly report, memory proposals, Run again
 - **Done when**: you can chat, approve and take over from the app on your phone.
 
-### After v1
-Email via Proton Bridge.
-
-**Not planned** (the owner's call, 2026-10-16): messengers (Signal, Telegram, Matrix); being reachable only through Hatbot's own web and iOS app is fine. Email and calendar wait for after v1.
+**Not planned** (the owner's call, 2026-10-16): messengers (Signal, Telegram, Matrix); being reachable only through Hatbot's own web and iOS app is fine. Email and calendar wait for after v1. Proton Bridge is out (2026-10-18): it needs a paid Proton plan.
 
 ---
 

@@ -238,7 +238,6 @@ A second review of everything since `ed5df58` was fixed, then the code and tests
 - **Tests now cover less, on purpose:** one test per rule (allow and refuse) and per real past bug. No longer tested: JSON compression of answers, message batching, memory search ranking and its fallback, which conversation a negotiation's messages belong to, a queued send already sent or unconfirmed, the address-bar screenshot wait, the watcher pattern timeout, and `ssh_exec`'s timeout (it can't be set under a second).
 
 ## 4. Later (not v1, don't start without the owner)
-- **After v1** (PLAN §11): email via Proton Bridge.
 - **Negotiation** (PLAN §16): N1 and N2 are built (above). N3 onwards wait for the owner, and Scout's part needs a handoff in Scout's own repo.
 
 ## Things the owner should know when testing M4
