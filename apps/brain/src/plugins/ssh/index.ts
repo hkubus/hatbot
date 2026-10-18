@@ -411,11 +411,14 @@ export const sshPlugin = definePlugin({
       return verdict(careful, why, kind);
     };
 
-    /** The desktop's sandbox; what it says when it fails is fine to show. */
-    const sandbox = async <T>(use: (d: DesktopAgent) => Promise<T>): Promise<T> => {
+    /** The desktop's sandbox, stopping with the call; what it says when it fails is fine to show. */
+    const sandbox = async <T>(
+      signal: AbortSignal,
+      use: (d: DesktopAgent) => Promise<T>,
+    ): Promise<T> => {
       if (!files?.desktop.configured) throw new PluginError("The desktop's sandbox isn't set up.");
       try {
-        return await use(files.desktop);
+        return await use(files.desktop.withSignal?.(signal) ?? files.desktop);
       } catch (err) {
         throw err instanceof DesktopError ? new PluginError(err.message) : err;
       }
@@ -610,7 +613,7 @@ export const sshPlugin = definePlugin({
             bytes = await pull(from, signal);
             name = baseName(from.path);
           } else if ("sandbox" in from) {
-            bytes = await sandbox((d) => d.getFile(from.sandbox));
+            bytes = await sandbox(signal, (d) => d.getFile(from.sandbox));
             name = baseName(from.sandbox);
           } else {
             const a = files?.attachments.get(from.attachment);
@@ -627,7 +630,7 @@ export const sshPlugin = definePlugin({
           }
           if ("sandbox" in to) {
             const path = into(to.sandbox, name);
-            await sandbox((d) => d.putFile(path, bytes));
+            await sandbox(signal, (d) => d.putFile(path, bytes));
             return `Copied ${where(from)} to the sandbox: ${path} (${size}).`;
           }
           const dest = { ...to, path: into(to.path, name) };
