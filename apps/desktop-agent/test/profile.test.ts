@@ -14,7 +14,7 @@ const fake = {
   quits: 0,
   async quit() {
     this.quits++;
-    setTimeout(() => writeFileSync(running, readFileSync(join(dir, "browser-profile"))), 50);
+    writeFileSync(running, readFileSync(join(dir, "browser-profile")));
   },
   devToolsUp: async () => true,
 };
@@ -24,7 +24,7 @@ test("switches Chromium to a bot's profile, only when it's on another, and only 
   writeFileSync(running, "hatbot\n");
   expect(await useProfile("hatbot", dir, browser, running)).toBe("hatbot");
   expect(fake.quits).toBe(0);
-  expect(await useProfile("chef", dir, browser, running)).toBe("chef");
+  expect(await useProfile("chef", dir, browser, running, 0)).toBe("chef");
   expect(fake.quits).toBe(1);
   expect(readFileSync(running, "utf8").trim()).toBe("chef");
   await expect(useProfile("../x", dir, browser, running)).rejects.toThrow();
