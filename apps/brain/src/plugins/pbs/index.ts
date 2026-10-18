@@ -4,7 +4,8 @@
 // The certificate is self-signed, so the connection is pinned like Proxmox VE's (src/proxmox.ts).
 import { z } from "zod";
 import { pinnedRequest } from "../../proxmox";
-import { allow, ask, definePlugin, needsSetup, type PluginInstance, tool } from "../plugin";
+import { ask, definePlugin, needsSetup, type PluginInstance, tool } from "../plugin";
+import { stamp } from "../proxmox";
 
 type Usage = {
   store: string;
@@ -55,7 +56,6 @@ const Time = z
   .describe("The snapshot's backup-time, in Unix seconds, as pbs_snapshots lists it");
 
 const gib = (b = 0) => `${(b / 1024 ** 3).toFixed(1)} GiB`;
-const stamp = (s: number) => new Date(s * 1000).toISOString().slice(0, 16).replace("T", " ");
 const snapName = (s: { type: string; id: string; time: number }) =>
   `${s.type}/${s.id}/${new Date(s.time * 1000).toISOString().replace(/\.\d{3}Z$/, "Z")}`;
 
@@ -194,7 +194,6 @@ export const pbsPlugin = definePlugin({
           type && id
             ? `Verify ${time ? snapName({ type, id, time }) : `${type}/${id}`} in ${store}`
             : `Verify datastore ${store}`,
-        policy: () => allow(),
         run: async ({ store: s, type, id, time }) => {
           const form: Record<string, string> = {};
           if (type && id) {
@@ -214,7 +213,6 @@ export const pbsPlugin = definePlugin({
         label: "Starting garbage collection",
         schema: z.object({ store: Store }),
         describe: ({ store }) => `Garbage collect ${store}`,
-        policy: () => allow(),
         run: async ({ store: s }) => {
           const upid = await pinnedRequest(pbs, "POST", `${store(s)}/gc`);
           return `Started garbage collection (task ${String(upid)}).`;

@@ -13,12 +13,12 @@ import { DesktopError } from "./desktop/client";
 import type { Desktop } from "./desktop/service";
 import type { MemoryStore } from "./memory/store";
 import { guessableTopic, type NtfyNotifier } from "./notify";
-import type { DeadManPing } from "./ping";
+import { type DeadManPing, errorText } from "./ping";
 import type { Plugins } from "./plugins/registry";
 import type { Proxmox } from "./proxmox";
 import type { SettingsStore } from "./settings";
 import type { Spend } from "./spend";
-import { type Storage, storageLine } from "./storage";
+import { bytes, type Storage, storageLine } from "./storage";
 import type { Updates } from "./updates";
 
 /** The cheapest real model call there is: it proves the key, the network and billing. */
@@ -31,6 +31,8 @@ const BIG_WAL_BYTES = 512 * 1024 ** 2;
 const SNAPSHOT_MAX_AGE_MS = 36 * 3600_000;
 /** Features the brain uses that an older desktop-agent doesn't have. */
 const DESKTOP_FEATURES = ["profiles", "exec", "files", "fields", "gates"];
+const NEW_TOPIC = "Run deploy.sh with NTFY_URL set to pick a random one.";
+const ONLY_YOU = "Allow only your ntfy user to read the topic.";
 
 export type ChecksDeps = {
   db: Db;
@@ -70,8 +72,6 @@ const ok = (detail: string) => ({ state: "ok" as const, detail });
 const warn = (detail: string) => ({ state: "warn" as const, detail });
 const fail = (detail: string) => ({ state: "fail" as const, detail });
 const skip = (detail: string) => ({ state: "skip" as const, detail });
-const gib = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
-const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 export class Checks {
   private running: Promise<CheckReport> | null = null;
@@ -210,6 +210,7 @@ export class Checks {
     const url = this.d.config.publicUrl;
     if (/^https?:\/\/(localhost|127\.|\[::1\])/.test(url))
       return skip("HATBOT_PUBLIC_URL is a local address.");
+    const asked = this.clock();
     let res: Response;
     try {
       res = await (this.d.fetch ?? fetch)(`${url}/api/v1/health`, {
@@ -221,10 +222,11 @@ export class Checks {
       );
     }
     if (!res.ok) return fail(`${url}/api/v1/health answered ${res.status}.`);
+    // Passed on since it asked: its own request, through your proxy.
     const proxy = this.d.auth?.untrustedProxy;
-    if (proxy)
+    if (proxy && proxy.at >= asked)
       return warn(
-        `${url} reaches the brain through ${proxy}, which isn't in HATBOT_TRUSTED_PROXIES, so sign-in limits count everyone as one address. Add it to /etc/hatbot/brain.env.`,
+        `${url} reaches the brain through ${proxy.ip}, which isn't in HATBOT_TRUSTED_PROXIES, so sign-in limits count everyone as one address. Add it to /etc/hatbot/brain.env.`,
       );
     return ok(`${url} reaches the brain.`);
   }
@@ -232,8 +234,9 @@ export class Checks {
   private async modelCall() {
     if (this.d.settings.get().paused) return skip("Paused.");
     if (this.d.apiKeySet === false) return fail("ANTHROPIC_API_KEY isn't set.");
+    let release = () => {};
     try {
-      this.d.spend.check(0.001);
+      release = this.d.spend.hold(0.001);
       const res = await this.d.model.create({
         model: CHECK_MODEL,
         max_tokens: 16,
@@ -243,6 +246,8 @@ export class Checks {
       return ok("Haiku 5.5 answered.");
     } catch (err) {
       return fail(`The call failed: ${modelErrorText(err)}`);
+    } finally {
+      release();
     }
   }
 
@@ -258,8 +263,8 @@ export class Checks {
 
   private async archive() {
     const free = await this.d.archive.probe();
-    if (free < LOW_DISK_BYTES) return warn(`Writable, but only ${gib(free)} free.`);
-    return ok(`Writable, ${gib(free)} free.`);
+    if (free < LOW_DISK_BYTES) return warn(`Writable, but only ${bytes(free)} free.`);
+    return ok(`Writable, ${bytes(free)} free.`);
   }
 
   private spending() {
@@ -295,10 +300,7 @@ export class Checks {
     const ntfy = this.d.ntfy;
     if (!ntfy?.configured)
       return warn("NTFY_URL isn't set, so approvals and results only show in the app.");
-    if (!ntfy.topic)
-      return fail(
-        "NTFY_TOPIC isn't set, so nothing is sent. Run deploy.sh with NTFY_URL set to pick a random one.",
-      );
+    if (!ntfy.topic) return fail(`NTFY_TOPIC isn't set, so nothing is sent. ${NEW_TOPIC}`);
     await ntfy.health();
     // Whoever reads the topic sees every notification, and can press its Approve buttons.
     let open: boolean;
@@ -307,20 +309,19 @@ export class Checks {
     } catch (err) {
       const why =
         (err as Error).name === "TimeoutError" ? "ntfy didn't answer" : (err as Error).message;
-      const fix = "Allow only your ntfy user to read the topic.";
       return guessableTopic(ntfy.topic)
         ? fail(
-            `Couldn't tell whether anyone can read your notifications (${why}), and the topic's name is easy to guess. Run deploy.sh with NTFY_URL set to pick a random one. ${fix}`,
+            `Couldn't tell whether anyone can read your notifications (${why}), and the topic's name is easy to guess. ${NEW_TOPIC} ${ONLY_YOU}`,
           )
-        : warn(`Couldn't tell whether anyone can read the topic (${why}). ${fix}`);
+        : warn(`Couldn't tell whether anyone can read the topic (${why}). ${ONLY_YOU}`);
     }
     if (open && guessableTopic(ntfy.topic))
       return fail(
-        "Anyone can read your notifications, Approve buttons included: the server lets anyone read the topic, and its name is easy to guess. Run deploy.sh with NTFY_URL set to pick a random one, and allow only your ntfy user to read it.",
+        `Anyone can read your notifications, Approve buttons included: the server lets anyone read the topic, and its name is easy to guess. ${NEW_TOPIC} ${ONLY_YOU}`,
       );
     if (open)
       return warn(
-        "Your ntfy server lets anyone read the topic; only its random name keeps the notifications and their Approve buttons private. Allow only your ntfy user to read it.",
+        `Your ntfy server lets anyone read the topic; only its random name keeps the notifications and their Approve buttons private. ${ONLY_YOU}`,
       );
     if (!ntfy.hasToken)
       return warn(

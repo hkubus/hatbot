@@ -121,7 +121,7 @@ function limitBody(c: Context, next: Next, max: number): Response | Promise<void
 function clientIp(
   c: Parameters<typeof getConnInfo>[0],
   trusted: string[],
-  auth: Pick<AuthService, "untrustedProxy">,
+  auth: Pick<AuthService, "forwardedBy">,
 ): string {
   let peer = "unknown";
   try {
@@ -133,12 +133,9 @@ function clientIp(
   const forwarded = c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim();
   if (trusted.includes(peer)) {
     if (forwarded) return forwarded;
-  } else if (forwarded && isPrivate(peer) && auth.untrustedProxy !== peer) {
+  } else if (forwarded && isPrivate(peer)) {
     // Your proxy, not listed: every sign-in would count as coming from it, and lock out the rest.
-    auth.untrustedProxy = peer;
-    console.warn(
-      `${peer} forwards requests but isn't in HATBOT_TRUSTED_PROXIES, so sign-in limits count every client as ${peer}`,
-    );
+    auth.forwardedBy(peer);
   }
   return peer;
 }

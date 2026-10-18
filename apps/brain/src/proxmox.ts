@@ -2,39 +2,19 @@
 // Settings, and the Proxmox plugin's calls.
 // The host's certificate is self-signed, so the connection is pinned to its SHA-256 fingerprint. A
 // certificate from a public CA for the host's name is accepted too, so one that renews itself (ACME)
-// keeps working. Bun's fetch skips checkServerIdentity when rejectUnauthorized is off, so this speaks
-// HTTP/1.1 over a node:tls socket it has checked itself.
+// keeps working. Bun's fetch skips checkServerIdentity when rejectUnauthorized is off, so requests go
+// over a node:tls socket checked here first.
+import { request } from "node:http";
 import { isIP } from "node:net";
 import { checkServerIdentity, connect } from "node:tls";
 import { PluginError } from "./plugins/plugin";
 
-/** Its message is fine to show the owner and the model. */
-export class ProxmoxError extends PluginError {
-  constructor(
-    message: string,
-    readonly status = 0,
-  ) {
-    super(message);
-  }
-}
+/** What Proxmox calls throw, as the desktop's routes know it. */
+export { PluginError as ProxmoxError };
 
 export type Snapshot = { name: string; description: string; createdAt: string | null };
 
 const normalizeFp = (fp: string) => fp.replace(/:/g, "").toUpperCase();
-
-function decodeChunked(body: Buffer): Buffer {
-  const out: Buffer[] = [];
-  let i = 0;
-  while (i < body.length) {
-    const eol = body.indexOf("\r\n", i);
-    if (eol < 0) break;
-    const size = Number.parseInt(body.subarray(i, eol).toString(), 16);
-    if (!size) break;
-    out.push(body.subarray(eol + 2, eol + 2 + size));
-    i = eol + 2 + size + 2;
-  }
-  return Buffer.concat(out);
-}
 
 /** A Proxmox-style API (VE or Backup Server) behind a self-signed certificate. */
 export type PinnedApi = {
@@ -76,7 +56,7 @@ export async function pinnedRequest(
     });
   } catch (err) {
     socket.destroy();
-    throw new ProxmoxError(`Can't reach ${api.name}: ${(err as Error).message}`);
+    throw new PluginError(`Can't reach ${api.name}: ${(err as Error).message}`);
   }
   const cert = socket.getPeerCertificate();
   const seen = cert.fingerprint256 ?? "";
@@ -84,52 +64,53 @@ export async function pinnedRequest(
   const publicCa = socket.authorized && !checkServerIdentity(api.host, cert);
   if (!pinned && !publicCa) {
     socket.destroy();
-    throw new ProxmoxError(
+    throw new PluginError(
       `${api.name}'s certificate doesn't match the pinned fingerprint. It now shows ${seen || "no certificate"}. If its certificate was renewed, put that in ${api.setting} and restart the brain; if not, something else may be answering in its place.`,
     );
   }
-  const chunks: Buffer[] = [];
-  const done = new Promise<void>((resolve, reject) => {
-    socket.on("data", (c: Buffer) => chunks.push(c));
-    socket.once("end", resolve);
-    socket.once("close", () => resolve());
-    socket.once("error", reject);
-  });
-  socket.write(
-    [
-      `${method} /api2/json${path} HTTP/1.1`,
-      `Host: ${api.host}:${api.port}`,
-      `Authorization: ${api.auth}`,
-      "Accept: application/json",
-      "Connection: close",
-      ...(form
-        ? [
-            "Content-Type: application/x-www-form-urlencoded",
-            `Content-Length: ${Buffer.byteLength(body)}`,
-          ]
-        : []),
-      "",
-      body,
-    ].join("\r\n"),
-  );
+  let res: { code: number; status: string; text: string };
   try {
-    await done;
+    res = await new Promise((resolve, reject) => {
+      const req = request(
+        {
+          method,
+          host: api.host,
+          port: api.port,
+          path: `/api2/json${path}`,
+          headers: {
+            authorization: api.auth,
+            accept: "application/json",
+            ...(form && {
+              "content-type": "application/x-www-form-urlencoded",
+              "content-length": Buffer.byteLength(body),
+            }),
+          },
+          createConnection: () => socket,
+        },
+        (r) => {
+          const chunks: Buffer[] = [];
+          r.on("data", (c: Buffer) => chunks.push(c));
+          r.on("error", reject);
+          r.on("end", () =>
+            resolve({
+              code: r.statusCode ?? 0,
+              status: r.statusMessage ?? "",
+              text: Buffer.concat(chunks).toString(),
+            }),
+          );
+        },
+      );
+      req.on("error", reject);
+      req.end(body);
+    });
   } catch (err) {
-    throw new ProxmoxError(`${api.name} request failed: ${(err as Error).message}`);
+    throw new PluginError(`${api.name} request failed: ${(err as Error).message}`);
   } finally {
     socket.destroy();
   }
-
-  const raw = Buffer.concat(chunks);
-  const split = raw.indexOf("\r\n\r\n");
-  if (split < 0) throw new ProxmoxError(`${api.name} sent a malformed response.`);
-  const head = raw.subarray(0, split).toString();
-  let payload: Buffer = raw.subarray(split + 4);
-  if (/^transfer-encoding:\s*chunked/im.test(head)) payload = decodeChunked(payload);
-  const status = /^HTTP\/1\.[01] (\d{3}) ?(.*)$/m.exec(head);
-  const code = Number(status?.[1] ?? 0);
-  if (code !== 200) throw new ProxmoxError(`${api.name}: ${status?.[2] || `HTTP ${code}`}`, code);
-  return (JSON.parse(payload.toString() || "{}") as { data: unknown }).data;
+  if (res.code !== 200)
+    throw new PluginError(`${api.name}: ${res.status || `HTTP ${res.code}`}`, res.code);
+  return (JSON.parse(res.text || "{}") as { data: unknown }).data;
 }
 
 export class Proxmox {
@@ -137,11 +118,8 @@ export class Proxmox {
   readonly hasApi: boolean;
   /** …and the desktop's id, for its snapshots. */
   readonly configured: boolean;
-  private host: string;
-  private port: number;
+  private api: PinnedApi;
   readonly node: string;
-  private auth: string;
-  private fingerprint: string;
   readonly desktopId: string;
   readonly brainId: string;
   /** The longest waitTask goes between asking Proxmox whether a task is done. */
@@ -149,19 +127,23 @@ export class Proxmox {
 
   constructor(env: Record<string, string | undefined> = process.env) {
     const url = env.PROXMOX_URL ? new URL(env.PROXMOX_URL) : null;
-    this.host = url?.hostname ?? "";
-    this.port = Number(url?.port || 8006);
+    this.api = {
+      name: "Proxmox",
+      host: url?.hostname ?? "",
+      port: Number(url?.port || 8006),
+      fingerprint: normalizeFp(env.PROXMOX_TLS_FINGERPRINT ?? ""),
+      setting: "PROXMOX_TLS_FINGERPRINT in /etc/hatbot/proxmox.env",
+      auth: `PVEAPIToken=${env.PROXMOX_TOKEN_ID}=${env.PROXMOX_TOKEN_SECRET}`,
+    };
     this.node = env.PROXMOX_NODE ?? "";
-    this.auth = `PVEAPIToken=${env.PROXMOX_TOKEN_ID}=${env.PROXMOX_TOKEN_SECRET}`;
-    this.fingerprint = normalizeFp(env.PROXMOX_TLS_FINGERPRINT ?? "");
     this.desktopId = env.HATBOT_DESKTOP_ID ?? "";
     this.brainId = env.HATBOT_BRAIN_ID ?? "";
     this.hasApi = Boolean(
-      this.host &&
+      this.api.host &&
         this.node &&
         env.PROXMOX_TOKEN_ID &&
         env.PROXMOX_TOKEN_SECRET &&
-        this.fingerprint,
+        this.api.fingerprint,
     );
     this.configured = this.hasApi && /^\d+$/.test(this.desktopId);
   }
@@ -175,20 +157,8 @@ export class Proxmox {
   }
 
   private request(method: "GET" | "POST", path: string, form?: Record<string, string>) {
-    if (!this.hasApi) throw new ProxmoxError("Proxmox isn't set up (no /etc/hatbot/proxmox.env).");
-    return pinnedRequest(
-      {
-        name: "Proxmox",
-        host: this.host,
-        port: this.port,
-        fingerprint: this.fingerprint,
-        setting: "PROXMOX_TLS_FINGERPRINT in /etc/hatbot/proxmox.env",
-        auth: this.auth,
-      },
-      method,
-      path,
-      form,
-    );
+    if (!this.hasApi) throw new PluginError("Proxmox isn't set up (no /etc/hatbot/proxmox.env).");
+    return pinnedRequest(this.api, method, path, form);
   }
 
   private get lxc() {
@@ -214,16 +184,16 @@ export class Proxmox {
 
   /** Rolls the desktop back to a snapshot and starts it again; resolves when Proxmox is done. */
   async rollbackDesktop(name: string, timeoutMs = 180_000) {
-    if (!/^[A-Za-z][\w-]{0,39}$/.test(name)) throw new ProxmoxError("Not a snapshot name.", 400);
-    if (!this.configured) throw new ProxmoxError("The desktop's id isn't set.");
+    if (!/^[A-Za-z][\w-]{0,39}$/.test(name)) throw new PluginError("Not a snapshot name.", 400);
+    if (!this.configured) throw new PluginError("The desktop's id isn't set.");
     const upid = (await this.request(
       "POST",
       `${this.lxc}/snapshot/${encodeURIComponent(name)}/rollback`,
       { start: "1" },
     )) as string;
     const exit = await this.waitTask(upid, timeoutMs);
-    if (exit === null) throw new ProxmoxError("The rollback is taking too long; check Proxmox.");
-    if (exit !== "OK") throw new ProxmoxError(`Rollback failed: ${exit}`);
+    if (exit === null) throw new PluginError("The rollback is taking too long; check Proxmox.");
+    if (exit !== "OK") throw new PluginError(`Rollback failed: ${exit}`);
   }
 
   /** Waits for a Proxmox task to end: its exit status ("OK" when it worked), or null on timeout. */

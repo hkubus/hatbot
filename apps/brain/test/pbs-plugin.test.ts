@@ -200,6 +200,17 @@ test("it offers only what its token may do, and checks again when it couldn't", 
     privs = full;
     await waitFor(() => t.plugins.tools().some((x) => x.name === "pbs_delete_snapshot"));
     expect(t.plugins.get("pbs")?.message).toBeNull();
+
+    // The test button checks again, and Settings is told what it offers now.
+    privs = { "Datastore.Audit": true };
+    const before = t.events.length;
+    await t.plugins.test("pbs");
+    const updated = t.events
+      .slice(before)
+      .flatMap((e) => (e.type === "plugin.updated" ? [e.plugin] : []));
+    expect(updated.at(-1)?.tools.map((x) => x.name)).toEqual(
+      look.t.plugins.tools().map((x) => x.name),
+    );
   } finally {
     privs = full;
   }

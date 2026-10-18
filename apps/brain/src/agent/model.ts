@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { estimateTokens, fixedTokens, requestCeiling, type Spend } from "../spend";
 
 /** A model failure in a line, for the owner: the API's own message when there is one. */
 export function modelErrorText(err: unknown): string {
@@ -90,6 +91,35 @@ export class AnthropicModelClient implements ModelClient {
 
   create(params: CreateParams) {
     return this.client.beta.messages.create(params);
+  }
+}
+
+/**
+ * One request that isn't streamed, its text. What it may cost is held against the limits until it's
+ * recorded (PLAN.md §6.3): past one, it throws BudgetError and isn't sent. `reserve`: it may use
+ * what's kept for alerts. A reply that didn't end its turn throws.
+ */
+export async function oneShot(
+  d: { model: ModelClient; spend: Spend },
+  params: CreateParams,
+  ledger: { purpose: string; episodeId?: number; taskId?: number; botId?: string },
+  { reserve = false } = {},
+): Promise<string> {
+  const release = d.spend.hold(
+    requestCeiling(params.model, {
+      prompt: fixedTokens(params.system, null) + estimateTokens(params.messages),
+      maxTokens: params.max_tokens,
+    }),
+    undefined,
+    { reserve },
+  );
+  try {
+    const res = await d.model.create(params);
+    d.spend.recordResponse({ model: params.model, usage: res.usage, ...ledger });
+    if (res.stop_reason !== "end_turn") throw new Error(`it stopped at ${res.stop_reason}`);
+    return res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
+  } finally {
+    release();
   }
 }
 

@@ -37,7 +37,7 @@ import {
   watcherLine,
 } from "../watch/service";
 import type { Readable } from "./screening";
-import { messageTag, tagText, untrustedBlock } from "./untrusted";
+import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE, untrustedBlock } from "./untrusted";
 
 export type ToolContext = {
   db: Db;
@@ -64,7 +64,7 @@ export type ToolContext = {
   /** Adds a schedule's card to the thread. */
   scheduleCard?: (s: Schedule) => void;
   plugins?: Plugins;
-  /** The plugin tools this reply was offered, with negotiation's; all of the plugins' without it. */
+  /** The plugin tools this reply was offered, with negotiation's. */
   pluginTools?: PluginTool[];
   /** Where writes to skills and indexes go while the conversation or task is tainted. */
   proposals?: Proposals;
@@ -89,6 +89,14 @@ export type ToolContext = {
   gated?: (
     t: PluginTool,
     input: unknown,
+    signal: AbortSignal,
+  ) => Promise<{ content: string; isError: boolean }>;
+  /**
+   * Asks about a change a core tool would make, as a plugin's change asks: Haiku's review, then you.
+   * Your note on the approval, for the tool's result, or why it mustn't go ahead.
+   */
+  approve?: (
+    call: { tool: string; input: unknown; what: string; why: string },
     signal: AbortSignal,
   ) => Promise<{ content: string; isError: boolean }>;
 };
@@ -267,25 +275,12 @@ async function asked(
   call: { name: string; input: unknown; what: string },
 ): Promise<string> {
   if (!ctx.tainted?.()) return "";
-  if (!ctx.gated)
+  if (!ctx.approve)
     throw new NotChanged(
       "Not changed: after reading untrusted content this needs the owner's approval, which can't be asked here.",
     );
-  const r = await ctx.gated(
-    {
-      name: call.name,
-      description: "",
-      schema: z.unknown(),
-      access: "write",
-      label: call.what,
-      describe: () => call.what,
-      // Not a command on the homelab: it doesn't count towards the chat's limit.
-      commands: () => 0,
-      run: async () => "",
-    },
-    call.input,
-    signal,
-  );
+  const why = "This conversation has read untrusted content, so changes need your approval.";
+  const r = await ctx.approve({ tool: call.name, input: call.input, what: call.what, why }, signal);
   if (r.isError) throw new NotChanged(r.content);
   return r.content;
 }
@@ -488,8 +483,7 @@ export const TOOLS = [
       const terms = query.match(/[\p{L}\p{N}_]+/gu) ?? [];
       if (!terms.length) return "No searchable words in the query.";
       // Not the conversation you're in: the message asking would otherwise be the best match. Only
-      // the chats this bot is in. What a message drew on: its conversation's or task's untrusted
-      // content, or a note's.
+      // the chats this bot is in.
       const rows = db
         .query<
           {
@@ -501,13 +495,8 @@ export const TOOLS = [
           },
           [string, string, string, number, string]
         >(
-          `SELECT m.role, m.bot_id, m.text, m.created_at,
-             CASE WHEN e.tainted = 1 THEN coalesce(e.tainted_by, 'Untrusted content')
-               WHEN t.tainted = 1 THEN 'Task #' || t.id || ' "' || t.title || '"'
-               ELSE m.tainted_by END AS tainted_by
-           FROM messages_fts f JOIN messages m ON m.id = f.rowid
-           LEFT JOIN episodes e ON e.id = m.episode_id
-           LEFT JOIN tasks t ON t.id = m.task_id
+          `SELECT m.role, m.bot_id, m.text, m.created_at, ${UNTRUSTED_SOURCE} AS tainted_by
+           FROM messages_fts f JOIN messages m ON m.id = f.rowid ${TRUST_JOINS}
            WHERE messages_fts MATCH ? AND m.created_at >= ? AND m.created_at < ?
            AND m.episode_id IS NOT ?
            AND m.conversation_id IN (SELECT conversation_id FROM conversation_bots WHERE bot_id = ?)
@@ -1047,7 +1036,7 @@ export async function runTool(
     TOOLS.find((t) => t.name === name) ??
     TOOLS.find((t) => t.name.toLowerCase() === name.toLowerCase());
   if (!tool) {
-    const offered = ctx.pluginTools ?? ctx.plugins?.tools() ?? [];
+    const offered = ctx.pluginTools ?? [];
     const found = offered.find((t) => t.name === name);
     const plugin = found && ctx.livePlugin ? ctx.livePlugin(found) : found;
     if (typeof plugin === "string") return { content: plugin, isError: true };

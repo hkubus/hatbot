@@ -645,4 +645,17 @@ export const migrations: string[] = [
   CREATE VIRTUAL TABLE messages_fts USING fts5(text, content='messages', content_rowid='id', tokenize='porter unicode61');
   INSERT INTO messages_fts (rowid, text) SELECT id, text FROM messages WHERE incognito = 0;
   `,
+  /*
+   * 37: what a conversation read itself, apart from what came with the summary or the messages before
+   * it: only that taints the running summary, so deleting the conversation clears it (PLAN.md §6.1)
+   */ `
+  ALTER TABLE episodes ADD COLUMN read_untrusted TEXT;
+  ALTER TABLE episodes ADD COLUMN read_suspected TEXT;
+  -- Before, only what came with the summary can be told apart.
+  UPDATE episodes SET read_untrusted = coalesce(tainted_by, 'Untrusted content')
+    WHERE tainted = 1 AND coalesce(tainted_by, '') NOT LIKE 'The summary of earlier conversations%';
+  UPDATE episodes SET read_suspected = injection_suspected
+    WHERE injection_suspected NOT LIKE 'The summary of earlier conversations%'
+    AND injection_suspected NOT LIKE '%, which couldn''t be checked';
+  `,
 ];

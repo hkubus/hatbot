@@ -10,6 +10,7 @@ import {
   withRetries,
 } from "../src/agent/model";
 import { safeToRun } from "../src/agent/review";
+import { screenPage } from "../src/agent/screening";
 import { EventBus } from "../src/events";
 import { type BudgetError, requestCeiling, searchesIn } from "../src/spend";
 import { Tasks } from "../src/tasks/service";
@@ -721,6 +722,10 @@ test("summaries and Haiku's reviews wait while the limits are spent", async () =
   );
   expect(review.safe).toBe(false);
   expect(model.creates).toHaveLength(0);
+  // Nor is what was read screened: it counts as suspected.
+  const page = { url: null, title: "Read https://x.example", text: "Hello." };
+  expect(await screenPage(model, t.spend, {}, page)).toMatchObject({ failed: true });
+  expect(model.creates).toHaveLength(0);
   t.settings.update({ limits: { taskUsd: 3, dailyUsd: 10, monthlyUsd: 200, alertReserveUsd: 0 } });
   await t.thread.sweep();
   expect(summarized(t)).toEqual([{ id: 1, summarized: 1 }]);
@@ -768,4 +773,40 @@ test("a task's reply that fails as it's written again still says how the task we
   expect(reply?.status).toBe("error");
   expect(reply?.text).toStartWith("Example.com is up.");
   expect(reply?.text).toContain("Something went wrong");
+});
+
+test("a task a deleted bot started ends with its result; the bot isn't asked again", async () => {
+  const slow = Promise.withResolvers<void>();
+  const chat = new FakeModel([
+    { content: [toolUse("run_task", { title: "Look", goal: "Look at the NAS" })] },
+    { content: [text("On it.")] },
+  ]);
+  const work = new FakeModel([
+    {
+      wait: slow.promise,
+      content: [
+        toolUse("finish_task", { outcome: "done", summary: "The NAS is fine.", notify: true }),
+      ],
+    },
+  ]);
+  const t = await testApp(chat, work);
+  const coder = t.bots.create({
+    name: "Coder",
+    instructions: "",
+    chatModel: null,
+    chatEffort: null,
+    plugins: null,
+  });
+  const thread = t.chats.direct(coder.id);
+  await thread.post("look at the nas").done;
+  const reply = thread.list().at(-1) as ThreadMessage;
+  t.bots.delete(coder.id);
+  slow.resolve();
+  await t.tasks.idle();
+  await thread.idle();
+  expect(chat.requests).toHaveLength(2);
+  expect(thread.list().find((m) => m.id === reply.id)?.text).toStartWith("The NAS is fine.");
+  // Nor can a failed reply of its be written again.
+  t.db.query("UPDATE messages SET status = 'error' WHERE id = ?").run(reply.id);
+  expect(thread.retry(reply.id)).toBeNull();
 });

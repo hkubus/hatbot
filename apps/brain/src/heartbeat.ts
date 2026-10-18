@@ -12,7 +12,7 @@ import type { EventBus } from "./events";
 import type { Notifier } from "./notify";
 import type { Plugins } from "./plugins/registry";
 import type { SettingsStore } from "./settings";
-import { fixedTokens, requestCeiling, type Spend } from "./spend";
+import { estimateTokens, fixedTokens, requestCeiling, type Spend } from "./spend";
 import { RESTARTED, type Tasks } from "./tasks/service";
 
 export const HEARTBEAT_MODEL = "claude-haiku-5-5";
@@ -100,13 +100,13 @@ export class Heartbeat {
     return { ...s.last, recent: s.recent };
   }
 
-  /** Runs when it's due; the brain calls it every few seconds. */
-  tick() {
+  /** Runs when it's due, and returns that look; the brain calls it every few seconds. */
+  tick(): Promise<HeartbeatInfo> | undefined {
     const s = this.d.settings.get();
     if (s.paused || !s.heartbeat.enabled || this.running) return;
     const last = this.state().lastRunAt;
     if (last && this.clock() - Date.parse(last) < s.heartbeat.everyMinutes * 60_000) return;
-    void this.run().catch((err) => console.error("heartbeat failed", err));
+    return this.run();
   }
 
   /** A look now: Settings' Run now, and tests. */
@@ -322,37 +322,46 @@ export class Heartbeat {
 
   private async triage(instructions: string, list: string) {
     const content = `The owner's instructions:\n${instructions}\n\n<findings_json>\n${tagJson(list)}\n</findings_json>`;
-    this.d.spend.check(
+    const messages = [{ role: "user" as const, content }];
+    const release = this.d.spend.hold(
       requestCeiling(HEARTBEAT_MODEL, {
-        prompt: fixedTokens(TRIAGE_PROMPT, content),
+        prompt: estimateTokens(messages) + fixedTokens(TRIAGE_PROMPT, []),
         maxTokens: TRIAGE_MAX_TOKENS,
       }),
       undefined,
       { reserve: true },
     );
-    const res = await this.d.model.create({
-      model: HEARTBEAT_MODEL,
-      max_tokens: TRIAGE_MAX_TOKENS,
-      thinking: { type: "adaptive" },
-      output_config: { effort: "low", format: { type: "json_schema", schema: CHOICE } },
-      system: TRIAGE_PROMPT,
-      messages: [{ role: "user", content }],
-    });
-    this.d.spend.recordResponse({ model: HEARTBEAT_MODEL, purpose: "heartbeat", usage: res.usage });
-    if (res.stop_reason !== "end_turn") throw new Error(`it stopped at ${res.stop_reason}`);
-    const out = res.content
-      .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("");
-    const parsed = JSON.parse(out) as Record<string, unknown>;
-    const action = ["nothing", "notify", "task"].includes(String(parsed.action))
-      ? String(parsed.action)
-      : "notify";
-    return {
-      action,
-      title: String(parsed.title ?? "").slice(0, 80),
-      message: String(parsed.message ?? "").slice(0, 2000),
-    };
+    try {
+      const res = await this.d.model.create({
+        model: HEARTBEAT_MODEL,
+        max_tokens: TRIAGE_MAX_TOKENS,
+        thinking: { type: "adaptive" },
+        output_config: { effort: "low", format: { type: "json_schema", schema: CHOICE } },
+        system: TRIAGE_PROMPT,
+        messages,
+      });
+      this.d.spend.recordResponse({
+        model: HEARTBEAT_MODEL,
+        purpose: "heartbeat",
+        usage: res.usage,
+      });
+      if (res.stop_reason !== "end_turn") throw new Error(`it stopped at ${res.stop_reason}`);
+      const out = res.content
+        .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
+        .map((b) => b.text)
+        .join("");
+      const parsed = JSON.parse(out) as Record<string, unknown>;
+      const action = ["nothing", "notify", "task"].includes(String(parsed.action))
+        ? String(parsed.action)
+        : "notify";
+      return {
+        action,
+        title: String(parsed.title ?? "").slice(0, 80),
+        message: String(parsed.message ?? "").slice(0, 2000),
+      };
+    } finally {
+      release();
+    }
   }
 
   private state(): State {

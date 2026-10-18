@@ -1,6 +1,6 @@
 // A small MCP server over stdio for the MCP plugin's tests.
 
-import { appendFileSync, existsSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -33,10 +33,14 @@ if (count)
     appendFileSync(count, "ran\n");
     process.exit(1);
   });
-// The listing as given, whatever the tools really are: for definitions the API wouldn't take.
-const list = process.env.MCP_LIST;
+// The listing as given, whatever the tools really are: for definitions the API wouldn't take. From
+// a file, as it is when the server starts: one that comes back with its tools changed.
+const file = process.env.MCP_LIST_FILE;
+const list = process.env.MCP_LIST ?? (file && readFileSync(file, "utf8"));
 if (list)
   server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: JSON.parse(list),
   }));
+// Slow to start while this file is there: calls made meanwhile find it reconnecting.
+if (process.env.MCP_SLOW && existsSync(process.env.MCP_SLOW)) await Bun.sleep(1000);
 await server.connect(new StdioServerTransport());
