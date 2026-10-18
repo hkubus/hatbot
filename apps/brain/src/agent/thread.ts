@@ -719,7 +719,7 @@ export class Thread {
 
   /** /new, /task and /remember, in turn with replies. */
   private async command(c: ChatCommand, message: ThreadMessage, bot: Bot) {
-    const { tasks, memory, events, settings } = this.d;
+    const { tasks, memory, settings } = this.d;
     const incognito = !!message.incognito;
     // A new incognito conversation: the one before it is gone, /new included.
     if (incognito && c.name === "new") return this.deleteIncognito();
@@ -753,14 +753,7 @@ export class Thread {
       const reason = `Remember: ${titleOf(c.arg, 60)}`;
       try {
         const fact = c.arg;
-        const sha = await memory.update(
-          "INDEX.md",
-          (index) => withNote(index ?? "", fact),
-          owner,
-          reason,
-        );
-        if (sha)
-          events.emit({ type: "memory.committed", sha, message: reason, author: owner.name });
+        await memory.update("INDEX.md", (index) => withNote(index ?? "", fact), owner, reason);
         note("Saved to memory.");
       } catch (err) {
         if (!(err instanceof MemoryError)) console.error("/remember failed", err);

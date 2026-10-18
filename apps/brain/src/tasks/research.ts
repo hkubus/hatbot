@@ -986,8 +986,7 @@ async function saveReport(run: { tasks: Tasks; task: Task }, content: string): P
     const message = `Research: ${task.title}`;
     for (const name of names) {
       try {
-        const sha = await d.memory.writeIf(name, `${content}\n`, "", author, message);
-        if (sha) d.events.emit({ type: "memory.committed", sha, message, author: author.name });
+        await d.memory.writeIf(name, `${content}\n`, "", author, message);
         path = name;
         break;
       } catch (err) {

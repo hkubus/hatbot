@@ -439,7 +439,6 @@ export const TOOLS = [
       if (proposed) return proposed;
       const sha = await ctx.memory.write(path, content, author, reason);
       if (!sha) return "No change: the file already had this content.";
-      ctx.events.emit({ type: "memory.committed", sha, message: reason, author: author.name });
       return `Saved ${path} (commit ${sha.slice(0, 7)}).`;
     },
   }),
@@ -451,9 +450,7 @@ export const TOOLS = [
       const author = authorOf(ctx, path);
       const proposed = await held(ctx, path, null, reason);
       if (proposed) return proposed;
-      const sha = await ctx.memory.delete(path, author, reason);
-      if (sha)
-        ctx.events.emit({ type: "memory.committed", sha, message: reason, author: author.name });
+      await ctx.memory.delete(path, author, reason);
       return `Deleted ${path}.`;
     },
   }),
