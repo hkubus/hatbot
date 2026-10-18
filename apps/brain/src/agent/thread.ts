@@ -74,6 +74,7 @@ import {
   INCOGNITO_TOOLS,
   inBatches,
   LOOKUP_TOOLS,
+  liveTool,
   runTool,
   TOOL_PARAMS,
   toolParam,
@@ -498,26 +499,17 @@ export class Thread {
       .run(what, own ? 1 : 0, episodeId);
   }
 
-  /**
-   * A plugin tool the reply was offered, as it is now: the definitions sent stay fixed for the reply,
-   * but a call runs on the plugin's current instance and policy. Why not, when the plugin was switched
-   * off or taken from the bot since the reply began, or now describes the tool differently.
-   */
+  /** A plugin tool the reply was offered, as it is now (see liveTool). */
   private livePlugin(bot: Bot, offered: PluginTool, incognito: boolean): PluginTool | string {
     const { plugins, bots } = this.d;
     // Negotiation's tools aren't a plugin's.
     if (!plugins.pluginOf(offered.name)) return offered;
-    const now = plugins
-      .tools((bots.get(bot.id) ?? bot).plugins)
-      .find((t) => t.name === offered.name);
-    if (!now)
-      return `Not run: ${offered.name} isn't available any more. Its plugin was switched off, or taken from ${bot.name}, during this reply.`;
-    if (JSON.stringify(toolParam(now)) !== JSON.stringify(toolParam(offered)))
-      return `Not run: ${offered.name} has changed during this reply.`;
-    // Incognito changes nothing.
-    if (incognito && now.access !== "read")
-      return `Not run: ${offered.name} changes things now, and this conversation only looks.`;
-    return now;
+    return liveTool(offered, plugins.tools((bots.get(bot.id) ?? bot).plugins), {
+      bot: bot.name,
+      since: "during this reply",
+      // Incognito changes nothing.
+      onlyLooks: incognito ? "this conversation only looks" : undefined,
+    });
   }
 
   /** The episode's screener, made on first use. */

@@ -16,6 +16,7 @@ import {
   DesktopTaskInput,
   inBatches,
   LOOKUP_TOOLS,
+  liveTool,
   missingSkill,
   runTool,
   serverToolWaiting,
@@ -247,11 +248,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       .filter((t) => !research || t.access === "read")
       .map((t) => [t.name, t]),
   );
-  /**
-   * A plugin tool the task was offered, as it is now: the definitions sent stay fixed for the cache,
-   * but a call runs on the plugin's current instance and policy. Why not, when the plugin was
-   * switched off or taken from the bot since the task began, or now describes the tool differently.
-   */
+  /** A plugin tool the task was offered, as it is now (see liveTool). */
   const current = (name: string): PluginTool | string => {
     const offered = pluginTools.get(name);
     if (!offered) return `Unknown tool "${name}".`;
@@ -259,15 +256,12 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     // Negotiation's tools keep what they learned in this task while Scout's stay the same.
     if (mine.length !== negotiation.from.length || mine.some((t, i) => t !== negotiation.from[i]))
       negotiation = negotiating(mine);
-    const now = [...mine, ...negotiation.tools].find((t) => t.name === name);
-    if (!now)
-      return `Not run: ${name} isn't available any more. Its plugin was switched off, or taken from ${bot.name}, after this task started.`;
-    if (JSON.stringify(toolParam(now)) !== JSON.stringify(toolParam(offered)))
-      return `Not run: ${name} has changed since this task started.`;
-    // Research gets lookups only: a tool that has come to change things since doesn't run in it.
-    if (research && now.access !== "read")
-      return `Not run: ${name} changes things now, and research only looks things up.`;
-    return now;
+    return liveTool(offered, [...mine, ...negotiation.tools], {
+      bot: bot.name,
+      since: "since this task started",
+      // Research gets lookups only: a tool that has come to change things since doesn't run in it.
+      onlyLooks: research ? "research only looks things up" : undefined,
+    });
   };
   const others = d.bots.list().filter((b) => b.id !== bot.id);
   const tools = [

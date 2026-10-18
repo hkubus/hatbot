@@ -1014,6 +1014,26 @@ export const toolParam = (t: {
   eager_input_streaming: true,
 });
 
+/**
+ * A tool a reply or task was offered, as it is in `now`: a call runs on the plugin's current instance
+ * and policy. Why not, when it's gone, describes itself differently, or (`onlyLooks`) changes things.
+ */
+export function liveTool(
+  offered: PluginTool,
+  now: PluginTool[],
+  { bot, since, onlyLooks }: { bot: string; since: string; onlyLooks?: string },
+): PluginTool | string {
+  const name = offered.name;
+  const tool = now.find((t) => t.name === name);
+  if (!tool)
+    return `Not run: ${name} isn't available any more. Its plugin was switched off, or taken from ${bot}, ${since}.`;
+  if (JSON.stringify(toolParam(tool)) !== JSON.stringify(toolParam(offered)))
+    return `Not run: ${name} has changed ${since}.`;
+  if (onlyLooks && tool.access !== "read")
+    return `Not run: ${name} changes things now, and ${onlyLooks}.`;
+  return tool;
+}
+
 /** The core's tool definitions. Order and content must stay stable to keep the cache. */
 export const TOOL_PARAMS: Anthropic.Beta.BetaTool[] = TOOLS.map(toolParam);
 
