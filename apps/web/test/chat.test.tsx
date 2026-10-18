@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { installDom, settle } from "./dom";
+import { msg } from "./fixtures";
 
 installDom();
 const {
@@ -45,23 +46,13 @@ test("until its task or schedule loads, a card's line shows without Markdown's m
   const card = (patch: object) =>
     renderToStaticMarkup(
       <Message
-        m={{
-          id: 40,
-          role: "assistant",
-          conversationId: 1,
-          botId: "hatbot",
+        m={msg(40, {
           kind: "task",
           text: "Task #12: Check the NAS. Done: **All good.** The `tank` pool is fine.",
-          status: "done",
-          createdAt: "2026-10-17T10:00:00.000Z",
           taskId: 12,
-          scheduleId: null,
-          negotiationId: null,
-          episodeId: null,
-          editedAt: null,
           seenAt: null,
           ...patch,
-        }}
+        })}
         animate={false}
         unread={false}
       />,

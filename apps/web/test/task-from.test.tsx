@@ -1,19 +1,14 @@
 import { expect, test } from "bun:test";
-import type { Bot, Conversation, Task } from "@hatbot/shared";
+import type { Bot, Task } from "@hatbot/shared";
 import { renderToStaticMarkup } from "react-dom/server";
 import { installDom } from "./dom";
+import { chat } from "./fixtures";
 
 const dom = installDom();
 const { From } = await import("../src/pages/Tasks");
 const { loadBots } = await import("../src/store");
 
 const bot = (id: string, name: string) => ({ id, name }) as Bot;
-const chat = (
-  id: number,
-  kind: Conversation["kind"],
-  botIds: string[],
-  title: string | null = null,
-) => ({ id, kind, title, botIds, unread: 0, lastMessageAt: null }) as Conversation;
 
 const task = (patch: Partial<Task>) =>
   ({ id: 9, origin: "chat", parentId: null, conversationId: null, source: null, ...patch }) as Task;
