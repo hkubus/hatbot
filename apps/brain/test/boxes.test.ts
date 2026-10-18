@@ -9,6 +9,8 @@ const open = async (t: TestApp, id: number) => {
   const res = await t.call("POST", `/boxes/${id}/open`, {}, signIn(t));
   return ((await res.json()) as { url: string }).url;
 };
+/** A call from box 1's page, as the app passes it on. */
+const page = (t: TestApp, body: unknown) => t.call("POST", "/boxes/1/call", body, signIn(t));
 
 test("a box: made in the chat, opened on an opaque origin, keeping what its page saves, changed as a new version", async () => {
   const model = new FakeModel([
@@ -90,4 +92,24 @@ test("a bot changes only its own boxes", async () => {
   await t.thread.post("rename Coder's box").done;
   expect(lastUserText(model.requests[1])).toContain("is Coder's");
   expect(t.boxes.get(1)?.title).toBe("Builds");
+});
+
+test("hatbox.ask: Haiku answers the page with no tools, as Boxes in Spend, within the boxes' own daily limit, and not while paused", async () => {
+  const t = await testApp();
+  t.taskModel.onCreate = () => "Walk for 20 minutes.";
+  t.boxes.create({ botId: "hatbot", conversationId: 1, title: "Habits", html: PAGE }, {});
+  const ask = { op: "ask", prompt: "Suggest a habit", system: "One line." };
+  expect(await (await page(t, ask)).json()).toEqual({ value: "Walk for 20 minutes." });
+  expect(t.taskModel.creates[0]).toMatchObject({ system: "One line." });
+  expect(t.taskModel.creates[0]?.tools).toBeUndefined();
+  expect(t.spend.byPurpose(1).map((p) => p.purpose)).toEqual(["boxes"]);
+  // The chat's model never sees it.
+  expect(t.model.requests).toHaveLength(0);
+
+  // Over the boxes' own limit, with the brain's still far off, and while paused: nothing is sent.
+  t.settings.update({ limits: { boxesUsd: 0 } });
+  expect((await page(t, ask)).status).toBe(429);
+  t.settings.update({ limits: { boxesUsd: 0.5 }, paused: true });
+  expect((await page(t, ask)).status).toBe(409);
+  expect(t.taskModel.creates).toHaveLength(1);
 });

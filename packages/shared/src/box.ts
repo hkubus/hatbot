@@ -33,6 +33,10 @@ export const MAX_BOX_HTML = 1_000_000;
 export const MAX_BOX_VALUE = 1024 * 1024;
 export const MAX_BOX_STORE = 5 * 1024 * 1024;
 export const MAX_BOX_KEY = 200;
+/** What hatbox.ask sends Haiku, in characters, and the most it may answer, in tokens (X4). */
+export const MAX_BOX_ASK = 50_000;
+export const MAX_BOX_ASK_SYSTEM = 10_000;
+export const MAX_BOX_ASK_TOKENS = 8000;
 
 export const OpenBox = z.object({
   version: z.number().int().positive().optional(),
@@ -47,6 +51,13 @@ export const BoxCall = z.discriminatedUnion("op", [
   z.object({ op: z.literal("set"), key: z.string().min(1).max(MAX_BOX_KEY), value: z.unknown() }),
   z.object({ op: z.literal("delete"), key: z.string().max(MAX_BOX_KEY) }),
   z.object({ op: z.literal("keys") }),
+  // X4: Haiku with no tools.
+  z.object({
+    op: z.literal("ask"),
+    prompt: z.string().trim().min(1).max(MAX_BOX_ASK),
+    system: z.string().max(MAX_BOX_ASK_SYSTEM).optional(),
+    maxTokens: z.number().int().min(1).max(MAX_BOX_ASK_TOKENS).optional(),
+  }),
 ]);
 export type BoxCall = z.infer<typeof BoxCall>;
 
