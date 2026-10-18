@@ -2876,6 +2876,11 @@ dialog.ask .field {
 .row-link:hover {
   background: rgba(127, 127, 127, 0.06);
 }
+/* A whole row isn't underlined like a link in text. */
+.row-link:hover,
+a.row-main:hover {
+  text-decoration: none;
+}
 .link-row {
   position: relative;
 }
