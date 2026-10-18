@@ -1842,15 +1842,23 @@ export class Thread {
       };
     };
 
+    /** Records what a request cost, failed attempts too, and shows what the reply has used so far. */
+    const bill = (model: string, purpose: string, usage: Anthropic.Beta.BetaUsage) => {
+      used.costUsd += spend.recordResponse({
+        model,
+        purpose,
+        usage,
+        episodeId: episode.id,
+        botId: bot.id,
+      });
+      used.tokens += tokenCount(tokensOf(usage));
+      events.emit({ type: "message.usage", id: out.id, ...used });
+    };
+
     let askedOpus = false;
     /** ask_opus: one Opus 5.5 call, its answer streamed into this reply as is. */
     const askOpus = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
-      const result = (content: string, isError = false): BlockParam => ({
-        type: "tool_result",
-        tool_use_id: call.id,
-        content,
-        ...(isError ? { is_error: true } : {}),
-      });
+      const result = (content: string, isError = false) => toolResult(call.id, content, isError);
       const p = AskOpus.safeParse(call.input);
       if (!p.success) return result(`Invalid input: ${z.prettifyError(p.error)}`, true);
       if (askedOpus)
@@ -1888,28 +1896,12 @@ export class Thread {
             answer = "";
             restore();
           },
-          onFailedUsage: (m, usage) => {
-            used.costUsd += spend.recordResponse({
-              model: m,
-              purpose: "expert",
-              usage,
-              episodeId: episode.id,
-              botId: bot.id,
-            });
-          },
+          onFailedUsage: (m, usage) => bill(m, "expert", usage),
           signal: abort.signal,
         },
       );
       held();
-      used.costUsd += spend.recordResponse({
-        model: EXPERT_MODEL,
-        purpose: "expert",
-        usage: res.usage,
-        episodeId: episode.id,
-        botId: bot.id,
-      });
-      used.tokens += tokenCount(tokensOf(res.usage));
-      events.emit({ type: "message.usage", id: out.id, ...used });
+      bill(EXPERT_MODEL, "expert", res.usage);
       separate = true;
       if (res.stop_reason === "refusal") return result("Opus declined to answer this.", true);
       // The answer itself too, so what comes after it can follow on from it.
@@ -2016,15 +2008,7 @@ export class Thread {
               else if (read && "read" in read) progress(`Reading ${read.read || "a web page"}`);
             },
             onRetry: checkpoint(),
-            onFailedUsage: (m, usage) => {
-              used.costUsd += spend.recordResponse({
-                model: m,
-                purpose: "thread",
-                usage,
-                episodeId: episode.id,
-                botId: bot.id,
-              });
-            },
+            onFailedUsage: (m, usage) => bill(m, "thread", usage),
             signal: abort.signal,
           },
         );
@@ -2041,15 +2025,7 @@ export class Thread {
         const content = afterFallback(res.content);
         // The turn first: what the API has answered is kept, whatever recording its cost does.
         this.appendTurn(episode.id, bot.id, "assistant", content);
-        used.costUsd += spend.recordResponse({
-          model: chatModel,
-          purpose: "thread",
-          usage: res.usage,
-          episodeId: episode.id,
-          botId: bot.id,
-        });
-        used.tokens += tokenCount(tokensOf(res.usage));
-        events.emit({ type: "message.usage", id: out.id, ...used });
+        bill(chatModel, "thread", res.usage);
         // The last request's entry was there to read, but most of it was written again.
         const read = res.usage.cache_read_input_tokens ?? 0;
         if (cached > 4000 && read < cached / 2)
@@ -2119,26 +2095,15 @@ export class Thread {
             pluginTools.find((t) => t.name === call.name)?.access === "read");
         const results = await inBatches(toolUses, lookup, async (call): Promise<BlockParam> => {
           if (abort.signal.aborted)
-            return {
-              type: "tool_result",
-              tool_use_id: call.id,
-              is_error: true,
-              content: "Not run: the reply was stopped.",
-            };
+            return toolResult(call.id, "Not run: the reply was stopped.", true);
           if (cutOff(res))
-            return {
-              type: "tool_result",
-              tool_use_id: call.id,
-              is_error: true,
-              content: "Input was cut off at max_tokens. Retry with a shorter input.",
-            };
+            return toolResult(
+              call.id,
+              "Input was cut off at max_tokens. Retry with a shorter input.",
+              true,
+            );
           if (!offered.has(call.name))
-            return {
-              type: "tool_result",
-              tool_use_id: call.id,
-              is_error: true,
-              content: `${call.name} isn't available in this conversation.`,
-            };
+            return toolResult(call.id, `${call.name} isn't available in this conversation.`, true);
           if (call.name === "ask_opus" && onHaiku) {
             progress("Asking Opus…");
             return askOpus(call);
@@ -2202,12 +2167,7 @@ export class Thread {
             },
             abort.signal,
           );
-          return {
-            type: "tool_result",
-            tool_use_id: call.id,
-            is_error: r.isError,
-            content: r.content,
-          };
+          return toolResult(call.id, r.content, r.isError);
         });
         this.appendTurn(episode.id, bot.id, "user", results);
       }
@@ -2295,6 +2255,14 @@ export function markPrevious(turns: Turn[]): Turn[] {
   return out;
 }
 
+/** A tool call's result, for the turn after the call. */
+const toolResult = (id: string, content: string, isError = false): BlockParam => ({
+  type: "tool_result",
+  tool_use_id: id,
+  is_error: isError,
+  content,
+});
+
 /**
  * Turns where every tool call has its result. A reply stopped while its tools ran never stored
  * theirs, and the API turns the whole episode away without them.
@@ -2317,12 +2285,9 @@ export function answered(turns: Turn[]): Turn[] {
     const results = content.filter((b) => b.type === "tool_result");
     const missing = calls.filter((c) => !results.some((r) => r.tool_use_id === c.id));
     if (!missing.length) continue;
-    const filled: BlockParam[] = missing.map((c) => ({
-      type: "tool_result",
-      tool_use_id: c.id,
-      is_error: true,
-      content: "Stopped before this finished; it may or may not have run.",
-    }));
+    const filled = missing.map((c) =>
+      toolResult(c.id, "Stopped before this finished; it may or may not have run.", true),
+    );
     const rest = content.filter((b) => b.type !== "tool_result");
     out.push({ role: "user", content: [...results, ...filled, ...rest] });
     if (next?.role === "user") i++;
