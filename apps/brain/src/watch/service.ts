@@ -22,7 +22,7 @@ import { type DesktopAgent, DesktopError } from "../desktop/client";
 import type { EventBus } from "../events";
 import type { Notifier } from "../notify";
 import { PluginError } from "../plugins/plugin";
-import type { Plugins } from "../plugins/registry";
+import { type Plugins, untrustedOf } from "../plugins/registry";
 import type { SettingsStore } from "../settings";
 import type { Tasks } from "../tasks/service";
 import { counts, pick, WatchError } from "./extract";
@@ -571,10 +571,8 @@ export class Watchers {
       if (err instanceof PluginError) throw new WatchError(err.message);
       throw err;
     }
-    const untrusted =
-      typeof t.untrusted === "function" ? t.untrusted(input.data) : Boolean(t.untrusted);
     const json = /^\s*[[{]/.test(out) ? "application/json" : "text/plain";
-    return { value: await pick(out, json, source), untrusted };
+    return { value: await pick(out, json, source), untrusted: untrustedOf(t, input.data, out) };
   }
 
   /**
@@ -587,7 +585,7 @@ export class Watchers {
     const t = this.d.plugins.tools(bot.plugins).find((x) => x.name === w.source.tool);
     const input = t?.schema.safeParse(w.source.input ?? {});
     if (!t || !input?.success) return true;
-    return typeof t.untrusted === "function" ? t.untrusted(input.data) : Boolean(t.untrusted);
+    return untrustedOf(t, input.data);
   }
 
   private changed(id: number) {
