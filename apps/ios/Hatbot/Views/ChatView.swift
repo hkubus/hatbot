@@ -23,9 +23,6 @@ struct ChatView: View {
   @State private var farFromBottom = false
   static let readingWidth: CGFloat = 720
   @State private var nearBottom = true
-  /// The round button's glyph box, growing with Dynamic Type like its glyph.
-  @ScaledMetric(relativeTo: .body) private var glyphWidth: CGFloat = 26
-  @ScaledMetric(relativeTo: .body) private var glyphHeight: CGFloat = 30
 
   /// What the list shows: times, folds, and the messages that aren't folded away.
   fileprivate enum Row: Identifiable {
@@ -186,9 +183,7 @@ struct ChatView: View {
           Button {
             withAnimation { position.scrollTo(edge: .bottom) }
           } label: {
-            Image(systemName: "arrow.down")
-              .font(.body.weight(.semibold))
-              .frame(width: glyphWidth, height: glyphHeight)
+            RoundGlyph(name: "arrow.down")
           }
           .glassButton()
           .buttonBorderShape(.circle)
@@ -347,9 +342,6 @@ private struct Composer: View {
   @State private var pickingPhotos = false
   @State private var pickingFiles = false
   @State private var sending = false
-  /// The round buttons' glyph box, growing with Dynamic Type like their glyphs.
-  @ScaledMetric(relativeTo: .body) private var glyphWidth: CGFloat = 26
-  @ScaledMetric(relativeTo: .body) private var glyphHeight: CGFloat = 30
 
   /// Whose draft and files these are: each chat has its own, and its incognito conversation another.
   private var key: String { "\(store.conversationId)\(store.incognito ? "i" : "")" }
@@ -416,9 +408,7 @@ private struct Composer: View {
           Button("Photos", systemImage: "photo.on.rectangle") { pickingPhotos = true }
           Button("Files", systemImage: "folder") { pickingFiles = true }
         } label: {
-          Image(systemName: "paperclip")
-            .font(.body.weight(.semibold))
-            .frame(width: glyphWidth, height: glyphHeight)
+          RoundGlyph(name: "paperclip")
         }
         .glassButton()
         .buttonBorderShape(.circle)
@@ -429,10 +419,7 @@ private struct Composer: View {
           .padding(.vertical, 11)
           .glassSurface(in: .rect(cornerRadius: 22), interactive: true)
         Button { send() } label: {
-          Image(systemName: "arrow.up")
-            .font(.body.weight(.semibold))
-            .foregroundStyle(canSend ? Color.onBrand : .secondary)
-            .frame(width: glyphWidth, height: glyphHeight)
+          RoundGlyph(name: "arrow.up").foregroundStyle(canSend ? Color.onBrand : .secondary)
         }
         .glassButton(prominent: true)
         .buttonBorderShape(.circle)
@@ -581,6 +568,17 @@ private struct Composer: View {
       }
       sending = false
     }
+  }
+}
+
+/// A round button's glyph, in a box that grows with Dynamic Type like the glyph.
+private struct RoundGlyph: View {
+  let name: String
+  @ScaledMetric(relativeTo: .body) private var width: CGFloat = 26
+  @ScaledMetric(relativeTo: .body) private var height: CGFloat = 30
+
+  var body: some View {
+    Image(systemName: name).font(.body.weight(.semibold)).frame(width: width, height: height)
   }
 }
 
