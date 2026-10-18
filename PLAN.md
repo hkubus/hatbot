@@ -7,7 +7,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 - **No vendor cloud.** It runs on your hardware.
 - **Predictable cost.** Spending limits are enforced.
 
-> Status: design agreed 2026-10-09. M0–M5, the iOS app, more than one bot (§14), looking after things (§15), negotiation's N1 and N2 (§16) and research (§17) are built, and so are the fixes from the 2026-10-17 code review. M4 onwards is not yet deployed or tried live, and the iOS app awaits its first install. Next is the owner's deploy and live run (`HANDOFF.md`). The clickable UI prototype lives in [`prototype/`](prototype/).
+> Status: design agreed 2026-10-09. M0–M5, the iOS app, more than one bot (§14), looking after things (§15), negotiation's N1 and N2 (§16) and research (§17) are built, and so are the fixes from the 2026-10-17 code review. M4 onwards is not yet deployed or tried live, and the iOS app awaits its first install. Next is the owner's deploy and live run (`HANDOFF.md`).
 
 ---
 
@@ -145,7 +145,7 @@ Everything valuable lives in the brain, and the brain only ever sees *pixels and
 - Services: `Xvnc :1` (TigerVNC, 1280×800), XFCE (lightweight), Chromium with a persistent profile, `desktop-agent`. All managed by systemd.
 
 ### 4.3 `apps/web` — React + Vite PWA
-Desktop-first, three panes. Design spec in §10; visual reference in `prototype/`.
+Desktop-first, three panes. Design spec in §10.
 
 ### 4.4 `packages/shared`
 Shared API types and zod schemas for the brain and web. The iOS app mirrors the types it uses in `apps/ios/Hatbot/Core/Models.swift`; change both together.
@@ -471,7 +471,6 @@ The app itself is installed by `infra/deploy.sh`, run on the host for the first 
 ---
 
 ## 10. Web design spec
-The visual reference is the clickable prototype in [`prototype/`](prototype/). Open `prototype/index.html`.
 
 ### 10.1 Direction
 - **Look**: Apple-native, macOS-app style, **desktop-first**.

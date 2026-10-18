@@ -1,4 +1,4 @@
-/* Hatbot web — design tokens (PLAN.md §10.2) and components, ported from prototype/. */
+/* Hatbot web — design tokens (PLAN.md §10.2) and components. */
 
 /* Inter for UI chrome, Noto Sans for reading text (chat, card bodies). Each is split by script, so a
    page downloads only the scripts it shows; imported from here so Vite fingerprints them. */
