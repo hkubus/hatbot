@@ -7,7 +7,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 - **No vendor cloud.** It runs on your hardware.
 - **Predictable cost.** Spending limits are enforced.
 
-> Status: design agreed 2026-10-09. M0–M5, the iOS app, more than one bot (§14), looking after things (§15), negotiation's N1 and N2 (§16) and research (§17) are built, and so are the fixes from the 2026-10-17 code review. M4 onwards is not yet deployed or tried live, and the iOS app awaits its first install. Next is the owner's deploy and live run (`HANDOFF.md`).
+> Status: design agreed 2026-10-09. M0–M5, the iOS app, more than one bot (§14), looking after things (§15), negotiation's N1 and N2 (§16), research (§17) and own code (§18) are built, and so are the fixes from the 2026-10-17 code review. M4 onwards is not yet deployed or tried live, and the iOS app awaits its first install. Next is the owner's deploy and live run (`HANDOFF.md`).
 
 ---
 
@@ -151,7 +151,7 @@ Desktop-first, three panes. Design spec in §10.
 Shared API types and zod schemas for the brain and web. The iOS app mirrors the types it uses in `apps/ios/Hatbot/Core/Models.swift`; change both together.
 
 ### 4.5 Plugins (`apps/brain/src/plugins/`)
-Integrations are plugins: Proxmox, Proxmox Backup Server, SSH, Home Assistant, Uptime Kuma, Forgejo, GitHub, Code and MCP. The core keeps memory, chat history, schedules, tasks and the desktop.
+Integrations are plugins: Proxmox, Proxmox Backup Server, SSH, Home Assistant, Uptime Kuma, Forgejo, GitHub, Code, Own code (§18) and MCP. The core keeps memory, chat history, schedules, tasks and the desktop.
 - **Shape**: each plugin is a folder exporting one `definePlugin({...})`: an id, a name, its settings (a zod schema whose fields all have defaults), the environment variables it reads from `/etc/hatbot/*.env` (secrets never reach the model or the web app), and `start(ctx)`, which returns its status, tools, an optional paragraph for the system prompt and an optional Test.
 - **Built in, not installed at runtime**: plugins ship with Hatbot. Code loaded at runtime would run in the brain next to the API key, the Proxmox token and the SSH key. Third-party extensions come in through the MCP plugin, whose servers run as separate processes behind the same approval rules.
 - **On and off**: every plugin starts off. Settings → Plugins switches one on and edits its settings; it restarts with them. One that's on but missing its secrets or settings shows *Needs setup* and offers no tools.
@@ -931,3 +931,13 @@ Deep research as its own kind of background task. The chat starts it with `resea
   - A page reader that runs JavaScript. It would fetch any URL the model names, and so could send out what the task has read. Pages that need a browser go to `run_desktop_task`, which asks before consequential steps.
   - Starting research from schedules.
 
+## 18. Own code (built 2026-10-18, not tried live)
+Hatbot can read its own code and propose changes to it as Forgejo pull requests, when the owner asks. It doesn't go looking for things to change on its own (§1). The **Own code** plugin (`apps/brain/src/plugins/self/`) needs the desktop, and `HATBOT_SELF_REPO` (owner/name) next to `FORGEJO_URL` and `FORGEJO_TOKEN` in `/etc/hatbot/forgejo.env`. The bot account needs write access to the repository, to push branches. It's off until switched on.
+
+- **Why Forgejo:** the canonical repository is on Forgejo, which push-mirrors it to GitHub. A branch made only on GitHub would likely be pruned by the mirror. Forgejo has no CI runners, so the sandbox runs the tests instead.
+- **`self_checkout`:** the brain keeps a bare clone in `/var/lib/hatbot/self/repo.git`, fetches the default branch, and copies `git archive` of it into the sandbox at `~/hatbot-self/work`, where it becomes a fresh git repository tagged `base` (its commit message is the commit it came from). Then `bun install --frozen-lockfile` runs there. The brain never runs the code.
+- **`self_run`:** bash in that checkout, like `code_run`: reading, editing, `bun test`, `bun run check`, `bun run typecheck`. Its output is untrusted, like everything the sandbox prints, so the task is tainted.
+- **`self_propose(branch, title, body)`:** the branch must start with `hatbot/`. The sandbox's `git diff --binary base` comes back to the brain, which applies it with `git apply --cached` to a temporary index on the checked-out commit, writes the tree and a commit as the bot account, and pushes it with no force. git applies the diff without running anything in it. The branch starts from the commit that was checked out, so a default branch that moved on meanwhile isn't undone; Forgejo shows any conflict. Symlinks and submodules are refused, and so is a diff over 5 MB. The pull request's body ends with where it came from and its size, and names any file under `infra/`, `.forgejo/`, `.github/`, `.gitea/` or `scripts/`, or any `package.json`, `bun.lock` or `bunfig.toml`, for the owner to read closely: once merged and updated, those run as root on the brain, run in CI, or bring in other code.
+- **Approvals:** it's a forge write in a tainted task, so it needs approval: Haiku's review, or the owner. Hatbot never merges its own pull requests (the guidance says so, and `forgejo_merge` always asks). Deploying stays with the owner too: Update deploys only commits signed by `HATBOT_UPDATE_SIGNERS`, and the bot's commits aren't signed, so a change goes live only through the owner's signed merge.
+- **How it's used:** the owner asks in the chat, and the chat starts a task (`run_task`, effort high). Tasks share the sandbox's one checkout, so run one at a time.
+- **Not built:** updating a pull request after review comments (push to its branch again), and suggesting improvements on a schedule.

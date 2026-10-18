@@ -26,6 +26,7 @@ import { DeadManPing } from "./ping";
 import { codePlugin } from "./plugins/code";
 import type { Plugin } from "./plugins/plugin";
 import { Plugins } from "./plugins/registry";
+import { selfPlugin } from "./plugins/self";
 import type { Proxmox } from "./proxmox";
 import { WeeklyReport } from "./report";
 import { Schedules } from "./schedules";
@@ -84,7 +85,8 @@ export async function createServices(o: Outside) {
   const storage = new Storage({ db, archive, clock });
   const desktop = new Desktop(agent, events, db);
   const files = { desktop: agent, attachments };
-  const plugins = new Plugins([...o.plugins, codePlugin(files)], {
+  const own = selfPlugin({ desktop: agent, dir: join(config.dataDir, "self") });
+  const plugins = new Plugins([...o.plugins, codePlugin(files), own], {
     db,
     events,
     env: o.pluginEnv,

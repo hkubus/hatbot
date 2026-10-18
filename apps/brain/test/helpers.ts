@@ -71,6 +71,7 @@ export async function testApp(
   const updateDir = join(dir, "update");
   const config = {
     ...loadConfig({ HATBOT_PUBLIC_URL: ORIGIN, HATBOT_DATA_DIR: "/nonexistent" }),
+    dataDir: dir,
     memoryDir: join(dir, "memory"),
     archiveDir: join(dir, "archive"),
     updateDir,
