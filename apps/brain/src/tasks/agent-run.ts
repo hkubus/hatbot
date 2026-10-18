@@ -466,7 +466,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     if (outcome === "cancelled") throw new Stop("cancelled", "The approval was cancelled.");
     const note = d.approvals.get(approval.id)?.note ?? null;
     if (note) {
-      notes.push(`[${localStamp(new Date())}] ${note}`);
+      notes.push(`[${localStamp(new Date(tasks.clock()))}] ${note}`);
       tasks.addStep(id, { kind: "note", name: "Your note", detail: note, url: null });
     }
     return { outcome, note };
