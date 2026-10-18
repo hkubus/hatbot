@@ -3,21 +3,13 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, normalize, sep } from "node:path";
+import type { Commit, MemoryFile, MemoryHit } from "@hatbot/shared";
 import type { Db } from "../db";
+import type { EventBus } from "../events";
 import { ftsQuery } from "../search";
 
 export type Author = { name: string; email: string };
 export const HATBOT: Author = { name: "Hatbot", email: "hatbot@local" };
-
-export type MemoryFile = { path: string; size: number };
-export type Commit = {
-  sha: string;
-  author: string;
-  date: string;
-  message: string;
-  files: string[];
-};
-export type SearchHit = { path: string; line: number; text: string };
 
 export class MemoryError extends Error {}
 
@@ -85,10 +77,14 @@ function bestLine(marked: string, first: number): { line: number; text: string }
 export class MemoryStore {
   private queue: Promise<unknown> = Promise.resolve();
 
-  /** With `db`, search ranks sections through its full-text index, which every commit keeps current. */
+  /**
+   * With `db`, search ranks sections through its full-text index, which every commit keeps current.
+   * With `events`, every commit is told as memory.committed.
+   */
   constructor(
     readonly dir: string,
     private db?: Db,
+    private events?: EventBus,
   ) {}
 
   /** Creates the repo if it doesn't exist (the brain's provisioning normally does this). */
@@ -182,18 +178,14 @@ export class MemoryStore {
     }
   }
 
+  /** A file's content, or null when there's no such file. */
+  async readOrNull(path: string): Promise<string | null> {
+    return (await this.exists(path)) ? this.read(path) : null;
+  }
+
   /** Writes a file and commits it. Returns the commit, or null if the content didn't change. */
   write(path: string, content: string, author: Author, message: string): Promise<string | null> {
     return this.writeAll([{ path, content }], author, message);
-  }
-
-  /** Writes and deletes (`content` null) files in one commit. */
-  change(
-    files: { path: string; content: string | null }[],
-    author: Author,
-    message: string,
-  ): Promise<string | null> {
-    return this.serial(() => this.apply(files, author, message));
   }
 
   /**
@@ -208,9 +200,7 @@ export class MemoryStore {
     message: string,
   ): Promise<string | null> {
     return this.serial(async () => {
-      const read = async (path: string) =>
-        (await this.exists(path)) ? await this.read(path) : null;
-      const files = await fn(read);
+      const files = await fn((path) => this.readOrNull(path));
       return files ? this.apply(files, author, message) : null;
     });
   }
@@ -220,40 +210,51 @@ export class MemoryStore {
     author: Author,
     message: string,
   ) {
-    // Every path checked before anything is written.
-    const resolved = files.map((f) => ({ ...this.resolve(f.path, { markdown: true }), ...f }));
-    const touched: string[] = [];
+    // Every path checked before anything is written; any file can be deleted.
+    const resolved = files.map((f) => ({
+      ...this.resolve(f.path, { markdown: f.content !== null }),
+      ...f,
+    }));
+    // Each file as it was, edits not committed too, to put back if the change fails partway.
+    const before = new Map<string, Buffer | null>();
+    const staged: string[] = [];
     try {
       for (const { rel, abs, content } of resolved) {
+        const was = await readFile(abs).catch(() => null);
+        if (content === null && was === null) continue;
+        before.set(rel, was);
         if (content === null) {
-          if (!(await this.exists(rel))) continue;
-          touched.push(rel);
           await rm(abs);
-          await this.git(["add", "-A", "--", rel]);
+          // A file that was never committed (made by hand) has nothing to stage.
+          if ((await this.git(["rm", "--cached", "--ignore-unmatch", "--", rel])).stdout.trim())
+            staged.push(rel);
         } else {
-          touched.push(rel);
           await mkdir(dirname(abs), { recursive: true });
           await writeFile(abs, content.endsWith("\n") ? content : `${content}\n`);
           await this.git(["add", "--", rel]);
+          staged.push(rel);
         }
       }
-      return await this.commitAs(author, message, touched);
+      return await this.commitAs(author, message, staged);
     } catch (err) {
-      await this.restore(touched);
+      await this.restore(before);
       throw err;
     }
   }
 
   /**
-   * After a change that failed partway: the files it touched as the last commit has them, and none
-   * of it staged, so the next commit doesn't carry half of it.
+   * After a change that failed partway: the files it touched as they were before it, and none of it
+   * staged, so the next commit doesn't carry half of it.
    */
-  private async restore(paths: string[]) {
-    for (const rel of paths) {
+  private async restore(before: Map<string, Buffer | null>) {
+    for (const [rel, content] of before) {
       await this.git(["reset", "-q", "--", rel], { allowFail: true });
-      if ((await this.git(["cat-file", "-e", `HEAD:${rel}`], { allowFail: true })).code === 0)
-        await this.git(["checkout", "-q", "HEAD", "--", rel], { allowFail: true });
-      else await rm(join(this.dir, rel), { force: true });
+      const abs = join(this.dir, rel);
+      if (content === null) await rm(abs, { force: true });
+      else {
+        await mkdir(dirname(abs), { recursive: true });
+        await writeFile(abs, content);
+      }
     }
   }
 
@@ -311,16 +312,9 @@ export class MemoryStore {
 
   delete(path: string, author: Author, message: string): Promise<string | null> {
     return this.serial(async () => {
-      const { rel, abs } = this.resolve(path);
+      const { rel } = this.resolve(path);
       if (!(await this.exists(rel))) throw new MemoryError(`not found: ${path}`);
-      try {
-        await rm(abs);
-        await this.git(["add", "-A", "--", rel]);
-        return await this.commitAs(author, message, [rel]);
-      } catch (err) {
-        await this.restore([rel]);
-        throw err;
-      }
+      return this.apply([{ path: rel, content: null }], author, message);
     });
   }
 
@@ -328,7 +322,7 @@ export class MemoryStore {
    * Sections with any of the words, in any form ("runs" finds "run"), the best match first, each as
    * its line with the most of them. Without the index, or if it fails, lines with every word.
    */
-  async search(query: string, limit = 50): Promise<SearchHit[]> {
+  async search(query: string, limit = 50): Promise<MemoryHit[]> {
     const fts = this.db && ftsQuery(query, " OR ");
     if (fts && this.db) {
       try {
@@ -357,7 +351,7 @@ export class MemoryStore {
    * Files with every word somewhere in them, the ones with the most matching lines first, and in each
    * the lines with the most of the words.
    */
-  private async grep(query: string, limit: number): Promise<SearchHit[]> {
+  private async grep(query: string, limit: number): Promise<MemoryHit[]> {
     const words = [...new Set(query.toLowerCase().split(/\s+/).filter(Boolean))].slice(0, 10);
     if (!words.length) return [];
     const res = await this.git(
@@ -374,7 +368,7 @@ export class MemoryStore {
       ],
       { allowFail: true },
     );
-    const files = new Map<string, { hit: SearchHit; words: number }[]>();
+    const files = new Map<string, { hit: MemoryHit; words: number }[]>();
     for (const line of res.stdout.split("\n")) {
       const m = /^(.*?):(\d+):(.*)$/.exec(line);
       if (!m) continue;
@@ -449,7 +443,13 @@ export class MemoryStore {
         throw new MemoryError("can't revert: later changes touch the same lines");
       }
       const subject = (await this.git(["log", "-1", "--format=%s", sha])).stdout.trim();
-      return this.commitAs(author, `Revert "${subject}"`, files);
+      try {
+        return await this.commitAs(author, `Revert "${subject}"`, files);
+      } catch (err) {
+        // Not left applied and staged, for the next commit to carry.
+        await this.git(["revert", "--abort"], { allowFail: true });
+        throw err;
+      }
     });
   }
 
@@ -488,6 +488,7 @@ export class MemoryStore {
         console.error("memory index update failed", err),
       );
     }
+    this.events?.emit({ type: "memory.committed", sha, message, author: author.name });
     return sha;
   }
 

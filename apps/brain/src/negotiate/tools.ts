@@ -6,7 +6,7 @@ import { askAlways, block, covered, PluginError, type PluginTool, tool } from ".
 import { appraisalText, appraise, type ListingFacts, listingFacts, parseKey } from "./appraise";
 import { collapse } from "./gate";
 import { MandateInput, mandateProblem, toMandate } from "./mandate";
-import { type SendInput, sendPolicy } from "./policy";
+import { type SendInput, sendPolicy, zl } from "./policy";
 import { MAX_TEXT, type Negotiations } from "./service";
 
 const ListingKey = z
@@ -17,9 +17,6 @@ const ListingKey = z
   .refine((k) => parseKey(k) !== null, 'A listing key as Scout gives it, e.g. "OLX:123456789"')
   .describe('The listing\'s key as Scout gives it (marketplaceListingKey), e.g. "OLX:123456789"');
 const Id = z.number().int().positive().describe("The negotiation's number");
-
-const zl = (n: number, currency = "PLN") =>
-  `${Math.round(n).toLocaleString("en-GB")} ${currency === "PLN" ? "zł" : currency}`;
 
 /** A negotiation in a line, for lists. */
 export function negotiationLine(n: Negotiation): string {
@@ -107,6 +104,11 @@ export function negotiateTools(
   const now = () => new Date(neg.clock());
   /** Appraisals made in this turn or task, so negotiate_start doesn't ask Scout again. */
   const appraised = new Map<string, Awaited<ReturnType<typeof appraise>>>();
+  /** A send's verdict: blocked while the negotiation is held, else as its mandate and pace say. */
+  const sendVerdict = (n: Negotiation, input: SendInput) => {
+    const held = neg.held(n);
+    return held ? block(held) : sendPolicy(n, input, neg.facts(n));
+  };
 
   return [
     tool({
@@ -142,7 +144,7 @@ export function negotiateTools(
       access: "write",
       commands: () => 0,
       describe: (i) => {
-        // The listing's currency, when it was appraised in this turn; it's PLN on most listings.
+        // The listing's currency, when it was appraised in this turn; until then, only the numbers.
         const money = (x: number) => zl(x, appraised.get(i.listing)?.appraisal.currency);
         return `Negotiate for ${i.listing}: open at ${money(i.mandate.opening)}, aim for ${money(i.mandate.target)}, at most ${money(i.mandate.limit)}`;
       },
@@ -240,17 +242,13 @@ export function negotiateTools(
       policy: (i) => {
         const n = neg.get(i.negotiation);
         if (!n || n.botId !== bot.id) return block(`There's no negotiation #${i.negotiation}.`);
-        const held = neg.held(n);
-        if (held) return block(held);
-        return sendPolicy(n, toSend(i), neg.facts(n));
+        return sendVerdict(n, toSend(i));
       },
       run: async (i, call) => {
         const n = neg.mine(bot, i.negotiation);
         const input = toSend(i);
-        const held = neg.held(n);
-        if (held) throw new PluginError(held);
-        // Again, since an approval may have taken hours: quiet hours and the pace still hold.
-        const v = sendPolicy(n, input, neg.facts(n));
+        // Again, since an approval may have taken hours: a hold, quiet hours and the pace still hold.
+        const v = sendVerdict(n, input);
         if (v.action === "block") throw new PluginError(v.why);
         // In flight from here, before anything waits, so a second send at once is blocked.
         const msg = neg.claimSend(n, input);
@@ -340,13 +338,15 @@ export function negotiateTools(
         const held = neg.held(n);
         if (held) throw new PluginError(held);
         const path = await neg.close(
-          bot.id,
           n,
           i.outcome,
           i.price ?? null,
           i.notes ?? null,
           call.task?.id ?? null,
         );
+        // Stopped or closed while this one was being asked about: that stands.
+        if (path === null)
+          throw new PluginError(`Negotiation #${n.id} is ${neg.get(n.id)?.status} already.`);
         const scout = await neg.recordOutcome(available, n, i.outcome, i.price ?? null);
         return `Negotiation #${n.id} is ${i.outcome}. Notes are in ${path}.${scout ? ` ${scout}` : ""}${i.outcome === "agreed" ? " Paying is a separate desktop task, which stops at the checkout and asks the owner." : ""}`;
       },

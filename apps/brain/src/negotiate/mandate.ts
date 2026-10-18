@@ -1,12 +1,12 @@
 // The mandate (PLAN.md §16.1): what Hatbot may do on its own in one negotiation, as the owner approves
 // it. Its approval card, its checks, and a steering note on the card turned into new numbers by Haiku,
 // which reads only the note, the mandate and the asking price: nothing a seller wrote.
-import type Anthropic from "@anthropic-ai/sdk";
+import { transformJSONSchema } from "@anthropic-ai/sdk/lib/transform-json-schema";
 import { MANDATE_CONTACTS, type Mandate, type Negotiation } from "@hatbot/shared";
 import { z } from "zod";
-import type { ModelClient } from "../agent/model";
+import { type ModelClient, oneShot } from "../agent/model";
 import type { Spend } from "../spend";
-import { allowance } from "./policy";
+import { allowance, zl } from "./policy";
 
 /** The mandate as negotiate_start takes it, and as Haiku gives it back from a note. */
 export const MandateInput = z.object({
@@ -29,9 +29,6 @@ export const MandateInput = z.object({
     .describe("Contact details messages may carry; none unless the owner said so"),
 });
 export type MandateInput = z.infer<typeof MandateInput>;
-
-const zl = (n: number, currency = "PLN") =>
-  `${n.toLocaleString("en-GB", { maximumFractionDigits: 2 })} ${currency === "PLN" ? "zł" : currency}`;
 
 /** Why these numbers aren't a mandate, or null when they are. */
 export function mandateProblem(
@@ -130,18 +127,12 @@ export function widened(n: Pick<Negotiation, "mandate" | "role">, after: Mandate
 
 const NOTE_MODEL = "claude-haiku-5-5";
 
-const SET_MANDATE: Anthropic.Beta.BetaTool = {
-  name: "set_mandate",
-  description: "The mandate with the owner's note applied.",
-  input_schema: z.toJSONSchema(MandateInput) as Anthropic.Beta.BetaTool.InputSchema,
-};
+export const NOTE_PROMPT = `You apply the owner's note to the mandate of a negotiation on a second-hand marketplace. The mandate says what a bot may do on its own while haggling for one listing: the opening offer, the target, the limit (buying: the most to pay; selling: the least to take), delivery terms, how many days it lasts, and which contact details its messages may carry.
 
-const NOTE_PROMPT = `You apply the owner's note to the mandate of a negotiation on a second-hand marketplace. The mandate says what a bot may do on its own while haggling for one listing: the opening offer, the target, the limit (buying: the most to pay; selling: the least to take), delivery terms, how many days it lasts, and which contact details its messages may carry.
-
-Change only what the note asks to change, and keep everything else exactly as it is. A note that doesn't touch the mandate, such as advice on tone, leaves it as it is. Keep the numbers in order: buying, opening ≤ target ≤ limit; selling, opening ≥ target ≥ limit. If the note sets only the limit, move the target or the opening only as far as that order needs. Amounts are plain numbers in the mandate's currency. Call set_mandate.`;
+Change only what the note asks to change, and keep everything else exactly as it is. A note that doesn't touch the mandate, such as advice on tone, leaves it as it is. Keep the numbers in order: buying, opening ≤ target ≤ limit; selling, opening ≥ target ≥ limit. If the note sets only the limit, move the target or the opening only as far as that order needs. Amounts are plain numbers in the mandate's currency. Answer with the whole mandate.`;
 
 /**
- * The mandate with the owner's note applied, by Haiku with a forced tool call; or why it couldn't be:
+ * The mandate with the owner's note applied, by Haiku in the mandate's JSON; or why it couldn't be:
  * the note is then shown to the owner again with the old numbers.
  */
 export async function applyNote(
@@ -161,35 +152,32 @@ export async function applyNote(
     allow: m.allow,
   };
   try {
-    d.spend.check(0.02);
-    const res = await d.model.create({
-      model: NOTE_MODEL,
-      max_tokens: 1000,
-      system: NOTE_PROMPT,
-      tools: [SET_MANDATE],
-      tool_choice: { type: "tool", name: SET_MANDATE.name },
-      messages: [
-        {
-          role: "user",
-          content: [
-            `<listing>\n${n.role === "buy" ? "Buying" : "Selling"}; asking ${n.asking ?? "unknown"} ${m.currency}\n</listing>`,
-            `<mandate>\n${JSON.stringify(current)}\n</mandate>`,
-            `<owner_note>\n${note}\n</owner_note>`,
-          ].join("\n\n"),
+    const out = await oneShot(
+      d,
+      {
+        model: NOTE_MODEL,
+        max_tokens: 1000,
+        output_config: {
+          format: {
+            type: "json_schema",
+            schema: transformJSONSchema(z.toJSONSchema(MandateInput)),
+          },
         },
-      ],
-    });
-    d.spend.recordResponse({
-      model: NOTE_MODEL,
-      purpose: "negotiation",
-      usage: res.usage,
-      botId: n.botId,
-    });
-    const call = res.content.find(
-      (b): b is Anthropic.Beta.BetaToolUseBlock =>
-        b.type === "tool_use" && b.name === SET_MANDATE.name,
+        system: NOTE_PROMPT,
+        messages: [
+          {
+            role: "user",
+            content: [
+              `<listing>\n${n.role === "buy" ? "Buying" : "Selling"}; asking ${n.asking ?? "unknown"} ${m.currency}\n</listing>`,
+              `<mandate>\n${JSON.stringify(current)}\n</mandate>`,
+              `<owner_note>\n${note}\n</owner_note>`,
+            ].join("\n\n"),
+          },
+        ],
+      },
+      { purpose: "negotiation", botId: n.botId },
     );
-    const parsed = MandateInput.safeParse(call?.input);
+    const parsed = MandateInput.safeParse(JSON.parse(out));
     if (!parsed.success) return { error: "Haiku's answer wasn't a mandate" };
     const problem = mandateProblem(parsed.data, n.role, n.asking, n.mandate.currency);
     if (problem) return { error: problem };

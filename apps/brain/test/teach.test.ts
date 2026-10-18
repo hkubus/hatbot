@@ -144,7 +144,7 @@ test("typing into a secret field, or one that can't be checked, isn't kept", asy
   expect(JSON.stringify(steps)).not.toContain("hunter");
   expect(JSON.stringify(steps)).not.toContain("unseen");
   expect(describeSteps(steps).lines.join("\n")).toContain(
-    "typed 8 characters into a password or code field (not recorded)",
+    "typed 8 characters in a password or code field (not recorded)",
   );
 });
 
@@ -201,16 +201,21 @@ test("a stuck modifier doesn't leave a password in clear", async () => {
   keys(prompt.r, ["Control", true]);
   for (const m of typeText("hunter2")) prompt.r.input(m);
   const typedThere = await prompt.r.finish();
-  expect(typedThere.map((s) => s.kind === "key" && s.key)).toEqual([
-    "ctrl+h",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-  ]);
-  expect(JSON.stringify(typedThere)).not.toContain("ctrl+u");
+  expect(typedThere.map((s) => s.kind === "key" && s.key)).toEqual(["", "", "", "", "", "", ""]);
+  expect(JSON.stringify(typedThere)).not.toContain("ctrl+");
+  // The same when the check answers after the first key: the run is decided again as it grows.
+  let answer = (_: unknown) => {};
+  const late = recorder(
+    () =>
+      new Promise((_, reject) => {
+        answer = reject;
+      }),
+  );
+  keys(late.r, ["Control", true], ["h", true]);
+  answer(new OffPage("the keyboard isn't on a page"));
+  await Bun.sleep(0);
+  for (const m of typeText("unter2")) late.r.input(m);
+  expect(JSON.stringify(await late.r.finish())).not.toContain("ctrl+");
 
   // Where the field couldn't be checked (the desktop slow to answer), none of them is kept.
   const failed = recorder(async () => {
@@ -467,7 +472,7 @@ function screensOf(t: TestApp, id: number): string[] {
 }
 
 async function record(t: TestApp, call: Call, show?: () => Promise<void>) {
-  const res = await call("POST", "/teach/start");
+  const res = await call("POST", "/teach/start", {});
   expect(res.status).toBe(200);
   const session = (await res.json()) as TeachSession;
   expect(session.status).toBe("recording");
@@ -524,7 +529,7 @@ test("record, draft and save a skill: the desktop is yours meanwhile, secrets st
   expect(req?.model).toBe("claude-opus-5-5");
   const body = JSON.stringify(req?.messages);
   expect(body).not.toContain("s3cret");
-  expect(body).toContain("typed 9 characters into a password or code field");
+  expect(body).toContain("typed 9 characters in a password or code field");
   expect(body).toContain('typed \\"Dune\\"');
   const content = req?.messages[0]?.content as { type: string }[];
   // The click before the password; none after it on that page, where it might still show.
@@ -556,12 +561,8 @@ test("record, draft and save a skill: the desktop is yours meanwhile, secrets st
   expect(
     (await call("POST", `/teach/${session.id}/save`, { name: "x", content: "y" })).status,
   ).toBe(409);
-  // Saved: the screenshots are gone, and nothing points at them.
+  // Saved: the screenshots are gone.
   expect(screensOf(t, session.id)).toEqual([]);
-  const row = t.db
-    .query<{ events: string }, [number]>("SELECT events FROM teach_sessions WHERE id = ?")
-    .get(session.id);
-  expect(row?.events).not.toContain("screen");
 });
 
 test("typing while the page hasn't the keyboard isn't kept, nor a screenshot while a secret shows", async () => {
@@ -582,6 +583,10 @@ test("typing while the page hasn't the keyboard isn't kept, nor a screenshot whi
       pageFocus: false,
     };
     for (const m of typeText("my-pin-1234")) t.teach.input(m);
+    // A frame, which can't be seen into.
+    t.agent.element = { tag: "frame", role: null, type: null, label: "", inForm: false };
+    for (const m of click(500, 400)) t.teach.input(m);
+    for (const m of typeText("4111111111111111")) t.teach.input(m);
   });
   await call("POST", "/teach/stop");
   await waitFor(() => t.teach.get(session.id)?.status === "draft");
@@ -589,6 +594,7 @@ test("typing while the page hasn't the keyboard isn't kept, nor a screenshot whi
   expect(body).toContain("left click at (400, 300) [screenshot 1]");
   expect(body).toContain("left click at (600, 300)\\n");
   expect(body).not.toContain("my-pin");
+  expect(body).not.toContain("4111");
   expect(body).toContain("typed 11 characters (not recorded: the field couldn't be checked)");
 });
 
@@ -707,8 +713,14 @@ test("discarding a recording, or handing back, ends it without a skill", async (
   await call("POST", "/desktop/handback");
   await waitFor(() => t.teach.get(second.id)?.status === "discarded");
   expect(t.tasks.lane.holderId).toBeNull();
-  expect(work.creates.some((p) => p.system === TEACH_PROMPT)).toBe(false);
   expect((await call("POST", "/teach/stop")).status).toBe(409);
+
+  // Discarded while Stop hands the desktop back: it stays discarded.
+  const third = await record(t, call);
+  const stopping = t.teach.stop();
+  await t.teach.discard(third.id);
+  expect((await stopping).status).toBe("discarded");
+  expect(work.creates.some((p) => p.system === TEACH_PROMPT)).toBe(false);
 });
 
 test("teach can't start while a task has the desktop; an empty recording isn't drafted", async () => {
@@ -716,7 +728,8 @@ test("teach can't start while a task has the desktop; an empty recording isn't d
   const t = await testApp(new FakeModel(), work);
   await t.desktop.refresh();
   const { cookie } = await setUpOwner(t);
-  const call = (method: string, path: string) => t.call(method, path, undefined, { cookie });
+  const call = (method: string, path: string, body?: unknown) =>
+    t.call(method, path, body, { cookie });
   const task = t.tasks.createDesktopTask({
     title: "Log in",
     goal: "Log in",
@@ -727,18 +740,27 @@ test("teach can't start while a task has the desktop; an empty recording isn't d
   // Asking for you leaves the screen free; once you take over for it, the task has it.
   expect((await call("POST", "/desktop/takeover")).status).toBe(200);
   expect(t.tasks.lane.holderId).toBe(task.id);
-  const busy = await call("POST", "/teach/start");
+  const busy = await call("POST", "/teach/start", {});
   expect(busy.status).toBe(409);
   await t.tasks.cancel(task.id);
   await t.tasks.idle();
 
-  await call("POST", "/teach/start");
+  await call("POST", "/teach/start", {});
   const stopped = (await (await call("POST", "/teach/stop")).json()) as TeachSession;
   expect(stopped.status).toBe("failed");
   expect(stopped.error).toContain("Nothing was recorded");
   expect((await call("POST", `/teach/${stopped.id}/draft`)).status).toBe(409);
   expect((await call("GET", "/teach")).status).toBe(200);
   expect((await t.call("POST", "/teach/start")).status).toBe(401);
+  // A body that isn't an object, or a name a skill can't have, is refused before anything starts.
+  expect((await call("POST", "/teach/start", null)).status).toBe(400);
+  const bad = await call("POST", "/teach/start", { replaces: "Renew Books" });
+  expect(bad.status).toBe(400);
+  expect(await bad.json()).toEqual({
+    error: "Use lowercase letters, digits and dashes.",
+    field: "replaces",
+  });
+  expect(t.desktop.get().control).toBe("hatbot");
 });
 
 test("a failed draft can be written again", async () => {

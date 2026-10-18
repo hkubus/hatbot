@@ -24,15 +24,17 @@ export function describeSkill(content: string): string {
   return (/^#\s+(.+)$/m.exec(content)?.[1] ?? "").trim().slice(0, 300);
 }
 
+/** Where the Skills section is among INDEX.md's lines, up to the next heading; start -1: nowhere. */
+function sectionAt(lines: string[]): { start: number; end: number } {
+  const start = lines.findIndex((l) => l.trim() === SECTION);
+  const next = start < 0 ? -1 : lines.findIndex((l, i) => i > start && /^#{1,2}\s/.test(l));
+  return { start, end: next < 0 ? lines.length : next };
+}
+
 /** INDEX.md with its Skills section listing `skills`; the section goes away when there are none. */
 export function withSkillsSection(index: string, skills: SkillInfo[]): string {
   const lines = index.replace(/\s+$/, "").split("\n");
-  const start = lines.findIndex((l) => l.trim() === SECTION);
-  let end = lines.length;
-  if (start >= 0) {
-    const next = lines.findIndex((l, i) => i > start && /^#{1,2}\s/.test(l));
-    if (next >= 0) end = next;
-  }
+  const { start, end } = sectionAt(lines);
   const section = skills.length
     ? [SECTION, "", ...skills.map((s) => `- ${skillPath(s.name)}: ${s.description}`), ""]
     : [];
@@ -49,11 +51,10 @@ export function withSkillsSection(index: string, skills: SkillInfo[]): string {
 /** The Skills section's lines, to tell whether two indexes list the same skills. */
 function sectionOf(index: string): string {
   const lines = index.split("\n");
-  const start = lines.findIndex((l) => l.trim() === SECTION);
+  const { start, end } = sectionAt(lines);
   if (start < 0) return "";
-  const end = lines.findIndex((l, i) => i > start && /^#{1,2}\s/.test(l));
   return lines
-    .slice(start, end < 0 ? undefined : end)
+    .slice(start, end)
     .map((l) => l.trim())
     .filter(Boolean)
     .join("\n");
@@ -62,8 +63,6 @@ function sectionOf(index: string): string {
 const byName = (a: SkillInfo, b: SkillInfo) => a.name.localeCompare(b.name);
 
 export class Skills {
-  private events?: EventBus;
-
   constructor(
     private db: Db,
     readonly memory: MemoryStore,
@@ -72,7 +71,6 @@ export class Skills {
 
   /** Keeps the index current as memory changes. */
   watch(events: EventBus) {
-    this.events = events;
     events.on((e) => {
       if (e.type === "memory.committed")
         void this.refresh().catch((err) => console.error("skills refresh failed", err));
@@ -105,8 +103,7 @@ export class Skills {
    */
   async refresh(): Promise<SkillInfo[]> {
     let found: SkillInfo[] = [];
-    const message = "List the skills in INDEX.md";
-    const sha = await this.memory.edit(
+    await this.memory.edit(
       async (read) => {
         found = await this.scan(read);
         const index = await read("INDEX.md");
@@ -117,9 +114,8 @@ export class Skills {
         return [{ path: "INDEX.md", content: next }];
       },
       HATBOT,
-      message,
+      "List the skills in INDEX.md",
     );
-    if (sha) this.events?.emit({ type: "memory.committed", sha, message, author: HATBOT.name });
     const now = new Date(this.clock()).toISOString();
     this.db.transaction(() => {
       this.db.query("DELETE FROM skills_index").run();

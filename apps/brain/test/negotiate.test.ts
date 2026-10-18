@@ -8,7 +8,7 @@ import type { Approval, Mandate, Negotiation, NegotiationDetail, Task } from "@h
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { Approvals } from "../src/approvals";
 import { EventBus } from "../src/events";
-import { mandateSummary } from "../src/negotiate/mandate";
+import { mandateSummary, NOTE_PROMPT } from "../src/negotiate/mandate";
 import { scamSignals } from "../src/negotiate/scam";
 import { mcpPlugin } from "../src/plugins/mcp";
 import type { CallContext, PluginTool } from "../src/plugins/plugin";
@@ -448,8 +448,7 @@ test("a note on the mandate changes its numbers; one Haiku can't apply asks agai
   const work = new FakeModel();
   const notes: string[] = [];
   work.onCreate = (p) => {
-    if (p.tool_choice?.type !== "tool" || p.tool_choice.name !== "set_mandate")
-      return '{"suspected": false, "excerpt": ""}';
+    if (p.system !== NOTE_PROMPT) return '{"suspected": false, "excerpt": ""}';
     notes.push(String(p.messages[0]?.content));
     return notes.length === 1
       ? '{"opening": 1000, "target": 1150, "limit": 1300, "delivery": "OLX delivery with buyer protection", "expires_in_days": 7, "allow": []}'
@@ -513,7 +512,7 @@ test("a note on the mandate changes its numbers; one Haiku can't apply asks agai
 test("a note that gives the mandate more room is shown to you again before it takes effect", async () => {
   const work = new FakeModel();
   work.onCreate = (p) =>
-    p.tool_choice?.type === "tool"
+    p.system === NOTE_PROMPT
       ? '{"opening": 1060, "target": 1300, "limit": 1450, "delivery": "Pickup in Kraków", "expires_in_days": 7, "allow": ["phone"]}'
       : '{"suspected": false, "excerpt": ""}';
   work.script.push({
@@ -554,7 +553,7 @@ test("a mandate approval with a note is applied once, however often it's seen", 
   const work = new FakeModel();
   let asked = 0;
   work.onCreate = (p) => {
-    if (p.tool_choice?.type !== "tool") return '{"suspected": false, "excerpt": ""}';
+    if (p.system !== NOTE_PROMPT) return '{"suspected": false, "excerpt": ""}';
     asked++;
     return '{"opening": 1000, "target": 1150, "limit": 1300, "delivery": "OLX delivery with buyer protection", "expires_in_days": 7, "allow": []}';
   };
@@ -592,7 +591,7 @@ test("two sends at once: the second is blocked; one the desktop can't take is ma
   expect(both.map((r) => r.isError)).toEqual([false, true]);
   expect(both[1]?.content).toContain("is being sent already");
   expect(t.negotiations.messages(n.id).map((m) => m.status)).toEqual(["sending"]);
-  await t.negotiations.close(t.bots.hatbot().id, n, "abandoned", null, null);
+  await t.negotiations.close(n, "abandoned", null, null);
   t.tasks.lane.release(-5);
   await t.tasks.idle();
 
@@ -803,6 +802,25 @@ test("closing writes the bot's notes; agreeing outside the mandate asks", async 
   await t.plugins.stopAll();
 });
 
+test("a close approved after the owner stopped the negotiation doesn't undo the Stop", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
+  await withScout(t, false);
+  const n = openNegotiation(t);
+  const close = named(negotiateTools(t), "negotiate_close");
+  const over = close.schema.parse({ negotiation: n.id, outcome: "agreed", price: 1450 });
+  expect(verdictFor(close, over, call(), true).action).toBe("ask");
+  // While that waits, the owner presses Stop; then approves the close.
+  await t.negotiations.stop(n.id);
+  const r = await runPluginTool(close, over, call());
+  expect(r.isError).toBe(true);
+  expect(r.content).toContain(`Negotiation #${n.id} is abandoned already.`);
+  expect(t.negotiations.get(n.id)).toMatchObject({ status: "abandoned", agreedPrice: null });
+  const want = t.db.query<{ status: string }, [number]>("SELECT status FROM wants WHERE id = ?");
+  expect(want.get(n.wantId)?.status).toBe("open");
+  expect((await t.memory.read("negotiations.md"))?.match(/^## /gm)).toHaveLength(1);
+  await t.plugins.stopAll();
+});
+
 test("closing a negotiation cancels a send that's queued; one closed meanwhile isn't sent", async () => {
   const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
   await withScout(t, false);
@@ -889,10 +907,9 @@ test("you can stop a negotiation; two closes at once both keep their notes", asy
 
   const first = openNegotiation(t);
   const second = openNegotiation(t);
-  const bot = t.bots.hatbot().id;
   await Promise.all([
-    t.negotiations.close(bot, first, "lost", null, "First seller sold it."),
-    t.negotiations.close(bot, second, "abandoned", null, "Second seller went quiet."),
+    t.negotiations.close(first, "lost", null, "First seller sold it."),
+    t.negotiations.close(second, "abandoned", null, "Second seller went quiet."),
   ]);
   const notes = await t.memory.read("negotiations.md");
   expect(notes).toContain("First seller sold it.");
@@ -1282,7 +1299,9 @@ test("a seller's message that looks like a scam holds the negotiation until you 
   expect(second.reason).toContain("Telegram");
   t.approvals.decide(second.id, "deny", "web");
   await waitFor(() => t.negotiations.get(n.id)?.status === "abandoned");
-  await waitFor(() => t.events.some((e) => e.type === "memory.committed"));
+  await waitFor(() =>
+    t.events.some((e) => e.type === "memory.committed" && e.message.startsWith("Negotiation #")),
+  );
   expect(await t.memory.read("negotiations.md")).toContain("the owner ended it");
   await t.plugins.stopAll();
 });
@@ -1374,12 +1393,12 @@ test("a Stop while a mandate note is being applied stands", async () => {
     release = r;
   });
   work.onCreate = (p) =>
-    p.tool_choice?.type === "tool"
+    p.system === NOTE_PROMPT
       ? '{"opening": 1000, "target": 1150, "limit": 1300, "delivery": "OLX delivery with buyer protection", "expires_in_days": 7, "allow": []}'
       : '{"suspected": false, "excerpt": ""}';
   const create = work.create.bind(work);
   work.create = async (p) => {
-    if (p.tool_choice?.type === "tool") await haiku;
+    if (p.system === NOTE_PROMPT) await haiku;
     return create(p);
   };
   const t = await testApp(new FakeModel(), work);
@@ -1399,7 +1418,7 @@ test("a Stop while a mandate note is being applied stands", async () => {
 test("a note that's asked about again still reaches the opening task, and a longer mandate is shown", async () => {
   const work = new FakeModel();
   work.onCreate = (p) =>
-    p.tool_choice?.type === "tool"
+    p.system === NOTE_PROMPT
       ? '{"opening": 1060, "target": 1300, "limit": 1450, "delivery": "OLX delivery with buyer protection", "expires_in_days": 21, "allow": []}'
       : '{"suspected": false, "excerpt": ""}';
   work.script.push({
@@ -1496,6 +1515,8 @@ test("the scam screen lets graphics cards, parcel codes, serial numbers and the 
     "Wsp. do monitora gratis",
     "Kod z aplikacji InPost do odbioru",
     "Kod potwierdzenia nadania mam",
+    "Wyślę jutro, a kod odbioru dostanie Pan SMS-em od InPost.",
+    "Paczkomat wyśle esemesa z kodem",
     "SN: AB12 CD34 EF56 GH78",
     "Wysyłka przez www.olx.pl.",
     "Wysyłka przez www.olx.pl, ok?",
@@ -1507,6 +1528,7 @@ test("the scam screen lets graphics cards, parcel codes, serial numbers and the 
     "Podaj numer karty płatniczej",
     "Wyślij dane karty kredytowej",
     "Pisz na wsp",
+    "Paczka jutro. Resztę ustalimy SMS-em",
     "Kod z aplikacji bankowej poproszę",
     "Podaj kod do potwierdzenia transakcji",
   ])

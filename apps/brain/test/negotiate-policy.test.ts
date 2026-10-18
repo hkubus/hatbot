@@ -410,6 +410,27 @@ describe("an amount written in the text, however it's written", () => {
     );
   });
 
+  test("the title's number on its own is a price; only after its word is it the model", () => {
+    const radeon = negotiation({ title: "AMD RX 6800 16GB" });
+    for (const text of ["Mogę 6800.", "Ostatecznie 6800."])
+      expect(why(verdict(text, {}, radeon))).toContain('"6800"');
+    expect(verdict("Czy RX 6800 jest sprawna?", {}, radeon).action).toBe("allow");
+    const ti = negotiation({ title: "RTX 3070 Ti stan idealny 1800" });
+    expect(why(verdict("Mogę 1800.", {}, ti))).toContain('"1800"');
+  });
+
+  test("a word of two letters glued to a number doesn't make it a model's", () => {
+    const cheap = negotiation({
+      asking: 300,
+      mandate: { ...negotiation().mandate, opening: 200, target: 250, limit: 300 },
+    });
+    for (const text of ["Mogę ok450.", "Mogę ca450.", "Mogę OK450.", "Mogę dać xy450."])
+      expect(why(verdict(text, {}, cheap))).toContain("450");
+    expect(verdict("Czy płyta b450 to obsłuży? Mogę 250.", { offer: 250 }, cheap).action).toBe(
+      "allow",
+    );
+  });
+
   test("every reading of the separators counts", () => {
     expect(amountsIn("1.500", "")).toEqual([{ raw: "1.500", values: [1500, 1.5] }]);
     expect(amountsIn("1,4k", "")).toEqual([{ raw: "1,4k", values: [1400] }]);
@@ -905,7 +926,7 @@ describe("ordinary haggling goes on its own (N1)", () => {
         ["Czy temperatury pod obciążeniem nie przekraczają 75°C?"],
         ["Czy karta ma jeszcze gwarancję do 2027?"],
         ["Gwarancja jest do marca 2027?"],
-        ["Czy to zwykła 3070 czy 3070 Ti?"],
+        ["Czy to zwykła RTX 3070 czy RTX 3070 Ti?"],
         ["Jak sobie radzi w 4K?"],
         ["How does it handle 4K gaming?"],
         ["Czy wystarczy do Ryzen 5 5600X?"],
@@ -915,6 +936,10 @@ describe("ordinary haggling goes on its own (N1)", () => {
         ["Kiedy mogę spodziewać się odbioru paczki?"],
         ["I'll collect it from the parcel locker on Monday."],
         ["Proszę dać znać, kiedy paczka zostanie nadana."],
+        ["Czy karta może zostać wysłana jutro?"],
+        ["Czy paczka została nadana?"],
+        ["Czy zdjęcia zostały już wysłane?"],
+        ["Wolałbym, żeby była wysłana kurierem przez OLX."],
       ],
     },
     {
@@ -1156,6 +1181,13 @@ describe("every known way around the check asks", () => {
       rows: [["Zgoda", { agree: true, offer: 1000 }]],
     },
     {
+      what: "a seller's price with shipping on top, by an amount not said",
+      n: tight(),
+      f: sellerSaid("1000 zł + wysyłka"),
+      says: "the seller's price can't be read",
+      rows: [["Zgoda, 1000 zł.", { agree: true, offer: 1000 }]],
+    },
+    {
       what: "paying part now and the rest later",
       n: tight(),
       f: sellerSaid("Najniżej 1500 zł"),
@@ -1165,6 +1197,9 @@ describe("every known way around the check asks", () => {
         ["Dam 1000 zł, a brakującą kwotę dopłacę za tydzień.", { offer: 1000 }],
         ["Dam 1000 zł i resztę po sprawdzeniu karty.", { offer: 1000 }],
         ["I'll pay 1000 now and the rest next week.", { offer: 1000 }],
+        ["Dam 1000 zł + wysyłka.", { offer: 1000 }],
+        ["Dam 1000 zł plus koszt wysyłki.", { offer: 1000 }],
+        ["I'll pay 1000 plus shipping.", { offer: 1000 }],
       ],
     },
     {
@@ -1301,6 +1336,11 @@ describe("every known way around the check asks", () => {
         ["Kupiłem już przez OLX, proszę nadać"],
         ["I've completed the payment, please ship"],
         ["Kasa jest już u Pana"],
+        ["Paczka została wysłana."],
+        ["Wysłałem paczkę."],
+        ["Czy wiesz, że przelew został wysłany?"],
+        ["Ok. Zapłaciłem, czy Pan wyśle?"],
+        ["Czy może Pan nadać dziś, pieniądze przelane"],
       ],
     },
     {

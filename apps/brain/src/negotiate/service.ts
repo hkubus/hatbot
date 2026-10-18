@@ -15,7 +15,6 @@ import {
   type Stated,
   type Task,
 } from "@hatbot/shared";
-import type { Chats } from "../agent/chats";
 import type { ModelClient } from "../agent/model";
 import type { Approvals } from "../approvals";
 import { type Bots, botFolder } from "../bots";
@@ -28,7 +27,7 @@ import { runPluginTool, verdictFor } from "../plugins/registry";
 import type { Spend } from "../spend";
 import type { Tasks } from "../tasks/service";
 import { type ListingFacts, parseKey, scoutTool } from "./appraise";
-import { collapse, type SendGate, sameAddress, sameHost } from "./gate";
+import { collapse, namesListing, type SendGate, sameAddress, sameHost } from "./gate";
 import {
   applyNote,
   mandateReason,
@@ -46,7 +45,6 @@ export type NegotiationsDeps = {
   events: EventBus;
   tasks: Tasks;
   approvals: Approvals;
-  chats: Chats;
   bots: Bots;
   memory: MemoryStore;
   desktop: Desktop;
@@ -95,6 +93,7 @@ type MessageRow = {
 };
 
 const SELECT = `SELECT n.*, w.text AS want FROM negotiations n JOIN wants w ON w.id = n.want_id`;
+const OPEN = OPEN_NEGOTIATION_STATUSES.map((s) => `'${s}'`).join(", ");
 const MESSAGE_SELECT = `SELECT m.*, (SELECT task_id FROM negotiation_tasks t WHERE t.message_id = m.id) AS task_id
   FROM negotiation_messages m`;
 
@@ -125,7 +124,6 @@ const mandateOf = (json: string): Mandate => {
 
 /** A message's words as the record compares them: letters and digits only, lowercased. */
 const keyOf = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** What the desktop model read in a conversation, oldest first. */
 export type ConversationReport = { from: "seller" | "us"; text: string }[];
@@ -154,15 +152,19 @@ export class Negotiations {
       .run();
     d.events.on((e) => {
       if (e.type === "task.updated" && FINAL_TASK.includes(e.task.status)) this.taskEnded(e.task);
-      if (e.type === "approval.resolved" && e.approval.kind === "mandate")
-        void this.mandateDecided(e.approval).catch((err) =>
-          console.error(`mandate approval ${e.approval.id} failed`, err),
-        );
-      if (e.type === "approval.resolved" && e.approval.kind === "injection_warning")
-        void this.holdDecided(e.approval).catch((err) =>
-          console.error(`hold approval ${e.approval.id} failed`, err),
-        );
+      if (e.type === "approval.resolved") this.decided(e.approval);
     });
+  }
+
+  /** The owner decided on a mandate or a hold: told by the event, or found by due(). */
+  private decided(a: Approval) {
+    const run =
+      a.kind === "mandate"
+        ? this.mandateDecided(a)
+        : a.kind === "injection_warning"
+          ? this.holdDecided(a)
+          : null;
+    void run?.catch((err) => console.error(`approval ${a.id} failed`, err));
   }
 
   now() {
@@ -170,8 +172,10 @@ export class Negotiations {
   }
 
   get(id: number): Negotiation | null {
-    const r = this.d.db.query<Row, [number]>(`${SELECT} WHERE n.id = ?`).get(id);
-    return r ? this.toNegotiation(r) : null;
+    return (
+      this.negotiations(this.d.db.query<Row, [number]>(`${SELECT} WHERE n.id = ?`).all(id))[0] ??
+      null
+    );
   }
 
   /** A bot's, or everyone's; newest first. */
@@ -182,16 +186,13 @@ export class Negotiations {
       where.push("n.bot_id = ?");
       args.push(opts.botId);
     }
-    if (opts.open !== undefined) {
-      const statuses = OPEN_NEGOTIATION_STATUSES.map((s) => `'${s}'`).join(", ");
-      where.push(`n.status ${opts.open ? "" : "NOT "}IN (${statuses})`);
-    }
-    return this.d.db
+    if (opts.open !== undefined) where.push(`n.status ${opts.open ? "" : "NOT "}IN (${OPEN})`);
+    const rows = this.d.db
       .query<Row, string[]>(
         `${SELECT}${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY n.id DESC LIMIT 200`,
       )
-      .all(...args)
-      .map((r) => this.toNegotiation(r));
+      .all(...args);
+    return this.negotiations(rows);
   }
 
   messages(id: number): NegotiationMessage[] {
@@ -211,13 +212,18 @@ export class Negotiations {
     return r ? toMessage(r) : null;
   }
 
-  private toNegotiation(r: Row): Negotiation {
-    const last = this.d.db
-      .query<MessageRow, [number]>(
-        `${MESSAGE_SELECT} WHERE m.negotiation_id = ? AND m.status != 'failed' ORDER BY m.id DESC LIMIT 1`,
-      )
-      .get(r.id);
-    return {
+  /** Negotiations from their rows, each with its last message that didn't fail, in one query. */
+  private negotiations(rows: Row[]): Negotiation[] {
+    const last = new Map(
+      this.d.db
+        .query<MessageRow, [string]>(
+          `${MESSAGE_SELECT} WHERE m.id IN (SELECT max(id) FROM negotiation_messages WHERE status != 'failed'
+           AND negotiation_id IN (SELECT value FROM json_each(?)) GROUP BY negotiation_id)`,
+        )
+        .all(JSON.stringify(rows.map((r) => r.id)))
+        .map((m) => [m.negotiation_id, toMessage(m)]),
+    );
+    return rows.map((r) => ({
       id: r.id,
       botId: r.bot_id,
       wantId: r.want_id,
@@ -236,11 +242,11 @@ export class Negotiations {
       approvalId: r.approval_id,
       conversationId: r.conversation_id,
       nextFollowUpAt: r.next_follow_up_at,
-      lastMessage: last ? toMessage(last) : null,
+      lastMessage: last.get(r.id) ?? null,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
       closedAt: r.closed_at,
-    };
+    }));
   }
 
   /** Changes columns of a negotiation and tells the clients. */
@@ -348,13 +354,12 @@ export class Negotiations {
 
   /** An open negotiation already on this listing, or on this want, which N4's several sellers allow. */
   busy(listingKey: string, wantId: number): Negotiation | null {
-    const statuses = OPEN_NEGOTIATION_STATUSES.map((s) => `'${s}'`).join(", ");
-    const r = this.d.db
+    const rows = this.d.db
       .query<Row, [string, number]>(
-        `${SELECT} WHERE n.status IN (${statuses}) AND (n.listing_key = ? OR n.want_id = ?) LIMIT 1`,
+        `${SELECT} WHERE n.status IN (${OPEN}) AND (n.listing_key = ? OR n.want_id = ?) LIMIT 1`,
       )
-      .get(listingKey, wantId);
-    return r ? this.toNegotiation(r) : null;
+      .all(listingKey, wantId);
+    return this.negotiations(rows)[0] ?? null;
   }
 
   /** The message being sent now, if any. */
@@ -460,12 +465,12 @@ export class Negotiations {
    */
   async mandateDecided(a: Approval) {
     if (a.kind !== "mandate" || this.applying.has(a.id)) return;
-    const r = this.d.db
-      .query<Row, [number]>(`${SELECT} WHERE n.approval_id = ? AND n.status = 'awaiting_mandate'`)
-      .get(a.id);
-    if (!r) return;
-    const n = this.toNegotiation(r);
-    if (a.status === "pending") return;
+    const [n] = this.negotiations(
+      this.d.db
+        .query<Row, [number]>(`${SELECT} WHERE n.approval_id = ? AND n.status = 'awaiting_mandate'`)
+        .all(a.id),
+    );
+    if (!n || a.status === "pending") return;
     // The event and the minute tick can both bring it while Haiku applies the note.
     this.applying.add(a.id);
     try {
@@ -478,10 +483,7 @@ export class Negotiations {
   private async applyDecision(first: Negotiation, a: Approval) {
     let n = first;
     if (a.status !== "approved") {
-      this.update(n.id, {
-        status: a.status === "expired" ? "expired" : "abandoned",
-        closed_at: this.now(),
-      });
+      this.end(n.id, a.status === "expired" ? "expired" : "abandoned");
       return;
     }
     let mandate = n.mandate;
@@ -550,45 +552,33 @@ export class Negotiations {
   due() {
     // Paused: nothing starts, and what's due waits for Resume.
     if (this.d.tasks.paused()) return;
+    // Decided while the brain was away. An approved hold needs nothing more.
     const waiting = this.d.db
       .query<{ approval_id: number }, []>(
-        "SELECT approval_id FROM negotiations WHERE status = 'awaiting_mandate' AND approval_id IS NOT NULL",
+        "SELECT approval_id FROM negotiations WHERE status IN ('awaiting_mandate', 'open') AND approval_id IS NOT NULL",
       )
       .all();
     for (const w of waiting) {
       const a = this.d.approvals.get(w.approval_id);
-      if (a?.kind === "mandate" && a.status !== "pending") void this.mandateDecided(a);
-    }
-    const holds = this.d.db
-      .query<{ approval_id: number }, []>(
-        "SELECT approval_id FROM negotiations WHERE status = 'open' AND approval_id IS NOT NULL",
+      if (
+        a &&
+        a.status !== "pending" &&
+        !(a.kind === "injection_warning" && a.status === "approved")
       )
-      .all();
-    for (const h of holds) {
-      const a = this.d.approvals.get(h.approval_id);
-      // Denied or unanswered while the brain was away; an approved one needs nothing more.
-      if (a?.kind === "injection_warning" && a.status !== "pending" && a.status !== "approved")
-        void this.holdDecided(a);
+        this.decided(a);
     }
     const lapsed = this.d.db
       .query<{ id: number }, [string]>(
         "SELECT id FROM negotiations WHERE status = 'open' AND json_extract(mandate, '$.expiresAt') <= ?",
       )
       .all(this.now());
-    for (const { id } of lapsed) {
-      this.update(id, { status: "expired", closed_at: this.now(), next_follow_up_at: null });
-      this.stopTasks(id);
-      // A hold waiting for you is moot now.
-      const held = this.get(id)?.approvalId;
-      if (held && this.d.approvals.get(held)?.status === "pending") this.d.approvals.cancel(held);
-    }
+    for (const { id } of lapsed) this.end(id, "expired");
     const ready = this.d.db
       .query<Row, [string]>(
         `${SELECT} WHERE n.status = 'open' AND n.next_follow_up_at IS NOT NULL AND n.next_follow_up_at <= ?`,
       )
       .all(this.now());
-    for (const r of ready) {
-      const n = this.toNegotiation(r);
+    for (const n of this.negotiations(ready)) {
       this.update(n.id, { next_follow_up_at: null });
       if (this.facts(n).starts) this.startOpening(n);
     }
@@ -822,14 +812,14 @@ export class Negotiations {
 
   /** The owner decided on a hold: carry on, or end the negotiation. */
   async holdDecided(a: Approval) {
-    const r = this.d.db
-      .query<Row, [number]>(`${SELECT} WHERE n.approval_id = ? AND n.status = 'open'`)
-      .get(a.id);
-    if (!r || a.status === "pending") return;
-    const n = this.toNegotiation(r);
+    const [n] = this.negotiations(
+      this.d.db
+        .query<Row, [number]>(`${SELECT} WHERE n.approval_id = ? AND n.status = 'open'`)
+        .all(a.id),
+    );
+    if (!n || a.status === "pending") return;
     if (a.status === "approved") return this.emit(n.id);
     await this.close(
-      n.botId,
       n,
       "abandoned",
       null,
@@ -964,32 +954,18 @@ export class Negotiations {
     const got = added
       ? `Recorded ${added} new message${added === 1 ? "" : "s"} from the seller.`
       : "Nothing new from the seller.";
-    if (alreadySent)
-      return {
-        text: `${got} The approved message is in the conversation already: it went. Don't send it again; finish the task.`,
-        stale: false,
-        alreadySent,
-      };
-    if (stale)
-      return {
-        text:
-          after > 0
-            ? `${got} The seller wrote since this message was approved, so it isn't sent: don't send it. Finish the task, saying the seller wrote first.`
-            : `${got} ${stopped} Don't send it; finish the task.`,
-        stale,
-        alreadySent,
-      };
-    if (mode === "read") return { text: `${got} Finish the task now.`, stale, alreadySent };
-    return {
-      text: state.sent
-        ? `${got} Finish the task now.`
-        : `${got} Now type exactly the approved message into the message box and send it.`,
-      stale,
-      alreadySent,
-    };
+    const next = alreadySent
+      ? "The approved message is in the conversation already: it went. Don't send it again; finish the task."
+      : stale && after > 0
+        ? "The seller wrote since this message was approved, so it isn't sent: don't send it. Finish the task, saying the seller wrote first."
+        : stale
+          ? `${stopped} Don't send it; finish the task.`
+          : mode === "read" || state.sent
+            ? "Finish the task now."
+            : "Now type exactly the approved message into the message box and send it.";
+    return { text: `${got} ${next}`, stale, alreadySent };
   }
 
-  /** The gate let the send through: whether the text then left the box. */
   /**
    * The gate let the send through: whether the text then left the box, and the tab's address then,
    * which is the conversation it went to.
@@ -1020,11 +996,9 @@ export class Negotiations {
    * text, where other conversations list their listings' titles; a send records where it went.
    */
   private conversationFor(n: Negotiation, url: string): boolean {
-    if (!sameHost(url, n.listingUrl) || sameAddress(url, n.listingUrl)) return false;
-    const id = parseKey(n.listingKey)?.id ?? "";
     return (
-      id.length >= 5 &&
-      new RegExp(`[/=-]${escapeRe(id)}(?:[/.-]|$)`, "i").test(new URL(url).pathname)
+      !sameAddress(url, n.listingUrl) &&
+      namesListing(url, n.listingUrl, parseKey(n.listingKey)?.id ?? "")
     );
   }
 
@@ -1044,12 +1018,7 @@ export class Negotiations {
         "UPDATE negotiation_messages SET status = ?, sent_at = CASE WHEN ? THEN coalesce(sent_at, ?) ELSE sent_at END WHERE id = ?",
       )
       .run(status, sent ? 1 : 0, this.now(), messageId);
-    const n = this.d.db
-      .query<{ negotiation_id: number }, [number]>(
-        "SELECT negotiation_id FROM negotiation_messages WHERE id = ?",
-      )
-      .get(messageId)?.negotiation_id;
-    if (n) this.update(n, {});
+    if (before) this.update(before.negotiationId, {});
   }
 
   /** A send whose task ended without the gate passing it never went. */
@@ -1062,62 +1031,69 @@ export class Negotiations {
   }
 
   /**
-   * Ends a negotiation: its status and price, the want agreed when it is, its unfinished tasks
-   * cancelled (but `from`, the task closing it), and notes on the seller and what worked in the bot's
-   * memory.
+   * Ends a negotiation that's still open or waiting for its mandate: its status and price, its
+   * unfinished tasks cancelled (but `from`, the task ending it), and a mandate or hold waiting for the
+   * owner withdrawn. False when it had ended already: a close approved after a Stop doesn't undo it.
+   */
+  private end(
+    id: number,
+    status: NegotiationStatus,
+    price: number | null = null,
+    from: number | null = null,
+  ): boolean {
+    const now = this.now();
+    const ended = this.d.db
+      .query(
+        `UPDATE negotiations SET status = ?, agreed_price = ?, closed_at = ?, next_follow_up_at = NULL,
+           updated_at = ? WHERE id = ? AND status IN (${OPEN})`,
+      )
+      .run(status, price, now, now, id).changes;
+    if (!ended) return false;
+    this.emit(id);
+    // A send already queued mustn't go now.
+    this.stopTasks(id, from);
+    const approval = this.get(id)?.approvalId;
+    if (approval && this.d.approvals.get(approval)?.status === "pending")
+      this.d.approvals.cancel(approval);
+    return true;
+  }
+
+  /**
+   * Closes a negotiation (see end), marks the want agreed when it is, and keeps notes on the seller and
+   * what worked in the bot's memory: the notes' path, or null when it had ended already.
    */
   async close(
-    botId: string,
     n: Negotiation,
     outcome: "agreed" | "lost" | "abandoned",
     price: number | null,
     notes: string | null,
     from: number | null = null,
-  ): Promise<string> {
-    const now = this.now();
-    this.update(n.id, {
-      status: outcome,
-      agreed_price: price,
-      closed_at: now,
-      next_follow_up_at: null,
-    });
+  ): Promise<string | null> {
+    if (!this.end(n.id, outcome, price, from)) return null;
     if (outcome === "agreed")
       this.d.db.query("UPDATE wants SET status = 'agreed' WHERE id = ?").run(n.wantId);
-    // A send already queued mustn't go now.
-    this.stopTasks(n.id, from);
-    // Its mandate, or a hold, no longer needs an answer.
-    if (n.approvalId && this.d.approvals.get(n.approvalId)?.status === "pending")
-      this.d.approvals.cancel(n.approvalId);
     const lines = [
-      `## ${now.slice(0, 10)} · ${n.title}`,
+      `## ${this.now().slice(0, 10)} · ${n.title}`,
       `${n.listingKey} ${n.listingUrl}`,
       `${outcome}${price !== null ? ` at ${price} ${n.mandate.currency}` : ""}; asking ${n.asking ?? "?"}, opened ${n.mandate.opening}, aimed ${n.mandate.target}, limit ${n.mandate.limit}.`,
       ...(notes ? [notes.trim()] : []),
     ];
-    const folder = botFolder(botId);
+    const folder = botFolder(n.botId);
     const path = folder ? `${folder}/negotiations.md` : "negotiations.md";
     // Read and written in one go, so two closes at once both keep their notes.
-    const sha = await this.d.memory.update(
+    await this.d.memory.update(
       path,
       (current) => `${(current ?? "# Negotiations\n").trimEnd()}\n\n${lines.join("\n")}\n`,
-      this.d.bots.author(botId),
+      this.d.bots.author(n.botId),
       `Negotiation #${n.id}: ${outcome}`,
     );
-    if (sha)
-      this.d.events.emit({
-        type: "memory.committed",
-        sha,
-        message: `Negotiation #${n.id}: ${outcome}`,
-        author: this.d.bots.nameOf(botId),
-      });
     return path;
   }
 
   /** The owner stops a negotiation: abandoned, and nothing more goes. Null if it had ended already. */
   async stop(id: number): Promise<Negotiation | null> {
     const n = this.get(id);
-    if (!n || !OPEN_NEGOTIATION_STATUSES.includes(n.status)) return null;
-    await this.close(n.botId, n, "abandoned", null, "Stopped by the owner.");
+    if (!n || !(await this.close(n, "abandoned", null, "Stopped by the owner."))) return null;
     return this.get(id);
   }
 

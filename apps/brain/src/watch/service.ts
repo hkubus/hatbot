@@ -4,7 +4,6 @@ import {
   type CreateWatcher,
   describeCondition,
   HATBOT_ID,
-  MAX_WATCH_MINUTES,
   minWatchMinutes,
   type UpdateWatcher,
   type WatchCondition,
@@ -22,7 +21,7 @@ import { type DesktopAgent, DesktopError } from "../desktop/client";
 import type { EventBus } from "../events";
 import type { Notifier } from "../notify";
 import { PluginError } from "../plugins/plugin";
-import type { Plugins } from "../plugins/registry";
+import { type Plugins, untrustedOf } from "../plugins/registry";
 import type { SettingsStore } from "../settings";
 import type { Tasks } from "../tasks/service";
 import { counts, pick, WatchError } from "./extract";
@@ -114,8 +113,6 @@ const saved = (s: WatchSource) => JSON.stringify({ ...s, render: s.render || und
 
 /** Throws when a watcher would look more often than its source allows. */
 function oftenEnough(source: WatchSource, everyMinutes: number) {
-  if (everyMinutes > MAX_WATCH_MINUTES)
-    throw new WatchError("A watcher looks at least once a week.");
   const min = minWatchMinutes(source);
   if (everyMinutes < min)
     throw new WatchError(
@@ -182,24 +179,7 @@ export class Watchers {
     oftenEnough(input.source, input.everyMinutes);
     const first = await this.read(input.source, input.botId);
     const row = this.d.db
-      .query<
-        { id: number },
-        [
-          string,
-          string,
-          string,
-          string,
-          string,
-          number,
-          number,
-          number,
-          string,
-          number,
-          string | null,
-          string,
-          string | null,
-        ]
-      >(
+      .query<{ id: number }, (string | number | null)[]>(
         `INSERT INTO watchers (bot_id, name, source, condition, prompt, every_minutes, once, enabled, created_via, tainted, tainted_by, created_at, next_check_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       )
@@ -241,8 +221,6 @@ export class Watchers {
     oftenEnough(source, every);
     const sourceChanged = patch.source && saved(patch.source) !== saved(w.source);
     const first = sourceChanged ? await this.read(source, botId) : null;
-    // Deleted while its new source was read.
-    if (!this.get(id)) return null;
     const enabled = patch.enabled ?? w.enabled;
     // What it does or where it looks: yours to trust again.
     const rewritten = patch.prompt !== undefined || patch.source !== undefined;
@@ -255,13 +233,9 @@ export class Watchers {
           ? by.taintedBy
           : null
       : null;
-    const next = !enabled
-      ? null
-      : sourceChanged || (enabled && !w.enabled) || every !== w.everyMinutes
-        ? this.now()
-        : w.nextCheckAt;
     // Switched on again, or looking somewhere new: what it counted before doesn't hold it back.
     const recount = sourceChanged || (enabled && !w.enabled);
+    const next = !enabled ? null : recount || every !== w.everyMinutes ? this.now() : w.nextCheckAt;
     this.d.db
       .query(
         `UPDATE watchers SET name = ?, bot_id = ?, source = ?, condition = ?, prompt = ?, every_minutes = ?, once = ?,
@@ -290,7 +264,7 @@ export class Watchers {
         this.now(),
         id,
       );
-    // Like a new watcher, that look is its first value.
+    // Like a new watcher, that look is its first value. Null: deleted while its new source was read.
     const updated = this.get(id);
     if (!updated) return null;
     if (first) await this.saw(updated, first.value, first.untrusted);
@@ -366,25 +340,20 @@ export class Watchers {
     }
   }
 
-  private failed(w: Watcher, error: string) {
+  private failed(seen: Watcher, error: string) {
+    const w = this.still(seen);
+    if (!w) return;
     const errors = w.errors + 1;
     // One that keeps failing looks less often: each wait twice the last, up to six hours.
     const every = Math.max(minWatchMinutes(w.source), w.everyMinutes);
-    const wait =
-      errors < BACKOFF_AFTER_ERRORS
-        ? every
-        : Math.max(
-            every,
-            Math.min(BACKOFF_MAX_MINUTES, every * 2 ** (errors - BACKOFF_AFTER_ERRORS + 1)),
-          );
-    const updated = this.d.db
+    const doubled = every * 2 ** (errors - BACKOFF_AFTER_ERRORS + 1);
+    const wait = Math.max(every, Math.min(BACKOFF_MAX_MINUTES, doubled));
+    this.d.db
       .query(
         `UPDATE watchers SET last_checked_at = ?, last_error = ?, errors = ?,
          next_check_at = CASE WHEN enabled = 1 THEN ? ELSE next_check_at END WHERE id = ?`,
       )
-      .run(this.now(), error, errors, this.after(wait), w.id).changes;
-    // Deleted while it was being read.
-    if (!updated) return;
+      .run(this.now(), error, errors, this.after(wait), w.id);
     this.changed(w.id);
     if (errors === TELL_AFTER_ERRORS)
       void this.d.notifier.send({
@@ -397,9 +366,8 @@ export class Watchers {
 
   /** A value it found: kept if it's new, and acted on if it counts. */
   private async saw(seen: Watcher, value: string, untrusted: boolean) {
-    // As it is now: it may have been deleted, or given a new source, while its page was read.
-    const w = this.get(seen.id);
-    if (!w || saved(w.source) !== saved(seen.source)) return;
+    const w = this.still(seen);
+    if (!w) return;
     const previous = w.lastValue;
     const fired = counts(w.condition, previous, value);
     const now = this.now();
@@ -439,6 +407,12 @@ export class Watchers {
     if (fired && this.firedToday(w.id) > MAX_FIRES_PER_DAY) return this.tooOften(w);
     this.changed(w.id);
     if (fired) this.fire(w, previous, value, untrusted);
+  }
+
+  /** The watcher as it is now, or null if it was deleted or given a new source while it was read. */
+  private still(seen: Watcher): Watcher | null {
+    const w = this.get(seen.id);
+    return w && saved(w.source) === saved(seen.source) ? w : null;
   }
 
   /** Times it counted in the last 24 hours, since it was last switched on or given a new source. */
@@ -566,10 +540,8 @@ export class Watchers {
       if (err instanceof PluginError) throw new WatchError(err.message);
       throw err;
     }
-    const untrusted =
-      typeof t.untrusted === "function" ? t.untrusted(input.data) : Boolean(t.untrusted);
     const json = /^\s*[[{]/.test(out) ? "application/json" : "text/plain";
-    return { value: await pick(out, json, source), untrusted };
+    return { value: await pick(out, json, source), untrusted: untrustedOf(t, input.data, out) };
   }
 
   /**
@@ -582,7 +554,7 @@ export class Watchers {
     const t = this.d.plugins.tools(bot.plugins).find((x) => x.name === w.source.tool);
     const input = t?.schema.safeParse(w.source.input ?? {});
     if (!t || !input?.success) return true;
-    return typeof t.untrusted === "function" ? t.untrusted(input.data) : Boolean(t.untrusted);
+    return untrustedOf(t, input.data);
   }
 
   private changed(id: number) {
@@ -615,24 +587,21 @@ export function describeLook(s: WatchSource): string {
 
 /** Its condition, from the chat tools' flat fields. */
 export function conditionOf(input: {
-  when?: string;
+  when?: WatchCondition["when"];
   text?: string;
   value?: number;
 }): WatchCondition | string {
-  switch (input.when ?? "changed") {
+  const when = input.when ?? "changed";
+  switch (when) {
     case "changed":
-      return { when: "changed" };
+      return { when };
     case "contains":
     case "missing":
-      return input.text
-        ? { when: input.when as "contains" | "missing", text: input.text }
-        : `"${input.when}" needs text.`;
+      return input.text ? { when, text: input.text } : `"${when}" needs text.`;
     case "below":
     case "above":
       return typeof input.value === "number"
-        ? { when: input.when as "below" | "above", value: input.value }
-        : `"${input.when}" needs a value.`;
-    default:
-      return `Unknown condition "${input.when}".`;
+        ? { when, value: input.value }
+        : `"${when}" needs a value.`;
   }
 }

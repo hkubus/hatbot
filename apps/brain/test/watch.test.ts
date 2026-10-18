@@ -37,10 +37,15 @@ test("values are picked by selector, path, pattern, or the page's text", async (
   );
 });
 
-test("a page without a full address says what to write", () => {
-  const r = WatchSourceInput.safeParse({ kind: "page", url: "example.com/shop" });
-  expect(r.success).toBe(false);
-  expect(r.error?.issues[0]?.message).toBe("Use a full address starting with https://");
+test("a page without a full web address says what to write", () => {
+  for (const url of ["example.com/shop", "file:///etc/passwd", "javascript:alert(1)"]) {
+    const r = WatchSourceInput.safeParse({ kind: "page", url });
+    expect(r.success).toBe(false);
+    expect(r.error?.issues[0]?.message).toBe("Use a full address starting with https://");
+  }
+  expect(WatchSourceInput.safeParse({ kind: "page", url: "http://shop.example/" }).success).toBe(
+    true,
+  );
 });
 
 test("a pattern that backtracks without end is stopped, and the brain keeps answering", async () => {
@@ -90,6 +95,10 @@ test("numbers are read in either style, and only a move into the condition count
   expect(numberIn("-300 zł")).toBe(-300);
   expect(numberIn("Taniej o 15 % 849,00 zł")).toBe(849);
   expect(numberIn("Laptop 16 GB 3 999 zł")).toBe(3999);
+  // A percentage is the number when there's no other.
+  expect(numberIn("15%")).toBe(15);
+  expect(numberIn("Battery: 15 %, -20% 7")).toBe(7);
+  expect(counts({ when: "below", value: 20 }, "25%", "15%")).toBe(true);
   // Neighbouring prices aren't read as one number.
   expect(numberIn("1 299 zł 1 499 zł")).toBe(1299);
   expect(numberIn("299\n999")).toBe(299);
@@ -386,6 +395,34 @@ test("a watcher deleted while its page is read is let go, and the checks carry o
     source: { kind: "page", url: "https://shop.example/new", selector: ".price" },
   });
   expect(moved.status).toBe(404);
+});
+
+test("a check of the old source that fails after a new one is saved doesn't count against it", async () => {
+  const t = await testApp();
+  const api = await owner(t);
+  const old = "https://shop.example/old";
+  const fresh = "https://shop.example/fresh";
+  t.agent.pages.set(old, page(`<p class="price">€10</p>`));
+  t.agent.pages.set(fresh, page(`<p class="price">€8</p>`));
+  const w = (await (
+    await api("POST", "/watchers", {
+      name: "W",
+      source: { kind: "page", url: old, selector: ".price" },
+      everyMinutes: 5,
+    })
+  ).json()) as Watcher;
+  // While the old page is read, and found moved, the owner points the watcher at another one.
+  t.agent.pages.set(old, page(`<p>moved</p>`));
+  const fetch = t.agent.fetch.bind(t.agent);
+  t.agent.fetch = async (u) => {
+    if (u === old)
+      await t.watchers.update(w.id, { source: { kind: "page", url: fresh, selector: ".price" } });
+    return fetch(u);
+  };
+  t.advance(5 * 60_000);
+  t.watchers.tick();
+  await t.watchers.idle();
+  expect(t.watchers.get(w.id)).toMatchObject({ errors: 0, lastError: null, lastValue: "€8" });
 });
 
 test("the chat makes a watcher from what it saw first", async () => {

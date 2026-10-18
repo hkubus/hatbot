@@ -1,15 +1,16 @@
 // Proposals: changes to memory written by the model for you to look over as a diff, then apply or
 // dismiss. A tidy-up of the whole memory (weekly, or when you ask), fixes to skills that keep failing
 // or needing you, and writes to skills and indexes from work that had read untrusted content.
-import type Anthropic from "@anthropic-ai/sdk";
+import { transformJSONSchema } from "@anthropic-ai/sdk/lib/transform-json-schema";
 import type { Proposal, SkillStatus } from "@hatbot/shared";
+import { z } from "zod";
 import { type ModelClient, modelErrorText } from "../agent/model";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
 import type { Notifier } from "../notify";
 import { lastDue } from "../report";
 import type { SettingsStore } from "../settings";
-import { costOf, type Spend } from "../spend";
+import { fixedTokens, requestCeiling, type Spend } from "../spend";
 import type { Tasks } from "../tasks/service";
 import { type Skills, skillPath } from "../teach/skills";
 import { MemoryConflict, type MemoryStore } from "./store";
@@ -69,29 +70,17 @@ const toProposal = (r: Row): Proposal => ({
 /** Room for adaptive thinking and the files' whole new content. */
 const MAX_TOKENS = 32000;
 
+const Change = z.object({
+  path: z.string(),
+  content: z.string().default(""),
+  delete: z.boolean().default(false),
+});
 /** The answer's shape: Opus 5.5 can't be made to call a tool, so it answers in this JSON. */
-const PROPOSAL_SCHEMA = {
-  type: "object",
-  properties: {
-    title: { type: "string" },
-    reason: { type: "string" },
-    changes: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          path: { type: "string" },
-          content: { type: "string" },
-          delete: { type: "boolean" },
-        },
-        required: ["path", "content", "delete"],
-        additionalProperties: false,
-      },
-    },
-  },
-  required: ["title", "reason", "changes"],
-  additionalProperties: false,
-};
+const Answer = z.object({
+  title: z.string().default(""),
+  reason: z.string().default(""),
+  changes: z.array(Change),
+});
 
 const ANSWER = `Answer with a JSON object: "title", what the change does in a few words; "reason", why, in a sentence or three, for the owner reading the diff; and "changes", only the files that change, each with its "path" (e.g. people/anna.md), its whole new "content", and "delete" true to delete it instead (with empty content). No changes when nothing needs doing.`;
 
@@ -225,8 +214,10 @@ export class Proposals {
         ? `\n\nLeft out for length, so don't touch or index-remove them: ${left.join(", ")}`
         : "";
       const out = await this.ask(TIDY_PROMPT, `${files.join("\n\n")}${note}`, "tidy");
-      // Skills are changed through their own fixes.
-      const changes = out.changes.filter((c) => !c.path.startsWith("skills/"));
+      // Skills are changed through their own fixes, by whatever path: notes/../skills/x.md too.
+      const changes = out.changes.filter(
+        (c) => !this.d.memory.resolve(c.path).rel.startsWith("skills/"),
+      );
       return await this.store("tidy", out.title, out.reason, changes, null);
     } finally {
       this.tidying = false;
@@ -330,8 +321,6 @@ export class Proposals {
         409,
       );
     }
-    if (sha)
-      this.d.events.emit({ type: "memory.committed", sha, message: p.title, author: owner.name });
     return { proposal: this.resolve(id, "applied"), sha };
   }
 
@@ -378,14 +367,14 @@ export class Proposals {
     kind: Proposal["kind"],
     title: string,
     reason: string,
-    proposed: { path: string; content?: string; delete?: boolean }[],
+    proposed: z.input<typeof Change>[],
     skill: string | null,
   ): Promise<Proposal | null> {
     const changes: Proposal["changes"] = [];
     for (const c of proposed) {
       // Throws on a path outside memory or not Markdown.
       const { rel } = this.d.memory.resolve(c.path, { markdown: true });
-      const before = (await this.d.memory.exists(rel)) ? await this.d.memory.read(rel) : null;
+      const before = await this.d.memory.readOrNull(rel);
       const after = c.delete ? null : (c.content ?? "");
       if (before === after || (before === null && after === null)) continue;
       if (after !== null && !after.trim()) continue;
@@ -417,26 +406,35 @@ export class Proposals {
   }
 
   private async ask(system: string, content: string, purpose: string) {
-    const tokens = { input: content.length / 3, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 };
-    this.d.spend.check(costOf(PROPOSAL_MODEL, { ...tokens, output: MAX_TOKENS }));
-    // Streamed: with thinking always on, the answer needs more room than a plain request allows.
-    const res = await this.d.model.stream(
-      {
-        model: PROPOSAL_MODEL,
-        max_tokens: MAX_TOKENS,
-        thinking: { type: "adaptive" },
-        output_config: {
-          effort: "medium",
-          format: { type: "json_schema", schema: PROPOSAL_SCHEMA },
-        },
-        system,
-        messages: [{ role: "user", content }],
-      },
-      {
-        onFailedUsage: (model, usage) => this.d.spend.recordResponse({ model, purpose, usage }),
-      },
+    const release = this.d.spend.hold(
+      requestCeiling(PROPOSAL_MODEL, {
+        prompt: fixedTokens(system, content),
+        maxTokens: MAX_TOKENS,
+      }),
     );
-    this.d.spend.recordResponse({ model: PROPOSAL_MODEL, purpose, usage: res.usage });
+    // Streamed: with thinking always on, the answer needs more room than a plain request allows.
+    const res = await this.d.model
+      .stream(
+        {
+          model: PROPOSAL_MODEL,
+          max_tokens: MAX_TOKENS,
+          thinking: { type: "adaptive" },
+          output_config: {
+            effort: "medium",
+            format: { type: "json_schema", schema: transformJSONSchema(z.toJSONSchema(Answer)) },
+          },
+          system,
+          messages: [{ role: "user", content }],
+        },
+        {
+          onFailedUsage: (model, usage) => this.d.spend.recordResponse({ model, purpose, usage }),
+        },
+      )
+      .then((r) => {
+        this.d.spend.recordResponse({ model: PROPOSAL_MODEL, purpose, usage: r.usage });
+        return r;
+      })
+      .finally(release);
     if (res.stop_reason === "max_tokens")
       throw new ProposalError(
         "The proposal was too long to finish. Try again, or tidy by hand.",
@@ -444,27 +442,12 @@ export class Proposals {
       );
     if (res.stop_reason === "refusal")
       throw new ProposalError("The model declined to write it.", 409);
-    let input: {
-      title?: string;
-      reason?: string;
-      changes?: { path: string; content?: string; delete?: boolean }[];
-    };
     try {
-      input = JSON.parse(
-        res.content
-          .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
-          .map((b) => b.text)
-          .join(""),
+      return Answer.parse(
+        JSON.parse(res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("")),
       );
     } catch {
-      input = {};
-    }
-    if (!input || typeof input !== "object" || !Array.isArray(input.changes))
       throw new ProposalError("The model's answer couldn't be read. Try again.", 409);
-    return {
-      title: String(input.title ?? ""),
-      reason: String(input.reason ?? ""),
-      changes: input.changes.filter((c) => typeof c?.path === "string"),
-    };
+    }
   }
 }

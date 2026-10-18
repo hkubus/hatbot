@@ -3,6 +3,7 @@
 // plugin tools; only ones set to Chat (read) are used, so nothing here asks.
 import type { Appraisal, AppraisalSource } from "@hatbot/shared";
 import { PluginError, type PluginTool } from "../plugins/plugin";
+import { zl } from "./policy";
 
 /** What Scout says about one listing. */
 export type ListingFacts = {
@@ -108,9 +109,6 @@ export function roundPrice(x: number, dir: "down" | "near" = "near"): number {
   const f = dir === "down" ? Math.floor : Math.round;
   return Math.max(step, f(x / step) * step);
 }
-
-const zl = (n: number, currency = "PLN") =>
-  `${Math.round(n).toLocaleString("en-GB")} ${currency === "PLN" ? "zł" : currency}`;
 
 /**
  * Appraises a listing for buying. It prefers Scout's price reference and comparables; until Scout has

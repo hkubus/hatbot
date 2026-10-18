@@ -52,16 +52,25 @@ export const MAX_SCREENS = 200;
 /** How often the address on screen is asked for: a new one is seen up to this late, and the asking. */
 export const PAGE_POLL_MS = 1500;
 
-const MODIFIERS: Record<string, string> = { Control: "ctrl", Alt: "alt", Meta: "super" };
+// A Map: a key named "constructor" or "__proto__" isn't a modifier.
+const MODIFIERS = new Map([
+  ["Control", "ctrl"],
+  ["Alt", "alt"],
+  ["Meta", "super"],
+]);
 
 type TextStep = Extract<RecStep, { kind: "text" }>;
 type KeyStep = Extract<RecStep, { kind: "key" }>;
+/** Characters with a modifier in a row, and how to hide them, by how many, once their field is checked. */
+type Combos = { steps: KeyStep[]; hide?: (n: number) => KeyStep["hidden"] };
 
-/**
- * Typing, or characters with a modifier (a paste), and where it went. Once hidden, a screenshot of that
- * page may show it (a card number in a payment frame stays there when you click Pay), for the rest of the
- * recording; and so may any screenshot until the address next changes.
- */
+/** Hides a run as its field check decided, for as many as it has now; a hidden step stays hidden. */
+function hideRun(run: Combos) {
+  const hidden = run.hide?.(run.steps.length);
+  if (hidden) for (const s of run.steps) s.hidden = hidden;
+}
+
+/** Typing, or characters with a modifier (a paste), and where it went: what snap() keeps no screenshot of. */
 type Typed = {
   hidden: () => boolean;
   checked: Promise<unknown>;
@@ -111,8 +120,7 @@ export class Recorder {
   private held = new Set<string>();
   private altGraph = false;
   private typing: TextStep | null = null;
-  /** Characters with a modifier in a row, and which of them to hide once their field is checked. */
-  private combos: { steps: KeyStep[]; hide?: (i: number) => KeyStep["hidden"] } | null = null;
+  private combos: Combos | null = null;
   /** All typing so far, with its field checks: a screenshot waits for them. */
   private typed: Typed[] = [];
   /** The address on screen, whole and as a page, and how many times it has changed. */
@@ -232,27 +240,24 @@ export class Recorder {
    * A character with a modifier: a shortcut, unless the field takes a secret. A modifier stuck down, or
    * one that types characters on a layout this doesn't know, mustn't leave a password in clear: where
    * the field can't be checked, none is kept, and off the page (the address bar, where ctrl+l is a
-   * shortcut) only the first of a run.
+   * shortcut) one is kept only while it's alone: a run there may be a password typed with Ctrl stuck.
    */
   private combo(step: KeyStep) {
     if (!this.combos) {
-      const run: { steps: KeyStep[]; hide?: (i: number) => KeyStep["hidden"] } = { steps: [] };
+      const run: Combos = { steps: [] };
       this.combos = run;
-      const decide = (hide: (i: number) => KeyStep["hidden"]) => {
+      const decide = (hide: Combos["hide"]) => {
         run.hide = hide;
-        run.steps.forEach((s, i) => {
-          s.hidden = hide(i) ?? s.hidden;
-        });
+        hideRun(run);
       };
       this.check(
         () => run.steps.some((s) => s.hidden),
         (c) => decide(() => (c.secret ? "secret" : undefined)),
-        (offPage) => decide((i) => (offPage && i === 0 ? undefined : "unknown")),
+        (offPage) => decide((n) => (offPage && n === 1 ? undefined : "unknown")),
       );
     }
-    const run = this.combos;
-    run.steps.push(step);
-    step.hidden = run.hide?.(run.steps.length - 1) ?? step.hidden;
+    this.combos.steps.push(step);
+    hideRun(this.combos);
   }
 
   /** The viewer went away, and desktop-agent let go of what it held: so are the modifiers here. */
@@ -296,7 +301,7 @@ export class Recorder {
           this.altGraph = m.down;
           return;
         }
-        const mod = MODIFIERS[m.key];
+        const mod = MODIFIERS.get(m.key);
         if (mod) {
           if (m.down) this.held.add(mod);
           else this.held.delete(mod);
@@ -372,6 +377,10 @@ export class Recorder {
 
 const secs = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
 const BUTTON = { 1: "left", 2: "middle", 3: "right" } as const;
+const NOT_RECORDED = {
+  secret: "in a password or code field (not recorded)",
+  unknown: "(not recorded: the field couldn't be checked)",
+};
 
 /**
  * The steps as lines for the model. A button press and release in the same spot is a click; moves are
@@ -415,20 +424,16 @@ export function describeSteps(steps: RecStep[]): { lines: string[]; screens: str
         break;
       case "key":
         lines.push(
-          s.hidden === "secret"
-            ? `${at} pressed a key with a modifier in a password or code field (not recorded)`
-            : s.hidden === "unknown"
-              ? `${at} pressed a key with a modifier (not recorded: the field couldn't be checked)`
-              : `${at} key ${s.key}${shot(s.screen)}`,
+          s.hidden
+            ? `${at} pressed a key with a modifier ${NOT_RECORDED[s.hidden]}`
+            : `${at} key ${s.key}${shot(s.screen)}`,
         );
         break;
       case "text":
         lines.push(
-          s.hidden === "secret"
-            ? `${at} typed ${s.chars} characters into a password or code field (not recorded)`
-            : s.hidden === "unknown"
-              ? `${at} typed ${s.chars} characters (not recorded: the field couldn't be checked)`
-              : `${at} typed ${JSON.stringify(s.text)}`,
+          s.hidden
+            ? `${at} typed ${s.chars} characters ${NOT_RECORDED[s.hidden]}`
+            : `${at} typed ${JSON.stringify(s.text)}`,
         );
         break;
       case "page":

@@ -43,8 +43,11 @@ export const NEW_PER_DAY = 10;
 /** Two messages in a row, with no reply between, are at least this far apart. */
 export const PACE_MS = 2 * 60_000;
 
-const zl = (n: number, currency: string) =>
-  `${n.toLocaleString("en-GB", { maximumFractionDigits: 2 })} ${currency === "PLN" ? "zł" : currency}`;
+/** An amount in its currency, zł for PLN; only the number while the currency isn't known. */
+export function zl(n: number, currency?: string): string {
+  const x = n.toLocaleString("en-GB", { maximumFractionDigits: 2 });
+  return currency ? `${x} ${currency === "PLN" ? "zł" : currency}` : x;
+}
 
 /** The policy for one message: block, ask (why), or allow as covered by the mandate. */
 export function sendPolicy(n: Negotiation, input: SendInput, f: SendFacts): Verdict {
@@ -254,7 +257,7 @@ export function outside(
   return why;
 }
 
-const CONTACT_NAMES: Record<MandateContact, string> = {
+export const CONTACT_NAMES: Record<MandateContact, string> = {
   phone: "a phone number",
   email: "an e-mail address",
   address: "an address",
@@ -464,6 +467,8 @@ const RELATIVE: RegExp[] = [
   // Any share but 100%, which is a manner of speaking ("sprawna w 100%").
   /(?<![\d.,])(?!100(?![\d.,]))\d+(?:[.,]\d+)?\s?(?:%|procent\p{L}*|percent)/giu,
   /(?<![\p{L}])(?:netto|(?:\+|plus)\s*vat)(?![\p{L}])/giu,
+  // Shipping on top with no amount: "1400 zł + wysyłka" is more than 1400 zł, by how much isn't said.
+  /(?:\+|(?<![\p{L}])plus)\s*(?:(?:koszt\p{L}*|op[łl]at\p{L}*|cost\s+of)\s+)?(?:wysy[łl]k\p{L}*|przesy[łl]k\p{L}*|dostaw\p{L}*|kurier\p{L}*|shipping|postage|delivery)(?![\p{L}])(?!\s*(?:\p{L}+\s+){0,2}\d)/giu,
   /\d+(?:[.,]\d+)?\s*(?:zł|zl|pln|złotych)?\s+(?:wi[ęe]cej|mniej|taniej|dro[żz]ej|extra|more|less|cheaper|off)(?![\p{L}])/giu,
   /(?<![\p{L}])(?:zej[śs][ćc]|zejd\p{L}*|opu[śs]ci\p{L}*|opuszcz\p{L}*|obni[żz]\p{L}*|podnie[śs]\p{L}*|podnios\p{L}*|podbi\p{L}*|zwi[ęe]ksz\p{L}*|spu[śs]ci\p{L}*|dorzuc\p{L}*|do[łl]o[żz]\p{L}*)\s+(?:o\s+)?\d+/giu,
   /(?<![\p{L}])(?:(?:\d+|dwa|trzy|two|three)\s*(?:x|×|razy|times)\s+(?:tyle|that|as\s+much)|podw[óo]jnie|potr[óo]jnie|pay\s+double|double\s+(?:the|your|that|it|what)|triple\s+(?:the|your|that|it)|o\s+po[łl]ow[ęe]|(?:p[óo][łl]|po[łl]ow[ęe]|po[łl]owa)\s+ceny|half\s+(?:the\s+)?price|half\s+of\s+(?:the|your|what))(?![\p{L}])/giu,
@@ -670,7 +675,6 @@ function read(text: string, title: string, asking: number | null): Reading {
         : [];
     }),
   );
-  const titleNumbers = new Set([...models].map((m) => m.split(" ")[1] ?? ""));
   const pre = clean(text);
   const unclear: Unclear[] = lookAlikes(pre).map((raw) => ({ raw, spaced: false }));
   let s = blankDates(plain(text));
@@ -689,15 +693,17 @@ function read(text: string, title: string, asking: number | null): Reading {
     // The asking price is a price wherever it stands, even after a model's name.
     const asked = asking !== null && values.includes(asking);
     if (!money && !asked) {
-      // RTX3070, iPhone12, i7, b550: glued to a model's letters, unless they're a price word (za1500).
+      // RTX3070, iPhone12, i7, b550: glued to a model's letters, unless they're a price word (za1500)
+      // or say "about" (ok450, CA450).
       const glued = /\p{L}+$/u.exec(before)?.[0];
       if (
         glued &&
         !priceWord(glued) &&
+        !/^(?:ok|ca)$/i.test(glued) &&
         !priceWord(lastWord(before.slice(0, -glued.length))) &&
         (modelLike(glued) ||
           models.has(`${glued.toLowerCase()} ${raw}`) ||
-          (glued.length <= 2 && values.every((v) => v < 1000)))
+          (glued.length === 1 && values.every((v) => v < 1000)))
       )
         return;
       // i7-12700, RX-580: after a hyphen glued to a model's letters. Not "oferta-1500" or "PLN-1500".
@@ -727,9 +733,8 @@ function read(text: string, title: string, asking: number | null): Reading {
       // 1080p: a resolution.
       if (/^p(?![\p{L}])/u.test(after) && /^(?:480|720|1080|1440|2160)$/.test(raw)) return;
       const word = /(\p{L}+)[\s-]$/u.exec(before)?.[1];
+      // Only with the title's word before it: the title's number on its own ("Mogę 6800") is a price.
       if (word && !asked && !priceWord(word) && models.has(`${word.toLowerCase()} ${raw}`)) return;
-      // "zwykła 3070": the title's model number on its own, not after a price word.
-      if (!asked && !priceWord(lastWord(before)) && titleNumbers.has(raw)) return;
       const year = Number(raw);
       if (
         !asked &&
@@ -1203,9 +1208,13 @@ function inPerson(text: string): string {
 /** Sending it by post or courier. */
 const SHIPPING =
   /(?<![\p{L}])(?:wysy[łl]k\p{L}*|przesy[łl]k\p{L}*|kurier\p{L}*|paczkomat\p{L}*|paczk\p{L}*|inpost\p{L}*|dpd|dhl|gls|poczt\p{L}*|dostaw\p{L}*|wys[łl]a[ćc]|wy[śs]l\p{L}*|wysy[łl]a\p{L}*|prze[śs]l\p{L}*|przes[łl]a[ćc]|nada[ćc]|nadani\p{L}*|ship\p{L}*|deliver\p{L}*|courier\p{L}*|parcel\p{L}*|postage|post\s+it|send\s+it)(?![\p{L}])/iu;
-/** Saying something was paid or sent: only the owner can say that. */
+/**
+ * Saying something was paid or sent: only the owner can say that. "Wysłana" counts, but not as
+ * something to come ("zostanie wysłana", "może zostać wysłana", "żeby była wysłana") or asked about
+ * in a sentence that opens with czy or kiedy ("Czy paczka została nadana?").
+ */
 const PAID =
-  /(?<![\p{L}])(?:(?:za|o|w|do|prze)?p[łl]aci[łl](?:em|am|[ae][śs]my|y[śs]my)|prze[łl]a[łl](?:em|am|[ae][śs]my)|wys[łl]a[łl](?:em|am|[ae][śs]my)|przes[łl]a[łl](?:em|am|[ae][śs]my)|nada[łl](?:em|am|[ae][śs]my)|(?<!(?:zostanie|zostan[ąa]|b[ęe]dzie|b[ęe]d[ąa]|by[ćc]|kiedy|czy)\s+)(?:(?:za|o|w)p[łl]acon\p{L}*|przelan[eaoy]|wys[łl]an[eaoy]|przes[łl]an[eaoy]|nadan[eaoy])|dokona[łl]\p{L}*\s+(?:\p{L}+\s+)?(?:p[łl]atno|zap[łl]at|przelew|wp[łl]at)\p{L}*|kupi[łl](?:em|am)\s+(?:ju[żz]|przez)|completed\s+(?:the\s+)?payment|payment\s+completed|(?:kasa|pieni[ąa]dze|[śs]rodki|money|funds)\s+(?:s[ąa]|jest|is|are)\s+(?:ju[żz]\s+|already\s+)?(?:u\s+(?:pana|pani|ciebie)|with\s+you|in\s+your\s+account|na\s+(?:pana|pani|twoim)\s+koncie)|(?:kasa|kas[eę]|pieni[ąa]dze|[śs]rodki|p[łl]atno[śs][ćc]|zap[łl]ata|wp[łl]ata|przelew|money|funds|payment|transfer)\s+(?:\p{L}+\s+)?(?:posz[łl]\p{L}*|poszed[łl]|wys[łl]an\p{L}*|wykonan\p{L}*|zrobion\p{L}*|zlecon\p{L}*|zrealizowan\p{L}*|zaksi[ęe]gowan\p{L}*|dotar[łl]\p{L}*|sent|done|made|complete\p{L}*|gone\s+through|went\s+through|on\s+(?:the|its)\s+way)|zrobi[łl](?:em|am)\s+przelew|uregulowa[łl]\p{L}*|pu[śs]ci[łl]\p{L}*|i(?:['’]ve|\s+have)?\s+(?:already\s+)?(?:paid|sent|transferred|wired|shipped|posted)|sent\s+(?:you|it|the\s+money|the\s+payment)|payment\s+(?:is\s+|has\s+been\s+|was\s+)?(?:sent|made|done|complete\p{L}*)|already\s+paid|(?<=^|[.!?]\s{0,3})paid)(?![\p{L}])/iu;
+  /(?<![\p{L}])(?:(?:za|o|w|do|prze)?p[łl]aci[łl](?:em|am|[ae][śs]my|y[śs]my)|prze[łl]a[łl](?:em|am|[ae][śs]my)|wys[łl]a[łl](?:em|am|[ae][śs]my)|przes[łl]a[łl](?:em|am|[ae][śs]my)|nada[łl](?:em|am|[ae][śs]my)|(?<!(?:zostanie|zostan[ąa]|zosta[ćc]|b[ęe]dzie|b[ęe]d[ąa]|by[ćc]|(?:[żz]e|a)by\s+(?:by|zosta)[łl][aoy]?|kiedy|czy)\s+)(?<!(?:^|[.!?])\s*(?:czy|kiedy)(?![\p{L}])[^.!?,;]*)(?:(?:za|o|w)p[łl]acon\p{L}*|przelan[eaoy]|wys[łl]an[eaoy]|przes[łl]an[eaoy]|nadan[eaoy])|dokona[łl]\p{L}*\s+(?:\p{L}+\s+)?(?:p[łl]atno|zap[łl]at|przelew|wp[łl]at)\p{L}*|kupi[łl](?:em|am)\s+(?:ju[żz]|przez)|completed\s+(?:the\s+)?payment|payment\s+completed|(?:kasa|pieni[ąa]dze|[śs]rodki|money|funds)\s+(?:s[ąa]|jest|is|are)\s+(?:ju[żz]\s+|already\s+)?(?:u\s+(?:pana|pani|ciebie)|with\s+you|in\s+your\s+account|na\s+(?:pana|pani|twoim)\s+koncie)|(?:kasa|kas[eę]|pieni[ąa]dze|[śs]rodki|p[łl]atno[śs][ćc]|zap[łl]ata|wp[łl]ata|przelew|money|funds|payment|transfer)\s+(?:\p{L}+\s+)?(?:posz[łl]\p{L}*|poszed[łl]|wys[łl]an\p{L}*|wykonan\p{L}*|zrobion\p{L}*|zlecon\p{L}*|zrealizowan\p{L}*|zaksi[ęe]gowan\p{L}*|dotar[łl]\p{L}*|sent|done|made|complete\p{L}*|gone\s+through|went\s+through|on\s+(?:the|its)\s+way)|zrobi[łl](?:em|am)\s+przelew|uregulowa[łl]\p{L}*|pu[śs]ci[łl]\p{L}*|i(?:['’]ve|\s+have)?\s+(?:already\s+)?(?:paid|sent|transferred|wired|shipped|posted)|sent\s+(?:you|it|the\s+money|the\s+payment)|payment\s+(?:is\s+|has\s+been\s+|was\s+)?(?:sent|made|done|complete\p{L}*)|already\s+paid|(?<=^|[.!?]\s{0,3})paid)(?![\p{L}])/iu;
 
 /** Sending an offer or a photo isn't a claim that something was paid or sent. */
 const SENT_NOT_PAID =
@@ -1301,6 +1310,10 @@ const ADDRESS: { re: RegExp; street?: number; city?: number }[] = [
 ];
 const APPS =
   /(?<![\p{L}])(?:whats\s?app\p{L}*|wh?ats?\s?up|[łlw]h?[ao](?:ts|c|s)ap+\p{L}*|wa\.me|telegram\p{L}*|t\.me|signal\p{L}*|viber\p{L}*|messenger\p{L}*|facebook\p{L}*|fb\.com|fejs\p{L}*|instagram\p{L}*|insta\p{L}*|snap\p{L}*|whatsik\p{L}*|whats-app\p{L}*|wechat|discord\p{L}*|skype\p{L}*|threema|sms\p{L}*|esem\p{L}*|imessage)(?![\p{L}])/iu;
+/** A text message a carrier sends: "kod odbioru dostanie Pan SMS-em od InPost" isn't another app. */
+const SMS = /(?<![\p{L}])(?:sms|esem)\p{L}*/giu;
+const CARRIER =
+  /(?<![\p{L}])(?:inpost\p{L}*|paczkomat\p{L}*|paczk\p{L}*|przesy[łl]k\p{L}*|kurier\p{L}*|dpd|dhl|gls|poczt\p{L}*|orlen\p{L}*|kod\p{L}*\s+odbioru)(?![\p{L}])/iu;
 /** WA, TG, FB, IG: on their own, not in Wa-wa or a domain. */
 const APP_SHORT =
   /(?<![\p{L}\p{N}.@-])(?:wa|tg|fb|ig|snap)(?![\p{L}\p{N}-])|(?<![\p{L}])na\s+tele(?![\p{L}])/iu;
@@ -1330,7 +1343,11 @@ export function contactsIn(raw: string): { kind: MandateContact; raw: string }[]
     const at = address.index ?? 0;
     out.push({ kind: "address", raw: text.slice(at, at + 40).split(/[,;\n]/)[0] ?? "" });
   }
-  const app = APPS.exec(text)?.[0] ?? APP_SHORT.exec(text)?.[0];
+  const apps = text
+    .split(/(?<=[.!?\n])/)
+    .map((s) => (CARRIER.test(s) ? s.replace(SMS, " ") : s))
+    .join("");
+  const app = APPS.exec(apps)?.[0] ?? APP_SHORT.exec(text)?.[0];
   if (app) out.push({ kind: "apps", raw: app });
   return out;
 }

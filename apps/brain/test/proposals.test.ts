@@ -25,6 +25,7 @@ async function tidy(t: TestApp, cookie: string): Promise<Proposal> {
 test("a tidy-up is proposed as a diff, and applied as you in one commit", async () => {
   const t = await testApp();
   const { cookie } = await setUpOwner(t);
+  t.settings.update({ limits: { taskUsd: 3, dailyUsd: 1, monthlyUsd: 200, alertReserveUsd: 0 } });
   await t.memory.writeAll(
     [
       { path: "home.md", content: "# Home\nRouter: 192.168.1.1\n" },
@@ -35,6 +36,8 @@ test("a tidy-up is proposed as a diff, and applied as you in one commit", async 
   );
   answers(t, (p) => {
     expect(JSON.stringify(p.messages)).toContain("The router is at 192.168.1.1.");
+    // What it may cost is held while it's asked, so nothing else can spend it meanwhile.
+    expect(() => t.spend.check(0.5)).toThrow("Today's $1 limit");
     return JSON.stringify({
       title: "Merge the router notes",
       reason: "Both say where the router is.",
@@ -42,6 +45,8 @@ test("a tidy-up is proposed as a diff, and applied as you in one commit", async 
         { path: "network.md", delete: true },
         { path: "home.md", content: "# Home\nRouter: 192.168.1.1 (also the network notes)\n" },
         { path: "skills/x.md", content: "nope" },
+        { path: "notes/../skills/y.md", content: "nope" },
+        { path: "./skills/z.md", content: "nope" },
       ],
     });
   });

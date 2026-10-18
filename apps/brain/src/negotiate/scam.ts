@@ -2,8 +2,9 @@
 // link, or a move to another app or to contact details the mandate doesn't allow. The negotiation is
 // held for the owner; the template's rule alone isn't enough.
 import type { MandateContact } from "@hatbot/shared";
+import { escapeRe } from "./gate";
 import { MARKETPLACE_HOSTS } from "./marketplace";
-import { contactsIn, linksIn, plain } from "./policy";
+import { CONTACT_NAMES, contactsIn, linksIn, plain } from "./policy";
 
 /** Paying off the platform, and the apps scams move to. */
 const OFF_PLATFORM =
@@ -64,7 +65,6 @@ const fold = (s: string) =>
  * ("kod z aplikacji" is a bank's, not InPost's).
  */
 type Term = string | { t: string; not: string[] };
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const stem = (t: string) =>
   t
     .split("*")
@@ -249,13 +249,6 @@ function ownSite(link: string): boolean {
   }
 }
 
-const CONTACTS: Record<MandateContact, string> = {
-  phone: "a phone number",
-  email: "an e-mail address",
-  address: "an address",
-  apps: "another app",
-};
-
 /** What in a seller's message looks like a scam, a phrase each; empty when nothing does. */
 export function scamSignals(text: string, allow: MandateContact[]): string[] {
   const out: string[] = [];
@@ -271,6 +264,6 @@ export function scamSignals(text: string, allow: MandateContact[]): string[] {
       !(c.kind === "apps" && off) &&
       !(c.kind === "phone" && account && digits(account).includes(digits(c.raw)))
     )
-      out.push(`${CONTACTS[c.kind]} (“${c.raw}”)`);
+      out.push(`${CONTACT_NAMES[c.kind]} (“${c.raw}”)`);
   return out;
 }

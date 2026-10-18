@@ -23,7 +23,7 @@ export const memoryRoutes = new Hono<AppEnv>()
     return c.json({ path, content, sha: blobSha(content) });
   })
   .put("/memory/file", query(PathQuery), json(PutMemoryFile), async (c) => {
-    const { memory, settings, events } = c.var;
+    const { memory, settings } = c.var;
     const { path } = c.req.valid("query");
     const { content, message, baseSha } = c.req.valid("json");
     const owner = settings.get().owner;
@@ -33,22 +33,12 @@ export const memoryRoutes = new Hono<AppEnv>()
       baseSha === undefined
         ? await memory.write(path, content, owner, what)
         : await memory.writeIf(path, content, baseSha, owner, what);
-    if (sha)
-      events.emit({
-        type: "memory.committed",
-        sha,
-        message: message ?? `Edit ${path}`,
-        author: owner.name,
-      });
     return c.json({ sha });
   })
   .delete("/memory/file", query(PathQuery), async (c) => {
-    const { memory, settings, events } = c.var;
+    const { memory, settings } = c.var;
     const { path } = c.req.valid("query");
-    const owner = settings.get().owner;
-    const sha = await memory.delete(path, owner, `Delete ${path}`);
-    if (sha)
-      events.emit({ type: "memory.committed", sha, message: `Delete ${path}`, author: owner.name });
+    const sha = await memory.delete(path, settings.get().owner, `Delete ${path}`);
     return c.json({ sha });
   })
   .get(
@@ -69,9 +59,6 @@ export const memoryRoutes = new Hono<AppEnv>()
     c.json({ diff: await c.var.memory.diff(c.req.param("sha")) }),
   )
   .post("/memory/revert/:sha", async (c) => {
-    const { memory, settings, events } = c.var;
-    const owner = settings.get().owner;
-    const sha = await memory.revert(c.req.param("sha"), owner);
-    if (sha) events.emit({ type: "memory.committed", sha, message: "Revert", author: owner.name });
-    return c.json({ sha });
+    const { memory, settings } = c.var;
+    return c.json({ sha: await memory.revert(c.req.param("sha"), settings.get().owner) });
   });

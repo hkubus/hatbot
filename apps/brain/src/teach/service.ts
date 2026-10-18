@@ -1,14 +1,14 @@
 // Teach-by-showing (PLAN.md §1, §5.4): record the owner doing a chore, have Opus draft a skill, save it once reviewed.
 import type Anthropic from "@anthropic-ai/sdk";
 import { SKILL_NAME, type TeachSession } from "@hatbot/shared";
-import { type ModelClient, modelErrorText } from "../agent/model";
+import { type ModelClient, modelErrorText, oneShot } from "../agent/model";
 import { TEACH_PROMPT } from "../agent/prompt";
 import type { Archive } from "../archive";
 import type { Db } from "../db";
 import type { Desktop } from "../desktop/service";
 import type { EventBus } from "../events";
 import type { SettingsStore } from "../settings";
-import { BudgetError, priceOf, type Spend } from "../spend";
+import { BudgetError, type Spend } from "../spend";
 import type { ScreenLane } from "../tasks/lane";
 import { describeSteps, OffPage, PAGE_POLL_MS, Recorder, type RecStep } from "./recorder";
 import { type Skills, skillPath } from "./skills";
@@ -17,9 +17,7 @@ export const TEACH_MODEL = "claude-opus-5-5";
 /** Holds the screen lane while you record, so no task starts on the desktop. */
 const TEACH_LANE = -2;
 /** Screenshots sent with the recording, spread across it. */
-const MAX_SCREENS = 16;
-/** Roughly what a 1280x800 screenshot costs in input tokens. */
-const SCREEN_TOKENS = 1500;
+const SCREENS_SENT = 16;
 
 export class TeachError extends Error {
   constructor(
@@ -90,15 +88,11 @@ export class Teach {
     this.clock = d.clock ?? Date.now;
     // A restart loses a recording in progress (its steps were in memory) and a draft being written.
     const lost = d.db
-      .query<{ id: number; started_at: string }, []>(
-        "SELECT id, started_at FROM teach_sessions WHERE status = 'recording'",
+      .query<{ id: number }, []>(
+        "UPDATE teach_sessions SET status = 'discarded' WHERE status = 'recording' RETURNING id",
       )
       .all();
-    d.db.query("UPDATE teach_sessions SET status = 'discarded' WHERE status = 'recording'").run();
-    for (const r of lost)
-      void d.archive
-        .removeScreens(`teach-${r.id}`, Date.parse(r.started_at), this.clock())
-        .catch((err) => console.error("teach screenshots not removed", err));
+    for (const { id } of lost) void this.forgetScreens(id);
     d.db
       .query(
         "UPDATE teach_sessions SET status = 'failed', error = 'Stopped: the brain restarted.' WHERE status = 'drafting'",
@@ -151,7 +145,7 @@ export class Teach {
     return { recording: this.rec ? this.get(this.rec.id) : null, drafts };
   }
 
-  private update(id: number, patch: Partial<Omit<Row, "id">>, onlyIf?: Row["status"]) {
+  private update(id: number, patch: Partial<Omit<Row, "id">>, onlyIf?: Row["status"]): boolean {
     const keys = Object.keys(patch);
     const res = this.d.db
       .query(
@@ -159,6 +153,7 @@ export class Teach {
       )
       .run(...(Object.values(patch) as (string | null)[]), id, ...(onlyIf ? [onlyIf] : []));
     if (res.changes) this.emit(id);
+    return res.changes > 0;
   }
 
   private emit(id: number) {
@@ -197,7 +192,11 @@ export class Teach {
         // went somewhere CDP can't see.
         if (!el || el.pageFocus === false) throw new OffPage("the keyboard isn't on a page");
         return {
-          secret: Boolean(el.secret) || el.type === "password" || el.tag === "iframe",
+          secret:
+            Boolean(el.secret) ||
+            el.type === "password" ||
+            el.tag === "iframe" ||
+            el.tag === "frame",
           url: el.url ?? null,
         };
       },
@@ -254,13 +253,18 @@ export class Teach {
     if (id === undefined) throw new TeachError("Nothing is being recorded.", 409);
     const steps = (await this.endRecording(id)) ?? [];
     const acted = actions(steps) > 0;
-    this.update(id, {
-      status: acted ? "drafting" : "failed",
-      stopped_at: this.now(),
-      events: JSON.stringify(steps),
-      error: acted ? null : "Nothing was recorded. Take over and show Hatbot the chore.",
-    });
-    if (acted) void this.write(id);
+    // Discarded while the recording was ending: it stays thrown away.
+    const ended = this.update(
+      id,
+      {
+        status: acted ? "drafting" : "failed",
+        stopped_at: this.now(),
+        events: JSON.stringify(steps),
+        error: acted ? null : "Nothing was recorded. Take over and show Hatbot the chore.",
+      },
+      "recording",
+    );
+    if (acted && ended) void this.write(id);
     return this.get(id) as TeachSession;
   }
 
@@ -279,7 +283,7 @@ export class Teach {
 
   /** One Opus call from the step log and a spread of the screenshots. */
   private async write(id: number) {
-    const { archive, model, spend } = this.d;
+    const { archive } = this.d;
     try {
       const steps = JSON.parse(this.row(id)?.events ?? "[]") as RecStep[];
       const { lines, screens } = describeSteps(steps);
@@ -289,7 +293,7 @@ export class Teach {
       // Full size: the log's coordinates are in the screenshots' pixels.
       const picked = spread(
         screens.map((path, i) => ({ path, n: i + 1 })),
-        MAX_SCREENS,
+        SCREENS_SENT,
       );
       for (const { path, n } of picked) {
         const file = archive.file(path);
@@ -304,26 +308,20 @@ export class Teach {
           },
         });
       }
-      const p = priceOf(TEACH_MODEL);
-      const inputTokens = lines.join("\n").length / 3 + picked.length * SCREEN_TOKENS + 3000;
-      spend.check((inputTokens * p.input + 8000 * p.output) / 1_000_000);
-      const res = await model.create({
-        model: TEACH_MODEL,
-        max_tokens: 16000,
-        thinking: { type: "adaptive" },
-        output_config: { effort: "medium" },
-        system: TEACH_PROMPT,
-        messages: [{ role: "user", content }],
-      });
-      spend.recordResponse({ model: TEACH_MODEL, purpose: "teach", usage: res.usage });
-      const text = res.content
-        .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
-        .map((b) => b.text)
-        .join("\n")
-        .trim()
-        .replace(/^```(?:markdown|md)?\n([\s\S]*)\n```$/, "$1");
-      if (res.stop_reason !== "end_turn" || !text)
-        throw new Error("The model stopped before the skill was finished.");
+      const out = await oneShot(
+        this.d,
+        {
+          model: TEACH_MODEL,
+          max_tokens: 16000,
+          thinking: { type: "adaptive" },
+          output_config: { effort: "medium" },
+          system: TEACH_PROMPT,
+          messages: [{ role: "user", content }],
+        },
+        { purpose: "teach" },
+      );
+      const text = out.trim().replace(/^```(?:markdown|md)?\n([\s\S]*)\n```$/, "$1");
+      if (!text) throw new Error("The model stopped before the skill was finished.");
       this.update(
         id,
         {
@@ -353,13 +351,6 @@ export class Teach {
       throw new TeachError(`There's already a skill called ${input.name}.`, 409);
     const owner = this.d.settings.get().owner;
     const sha = await this.d.skills.save(input.name, input.content, owner);
-    if (sha)
-      this.d.events.emit({
-        type: "memory.committed",
-        sha,
-        message: `Add skill ${input.name}`,
-        author: owner.name,
-      });
     this.update(id, { status: "saved", name: input.name, draft: input.content }, "draft");
     await this.forgetScreens(id);
     return { session: this.get(id) as TeachSession, path: skillPath(input.name), sha };
@@ -383,13 +374,6 @@ export class Teach {
   private async forgetScreens(id: number) {
     const r = this.row(id);
     if (!r) return;
-    const steps = JSON.parse(r.events ?? "[]") as RecStep[];
-    if (steps.some((s) => "screen" in s && s.screen)) {
-      for (const s of steps) if ("screen" in s) delete s.screen;
-      this.d.db
-        .query("UPDATE teach_sessions SET events = ? WHERE id = ?")
-        .run(JSON.stringify(steps), id);
-    }
     const to = r.stopped_at ? Date.parse(r.stopped_at) : this.clock();
     await this.d.archive
       .removeScreens(`teach-${id}`, Date.parse(r.started_at), to)
