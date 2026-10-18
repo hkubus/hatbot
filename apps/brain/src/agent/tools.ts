@@ -9,8 +9,10 @@ import {
   findTodo,
   HATBOT_ID,
   localDay,
+  MAX_BOX_FEED_NAME,
   MAX_BOX_HTML,
   MAX_WATCH_MINUTES,
+  MIN_WATCH_MINUTES,
   minWatchMinutes,
   parseTodos,
   type Schedule,
@@ -27,6 +29,7 @@ import {
 import { z } from "zod";
 import type { Attachments } from "../attachments";
 import { type Bots, botFolder } from "../bots";
+import type { BoxFeed } from "../box-feeds";
 import { BoxError, type Boxes } from "../boxes";
 import type { Db } from "../db";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
@@ -108,10 +111,10 @@ export type ToolContext = {
   ) => Promise<{ content: string; isError: boolean }>;
   /**
    * Asks about a change a core tool would make, as a plugin's change asks: Haiku's review, then you.
-   * Your note on the approval, for the tool's result, or why it mustn't go ahead.
+   * Your note on the approval, for the tool's result, or why it mustn't go ahead. `always`: only you.
    */
   approve?: (
-    call: { tool: string; input: unknown; what: string; why: string },
+    call: { tool: string; input: unknown; what: string; why: string; always?: boolean },
     signal: AbortSignal,
   ) => Promise<{ content: string; isError: boolean }>;
 };
@@ -451,6 +454,14 @@ function shown(ctx: ToolContext, box: Box): string {
 
 const BOX_TITLE = z.string().min(1).max(80).describe('Short, e.g. "Habit tracker"');
 
+/** A box's feed, for box_data. */
+const feedLine = (f: BoxFeed) =>
+  `"${f.name}": ${f.tool} ${JSON.stringify(f.input)}, every ${f.everyMinutes} min${f.error ? `; ${f.error}` : ""}\n  ${f.at ? `Latest, ${f.at.slice(0, 16).replace("T", " ")} UTC: ${cut(JSON.stringify(f.value), 2000)}` : "Nothing yet"}`;
+
+/** What a feed gave, in a word or two. */
+const kindOf = (v: unknown) =>
+  typeof v === "string" ? "text" : Array.isArray(v) ? "a JSON array" : "a JSON object";
+
 type ToolDef<S extends z.ZodType> = {
   name: string;
   description: string;
@@ -711,7 +722,7 @@ export const TOOLS = [
   def({
     name: "box_create",
     description:
-      "Make a box: a small web app the owner keeps and opens from the chat, such as a tracker, a calculator, a planner or a dashboard. Not for a one-off answer: reply instead, with a chart block if it helps. A box is one self-contained HTML page, its CSS and JavaScript inline. It can't load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don't work; show messages and confirmations in the page. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app's colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too.",
+      "Make a box: a small web app the owner keeps and opens from the chat, such as a tracker, a calculator, a planner or a dashboard. Not for a one-off answer: reply instead, with a chart block if it helps. A box is one self-contained HTML page, its CSS and JavaScript inline. It can't load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don't work; show messages and confirmations in the page. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app's colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku's answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes, and hatbox.feed(name) for what a feed you give it with box_feed last read.",
     schema: z.object({
       title: BOX_TITLE,
       html: z.string().min(1).max(MAX_BOX_HTML).describe("The whole page"),
@@ -818,19 +829,91 @@ export const TOOLS = [
   }),
   def({
     name: "box_data",
-    description: "What one of your boxes' page has saved with hatbox.store, by key.",
+    description:
+      "What one of your boxes' page has saved with hatbox.store, by key, and its feeds with what they last read.",
     schema: z.object({ box: z.number().int() }),
     run: async ({ box: id }, ctx) => {
       const box = ownBox(ctx, id);
       const data = ctx.boxes?.data(id) ?? {};
-      if (!Object.keys(data).length) return "Nothing saved yet.";
-      // What the page saved is whatever its code and the owner's typing made of it.
+      const feeds = ctx.boxes?.feeds?.list(id) ?? [];
+      if (!Object.keys(data).length && !feeds.length) return "Nothing saved yet.";
+      // What the page saved is whatever its code and the owner's typing made of it; what its feeds
+      // read is whatever their tools found.
+      const saved = Object.keys(data).length
+        ? cut(JSON.stringify(data, null, 1), 30_000)
+        : "Nothing saved yet.";
       return boxOutput(
         ctx,
         "box_data",
-        cut(JSON.stringify(data, null, 1), 30_000),
+        feeds.length ? `${saved}\n\nFeeds:\n${feeds.map(feedLine).join("\n")}` : saved,
         `What box #${id} "${box.title}" saved`,
       );
+    },
+  }),
+  def({
+    name: "box_feed",
+    description:
+      "Give one of your boxes a feed: one of your plugins' read tools, which the brain runs on a timer without a model, so the box's page shows the latest. The page reads it with await hatbox.feed(name), which gives {value, at, error} (value: the tool's output, parsed when it's JSON; at: when it came; error: why the last run failed, if it did) or undefined before there's one. It runs once now; one that fails isn't added. The same name changes it; leave out tool to remove it. At most 10 a box.",
+    schema: z.object({
+      box: z.number().int(),
+      name: z
+        .string()
+        .min(1)
+        .max(MAX_BOX_FEED_NAME)
+        .describe('What the page asks hatbox.feed for, e.g. "guests"'),
+      tool: z
+        .string()
+        .optional()
+        .describe("Your plugin's read tool, e.g. proxmox_status. Leave out to remove the feed"),
+      tool_input: z.record(z.string(), z.unknown()).optional().describe("The tool's input"),
+      every_minutes: z
+        .number()
+        .int()
+        .min(MIN_WATCH_MINUTES)
+        .max(MAX_WATCH_MINUTES)
+        .optional()
+        .describe("How often it runs, at least 5 and at most 10080 (a week); 60 if left out"),
+    }),
+    run: async ({ box: id, name, tool, tool_input, every_minutes }, ctx, signal) => {
+      const box = ownBox(ctx, id);
+      const feeds = ctx.boxes?.feeds;
+      if (!ctx.boxes || !feeds) return "Boxes aren't available here.";
+      if (!tool)
+        return feeds.remove(id, name)
+          ? `Removed the feed "${name}".`
+          : `Box #${id} has no feed "${name}".`;
+      const input = tool_input ?? {};
+      const every = every_minutes ?? 60;
+      // The page gets what the tool reads. After untrusted content, or for a page written after it,
+      // that's for the owner to allow: Haiku's review never sees what the page does with it.
+      const chat = ctx.tainted?.() ?? null;
+      let note = "";
+      if (chat || ctx.boxes.taintedBy(id)) {
+        if (!ctx.approve)
+          return "Not added: this needs the owner's approval, which can't be asked here.";
+        const hosts = ctx.boxes.hosts(id);
+        const r = await ctx.approve(
+          {
+            tool: "box_feed",
+            input: { box: id, name, tool, tool_input: input, every_minutes: every },
+            what: `Give box #${id} "${box.title}" the feed "${name}": ${tool} ${JSON.stringify(input)}, every ${every} min. ${
+              hosts.length
+                ? `The box can also reach ${hosts.join(", ")}, so it could send what it reads there.`
+                : "The box can't reach any host, so what it reads stays in Hatbot."
+            }`,
+            why: chat
+              ? "This conversation has read untrusted content, so giving a box your data needs your approval."
+              : "This box's page was written after reading untrusted content, so giving it your data needs your approval.",
+            always: true,
+          },
+          signal,
+        );
+        if (r.isError) return r.content;
+        note = r.content;
+      }
+      const first = await feeds.set(id, box.botId, { name, tool, input, everyMinutes: every });
+      // Not what it gave: that's untrusted, and would make adding the next feed ask too.
+      return `Added the feed "${name}": it ran and gave ${kindOf(first.value)}. It runs every ${every} min; the page reads it with await hatbox.feed(${JSON.stringify(name)}).${note}`;
     },
   }),
   def({

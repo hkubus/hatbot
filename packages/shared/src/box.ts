@@ -33,6 +33,13 @@ export const MAX_BOX_HTML = 1_000_000;
 export const MAX_BOX_VALUE = 1024 * 1024;
 export const MAX_BOX_STORE = 5 * 1024 * 1024;
 export const MAX_BOX_KEY = 200;
+/** What hatbox.ask sends Haiku, in characters, and the most it may answer, in tokens (X4). */
+export const MAX_BOX_ASK = 50_000;
+export const MAX_BOX_ASK_SYSTEM = 10_000;
+export const MAX_BOX_ASK_TOKENS = 8000;
+/** A note hatbox.send puts in the chat, in characters. */
+export const MAX_BOX_NOTE = 2000;
+export const MAX_BOX_FEED_NAME = 40;
 
 export const OpenBox = z.object({
   version: z.number().int().positive().optional(),
@@ -47,8 +54,23 @@ export const BoxCall = z.discriminatedUnion("op", [
   z.object({ op: z.literal("set"), key: z.string().min(1).max(MAX_BOX_KEY), value: z.unknown() }),
   z.object({ op: z.literal("delete"), key: z.string().max(MAX_BOX_KEY) }),
   z.object({ op: z.literal("keys") }),
+  // X4: Haiku with no tools, a note in the box's chat, and a feed's latest result.
+  z.object({
+    op: z.literal("ask"),
+    prompt: z.string().trim().min(1).max(MAX_BOX_ASK),
+    system: z.string().max(MAX_BOX_ASK_SYSTEM).optional(),
+    maxTokens: z.number().int().min(1).max(MAX_BOX_ASK_TOKENS).optional(),
+  }),
+  z.object({ op: z.literal("send"), text: z.string().trim().min(1).max(MAX_BOX_NOTE) }),
+  z.object({ op: z.literal("feed"), name: z.string().max(MAX_BOX_FEED_NAME) }),
 ]);
 export type BoxCall = z.infer<typeof BoxCall>;
 
 /** The answer: `value` for get (absent when there's none) and keys. */
 export type BoxAnswer = { value?: unknown };
+
+/**
+ * What hatbox.feed(name) gives the page: the feed's latest result (the tool's output, parsed when it's
+ * JSON) and when it came; `error` says why its last run failed, or why it stopped.
+ */
+export type BoxFeedValue = { value: unknown; at: string; error?: string };

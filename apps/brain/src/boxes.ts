@@ -14,10 +14,15 @@ import {
   MAX_BOX_STORE,
   MAX_BOX_VALUE,
 } from "@hatbot/shared";
+import type { Chats } from "./agent/chats";
+import { type CreateParams, type ModelClient, modelErrorText, oneShot } from "./agent/model";
 import { sameText, secretKey } from "./auth/keys";
+import type { BoxFeeds } from "./box-feeds";
 import type { Db } from "./db";
 import { UserError } from "./errors";
 import type { EventBus } from "./events";
+import type { SettingsStore } from "./settings";
+import { BudgetError, estimateTokens, fixedTokens, requestCeiling, type Spend } from "./spend";
 
 /** Why a box can't be made, changed or kept: the message is for the model, or for you. */
 export class BoxError extends UserError {}
@@ -50,8 +55,27 @@ export type Made = { messageId?: number | null; taintedBy?: string | null };
 /** How long an address to open a box's page holds. */
 const OPEN_MS = 10 * 60_000;
 
+/** hatbox.ask's model, and what it may write when the page doesn't say, thinking included. */
+export const BOX_ASK_MODEL = "claude-haiku-5-5";
+const ASK_TOKENS = 4000;
+/** Notes a box's page may put in the chat in an hour (hatbox.send). */
+const NOTES_PER_HOUR = 5;
+
+/** What hatbox.ask, .send and .feed need: the boxes get it once the chats exist (connect). */
+export type BoxDeps = {
+  settings: SettingsStore;
+  spend: Spend;
+  /** The background model, for hatbox.ask. */
+  model: ModelClient;
+  chats: Chats;
+  feeds: BoxFeeds;
+};
+
 export class Boxes {
   private key: Buffer;
+  private d: BoxDeps | null = null;
+  /** What hatbox.ask's answers on their way may still cost, held against the boxes' daily limit. */
+  private asking = 0;
 
   constructor(
     private db: Db,
@@ -63,6 +87,23 @@ export class Boxes {
 
   private now() {
     return new Date(this.clock()).toISOString();
+  }
+
+  /** Called once the chats exist: hatbox.ask, .send and .feed need them. */
+  connect(d: BoxDeps) {
+    this.d = d;
+  }
+
+  get feeds(): BoxFeeds | null {
+    return this.d?.feeds ?? null;
+  }
+
+  /**
+   * The hosts a box's backend may reach, which an approval to give it a feed names. None until the
+   * boxes guest (X2) lets a box reach hosts.
+   */
+  hosts(_id: number): string[] {
+    return [];
   }
 
   /** The latest changed first; only `botId`'s, when it's given. */
@@ -207,7 +248,7 @@ export class Boxes {
   }
 
   /** A call from the box's page through the app (PLAN.md §21.2). */
-  call(id: number, c: BoxCall): BoxAnswer {
+  async call(id: number, c: BoxCall): Promise<BoxAnswer> {
     switch (c.op) {
       case "get": {
         const r = this.db
@@ -249,7 +290,79 @@ export class Boxes {
           .run(id, c.key, json, this.now());
         return {};
       }
+      case "ask":
+        return { value: await this.ask(this.existing(id), c) };
+      case "send":
+        this.send(this.existing(id), c.text);
+        return {};
+      case "feed": {
+        const latest = this.connected().feeds.latest(id, c.name);
+        return latest ? { value: latest } : {};
+      }
     }
+  }
+
+  private existing(id: number): Box {
+    const box = this.get(id);
+    if (!box) throw new BoxError("That box is gone.", 404);
+    return box;
+  }
+
+  private connected(): BoxDeps {
+    if (!this.d) throw new BoxError("Boxes can't do that here.", 503);
+    return this.d;
+  }
+
+  /**
+   * Haiku's answer to the page, with no tools (hatbox.ask). The chat's model never sees it. Boxes have
+   * a daily limit of their own, besides the brain's, and nothing is asked while Hatbot is paused.
+   */
+  private async ask(box: Box, c: Extract<BoxCall, { op: "ask" }>): Promise<string> {
+    const d = this.connected();
+    const { paused, limits } = d.settings.get();
+    if (paused) throw new BoxError("Hatbot is paused.", 409);
+    const params: CreateParams = {
+      model: BOX_ASK_MODEL,
+      max_tokens: c.maxTokens ?? ASK_TOKENS,
+      thinking: { type: "adaptive" },
+      output_config: { effort: "low" },
+      ...(c.system ? { system: c.system } : {}),
+      messages: [{ role: "user", content: c.prompt }],
+    };
+    const most = requestCeiling(BOX_ASK_MODEL, {
+      prompt: fixedTokens(params.system, null) + estimateTokens(params.messages),
+      maxTokens: params.max_tokens,
+    });
+    const spent = d.spend.byPurpose(1).find((p) => p.purpose === "boxes")?.costUsd ?? 0;
+    if (spent + this.asking + most > limits.boxesUsd)
+      throw new BoxError(
+        `Boxes have used today's $${limits.boxesUsd} for asking Haiku. It's in Settings, under Spending limits.`,
+        429,
+      );
+    this.asking += most;
+    try {
+      return await oneShot(d, params, { purpose: "boxes", botId: box.botId });
+    } catch (err) {
+      if (err instanceof BudgetError) throw new BoxError(err.message, 429);
+      console.error(`box ${box.id}: ask failed`, err);
+      throw new BoxError(`Haiku didn't answer: ${modelErrorText(err)}`, 502);
+    } finally {
+      this.asking -= most;
+    }
+  }
+
+  /** A note from the page in the box's chat (hatbox.send), a few an hour. */
+  private send(box: Box, text: string) {
+    const since = new Date(this.clock() - 3600_000).toISOString();
+    const sent =
+      this.db
+        .query<{ n: number }, [number, string]>(
+          "SELECT count(*) AS n FROM messages WHERE box_id = ? AND kind = 'box' AND created_at > ?",
+        )
+        .get(box.id, since)?.n ?? 0;
+    if (sent >= NOTES_PER_HOUR)
+      throw new BoxError(`A box sends at most ${NOTES_PER_HOUR} notes an hour.`, 429);
+    this.connected().chats.boxNote(box, text);
   }
 
   /** Everything the box's page saved, by key. */
@@ -347,6 +460,15 @@ const HATBOX = `(() => {
       delete: (key) => call("delete", { key: String(key) }),
       keys: () => call("keys", {}),
     }),
+    ask: (prompt, o) => {
+      const { system, maxTokens } = o || {};
+      const args = { prompt: String(prompt) };
+      if (system !== undefined) args.system = String(system);
+      if (maxTokens !== undefined) args.maxTokens = Number(maxTokens);
+      return call("ask", args);
+    },
+    send: (text) => call("send", { text: String(text) }),
+    feed: (name) => call("feed", { name: String(name) }),
     theme,
   });
 })();`;

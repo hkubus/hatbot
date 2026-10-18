@@ -32,6 +32,7 @@ const brain = await createServices({
 });
 const { app, auth, approvals, chats, desktop, negotiations, plugins, settings, tasks } = brain;
 const { schedules, triggers, watchers, heartbeat, report, proposals, storage, ping } = brain;
+const { boxes } = brain;
 await brain.skills.refresh();
 // In the background: an MCP server that is slow to answer mustn't hold up the health check.
 const pluginsStarted = plugins
@@ -76,6 +77,7 @@ void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {
     safely("weekly report", () => report.tick());
     safely("proposals", () => proposals.tick());
     safely("storage", () => storage.tick());
+    safely("box feeds", () => boxes.feeds?.tick());
   }, 10_000);
 });
 
