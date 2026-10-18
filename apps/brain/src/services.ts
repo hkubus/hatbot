@@ -11,6 +11,7 @@ import { Archive } from "./archive";
 import { Attachments } from "./attachments";
 import { AuthService, FailureLimiter, type PasswordCost } from "./auth/service";
 import { Bots } from "./bots";
+import { BoxFeeds } from "./box-feeds";
 import { Boxes } from "./boxes";
 import { Checks, type ChecksDeps } from "./checks";
 import type { Config } from "./config";
@@ -172,7 +173,8 @@ export async function createServices(o: Outside) {
     proposals,
   });
   tasks.attach({ proposals });
-  boxes.connect({ settings, spend, model: o.taskModel, chats });
+  const feeds = new BoxFeeds({ db, settings, plugins, bots, clock });
+  boxes.connect({ settings, spend, model: o.taskModel, chats, feeds });
 
   const updates = new Updates(config, clock);
   const ping = new DeadManPing({ db, url: o.pingUrl, clock });

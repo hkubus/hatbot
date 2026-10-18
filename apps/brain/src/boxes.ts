@@ -17,6 +17,7 @@ import {
 import type { Chats } from "./agent/chats";
 import { type CreateParams, type ModelClient, modelErrorText, oneShot } from "./agent/model";
 import { sameText, secretKey } from "./auth/keys";
+import type { BoxFeeds } from "./box-feeds";
 import type { Db } from "./db";
 import { UserError } from "./errors";
 import type { EventBus } from "./events";
@@ -60,13 +61,14 @@ const ASK_TOKENS = 4000;
 /** Notes a box's page may put in the chat in an hour (hatbox.send). */
 const NOTES_PER_HOUR = 5;
 
-/** What hatbox.ask and .send need: the boxes get it once the chats exist (connect). */
+/** What hatbox.ask, .send and .feed need: the boxes get it once the chats exist (connect). */
 export type BoxDeps = {
   settings: SettingsStore;
   spend: Spend;
   /** The background model, for hatbox.ask. */
   model: ModelClient;
   chats: Chats;
+  feeds: BoxFeeds;
 };
 
 export class Boxes {
@@ -87,9 +89,21 @@ export class Boxes {
     return new Date(this.clock()).toISOString();
   }
 
-  /** Called once the chats exist: hatbox.ask and .send need them. */
+  /** Called once the chats exist: hatbox.ask, .send and .feed need them. */
   connect(d: BoxDeps) {
     this.d = d;
+  }
+
+  get feeds(): BoxFeeds | null {
+    return this.d?.feeds ?? null;
+  }
+
+  /**
+   * The hosts a box's backend may reach, which an approval to give it a feed names. None until the
+   * boxes guest (X2) lets a box reach hosts.
+   */
+  hosts(_id: number): string[] {
+    return [];
   }
 
   /** The latest changed first; only `botId`'s, when it's given. */
@@ -281,6 +295,10 @@ export class Boxes {
       case "send":
         this.send(this.existing(id), c.text);
         return {};
+      case "feed": {
+        const latest = this.connected().feeds.latest(id, c.name);
+        return latest ? { value: latest } : {};
+      }
     }
   }
 
@@ -450,6 +468,7 @@ const HATBOX = `(() => {
       return call("ask", args);
     },
     send: (text) => call("send", { text: String(text) }),
+    feed: (name) => call("feed", { name: String(name) }),
     theme,
   });
 })();`;

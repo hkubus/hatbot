@@ -763,4 +763,28 @@ export const migrations: string[] = [
   );
   ALTER TABLE messages ADD COLUMN box_id INTEGER;
   `,
+  // 42: the boxes guest's (X2), built alongside; only a stand-in here, which the merge replaces.
+  `SELECT 1;`,
+  // 43: boxes' feeds, a plugin's read tool run for a box's page on a timer (PLAN.md §21.2, X4).
+  `
+  CREATE TABLE box_feeds (
+    id INTEGER PRIMARY KEY,
+    box_id INTEGER NOT NULL REFERENCES boxes(id) ON DELETE CASCADE,
+    -- The bot that added it: it runs with that bot's tools, and stops once the bot is deleted.
+    bot_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    input TEXT NOT NULL,
+    every_minutes INTEGER NOT NULL,
+    -- The latest result, as JSON, and when it came.
+    value TEXT,
+    value_at TEXT,
+    error TEXT,
+    -- NULL once it stopped: its tool is gone, or its bot.
+    next_run_at TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (box_id, name)
+  );
+  CREATE INDEX box_feeds_due ON box_feeds (next_run_at);
+  `,
 ];

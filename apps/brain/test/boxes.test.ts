@@ -1,8 +1,11 @@
 // Boxes (PLAN.md §21): small web apps a bot makes, shown sandboxed, keeping what their pages save.
 import { expect, test } from "bun:test";
-import type { BoxDetail } from "@hatbot/shared";
+import type { BoxDetail, BoxFeedValue } from "@hatbot/shared";
+import { z } from "zod";
+import { REVIEW_PROMPT } from "../src/agent/prompt";
+import { definePlugin, ready, tool } from "../src/plugins/plugin";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { bot, lastUserText, signIn, type TestApp, testApp } from "./helpers";
+import { bot, lastUserText, signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 const PAGE = "<!doctype html><title>Habits</title><button>Walk</button>";
 const open = async (t: TestApp, id: number) => {
@@ -137,4 +140,101 @@ test("hatbox.send: a note in the box's chat from the box, which the bot reads as
   expect((await page(t, { op: "send", text: "One too many" })).status).toBe(429);
   t.advance(3600_000);
   expect((await page(t, { op: "send", text: "An hour later" })).status).toBe(200);
+});
+
+/** A plugin with one read tool, whose answer the test sets. */
+function lab(answer: { load: number }) {
+  return definePlugin({
+    id: "lab",
+    name: "Lab",
+    description: "",
+    config: z.object({}),
+    start: () =>
+      ready([
+        tool({
+          name: "lab_load",
+          description: "",
+          access: "read",
+          schema: z.object({ node: z.string() }),
+          run: async ({ node }) => JSON.stringify({ node, load: answer.load }),
+        }),
+      ]),
+  });
+}
+
+test("hatbox.feed: a plugin's read tool, run for the page on a timer without the model; not while paused, and stopped once its plugin is off", async () => {
+  const answer = { load: 1 };
+  const model = new FakeModel([
+    {
+      content: [
+        toolUse("box_feed", {
+          box: 1,
+          name: "load",
+          tool: "lab_load",
+          tool_input: { node: "pve" },
+          every_minutes: 5,
+        }),
+      ],
+    },
+    { content: [text("Added.")] },
+  ]);
+  const t = await testApp(model, new FakeModel(), {}, [lab(answer)]);
+  await t.plugins.update("lab", { enabled: true });
+  t.boxes.create({ botId: "hatbot", conversationId: 1, title: "Load", html: PAGE }, {});
+  await t.thread.post("show the load in the box").done;
+  const feed = async () =>
+    ((await (await page(t, { op: "feed", name: "load" })).json()) as { value: BoxFeedValue }).value;
+  expect((await feed()).value).toEqual({ node: "pve", load: 1 });
+
+  answer.load = 2;
+  t.advance(5 * 60_000);
+  await t.boxes.feeds?.tick();
+  expect(await feed()).toMatchObject({ value: { load: 2 }, at: new Date(t.clock()).toISOString() });
+
+  t.settings.update({ paused: true });
+  answer.load = 3;
+  t.advance(5 * 60_000);
+  await t.boxes.feeds?.tick();
+  expect((await feed()).value).toMatchObject({ load: 2 });
+
+  t.settings.update({ paused: false });
+  await t.plugins.update("lab", { enabled: false });
+  await t.boxes.feeds?.tick();
+  await t.plugins.update("lab", { enabled: true });
+  t.advance(5 * 60_000);
+  await t.boxes.feeds?.tick();
+  // It keeps what it last read, saying why that's old.
+  const stopped = await feed();
+  expect(stopped.value).toMatchObject({ load: 2 });
+  expect(stopped.error).toStartWith("Stopped");
+  expect(model.requests).toHaveLength(2);
+});
+
+test("after reading untrusted content, giving a box a feed waits for the owner, past Haiku's review", async () => {
+  const model = new FakeModel([
+    { content: [text("Hi.")] },
+    {
+      content: [
+        toolUse("box_feed", {
+          box: 1,
+          name: "load",
+          tool: "lab_load",
+          tool_input: { node: "pve" },
+        }),
+      ],
+    },
+    { content: [text("Not added.")] },
+  ]);
+  const t = await testApp(model, new FakeModel(), {}, [lab({ load: 1 })]);
+  t.taskModel.onCreate = (p) =>
+    p.system === REVIEW_PROMPT ? JSON.stringify({ safe: true, why: "" }) : undefined;
+  await t.plugins.update("lab", { enabled: true });
+  t.boxes.create({ botId: "hatbot", conversationId: 1, title: "Load", html: PAGE }, {});
+  await t.thread.post("hi").done;
+  t.db.query("UPDATE episodes SET tainted = 1, tainted_by = 'https://evil.example'").run();
+  const reply = t.thread.post("show the load in the box");
+  const asked = await waitFor(() => t.approvals.list(true)[0]);
+  t.approvals.decide(asked.id, "deny", "web");
+  await reply.done;
+  expect(t.boxes.feeds?.list(1)).toEqual([]);
 });

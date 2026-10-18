@@ -2217,9 +2217,9 @@ export class Thread {
                   this.gatedCall(episode.id, bot, t, input, signal, progress, out.id, screen),
                 );
               },
-              approve: ({ why, ...call }, signal) =>
+              approve: ({ why, always, ...call }, signal) =>
                 checked(async () => {
-                  const verdict = { action: "ask" as const, why, tainted: true };
+                  const verdict = { action: "ask" as const, why, tainted: true, always };
                   const r = await this.approve(episode.id, bot, call, verdict, signal, progress);
                   if ("content" in r) return r;
                   return { content: r.note ? `\n\n${ownerNote(r.note)}` : "", isError: false };
@@ -2397,6 +2397,7 @@ function toolLabel(name: string, plugins: Plugins): string {
     box_read: "Reading a box",
     box_revert: "Changing a box",
     box_data: "Reading what a box saved",
+    box_feed: "Giving a box a feed",
   };
   const plugin = plugins.pluginOf(name);
   return labels[name] ?? `Using ${plugin?.name ?? name}`;
