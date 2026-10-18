@@ -11,9 +11,9 @@ const display = process.env.DISPLAY ?? ":1";
 const DEADLINE_MS = 10_000;
 
 /** Runs `cmd` and kills it at the deadline, so one hung process can't hold up the input queue. */
-export async function spawn(cmd: string[], extraMs = 0, base = DEADLINE_MS) {
+export async function spawn(cmd: string[], extraMs = 0, base = DEADLINE_MS, input?: Uint8Array) {
   const p = Bun.spawn(cmd, {
-    stdin: "ignore",
+    stdin: input ?? "ignore",
     stdout: "pipe",
     stderr: "pipe",
     env: { ...process.env, DISPLAY: display },
@@ -92,19 +92,30 @@ export const displayUp = () =>
   );
 
 // Lossless WebP: exact pixels for the model, and about a third of PNG's size in the archive.
-const WEBP = [
-  "-frames:v",
-  "1",
-  "-c:v",
-  "libwebp",
-  "-lossless",
-  "1",
-  "-compression_level",
-  "1",
-  "-f",
-  "webp",
-  "-",
-];
+const LOSSLESS = ["-c:v", "libwebp", "-lossless", "1", "-compression_level", "1"];
+const WEBP = ["-frames:v", "1", ...LOSSLESS, "-f", "webp", "-"];
+
+// Each step of a desktop task sends all its screenshots again. Lossless is the smaller on text and UI
+// (40-110 KB); a screen of photos, a marketplace grid say, is 700 KB-1 MB, and lossy at 85 is 4-5 times
+// smaller there with text as legible. Higher lossless efforts save a few percent at 10-20 times the time.
+const LOSSLESS_MAX = 150 * 1024;
+
+async function encode(image: Uint8Array, codec: string[]): Promise<Uint8Array> {
+  const cmd = ["ffmpeg", "-loglevel", "error", "-i", "-", "-frames:v", "1", ...codec];
+  const { out, err, code } = await spawn([...cmd, "-f", "webp", "-"], 0, DEADLINE_MS, image);
+  if (code !== 0 || !out.length)
+    throw new Error(`ffmpeg exited ${code}: ${err.trim().slice(0, 300)}`);
+  return out;
+}
+
+async function shrink(exact: Uint8Array): Promise<Uint8Array> {
+  if (exact.length <= LOSSLESS_MAX) return exact;
+  const lossy = await encode(exact, ["-c:v", "libwebp", "-quality", "85", "-pix_fmt", "yuv420p"]);
+  return lossy.length < exact.length ? lossy : exact;
+}
+
+/** Any image ffmpeg reads as a screenshot's WebP: lossless unless that's large. */
+export const webp = async (image: Uint8Array) => shrink(await encode(image, LOSSLESS));
 
 export function screenshot(size: { width: number; height: number }) {
   return grab([
@@ -115,7 +126,7 @@ export function screenshot(size: { width: number; height: number }) {
     "-i",
     display,
     ...WEBP,
-  ]);
+  ]).then(shrink);
 }
 
 /** Crops [x0, y0, x1, y1] and scales it up to fit the screen size, keeping the aspect ratio. */
@@ -141,7 +152,7 @@ export function zoom(size: { width: number; height: number }, region: number[]) 
     "-vf",
     `scale=${ow}:${oh}:flags=lanczos`,
     ...WEBP,
-  ]);
+  ]).then(shrink);
 }
 
 function checkPoint(size: { width: number; height: number }, p: unknown): [number, number] {

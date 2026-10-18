@@ -21,6 +21,7 @@ import {
   SCROLL_TO,
   VIEWPORT,
 } from "./page";
+import { webp } from "./x11";
 
 const CDP = process.env.HATBOT_CDP ?? "http://127.0.0.1:9222";
 const COMMAND_TIMEOUT_MS = 30_000;
@@ -893,10 +894,11 @@ export class Browser {
     const s = await this.session(targetId);
     const { data } = await this.cdp.send<{ data: string }>(
       "Page.captureScreenshot",
-      { format: "webp", quality: 90, ...(clip ? { clip } : {}) },
+      { format: "png", ...(clip ? { clip } : {}) },
       s,
     );
-    return { kind: "image", data, mediaType: "image/webp" };
+    const image = await webp(Buffer.from(data, "base64"));
+    return { kind: "image", data: Buffer.from(image).toString("base64"), mediaType: "image/webp" };
   }
 
   private async read(targetId: string, opts: Json) {
