@@ -755,9 +755,7 @@ test("incognito sees no history, can't write or start work, and leaves nothing w
   ]);
   await t.thread.post("/remember x", [], true).done;
   await t.thread.post("/task do x", [], true).done;
-  // Only the store's first commit, from when the app started.
-  const commits = t.events.filter((e) => e.type === "memory.committed");
-  expect(commits.map((e) => e.message)).toEqual(["Start memory"]);
+  expect(t.events.filter((e) => e.type === "memory.committed")).toEqual([]);
   expect(t.tasks.list()).toEqual([]);
 
   // None of it is in the thread, unread, or the search index.
