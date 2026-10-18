@@ -15,6 +15,7 @@ import {
   SKILL_NAME,
   type Source,
   TODO_FILE,
+  type Todo,
   todoLine,
   type Watcher,
   type WatchSource,
@@ -28,7 +29,7 @@ import type { Db } from "../db";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import type { EventBus } from "../events";
 import type { Proposals } from "../memory/proposals";
-import { HATBOT, MemoryError, type MemoryStore } from "../memory/store";
+import { type Author, HATBOT, MemoryError, type MemoryStore } from "../memory/store";
 import { NEGOTIATE_TOOL_NAMES } from "../negotiate/names";
 import type { PluginTool } from "../plugins/plugin";
 import { describeCall, runPluginTool } from "../plugins/registry";
@@ -420,8 +421,8 @@ async function changeTodos(
   ctx: ToolContext,
   reason: string,
   change: (md: string) => string,
+  author: Author = authorOf(ctx, TODO_FILE),
 ): Promise<string | null> {
-  const author = authorOf(ctx, TODO_FILE);
   if (ctx.tainted?.()) {
     const md = (await ctx.memory.readOrNull(TODO_FILE)) ?? "";
     const proposed = await held(ctx, TODO_FILE, change(md), reason);
@@ -431,10 +432,36 @@ async function changeTodos(
   return null;
 }
 
+/**
+ * Ticks off, today, the open item `pick` finds in the list (a string says why there's none): todo_done,
+ * the apps' checkboxes, and a task on the item that ended done. The reply.
+ */
+export async function tickTodo(
+  ctx: ToolContext,
+  item: string,
+  pick: (md: string) => Todo | string,
+  author?: Author,
+): Promise<string> {
+  const today = localDay(new Date((ctx.clock ?? Date.now)()));
+  let ticked = "";
+  const proposed = await changeTodos(
+    ctx,
+    `Done: ${cut(item, 60)}`,
+    (md) => {
+      const t = pick(md);
+      if (typeof t === "string") throw new MemoryError(t);
+      ticked = t.text;
+      return withDone(md, t, today);
+    },
+    author,
+  );
+  return proposed ?? `Ticked off: ${ticked}`;
+}
+
 const DUE = /^(\d{4}-\d{2}-\d{2})(?: (\d{2}:\d{2}))?$/;
 
 /** "2026-10-25" or "2026-10-25 14:00" as a tag, when it's a real date and time. */
-function dueInput(due: string): string {
+export function dueInput(due: string): string {
   const [, date = "", at] = DUE.exec(due) ?? [];
   const [y, m, d] = date.split("-").map(Number) as [number, number, number];
   const [h, min] = (at ?? "00:00").split(":").map(Number) as [number, number];
@@ -556,17 +583,7 @@ export const TOOLS = [
     schema: z.object({
       item: z.string().min(1).describe("The item's text, or enough of it to pick it out"),
     }),
-    run: async ({ item }, ctx) => {
-      const today = localDay(new Date((ctx.clock ?? Date.now)()));
-      let ticked = "";
-      const proposed = await changeTodos(ctx, `Done: ${cut(item, 60)}`, (md) => {
-        const t = findTodo(md, item);
-        if (typeof t === "string") throw new MemoryError(t);
-        ticked = t.text;
-        return withDone(md, t, today);
-      });
-      return proposed ?? `Ticked off: ${ticked}`;
-    },
+    run: ({ item }, ctx) => tickTodo(ctx, item, (md) => findTodo(md, item)),
   }),
   def({
     name: "search_history",
@@ -727,6 +744,42 @@ export const TOOLS = [
       if (!task) return "The research couldn't start.";
       if (suspect) tasks.mark(task.id, "injection_suspected");
       return `Started research task #${task.id}. It runs in the background for a few minutes; the owner sees its progress and answer under this reply. Don't wait for it.`;
+    },
+  }),
+  def({
+    name: "todo_work",
+    description:
+      "Start a background task on an item of the owner's to-do list, when they want you to get it done. Its goal is the item's text, with the details you add; when the task ends done, the item is ticked off. Its progress and result show under your reply. It can't see this conversation, so put what it needs beyond the item in details.",
+    schema: z.object({
+      item: z.string().min(1).describe("The item's text, or enough of it to pick it out"),
+      details: z
+        .string()
+        .max(4000)
+        .optional()
+        .describe("What the task needs to know that the item doesn't say"),
+    }),
+    run: async (
+      { item, details },
+      { tasks, memory, messageId, tainted, ownerSaid, bot, conversationId, suspected },
+    ) => {
+      if (!tasks) return "Tasks aren't available.";
+      const t = findTodo((await memory.readOrNull(TODO_FILE)) ?? "", item);
+      if (typeof t === "string") return t;
+      const suspect = await suspected?.();
+      const task = tasks.createBackgroundTask({
+        title: cut(t.text, 80),
+        goal: details ? `${t.text}\n\n${details}` : t.text,
+        todo: t.text,
+        origin: "chat",
+        botId: bot?.id,
+        conversationId,
+        message: messageId,
+        taintedBy: chatTaint(tainted?.()),
+        request: ownerSaid?.(),
+      });
+      if (!task) return `A task is already working on "${t.text}".`;
+      if (suspect) tasks.mark(task.id, "injection_suspected");
+      return `Started task #${task.id} on "${t.text}". The owner sees its progress and result under this reply; the item is ticked off if it ends done. Don't wait for it.`;
     },
   }),
   def({

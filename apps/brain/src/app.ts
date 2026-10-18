@@ -25,6 +25,7 @@ import { streamRoutes } from "./routes/stream";
 import { approvalRoutes, taskRoutes } from "./routes/tasks";
 import { teachRoutes } from "./routes/teach";
 import { threadRoutes } from "./routes/thread";
+import { todoRoutes } from "./routes/todo";
 import { watcherRoutes } from "./routes/watchers";
 
 export const VERSION = "0.1.0";
@@ -74,6 +75,7 @@ export function createApp(deps: Deps) {
   app.route("/", searchRoutes);
   app.route("/", heartbeatRoutes);
   app.route("/", proposalRoutes);
+  app.route("/", todoRoutes);
 
   app.notFound((c) => c.json({ error: "That's gone." }, 404));
   app.onError((err, c) => {

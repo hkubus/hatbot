@@ -46,10 +46,12 @@ const SkillDraft = lazy(() =>
   import("./pages/SkillDraft").then((m) => ({ default: m.SkillDraft })),
 );
 const Spend = lazy(() => import("./pages/Spend").then((m) => ({ default: m.Spend })));
+const TodoPage = lazy(() => import("./pages/Todo").then((m) => ({ default: m.TodoPage })));
 
 const VIEWS = [
   { path: "/", title: "Chat", icon: "chat", phone: true },
   { path: "/tasks", title: "Tasks", icon: "tasks", phone: true },
+  { path: "/todo", title: "To-do", icon: "check", phone: false },
   { path: "/search", title: "Search", icon: "search", phone: false },
   { path: "/live", title: "Live", icon: "monitor", phone: true },
   { path: "/schedules", title: "Schedules & Triggers", icon: "clock", phone: false },
@@ -73,8 +75,12 @@ const viewOf = (path: string) => {
   const first = path.split("/")[1] ?? "";
   return VIEWS.find((v) => v.path === (VIEW_OF[first] ?? `/${first}`)) ?? VIEWS[0];
 };
-/** On a phone, Spend and Schedules are reached from Settings, so its tab stays lit. */
-const TAB_OF: Record<string, string> = { "/spend": "/settings", "/schedules": "/settings" };
+/** On a phone, To-do, Spend and Schedules are reached from Settings, so its tab stays lit. */
+const TAB_OF: Record<string, string> = {
+  "/todo": "/settings",
+  "/spend": "/settings",
+  "/schedules": "/settings",
+};
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -435,6 +441,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
                 />
               ))}
             {page === "/spend" && <Spend />}
+            {page === "/todo" && <TodoPage toast={toast} />}
             {reading && (
               <Reader
                 key={params.toString()}

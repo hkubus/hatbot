@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
+import type { Task, TodoList } from "@hatbot/shared";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { type TestApp, testApp } from "./helpers";
+import { signIn, type TestApp, testApp } from "./helpers";
 
 /** Moves the clock to that local time. */
 const at = (t: TestApp, y: number, m: number, d: number, h: number, min = 0) =>
@@ -61,4 +62,35 @@ test("the to-do list: added and ticked off in the chat, shown to the next conver
   await t.todoReminders.tick();
   expect(reminders(t).slice(2)).toEqual(["Overdue:\n- Renew the domain (due 2026-10-09)"]);
   expect((await t.report.make()).text).toContain("- To-do: 1 done, 1 overdue.");
+});
+
+test("in the apps: an item is added, ticked off, and ticked off by a task on it only when that ends done", async () => {
+  const end = (outcome: string) => ({
+    content: [toolUse("finish_task", { outcome, summary: outcome, notify: false })],
+  });
+  const t = await testApp(new FakeModel(), new FakeModel([end("failed"), end("done")]));
+  const auth = signIn(t);
+  const call = (path: string, body?: unknown) => t.call("POST", path, body, auth);
+  expect((await call("/todo", { item: "Fix the gate" })).status).toBe(201);
+  const added = await call("/todo", { item: "Buy filters", due: "2026-10-12" });
+  const { items } = (await added.json()) as TodoList;
+  expect(items.map((i) => [i.text, i.due])).toEqual([
+    ["Fix the gate", null],
+    ["Buy filters", "2026-10-12"],
+  ]);
+
+  // One task on an item at a time; one that fails leaves it open.
+  const work = { text: "Fix the gate", line: items[0]?.line };
+  const failed = (await (await call("/todo/work", work)).json()) as Task;
+  expect((await call("/todo/work", work)).status).toBe(409);
+  await t.tasks.idle();
+  expect(t.tasks.get(failed.id)?.status).toBe("failed");
+  expect(await t.memory.read("todo.md")).toContain("- [ ] Fix the gate\n");
+  await call("/todo/work", work);
+  await t.tasks.idle();
+
+  await call("/todo/done", { text: "Buy filters", line: items[1]?.line });
+  expect(await t.memory.read("todo.md")).toBe(
+    "# To-do\n\n- [x] Fix the gate done:2026-10-09\n- [x] Buy filters due:2026-10-12 done:2026-10-09\n",
+  );
 });

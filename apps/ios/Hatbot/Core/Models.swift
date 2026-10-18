@@ -224,6 +224,8 @@ struct AgentTask: Codable, Identifiable, Equatable, Sendable {
   var research: Bool?
   /// A research task's report, in memory; missing on brains from before research.
   var reportPath: String?
+  /// The to-do item it works on, ticked off when it ends done; missing on older brains.
+  var todo: String?
 
   var isActive: Bool { finishedAt == nil }
 }

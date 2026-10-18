@@ -6,10 +6,11 @@ import {
   type Task,
   type TaskStatus,
   type TaskStep,
+  todoAt,
 } from "@hatbot/shared";
 import type { Chats } from "../agent/chats";
 import type { ModelClient } from "../agent/model";
-import type { ToolContext } from "../agent/tools";
+import { type ToolContext, tickTodo } from "../agent/tools";
 import type { Approvals } from "../approvals";
 import type { Archive } from "../archive";
 import type { Attachments } from "../attachments";
@@ -19,7 +20,7 @@ import type { Db } from "../db";
 import type { Desktop } from "../desktop/service";
 import type { EventBus } from "../events";
 import type { Proposals } from "../memory/proposals";
-import type { MemoryStore } from "../memory/store";
+import { MemoryError, type MemoryStore } from "../memory/store";
 import type { Negotiations } from "../negotiate/service";
 import type { Notifier } from "../notify";
 import type { Plugins } from "../plugins/registry";
@@ -83,6 +84,7 @@ type Row = {
   effort: Task["effort"];
   research: number;
   report_path: string | null;
+  todo: string | null;
   status: TaskStatus;
   tainted: number;
   tainted_by: string | null;
@@ -124,6 +126,7 @@ const toTask = (r: Row): Task => ({
   effort: r.effort,
   research: Boolean(r.research),
   reportPath: r.report_path,
+  todo: r.todo,
   status: r.status,
   tainted: Boolean(r.tainted),
   taintedBy: r.tainted_by,
@@ -408,8 +411,11 @@ export class Tasks {
     parent?: Task;
     /** A research task (PLAN.md §17): Haiku at xhigh effort with helpers, ending in a report. */
     research?: boolean;
+    /** The to-do item it works on, ticked off when it ends done; one task on an item at a time. */
+    todo?: string;
   }): Task | null {
-    if (input.runKey && this.activeFor(input.runKey)) return null;
+    const runKey = input.runKey ?? (input.todo ? `todo:${input.todo}` : undefined);
+    if (runKey && this.activeFor(runKey)) return null;
     const taintedBy =
       input.taintedBy ||
       (input.payload !== undefined && !input.trusted
@@ -437,7 +443,8 @@ export class Tasks {
       schedule_id: input.scheduleId ?? null,
       trigger_id: input.triggerId ?? null,
       watcher_id: input.watcherId ?? null,
-      run_key: input.runKey ?? null,
+      run_key: runKey ?? null,
+      todo: input.todo ?? null,
       payload: input.payload ?? null,
       request: input.request ?? null,
       tainted: taintedBy ? 1 : 0,
@@ -570,6 +577,7 @@ export class Tasks {
       // The bot that asked for it hears how this one ends too.
       requestedBy: t.requestedBy ?? undefined,
       research: t.research,
+      todo: t.todo ?? undefined,
     });
   }
 
@@ -902,6 +910,7 @@ export class Tasks {
     else if (tell && task.lane === "background")
       this.d.chats.addCard(conversationId, reporter, "task", text, { taskId: id });
     this.emit(id);
+    if (status === "done" && task.todo) this.tickTodo(task, task.todo);
     if (!tell || !ntfy) return;
     void this.d.notifier.send({
       title: this.titled(task, `${word}: ${task.title}`),
@@ -909,6 +918,32 @@ export class Tasks {
       priority: status === "done" ? 3 : 4,
       click: `${this.d.config.publicUrl}/tasks/${id}`,
     });
+  }
+
+  /**
+   * A task on a to-do item ended done: the item is ticked off as todo_done would, so after untrusted
+   * content it's a proposal. Not if it's no longer open, or the task ticked it off itself.
+   */
+  private tickTodo(task: Task, text: string) {
+    const ctx = this.toolContext(task, new AbortController().signal);
+    const run = tickTodo(ctx, text, (md) => todoAt(md, text) ?? "It isn't open any more.").then(
+      () => {},
+      (err) => {
+        if (!(err instanceof MemoryError)) console.error(`task ${task.id}'s to-do`, err);
+      },
+    );
+    this.runs.add(run);
+    void run.finally(() => this.runs.delete(run));
+  }
+
+  /** The tasks working on to-do items now, by the item's text. */
+  onTodos(): Map<string, number> {
+    const rows = this.d.db
+      .query<{ id: number; todo: string }, []>(
+        `SELECT id, todo FROM tasks WHERE todo IS NOT NULL AND status ${among(ACTIVE)} ORDER BY id`,
+      )
+      .all();
+    return new Map(rows.map((r) => [r.todo, r.id]));
   }
 
   /** A notification's title: another bot's says which. */
