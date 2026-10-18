@@ -4,8 +4,15 @@
 import { afterAll } from "bun:test";
 import { API_PREFIX, type HatbotEvent } from "@hatbot/shared";
 
-class MemoryStorage {
+/** localStorage or sessionStorage. */
+export class MemoryStorage {
   private map = new Map<string, string>();
+  get length() {
+    return this.map.size;
+  }
+  key(i: number) {
+    return [...this.map.keys()][i] ?? null;
+  }
   getItem(k: string) {
     return this.map.get(k) ?? null;
   }
@@ -48,29 +55,62 @@ export type Request = { method: string; path: string; body: unknown; signal?: Ab
 export type Answer = (req: Request) => unknown;
 
 type Frame = (t: number) => void;
+const ORIGIN = "http://hatbot.test";
 
-export function installDom() {
+/** A browser at `start`. */
+export function installDom(start = "/") {
   const g = globalThis as Record<string, unknown>;
   const frames = new Map<number, Frame>();
   let frame = 0;
   const requests: Request[] = [];
   let answer: Answer = () => ({});
-  const document = Object.assign(new EventTarget(), {
-    visibilityState: "visible",
-    hasFocus: () => true,
-  });
-  const added: Record<string, unknown> = {
-    sessionStorage: new MemoryStorage(),
-    localStorage: new MemoryStorage(),
-    window: new EventTarget(),
-    document,
-    location: {
-      protocol: "http:",
-      host: "hatbot.test",
-      origin: "http://hatbot.test",
-      pathname: "/",
-      search: "",
+  const win = new EventTarget() as EventTarget & {
+    confirm?: (text: string) => boolean;
+    prompt?: (text: string) => string | null;
+  };
+  const entries = [start];
+  let at = 0;
+  const location = {
+    get pathname() {
+      return new URL(entries[at] as string, ORIGIN).pathname;
     },
+    get search() {
+      return new URL(entries[at] as string, ORIGIN).search;
+    },
+    origin: ORIGIN,
+  };
+  const history = {
+    pushState(_: unknown, __: string, url: string) {
+      entries.splice(at + 1, entries.length, url);
+      at++;
+    },
+    replaceState(_: unknown, __: string, url: string) {
+      entries[at] = url;
+    },
+    go(n: number) {
+      at = Math.max(0, Math.min(entries.length - 1, at + n));
+      // The browser tells the page a little later.
+      setTimeout(() => win.dispatchEvent(new Event("popstate")), 0);
+    },
+    back() {
+      history.go(-1);
+    },
+    forward() {
+      history.go(1);
+    },
+  };
+  const sessionStorage = new MemoryStorage();
+  const added: Record<string, unknown> = {
+    sessionStorage,
+    localStorage: new MemoryStorage(),
+    window: win,
+    document: Object.assign(new EventTarget(), {
+      visibilityState: "visible",
+      hasFocus: () => true,
+    }),
+    location,
+    history,
+    PopStateEvent: Event,
     requestAnimationFrame: (f: Frame) => {
       frames.set(++frame, f);
       return frame;
@@ -107,7 +147,12 @@ export function installDom() {
     }
   });
   return {
-    storage: added.sessionStorage as MemoryStorage,
+    window: win,
+    history,
+    /** The address bar, and the history around it. */
+    url: () => location.pathname + location.search,
+    entries: () => entries.slice(),
+    storage: sessionStorage,
     /** Every API call made so far. */
     requests,
     /** How API calls are answered from now on. */
@@ -123,16 +168,5 @@ export function installDom() {
   };
 }
 
-/** A promise you settle later: an answer still on its way. */
-export function later<T>() {
-  let resolve!: (v: T) => void;
-  let reject!: (e: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
-/** Lets pending promises and their follow-ups run. */
-export const settle = () => new Promise((r) => setTimeout(r, 0));
+/** Lets pending promises and timers run. */
+export const settle = () => new Promise((r) => setTimeout(r, 5));

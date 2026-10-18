@@ -1,14 +1,15 @@
 // A bot's page (PLAN.md §14): its name, role, model and plugins. "new" makes one, from a template or not.
 import { BOT_COLORS, BOT_ICONS, BOT_TEMPLATES, type Bot, HATBOT_ID } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
+import { useAction } from "../action";
 import { errorText } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm, toggled, useStoredForm } from "../form";
-import { BotMark, Icon } from "../icons";
-import { loadErrorText } from "../load";
+import { BotMark } from "../icons";
 import { navigate } from "../router";
-import { createBot, deleteBot, loadBots, loadPlugins, saveBot, useStore } from "../store";
+import { chatPath, createBot, deleteBot, loadBots, loadPlugins, saveBot, useStore } from "../store";
 import { Switch } from "../switch";
+import { BackHead, CHAT_MODELS, EFFORTS, SaveBar, Select } from "../ui";
 
 type Form = {
   name: string;
@@ -60,8 +61,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
     isNew ? start : stored && formOf(stored),
   );
   const [template, setTemplate] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const { busy, error, run } = useAction();
   const release = useLeaveGuard(dirty);
   // The bots again, to tell one that's gone from one not loaded yet.
   const [loaded, setLoaded] = useState(false);
@@ -70,7 +70,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
     setLoadError("");
     loadBots().then(
       () => setLoaded(true),
-      (err) => setLoadError(loadErrorText(err)),
+      (err) => setLoadError(errorText(err)),
     );
   }, []);
 
@@ -81,14 +81,14 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
     if (!isNew) load();
   }, [isNew, load]);
 
-  const back = () => navigate(chat ? (chat.id === 1 ? "/" : `/chat/${chat.id}`) : "/");
+  const back = chat ? chatPath(chat.id) : "/";
   if (!isNew && (!stored || !listed || !form))
     return (
       <NoForm
         error={loadError}
         missing={loaded && !listed ? "This bot doesn't exist." : ""}
         retry={load}
-        back={{ label: "Chat", go: back }}
+        back={{ label: "Chat", to: back }}
       />
     );
   if (!form) return null;
@@ -112,10 +112,8 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
   const isHatbot = id === HATBOT_ID;
   const pluginList = Object.values(plugins).sort((a, b) => a.name.localeCompare(b.name));
 
-  const save = async () => {
-    setBusy(true);
-    setError("");
-    try {
+  const save = () =>
+    run(async () => {
       const body = { ...form, name: form.name.trim() };
       if (isNew) {
         const bot = await createBot(body);
@@ -127,12 +125,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
         saved(form, formOf(await saveBot(id, isHatbot ? { ...body, name: undefined } : body)));
         toast("Saved");
       }
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+    });
   const remove = async () => {
     if (!stored) return;
     if (
@@ -142,30 +135,23 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
       }))
     )
       return;
-    try {
+    await run(async () => {
       await deleteBot(id);
       release();
       navigate("/");
-    } catch (err) {
-      setError(errorText(err));
-    }
+    });
   };
 
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">
-          <button type="button" className="btn sm ghost back" onClick={back}>
-            <Icon name="chevron" />
-            Chat
-          </button>
-          <span className="spacer" />
+        <BackHead to={back} label="Chat">
           {!isNew && !isHatbot && (
             <button type="button" className="btn sm danger-text" onClick={remove}>
               Delete
             </button>
           )}
-        </div>
+        </BackHead>
 
         <div className="panel form">
           {isNew && (
@@ -244,29 +230,23 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
           </label>
           <div className="form-row">
             <span className="label">Model</span>
-            <select
+            <Select
               className="field"
-              aria-label="Model"
+              label="Model"
               value={form.chatModel ?? ""}
-              onChange={(e) => set({ chatModel: (e.target.value || null) as Form["chatModel"] })}
-            >
-              <option value="">As in Settings</option>
-              <option value="claude-haiku-5-5">Haiku 5.5, asks Opus for hard parts</option>
-              <option value="claude-opus-5-5">Opus 5.5</option>
-            </select>
+              options={[["", "As in Settings"], ...CHAT_MODELS]}
+              onChange={(chatModel) => set({ chatModel: chatModel || null })}
+            />
           </div>
           <div className="form-row">
             <span className="label">Effort</span>
-            <select
+            <Select
               className="field"
-              aria-label="Effort"
+              label="Effort"
               value={form.chatEffort ?? ""}
-              onChange={(e) => set({ chatEffort: (e.target.value || null) as Form["chatEffort"] })}
-            >
-              <option value="">As in Settings</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-            </select>
+              options={[["", "As in Settings"], ...EFFORTS]}
+              onChange={(chatEffort) => set({ chatEffort: chatEffort || null })}
+            />
           </div>
           {pluginList.length > 0 && (
             <>
@@ -335,17 +315,12 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
               </dd>
             </dl>
           )}
-          {error && <div className="form-error">{error}</div>}
-          <div className="form-actions">
-            <button
-              type="button"
-              className="btn accent"
-              disabled={busy || !changed || !form.name.trim()}
-              onClick={save}
-            >
-              {isNew ? "Create" : "Save"}
-            </button>
-          </div>
+          <SaveBar
+            error={error}
+            disabled={busy || !changed || !form.name.trim()}
+            onSave={save}
+            label={isNew ? "Create" : "Save"}
+          />
         </div>
       </div>
     </section>

@@ -1,15 +1,16 @@
 // Settings → Heartbeat: a look every few minutes at what went wrong; only news goes to Haiku.
 import { type AppSettings, describeEvery, type HeartbeatInfo } from "@hatbot/shared";
 import { Fragment, useEffect, useRef, useState } from "react";
+import { useAction } from "../action";
 import { api, errorText } from "../api";
-import { BotPicker, stamp } from "../automations";
+import { BotPicker } from "../automations";
 import { useLeaveGuard } from "../confirm";
-import { plainText } from "../format";
-import { Icon } from "../icons";
-import { LoadError, loadErrorText } from "../load";
+import { plainText, stamp } from "../format";
+import { LoadError } from "../load";
 import { navigate } from "../router";
 import { useStore } from "../store";
 import { Switch } from "../switch";
+import { BackHead, SaveBar } from "../ui";
 
 const EVERY = [5, 10, 15, 30, 60, 120, 360];
 const DID: Record<string, string> = {
@@ -22,8 +23,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [info, setInfo] = useState<HeartbeatInfo | null>(null);
   const [instructions, setInstructions] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const { busy, error, run } = useAction();
   const [loadError, setLoadError] = useState("");
   const [attempt, setAttempt] = useState(0);
   const settingsVersion = useStore((s) => s.settingsVersion);
@@ -41,7 +41,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
         setInstructions((cur) => (was === null || cur === was ? s.heartbeat.instructions : cur));
         savedInstructions.current = s.heartbeat.instructions;
       },
-      (err) => setLoadError(loadErrorText(err)),
+      (err) => setLoadError(errorText(err)),
     );
   }, [settingsVersion, attempt]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: refetch after each heartbeat
@@ -62,9 +62,8 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
       </section>
     );
   const hb = settings.heartbeat;
-  const save = async (patch: Partial<AppSettings["heartbeat"]>) => {
-    setError("");
-    try {
+  const save = (patch: Partial<AppSettings["heartbeat"]>) =>
+    run(async () => {
       const s = await api<AppSettings>("/settings", {
         method: "PUT",
         body: { heartbeat: { ...hb, ...patch } },
@@ -72,31 +71,14 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
       setSettings(s);
       savedInstructions.current = s.heartbeat.instructions;
       toast("Saved");
-    } catch (err) {
-      setError(errorText(err, "Couldn't save"));
-    }
-  };
-  const lookNow = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      const ran = await api<HeartbeatInfo>("/heartbeat/run", { body: {} });
-      setInfo(ran);
-    } catch (err) {
-      setError(errorText(err));
-    }
-    setBusy(false);
-  };
+    });
+  const lookNow = () =>
+    run(async () => setInfo(await api<HeartbeatInfo>("/heartbeat/run", { body: {} })));
 
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">
-          <button type="button" className="btn sm ghost back" onClick={() => navigate("/settings")}>
-            <Icon name="chevron" />
-            Settings
-          </button>
-          <span className="spacer" />
+        <BackHead to="/settings" label="Settings">
           {/* It looks with what's saved: off while you have unsaved instructions. */}
           <button
             type="button"
@@ -107,7 +89,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
           >
             Look now
           </button>
-        </div>
+        </BackHead>
         <div className="panel form">
           <div className="form-row">
             <span className="label">On</span>
@@ -141,17 +123,11 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
               onChange={(e) => setInstructions(e.target.value)}
             />
           </label>
-          {error && <div className="form-error">{error}</div>}
-          <div className="form-actions">
-            <button
-              type="button"
-              className="btn accent"
-              disabled={!instructions.trim() || instructions === hb.instructions}
-              onClick={() => save({ instructions })}
-            >
-              Save
-            </button>
-          </div>
+          <SaveBar
+            error={error}
+            disabled={!instructions.trim() || instructions === hb.instructions}
+            onSave={() => save({ instructions })}
+          />
         </div>
         {info?.at && (
           <div className="panel">

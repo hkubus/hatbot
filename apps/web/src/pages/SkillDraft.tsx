@@ -1,24 +1,22 @@
 // Teach-by-showing's review step (PLAN.md §10.5): the skill Opus drafted from your recording, to edit and save.
 import { useEffect, useState } from "react";
-import { ApiError, errorText } from "../api";
+import { useAction } from "../action";
+import { ApiError } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
-import { Icon } from "../icons";
+import { NoForm } from "../form";
+import { useItem } from "../load";
 import { navigate } from "../router";
 import { discardTeach, loadTeach, redraftTeach, saveSkill, useStore } from "../store";
+import { BackButton, BackHead } from "../ui";
 
 const NAME = /^[a-z0-9][a-z0-9-]{0,59}$/;
 
 export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => void }) {
   const session = useStore((s) => s.teach[id]);
-  const [missing, setMissing] = useState(false);
+  const item = useItem(id, loadTeach);
   const [name, setName] = useState("");
   const [content, setContent] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    loadTeach(id).catch(() => setMissing(true));
-  }, [id]);
+  const { busy, error, run } = useAction();
 
   // Fill the editor when the draft arrives, without overwriting your edits.
   const draft = session?.status === "draft" ? session.draft : null;
@@ -31,20 +29,15 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
     draft !== null && (content !== draft || name !== (session?.name ?? "")),
   );
 
-  if (missing) return <div className="empty">This recording doesn't exist.</div>;
-  if (!session) return <section className="view" />;
-
-  const run = async (fn: () => Promise<void>) => {
-    setError("");
-    setBusy(true);
-    try {
-      await fn();
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+  if (item.missing || !session)
+    return (
+      <NoForm
+        error={item.error}
+        missing={item.missing ? "This recording doesn't exist." : ""}
+        retry={item.load}
+        back={{ label: "Memory", to: "/memory" }}
+      />
+    );
 
   const save = () =>
     run(async () => {
@@ -69,19 +62,12 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
       });
   };
 
-  const back = (
-    <button type="button" className="btn sm ghost back" onClick={() => navigate("/memory")}>
-      <Icon name="chevron" />
-      Memory
-    </button>
-  );
-
   if (session.status === "draft")
     return (
       <section className="view">
         <div className="editor">
           <div className="editor-bar">
-            {back}
+            <BackButton to="/memory" label="Memory" />
             <span className="path">skills/</span>
             <input
               className="field mono"
@@ -119,7 +105,7 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">{back}</div>
+        <BackHead to="/memory" label="Memory" />
         <div className="panel">
           {session.status === "recording" && <p>Still recording. Stop it from the live view.</p>}
           {session.status === "drafting" && <p>Writing the skill from your recording…</p>}

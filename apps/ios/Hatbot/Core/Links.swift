@@ -16,7 +16,7 @@ enum AppLink: Equatable, Sendable {
   /// hatbot://tasks/12, hatbot://approvals/5, hatbot://schedules/2, hatbot://triggers/3; hatbot://new,
   /// hatbot://live, hatbot://tasks; hatbot://memory/notes/servers.md.
   init?(url: URL) {
-    guard url.scheme == "hatbot", let host = url.host() else { return nil }
+    guard url.scheme?.lowercased() == "hatbot", let host = url.host() else { return nil }
     let parts = url.pathComponents.filter { $0 != "/" }
     switch (host, parts.count) {
     case ("new", 0): self = .newMessage

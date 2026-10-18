@@ -11,6 +11,8 @@ const MAX_OUTPUT = 30_000;
 const MAX_TIMEOUT_S = 600;
 /** The most a file going in or out may be: the brain's attachment limit. */
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
+/** A file going in is the biggest body; anything past it is refused before it's read. */
+export const MAX_BODY_BYTES = MAX_FILE_BYTES + 64 * 1024;
 
 /** Long output keeps its start and end, where errors and results usually are. */
 export function clip(out: string, max = MAX_OUTPUT): string {
@@ -62,21 +64,29 @@ export async function run(command: string, timeoutS = 60): Promise<ShellResult> 
   return { exitCode, output: clip(output), timedOut };
 }
 
-/** The body, or null once it's over `max` bytes: what's past that is never read. */
-export async function readUpTo(req: Request, max: number): Promise<Uint8Array | null> {
-  if (Number(req.headers.get("content-length") ?? 0) > max) return null;
-  if (!req.body) return new Uint8Array();
+/** A stream's bytes until it ends or passes `max`, and whether it did: what's past that is never read. */
+export async function readStream(
+  body: ReadableStream<Uint8Array> | null,
+  max: number,
+): Promise<{ bytes: Uint8Array; over: boolean }> {
+  const reader = body?.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
-  for await (const chunk of req.body) {
-    size += chunk.byteLength;
-    if (size > max) {
-      await req.body.cancel().catch(() => {});
-      return null;
-    }
-    chunks.push(chunk);
+  while (reader && size <= max) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    size += value.byteLength;
   }
-  return Buffer.concat(chunks);
+  if (size > max) await reader?.cancel().catch(() => {});
+  return { bytes: Buffer.concat(chunks), over: size > max };
+}
+
+/** The body, or null once it's over `max` bytes: one that says it is isn't read at all. */
+export async function readUpTo(req: Request, max: number): Promise<Uint8Array | null> {
+  if (Number(req.headers.get("content-length") ?? 0) > max) return null;
+  const { bytes, over } = await readStream(req.body, max);
+  return over ? null : bytes;
 }
 
 /**
@@ -109,8 +119,7 @@ if (import.meta.main) {
   rmSync(SHELL_SOCKET, { force: true });
   Bun.serve({
     unix: SHELL_SOCKET,
-    // A file going in is the biggest body; anything past it is refused before it's read.
-    maxRequestBodySize: MAX_FILE_BYTES + 64 * 1024,
+    maxRequestBodySize: MAX_BODY_BYTES,
     async fetch(req) {
       const route = new URL(req.url).pathname;
       if (route === "/files" && (req.method === "GET" || req.method === "PUT")) {

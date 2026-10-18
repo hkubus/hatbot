@@ -33,6 +33,17 @@ export function untrustedFields(
   return `<${tag}${named} trusted="false">\n${body}\n</${tag}>`;
 }
 
+/**
+ * What a chat message's text came from when that was untrusted, else NULL, as SQL over `messages m`
+ * with TRUST_JOINS. The owner's own words are trusted. A note names what it quotes; a bot's message
+ * is untrusted when the task it shows, or its conversation, had read untrusted content (PLAN.md §6.1).
+ */
+export const UNTRUSTED_SOURCE = `CASE WHEN m.role = 'user' THEN NULL ELSE coalesce(m.tainted_by,
+  CASE WHEN t.tainted = 1 THEN 'Task #' || t.id || ' "' || t.title || '"' END,
+  CASE WHEN e.tainted = 1 THEN coalesce(e.tainted_by, 'Untrusted content') END) END`;
+export const TRUST_JOINS =
+  "LEFT JOIN episodes e ON e.id = m.episode_id LEFT JOIN tasks t ON t.id = m.task_id";
+
 /** Text between tags that isn't JSON: `&` and `<` escaped, so it can't close its tag or open another. */
 export function tagText(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;");

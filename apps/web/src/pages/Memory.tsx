@@ -1,10 +1,12 @@
 import type { Commit, MemoryFile, Proposal, SkillStatus } from "@hatbot/shared";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAction } from "../action";
 import { ApiError, api, errorText } from "../api";
 import { ask, askText, useLeaveGuard } from "../confirm";
 import { lineDiff } from "../diff";
+import { dayTime } from "../format";
 import { Icon } from "../icons";
-import { LoadError, loadErrorText } from "../load";
+import { LoadError } from "../load";
 import { type Doc, isDirty, loading, newDoc, readDoc, readFailed } from "../memory-doc";
 import { navigate } from "../router";
 import { bumpMemory, loadProposals, putProposal, startTeach, useStore } from "../store";
@@ -19,13 +21,6 @@ type History = { path: string; log: Commit[]; older: boolean; error: string };
 const enc = encodeURIComponent;
 /** Commits in a page of History. */
 const PAGE = 50;
-const when = (iso: string) =>
-  new Date(iso).toLocaleString("en-GB", {
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 
 function DiffView({ diff }: { diff: string }) {
   const lines = diff
@@ -94,7 +89,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
     [allProposals],
   );
   const [skills, setSkills] = useState<SkillStatus[]>([]);
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useAction();
   const teach = useStore((s) => s.teach);
   const drafts = useMemo(
     () =>
@@ -141,7 +136,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
       },
       (err) => {
         if (stale) return;
-        const error = loadErrorText(err);
+        const error = errorText(err);
         setHist((h) =>
           h?.path === path ? { ...h, error } : { path, log: [], older: false, error },
         );
@@ -167,7 +162,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
                 older: l.length === PAGE,
               },
         ),
-      (err) => toast(errorText(err, "Couldn't reach Hatbot"), "error"),
+      (err) => toast(errorText(err), "error"),
     );
   };
 
@@ -208,11 +203,20 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
   };
 
   useEffect(() => {
-    if (sel.kind === "diff")
-      api<{ diff: string }>(`/memory/diff/${sel.commit.sha}`).then(
-        (r) => setDiff(r.diff),
-        (err) => toast(errorText(err, "Couldn't reach Hatbot"), "error"),
-      );
+    if (sel.kind !== "diff") return;
+    // Only the commit still shown: an earlier one's diff may answer last.
+    let stale = false;
+    api<{ diff: string }>(`/memory/diff/${sel.commit.sha}`).then(
+      (r) => {
+        if (!stale) setDiff(r.diff);
+      },
+      (err) => {
+        if (!stale) toast(errorText(err), "error");
+      },
+    );
+    return () => {
+      stale = true;
+    };
   }, [sel, toast]);
 
   const groups = useMemo(() => {
@@ -319,9 +323,9 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
   const skill = skills.find((s) => s.name === skillName);
   const troubled = skill ? new Set([...skill.failed, ...skill.takeovers]).size : 0;
 
-  const tidy = async () => {
-    setBusy(true);
-    try {
+  const failed = (err: unknown) => toast(errorText(err), "error");
+  const tidy = () =>
+    run(async () => {
       // It's worked out in the background now; the proposal arrives as an event.
       const p = await api<Proposal | { started: true } | null>("/proposals/tidy", { body: {} });
       if (p && "started" in p)
@@ -330,14 +334,9 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
         putProposal(p);
         void select({ kind: "proposal", id: p.id });
       } else toast("Nothing to tidy", "info");
-    } catch (err) {
-      toast(errorText(err, "Couldn't reach Hatbot"), "error");
-    }
-    setBusy(false);
-  };
-  const fixSkill = async (name: string) => {
-    setBusy(true);
-    try {
+    }, failed);
+  const fixSkill = (name: string) =>
+    run(async () => {
       const p = await api<Proposal | { started: true } | null>(`/skills/${name}/fix`, {
         body: {},
       });
@@ -347,11 +346,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
         putProposal(p);
         void select({ kind: "proposal", id: p.id });
       } else toast("No fix found in what went wrong", "info");
-    } catch (err) {
-      toast(errorText(err, "Couldn't reach Hatbot"), "error");
-    }
-    setBusy(false);
-  };
+    }, failed);
   const recordAgain = async (name: string) => {
     try {
       await startTeach(name);
@@ -370,7 +365,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
       if (how === "apply") bumpMemory();
       void select({ kind: "file", path: p.changes[0]?.path ?? "INDEX.md" });
     } catch (err) {
-      toast(errorText(err, "Couldn't reach Hatbot"), "error");
+      toast(errorText(err), "error");
     }
   };
 
@@ -438,7 +433,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
               {drafts.map((d) => (
                 <button type="button" key={d.id} onClick={() => navigate(`/memory/teach/${d.id}`)}>
                   <Icon name="file" />
-                  {d.name ?? `Recording, ${when(d.startedAt)}`}
+                  {d.name ?? `Recording, ${dayTime(d.startedAt)}`}
                 </button>
               ))}
             </>
@@ -594,7 +589,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
                 <div>
                   <div>{c.message}</div>
                   <div className="who">
-                    {c.author} · {c.files.join(", ")} · {when(c.date)}
+                    {c.author} · {c.files.join(", ")} · {dayTime(c.date)}
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 4 }}>

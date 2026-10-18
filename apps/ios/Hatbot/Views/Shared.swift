@@ -4,16 +4,11 @@ import SwiftUI
 import UIKit
 
 extension Color {
-  /// Hatbot's amber (PLAN.md §10.2). Blue means "needs you", red destructive, green done.
+  /// Hatbot's amber (PLAN.md §10.2), for fills. Blue means "needs you", red destructive, green done.
+  /// Amber as text, and the app's tint, is the AccentColor asset (`accentColor`): the brand's amber gives
+  /// only 2.75:1 on white, and that one reads at 4.5:1 or better on white, grey bubbles and the sidebar's
+  /// selected row.
   static let brand = Color(light: 0xE8820C, dark: 0xFF9F2E)
-  /// Amber as text and the app's tint. In light mode the brand's amber gives only 2.75:1 on white; this
-  /// one reads at 4.5:1 or better on white, grey bubbles and the sidebar's selected row. Fills keep `brand`.
-  static let brandText = Color(
-    uiColor: UIColor { traits in
-      let high = traits.accessibilityContrast == .high
-      return traits.userInterfaceStyle == .dark
-        ? UIColor(hex: high ? 0xFFB866 : 0xFF9F2E, alpha: 1) : UIColor(hex: high ? 0x7A4000 : 0x9C5200, alpha: 1)
-    })
   static let attention = Color.blue
   /// Solid, with white text, like Messages' blue; Hatbot's grey is Messages' too. A darker amber than
   /// the brand's, so the white reads at 4.9:1 (the brand's own gives 2.75:1).
@@ -109,6 +104,69 @@ func message(for error: Error) -> String {
   (error as? APIError)?.message ?? "Couldn't reach Hatbot."
 }
 
+/// Does `work`, then shows in `error` what went wrong, or clears it if nothing did. An earlier error
+/// stays up while it works, rather than going and coming back. A page given `missing` sets it instead
+/// when what it shows isn't there.
+@MainActor
+func attempt(_ error: Binding<String?>, missing: Binding<Bool>? = nil, _ work: () async throws -> Void) async {
+  do {
+    try await work()
+    error.wrappedValue = nil
+  } catch let e as APIError where e.status == 404 && missing != nil {
+    missing?.wrappedValue = true
+  } catch let e {
+    error.wrappedValue = message(for: e)
+  }
+}
+
+extension Binding where Value: Equatable {
+  /// A switch or picker that saves as soon as it's changed. `shown` holds the change while it saves;
+  /// then `value` shows again, saved or put back, unless it's been changed again meanwhile.
+  @MainActor
+  static func saving(_ value: Value, shown: Binding<Value?>, save: @escaping (Value) async -> Void) -> Binding<Value> {
+    Binding(
+      get: { shown.wrappedValue ?? value },
+      set: { new in
+        shown.wrappedValue = new
+        Task {
+          await save(new)
+          if shown.wrappedValue == new { shown.wrappedValue = nil }
+        }
+      })
+  }
+}
+
+extension View {
+  /// Asks before deleting what the page shows; once it's deleted, the page closes.
+  func confirmingDelete(
+    _ title: String, isPresented: Binding<Bool>, error: Binding<String?>,
+    delete: @escaping @MainActor () async throws -> Void
+  ) -> some View {
+    modifier(ConfirmDelete(title: title, isPresented: isPresented, error: error, delete: delete))
+  }
+}
+
+private struct ConfirmDelete: ViewModifier {
+  let title: String
+  @Binding var isPresented: Bool
+  @Binding var error: String?
+  let delete: @MainActor () async throws -> Void
+  @Environment(\.dismiss) private var dismiss
+
+  func body(content: Content) -> some View {
+    content.confirmationDialog(title, isPresented: $isPresented, titleVisibility: .visible) {
+      Button("Delete", role: .destructive) {
+        Task {
+          await attempt($error) {
+            try await delete()
+            dismiss()
+          }
+        }
+      }
+    }
+  }
+}
+
 extension String {
   /// "14:05", in the phone's own time format.
   var timeText: String {
@@ -138,7 +196,7 @@ extension TaskStatus {
   var tint: Color {
     switch self {
     case .waitingApproval, .waitingTakeover: .attention
-    case .running: .brandText
+    case .running: .accentColor
     case .done: .green
     case .failed: .red
     case .queued, .cancelled: .secondary
@@ -165,29 +223,31 @@ enum Picture {
   static func cost(_ image: UIImage) -> Int {
     image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0
   }
-
-  static func cache(megabytes: Int) -> NSCache<NSString, UIImage> {
-    let c = NSCache<NSString, UIImage>()
-    c.totalCostLimit = megabytes << 20
-    return c
-  }
 }
 
-/// Screenshots need the bearer token, so they don't go through AsyncImage.
+/// Attachments and screenshots need the bearer token, so they don't go through AsyncImage.
 @MainActor
-final class ScreenCache {
-  static let shared = ScreenCache()
+final class ImageCache {
+  /// The chat's pictures, at the size the chat shows them (about 2 MB each).
+  static let attachments = ImageCache(megabytes: 48)
   /// The desktop's screens, about 6 MB each.
-  private let cache = Picture.cache(megabytes: 40)
+  static let screens = ImageCache(megabytes: 40)
+  private let cache = NSCache<NSString, UIImage>()
 
-  func image(_ api: API, taskId: Int, stepId: Int) async throws -> UIImage {
-    let key = "\(api.server.absoluteString)/\(taskId)/\(stepId)" as NSString
+  init(megabytes: Int) {
+    cache.totalCostLimit = megabytes << 20
+  }
+
+  /// The picture at `path`, at most `longSide` pixels on its long side. One that isn't kept (opened full
+  /// screen, say) is decoded for that and let go when it closes.
+  func image(_ api: API, _ path: String, longSide: CGFloat, keep: Bool = true) async throws -> UIImage {
+    let key = "\(api.server.absoluteString)\(path)/\(Int(longSide))" as NSString
     if let hit = cache.object(forKey: key) { return hit }
-    let data = try await api.data("/tasks/\(taskId)/screens/\(stepId)")
-    guard let image = await Task.detached(operation: { Picture.decode(data, longSide: 1920) }).value else {
+    let data = try await api.data(path)
+    guard let image = await Task.detached(operation: { Picture.decode(data, longSide: longSide) }).value else {
       throw APIError(status: 0, message: "Not an image")
     }
-    cache.setObject(image, forKey: key, cost: Picture.cost(image))
+    if keep { cache.setObject(image, forKey: key, cost: Picture.cost(image)) }
     return image
   }
 
@@ -225,7 +285,7 @@ struct Screenshot: View {
     }
     .task(id: stepId) {
       do {
-        image = try await ScreenCache.shared.image(store.api, taskId: taskId, stepId: stepId)
+        image = try await ImageCache.screens.image(store.api, "/tasks/\(taskId)/screens/\(stepId)", longSide: 1920)
       } catch {
         failed = true
       }

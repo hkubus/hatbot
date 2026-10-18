@@ -201,10 +201,7 @@ struct LiveView: View {
   }
 
   private func run(_ action: @escaping @MainActor () async throws -> Void) {
-    error = nil
-    Task {
-      do { try await action() } catch { self.error = message(for: error) }
-    }
+    Task { await attempt($error) { try await action() } }
   }
 }
 

@@ -82,10 +82,9 @@ export const printable = (s: string) => [...s].length === 1 && /^[\p{L}\p{N}\p{P
 export function readKey(name: string): { mod: Modifier } | { key: string } | null {
   if ([...name].length === 1) return printable(name) ? { key: name } : null;
   const lower = name.toLowerCase();
-  const mod = MODIFIER_NAMES[lower];
-  if (mod) return { mod };
-  const key = KEY_NAMES[lower];
-  if (key) return { key };
+  // Own entries only: every object has a "constructor" and a "__proto__".
+  if (Object.hasOwn(MODIFIER_NAMES, lower)) return { mod: MODIFIER_NAMES[lower] as Modifier };
+  if (Object.hasOwn(KEY_NAMES, lower)) return { key: KEY_NAMES[lower] as string };
   const f = /^f([1-9]|1\d|2[0-4])$/.exec(lower);
   return f ? { key: `f${f[1]}` } : null;
 }

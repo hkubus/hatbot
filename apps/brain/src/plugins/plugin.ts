@@ -92,8 +92,65 @@ export type PluginTool<I = unknown> = {
 /** Typed in place, stored loosely: the registry validates input against `schema` before calling. */
 export const tool = <I>(t: PluginTool<I>) => t as unknown as PluginTool;
 
-/** An error whose message is fine to show the model and the owner. */
-export class PluginError extends Error {}
+/** An error whose message is fine to show the model and the owner; `status`, a service's answer. */
+export class PluginError extends Error {
+  constructor(
+    message: string,
+    readonly status = 0,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * A service's HTTP API, with its own headers on every request. `api` gives the answer's JSON, or its
+ * text when another type is asked for; `send` the response itself, and with redirect "manual" a
+ * redirect as it is, not followed. What the service says when it fails is in the PluginError.
+ */
+export function httpApi(name: string, base: string, headers: Record<string, string>) {
+  const send = async (
+    method: string,
+    path: string,
+    body?: unknown,
+    accept?: string,
+    redirect: RequestInit["redirect"] = "follow",
+  ): Promise<Response> => {
+    let res: Response;
+    try {
+      res = await fetch(`${base}${path}`, {
+        method,
+        headers: {
+          ...headers,
+          ...(accept ? { accept } : {}),
+          ...(body === undefined ? {} : { "content-type": "application/json" }),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        redirect,
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (err) {
+      throw new PluginError(`Can't reach ${name}: ${(err as Error).message}`);
+    }
+    if (res.ok || (redirect === "manual" && res.status >= 300 && res.status < 400)) return res;
+    // Most say {"message": ...}, GitHub with {"errors": [...]}; some plain text ("401: Unauthorized").
+    const text = (await res.text().catch(() => "")).trim();
+    let detail = text.startsWith("<") ? "" : text;
+    try {
+      const e = JSON.parse(text) as { message?: string; errors?: { message?: string }[] };
+      detail = [e.message, ...(e.errors?.map((x) => x.message) ?? [])].filter(Boolean).join(": ");
+    } catch {}
+    throw new PluginError(
+      `${name} said ${res.status}${detail ? `: ${detail.slice(0, 300)}` : ""}`,
+      res.status,
+    );
+  };
+  const api = async <T>(method: string, path: string, body?: unknown, accept?: string) => {
+    const res = await send(method, path, body, accept);
+    if (accept && !accept.endsWith("json")) return (await res.text()) as T;
+    return (res.status === 204 ? null : await res.json()) as T;
+  };
+  return { send, api };
+}
 
 export type PluginStatus =
   | { state: "ready" }

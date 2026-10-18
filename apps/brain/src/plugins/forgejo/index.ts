@@ -2,11 +2,21 @@
 // pull requests, and commit files, as Hatbot's own bot account. What it can reach is up to Forgejo:
 // add the bot as a collaborator to the repos it should work on.
 import { z } from "zod";
-import { Branch, Path, Ref, Repo as RepoOf, runsInCi, sameBranch } from "../forge";
-import { allow, ask, definePlugin, needsSetup, PluginError, ready, tool } from "../plugin";
+import {
+  Branch,
+  contentsPath,
+  forgeTools,
+  Num,
+  Path,
+  Ref,
+  Repo as RepoOf,
+  repoPath,
+  runsInCi,
+  sameBranch,
+} from "../forge";
+import { allow, ask, definePlugin, httpApi, needsSetup, PluginError, ready, tool } from "../plugin";
 
 const Repo = RepoOf("kubus/hatbot");
-const Num = z.number().int().positive().describe("The issue or pull request number");
 
 type User = { login: string };
 type Issue = {
@@ -37,8 +47,8 @@ type Content = {
   path: string;
   sha: string;
   size: number;
-  content?: string;
-  encoding?: string;
+  content?: string | null;
+  encoding?: string | null;
 };
 
 export const forgejoPlugin = definePlugin({
@@ -55,45 +65,10 @@ export const forgejoPlugin = definePlugin({
         "Create a token for Hatbot's Forgejo bot account (repository and issue read/write) and put FORGEJO_URL and FORGEJO_TOKEN in /etc/hatbot/forgejo.env on the brain, then restart it.",
       );
 
-    const api = async <T>(
-      method: string,
-      path: string,
-      body?: unknown,
-      accept = "application/json",
-    ): Promise<T> => {
-      let res: Response;
-      try {
-        res = await fetch(`${base}/api/v1${path}`, {
-          method,
-          headers: {
-            authorization: `token ${token}`,
-            accept,
-            ...(body === undefined ? {} : { "content-type": "application/json" }),
-          },
-          body: body === undefined ? undefined : JSON.stringify(body),
-          signal: AbortSignal.timeout(30_000),
-        });
-      } catch (err) {
-        throw new PluginError(`Can't reach Forgejo: ${(err as Error).message}`);
-      }
-      if (!res.ok) {
-        const detail = await res
-          .json()
-          .then((j) => (j as { message?: string }).message)
-          .catch(() => "");
-        throw new PluginError(
-          `Forgejo said ${res.status}${detail ? `: ${String(detail).slice(0, 300)}` : ""}`,
-        );
-      }
-      if (accept !== "application/json") return (await res.text()) as T;
-      return (res.status === 204 ? null : await res.json()) as T;
-    };
-    const repoPath = (repo: string) => {
-      const [owner, name] = repo.split("/") as [string, string];
-      return `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
-    };
-    const contentsPath = (repo: string, path: string) =>
-      `${repoPath(repo)}/contents/${path.split("/").filter(Boolean).map(encodeURIComponent).join("/")}`;
+    const { api } = httpApi("Forgejo", `${base}/api/v1`, {
+      authorization: `token ${token}`,
+      accept: "application/json",
+    });
     /** Default branches, so policy can tell a commit to main from one to a new branch. */
     const defaults = new Map<string, string>();
     /** Repositories whose default branch holds only what was merged there: not forks or mirrors. */
@@ -128,7 +103,7 @@ export const forgejoPlugin = definePlugin({
           throw new PluginError(`${path} is a ${c.type}; you can't change those here.`);
         return c.sha;
       } catch (err) {
-        if (err instanceof PluginError && err.message.startsWith("Forgejo said 404")) return null;
+        if (err instanceof PluginError && err.status === 404) return null;
         throw err;
       }
     };
@@ -256,7 +231,10 @@ export const forgejoPlugin = definePlugin({
                   `${e.type === "dir" ? `${e.name}/` : e.name}${e.type === "file" ? ` (${e.size} B)` : ""}`,
               )
               .join("\n");
-          if (c.type !== "file" || c.content === undefined) return `${c.path} is a ${c.type}.`;
+          if (c.type !== "file") return `${c.path} is a ${c.type}.`;
+          // Past its blob size limit Forgejo sends content: null.
+          if (c.content == null)
+            return `${c.path} is too big to read through the API (${c.size} B).`;
           return Buffer.from(c.content, "base64").toString("utf8");
         },
       }),
@@ -289,36 +267,6 @@ export const forgejoPlugin = definePlugin({
               `${x.context}: ${x.status}${x.description ? ` (${x.description})` : ""} ${x.target_url ?? ""}`.trim(),
             ),
           ].join("\n");
-        },
-      }),
-      tool({
-        name: "forgejo_comment",
-        description: "Comment on an issue or pull request, as your bot account. Markdown.",
-        access: "write",
-        schema: z.object({ repo: Repo, number: Num, body: z.string().min(1).max(20_000) }),
-        describe: ({ repo, number }) => `Comment on ${repo}#${number}`,
-        run: async ({ repo, number, body }) => {
-          const c = await api<{ html_url: string }>(
-            "POST",
-            `${repoPath(repo)}/issues/${number}/comments`,
-            { body },
-          );
-          return `Commented: ${c.html_url}`;
-        },
-      }),
-      tool({
-        name: "forgejo_create_issue",
-        description: "Open an issue, as your bot account.",
-        access: "write",
-        schema: z.object({
-          repo: Repo,
-          title: z.string().min(1).max(255),
-          body: z.string().max(20_000).default(""),
-        }),
-        describe: ({ repo, title }) => `Open an issue in ${repo}: ${title}`,
-        run: async ({ repo, title, body }) => {
-          const i = await api<Issue>("POST", `${repoPath(repo)}/issues`, { title, body });
-          return `Opened #${i.number}: ${i.html_url}`;
         },
       }),
       tool({
@@ -391,59 +339,10 @@ export const forgejoPlugin = definePlugin({
           return `Committed ${r.commit.sha.slice(0, 10)} to ${new_branch ?? branch}: ${r.commit.html_url}`;
         },
       }),
-      tool({
-        name: "forgejo_open_pr",
-        description: "Open a pull request from head into base, as your bot account.",
-        access: "write",
-        schema: z.object({
-          repo: Repo,
-          head: z.string().max(200).describe("The branch with the changes"),
-          base: z
-            .string()
-            .max(200)
-            .describe("The branch to merge into, usually the default branch"),
-          title: z.string().min(1).max(255),
-          body: z.string().max(20_000).default(""),
-        }),
-        describe: ({ repo, head, base }) => `Open a pull request in ${repo}: ${head} into ${base}`,
-        run: async ({ repo, head, base, title, body }) => {
-          const pr = await api<Pull>("POST", `${repoPath(repo)}/pulls`, {
-            head,
-            base,
-            title,
-            body,
-          });
-          return `Opened pull request #${pr.number}: ${pr.html_url}`;
-        },
-      }),
-      tool({
-        name: "forgejo_close",
-        description: "Close an issue or pull request without merging, or reopen one.",
-        access: "write",
-        schema: z.object({ repo: Repo, number: Num, reopen: z.boolean().optional() }),
-        describe: ({ repo, number, reopen }) => `${reopen ? "Reopen" : "Close"} ${repo}#${number}`,
-        run: async ({ repo, number, reopen }) => {
-          await api("PATCH", `${repoPath(repo)}/issues/${number}`, {
-            state: reopen ? "open" : "closed",
-          });
-          return `${reopen ? "Reopened" : "Closed"} ${repo}#${number}.`;
-        },
-      }),
-      tool({
-        name: "forgejo_merge",
-        description: "Merge a pull request. It needs approval (the safety review or the owner).",
-        access: "write",
-        schema: z.object({
-          repo: Repo,
-          number: Num,
-          method: z.enum(["merge", "rebase", "squash"]).default("merge"),
-        }),
-        describe: ({ repo, number, method }) => `Merge ${repo}#${number} (${method})`,
-        policy: () => ask("Merging changes the target branch for everyone."),
-        run: async ({ repo, number, method }) => {
-          await api("POST", `${repoPath(repo)}/pulls/${number}/merge`, { Do: method });
-          return `Merged ${repo}#${number}.`;
-        },
+      ...forgeTools("forgejo", {
+        Repo,
+        api,
+        merge: ["POST", (method) => ({ Do: method })],
       }),
     ];
 

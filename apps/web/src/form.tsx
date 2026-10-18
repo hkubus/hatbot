@@ -1,7 +1,7 @@
 // Edit pages: a form filled from what's stored, and what to show when there's nothing to fill it from.
 import { useEffect, useState } from "react";
-import { Icon } from "./icons";
 import { LoadError } from "./load";
+import { BackHead } from "./ui";
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -77,7 +77,7 @@ export function useStoredForm<F>(seed: F | undefined) {
   };
 }
 
-/** An edit page with nothing to edit yet: why, with Back, and Retry when loading failed. */
+/** A page with nothing to show yet: why, with Back, and Retry when loading failed. */
 export function NoForm({
   error,
   missing,
@@ -85,20 +85,15 @@ export function NoForm({
   back,
 }: {
   error: string;
-  /** Set once the list has loaded without it, e.g. "This bot doesn't exist." */
+  /** Set once it turns out not to exist, e.g. "This bot doesn't exist." */
   missing: string;
   retry: () => void;
-  back: { label: string; go: () => void };
+  back: { label: string; to: string };
 }) {
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">
-          <button type="button" className="btn sm ghost back" onClick={back.go}>
-            <Icon name="chevron" />
-            {back.label}
-          </button>
-        </div>
+        <BackHead to={back.to} label={back.label} />
         {missing ? (
           <div className="empty">{missing}</div>
         ) : (

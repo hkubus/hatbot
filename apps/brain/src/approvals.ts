@@ -1,6 +1,7 @@
 // Approvals (PLAN.md §6.2): a task asks, you decide in the web app or from an ntfy notification.
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { type Approval, type ApprovalKind, HATBOT_ID } from "@hatbot/shared";
+import { sameText, secretKey } from "./auth/keys";
 import type { Bots } from "./bots";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
@@ -88,7 +89,7 @@ export class Approvals {
     /** For the bot's name on notifications. */
     private bots?: Bots,
   ) {
-    this.key = this.signingKey();
+    this.key = secretKey(db, "approval_key");
     // Nothing waits on approvals from before a restart: their tasks were stopped. A negotiation's
     // mandate or hold waits for no task: it takes the answer whenever it comes (PLAN.md §16.1).
     db.query(
@@ -99,18 +100,6 @@ export class Approvals {
 
   private now() {
     return new Date(this.clock()).toISOString();
-  }
-
-  private signingKey(): Buffer {
-    const row = this.db
-      .query<{ value: string }, []>("SELECT value FROM settings WHERE key = 'approval_key'")
-      .get();
-    if (row) return Buffer.from(row.value, "hex");
-    const key = randomBytes(32);
-    this.db
-      .query("INSERT INTO settings (key, value) VALUES ('approval_key', ?)")
-      .run(key.toString("hex"));
-    return key;
   }
 
   get(id: number): Approval | null {
@@ -249,27 +238,29 @@ export class Approvals {
   }
 
   sign(id: number, decision: "approve" | "deny", exp: number): string {
-    return createHmac("sha256", this.key).update(`${id}:${decision}:${exp}`).digest("base64url");
+    return this.mac(`${id}:${decision}:${exp}`);
   }
 
   /** An ntfy button's token: right signature, not expired. Single use, because a decision only applies once. */
   verify(id: number, decision: "approve" | "deny", exp: number, sig: string): boolean {
-    if (exp * 1000 < this.clock()) return false;
-    const want = Buffer.from(this.sign(id, decision, exp));
-    const got = Buffer.from(sig);
-    return got.length === want.length && timingSafeEqual(got, want);
+    return this.checkSig(`${id}:${decision}:${exp}`, exp, sig);
   }
 
   /** The Pause all button's token, signed apart from any decision so it can't stand for one. */
   signPause(exp: number): string {
-    return createHmac("sha256", this.key).update(`pause-all:${exp}`).digest("base64url");
+    return this.mac(`pause-all:${exp}`);
   }
 
   verifyPause(exp: number, sig: string): boolean {
-    if (exp * 1000 < this.clock()) return false;
-    const want = Buffer.from(this.signPause(exp));
-    const got = Buffer.from(sig);
-    return got.length === want.length && timingSafeEqual(got, want);
+    return this.checkSig(`pause-all:${exp}`, exp, sig);
+  }
+
+  private mac(payload: string): string {
+    return createHmac("sha256", this.key).update(payload).digest("base64url");
+  }
+
+  private checkSig(payload: string, exp: number, sig: string): boolean {
+    return exp * 1000 >= this.clock() && sameText(sig, this.mac(payload));
   }
 
   private async notify(a: Approval) {

@@ -1,10 +1,10 @@
 // Settings → Check everything: tries each part Hatbot depends on, and a test approval for the phone.
 import type { Approval, CheckReport, CheckState, ChecksInfo } from "@hatbot/shared";
 import { useEffect, useState } from "react";
+import { useAction } from "../action";
 import { api, errorText } from "../api";
-import { Icon } from "../icons";
-import { navigate } from "../router";
 import { useStore } from "../store";
+import { BackHead, Group, Row } from "../ui";
 
 const CHIP: Record<CheckState, { label: string; className: string }> = {
   ok: { label: "OK", className: "chip ok" },
@@ -29,8 +29,7 @@ export function Checks() {
   const [approvalId, setApprovalId] = useState<number | null>(null);
   const live = useStore((s) => (approvalId ? s.approvals[approvalId] : undefined));
   const [approval, setApproval] = useState<Approval | null>(null);
-  const [running, setRunning] = useState(false);
-  const [error, setError] = useState("");
+  const { busy: running, error, setError, run } = useAction();
 
   useEffect(() => {
     api<ChecksInfo>("/checks").then(
@@ -41,18 +40,9 @@ export function Checks() {
       },
       (err) => setError(errorText(err)),
     );
-  }, []);
+  }, [setError]);
 
-  const run = async () => {
-    setRunning(true);
-    setError("");
-    try {
-      setReport(await api<CheckReport>("/checks", { body: {} }));
-    } catch (err) {
-      setError(errorText(err));
-    }
-    setRunning(false);
-  };
+  const check = () => run(async () => setReport(await api<CheckReport>("/checks", { body: {} })));
 
   const tryApproval = async () => {
     setError("");
@@ -71,57 +61,43 @@ export function Checks() {
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">
-          <button type="button" className="btn sm ghost back" onClick={() => navigate("/settings")}>
-            <Icon name="chevron" />
-            Settings
-          </button>
-          <span className="spacer" />
-          <button type="button" className="btn sm" disabled={running} onClick={run}>
+        <BackHead to="/settings" label="Settings">
+          <button type="button" className="btn sm" disabled={running} onClick={check}>
             {running ? "Checking…" : report ? "Check again" : "Check everything"}
           </button>
-        </div>
+        </BackHead>
         {error && <div className="form-error">{error}</div>}
 
         {report && (
-          <section className="group">
-            <h2>{problems.length ? `${problems.length} to look at` : "All good"}</h2>
-            <div className="group-box">
-              {[...report.results]
-                .sort((a, b) => rank(a.state) - rank(b.state))
-                .map((r) => (
-                  <div className="row" key={r.id}>
-                    <div className="txt">
-                      <b>{r.name}</b>
-                      <span>{r.detail}</span>
-                    </div>
-                    <span className={CHIP[r.state].className}>{CHIP[r.state].label}</span>
-                  </div>
-                ))}
-            </div>
-          </section>
+          <Group title={problems.length ? `${problems.length} to look at` : "All good"}>
+            {[...report.results]
+              .sort((a, b) => rank(a.state) - rank(b.state))
+              .map((r) => (
+                <Row key={r.id} label={r.name} sub={<span>{r.detail}</span>}>
+                  <span className={CHIP[r.state].className}>{CHIP[r.state].label}</span>
+                </Row>
+              ))}
+          </Group>
         )}
 
-        <section className="group">
-          <h2>From your phone</h2>
-          <div className="group-box">
-            <div className="row">
-              <div className="txt">
-                <b>Test approval</b>
-                {shown && (
-                  <span>
-                    {ANSWER[shown.status]}
-                    {shown.decidedVia === "ntfy" ? " from the notification" : ""}
-                    {shown.decidedAt ? `, ${when(shown.decidedAt)}` : ""}
-                  </span>
-                )}
-              </div>
-              <button type="button" className="btn sm" onClick={tryApproval}>
-                Send
-              </button>
-            </div>
-          </div>
-        </section>
+        <Group title="From your phone">
+          <Row
+            label="Test approval"
+            sub={
+              shown && (
+                <span>
+                  {ANSWER[shown.status]}
+                  {shown.decidedVia === "ntfy" ? " from the notification" : ""}
+                  {shown.decidedAt ? `, ${when(shown.decidedAt)}` : ""}
+                </span>
+              )
+            }
+          >
+            <button type="button" className="btn sm" onClick={tryApproval}>
+              Send
+            </button>
+          </Row>
+        </Group>
       </div>
     </section>
   );

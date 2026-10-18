@@ -3,7 +3,24 @@
 //
 // Each is a function expression; browser.ts calls it with one JSON argument.
 
-/** Shared by the scripts below: element references, roles, names and visibility. */
+/** How a page is walked, and whether an element in it shows; cdp.ts's scripts use it too. */
+export const WALK = `
+  const isFrame = (e) => !!e && (e.tagName === 'IFRAME' || e.tagName === 'FRAME');
+  // Null for another origin's frame, which can't be entered.
+  const frameDoc = (e) => { try { return e.contentDocument; } catch { return null; } };
+  // Every element in root, open shadow roots and same-origin frames included.
+  const allIn = (root, out = []) => {
+    for (const e of root.querySelectorAll('*')) {
+      out.push(e);
+      const inner = e.shadowRoot || (isFrame(e) && frameDoc(e));
+      if (inner) allIn(inner, out);
+    }
+    return out;
+  };
+  const shownBox = (e) => e.getClientRects().length > 0
+    && (e.ownerDocument.defaultView || window).getComputedStyle(e).visibility !== 'hidden';
+`;
+
 /**
  * The text boxes a click or Enter could send, for the brain's exact-text check (PLAN.md §16.3): what each
  * visible one holds, whitespace collapsed, in the element's form when that has any, otherwise in its page,
@@ -11,10 +28,9 @@
  * role=textbox) counts once. A site's search box isn't one: its query stays in it on every page.
  */
 export const FIELDS = `
+  ${WALK}
   const TEXT_BOX = 'textarea, input:not([type]), input[type=text], input[type=search], input[type=email], input[type=tel], input[type=url], input[type=number], [contenteditable=""], [contenteditable=true], [contenteditable=plaintext-only], [role=textbox]';
   const isTextBox = (e) => !!e && e.nodeType === 1 && (e.matches(TEXT_BOX) || e.isContentEditable);
-  const shownBox = (e) => e.getClientRects().length > 0
-    && (e.ownerDocument.defaultView || window).getComputedStyle(e).visibility !== 'hidden';
   // A search box says so in its type or role, its search landmark, a search (GET) form, or its own name.
   const SEARCH_HINT = /search|szuka|wyszuk|hleda|vyhled|suche|recherche/i;
   const isSearchBox = (e) => e.matches('input[type=search], [role=searchbox]') || !!e.closest('[role=search]')
@@ -24,18 +40,7 @@ export const FIELDS = `
         e.id, e.getAttribute('title')].join(' '))));
   const boxValue = (e) => String((e.matches('input, textarea') ? e.value : e.innerText) || '')
     .replace(/\\s+/g, ' ').trim().slice(0, 4000);
-  const boxesIn = (root, out = []) => {
-    for (const e of root.querySelectorAll('*')) {
-      if (e.matches(TEXT_BOX)) out.push(e);
-      if (e.shadowRoot) boxesIn(e.shadowRoot, out);
-      if (e.tagName === 'IFRAME' || e.tagName === 'FRAME') {
-        let d = null;
-        try { d = e.contentDocument; } catch {}
-        if (d) boxesIn(d, out);
-      }
-    }
-    return out;
-  };
+  const boxesIn = (root) => allIn(root).filter((e) => e.matches(TEXT_BOX));
   const fieldsFor = (el) => {
     const all = (root) => boxesIn(root).filter((b) => shownBox(b) && !isSearchBox(b));
     const form = el.closest('form');
@@ -149,7 +154,9 @@ export const ELEMENT = `
     }
     return out;
   };
-  const isFrame = (e) => !!e && (e.tagName === 'IFRAME' || e.tagName === 'FRAME');
+  // Nothing there, or nothing focused: the page itself.
+  const pageInfo = () => ({ tag: 'body', role: null, type: null, label: '', inForm: false, url: location.href,
+    editable: false, fields: fieldsFor(document.body) });
   // The deepest element at a viewport point, through open shadow roots and same-origin frames. At a frame it
   // can't enter (another origin's), { el: the frame, frame: the point inside it }, for browser.ts to follow.
   const elementAt = (x, y) => {
@@ -166,8 +173,7 @@ export const ELEMENT = `
       if (!isFrame(hit)) return { el };
       const r = hit.getBoundingClientRect();
       const fx = ox + r.left + hit.clientLeft, fy = oy + r.top + hit.clientTop;
-      let inner = null;
-      try { inner = hit.contentDocument; } catch {}
+      const inner = frameDoc(hit);
       if (!inner) return { el, frame: { x: x - fx, y: y - fy } };
       ox = fx; oy = fy; doc = inner;
     }
@@ -179,8 +185,7 @@ export const ELEMENT = `
     for (;;) {
       while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
       if (!isFrame(el)) return { el };
-      let inner = null;
-      try { inner = el.contentDocument; } catch {}
+      const inner = frameDoc(el);
       if (!inner) return { el, frame: { focused: true } };
       el = inner.activeElement;
     }
@@ -335,8 +340,9 @@ const COMMON = `
     r.top < innerHeight && r.left < innerWidth;
   // Children, through open shadow roots and into same-origin iframes.
   const childrenOf = (el) => {
-    if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
-      try { const d = el.contentDocument; return d && d.body ? [d.body] : []; } catch { return []; }
+    if (isFrame(el)) {
+      const d = frameDoc(el);
+      return d && d.body ? [d.body] : [];
     }
     if (el.tagName === 'SLOT') return el.assignedElements();
     return el.shadowRoot ? [...el.shadowRoot.children] : [...el.children];
@@ -497,9 +503,8 @@ export const PAGE_TEXT = `(o) => {
 /** The element for the click policy: by ref, at a viewport point, or the focused one. */
 export const INSPECT = `(o) => {
   ${COMMON}
-  // Nothing there, or nothing focused, is the page itself; null means it couldn't be looked at (a stale ref).
-  const info = (at) => leaveFrame(elementInfo(at.el) || { tag: 'body', role: null, type: null, label: '',
-    inForm: false, url: location.href, editable: false, fields: fieldsFor(document.body) }, at);
+  // Null means it couldn't be looked at (a stale ref).
+  const info = (at) => leaveFrame(elementInfo(at.el) || pageInfo(), at);
   if (o.ref) {
     const el = byRef(o.ref);
     if (!el) return null;

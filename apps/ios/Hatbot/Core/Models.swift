@@ -1,5 +1,5 @@
-// API types, mirroring packages/shared/src/index.ts. Unknown enum values from a newer brain
-// decode to a fallback instead of failing the whole response.
+// API types, mirroring packages/shared/src/index.ts. Unknown enum values from a newer brain, and
+// ones missing on an older brain, decode to a fallback instead of failing the whole response.
 import Foundation
 
 protocol LenientEnum: RawRepresentable<String>, Codable, Sendable {
@@ -10,6 +10,14 @@ extension LenientEnum {
   init(from decoder: Decoder) throws {
     let raw = try decoder.singleValueContainer().decode(String.self)
     self = Self(rawValue: raw) ?? .fallback
+  }
+}
+
+extension KeyedDecodingContainer {
+  /// Synthesized decoders use this one too, so a type needn't write its own for a field that's missing on
+  /// older brains.
+  func decode<T: LenientEnum>(_ type: T.Type, forKey key: Key) throws -> T {
+    try decodeIfPresent(type, forKey: key) ?? .fallback
   }
 }
 
@@ -50,8 +58,6 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   private(set) var date: Date?
   var taskId: Int?
   var scheduleId: Int?
-  /// The negotiation it started, shown under it; missing on brains from before negotiations.
-  var negotiationId: Int?
   /// The conversation it belongs to; cards from background tasks have none.
   var episodeId: Int?
   /// When a task's result changed it after it was sent; missing on brains from before.
@@ -76,14 +82,14 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case id, role, kind, text, status, createdAt, taskId, scheduleId, episodeId, editedAt, seenAt, attachments
-    case incognito, conversationId, botId, negotiationId, sources
+    case incognito, conversationId, botId, sources
   }
 
   init(
     id: Int, role: Role, kind: Kind, text: String, status: Status, createdAt: String, taskId: Int? = nil,
     scheduleId: Int? = nil, episodeId: Int? = nil, editedAt: String? = nil, seenAt: String? = nil,
     attachments: [Attachment]? = nil, incognito: Bool? = nil, conversationId: Int? = nil, botId: String? = nil,
-    negotiationId: Int? = nil, sources: [Source]? = nil
+    sources: [Source]? = nil
   ) {
     self.id = id
     self.role = role
@@ -101,7 +107,6 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
     self.incognito = incognito
     self.conversationId = conversationId
     self.botId = botId
-    self.negotiationId = negotiationId
     self.sources = sources
   }
 
@@ -123,7 +128,6 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
       incognito: c.decodeIfPresent(Bool.self, forKey: .incognito),
       conversationId: c.decodeIfPresent(Int.self, forKey: .conversationId),
       botId: c.decodeIfPresent(String.self, forKey: .botId),
-      negotiationId: c.decodeIfPresent(Int.self, forKey: .negotiationId),
       sources: c.decodeIfPresent([Source].self, forKey: .sources))
   }
 }
@@ -353,12 +357,13 @@ struct Bot: Codable, Identifiable, Equatable, Sendable {
 
   let id: String
   var name: String
+  /// Missing on brains from before them: the fallbacks.
   var icon: Icon = .hat
   var color: Tint = .amber
   /// Its role, in the owner's words.
   var instructions: String
   /// nil: as in Settings.
-  var chatModel: AppSettings.ChatModel?
+  var chatModel: AppSettings.ModelID?
   var chatEffort: AppSettings.Effort?
   /// nil: every plugin that's on.
   var plugins: [String]?
@@ -391,26 +396,6 @@ struct Bot: Codable, Identifiable, Equatable, Sendable {
   }
 }
 
-extension Bot {
-  private enum CodingKeys: String, CodingKey {
-    case id, name, icon, color, instructions, chatModel, chatEffort, plugins, createdAt
-  }
-
-  /// The icon and colour are missing on brains from before them.
-  init(from decoder: Decoder) throws {
-    let c = try decoder.container(keyedBy: CodingKeys.self)
-    id = try c.decode(String.self, forKey: .id)
-    name = try c.decode(String.self, forKey: .name)
-    icon = try c.decodeIfPresent(Icon.self, forKey: .icon) ?? .hat
-    color = try c.decodeIfPresent(Tint.self, forKey: .color) ?? .amber
-    instructions = try c.decode(String.self, forKey: .instructions)
-    chatModel = try c.decodeIfPresent(AppSettings.ChatModel.self, forKey: .chatModel)
-    chatEffort = try c.decodeIfPresent(AppSettings.Effort.self, forKey: .chatEffort)
-    plugins = try c.decodeIfPresent([String].self, forKey: .plugins)
-    createdAt = try c.decode(String.self, forKey: .createdAt)
-  }
-}
-
 /// A starting point for a new bot (PLAN.md §14.6), from GET /bot-templates.
 struct BotTemplate: Decodable, Identifiable, Equatable, Sendable {
   let id: String
@@ -418,7 +403,7 @@ struct BotTemplate: Decodable, Identifiable, Equatable, Sendable {
   var icon: Bot.Icon
   var color: Bot.Tint
   var instructions: String
-  var chatModel: AppSettings.ChatModel?
+  var chatModel: AppSettings.ModelID?
   var chatEffort: AppSettings.Effort?
   var plugins: [String]?
 }
@@ -562,13 +547,13 @@ struct AppSettings: Codable, Equatable, Sendable {
   /// Missing on brains from before the setting.
   var notificationsOpen: Opens?
   /// The model that drives desktop tasks; missing on brains from before the setting.
-  var desktopModel: DesktopModel?
+  var desktopModel: ModelID?
   /// A desktop task Haiku fails at carries on once on Opus; missing on older brains.
   var desktopEscalate: Bool?
   /// The model background tasks run on; missing on brains from before the setting.
-  var taskModel: TaskModel?
+  var taskModel: ModelID?
   /// The chat's model; missing on brains from before the setting.
-  var chatModel: ChatModel?
+  var chatModel: ModelID?
   /// Changes Haiku finds safe go ahead without asking; missing on older brains.
   var reviewChanges: Bool?
   /// Every few minutes a look over what went wrong; missing on older brains.
@@ -592,45 +577,30 @@ struct AppSettings: Codable, Equatable, Sendable {
     var hour: Int
   }
 
-  struct ChatModel: RawRepresentable, Codable, Hashable, Sendable {
+  /// The chat's, a bot's, background tasks' or desktop tasks' model.
+  struct ModelID: RawRepresentable, Codable, Hashable, Sendable {
     let rawValue: String
     init(rawValue: String) { self.rawValue = rawValue }
-    static let haiku = ChatModel(rawValue: "claude-haiku-5-5")
-    static let opus = ChatModel(rawValue: "claude-opus-5-5")
+    static let haiku = ModelID(rawValue: "claude-haiku-5-5")
+    static let opus = ModelID(rawValue: "claude-opus-5-5")
     static let known = [haiku, opus]
-  }
 
-  struct DesktopModel: RawRepresentable, Codable, Hashable, Sendable {
-    let rawValue: String
-    init(rawValue: String) { self.rawValue = rawValue }
-    static let opus = DesktopModel(rawValue: "claude-opus-5-5")
-    static let haiku = DesktopModel(rawValue: "claude-haiku-5-5")
-    static let known = [opus, haiku]
-  }
-
-  struct TaskModel: RawRepresentable, Codable, Hashable, Sendable {
-    let rawValue: String
-    init(rawValue: String) { self.rawValue = rawValue }
-    static let haiku = TaskModel(rawValue: "claude-haiku-5-5")
-    static let opus = TaskModel(rawValue: "claude-opus-5-5")
-    static let known = [haiku, opus]
+    /// "Opus 5.5"; one of another shape as it is.
+    var name: String { Format.modelName(rawValue) }
   }
 }
 
-/// A negotiation with a seller (Negotiation in packages/shared/src/negotiate.ts). The app doesn't show
-/// negotiations yet, so only their outline; the rest of the brain's JSON is ignored.
-struct Negotiation: Decodable, Identifiable, Equatable, Sendable {
-  let id: Int
-  var botId: String
-  var title: String
-  var listingUrl: String
-  /// awaiting_mandate, open, agreed, lost, abandoned or expired.
-  var status: String
-  var agreedPrice: Double?
-  var approvalId: Int?
+extension Array where Element: Equatable {
+  /// A picker's choices, and the value set now when it isn't one of them (set on the web, newer than this
+  /// app, or gone), so the picker has a row for it.
+  func including(_ current: Element?) -> [Element] {
+    guard let current, !contains(current) else { return self }
+    return self + [current]
+  }
 }
 
-/// Live events on /api/v1/stream. Events this app doesn't know decode to `.unknown`.
+/// Live events on /api/v1/stream. Events this app doesn't know, or doesn't show yet (negotiations),
+/// decode to `.unknown`.
 enum HatbotEvent: Decodable, Sendable {
   case messageCreated(ThreadMessage)
   /// `at`: where `text` starts in the reply, in UTF-16 units; an older brain doesn't say.
@@ -638,8 +608,6 @@ enum HatbotEvent: Decodable, Sendable {
   case messageProgress(id: Int, text: String)
   case messageDone(id: Int, text: String, status: ThreadMessage.Status, sources: [Source]? = nil)
   case messageTask(id: Int, taskId: Int)
-  /// A negotiation now shows under this reply.
-  case messageNegotiation(id: Int, negotiationId: Int)
   case messageEdited(id: Int, editedAt: String)
   case messageRewrite(id: Int)
   case messageSeen(ids: [Int], seenAt: String)
@@ -672,123 +640,79 @@ enum HatbotEvent: Decodable, Sendable {
   /// The heartbeat looked again.
   case heartbeatUpdated
   case watcherDeleted(id: Int)
-  case negotiationUpdated(Negotiation)
   case unknown(String)
 
   private enum Key: String, CodingKey {
     case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused, tokens, costUsd
     case task, step, approval, state, schedule, trigger, episode, editedAt, ids, seenAt, attachment
-    case bot, conversation, proposal, watcher, negotiation, negotiationId, sources, at
+    case bot, conversation, proposal, watcher, sources, at
   }
 
   init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: Key.self)
-    let type = try c.decode(String.self, forKey: .type)
+    // Each field is read as the type its case takes.
+    func v<T: Decodable>(_ key: Key) throws -> T { try c.decode(T.self, forKey: key) }
+    func maybe<T: Decodable>(_ key: Key) throws -> T? { try c.decodeIfPresent(T.self, forKey: key) }
+    let type: String = try v(.type)
     switch type {
-    case "message.created": self = .messageCreated(try c.decode(ThreadMessage.self, forKey: .message))
-    case "message.delta":
-      self = .messageDelta(
-        id: try c.decode(Int.self, forKey: .id),
-        text: try c.decode(String.self, forKey: .text),
-        at: try c.decodeIfPresent(Int.self, forKey: .at))
-    case "message.progress":
-      self = .messageProgress(id: try c.decode(Int.self, forKey: .id), text: try c.decode(String.self, forKey: .text))
-    case "message.done":
-      self = .messageDone(
-        id: try c.decode(Int.self, forKey: .id),
-        text: try c.decode(String.self, forKey: .text),
-        status: try c.decode(ThreadMessage.Status.self, forKey: .status),
-        sources: try c.decodeIfPresent([Source].self, forKey: .sources))
-    case "message.task":
-      self = .messageTask(id: try c.decode(Int.self, forKey: .id), taskId: try c.decode(Int.self, forKey: .taskId))
-    case "message.negotiation":
-      self = .messageNegotiation(
-        id: try c.decode(Int.self, forKey: .id), negotiationId: try c.decode(Int.self, forKey: .negotiationId))
-    case "message.edited":
-      self = .messageEdited(id: try c.decode(Int.self, forKey: .id), editedAt: try c.decode(String.self, forKey: .editedAt))
-    case "message.rewrite": self = .messageRewrite(id: try c.decode(Int.self, forKey: .id))
-    case "message.seen":
-      self = .messageSeen(ids: try c.decode([Int].self, forKey: .ids), seenAt: try c.decode(String.self, forKey: .seenAt))
-    case "message.deleted": self = .messageDeleted(ids: try c.decode([Int].self, forKey: .ids))
-    case "message.usage":
-      self = .messageUsage(
-        id: try c.decode(Int.self, forKey: .id),
-        ReplyUsage(tokens: try c.decode(Int.self, forKey: .tokens), costUsd: try c.decode(Double.self, forKey: .costUsd)))
-    case "message.attachment":
-      self = .messageAttachment(id: try c.decode(Int.self, forKey: .id), try c.decode(Attachment.self, forKey: .attachment))
-    case "spend.updated":
-      self = .spendUpdated(
-        todayUsd: try c.decode(Double.self, forKey: .todayUsd),
-        monthUsd: try c.decode(Double.self, forKey: .monthUsd))
-    case "memory.committed":
-      self = .memoryCommitted(
-        sha: try c.decode(String.self, forKey: .sha),
-        message: try c.decode(String.self, forKey: .message),
-        author: try c.decode(String.self, forKey: .author))
-    case "paused": self = .paused(try c.decode(Bool.self, forKey: .paused))
-    case "task.updated": self = .taskUpdated(try c.decode(AgentTask.self, forKey: .task))
-    case "task.step": self = .taskStep(try c.decode(TaskStep.self, forKey: .step))
-    case "task.progress":
-      self = .taskProgress(taskId: try c.decode(Int.self, forKey: .taskId), text: try c.decode(String.self, forKey: .text))
-    case "approval.created": self = .approvalCreated(try c.decode(Approval.self, forKey: .approval))
-    case "approval.resolved": self = .approvalResolved(try c.decode(Approval.self, forKey: .approval))
-    case "desktop.state": self = .desktopState(try c.decode(DesktopState.self, forKey: .state))
-    case "schedule.updated": self = .scheduleUpdated(try c.decode(Schedule.self, forKey: .schedule))
-    case "schedule.deleted": self = .scheduleDeleted(id: try c.decode(Int.self, forKey: .id))
-    case "trigger.updated": self = .triggerUpdated(try c.decode(Trigger.self, forKey: .trigger))
-    case "trigger.deleted": self = .triggerDeleted(id: try c.decode(Int.self, forKey: .id))
-    case "episode.updated": self = .episodeUpdated(try c.decode(Episode.self, forKey: .episode))
-    case "bot.updated": self = .botUpdated(try c.decode(Bot.self, forKey: .bot))
-    case "bot.deleted": self = .botDeleted(id: try c.decode(String.self, forKey: .id))
-    case "conversation.updated":
-      self = .conversationUpdated(try c.decode(Conversation.self, forKey: .conversation))
-    case "conversation.deleted": self = .conversationDeleted(id: try c.decode(Int.self, forKey: .id))
-    case "proposal.updated": self = .proposalUpdated(try c.decode(Proposal.self, forKey: .proposal))
-    case "watcher.updated": self = .watcherUpdated(try c.decode(Watcher.self, forKey: .watcher))
+    case "message.created": self = try .messageCreated(v(.message))
+    case "message.delta": self = try .messageDelta(id: v(.id), text: v(.text), at: maybe(.at))
+    case "message.progress": self = try .messageProgress(id: v(.id), text: v(.text))
+    case "message.done": self = try .messageDone(id: v(.id), text: v(.text), status: v(.status), sources: maybe(.sources))
+    case "message.task": self = try .messageTask(id: v(.id), taskId: v(.taskId))
+    case "message.edited": self = try .messageEdited(id: v(.id), editedAt: v(.editedAt))
+    case "message.rewrite": self = try .messageRewrite(id: v(.id))
+    case "message.seen": self = try .messageSeen(ids: v(.ids), seenAt: v(.seenAt))
+    case "message.deleted": self = try .messageDeleted(ids: v(.ids))
+    case "message.usage": self = try .messageUsage(id: v(.id), ReplyUsage(tokens: v(.tokens), costUsd: v(.costUsd)))
+    case "message.attachment": self = try .messageAttachment(id: v(.id), v(.attachment))
+    case "spend.updated": self = try .spendUpdated(todayUsd: v(.todayUsd), monthUsd: v(.monthUsd))
+    case "memory.committed": self = try .memoryCommitted(sha: v(.sha), message: v(.message), author: v(.author))
+    case "paused": self = try .paused(v(.paused))
+    case "task.updated": self = try .taskUpdated(v(.task))
+    case "task.step": self = try .taskStep(v(.step))
+    case "task.progress": self = try .taskProgress(taskId: v(.taskId), text: v(.text))
+    case "approval.created": self = try .approvalCreated(v(.approval))
+    case "approval.resolved": self = try .approvalResolved(v(.approval))
+    case "desktop.state": self = try .desktopState(v(.state))
+    case "schedule.updated": self = try .scheduleUpdated(v(.schedule))
+    case "schedule.deleted": self = try .scheduleDeleted(id: v(.id))
+    case "trigger.updated": self = try .triggerUpdated(v(.trigger))
+    case "trigger.deleted": self = try .triggerDeleted(id: v(.id))
+    case "episode.updated": self = try .episodeUpdated(v(.episode))
+    case "bot.updated": self = try .botUpdated(v(.bot))
+    case "bot.deleted": self = try .botDeleted(id: v(.id))
+    case "conversation.updated": self = try .conversationUpdated(v(.conversation))
+    case "conversation.deleted": self = try .conversationDeleted(id: v(.id))
+    case "proposal.updated": self = try .proposalUpdated(v(.proposal))
+    case "watcher.updated": self = try .watcherUpdated(v(.watcher))
     case "settings.updated": self = .settingsUpdated
     case "heartbeat.updated": self = .heartbeatUpdated
-    case "watcher.deleted": self = .watcherDeleted(id: try c.decode(Int.self, forKey: .id))
-    case "negotiation.updated":
-      self = .negotiationUpdated(try c.decode(Negotiation.self, forKey: .negotiation))
+    case "watcher.deleted": self = try .watcherDeleted(id: v(.id))
     default: self = .unknown(type)
     }
   }
 }
 
-/// What you do on the desktop while you have control (LiveInput in packages/shared/src/desktop.ts).
-enum LiveInput: Encodable, Sendable {
-  case move(x: Double, y: Double)
-  case button(Int, down: Bool, x: Double, y: Double)
-  case wheel(dx: Double, dy: Double, x: Double, y: Double)
-  case key(String, down: Bool)
+/// What you do on the desktop while you have control (LiveInput in packages/shared/src/desktop.ts):
+/// `t` says which, and only the fields it has are sent.
+struct LiveInput: Encodable, Sendable {
+  var t: String
+  var x, y: Double?
+  var button: Int?
+  var down: Bool?
+  var dx, dy: Double?
+  var key: String?
 
-  private enum Key: String, CodingKey {
-    case t, x, y, button, down, dx, dy, key
+  static func move(x: Double, y: Double) -> Self { Self(t: "move", x: x, y: y) }
+
+  static func button(_ button: Int, down: Bool, x: Double, y: Double) -> Self {
+    Self(t: "button", x: x, y: y, button: button, down: down)
   }
 
-  func encode(to encoder: Encoder) throws {
-    var c = encoder.container(keyedBy: Key.self)
-    switch self {
-    case let .move(x, y):
-      try c.encode("move", forKey: .t)
-      try c.encode(x, forKey: .x)
-      try c.encode(y, forKey: .y)
-    case let .button(button, down, x, y):
-      try c.encode("button", forKey: .t)
-      try c.encode(button, forKey: .button)
-      try c.encode(down, forKey: .down)
-      try c.encode(x, forKey: .x)
-      try c.encode(y, forKey: .y)
-    case let .wheel(dx, dy, x, y):
-      try c.encode("wheel", forKey: .t)
-      try c.encode(dx, forKey: .dx)
-      try c.encode(dy, forKey: .dy)
-      try c.encode(x, forKey: .x)
-      try c.encode(y, forKey: .y)
-    case let .key(key, down):
-      try c.encode("key", forKey: .t)
-      try c.encode(key, forKey: .key)
-      try c.encode(down, forKey: .down)
-    }
+  static func wheel(dx: Double, dy: Double, x: Double, y: Double) -> Self {
+    Self(t: "wheel", x: x, y: y, dx: dx, dy: dy)
   }
+
+  static func key(_ key: String, down: Bool) -> Self { Self(t: "key", down: down, key: key) }
 }

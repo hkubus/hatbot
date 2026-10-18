@@ -2,10 +2,10 @@
 import { afterAll, expect, test } from "bun:test";
 import { Browser } from "../src/browser";
 import { inspect as inspectScreen } from "../src/cdp";
-import { startChromium } from "./chromium";
+import { serve, startChromium } from "./chromium";
 
 const chromium = await startChromium();
-if (!chromium) console.log("No Chromium that runs here: the inspect tests are skipped.");
+const live = test.skipIf(!chromium);
 const browser = new Browser(null, chromium?.endpoint);
 
 /** Each control in its own 100×40 box down the left edge, so a test can point at the nth one. */
@@ -58,16 +58,6 @@ const pages: Record<string, string> = {
 pages["/pay"] = `<!doctype html><body style="margin:0">
   <button style="position:absolute;left:10px;top:10px;width:100px;height:40px">Zapłać</button>
   <input style="position:absolute;left:150px;top:10px;width:100px;height:30px"></body>`;
-const serve = (p: Record<string, string>) =>
-  Bun.serve({
-    port: 0,
-    hostname: "127.0.0.1",
-    fetch(req) {
-      const body = p[new URL(req.url).pathname];
-      if (!body) return new Response("no", { status: 404 });
-      return new Response(body, { headers: { "content-type": "text/html; charset=utf-8" } });
-    },
-  });
 const server = serve(pages);
 // Another origin: on another port it's the same site, as "localhost" another site, with its own process.
 const widgets = serve({ "/pay": pages["/pay"] as string });
@@ -79,10 +69,10 @@ pages["/shop"] = `<!doctype html><body style="margin:0">
   ${frame(`http://127.0.0.1:${widgets.port}/pay`, 1)}
   ${frame("/pay", 2)}
 </body>`;
-afterAll(() => {
+afterAll(async () => {
   server.stop(true);
   widgets.stop(true);
-  chromium?.stop();
+  await chromium?.stop();
 });
 
 /** Inspects until `ready` holds: frames load after their page. */
@@ -94,39 +84,36 @@ async function settled(o: Parameters<Browser["inspect"]>[0], ready: (el: unknown
   }
 }
 
-test.skipIf(!chromium)(
-  "icon buttons are named from their icon, and toggles and search say so",
-  async () => {
-    await browser.call("navigate", { url: `${base}/controls` });
-    expect(await browser.inspect(at(0))).toMatchObject({ tag: "button", label: "Wyślij" });
-    expect(await browser.inspect(at(1))).toMatchObject({ tag: "button", label: "", toggle: false });
-    expect(await browser.inspect(at(2))).toMatchObject({ label: "", toggle: true });
-    // A button's value isn't its name.
-    expect(await browser.inspect(at(3))).toMatchObject({ label: "Kup teraz" });
-    expect(await browser.inspect({ x: 80, y: 220 })).toMatchObject({
-      tag: "button",
-      label: "",
-      inForm: true,
-      search: true,
-    });
-    expect(await browser.inspect(at(5))).toMatchObject({ role: "button", label: "Zapłać" });
-    expect(await browser.inspect(at(6))).toMatchObject({ label: "➤" });
-    // A choice's label chooses, like the choice.
-    expect(await browser.inspect({ x: 80, y: 370 })).toMatchObject({
-      tag: "label",
-      label: "Paczkomat",
-      toggle: true,
-    });
-  },
-);
+live("icon buttons are named from their icon, and toggles and search say so", async () => {
+  await browser.call("navigate", { url: `${base}/controls` });
+  expect(await browser.inspect(at(0))).toMatchObject({ tag: "button", label: "Wyślij" });
+  expect(await browser.inspect(at(1))).toMatchObject({ tag: "button", label: "", toggle: false });
+  expect(await browser.inspect(at(2))).toMatchObject({ label: "", toggle: true });
+  // A button's value isn't its name.
+  expect(await browser.inspect(at(3))).toMatchObject({ label: "Kup teraz" });
+  expect(await browser.inspect({ x: 80, y: 220 })).toMatchObject({
+    tag: "button",
+    label: "",
+    inForm: true,
+    search: true,
+  });
+  expect(await browser.inspect(at(5))).toMatchObject({ role: "button", label: "Zapłać" });
+  expect(await browser.inspect(at(6))).toMatchObject({ label: "➤" });
+  // A choice's label chooses, like the choice.
+  expect(await browser.inspect({ x: 80, y: 370 })).toMatchObject({
+    tag: "label",
+    label: "Paczkomat",
+    toggle: true,
+  });
+});
 
-test.skipIf(!chromium)("the screen's inspect sees the focused control the same way", async () => {
+live("the screen's inspect sees the focused control the same way", async () => {
   await browser.call("navigate", { url: `${base}/controls` });
   await browser.call("left_click", { target: { type: "coordinate", ...at(3) } });
   expect(await inspectScreen(browser)).toMatchObject({ tag: "button", label: "Kup teraz" });
 });
 
-test.skipIf(!chromium)(
+live(
   "with nothing focused, the screen's inspect still says whether the page has the keyboard",
   async () => {
     await browser.call("navigate", { url: `${base}/chat` });
@@ -138,68 +125,59 @@ test.skipIf(!chromium)(
   },
 );
 
-test.skipIf(!chromium)(
-  "a chat box says which buttons come after it, through shadow roots",
-  async () => {
-    await browser.call("navigate", { url: `${base}/chat` });
-    await browser.call("left_click", { target: { type: "coordinate", ...at(0) } });
-    // The buttons after it first, then the one before it in its own row.
-    expect(await browser.inspect({})).toMatchObject({
-      tag: "textarea",
-      editable: true,
-      buttonsAfter: ["", "Wyślij", "Emoji"],
-    });
-    await browser.call("left_click", { target: { type: "coordinate", x: 50, y: 170 } });
-    expect(await browser.inspect({})).toMatchObject({
-      tag: "textarea",
-      buttonsAfter: ["Odpowiedz"],
-    });
-  },
-);
+live("a chat box says which buttons come after it, through shadow roots", async () => {
+  await browser.call("navigate", { url: `${base}/chat` });
+  await browser.call("left_click", { target: { type: "coordinate", ...at(0) } });
+  // The buttons after it first, then the one before it in its own row.
+  expect(await browser.inspect({})).toMatchObject({
+    tag: "textarea",
+    editable: true,
+    buttonsAfter: ["", "Wyślij", "Emoji"],
+  });
+  await browser.call("left_click", { target: { type: "coordinate", x: 50, y: 170 } });
+  expect(await browser.inspect({})).toMatchObject({
+    tag: "textarea",
+    buttonsAfter: ["Odpowiedz"],
+  });
+});
 
-test.skipIf(!chromium)(
-  "a click or focus inside another origin's frame is followed in",
-  async () => {
-    await browser.call("navigate", { url: `${base}/shop` });
-    const pay = (el: unknown) => (el as { label?: string } | null)?.label === "Zapłać";
-    const sites = [
-      [30, `http://localhost:${widgets.port}/pay`],
-      [150, `http://127.0.0.1:${widgets.port}/pay`],
-    ] as const;
-    for (const [y, frameUrl] of sites)
-      expect(await settled({ x: 60, y }, pay)).toMatchObject({
-        tag: "button",
-        label: "Zapłać",
-        url: `${base}/shop`,
-        frameUrl,
-      });
-    // The same origin's frame is entered by the page script itself.
-    expect(await settled({ x: 60, y: 270 }, pay)).toMatchObject({ tag: "button", label: "Zapłać" });
-
-    // Typing in the other site's frame: the focus is followed too, and counts as secret for teach mode.
-    // Whether the page has the keyboard (not the address bar) is the tab's, and still said.
-    await browser.call("left_click", { target: { type: "coordinate", x: 200, y: 25 } });
-    expect(await browser.inspect({})).toMatchObject({ tag: "input", editable: true });
-    expect(await inspectScreen(browser)).toMatchObject({
-      tag: "input",
-      secret: true,
-      pageFocus: expect.any(Boolean),
-    });
-  },
-);
-
-test.skipIf(!chromium)(
-  "text boxes are seen in shadow roots and frames, and links say where they go",
-  async () => {
-    await browser.call("navigate", { url: `${base}/deep` });
-    const seen = (el: unknown) => ((el as { fields?: string[] } | null)?.fields?.length ?? 0) === 2;
-    expect(await settled(at(0), seen)).toMatchObject({
+live("a click or focus inside another origin's frame is followed in", async () => {
+  await browser.call("navigate", { url: `${base}/shop` });
+  const pay = (el: unknown) => (el as { label?: string } | null)?.label === "Zapłać";
+  const sites = [
+    [30, `http://localhost:${widgets.port}/pay`],
+    [150, `http://127.0.0.1:${widgets.port}/pay`],
+  ] as const;
+  for (const [y, frameUrl] of sites)
+    expect(await settled({ x: 60, y }, pay)).toMatchObject({
       tag: "button",
-      fields: ["Dzień dobry", "Kupię za 2000 zł"],
+      label: "Zapłać",
+      url: `${base}/shop`,
+      frameUrl,
     });
-    expect(await browser.inspect(at(1))).toMatchObject({ tag: "a", href: `${base}/out?to=x` });
-  },
-);
+  // The same origin's frame is entered by the page script itself.
+  expect(await settled({ x: 60, y: 270 }, pay)).toMatchObject({ tag: "button", label: "Zapłać" });
+
+  // Typing in the other site's frame: the focus is followed too, and counts as secret for teach mode.
+  // Whether the page has the keyboard (not the address bar) is the tab's, and still said.
+  await browser.call("left_click", { target: { type: "coordinate", x: 200, y: 25 } });
+  expect(await browser.inspect({})).toMatchObject({ tag: "input", editable: true });
+  expect(await inspectScreen(browser)).toMatchObject({
+    tag: "input",
+    secret: true,
+    pageFocus: expect.any(Boolean),
+  });
+});
+
+live("text boxes are seen in shadow roots and frames, and links say where they go", async () => {
+  await browser.call("navigate", { url: `${base}/deep` });
+  const seen = (el: unknown) => ((el as { fields?: string[] } | null)?.fields?.length ?? 0) === 2;
+  expect(await settled(at(0), seen)).toMatchObject({
+    tag: "button",
+    fields: ["Dzień dobry", "Kupię za 2000 zł"],
+  });
+  expect(await browser.inspect(at(1))).toMatchObject({ tag: "a", href: `${base}/out?to=x` });
+});
 
 pages["/opener"] = `<!doctype html><body style="margin:0">
   <button style="${box(0)}" onclick="window.open('/popup', 'pp', 'width=400,height=300')">PayPal</button>
@@ -211,39 +189,33 @@ pages["/dialog"] = `<!doctype html><body style="margin:0">
     <button style="position:absolute;left:100px;top:80px;width:100px;height:40px">Zapłać 900 zł</button>
   </div></body>`;
 
-test.skipIf(!chromium)(
-  "a click on a ref is checked where it lands: the button in a container's middle",
-  async () => {
-    await browser.call("navigate", { url: `${base}/dialog` });
-    const found = await browser.call("find", { query: "Podsumowanie zamówienia" });
-    const text = found.kind === "text" ? found.text : "";
-    expect(text).toContain("dialog");
-    const ref = /\[(ref_\d+)\]/.exec(text)?.[1] as string;
-    expect(await browser.inspect({ ref })).toMatchObject({ tag: "button", label: "Zapłać 900 zł" });
-  },
-);
+live("a click on a ref is checked where it lands: the button in a container's middle", async () => {
+  await browser.call("navigate", { url: `${base}/dialog` });
+  const found = await browser.call("find", { query: "Podsumowanie zamówienia" });
+  const text = found.kind === "text" ? found.text : "";
+  expect(text).toContain("dialog");
+  const ref = /\[(ref_\d+)\]/.exec(text)?.[1] as string;
+  expect(await browser.inspect({ ref })).toMatchObject({ tag: "button", label: "Zapłać 900 zł" });
+});
 
-test.skipIf(!chromium)(
-  "a popup window's point isn't checked against the page under it",
-  async () => {
-    await browser.call("navigate", { url: `${base}/opener` });
-    await browser.call("left_click", { target: { type: "coordinate", ...at(0) } });
-    let state = await browser.state();
-    for (let i = 0; state.tabs.length < 2 && i < 50; i++) {
-      await Bun.sleep(100);
-      state = await browser.state();
-    }
-    expect(state.tabs.map((t) => new URL(t.url).pathname).sort()).toEqual(["/opener", "/popup"]);
-    // Both windows' tabs say they're visible. Where the windows overlap, the screen's inspect can't tell
-    // which is on top, so it says so rather than answer for the one below.
-    browser.screenTouched();
-    await expect(inspectScreen(browser, 50, 260)).rejects.toThrow("can't tell which is on top");
-    const popup = state.tabs.find((t) => t.url.endsWith("/popup"))?.tab_id;
-    await browser.call("close_tab", { tab_id: popup });
-    browser.screenTouched();
-    expect(await inspectScreen(browser, 50, 260)).not.toBeUndefined();
-  },
-);
+live("a popup window's point isn't checked against the page under it", async () => {
+  await browser.call("navigate", { url: `${base}/opener` });
+  await browser.call("left_click", { target: { type: "coordinate", ...at(0) } });
+  let state = await browser.state();
+  for (let i = 0; state.tabs.length < 2 && i < 50; i++) {
+    await Bun.sleep(100);
+    state = await browser.state();
+  }
+  expect(state.tabs.map((t) => new URL(t.url).pathname).sort()).toEqual(["/opener", "/popup"]);
+  // Both windows' tabs say they're visible. Where the windows overlap, the screen's inspect can't tell
+  // which is on top, so it says so rather than answer for the one below.
+  browser.screenTouched();
+  await expect(inspectScreen(browser, 50, 260)).rejects.toThrow("can't tell which is on top");
+  const popup = state.tabs.find((t) => t.url.endsWith("/popup"))?.tab_id;
+  await browser.call("close_tab", { tab_id: popup });
+  browser.screenTouched();
+  expect(await inspectScreen(browser, 50, 260)).toMatchObject({ url: `${base}/opener` });
+});
 
 const nest = (inner: string, n: number): string => (n ? `<div>${nest(inner, n - 1)}</div>` : inner);
 pages["/search"] = `<!doctype html><body style="margin:0">
@@ -262,7 +234,7 @@ pages["/composers"] = `<!doctype html><body style="margin:0">
   <div style="position:absolute;top:200px"><div><div role="textbox" contenteditable="true" style="width:100px;height:40px"></div></div></div>
   </body>`;
 
-test.skipIf(!chromium)(
+live(
   "a site's search box is searching by its own name, and its query isn't a message",
   async () => {
     await browser.call("navigate", { url: `${base}/search` });
@@ -279,7 +251,7 @@ test.skipIf(!chromium)(
   },
 );
 
-test.skipIf(!chromium)("a div made clickable is reported as one, named by its text", async () => {
+live("a div made clickable is reported as one, named by its text", async () => {
   await browser.call("navigate", { url: `${base}/divs` });
   expect(await browser.inspect(at(0))).toMatchObject({ tag: "div", role: "clickable", label: "" });
   expect(await browser.inspect({ x: 10, y: 65 })).toMatchObject({
@@ -289,7 +261,7 @@ test.skipIf(!chromium)("a div made clickable is reported as one, named by its te
   });
 });
 
-test.skipIf(!chromium)(
+live(
   "a chat box finds its Send however deep, before or after it, or says there's none",
   async () => {
     await browser.call("navigate", { url: `${base}/composers` });
@@ -305,7 +277,7 @@ test.skipIf(!chromium)(
   },
 );
 
-test.skipIf(!chromium)("navigate takes its address only as text", async () => {
+live("navigate takes its address only as text", async () => {
   await expect(browser.call("navigate", { url: [`${base}/controls`] })).rejects.toThrow(
     "url must be a string",
   );

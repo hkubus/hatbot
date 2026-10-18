@@ -82,21 +82,6 @@ extension AppStore {
     return r.text
   }
 
-  func setHeartbeat(_ value: AppSettings.Heartbeat) async throws -> AppSettings {
-    struct Body: Encodable { let heartbeat: AppSettings.Heartbeat }
-    return try await api.put("/settings", body: Body(heartbeat: value))
-  }
-
-  func setWeeklyReport(_ value: AppSettings.WeeklyReport) async throws -> AppSettings {
-    struct Body: Encodable { let weeklyReport: AppSettings.WeeklyReport }
-    return try await api.put("/settings", body: Body(weeklyReport: value))
-  }
-
-  func setMemoryTidy(_ on: Bool) async throws -> AppSettings {
-    struct Body: Encodable { let memoryTidy: Bool }
-    return try await api.put("/settings", body: Body(memoryTidy: on))
-  }
-
   // MARK: Proposals
 
   func loadProposals() async throws {

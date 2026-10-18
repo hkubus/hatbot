@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
-import { backspace, complete, pasted, slots, typed } from "../src/otp";
+import { backspace, pasted, slots, typed } from "../src/otp";
 
 test("typing fills one box and moves on", () => {
   let code = "";
   for (const [i, d] of [..."123456"].entries()) code = typed(code, i, d).code;
-  expect(complete(code)).toBe("123456");
+  expect(code).toBe("123456");
   expect(typed("", 0, "7")).toEqual({ code: "7     ", focus: 1 });
   expect(typed("12345 ", 5, "6").focus).toBe(5);
 });
@@ -18,7 +18,6 @@ test("fixing one digit changes that digit only", () => {
   const cleared = typed("123456", 2, "").code;
   expect(cleared).toBe("12 456");
   expect(slots(cleared)).toEqual(["1", "2", "", "4", "5", "6"]);
-  expect(complete(cleared)).toBeNull();
   expect(typed(cleared, 2, "0").code).toBe("120456");
   // A letter changes nothing.
   expect(typed("123456", 2, "3a")).toEqual({ code: "123456", focus: 2 });

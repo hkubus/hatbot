@@ -1,11 +1,11 @@
 // The desktop's live view (PLAN.md §10.5): JPEG frames over a WebSocket, drawn to a canvas.
 // While you have control, your pointer and keys go to the desktop.
-import { API_PREFIX, latestNoteOnly, type TaskStep } from "@hatbot/shared";
+import { latestNoteOnly, type TaskStep } from "@hatbot/shared";
 import type { LiveInput } from "@hatbot/shared/desktop";
 import { useEffect, useRef, useState } from "react";
 import { errorText } from "./api";
 import { ask } from "./confirm";
-import { plainText } from "./format";
+import { plainText, time } from "./format";
 import { Held } from "./held";
 import { Icon } from "./icons";
 import { navigate } from "./router";
@@ -13,6 +13,7 @@ import {
   discardTeach,
   ensureSteps,
   handback,
+  openSocket,
   recording,
   startTeach,
   stopTeach,
@@ -20,9 +21,6 @@ import {
   useStore,
 } from "./store";
 import { taskLine } from "./tasks";
-
-const time = (iso: string) =>
-  new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
 type Conn = "connecting" | "live" | "offline";
 
@@ -75,8 +73,7 @@ const feed = (() => {
   };
 
   const open = () => {
-    const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${API_PREFIX}/desktop/live`;
-    const ws = new WebSocket(url);
+    const ws = openSocket("/desktop/live");
     ws.binaryType = "blob";
     socket = ws;
     ws.onopen = () => {

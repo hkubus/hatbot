@@ -59,19 +59,9 @@ struct GroupView: View {
           .disabled(busy || !changed || !valid)
       }
     }
-    .confirmationDialog("Delete \(store.chatName(stored))? Its messages go with it.", isPresented: $confirmDelete, titleVisibility: .visible) {
-      Button("Delete", role: .destructive) {
-        Task {
-          guard let id else { return }
-          do {
-            try await store.deleteGroup(id)
-            dismiss()
-          } catch {
-            self.error = message(for: error)
-          }
-        }
-      }
-    }
+    .confirmingDelete(
+      "Delete \(store.chatName(stored))? Its messages go with it.", isPresented: $confirmDelete, error: $error
+    ) { if let id { try await store.deleteGroup(id) } }
     .task(id: id) {
       if let stored {
         title = stored.title ?? ""
@@ -83,9 +73,8 @@ struct GroupView: View {
   private func save(_ title: String) async {
     busy = true
     defer { busy = false }
-    error = nil
     let change = AppStore.GroupChange(title: title, botIds: members)
-    do {
+    await attempt($error) {
       if let id {
         try await store.saveGroup(id, change)
         store.toast = "Saved"
@@ -93,8 +82,6 @@ struct GroupView: View {
         let c = try await store.createGroup(change)
         if let made { made(c) } else { dismiss() }
       }
-    } catch {
-      self.error = message(for: error)
     }
   }
 }

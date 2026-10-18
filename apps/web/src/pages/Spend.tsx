@@ -6,13 +6,14 @@ import type {
   SpendSummary,
 } from "@hatbot/shared";
 import { useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { api, errorText } from "../api";
 import { useWidth } from "../chart";
-import { modelName, usd } from "../format";
-import { LoadError, loadErrorText } from "../load";
+import { day, modelName, time, usd } from "../format";
+import { LoadError } from "../load";
 import { spendAxis, withToday } from "../spend";
 import { useStore } from "../store";
 import { tokenText } from "../tasks";
+import { Seg } from "../ui";
 
 /** What the ledger's purposes are, in words. */
 const PURPOSE_NAMES: Record<string, string> = {
@@ -34,10 +35,6 @@ const purposeName = (p: string) =>
 const parseDay = (d: string) => new Date(`${d}T12:00:00`);
 const fmtDay = (d: string) =>
   parseDay(d).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
-const fmtShort = (d: string) =>
-  parseDay(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-const fmtHour = (iso: string) =>
-  new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
 /** One bar: its dollars, the label under it (if any), and what the tooltip and table say. */
 type Point = { key: string; usd: number; axis?: string; title: string; detail: string };
@@ -155,24 +152,14 @@ function SpendCard({ title, points, limit }: { title: string; points: Point[]; l
       <div className="chart-head">
         <h3>{title}</h3>
         <span className="spacer" />
-        <div className="seg">
-          <button
-            type="button"
-            className={mode === "chart" ? "active" : ""}
-            aria-pressed={mode === "chart"}
-            onClick={() => setMode("chart")}
-          >
-            Chart
-          </button>
-          <button
-            type="button"
-            className={mode === "table" ? "active" : ""}
-            aria-pressed={mode === "table"}
-            onClick={() => setMode("table")}
-          >
-            Table
-          </button>
-        </div>
+        <Seg
+          value={mode}
+          options={[
+            ["chart", "Chart"],
+            ["table", "Table"],
+          ]}
+          onChange={setMode}
+        />
       </div>
       {mode === "chart" ? (
         points.length > 0 && <BarChart points={points} limit={limit} label={title} />
@@ -237,7 +224,7 @@ export function Spend() {
   }, []);
 
   // A refresh that fails leaves what's showing; only the first load says so.
-  const failed = (err: unknown) => setLoadError(loadErrorText(err));
+  const failed = (err: unknown) => setLoadError(errorText(err));
   const loadNow = () => {
     api<SpendSummary>("/spend/summary").then(setSummary, failed);
     api<SpendHour[]>("/spend/hourly?hours=24").then(setHours, failed);
@@ -287,14 +274,14 @@ export function Spend() {
   const hourPoints: Point[] = hours.map((h, i) => ({
     key: h.hour,
     usd: h.usd,
-    axis: i % 6 === 0 ? fmtHour(h.hour) : undefined,
-    title: `${fmtHour(h.hour)}–${fmtHour(new Date(Date.parse(h.hour) + 3600_000).toISOString())}`,
+    axis: i % 6 === 0 ? time(h.hour) : undefined,
+    title: `${time(h.hour)}–${time(new Date(Date.parse(h.hour) + 3600_000).toISOString())}`,
     detail: `${usd(h.usd)} · ${tokenText(h.tokens)} tokens`,
   }));
   const dayPoints: Point[] = days.map((d, i) => ({
     key: d.date,
     usd: d.usd,
-    axis: i % 7 === 0 ? fmtShort(d.date) : undefined,
+    axis: i % 7 === 0 ? day(parseDay(d.date)) : undefined,
     title: fmtDay(d.date),
     detail: usd(d.usd),
   }));

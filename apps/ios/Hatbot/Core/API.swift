@@ -89,8 +89,12 @@ final class API: Sendable {
     if !s.contains("://") { s = "https://" + s }
     while s.hasSuffix("/") { s.removeLast() }
     if s.hasSuffix(prefix) { s.removeLast(prefix.count) }
-    guard let url = URL(string: s), url.scheme?.lowercased() == "https", url.host != nil else { return nil }
-    return url
+    guard let url = URL(string: s), url.scheme?.lowercased() == "https", url.host != nil,
+      var parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
+    else { return nil }
+    // "HTTPS://" would be saved as typed, and nothing after should have to compare cases.
+    parts.scheme = "https"
+    return parts.url
   }
 
   /// An address typed with http://, which the app won't use.
@@ -195,11 +199,12 @@ final class API: Sendable {
     }
   }
 
-  /// A WebSocket with the bearer token; the brain checks it before upgrading.
+  /// A WebSocket with the bearer token; the brain checks it before upgrading. Always wss: the token
+  /// never goes unencrypted, whatever the server's address looks like.
   func webSocket(_ path: String) -> URLSessionWebSocketTask {
     var req = request(path, method: "GET")
     var parts = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)!
-    parts.scheme = parts.scheme == "https" ? "wss" : "ws"
+    parts.scheme = "wss"
     req.url = parts.url
     return session.webSocketTask(with: req)
   }
