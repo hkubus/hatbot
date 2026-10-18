@@ -12,7 +12,7 @@ import type {
 import { Browser, BrowserError } from "./browser";
 import { context, inspect } from "./cdp";
 import { FetchError, fetchPage } from "./fetch";
-import { browserKey } from "./keys";
+import { browserKey, KeyError } from "./keys";
 import { LiveQueue } from "./livequeue";
 import { runningProfile, useProfile } from "./profile";
 import { RENDER_SOCKET } from "./render";
@@ -341,7 +341,7 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array; input?: boolea
           return json({ error: "not found" }, 404);
       }
     } catch (err) {
-      if (err instanceof ActionError || err instanceof BrowserError)
+      if (err instanceof ActionError || err instanceof BrowserError || err instanceof KeyError)
         return json({ error: err.message }, 400);
       console.error(route, err);
       return json({ error: err instanceof Error ? err.message : "failed" }, 500);

@@ -1,7 +1,7 @@
 // The X display: input through xdotool, pixels through ffmpeg's x11grab.
 import type { AgentActionResult } from "@hatbot/shared/desktop";
 import { between, path } from "./human";
-import { combo, KeyError, modifiers } from "./keys";
+import { combo, modifiers } from "./keys";
 
 export class ActionError extends Error {}
 
@@ -219,20 +219,6 @@ export const LIVE_FPS_WATCHING = 5;
 /** Longer text than this is typed fast, in chunks this long; the brain's timeout for `type` assumes it. */
 const HUMAN_TYPING_CHARS = 200;
 
-/** Runs one computer toolset member (not screenshot or zoom). */
-export async function act(
-  size: { width: number; height: number },
-  name: string,
-  input: Record<string, unknown>,
-): Promise<AgentActionResult> {
-  try {
-    return await actInner(size, name, input);
-  } catch (err) {
-    if (err instanceof KeyError) throw new ActionError(err.message);
-    throw err;
-  }
-}
-
 /** xdotool steps that move the pointer to `to` along a person-like path from where it is. */
 async function glide([x, y]: [number, number]): Promise<string[]> {
   const out = await xdotool("getmouselocation", "--shell");
@@ -260,7 +246,8 @@ async function glide([x, y]: [number, number]): Promise<string[]> {
   ];
 }
 
-async function actInner(
+/** Runs one computer toolset member (not screenshot or zoom). A name off the key lists throws KeyError. */
+export async function act(
   size: { width: number; height: number },
   name: string,
   input: Record<string, unknown>,

@@ -2,7 +2,7 @@
 // (KeyboardEvent.key) to X keysyms for xdotool. Only names on these lists are pressed: xdotool would also
 // take a keycode ("36"), a hex or Unicode keysym ("0xff0d", "U0020") or any other keysym, and press Enter
 // under a name the brain's checks don't read as Enter. The brain reads names with the same lists
-// (packages/shared/src/keys.ts); keys.test.ts keeps the two the same.
+// (packages/shared/src/keys.ts); keys.test.ts keeps the two the same. browser.ts reads them here too.
 
 export const MODIFIERS: Record<string, string> = {
   ctrl: "ctrl",

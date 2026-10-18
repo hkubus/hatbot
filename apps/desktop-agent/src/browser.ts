@@ -10,6 +10,7 @@ import type {
   BrowserTab,
 } from "@hatbot/shared/desktop";
 import { between, keyGap, type Point, path } from "./human";
+import { keysym, modifier, modifiers } from "./keys";
 import {
   FORM_INPUT,
   INSPECT,
@@ -145,62 +146,41 @@ class Connection {
   }
 }
 
-// Keys: DOM key names, codes and Windows virtual key codes, as Chromium's input pipeline expects them.
+// Keys: DOM key names, codes and Windows virtual key codes, as Chromium's input pipeline expects them, by
+// the X keysym keys.ts reads a name as: the screen and the brain's checks go by the same lists.
 type KeyDef = { key: string; code: string; keyCode: number; text?: string };
+const ENTER: KeyDef = { key: "Enter", code: "Enter", keyCode: 13, text: "\r" };
+const PAGE_UP: KeyDef = { key: "PageUp", code: "PageUp", keyCode: 33 };
+const PAGE_DOWN: KeyDef = { key: "PageDown", code: "PageDown", keyCode: 34 };
 const NAMED_KEYS: Record<string, KeyDef> = {
-  enter: { key: "Enter", code: "Enter", keyCode: 13, text: "\r" },
-  tab: { key: "Tab", code: "Tab", keyCode: 9 },
-  escape: { key: "Escape", code: "Escape", keyCode: 27 },
-  backspace: { key: "Backspace", code: "Backspace", keyCode: 8 },
-  delete: { key: "Delete", code: "Delete", keyCode: 46 },
-  insert: { key: "Insert", code: "Insert", keyCode: 45 },
-  arrowup: { key: "ArrowUp", code: "ArrowUp", keyCode: 38 },
-  arrowdown: { key: "ArrowDown", code: "ArrowDown", keyCode: 40 },
-  arrowleft: { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37 },
-  arrowright: { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
-  home: { key: "Home", code: "Home", keyCode: 36 },
-  end: { key: "End", code: "End", keyCode: 35 },
-  pageup: { key: "PageUp", code: "PageUp", keyCode: 33 },
-  pagedown: { key: "PageDown", code: "PageDown", keyCode: 34 },
+  Return: ENTER,
+  KP_Enter: ENTER,
+  Tab: { key: "Tab", code: "Tab", keyCode: 9 },
+  Escape: { key: "Escape", code: "Escape", keyCode: 27 },
+  BackSpace: { key: "Backspace", code: "Backspace", keyCode: 8 },
+  Delete: { key: "Delete", code: "Delete", keyCode: 46 },
+  Insert: { key: "Insert", code: "Insert", keyCode: 45 },
+  Up: { key: "ArrowUp", code: "ArrowUp", keyCode: 38 },
+  Down: { key: "ArrowDown", code: "ArrowDown", keyCode: 40 },
+  Left: { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37 },
+  Right: { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
+  Home: { key: "Home", code: "Home", keyCode: 36 },
+  End: { key: "End", code: "End", keyCode: 35 },
+  Page_Up: PAGE_UP,
+  Prior: PAGE_UP,
+  Page_Down: PAGE_DOWN,
+  Next: PAGE_DOWN,
   space: { key: " ", code: "Space", keyCode: 32, text: " " },
-  contextmenu: { key: "ContextMenu", code: "ContextMenu", keyCode: 93 },
-  capslock: { key: "CapsLock", code: "CapsLock", keyCode: 20 },
-  printscreen: { key: "PrintScreen", code: "PrintScreen", keyCode: 44 },
+  Menu: { key: "ContextMenu", code: "ContextMenu", keyCode: 93 },
+  Caps_Lock: { key: "CapsLock", code: "CapsLock", keyCode: 20 },
+  Print: { key: "PrintScreen", code: "PrintScreen", keyCode: 44 },
 };
-const KEY_ALIASES: Record<string, string> = {
-  return: "enter",
-  esc: "escape",
-  del: "delete",
-  up: "arrowup",
-  down: "arrowdown",
-  left: "arrowleft",
-  right: "arrowright",
-  page_up: "pageup",
-  pgup: "pageup",
-  page_down: "pagedown",
-  pgdn: "pagedown",
-  menu: "contextmenu",
-  print: "printscreen",
-};
-/** Modifier name to its key and its bit in CDP's `modifiers` (Alt 1, Ctrl 2, Meta 4, Shift 8). */
+/** A modifier to its key and its bit in CDP's `modifiers` (Alt 1, Ctrl 2, Meta 4, Shift 8). */
 const MODIFIER_KEYS: Record<string, KeyDef & { bit: number }> = {
   alt: { key: "Alt", code: "AltLeft", keyCode: 18, bit: 1 },
   ctrl: { key: "Control", code: "ControlLeft", keyCode: 17, bit: 2 },
-  meta: { key: "Meta", code: "MetaLeft", keyCode: 91, bit: 4 },
+  super: { key: "Meta", code: "MetaLeft", keyCode: 91, bit: 4 },
   shift: { key: "Shift", code: "ShiftLeft", keyCode: 16, bit: 8 },
-};
-const MODIFIER_ALIASES: Record<string, string> = {
-  alt: "alt",
-  option: "alt",
-  ctrl: "ctrl",
-  control: "ctrl",
-  meta: "meta",
-  super: "meta",
-  cmd: "meta",
-  command: "meta",
-  win: "meta",
-  windows: "meta",
-  shift: "shift",
 };
 // US layout: the unshifted key each symbol is on.
 const SYMBOL_KEYS: Record<string, [string, number]> = {
@@ -252,17 +232,14 @@ function charKey(ch: string): KeyDef {
   return { key: ch, code: sym?.[0] ?? "", keyCode: sym?.[1] ?? 0, text: ch };
 }
 
+/** A key by its name or character; keys.ts refuses one off its lists. */
 function keyDef(name: string): KeyDef {
-  if ([...name].length === 1) {
-    if (!/^[\p{L}\p{N}\p{P}\p{S}]$/u.test(name)) throw new BrowserError(`Unknown key "${name}".`);
-    return charKey(name);
-  }
-  const lower = name.toLowerCase();
-  const named = NAMED_KEYS[KEY_ALIASES[lower] ?? lower];
-  if (named) return named;
-  const f = /^f([1-9]|1\d|2[0-4])$/.exec(lower);
-  if (f) return { key: `F${f[1]}`, code: `F${f[1]}`, keyCode: 111 + Number(f[1]) };
-  throw new BrowserError(`Unknown key "${name}".`);
+  const sym = keysym(name);
+  if ([...name].length === 1) return charKey(name);
+  const f = /^F(\d+)$/.exec(sym);
+  const def = f ? { key: sym, code: sym, keyCode: 111 + Number(f[1]) } : NAMED_KEYS[sym];
+  if (!def) throw new BrowserError(`The browser has no "${name}" key.`);
+  return def;
 }
 
 /** "ctrl+shift+a" to its modifiers and main key. A lone "+" (or a trailing "++") is the plus key. */
@@ -275,29 +252,24 @@ function chord(text: string): { mods: (KeyDef & { bit: number })[]; key: KeyDef 
   const mods: (KeyDef & { bit: number })[] = [];
   let key: KeyDef | null = null;
   for (const p of parts) {
-    const m = MODIFIER_ALIASES[p.toLowerCase()];
+    const m = modifier(p);
     // Modifiers first, as on the screen, where xdotool presses them in order.
-    if (m && p.length > 1 && key)
+    if (m && key)
       throw new BrowserError(
         `"${text}": put the modifiers first and one key last, like ctrl+shift+t.`,
       );
-    if (m && p.length > 1) mods.push(MODIFIER_KEYS[m] as KeyDef & { bit: number });
+    if (m) mods.push(MODIFIER_KEYS[m] as KeyDef & { bit: number });
     else if (key) throw new BrowserError(`"${text}" names more than one key.`);
     else key = keyDef(p);
   }
   return { mods, key };
 }
 
-function modifierBits(text: unknown): number {
-  if (typeof text !== "string" || !text.trim()) return 0;
-  let bits = 0;
-  for (const p of text.split("+")) {
-    const m = MODIFIER_ALIASES[p.trim().toLowerCase()];
-    if (!m) throw new BrowserError(`"${p}" is not a modifier key (ctrl, shift, alt, meta).`);
-    bits |= (MODIFIER_KEYS[m] as { bit: number }).bit;
-  }
-  return bits;
-}
+const modifierBits = (text: unknown) =>
+  modifiers(typeof text === "string" ? text : null).reduce(
+    (bits, m) => bits | (MODIFIER_KEYS[m]?.bit ?? 0),
+    0,
+  );
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Page-supplied text that goes into a tab entry: no control characters or line separators, and capped. */
