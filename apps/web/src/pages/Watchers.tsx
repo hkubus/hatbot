@@ -16,11 +16,10 @@ import { api, errorText } from "../api";
 import { BotPicker, Runs, stamp, useListed } from "../automations";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm, useStoredForm } from "../form";
-import { Icon } from "../icons";
 import { navigate } from "../router";
 import { loadPlugins, putWatcher, useStore } from "../store";
 import { Switch } from "../switch";
-import { BackHead, Group, SaveBar, Seg } from "../ui";
+import { BackHead, SaveBar, Seg } from "../ui";
 
 const EVERY = [5, 15, 30, 60, 180, 360, 720, 1440];
 const WHEN: { when: WatchCondition["when"]; label: string }[] = [
@@ -32,49 +31,11 @@ const WHEN: { when: WatchCondition["when"]; label: string }[] = [
 ];
 type Pick = "page" | "selector" | "path";
 
-const patchWatcher = async (id: number, body: object) => {
+export const patchWatcher = async (id: number, body: object) => {
   const w = await api<Watcher>(`/watchers/${id}`, { method: "PATCH", body });
   putWatcher(w);
   return w;
 };
-
-/** The Watchers group on the Schedules page. */
-export function WatcherList({ onError }: { onError: (error: string) => void }) {
-  const watchers = useStore((s) => s.watchers);
-  const shown = Object.values(watchers)
-    .filter((w): w is Watcher => Boolean(w))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  return (
-    <Group title="Watchers">
-      {shown.map((w) => (
-        <div className="row" key={w.id}>
-          <button type="button" className="row-main" onClick={() => navigate(`/watchers/${w.id}`)}>
-            <div className="txt">
-              <b>{w.name}</b>
-            </div>
-            {w.lastError ? (
-              <span className={w.errors ? "val bad" : "val"}>{trouble(w)?.short}</span>
-            ) : (
-              <span className="val">{w.enabled ? (w.lastValue ?? "") : "Off"}</span>
-            )}
-            <Icon name="chevron" className="chev" />
-          </button>
-          <Switch
-            on={w.enabled}
-            onChange={(enabled) =>
-              patchWatcher(w.id, { enabled }).catch((err) => onError(errorText(err)))
-            }
-          />
-        </div>
-      ))}
-      {!shown.length && (
-        <div className="row">
-          <span className="muted">None yet. Ask Hatbot to tell you when something changes.</span>
-        </div>
-      )}
-    </Group>
-  );
-}
 
 type Form = {
   name: string;

@@ -7,20 +7,21 @@ import {
   type Trigger,
   type TriggerWithSecret,
 } from "@hatbot/shared";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { BotPicker, Runs, stamp, useListed } from "../automations";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm, useStoredForm } from "../form";
 import { Icon } from "../icons";
+import { Link } from "../link";
 import { navigate } from "../router";
 import { atIso, cronOk, localInput } from "../schedule-form";
 import { loadSchedules, putSchedule, putTrigger, saveSchedule, useStore } from "../store";
 import { Switch } from "../switch";
 import { whenText } from "../tasks";
 import { BackHead, Group, SaveBar, Seg } from "../ui";
-import { WatcherEdit, WatcherList } from "./Watchers";
+import { patchWatcher, trouble, WatcherEdit } from "./Watchers";
 
 const KIND = { webhook: "Webhook", kuma: "Uptime Kuma" } as const;
 const KUMA_PROMPT =
@@ -52,22 +53,11 @@ function List() {
   const [error, setError] = useState("");
   const schedules = useStore((s) => s.schedules);
   const triggers = useStore((s) => s.triggers);
+  const watchers = useStore((s) => s.watchers);
 
   useEffect(() => {
     loadSchedules().then(setIds, (err) => setError(errorText(err)));
   }, []);
-
-  const shownSchedules = Object.values(schedules)
-    .filter((s): s is Schedule => Boolean(s))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  const shownTriggers = Object.values(triggers)
-    .filter((t): t is Trigger => Boolean(t))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  const toggleTrigger = (t: Trigger, enabled: boolean) =>
-    api<Trigger>(`/triggers/${t.id}`, { method: "PATCH", body: { enabled } }).then(
-      putTrigger,
-      (err) => setError(errorText(err)),
-    );
 
   return (
     <section className="view">
@@ -90,62 +80,95 @@ function List() {
         {error && <div className="form-error">{error}</div>}
         {ids && (
           <>
-            <Group title="Schedules">
-              {shownSchedules.map((s) => (
-                <div className="row" key={s.id}>
-                  <button
-                    type="button"
-                    className="row-main"
-                    onClick={() => navigate(`/schedules/${s.id}`)}
-                  >
-                    <div className="txt">
-                      <b>{s.name}</b>
-                    </div>
-                    <span className="val">{s.enabled ? whenText(s) : "Off"}</span>
-                    <Icon name="chevron" className="chev" />
-                  </button>
-                  <Switch
-                    on={s.enabled}
-                    onChange={(enabled) =>
-                      saveSchedule(s.id, { enabled }).catch((err) => setError(errorText(err)))
-                    }
-                  />
-                </div>
-              ))}
-              {!shownSchedules.length && (
-                <div className="row">
-                  <span className="muted">None yet. Ask Hatbot in chat, or add one here.</span>
-                </div>
-              )}
-            </Group>
-            <WatcherList onError={setError} />
-            <Group title="Triggers">
-              {shownTriggers.map((t) => (
-                <div className="row" key={t.id}>
-                  <button
-                    type="button"
-                    className="row-main"
-                    onClick={() => navigate(`/triggers/${t.id}`)}
-                  >
-                    <div className="txt">
-                      <b>{t.name}</b>
-                    </div>
-                    <span className="val">{t.enabled ? KIND[t.kind] : "Off"}</span>
-                    <Icon name="chevron" className="chev" />
-                  </button>
-                  <Switch on={t.enabled} onChange={(enabled) => toggleTrigger(t, enabled)} />
-                </div>
-              ))}
-              {!shownTriggers.length && (
-                <div className="row">
-                  <span className="muted">None yet.</span>
-                </div>
-              )}
-            </Group>
+            <RoutineGroup
+              title="Schedules"
+              items={schedules}
+              path="/schedules"
+              value={(s) => (s.enabled ? whenText(s) : "Off")}
+              toggle={(s, enabled) => saveSchedule(s.id, { enabled })}
+              empty="None yet. Ask Hatbot in chat, or add one here."
+              onError={setError}
+            />
+            <RoutineGroup
+              title="Watchers"
+              items={watchers}
+              path="/watchers"
+              value={(w) =>
+                w.lastError ? trouble(w)?.short : w.enabled ? (w.lastValue ?? "") : "Off"
+              }
+              bad={(w) => !!w.lastError && w.errors > 0}
+              toggle={(w, enabled) => patchWatcher(w.id, { enabled })}
+              empty="None yet. Ask Hatbot to tell you when something changes."
+              onError={setError}
+            />
+            <RoutineGroup
+              title="Triggers"
+              items={triggers}
+              path="/triggers"
+              value={(t) => (t.enabled ? KIND[t.kind] : "Off")}
+              toggle={(t, enabled) =>
+                api<Trigger>(`/triggers/${t.id}`, { method: "PATCH", body: { enabled } }).then(
+                  putTrigger,
+                )
+              }
+              empty="None yet."
+              onError={setError}
+            />
           </>
         )}
       </div>
     </section>
+  );
+}
+
+/** One kind on the list, by name, each with its switch. */
+function RoutineGroup<T extends { id: number; name: string; enabled: boolean }>({
+  title,
+  items,
+  path,
+  value,
+  bad,
+  toggle,
+  empty,
+  onError,
+}: {
+  title: string;
+  /** As in the store, where a deleted one is null. */
+  items: Record<number, T | null>;
+  path: string;
+  /** What it's doing, beside its name. */
+  value: (item: T) => ReactNode;
+  bad?: (item: T) => boolean;
+  toggle: (item: T, enabled: boolean) => Promise<unknown>;
+  empty: string;
+  onError: (error: string) => void;
+}) {
+  const shown = Object.values(items)
+    .filter((x): x is T => Boolean(x))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return (
+    <Group title={title}>
+      {shown.map((x) => (
+        <div className="row" key={x.id}>
+          <Link className="row-main" to={`${path}/${x.id}`}>
+            <div className="txt">
+              <b>{x.name}</b>
+            </div>
+            <span className={bad?.(x) ? "val bad" : "val"}>{value(x)}</span>
+            <Icon name="chevron" className="chev" />
+          </Link>
+          <Switch
+            on={x.enabled}
+            onChange={(enabled) => toggle(x, enabled).catch((err) => onError(errorText(err)))}
+          />
+        </div>
+      ))}
+      {!shown.length && (
+        <div className="row">
+          <span className="muted">{empty}</span>
+        </div>
+      )}
+    </Group>
   );
 }
 
