@@ -23,7 +23,6 @@ import { botFolder, slugWords } from "../bots";
 import { MemoryConflict } from "../memory/store";
 import { BudgetError, estimateTokens, requestCeiling } from "../spend";
 import { pathOf, TRACKING } from "./policy";
-import { refreshing } from "./research-goal";
 import type { Tasks } from "./service";
 
 const WORKER_MODEL = "claude-haiku-5-5";
@@ -945,14 +944,12 @@ export async function finishResearch(
   };
 }
 
-/** A report's title, when and by which task, `note` if there's one, and the question. */
+/** A report's title, and when and by which task, with `note` if there's one. */
 function head(run: { tasks: Tasks; task: Task }, note: string): string {
   const { tasks, task } = run;
-  const question = refreshing(task.goal, null).replace(/\n+/g, " ");
   return [
     `# ${task.title}`,
     `_Researched ${localStamp(new Date(tasks.clock()))}, task #${task.id}.${note ? ` ${note}` : ""}_`,
-    `**Question:** ${question}`,
   ].join("\n\n");
 }
 
