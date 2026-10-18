@@ -41,6 +41,14 @@ enum Format {
     usd.formatted(.number.grouping(.never).precision(.fractionLength(0...2)).locale(locale))
   }
 
+  /// The limit a money field's text sets. Nil while it's blank or isn't a number: the field keeps its
+  /// last number, which Save mustn't send. `value` itself while the text is `value` as shown, to the
+  /// cent: a limit like 0.125 shows rounded and isn't a change until you type one.
+  static func typedAmount(_ text: String, editing value: Double, locale: Locale = .current) -> Double? {
+    guard let amount = amount(text, locale: locale) else { return nil }
+    return text == amountText(value, locale: locale) ? value : amount
+  }
+
   /// 950, 12.4k, 3.1M.
   /// 1000 or 12.5: no ".0" on whole numbers.
   static func number(_ n: Double) -> String {

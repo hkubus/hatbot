@@ -209,8 +209,11 @@ fi
 
 step "3/3 Release"
 : "${DESKTOP_ID:?}" "${DESKTOP_IP:?}"
-mkdir "$tmp/agent"
+# desktop-agent, with packages/shared copied where the workspace links it: it imports shared's keys.ts.
+mkdir -p "$tmp/agent/node_modules/@hatbot/shared"
 tar -C "$tmp/agent" -xf "$tmp/app.tar" --strip-components=2 apps/desktop-agent
+tar -C "$tmp/agent/node_modules/@hatbot/shared" -xf "$tmp/app.tar" --strip-components=2 \
+  packages/shared/package.json packages/shared/src
 [[ -z $src_sha ]] || echo "$src_sha" >"$tmp/agent/VERSION"
 tar -C "$tmp/agent" -cf "$tmp/agent.tar" .
 pct push "$DESKTOP_ID" "$tmp/agent.tar" /root/hatbot-desktop-agent.tar --perms 600

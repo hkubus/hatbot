@@ -1,6 +1,6 @@
 import type { Bot, BotIcon } from "@hatbot/shared";
 
-// Lucide-style icons (ISC-licensed shapes, redrawn as inline paths), from the prototype.
+// Lucide-style icons (ISC-licensed shapes, redrawn as inline paths).
 const PATHS = {
   hat: '<path d="M7 15.5V7c0-1.7 2.2-3 5-3s5 1.3 5 3v8.5"/><path d="M7 12.5c1.4.6 3.1 1 5 1s3.6-.4 5-1"/><path d="M2.5 16c1.4 2.1 5.2 3.5 9.5 3.5s8.1-1.4 9.5-3.5"/>',
   chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',

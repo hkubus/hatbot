@@ -23,13 +23,15 @@ export const runningProfile = (path = RUNNING) => read(path);
 
 /**
  * Switches Chromium to `id`'s profile, closing it if it's on another: its tabs go with it. Null where
- * there's only the one shared profile. `runningPath`: where the service says which one it's on.
+ * there's only the one shared profile. `runningPath`: where the service says which one it's on;
+ * `pollMs`: how long to wait between looks while Chromium comes back.
  */
 export async function useProfile(
   id: string,
   stateDir: string | null,
   browser: Browser,
   runningPath = RUNNING,
+  pollMs = 300,
 ): Promise<string | null> {
   if (!PROFILE.test(id)) throw new BrowserError("That isn't a profile name.");
   const running = runningProfile(runningPath);
@@ -39,7 +41,7 @@ export async function useProfile(
   await browser.quit();
   const end = Date.now() + SWITCH_TIMEOUT_MS;
   while (Date.now() < end) {
-    await Bun.sleep(300);
+    await Bun.sleep(pollMs);
     if (runningProfile(runningPath) === id && (await browser.devToolsUp(1000))) return id;
   }
   throw new BrowserError(`Chromium didn't come back on the ${id} profile.`);

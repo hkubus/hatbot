@@ -89,12 +89,6 @@ fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 git -C "$REPO" archive --format=tar "$to" >"$tmp/app.tar"
-# desktop-agent's part, taken out now: brain-deploy.sh removes the archive it's given.
-mkdir "$tmp/agent"
-tar -C "$tmp/agent" -xf "$tmp/app.tar" --strip-components=2 apps/desktop-agent
-echo "$to" >"$tmp/agent/VERSION"
-tar -C "$tmp/agent" -cf "$tmp/agent.tar" .
-
 # The brain first: if it fails and goes back to the old version, the desktop hasn't changed either.
 # A new brain copes with the old desktop-agent for the minute until it's updated.
 step="Updating the brain"
@@ -109,6 +103,13 @@ step="Updating the desktop"
 status running "$step"
 # shellcheck source=/dev/null
 if [[ -r $ETC/desktop.env ]] && source "$ETC/desktop.env" && [[ -n ${DESKTOP_AGENT_URL:-} ]]; then
+  # desktop-agent, with packages/shared copied where the workspace links it: it imports shared's keys.ts.
+  mkdir -p "$tmp/agent/node_modules/@hatbot/shared"
+  git -C "$REPO" archive "$to" apps/desktop-agent | tar -C "$tmp/agent" -xf - --strip-components=2
+  git -C "$REPO" archive "$to" packages/shared/package.json packages/shared/src |
+    tar -C "$tmp/agent/node_modules/@hatbot/shared" -xf - --strip-components=2
+  echo "$to" >"$tmp/agent/VERSION"
+  tar -C "$tmp/agent" -cf "$tmp/agent.tar" .
   agent() { printf 'Authorization: Bearer %s\n' "$DESKTOP_AGENT_TOKEN" | curl -sS -m 30 -H @- "$@"; }
   code=$(agent -o "$tmp/agent.out" -w '%{http_code}' --data-binary @"$tmp/agent.tar" \
     -H 'content-type: application/x-tar' "$DESKTOP_AGENT_URL/update" || true)

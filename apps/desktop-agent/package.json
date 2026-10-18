@@ -5,7 +5,7 @@
   "scripts": {
     "start": "bun src/main.ts"
   },
-  "devDependencies": {
+  "dependencies": {
     "@hatbot/shared": "workspace:*"
   }
 }

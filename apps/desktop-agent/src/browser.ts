@@ -9,6 +9,7 @@ import type {
   BrowserStateChange,
   BrowserTab,
 } from "@hatbot/shared/desktop";
+import { comboParts } from "@hatbot/shared/keys";
 import { between, keyGap, type Point, path } from "./human";
 import { keysym, modifier, modifiers } from "./keys";
 import {
@@ -150,8 +151,6 @@ class Connection {
 // the X keysym keys.ts reads a name as: the screen and the brain's checks go by the same lists.
 type KeyDef = { key: string; code: string; keyCode: number; text?: string };
 const ENTER: KeyDef = { key: "Enter", code: "Enter", keyCode: 13, text: "\r" };
-const PAGE_UP: KeyDef = { key: "PageUp", code: "PageUp", keyCode: 33 };
-const PAGE_DOWN: KeyDef = { key: "PageDown", code: "PageDown", keyCode: 34 };
 const NAMED_KEYS: Record<string, KeyDef> = {
   Return: ENTER,
   KP_Enter: ENTER,
@@ -166,10 +165,8 @@ const NAMED_KEYS: Record<string, KeyDef> = {
   Right: { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
   Home: { key: "Home", code: "Home", keyCode: 36 },
   End: { key: "End", code: "End", keyCode: 35 },
-  Page_Up: PAGE_UP,
-  Prior: PAGE_UP,
-  Page_Down: PAGE_DOWN,
-  Next: PAGE_DOWN,
+  Page_Up: { key: "PageUp", code: "PageUp", keyCode: 33 },
+  Page_Down: { key: "PageDown", code: "PageDown", keyCode: 34 },
   space: { key: " ", code: "Space", keyCode: 32, text: " " },
   Menu: { key: "ContextMenu", code: "ContextMenu", keyCode: 93 },
   Caps_Lock: { key: "CapsLock", code: "CapsLock", keyCode: 20 },
@@ -246,8 +243,7 @@ function keyDef(name: string): KeyDef {
 function chord(text: string): { mods: (KeyDef & { bit: number })[]; key: KeyDef | null } {
   const t = text.trim();
   if (!t) throw new BrowserError("Empty key name.");
-  const parts =
-    t === "+" ? ["+"] : t.endsWith("++") ? [...t.slice(0, -2).split("+"), "+"] : t.split("+");
+  const parts = comboParts(t);
   if (parts.some((p) => !p)) throw new BrowserError(`Can't read the key combination "${text}".`);
   const mods: (KeyDef & { bit: number })[] = [];
   let key: KeyDef | null = null;

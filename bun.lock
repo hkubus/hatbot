@@ -25,7 +25,7 @@
     },
     "apps/desktop-agent": {
       "name": "@hatbot/desktop-agent",
-      "devDependencies": {
+      "dependencies": {
         "@hatbot/shared": "workspace:*",
       },
     },

@@ -149,9 +149,8 @@ private struct MoneyField: View {
     }
     .onAppear { text = Format.amountText(value) }
     .onChange(of: text) { _, typed in
-      if let amount = Format.amount(typed) {
-        // Shown to the cent: a limit like 0.125 stays itself until you type another.
-        if typed != Format.amountText(value) { value = amount }
+      if let amount = Format.typedAmount(typed, editing: value) {
+        if amount != value { value = amount }
         unreadable.remove(label)
       } else {
         unreadable.insert(label)

@@ -85,6 +85,8 @@ final class AppStore {
   @ObservationIgnored private var refreshing = false
   /// News came while the chats were loading: load them once more after.
   @ObservationIgnored private var refreshAgain = false
+  /// How long the chats wait for the rest of a burst of news before they load.
+  @ObservationIgnored var refreshDelay: Duration = .milliseconds(300)
   /// Seen messages not yet told to the brain, sent together.
   @ObservationIgnored private var seenQueue: [Int] = []
   @ObservationIgnored private var seenFlush: Task<Void, Never>?
@@ -516,7 +518,7 @@ final class AppStore {
     Task {
       repeat {
         refreshAgain = false
-        try? await Task.sleep(for: .milliseconds(300))
+        try? await Task.sleep(for: refreshDelay)
         if let chats: [Conversation] = try? await api.get("/conversations") { conversations = chats }
       } while refreshAgain
       refreshing = false
