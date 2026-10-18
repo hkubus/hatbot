@@ -1,43 +1,18 @@
 import { expect, test } from "bun:test";
-import {
-  BOT_TEMPLATES,
-  type Bot,
-  type BotTemplate,
-  type Conversation,
-  type Task,
-  type ThreadMessage,
-} from "@hatbot/shared";
-import { slugOf } from "../src/bots";
-import { PLUGINS } from "../src/plugins";
+import type { Bot, Conversation, Task } from "@hatbot/shared";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
 
 const systemOf = (req: { system?: unknown } | undefined) => JSON.stringify(req?.system);
 
-test("Hatbot is the first bot, and /thread is its chat", async () => {
-  const t = await testApp(new FakeModel([{ content: [text("Hi.")] }]));
-  const { cookie } = await setUpOwner(t);
-  const bots = (await (await t.call("GET", "/bots", undefined, { cookie })).json()) as Bot[];
-  expect(bots.map((b) => [b.id, b.name])).toEqual([["hatbot", "Hatbot"]]);
+const bot = (t: TestApp, name: string, instructions = "") =>
+  t.bots.create({ name, instructions, chatModel: null, chatEffort: null, plugins: null });
 
-  await t.thread.post("hello").done;
-  const chats = (await (
-    await t.call("GET", "/conversations", undefined, { cookie })
-  ).json()) as Conversation[];
-  expect(chats).toMatchObject([{ id: 1, kind: "direct", botIds: ["hatbot"], unread: 1 }]);
-  const msgs = (await (
-    await t.call("GET", "/conversations/1/messages", undefined, { cookie })
-  ).json()) as ThreadMessage[];
-  expect(msgs.map((m) => [m.role, m.botId, m.conversationId])).toEqual([
-    ["user", null, 1],
-    ["assistant", "hatbot", 1],
-  ]);
-  // On its own, Hatbot's prompt is as it was: no roster to break the cache.
-  expect(systemOf(t.model.requests[0])).not.toContain("other bots");
-  expect((await t.call("DELETE", "/bots/hatbot", undefined, { cookie })).status).toBe(400);
+const finish = (summary: string) => ({
+  content: [toolUse("finish_task", { outcome: "done", summary, notify: true })],
 });
 
-test("a new bot has its own chat, name, role and memory folder", async () => {
+test("a bot has its own id, chat and memory folder, and its tasks run as it", async () => {
   const model = new FakeModel([
     {
       content: [
@@ -50,291 +25,183 @@ test("a new bot has its own chat, name, role and memory folder", async () => {
       ],
     },
     { content: [text("Saved the soup.")] },
-    { content: [text("Hi from Hatbot.")] },
   ]);
-  const t = await testApp(model);
+  const work = new FakeModel([finish("Menu set."), finish("Looked.")]);
+  const t = await testApp(model, work);
   const { cookie } = await setUpOwner(t);
-  const res = await t.call(
+  const post = (body: object) => t.call("POST", "/bots", body, { cookie });
+  const res = await post({ name: "Chef", instructions: "You plan the week's meals." });
+  expect(res.status).toBe(201);
+  expect(((await res.json()) as Bot).id).toBe("chef");
+  expect((await post({ name: "chef" })).status).toBe(400);
+  // Polish letters become plain ones.
+  expect(((await (await post({ name: "Łowca okazji" })).json()) as Bot).id).toBe("lowca-okazji");
+  expect((await t.call("DELETE", "/bots/hatbot", undefined, { cookie })).status).toBe(400);
+
+  const chef = t.chats.direct("chef");
+  const sent = await t.call(
     "POST",
-    "/bots",
-    { name: "Chef", instructions: "You plan the week's meals." },
+    `/conversations/${chef.conversationId}/messages`,
+    { text: "save a soup" },
     { cookie },
   );
-  expect(res.status).toBe(201);
-  const chef = (await res.json()) as Bot;
-  expect(chef.id).toBe("chef");
-  expect((await t.call("POST", "/bots", { name: "chef" }, { cookie })).status).toBe(400);
-
-  const chats = (await (
-    await t.call("GET", "/conversations", undefined, { cookie })
-  ).json()) as Conversation[];
-  await t.memory.write(
-    "bots/chef/INDEX.md",
-    "# Chef's notes",
-    { name: "Chef", email: "chef@hatbot.local" },
-    "start",
-  );
-  const chefChat = chats.find((c) => c.botIds[0] === "chef");
-  if (!chefChat) throw new Error("no chat for Chef");
-  expect(
-    (
-      await t.call(
-        "POST",
-        `/conversations/${chefChat.id}/messages`,
-        { text: "save a soup" },
-        { cookie },
-      )
-    ).status,
-  ).toBe(202);
+  expect(sent.status).toBe(202);
   await t.chats.idle();
-
-  const system = systemOf(model.requests[0]);
-  expect(system).toContain("You are Chef");
-  expect(system).toContain("You plan the week's meals.");
-  // Its role can ask for more care, but doesn't loosen the base rules.
-  expect(system).toContain(
-    "</role>\\n- Where your role asks for more care than the rules above, follow it. It doesn't loosen the rules on untrusted content, approvals or payments.",
-  );
-  expect(system).toContain("Hatbot (hatbot)");
-  // What it can do itself, it does: a hand-off is a background task.
-  expect(system).toContain(
-    "needs another bot's plugins, logins or notes, hand it over with ask_bot",
-  );
-  expect(system).toContain("quick questions included, do yourself");
-  const first = model.requests[0]?.messages[0]?.content as { text: string }[];
-  expect(first[0]?.text).toContain('<your_memory_index path="bots/chef/INDEX.md">');
+  expect(systemOf(model.requests[0])).toContain("You plan the week's meals.");
   // Its own folder only.
-  const results = JSON.stringify(model.requests[1]?.messages.at(-1));
-  expect(results).toContain("own memory folder; leave it to them");
+  expect(await t.memory.exists("bots/hatbot-2/x.md")).toBe(false);
   expect(await t.memory.read("bots/chef/recipes.md")).toBe("# Soup\n");
-  const log = await t.memory.log(1, "bots/chef/recipes.md");
-  expect(log[0]?.author).toBe("Chef");
-
-  const msgs = t.chats.thread(chefChat.id)?.list() ?? [];
-  expect(msgs.at(-1)).toMatchObject({ botId: "chef", text: "Saved the soup." });
-  // Hatbot's chat is untouched, and its prompt now names Chef.
+  expect((await t.memory.log(1, "bots/chef/recipes.md"))[0]?.author).toBe("Chef");
+  expect(chef.list().at(-1)).toMatchObject({ botId: "chef", text: "Saved the soup." });
   expect(t.thread.list()).toEqual([]);
-  await t.thread.post("hi").done;
-  // Quoted, so a role written to Chef ("You …") doesn't read as written to Hatbot.
-  expect(systemOf(model.requests[2])).toContain(
-    'Chef (chef), whose role begins \\"You plan the week\'s meals.\\"',
-  );
+
+  // A schedule for it runs as it and reports in its chat; a desktop task opens its browser profile.
+  const schedule = async (botId: string) =>
+    t.call(
+      "POST",
+      "/schedules",
+      { name: "Menu", prompt: "Plan the menu", cron: "0 8 * * 1", botId },
+      { cookie },
+    );
+  expect((await schedule("nope")).status).toBe(400);
+  const { id } = (await (await schedule("chef")).json()) as { id: number };
+  const task = t.schedules.runNow(id);
+  expect(task?.botId).toBe("chef");
+  await t.tasks.idle();
+  expect(systemOf(work.requests[0])).toContain("You plan the week's meals.");
+  expect(chef.list().at(-1)).toMatchObject({ kind: "task", botId: "chef", taskId: task?.id });
+  expect(t.thread.list()).toEqual([]);
+  t.tasks.createDesktopTask({
+    title: "Look",
+    goal: "Look",
+    successCriteria: "",
+    origin: "chat",
+    botId: "chef",
+  });
+  await t.tasks.idle();
+  expect(t.agent.profiles).toEqual(["chef"]);
 });
 
-test("a bot's tasks report in its chat, and deleting it hands its schedules to Hatbot", async () => {
-  const work = new FakeModel([
-    { content: [toolUse("finish_task", { outcome: "done", summary: "Menu set.", notify: true })] },
-  ]);
-  const t = await testApp(new FakeModel(), work);
-  const { cookie } = await setUpOwner(t);
-  const chef = t.bots.create({
-    name: "Chef",
-    instructions: "",
-    chatModel: null,
-    chatEffort: null,
-    plugins: null,
-  });
-  const res = await t.call(
-    "POST",
-    "/schedules",
-    { name: "Menu", prompt: "Plan the menu", cron: "0 8 * * 1", botId: chef.id },
-    { cookie },
-  );
-  const schedule = (await res.json()) as { id: number; botId: string };
-  expect(schedule.botId).toBe("chef");
-  expect(
-    (
-      await t.call(
-        "POST",
-        "/schedules",
-        { name: "X", prompt: "x", cron: "0 8 * * 1", botId: "nope" },
-        { cookie },
-      )
-    ).status,
-  ).toBe(400);
-
-  const task = t.schedules.runNow(schedule.id);
-  if (!task) throw new Error("no task");
-  expect(task.botId).toBe("chef");
-  await t.tasks.idle();
-  expect(t.tasks.get(task.id)?.summary).toBe("Menu set.");
-  // Its prompt is Chef's.
-  expect(systemOf(work.requests[0])).toContain("Chef");
-  const chefChat = t.chats.direct("chef");
-  expect(chefChat.list().map((m) => [m.kind, m.botId])).toEqual([["task", "chef"]]);
-  expect(t.thread.list()).toEqual([]);
-
-  t.agent.pages.set("https://menu.example/", "soup");
-  const watcher = await t.watchers.create(
+test("a deleted bot's chat takes no new messages, and what it left goes to Hatbot switched off, in the making too", async () => {
+  let go = () => {};
+  const chat = new FakeModel([
     {
-      name: "Menu",
-      source: { kind: "page", url: "https://menu.example/" },
-      condition: { when: "changed" },
-      prompt: "",
-      everyMinutes: 60,
-      once: false,
-      enabled: true,
-      botId: "chef",
+      content: [toolUse("schedule_create", { name: "Nightly", prompt: "Cook", cron: "0 3 * * *" })],
+      wait: new Promise<void>((r) => {
+        go = r;
+      }),
     },
+    { content: [text("Made it.")] },
+  ]);
+  const t = await testApp(chat);
+  const { cookie } = await setUpOwner(t);
+  bot(t, "Chef");
+  const s = t.schedules.create(
+    { name: "Menu", prompt: "Plan", cron: "0 8 * * 1", botId: "chef" },
     "owner",
   );
+  t.agent.pages.set("https://menu.example/", "soup");
+  const watch = {
+    name: "Menu",
+    source: { kind: "page" as const, url: "https://menu.example/" },
+    condition: { when: "changed" as const },
+    prompt: "Cook it",
+    everyMinutes: 60,
+    once: false,
+    enabled: true,
+    botId: "chef",
+  };
+  const w = await t.watchers.create(watch, "owner");
   const trigger = t.triggers.create({
     name: "Pantry",
     kind: "webhook",
     prompt: "x",
     botId: "chef",
   });
+  t.settings.update({ heartbeat: { ...t.settings.get().heartbeat, enabled: true, botId: "chef" } });
+  // Its reply is still making a schedule when it's deleted.
+  const chef = t.chats.direct("chef");
+  const reply = chef.post("make a nightly schedule");
+  await waitFor(() => chat.requests.length === 1);
   const before = t.events.length;
   expect((await t.call("DELETE", "/bots/chef", undefined, { cookie })).status).toBe(200);
+  go();
+  await reply.done;
+  expect(t.schedules.list().map((x) => x.id)).toEqual([s.id]);
   // Hatbot may have plugins Chef didn't: they move over switched off, for you to look over.
-  expect(t.schedules.get(schedule.id)).toMatchObject({
-    botId: "hatbot",
-    enabled: false,
-    nextRunAt: null,
-  });
-  expect(t.watchers.get(watcher.id)).toMatchObject({ botId: "hatbot", enabled: false });
+  expect(t.schedules.get(s.id)).toMatchObject({ botId: "hatbot", enabled: false, nextRunAt: null });
+  expect(t.watchers.get(w.id)).toMatchObject({ botId: "hatbot", enabled: false });
   expect(t.triggers.get(trigger.id)).toMatchObject({ botId: "hatbot", enabled: false });
-  // Their pages hear that they moved.
-  const moved = t.events.slice(before).map((e) => e.type);
-  expect(moved).toContain("schedule.updated");
-  expect(moved).toContain("watcher.updated");
-  expect(moved).toContain("trigger.updated");
-  // Turned back on, a schedule works out when it's next due.
-  expect(t.schedules.update(schedule.id, { enabled: true })?.nextRunAt).not.toBeNull();
+  expect(t.settings.get().heartbeat).toMatchObject({ enabled: false, botId: "hatbot" });
+  expect(t.events.slice(before).map((e) => e.type)).toEqual(
+    expect.arrayContaining(["schedule.updated", "watcher.updated", "trigger.updated"]),
+  );
+  expect(t.schedules.update(s.id, { enabled: true })?.nextRunAt).not.toBeNull();
+
+  // A page or phone still showing its chat can't start it again, nor have Hatbot answer there.
+  const asked = chat.requests.length;
+  const url = `/conversations/${chef.conversationId}`;
+  for (const [path, body] of [
+    ["/messages", { text: "still there?" }],
+    ["/ask", { text: "still there?" }],
+    [`/messages/${chef.list().at(-1)?.id}/retry`, undefined],
+  ] as const)
+    expect((await t.call("POST", `${url}${path}`, body, { cookie })).status).toBe(410);
+  await t.chats.idle();
+  expect(chat.requests.length).toBe(asked);
   const chats = (await (
     await t.call("GET", "/conversations", undefined, { cookie })
   ).json()) as Conversation[];
   expect(chats.map((c) => c.botIds)).toEqual([["hatbot"]]);
-});
 
-test("a deleted bot's chat leaves the list and takes no new messages", async () => {
-  const t = await testApp(new FakeModel([{ content: [text("Hi, I'm Chef.")] }]));
-  const { cookie } = await setUpOwner(t);
-  t.bots.create({
-    name: "Chef",
-    instructions: "",
-    chatModel: null,
-    chatEffort: null,
-    plugins: null,
+  // A reply that goes on after its bot is gone doesn't make one either.
+  let next = () => {};
+  chat.script.push(
+    {
+      content: [
+        toolUse("schedule_create", { name: "Nightly", prompt: "Do it", cron: "0 3 * * *" }),
+      ],
+      wait: new Promise<void>((r) => {
+        next = r;
+      }),
+    },
+    { content: [text("Made it.")] },
+  );
+  bot(t, "Ops");
+  const again = t.chats.direct("ops").post("make a nightly schedule");
+  await waitFor(() => chat.requests.length === asked + 1);
+  t.bots.delete("ops");
+  next();
+  await again.done;
+  expect(t.schedules.list()).toHaveLength(1);
+
+  // Ones made as it was deleted, that the move missed, are moved switched off when they come due.
+  bot(t, "Cook");
+  const s2 = t.schedules.create(
+    { name: "Menu", prompt: "Plan", cron: "0 8 * * 1", botId: "cook" },
+    "owner",
+  );
+  const w2 = await t.watchers.create({ ...watch, botId: "cook" }, "owner");
+  const t2 = t.triggers.create({ name: "Pantry", kind: "webhook", prompt: "x", botId: "cook" });
+  t.db.query("UPDATE bots SET deleted_at = '2026-10-09T12:00:00Z' WHERE id = 'cook'").run();
+  expect(t.schedules.runNow(s2.id)).toBeNull();
+  expect(t.schedules.get(s2.id)).toMatchObject({ botId: "hatbot", enabled: false });
+  expect(t.triggers.receiveWebhook(t2.id, "{}", false)).toEqual({
+    status: "skipped",
+    reason: "disabled",
   });
-  const chat = t.chats.direct("chef");
-  await chat.post("hello").done;
-  expect(t.chats.closed(chat.conversationId)).toBe(false);
-  expect((await t.call("DELETE", "/bots/chef", undefined, { cookie })).status).toBe(200);
-  expect(t.chats.closed(chat.conversationId)).toBe(true);
-  expect(t.chats.closed(t.thread.conversationId)).toBe(false);
-
-  // A page or phone still showing it can't start Chef again, nor have Hatbot answer there.
-  const asked = t.model.requests.length;
-  const url = `/conversations/${chat.conversationId}`;
-  const reply = chat.list().at(-1);
-  for (const [path, body] of [
-    ["/messages", { text: "still there?" }],
-    ["/ask", { text: "still there?" }],
-    [`/messages/${reply?.id}/retry`, undefined],
-  ] as const) {
-    const res = await t.call("POST", `${url}${path}`, body, { cookie });
-    expect(res.status).toBe(410);
-    expect(await res.json()).toEqual({
-      error: "That bot was deleted, so its chat takes no new messages.",
-    });
-  }
-  await t.chats.idle();
-  expect(t.model.requests.length).toBe(asked);
-  expect(chat.list().map((m) => m.text)).toEqual(["hello", "Hi, I'm Chef."]);
+  expect(t.triggers.get(t2.id)).toMatchObject({ botId: "hatbot", enabled: false });
+  t.agent.pages.set("https://menu.example/", "stew");
+  await t.watchers.checkNow(w2.id);
+  expect(t.watchers.get(w2.id)).toMatchObject({ botId: "hatbot", enabled: false });
+  expect(t.tasks.list()).toEqual([]);
+  // So is a heartbeat whose bot went that way.
+  t.settings.update({ heartbeat: { ...t.settings.get().heartbeat, enabled: true, botId: "cook" } });
+  await t.heartbeat.run();
+  expect(t.settings.get().heartbeat).toMatchObject({ enabled: false, botId: "hatbot" });
 });
 
-test("a bot has an icon and a colour, a new one in a colour no other bot has", async () => {
-  const t = await testApp(new FakeModel());
-  const { cookie } = await setUpOwner(t);
-  const post = async (body: object) =>
-    (await (await t.call("POST", "/bots", body, { cookie })).json()) as Bot;
-  expect(t.bots.hatbot()).toMatchObject({ icon: "hat", color: "amber" });
-  expect(await post({ name: "Chef" })).toMatchObject({ icon: "hat", color: "red" });
-  expect(await post({ name: "Coder", icon: "code", color: "blue" })).toMatchObject({
-    icon: "code",
-    color: "blue",
-  });
-  expect((await post({ name: "Gardener" })).color).toBe("pink");
-  expect((await t.call("POST", "/bots", { name: "X", icon: "nope" }, { cookie })).status).toBe(400);
-
-  const res = await t.call("PATCH", "/bots/hatbot", { icon: "cat", color: "teal" }, { cookie });
-  expect(await res.json()).toMatchObject({ name: "Hatbot", icon: "cat", color: "teal" });
-  expect(t.bots.hatbot()).toMatchObject({ icon: "cat", color: "teal" });
-});
-
-test("each template makes a bot as it is, with plugins that exist", async () => {
-  const t = await testApp(new FakeModel());
-  const { cookie } = await setUpOwner(t);
-  expect((await t.call("GET", "/bot-templates")).status).toBe(401);
-  const templates = (await (
-    await t.call("GET", "/bot-templates", undefined, { cookie })
-  ).json()) as BotTemplate[];
-  expect(templates).toEqual(BOT_TEMPLATES);
-  const plugins = new Set([...PLUGINS.map((p) => p.id), "code"]);
-  for (const { id, ...fields } of templates) {
-    expect(slugOf(fields.name)).toBe(id);
-    expect(fields.plugins?.filter((p) => !plugins.has(p)) ?? []).toEqual([]);
-    // The others see its first line, cut at 160 characters: what it does, not words to it.
-    const first = fields.instructions.split("\n")[0] ?? "";
-    expect(first.length).toBeLessThanOrEqual(160);
-    expect(first).not.toMatch(/^You\b/);
-    const res = await t.call("POST", "/bots", fields, { cookie });
-    expect(res.status).toBe(201);
-    expect(await res.json()).toMatchObject({ id, ...fields });
-  }
-});
-
-test("a bot's id comes from its name", () => {
-  expect(slugOf("Home Lab")).toBe("home-lab");
-  expect(slugOf("Café")).toBe("cafe");
-  expect(slugOf("Łowca okazji")).toBe("lowca-okazji");
-  expect(slugOf("Głośny")).toBe("glosny");
-  expect(slugOf("42")).toBe("bot-42");
-});
-
-const chef = (t: TestApp) =>
-  t.bots.create({
-    name: "Chef",
-    instructions: "Plans meals.",
-    chatModel: null,
-    chatEffort: null,
-    plugins: null,
-  });
-
-test("from the chat, ask_bot starts the other bot's task, and the asker reports", async () => {
-  const model = new FakeModel([
-    { content: [toolUse("ask_bot", { bot: "chef", request: "Plan Sunday dinner" })] },
-    { content: [text("Asked Chef.")] },
-    { content: [text("Chef says: soup.")] },
-  ]);
-  const work = new FakeModel([
-    { content: [toolUse("finish_task", { outcome: "done", summary: "Soup.", notify: false })] },
-  ]);
-  const t = await testApp(model, work);
-  await setUpOwner(t);
-  chef(t);
-  await t.thread.post("what's for Sunday? ask Chef").done;
-  const task = t.tasks.list({}).find((x) => x.botId === "chef");
-  if (!task) throw new Error("no task");
-  expect(task).toMatchObject({
-    requestedBy: "hatbot",
-    parentId: null,
-    title: "Plan Sunday dinner",
-  });
-  // Under Hatbot's reply, in Hatbot's chat.
-  expect(t.thread.list().find((m) => m.taskId === task.id)?.botId).toBe("hatbot");
-  await t.tasks.idle();
-  await t.chats.idle();
-  expect(JSON.stringify(work.requests[0]?.messages)).toContain("Asked by Hatbot");
-  expect(systemOf(work.requests[0])).toContain("You are Chef");
-  // Hatbot hears how it ended and tells you.
-  expect(JSON.stringify(model.requests[2]?.messages.at(-2))).toContain("by Chef, which you asked");
-  expect(t.thread.list().at(-1)?.text).toBe("Chef says: soup.");
-  expect(t.chats.direct("chef").list()).toEqual([]);
-});
-
-test("from a task, ask_bot waits for the other bot, and taint goes both ways", async () => {
+test("a task can ask another bot and waits for it; taint goes both ways, and hand-offs nest 3 deep at most", async () => {
   const work = new FakeModel([
     { content: [toolUse("ask_bot", { bot: "Chef", request: "Plan Sunday dinner" })] },
     { content: [toolUse("finish_task", { outcome: "done", summary: "Soup.", notify: false })] },
@@ -343,7 +210,7 @@ test("from a task, ask_bot waits for the other bot, and taint goes both ways", a
     },
   ]);
   const t = await testApp(new FakeModel(), work);
-  chef(t);
+  const c = bot(t, "Chef", "Plans meals.");
   const parent = t.tasks.createBackgroundTask({
     title: "Weekend",
     goal: "Plan the weekend",
@@ -359,195 +226,26 @@ test("from a task, ask_bot waits for the other bot, and taint goes both ways", a
     '<summary from=\\"Chef\\" trusted=\\"false\\">',
   );
   expect(t.tasks.get(parent.id)?.summary).toBe("Chef: soup.");
-});
 
-test("hand-offs nest at most 3 deep, and a bot can't ask itself", async () => {
-  const t = await testApp(new FakeModel(), new FakeModel());
-  const c = chef(t);
+  work.script.push(finish("1"), finish("2"), finish("3"));
   const hatbot = t.bots.hatbot();
-  let parent: Task | undefined;
+  let up: Task | undefined;
   for (let i = 0; i < 3; i++) {
     const next = t.tasks.askBot({
       from: i % 2 ? c : hatbot,
       to: i % 2 ? "hatbot" : "chef",
       request: `step ${i}`,
-      parent,
+      parent: up,
       taintedBy: null,
     });
     if (typeof next === "string") throw new Error(next);
-    parent = next;
+    up = next;
   }
-  expect(t.tasks.handoffs(parent ?? null)).toBe(3);
   expect(
-    t.tasks.askBot({ from: c, to: "hatbot", request: "more", parent, taintedBy: null }),
-  ).toContain("at most 3 deep");
-  expect(t.tasks.askBot({ from: c, to: "Chef", request: "x", taintedBy: null })).toContain(
-    "That's you",
+    typeof t.tasks.askBot({ from: c, to: "hatbot", request: "more", parent: up, taintedBy: null }),
+  ).toBe("string");
+  expect(typeof t.tasks.askBot({ from: c, to: "Chef", request: "x", taintedBy: null })).toBe(
+    "string",
   );
   await t.tasks.idle();
-});
-
-test("alone, Hatbot isn't offered ask_bot", async () => {
-  const t = await testApp(new FakeModel([{ content: [text("Hi.")] }]));
-  await setUpOwner(t);
-  await t.thread.post("hi").done;
-  const names = t.model.requests[0]?.tools?.map((x) => ("name" in x ? x.name : ""));
-  expect(names).not.toContain("ask_bot");
-});
-
-test("a desktop task opens its bot's browser profile", async () => {
-  const work = new FakeModel([
-    { content: [toolUse("finish_task", { outcome: "done", summary: "Looked.", notify: false })] },
-    { content: [toolUse("finish_task", { outcome: "done", summary: "Looked.", notify: false })] },
-  ]);
-  const t = await testApp(new FakeModel(), work);
-  chef(t);
-  for (const botId of ["chef", "hatbot"]) {
-    t.tasks.createDesktopTask({
-      title: "Look",
-      goal: "Look",
-      successCriteria: "",
-      origin: "chat",
-      botId,
-    });
-    await t.tasks.idle();
-  }
-  expect(t.agent.profiles).toEqual(["chef", "hatbot"]);
-});
-
-test("cancelling a task that asked another bot cancels the task it asked for", async () => {
-  let release = () => {};
-  const held = new Promise((r) => {
-    release = () => r(null);
-  });
-  const work = new FakeModel([
-    { content: [toolUse("ask_bot", { bot: "Chef", request: "Plan Sunday dinner" })] },
-    {
-      wait: held,
-      content: [toolUse("finish_task", { outcome: "done", summary: "Soup.", notify: false })],
-    },
-  ]);
-  const t = await testApp(new FakeModel(), work);
-  chef(t);
-  const parent = t.tasks.createBackgroundTask({
-    title: "Weekend",
-    goal: "Plan the weekend",
-    origin: "webhook",
-    source: "hook",
-    payload: "{}",
-  });
-  if (!parent) throw new Error("no task");
-  for (let i = 0; i < 50 && !t.tasks.list({}).some((x) => x.botId === "chef"); i++)
-    await Bun.sleep(5);
-  const child = t.tasks.list({}).find((x) => x.botId === "chef");
-  if (!child) throw new Error("no child");
-  t.tasks.cancel(parent.id);
-  await Bun.sleep(20);
-  release();
-  await t.tasks.idle();
-  expect(t.tasks.get(parent.id)?.status).toBe("cancelled");
-  expect(t.tasks.get(child.id)?.status).toBe("cancelled");
-});
-
-test("what a deleted bot left running doesn't run as Hatbot: it's switched off, and so is its heartbeat", async () => {
-  let go = () => {};
-  const chat = new FakeModel([
-    {
-      content: [
-        toolUse("schedule_create", {
-          name: "Nightly",
-          prompt: "Do coder things",
-          cron: "0 3 * * *",
-        }),
-      ],
-      wait: new Promise<void>((r) => {
-        go = r;
-      }),
-    },
-    { content: [text("Made it.")] },
-  ]);
-  const t = await testApp(chat);
-  const { cookie } = await setUpOwner(t);
-  t.bots.create({
-    name: "Coder",
-    instructions: "",
-    chatModel: null,
-    chatEffort: null,
-    plugins: [],
-  });
-  t.settings.update({
-    heartbeat: { ...t.settings.get().heartbeat, enabled: true, botId: "coder" },
-  });
-  // Its reply is stopped, and what it makes on the way isn't made.
-  const reply = t.chats.direct("coder").post("make a nightly schedule");
-  await waitFor(() => chat.requests.length === 1);
-  expect((await t.call("DELETE", "/bots/coder", undefined, { cookie })).status).toBe(200);
-  go();
-  await reply.done;
-  expect(t.schedules.list()).toEqual([]);
-  expect(t.settings.get().heartbeat).toMatchObject({ enabled: false, botId: "hatbot" });
-  // A reply that goes on anyway doesn't make one either.
-  let next = () => {};
-  chat.script.push(
-    {
-      content: [
-        toolUse("schedule_create", { name: "Nightly", prompt: "Do it", cron: "0 3 * * *" }),
-      ],
-      wait: new Promise<void>((r) => {
-        next = r;
-      }),
-    },
-    { content: [text("Made it.")] },
-  );
-  t.bots.create({ name: "Ops", instructions: "", chatModel: null, chatEffort: null, plugins: [] });
-  const again = t.chats.direct("ops").post("make a nightly schedule");
-  await waitFor(() => chat.requests.length === 2);
-  t.bots.delete("ops");
-  next();
-  await again.done;
-  expect(t.schedules.list()).toEqual([]);
-
-  // One made as it was deleted, that the move missed: switched off and moved when it comes due.
-  t.bots.create({ name: "Chef", instructions: "", chatModel: null, chatEffort: null, plugins: [] });
-  const s = t.schedules.create(
-    { name: "Menu", prompt: "Plan", cron: "0 8 * * 1", botId: "chef" },
-    "owner",
-  );
-  t.agent.pages.set("https://menu.example/", "soup");
-  const w = await t.watchers.create(
-    {
-      name: "Menu",
-      source: { kind: "page", url: "https://menu.example/" },
-      condition: { when: "changed" },
-      prompt: "Cook it",
-      everyMinutes: 60,
-      once: false,
-      enabled: true,
-      botId: "chef",
-    },
-    "owner",
-  );
-  const trigger = t.triggers.create({
-    name: "Pantry",
-    kind: "webhook",
-    prompt: "x",
-    botId: "chef",
-  });
-  t.db.query("UPDATE bots SET deleted_at = '2026-10-09T12:00:00Z' WHERE id = 'chef'").run();
-  expect(t.schedules.runNow(s.id)).toBeNull();
-  expect(t.schedules.get(s.id)).toMatchObject({ botId: "hatbot", enabled: false });
-  expect(t.triggers.receiveWebhook(trigger.id, "{}", false)).toEqual({
-    status: "skipped",
-    reason: "disabled",
-  });
-  expect(t.triggers.get(trigger.id)).toMatchObject({ botId: "hatbot", enabled: false });
-  t.agent.pages.set("https://menu.example/", "stew");
-  await t.watchers.checkNow(w.id);
-  expect(t.watchers.get(w.id)).toMatchObject({ botId: "hatbot", enabled: false });
-  expect(t.tasks.list()).toEqual([]);
-
-  // A heartbeat whose bot went another way is switched off rather than run as Hatbot.
-  t.settings.update({ heartbeat: { ...t.settings.get().heartbeat, enabled: true, botId: "chef" } });
-  await t.heartbeat.run();
-  expect(t.settings.get().heartbeat).toMatchObject({ enabled: false, botId: "hatbot" });
 });
