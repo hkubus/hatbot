@@ -37,6 +37,12 @@ export function toolOf(t: TestApp, name: string): PluginTool {
 
 const running: TestApp[] = [];
 
+/** Stops `t`'s plugins after the test, as pluginApp() does, for an app made another way. */
+export function track<T extends TestApp>(t: T): T {
+  running.push(t);
+  return t;
+}
+
 /**
  * A test app with `plugin` switched on. `chat` answers the chat; `work` answers tasks. Call
  * stopPluginsAfterEach() in the file so its plugins stop even when a test fails.
@@ -53,7 +59,7 @@ export async function pluginApp(
     [plugin],
     env,
   );
-  running.push(t);
+  track(t);
   const info = await t.plugins.update(plugin.id, {
     enabled: true,
     ...(opts.config === undefined ? {} : { config: opts.config }),
