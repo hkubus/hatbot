@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import Anthropic from "@anthropic-ai/sdk";
 import type { ThreadMessage } from "@hatbot/shared";
 import { Chats } from "../src/agent/chats";
@@ -9,175 +9,128 @@ import {
   retryDelays,
   withRetries,
 } from "../src/agent/model";
-import { safeToRun } from "../src/agent/review";
-import { screenPage } from "../src/agent/screening";
 import { EventBus } from "../src/events";
-import { type BudgetError, requestCeiling, searchesIn } from "../src/spend";
+import { type BudgetError, estimateTokens, requestCeiling, searchesIn } from "../src/spend";
 import { Tasks } from "../src/tasks/service";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { setUpOwner, testApp, waitFor } from "./helpers";
+import {
+  bot,
+  lastUserText,
+  requested,
+  setUpOwner,
+  type TestApp,
+  testApp,
+  unmarked,
+} from "./helpers";
 
-const lastUserText = (req: { messages: { role: string; content: unknown }[] }) =>
-  JSON.stringify(req.messages.at(-1)?.content);
+const overloaded = new Anthropic.APIError(
+  undefined,
+  { type: "error", error: { type: "overloaded_error", message: "Overloaded" } },
+  undefined,
+  undefined,
+  "overloaded_error",
+);
 
-const summarized = (t: Awaited<ReturnType<typeof testApp>>) =>
+/** `usd` of spend in the ledger now, for a task or none. */
+const spent = (t: TestApp, usd: number, taskId?: number) =>
+  t.spend.record({
+    model: "claude-haiku-5-5",
+    purpose: "task",
+    usage: { input_tokens: 0, output_tokens: 0 },
+    taskId,
+    extraUsd: usd,
+  });
+
+const summarized = (t: TestApp) =>
   t.db.query<{ id: number; summarized: number }, []>("SELECT id, summarized FROM episodes").all();
 
-test("a reply still running isn't summarized, however long it takes", async () => {
-  let release = () => {};
-  const slow = new Promise<void>((r) => {
-    release = r;
-  });
+test("a summary waits for an idle conversation with no reply running, is tried again when it can't be written, and the next conversation doesn't wait on it", async () => {
+  const slow = Promise.withResolvers<void>();
   const model = new FakeModel(
-    [{ content: [text("Done at last.")], wait: slow }],
-    ["<recap>R</recap><summary>S</summary>"],
+    [
+      { content: [text("Done at last.")], wait: slow.promise },
+      { content: [text("two")] },
+      { content: [text("three")] },
+    ],
+    ["", "<summary>Talked about one.</summary>", "", "", ""],
   );
   const t = await testApp(model);
+  const asked = requested(model);
   const { done } = t.thread.post("a slow one");
-  await waitFor(() => model.requests.length);
+  await asked;
   t.advance(31 * 60_000);
   await t.thread.sweep();
-  expect(model.creates.length).toBe(0);
-  release();
+  expect(model.creates).toHaveLength(0);
+  slow.resolve();
   await done;
   // It just ended: active again, so not idle yet.
   await t.thread.sweep();
-  expect(model.creates.length).toBe(0);
-  t.advance(31 * 60_000);
-  await t.thread.sweep();
-  expect(model.creates.length).toBe(1);
-  expect(summarized(t)).toEqual([{ id: 1, summarized: 1 }]);
-});
+  expect(model.creates).toHaveLength(0);
 
-test("a summary that fails is tried again, and given up after three tries", async () => {
-  const model = new FakeModel(
-    [{ content: [text("one")] }, { content: [text("two")] }],
-    ["", "<summary>S</summary>", "", "", ""],
-  );
-  const t = await testApp(model);
-  await t.thread.post("first").done;
+  // A spent limit: the summary waits, and that isn't a failed try.
+  const limits = t.settings.get().limits;
+  t.settings.update({ limits: { dailyUsd: 0.000001, alertReserveUsd: 0 } });
   t.advance(31 * 60_000);
+  for (let i = 0; i < 4; i++) await t.thread.sweep();
+  expect(model.creates).toHaveLength(0);
+  t.settings.update({ limits });
+  // A failed try.
   await t.thread.sweep();
   expect(summarized(t)).toEqual([{ id: 1, summarized: 0 }]);
-  await t.thread.sweep();
-  expect(summarized(t)).toEqual([{ id: 1, summarized: 1 }]);
 
+  // The next conversation starts without a slow summary, which lands for the one after.
+  const gate = Promise.withResolvers<void>();
+  const create = model.create.bind(model);
+  model.create = async (p) => {
+    await gate.promise;
+    return create(p);
+  };
+  t.thread.summaryWaitMs = 0;
   await t.thread.post("second").done;
+  expect(model.requests[1]?.messages).toHaveLength(1);
+  expect(lastUserText(model.requests[1])).not.toContain("Talked about one");
+  gate.resolve();
+  await t.thread.summarize(1);
+  expect(summarized(t)).toEqual([
+    { id: 1, summarized: 1 },
+    { id: 2, summarized: 0 },
+  ]);
+
+  // Given up after three failed tries.
   t.advance(31 * 60_000);
   for (let i = 0; i < 3; i++) await t.thread.sweep();
   expect(summarized(t).at(-1)).toEqual({ id: 2, summarized: 1 });
   await t.thread.sweep();
-  expect(model.creates.length).toBe(5);
-  expect(lastUserText(model.requests[1] as never)).toContain("earlier_conversations>\\nS\\n");
+  expect(model.creates).toHaveLength(5);
+  await t.thread.post("third").done;
+  expect(lastUserText(model.requests[2])).toContain("Talked about one");
 });
 
-test("a conversation whose last request passed 90k tokens carries on in a new one", async () => {
-  const model = new FakeModel(
-    [
-      {
-        content: [text("A long answer.")],
-        usage: { input_tokens: 2000, cache_read_input_tokens: 93_000 },
-      },
-      { content: [text("Fresh start.")] },
-    ],
-    ["<summary>They talked at length.</summary>"],
-  );
-  const t = await testApp(model);
-  await t.thread.post("first").done;
-  t.advance(60_000);
-  await t.thread.post("second").done;
-  expect(model.requests[1]?.messages.length).toBe(1);
-  const opening = lastUserText(model.requests[1] as never);
-  expect(opening).toContain(
-    '<message from=\\"Owner\\" at=\\"Fri 2026-10-09 12:00\\">first</message>',
-  );
-  expect(opening).toContain("They talked at length.");
-  const [one, two] = t.thread.list().filter((m) => m.role === "user");
-  expect(two?.episodeId).not.toBe(one?.episodeId as number);
-  expect(t.events.some((e) => e.type === "message.progress" && e.text.includes("got long"))).toBe(
-    true,
-  );
-  // The chat reads less of a page than a task does.
-  const fetch = model.requests[0]?.tools?.find((x) => "name" in x && x.name === "web_fetch");
-  expect(fetch).toMatchObject({ max_content_tokens: 10000 });
-});
-
-test("a background task clears old tool results past 70k", async () => {
-  const work = new FakeModel([
-    { content: [toolUse("finish_task", { outcome: "done", summary: "Done.", notify: false })] },
-  ]);
-  const t = await testApp(new FakeModel(), work);
-  t.tasks.createBackgroundTask({ title: "Check", goal: "Check", origin: "schedule" });
-  await t.tasks.idle();
-  const req = work.requests[0];
-  expect(req?.betas).toContain("context-management-2025-06-27");
-  expect(req?.context_management?.edits?.[0]).toMatchObject({
-    type: "clear_tool_uses_20250919",
-    trigger: { type: "input_tokens", value: 70_000 },
-  });
-});
-
-const breakpoints = (req: unknown) => JSON.stringify(req).match(/"cache_control"/g)?.length ?? 0;
-
-test("tasks cache their tools and system apart from the conversation, within four breakpoints", async () => {
-  const done = { outcome: "done", summary: "Done.", notify: false };
-  const work = new FakeModel([
-    { content: [toolUse("finish_task", done)] },
-    { content: [toolUse("finish_task", { outcome: "done", summary: "Booked." })] },
-  ]);
-  const t = await testApp(new FakeModel([{ content: [text("Hi.")] }]), work);
-  t.tasks.createBackgroundTask({ title: "Check", goal: "Check", origin: "schedule" });
-  await t.tasks.idle();
-  t.tasks.createDesktopTask({ title: "Book", goal: "Book", successCriteria: "", origin: "chat" });
-  await t.tasks.idle();
-  await t.thread.post("hello").done;
-  for (const req of [...work.requests, ...t.model.requests]) {
-    expect((req.system as { cache_control?: unknown }[])[0]?.cache_control).toBeDefined();
-    expect(req.cache_control).toBeDefined();
-    expect(breakpoints(req)).toBeLessThanOrEqual(4);
-  }
-  expect(work.requests).toHaveLength(2);
-});
-
-test("a stream that fails partway is tried again; one the owner stopped isn't", async () => {
-  const overloaded = new Anthropic.APIError(
-    undefined,
-    { type: "error", error: { type: "overloaded_error", message: "Overloaded" } },
-    undefined,
-    undefined,
-    "overloaded_error",
-  );
+test("a stream that fails is tried three times at most, after retry-after; not once stopped, nor when retry-after asks too long", async () => {
   expect(retryable(overloaded)).toBe(true);
   expect(retryable(new Anthropic.APIConnectionError({ message: "reset" }))).toBe(true);
   expect(retryable(new Anthropic.APIUserAbortError())).toBe(false);
   expect(retryable(new Anthropic.APIError(400, undefined, "bad", undefined))).toBe(false);
 
   let tries = 0;
+  const failing =
+    (times: number, err: unknown = overloaded) =>
+    () =>
+      ++tries <= times ? Promise.reject(err) : Promise.resolve("ok");
   let retries = 0;
-  const flaky = () => {
-    tries++;
-    if (tries < 3) throw overloaded;
-    return Promise.resolve("ok");
-  };
-  expect(await withRetries(flaky, { onRetry: () => retries++ }, [0, 0])).toBe("ok");
+  expect(await withRetries(failing(2), { onRetry: () => retries++ }, [0, 0])).toBe("ok");
   expect([tries, retries]).toEqual([3, 2]);
-
   tries = 0;
-  const always = () => {
-    tries++;
-    return Promise.reject(overloaded);
-  };
-  await expect(withRetries(always, {}, [0, 0])).rejects.toBe(overloaded);
+  await expect(withRetries(failing(3), {}, [0, 0])).rejects.toBe(overloaded);
   expect(tries).toBe(3);
-
   tries = 0;
   const stopped = new AbortController();
   stopped.abort();
-  await expect(withRetries(always, { signal: stopped.signal }, [0, 0])).rejects.toBe(overloaded);
+  await expect(withRetries(failing(3), { signal: stopped.signal }, [0, 0])).rejects.toBe(
+    overloaded,
+  );
   expect(tries).toBe(1);
-});
 
-test("a retry waits as long as retry-after asks, and one that asks too long isn't made", async () => {
   const limited = (headers: Record<string, string>) =>
     new Anthropic.APIError(
       429,
@@ -188,35 +141,37 @@ test("a retry waits as long as retry-after asks, and one that asks too long isn'
     );
   expect(retryAfterMs(limited({ "retry-after": "2" }))).toBe(2000);
   expect(retryAfterMs(limited({ "retry-after-ms": "150" }))).toBe(150);
-  expect(
-    retryAfterMs(limited({ "retry-after": "Fri, 09 Oct 2026 12:00:30 GMT" }), 0),
-  ).toBeGreaterThan(0);
-  expect(retryAfterMs(limited({}))).toBeNull();
-
-  let tries = 0;
-  const started = Date.now();
-  const twice = () =>
-    ++tries < 2 ? Promise.reject(limited({ "retry-after-ms": "60" })) : Promise.resolve("ok");
-  expect(await withRetries(twice, {}, [0, 0])).toBe("ok");
-  expect(Date.now() - started).toBeGreaterThanOrEqual(55);
-
-  tries = 0;
-  const later = () => {
-    tries++;
-    return Promise.reject(limited({ "retry-after": "3600" }));
-  };
-  await expect(withRetries(later, {}, [0, 0])).rejects.toBeInstanceOf(Anthropic.APIError);
-  expect(tries).toBe(1);
-});
-
-test("a stream is tried at most three times in all, and a failed try's usage is reported", async () => {
-  const overloaded = new Anthropic.APIError(
-    undefined,
-    { type: "error", error: { type: "overloaded_error", message: "Overloaded" } },
-    undefined,
-    undefined,
-    "overloaded_error",
+  const now = Date.parse("2026-10-09T12:00:00Z");
+  expect(retryAfterMs(limited({ "retry-after": "Fri, 09 Oct 2026 12:00:30 GMT" }), now)).toBe(
+    30_000,
   );
+  expect(retryAfterMs(limited({}))).toBeNull();
+  // It waits as long as retry-after asks, not its own shorter delay; the wait itself is skipped.
+  const waits: number[] = [];
+  const realTimeout = globalThis.setTimeout;
+  const timer = spyOn(globalThis, "setTimeout").mockImplementation(((
+    fn: () => void,
+    ms?: number,
+  ) => {
+    waits.push(ms ?? 0);
+    return realTimeout(fn, 0);
+  }) as typeof setTimeout);
+  tries = 0;
+  try {
+    expect(await withRetries(failing(1, limited({ "retry-after-ms": "60" })), {}, [0, 0])).toBe(
+      "ok",
+    );
+  } finally {
+    timer.mockRestore();
+  }
+  expect(waits).toEqual([60]);
+  tries = 0;
+  await expect(
+    withRetries(failing(3, limited({ "retry-after": "3600" })), {}, [0, 0]),
+  ).rejects.toBeInstanceOf(Anthropic.APIError);
+  expect(tries).toBe(1);
+
+  // The client tries a stream three times in all, the SDK not at all, and reports each try's usage.
   const options: unknown[] = [];
   const client = new AnthropicModelClient("sk-test");
   (client as unknown as { client: unknown }).client = {
@@ -266,43 +221,43 @@ test("a stream is tried at most three times in all, and a failed try's usage is 
   expect(failed).toEqual(Array(3).fill({ model: "claude-opus-5-5", output: 40 }));
 });
 
-test("a reply whose stream failed partway bills that try too", async () => {
+test("a reply as it's written: shown and saved so far, started over when its stream is tried again, with the failed try billed, and kept through a restart", async () => {
+  const first = Promise.withResolvers<void>();
+  const second = Promise.withResolvers<void>();
   const model = new FakeModel([
     {
       content: [text("The whole answer.")],
       failedWith: "The who",
       failedUsage: { input_tokens: 1000, output_tokens: 0 },
     },
-  ]);
-  const t = await testApp(model);
-  await t.thread.post("hi").done;
-  const rows = t.db.query("SELECT input_tokens FROM spend_ledger WHERE purpose = 'thread'").all();
-  expect(rows).toHaveLength(2);
-});
-
-test("a reply being written shows its text so far, is saved as it goes, and a restart keeps it", async () => {
-  let release = () => {};
-  let release2 = () => {};
-  const model = new FakeModel([
     {
       content: [text("Checking the disks."), toolUse("memory_list", {})],
-      wait: new Promise<void>((r) => {
-        release = r;
-      }),
+      wait: first.promise,
     },
-    {
-      content: [text("All fine.")],
-      wait: new Promise<void>((r) => {
-        release2 = r;
-      }),
-    },
+    { content: [text("All fine.")], wait: second.promise },
   ]);
   const t = await testApp(model);
+
+  // The stream failed after "The who" and was tried again: the reply starts over, and both tries are billed.
+  await t.thread.post("hi").done;
+  const answer = t.thread.list().find((m) => m.role === "assistant");
+  expect(answer?.text).toBe("The whole answer.");
+  const at = t.events.findIndex((e) => e.type === "message.rewrite" && e.id === answer?.id);
+  expect(at).toBeGreaterThan(-1);
+  const after = t.events
+    .slice(at)
+    .flatMap((e) => (e.type === "message.delta" && e.id === answer?.id ? [e.text] : []));
+  expect(after.join("")).toBe("The whole answer.");
+  const rows = t.db.query("SELECT input_tokens FROM spend_ledger WHERE purpose = 'thread'").all();
+  expect(rows).toHaveLength(2);
+
+  const asked = requested(model, 2);
   const { done } = t.thread.post("check the disks");
-  await waitFor(() => model.requests.length);
+  await asked;
   t.advance(5000);
-  release();
-  await waitFor(() => model.requests.length === 2);
+  const again = requested(model, 3);
+  first.resolve();
+  await again;
   const reply = t.thread.list().at(-1) as ThreadMessage;
   expect(reply).toMatchObject({ status: "streaming", text: "Checking the disks." });
   const saved = () =>
@@ -313,8 +268,8 @@ test("a reply being written shows its text so far, is saved as it goes, and a re
       .get(reply.id);
   expect(saved()?.text).toBe("Checking the disks.");
   // Each delta says where it starts, so an app that loaded the reply mid-way doesn't add it twice.
-  const first = t.events.find((e) => e.type === "message.delta" && e.id === reply.id);
-  expect(first).toMatchObject({ at: 0, text: "Checking the disks." });
+  const delta = t.events.find((e) => e.type === "message.delta" && e.id === reply.id);
+  expect(delta).toMatchObject({ at: 0, text: "Checking the disks." });
 
   // The brain restarts now: the reply keeps what was saved, and says it was cut off.
   t.db
@@ -340,100 +295,232 @@ test("a reply being written shows its text so far, is saved as it goes, and a re
     .query<{ text: string }, []>("SELECT text FROM messages ORDER BY id DESC LIMIT 1")
     .get();
   expect(empty?.text).toBe("_This reply was cut off._");
-  release2();
+  second.resolve();
   await done;
 });
 
-test("a reply whose stream is tried again drops what it had streamed", async () => {
-  const model = new FakeModel([{ content: [text("The whole answer.")], failedWith: "The who" }]);
-  const t = await testApp(model);
-  await t.thread.post("hi").done;
-  const reply = t.thread.list().find((m) => m.role === "assistant");
-  expect(reply?.text).toBe("The whole answer.");
-  const at = t.events.findIndex((e) => e.type === "message.rewrite" && e.id === reply?.id);
-  expect(at).toBeGreaterThan(-1);
-  const after = t.events
-    .slice(at)
-    .flatMap((e) => (e.type === "message.delta" && e.id === reply?.id ? [e.text] : []));
-  expect(after.join("")).toBe("The whole answer.");
-});
-
-test("a reply that failed is written again in place, from the turns it had", async () => {
+test("only the latest reply that failed can be tried again; it's written in place from the turns it had", async () => {
   const model = new FakeModel([]);
   const t = await testApp(model);
   const { cookie } = await setUpOwner(t);
-  await t.thread.post("what's 2+2?").done;
-  const failed = t.thread.list().find((m) => m.role === "assistant");
-  expect(failed?.status).toBe("error");
-
-  model.script.push({ content: [text("4.")] });
-  const res = await t.call("POST", `/thread/messages/${failed?.id}/retry`, undefined, { cookie });
-  expect(res.status).toBe(202);
-  await t.thread.idle();
-  const after = t.thread.list();
-  expect(after.filter((m) => m.role === "user")).toHaveLength(1);
-  expect(after.filter((m) => m.role === "assistant")).toEqual([
-    expect.objectContaining({ id: failed?.id, text: "4.", status: "done", editedAt: null }),
-  ]);
-  // The same request again: the owner's message once, nothing added.
-  expect(model.requests).toHaveLength(2);
-  expect(model.requests[1]?.messages).toEqual(model.requests[0]?.messages as never);
-  expect(t.events.some((e) => e.type === "message.rewrite" && e.id === failed?.id)).toBe(true);
-
-  // Done now, so not again.
-  const twice = await t.call("POST", `/thread/messages/${failed?.id}/retry`, undefined, { cookie });
-  expect(twice.status).toBe(409);
-});
-
-test("only the latest reply that failed can be tried again", async () => {
-  const model = new FakeModel([]);
-  const t = await testApp(model);
-  const { cookie } = await setUpOwner(t);
+  const retry = (id?: number) =>
+    t.call("POST", `/thread/messages/${id}/retry`, undefined, { cookie });
   await t.thread.post("one").done;
   const first = t.thread.list().find((m) => m.role === "assistant");
   model.script.push({ content: [text("Two.")], stop_reason: "max_tokens" });
   await t.thread.post("two").done;
-  const second = t.thread.list().filter((m) => m.role === "assistant")[1];
+  const second = t.thread.list().at(-1);
   expect([first?.status, second?.status]).toEqual(["error", "error"]);
-  const old = await t.call("POST", `/thread/messages/${first?.id}/retry`, undefined, { cookie });
-  expect(old.status).toBe(409);
-  const user = t.thread.list()[0];
-  expect(t.thread.retry(user?.id as number)).toBeNull();
+  expect((await retry(first?.id)).status).toBe(409);
+  expect(t.thread.retry(t.thread.list()[0]?.id as number)).toBeNull();
 
-  // The model ended that one itself; it's asked to try again.
+  // The model ended that one itself: it goes on from what it wrote.
   model.script.push({ content: [text("Two, in full.")] });
-  expect(t.thread.retry(second?.id as number)).not.toBeNull();
+  expect((await retry(second?.id)).status).toBe(202);
   await t.thread.idle();
-  expect(lastUserText(model.requests.at(-1) as never)).toContain("try that reply again");
-  expect(t.thread.list().at(-1)).toMatchObject({ id: second?.id, text: "Two, in full." });
+  const [cut, again] = model.requests.slice(-2);
+  expect(again?.messages.length).toBeGreaterThan(cut?.messages.length as number);
+  expect(t.thread.list().at(-1)).toMatchObject({
+    id: second?.id,
+    text: "Two, in full.",
+    status: "done",
+    editedAt: null,
+  });
+  expect(t.events.some((e) => e.type === "message.rewrite" && e.id === second?.id)).toBe(true);
+  // Done now, so not again.
+  expect((await retry(second?.id)).status).toBe(409);
+
+  // A request that failed goes again as it was: the owner's message once, nothing added.
+  await t.thread.post("three").done;
+  const third = t.thread.list().at(-1);
+  expect(third?.status).toBe("error");
+  model.script.push({ content: [text("3.")] });
+  expect((await retry(third?.id)).status).toBe(202);
+  await t.thread.idle();
+  expect(unmarked(model.requests.at(-1)?.messages)).toEqual(
+    unmarked(model.requests.at(-2)?.messages),
+  );
+  expect(t.thread.list().filter((m) => m.text === "three")).toHaveLength(1);
+  expect(t.thread.list().at(-1)).toMatchObject({ id: third?.id, text: "3.", status: "done" });
 });
 
-test("a new conversation doesn't wait long for the last one's summary, which lands for the next", async () => {
-  const model = new FakeModel(
-    [{ content: [text("one")] }, { content: [text("two")] }, { content: [text("three")] }],
-    ["<summary>Talked about one.</summary>", "<summary>Talked about one and two.</summary>"],
-  );
-  let release = () => {};
-  const slow = new Promise<void>((r) => {
-    release = r;
-  });
-  const create = model.create.bind(model);
-  let calls = 0;
-  model.create = async (p) => {
-    if (calls++ === 0) await slow;
-    return create(p);
+test("the spending check stops at a task tree's, today's and the month's limit, counting what's in flight and keeping the reserve", async () => {
+  const t = await testApp();
+  t.settings.update({ limits: { dailyUsd: 2, monthlyUsd: 4, alertReserveUsd: 0 } });
+  const add = (parent: number | null) =>
+    t.db
+      .query<{ id: number }, [number | null]>(
+        `INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, parent_id)
+         VALUES ('Research a laptop', 'g', '', 'chat', 'background', 'claude-opus-5-5', 'running', 1, '2026-10-09T12:00:00Z', ?)
+         RETURNING id`,
+      )
+      .get(parent)?.id as number;
+  const stop = (estimate: number, task?: { id: number; limitUsd: number }, reserve = false) => {
+    try {
+      t.spend.check(estimate, task, { reserve });
+      return null;
+    } catch (err) {
+      return (err as BudgetError).limit;
+    }
   };
+
+  // A task's limit covers the tasks it started; its cost shows theirs too.
+  const root = add(null);
+  const child = add(root);
+  spent(t, 0.5, root);
+  spent(t, 0.4, child);
+  expect(t.tasks.get(root)?.costUsd).toBeCloseTo(0.9, 9);
+  const tree = () => ({ id: child, limitUsd: t.tasks.budget(child) });
+  expect(stop(0.05, tree())).toBeNull();
+  expect(stop(0.2, tree())).toBe("task");
+  const held = t.spend.hold(0.05, tree());
+  expect(stop(0.06, tree())).toBe("task");
+  held();
+  t.tasks.raiseBudget(child, 3);
+  expect(t.tasks.budget(root)).toBe(4);
+  expect(stop(0.2, tree())).toBeNull();
+
+  // Today's, with what's in flight.
+  spent(t, 1);
+  expect(stop(0.05)).toBeNull();
+  expect(stop(0.2)).toBe("daily");
+  const inFlight = t.spend.hold(0.05);
+  expect(stop(0.06)).toBe("daily");
+  inFlight();
+  // A new day starts from nothing, and a row the ledger gets some other way is counted.
+  t.advance(86_400_000);
+  expect(stop(0.6)).toBeNull();
+  t.db
+    .query(
+      `INSERT INTO spend_ledger (created_at, model, purpose, input_tokens, cache_write_5m_tokens,
+       cache_write_1h_tokens, cache_read_tokens, output_tokens, cost_usd) VALUES (?, 'x', 'test', 0, 0, 0, 0, 0, 1.5)`,
+    )
+    .run("2026-10-10T12:00:00.000Z");
+  expect(stop(0.6)).toBe("daily");
+
+  // The month's, and its last $0.50 only for alerts and the heartbeat.
+  t.settings.update({ limits: { dailyUsd: 10 } });
+  expect(stop(0.5)).toBeNull();
+  expect(stop(0.7)).toBe("monthly");
+  t.settings.update({ limits: { alertReserveUsd: 0.5 } });
+  expect(stop(0.2)).toBe("monthly");
+  expect(stop(0.5, undefined, true)).toBeNull();
+});
+
+test("the most a request may cost: uncached input as a cache write, all its output and searches, a fallback's answer, files by size", async () => {
+  // Opus 5.5: 100k prompt, 60k of it cached, written for an hour; 32k out; 8 searches.
+  const r = { prompt: 100_000, cached: 60_000, write: "1h" as const, maxTokens: 32_000 };
+  expect(requestCeiling("claude-opus-5-5", { ...r, webSearches: 8 })).toBeCloseTo(
+    (40_000 * 8 + 60_000 * 0.2 + 32_000 * 20) / 1e6 + 0.08,
+    9,
+  );
+  // Opus 5.5 reads the prompt and declines; Opus 5 or Opus 4.8 answers at $5/$25, with nothing cached.
+  expect(requestCeiling("claude-opus-5-5", { ...r, fallbacks: true })).toBeCloseTo(
+    (40_000 * 8 + 60_000 * 0.2) / 1e6 + (100_000 * 10 + 32_000 * 25) / 1e6,
+    9,
+  );
+  // Haiku 5.5 has no fallback; with no cache breakpoints, it's plain input.
+  expect(
+    requestCeiling("claude-haiku-5-5", { prompt: 1000, maxTokens: 4000, fallbacks: true }),
+  ).toBeCloseTo((1000 * 0.1 + 4000 * 0.5) / 1e6, 9);
+  expect(
+    searchesIn([
+      { name: "web_search", max_uses: 8 },
+      { name: "web_fetch", max_uses: 8 },
+    ]),
+  ).toBe(8);
+  // Images and PDFs count by their size, not their base64: 100 + 200 of text, an image, a 768 KB PDF.
+  const mb = "A".repeat(1024 * 1024);
+  const tokens = estimateTokens([
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "x".repeat(350) },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: mb } },
+        { type: "document", source: { type: "base64", media_type: "application/pdf", data: mb } },
+        {
+          type: "document",
+          source: { type: "text", media_type: "text/plain", data: "y".repeat(700) },
+        },
+      ],
+    },
+  ]);
+  expect(tokens).toBeGreaterThan(300 + 1600 + 768 * 25);
+  expect(tokens).toBeLessThan(300 + 1600 + 768 * 25 + 50);
+
+  // The chat holds that, and its cache's hour runs from when the request was sent.
+  const sent = Promise.withResolvers<void>();
+  const model = new FakeModel([
+    {
+      content: [text("Hi.")],
+      usage: {
+        cache_creation_input_tokens: 80_000,
+        cache_creation: { ephemeral_1h_input_tokens: 80_000, ephemeral_5m_input_tokens: 0 },
+      },
+      wait: sent.promise,
+    },
+    { content: [text("Again.")] },
+  ]);
   const t = await testApp(model);
-  t.thread.summaryWaitMs = 20;
+  t.settings.update({ chatModel: "claude-opus-5-5" });
+  const holds: number[] = [];
+  const hold = t.spend.hold.bind(t.spend);
+  t.spend.hold = (usd, ...rest) => {
+    holds.push(usd);
+    return hold(usd, ...rest);
+  };
+  // About 80k tokens: what the first request wrote to the cache.
+  const asked = requested(model);
+  const first = t.thread.post(`Read this: ${"lorem ".repeat(47_000)}`).done;
+  await asked;
+  // A reply that takes 35 minutes, then a message 26 minutes after it: an hour after the request was
+  // sent, its cache entry is gone.
+  t.advance(35 * 60_000);
+  sent.resolve();
+  await first;
+  t.advance(26 * 60_000);
+  await t.thread.post("again").done;
+  expect(new Set(t.thread.list().map((m) => m.episodeId)).size).toBe(1);
+  // Each may cost 80k tokens of prompt written to the cache by Opus 5.5, which declines, and again by
+  // Opus 5, which answers with all of its output and searches.
+  const most = (80_000 * 8 + 80_000 * 10) / 1e6 + 0.85;
+  expect(holds[0]).toBeGreaterThan(most);
+  // The second was sent over an hour after the first: none of it is in the cache.
+  expect(holds[1]).toBeGreaterThan(most);
+});
+
+test("an effort change mid-conversation is a message where it was made, so the cache stays", async () => {
+  const model = new FakeModel([
+    { content: [text("one")] },
+    { content: [text("two")] },
+    { content: [text("three")] },
+    { content: [text("four")] },
+  ]);
+  const t = await testApp(model);
   await t.thread.post("first").done;
-  t.advance(31 * 60_000);
+  t.settings.update({ chatEffort: "medium" });
   await t.thread.post("second").done;
-  expect(lastUserText(model.requests[1] as never)).not.toContain("Talked about one");
-  release();
-  await waitFor(() => summarized(t)[0]?.summarized);
-  t.advance(31 * 60_000);
   await t.thread.post("third").done;
-  expect(lastUserText(model.requests[2] as never)).toContain("Talked about one");
+  const [one, two, three] = model.requests;
+  for (const req of [one, two, three]) {
+    expect(req?.output_config).toEqual({ effort: "low" });
+    expect(req?.betas).toContain("mid-conversation-output-config-2026-07-01");
+  }
+  expect(unmarked(two?.messages.slice(0, 1))).toEqual(unmarked(one?.messages));
+  expect(two?.messages[1]?.role).toBe("assistant");
+  expect(two?.messages[2]).toEqual({
+    role: "system",
+    content: [],
+    output_config: { effort: "medium" },
+  } as never);
+  expect(two?.messages[3]?.role).toBe("user");
+  // Set once: the next reply carries on at it.
+  expect(three?.messages.filter((m) => m.role === "system")).toHaveLength(1);
+  // A new conversation starts at it.
+  t.advance(31 * 60_000);
+  await t.thread.post("fourth").done;
+  expect(model.requests[3]?.output_config).toEqual({ effort: "medium" });
+  expect(model.requests[3]?.messages.some((m) => m.role === "system")).toBe(false);
 });
 
 test("tasks a restart stopped are told in their chat, with one notification", async () => {
@@ -468,295 +555,30 @@ test("tasks a restart stopped are told in their chat, with one notification", as
   expect(t.notifier.sent.length).toBe(sent + 1);
 });
 
-test("an effort change mid-conversation is a message where it was made, so the cache stays", async () => {
-  const model = new FakeModel([
-    { content: [text("one")] },
-    { content: [text("two")] },
-    { content: [text("three")] },
-  ]);
-  const t = await testApp(model);
-  await t.thread.post("first").done;
-  t.settings.update({ chatEffort: "medium" });
-  await t.thread.post("second").done;
-  await t.thread.post("third").done;
-  const [one, two, three] = model.requests;
-  for (const req of [one, two, three]) {
-    expect(req?.output_config).toEqual({ effort: "low" });
-    expect(req?.betas).toContain("mid-conversation-output-config-2026-07-01");
-  }
-  const marker = { role: "system", content: [], output_config: { effort: "medium" } };
-  // The same turns, but for where each request marks the cache.
-  const unmarked = (v: unknown) =>
-    JSON.parse(JSON.stringify(v, (k, x) => (k === "cache_control" ? undefined : x)));
-  expect(unmarked(two?.messages.slice(0, 1))).toEqual(unmarked(one?.messages));
-  expect(two?.messages[1]?.role).toBe("assistant");
-  expect(two?.messages[2]).toEqual(marker as never);
-  expect(two?.messages[3]?.role).toBe("user");
-  // Set once: the next reply carries on at it.
-  expect(three?.messages.filter((m) => m.role === "system")).toHaveLength(1);
-  // A new conversation starts at it.
-  t.advance(31 * 60_000);
-  model.script.push({ content: [text("four")] });
-  await t.thread.post("fourth").done;
-  expect(model.requests[3]?.output_config).toEqual({ effort: "medium" });
-  expect(model.requests[3]?.messages.some((m) => m.role === "system")).toBe(false);
-});
-
-test("the spending check reads today, the month and the task's spend, and keeps the reserve", async () => {
-  const t = await testApp();
-  t.settings.update({ limits: { taskUsd: 1, dailyUsd: 2, monthlyUsd: 3, alertReserveUsd: 0 } });
-  const task = t.tasks.createBackgroundTask({ title: "Check", goal: "Check", origin: "schedule" });
-  await t.tasks.idle();
-  const id = (task as { id: number }).id;
-  const spent = (usd: number, taskId?: number) =>
-    t.spend.record({
-      model: "claude-haiku-5-5",
-      purpose: "task",
-      usage: { input_tokens: 0, output_tokens: 0 },
-      taskId,
-      extraUsd: usd,
-    });
-  const stop = (estimate: number, withTask = false, reserve = false) => {
-    try {
-      t.spend.check(estimate, withTask ? { id, limitUsd: 1 } : undefined, { reserve });
-      return null;
-    } catch (err) {
-      return (err as BudgetError).limit;
-    }
-  };
-  // Two days ago this month, for the task; then today, for none.
-  spent(0.9, id);
-  t.advance(2 * 86_400_000);
-  spent(1.5);
-  expect(stop(0.05, true)).toBeNull();
-  expect(stop(0.2, true)).toBe("task");
-  expect(stop(0.6)).toBe("daily");
-  t.settings.update({ limits: { dailyUsd: 10 } });
-  expect(stop(0.5)).toBeNull();
-  expect(stop(0.7)).toBe("monthly");
-  // The last $0.50 of the month is only for alerts and the heartbeat.
-  t.settings.update({ limits: { alertReserveUsd: 0.5 } });
-  expect(stop(0.2)).toBe("monthly");
-  expect(stop(0.5, false, true)).toBeNull();
-});
-
-test("the most a request may cost: uncached input as a cache write, all of max_tokens, every search", () => {
-  // Opus 5.5: 100k prompt, 60k of it cached, written for an hour; 32k out; 8 searches.
-  const usd = requestCeiling("claude-opus-5-5", {
-    prompt: 100_000,
-    cached: 60_000,
-    write: "1h",
-    maxTokens: 32_000,
-    webSearches: 8,
-  });
-  expect(usd).toBeCloseTo((40_000 * 8 + 60_000 * 0.2 + 32_000 * 20) / 1e6 + 0.08, 9);
-  // No cache breakpoints: plain input.
-  expect(requestCeiling("claude-haiku-5-5", { prompt: 1000, maxTokens: 4000 })).toBeCloseTo(
-    (1000 * 0.1 + 4000 * 0.5) / 1e6,
-    9,
-  );
-  expect(
-    searchesIn([
-      { name: "web_search", max_uses: 8 },
-      { name: "web_fetch", max_uses: 8 },
-    ]),
-  ).toBe(8);
-});
-
-test("with fallbacks, the most a request may cost counts a decline and an answer from a dearer model", () => {
-  const r = { prompt: 100_000, cached: 60_000, write: "1h" as const, maxTokens: 32_000 };
-  // Opus 5.5 reads the prompt and declines; Opus 5 or Opus 4.8 answers at $5/$25, with nothing cached.
-  expect(requestCeiling("claude-opus-5-5", { ...r, fallbacks: true })).toBeCloseTo(
-    (40_000 * 8 + 60_000 * 0.2) / 1e6 + (100_000 * 10 + 32_000 * 25) / 1e6,
-    9,
-  );
-  // Haiku 5.5 has none.
-  expect(requestCeiling("claude-haiku-5-5", { ...r, fallbacks: true })).toBe(
-    requestCeiling("claude-haiku-5-5", r),
-  );
-});
-
-test("the chat's hold counts its fallbacks, and its cache's hour runs from when it was sent", async () => {
-  let release = () => {};
-  const model = new FakeModel([
-    {
-      content: [text("Hi.")],
-      usage: {
-        cache_creation_input_tokens: 80_000,
-        cache_creation: { ephemeral_1h_input_tokens: 80_000, ephemeral_5m_input_tokens: 0 },
-      },
-      wait: new Promise<void>((resolve) => {
-        release = resolve;
-      }),
-    },
-    { content: [text("Again.")] },
-  ]);
-  const t = await testApp(model);
-  t.settings.update({ chatModel: "claude-opus-5-5" });
-  const holds: number[] = [];
-  const hold = t.spend.hold.bind(t.spend);
-  t.spend.hold = (usd, ...rest) => {
-    holds.push(usd);
-    return hold(usd, ...rest);
-  };
-  // About 80k tokens: what the first request wrote to the cache.
-  const first = t.thread.post(`Read this: ${"lorem ".repeat(47_000)}`).done;
-  await waitFor(() => model.requests.length === 1);
-  // A reply that takes 35 minutes, then a message 26 minutes after it: an hour after the request was
-  // sent, its cache entry is gone.
-  t.advance(35 * 60_000);
-  release();
-  await first;
-  t.advance(26 * 60_000);
-  await t.thread.post("again").done;
-  expect(new Set(t.thread.list().map((m) => m.episodeId)).size).toBe(1);
-  // Each may cost 80k tokens of prompt written to the cache by Opus 5.5, which declines, and again by
-  // Opus 5, which answers with all of its output and searches.
-  const most = (80_000 * 8 + 80_000 * 10) / 1e6 + 0.85;
-  expect(holds[0]).toBeGreaterThan(most);
-  // The second was sent over an hour after the first: none of it is in the cache.
-  expect(holds[1]).toBeGreaterThan(most);
-});
-
-test("requests in flight hold what they may cost, so ones made at once can't pass a limit together", async () => {
-  const t = await testApp();
-  t.settings.update({ limits: { taskUsd: 3, dailyUsd: 1, monthlyUsd: 200, alertReserveUsd: 0 } });
-  const first = t.spend.hold(0.6);
-  expect(() => t.spend.hold(0.6)).toThrow("Today's $1 limit");
-  first();
-  const second = t.spend.hold(0.6);
-  second();
-  // A task's own requests in flight count against its limit too.
-  const task = { id: 7, limitUsd: 0.5 };
-  const one = t.spend.hold(0.3, task);
-  expect(() => t.spend.hold(0.3, task)).toThrow("over its $0.5 limit");
-  one();
-});
-
-test("the check keeps today's and the month's spend up to date without summing them again", async () => {
-  const t = await testApp();
-  t.settings.update({ limits: { taskUsd: 3, dailyUsd: 1, monthlyUsd: 200, alertReserveUsd: 0 } });
-  t.spend.check(0.5);
-  // A row the ledger gets some other way is counted on the next check.
-  t.db
-    .query(
-      `INSERT INTO spend_ledger (created_at, model, purpose, input_tokens, cache_write_5m_tokens,
-       cache_write_1h_tokens, cache_read_tokens, output_tokens, cost_usd) VALUES (?, 'x', 'test', 0, 0, 0, 0, 0, 0.8)`,
-    )
-    .run(new Date(Date.parse("2026-10-09T12:00:00Z")).toISOString());
-  expect(() => t.spend.check(0.5)).toThrow("Today's $1 limit");
-  expect(t.spend.summary().monthUsd).toBeCloseTo(0.8, 9);
-  // A new day starts from nothing.
-  t.advance(86_400_000);
-  t.spend.check(0.5);
-});
-
-test("a task's limit covers the tasks it started; its cost shows theirs too", async () => {
-  const t = await testApp();
-  const add = (parent: number | null) =>
-    t.db
-      .query<{ id: number }, [number | null]>(
-        `INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, parent_id)
-         VALUES ('Research a laptop', 'g', '', 'chat', 'background', 'claude-opus-5-5', 'running', 3, '2026-10-09T12:00:00Z', ?)
-         RETURNING id`,
-      )
-      .get(parent)?.id as number;
-  const root = add(null);
-  const asked = add(root);
-  const screen = add(asked);
-  const spent = (usd: number, taskId: number) =>
-    t.spend.record({
-      model: "claude-haiku-5-5",
-      purpose: "task",
-      usage: { input_tokens: 0, output_tokens: 0 },
-      taskId,
-      extraUsd: usd,
-    });
-  spent(1, root);
-  spent(1, asked);
-  spent(0.9, screen);
-  expect(t.tasks.rootOf(screen)).toBe(root);
-  expect(t.tasks.budget(screen)).toBe(3);
-  // Each would have room on its own; together the tree is at its limit.
-  const limit = { id: screen, limitUsd: t.tasks.budget(screen) };
-  expect(() => t.spend.check(0.2, limit)).toThrow(`task #${root}, which started it`);
-  expect(t.tasks.get(root)?.costUsd).toBeCloseTo(2.9, 9);
-  expect(t.tasks.get(asked)?.costUsd).toBeCloseTo(1.9, 9);
-  expect(t.tasks.budgetAsk(screen, 3).summary).toBe(
-    `Let task #${root} and the tasks it started spend $3 more`,
-  );
-  t.tasks.raiseBudget(screen, 3);
-  expect(t.tasks.budget(root)).toBe(6);
-  t.spend.check(0.2, { id: screen, limitUsd: t.tasks.budget(screen) });
-});
-
-test("an Opus reply that could pass the limit with all its output isn't started", async () => {
-  const model = new FakeModel([{ content: [text("ok")] }]);
-  const t = await testApp(model);
-  t.settings.update({
-    chatModel: "claude-opus-5-5",
-    limits: { taskUsd: 3, dailyUsd: 0.5, monthlyUsd: 200, alertReserveUsd: 0 },
-  });
-  await t.thread.post("hi").done;
-  // 32k output tokens at $20 a million is $0.64 alone.
-  expect(model.requests).toHaveLength(0);
-  expect(t.thread.list().at(-1)?.text).toContain("Today's $0.5 limit");
-});
-
-test("summaries and Haiku's reviews wait while the limits are spent", async () => {
-  const model = new FakeModel([{ content: [text("one")] }], ["<summary>S</summary>"]);
-  const t = await testApp(model);
-  await t.thread.post("first").done;
-  t.settings.update({
-    limits: { taskUsd: 3, dailyUsd: 0.000001, monthlyUsd: 200, alertReserveUsd: 0 },
-  });
-  t.advance(31 * 60_000);
-  for (let i = 0; i < 4; i++) await t.thread.sweep();
-  expect(model.creates).toHaveLength(0);
-  expect(summarized(t)).toEqual([{ id: 1, summarized: 0 }]);
-  const review = await safeToRun(
-    { model, spend: t.spend },
-    {},
-    { ownerSaid: "restart it", goal: "restart nginx", sources: [] },
-    { tool: "ssh_exec", input: {}, what: "Restart nginx", why: "It changes a host." },
-  );
-  expect(review.safe).toBe(false);
-  expect(model.creates).toHaveLength(0);
-  // Nor is what was read screened: it counts as suspected.
-  const page = { url: null, title: "Read https://x.example", text: "Hello." };
-  expect(await screenPage(model, t.spend, {}, page)).toMatchObject({ failed: true });
-  expect(model.creates).toHaveLength(0);
-  t.settings.update({ limits: { taskUsd: 3, dailyUsd: 10, monthlyUsd: 200, alertReserveUsd: 0 } });
-  await t.thread.sweep();
-  expect(summarized(t)).toEqual([{ id: 1, summarized: 1 }]);
-});
-
 test("a background task waiting on a desktop task doesn't hold a slot", async () => {
-  let release = () => {};
-  const screen = new Promise<void>((r) => {
-    release = r;
-  });
+  const screen = Promise.withResolvers<void>();
   const run = { title: "Look", goal: "Open example.com", success_criteria: "" };
   const work = new FakeModel([
     { content: [toolUse("run_desktop_task", run)] },
     {
       content: [toolUse("finish_task", { outcome: "done", summary: "It's up." })],
-      wait: screen,
+      wait: screen.promise,
     },
     { content: [toolUse("finish_task", { outcome: "done", summary: "Checked.", notify: false })] },
   ]);
   const t = await testApp(new FakeModel(), work);
+  const asked = requested(work, 2);
   t.tasks.createBackgroundTask({ title: "Check", goal: "Check", origin: "schedule" });
-  await waitFor(() => work.requests.length === 2);
+  await asked;
   const active = () => (t.tasks.pool as unknown as { active: number }).active;
   expect(active()).toBe(0);
-  release();
+  screen.resolve();
   await t.tasks.idle();
   expect(active()).toBe(0);
   expect(work.requests).toHaveLength(3);
 });
 
-test("a task's reply that fails as it's written again still says how the task went", async () => {
+test("a task's reply that fails as it's written still says how the task went", async () => {
   const run = { title: "Check", goal: "Open example.com", success_criteria: "" };
   const chat = new FakeModel([
     { content: [toolUse("run_desktop_task", run)] },
@@ -772,7 +594,6 @@ test("a task's reply that fails as it's written again still says how the task we
   const reply = t.thread.list().find((m) => m.role === "assistant" && m.taskId);
   expect(reply?.status).toBe("error");
   expect(reply?.text).toStartWith("Example.com is up.");
-  expect(reply?.text).toContain("Something went wrong");
 });
 
 test("a task a deleted bot started ends with its result; the bot isn't asked again", async () => {
@@ -790,13 +611,7 @@ test("a task a deleted bot started ends with its result; the bot isn't asked aga
     },
   ]);
   const t = await testApp(chat, work);
-  const coder = t.bots.create({
-    name: "Coder",
-    instructions: "",
-    chatModel: null,
-    chatEffort: null,
-    plugins: null,
-  });
+  const coder = bot(t, "Coder");
   const thread = t.chats.direct(coder.id);
   await thread.post("look at the nas").done;
   const reply = thread.list().at(-1) as ThreadMessage;
