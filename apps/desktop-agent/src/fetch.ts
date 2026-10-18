@@ -5,6 +5,7 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import type { FetchResult } from "@hatbot/shared/desktop";
+import { readStream } from "./shell";
 
 const MAX_REDIRECTS = 5;
 /** Pages a watcher fetches are cut here. */
@@ -163,27 +164,14 @@ export async function fetchPage(target: string, opts: FetchOptions = {}): Promis
       status: res.status,
       url: parsed.href,
       contentType: res.headers.get("content-type") ?? "",
-      body: (await readCapped(res)).slice(0, MAX_FETCH_CHARS),
+      body: await readText(res.body),
     };
   }
 }
 
-/** The body as text, reading no more than MAX_FETCH_BYTES of it. */
-export async function readCapped(res: Response): Promise<string> {
-  if (!res.body) return "";
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let text = "";
-  let bytes = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    bytes += value.byteLength;
-    text += decoder.decode(value, { stream: true });
-    if (bytes >= MAX_FETCH_BYTES || text.length >= MAX_FETCH_CHARS) {
-      await reader.cancel();
-      return text;
-    }
-  }
-  return text + decoder.decode();
+/** A body as text, cut at MAX_FETCH_CHARS: no more than MAX_FETCH_BYTES of it is read. */
+export async function readText(body: ReadableStream<Uint8Array> | null): Promise<string> {
+  const { bytes, over } = await readStream(body, MAX_FETCH_BYTES);
+  // A character cut off at the end is left out, not decoded as a broken one.
+  return new TextDecoder().decode(bytes, { stream: over }).slice(0, MAX_FETCH_CHARS);
 }

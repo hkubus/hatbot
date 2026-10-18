@@ -16,7 +16,7 @@ import { browserKey } from "./keys";
 import { LiveQueue } from "./livequeue";
 import { runningProfile, useProfile } from "./profile";
 import { RENDER_SOCKET } from "./render";
-import { MAX_FILE_BYTES, readUpTo, SHELL_SOCKET } from "./shell";
+import { MAX_BODY_BYTES, readUpTo, SHELL_SOCKET } from "./shell";
 import {
   ActionError,
   act,
@@ -59,8 +59,6 @@ const installer = (() => {
 /** Set by systemd's StateDirectory=; an archive dropped here is installed by a root service. */
 const stateDir = process.env.STATE_DIRECTORY;
 const MAX_UPDATE_BYTES = 10 * 1024 * 1024;
-/** A file for the shell is the biggest body; anything past it is refused before it's read. */
-const MAX_BODY_BYTES = MAX_FILE_BYTES + 64 * 1024;
 /** Endpoints added since the first deploy; the brain's checks say when the desktop is behind. */
 const FEATURES = [
   "profiles",
@@ -96,6 +94,17 @@ const browser = new Browser(downloadDir);
 const LIVE_BUFFER_BYTES = 256 * 1024;
 /** While locked (the owner has control, or Pause all), the brain's model can't act. Live input still works. */
 let locked = false;
+/** What the model does on the desktop: refused while it's locked. */
+const LOCKED = new Set([
+  "POST /action",
+  "POST /exec",
+  "GET /files",
+  "PUT /files",
+  "POST /browser",
+  // Before a task's first look at the screen: no input is going on.
+  "POST /browser/profile",
+  "POST /browser/reset",
+]);
 
 const authorized = (req: Request) => {
   const got = Buffer.from(req.headers.get("authorization") ?? "");
@@ -134,6 +143,30 @@ async function deepHealth(): Promise<DeepHealth> {
 }
 const image = (bytes: Uint8Array) =>
   new Response(bytes, { headers: { "content-type": "image/webp", "cache-control": "no-store" } });
+
+/**
+ * Passes a request on to one of the desktop's own services (`what`) on its Unix socket, its body
+ * streamed through, and the answer back.
+ */
+async function relay(req: Request, socket: string, path: string, ms: number, what: string) {
+  let res: Response;
+  try {
+    res = await fetch(`http://local${path}`, {
+      method: req.method,
+      body: req.body,
+      unix: socket,
+      signal: AbortSignal.timeout(ms),
+    } as RequestInit);
+  } catch (err) {
+    if ((err as Error).name === "TimeoutError")
+      return json({ error: `${what} didn't answer in time.` }, 504);
+    return json({ error: `${what} isn't running (deploy.sh sets it up).` }, 503);
+  }
+  return new Response(res.body, {
+    status: res.status,
+    headers: { "content-type": res.headers.get("content-type") ?? "application/octet-stream" },
+  });
+}
 
 // One input at a time, in order: xdotool calls must not interleave.
 let inputChain: Promise<unknown> = Promise.resolve();
@@ -194,6 +227,8 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array; input?: boolea
     const url = new URL(req.url);
     if (!authorized(req)) return json({ error: "unauthorized" }, 401);
     const route = `${req.method} ${url.pathname}`;
+    if (locked && LOCKED.has(route))
+      return json({ error: "The owner has control of the desktop." }, 423);
     try {
       switch (route) {
         case "GET /health":
@@ -217,34 +252,13 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array; input?: boolea
           return image(await serial(() => zoom(size, region)));
         }
         case "POST /action": {
-          if (locked) return json({ error: "The owner has control of the desktop." }, 423);
           const { name, input } = (await req.json()) as AgentAction;
           // After it, not before: a look at the tabs in the meantime would see them as they were.
           return json(await serial(() => act(size, name, input ?? {}).finally(touched)));
         }
-        case "POST /exec": {
+        case "POST /exec":
           // Not serialised with input: the shell doesn't touch the screen.
-          if (locked) return json({ error: "The owner has control of the desktop." }, 423);
-          let res: Response;
-          try {
-            res = await fetch("http://shell/exec", {
-              method: "POST",
-              unix: SHELL_SOCKET,
-              headers: { "content-type": "application/json" },
-              body: await req.text(),
-              signal: AbortSignal.timeout(11 * 60_000),
-            } as RequestInit);
-          } catch {
-            return json(
-              { error: "The desktop's shell isn't running (deploy.sh sets it up)." },
-              503,
-            );
-          }
-          return new Response(res.body, {
-            status: res.status,
-            headers: { "content-type": "application/json" },
-          });
-        }
+          return relay(req, SHELL_SOCKET, "/exec", 11 * 60_000, "The desktop's shell");
         case "POST /fetch": {
           // For watchers: the desktop's firewall lets it reach only the internet, so the brain fetches
           // pages from here instead of from the LAN. Not serialised: it doesn't touch the screen.
@@ -257,28 +271,16 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array; input?: boolea
           }
         }
         case "POST /render":
-        case "POST /render/check": {
+        case "POST /render/check":
           // For watchers that run a page's scripts: hatbot-render, one page at a time, so a render may
           // wait behind a few others. Not serialised with input: its Chromium isn't the one on screen.
-          let res: Response;
-          try {
-            res = await fetch(`http://render/${url.pathname === "/render" ? "render" : "check"}`, {
-              method: "POST",
-              unix: RENDER_SOCKET,
-              headers: { "content-type": "application/json" },
-              body: await req.text(),
-              signal: AbortSignal.timeout(110_000),
-            } as RequestInit);
-          } catch (err) {
-            if ((err as Error).name === "TimeoutError")
-              return json({ error: "The renderer didn't answer in time." }, 504);
-            return json({ error: "The renderer isn't running (deploy.sh sets it up)." }, 503);
-          }
-          return new Response(res.body, {
-            status: res.status,
-            headers: { "content-type": "application/json" },
-          });
-        }
+          return relay(
+            req,
+            RENDER_SOCKET,
+            url.pathname === "/render" ? "/render" : "/check",
+            110_000,
+            "The renderer",
+          );
         case "GET /download": {
           const d = browser.download(url.searchParams.get("id") ?? "");
           if (!d || !(await Bun.file(d.path).exists()))
@@ -291,45 +293,18 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array; input?: boolea
           });
         }
         case "GET /files":
-        case "PUT /files": {
-          if (locked) return json({ error: "The owner has control of the desktop." }, 423);
-          if (Number(req.headers.get("content-length") ?? 0) > MAX_FILE_BYTES)
-            return json({ error: "The file is too big." }, 413);
-          let res: Response;
-          try {
-            // Streamed through: the shell counts the bytes as they come and stops past 25 MB.
-            res = await fetch(`http://shell/files${url.search}`, {
-              method: req.method,
-              unix: SHELL_SOCKET,
-              body: req.method === "PUT" ? req.body : undefined,
-              signal: AbortSignal.timeout(120_000),
-            } as RequestInit);
-          } catch {
-            return json(
-              { error: "The desktop's shell isn't running (deploy.sh sets it up)." },
-              503,
-            );
-          }
-          return new Response(res.body, {
-            status: res.status,
-            headers: {
-              "content-type": res.headers.get("content-type") ?? "application/octet-stream",
-            },
-          });
-        }
+        case "PUT /files":
+          // Streamed through: the shell counts the bytes as they come and stops past 25 MB.
+          return relay(req, SHELL_SOCKET, `/files${url.search}`, 120_000, "The desktop's shell");
         case "POST /browser": {
-          if (locked) return json({ error: "The owner has control of the desktop." }, 423);
           const { name, input } = (await req.json()) as BrowserCall;
           return json(await serial(() => browser.call(name, input ?? {})));
         }
         case "POST /browser/profile": {
-          // Before a task's first look at the screen: no input is going on.
-          if (locked) return json({ error: "The owner has control of the desktop." }, 423);
           const { id } = (await req.json()) as { id: string };
           return json({ profile: await serial(() => useProfile(id, stateDir ?? null, browser)) });
         }
         case "POST /browser/reset":
-          if (locked) return json({ error: "The owner has control of the desktop." }, 423);
           return json(await serial(() => browser.reset()));
         case "GET /browser/state":
           return json(await serial(() => browser.state()));

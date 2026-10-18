@@ -10,7 +10,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RenderResult } from "@hatbot/shared/desktop";
-import { FetchError, MAX_FETCH_CHARS, readCapped, resolveHost, USER_AGENT, webUrl } from "./fetch";
+import { FetchError, readText, resolveHost, USER_AGENT, webUrl } from "./fetch";
 
 export const RENDER_SOCKET = process.env.HATBOT_RENDER_SOCKET ?? "/run/hatbot-render/render.sock";
 /** Chromium is killed after this, whatever it's doing. */
@@ -112,7 +112,7 @@ async function dumpDom(url: string, opts: RenderOptions): Promise<string> {
   }, limit);
   try {
     const [html, err, code] = await Promise.all([
-      readCapped(new Response(proc.stdout)),
+      readText(proc.stdout),
       tail(proc.stderr),
       proc.exited,
     ]);
@@ -123,7 +123,7 @@ async function dumpDom(url: string, opts: RenderOptions): Promise<string> {
         500,
       );
     if (!html.trim()) throw new FetchError("Chromium gave back nothing.", 502);
-    return html.slice(0, MAX_FETCH_CHARS);
+    return html;
   } finally {
     clearTimeout(timer);
     // Any helper process that outlived the browser.
