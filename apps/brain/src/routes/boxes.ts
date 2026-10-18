@@ -73,6 +73,12 @@ export const boxRoutes = new Hono<AppEnv>()
     if (!boxes.get(id(c))) return c.json({ error: GONE }, 404);
     return c.json(await boxes.call(id(c), c.req.valid("json")));
   })
+  // Yours to take back: the page can't run it any more, and a run waiting for approval goes with it.
+  .delete("/boxes/:id/actions/:name", (c) =>
+    c.var.boxes.actions?.remove(id(c), c.req.param("name"))
+      ? c.json({ ok: true })
+      : c.json({ error: "That action is gone." }, 404),
+  )
   .delete("/boxes/:id", (c) =>
     c.var.boxes.delete(id(c)) ? c.json({ ok: true }) : c.json({ error: GONE }, 404),
   );

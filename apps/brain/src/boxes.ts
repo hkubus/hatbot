@@ -27,6 +27,7 @@ import {
 import type { Chats } from "./agent/chats";
 import { type CreateParams, type ModelClient, modelErrorText, oneShot } from "./agent/model";
 import { sameText, secretKey } from "./auth/keys";
+import type { BoxActions } from "./box-actions";
 import type { BoxFeeds } from "./box-feeds";
 import type { Db } from "./db";
 import { UserError } from "./errors";
@@ -83,7 +84,10 @@ const NOTES_PER_HOUR = 5;
  */
 export const NOTIFY_PER_DAY = 10;
 
-/** What hatbox.ask, .send and .feed, and backends' notifications, need: given once the chats exist. */
+/**
+ * What hatbox.ask, .send, .feed and .action, and backends' notifications, need: given once the chats
+ * exist.
+ */
 export type BoxDeps = {
   settings: SettingsStore;
   spend: Spend;
@@ -91,6 +95,7 @@ export type BoxDeps = {
   model: ModelClient;
   chats: Chats;
   feeds: BoxFeeds;
+  actions: BoxActions;
   notifier: Notifier;
   publicUrl: string;
 };
@@ -126,6 +131,10 @@ export class Boxes {
     return this.d?.feeds ?? null;
   }
 
+  get actions(): BoxActions | null {
+    return this.d?.actions ?? null;
+  }
+
   /** The latest changed first; only `botId`'s, when it's given. */
   list(botId?: string): Box[] {
     const where = botId === undefined ? "" : "WHERE bot_id = ?";
@@ -148,7 +157,7 @@ export class Boxes {
         `SELECT ${VERSION_COLUMNS} FROM box_versions WHERE box_id = ? ORDER BY n`,
       )
       .all(id);
-    return { ...box, versions, secrets: this.secrets(id) };
+    return { ...box, versions, secrets: this.secrets(id), actions: this.d?.actions.info(id) ?? [] };
   }
 
   /** A version's page, the current one unless `n` is given. */
@@ -393,6 +402,7 @@ export class Boxes {
     if (gone) {
       this.events.emit({ type: "box.deleted", id });
       void this.backends?.remove(id);
+      this.d?.actions.forget(id);
       const names = this.setSecretNames(id);
       if (names.length) this.vault?.setBox(id, Object.fromEntries(names.map((n) => [n, null])));
     }
@@ -476,6 +486,12 @@ export class Boxes {
         const latest = this.connected().feeds.latest(id, c.name);
         return latest ? { value: latest } : {};
       }
+      case "action": {
+        const { actions } = this.connected();
+        if (!c.check) return { value: await actions.press(this.existing(id).id, c.name) };
+        const last = actions.last(id, c.name);
+        return last ? { value: last } : {};
+      }
     }
   }
 
@@ -536,6 +552,8 @@ export class Boxes {
         .query<{ n: number }, [number, string]>(
           `SELECT count(*) AS n FROM messages WHERE box_id = ?1 AND kind = 'box' AND created_at > ?2
            AND id NOT IN (SELECT message_id FROM box_notices
+             WHERE box_id = ?1 AND message_id IS NOT NULL)
+           AND id NOT IN (SELECT message_id FROM box_action_runs
              WHERE box_id = ?1 AND message_id IS NOT NULL)`,
         )
         .get(box.id, since)?.n ?? 0;
@@ -718,6 +736,7 @@ const HATBOX = `(() => {
     },
     send: (text) => call("send", { text: String(text) }),
     feed: (name) => call("feed", { name: String(name) }),
+    action: (name, o) => call("action", { name: String(name), ...(o && o.check ? { check: true } : {}) }),
     fetch: boxFetch,
     theme,
   });
