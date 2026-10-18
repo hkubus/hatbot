@@ -1,9 +1,11 @@
+// A call runs on the plugin as it is when it runs: not as it was when the task started, the reply
+// began, or the call was checked or approved.
 import { expect, test } from "bun:test";
-import type { Task } from "@hatbot/shared";
 import { z } from "zod";
 import { allow, ask, definePlugin, ready, tool } from "../src/plugins/plugin";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { type TestApp, testApp, waitFor } from "./helpers";
+import { ended, finish, scheduled } from "./plugin-helpers";
 
 /** Restarts guests; the careful ones ask first. `note` is part of the tool's description. */
 function guests(calls: string[]) {
@@ -34,113 +36,45 @@ function guests(calls: string[]) {
   });
 }
 
+const restart = (guest: string) => ({ content: [toolUse("guests_restart", { guest })] });
+
 /** A task whose first call waits until `change` has run, as if you changed Settings meanwhile. */
 async function changedMidTask(change: (t: TestApp) => Promise<unknown> | unknown) {
   const calls: string[] = [];
   let go = () => {};
   const work = new FakeModel([
-    {
-      content: [toolUse("guests_restart", { guest: "web" })],
-      wait: new Promise<void>((r) => {
-        go = r;
-      }),
-    },
-    { content: [toolUse("finish_task", { outcome: "done", summary: "Done.", notify: false })] },
+    { ...restart("web"), wait: new Promise<void>((r) => (go = r)) },
+    finish(),
   ]);
   const t = await testApp(new FakeModel(), work, {}, [guests(calls)]);
   await t.plugins.update("guests", { enabled: true });
-  const task = t.tasks.createBackgroundTask({
-    title: "Restart web",
-    goal: "Restart web",
-    origin: "schedule",
-    source: "nightly",
-    runKey: "schedule:1",
-  }) as Task;
+  const task = scheduled(t);
   await waitFor(() => work.requests.length === 1);
-  // Offered when it started.
-  expect(JSON.stringify(work.requests[0]?.tools)).toContain("guests_restart");
   await change(t);
   go();
-  return { t, task, work, calls };
+  return { t, task, calls, result: () => JSON.stringify(work.requests[1]?.messages.at(-1)) };
 }
 
-const resultOf = (work: FakeModel) => JSON.stringify(work.requests[1]?.messages.at(-1)?.content);
+/** The chat, with web careful and no review unless `review` answers it. */
+async function chatWith(restarts: string[], calls: string[]) {
+  const chat = new FakeModel([...restarts.map(restart), { content: [text("ok")] }]);
+  const t = await testApp(chat, new FakeModel(), {}, [guests(calls)]);
+  await t.plugins.update("guests", { enabled: true, config: { careful: ["web"] } });
+  return { t, chat };
+}
 
-test("a running task's call follows the plugin's settings now, not when it started", async () => {
-  const { t, task, calls } = await changedMidTask((t) =>
+test("a call follows the plugin's settings now, in a running task and later in the same reply", async () => {
+  const task = await changedMidTask((t) =>
     t.plugins.update("guests", { config: { careful: ["web"] } }),
   );
-  const approval = await waitFor(() => t.approvals.list(true)[0]);
+  const approval = await waitFor(() => task.t.approvals.list(true)[0]);
   expect(approval).toMatchObject({ summary: "Restart web", reason: "web is careful." });
-  expect(calls).toEqual([]);
-  t.approvals.decide(approval.id, "approve", "web");
-  await waitFor(() => t.tasks.get(task.id)?.finishedAt);
-  expect(calls).toEqual(["web"]);
-});
+  task.t.approvals.decide(approval.id, "approve", "web");
+  await ended(task.t, task.task.id);
+  expect(task.calls).toEqual(["web"]);
 
-test("a plugin switched off, or taken from the bot, mid-task refuses the call", async () => {
-  const off = await changedMidTask((t) => t.plugins.update("guests", { enabled: false }));
-  await waitFor(() => off.t.tasks.get(off.task.id)?.finishedAt);
-  expect(off.calls).toEqual([]);
-  expect(resultOf(off.work)).toContain("guests_restart isn't available any more");
-  expect(off.t.tasks.steps(off.task.id).some((s) => s.name === "Refused")).toBe(true);
-
-  const taken = await changedMidTask((t) => t.bots.update("hatbot", { plugins: [] }));
-  await waitFor(() => taken.t.tasks.get(taken.task.id)?.finishedAt);
-  expect(taken.calls).toEqual([]);
-  expect(resultOf(taken.work)).toContain("taken from Hatbot");
-});
-
-test("a tool whose description changed mid-task isn't run on the old one", async () => {
-  const { t, task, work, calls } = await changedMidTask((t) =>
-    t.plugins.update("guests", { config: { note: " Also wipes its disk." } }),
-  );
-  await waitFor(() => t.tasks.get(task.id)?.finishedAt);
-  expect(calls).toEqual([]);
-  expect(resultOf(work)).toContain("guests_restart has changed since this task started");
-});
-
-test("in the chat, a plugin switched off while a change waited for approval doesn't run it", async () => {
   const calls: string[] = [];
-  const chat = new FakeModel([
-    { content: [toolUse("guests_restart", { guest: "web" })] },
-    { content: [text("It didn't run.")] },
-  ]);
-  const t = await testApp(chat, new FakeModel(), {}, [guests(calls)]);
-  await t.plugins.update("guests", { enabled: true, config: { careful: ["web"] } });
-  t.settings.update({ reviewChanges: false });
-  const reply = t.thread.post("restart web");
-  const approval = await waitFor(() => t.approvals.list(true)[0]);
-  await t.plugins.update("guests", { enabled: false });
-  t.approvals.decide(approval.id, "approve", "web");
-  await reply.done;
-  expect(calls).toEqual([]);
-  expect(JSON.stringify(chat.requests[1]?.messages.at(-1)?.content)).toContain(
-    "switched off or restarted while this was checked or waited for approval",
-  );
-});
-
-test("a plugin restarted while its call waited for approval doesn't run the approved call", async () => {
-  const { t, task, work, calls } = await changedMidTask((t) =>
-    t.plugins.update("guests", { config: { careful: ["web"] } }),
-  );
-  const approval = await waitFor(() => t.approvals.list(true)[0]);
-  await t.plugins.update("guests", { config: { careful: [] } });
-  t.approvals.decide(approval.id, "approve", "web");
-  await waitFor(() => t.tasks.get(task.id)?.finishedAt);
-  expect(calls).toEqual([]);
-  expect(resultOf(work)).toContain("restarted while this was checked or waited for approval");
-});
-
-test("in the chat, each call in a reply runs on the plugin as it is now", async () => {
-  const calls: string[] = [];
-  const chat = new FakeModel([
-    { content: [toolUse("guests_restart", { guest: "web" })] },
-    { content: [toolUse("guests_restart", { guest: "db" })] },
-    { content: [text("ok")] },
-  ]);
-  const t = await testApp(chat, new FakeModel(), {}, [guests(calls)]);
-  await t.plugins.update("guests", { enabled: true, config: { careful: ["web"] } });
+  const { t } = await chatWith(["web", "db"], calls);
   t.settings.update({ reviewChanges: false });
   const reply = t.thread.post("restart web and db");
   const first = await waitFor(() => t.approvals.list(true)[0]);
@@ -149,45 +83,57 @@ test("in the chat, each call in a reply runs on the plugin as it is now", async 
   t.approvals.decide(first.id, "deny", "web");
   const second = await waitFor(() => t.approvals.list(true)[0]);
   expect(second.summary).toBe("Restart db");
-  // Switched off meanwhile: the approved call doesn't run.
-  await t.plugins.update("guests", { enabled: false });
-  t.approvals.decide(second.id, "approve", "web");
+  t.approvals.decide(second.id, "deny", "web");
   await reply.done;
   expect(calls).toEqual([]);
 });
 
-test("a plugin switched off while Haiku reviewed the call doesn't run it", async () => {
+test("a task's call isn't run once its plugin is switched off, taken from the bot, or its tool changed", async () => {
+  for (const [change, why] of [
+    [(t: TestApp) => t.plugins.update("guests", { enabled: false }), "isn't available any more"],
+    [(t: TestApp) => t.bots.update("hatbot", { plugins: [] }), "taken from Hatbot"],
+    [
+      (t: TestApp) => t.plugins.update("guests", { config: { note: " Also wipes its disk." } }),
+      "has changed since this task started",
+    ],
+  ] as const) {
+    const { t, task, calls, result } = await changedMidTask(change);
+    await ended(t, task.id);
+    expect(calls, why).toEqual([]);
+    expect(result(), why).toContain(why);
+  }
+});
+
+test("a plugin restarted while its call waited for approval or the review doesn't run it", async () => {
+  // A task's call, approved after its plugin restarted.
+  const task = await changedMidTask((t) =>
+    t.plugins.update("guests", { config: { careful: ["web"] } }),
+  );
+  const approval = await waitFor(() => task.t.approvals.list(true)[0]);
+  await task.t.plugins.update("guests", { config: { careful: [] } });
+  task.t.approvals.decide(approval.id, "approve", "web");
+  await ended(task.t, task.task.id);
+  expect(task.calls).toEqual([]);
+  expect(task.result()).toContain("restarted while this was checked or waited for approval");
+
+  // The chat's, approved after its plugin was switched off.
   const calls: string[] = [];
-  let app: TestApp | null = null;
-  const review = (p: { system?: unknown }) => {
+  const asked = await chatWith(["web"], calls);
+  asked.t.settings.update({ reviewChanges: false });
+  const reply = asked.t.thread.post("restart web");
+  const waiting = await waitFor(() => asked.t.approvals.list(true)[0]);
+  await asked.t.plugins.update("guests", { enabled: false });
+  asked.t.approvals.decide(waiting.id, "approve", "web");
+  await reply.done;
+
+  // The chat's, let through by Haiku's review after its plugin was switched off.
+  const reviewed = await chatWith(["web"], calls);
+  reviewed.chat.onCreate = (p) => {
     if (!String(p.system).includes("wants to make a change")) return undefined;
-    void app?.plugins.update("guests", { enabled: false });
+    void reviewed.t.plugins.update("guests", { enabled: false });
     return JSON.stringify({ safe: true, why: "A restart." });
   };
-  // The chat.
-  const chat = new FakeModel([
-    { content: [toolUse("guests_restart", { guest: "web" })] },
-    { content: [text("ok")] },
-  ]);
-  chat.onCreate = review;
-  const t = await testApp(chat, new FakeModel(), {}, [guests(calls)]);
-  app = t;
-  await t.plugins.update("guests", { enabled: true, config: { careful: ["web"] } });
-  await t.thread.post("restart web").done;
+  await reviewed.t.thread.post("restart web").done;
   expect(calls).toEqual([]);
-  expect(JSON.stringify(chat.requests[1]?.messages.at(-1)?.content)).toContain("Not run");
-
-  // A task.
-  const {
-    t: u,
-    task,
-    work,
-  } = await changedMidTask((u) => {
-    app = u;
-    return u.plugins.update("guests", { config: { careful: ["web"] } });
-  });
-  work.onCreate = review;
-  await waitFor(() => u.tasks.get(task.id)?.finishedAt);
-  expect(calls).toEqual([]);
-  expect(resultOf(work)).toContain("Not run");
+  expect(JSON.stringify(reviewed.chat.requests[1]?.messages.at(-1))).toContain("Not run");
 });

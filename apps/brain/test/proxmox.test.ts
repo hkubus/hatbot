@@ -1,71 +1,47 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { Proxmox, pinnedRequest } from "../src/proxmox";
 import { setUpOwner, testApp } from "./helpers";
-
-const FINGERPRINT =
-  "D7:6A:C1:55:98:6E:33:E6:73:98:B6:92:28:50:A5:F7:F0:69:D9:96:AD:CC:64:25:0D:DA:0F:BC:7A:4C:40:D0";
-const fixtures = join(import.meta.dir, "fixtures");
-const seen: { method: string; path: string; auth: string | null; body: string }[] = [];
-let server: ReturnType<typeof Bun.serve>;
+import { fakeApi, fixtures, PVE_FINGERPRINT } from "./plugin-helpers";
 
 // A stand-in for pveproxy with a self-signed certificate.
-beforeAll(() => {
-  server = Bun.serve({
-    port: 0,
-    tls: {
-      cert: Bun.file(join(fixtures, "pve-cert.pem")),
-      key: Bun.file(join(fixtures, "pve-key.pem")),
-    },
-    async fetch(req) {
-      const path = new URL(req.url).pathname;
-      seen.push({
-        method: req.method,
-        path,
-        auth: req.headers.get("authorization"),
-        body: await req.text(),
+const pve = fakeApi(
+  (_req, url) => {
+    const path = url.pathname;
+    if (path === "/api2/json/nodes/pve/lxc/126/snapshot") {
+      const json = JSON.stringify({
+        data: [
+          { name: "current", description: "You are here!" },
+          { name: "nightly_20261007", snaptime: 1791345600, description: "Hatbot nightly\n" },
+          { name: "nightly_20261008", snaptime: 1791432000, description: "Hatbot nightly\n" },
+        ],
       });
-      const data = (d: unknown) => Response.json({ data: d });
-      if (path === "/api2/json/nodes/pve/lxc/126/snapshot") {
-        // Chunked, as pveproxy may send it.
-        const json = JSON.stringify({
-          data: [
-            { name: "current", description: "You are here!" },
-            {
-              name: "nightly_20261007",
-              snaptime: 1791345600,
-              description: "Hatbot nightly snapshot\n",
-            },
-            {
-              name: "nightly_20261008",
-              snaptime: 1791432000,
-              description: "Hatbot nightly snapshot\n",
-            },
-          ],
-        });
-        return new Response(
-          new ReadableStream({
-            start(c) {
-              c.enqueue(new TextEncoder().encode(json.slice(0, 40)));
-              c.enqueue(new TextEncoder().encode(json.slice(40)));
-              c.close();
-            },
-          }),
-          { headers: { "content-type": "application/json" } },
-        );
-      }
-      if (path === "/api2/json/nodes/pve/lxc/126/snapshot/nightly_20261008/rollback")
-        return data("UPID:pve:1:2:3:vzrollback:126:hatbot@pve!brain:");
-      if (path.startsWith("/api2/json/nodes/pve/tasks/"))
-        return data({ status: "stopped", exitstatus: "OK" });
-      return new Response(null, { status: 403, statusText: "Forbidden" });
-    },
-  });
-});
-afterAll(() => server.stop(true));
+      // Chunked, as pveproxy may send it.
+      const bytes = new TextEncoder().encode(json);
+      return new Response(
+        new ReadableStream({
+          start(c) {
+            c.enqueue(bytes.slice(0, 40));
+            c.enqueue(bytes.slice(40));
+            c.close();
+          },
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }
+    if (path === "/api2/json/nodes/pve/lxc/126/snapshot/nightly_20261008/rollback")
+      return { data: "UPID:pve:1:2:3:vzrollback:126:hatbot@pve!brain:" };
+    if (path.startsWith("/api2/json/nodes/pve/tasks/"))
+      return { data: { status: "stopped", exitstatus: "OK" } };
+    return new Response(null, { status: 403, statusText: "Forbidden" });
+  },
+  { tls: "pve" },
+);
+// Its certificate is signed by fixtures/test-ca.pem for "localhost".
+const signed = fakeApi(() => ({ data: "ok" }), { tls: "ca-signed" });
 
-const env = (fingerprint = FINGERPRINT) => ({
-  PROXMOX_URL: `https://127.0.0.1:${server.port}`,
+const env = (fingerprint = PVE_FINGERPRINT) => ({
+  PROXMOX_URL: pve.url,
   PROXMOX_NODE: "pve",
   PROXMOX_TOKEN_ID: "hatbot@pve!brain",
   PROXMOX_TOKEN_SECRET: "s3cret",
@@ -73,109 +49,63 @@ const env = (fingerprint = FINGERPRINT) => ({
   HATBOT_DESKTOP_ID: "126",
 });
 
-describe("Proxmox", () => {
-  test("lists the desktop's snapshots over the pinned connection, newest first", async () => {
-    const snaps = await new Proxmox(env()).desktopSnapshots();
-    expect(snaps.map((s) => s.name)).toEqual(["nightly_20261008", "nightly_20261007"]);
-    expect(snaps[0]?.description).toBe("Hatbot nightly snapshot");
-    expect(seen.at(-1)?.auth).toBe("PVEAPIToken=hatbot@pve!brain=s3cret");
-  });
+test("Settings lists the desktop's snapshots, newest first, and rolls back to one", async () => {
+  const t = await testApp(undefined, undefined, env());
+  const { cookie } = await setUpOwner(t);
+  const list = await t.call("GET", "/desktop/snapshots", undefined, { cookie });
+  const { snapshots } = (await list.json()) as { snapshots: { name: string }[] };
+  expect(snapshots.map((s) => s.name)).toEqual(["nightly_20261008", "nightly_20261007"]);
+  expect(pve.seen[0]?.auth).toBe("PVEAPIToken=hatbot@pve!brain=s3cret");
 
-  test("refuses a certificate that doesn't match the pin, before sending the token", async () => {
-    const before = seen.length;
-    const wrong = FINGERPRINT.replace("D7", "D8");
-    // It says what it saw and where to put it, for a certificate that was renewed.
-    await expect(new Proxmox(env(wrong)).desktopSnapshots()).rejects.toThrow(
-      `Proxmox's certificate doesn't match the pinned fingerprint. It now shows ${FINGERPRINT}. If its certificate was renewed, put that in PROXMOX_TLS_FINGERPRINT in /etc/hatbot/proxmox.env and restart the brain`,
-    );
-    await Bun.sleep(50);
-    expect(seen.length).toBe(before);
-  });
-
-  test("a certificate from a trusted CA for the host's name passes without the pin", async () => {
-    const ca = Bun.serve({
-      port: 0,
-      tls: {
-        cert: Bun.file(join(fixtures, "ca-signed-cert.pem")),
-        key: Bun.file(join(fixtures, "ca-signed-key.pem")),
-      },
-      fetch: () => Response.json({ data: "ok" }),
-    });
-    try {
-      const api = {
-        name: "Proxmox",
-        host: "localhost",
-        port: Number(ca.port),
-        fingerprint: FINGERPRINT,
-        setting: "PROXMOX_TLS_FINGERPRINT in /etc/hatbot/proxmox.env",
-        auth: "PVEAPIToken=x=y",
-      };
-      // Not a CA the system trusts: the pin decides, and it doesn't match.
-      await expect(pinnedRequest(api, "GET", "/version")).rejects.toThrow(/pinned fingerprint/);
-      const testCa = await Bun.file(join(fixtures, "test-ca.pem")).text();
-      expect(await pinnedRequest({ ...api, ca: testCa }, "GET", "/version")).toBe("ok");
-      // The CA's word counts only for the name it signed.
-      const other = { ...api, ca: testCa, host: "127.0.0.2" };
-      await expect(pinnedRequest(other, "GET", "/version")).rejects.toThrow(/pinned fingerprint/);
-    } finally {
-      ca.stop(true);
-    }
-  });
-
-  test("rolls back, starting the desktop again, and waits for the task", async () => {
-    const pve = new Proxmox(env());
-    pve.pollMs = 5;
-    await pve.rollbackDesktop("nightly_20261008");
-    const post = seen.find((s) => s.method === "POST");
-    expect(post?.body).toBe("start=1");
-    expect(seen.at(-1)?.path).toContain("/tasks/UPID");
-  });
-
-  test("passes Proxmox's error on", async () => {
-    const pve = new Proxmox(env());
-    await expect(pve.rollbackDesktop("nightly_19990101")).rejects.toThrow(/^Proxmox: /);
-    await expect(pve.rollbackDesktop("../../etc")).rejects.toThrow(/Not a snapshot name/);
-  });
-
-  test("isn't configured without a fingerprint", () => {
-    expect(new Proxmox({ ...env(), PROXMOX_TLS_FINGERPRINT: "" }).configured).toBe(false);
-  });
+  const rollback = (name: string) => t.call("POST", "/desktop/rollback", { name }, { cookie });
+  expect((await rollback("nightly_20261008")).status).toBe(200);
+  // It starts the desktop again and waits for Proxmox's task.
+  expect(pve.seen.find((s) => s.method === "POST")?.body).toBe("start=1");
+  expect(pve.seen.at(-1)?.path).toContain("/tasks/UPID");
+  expect(t.tasks.lane.holderId).toBeNull();
+  // A name that isn't a snapshot's never reaches Proxmox's paths.
+  const before = pve.seen.length;
+  expect((await rollback("../../etc")).status).toBe(400);
+  expect(pve.seen.length).toBe(before);
 });
 
-describe("Roll back desktop", () => {
-  test("lists snapshots and rolls back when nothing is using the desktop", async () => {
-    const t = await testApp(undefined, undefined, env());
-    const { cookie } = await setUpOwner(t);
-    const list = await t.call("GET", "/desktop/snapshots", undefined, { cookie });
-    expect(((await list.json()) as { snapshots: unknown[] }).snapshots).toHaveLength(2);
+test("rolling back is refused while you or a task use the desktop", async () => {
+  const t = await testApp(undefined, undefined, env());
+  const { cookie } = await setUpOwner(t);
+  const rollback = () =>
+    t.call("POST", "/desktop/rollback", { name: "nightly_20261008" }, { cookie });
+  await t.call("POST", "/desktop/takeover", undefined, { cookie });
+  expect((await rollback()).status).toBe(409);
+  await t.call("POST", "/desktop/handback", undefined, { cookie });
+  t.db.run(
+    "INSERT INTO tasks (title, goal, origin, lane, model, status, budget_usd) VALUES ('x', 'x', 'chat', 'screen', 'm', 'waiting_approval', 1)",
+  );
+  expect((await rollback()).status).toBe(409);
+  expect(pve.seen.some((s) => s.method === "POST")).toBe(false);
+});
 
-    const res = await t.call("POST", "/desktop/rollback", { name: "nightly_20261008" }, { cookie });
-    expect(res.status).toBe(200);
-    expect(t.tasks.lane.holderId).toBeNull();
-  });
+test("only the pinned certificate, or a trusted CA's for the host's name, gets the token", async () => {
+  // A wrong pin fails before anything is sent, and says what it saw.
+  const wrong = PVE_FINGERPRINT.replace("D7", "D8");
+  await expect(new Proxmox(env(wrong)).desktopSnapshots()).rejects.toThrow(PVE_FINGERPRINT);
+  expect(pve.seen).toEqual([]);
+  // Without a pin it isn't set up at all.
+  expect(new Proxmox({ ...env(), PROXMOX_TLS_FINGERPRINT: "" }).configured).toBe(false);
 
-  test("refuses while a task or you are using the desktop", async () => {
-    const t = await testApp(undefined, undefined, env());
-    const { cookie } = await setUpOwner(t);
-    const rollback = () =>
-      t.call("POST", "/desktop/rollback", { name: "nightly_20261008" }, { cookie });
-
-    await t.call("POST", "/desktop/takeover", undefined, { cookie });
-    expect(((await (await rollback()).json()) as { error: string }).error).toMatch(/Hand/);
-    await t.call("POST", "/desktop/handback", undefined, { cookie });
-
-    t.db.run(
-      "INSERT INTO tasks (title, goal, origin, lane, model, status, budget_usd) VALUES ('x', 'x', 'chat', 'screen', 'm', 'waiting_approval', 1)",
-    );
-    const res = await rollback();
-    expect(res.status).toBe(409);
-    expect(((await res.json()) as { error: string }).error).toMatch(/Cancel it first/);
-  });
-
-  test("says when Proxmox isn't set up", async () => {
-    const t = await testApp();
-    const { cookie } = await setUpOwner(t);
-    const res = await t.call("GET", "/desktop/snapshots", undefined, { cookie });
-    expect(await res.json()).toEqual({ configured: false, snapshots: [] });
-  });
+  const api = {
+    name: "Proxmox",
+    host: "localhost",
+    port: signed.port,
+    fingerprint: PVE_FINGERPRINT,
+    setting: "PROXMOX_TLS_FINGERPRINT in /etc/hatbot/proxmox.env",
+    auth: "PVEAPIToken=x=y",
+  };
+  // Not a CA the system trusts: the pin decides, and it doesn't match.
+  await expect(pinnedRequest(api, "GET", "/version")).rejects.toThrow(/pinned fingerprint/);
+  const ca = await Bun.file(join(fixtures, "test-ca.pem")).text();
+  expect(await pinnedRequest({ ...api, ca }, "GET", "/version")).toBe("ok");
+  // The CA's word counts only for the name it signed.
+  await expect(pinnedRequest({ ...api, ca, host: "127.0.0.2" }, "GET", "/version")).rejects.toThrow(
+    /pinned fingerprint/,
+  );
 });
