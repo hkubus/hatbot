@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { KEY_NAMES, MODIFIER_NAMES, readKey } from "@hatbot/shared/keys";
-import { browserKey, combo, KeyError, keysym, MODIFIERS, modifiers, NAMED } from "../src/keys";
+import { browserKey, combo, KeyError, keysym, modifiers } from "../src/keys";
 
 test("only listed names are pressed, modifiers first: no keycodes, hex keysyms or object keys", () => {
   for (const [name, sym] of [
@@ -31,8 +31,6 @@ test("only listed names are pressed, modifiers first: no keycodes, hex keysyms o
 
 test("desktop-agent presses exactly the names the brain's checks read, as the same keys", () => {
   const names = [
-    ...Object.keys(NAMED),
-    ...Object.keys(MODIFIERS),
     ...Object.keys(MODIFIER_NAMES),
     ...Object.keys(KEY_NAMES),
     ...["F1", "f24", "F25", "a", "+", "ą", "36", "0xff0d", "U0020", "KP_Space", "ISO_Left_Tab"],

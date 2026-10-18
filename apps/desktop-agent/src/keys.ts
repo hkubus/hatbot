@@ -1,69 +1,30 @@
 // Key names from the model ("ctrl+shift+Escape", "Page_Down", "enter") and from the browser
-// (KeyboardEvent.key) to X keysyms for xdotool. Only names on these lists are pressed: xdotool would also
-// take a keycode ("36"), a hex or Unicode keysym ("0xff0d", "U0020") or any other keysym, and press Enter
-// under a name the brain's checks don't read as Enter. The brain reads names with the same lists
-// (packages/shared/src/keys.ts); keys.test.ts keeps the two the same. browser.ts reads them here too.
+// (KeyboardEvent.key) to X keysyms for xdotool. Only names on the brain's lists (packages/shared/src/keys.ts)
+// are pressed: xdotool would also take a keycode ("36"), a hex or Unicode keysym ("0xff0d", "U0020") or any
+// other keysym, and press Enter under a name the brain's checks don't read as Enter. browser.ts reads them
+// here too.
+import { comboParts, readKey } from "@hatbot/shared/keys";
 
-export const MODIFIERS: Record<string, string> = {
-  ctrl: "ctrl",
-  control: "ctrl",
-  control_l: "ctrl",
-  control_r: "ctrl",
-  shift: "shift",
-  shift_l: "shift",
-  shift_r: "shift",
-  alt: "alt",
-  option: "alt",
-  alt_l: "alt",
-  alt_r: "alt",
-  super: "super",
-  meta: "super",
-  cmd: "super",
-  command: "super",
-  win: "super",
-  windows: "super",
-  super_l: "super",
-  super_r: "super",
-  meta_l: "super",
-  meta_r: "super",
-};
-
-export const NAMED: Record<string, string> = {
-  return: "Return",
+/** X keysyms for the keys shared's KEY_NAMES press. Prior and Next are X's names for Page_Up and Page_Down. */
+const KEYSYMS: Record<string, string> = {
   enter: "Return",
-  kp_enter: "KP_Enter",
-  escape: "Escape",
-  esc: "Escape",
+  space: "space",
   tab: "Tab",
+  escape: "Escape",
   backspace: "BackSpace",
   delete: "Delete",
-  del: "Delete",
   insert: "Insert",
   up: "Up",
   down: "Down",
   left: "Left",
   right: "Right",
-  arrowup: "Up",
-  arrowdown: "Down",
-  arrowleft: "Left",
-  arrowright: "Right",
   home: "Home",
   end: "End",
-  page_up: "Page_Up",
   pageup: "Page_Up",
-  pgup: "Page_Up",
-  prior: "Prior",
-  page_down: "Page_Down",
   pagedown: "Page_Down",
-  pgdn: "Page_Down",
-  next: "Next",
-  space: "space",
   menu: "Menu",
-  contextmenu: "Menu",
   print: "Print",
-  printscreen: "Print",
   capslock: "Caps_Lock",
-  caps_lock: "Caps_Lock",
 };
 
 const SYMBOLS: Record<string, string> = {
@@ -104,26 +65,23 @@ const SYMBOLS: Record<string, string> = {
 
 export class KeyError extends Error {}
 
-/** A table's own entry: every object has a "constructor" and a "__proto__", which aren't keys. */
-const own = (table: Record<string, string>, name: string) =>
-  Object.hasOwn(table, name) ? table[name] : undefined;
 /** The modifier a name is (ctrl, shift, alt or super), if it's one. */
-export const modifier = (name: string) => own(MODIFIERS, name.toLowerCase());
-
-/** A letter, digit, punctuation mark or symbol, not a control character or a space. */
-const printable = (s: string) => [...s].length === 1 && /^[\p{L}\p{N}\p{P}\p{S}]$/u.test(s);
+export const modifier = (name: string) => {
+  const k = readKey(name);
+  return k && "mod" in k ? k.mod : undefined;
+};
 
 /** One key name to a keysym, from the lists only. */
 export function keysym(name: string): string {
-  if ([...name].length === 1) {
-    if (!printable(name)) throw new KeyError(`Unknown key "${name}".`);
-    return SYMBOLS[name] ?? name;
+  const k = readKey(name);
+  if (k && "mod" in k) return k.mod;
+  if (k && [...name].length === 1) return SYMBOLS[name] ?? name;
+  if (k) {
+    // The brain reads KP_Enter as Enter; it's pressed as itself.
+    if (name.toLowerCase() === "kp_enter") return "KP_Enter";
+    if (/^f\d+$/.test(k.key)) return `F${k.key.slice(1)}`;
+    if (Object.hasOwn(KEYSYMS, k.key)) return KEYSYMS[k.key] as string;
   }
-  const lower = name.toLowerCase();
-  const sym = modifier(name) ?? own(NAMED, lower);
-  if (sym) return sym;
-  const f = /^f([1-9]|1\d|2[0-4])$/.exec(lower);
-  if (f) return `F${f[1]}`;
   throw new KeyError(
     `Unknown key "${name}". Use a key's name (Return, Tab, Page_Down, F5) or a character.`,
   );
@@ -136,8 +94,7 @@ export function keysym(name: string): string {
 export function combo(text: string): string {
   const t = text.trim();
   if (!t) throw new KeyError("Empty key name.");
-  if (t === "+") return "plus";
-  const parts = t.endsWith("++") ? [...t.slice(0, -2).split("+"), "+"] : t.split("+");
+  const parts = comboParts(t);
   if (parts.some((p) => !p)) throw new KeyError(`Can't read the key combination "${text}".`);
   if (parts.slice(0, -1).some((p) => !modifier(p)))
     throw new KeyError(`"${text}": put the modifiers first and one key last, like ctrl+shift+t.`);
@@ -167,8 +124,7 @@ export function browserKey(key: string): string | null {
     Meta: "Super_L",
     AltGraph: "ISO_Level3_Shift",
   };
-  const held = own(special, key);
-  if (held) return held;
+  if (Object.hasOwn(special, key)) return special[key] as string;
   try {
     return keysym(key);
   } catch (err) {

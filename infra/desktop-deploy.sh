@@ -2,9 +2,10 @@
 # Hatbot: install desktop-agent inside hatbot-desktop (PLAN.md §4.2). deploy.sh pushes and runs it,
 # and it installs itself as /usr/local/sbin/hatbot-desktop-agent-deploy for updates from the brain:
 # desktop-agent drops an archive in its state directory, and hatbot-desktop-agent-update.path runs this.
-#   $1          archive of apps/desktop-agent
+#   $1          archive of apps/desktop-agent, with packages/shared in node_modules/@hatbot/shared
 #   DESKTOP_IP  this container's IP; desktop-agent listens only there
-# desktop-agent has no dependencies, so nothing is installed from npm here.
+# desktop-agent has no dependencies from npm (it imports only shared's modules without zod), so nothing
+# is installed here.
 
 set -euo pipefail
 ARCHIVE=${1:?usage: desktop-deploy.sh ARCHIVE}
