@@ -4,6 +4,7 @@ import type { ComponentType } from "react";
 import { HomeAssistantSettings } from "./homeassistant";
 import { McpSettings } from "./mcp";
 import { ProxmoxSettings } from "./proxmox";
+import { SelfSettings } from "./self";
 import { SshSettings } from "./ssh";
 
 export type PluginSettingsProps<C = unknown> = {
@@ -21,4 +22,5 @@ export const PLUGIN_SETTINGS: Record<string, ComponentType<PluginSettingsProps>>
   ssh: SshSettings as ComponentType<PluginSettingsProps>,
   mcp: McpSettings as ComponentType<PluginSettingsProps>,
   homeassistant: HomeAssistantSettings as ComponentType<PluginSettingsProps>,
+  self: SelfSettings,
 };
