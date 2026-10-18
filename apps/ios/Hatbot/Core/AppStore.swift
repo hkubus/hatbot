@@ -47,6 +47,8 @@ final class AppStore {
   var tasks: [Int: AgentTask] = [:]
   /// Steps of the tasks that have been opened or shown in the chat.
   var steps: [Int: [TaskStep]] = [:]
+  /// Files attached to the tasks that have been opened, such as a research report's copy.
+  var taskFiles: [Int: [Attachment]] = [:]
   /// Latest progress note per running task.
   var taskProgress: [Int: String] = [:]
   var approvals: [Int: Approval] = [:]
@@ -700,6 +702,7 @@ final class AppStore {
     let res: TaskWithSteps = try await api.get("/tasks/\(id)")
     tasks[id] = res.task
     steps[id] = res.steps
+    taskFiles[id] = res.attachments ?? []
   }
 
   /// Loads a task the first time something shows it. The rows that appear together come in one request.

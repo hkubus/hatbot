@@ -148,6 +148,8 @@ struct MemoryView: View {
 struct MemoryFileView: View {
   let path: String
   var isNew = false
+  /// Opens in the editor once it's read.
+  var edit = false
   @Environment(AppStore.self) private var store
   @Environment(\.dismiss) private var dismiss
   @State private var content: String?
@@ -157,6 +159,7 @@ struct MemoryFileView: View {
   @State private var conflict: AppStore.MemoryConflict?
   @State private var draft = ""
   @State private var editing = false
+  @State private var openedEditor = false
   @State private var saving = false
   @State private var confirmDelete = false
   @State private var error: String?
@@ -208,6 +211,11 @@ struct MemoryFileView: View {
             editing = true
           }
         }
+        if path.lowercased().hasSuffix(".md") {
+          ToolbarItem(placement: .secondaryAction) {
+            NavigationLink(value: Route.read(ReadTarget(path: path))) { Label("Read", systemImage: "book") }
+          }
+        }
         ToolbarItem(placement: .secondaryAction) {
           NavigationLink(value: Route.memoryHistory(path: path)) {
             Label("History", systemImage: "clock.arrow.circlepath")
@@ -242,6 +250,11 @@ struct MemoryFileView: View {
         let file = try await store.memoryFile(path)
         content = file.content
         baseSha = file.sha
+        if edit && !openedEditor {
+          openedEditor = true
+          draft = file.content
+          editing = true
+        }
       }
     }
   }

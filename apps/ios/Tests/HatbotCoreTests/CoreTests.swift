@@ -783,6 +783,37 @@ final class NetworkTests: XCTestCase {
     XCTAssertEqual(sent["baseSha"] as? String, "")
   }
 
+  /// A research report opens from its note; the copy attached to the task stands in only when the note
+  /// is gone, not when the brain fails.
+  func testAReportFallsBackToItsAttachmentWhenTheNoteIsGone() async throws {
+    let store = await MainActor.run { Self.store() }
+    let task = Self.task(5).dropLast() + #","research":true,"reportPath":"research/nas.md"}"#
+    let file = #"{"id":8,"name":"nas.md","mediaType":"text/markdown","size":9,"from":"hatbot","createdAt":"2026-10-15T08:00:00Z"}"#
+    let picture = #"{"id":7,"name":"nas.png","mediaType":"image/png","size":9,"from":"hatbot","createdAt":"2026-10-15T08:00:00Z"}"#
+    SlowBrain.routes["/tasks/5"] = #"{"task":\#(task),"steps":[],"attachments":[\#(picture),\#(file)]}"#
+    SlowBrain.routes["/attachments/8"] = "# The copy\n"
+    try await store.loadTask(5)
+    let target = try await MainActor.run {
+      try XCTUnwrap(ReadTarget.report(XCTUnwrap(store.tasks[5]), files: store.taskFiles[5] ?? []))
+    }
+    XCTAssertEqual(target.file?.id, 8)
+
+    var read = try await store.read(target)
+    XCTAssertEqual(read, ReadFile(text: "# The copy\n", name: "nas.md", note: nil))
+
+    SlowBrain.routes["/memory/file?path=research/nas.md"] = #"{"path":"research/nas.md","content":"The note"}"#
+    read = try await store.read(target)
+    XCTAssertEqual(read, ReadFile(text: "The note", name: "nas.md", note: "research/nas.md"))
+
+    SlowBrain.statuses["/memory/file?path=research/nas.md"] = 500
+    do {
+      _ = try await store.read(target)
+      XCTFail("a failing brain read as a missing note")
+    } catch let e as APIError {
+      XCTAssertEqual(e.status, 500)
+    }
+  }
+
   /// A file goes up from disk as the same multipart body as one from memory, and the body file is deleted.
   func testUploadsAFileFromDisk() async throws {
     let store = await MainActor.run { Self.store() }
