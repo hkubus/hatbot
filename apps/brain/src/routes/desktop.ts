@@ -30,12 +30,12 @@ export const desktopRoutes = new Hono<AppEnv>()
     // Same rules as /stream: a cookie needs the public Origin, an app uses its bearer token.
     async (c, next) => {
       const principal = principalOf(c, { renew: false });
-      if (!principal) return c.json({ error: "unauthorized" }, 401);
-      if (principal.kind === "session" && c.req.header("origin") !== c.var.config.publicUrl) {
-        return c.json({ error: "bad origin" }, 403);
-      }
+      if (!principal) return c.json({ error: "You're not signed in." }, 401);
+      const { publicUrl } = c.var.config;
+      if (principal.kind === "session" && c.req.header("origin") !== publicUrl)
+        return c.json({ error: `Open Hatbot at ${publicUrl} to make changes.` }, 403);
       if (!c.var.desktop.agent.configured)
-        return c.json({ error: "the desktop isn't set up" }, 503);
+        return c.json({ error: "The desktop isn't set up." }, 503);
       c.set("principal", principal);
       await next();
     },

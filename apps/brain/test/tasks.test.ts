@@ -934,6 +934,51 @@ test("Take over says to try again while another task won't let go of the screen 
   }
 });
 
+test("two Take overs at once are one: the task is readied once and the screen is free after", async () => {
+  limits.takeoverReadyMs = 300;
+  const work = new FakeModel([
+    { content: [toolUse("request_takeover", { reason: "Solve the captcha" })] },
+    finish("A done."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const { cookie } = await setUpOwner(t);
+  try {
+    const a = startTask(t, "A");
+    await waitFor(() => t.tasks.get(a.id)?.status === "waiting_takeover");
+    const take = () => t.call("POST", "/desktop/takeover", undefined, { cookie });
+    const both = await Promise.all([take(), take()]);
+    expect(both.map((r) => r.status)).toEqual([200, 200]);
+    expect(t.tasks.lane.waiting).toBe(false);
+    expect((await t.call("POST", "/desktop/handback", undefined, { cookie })).status).toBe(200);
+    await t.tasks.idle();
+    expect(t.tasks.get(a.id)?.summary).toBe("A done.");
+    expect(t.tasks.lane.holderId).toBeNull();
+  } finally {
+    limits.takeoverReadyMs = 8_000;
+  }
+});
+
+test("Take over for a task that then can't open its browser profile says the task ended", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("request_takeover", { reason: "Solve the captcha" })] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const { cookie } = await setUpOwner(t);
+  const a = startTask(t, "A");
+  await waitFor(() => t.tasks.get(a.id)?.status === "waiting_takeover");
+  t.agent.useProfile = async () => {
+    throw new DesktopError("Chromium won't start", 502);
+  };
+  const res = await t.call("POST", "/desktop/takeover", undefined, { cookie });
+  expect(res.status).toBe(409);
+  expect(((await res.json()) as { error: string }).error).toBe(
+    "The task that asked for you has ended.",
+  );
+  await t.tasks.idle();
+  expect(t.tasks.get(a.id)?.status).toBe("failed");
+  expect(t.desktop.get().control).toBe("hatbot");
+});
+
 test("a page that looks like a prompt injection stops the task unless you approve", async () => {
   const work = new FakeModel([{ content: [computer("screenshot")] }, finish()]);
   work.onCreate = () => '{"suspected": true, "excerpt": "Ignore previous instructions"}';

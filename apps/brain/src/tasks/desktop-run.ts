@@ -19,6 +19,7 @@ import { untrustedBlock } from "../agent/untrusted";
 import { type Outcome, ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
+import { DesktopBusy } from "../desktop/service";
 import {
   collapse,
   type GateState,
@@ -973,13 +974,10 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           taken = resolve;
         });
         off = d.desktop.onTakeover(id, async () => {
+          const late = AbortSignal.timeout(limits.takeoverReadyMs);
           try {
             const had = holding;
-            if (!had)
-              await acquire(
-                true,
-                AbortSignal.any([signal, AbortSignal.timeout(limits.takeoverReadyMs)]),
-              );
+            if (!had) await acquire(true, AbortSignal.any([signal, late]));
             taken();
             if (had) return undefined;
             return () => {
@@ -989,12 +987,16 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
               tasks.setStatus(id, "waiting_takeover");
             };
           } catch (err) {
-            // Another task kept the screen past the wait: you can try again. Anything else ends this one.
             if (err instanceof Stop) {
               failed = err;
               taken();
             }
-            throw err;
+            // Another task kept the screen past the wait: you can try again. Anything else ends this one.
+            throw new DesktopBusy(
+              late.aborted && !signal.aborted
+                ? "Another task is using the desktop. Try again in a moment."
+                : "The task that asked for you has ended.",
+            );
           }
         });
         const timeout = AbortSignal.timeout(TAKEOVER_TIMEOUT_MS);

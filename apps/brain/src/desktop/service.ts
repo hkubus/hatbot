@@ -4,10 +4,13 @@ import type { Db } from "../db";
 import type { EventBus } from "../events";
 import type { DesktopAgent } from "./client";
 
-/** Take over couldn't give the task that asked the screen in time: another task is mid-step. */
+/** Take over couldn't give the task that asked the screen: another task is mid-step, or it ended. */
 export class DesktopBusy extends Error {}
 
-/** Gives a waiting task the screen for Take over; what it returns gives it back if Take over fails. */
+/**
+ * Gives a waiting task the screen for Take over, rejecting with DesktopBusy when it can't; what it returns
+ * gives the screen back if Take over fails.
+ */
 type Readying = () => Promise<(() => void) | undefined>;
 
 export class Desktop {
@@ -24,6 +27,7 @@ export class Desktop {
   private requests: { taskId: number; reason: string }[] = [];
   private served: number | null = null;
   private readying = new Map<number, Readying>();
+  private taking: Promise<void> | null = null;
 
   constructor(
     readonly agent: DesktopAgent,
@@ -77,16 +81,20 @@ export class Desktop {
 
   /**
    * You take control. `forRequest`: Take over, answering the first task that asked for you; that task gets
-   * the screen and its browser profile first, so you work where it needs you (B16).
+   * the screen and its browser profile first, so you work where it needs you (B16). A second Take over
+   * while one is under way (a double tap, another device) is the same one: the task is readied once.
    */
-  async takeover(forRequest = false) {
+  takeover(forRequest = false): Promise<void> {
+    this.taking ??= this.take(forRequest).finally(() => {
+      this.taking = null;
+    });
+    return this.taking;
+  }
+
+  private async take(forRequest: boolean) {
     const asked = forRequest && this.state.control !== "owner" ? this.state.request : null;
     const ready = asked ? this.readying.get(asked.taskId) : undefined;
-    const undo = ready
-      ? await ready().catch(() => {
-          throw new DesktopBusy("Another task is using the desktop. Try again in a moment.");
-        })
-      : undefined;
+    const undo = ready ? await ready() : undefined;
     try {
       await this.agent.lock();
     } catch (err) {
