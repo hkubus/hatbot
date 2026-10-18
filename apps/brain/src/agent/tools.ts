@@ -2,12 +2,14 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import {
   type Bot,
+  type Box,
   describeCondition,
   describeCron,
   dueTag,
   findTodo,
   HATBOT_ID,
   localDay,
+  MAX_BOX_HTML,
   MAX_WATCH_MINUTES,
   minWatchMinutes,
   parseTodos,
@@ -25,6 +27,7 @@ import {
 import { z } from "zod";
 import type { Attachments } from "../attachments";
 import { type Bots, botFolder } from "../bots";
+import { BoxError, type Boxes } from "../boxes";
 import type { Db } from "../db";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import type { EventBus } from "../events";
@@ -70,6 +73,8 @@ export type ToolContext = {
   /** The background task running the tool: files it sends go on the task. */
   taskId?: number;
   attachments?: Attachments;
+  /** Boxes the chat makes and changes (PLAN.md §21). */
+  boxes?: Boxes;
   /** The desktop, whose sandbox send_file takes files from. */
   desktop?: DesktopAgent;
   /** Adds a schedule's card to the thread. */
@@ -406,6 +411,46 @@ const scheduleWhen = {
   at: z.string().optional().describe('Once: local date and time, e.g. "2026-10-11T08:00"'),
 };
 
+/** One of the calling bot's boxes: another bot's is theirs to change. */
+function ownBox(ctx: ToolContext, id: number): Box {
+  const box = ctx.boxes?.get(id);
+  if (!box) throw new BoxError(`There's no box #${id}.`);
+  const me = ctx.bot?.id ?? HATBOT_ID;
+  if (box.botId !== me)
+    throw new BoxError(
+      `Box #${id} is ${ctx.bots?.nameOf(box.botId) ?? box.botId}'s; leave it to them.`,
+    );
+  return box;
+}
+
+/** The page with each exact replacement made in turn; each old text must be there once. */
+function edited(html: string, edits: { old: string; new: string }[]): string {
+  return edits.reduce((page, e, i) => {
+    const at = page.indexOf(e.old);
+    const again = at >= 0 && page.indexOf(e.old, at + 1) >= 0;
+    if (at < 0 || again)
+      throw new BoxError(
+        `Not changed: edit ${i + 1}'s old text ${again ? "is in the page more than once; give more of it" : "isn't in the page"}.`,
+      );
+    return page.slice(0, at) + e.new + page.slice(at + e.old.length);
+  }, html);
+}
+
+/** What a box gives the model, untrusted and tainting when `by` says what tainted it. */
+function boxOutput(ctx: ToolContext, tool: string, text: string, by: string | null): string {
+  if (!by) return text;
+  ctx.taint?.(by, text);
+  return untrustedBlock("tool_output", text, { tool });
+}
+
+/** Shows the box under the reply, and says so. */
+function shown(ctx: ToolContext, box: Box): string {
+  if (ctx.messageId) ctx.boxes?.attach(ctx.messageId, box.id);
+  return `Box #${box.id} "${box.title}", version ${box.version}, shows under your reply, where the owner opens it.`;
+}
+
+const BOX_TITLE = z.string().min(1).max(80).describe('Short, e.g. "Habit tracker"');
+
 type ToolDef<S extends z.ZodType> = {
   name: string;
   description: string;
@@ -661,6 +706,131 @@ export const TOOLS = [
       const target = taskId ? { taskId } : { messageId };
       const a = await attachments.fromDesktop(desktop, { path, name }, target);
       return `Sent "${a.name}" (${a.mediaType}).`;
+    },
+  }),
+  def({
+    name: "box_create",
+    description:
+      "Make a box: a small web app the owner keeps and opens from the chat, such as a tracker, a calculator, a planner or a dashboard. Not for a one-off answer: reply instead, with a chart block if it helps. A box is one self-contained HTML page, its CSS and JavaScript inline. It can't load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don't work; show messages and confirmations in the page. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app's colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too.",
+    schema: z.object({
+      title: BOX_TITLE,
+      html: z.string().min(1).max(MAX_BOX_HTML).describe("The whole page"),
+    }),
+    run: async ({ title, html }, ctx) => {
+      if (!ctx.boxes) return "Boxes aren't available here.";
+      if (gone(ctx)) return GONE;
+      const box = ctx.boxes.create(
+        {
+          botId: ctx.bot?.id ?? HATBOT_ID,
+          conversationId: ctx.conversationId ?? null,
+          title,
+          html,
+        },
+        { messageId: ctx.messageId, taintedBy: chatTaint(ctx.tainted?.()) },
+      );
+      return `Made it. ${shown(ctx, box)}`;
+    },
+  }),
+  def({
+    name: "box_edit",
+    description:
+      "Change one of your boxes, as a new version; the earlier ones are kept. Give edits for a few changes, or the whole new page as html.",
+    schema: z.object({
+      box: z.number().int().describe("The box's number"),
+      edits: z
+        .array(
+          z.object({
+            old: z.string().min(1).describe("Text in the page, exactly, found there once"),
+            new: z.string().describe("What it becomes"),
+          }),
+        )
+        .max(50)
+        .optional()
+        .describe("Replacements, made in turn"),
+      html: z.string().min(1).max(MAX_BOX_HTML).optional().describe("The whole new page"),
+      title: BOX_TITLE.optional(),
+    }),
+    run: async ({ box: id, edits, html, title }, ctx) => {
+      const box = ownBox(ctx, id);
+      const current = ctx.boxes?.page(id);
+      if (!ctx.boxes || !current) return `There's no box #${id}.`;
+      const page = edited(html ?? current.html, edits ?? []);
+      if (page.length > MAX_BOX_HTML) return "Not changed: the page would be too long.";
+      const saved = ctx.boxes.save(id, title ?? box.title, page, {
+        messageId: ctx.messageId,
+        taintedBy: chatTaint(ctx.tainted?.()),
+      });
+      return saved
+        ? `Saved. ${shown(ctx, saved)}`
+        : "No change: the page and title are as they were.";
+    },
+  }),
+  def({
+    name: "box_list",
+    description: "Your boxes, the latest changed first.",
+    schema: z.object({}),
+    run: async (_, ctx) => {
+      const list = ctx.boxes?.list(ctx.bot?.id ?? HATBOT_ID) ?? [];
+      if (!list.length) return "You haven't made any boxes.";
+      return list
+        .map(
+          (b) =>
+            `#${b.id} "${b.title}" (version ${b.version}, changed ${localDay(new Date(b.updatedAt))})`,
+        )
+        .join("\n");
+    },
+  }),
+  def({
+    name: "box_read",
+    description: "Read one of your boxes' page: the one that opens, or an earlier version.",
+    schema: z.object({
+      box: z.number().int(),
+      version: z.number().int().positive().optional(),
+    }),
+    run: async ({ box: id, version }, ctx) => {
+      const box = ownBox(ctx, id);
+      const page = ctx.boxes?.page(id, version);
+      if (!page) return `Box #${id} has no version ${version}.`;
+      const by = ctx.boxes?.taintedBy(id);
+      const text = `Box #${id} "${page.title}", version ${page.n} (${version ? `version ${box.version} opens` : "the one that opens"}):\n\n${page.html}`;
+      return boxOutput(
+        ctx,
+        "box_read",
+        text,
+        by ? `Box #${id} "${box.title}", written after reading: ${by}` : null,
+      );
+    },
+  }),
+  def({
+    name: "box_revert",
+    description: "Bring back an earlier version of one of your boxes, as a new version.",
+    schema: z.object({ box: z.number().int(), version: z.number().int().positive() }),
+    run: async ({ box: id, version }, ctx) => {
+      ownBox(ctx, id);
+      const saved = ctx.boxes?.revert(id, version, {
+        messageId: ctx.messageId,
+        taintedBy: chatTaint(ctx.tainted?.()),
+      });
+      return saved
+        ? `Brought back version ${version}. ${shown(ctx, saved)}`
+        : `No change: version ${version} is what opens now.`;
+    },
+  }),
+  def({
+    name: "box_data",
+    description: "What one of your boxes' page has saved with hatbox.store, by key.",
+    schema: z.object({ box: z.number().int() }),
+    run: async ({ box: id }, ctx) => {
+      const box = ownBox(ctx, id);
+      const data = ctx.boxes?.data(id) ?? {};
+      if (!Object.keys(data).length) return "Nothing saved yet.";
+      // What the page saved is whatever its code and the owner's typing made of it.
+      return boxOutput(
+        ctx,
+        "box_data",
+        cut(JSON.stringify(data, null, 1), 30_000),
+        `What box #${id} "${box.title}" saved`,
+      );
     },
   }),
   def({
@@ -1236,7 +1406,8 @@ export async function runTool(
       err instanceof MemoryError ||
       err instanceof ScheduleError ||
       err instanceof DesktopError ||
-      err instanceof NotChanged
+      err instanceof NotChanged ||
+      err instanceof BoxError
     )
       return { content: err.message, isError: true };
     console.error(`tool ${name} failed`, err);

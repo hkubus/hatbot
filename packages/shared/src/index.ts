@@ -1,12 +1,14 @@
 // API types shared by the brain, the web app and the future iOS app (PLAN.md §4.4).
 import { z } from "zod";
 import { BOT_ID } from "./bot-id";
+import type { Box } from "./box";
 import type { Negotiation } from "./negotiate";
 import type { PluginInfo } from "./plugin";
 import type { Schedule, Trigger } from "./schedule";
 import type { Watcher } from "./watch";
 
 export * from "./bot-id";
+export * from "./box";
 export * from "./chart";
 export * from "./checks";
 export * from "./negotiate";
@@ -117,6 +119,8 @@ export type ThreadMessage = {
   scheduleId: number | null;
   /** A negotiation this reply started shows under it (PLAN.md §16.5). */
   negotiationId: number | null;
+  /** The box this reply made or changed last shows under it (PLAN.md §21.5). */
+  boxId: number | null;
   /** The conversation it belongs to; cards from background tasks have none. */
   episodeId: number | null;
   /** When a task's result changed it after it was sent. */
@@ -361,6 +365,8 @@ export type HatbotEvent =
   | { type: "message.task"; id: number; taskId: number }
   /** A negotiation now shows under this reply (PLAN.md §16.5). */
   | { type: "message.negotiation"; id: number; negotiationId: number }
+  /** A box this reply made or changed now shows under it (PLAN.md §21.5). */
+  | { type: "message.box"; id: number; boxId: number }
   /** A task's result changed this message. */
   | { type: "message.edited"; id: number; editedAt: string }
   /** The task shown under this reply ended: its bot is writing the reply again, to say what came of it. */
@@ -391,6 +397,8 @@ export type HatbotEvent =
   | { type: "watcher.updated"; watcher: Watcher }
   | { type: "watcher.deleted"; id: number }
   | { type: "negotiation.updated"; negotiation: Negotiation }
+  | { type: "box.updated"; box: Box }
+  | { type: "box.deleted"; id: number }
   | { type: "plugin.updated"; plugin: PluginInfo }
   | { type: "teach.updated"; session: TeachSession }
   | { type: "episode.updated"; episode: Episode }

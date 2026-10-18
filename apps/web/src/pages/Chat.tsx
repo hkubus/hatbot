@@ -43,6 +43,7 @@ import {
   chatPath,
   currentChat,
   deleteEpisode,
+  ensureBox,
   ensureNegotiation,
   ensureSchedule,
   ensureTask,
@@ -266,6 +267,22 @@ function NegotiationResult({ id }: { id: number }) {
   );
 }
 
+/** A box under the reply that made or changed it: its title, with Open. */
+function BoxResult({ id }: { id: number }) {
+  const box = useStore((s) => s.boxes[id]);
+  useEffect(() => ensureBox(id), [id]);
+  if (!box) return null;
+  return (
+    <div className="box-line">
+      <Icon name="box" />
+      <b>{box.title}</b>
+      <Link className="btn sm" to={`/boxes/${id}`}>
+        Open
+      </Link>
+    </div>
+  );
+}
+
 /**
  * Hatbot's reply, with the task it started (if any) working under it. Once the task finishes or fails,
  * its bot writes the reply again to say what came of it; if it doesn't, the task's result shows in the
@@ -312,6 +329,7 @@ function ReplyMessage({
         {!streaming && m.sources?.length ? <Sources list={m.sources} /> : null}
         {answerable && m.choices?.length ? <Choices lists={m.choices} /> : null}
         {m.negotiationId && <NegotiationResult id={m.negotiationId} />}
+        {m.boxId && <BoxResult id={m.boxId} />}
         {ended && !finished && m.text && <hr className="result-rule" />}
         {m.taskId && !finished && <TaskResult taskId={m.taskId} />}
         {m.attachments?.length ? <Files list={m.attachments} /> : null}
@@ -323,9 +341,11 @@ function ReplyMessage({
           open={
             m.negotiationId
               ? { to: `/negotiations/${m.negotiationId}`, label: "Open negotiation" }
-              : m.taskId
-                ? { to: `/tasks/${m.taskId}`, label: "Open task" }
-                : undefined
+              : m.boxId
+                ? { to: `/boxes/${m.boxId}`, label: "Open box" }
+                : m.taskId
+                  ? { to: `/tasks/${m.taskId}`, label: "Open task" }
+                  : undefined
           }
           retry={retryable && m.status === "error" ? () => retryReply(m) : undefined}
         />

@@ -11,6 +11,7 @@ import { Archive } from "./archive";
 import { Attachments } from "./attachments";
 import { AuthService, FailureLimiter, type PasswordCost } from "./auth/service";
 import { Bots } from "./bots";
+import { Boxes } from "./boxes";
 import { Checks, type ChecksDeps } from "./checks";
 import type { Config } from "./config";
 import type { Db } from "./db";
@@ -102,6 +103,7 @@ export async function createServices(o: Outside) {
     reserved: CORE_TOOL_NAMES,
   });
   const bots = new Bots(db, events, clock);
+  const boxes = new Boxes(db, events, clock);
   // Not given the rest at first: attach() hands it what needs the chats in turn.
   const chats = new Chats({
     db,
@@ -112,6 +114,7 @@ export async function createServices(o: Outside) {
     model: o.model,
     plugins,
     bots,
+    boxes,
     clock,
   });
   const notifier = new LinkingNotifier(
@@ -140,6 +143,7 @@ export async function createServices(o: Outside) {
     desktop,
     plugins,
     bots,
+    boxes,
     chats,
     notifier,
     approvals,

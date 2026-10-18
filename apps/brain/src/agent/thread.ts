@@ -24,6 +24,7 @@ import { z } from "zod";
 import { type Approvals, ownerNote } from "../approvals";
 import type { Attachments } from "../attachments";
 import { type Bots, botIndex, promptFor } from "../bots";
+import type { Boxes } from "../boxes";
 import type { Db } from "../db";
 import type { DesktopAgent } from "../desktop/client";
 import type { EventBus } from "../events";
@@ -113,7 +114,7 @@ const MAX_CHAT_COMMANDS = 2;
 const STOPPED = "stopped";
 const DELETED = "deleted";
 export const MESSAGE_COLUMNS =
-  "id, role, conversation_id AS conversationId, bot_id AS botId, kind, text, status, created_at AS createdAt, task_id AS taskId, schedule_id AS scheduleId, negotiation_id AS negotiationId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt, incognito, sources, choices";
+  "id, role, conversation_id AS conversationId, bot_id AS botId, kind, text, status, created_at AS createdAt, task_id AS taskId, schedule_id AS scheduleId, negotiation_id AS negotiationId, box_id AS boxId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt, incognito, sources, choices";
 export type MessageRow = Omit<ThreadMessage, "incognito" | "sources" | "choices"> & {
   incognito: number;
   sources: string | null;
@@ -211,6 +212,7 @@ export type ThreadDeps = {
   model: ModelClient;
   plugins: Plugins;
   bots: Bots;
+  boxes?: Boxes;
   clock?: () => number;
 };
 
@@ -2336,6 +2338,12 @@ function toolLabel(name: string, plugins: Plugins): string {
     ask_bot: "Asking another bot",
     ask_opus: "Asking Opus",
     send_file: "Sending a file",
+    box_create: "Making a box",
+    box_edit: "Changing a box",
+    box_list: "Looking at boxes",
+    box_read: "Reading a box",
+    box_revert: "Changing a box",
+    box_data: "Reading what a box saved",
   };
   const plugin = plugins.pluginOf(name);
   return labels[name] ?? `Using ${plugin?.name ?? name}`;

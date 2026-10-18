@@ -733,4 +733,34 @@ export const migrations: string[] = [
   `ALTER TABLE questions ADD COLUMN sources TEXT NOT NULL DEFAULT '[]';`,
   // 40: the to-do item a task works on, ticked off when it ends done (PLAN.md §19).
   `ALTER TABLE tasks ADD COLUMN todo TEXT;`,
+  // 41: boxes, small web apps a bot makes, with their versions and what their pages keep (PLAN.md §21).
+  `
+  CREATE TABLE boxes (
+    id INTEGER PRIMARY KEY,
+    bot_id TEXT NOT NULL,
+    conversation_id INTEGER REFERENCES conversations(id),
+    title TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE box_versions (
+    box_id INTEGER NOT NULL REFERENCES boxes(id) ON DELETE CASCADE,
+    n INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    html TEXT NOT NULL,
+    message_id INTEGER,
+    tainted_by TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (box_id, n)
+  );
+  CREATE TABLE box_store (
+    box_id INTEGER NOT NULL REFERENCES boxes(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (box_id, key)
+  );
+  ALTER TABLE messages ADD COLUMN box_id INTEGER;
+  `,
 ];

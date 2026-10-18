@@ -11,6 +11,7 @@ import { PluginError } from "./plugins/plugin";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
 import { botRoutes } from "./routes/bots";
+import { boxRoutes } from "./routes/boxes";
 import { checkRoutes } from "./routes/checks";
 import { desktopRoutes } from "./routes/desktop";
 import { heartbeatRoutes } from "./routes/heartbeat";
@@ -76,6 +77,7 @@ export function createApp(deps: Deps) {
   app.route("/", heartbeatRoutes);
   app.route("/", proposalRoutes);
   app.route("/", todoRoutes);
+  app.route("/", boxRoutes);
 
   app.notFound((c) => c.json({ error: "That's gone." }, 404));
   app.onError((err, c) => {

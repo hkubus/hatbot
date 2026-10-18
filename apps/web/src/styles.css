@@ -3224,3 +3224,67 @@ a.row-main:hover {
     padding: 14px 16px 30px;
   }
 }
+
+/* Boxes: one under the reply that made it, and its page as large as the window allows. */
+.box-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 360px;
+  margin: 4px 0;
+  padding: 6px 6px 6px 10px;
+  border-radius: 10px;
+  border: 0.5px solid var(--line-strong);
+  font-size: 13px;
+}
+.box-line b {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.box-line svg.i {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+}
+.page.box-page {
+  max-width: none;
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding-bottom: 18px;
+}
+.box-page .page-head select {
+  height: 24px;
+  font-size: 12px;
+}
+.box-frame,
+.box-code {
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+  border: 0.5px solid var(--line-strong);
+  border-radius: 10px;
+}
+.box-frame {
+  display: block;
+  background: var(--bg);
+}
+.box-code {
+  margin: 0;
+  overflow: auto;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 899px) {
+  .page.box-page {
+    padding-bottom: 12px;
+  }
+}
