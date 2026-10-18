@@ -1,10 +1,10 @@
 // A negotiation's page (PLAN.md §16.5): its mandate, what's been said, and every message with the seller.
 import { type NegotiationMessage, OPEN_NEGOTIATION_STATUSES } from "@hatbot/shared";
-import { useCallback, useEffect, useState } from "react";
 import { useAction } from "../action";
-import { ApiError, api } from "../api";
+import { api } from "../api";
 import { ask } from "../confirm";
-import { LoadError, loadErrorText } from "../load";
+import { NoForm } from "../form";
+import { useItem } from "../load";
 import { money, NegotiationChip, negotiationText } from "../negotiations";
 import { navigate } from "../router";
 import { botName, loadNegotiation, useStore } from "../store";
@@ -28,29 +28,17 @@ export function NegotiationPage({ id }: { id: number }) {
   const n = useStore((s) => s.negotiations[id]);
   const messages = useStore((s) => s.negotiationMessages[id]);
   const bot = useStore((s) => (n ? botName(s, n.botId) : ""));
-  const [missing, setMissing] = useState(false);
-  const [loadError, setLoadError] = useState("");
+  const { missing, error: loadError, load } = useItem(id, loadNegotiation);
   const { busy, error, run } = useAction();
 
-  const load = useCallback(() => {
-    setLoadError("");
-    loadNegotiation(id).catch((err) => {
-      if (err instanceof ApiError && err.status === 404) setMissing(true);
-      else setLoadError(loadErrorText(err));
-    });
-  }, [id]);
-  useEffect(load, [load]);
-
-  if (missing) return <div className="empty">This negotiation doesn't exist.</div>;
-  if (!n || !messages)
+  if (missing || !n || !messages)
     return (
-      <section className="view">
-        {loadError && (
-          <div className="page narrow">
-            <LoadError error={loadError} retry={load} />
-          </div>
-        )}
-      </section>
+      <NoForm
+        error={loadError}
+        missing={missing ? "This negotiation doesn't exist." : ""}
+        retry={load}
+        back={{ label: "Tasks", to: "/tasks" }}
+      />
     );
 
   const m = n.mandate;

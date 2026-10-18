@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { useAction } from "../action";
 import { ApiError } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
+import { NoForm } from "../form";
+import { useItem } from "../load";
 import { navigate } from "../router";
 import { discardTeach, loadTeach, redraftTeach, saveSkill, useStore } from "../store";
 import { BackButton, BackHead } from "../ui";
@@ -11,14 +13,10 @@ const NAME = /^[a-z0-9][a-z0-9-]{0,59}$/;
 
 export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => void }) {
   const session = useStore((s) => s.teach[id]);
-  const [missing, setMissing] = useState(false);
+  const item = useItem(id, loadTeach);
   const [name, setName] = useState("");
   const [content, setContent] = useState("");
   const { busy, error, run } = useAction();
-
-  useEffect(() => {
-    loadTeach(id).catch(() => setMissing(true));
-  }, [id]);
 
   // Fill the editor when the draft arrives, without overwriting your edits.
   const draft = session?.status === "draft" ? session.draft : null;
@@ -31,8 +29,15 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
     draft !== null && (content !== draft || name !== (session?.name ?? "")),
   );
 
-  if (missing) return <div className="empty">This recording doesn't exist.</div>;
-  if (!session) return <section className="view" />;
+  if (item.missing || !session)
+    return (
+      <NoForm
+        error={item.error}
+        missing={item.missing ? "This recording doesn't exist." : ""}
+        retry={item.load}
+        back={{ label: "Memory", to: "/memory" }}
+      />
+    );
 
   const save = () =>
     run(async () => {

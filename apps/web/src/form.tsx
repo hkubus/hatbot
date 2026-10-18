@@ -77,7 +77,7 @@ export function useStoredForm<F>(seed: F | undefined) {
   };
 }
 
-/** An edit page with nothing to edit yet: why, with Back, and Retry when loading failed. */
+/** A page with nothing to show yet: why, with Back, and Retry when loading failed. */
 export function NoForm({
   error,
   missing,
@@ -85,7 +85,7 @@ export function NoForm({
   back,
 }: {
   error: string;
-  /** Set once the list has loaded without it, e.g. "This bot doesn't exist." */
+  /** Set once it turns out not to exist, e.g. "This bot doesn't exist." */
   missing: string;
   retry: () => void;
   back: { label: string; to: string };

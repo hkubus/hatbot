@@ -1,13 +1,14 @@
 import { latestNoteOnly, OPEN_NEGOTIATION_STATUSES, type Task } from "@hatbot/shared";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAction } from "../action";
-import { ApiError, api } from "../api";
+import { api } from "../api";
 import { ask } from "../confirm";
+import { NoForm } from "../form";
 import { modelName, plainText, usd } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LiveView, StepIcon } from "../live";
-import { LoadError, loadErrorText } from "../load";
+import { LoadError, loadErrorText, useItem } from "../load";
 import { NegotiationChip } from "../negotiations";
 import { navigate } from "../router";
 import {
@@ -305,31 +306,19 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   const request = useStore((s) => s.desktop?.request);
   const approvals = useStore((s) => s.approvals);
   const [watch, setWatch] = useState(live);
-  const [missing, setMissing] = useState(false);
-  const [loadError, setLoadError] = useState("");
+  const { missing, error: loadError, load } = useItem(id, loadTask);
   const { busy, error, run } = useAction();
   /** The goal being edited to run it again; null when that form is closed. */
   const [again, setAgain] = useState<string | null>(null);
 
-  const load = useCallback(() => {
-    setLoadError("");
-    loadTask(id).catch((err) => {
-      if (err instanceof ApiError && err.status === 404) setMissing(true);
-      else setLoadError(loadErrorText(err));
-    });
-  }, [id]);
-  useEffect(load, [load]);
-
-  if (missing) return <div className="empty">This task doesn't exist.</div>;
-  if (!task)
+  if (missing || !task)
     return (
-      <section className="view">
-        {loadError && (
-          <div className="page narrow">
-            <LoadError error={loadError} retry={load} />
-          </div>
-        )}
-      </section>
+      <NoForm
+        error={loadError}
+        missing={missing ? "This task doesn't exist." : ""}
+        retry={load}
+        back={{ label: "Tasks", to: "/tasks" }}
+      />
     );
 
   const active = isActive(task);
