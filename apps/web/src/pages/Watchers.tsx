@@ -20,15 +20,15 @@ import { stamp } from "../format";
 import { navigate } from "../router";
 import { loadPlugins, putWatcher, useStore } from "../store";
 import { Switch } from "../switch";
-import { BackHead, SaveBar, Seg } from "../ui";
+import { BackHead, SaveBar, Seg, Select } from "../ui";
 
 const EVERY = [5, 15, 30, 60, 180, 360, 720, 1440];
-const WHEN: { when: WatchCondition["when"]; label: string }[] = [
-  { when: "changed", label: "Changes" },
-  { when: "contains", label: "Contains" },
-  { when: "missing", label: "Doesn't contain" },
-  { when: "below", label: "Below" },
-  { when: "above", label: "Above" },
+const WHEN: [WatchCondition["when"], string][] = [
+  ["changed", "Changes"],
+  ["contains", "Contains"],
+  ["missing", "Doesn't contain"],
+  ["below", "Below"],
+  ["above", "Above"],
 ];
 type Pick = "page" | "selector" | "path";
 
@@ -439,18 +439,13 @@ export function WatcherEdit({ id }: { id: number | null }) {
 
           <div className="form-row">
             <span className="label">Counts when it</span>
-            <select
+            <Select
               className="field"
-              aria-label="Counts when it"
+              label="Counts when it"
               value={form.when}
-              onChange={(e) => set({ when: e.target.value as WatchCondition["when"] })}
-            >
-              {WHEN.map((w) => (
-                <option key={w.when} value={w.when}>
-                  {w.label}
-                </option>
-              ))}
-            </select>
+              options={WHEN}
+              onChange={(when) => set({ when })}
+            />
           </div>
           {(form.when === "contains" || form.when === "missing") && (
             <input

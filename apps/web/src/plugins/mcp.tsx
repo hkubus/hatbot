@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useAction } from "../action";
 import { useLeaveGuard } from "../confirm";
 import { Switch } from "../switch";
-import { Seg } from "../ui";
+import { Seg, Select } from "../ui";
 import type { PluginSettingsProps } from ".";
 
 type Mode = "chat" | "allow" | "ask" | "always" | "off";
@@ -308,30 +308,20 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
                         </pre>
                       </details>
                     </div>
-                    <select
-                      aria-label={`What ${t.name} does`}
+                    <Select
+                      label={`What ${t.name} does`}
                       value={kindIn(s, t)}
-                      onChange={(e) => set(i, withKind(s, t, e.target.value as Kind))}
-                    >
-                      {KINDS.map(([k, label]) => (
-                        <option key={k} value={k}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      aria-label={`When ${t.name} asks`}
+                      options={KINDS}
+                      onChange={(kind) => set(i, withKind(s, t, kind))}
+                    />
+                    <Select
+                      label={`When ${t.name} asks`}
                       value={modeIn(s, t)}
-                      onChange={(e) => set(i, withMode(s, t, e.target.value as Mode))}
-                    >
-                      {MODES.filter(
+                      options={MODES.filter(
                         ([m]) => kindIn(s, t) === "none" || (m !== "ask" && m !== "chat"),
-                      ).map(([m, label]) => (
-                        <option key={m} value={m}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
+                      )}
+                      onChange={(mode) => set(i, withMode(s, t, mode))}
+                    />
                   </div>
                 ))}
               </div>

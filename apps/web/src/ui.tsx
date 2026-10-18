@@ -1,4 +1,5 @@
-// The pieces most pages are made of: a head with Back, a form's Save, and Settings-style groups of rows.
+// The pieces most pages are made of: a head with Back, a form's Save, Settings-style groups of
+// rows, and choices.
 import type { ReactNode } from "react";
 import { Icon } from "./icons";
 import { Link } from "./link";
@@ -145,3 +146,47 @@ export function Seg<T extends string | number | boolean>({
     </div>
   );
 }
+
+/** One of a list of choices, as a select; `className` "field" for a form's. */
+export function Select<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+  className,
+}: {
+  label: string;
+  value: T;
+  options: readonly (readonly [T, string])[];
+  onChange: (value: T) => void;
+  className?: string;
+}) {
+  return (
+    <select
+      className={className}
+      aria-label={label}
+      value={value}
+      onChange={(e) => onChange(e.target.value as T)}
+    >
+      {options.map(([v, text]) => (
+        <option key={v} value={v}>
+          {text}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+// The models and efforts Settings and a bot offer, so a new one is added in one place.
+export const CHAT_MODELS = [
+  ["claude-haiku-5-5", "Haiku 5.5, asks Opus for hard parts"],
+  ["claude-opus-5-5", "Opus 5.5"],
+] as const;
+export const MODELS = [
+  ["claude-haiku-5-5", "Haiku 5.5"],
+  ["claude-opus-5-5", "Opus 5.5"],
+] as const;
+export const EFFORTS = [
+  ["low", "Low"],
+  ["medium", "Medium"],
+] as const;

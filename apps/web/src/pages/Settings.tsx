@@ -18,7 +18,7 @@ import { setPaused, useStore } from "../store";
 import { Switch } from "../switch";
 import { setTheme, useTheme } from "../theme";
 import type { Toast } from "../toast";
-import { Group, LinkRow, Row, Seg } from "../ui";
+import { CHAT_MODELS, EFFORTS, Group, LinkRow, MODELS, Row, Seg, Select } from "../ui";
 import { PluginPage, PluginsGroup } from "./Plugins";
 
 const Account = lazy(() => import("./Account").then((m) => ({ default: m.Account })));
@@ -191,24 +191,20 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
 
         <Group title="Chat">
           <Row label="Model">
-            <select
-              aria-label="Chat model"
+            <Select
+              label="Chat model"
               value={settings.chatModel}
-              onChange={(e) => update({ chatModel: e.target.value as AppSettings["chatModel"] })}
-            >
-              <option value="claude-haiku-5-5">Haiku 5.5, asks Opus for hard parts</option>
-              <option value="claude-opus-5-5">Opus 5.5</option>
-            </select>
+              options={CHAT_MODELS}
+              onChange={(chatModel) => update({ chatModel })}
+            />
           </Row>
           <Row label="Effort">
-            <select
-              aria-label="Chat effort"
+            <Select
+              label="Chat effort"
               value={settings.chatEffort}
-              onChange={(e) => update({ chatEffort: e.target.value as AppSettings["chatEffort"] })}
-            >
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-            </select>
+              options={EFFORTS}
+              onChange={(chatEffort) => update({ chatEffort })}
+            />
           </Row>
           <SavedRow
             label="Your name on memory edits"
@@ -221,14 +217,12 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
 
         <Group title="Tasks">
           <Row label="Model for background tasks">
-            <select
-              aria-label="Model for background tasks"
+            <Select
+              label="Model for background tasks"
               value={settings.taskModel}
-              onChange={(e) => update({ taskModel: e.target.value as AppSettings["taskModel"] })}
-            >
-              <option value="claude-haiku-5-5">Haiku 5.5</option>
-              <option value="claude-opus-5-5">Opus 5.5</option>
-            </select>
+              options={MODELS}
+              onChange={(taskModel) => update({ taskModel })}
+            />
           </Row>
         </Group>
 
@@ -299,16 +293,12 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
 
         <Group title="Desktop">
           <Row label="Model for desktop tasks">
-            <select
-              aria-label="Model for desktop tasks"
+            <Select
+              label="Model for desktop tasks"
               value={settings.desktopModel}
-              onChange={(e) =>
-                update({ desktopModel: e.target.value as AppSettings["desktopModel"] })
-              }
-            >
-              <option value="claude-haiku-5-5">Haiku 5.5</option>
-              <option value="claude-opus-5-5">Opus 5.5</option>
-            </select>
+              options={MODELS}
+              onChange={(desktopModel) => update({ desktopModel })}
+            />
           </Row>
           {settings.desktopModel === "claude-haiku-5-5" && (
             <Row label="Try again on Opus when Haiku fails">
@@ -322,18 +312,15 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
 
         <Group title="Notifications">
           <Row label="Tapping one opens">
-            <select
-              aria-label="Tapping one opens"
+            <Select
+              label="Tapping one opens"
               value={settings.notificationsOpen}
-              onChange={(e) =>
-                update({
-                  notificationsOpen: e.target.value as AppSettings["notificationsOpen"],
-                })
-              }
-            >
-              <option value="web">The web app</option>
-              <option value="app">The iOS app</option>
-            </select>
+              options={[
+                ["web", "The web app"],
+                ["app", "The iOS app"],
+              ]}
+              onChange={(notificationsOpen) => update({ notificationsOpen })}
+            />
           </Row>
         </Group>
 

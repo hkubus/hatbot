@@ -9,7 +9,7 @@ import { loadErrorText } from "../load";
 import { navigate } from "../router";
 import { chatPath, createBot, deleteBot, loadBots, loadPlugins, saveBot, useStore } from "../store";
 import { Switch } from "../switch";
-import { BackHead, SaveBar } from "../ui";
+import { BackHead, CHAT_MODELS, EFFORTS, SaveBar, Select } from "../ui";
 
 type Form = {
   name: string;
@@ -230,29 +230,23 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
           </label>
           <div className="form-row">
             <span className="label">Model</span>
-            <select
+            <Select
               className="field"
-              aria-label="Model"
+              label="Model"
               value={form.chatModel ?? ""}
-              onChange={(e) => set({ chatModel: (e.target.value || null) as Form["chatModel"] })}
-            >
-              <option value="">As in Settings</option>
-              <option value="claude-haiku-5-5">Haiku 5.5, asks Opus for hard parts</option>
-              <option value="claude-opus-5-5">Opus 5.5</option>
-            </select>
+              options={[["", "As in Settings"], ...CHAT_MODELS]}
+              onChange={(chatModel) => set({ chatModel: chatModel || null })}
+            />
           </div>
           <div className="form-row">
             <span className="label">Effort</span>
-            <select
+            <Select
               className="field"
-              aria-label="Effort"
+              label="Effort"
               value={form.chatEffort ?? ""}
-              onChange={(e) => set({ chatEffort: (e.target.value || null) as Form["chatEffort"] })}
-            >
-              <option value="">As in Settings</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-            </select>
+              options={[["", "As in Settings"], ...EFFORTS]}
+              onChange={(chatEffort) => set({ chatEffort: chatEffort || null })}
+            />
           </div>
           {pluginList.length > 0 && (
             <>
