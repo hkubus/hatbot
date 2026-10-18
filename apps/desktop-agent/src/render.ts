@@ -11,16 +11,29 @@
 // and this user may reach the internet, which watchers need. So that Chromium gets a proxy that refuses
 // every connection, loopback included, a resolver that resolves nothing, and WebRTC kept to the proxy,
 // and DevTools (a pipe, not a port) serves the page and stops it leaving before any of that is reached.
+// A look may also try the page (steps: clicks, typing, keys, waits, evals), and with a relay its
+// hatbox.fetch reaches the box's backend through the brain: a DevTools binding, never the network.
 import { chmodSync, rmSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  BOX_KEYS,
+  type BoxKey,
   type BoxLook,
+  type BoxLookAnswer,
   type BoxLookError,
+  type BoxLookFetch,
+  type BoxLookLine,
   type BoxLookResult,
+  type BoxStep,
+  type BoxStepResult,
+  LOOK_BINDING,
   MAX_LOOK_ERRORS,
   MAX_LOOK_HEIGHT,
+  MAX_LOOK_STEPS,
+  MAX_LOOK_STORE,
+  MAX_LOOK_VALUE,
   type RenderResult,
 } from "@hatbot/shared/desktop";
 import { FetchError, readText, resolveHost, USER_AGENT, webUrl } from "./fetch";
@@ -29,6 +42,9 @@ import { DevToolsPipe } from "./pipe";
 export const RENDER_SOCKET = process.env.HATBOT_RENDER_SOCKET ?? "/run/hatbot-render/render.sock";
 /** Chromium is killed after this, whatever it's doing. */
 const KILL_AFTER_MS = 20_000;
+/** For a look that tries steps or reaches a backend, of which the steps get STEPS_MS in all. */
+const KILL_TRYING_MS = 40_000;
+const STEPS_MS = 25_000;
 /** Renders running or waiting their turn; past this the renderer is busy. */
 const MAX_WAITING = 5;
 /** Its script writes "rendered" after a wait that only virtual time makes short. */
@@ -42,6 +58,16 @@ const BOX_URL = "https://box.hatbot.invalid/";
 const SETTLE_MS = 500;
 const MAX_BOX_PAGE = 12 * 1024 * 1024;
 const MAX_ERROR_CHARS = 300;
+/** After each step, for the page's handlers to run. */
+const STEP_SETTLE_MS = 150;
+/** After the load, for what its page fetched then (a backend may have to start). */
+const FETCH_WAIT_MS = 10_000;
+const WAIT_MS = 2000;
+const MAX_WAIT_MS = 5000;
+const MAX_PAUSE_MS = 3000;
+const EVAL_MS = 5000;
+/** Requests one look's page may make of its backend. */
+const MAX_LOOK_FETCHES = 50;
 
 export type RenderOptions = {
   /** Debian's binary is chromium. */
@@ -164,20 +190,52 @@ export function boxLook(body: unknown): BoxLook {
   if (!px(b.width) || !px(b.height))
     throw new FetchError("width and height must be whole pixels, from 200 to 2000", 400);
   if (b.html.length > MAX_BOX_PAGE) throw new FetchError("The page is too big to render.", 413);
+  if (b.steps !== undefined && (!Array.isArray(b.steps) || b.steps.length > MAX_LOOK_STEPS))
+    throw new FetchError(`steps must be a list of up to ${MAX_LOOK_STEPS}`, 400);
+  if (b.relay !== undefined && (typeof b.relay !== "string" || !/^[\w-]{16,100}$/.test(b.relay)))
+    throw new FetchError("relay must be a random token", 400);
   return {
     html: b.html,
     csp: b.csp,
     width: Number(b.width),
     height: Number(b.height),
     dark: b.dark,
+    ...(b.steps?.length ? { steps: b.steps.map(boxStep) } : {}),
+    ...(b.relay ? { relay: b.relay } : {}),
   };
 }
+
+function boxStep(raw: unknown, i: number): BoxStep {
+  const o = (raw ?? {}) as Record<string, unknown>;
+  const text = (v: unknown, max = 1000): v is string =>
+    typeof v === "string" && v.length > 0 && v.length <= max;
+  if (text(o.click)) return { click: o.click };
+  if (text(o.type) && typeof o.text === "string" && o.text.length <= 10_000)
+    return { type: o.type, text: o.text };
+  if (BOX_KEYS.includes(o.press as BoxKey)) return { press: o.press as BoxKey };
+  if (text(o.wait))
+    return typeof o.ms === "number" && o.ms >= 0 ? { wait: o.wait, ms: o.ms } : { wait: o.wait };
+  if (typeof o.wait_ms === "number" && o.wait_ms >= 0) return { wait_ms: o.wait_ms };
+  if (text(o.eval, 10_000)) return { eval: o.eval };
+  throw new FetchError(`step ${i + 1} isn't a step box_look knows`, 400);
+}
+
+/** A look's way out to the brain: the page's fetches go out, and each answer comes back by its id. */
+type Relay = {
+  send: (f: BoxLookFetch) => void;
+  /** Set by the look once its page is up; false for a fetch it doesn't know. */
+  answer?: (id: number, a: BoxLookAnswer["answer"]) => boolean;
+};
 
 /**
  * A box's page drawn at the screen size asked, once it has loaded and done what it does then, with the
  * errors it hit. Throws FetchError.
  */
-export async function lookAtBox(look: BoxLook, opts: RenderOptions = {}): Promise<BoxLookResult> {
+export async function lookAtBox(
+  look: BoxLook,
+  opts: RenderOptions = {},
+  relay?: Relay,
+): Promise<BoxLookResult> {
   const dir = await mkdtemp(join(tmpdir(), "hatbot-look-"));
   // Every connection to it ends at once. Under systemd the loopback rule resets them before that.
   const proxy = Bun.listen({
@@ -185,7 +243,10 @@ export async function lookAtBox(look: BoxLook, opts: RenderOptions = {}): Promis
     port: 0,
     socket: { open: (s) => void s.end(), data: () => {} },
   });
-  const limit = opts.timeoutMs ?? KILL_AFTER_MS;
+  const limit =
+    opts.timeoutMs ?? (look.steps?.length || look.relay ? KILL_TRYING_MS : KILL_AFTER_MS);
+  // What's left for the picture once the steps are done.
+  const end = Date.now() + limit - 3000;
   const proc = Bun.spawn(
     [
       "setsid",
@@ -230,7 +291,7 @@ export async function lookAtBox(look: BoxLook, opts: RenderOptions = {}): Promis
   });
   died.catch(() => {});
   try {
-    return await Promise.race([drawBox(cdp, look), timedOut, died]);
+    return await Promise.race([drawBox(cdp, look, end, relay), timedOut, died]);
   } catch (err) {
     if (err instanceof FetchError) throw err;
     throw new FetchError(`Chromium failed: ${(err as Error).message}`, 500);
@@ -244,7 +305,12 @@ export async function lookAtBox(look: BoxLook, opts: RenderOptions = {}): Promis
   }
 }
 
-async function drawBox(cdp: DevToolsPipe, look: BoxLook): Promise<BoxLookResult> {
+async function drawBox(
+  cdp: DevToolsPipe,
+  look: BoxLook,
+  end: number,
+  relay?: Relay,
+): Promise<BoxLookResult> {
   const { targetId } = await cdp.send<{ targetId: string }>("Target.createTarget", {
     url: "about:blank",
   });
@@ -257,13 +323,15 @@ async function drawBox(cdp: DevToolsPipe, look: BoxLook): Promise<BoxLookResult>
   const answer = (method: string, params: object) => void page(method, params).catch(() => {});
 
   const errors: BoxLookError[] = [];
+  /** The step running, from 1, which the errors that come meanwhile are tagged with. */
+  let running: number | undefined;
   const add = (message: string, line?: number) => {
-    const text =
-      message.length > MAX_ERROR_CHARS ? `${message.slice(0, MAX_ERROR_CHARS - 1)}…` : message;
-    const same = errors.find((e) => e.message === text && e.line === line);
+    const text = cut(message, MAX_ERROR_CHARS);
+    const step = running;
+    const same = errors.find((e) => e.message === text && e.line === line && e.step === step);
     if (same) same.count = (same.count ?? 1) + 1;
     else if (errors.length < MAX_LOOK_ERRORS)
-      errors.push(line ? { message: text, line } : { message: text });
+      errors.push({ message: text, ...(line ? { line } : {}), ...(step ? { step } : {}) });
   };
   cdp.on("Runtime.exceptionThrown", (p) => {
     const d = (p as { exceptionDetails: ExceptionDetails }).exceptionDetails;
@@ -309,6 +377,48 @@ async function drawBox(cdp: DevToolsPipe, look: BoxLook): Promise<BoxLookResult>
     }
     answer("Fetch.continueRequest", { requestId });
   });
+  // With a relay, the preview script's hatbox.fetch calls the binding, and the brain's answer goes back
+  // into the page by the page's own id. Ours are numbered here, so the page can't answer for another.
+  const pending = new Map<number, (a: BoxLookAnswer["answer"]) => void>();
+  if (relay) {
+    let made = 0;
+    cdp.on("Runtime.bindingCalled", (p) => {
+      const b = p as { name: string; payload: string; executionContextId: number };
+      if (b.name !== LOOK_BINDING) return;
+      let f: Partial<BoxLookFetch>;
+      try {
+        f = JSON.parse(b.payload);
+      } catch {
+        return;
+      }
+      const own = f.id;
+      if (typeof own !== "number") return;
+      const reply = (a: BoxLookAnswer["answer"]) =>
+        answer("Runtime.evaluate", {
+          expression: `window.__hatboxAnswer(${own}, ${JSON.stringify(a)})`,
+          contextId: b.executionContextId,
+        });
+      if (++made > MAX_LOOK_FETCHES)
+        return reply({ error: `A look's page makes at most ${MAX_LOOK_FETCHES} requests.` });
+      if (b.payload.length > 7_500_000)
+        return reply({ error: "A request to a box carries at most 5 MB." });
+      pending.set(made, reply);
+      relay.send({
+        id: made,
+        path: String(f.path),
+        ...(typeof f.method === "string" ? { method: f.method } : {}),
+        ...(f.headers && typeof f.headers === "object" ? { headers: f.headers } : {}),
+        ...(typeof f.body === "string" ? { body: f.body } : {}),
+        ...(f.base64 === true ? { base64: true } : {}),
+      });
+    });
+    relay.answer = (id, a) => {
+      const reply = pending.get(id);
+      pending.delete(id);
+      reply?.(a);
+      return Boolean(reply);
+    };
+  }
   // Not its load event, which a page that tried to leave while loading never gets.
   const loaded = new Promise<void>((resolve) =>
     cdp.on("Page.frameStoppedLoading", (p) => {
@@ -329,10 +439,24 @@ async function drawBox(cdp: DevToolsPipe, look: BoxLook): Promise<BoxLookResult>
     page("Emulation.setEmulatedMedia", {
       features: [{ name: "prefers-color-scheme", value: look.dark ? "dark" : "light" }],
     }),
+    ...(relay ? [page("Runtime.addBinding", { name: LOOK_BINDING })] : []),
   ]);
+  /** A short wait, then on until the page's fetches have their answers (by `until`). */
+  const settle = async (ms: number, until: number) => {
+    await Bun.sleep(ms);
+    while (pending.size && Date.now() < until) await Bun.sleep(50);
+  };
   await page("Page.navigate", { url: BOX_URL });
   await loaded;
-  await Bun.sleep(SETTLE_MS);
+  await settle(SETTLE_MS, Math.min(Date.now() + FETCH_WAIT_MS, end));
+
+  const tried = look.steps
+    ? await runSteps(page, look.steps, end, settle, (n) => (running = n))
+    : [];
+  const trying = Boolean(look.steps || relay);
+  const store = trying ? await savedStore(page) : null;
+  // A step may have scrolled; the picture is of the top of the page.
+  if (look.steps) await inPage(page, "() => scrollTo(0, 0)").catch(() => {});
   const { cssContentSize: size } = await page<{
     cssContentSize: { width: number; height: number };
   }>("Page.getLayoutMetrics");
@@ -347,7 +471,245 @@ async function drawBox(cdp: DevToolsPipe, look: BoxLook): Promise<BoxLookResult>
     },
     captureBeyondViewport: true,
   });
-  return { png: data, width: Math.ceil(size.width), height: Math.ceil(size.height), errors };
+  return {
+    png: data,
+    width: Math.ceil(size.width),
+    height: Math.ceil(size.height),
+    errors,
+    ...(look.steps ? { steps: tried } : {}),
+    ...(store !== null ? { store } : {}),
+  };
+}
+
+type Page = <T>(method: string, params?: object) => Promise<T>;
+
+/** `text` cut at `max` characters, marked. */
+const cut = (text: string, max: number) =>
+  text.length > max ? `${text.slice(0, max - 1)}…` : text;
+
+/** Rejects once `ms` have gone by. */
+function within<T>(p: Promise<T>, ms: number, why: string): Promise<T> {
+  let timer: Timer | undefined;
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(why)), Math.max(0, ms));
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/** `fn`'s source called in the page with `args`, its value back (awaited). Throws what it threw. */
+async function inPage<T>(page: Page, fn: string, ...args: unknown[]): Promise<T> {
+  const r = await page<{ result: RemoteObject; exceptionDetails?: ExceptionDetails }>(
+    "Runtime.evaluate",
+    {
+      expression: `(${fn})(${args.map((a) => JSON.stringify(a)).join(", ")})`,
+      awaitPromise: true,
+      returnByValue: true,
+    },
+  );
+  if (r.exceptionDetails) throw new Error(thrownText(r.exceptionDetails));
+  return r.result.value as T;
+}
+
+const thrownText = (d: ExceptionDetails) =>
+  d.exception?.description?.split("\n")[0] ?? (valueText(d.exception) || d.text);
+
+/**
+ * The steps in order, each followed by a short settle; the first that fails, or the steps' time
+ * running out, ends the run. `now(n)`: the step running, for the errors that come meanwhile.
+ */
+async function runSteps(
+  page: Page,
+  steps: BoxStep[],
+  end: number,
+  settle: (ms: number, until: number) => Promise<void>,
+  now: (n: number) => void,
+): Promise<BoxStepResult[]> {
+  const until = Math.min(Date.now() + STEPS_MS, end);
+  const out: BoxStepResult[] = [];
+  for (const [i, step] of steps.entries()) {
+    now(i + 1);
+    const left = until - Date.now();
+    const late = `Out of time: the steps have ${STEPS_MS / 1000} seconds in all.`;
+    try {
+      if (left <= 0) throw new Error(late);
+      const value = await within(tryStep(page, step, left), left, late);
+      out.push(value === undefined ? { ok: true } : { ok: true, value });
+    } catch (err) {
+      out.push({ ok: false, error: cut((err as Error).message, MAX_ERROR_CHARS) });
+      break;
+    }
+    await settle(STEP_SETTLE_MS, until);
+  }
+  return out;
+}
+
+/** DOM key names to what Chromium's input expects (as browser.ts has them). */
+const KEYS: Record<BoxKey, { key: string; code: string; keyCode: number; text?: string }> = {
+  Enter: { key: "Enter", code: "Enter", keyCode: 13, text: "\r" },
+  Tab: { key: "Tab", code: "Tab", keyCode: 9 },
+  Escape: { key: "Escape", code: "Escape", keyCode: 27 },
+  Backspace: { key: "Backspace", code: "Backspace", keyCode: 8 },
+  ArrowUp: { key: "ArrowUp", code: "ArrowUp", keyCode: 38 },
+  ArrowDown: { key: "ArrowDown", code: "ArrowDown", keyCode: 40 },
+  ArrowLeft: { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37 },
+  ArrowRight: { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
+  Space: { key: " ", code: "Space", keyCode: 32, text: " " },
+};
+
+async function press(page: Page, name: BoxKey) {
+  const def = KEYS[name];
+  if (!def) throw new Error(`${name} isn't a key a step presses.`);
+  const { text, keyCode, ...key } = def;
+  await page("Input.dispatchKeyEvent", {
+    type: text ? "keyDown" : "rawKeyDown",
+    ...key,
+    windowsVirtualKeyCode: keyCode,
+    ...(text ? { text, unmodifiedText: text } : {}),
+  });
+  await page("Input.dispatchKeyEvent", { type: "keyUp", ...key, windowsVirtualKeyCode: keyCode });
+}
+
+/** The element in view, its middle, and what's on top of it there when that's something else. */
+const FIND_TO_CLICK = `(sel) => {
+  const el = document.querySelector(sel);
+  if (!el) return null;
+  el.scrollIntoView({ block: "center", inline: "center" });
+  const r = el.getBoundingClientRect();
+  if (!r.width || !r.height) return { hidden: true };
+  const x = r.left + r.width / 2, y = r.top + r.height / 2;
+  const top = document.elementFromPoint(x, y);
+  const name = (e) => e.tagName.toLowerCase() + (e.id ? "#" + e.id : "") + (typeof e.className === "string" && e.className.trim() ? "." + e.className.trim().split(/\\s+/).join(".") : "");
+  return { x, y, over: top && !el.contains(top) && !top.contains(el) ? name(top) : null };
+}`;
+
+/** Focuses the element and selects what's in it, so typing replaces it: how it can be typed in. */
+const FOCUS_TO_TYPE = `(sel) => {
+  const el = document.querySelector(sel);
+  if (!el) return "none";
+  el.scrollIntoView({ block: "center" });
+  if (el instanceof HTMLSelectElement || (el instanceof HTMLInputElement && !/^(text|search|email|url|tel|password|number)$/.test(el.type))) return "set";
+  el.focus();
+  if (document.activeElement !== el) return "no";
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.select();
+  else if (el.isContentEditable) getSelection().selectAllChildren(el);
+  else return "no";
+  return "type";
+}`;
+
+/** For a date, a colour, a range or a select, which aren't typed into: the value set as a pick would. */
+const SET_VALUE = `(sel, text) => {
+  const el = document.querySelector(sel);
+  el.focus();
+  const set = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), "value")?.set;
+  if (set) set.call(el, text); else el.value = text;
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+  return el.value;
+}`;
+
+const CHANGED = `(sel) => {
+  const el = document.querySelector(sel);
+  if (el && !el.isContentEditable) el.dispatchEvent(new Event("change", { bubbles: true }));
+}`;
+
+/** One step: what it gives back (an eval's value, a note on a click), or it throws why it failed. */
+async function tryStep(page: Page, step: BoxStep, left: number): Promise<string | undefined> {
+  const none = (sel: string) => new Error(`Nothing matches ${sel}.`);
+  if ("click" in step) {
+    const at = await inPage<{ x: number; y: number; over: string | null; hidden?: true } | null>(
+      page,
+      FIND_TO_CLICK,
+      step.click,
+    );
+    if (!at) throw none(step.click);
+    if (at.hidden) throw new Error(`${step.click} matches an element that isn't shown.`);
+    const mouse = { x: at.x, y: at.y, button: "left" as const };
+    await page("Input.dispatchMouseEvent", { type: "mouseMoved", x: at.x, y: at.y });
+    await page("Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      ...mouse,
+      buttons: 1,
+      clickCount: 1,
+    });
+    await page("Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      ...mouse,
+      buttons: 0,
+      clickCount: 1,
+    });
+    return at.over ? `It landed on ${at.over}, which covers it.` : undefined;
+  }
+  if ("type" in step) {
+    const how = await inPage<string>(page, FOCUS_TO_TYPE, step.type);
+    if (how === "none") throw none(step.type);
+    if (how === "no") throw new Error(`${step.type} can't be typed in.`);
+    if (how === "set") {
+      const value = await inPage<string>(page, SET_VALUE, step.type, step.text);
+      if (value !== step.text)
+        throw new Error(`${step.type} didn't take ${JSON.stringify(cut(step.text, 60))}.`);
+      return undefined;
+    }
+    // A key's own press empties it, as a person would; text goes in as one input.
+    if (step.text) await page("Input.insertText", { text: step.text });
+    else await press(page, "Backspace");
+    await inPage(page, CHANGED, step.type);
+    return undefined;
+  }
+  if ("press" in step) {
+    await press(page, step.press);
+    return undefined;
+  }
+  if ("wait" in step) {
+    const ms = Math.min(step.ms ?? WAIT_MS, MAX_WAIT_MS);
+    const until = Date.now() + Math.min(ms, left);
+    for (;;) {
+      if (await inPage<boolean>(page, "(sel) => Boolean(document.querySelector(sel))", step.wait))
+        return undefined;
+      if (Date.now() >= until) throw new Error(`Nothing matched ${step.wait} in ${ms / 1000} s.`);
+      await Bun.sleep(100);
+    }
+  }
+  if ("wait_ms" in step) {
+    await Bun.sleep(Math.min(step.wait_ms, MAX_PAUSE_MS, left));
+    return undefined;
+  }
+  const ms = Math.min(EVAL_MS, left);
+  const r = await within(
+    page<{ result: RemoteObject; exceptionDetails?: ExceptionDetails }>("Runtime.evaluate", {
+      expression: step.eval,
+      awaitPromise: true,
+      returnByValue: true,
+      userGesture: true,
+      // Stops a loop that never ends, which would hold the picture back.
+      timeout: Math.max(1, ms),
+    }),
+    ms,
+    `It didn't finish in ${EVAL_MS / 1000} s.`,
+  );
+  if (r.exceptionDetails) throw new Error(thrownText(r.exceptionDetails));
+  const v =
+    r.result.unserializableValue ??
+    (r.result.value === undefined ? undefined : JSON.stringify(r.result.value));
+  return v === undefined ? undefined : cut(v, MAX_LOOK_VALUE);
+}
+
+/** What the page saved by the end, read through its own hatbox.store, as JSON; null if it can't be read. */
+async function savedStore(page: Page): Promise<string | null> {
+  const read = `async () => {
+    const s = window.hatbox && window.hatbox.store;
+    if (!s) return null;
+    const o = {};
+    for (const k of await s.keys()) o[k] = await s.get(k);
+    return JSON.stringify(o);
+  }`;
+  try {
+    const json = await within(inPage<string | null>(page, read), 2000, "slow");
+    return typeof json === "string" ? cut(json, MAX_LOOK_STORE) : null;
+  } catch {
+    return null;
+  }
 }
 
 type RemoteObject = {
@@ -406,7 +768,59 @@ export function oneAtATime<T>(work: () => Promise<T>): Promise<T> {
   return p;
 }
 
-/** The socket's routes: POST /render with { url }, POST /box with a BoxLook, and POST /check. */
+/** Looks with a relay, by their token, while they're queued or running. */
+const relays = new Map<string, Relay>();
+
+/**
+ * A look whose page reaches its backend: the answer is NDJSON, each of the page's fetches a line as it
+ * comes and then the result, while the brain answers the fetches on POST /box/answer.
+ */
+function relayed(look: BoxLook, opts: RenderOptions): Response {
+  const token = look.relay as string;
+  if (relays.has(token))
+    return Response.json({ error: "That look is already running." }, { status: 409 });
+  const relay: Relay = { send: () => {} };
+  relays.set(token, relay);
+  const encoder = new TextEncoder();
+  let open = true;
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      const line = (l: BoxLookLine) => {
+        if (!open) return;
+        try {
+          c.enqueue(encoder.encode(`${JSON.stringify(l)}\n`));
+        } catch {
+          open = false;
+        }
+      };
+      relay.send = (fetch) => line({ fetch });
+      oneAtATime(() => lookAtBox(look, opts, relay))
+        .then(
+          (result) => line({ result }),
+          (err) =>
+            line(
+              err instanceof FetchError
+                ? { error: err.message, status: err.status }
+                : { error: (err as Error).message, status: 500 },
+            ),
+        )
+        .finally(() => {
+          relays.delete(token);
+          if (open) c.close();
+          open = false;
+        });
+    },
+    cancel() {
+      open = false;
+    },
+  });
+  return new Response(stream, { headers: { "content-type": "application/x-ndjson" } });
+}
+
+/**
+ * The socket's routes: POST /render with { url }, POST /box with a BoxLook (and POST /box/answer for a
+ * look's fetches), and POST /check.
+ */
 export async function handle(req: Request, opts: RenderOptions = {}): Promise<Response> {
   const route = `${req.method} ${new URL(req.url).pathname}`;
   try {
@@ -418,7 +832,20 @@ export async function handle(req: Request, opts: RenderOptions = {}): Promise<Re
     }
     if (route === "POST /box") {
       const look = boxLook(await req.json().catch(() => null));
+      if (look.relay) return relayed(look, opts);
       return Response.json(await oneAtATime(() => lookAtBox(look, opts)));
+    }
+    if (route === "POST /box/answer") {
+      const a = (await req.json().catch(() => ({}))) as Partial<BoxLookAnswer>;
+      const answered =
+        typeof a.look === "string" &&
+        typeof a.id === "number" &&
+        a.answer !== null &&
+        typeof a.answer === "object" &&
+        relays.get(a.look)?.answer?.(a.id, a.answer);
+      return answered
+        ? Response.json({ ok: true })
+        : Response.json({ error: "No look is waiting for that." }, { status: 404 });
     }
     if (route === "POST /check") return Response.json(await oneAtATime(() => selfTest(opts)));
     return Response.json({ error: "not found" }, { status: 404 });

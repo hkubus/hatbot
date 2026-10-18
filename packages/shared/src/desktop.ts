@@ -54,6 +54,73 @@ export type BoxLook = {
   width: number;
   height: number;
   dark: boolean;
+  /** Tried in order once the page has loaded and settled; the first that fails ends the run. */
+  steps?: BoxStep[];
+  /**
+   * A random token naming this look. With it, the page's hatbox.fetch goes out on the answer, which is
+   * then NDJSON (BoxLookLine), and the brain answers each fetch with POST /render/box/answer.
+   */
+  relay?: string;
+};
+
+/** The DevTools binding a look's page calls for hatbox.fetch, with a relay; it answers __hatboxAnswer. */
+export const LOOK_BINDING = "__hatboxFetch";
+
+/** Keys a step may press, as DOM key names. */
+export const BOX_KEYS = [
+  "Enter",
+  "Tab",
+  "Escape",
+  "Backspace",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "Space",
+] as const;
+export type BoxKey = (typeof BOX_KEYS)[number];
+
+/**
+ * What box_look does to the page: click the element a selector matches, type into one (its value
+ * replaced), press a key where the focus is, wait for a selector or a time, or run an expression.
+ */
+export type BoxStep =
+  | { click: string }
+  | { type: string; text: string }
+  | { press: BoxKey }
+  | { wait: string; ms?: number }
+  | { wait_ms: number }
+  | { eval: string };
+
+/** How a step went: an eval's value as JSON, cut at MAX_LOOK_VALUE. */
+export type BoxStepResult = { ok: boolean; value?: string; error?: string };
+
+export const MAX_LOOK_STEPS = 20;
+export const MAX_LOOK_VALUE = 2000;
+/** What the page saved, as JSON, is cut at this. */
+export const MAX_LOOK_STORE = 4000;
+
+/** A line of POST /render/box's answer with a relay: a fetch from the page, then the result. */
+export type BoxLookLine =
+  | { fetch: BoxLookFetch }
+  | { result: BoxLookResult }
+  | { error: string; status?: number };
+
+/** hatbox.fetch in a look, as the page's bridge would send it. */
+export type BoxLookFetch = {
+  id: number;
+  path: string;
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+  base64?: boolean;
+};
+
+/** POST /render/box/answer: what the page's fetch gets, `{value}` (a BoxResponse) or `{error}`. */
+export type BoxLookAnswer = {
+  look: string;
+  id: number;
+  answer: { value?: unknown; error?: string };
 };
 
 /** An error the page hit: its own, or the browser's about it (a CSP refusal). */
@@ -63,6 +130,8 @@ export type BoxLookError = {
   line?: number;
   /** The same message again, this many times in all. */
   count?: number;
+  /** The step that was running, from 1; none while the page loaded. */
+  step?: number;
 };
 
 export type BoxLookResult = {
@@ -73,6 +142,10 @@ export type BoxLookResult = {
   height: number;
   /** In the order they came, at most MAX_LOOK_ERRORS. */
   errors: BoxLookError[];
+  /** With steps: how each that ran went, in order. */
+  steps?: BoxStepResult[];
+  /** With steps or a relay: what the page saved by the end, as JSON, cut at MAX_LOOK_STORE. */
+  store?: string;
 };
 
 /** How much of a page box_look's picture shows, in CSS pixels. */

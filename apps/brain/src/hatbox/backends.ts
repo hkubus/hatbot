@@ -8,6 +8,7 @@ import {
   type BoxBuild,
   type BoxFile,
   type BoxResponse,
+  type BoxRun,
   MAX_BOX_BODY,
   passedHeaders,
 } from "@hatbot/shared/hatbox";
@@ -176,6 +177,27 @@ export class Backends {
       };
     }
     return { value };
+  }
+
+  /**
+   * The backend's scheduled() once now, for the model to try: what it returned is given back, not
+   * sent to you, and when its timer runs next doesn't change. Not alongside a run of its own.
+   */
+  async runNow(id: number): Promise<BoxRun> {
+    if (this.running.has(id)) throw new BoxError("Its scheduled() is running now; try again soon.");
+    this.running.add(id);
+    try {
+      const r = await this.current(id, (version, secrets) =>
+        this.agent.scheduled(id, version, secrets),
+      );
+      return {
+        ok: r.ok,
+        ...(r.error ? { error: this.boxes.redact(id, r.error) } : {}),
+        ...(r.notify ? { notify: this.boxes.redact(id, r.notify) } : {}),
+      };
+    } finally {
+      this.running.delete(id);
+    }
   }
 
   async logs(id: number): Promise<string> {

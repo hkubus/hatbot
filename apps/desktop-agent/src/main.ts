@@ -243,10 +243,11 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array; input?: boolea
         }
         case "POST /render":
         case "POST /render/box":
+        case "POST /render/box/answer":
         case "POST /render/check":
           // For watchers that run a page's scripts, and box_look: hatbot-render, one page at a time, so
           // a render may wait behind a few others. Not serialised with input: its Chromium isn't the one
-          // on screen.
+          // on screen. A look whose page reaches its backend answers as a stream, passed on as it comes.
           return relay(
             req,
             RENDER_SOCKET,
