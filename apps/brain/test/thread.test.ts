@@ -5,7 +5,7 @@ import { markPrevious } from "../src/agent/thread";
 import { runTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { bot, lastUserText, setUpOwner, testApp, toolNames } from "./helpers";
+import { bot, lastUserText, signIn, testApp, toolNames } from "./helpers";
 
 test("a message gets a streamed reply, stored, and /thread/ask answers with one", async () => {
   const t = await testApp(
@@ -14,7 +14,7 @@ test("a message gets a streamed reply, stored, and /thread/ask answers with one"
       { content: [text("It's 21 degrees.")] },
     ]),
   );
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   const res = await t.call("POST", "/thread/messages", { text: "hello there" }, { cookie });
   expect(res.status).toBe(202);
   await t.thread.idle();
@@ -55,7 +55,7 @@ test("a message sent again with the same client id, its answer lost, is posted a
   const t = await testApp(
     new FakeModel([{ content: [text("Once.")] }, { content: [text("Twice.")] }]),
   );
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   const send = (clientId?: string, path = "/conversations/1/messages") =>
     t.call("POST", path, { text: "hello", clientId }, { cookie });
   const first = await send("tab-1-a");
@@ -112,7 +112,6 @@ test("tool calls run and their results go back to the model; bad input is an err
   });
   // The store tells the commit; nothing tells it twice.
   expect(t.events.filter((e) => e.type === "memory.committed").map((e) => e.message)).toEqual([
-    "Start memory",
     "Note tea",
   ]);
 });
@@ -734,7 +733,7 @@ test("incognito sees no history, can't write or start work, and leaves nothing w
     { content: [text("Back.")] },
   ]);
   const t = await testApp(model);
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   await t.thread.post("my wireguard port is 51820").done;
   t.db.query("UPDATE conversations SET summary = 'They run WireGuard.' WHERE id = 1").run();
   const post = (text: string) =>
@@ -759,9 +758,7 @@ test("incognito sees no history, can't write or start work, and leaves nothing w
   ]);
   await t.thread.post("/remember x", [], true).done;
   await t.thread.post("/task do x", [], true).done;
-  // Only the store's first commit, from when the app started.
-  const commits = t.events.filter((e) => e.type === "memory.committed");
-  expect(commits.map((e) => e.message)).toEqual(["Start memory"]);
+  expect(t.events.filter((e) => e.type === "memory.committed")).toEqual([]);
   expect(t.tasks.list()).toEqual([]);
 
   // None of it is in the thread, unread, or the search index.
@@ -821,7 +818,7 @@ test("deleting a conversation takes it out of the chat, search, files and the su
     ],
   );
   const t = await testApp(model);
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   const limits = t.settings.get().limits;
   const a = await t.attachments.save({
     bytes: new TextEncoder().encode("wg0.conf"),

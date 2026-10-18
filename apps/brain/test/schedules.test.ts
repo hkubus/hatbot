@@ -4,7 +4,7 @@ import type { Schedule, Task, TriggerWithSecret } from "@hatbot/shared";
 import { EventBus } from "../src/events";
 import { Triggers } from "../src/triggers";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { ORIGIN, setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
+import { ORIGIN, signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 const finish = (summary: string, notify: boolean) => ({
   content: [toolUse("finish_task", { outcome: "done", summary, notify })],
@@ -17,7 +17,7 @@ const ended = (t: TestApp, id: number) =>
   });
 
 async function owner(t: TestApp) {
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   return (method: string, path: string, body?: unknown) => t.call(method, path, body, { cookie });
 }
 

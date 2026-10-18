@@ -2,10 +2,10 @@ import { expect, test } from "bun:test";
 import type { Task } from "@hatbot/shared";
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { SCREENING_PROMPT } from "../src/agent/prompt";
-import { DesktopError, HttpDesktopAgent } from "../src/desktop/client";
+import { type DesktopAgent, DesktopError, HttpDesktopAgent } from "../src/desktop/client";
 import { limits } from "../src/tasks/desktop-run";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
-import { type TestApp, testApp, waitFor } from "./helpers";
+import { signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 const finish = (summary = "Booked it.") => ({
   content: [toolUse("finish_task", { outcome: "done", summary })],
@@ -20,9 +20,6 @@ const pending = (t: TestApp) => waitFor(() => t.approvals.list(true)[0]);
 /** What the last message of a request said. */
 const lastText = (req: { messages: { content: unknown }[] } | undefined) =>
   JSON.stringify(req?.messages.at(-1)?.content);
-
-/** A signed-in session, without hashing a password the way setUpOwner does. */
-const signIn = (t: TestApp) => ({ cookie: `hatbot_session=${t.auth.createSession(null)}` });
 
 test("chat starts a desktop task that runs, archives screenshots and reports back", async () => {
   const chat = new FakeModel([
@@ -611,6 +608,28 @@ test("cancelling a task cancels the desktop task it started, which then does not
   await t.tasks.idle();
   expect(t.tasks.get(child.id)?.status).toBe("cancelled");
   expect(t.agent.actions).toEqual([]);
+});
+
+test("cancelling a task stops its command in the sandbox", async () => {
+  const work = new FakeModel([{ content: [toolUse("code_run", { command: "sleep 600" })] }]);
+  const t = await testApp(new FakeModel(), work);
+  await t.plugins.update("code", { enabled: true });
+  let running = false;
+  // The sandbox as the task's signal sees it: its command ends only when that aborts.
+  (t.agent as DesktopAgent).withSignal = (signal) =>
+    Object.assign(Object.create(t.agent), {
+      exec: () => {
+        running = true;
+        return new Promise((_, reject) =>
+          signal.addEventListener("abort", () => reject(signal.reason)),
+        );
+      },
+    });
+  const task = t.tasks.createBackgroundTask({ title: "Run", goal: "Run it.", origin: "schedule" });
+  await waitFor(() => running);
+  t.tasks.cancel(task?.id ?? 0);
+  await t.tasks.idle();
+  expect(t.tasks.get(task?.id ?? 0)?.status).toBe("cancelled");
 });
 
 test("a desktop request in flight ends as soon as its task's signal aborts", async () => {

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { definePlugin, ready } from "../src/plugins/plugin";
 import { RESTARTED } from "../src/tasks/service";
 import { FakeModel, toolUse } from "./fake-model";
-import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
+import { signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 type Signal = { key: string; text: string };
 
@@ -129,7 +129,7 @@ test("runs that keep failing are told once a streak, recent ones only, and the t
     { content: [toolUse("finish_task", { outcome: "done", summary: "Looked.", notify: false })] },
   ]);
   const t = await testApp(new FakeModel(), work);
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   await on(t);
   t.taskModel.onCreate = () => '{"action": "notify", "message": "The backup keeps failing."}';
   // A streak from before the last two intervals; one failure; one the restart stopped; and a streak

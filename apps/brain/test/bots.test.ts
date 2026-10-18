@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Bot, Conversation, Task } from "@hatbot/shared";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
+import { signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 const systemOf = (req: { system?: unknown } | undefined) => JSON.stringify(req?.system);
 
@@ -28,7 +28,7 @@ test("a bot has its own id, chat and memory folder, and its tasks run as it", as
   ]);
   const work = new FakeModel([finish("Menu set."), finish("Looked.")]);
   const t = await testApp(model, work);
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   const post = (body: object) => t.call("POST", "/bots", body, { cookie });
   const res = await post({ name: "Chef", instructions: "You plan the week's meals." });
   expect(res.status).toBe(201);
@@ -94,7 +94,7 @@ test("a deleted bot's chat takes no new messages, and what it left goes to Hatbo
     { content: [text("Made it.")] },
   ]);
   const t = await testApp(chat);
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   bot(t, "Chef");
   const s = t.schedules.create(
     { name: "Menu", prompt: "Plan", cron: "0 8 * * 1", botId: "chef" },

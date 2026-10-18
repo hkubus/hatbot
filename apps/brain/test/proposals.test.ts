@@ -3,7 +3,7 @@ import type { Proposal } from "@hatbot/shared";
 import type { StreamParams } from "../src/agent/model";
 import { HATBOT } from "../src/memory/store";
 import { text } from "./fake-model";
-import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
+import { signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 /** Answers each proposal request with the JSON `reply` gives, as the model would. */
 function answers(t: TestApp, reply: (p: Omit<StreamParams, "stream">) => string) {
@@ -22,7 +22,7 @@ async function tidy(t: TestApp, cookie: string): Promise<Proposal> {
 
 test("a tidy-up holds what it may cost while asked, can't reach skills, and is applied as you", async () => {
   const t = await testApp();
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   t.settings.update({ limits: { taskUsd: 3, dailyUsd: 1, monthlyUsd: 200, alertReserveUsd: 0 } });
   await t.memory.writeAll(
     [
@@ -71,7 +71,7 @@ test("a tidy-up holds what it may cost while asked, can't reach skills, and is a
 
 test("a tidy-up whose stream failed partway is billed for that try too", async () => {
   const t = await testApp();
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   await t.memory.writeAll([{ path: "home.md", content: "# Home\nRouter\n" }], HATBOT, "Notes");
   t.taskModel.route = (p) =>
     p.output_config?.format

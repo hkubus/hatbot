@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { MATCH_END, MATCH_START, type SearchResults } from "@hatbot/shared";
 import { HATBOT } from "../src/memory/store";
 import { FakeModel, text } from "./fake-model";
-import { bot, setUpOwner, testApp } from "./helpers";
+import { bot, signIn, testApp } from "./helpers";
 
 test("search finds chat messages, tasks, memory and schedules, and leaves out a deleted bot's chat and a deleted group", async () => {
   const t = await testApp(
@@ -12,7 +12,7 @@ test("search finds chat messages, tasks, memory and schedules, and leaves out a 
       { content: [text("WireGuard, then.")] },
     ]),
   );
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   const search = async (q: string) =>
     (await (await t.call("GET", `/search?q=${q}`, undefined, { cookie })).json()) as SearchResults;
   await t.thread.post("which port does wireguard use?").done;

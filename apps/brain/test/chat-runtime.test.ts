@@ -13,15 +13,7 @@ import { EventBus } from "../src/events";
 import { type BudgetError, estimateTokens, requestCeiling, searchesIn } from "../src/spend";
 import { Tasks } from "../src/tasks/service";
 import { FakeModel, text, toolUse } from "./fake-model";
-import {
-  bot,
-  lastUserText,
-  requested,
-  setUpOwner,
-  type TestApp,
-  testApp,
-  unmarked,
-} from "./helpers";
+import { bot, lastUserText, requested, signIn, type TestApp, testApp, unmarked } from "./helpers";
 
 const overloaded = new Anthropic.APIError(
   undefined,
@@ -292,7 +284,7 @@ test("a reply as it's written: shown and saved so far, started over when its str
 test("only the latest reply that failed can be tried again; it's written in place from the turns it had", async () => {
   const model = new FakeModel([]);
   const t = await testApp(model);
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   const retry = (id?: number) =>
     t.call("POST", `/thread/messages/${id}/retry`, undefined, { cookie });
   await t.thread.post("one").done;

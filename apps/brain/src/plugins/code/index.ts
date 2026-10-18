@@ -44,7 +44,9 @@ export const codePlugin = (d: { desktop: DesktopAgent; attachments: Attachments 
             const line = command.trim().split("\n")[0] ?? "";
             return line.length > 120 ? `${line.slice(0, 119)}…` : line;
           },
-          run: async ({ command, timeout_s, files }) => {
+          run: async ({ command, timeout_s, files }, call) => {
+            // A cancelled task's (or stopped reply's) command and copies stop with it.
+            const desktop = d.desktop.withSignal?.(call.signal) ?? d.desktop;
             try {
               const copied: string[] = [];
               for (const id of files) {
@@ -52,10 +54,10 @@ export const codePlugin = (d: { desktop: DesktopAgent; attachments: Attachments 
                 const bytes = a && (await d.attachments.bytes(id));
                 if (!a || !bytes) throw new PluginError(`There's no attachment #${id}.`);
                 const path = `in/${a.id}-${a.name.replace(/[^\w.-]+/g, "_")}`;
-                await d.desktop.putFile(path, bytes);
+                await desktop.putFile(path, bytes);
                 copied.push(path);
               }
-              const r = await d.desktop.exec(command, timeout_s);
+              const r = await desktop.exec(command, timeout_s);
               const head = r.timedOut ? `Killed after ${timeout_s} s.` : `Exit code ${r.exitCode}`;
               const out = `${head}\n${r.output}`;
               return copied.length ? `Copied in: ${copied.join(", ")}\n${out}` : out;

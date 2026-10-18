@@ -2,13 +2,13 @@ import { expect, test } from "bun:test";
 import { type Task, type Watcher, WatchSourceInput } from "@hatbot/shared";
 import { counts, numberIn } from "../src/watch/extract";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
+import { signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 const page = (body: string) =>
   `<!doctype html><html><head><title>Shop</title><style>p{}</style></head><body>${body}<script>var x = 1;</script></body></html>`;
 
 async function owner(t: TestApp) {
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   return (method: string, path: string, body?: unknown) => t.call(method, path, body, { cookie });
 }
 

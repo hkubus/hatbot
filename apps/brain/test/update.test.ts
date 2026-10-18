@@ -3,11 +3,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { UpdateInfo } from "@hatbot/shared";
-import { setUpOwner, testApp } from "./helpers";
+import { signIn, testApp } from "./helpers";
 
 async function setup() {
   const t = await testApp();
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   const write = (name: string, body: unknown) =>
     writeFileSync(join(t.updateDir, name), JSON.stringify(body));
   const post = () => t.call("POST", "/update", undefined, { cookie });

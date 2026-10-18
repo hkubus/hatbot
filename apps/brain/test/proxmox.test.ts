@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { Proxmox, pinnedRequest } from "../src/proxmox";
-import { setUpOwner, testApp } from "./helpers";
+import { signIn, testApp } from "./helpers";
 import { fakeApi, fixtures, PVE_FINGERPRINT } from "./plugin-helpers";
 
 // A stand-in for pveproxy with a self-signed certificate.
@@ -51,7 +51,7 @@ const env = (fingerprint = PVE_FINGERPRINT) => ({
 
 test("Settings lists the desktop's snapshots, newest first, and rolls back to one", async () => {
   const t = await testApp(undefined, undefined, env());
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   const list = await t.call("GET", "/desktop/snapshots", undefined, { cookie });
   const { snapshots } = (await list.json()) as { snapshots: { name: string }[] };
   expect(snapshots.map((s) => s.name)).toEqual(["nightly_20261008", "nightly_20261007"]);
@@ -71,7 +71,7 @@ test("Settings lists the desktop's snapshots, newest first, and rolls back to on
 
 test("rolling back is refused while you or a task use the desktop", async () => {
   const t = await testApp(undefined, undefined, env());
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   const rollback = () =>
     t.call("POST", "/desktop/rollback", { name: "nightly_20261008" }, { cookie });
   await t.call("POST", "/desktop/takeover", undefined, { cookie });

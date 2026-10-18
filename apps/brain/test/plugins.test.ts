@@ -12,7 +12,7 @@ import {
   tool,
 } from "../src/plugins/plugin";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { setUpOwner, testApp, waitFor } from "./helpers";
+import { signIn, testApp, waitFor } from "./helpers";
 import {
   call,
   ended,
@@ -109,7 +109,7 @@ const bare = (id: string, start: Plugin["start"]) =>
 
 test("Settings: off until switched on, what's missing, bad settings refused, and the test button", async () => {
   const t = await testApp(new FakeModel(), new FakeModel(), {}, [labPlugin()], {});
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   const api = (method: string, path: string, body?: unknown) =>
     t.call(method, path, body, { cookie });
 
@@ -129,7 +129,7 @@ test("Settings: off until switched on, what's missing, bad settings refused, and
 
   // With it, new settings restart the plugin, and the test button runs its check.
   const set = await lab(new FakeModel());
-  const { cookie: owner } = await setUpOwner(set);
+  const { cookie: owner } = signIn(set);
   const res = await set.call(
     "PATCH",
     "/plugins/lab",

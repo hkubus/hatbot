@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { Bot, Conversation } from "@hatbot/shared";
 import { mentionsIn } from "../src/agent/thread";
 import { FakeModel, text } from "./fake-model";
-import { bot, setUpOwner, type TestApp, testApp } from "./helpers";
+import { bot, signIn, type TestApp, testApp } from "./helpers";
 
 async function group(t: TestApp, cookie: string, botIds: string[]) {
   const res = await t.call("POST", "/conversations", { title: "Kitchen", botIds }, { cookie });
@@ -18,7 +18,7 @@ test("in a group, @name picks who answers, else the last bot to speak, and a bot
     { content: [text("Bread too.")] },
   ]);
   const t = await testApp(model);
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   bot(t, "Chef");
   bot(t, "Coder");
   for (const botIds of [
@@ -97,7 +97,7 @@ test("at most 4 bot replies follow one message", async () => {
     })),
   );
   const t = await testApp(model);
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   bot(t, "Chef");
   const g = await group(t, cookie, ["chef", "hatbot"]);
   const thread = t.chats.thread(g.id);

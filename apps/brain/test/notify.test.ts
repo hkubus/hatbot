@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { ORIGIN, setUpOwner, testApp, waitFor } from "./helpers";
+import { ORIGIN, signIn, testApp, waitFor } from "./helpers";
 
 test("an approval's notification keeps its whole summary, opens the iOS app when Settings say so, and its buttons still call the brain", async () => {
   const t = await testApp();
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   const res = await t.call("PUT", "/settings", { notificationsOpen: "app" }, { cookie });
   expect(res.status).toBe(200);
   // Every client hears of the change.

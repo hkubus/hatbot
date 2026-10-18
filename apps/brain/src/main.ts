@@ -1,180 +1,37 @@
 import { websocket } from "hono/bun";
-import { Chats } from "./agent/chats";
 import { AnthropicModelClient } from "./agent/model";
-import { CORE_TOOL_NAMES } from "./agent/tools";
-import { createApp } from "./app";
-import { Approvals } from "./approvals";
-import { Archive } from "./archive";
-import { Attachments } from "./attachments";
-import { AuthService, FailureLimiter } from "./auth/service";
-import { Bots } from "./bots";
-import { Checks } from "./checks";
 import { loadConfig, urlHost } from "./config";
 import { openDb } from "./db";
 import { HttpDesktopAgent } from "./desktop/client";
-import { Desktop } from "./desktop/service";
-import { EventBus } from "./events";
-import { Heartbeat } from "./heartbeat";
-import { Proposals } from "./memory/proposals";
-import { MemoryStore } from "./memory/store";
-import { Negotiations } from "./negotiate/service";
-import { LinkingNotifier, NtfyNotifier } from "./notify";
-import { DeadManPing } from "./ping";
+import { NtfyNotifier } from "./notify";
 import { PLUGINS } from "./plugins";
-import { codePlugin } from "./plugins/code";
-import { Plugins } from "./plugins/registry";
 import { Proxmox } from "./proxmox";
-import { WeeklyReport } from "./report";
-import { Schedules } from "./schedules";
-import { SettingsStore } from "./settings";
-import { Spend } from "./spend";
-import { Storage } from "./storage";
-import { Tasks } from "./tasks/service";
-import { Teach } from "./teach/service";
-import { Skills } from "./teach/skills";
-import { Triggers } from "./triggers";
-import { Updates } from "./updates";
-import { Watchers } from "./watch/service";
+import { createServices } from "./services";
 import { webHandler } from "./web";
 
 const config = loadConfig();
-const db = openDb(config.dbPath);
-const auth = new AuthService(db);
-const events = new EventBus();
-const settings = new SettingsStore(db);
-const spend = new Spend(db, settings, events);
-const memory = new MemoryStore(config.memoryDir, db, events);
-await memory.init();
-const skills = new Skills(db, memory);
-await skills.refresh();
-skills.watch(events);
 const model = new AnthropicModelClient();
-const archive = new Archive(config.archiveDir);
-const storage = new Storage({ db, archive });
-const attachments = new Attachments({ db, archive, events });
-const desktop = new Desktop(new HttpDesktopAgent(), events, db);
-const plugins = new Plugins([...PLUGINS, codePlugin({ desktop: desktop.agent, attachments })], {
-  db,
-  events,
-  files: { desktop: desktop.agent, attachments },
-  reserved: CORE_TOOL_NAMES,
+const ntfy = new NtfyNotifier();
+const brain = await createServices({
+  config,
+  db: openDb(config.dbPath),
+  model,
+  taskModel: model,
+  agent: new HttpDesktopAgent(),
+  notifications: ntfy,
+  ntfy,
+  proxmox: new Proxmox(),
+  plugins: PLUGINS,
+  pingUrl: process.env.HATBOT_PING_URL,
+  apiKeySet: Boolean(process.env.ANTHROPIC_API_KEY),
 });
+const { app, auth, approvals, chats, desktop, negotiations, plugins, settings, tasks } = brain;
+const { schedules, triggers, watchers, heartbeat, report, proposals, storage, ping } = brain;
+await brain.skills.refresh();
 // In the background: an MCP server that is slow to answer mustn't hold up the health check.
 const pluginsStarted = plugins
   .startAll()
   .catch((err) => console.error("plugins failed to start", err));
-const bots = new Bots(db, events);
-const chats = new Chats({ db, memory, events, spend, settings, model, plugins, bots });
-const ntfy = new NtfyNotifier();
-const notifier = new LinkingNotifier(
-  ntfy,
-  config.publicUrl,
-  () => settings.get().notificationsOpen,
-);
-const approvals = new Approvals(db, events, notifier, config.publicUrl, Date.now, bots);
-const tasks = new Tasks({
-  db,
-  events,
-  spend,
-  settings,
-  model,
-  desktop,
-  approvals,
-  notifier,
-  archive,
-  attachments,
-  chats,
-  bots,
-  config,
-  memory,
-  plugins,
-  skills,
-});
-const teach = new Teach({
-  db,
-  events,
-  desktop,
-  lane: tasks.lane,
-  archive,
-  model,
-  spend,
-  settings,
-  skills,
-});
-const schedules = new Schedules(db, events, settings, tasks);
-const triggers = new Triggers(db, events, settings, tasks, notifier, config.publicUrl);
-const watchers = new Watchers({
-  db,
-  events,
-  settings,
-  tasks,
-  chats,
-  notifier,
-  desktop: desktop.agent,
-  plugins,
-  bots,
-  publicUrl: config.publicUrl,
-});
-const heartbeat = new Heartbeat({
-  db,
-  events,
-  settings,
-  spend,
-  model,
-  tasks,
-  chats,
-  notifier,
-  plugins,
-  desktop,
-  bots,
-  publicUrl: config.publicUrl,
-});
-const proposals = new Proposals({
-  db,
-  events,
-  settings,
-  spend,
-  model,
-  memory,
-  skills,
-  tasks,
-  notifier,
-  publicUrl: config.publicUrl,
-});
-const report = new WeeklyReport({
-  db,
-  settings,
-  chats,
-  notifier,
-  bots,
-  memory,
-  storage,
-  publicUrl: config.publicUrl,
-});
-const negotiations = new Negotiations({
-  db,
-  events,
-  tasks,
-  approvals,
-  bots,
-  memory,
-  desktop,
-  model,
-  spend,
-});
-tasks.negotiations = negotiations;
-chats.attach({
-  tasks,
-  schedules,
-  triggers,
-  watchers,
-  approvals,
-  attachments,
-  desktop: desktop.agent,
-  negotiations,
-  proposals,
-});
-tasks.attach({ proposals });
 // A restart ends an incognito conversation.
 await chats.endIncognito();
 // Tasks the restart stopped, told where they were started.
@@ -198,7 +55,6 @@ setInterval(() => safely("approvals", () => approvals.expireDue()), 60_000);
 setInterval(() => safely("sign-in prune", () => auth.prune()), 3600_000);
 setInterval(() => safely("negotiations", () => negotiations.due()), 60_000);
 setInterval(() => safely("chat sweep", () => chats.sweep()), 60_000);
-const ping = new DeadManPing({ db, url: process.env.HATBOT_PING_URL });
 // Runs missed while the brain was down start once plugins are up, so they get their tools.
 void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {
   safely("schedules", () => schedules.tick());
@@ -215,69 +71,7 @@ void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {
     safely("storage", () => storage.tick());
   }, 10_000);
 });
-const proxmox = new Proxmox();
-const updates = new Updates(config);
-const checks = new Checks({
-  db,
-  config,
-  settings,
-  spend,
-  model,
-  memory,
-  archive,
-  storage,
-  desktop,
-  plugins,
-  approvals,
-  proxmox,
-  updates,
-  ntfy,
-  ping,
-  auth,
-  apiKeySet: Boolean(process.env.ANTHROPIC_API_KEY),
-});
-const loginLimits = {
-  perIp: new FailureLimiter(10, 15 * 60_000),
-  global: new FailureLimiter(50, 15 * 60_000, Date.now, () => {
-    void notifier.send({
-      title: "Sign-in is on hold",
-      message:
-        "50 wrong passwords or codes in 15 minutes. New browsers can't sign in until it calms down; ones you've signed in on before still can.",
-      priority: 4,
-      tags: ["warning"],
-    });
-  }),
-};
 
-const app = createApp({
-  config,
-  db,
-  auth,
-  loginLimits,
-  events,
-  settings,
-  spend,
-  memory,
-  chats,
-  bots,
-  tasks,
-  approvals,
-  desktop,
-  archive,
-  attachments,
-  proxmox,
-  updates,
-  schedules,
-  triggers,
-  watchers,
-  heartbeat,
-  report,
-  proposals,
-  plugins,
-  teach,
-  checks,
-  negotiations,
-});
 const web = webHandler(config.webDir);
 const server = Bun.serve({
   hostname: config.host,
