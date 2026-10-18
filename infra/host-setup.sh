@@ -403,8 +403,6 @@ if [[ -n $BOXES ]]; then
 
 # $BOXES_NAME (CT $BOXES_ID): the same fence, with only the brain reaching its agent.
 table bridge hatbot {
-  # The bridge learns a frame's source MAC before forward or input see it, so a frame claiming another
-  # machine's MAC is dropped here, or it would draw that machine's traffic to the boxes guest.
   chain boxes_prerouting {
     type filter hook prerouting priority filter - 5; policy accept;
     iifname "$BOXES_VETH" ether saddr != $BOXES_MAC counter drop
@@ -460,6 +458,13 @@ table bridge hatbot {
     elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12,
                  192.0.0.0/24, 192.0.2.0/24, 192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24,
                  203.0.113.0/24, 224.0.0.0/3, $LAN_NET$PUBLIC_BLOCK }
+  }
+
+  # The bridge learns a frame's source MAC before forward or input see it, so a frame claiming another
+  # machine's MAC is dropped here, or it would draw that machine's traffic to the desktop.
+  chain desktop_prerouting {
+    type filter hook prerouting priority filter - 5; policy accept;
+    iifname "$DESKTOP_VETH" ether saddr != $DESKTOP_MAC counter drop
   }
 
   chain forward {
