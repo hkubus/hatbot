@@ -11,12 +11,12 @@ import type { BetaBrowserMemberInput } from "@anthropic-ai/sdk/resources/beta";
 import type { ApprovalKind } from "@hatbot/shared";
 import type { AgentElement, BrowserState, ComputerMember } from "@hatbot/shared/desktop";
 import { z } from "zod";
-import { cutOff, modelErrorText, type StreamParams } from "../agent/model";
+import { cutOff, type StreamParams } from "../agent/model";
 import { DESKTOP_PROMPT } from "../agent/prompt";
 import { type Screening, screenPage } from "../agent/screening";
 import { localStamp } from "../agent/thread";
 import { untrustedBlock } from "../agent/untrusted";
-import { type Outcome, ownerNote } from "../approvals";
+import { ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import { DesktopBusy } from "../desktop/service";
@@ -30,9 +30,9 @@ import {
 } from "../negotiate/gate";
 import { marketplaceSend } from "../negotiate/marketplace";
 import { destructive } from "../plugins/ssh/policy";
-import { BudgetError, estimateTokens, fixedTokens, requestCeiling, usesReserve } from "../spend";
 import { skillPath } from "../teach/skills";
 import { type Armed, approvalKind, notCovered } from "./approval-kind";
+import { addNotes, askOwner, callsOf, endOf, requestsFor, Stop, textOf, thinkingFor } from "./loop";
 import {
   checkFor,
   consequential,
@@ -45,8 +45,6 @@ import {
 import { DesktopSendToChat, SEND_TO_CHAT_DESCRIPTION, sendToChat } from "./send-to-chat";
 import type { Tasks } from "./service";
 
-/** Models whose between-tool progress notes (`display: "updates"`) are documented. */
-export const UPDATES_MODELS = new Set(["claude-opus-5-5"]);
 /** A desktop task Haiku gives up on carries on, once, on Opus (PLAN.md §5.4). */
 const FIRST_MODEL = "claude-haiku-5-5";
 const ESCALATE_TO = "claude-opus-5-5";
@@ -186,22 +184,6 @@ const NUDGE =
 /** How a send the gate let through is confirmed: the text leaving the box. Tests shorten it. */
 export const sendConfirm = { tries: 6, everyMs: 500 };
 
-/**
- * Ends the run from inside a helper. `notify` false: a routine result nobody needs to hear about.
- * `escalate`: a failure a stronger model might get past (out of steps or time, refused, cut off, or it
- * gave up), with the model's own account of what it tried when it gave one.
- */
-export class Stop extends Error {
-  constructor(
-    readonly status: "done" | "failed" | "cancelled",
-    readonly summary: string,
-    readonly notify = true,
-    readonly escalate: false | { account: string | null } = false,
-  ) {
-    super(summary);
-  }
-}
-
 /** The computer toolset on desktop-agent. The SDK formats results; the run checks policy before calling it. */
 class Computer extends BetaAbstractComputerToolset20260801 {
   constructor(
@@ -317,20 +299,6 @@ const describe = (name: string, input: Record<string, unknown>): string => {
   }
 };
 
-/**
- * The most a request may cost, for the check before it: images at their typical size, and the part
- * the last request left in the cache (`cached`) at the read price.
- */
-function ceilingOf(params: Omit<StreamParams, "stream">, cached = 0): number {
-  const prompt = estimateTokens(params.messages) + fixedTokens(params.system, params.tools);
-  return requestCeiling(params.model, {
-    prompt: Math.max(prompt, cached),
-    cached,
-    write: "5m",
-    maxTokens: params.max_tokens,
-  });
-}
-
 export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSignal): Promise<void> {
   const { d } = tasks;
   const task = tasks.get(id);
@@ -339,10 +307,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   const agent = d.desktop.agent.withSignal?.(signal) ?? d.desktop.agent;
   /** Haiku's, until it fails and Opus carries on. */
   let model = task.model;
-  /** Lets go of what the request in flight holds against the limits. */
-  let held = () => {};
-  /** What the last request left in the cache, and when it started: entries last 5 minutes. */
-  let cache = { tokens: 0, at: 0 };
+  const requests = requestsFor(tasks, task, signal);
 
   let holding = false;
   let activeMs = 0;
@@ -472,38 +437,20 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     tasks.appendTurn(id, role, stored);
   };
 
-  const askApproval = async (input: {
+  const askApproval = (input: {
     kind: ApprovalKind;
     summary: string;
     reason?: string;
     screenshotStepId?: number | null;
-  }): Promise<{ outcome: Outcome; note: string | null }> => {
-    const approval = d.approvals.create({
-      taskId: id,
-      botId: task.botId,
-      sources: [...sources],
-      ...input,
-    });
-    tasks.addStep(id, {
-      kind: "approval",
-      name: "Asked for approval",
-      detail: input.summary,
-      url: lastUrl,
-    });
-    const outcome = await away(() => d.approvals.wait(approval.id, signal));
-    tasks.addStep(id, {
-      kind: "approval",
-      name: `Approval ${outcome}`,
-      detail: input.summary,
-      url: lastUrl,
-    });
-    if (outcome === "expired")
-      throw new Stop("cancelled", "Nobody answered the approval within 24 hours.");
-    if (outcome === "cancelled") throw new Stop("cancelled", "The approval was cancelled.");
-    const note = d.approvals.get(approval.id)?.note ?? null;
-    if (note) tasks.addStep(id, { kind: "note", name: "Your note", detail: note, url: lastUrl });
-    return { outcome, note };
-  };
+  }) =>
+    askOwner(
+      tasks,
+      id,
+      { botId: task.botId, sources: [...sources], ...input },
+      lastUrl,
+      away,
+      signal,
+    );
 
   /** Waits while you have the desktop, holding the screen lane: you're working on this task's behalf. */
   const waitForOwner = async () => {
@@ -1039,9 +986,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
     cache_control: { type: "ephemeral" },
     tools: [computer.toJSON(), browser.toJSON(), ...CUSTOM_TOOLS, ...(gate ? [RECORD_TOOL] : [])],
-    thinking: UPDATES_MODELS.has(model)
-      ? { type: "adaptive", display: "updates" }
-      : { type: "adaptive" },
+    thinking: thinkingFor(model),
     output_config: { effort: "medium" },
     // Old screenshots are cleared on the server; clearing them here would break cached reasoning.
     context_management: {
@@ -1067,6 +1012,13 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     await observePage();
     record("user", first);
     let nudged = false;
+    /** Only finish_task ends a task: asked once, then it has failed, and Opus may carry on. */
+    const nudge = () => {
+      if (nudged) return false;
+      nudged = true;
+      record("user", [{ type: "text", text: NUDGE }]);
+      return true;
+    };
 
     for (let step = 0; ; step++) {
       if (signal.aborted) throw signal.reason;
@@ -1080,88 +1032,20 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       if (activeMs + (holding ? tasks.clock() - since : 0) > MAX_ACTIVE_MS)
         throw new Stop("failed", "Stopped: it ran for 30 minutes without finishing.", true, ASK);
       const params = request(messages);
-      try {
-        const cached = tasks.clock() - cache.at < 5 * 60_000 ? cache.tokens : 0;
-        held = d.spend.hold(
-          ceilingOf(params, cached),
-          { id, limitUsd: tasks.budget(id) },
-          { reserve: usesReserve(task.origin) },
-        );
-      } catch (err) {
-        if (!(err instanceof BudgetError)) throw err;
-        if (err.limit !== "task") throw new Stop("failed", `Stopped: ${err.message}`);
-        const extra = tasks.raiseStep(id);
-        const { outcome } = await askApproval({ kind: "budget", ...tasks.budgetAsk(id, extra) });
-        if (outcome !== "approved") throw new Stop("failed", "Stopped at its spending limit.");
-        tasks.raiseBudget(id, extra);
-        continue;
-      }
+      if (!(await requests.hold(requests.ceiling(params), askApproval))) continue;
 
       // The model doesn't need the screen to think: a task you took over for may have it meanwhile.
       if (yieldAsked && tasks.lane.waiting) giveWay();
       thinking = true;
-      const sent = tasks.clock();
-      const res = await d.model
-        .stream(params, {
-          onText: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
-          onThinking: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
-          onFailedUsage: (m, usage) =>
-            d.spend.recordResponse({ model: m, purpose: "task", usage, taskId: id }),
-          signal,
-        })
-        .finally(() => {
-          thinking = false;
-        });
-      held();
-      cache = {
-        tokens:
-          (res.usage.cache_read_input_tokens ?? 0) + (res.usage.cache_creation_input_tokens ?? 0),
-        at: sent,
-      };
-      d.spend.recordResponse({
-        model,
-        purpose: "task",
-        usage: res.usage,
-        taskId: id,
+      const res = await requests.stream(params).finally(() => {
+        thinking = false;
       });
       record("assistant", res.content);
       // The model read the pages while Haiku screened them; nothing it asks for runs before the verdict.
       await screened();
-      for (const b of res.content) {
-        const note = b.type === "text" ? b.text : b.type === "thinking" ? b.thinking : "";
-        if (note.trim())
-          tasks.addStep(id, { kind: "note", name: "Note", detail: note.trim(), url: lastUrl });
-      }
-
-      if (res.stop_reason === "refusal")
-        throw new Stop("failed", "The model declined to carry on with this task.", true, {
-          account: "",
-        });
-      // Asking it what it tried wouldn't fit either; Opus starts afresh without its account.
-      if (res.stop_reason === "model_context_window_exceeded")
-        throw new Stop("failed", "Stopped: the task's conversation got too long.", true, {
-          account: "",
-        });
-      if (res.stop_reason === "pause_turn") continue;
-      const calls = res.content.filter(
-        (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use",
-      );
-      if (!calls.length) {
-        if (cutOff(res)) throw new Stop("failed", "Stopped: a reply was cut off.", true, ASK);
-        const text = res.content
-          .map((b) => (b.type === "text" ? b.text : ""))
-          .join("")
-          .trim();
-        // Only finish_task ends a task: asked once, then it has failed, and Opus may carry on.
-        if (!nudged) {
-          nudged = true;
-          record("user", [{ type: "text", text: NUDGE }]);
-          continue;
-        }
-        throw new Stop("failed", text || "Stopped: it ended without finishing.", true, {
-          account: text || null,
-        });
-      }
+      addNotes(tasks, id, res, lastUrl);
+      const calls = callsOf(res, nudge, true);
+      if (!calls) continue;
       if (lostScreen) {
         lostScreen = false;
         if (!holding) {
@@ -1277,18 +1161,10 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         : [...messages, { role: "user", content: [ask] }];
     try {
       const params = { ...request(asked), max_tokens: 4000 };
-      const done = d.spend.hold(
-        ceilingOf(params, tasks.clock() - cache.at < 5 * 60_000 ? cache.tokens : 0),
-        { id, limitUsd: tasks.budget(id) },
-        { reserve: usesReserve(task.origin) },
-      );
+      const done = requests.holdOnly(requests.ceiling(params));
       const res = await d.model.create(params).finally(done);
       d.spend.recordResponse({ model, purpose: "task", usage: res.usage, taskId: id });
-      return res.content
-        .map((b) => (b.type === "text" ? b.text : ""))
-        .join("")
-        .trim()
-        .slice(0, 2000);
+      return textOf(res).slice(0, 2000);
     } catch (err) {
       if (signal.aborted) throw err;
       console.error(`task ${id}: no account of the first attempt`, err);
@@ -1331,7 +1207,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       tasks.setModel(id, model, FIRST_MODEL);
       messages.length = 0;
       // Another model reads nothing of Haiku's cache.
-      cache = { tokens: 0, at: 0 };
+      requests.cache = { tokens: 0, at: 0 };
       // Pages Haiku left on screen aren't screened again: their verdicts come first.
       await screened();
       armed = null;
@@ -1345,26 +1221,10 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       );
     }
   } catch (err) {
-    if (err instanceof Stop) tasks.finish(id, err.status, err.summary, err.notify);
-    else if (signal.aborted) {
-      const paused = signal.reason instanceof Error && signal.reason.message === "paused";
-      tasks.finish(id, "cancelled", paused ? "Stopped by Pause all." : "Cancelled.");
-    } else if (err instanceof DesktopError) {
-      tasks.finish(
-        id,
-        "failed",
-        err.status === 0 ? "The desktop stopped answering." : `The desktop failed: ${err.message}`,
-      );
-    } else {
-      console.error(`task ${id} failed`, err);
-      tasks.finish(
-        id,
-        "failed",
-        `Something went wrong talking to the model (${modelErrorText(err)}).`,
-      );
-    }
+    const ended = endOf(err, id, signal);
+    tasks.finish(id, ended.status, ended.summary, ended.notify);
   } finally {
-    held();
+    requests.release();
     release();
     d.approvals.cancelForTask(id);
     d.desktop.clearRequest(id);
