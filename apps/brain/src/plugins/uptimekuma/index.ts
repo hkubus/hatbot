@@ -15,53 +15,20 @@ export type Sample = { name: string; labels: Record<string, string>; value: numb
  * Prometheus' text format: `name{label="value",...} value [timestamp]`, with \\, \" and \n escaped in
  * label values. HELP, TYPE and other '#' lines are skipped, as are lines that don't parse.
  */
+const LINE =
+  /^([a-zA-Z_:][\w:]*)(?:\{\s*((?:[a-zA-Z_]\w*\s*=\s*"(?:[^"\\]|\\.)*"\s*(?:,\s*)?)*)\})?\s+(\S+)/;
+const LABEL = /([a-zA-Z_]\w*)\s*=\s*"((?:[^"\\]|\\.)*)"/g;
+
 export function parseMetrics(text: string): Sample[] {
-  const out: Sample[] = [];
-  for (const raw of text.split("\n")) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
-    const name = /^[a-zA-Z_:][\w:]*/.exec(line)?.[0];
-    if (!name) continue;
-    let i = name.length;
+  return text.split("\n").flatMap((line) => {
+    const m = LINE.exec(line.trim());
+    const value = Number(m?.[3]);
+    if (!m || Number.isNaN(value)) return [];
     const labels: Record<string, string> = {};
-    if (line[i] === "{") {
-      i++;
-      let ok = false;
-      while (i < line.length) {
-        while (line[i] === " " || line[i] === ",") i++;
-        if (line[i] === "}") {
-          i++;
-          ok = true;
-          break;
-        }
-        const key = /^[a-zA-Z_]\w*/.exec(line.slice(i))?.[0];
-        if (!key) break;
-        i += key.length;
-        while (line[i] === " ") i++;
-        if (line[i] !== "=") break;
-        i++;
-        while (line[i] === " ") i++;
-        if (line[i] !== '"') break;
-        i++;
-        let value = "";
-        while (i < line.length && line[i] !== '"') {
-          if (line[i] === "\\" && i + 1 < line.length) {
-            const next = line[i + 1];
-            value += next === "n" ? "\n" : next;
-            i += 2;
-          } else value += line[i++];
-        }
-        if (line[i] !== '"') break;
-        i++;
-        labels[key] = value;
-      }
-      if (!ok) continue;
-    }
-    const value = Number(line.slice(i).trim().split(/\s+/)[0]);
-    if (line.slice(i).trim() === "" || Number.isNaN(value)) continue;
-    out.push({ name, labels, value });
-  }
-  return out;
+    for (const [, key = "", v = ""] of (m[2] ?? "").matchAll(LABEL))
+      labels[key] = v.replace(/\\(.)/g, (_, c) => (c === "n" ? "\n" : c));
+    return [{ name: m[1] ?? "", labels, value }];
+  });
 }
 
 type Monitor = {
