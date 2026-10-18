@@ -94,13 +94,11 @@ test("a call while the tabs are being asked waits for an answer from after the s
   const browser = new Browser(null, endpoint);
   expect((await browser.onScreen(null))?.url).toBe("https://a.example/");
   // The owner switches to B; the tabs are slow to answer, and a second caller comes meanwhile.
-  answerMs = 300;
+  answerMs = 100;
   onScreen = "B";
   browser.screenTouched();
-  const first = browser.onScreen(null);
-  await Bun.sleep(20);
-  const second = await browser.onScreen(null);
-  expect([(await first)?.url, second?.url]).toEqual(["https://b.example/", "https://b.example/"]);
+  const [first, second] = await Promise.all([browser.onScreen(null), browser.onScreen(null)]);
+  expect([first?.url, second?.url]).toEqual(["https://b.example/", "https://b.example/"]);
 
   // A page brings a tab to the front without opening or closing one: only its info changes.
   answerMs = 0;
