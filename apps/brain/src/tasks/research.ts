@@ -1,4 +1,4 @@
-// Research tasks (PLAN.md §17). Opus plans the question and hands parts to Haiku helpers that search
+// Research tasks (PLAN.md §17). The lead plans the question and hands parts to Haiku helpers that search
 // at once; each finding comes back with the quote it rests on and a numbered source. Before the report
 // is final, Haiku checks its numbers against those quotes. The answer goes to the chat, and the report
 // into the bot's notes and onto the task.
@@ -145,7 +145,7 @@ const WORKER_TOOLS: Anthropic.Beta.BetaToolUnion[] = [
   ...webTools({ pageTokens: HELPER_PAGE_TOKENS, uses: HELPER_USES }),
 ];
 
-/** The lead's own web tools: it checks one thing at Opus prices, so it reads less of a page. */
+/** The lead's own web tools: it checks one thing, and leaves reading pages to the helpers. */
 export const LEAD_WEB_TOOLS = webTools({ pageTokens: 10_000 });
 
 /** The research prompt, with where this bot keeps its reports. */

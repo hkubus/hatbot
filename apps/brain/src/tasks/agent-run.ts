@@ -56,6 +56,7 @@ import {
   refusedLinks,
   researchPrompt,
 } from "./research";
+import { RESEARCH_EFFORT } from "./research-goal";
 import { SEND_TO_CHAT_DESCRIPTION, SendToChat, sendToChat } from "./send-to-chat";
 import type { Tasks } from "./service";
 
@@ -666,7 +667,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       return true;
     };
     // Code work writes whole files into tool calls, research its report; the chat's high efforts think longer.
-    const effort = task.effort ?? d.settings.get().chatEffort;
+    const effort = research ? RESEARCH_EFFORT : (task.effort ?? d.settings.get().chatEffort);
     const roomy = task.effort || (effort !== "low" && effort !== "medium");
     const maxTokens = research ? 64000 : roomy ? 32000 : 16000;
     for (let step = 0; ; step++) {
@@ -696,15 +697,14 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           ...(research ? { task_budget: { type: "tokens" as const, total: RESEARCH_TOKENS } } : {}),
         },
         // Old tool results are cleared on the server once the prompt passes 70k, below the 100k
-        // where Haiku 5.5 bills the whole request at 5x. Research's Opus lead has no such step, and a
-        // clearing rewrites the cache after it at the write price, so it clears late and in bulk.
+        // where Haiku 5.5 bills the whole request at 5x.
         context_management: {
           edits: [
             {
               type: "clear_tool_uses_20250919",
-              trigger: { type: "input_tokens", value: research ? 150_000 : 70_000 },
+              trigger: { type: "input_tokens", value: 70_000 },
               keep: { type: "tool_uses", value: 6 },
-              clear_at_least: { type: "input_tokens", value: research ? 50_000 : 20_000 },
+              clear_at_least: { type: "input_tokens", value: 20_000 },
               exclude_tools: keptTools,
             },
           ],

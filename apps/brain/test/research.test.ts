@@ -1,7 +1,11 @@
 import { expect, test } from "bun:test";
 import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { RESEARCH_CHECK_PROMPT, SCREENING_PROMPT } from "../src/agent/prompt";
+import {
+  RESEARCH_CHECK_PROMPT,
+  RESEARCH_WORKER_PROMPT,
+  SCREENING_PROMPT,
+} from "../src/agent/prompt";
 import { runTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
 import { HATBOT } from "../src/memory/store";
@@ -74,7 +78,7 @@ const SHOP_PAGE = "Synology DS925+\n2 399,00 zł\nIn stock";
  */
 function helpers(model: FakeModel) {
   model.route = (p: Params) => {
-    if (p.model !== "claude-haiku-5-5") return undefined;
+    if (!isHelper(p)) return undefined;
     const brief = JSON.stringify(p.messages[0]?.content);
     const noise = brief.includes("noise");
     const findings = noise ? [NOISE] : [PRICE, { ...NOISE, claim: "Quiet." }];
@@ -137,13 +141,15 @@ async function startResearch(t: TestApp, goal = "Which quiet four-bay NAS, under
   return t.tasks.get(task?.id as number) as NonNullable<typeof task>;
 }
 
-const isHelper = (p: Params) => p.model === "claude-haiku-5-5";
+// The lead and its helpers both run on Haiku: a helper is told it's one.
+const isHelper = (p: Params) =>
+  JSON.stringify(p.system).includes(RESEARCH_WORKER_PROMPT.slice(0, 40));
 const ONE_PART = {
   content: [toolUse("investigate", { parts: [{ topic: "Price", brief: "Find the price." }] })],
 };
 const REPORT_PATH = `research/${DAY}-quiet-nas-for-four-drives.md`;
 
-test("research runs on Opus with helpers on the web, checks its numbers, and saves a cited report", async () => {
+test("research runs on Haiku with helpers on the web, checks its numbers, and saves a cited report", async () => {
   const work = new FakeModel([
     INVESTIGATE,
     finish(
@@ -155,8 +161,9 @@ test("research runs on Opus with helpers on the web, checks its numbers, and sav
   work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
   const { t, task } = await research(work);
 
-  expect(task).toMatchObject({ research: true, model: "claude-opus-5-5", status: "done" });
-  const lead = work.requests.find((r) => r.model === "claude-opus-5-5");
+  expect(task).toMatchObject({ research: true, model: "claude-haiku-5-5", status: "done" });
+  const lead = work.requests.find((r) => !isHelper(r));
+  expect(lead?.output_config?.effort).toBe("xhigh");
   expect(toolNames(lead)).toEqual(expect.arrayContaining(["investigate", "finish_research"]));
   const helperRequests = work.requests.filter(isHelper);
   expect(helperRequests).toHaveLength(2);
@@ -525,14 +532,14 @@ test("a helper's request in flight counts for the chat and other tasks too", asy
 test("research near its spending limit is told to finish, and a denied raise keeps the findings", async () => {
   const work = new FakeModel([
     INVESTIGATE,
-    // About $16.50 of the $20: past 80%.
+    // About $2.06 of the $2.50, at Haiku's long-prompt price: past 80%.
     { content: [toolUse("memory_list", {})], usage: { input_tokens: 4_125_000 } },
     // Past the limit.
     { content: [toolUse("memory_list", {})], usage: { input_tokens: 1_200_000 } },
   ]);
   helpers(work);
   const t = await testApp(new FakeModel(), work);
-  t.settings.update({ limits: { researchUsd: 20, dailyUsd: 1000, monthlyUsd: 1000 } });
+  t.settings.update({ limits: { researchUsd: 2.5, dailyUsd: 1000, monthlyUsd: 1000 } });
   const created = t.tasks.createBackgroundTask({
     title: "Quiet NAS for four drives",
     goal: "Which quiet four-bay NAS?",

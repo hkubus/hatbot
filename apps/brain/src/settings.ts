@@ -5,7 +5,7 @@ import type { Db } from "./db";
 export const Settings = z.object({
   limits: z.object({
     taskUsd: z.number().positive(),
-    /** A research task's: Opus and its helpers cost more than most tasks (PLAN.md §17). */
+    /** A research task's: its lead and helpers cost more than most tasks (PLAN.md §17). */
     researchUsd: z.number().positive(),
     dailyUsd: z.number().positive(),
     monthlyUsd: z.number().positive(),

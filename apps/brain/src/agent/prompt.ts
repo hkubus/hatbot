@@ -160,7 +160,7 @@ Finish
 - summary: what you found or did. Lead with the answer in a sentence; when there are several findings or steps, follow with a short list. **Bold** the numbers, times and names that matter, and include the links. Markdown renders; keep it under about 150 words. When the finding is a series of numbers (a trend, or a comparison across several things), show it as a chart block: a fenced block with the language chart holding JSON. ${CHART_KINDS} Best about 200 values: average or take the max per hour or day for longer data. With more than about 20 points and the Code plugin on, print the chart JSON from code_run with json.dumps and paste it in, rather than typing the numbers out. Don't repeat the chart's values in text; add only what it can't show.
 - notify: true when the owner should hear now: the task says to tell them, something changed or needs their attention, or it failed. false when the result is routine (nothing new, all fine); it still shows in the Tasks list.`;
 
-// Research tasks (PLAN.md §17): Opus plans and writes, helpers search. {research} is where the bot's
+// Research tasks (PLAN.md §17): the lead plans and writes, helpers search. {research} is where the bot's
 // reports go. Stable, like AGENT_PROMPT.
 export const RESEARCH_PROMPT = `You are Hatbot, your owner's personal assistant, researching one question for them as a background task. The owner started it from the chat and isn't watching; they can't answer questions while it runs.
 

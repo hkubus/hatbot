@@ -404,7 +404,7 @@ export class Tasks {
     requestedBy?: string;
     /** The task that handed it over, which waits for it; it shows nowhere in the chat. */
     parent?: Task;
-    /** A research task (PLAN.md §17): Opus at high effort with helpers, ending in a report. */
+    /** A research task (PLAN.md §17): Haiku at xhigh effort with helpers, ending in a report. */
     research?: boolean;
   }): Task | null {
     if (input.runKey && this.activeFor(input.runKey)) return null;
@@ -428,7 +428,8 @@ export class Tasks {
       lane: "background",
       // Fixed for the task, like a desktop task's.
       model: input.research ? RESEARCH_MODEL : this.d.settings.get().taskModel,
-      effort: input.research ? "high" : (input.effort ?? null),
+      // Research runs at RESEARCH_EFFORT, which the column can't hold.
+      effort: input.research ? null : (input.effort ?? null),
       research: input.research ? 1 : 0,
       source: input.source ?? null,
       schedule_id: input.scheduleId ?? null,
