@@ -26,6 +26,7 @@ import {
   withDone,
   withTodo,
 } from "@hatbot/shared";
+import { type BoxLookError, MAX_LOOK_HEIGHT } from "@hatbot/shared/desktop";
 import {
   BOX_CONFIG,
   BOX_PAGE,
@@ -39,7 +40,7 @@ import { z } from "zod";
 import type { Attachments } from "../attachments";
 import { type Bots, botFolder } from "../bots";
 import type { BoxFeed } from "../box-feeds";
-import { BoxError, type Boxes } from "../boxes";
+import { BoxError, type Boxes, FRAME_CSP, previewed } from "../boxes";
 import type { Db } from "../db";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import type { EventBus } from "../events";
@@ -454,11 +455,26 @@ function edited(
   }, html);
 }
 
-/** What a box gives the model, untrusted and tainting when `by` says what tainted it. */
-function boxOutput(ctx: ToolContext, tool: string, text: string, by: string | null): string {
+/**
+ * What a box gives the model, untrusted and tainting when `by` says what tainted it. `screened`: what
+ * the screening reads, when it's more than the text.
+ */
+function boxOutput(
+  ctx: ToolContext,
+  tool: string,
+  text: string,
+  by: string | null,
+  screened = text,
+): string {
   if (!by) return text;
-  ctx.taint?.(by, text);
+  ctx.taint?.(by, screened);
   return untrustedBlock("tool_output", text, { tool });
+}
+
+/** An error box_look's page hit, at its line in the page: Hatbox's script comes `lines` above it. */
+function lookError(e: BoxLookError, lines: number | null): string {
+  const at = lines !== null && e.line && e.line > lines ? ` (line ${e.line - lines})` : "";
+  return `- ${e.message}${at}${e.count ? ` (${e.count} times)` : ""}`;
 }
 
 /** Shows the box under the reply, and says so. */
@@ -555,11 +571,18 @@ async function builtBox(
   return { id, page: result.page, note };
 }
 
+/** A tool's result with a picture the model sees too (box_look). */
+export type ToolImage = { data: string; mediaType: "image/png" };
+
 type ToolDef<S extends z.ZodType> = {
   name: string;
   description: string;
   schema: S;
-  run: (input: z.infer<S>, ctx: ToolContext, signal: AbortSignal) => Promise<string>;
+  run: (
+    input: z.infer<S>,
+    ctx: ToolContext,
+    signal: AbortSignal,
+  ) => Promise<string | { text: string; image: ToolImage }>;
 };
 
 /**
@@ -815,7 +838,7 @@ export const TOOLS = [
   def({
     name: "box_create",
     description:
-      'Make a box: a small web app the owner keeps and opens from the chat, such as a tracker, a calculator, a planner or a dashboard. Not for a one-off answer: reply instead, with a chart block if it helps. A box is one self-contained HTML page, its CSS and JavaScript inline. It can\'t load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don\'t work; show messages and confirmations in the page. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app\'s colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku\'s answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes, and hatbox.feed(name) for what a feed you give it with box_feed last read. For more than a page, give files instead, built on the boxes guest into one page: index.html, which loads its scripts and styles by path (<script type="module" src="./app.ts">), the modules they import, npm packages in box.json, and server.ts for a backend (`export default { fetch(req), scheduled?() }` on Bun, keeping data with bun:sqlite in its working folder), which the page calls with await hatbox.fetch(path, init), answered like fetch. The backend reaches only the hosts box.json lists, and cron runs scheduled(), at most every 5 minutes: {"hosts": ["shop.example.com"], "cron": "0 * * * *", "packages": {"chart.js": "^4"}}.',
+      'Make a box: a small web app the owner keeps and opens from the chat, such as a tracker, a calculator, a planner or a dashboard. Not for a one-off answer: reply instead, with a chart block if it helps. A box is one self-contained HTML page, its CSS and JavaScript inline. It can\'t load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don\'t work; show messages and confirmations in the page. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app\'s colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku\'s answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes, and hatbox.feed(name) for what a feed you give it with box_feed last read. For more than a page, give files instead, built on the boxes guest into one page: index.html, which loads its scripts and styles by path (<script type="module" src="./app.ts">), the modules they import, npm packages in box.json, and server.ts for a backend (`export default { fetch(req), scheduled?() }` on Bun, keeping data with bun:sqlite in its working folder), which the page calls with await hatbox.fetch(path, init), answered like fetch. The backend reaches only the hosts box.json lists, and cron runs scheduled(), at most every 5 minutes: {"hosts": ["shop.example.com"], "cron": "0 * * * *", "packages": {"chart.js": "^4"}}. Then look at it with box_look and fix what\'s wrong before you say it\'s done.',
     schema: z.object({
       title: BOX_TITLE,
       html: z.string().min(1).max(MAX_BOX_HTML).optional().describe("The whole page"),
@@ -858,7 +881,7 @@ export const TOOLS = [
   def({
     name: "box_edit",
     description:
-      "Change one of your boxes, as a new version; the earlier ones are kept. Give edits for a few changes, or the whole new page as html. A box with files takes edits to any of them, whole files to add or replace, and files to remove.",
+      "Change one of your boxes, as a new version; the earlier ones are kept. Give edits for a few changes, or the whole new page as html. A box with files takes edits to any of them, whole files to add or replace, and files to remove. Then look at it again with box_look.",
     schema: z.object({
       box: z.number().int().describe("The box's number"),
       edits: z
@@ -1007,6 +1030,54 @@ export const TOOLS = [
         feeds.length ? `${saved}\n\nFeeds:\n${feeds.map(feedLine).join("\n")}` : saved,
         `What box #${id} "${box.title}" saved`,
       );
+    },
+  }),
+  def({
+    name: "box_look",
+    description:
+      "See one of your boxes as the owner would: a picture of the top of its page on a phone, or a desktop, with the errors it hit (uncaught exceptions, unhandled rejections, console.error, and what the browser refused it). It's drawn on the desktop with no network. hatbox.store starts empty and keeps what the page saves for that one look; hatbox.ask, .send, .feed and .fetch fail there. with_data starts it with what the page saved, and what comes back is then untrusted.",
+    schema: z.object({
+      box: z.number().int(),
+      width: z
+        .enum(["phone", "desktop"])
+        .optional()
+        .describe("phone (390 px wide) if left out; desktop is 1280"),
+      dark: z.boolean().optional().describe("In the dark theme"),
+      with_data: z.boolean().optional().describe("With what the page saved, as the owner sees it"),
+    }),
+    run: async ({ box: id, width, dark = false, with_data }, ctx) => {
+      const box = ownBox(ctx, id);
+      const page = ctx.boxes?.page(id);
+      if (!ctx.boxes || !page) return `There's no box #${id}.`;
+      if (!ctx.desktop?.configured)
+        return "Not looked at: that needs the desktop, and it isn't set up.";
+      const store = with_data ? ctx.boxes.data(id) : {};
+      const phone = width !== "desktop";
+      const screen = phone ? { width: 390, height: 844 } : { width: 1280, height: 800 };
+      const { html, lines } = previewed(page.html, dark, store);
+      const look = await ctx.desktop.lookAtBox({ html, csp: FRAME_CSP, ...screen, dark });
+      const tall =
+        look.height > MAX_LOOK_HEIGHT
+          ? ` The page is ${look.height} px tall; the picture shows the top ${MAX_LOOK_HEIGHT}.`
+          : "";
+      const wide =
+        look.width > screen.width
+          ? ` It's ${look.width} px wide, wider than the screen, so it scrolls sideways.`
+          : "";
+      // A built page's lines aren't its files'.
+      const errors = look.errors.map((e) => lookError(e, page.files ? null : lines));
+      const text = `Box #${id} "${page.title}", version ${page.n}, on a ${phone ? "phone" : "desktop"} ${screen.width} px wide, ${dark ? "dark" : "light"}, ${with_data ? "with what the page saved" : "with an empty store"}.${tall}${wide}\n\n${errors.length ? `Errors:\n${errors.join("\n")}` : "No errors."}`;
+      // With the owner's data in it, both the errors and the picture show what the page made of it.
+      const tainted = ctx.boxes.taintedBy(id);
+      const by = with_data
+        ? `What box #${id} "${box.title}" showed with what it saved`
+        : tainted && `Box #${id} "${box.title}", written after reading: ${tainted}`;
+      const screened = with_data ? `${text}\n\n${cut(JSON.stringify(store), 30_000)}` : text;
+      const out = boxOutput(ctx, "box_look", text, by || null, screened);
+      return {
+        text: by ? `${out}\nThe picture is untrusted too.` : out,
+        image: { data: look.png, mediaType: "image/png" },
+      };
     },
   }),
   def({
@@ -1668,7 +1739,7 @@ export async function runTool(
   input: unknown,
   ctx: ToolContext,
   signal: AbortSignal = new AbortController().signal,
-): Promise<{ content: string; isError: boolean; untrusted?: boolean }> {
+): Promise<{ content: string; isError: boolean; untrusted?: boolean; image?: ToolImage }> {
   const tool =
     TOOLS.find((t) => t.name === name) ??
     TOOLS.find((t) => t.name.toLowerCase() === name.toLowerCase());
@@ -1693,7 +1764,9 @@ export async function runTool(
   if (!parsed.success) return { content: invalidInput(parsed.error), isError: true };
   try {
     // biome-ignore lint/suspicious/noExplicitAny: each tool's run matches its own schema
-    return { content: await tool.run(parsed.data as any, ctx, signal), isError: false };
+    const out = await tool.run(parsed.data as any, ctx, signal);
+    if (typeof out === "string") return { content: out, isError: false };
+    return { content: out.text, image: out.image, isError: false };
   } catch (err) {
     if (
       err instanceof MemoryError ||

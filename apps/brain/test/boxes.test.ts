@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import type { BoxDetail, BoxFeedValue } from "@hatbot/shared";
 import { z } from "zod";
 import { REVIEW_PROMPT } from "../src/agent/prompt";
+import { FRAME_CSP, previewed } from "../src/boxes";
 import { definePlugin, ready, tool } from "../src/plugins/plugin";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { bot, lastUserText, signIn, type TestApp, testApp, waitFor } from "./helpers";
@@ -95,6 +96,54 @@ test("a bot changes only its own boxes", async () => {
   await t.thread.post("rename Coder's box").done;
   expect(lastUserText(model.requests[1])).toContain("is Coder's");
   expect(t.boxes.get(1)?.title).toBe("Builds");
+});
+
+test("box_look: the bot sees its box drawn on the desktop with its errors, and with what the page saved as untrusted", async () => {
+  const model = new FakeModel([
+    { content: [toolUse("box_look", { box: 1 })] },
+    { content: [text("No walks yet.")] },
+    { content: [toolUse("box_look", { box: 1, with_data: true, width: "desktop", dark: true })] },
+    { content: [text("Your walks show.")] },
+    { content: [toolUse("box_look", { box: 1 })] },
+    { content: [text("Can't look.")] },
+  ]);
+  const t = await testApp(model);
+  const html = "<!doctype html><title>Habits</title>\n<script>draw()</script>";
+  t.boxes.create({ botId: "hatbot", conversationId: 1, title: "Habits", html }, {});
+  await t.boxes.call(1, { op: "set", key: "walks", value: 3 });
+  // The page's second line, below Hatbox's script.
+  const line = previewed(html, false, {}).lines + 2;
+  const png =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+  t.agent.look = {
+    png,
+    width: 390,
+    height: 844,
+    errors: [{ message: "Uncaught ReferenceError: draw is not defined", line }],
+  };
+
+  await t.thread.post("does the tracker look right?").done;
+  expect(t.agent.looks[0]).toMatchObject({ csp: FRAME_CSP, width: 390, dark: false });
+  // An empty store: only the bot's own code is at work, so it's trusted.
+  expect(t.agent.looks[0]?.html).not.toContain('"walks"');
+  const seen = lastUserText(model.requests[1]);
+  expect(seen).toContain(
+    `{"type":"image","source":{"type":"base64","media_type":"image/png","data":"${png}"}}`,
+  );
+  expect(seen).toContain("draw is not defined (line 2)");
+  expect(seen).not.toContain('trusted=\\"false\\"');
+
+  await t.thread.post("and with my walks, on a computer, in dark?").done;
+  expect(t.agent.looks[1]).toMatchObject({ width: 1280, dark: true });
+  expect(t.agent.looks[1]?.html).toContain('const preview = {"walks":3};');
+  expect(lastUserText(model.requests[3])).toContain('trusted=\\"false\\"');
+  expect(lastUserText(model.requests[3])).toContain('"type":"image"');
+
+  // Without the desktop, a sentence.
+  t.agent.configured = false;
+  await t.thread.post("look again").done;
+  expect(t.agent.looks).toHaveLength(2);
+  expect(lastUserText(model.requests[5])).not.toContain('"type":"image"');
 });
 
 test("hatbox.ask: Haiku answers the page with no tools, as Boxes in Spend, within the boxes' own daily limit, and not while paused", async () => {

@@ -498,6 +498,10 @@ export class Boxes {
   }
 }
 
+/** A box's page's Content-Security-Policy (PLAN.md §21.1), in the app and in box_look's render. */
+export const FRAME_CSP =
+  "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'";
+
 /**
  * The app's colours, following light and dark (apps/web/src/styles.css), and its type, as defaults a
  * box's own styles override. Its fonts can't load here: the page reaches nothing outside itself.
@@ -509,11 +513,13 @@ const BASE_CSS = `:root{--hb-bg:light-dark(#f5f5f7,#161617);--hb-surface:light-d
  * box only (POST /boxes/:id/call), so a new kind of call needs nothing new in the apps. In the web app
  * the page is a frame and calls are messages to its parent, which also sends the theme; in the iOS app
  * it's the web view's own page, and calls go to WebKit's `hatbox` handler, which replies. Links to
- * other pages open in a new tab, since the frame can't leave the box.
+ * other pages open in a new tab, since the frame can't leave the box. In box_look's render there's no
+ * app: the store is kept in memory for that render, and calls that would reach outside the page fail.
  */
 const HATBOX = `(() => {
   const root = document.documentElement;
   const theme = { dark: __DARK__ };
+  const preview = __PREVIEW__;
   const scheme = () => { root.style.colorScheme = theme.dark ? "dark" : "light"; };
   scheme();
   const setDark = (dark) => {
@@ -524,7 +530,18 @@ const HATBOX = `(() => {
   const native = parent === window ? window.webkit?.messageHandlers?.hatbox : undefined;
   let next = 1;
   const waiting = new Map();
+  const kept = new Map(Object.entries(preview || {}).map(([k, v]) => [k, JSON.stringify(v)]));
+  const previewCall = async (op, args) => {
+    if (op === "get") return kept.has(args.key) ? JSON.parse(kept.get(args.key)) : undefined;
+    if (op === "keys") return [...kept.keys()].sort();
+    if (op === "delete") return void kept.delete(args.key);
+    if (op !== "set") throw new Error("Not in a preview.");
+    const json = JSON.stringify(args.value);
+    if (json === undefined) throw new Error("That isn't a value a box can keep.");
+    kept.set(args.key, json);
+  };
   const call = (op, args) => {
+    if (preview) return previewCall(op, args);
     if (native)
       return native.postMessage({ ...args, op }).catch((e) => {
         throw new Error(typeof e === "string" ? e : e?.message || "Couldn't reach Hatbot.");
@@ -599,7 +616,27 @@ const HATBOX = `(() => {
 
 /** A box's page with Hatbox's styles and script first: after a doctype, so it keeps standards mode. */
 export function framed(html: string, dark: boolean): string {
-  const head = `<style>${BASE_CSS}</style><script>${HATBOX.replace("__DARK__", String(dark))}</script>`;
+  return withHatbox(html, dark, null).html;
+}
+
+/**
+ * A box's page as box_look draws it (PLAN.md §21.12): hatbox.store starts with `store` and keeps what
+ * the page saves in memory, for that render only. `lines`: how many lines Hatbox puts above the page's
+ * own, which the line numbers of its errors count.
+ */
+export function previewed(
+  html: string,
+  dark: boolean,
+  store: Record<string, unknown>,
+): { html: string; lines: number } {
+  return withHatbox(html, dark, store);
+}
+
+function withHatbox(html: string, dark: boolean, preview: Record<string, unknown> | null) {
+  // As JSON in the script, with no "<" that could end it. A function, so "$&" in it stays as it is.
+  const json = preview ? JSON.stringify(preview).replace(/</g, "\\u003c") : "null";
+  const script = HATBOX.replace("__DARK__", String(dark)).replace("__PREVIEW__", () => json);
+  const head = `<style>${BASE_CSS}</style><script>${script}</script>`;
   const at = /^\s*<!doctype[^>]*>/i.exec(html)?.[0].length ?? 0;
-  return html.slice(0, at) + head + html.slice(at);
+  return { html: html.slice(0, at) + head + html.slice(at), lines: head.split("\n").length - 1 };
 }
