@@ -20,6 +20,7 @@ import {
   type BoxConfig,
   type BoxFile,
   boxConfig,
+  MAX_BOX_NOTIFY,
 } from "@hatbot/shared/hatbox";
 import type { Chats } from "./agent/chats";
 import { type CreateParams, type ModelClient, modelErrorText, oneShot } from "./agent/model";
@@ -29,6 +30,7 @@ import type { Db } from "./db";
 import { UserError } from "./errors";
 import type { EventBus } from "./events";
 import type { Backends } from "./hatbox/backends";
+import type { Notifier } from "./notify";
 import type { SettingsStore } from "./settings";
 import { BudgetError, estimateTokens, fixedTokens, requestCeiling, type Spend } from "./spend";
 
@@ -72,8 +74,13 @@ export const BOX_ASK_MODEL = "claude-haiku-5-5";
 const ASK_TOKENS = 4000;
 /** Notes a box's page may put in the chat in an hour (hatbox.send). */
 const NOTES_PER_HOUR = 5;
+/**
+ * Notifications a box's backend may send in a day (scheduled() returning {notify}). Fewer than notes:
+ * each one buzzes your phone, and a schedule runs up to 288 times a day.
+ */
+export const NOTIFY_PER_DAY = 10;
 
-/** What hatbox.ask, .send and .feed need: the boxes get it once the chats exist (connect). */
+/** What hatbox.ask, .send and .feed, and backends' notifications, need: given once the chats exist. */
 export type BoxDeps = {
   settings: SettingsStore;
   spend: Spend;
@@ -81,6 +88,8 @@ export type BoxDeps = {
   model: ModelClient;
   chats: Chats;
   feeds: BoxFeeds;
+  notifier: Notifier;
+  publicUrl: string;
 };
 
 export class Boxes {
@@ -457,12 +466,44 @@ export class Boxes {
     const sent =
       this.db
         .query<{ n: number }, [number, string]>(
-          "SELECT count(*) AS n FROM messages WHERE box_id = ? AND kind = 'box' AND created_at > ?",
+          `SELECT count(*) AS n FROM messages WHERE box_id = ?1 AND kind = 'box' AND created_at > ?2
+           AND id NOT IN (SELECT message_id FROM box_notices
+             WHERE box_id = ?1 AND message_id IS NOT NULL)`,
         )
         .get(box.id, since)?.n ?? 0;
     if (sent >= NOTES_PER_HOUR)
       throw new BoxError(`A box sends at most ${NOTES_PER_HOUR} notes an hour.`, 429);
     this.connected().chats.boxNote(box, text);
+  }
+
+  /**
+   * What the box's backend asked to tell you (scheduled() returning {notify}): a notification that
+   * opens the box, and a note in its chat, so it's kept and the bot reads it, as untrusted, with your
+   * next message. Why it wasn't sent, or null.
+   */
+  notify(id: number, text: string): string | null {
+    const box = this.get(id);
+    if (!box || !this.d) return "Boxes can't notify here.";
+    const since = new Date(this.clock() - 86400_000).toISOString();
+    const sent =
+      this.db
+        .query<{ n: number }, [number, string]>(
+          "SELECT count(*) AS n FROM box_notices WHERE box_id = ? AND created_at > ?",
+        )
+        .get(id, since)?.n ?? 0;
+    if (sent >= NOTIFY_PER_DAY) return `a box notifies at most ${NOTIFY_PER_DAY} times a day.`;
+    const message = text.length > MAX_BOX_NOTIFY ? `${text.slice(0, MAX_BOX_NOTIFY - 1)}…` : text;
+    const note = this.d.chats.boxNote(box, message);
+    this.db
+      .query("INSERT INTO box_notices (box_id, message_id, created_at) VALUES (?, ?, ?)")
+      .run(id, note.id, this.now());
+    void this.d.notifier.send({
+      title: box.title,
+      message,
+      priority: 3,
+      click: `${this.d.publicUrl}/boxes/${id}`,
+    });
+    return null;
   }
 
   /** Everything the box's page saved, by key. */

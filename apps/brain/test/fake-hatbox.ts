@@ -1,4 +1,4 @@
-import type { BoxBuild, BoxFile, GuestBox, HatboxStatus } from "@hatbot/shared/hatbox";
+import type { BoxBuild, BoxFile, BoxRun, GuestBox, HatboxStatus } from "@hatbot/shared/hatbox";
 import { type BoxRequest, type HatboxAgent, HatboxError } from "../src/hatbox/client";
 
 /** The boxes guest, in memory: a build's page is index.html as it is, and a backend answers as the test says. */
@@ -11,6 +11,10 @@ export class FakeHatbox implements HatboxAgent {
   failBuild: string | null = null;
   backend: (req: BoxRequest) => Response | Promise<Response> = () => new Response("ok");
   runs: number[] = [];
+  /** What the next scheduled() run gives back. */
+  run: BoxRun = { ok: true };
+  /** The lines the brain wrote in the boxes' logs. */
+  notes: string[] = [];
   stopped: number[] = [];
   log = "";
 
@@ -43,7 +47,10 @@ export class FakeHatbox implements HatboxAgent {
   async scheduled(id: number, version: number) {
     this.has(id, version);
     this.runs.push(id);
-    return null;
+    return this.run;
+  }
+  async note(id: number, line: string) {
+    this.notes.push(`${id}: ${line}`);
   }
   async logs() {
     return this.log;

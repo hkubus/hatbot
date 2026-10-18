@@ -72,7 +72,7 @@ export default {
     const url = new URL(req.url);
     return Response.json({ n: next(), path: url.pathname, q: url.searchParams.get("q"), auth: req.headers.get("authorization"), sent: req.headers.get("x-sent") });
   },
-  scheduled() { console.log("ran on schedule"); },
+  scheduled() { console.log("ran on schedule"); return { notify: "Price dropped to €40" }; },
 };`,
     },
   ];
@@ -107,6 +107,7 @@ export default {
 
   expect(await (await a.send("/boxes/1/scheduled", { method: "POST" })).json()).toEqual({
     ok: true,
+    notify: "Price dropped to €40",
   });
   expect(await (await a.send("/boxes/1/logs")).text()).toContain("ran on schedule");
 

@@ -25,6 +25,8 @@ export const MAX_BOX_SOURCE = 2_000_000;
 /** A built page or backend, and a body going to or coming from a backend, in bytes. */
 export const MAX_BOX_BUILT = 5 * 1024 * 1024;
 export const MAX_BOX_BODY = 5 * 1024 * 1024;
+/** What a backend's scheduled() may tell you, in characters. */
+export const MAX_BOX_NOTIFY = 1000;
 
 const SEGMENT = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 const KINDS = /\.(ts|tsx|js|jsx|mjs|css|html|json|svg|txt|md)$/;
@@ -124,6 +126,12 @@ export type GuestBox = { id: number; version: number };
 
 /** POST /boxes/:id/build: the page inlined into one file, and what the build printed. */
 export type BoxBuild = { ok: boolean; page?: string; output: string };
+
+/**
+ * POST /boxes/:id/scheduled: how the backend's scheduled() ended. `notify`: what it returned as
+ * `{notify: "…"}`, for the brain to tell you.
+ */
+export type BoxRun = { ok: boolean; error?: string; notify?: string };
 
 /** What hatbox.fetch answers the page, as JSON: a binary body is base64. */
 export type BoxResponse = {

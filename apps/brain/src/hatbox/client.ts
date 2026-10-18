@@ -1,5 +1,5 @@
 // HTTP client for the boxes guest's agent, apps/hatbox (PLAN.md §21.6).
-import type { BoxBuild, BoxFile, GuestBox, HatboxStatus } from "@hatbot/shared/hatbox";
+import type { BoxBuild, BoxFile, BoxRun, GuestBox, HatboxStatus } from "@hatbot/shared/hatbox";
 
 export class HatboxError extends Error {
   constructor(
@@ -31,8 +31,10 @@ export interface HatboxAgent {
   build(id: number, version: number, files: BoxFile[]): Promise<BoxBuild>;
   /** A request to the backend, started if it isn't; its answer as it is, whatever the status. */
   http(id: number, version: number, req: BoxRequest): Promise<Response>;
-  /** Runs the backend's scheduled(); why it failed, if it did. */
-  scheduled(id: number, version: number): Promise<string | null>;
+  /** Runs the backend's scheduled(): why it failed, or what it asked to tell you. */
+  scheduled(id: number, version: number): Promise<BoxRun>;
+  /** A line in the box's log, from the brain. */
+  note(id: number, line: string): Promise<void>;
   logs(id: number): Promise<string>;
   stop(id: number): Promise<void>;
   /** The box and its backend's data, gone from the guest. */
@@ -117,8 +119,13 @@ export class HttpHatboxAgent implements HatboxAgent {
   }
   async scheduled(id: number, version: number) {
     const res = await this.req("POST", `/boxes/${id}/scheduled`, { version, timeoutMs: 80_000 });
-    const r = (await res.json()) as { ok: boolean; error?: string };
-    return r.ok ? null : (r.error ?? "It failed.");
+    return (await res.json()) as BoxRun;
+  }
+  async note(id: number, line: string) {
+    await this.req("POST", `/boxes/${id}/log`, {
+      body: JSON.stringify({ line }),
+      headers: [["content-type", "application/json"]],
+    });
   }
   async logs(id: number) {
     return (await this.req("GET", `/boxes/${id}/logs`)).text();

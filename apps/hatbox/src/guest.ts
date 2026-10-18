@@ -26,11 +26,13 @@ import {
   type BoxBuild,
   type BoxConfig,
   type BoxFile,
+  type BoxRun,
   badFiles,
   boxConfig,
   type GuestBox,
   MAX_BOX_BODY,
   MAX_BOX_BUILT,
+  MAX_BOX_NOTIFY,
   passedHeaders,
 } from "@hatbot/shared/hatbox";
 import type { Server } from "bun";
@@ -225,14 +227,19 @@ export class Guest {
     return this.relay(id, path, { method: req.method, headers, body: body?.bytes });
   }
 
-  /** Runs the backend's scheduled(); why it failed, if it did. */
-  async scheduled(id: number, version: number): Promise<string | null> {
+  /** Runs the backend's scheduled(): why it failed, or what it asked to tell you. */
+  async scheduled(id: number, version: number): Promise<BoxRun> {
     this.current(id, version);
     const res = await this.relay(id, "/", {
       method: "POST",
       headers: [["x-hatbox-op", "scheduled"]],
     });
-    return res.ok ? null : (await res.text()) || `It answered ${res.status}.`;
+    if (!res.ok) return { ok: false, error: (await res.text()) || `It answered ${res.status}.` };
+    const said = res.status === 200 ? await res.json().catch(() => null) : null;
+    const notify = (said as { notify?: unknown } | null)?.notify;
+    return typeof notify === "string" && notify.trim()
+      ? { ok: true, notify: notify.slice(0, MAX_BOX_NOTIFY) }
+      : { ok: true };
   }
 
   private current(id: number, version: number) {
@@ -354,8 +361,8 @@ export class Guest {
     }
   }
 
-  /** A line from the agent in the box's log. */
-  private note(id: number, line: string) {
+  /** A line from the agent in the box's log, or from the brain through it. */
+  note(id: number, line: string) {
     appendFileSync(
       this.dir("logs", `${id}.log`),
       `${new Date(this.clock()).toISOString().slice(0, 19)} [hatbox] ${line}\n`,

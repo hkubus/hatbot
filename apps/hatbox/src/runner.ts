@@ -37,6 +37,7 @@ globalThis.fetch = Object.assign(viaAgent, { preconnect: () => {} }) as typeof f
 
 type Backend = {
   fetch?: (req: Request) => Response | Promise<Response>;
+  /** May return `{notify: "…"}`, which the brain tells you, a few a day. */
   scheduled?: () => unknown;
 };
 const backend: Backend = (await import(app)).default ?? {};
@@ -52,8 +53,11 @@ Bun.serve({
       if (typeof backend.scheduled !== "function")
         return new Response("server.ts has no scheduled().", { status: 404 });
       try {
-        await backend.scheduled();
-        return new Response(null, { status: 204 });
+        const out = await backend.scheduled();
+        const notify = (out as { notify?: unknown } | null | undefined)?.notify;
+        return typeof notify === "string"
+          ? Response.json({ notify })
+          : new Response(null, { status: 204 });
       } catch (err) {
         console.error("scheduled() failed:", err);
         return new Response(err instanceof Error ? err.message : String(err), { status: 500 });

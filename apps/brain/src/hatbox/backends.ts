@@ -152,7 +152,11 @@ export class Backends {
       this.running.add(b.id);
       runs.push(
         this.current(b.id, (version) => this.agent.scheduled(b.id, version))
-          .then((failed) => failed && console.error(`box #${b.id}'s scheduled() failed: ${failed}`))
+          .then((r) =>
+            r.ok
+              ? r.notify && this.notify(b.id, r.notify)
+              : console.error(`box #${b.id}'s scheduled() failed: ${r.error}`),
+          )
           .catch((err) => console.error(`box #${b.id}'s schedule didn't run`, err))
           .finally(() => this.running.delete(b.id)),
       );
@@ -162,6 +166,21 @@ export class Backends {
       runs.push(this.sync().catch((err) => console.error("boxes guest sync failed", err)));
     }
     await Promise.all(runs);
+  }
+
+  /**
+   * What scheduled() returned as {notify}: a notification and a note in the box's chat, a few a day
+   * (Boxes.notify). One that isn't sent is noted in the box's log instead.
+   */
+  private async notify(id: number, text: string) {
+    const said = text.trim();
+    if (!said) return;
+    // A run that started before Pause all ends after it.
+    const refused = this.settings.get().paused ? "Hatbot is paused." : this.boxes.notify(id, said);
+    if (refused)
+      await this.agent
+        .note(id, `Not notified: ${refused} It said: ${said.slice(0, 200)}`)
+        .catch(() => {});
   }
 
   /** Removes from the guest the boxes the brain no longer has. */

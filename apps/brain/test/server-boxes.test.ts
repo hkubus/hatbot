@@ -6,7 +6,7 @@ import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { NO_GUEST } from "../src/hatbox/backends";
 import { HttpHatboxAgent } from "../src/hatbox/client";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { lastUserText, signIn, type TestApp, testApp, waitFor } from "./helpers";
+import { lastUserText, ORIGIN, signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 const PAGE = '<!doctype html><script type="module" src="./app.ts"></script>';
 const files = (config: object = { hosts: ["shop.example.com"] }) => [
@@ -173,6 +173,51 @@ test("a server box's schedule runs when due, at most every 5 minutes; Pause all 
   await tick(10 * 60_000);
   expect(t.hatbox.runs).toEqual([1, 1]);
   expect((await boxFetch(t, { path: "/" })).status).toBe(503);
+});
+
+test("a backend's scheduled() notifies you, opening the box, with a note the bot reads as untrusted; 10 a day, and none once paused", async () => {
+  const model = new FakeModel([{ content: [text("Hello.")] }, { content: [text("Cheaper.")] }]);
+  const t = await testApp(model);
+  const config = { hosts: [], cron: "*/5 * * * *" };
+  t.boxes.create(
+    { botId: "hatbot", conversationId: 1, title: "Prices", html: PAGE, files: files(config) },
+    {},
+  );
+  await t.thread.post("hi").done;
+  t.hatbox.run = { ok: true, notify: "Price dropped to €40" };
+  const tick = async () => {
+    t.advance(5 * 60_000);
+    await t.boxes.backends?.tick();
+  };
+  await tick();
+  expect(t.notifier.sent).toEqual([
+    { title: "Prices", message: "Price dropped to €40", priority: 3, click: `${ORIGIN}/boxes/1` },
+  ]);
+  expect(t.thread.list().at(-1)).toMatchObject({ kind: "box", boxId: 1 });
+  await t.thread.post("anything new?").done;
+  expect(lastUserText(model.requests[1])).toContain("Price dropped to €40");
+  expect(lastUserText(model.requests[1])).toContain('trusted=\\"false\\"');
+
+  // The eleventh in a day isn't sent: the box's log says so. The page's own notes count apart.
+  for (let i = 0; i < 10; i++) await tick();
+  expect(t.notifier.sent).toHaveLength(10);
+  expect(t.hatbox.notes).toEqual([
+    "1: Not notified: a box notifies at most 10 times a day. It said: Price dropped to €40",
+  ]);
+  const note = await t.call("POST", "/boxes/1/call", { op: "send", text: "Hi" }, signIn(t));
+  expect(note.status).toBe(200);
+
+  // A run that ends after Pause all tells you nothing.
+  t.advance(86400_000);
+  const run = t.hatbox.scheduled.bind(t.hatbox);
+  t.hatbox.scheduled = async (...a) => {
+    const r = await run(...a);
+    t.settings.update({ paused: true });
+    return r;
+  };
+  await tick();
+  expect(t.notifier.sent).toHaveLength(10);
+  expect(t.hatbox.notes.at(-1)).toStartWith("1: Not notified: Hatbot is paused.");
 });
 
 test("a box's request reaches only its own backend on the guest, however its path is spelled", async () => {

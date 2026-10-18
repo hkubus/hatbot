@@ -273,8 +273,9 @@ export class Chats {
   }
 
   /**
-   * A note from a box's page (hatbox.send), in the chat the box was made in while its bot is in it,
-   * else in the bot's own. The page wrote it, so it's untrusted: never your words, nor the bot's.
+   * A note from a box's page (hatbox.send) or its backend (a notification), in the chat the box was
+   * made in while its bot is in it, else in the bot's own. The box's code wrote it, so it's untrusted:
+   * never your words, nor the bot's.
    */
   boxNote(box: Box, text: string) {
     const made = box.conversationId === null ? null : this.thread(box.conversationId);

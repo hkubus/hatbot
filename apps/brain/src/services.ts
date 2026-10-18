@@ -179,7 +179,7 @@ export async function createServices(o: Outside) {
   });
   tasks.attach({ proposals });
   const feeds = new BoxFeeds({ db, settings, plugins, bots, clock });
-  boxes.connect({ settings, spend, model: o.taskModel, chats, feeds });
+  boxes.connect({ settings, spend, model: o.taskModel, chats, feeds, notifier, publicUrl });
 
   const updates = new Updates(config, clock);
   const ping = new DeadManPing({ db, url: o.pingUrl, clock });
