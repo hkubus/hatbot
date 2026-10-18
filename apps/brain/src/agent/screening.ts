@@ -1,9 +1,8 @@
 // Haiku screens untrusted text for prompt injection (PLAN.md §6.1, defence in depth): a desktop task's
 // pages, and what the chat and background tasks read from the web and from plugins.
 import { createHash } from "node:crypto";
-import type Anthropic from "@anthropic-ai/sdk";
 import type { Spend } from "../spend";
-import type { ModelClient } from "./model";
+import { type ModelClient, oneShot } from "./model";
 import { SCREENING_PROMPT } from "./prompt";
 import { tagJson } from "./untrusted";
 
@@ -38,40 +37,34 @@ export async function screenPage(
   // document before its label.
   const label = `<page_json>\n${tagJson({ url: page.url, title: page.title, text: pdf === null ? (page.text as string).slice(0, MAX_SCREENED_CHARS) : "(the PDF document above)" })}\n</page_json>`;
   try {
-    const res = await model.create({
-      model: SCREENING_MODEL,
-      // Haiku 5.5 thinks by default; low effort, with room so thinking can't crowd out the verdict.
-      max_tokens: 2000,
-      thinking: { type: "adaptive" },
-      output_config: { effort: "low", format: { type: "json_schema", schema: VERDICT } },
-      system: SCREENING_PROMPT,
-      messages: [
-        {
-          role: "user",
-          content:
-            pdf === null
-              ? label
-              : [
-                  {
-                    type: "document",
-                    source: { type: "base64", media_type: "application/pdf", data: pdf },
-                  },
-                  { type: "text", text: label },
-                ],
-        },
-      ],
-    });
-    spend.recordResponse({
-      model: SCREENING_MODEL,
-      purpose: "screening",
-      usage: res.usage,
-      ...where,
-    });
-    if (res.stop_reason !== "end_turn") throw new Error(`it stopped at ${res.stop_reason}`);
-    const out = res.content
-      .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("");
+    // Past a limit it throws: the text counts as suspected, as with any check that failed.
+    const out = await oneShot(
+      { model, spend },
+      {
+        model: SCREENING_MODEL,
+        // Haiku 5.5 thinks by default; low effort, with room so thinking can't crowd out the verdict.
+        max_tokens: 2000,
+        thinking: { type: "adaptive" },
+        output_config: { effort: "low", format: { type: "json_schema", schema: VERDICT } },
+        system: SCREENING_PROMPT,
+        messages: [
+          {
+            role: "user",
+            content:
+              pdf === null
+                ? label
+                : [
+                    {
+                      type: "document",
+                      source: { type: "base64", media_type: "application/pdf", data: pdf },
+                    },
+                    { type: "text", text: label },
+                  ],
+          },
+        ],
+      },
+      { purpose: "screening", ...where },
+    );
     const parsed = JSON.parse(out) as Partial<Screening>;
     if (typeof parsed.suspected !== "boolean")
       throw new Error(`no verdict in ${out.slice(0, 200)}`);

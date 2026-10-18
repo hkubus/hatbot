@@ -47,7 +47,7 @@ export const threadRoutes = new Hono<AppEnv>()
     if (Number(c.req.header("content-length") ?? 0) > MAX_ATTACHMENT_BYTES + 64 * 1024)
       return c.json({ error: "The file is over 25 MB." }, 413);
     const form = await c.req.formData().catch(() => null);
-    if (signedOut(c)) return c.json({ error: "unauthorized" }, 401);
+    if (signedOut(c)) return c.json({ error: "You're not signed in." }, 401);
     const file = form?.get("file");
     if (!(file instanceof File))
       return c.json({ error: 'Send the file as multipart field "file".' }, 400);
@@ -103,39 +103,6 @@ export const threadRoutes = new Hono<AppEnv>()
       ? c.json({ ok: true })
       : c.json({ error: "That's gone." }, 404),
   )
-  .get("/thread/messages", query(ListMessages), (c) => listMessages(c, c.var.chats.hatbot()))
-  .get("/conversations/:id/messages", query(ListMessages), (c) =>
-    withThread(c, (t) => listMessages(c, t)),
-  )
-  // The conversations messages belong to, for their recaps where they fold up.
-  .get("/thread/episodes", query(EpisodeIds), (c) => episodes(c, c.var.chats.hatbot()))
-  .get("/conversations/:id/episodes", query(EpisodeIds), (c) =>
-    withThread(c, (t) => episodes(c, t)),
-  )
-  // Deleting a conversation from the chat for good.
-  .delete("/thread/episodes/:episodeId", (c) => deleteEpisode(c, c.var.chats.hatbot()))
-  .delete("/conversations/:id/episodes/:episodeId", (c) =>
-    withThread(c, (t) => deleteEpisode(c, t)),
-  )
-  .post("/thread/messages", json(PostMessage), (c) => post(c, c.var.chats.hatbot()))
-  .post("/conversations/:id/messages", json(PostMessage), (c) => withThread(c, (t) => post(c, t)))
-  // A reply that failed, written again in place from where it was.
-  .post("/thread/messages/:messageId/retry", (c) => retry(c, c.var.chats.hatbot()))
-  .post("/conversations/:id/messages/:messageId/retry", (c) => withThread(c, (t) => retry(c, t)))
-  // Shortcuts and Siri: posts like /thread/messages, then waits a while for the answer.
-  .post("/thread/ask", json(PostMessage), (c) => ask(c, c.var.chats.hatbot()))
-  .post("/conversations/:id/ask", json(PostMessage), (c) => withThread(c, (t) => ask(c, t)))
-  // Leaving incognito: its conversation is deleted.
-  .delete("/thread/incognito", async (c) => {
-    await c.var.chats.hatbot().endIncognito();
-    return c.json({ ok: true });
-  })
-  .delete("/conversations/:id/incognito", (c) =>
-    withThread(c, async (t) => {
-      await t.endIncognito();
-      return c.json({ ok: true });
-    }),
-  )
   // Unread: your bots' messages, in every chat, sent or edited since you last saw them.
   .get("/thread/unread", (c) => c.json(c.var.chats.unread()))
   .post("/thread/seen", json(SeenMessages), (c) => {
@@ -146,6 +113,42 @@ export const threadRoutes = new Hono<AppEnv>()
 // biome-ignore lint/suspicious/noExplicitAny: the handlers' contexts differ only in their validated input.
 type Ctx = Context<AppEnv, string, any>;
 
+// Each chat's own routes: Hatbot's at /thread/…, and any chat's at /conversations/:id/….
+for (const [at, threadOf] of [
+  ["/thread", (c: Ctx) => c.var.chats.hatbot()],
+  [
+    "/conversations/:id",
+    (c: Ctx) => {
+      const id = Number(c.req.param("id"));
+      return Number.isInteger(id) ? c.var.chats.thread(id) : null;
+    },
+  ],
+] as const) {
+  const on = (f: (c: Ctx, t: Thread) => Response | Promise<Response>) => (c: Ctx) => {
+    const thread = threadOf(c);
+    return thread ? f(c, thread) : c.json({ error: "That's gone." }, 404);
+  };
+  threadRoutes
+    .get(`${at}/messages`, query(ListMessages), on(listMessages))
+    // The conversations messages belong to, for their recaps where they fold up.
+    .get(`${at}/episodes`, query(EpisodeIds), on(episodes))
+    // Deleting a conversation from the chat for good.
+    .delete(`${at}/episodes/:episodeId`, on(deleteEpisode))
+    .post(`${at}/messages`, json(PostMessage), on(post))
+    // A reply that failed, written again in place from where it was.
+    .post(`${at}/messages/:messageId/retry`, on(retry))
+    // Shortcuts and Siri: posts like /thread/messages, then waits a while for the answer.
+    .post(`${at}/ask`, json(PostMessage), on(ask))
+    // Leaving incognito: its conversation is deleted.
+    .delete(
+      `${at}/incognito`,
+      on(async (c, t) => {
+        await t.endIncognito();
+        return c.json({ ok: true });
+      }),
+    );
+}
+
 function groupError(f: () => Response, c: Ctx): Response {
   try {
     return f();
@@ -155,17 +158,19 @@ function groupError(f: () => Response, c: Ctx): Response {
   }
 }
 
-function withThread(c: Ctx, f: (t: Thread) => Response | Promise<Response>) {
-  const id = Number(c.req.param("id"));
-  const thread = Number.isInteger(id) ? c.var.chats.thread(id) : null;
-  return thread ? f(thread) : c.json({ error: "That's gone." }, 404);
-}
-
 /** A deleted bot's chat is gone from the app; a page still showing it can't start the bot again. */
 const closed = (c: Ctx, t: Thread) =>
   c.var.chats.closed(t.conversationId)
     ? c.json({ error: "That bot was deleted, so its chat takes no new messages." }, 410)
     : null;
+
+/** Why `t` can't take this message, or null. */
+function refused(c: Ctx, t: Thread, { attachmentIds, incognito }: z.infer<typeof PostMessage>) {
+  if (attachmentIds.some((id) => c.var.attachments.get(id)?.from !== "owner"))
+    return c.json({ error: "unknown attachment" }, 400);
+  if (incognito && t.group()) return c.json({ error: "Group chats have no incognito." }, 400);
+  return closed(c, t);
+}
 
 function retry(c: Ctx, t: Thread) {
   const gone = closed(c, t);
@@ -214,9 +219,8 @@ export const SENT_FOR_MS = 10 * 60_000;
 const sentIn = new WeakMap<Thread, Map<string, { message: ThreadMessage; at: number }>>();
 
 function post(c: Ctx, t: Thread) {
-  const { text, attachmentIds, incognito, clientId } = c.req.valid("json" as never) as z.infer<
-    typeof PostMessage
-  >;
+  const body = c.req.valid("json" as never) as z.infer<typeof PostMessage>;
+  const { text, attachmentIds, incognito, clientId } = body;
   const sent = sentIn.get(t) ?? new Map<string, { message: ThreadMessage; at: number }>();
   sentIn.set(t, sent);
   const now = Date.now();
@@ -227,11 +231,8 @@ function post(c: Ctx, t: Thread) {
   }
   const before = clientId ? sent.get(clientId) : undefined;
   if (before) return c.json(before.message, 202);
-  if (attachmentIds.some((id) => c.var.attachments.get(id)?.from !== "owner"))
-    return c.json({ error: "unknown attachment" }, 400);
-  if (incognito && t.group()) return c.json({ error: "Group chats have no incognito." }, 400);
-  const gone = closed(c, t);
-  if (gone) return gone;
+  const no = refused(c, t, body);
+  if (no) return no;
   const { message } = t.post(text, attachmentIds, incognito);
   if (clientId) sent.set(clientId, { message, at: now });
   return c.json(message, 202);
@@ -241,14 +242,10 @@ function post(c: Ctx, t: Thread) {
 export const ASK_WAIT_MS = 25_000;
 
 async function ask(c: Ctx, t: Thread) {
-  const { text, attachmentIds, incognito } = c.req.valid("json" as never) as z.infer<
-    typeof PostMessage
-  >;
-  if (attachmentIds.some((id) => c.var.attachments.get(id)?.from !== "owner"))
-    return c.json({ error: "unknown attachment" }, 400);
-  if (incognito && t.group()) return c.json({ error: "Group chats have no incognito." }, 400);
-  const gone = closed(c, t);
-  if (gone) return gone;
+  const body = c.req.valid("json" as never) as z.infer<typeof PostMessage>;
+  const { text, attachmentIds, incognito } = body;
+  const no = refused(c, t, body);
+  if (no) return no;
   const { message, done } = t.post(text, attachmentIds, incognito);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const finished = await Promise.race([
