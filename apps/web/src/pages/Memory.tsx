@@ -176,7 +176,9 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
           readFailed(
             d,
             path,
-            err instanceof ApiError && err.status === 400 && err.message.startsWith("not found"),
+            // An older brain answers a missing file with a 400.
+            err instanceof ApiError &&
+              (err.status === 404 || (err.status === 400 && err.message.startsWith("not found"))),
             errorText(err),
           ),
         ),
