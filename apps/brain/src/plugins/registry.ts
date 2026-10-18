@@ -171,24 +171,26 @@ export class Plugins {
   }
 
   /**
-   * Tools of the ready plugins, for the chat and tasks, in a stable order (it's part of the prompt
-   * cache). With `only`, just those of the plugins a bot may use.
+   * The ready plugins in a stable order: it's part of the prompt cache. With `only`, just those a
+   * bot may use.
    */
-  tools(only: string[] | null = null): PluginTool[] {
+  private readyOnes(only: string[] | null) {
     return [...this.slots.values()]
-      .filter((s) => s.state === "ready" && s.instance && (!only || only.includes(s.plugin.id)))
-      .sort((a, b) => a.plugin.id.localeCompare(b.plugin.id))
-      .flatMap((s) => s.instance?.tools ?? []);
+      .filter((s) => s.state === "ready" && (!only || only.includes(s.plugin.id)))
+      .sort((a, b) => a.plugin.id.localeCompare(b.plugin.id));
+  }
+
+  /** Tools of the ready plugins, for the chat and tasks. */
+  tools(only: string[] | null = null): PluginTool[] {
+    return this.readyOnes(only).flatMap((s) => s.instance?.tools ?? []);
   }
 
   /** The ready plugins' paragraphs for the system prompt. */
   guidance(only: string[] | null = null): string {
-    return [...this.slots.values()]
-      .filter(
-        (s) => s.state === "ready" && s.instance?.guidance && (!only || only.includes(s.plugin.id)),
+    return this.readyOnes(only)
+      .flatMap((s) =>
+        s.instance?.guidance ? `${s.plugin.name}\n${s.instance.guidance.trim()}` : [],
       )
-      .sort((a, b) => a.plugin.id.localeCompare(b.plugin.id))
-      .map((s) => `${s.plugin.name}\n${s.instance?.guidance?.trim()}`)
       .join("\n\n");
   }
 
@@ -359,6 +361,13 @@ export function saved(db: Db, id: string): { enabled?: boolean; config?: unknown
 }
 
 /**
+ * Whether a call's output is untrusted content. `input` is the parsed input; with `output`, once the
+ * call has returned it.
+ */
+export const untrustedOf = (t: PluginTool, input: unknown, output?: string): boolean =>
+  typeof t.untrusted === "function" ? t.untrusted(input, output) : Boolean(t.untrusted);
+
+/**
  * Runs a plugin tool: checks its input, and labels untrusted output so it can't pose as instructions
  * (PLAN.md §6.1). Policy is the caller's job; this only runs it. `text`: the output without its label,
  * for screening.
@@ -373,8 +382,6 @@ export async function runPluginTool(
     const content = `Invalid input: ${z.prettifyError(parsed.error)}`;
     return { content, isError: true, untrusted: false, text: content };
   }
-  const untrustedOf = (output?: string) =>
-    typeof t.untrusted === "function" ? t.untrusted(parsed.data, output) : Boolean(t.untrusted);
   const label = (text: string, untrusted: boolean) =>
     untrusted ? untrustedBlock("tool_output", text, { tool: t.name }) : text;
   let out: string;
@@ -384,7 +391,7 @@ export async function runPluginTool(
     if (call.signal.aborted) throw err;
     // An untrusted source's error message is untrusted too.
     if (err instanceof PluginError) {
-      const untrusted = untrustedOf();
+      const untrusted = untrustedOf(t, parsed.data);
       return {
         content: label(err.message, untrusted),
         isError: true,
@@ -396,7 +403,7 @@ export async function runPluginTool(
     const content = "The tool failed with an internal error.";
     return { content, isError: true, untrusted: false, text: content };
   }
-  const untrusted = untrustedOf(out);
+  const untrusted = untrustedOf(t, parsed.data, out);
   if (out.length > MAX_OUTPUT_CHARS)
     out = `${out.slice(0, MAX_OUTPUT_CHARS)}\n… (cut; ${out.length} characters in all)`;
   return { content: label(out, untrusted), isError: false, untrusted, text: out };

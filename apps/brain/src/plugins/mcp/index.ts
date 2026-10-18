@@ -211,16 +211,10 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
 const PROPERTY_NAME = /^[a-zA-Z0-9_.-]{1,64}$/;
 /** The first property name anywhere in a schema that the API wouldn't take. */
 function badName(schema: unknown): string | null {
-  if (Array.isArray(schema)) {
-    for (const s of schema) {
-      const bad = badName(s);
-      if (bad !== null) return bad;
-    }
-    return null;
-  }
-  if (!isObject(schema)) return null;
-  if (isObject(schema.properties))
+  if (typeof schema !== "object" || schema === null) return null;
+  if (isObject(schema) && isObject(schema.properties))
     for (const name of Object.keys(schema.properties)) if (!PROPERTY_NAME.test(name)) return name;
+  // An array's values are its items.
   for (const v of Object.values(schema)) {
     const bad = badName(v);
     if (bad !== null) return bad;
@@ -575,11 +569,8 @@ export const mcpPlugin = definePlugin({
                 mode,
                 problem,
                 hash: t.hash,
-                /** What its calls are now, and what its words suggest. */
-                kind: kindOf(c, t),
+                /** What its words suggest it does, if it moves money. */
                 guess: moneyKind(t.name, t.description),
-                /** Its Chat or Allow mode no longer holds: the definition changed since. */
-                changed: lapsed(c, t),
               }))
             : [],
         };

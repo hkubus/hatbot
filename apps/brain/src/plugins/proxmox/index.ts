@@ -356,4 +356,5 @@ export function duration(s: number): string {
   return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
 }
 
-const stamp = (unix: number) => new Date(unix * 1000).toISOString().slice(0, 16).replace("T", " ");
+export const stamp = (unix: number) =>
+  new Date(unix * 1000).toISOString().slice(0, 16).replace("T", " ");

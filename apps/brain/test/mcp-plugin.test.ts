@@ -567,11 +567,11 @@ test("money words: fewer misses, fewer false alarms, and the owner's say wins", 
     always: true,
   });
   const status = (await t.plugins.action("mcp", "status", {})) as {
-    tools: { mode: string; kind: string | null; guess: string | null }[];
+    tools: { mode: string; guess: string | null }[];
   }[];
   expect(status[0]?.tools).toMatchObject([
-    { mode: "ask", kind: null, guess: "payment" },
-    { mode: "always", kind: "account_security", guess: null },
+    { mode: "ask", guess: "payment" },
+    { mode: "always", guess: null },
   ]);
   await t.plugins.stopAll();
 });
@@ -636,7 +636,7 @@ test("a tool set to Chat or Allow asks again once its definition changes", async
   const status = (await t.plugins.action("mcp", "status", {})) as {
     tools: { mode: string; changed: boolean }[];
   }[];
-  expect(status[0]?.tools[0]).toMatchObject({ mode: "always", changed: true });
+  expect(status[0]?.tools[0]).toMatchObject({ mode: "always" });
   await t.plugins.stopAll();
 });
 
