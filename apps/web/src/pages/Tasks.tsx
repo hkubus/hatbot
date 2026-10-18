@@ -16,7 +16,6 @@ import {
   cancelTask,
   chatName,
   chatPath,
-  HATBOT_CHAT,
   loadNegotiations,
   loadTask,
   loadTasks,
@@ -111,8 +110,8 @@ export function Tasks() {
                       ? `/tasks/${a.taskId}`
                       : n
                         ? `/negotiations/${n.id}`
-                        : a.conversationId && a.conversationId !== HATBOT_CHAT
-                          ? `/chat/${a.conversationId}`
+                        : a.conversationId
+                          ? chatPath(a.conversationId)
                           : "/"
                   }
                 />

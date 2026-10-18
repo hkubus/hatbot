@@ -60,7 +60,7 @@ export function GroupPage({ id, toast }: { id: string; toast: (t: string) => voi
       if (isNew) {
         const c = await createGroup(body);
         release();
-        navigate(`/chat/${c.id}`, true);
+        navigate(chatPath(c.id), true);
       } else {
         await saveGroup(Number(id), body);
         // What was saved, trimmed: the form is clean again, unless you went on editing.

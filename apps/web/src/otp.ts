@@ -4,9 +4,6 @@
 export const slots = (code: string) => Array.from({ length: 6 }, (_, i) => (code[i] ?? " ").trim());
 const join = (s: string[]) => s.map((d) => d || " ").join("");
 
-/** The code, once every box has a digit. */
-export const complete = (code: string) => (/^\d{6}$/.test(code) ? code : null);
-
 type Step = { code: string; focus: number };
 
 /** Digits pasted (or autofilled) into box `i`: a whole code fills every box, a part fills from `i`. */

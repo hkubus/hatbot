@@ -70,7 +70,7 @@ test("a finished reply is said without Markdown's marks", () => {
   const reply = { text: "**Done.** The `backup` ran:\n\n# Result\n\n- ok" } as Parameters<
     typeof spoken
   >[0];
-  expect(spoken(reply, "Sysadmin")).toBe("Sysadmin: Done. The backup ran: Result - ok");
+  expect(spoken(reply, "Sysadmin")).toBe("Sysadmin: Done. The backup ran: Result ok");
   expect(spoken({ ...reply, text: "x".repeat(500) }, "Hatbot")).toHaveLength(
     "Hatbot: ".length + 400,
   );

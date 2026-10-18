@@ -47,13 +47,13 @@ import { navigate, useRoute } from "../router";
 import {
   botName,
   chatName,
+  chatPath,
   currentChat,
   deleteEpisode,
   ensureNegotiation,
   ensureSchedule,
   ensureTask,
   getState,
-  HATBOT_CHAT,
   loadEarlier,
   loadThread,
   markSeen,
@@ -1037,13 +1037,7 @@ export function Chat({ id }: { id: number }) {
                 type="button"
                 className="tray-more"
                 onClick={() =>
-                  navigate(
-                    !waiting.elsewhere
-                      ? "/tasks"
-                      : waiting.elsewhere.id === HATBOT_CHAT
-                        ? "/"
-                        : `/chat/${waiting.elsewhere.id}`,
-                  )
+                  navigate(waiting.elsewhere ? chatPath(waiting.elsewhere.id) : "/tasks")
                 }
               >
                 {waiting.here.length ? `${waiting.rest} more` : waiting.rest} waiting in{" "}
@@ -1068,10 +1062,7 @@ export function Chat({ id }: { id: number }) {
 
 /** A reply as a screen reader says it: who, then its text without Markdown's marks, cut short. */
 export function spoken(m: ThreadMessage, name: string): string {
-  const text = m.text
-    .replace(/[*_`#>|~]+/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const text = plainText(m.text);
   if (!text) return "";
   return `${name}: ${text.length > 400 ? `${text.slice(0, 399)}…` : text}`;
 }
