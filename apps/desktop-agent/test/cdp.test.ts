@@ -253,8 +253,10 @@ Object.assign(pages, {
         root.querySelector("input").focus();
       }
     });</script></body>`,
+  // The popup is written as it opens, so it has no page to load.
   "/opener": `<!doctype html><body style="margin:0">
-    <button style="width:100px;height:40px" onclick="window.open('/area', 'pay', 'width=400,height=300')">Pay</button></body>`,
+    <button style="width:100px;height:40px" onclick="window.open('', 'pay', 'width=400,height=300')
+      .document.write('<textarea name=private_key>KEY</textarea>')">Pay</button></body>`,
 });
 
 /** Whether a secret shows on the page, once loaded: navigate waits for its frames to load too. */
@@ -293,14 +295,11 @@ live("typing into a closed shadow root counts as secret: its input can't be seen
 live("a secret in a popup's window shows, though the tab under it is the active one", async () => {
   expect(await shown("/opener")).toBe(false);
   await real.call("left_click", { target: { type: "coordinate", x: 20, y: 20 } });
-  // The popup loads in its own time.
-  let page = await context(real, false, true);
-  for (let i = 0; !page.secretShown && i < 50; i++) {
-    await Bun.sleep(100);
-    page = await context(real, false, true);
-  }
-  expect(page).toMatchObject({ url: `${base}/opener`, secretShown: true });
-  const popup = (await real.state()).tabs.find((t) => t.url.endsWith("/area"));
+  expect(await context(real, false, true)).toMatchObject({
+    url: `${base}/opener`,
+    secretShown: true,
+  });
+  const popup = (await real.state()).tabs.find((t) => !t.active);
   await real.call("close_tab", { tab_id: popup?.tab_id });
   expect((await context(real, false, true)).secretShown).toBe(false);
 });
