@@ -101,6 +101,8 @@ enum SpendCharts {
     "research": "Research",
     "check": "Checks",
     "teach": "Teaching",
+    "tidy": "Memory tidy-ups",
+    "skill-fix": "Skill fixes",
     "boxes": "Boxes",
   ]
 
