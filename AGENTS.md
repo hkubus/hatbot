@@ -1,0 +1,15 @@
+# Working on Hatbot
+
+`PLAN.md` is the design and the source of truth, including what is built and what is not. `infra/README.md` says how to install and deploy.
+
+- **Run:** `export PATH=$HOME/.bun/bin:$PATH` (`bun` isn't on PATH). Then `bun test`, `bun run check` (Biome) and `bun run typecheck`, all three before every commit. The Update test's jq stand-in runs on `bun`, so it fails without that PATH where jq isn't installed.
+- **Tests:** one test per rule (allow and refuse) and per real past bug, plus one end-to-end test per feature; no tests of wording, mappers or constants. No sleeps: advance `testApp()`'s clock, await what a tick returns, or `waitFor` a condition. `testApp()` hashes passwords at argon2id's lowest cost (`AuthService`'s third argument); the brain itself never passes one.
+- **Chromium tests:** desktop-agent's tests that drive a real Chromium (cdp, inspect, render) take seconds, so `bun test` skips them. Run `HATBOT_CHROMIUM_TESTS=1 bun test ./apps/desktop-agent` before shipping desktop-agent changes (`HATBOT_CHROMIUM` picks the binary).
+- **Commits:** one commit per finished piece, on `main`, in the style of the history ("Plugins: …", "MCP plugin: …"). Commit locally; push only when the owner asks. End commit messages with the `Co-Authored-By` line your harness gives you.
+- **Stopping the dev brain:** use `fuser -k <port>/tcp`. `pkill -f "bun src/main.ts"` kills your own shell.
+- **Forgejo** (`git.gaycats.ovh`) sometimes hangs or resets connections. Retry later; the GitHub mirror runs CI.
+- **Code style:** match the surrounding code. Comments are sparse and explain *why*; user-facing text is plain, short English.
+- **UI style:** no decorative clutter, meaning no status dots, subtext, kickers or meta chips.
+- **Shared types:** they live in `packages/shared`. The iOS app mirrors the ones it uses in `apps/ios/Hatbot/Core/Models.swift`, so change both together. The iOS decoder tolerates unknown events and enum values. desktop-agent ships with `packages/shared` but without zod, so it imports values only from `@hatbot/shared/bot-id`, `/keys` and `/desktop`, never the package entry.
+- **Swift on Linux:** the Swift 6.1 toolchain is in `~/.local/swift61` (reinstall it if it's gone; no Docker here). Use its wrapper, `~/.local/swift61/bin/swift` (and `swiftc`): it adds `~/.local/swift61/compat` to `LD_LIBRARY_PATH` for the ncurses and libxml2 sonames Arch lacks. `~/.local/swift61/bin/swift test -Xswiftc -use-ld=lld --scratch-path /tmp/hbswiftbuild` in `apps/ios` tests `Hatbot/Core`; `~/.local/swift61/bin/swiftc -parse` checks the views' syntax. SwiftUI can't be type-checked on Linux; CI on the GitHub mirror builds the app.
+- **Licences:** no copyleft dependencies (PLAN §2), not even MPL. That's why the live view is our own MJPEG stream and not noVNC (MPL). `bun run licenses` (`scripts/licenses.ts`, in CI) lists every installed package's licence and fails on anything not permissive. Its one exception is lightningcss (MPL-2.0), which Vite itself depends on to minify CSS at build time; none of it is in the build.

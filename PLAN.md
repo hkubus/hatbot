@@ -7,7 +7,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 - **No vendor cloud.** It runs on your hardware.
 - **Predictable cost.** Spending limits are enforced.
 
-> Status: design agreed 2026-10-09. M0–M5, the iOS app, more than one bot (§14), looking after things (§15), negotiation's N1 and N2 (§16), research (§17) and own code (§18) are built, and so are the fixes from the 2026-10-17 code review. M4 onwards is not yet deployed or tried live, and the iOS app awaits its first install. Next is the owner's deploy and live run (`HANDOFF.md`).
+> Status: design agreed 2026-10-09. M0–M5, the iOS app, more than one bot (§14), looking after things (§15), negotiation's N1 and N2 (§16), research (§17) and own code (§18) are built, and so are the fixes from the 2026-10-17 code review. The owner deployed and tried them live by 2026-10-18. What isn't built is under each section's "Not built" or "Not done", and what was left on purpose is in §12.1.
 
 ---
 
@@ -132,7 +132,7 @@ Everything valuable lives in the brain, and the brain only ever sees *pixels and
 - **Storage**: SQLite (WAL) on SSD; `memory/` git repo on SSD; `/archive` (screenshots, raw transcripts) on the HDD mount.
 
 ### 4.2 `apps/desktop-agent` — tiny Bun daemon inside the desktop LXC
-- `POST /screenshot`: captures the X display (1280×800) and returns lossless WebP.
+- `POST /screenshot`: captures the X display (1280×800) and returns WebP: lossless, or lossy at quality 85 when lossless is over 150 KB, a screen of photos (4–5 times smaller there, text as legible). `/zoom` and the browser tool's screenshots do the same. Each step of a desktop task sends all its screenshots again; the Files API would send each once but keep them at Anthropic until deleted, so not that (the owner's call, 2026-10-18).
 - `POST /action`: runs the computer-use actions (click, drag, type, key, scroll, hold_key, mouse down/up, cursor_position, wait) through `xdotool`. Keys are only named keys (Return, Tab, Page_Down, F1–F24, KP_Enter, the modifiers) and single characters, modifiers first; keycodes, keysyms in hex or Unicode and chords with a modifier after the key are refused. The brain checks the same list (`packages/shared/src/keys.ts`, desktop-agent's `keys.ts`; a test keeps them equal), so the two are deployed together.
 - `POST /zoom`: crops a region at full resolution.
 - `POST /browser`: runs a browser toolset member (`browser_toolset_20260801`: navigate, read_page, find, get_page_text, clicks and typing by element reference or viewport point, form_input, screenshot, zoom, tabs) on the running Chromium over CDP. Element references live in an isolated world the page can't touch. Dialogs are dismissed and reported; `javascript_exec`, `file_upload`, console and network reads stay off.
@@ -563,14 +563,14 @@ Each milestone ends with a working, demo-able system.
 - [x] Trust tracking, approval gates, `confirm_intent`, Haiku injection screening
 - [x] ntfy notifier (publishing to your ntfy server) + signed action buttons
 - [x] Nightly desktop snapshots + "Roll back desktop" in Settings (Proxmox API, pinned TLS fingerprint)
-- [ ] Tried live: "book a table at X" with an approval from the lock screen (browsing and takeover work; the lock-screen approval is still unchecked)
+- [x] Tried live: "book a table at X" with an approval from the lock screen
 - **Done when**: "book a table at X" works end to end, with an approval from your lock screen.
 
 ### M3 — Triggers
 - [x] Scheduler (cron + one-shot), agent-created schedules from chat, Schedules & Triggers UI
 - [x] Generic HMAC webhooks (per-trigger secret, trusted/untrusted flag)
 - [x] Uptime Kuma adapter
-- [ ] Tried live: a morning schedule, a Forgejo webhook, a Kuma test alert
+- [x] Tried live: a morning schedule, a Forgejo webhook, a Kuma test alert
 - **Done when**: "every morning at 8, check X" runs unattended and reports back.
 
 ### M4 — Homelab plugins + MCP
@@ -587,7 +587,7 @@ Each milestone ends with a working, demo-able system.
 - [x] Record mode in takeover (live-view input events + screenshots + CDP URL/title); typing into password, code and card fields, frames, or fields that can't be checked isn't recorded
 - [x] Opus turns a recording into a draft `skills/<name>.md` with placeholders → you review and save
 - [x] Skills index in the memory INDEX (and `skills_index`); background tasks see the list, `run_desktop_task(skill)` hands the desktop model its steps
-- [ ] Tried live: record a chore, save the skill, a schedule repeats it
+- [x] Tried live: record a chore, save the skill, a schedule repeats it
 - **Done when**: you demo a chore once and Hatbot repeats it on a schedule.
 
 ### iOS app (alongside M3–M5)
@@ -596,12 +596,13 @@ Each milestone ends with a working, demo-able system.
 - [x] Tasks list and task page (approvals, timeline, screenshots, cancel)
 - [x] Live view with takeover (touch, scroll, keyboard)
 - [x] Settings: spend, chat effort, Pause all / Resume, sign out
-- [ ] First build by the iOS workflow, installed from the SideStore source and tried against the brain
+- [x] First build by the iOS workflow, installed from the SideStore source and tried against the brain
 - [x] Memory (tree, file, history) and Schedules & Triggers (triggers are made on the web)
 - [x] ntfy notifications open the app (`hatbot://` click URLs), chosen in Settings → Notifications
 - [x] Siri and Shortcuts actions, and a share extension
 - [x] Search, watchers, Check everything, the heartbeat and weekly report, memory proposals, Run again
 - **Done when**: you can chat, approve and take over from the app on your phone.
+- Settings → Plugins and teach mode are web-only; the plan doesn't ask for them in the app.
 
 **Not planned** (the owner's call, 2026-10-16): messengers (Signal, Telegram, Matrix); being reachable only through Hatbot's own web and iOS app is fine. Email and calendar wait for after v1. Proton Bridge is out (2026-10-18): it needs a paid Proton plan.
 
@@ -619,6 +620,17 @@ Each milestone ends with a working, demo-able system.
 | Sites block automation / captchas | `request_takeover` flow |
 | "Keep forever" archive growth | WebP screenshots, HDD pool, PBS deduplication; monitor size in Spend/Settings |
 
+### 12.1 Left on purpose
+Known gaps, kept because closing them costs more than they risk. Reopen one only if the owner asks.
+- stdio MCP servers run as the `hatbot` user, which can read `/etc/hatbot/*.env` (§4.5).
+- Attachments are sent inline with every request, up to 20 MB, not through the Files API: deleted and incognito conversations would need their remote files deleted too.
+- No cache mark on the app's system-note turns: the docs don't say system messages take `cache_control`.
+- No Chromium policy (`URLBlocklist` for `javascript:`) in `desktop-deploy.sh`; the brain refuses typed script addresses instead (§6.1).
+- Outside negotiations, Enter in a custom element with a closed shadow root isn't held; only Teach treats it as secret.
+- The mandate check works from word lists (§16.7), and holds an IBAN written like a phone number as a phone number.
+- desktop-agent keeps its own list of payment hosts for Teach's card-frame check, apart from the brain's.
+- The try-again note and the chart-fix note are user turns opening "(No message from the owner: …)": the API takes a system message only after a user turn.
+
 ---
 
 ## 13. Assumptions to confirm during M0
@@ -633,7 +645,7 @@ Each milestone ends with a working, demo-able system.
 
 ## 14. Multiple bots
 
-More than one Hatbot, like Grok Bot: several named bots, each with its own role, chat, memory and logins, which hand work to each other. Agreed 2026-10-14. B1–B5 built 2026-10-14; not yet deployed or tried live.
+More than one Hatbot, like Grok Bot: several named bots, each with its own role, chat, memory and logins, which hand work to each other. Agreed 2026-10-14. B1–B5 built 2026-10-14.
 
 ### 14.1 Decisions
 | Area | Decision |
@@ -908,7 +920,7 @@ Haggler is a template on New bot (§14.6): pick it, and its instructions and its
 
 ---
 
-## 17. Research (built 2026-10-17, not tried live)
+## 17. Research (built 2026-10-17)
 Deep research as its own kind of background task. The chat starts it with `research(title, question, previous?)`, after asking one to three scoping questions when the question leaves out something that would change the answer. Not in incognito.
 
 - **Runs on** Haiku 5.5 at xhigh effort (`RESEARCH_MODEL` and `RESEARCH_EFFORT` in `apps/brain/src/tasks/research-goal.ts`; Opus 5.5 at high until 2026-10-18), whatever Settings say for tasks. It gets up to 60 steps, and the API's task budget (beta `task-budgets-2026-03-13`) is 250k tokens. The prompt is `RESEARCH_PROMPT`; the bot's role and the other bots follow it as usual. It writes in the question's language.
@@ -928,7 +940,7 @@ Deep research as its own kind of background task. The chat starts it with `resea
   - A page reader that runs JavaScript. It would fetch any URL the model names, and so could send out what the task has read. Pages that need a browser go to `run_desktop_task`, which asks before consequential steps.
   - Starting research from schedules.
 
-## 18. Own code (built 2026-10-18, not tried live)
+## 18. Own code (built 2026-10-18)
 Hatbot can read its own code and propose changes to it as Forgejo pull requests, when the owner asks. It doesn't go looking for things to change on its own (§1). The **Own code** plugin (`apps/brain/src/plugins/self/`) needs the desktop, and `HATBOT_SELF_REPO` (owner/name) next to `FORGEJO_URL` and `FORGEJO_TOKEN` in `/etc/hatbot/forgejo.env`. The bot account needs write access to the repository, to push branches. It's off until switched on.
 
 - **Why Forgejo:** the canonical repository is on Forgejo, which push-mirrors it to GitHub. A branch made only on GitHub would likely be pruned by the mirror. Forgejo has no CI runners, so the sandbox runs the tests instead.

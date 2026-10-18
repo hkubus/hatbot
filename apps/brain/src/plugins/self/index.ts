@@ -328,7 +328,7 @@ export const selfPlugin = (d: { desktop: DesktopAgent; dir: string }) =>
         }),
       ];
       return ready(tools, {
-        guidance: `Your own code is ${repo} on Forgejo. Change it only when the owner asks, never on your own initiative, and as a task (run_task, effort high). self_checkout puts it in the sandbox; self_run reads, changes and tests it there (its AGENTS.md or HANDOFF.md, if it has one, says how to build and test; run the tests, lint and typecheck before proposing); self_propose opens a pull request from what changed, one change per pull request. Never merge your own pull requests: the owner reviews and merges them.`,
+        guidance: `Your own code is ${repo} on Forgejo. Change it only when the owner asks, never on your own initiative, and as a task (run_task, effort high). self_checkout puts it in the sandbox; self_run reads, changes and tests it there (its AGENTS.md says how to build and test; run the tests, lint and typecheck before proposing); self_propose opens a pull request from what changed, one change per pull request. Never merge your own pull requests: the owner reviews and merges them.`,
         test: async () => {
           const { login } = await user();
           const branch = await defaultBranch();
