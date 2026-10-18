@@ -13,7 +13,7 @@ Everything built since M4 goes live with these steps, in this order: `host-setup
 
 1. **iOS build:** push `main`. The GitHub mirror's CI builds the iOS app for the first time, since no SwiftUI has been compiled yet; fix the compile errors from its log. If SideStore refuses the App Group, the widget's App ID or the share extension, see "iOS" below for what to take out.
 2. **Host setup:** copy `infra/` to the host (`infra/README.md`, "Run it"). If your router forwards ports, set `HATBOT_PUBLIC_IPS` in `/etc/hatbot/host.env`. Run `./host-setup.sh` again: it loads the new firewall ranges, and its provision scripts bring the fonts, Python and the sandbox's tools, and make `/etc/hatbot/mcp.env` root:hatbot, mode 640, which the MCP plugin now needs.
-3. **Deploy:** `NTFY_URL=<your ntfy server> HATBOT_GIT_URL=<repository> ./deploy.sh 124:/root/hatbot`. The two variables make it ask again for what it otherwise keeps: ntfy (take the random topic it suggests, and a token) and the repository, now with the SSH public key you sign commits with (it sets `HATBOT_UPDATE_SIGNERS`). It runs the brain's migrations up to 36, reinstalls `hatbot-update.sh`, and installs the brain and desktop-agent together, which must match (they share the key lists). desktop-agent's archive now carries `packages/shared` (in its `node_modules`), where it reads those lists; an Update run by the `hatbot-update.sh` installed before that would send desktop-agent without it, and the desktop would keep its old version. It installs the desktop's units: `hatbot-chromium` (a browser profile per bot), the shell, the renderer (`hatbot-render`, for watchers that run a page's scripts), `/fetch` and `/files`; the shell and renderer now get their own IPC namespace. Use `deploy.sh`, not Update, for this one.
+3. **Deploy:** `NTFY_URL=<your ntfy server> HATBOT_GIT_URL=<repository> ./deploy.sh 124:/root/hatbot`. The two variables make it ask again for what it otherwise keeps: ntfy (take the random topic it suggests, and a token) and the repository, now with the SSH public key you sign commits with (it sets `HATBOT_UPDATE_SIGNERS`). It runs the brain's migrations up to 37, reinstalls `hatbot-update.sh`, and installs the brain and desktop-agent together, which must match (they share the key lists). desktop-agent's archive now carries `packages/shared` (in its `node_modules`), where it reads those lists; an Update run by the `hatbot-update.sh` installed before that would send desktop-agent without it, and the desktop would keep its old version. It installs the desktop's units: `hatbot-chromium` (a browser profile per bot), the shell, the renderer (`hatbot-render`, for watchers that run a page's scripts), `/fetch` and `/files`; the shell and renderer now get their own IPC namespace. Use `deploy.sh`, not Update, for this one.
 4. **ntfy:** subscribe the phone's ntfy app to the new topic, and on the ntfy server let only your user read it (`auth-default-access: deny-all` or `write-only`, plus an access rule for your user).
 5. **Env files:** one for each plugin you want (`github.env`, `forgejo.env`, `pbs.env`, `homeassistant.env`, `uptimekuma.env`, `mcp.env`; `infra/README.md`, "Plugins"), and `HATBOT_PING_URL` in `secrets.env` with its Uptime Kuma Push monitor ("When the brain itself is down"). Then restart the brain.
 6. **Optional:** `./pct-exec-setup.sh` on the host (again, if you ran it before: it now tags the brain and desktop `hatbot` and installs a wrapper that refuses tagged containers), then add the host in Settings → Plugins → SSH with "Proxmox host" on.
@@ -21,7 +21,7 @@ Everything built since M4 goes live with these steps, in this order: `host-setup
 8. **Kuma triggers:** re-save existing Uptime Kuma triggers with the new default prompt (`KUMA_PROMPT` in `apps/web/src/pages/Schedules.tsx`) to get investigate → one restart → verify.
 9. **iOS install:** install the IPA from the SideStore source. The bundle prefix is now one setting (`BUNDLE_PREFIX` in `apps/ios/project.yml`, `com.example` there); the iOS workflow keeps `ovh.gaycats` unless the repository variable `BUNDLE_PREFIX` says otherwise, so the installed app stays the same app. Sign in with the brain's **https** address: the app no longer takes `http`, on the LAN either, and an address saved as `http` shows the sign-in screen.
 10. **Settings:** a setting saved by an earlier version keeps its value, so look at these. The heartbeat is on by default now (Settings → Heartbeat). Desktop tasks now start on Haiku 5.5 and carry on on Opus when Haiku fails; an install that saved any setting since 2026-10-10 keeps Opus for the desktop (Settings → Desktop). The last $1 of the daily and monthly limits is now kept for alerts (Settings → Spending limits → Kept for alerts), and a research task has its own $5 (Per research task).
-11. **MCP:** pick every MCP tool's mode again in Settings → Plugins → MCP. Chat and Allow are now pinned to the tool's definition, and the ones saved before have no pin, so they ask until you pick them again. Accept an untrusted server's tool descriptions there, or they taint every chat. Scout's read tools must be set to Chat again, or negotiations fail.
+11. **MCP:** pick every MCP tool's mode again in Settings → Plugins → MCP. Chat and Allow are now pinned to the tool's definition, and the ones saved before have no pin, so they ask until you pick them again. Accept an untrusted server's tool descriptions there, or they taint every chat; pins saved before 2026-10-18 were a shorter hash, so even a tool you picked or accepted since then asks once more. Scout's read tools must be set to Chat again, or negotiations fail.
 12. **Negotiation**, once you have a marketplace account: the steps under "Negotiation, N1 and N2" below.
 
 ## The live run
@@ -52,7 +52,7 @@ Acceptance tests for parts that have never run live. The owner runs them; write 
 
 - **Built:** M0–M5, the iOS app, more than one bot (§14), looking after things (§15), negotiation's N1 and N2 (§16), research (§17), and the review fixes. M4 onwards is built and committed but not yet deployed or tried live.
 - **Not yet tried live** (the owner does these): the M2 lock-screen approval, the M3 morning schedule, Forgejo webhook and Kuma alert, all of M4 and M5, the first iOS install from SideStore, and everything from the gaps pass and the review fixes. The renderer and the desktop gates' frame following were tried only with Chromium here, not Debian's on the desktop.
-- **Checks:** 1,575 tests (brain, desktop-agent, web and shared) and 75 iOS core tests pass, Biome and `tsc -b` are clean, and `bun run licenses` passes (2026-10-18).
+- **Checks:** 368 tests (brain, desktop-agent, web and shared; 8 of them drive Chromium and run only with `HATBOT_CHROMIUM_TESTS=1`) pass in about 5 s, 36 iOS core tests pass, Biome and `tsc -b` are clean (2026-10-18).
 
 ## How to work here
 
@@ -199,7 +199,7 @@ A code review (about 240 findings and nits, kept outside the repo) was fixed in 
   - **Spending** (§6.3): a request holds the most it could cost; a task's limit covers the tasks it started; research has its own $5.
   - **Also:** watchers' limits and back-off, triggers (Kuma "down again", 24 tasks a day, replays by signature), the heartbeat, research's limits and checks, deleting a bot, iOS (https only, intents need unlock), and much of the web UI.
 - **To deploy** (the checklist above has these steps):
-  1. **Migrations** 32–36 run on deploy. Migration 34 rebuilds the attachments table, so new attachment ids jump by 1000.
+  1. **Migrations** 32–37 run on deploy. Migration 34 rebuilds the attachments table, so new attachment ids jump by 1000. Migration 37 records on each episode whether it read untrusted content or was suspected, and fills that in for old episodes.
   2. **`bun install`** in a checkout: `ajv` is a new dependency of the brain. Deploy installs it on the brain itself.
   3. **`deploy.sh` on the host**, not Update: `hatbot-update.sh`, `desktop-deploy.sh` and the desktop units changed. The brain and desktop-agent go together, since they share the key lists; an older desktop-agent has no `gates`.
   4. **ntfy:** run `deploy.sh` with `NTFY_URL` set to get a random topic, give it a token, subscribe the phone to the new topic, and let only your ntfy user read it. A guessable topic (`hatbot`, the old default) fails Check everything.
@@ -217,8 +217,24 @@ A code review (about 240 findings and nits, kept outside the repo) was fixed in 
   - The mandate check works from word lists, so it still can't catch an acceptance in words it doesn't know while naming our own price inside the mandate, new plain words for paying off the platform, or trades ("300 zł i moją starą kartę"). It holds an IBAN written like a phone number as a phone number.
   - desktop-agent keeps its own list of payment hosts for Teach's card-frame check, apart from the brain's.
   - The try-again note and the chart-fix note stay user turns, opening "(No message from the owner: …)": the API takes a system message only after a user turn.
-  - SwiftUI still hasn't been compiled. Every Swift file passes `swiftc -parse` and the core's 75 tests pass, but the first Xcode build in CI is the iOS app's real check.
+  - SwiftUI still hasn't been compiled. Every Swift file passes `swiftc -parse` and the core's 36 tests pass, but the first Xcode build in CI is the iOS app's real check.
   - The web app's room for the phone keyboard hasn't been tried on a real iPhone or Android phone.
+
+## The cleanup pass (built 2026-10-18, not tried live)
+A second review of everything since `ed5df58` was fixed, then the code and tests were cut down: from `52a55af`, source went from about 66,800 lines to 63,600 and tests from about 28,400 lines (1,586 tests, ~55 s) to 15,700 (368 tests, ~5 s). `prototype/` is gone. All merged on `main`; nothing deployed or pushed.
+- **What behaves differently:**
+  - **Desktop:** an approval asked before a step covers that one step, and only if the step is what was approved. A desktop request that times out answers 504, and Check everything says it timed out rather than that the desktop isn't running. Cancelling a task also stops its `code_run` and its copies to and from the sandbox.
+  - **Sign-in:** signing out other browsers, changing the password or authenticator, and `reset-login` each rotate the device key. A proxy that forwards addresses without being in `HATBOT_TRUSTED_PROXIES` is warned about.
+  - **Update** refuses a branch that moved back or was rewritten.
+  - **MCP** pins are the definition's full hash (see the checklist's MCP step).
+  - **GitHub/Forgejo:** `open_pr` refuses a head from another repository (`owner:branch`).
+  - **Research** strips `gbraid`, `wbraid` and `_ga` from links too, and what its helpers read is screened like everything else.
+  - **Negotiation:** the mandate note is a structured JSON answer, not a forced tool call.
+  - **API:** an owner's mistake (no such bot, bad schedule, …) answers 400 from every route where some gave 500; a missing memory file answers 404 (the web takes both); webhooks refuse with "Wrong or missing signature." or "Wrong or missing secret."; 401 and 403 say plainly why. `/triggers` with no id opens Schedules.
+  - Check everything's model call fails if Haiku stops at its 16-token cap instead of answering.
+- **Deploy:** `deploy.sh`, not Update (step 3 of the checklist): desktop-agent now ships with `packages/shared` in its `node_modules`, and the `hatbot-update.sh` already installed doesn't put it there.
+- **iOS:** the views changed in this pass (the shared `attempt` helper, the delete confirmation, `SpendView`'s limit field) were only parse-checked; the first Xcode build is their real check.
+- **Tests now cover less, on purpose:** one test per rule (allow and refuse) and per real past bug. No longer tested: JSON compression of answers, message batching, memory search ranking and its fallback, which conversation a negotiation's messages belong to, a queued send already sent or unconfirmed, the address-bar screenshot wait, the watcher pattern timeout, and `ssh_exec`'s timeout (it can't be set under a second).
 
 ## 4. Later (not v1, don't start without the owner)
 - **After v1** (PLAN §11): email via Proton Bridge.
