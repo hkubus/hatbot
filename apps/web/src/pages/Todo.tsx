@@ -94,7 +94,7 @@ export function TodoPage({ toast }: { toast: Toast }) {
   return (
     <section className="view">
       <div className="page narrow">
-        <form className="form-row todo-add" onSubmit={add}>
+        <form className="todo-add" onSubmit={add}>
           <input
             className="field"
             aria-label="New to-do"

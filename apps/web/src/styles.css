@@ -2275,14 +2275,37 @@ button.text-link:hover {
   flex-shrink: 0;
   white-space: nowrap;
 }
-/* To-do: a new item's text gets the room, its date what it needs. */
+/* To-do: a new item's text gets the room, its date what it needs. On a phone the text has its own
+   line and the date and button share the next. */
+.todo-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
 .todo-add > .field:first-child {
-  flex: 1;
+  flex: 1 1 240px;
   min-width: 0;
 }
 .todo-add > input[type="date"] {
   flex: 0 0 auto;
   width: auto;
+}
+.todo-add > .btn {
+  flex-shrink: 0;
+}
+@media (max-width: 899px) {
+  .todo-add > .field,
+  .todo-add > .btn {
+    height: 36px;
+  }
+  .todo-add > .field:first-child {
+    flex-basis: 100%;
+  }
+  .todo-add > input[type="date"] {
+    flex: 1;
+    min-width: 0;
+  }
 }
 .todo-box {
   flex-shrink: 0;
