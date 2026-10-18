@@ -1,5 +1,5 @@
 // Siri and Shortcuts (App Intents): ask Hatbot, or another bot or group, and hear the answer, give
-// Hatbot a task, or send it text and files. They run in the app, as you, through the chats, and only on
+// Hatbot a task, add a to-do, or send it text and files. They run in the app, as you, through the chats, and only on
 // an unlocked phone: whoever holds a locked one isn't necessarily you.
 import AppIntents
 import Foundation
@@ -94,6 +94,35 @@ struct StartTaskIntent: AppIntent {
   }
 }
 
+struct AddTodoIntent: AppIntent {
+  static let title: LocalizedStringResource = "Add a To-do"
+  static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
+  static let description = IntentDescription("Adds an item to the to-do list Hatbot keeps and reminds you of.")
+
+  @Parameter(title: "Item")
+  var item: String
+
+  @Parameter(title: "Due")
+  var due: Date?
+
+  static var parameterSummary: some ParameterSummary {
+    Summary("Add \(\.$item) to the to-do list") { \.$due }
+  }
+
+  func perform() async throws -> some IntentResult & ProvidesDialog {
+    struct Body: Encodable { let item: String; let due: String? }
+    let text = item.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else { throw APIError(status: 0, message: "There's nothing to add.") }
+    // The day only: a time Siri fills in for "tomorrow" would be a reminder at that time.
+    let day = due.map { d in
+      let c = Calendar.current.dateComponents([.year, .month, .day], from: d)
+      return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+    }
+    let _: TodoList = try await signedIn().post("/todo", body: Body(item: text, due: day))
+    return .result(dialog: "Added to your to-do list.")
+  }
+}
+
 struct SendToHatbotIntent: AppIntent {
   static let title: LocalizedStringResource = "Send to Hatbot"
   static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
@@ -138,6 +167,10 @@ struct HatbotShortcuts: AppShortcutsProvider {
       intent: StartTaskIntent(),
       phrases: ["Give \(.applicationName) a task", "Start a \(.applicationName) task"],
       shortTitle: "Give Hatbot a Task", systemImageName: "checklist")
+    AppShortcut(
+      intent: AddTodoIntent(),
+      phrases: ["Add a to-do in \(.applicationName)", "Add to my \(.applicationName) to-do list"],
+      shortTitle: "Add a To-do", systemImageName: "checkmark.square")
     AppShortcut(
       intent: SendToHatbotIntent(),
       phrases: ["Send to \(.applicationName)"],

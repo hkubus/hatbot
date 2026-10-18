@@ -6,7 +6,7 @@ API with a bearer token. Notifications still come from the ntfy app.
 - `Hatbot/Core`: Foundation only. API types, the API client, the reconnecting WebSocket, the live
   store, Markdown blocks, cron in words. `Package.swift` builds it on its own so it compiles and
   tests anywhere Swift runs.
-- `Hatbot/Views`, `Hatbot/App`: SwiftUI and UIKit. Chat, Search, Tasks, Live, Memory and Settings;
+- `Hatbot/Views`, `Hatbot/App`: SwiftUI and UIKit. Chat, Search, Tasks, To-do, Live, Memory and Settings;
   Schedules & Triggers, Watchers, Check everything and the Heartbeat open from Settings. Siri and
   Shortcuts actions are in `Hatbot/App/Intents.swift`.
 - `Share`: the share extension. It sends what you share, with a note, to Hatbot's chat.
@@ -62,11 +62,13 @@ Certificate Trust Settings), or Tailscale with `tailscale cert` for the brain's 
 
 ## Siri, Shortcuts and the share sheet
 
-Shortcuts has three Hatbot actions, and Siri knows them without setup:
+Shortcuts has four Hatbot actions, and Siri knows them without setup:
 
 - **Ask Hatbot** ("Ask Hatbot"): sends the question to Hatbot's chat, or another bot's or a group's,
   and answers with the reply. It waits up to 25 seconds; a longer answer is in the chat.
 - **Give Hatbot a Task** ("Give Hatbot a task"): starts a background task, like `/task` in the chat.
+- **Add a To-do** ("Add a to-do in Hatbot"): adds an item to the to-do list, with a day it's due if
+  you give one.
 - **Send to Hatbot**: text and files into the chat. Photos go up as JPEG.
 
 On a locked iPhone they ask you to unlock it first, and so does Pause Hatbot.
