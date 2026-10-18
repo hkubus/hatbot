@@ -18,24 +18,14 @@ export const pluginRoutes = new Hono<AppEnv>()
     const { plugins } = c.var;
     const id = c.req.param("id");
     if (!plugins.get(id)) return c.json({ error: "That's gone." }, 404);
-    try {
-      return c.json(await plugins.update(id, c.req.valid("json")));
-    } catch (err) {
-      if (err instanceof PluginError) return c.json({ error: err.message }, 400);
-      throw err;
-    }
+    return c.json(await plugins.update(id, c.req.valid("json")));
   })
   .post("/plugins/:id/actions/:name", async (c) => {
     const args = await c.req.json().catch(() => ({}));
-    if (signedOut(c)) return c.json({ error: "unauthorized" }, 401);
-    try {
-      return c.json({
-        result: await c.var.plugins.action(c.req.param("id"), c.req.param("name"), args),
-      });
-    } catch (err) {
-      if (err instanceof PluginError) return c.json({ error: err.message }, 400);
-      throw err;
-    }
+    if (signedOut(c)) return c.json({ error: "You're not signed in." }, 401);
+    return c.json({
+      result: await c.var.plugins.action(c.req.param("id"), c.req.param("name"), args),
+    });
   })
   .post("/plugins/:id/test", async (c) => {
     try {
@@ -45,4 +35,9 @@ export const pluginRoutes = new Hono<AppEnv>()
       console.error("plugin test failed", err);
       return c.json({ ok: false, message: "The test failed; see the brain's log." });
     }
+  })
+  // A plugin's own refusal, such as bad settings, is shown as it is; anything else is the app's.
+  .onError((err, c) => {
+    if (err instanceof PluginError) return c.json({ error: err.message }, 400);
+    throw err;
   });

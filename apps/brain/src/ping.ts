@@ -24,7 +24,7 @@ export type PingDeps = {
   clock?: () => number;
 };
 
-const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err));
+export const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 export class DeadManPing {
   private last: PingResult | null = null;

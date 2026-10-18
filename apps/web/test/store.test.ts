@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Proposal, Task, ThreadMessage } from "@hatbot/shared";
-import { FakeSocket, installDom, later, type Request, settle } from "./dom";
+import { FakeSocket, installDom, type Request, settle } from "./dom";
+import { msg } from "./fixtures";
 
 const dom = installDom();
 dom.answer(() => []);
@@ -9,36 +10,27 @@ dom.answer(() => []);
 const freshStore = (name: string) =>
   import(`../src/store.ts?${name}`) as Promise<typeof import("../src/store")>;
 
-const msg = (id: number, patch: Partial<ThreadMessage> = {}): ThreadMessage => ({
-  id,
-  role: "assistant",
-  conversationId: 1,
-  botId: "hatbot",
-  kind: "text",
-  text: `Message ${id}`,
-  status: "done",
-  createdAt: "2026-10-17T10:00:00.000Z",
-  taskId: null,
-  scheduleId: null,
-  negotiationId: null,
-  episodeId: null,
-  editedAt: null,
-  seenAt: "2026-10-17T10:00:00.000Z",
-  ...patch,
-});
 const shown = (s: { getState(): { messages: ThreadMessage[] } }) =>
   s.getState().messages.map((m) => [m.id, m.text, m.status]);
 const asked = (pattern: RegExp) => dom.requests.filter((r) => pattern.test(r.path));
 /** Answers the thread's pages with `thread`, and everything else as `rest` says, or with []. */
 const serve = (thread: (r: Request) => unknown, rest: (r: Request) => unknown = () => []) =>
   dom.answer((r) => (/^\/conversations\/1\/messages/.test(r.path) ? thread(r) : rest(r)));
+/** The stream drops and comes back, and the store catches up. */
+async function reconnect(store: { reconnectNow(): void }) {
+  FakeSocket.last.close();
+  store.reconnectNow();
+  FakeSocket.last.open();
+  await settle();
+  await settle();
+}
 
 test("events that come while the thread loads are put onto what it loaded", async () => {
   const store = await freshStore("loading");
   store.connect();
   const socket = FakeSocket.last;
   socket.open();
-  const page = later<ThreadMessage[]>();
+  const page = Promise.withResolvers<ThreadMessage[]>();
   serve(() => page.promise);
   const loading = store.loadThread();
   await settle();
@@ -70,7 +62,7 @@ test("text a page read mid-reply already has isn't put onto it again", async () 
   store.connect();
   const socket = FakeSocket.last;
   socket.open();
-  const page = later<ThreadMessage[]>();
+  const page = Promise.withResolvers<ThreadMessage[]>();
   serve(() => page.promise);
   const loading = store.loadThread();
   await settle();
@@ -104,7 +96,7 @@ test("the stream's first open catches the thread up too", async () => {
 test("Earlier messages loads once however often it's asked, and never into incognito", async () => {
   const store = await freshStore("earlier");
   const latest = Array.from({ length: 50 }, (_, i) => msg(51 + i));
-  const older = later<ThreadMessage[]>();
+  const older = Promise.withResolvers<ThreadMessage[]>();
   serve((r) => (r.path.includes("before=51") ? older.promise : latest));
   await store.loadThread();
   expect(store.getState().hasEarlier).toBe(true);
@@ -122,7 +114,7 @@ test("Earlier messages loads once however often it's asked, and never into incog
   const first = await freshStore("earlier-incognito");
   serve((r) => (r.path.includes("before=51") ? older.promise : latest));
   await first.loadThread();
-  const page = later<ThreadMessage[]>();
+  const page = Promise.withResolvers<ThreadMessage[]>();
   serve((r) => (r.path.includes("before=51") ? page.promise : []));
   const loading = first.loadEarlier();
   await first.setIncognito(true);
@@ -167,11 +159,7 @@ test("a card whose fetch failed is fetched again after a reconnect", async () =>
   expect(store.getState().tasks[12]).toBeUndefined();
   // The card asks once, when it's first shown; the reconnect asks again.
   down = false;
-  FakeSocket.last.close();
-  store.reconnectNow();
-  FakeSocket.last.open();
-  await settle();
-  await settle();
+  await reconnect(store);
   expect(store.getState().tasks[12]?.title).toBe("Check the NAS");
   store.disconnect();
 });
@@ -196,11 +184,7 @@ test("a reconnect reloads settings, memory, the heartbeat, proposals and plugins
   const before = store.getState();
   // While the stream was down, the proposal was applied on the phone and a plugin turned on.
   answered = true;
-  FakeSocket.last.close();
-  store.reconnectNow();
-  FakeSocket.last.open();
-  await settle();
-  await settle();
+  await reconnect(store);
   const after = store.getState();
   expect(after.settingsVersion).toBe(before.settingsVersion + 1);
   expect(after.memoryVersion).toBe(before.memoryVersion + 1);
@@ -235,13 +219,43 @@ test("a reconnect finds a proposal made while Memory had none, and an open negot
   expect(store.getState().proposals).toEqual({});
   // While the stream was down, one was made and the seller answered.
   away = true;
-  FakeSocket.last.close();
-  store.reconnectNow();
-  FakeSocket.last.open();
-  await settle();
-  await settle();
+  await reconnect(store);
   const after = store.getState();
   expect(after.proposals[8]?.status).toBe("pending");
   expect(after.negotiationMessages[4]).toHaveLength(2);
   store.disconnect();
+});
+
+test("a reloaded incognito chat stays incognito, and only that chat", async () => {
+  // This tab was incognito in chat 5 when it was reloaded.
+  dom.storage.setItem("hatbot:incognito", "5");
+  dom.answer(() => []);
+  const store = await freshStore("incognito");
+  const from = dom.requests.length;
+  expect(store.getState()).toMatchObject({ conversationId: 5, incognito: true });
+  await store.openConversation(5);
+  expect(store.getState()).toMatchObject({ conversationId: 5, incognito: true });
+  await store.loadThread();
+  expect(dom.requests.slice(from).map((r) => `${r.method} ${r.path}`)).toEqual([
+    "GET /conversations/5/messages?limit=50&incognito=1",
+  ]);
+
+  // Going to another chat leaves it, which deletes its conversation.
+  await store.openConversation(1);
+  expect(store.getState()).toMatchObject({ conversationId: 1, incognito: false });
+  expect(dom.requests.at(-1)).toMatchObject({
+    method: "DELETE",
+    path: "/conversations/5/incognito",
+  });
+  expect(dom.storage.getItem("hatbot:incognito")).toBeNull();
+
+  // Incognito in Hatbot's chat: the tab remembers which chat.
+  await store.setIncognito(true);
+  expect(dom.storage.getItem("hatbot:incognito")).toBe("1");
+  await store.setIncognito(false);
+  expect(dom.storage.getItem("hatbot:incognito")).toBeNull();
+  expect(dom.requests.at(-1)).toMatchObject({
+    method: "DELETE",
+    path: "/conversations/1/incognito",
+  });
 });

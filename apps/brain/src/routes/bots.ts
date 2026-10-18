@@ -1,10 +1,10 @@
 import { BOT_TEMPLATES, CreateBot, HATBOT_ID, UpdateBot } from "@hatbot/shared";
 import { Hono } from "hono";
-import { z } from "zod";
 import { requireAuth } from "../auth/middleware";
 import { BotError } from "../bots";
 import type { AppEnv } from "../context";
-import { json, query } from "./util";
+import { spendDays } from "./admin";
+import { json } from "./util";
 
 export const botRoutes = new Hono<AppEnv>()
   .use("/bots", requireAuth)
@@ -68,8 +68,4 @@ export const botRoutes = new Hono<AppEnv>()
       throw err;
     }
   })
-  .get(
-    "/spend/by-bot",
-    query(z.object({ days: z.coerce.number().int().min(1).max(366).default(30) })),
-    (c) => c.json(c.var.spend.byBot(c.req.valid("query").days)),
-  );
+  .get("/spend/by-bot", spendDays, (c) => c.json(c.var.spend.byBot(c.req.valid("query").days)));

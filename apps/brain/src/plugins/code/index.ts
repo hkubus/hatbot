@@ -4,7 +4,7 @@
 import { z } from "zod";
 import type { Attachments } from "../../attachments";
 import { type DesktopAgent, DesktopError } from "../../desktop/client";
-import { allow, definePlugin, needsSetup, PluginError, ready, tool } from "../plugin";
+import { definePlugin, needsSetup, PluginError, ready, tool } from "../plugin";
 
 export const codePlugin = (d: { desktop: DesktopAgent; attachments: Attachments }) =>
   definePlugin({
@@ -44,7 +44,6 @@ export const codePlugin = (d: { desktop: DesktopAgent; attachments: Attachments 
             const line = command.trim().split("\n")[0] ?? "";
             return line.length > 120 ? `${line.slice(0, 119)}…` : line;
           },
-          policy: () => allow(),
           run: async ({ command, timeout_s, files }) => {
             try {
               const copied: string[] = [];

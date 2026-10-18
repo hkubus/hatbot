@@ -34,10 +34,11 @@ export function principalOf(c: Context<AppEnv>, opts: { renew?: boolean } = {}):
 /** Requires a session cookie or a bearer token. Cookie-authenticated writes must come from the public origin. */
 export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
   const principal = principalOf(c);
-  if (!principal) return c.json({ error: "unauthorized" }, 401);
+  if (!principal) return c.json({ error: "You're not signed in." }, 401);
   if (principal.kind === "session" && !["GET", "HEAD", "OPTIONS"].includes(c.req.method)) {
-    if (c.req.header("origin") !== c.var.config.publicUrl)
-      return c.json({ error: "bad origin" }, 403);
+    const { publicUrl } = c.var.config;
+    if (c.req.header("origin") !== publicUrl)
+      return c.json({ error: `Open Hatbot at ${publicUrl} to make changes.` }, 403);
   }
   c.set("principal", principal);
   await next();

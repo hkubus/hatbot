@@ -4,11 +4,21 @@
 // collaborator to the repos it should work on.
 import { posix } from "node:path";
 import { z } from "zod";
-import { Branch, Path, Ref, Repo as RepoOf, runsInCi, sameBranch } from "../forge";
-import { allow, ask, definePlugin, needsSetup, PluginError, ready, tool } from "../plugin";
+import {
+  Branch,
+  contentsPath,
+  forgeTools,
+  Num,
+  Path,
+  Ref,
+  Repo as RepoOf,
+  repoPath,
+  runsInCi,
+  sameBranch,
+} from "../forge";
+import { allow, ask, definePlugin, httpApi, needsSetup, PluginError, ready, tool } from "../plugin";
 
 const Repo = RepoOf("hkubus/hatbot");
-const Num = z.number().int().positive().describe("The issue or pull request number");
 
 type User = { login: string };
 type Issue = {
@@ -119,64 +129,12 @@ export const githubPlugin = definePlugin({
         "Create a fine-grained token for Hatbot's GitHub bot account (contents, issues and pull requests read/write; commit statuses, checks and actions read) and put GITHUB_TOKEN in /etc/hatbot/github.env on the brain, then restart it. GITHUB_API_URL is only for GitHub Enterprise.",
       );
 
-    /** A request to the API. With redirect "manual", a redirect comes back as it is, not followed. */
-    const send = async (
-      method: string,
-      path: string,
-      body?: unknown,
-      accept = "application/vnd.github+json",
-      redirect: RequestInit["redirect"] = "follow",
-    ): Promise<Response> => {
-      let res: Response;
-      try {
-        res = await fetch(`${base}${path}`, {
-          method,
-          headers: {
-            authorization: `Bearer ${token}`,
-            accept,
-            "x-github-api-version": "2022-11-28",
-            "user-agent": "hatbot",
-            ...(body === undefined ? {} : { "content-type": "application/json" }),
-          },
-          body: body === undefined ? undefined : JSON.stringify(body),
-          redirect,
-          signal: AbortSignal.timeout(30_000),
-        });
-      } catch (err) {
-        throw new PluginError(`Can't reach GitHub: ${(err as Error).message}`);
-      }
-      if (redirect === "manual" && res.status >= 300 && res.status < 400) return res;
-      if (!res.ok) {
-        const detail = await res
-          .json()
-          .then((j) => {
-            const e = j as { message?: string; errors?: { message?: string }[] };
-            const more = e.errors?.map((x) => x.message).filter(Boolean) ?? [];
-            return [e.message, ...more].filter(Boolean).join(": ");
-          })
-          .catch(() => "");
-        throw new PluginError(
-          `GitHub said ${res.status}${detail ? `: ${String(detail).slice(0, 300)}` : ""}`,
-        );
-      }
-      return res;
-    };
-    const api = async <T>(
-      method: string,
-      path: string,
-      body?: unknown,
-      accept = "application/vnd.github+json",
-    ): Promise<T> => {
-      const res = await send(method, path, body, accept);
-      if (!accept.endsWith("json")) return (await res.text()) as T;
-      return (res.status === 204 ? null : await res.json()) as T;
-    };
-    const repoPath = (repo: string) => {
-      const [owner, name] = repo.split("/") as [string, string];
-      return `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
-    };
-    const contentsPath = (repo: string, path: string) =>
-      `${repoPath(repo)}/contents/${path.split("/").filter(Boolean).map(encodeURIComponent).join("/")}`;
+    const { send, api } = httpApi("GitHub", base, {
+      authorization: `Bearer ${token}`,
+      accept: "application/vnd.github+json",
+      "x-github-api-version": "2022-11-28",
+      "user-agent": "hatbot",
+    });
     const refPath = (branch: string) =>
       branch.split("/").filter(Boolean).map(encodeURIComponent).join("/");
     /** Default branches, so policy can tell a commit to main from one to a new branch. */
@@ -486,36 +444,6 @@ export const githubPlugin = definePlugin({
         },
       }),
       tool({
-        name: "github_comment",
-        description: "Comment on an issue or pull request, as your bot account. Markdown.",
-        access: "write",
-        schema: z.object({ repo: Repo, number: Num, body: z.string().min(1).max(20_000) }),
-        describe: ({ repo, number }) => `Comment on ${repo}#${number}`,
-        run: async ({ repo, number, body }) => {
-          const c = await api<{ html_url: string }>(
-            "POST",
-            `${repoPath(repo)}/issues/${number}/comments`,
-            { body },
-          );
-          return `Commented: ${c.html_url}`;
-        },
-      }),
-      tool({
-        name: "github_create_issue",
-        description: "Open an issue, as your bot account.",
-        access: "write",
-        schema: z.object({
-          repo: Repo,
-          title: z.string().min(1).max(255),
-          body: z.string().max(20_000).default(""),
-        }),
-        describe: ({ repo, title }) => `Open an issue in ${repo}: ${title}`,
-        run: async ({ repo, title, body }) => {
-          const i = await api<Issue>("POST", `${repoPath(repo)}/issues`, { title, body });
-          return `Opened #${i.number}: ${i.html_url}`;
-        },
-      }),
-      tool({
         name: "github_commit_files",
         description:
           "Commit changes to files in one commit, through the API: each file's whole new content, or delete. Give new_branch to start a branch from `branch` (the usual way: then open a pull request). Committing straight to the default branch needs approval (the safety review or the owner).",
@@ -636,61 +564,11 @@ export const githubPlugin = definePlugin({
           return `Committed ${commit.sha.slice(0, 10)} to ${new_branch ?? branch}: ${commit.html_url}`;
         },
       }),
-      tool({
-        name: "github_open_pr",
-        description: "Open a pull request from head into base, as your bot account.",
-        access: "write",
-        schema: z.object({
-          repo: Repo,
-          head: z.string().max(200).describe("The branch with the changes"),
-          base: z
-            .string()
-            .max(200)
-            .describe("The branch to merge into, usually the default branch"),
-          title: z.string().min(1).max(255),
-          body: z.string().max(20_000).default(""),
-          draft: z.boolean().optional(),
-        }),
-        describe: ({ repo, head, base }) => `Open a pull request in ${repo}: ${head} into ${base}`,
-        run: async ({ repo, head, base, title, body, draft }) => {
-          const pr = await api<Pull>("POST", `${repoPath(repo)}/pulls`, {
-            head,
-            base,
-            title,
-            body,
-            ...(draft ? { draft } : {}),
-          });
-          return `Opened pull request #${pr.number}: ${pr.html_url}`;
-        },
-      }),
-      tool({
-        name: "github_close",
-        description: "Close an issue or pull request without merging, or reopen one.",
-        access: "write",
-        schema: z.object({ repo: Repo, number: Num, reopen: z.boolean().optional() }),
-        describe: ({ repo, number, reopen }) => `${reopen ? "Reopen" : "Close"} ${repo}#${number}`,
-        run: async ({ repo, number, reopen }) => {
-          await api("PATCH", `${repoPath(repo)}/issues/${number}`, {
-            state: reopen ? "open" : "closed",
-          });
-          return `${reopen ? "Reopened" : "Closed"} ${repo}#${number}.`;
-        },
-      }),
-      tool({
-        name: "github_merge",
-        description: "Merge a pull request. It needs approval (the safety review or the owner).",
-        access: "write",
-        schema: z.object({
-          repo: Repo,
-          number: Num,
-          method: z.enum(["merge", "rebase", "squash"]).default("merge"),
-        }),
-        describe: ({ repo, number, method }) => `Merge ${repo}#${number} (${method})`,
-        policy: () => ask("Merging changes the target branch for everyone."),
-        run: async ({ repo, number, method }) => {
-          await api("PUT", `${repoPath(repo)}/pulls/${number}/merge`, { merge_method: method });
-          return `Merged ${repo}#${number}.`;
-        },
+      ...forgeTools("github", {
+        Repo,
+        api,
+        merge: ["PUT", (method) => ({ merge_method: method })],
+        drafts: true,
       }),
     ];
 

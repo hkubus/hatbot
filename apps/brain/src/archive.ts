@@ -8,26 +8,29 @@ export class Archive {
     private clock: () => number = Date.now,
   ) {}
 
-  /** Where `owner`'s screenshots from the day of `t` go. */
-  private screenDir(owner: number | string, t: number) {
+  /** The folder for `kind` ("screens" or "files") from the day of `t`. */
+  private dayDir(kind: string, t: number) {
     const d = new Date(t);
     const pad = (n: number) => String(n).padStart(2, "0");
-    return join(
-      "screens",
-      String(d.getFullYear()),
-      pad(d.getMonth() + 1),
-      pad(d.getDate()),
-      String(owner),
-    );
+    return join(kind, String(d.getFullYear()), pad(d.getMonth() + 1), pad(d.getDate()));
   }
 
-  /** Saves a screenshot as `name`.webp in the day's folder for `owner` (a task id, or e.g. "teach-3"). */
-  async saveScreen(owner: number | string, name: string, bytes: Uint8Array): Promise<string> {
-    const rel = join(this.screenDir(owner, this.clock()), `${name}.webp`);
+  /** Where `owner`'s screenshots from the day of `t` go. */
+  private screenDir(owner: number | string, t: number) {
+    return join(this.dayDir("screens", t), String(owner));
+  }
+
+  /** Writes `rel` under the archive, making its folder; returns `rel`. */
+  private async save(rel: string, bytes: Uint8Array): Promise<string> {
     const abs = join(this.dir, rel);
     await mkdir(join(abs, ".."), { recursive: true });
     await Bun.write(abs, bytes);
     return rel;
+  }
+
+  /** Saves a screenshot as `name`.webp in the day's folder for `owner` (a task id, or e.g. "teach-3"). */
+  saveScreen(owner: number | string, name: string, bytes: Uint8Array): Promise<string> {
+    return this.save(join(this.screenDir(owner, this.clock()), `${name}.webp`), bytes);
   }
 
   /** Deletes `owner`'s screenshots saved between `from` and `to` (at most a month of days). */
@@ -41,21 +44,9 @@ export class Archive {
   }
 
   /** Saves a chat attachment in the day's folder as `<id>-<name>`. */
-  async saveFile(id: number, name: string, bytes: Uint8Array): Promise<string> {
-    const d = new Date(this.clock());
-    const pad = (n: number) => String(n).padStart(2, "0");
+  saveFile(id: number, name: string, bytes: Uint8Array): Promise<string> {
     const safe = name.replace(/[^\w.-]+/g, "_").slice(-100) || "file";
-    const rel = join(
-      "files",
-      String(d.getFullYear()),
-      pad(d.getMonth() + 1),
-      pad(d.getDate()),
-      `${id}-${safe}`,
-    );
-    const abs = join(this.dir, rel);
-    await mkdir(join(abs, ".."), { recursive: true });
-    await Bun.write(abs, bytes);
-    return rel;
+    return this.save(join(this.dayDir("files", this.clock()), `${id}-${safe}`), bytes);
   }
 
   /** A file for reading, or null if the path leaves the archive. */

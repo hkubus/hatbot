@@ -1,5 +1,5 @@
 // Triggers (PLAN.md §4.1, §8): signed webhooks and Uptime Kuma alerts start background tasks.
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import {
   API_PREFIX,
   HATBOT_ID,
@@ -7,6 +7,7 @@ import {
   type Trigger,
   type TriggerWithSecret,
 } from "@hatbot/shared";
+import { sameText } from "./auth/keys";
 import { orphaned } from "./bots";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
@@ -79,7 +80,6 @@ type KumaBody = {
 };
 
 export class Triggers {
-  private clock: () => number;
   private prunedAt = 0;
 
   constructor(
@@ -89,10 +89,8 @@ export class Triggers {
     private tasks: Tasks,
     private notifier: Notifier,
     private publicUrl: string,
-    clock?: () => number,
-  ) {
-    this.clock = clock ?? Date.now;
-  }
+    private clock: () => number = Date.now,
+  ) {}
 
   private toTrigger = (r: Row): Trigger => ({
     id: r.id,
@@ -221,7 +219,7 @@ export class Triggers {
         header("x-gitea-signature");
       want = mac(body);
     }
-    if (!sig || !same(sig.toLowerCase(), want)) return { ok: false as const };
+    if (!sig || !sameText(sig.toLowerCase(), want)) return { ok: false as const };
     // The same signed body again is a replay. A forge's delivery id isn't signed, so it can't make a
     // body new; it also catches a forge sending one delivery again. Real events differ in their own
     // ids and times, so two never share a body.
@@ -235,7 +233,7 @@ export class Triggers {
   verifyKuma(id: number, authorization: string | undefined): boolean {
     const secret = this.secretOf(id, "kuma");
     const got = authorization?.replace(/^Bearer\s+/i, "").trim();
-    return Boolean(secret && got && same(got, secret));
+    return Boolean(secret && got && sameText(got, secret));
   }
 
   /**
@@ -350,21 +348,9 @@ export class Triggers {
       const each = Math.min(KUMA_INTERVAL_S.max, Math.max(KUMA_INTERVAL_S.min, interval));
       wait = t.confirmChecks * each * 1000 + KUMA_SLACK_MS;
     }
-    const again = this.again(runKey, `${name} is down again`, message, name, {
-      t,
-      name,
-      alert,
-      wait,
-    });
-    if (again) return again;
-    if (wait > 0) {
-      const until = new Date(this.clock() + wait).toISOString();
-      this.wait(t, runKey, until, name, alert);
-      return { status: "waiting", until };
-    }
     // A wait that's over is this alert's now.
     if (waiting) this.db.query("DELETE FROM kuma_waiting WHERE run_key = ?").run(runKey);
-    return this.startAlert(t, runKey, name, alert);
+    return this.startAlert(t, runKey, name, alert, wait);
   }
 
   private wait(t: Trigger, runKey: string, until: string, name: string, alert: string) {
@@ -465,20 +451,27 @@ export class Triggers {
     });
   }
 
-  private startAlert(t: Trigger, runKey: string, name: string, payload: string): Received {
-    const again = this.again(
-      runKey,
-      `${name} is down again`,
-      alertParts(payload)?.message ?? "",
+  /** A monitor that's down: a task for it, unless it was looked into this hour or waits `wait` ms first. */
+  private startAlert(
+    t: Trigger,
+    runKey: string,
+    name: string,
+    payload: string,
+    wait = 0,
+  ): Received {
+    const message = alertParts(payload)?.message ?? "";
+    const again = this.again(runKey, `${name} is down again`, message, name, {
+      t,
       name,
-      {
-        t,
-        name,
-        alert: payload,
-        wait: 0,
-      },
-    );
+      alert: payload,
+      wait,
+    });
     if (again) return again;
+    if (wait > 0) {
+      const until = new Date(this.clock() + wait).toISOString();
+      this.wait(t, runKey, until, name, payload);
+      return { status: "waiting", until };
+    }
     const limited = this.limited(t);
     if (limited) return limited;
     const task = this.tasks.createBackgroundTask({
@@ -492,7 +485,7 @@ export class Triggers {
       payload,
       // Kuma's own fields are trusted; its message often quotes the service's response.
       trusted: true,
-      taintedBy: alertParts(payload)?.message ? alertMessageSource(name) : null,
+      taintedBy: message ? alertMessageSource(name) : null,
     });
     if (!task) return { status: "skipped", reason: "running" };
     this.started(t);
@@ -502,8 +495,7 @@ export class Triggers {
   private blocked(t: Trigger): Received | null {
     if (!t.enabled) return { status: "skipped", reason: "disabled" };
     if (orphaned(this.db, "triggers", t.id, t.botId)) {
-      const trigger = this.get(t.id);
-      if (trigger) this.events.emit({ type: "trigger.updated", trigger });
+      this.changed(t.id);
       return { status: "skipped", reason: "disabled" };
     }
     if (this.settings.get().paused) return { status: "skipped", reason: "paused" };
@@ -534,14 +526,13 @@ export class Triggers {
     );
   }
 
-  /** A delivery that ran; a replay doesn't move its time, so the window ends when it should. */
+  /** A delivery that ran. A replay doesn't get here, so one seen before is from before the window. */
   private remember(key: string) {
     this.db
       .query(
-        `INSERT INTO hook_deliveries (key, seen_at) VALUES (?, ?)
-         ON CONFLICT (key) DO UPDATE SET seen_at = excluded.seen_at WHERE seen_at <= ?`,
+        "INSERT INTO hook_deliveries (key, seen_at) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET seen_at = excluded.seen_at",
       )
-      .run(key, this.now(), new Date(this.clock() - REPLAY_WINDOW_MS).toISOString());
+      .run(key, this.now());
   }
 
   /** Deliveries older than the window go, once a day. */
@@ -560,12 +551,6 @@ export class Triggers {
 }
 
 const newSecret = () => randomBytes(24).toString("base64url");
-
-function same(a: string, b: string): boolean {
-  const x = Buffer.from(a);
-  const y = Buffer.from(b);
-  return x.length === y.length && timingSafeEqual(x, y);
-}
 
 /**
  * An Uptime Kuma alert in two parts: what Kuma itself says (the monitor, its type and address, the
