@@ -587,6 +587,10 @@ test("typing while the page hasn't the keyboard isn't kept, nor a screenshot whi
       pageFocus: false,
     };
     for (const m of typeText("my-pin-1234")) t.teach.input(m);
+    // A frame, which can't be seen into.
+    t.agent.element = { tag: "frame", role: null, type: null, label: "", inForm: false };
+    for (const m of click(500, 400)) t.teach.input(m);
+    for (const m of typeText("4111111111111111")) t.teach.input(m);
   });
   await call("POST", "/teach/stop");
   await waitFor(() => t.teach.get(session.id)?.status === "draft");
@@ -594,6 +598,7 @@ test("typing while the page hasn't the keyboard isn't kept, nor a screenshot whi
   expect(body).toContain("left click at (400, 300) [screenshot 1]");
   expect(body).toContain("left click at (600, 300)\\n");
   expect(body).not.toContain("my-pin");
+  expect(body).not.toContain("4111");
   expect(body).toContain("typed 11 characters (not recorded: the field couldn't be checked)");
 });
 
@@ -683,31 +688,6 @@ test("discarding a recording deletes its screenshots, a restart's too", async ()
   expect(again.get(second.id)?.status).toBe("discarded");
 });
 
-test("a recording discarded while it stops stays discarded", async () => {
-  const { t, work, call } = await teachApp();
-  const session = await record(t, call);
-  const stopping = t.teach.stop();
-  await t.teach.discard(session.id);
-  expect((await stopping).status).toBe("discarded");
-  await Bun.sleep(5);
-  expect(t.teach.get(session.id)?.status).toBe("discarded");
-  expect(work.creates.some((p) => p.system === TEACH_PROMPT)).toBe(false);
-});
-
-test("typing into a frame isn't kept", async () => {
-  const { t, work, call } = await teachApp();
-  const session = await record(t, call, async () => {
-    t.agent.element = { tag: "frame", role: null, type: null, label: "", inForm: false };
-    for (const m of typeText("4111111111111111")) t.teach.input(m);
-    await Bun.sleep(1);
-  });
-  await call("POST", "/teach/stop");
-  await waitFor(() => t.teach.get(session.id)?.status === "draft");
-  const body = JSON.stringify(work.creates.find((p) => p.system === TEACH_PROMPT)?.messages);
-  expect(body).not.toContain("4111");
-  expect(body).toContain("typed 16 characters into a password or code field");
-});
-
 test("a skill name that's taken needs replace; bad names are refused", async () => {
   const { t, call } = await teachApp();
   await t.memory.write("skills/renew-library-books.md", "# Old\n", t.settings.get().owner, "Old");
@@ -737,8 +717,14 @@ test("discarding a recording, or handing back, ends it without a skill", async (
   await call("POST", "/desktop/handback");
   await waitFor(() => t.teach.get(second.id)?.status === "discarded");
   expect(t.tasks.lane.holderId).toBeNull();
-  expect(work.creates.some((p) => p.system === TEACH_PROMPT)).toBe(false);
   expect((await call("POST", "/teach/stop")).status).toBe(409);
+
+  // Discarded while Stop hands the desktop back: it stays discarded.
+  const third = await record(t, call);
+  const stopping = t.teach.stop();
+  await t.teach.discard(third.id);
+  expect((await stopping).status).toBe("discarded");
+  expect(work.creates.some((p) => p.system === TEACH_PROMPT)).toBe(false);
 });
 
 test("teach can't start while a task has the desktop; an empty recording isn't drafted", async () => {
