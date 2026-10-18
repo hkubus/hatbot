@@ -237,6 +237,7 @@ private struct Goal: Identifiable {
 
 private struct TaskDetails: View {
   let task: AgentTask
+  @Environment(AppStore.self) private var store
 
   var body: some View {
     LabeledContent("From") {
@@ -265,8 +266,8 @@ private struct TaskDetails: View {
       LabeledContent("Tainted by") { Text(taintedBy).multilineTextAlignment(.trailing) }
     }
     LabeledContent("Cost", value: Format.money(task.costUsd))
-    if let report = task.reportPath {
-      NavigationLink(value: Route.memoryFile(report)) { LabeledContent("Report", value: report) }
+    if let report = ReadTarget.report(task, files: store.taskFiles[task.id] ?? []) {
+      NavigationLink(value: Route.read(report)) { LabeledContent("Report", value: report.path ?? report.name) }
     }
     if let payload = task.payload {
       VStack(alignment: .leading, spacing: 6) {

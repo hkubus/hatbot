@@ -53,7 +53,9 @@ extension UIColor {
 enum Route: Hashable {
   case task(Int)
   case live(taskId: Int?)
-  case memoryFile(String, isNew: Bool = false)
+  /// `edit`: open in the editor, as the reader's Edit does.
+  case memoryFile(String, isNew: Bool = false, edit: Bool = false)
+  case read(ReadTarget)
   case memoryHistory(path: String?)
   case commit(MemoryCommit)
   case schedules
@@ -78,7 +80,8 @@ extension View {
       switch route {
       case let .task(id): TaskDetailView(taskId: id)
       case let .live(taskId): LiveView(taskId: taskId).navigationTitle("Live")
-      case let .memoryFile(path, isNew): MemoryFileView(path: path, isNew: isNew)
+      case let .memoryFile(path, isNew, edit): MemoryFileView(path: path, isNew: isNew, edit: edit)
+      case let .read(target): ReaderView(target: target)
       case let .memoryHistory(path): MemoryHistoryView(path: path)
       case let .commit(c): CommitView(commit: c)
       case .schedules: SchedulesView()

@@ -1,5 +1,5 @@
-// Files in the chat: the ones on messages (pictures inline, the rest open in Quick Look) and the ones
-// waiting in the composer while they upload.
+// Files in the chat: the ones on messages (pictures inline, Markdown in the reader, the rest in Quick
+// Look) and the ones waiting in the composer while they upload.
 import PhotosUI
 import QuickLook
 import SwiftUI
@@ -13,7 +13,14 @@ struct MessageFiles: View {
   var body: some View {
     VStack(alignment: alignment, spacing: 6) {
       ForEach(list) { a in
-        if a.isPicture { PictureFile(attachment: a) } else { FileRow(attachment: a) }
+        if a.isPicture {
+          PictureFile(attachment: a)
+        } else if a.isMarkdown {
+          NavigationLink(value: Route.read(ReadTarget(file: a))) { FileChip(name: a.name) }
+            .buttonStyle(.plain)
+        } else {
+          FileRow(attachment: a)
+        }
       }
     }
   }
@@ -90,15 +97,7 @@ private struct FileRow: View {
         loading = false
       }
     } label: {
-      HStack(spacing: 8) {
-        if loading { ProgressView().controlSize(.small) } else { Image(systemName: "doc") }
-        Text(attachment.name).lineLimit(1).truncationMode(.middle)
-      }
-      .font(.subheadline)
-      .padding(.horizontal, 12)
-      .padding(.vertical, 9)
-      .frame(maxWidth: 260, alignment: .leading)
-      .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 12))
+      FileChip(name: attachment.name, loading: loading)
     }
     .buttonStyle(.plain)
     .quickLookPreview($url)
@@ -113,6 +112,24 @@ private struct FileRow: View {
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     try data.write(to: url)
     return url
+  }
+}
+
+/// A file's name on a message.
+private struct FileChip: View {
+  let name: String
+  var loading = false
+
+  var body: some View {
+    HStack(spacing: 8) {
+      if loading { ProgressView().controlSize(.small) } else { Image(systemName: "doc") }
+      Text(name).lineLimit(1).truncationMode(.middle)
+    }
+    .font(.subheadline)
+    .padding(.horizontal, 12)
+    .padding(.vertical, 9)
+    .frame(maxWidth: 260, alignment: .leading)
+    .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 12))
   }
 }
 

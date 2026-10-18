@@ -139,7 +139,7 @@ struct Source: Codable, Equatable, Hashable, Sendable {
 }
 
 /// A file on a message: one you attached, or one Hatbot or a task sent you.
-struct Attachment: Codable, Identifiable, Equatable, Sendable {
+struct Attachment: Codable, Identifiable, Hashable, Sendable {
   enum From: String, LenientEnum {
     case owner, hatbot
     static let fallback = From.hatbot
@@ -154,6 +154,8 @@ struct Attachment: Codable, Identifiable, Equatable, Sendable {
 
   /// Shown as a picture rather than a file.
   var isPicture: Bool { ["image/jpeg", "image/png", "image/gif", "image/webp", "image/heic"].contains(mediaType) }
+  /// Opened in the reader rather than Quick Look.
+  var isMarkdown: Bool { mediaType == "text/markdown" || name.lowercased().hasSuffix(".md") }
 }
 
 /// A conversation in the thread. Finished ones fold up under their recap.
@@ -214,6 +216,8 @@ struct AgentTask: Codable, Identifiable, Equatable, Sendable {
   var botId: String?
   /// The bot that handed it over with ask_bot.
   var requestedBy: String?
+  /// A research task (PLAN.md §17); missing on brains from before research.
+  var research: Bool?
   /// A research task's report, in memory; missing on brains from before research.
   var reportPath: String?
 
@@ -250,6 +254,8 @@ extension [TaskStep] {
 struct TaskWithSteps: Decodable, Sendable {
   let task: AgentTask
   let steps: [TaskStep]
+  /// Missing on brains from before task files.
+  let attachments: [Attachment]?
 }
 
 struct Approval: Codable, Identifiable, Equatable, Sendable {
