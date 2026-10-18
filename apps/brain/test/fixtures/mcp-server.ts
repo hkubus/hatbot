@@ -1,13 +1,10 @@
 // A small MCP server over stdio for the MCP plugin's tests.
 
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-
-// A server that isn't up yet: it won't start until this file exists.
-if (process.env.MCP_WAIT_FOR && !existsSync(process.env.MCP_WAIT_FOR)) process.exit(1);
 
 const server = new McpServer({ name: "fixture", version: "1.0.0" });
 server.registerTool(
@@ -41,6 +38,11 @@ if (list)
   server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: JSON.parse(list),
   }));
-// Slow to start while this file is there: calls made meanwhile find it reconnecting.
-if (process.env.MCP_SLOW && existsSync(process.env.MCP_SLOW)) await Bun.sleep(1000);
+// Held before it answers while this file is there, and says so in <file>.held: calls made
+// meanwhile find it reconnecting.
+const hold = process.env.MCP_HOLD;
+if (hold && existsSync(hold)) {
+  writeFileSync(`${hold}.held`, "");
+  while (existsSync(hold)) await Bun.sleep(5);
+}
 await server.connect(new StdioServerTransport());
