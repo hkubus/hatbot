@@ -14,11 +14,14 @@ export const spendDays = query(
 );
 
 /** The kill switch (PLAN.md §6.5): from Settings, or a notification's Pause all. */
-export function pauseAll(v: Pick<Deps, "settings" | "chats" | "tasks" | "desktop" | "events">) {
+export function pauseAll(
+  v: Pick<Deps, "settings" | "chats" | "tasks" | "desktop" | "events" | "boxes">,
+) {
   v.settings.update({ paused: true });
   v.chats.abortAll();
   v.tasks.cancelAll();
   void v.desktop.setPaused(true);
+  void v.boxes.backends?.stopAll();
   v.events.emit({ type: "paused", paused: true });
 }
 

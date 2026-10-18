@@ -4,6 +4,7 @@ import {
   type Approval,
   type Attachment,
   type Bot,
+  type Box,
   type Conversation,
   type DesktopState,
   type Episode,
@@ -71,6 +72,8 @@ type State = {
   negotiations: Record<number, Negotiation>;
   /** The messages of negotiations whose page has been opened. */
   negotiationMessages: Record<number, NegotiationMessage[]>;
+  /** Boxes (PLAN.md §21): all of them once Boxes has been opened, and any a chat has shown. null: deleted. */
+  boxes: Record<number, Box | null>;
   plugins: Record<string, PluginInfo>;
   /** Memory changes waiting for you, and ones you've answered this session. */
   proposals: Record<number, Proposal>;
@@ -121,6 +124,7 @@ let state: State = {
   watchers: {},
   negotiations: {},
   negotiationMessages: {},
+  boxes: {},
   plugins: {},
   proposals: {},
   teach: {},
@@ -546,6 +550,31 @@ export async function loadNegotiations() {
   merge("negotiations", list);
   return list.map((n) => n.id);
 }
+export const putBox = (b: Box) => put("boxes", b.id, b);
+// Boxes has been opened: a reconnect lists them again.
+let boxesLoaded = false;
+export async function loadBoxes() {
+  boxesLoaded = true;
+  const known = Object.keys(state.boxes).map(Number);
+  const list = await api<Box[]>("/boxes");
+  // One we had that isn't listed was deleted while we were away.
+  const gone = known.filter((id) => !list.some((b) => b.id === id));
+  set({
+    boxes: {
+      ...state.boxes,
+      ...Object.fromEntries(gone.map((id) => [id, null])),
+      ...Object.fromEntries(list.map((b) => [b.id, b])),
+    },
+  });
+}
+/** Loads a box the first time a chat shows it. */
+export const ensureBox = (id: number) =>
+  once(`x${id}`, id in state.boxes, () =>
+    api<Box>(`/boxes/${id}`).then(putBox, (err) => {
+      if (!(err instanceof ApiError && err.status === 404)) throw err;
+      put("boxes", id, null);
+    }),
+  );
 /** The negotiation a mandate approval is for. */
 export const negotiationOf = (s: Pick<State, "negotiations">, approvalId: number) =>
   Object.values(s.negotiations).find((n) => n.approvalId === approvalId);
@@ -711,6 +740,8 @@ function onMessages(list: ThreadMessage[], e: HatbotEvent): ThreadMessage[] {
       return patch(e.id, (m) => ({ ...m, taskId: e.taskId }));
     case "message.negotiation":
       return patch(e.id, (m) => ({ ...m, negotiationId: e.negotiationId }));
+    case "message.box":
+      return patch(e.id, (m) => ({ ...m, boxId: e.boxId }));
     case "message.done":
       return patch(e.id, (m) => ({
         ...m,
@@ -785,6 +816,7 @@ function apply(e: HatbotEvent) {
     case "message.attachment":
     case "message.task":
     case "message.negotiation":
+    case "message.box":
       return set({ messages: onMessages(state.messages, e) });
     case "message.usage":
       return put("usage", e.id, { tokens: e.tokens, costUsd: e.costUsd });
@@ -853,6 +885,10 @@ function apply(e: HatbotEvent) {
       if (state.negotiationMessages[e.negotiation.id])
         void loadNegotiation(e.negotiation.id).catch(() => {});
       return put("negotiations", e.negotiation.id, e.negotiation);
+    case "box.updated":
+      return putBox(e.box);
+    case "box.deleted":
+      return put("boxes", e.id, null);
     case "plugin.updated":
       return put("plugins", e.plugin.id, e.plugin);
     case "teach.updated":
@@ -908,6 +944,7 @@ async function catchUp(reconnected: boolean) {
     if (m.taskId) ensureTask(m.taskId);
     if (m.scheduleId) ensureSchedule(m.scheduleId);
     if (m.negotiationId) ensureNegotiation(m.negotiationId);
+    if (m.boxId) ensureBox(m.boxId);
   }
   if (reconnected) {
     set({
@@ -918,6 +955,7 @@ async function catchUp(reconnected: boolean) {
     if (proposalsLoaded || Object.keys(state.proposals).length)
       void refreshProposals().catch(() => {});
     if (Object.keys(state.plugins).length) void loadPlugins().catch(() => {});
+    if (boxesLoaded) void loadBoxes().catch(() => {});
     // A negotiation's page shows its messages; negotiation.updated may have been missed.
     for (const id of Object.keys(state.negotiationMessages))
       void loadNegotiation(Number(id)).catch(() => {});

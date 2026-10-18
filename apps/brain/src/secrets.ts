@@ -1,7 +1,7 @@
-// The Anthropic API key, the ntfy server and plugins' tokens, as set in Settings (PLAN.md §6.4). They're
-// kept in a file of their own in the data directory, mode 600, not in the database: the nightly
-// snapshots and the settings every client is sent don't carry them. Unset, the host's apply
-// (/etc/hatbot, from deploy.sh and the env files).
+// The Anthropic API key, the ntfy server and plugins' tokens, as set in Settings (PLAN.md §6.4), and
+// boxes' secrets, set on a box's page (§21.6). They're kept in a file of their own in the data
+// directory, mode 600, not in the database: the nightly snapshots and the settings every client is sent
+// don't carry them. Unset, the host's apply (/etc/hatbot, from deploy.sh and the env files).
 import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import Anthropic from "@anthropic-ai/sdk";
 import type { ConnectionSource, Connections } from "@hatbot/shared";
@@ -15,6 +15,8 @@ type Stored = {
   env?: Values;
   /** Secrets a plugin takes by any name (MCP's ${NAME}), by plugin. */
   named?: Record<string, Values>;
+  /** Boxes' secrets, by box: only its backend reads them. */
+  boxes?: Record<string, Values>;
 };
 
 /** Only string values, so a hand-edited file can't hand a plugin anything else. */
@@ -23,6 +25,11 @@ const values = (v: unknown): Values =>
     Object.entries(v && typeof v === "object" ? v : {}).filter(
       (e): e is [string, string] => typeof e[1] === "string",
     ),
+  );
+
+const byId = (v: unknown): Record<string, Values> =>
+  Object.fromEntries(
+    Object.entries(v && typeof v === "object" ? v : {}).map(([id, x]) => [id, values(x)]),
   );
 
 /** Throws, with the API's answer, when the API won't take the key. */
@@ -49,12 +56,8 @@ function read(path: string): Stored {
           ? { url: s.ntfy.url, topic: s.ntfy.topic, token: String(s.ntfy.token ?? "") }
           : undefined,
       env: values(s.env),
-      named: Object.fromEntries(
-        Object.entries(s.named && typeof s.named === "object" ? s.named : {}).map(([id, v]) => [
-          id,
-          values(v),
-        ]),
-      ),
+      named: byId(s.named),
+      boxes: byId(s.boxes),
     };
   } catch (err) {
     console.error(`${path} isn't readable JSON; the host's API key and ntfy apply`, err);
@@ -101,6 +104,19 @@ export class Secrets {
   /** Each value replaces what's set here; null forgets it, and the host's applies again. */
   setPluginEnv(changes: Record<string, string | null>) {
     this.save({ ...this.stored, env: merge(this.stored.env, changes) });
+  }
+
+  /** A box's secrets, by name. */
+  box(id: number): Values {
+    return this.stored.boxes?.[id] ?? {};
+  }
+
+  /** Each value replaces the box's secret by that name; null removes it. */
+  setBox(id: number, changes: Record<string, string | null>) {
+    const boxes: Record<string, Values> = { ...this.stored.boxes };
+    boxes[id] = merge(boxes[id], changes);
+    if (!Object.keys(boxes[id]).length) delete boxes[id];
+    this.save({ ...this.stored, boxes });
   }
 
   setNamed(plugin: string, changes: Record<string, string | null>) {

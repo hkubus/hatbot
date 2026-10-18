@@ -65,6 +65,9 @@ struct LimitsView: View {
           if limits?.alertReserveUsd != nil {
             field("Kept for alerts", optional: \.alertReserveUsd)
           }
+          if limits?.boxesUsd != nil {
+            field("Boxes per day", optional: \.boxesUsd)
+          }
         } footer: {
           Text("In dollars. Hatbot stops before going past one.")
         }
@@ -103,8 +106,9 @@ struct LimitsView: View {
 
   private var valid: Bool {
     guard let l = limits, unreadable.isEmpty else { return false }
+    // Nothing kept for alerts is allowed, and boxes asking nothing; a limit of nothing isn't.
     return l.taskUsd > 0 && (l.researchUsd ?? 1) > 0 && l.dailyUsd > 0 && l.monthlyUsd > 0
-      && (l.alertReserveUsd ?? 0) >= 0
+      && (l.alertReserveUsd ?? 0) >= 0 && (l.boxesUsd ?? 0) >= 0
   }
 
   private func field(_ label: String, _ key: WritableKeyPath<Limits, Double>) -> some View {

@@ -19,8 +19,8 @@ die() {
 }
 
 # ---------- Reaching the guests ----------
-# The brain and the desktop are containers on this Proxmox host (host-setup.sh), reached with pct and
-# named by VMID, or any two Debian machines (ssh-setup.sh), reached over SSH and named by user@host.
+# The brain, the desktop and the boxes guest are containers on this Proxmox host (host-setup.sh), reached
+# with pct and named by VMID, or Debian machines (ssh-setup.sh), reached over SSH and named by user@host.
 # HATBOT_TRANSPORT in host.env says which; installs from before it are Proxmox ones.
 
 # The settings host-setup.sh or ssh-setup.sh saved: /etc/hatbot/host.env for root, otherwise in your
@@ -35,8 +35,9 @@ state_file() {
   fi
 }
 
-# load_state: sources host.env and sets BRAIN and DESKTOP to what guest_exec takes (DESKTOP may be empty
-# over SSH: a brain without a desktop).
+# load_state: sources host.env and sets BRAIN, DESKTOP and BOXES to what guest_exec takes. DESKTOP may be
+# empty over SSH (a brain without a desktop), and BOXES on either (no boxes guest: installs from before
+# it, or BOXES_ID=none / BOXES_SSH=none).
 load_state() {
   local f
   f=$(state_file)
@@ -46,9 +47,10 @@ load_state() {
   case $HATBOT_TRANSPORT in
     pct)
       [[ $EUID -eq 0 ]] || die "run as root on the Proxmox host"
-      BRAIN=${BRAIN_ID:?} DESKTOP=${DESKTOP_ID:?}
+      BRAIN=${BRAIN_ID:?} DESKTOP=${DESKTOP_ID:?} BOXES=${BOXES_ID:-}
+      [[ $BOXES != none ]] || BOXES=''
       ;;
-    ssh) BRAIN=${BRAIN_SSH:?} DESKTOP=${DESKTOP_SSH:-} ;;
+    ssh) BRAIN=${BRAIN_SSH:?} DESKTOP=${DESKTOP_SSH:-} BOXES=${BOXES_SSH:-} ;;
     *) die "HATBOT_TRANSPORT in $f is $HATBOT_TRANSPORT; it should be pct or ssh" ;;
   esac
 }
@@ -152,11 +154,11 @@ cidr_net() {
 # store_type NAME -> storage type (zfspool, lvmthin, dir, pbs, ...), empty if unknown.
 store_type() { pvesm status 2>/dev/null | awk -v s="$1" 'NR > 1 && $1 == s { print $2 }'; }
 
-# backup_jobs BRAIN_ID DESKTOP_ID -> one tab-separated line per vzdump job:
-#   id  enabled  storage  schedule  selection  covers_brain  covers_desktop
+# backup_jobs VMID... -> one tab-separated line per vzdump job, with a column per guest asked about:
+#   id  enabled  storage  schedule  selection  covers_1  covers_2 ...
 backup_jobs() {
   pvesh get /cluster/backup --output-format json | perl -MJSON::PP -e '
-    my ($b, $d) = @ARGV;
+    my @guests = @ARGV;
     my $jobs = decode_json(do { local $/; <STDIN> });
     for my $j (@$jobs) {
       my %ex  = map { $_ => 1 } split /,/, ($j->{exclude} // "");
@@ -166,8 +168,8 @@ backup_jobs() {
         my $id = shift;
         return $j->{all} ? !$ex{$id} : defined $j->{pool} ? $j->{pool} eq "hatbot" : $ids{$id};
       };
-      printf "%s\t%s\t%s\t%s\t%s\t%d\t%d\n", $j->{id}, ($j->{enabled} // 1), ($j->{storage} // ""),
-        ($j->{schedule} // ""), $sel, ($covers->($b) ? 1 : 0), ($covers->($d) ? 1 : 0);
+      print join("\t", $j->{id}, ($j->{enabled} // 1), ($j->{storage} // ""), ($j->{schedule} // ""), $sel,
+        map { $covers->($_) ? 1 : 0 } @guests), "\n";
     }
-  ' "$1" "$2"
+  ' "$@"
 }

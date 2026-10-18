@@ -6,7 +6,9 @@
     ".": "./src/index.ts",
     "./bot-id": "./src/bot-id.ts",
     "./desktop": "./src/desktop.ts",
-    "./keys": "./src/keys.ts"
+    "./hatbox": "./src/hatbox.ts",
+    "./keys": "./src/keys.ts",
+    "./net": "./src/net.ts"
   },
   "dependencies": {
     "zod": "^4.6.5"

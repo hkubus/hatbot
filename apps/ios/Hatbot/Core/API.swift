@@ -120,6 +120,16 @@ final class API: Sendable {
     let _: Empty = try await call(path, method: "POST", body: Empty())
   }
 
+  /// JSON as it is, and the answer as it came: a box's calls, which only the brain reads (PLAN.md §21.8).
+  func post(_ path: String, json: Data) async throws -> Data {
+    var req = request(path, method: "POST")
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    req.httpBody = json
+    let (data, response) = try await load(req)
+    try check(response, data: data, path: path)
+    return data
+  }
+
   func put<T: Decodable, B: Encodable>(_ path: String, body: B) async throws -> T {
     try await call(path, method: "PUT", body: body)
   }
@@ -233,17 +243,7 @@ final class API: Sendable {
       req.setValue("application/json", forHTTPHeaderField: "Content-Type")
       req.httpBody = try JSONEncoder().encode(body)
     }
-    let data: Data
-    let response: URLResponse
-    do {
-      (data, response) = try await session.data(for: req)
-    } catch is CancellationError {
-      throw CancellationError()
-    } catch let error as URLError where error.code == .cancelled {
-      throw CancellationError()
-    } catch {
-      throw APIError(status: 0, message: "Couldn't reach Hatbot.")
-    }
+    let (data, response) = try await load(req)
     try check(response, data: data, path: path)
     do {
       return try JSONDecoder().decode(T.self, from: data.isEmpty ? Data("{}".utf8) : data)
@@ -251,6 +251,18 @@ final class API: Sendable {
       // 204 No Content, where an optional is expected: nothing.
       if data.isEmpty, let none = try? JSONDecoder().decode(T.self, from: Data("null".utf8)) { return none }
       throw APIError(status: 0, message: "Hatbot sent something this app doesn't understand.")
+    }
+  }
+
+  private func load(_ req: URLRequest) async throws -> (Data, URLResponse) {
+    do {
+      return try await session.data(for: req)
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch let error as URLError where error.code == .cancelled {
+      throw CancellationError()
+    } catch {
+      throw APIError(status: 0, message: "Couldn't reach Hatbot.")
     }
   }
 

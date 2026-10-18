@@ -5,6 +5,8 @@ import type {
   AgentContext,
   AgentElement,
   AgentStatus,
+  BoxLook,
+  BoxLookResult,
   BrowserCall,
   BrowserInspect,
   BrowserResult,
@@ -49,6 +51,8 @@ export interface DesktopAgent {
   render(url: string): Promise<RenderResult>;
   /** Renders a page of the desktop's own whose script writes its text. Throws when that fails. */
   renderCheck(): Promise<void>;
+  /** A box's page drawn in the same Chromium, with no network, and the errors it hit (box_look). */
+  lookAtBox(look: BoxLook): Promise<BoxLookResult>;
   /** One browser toolset member, run on Chromium over CDP. */
   browser(call: BrowserCall): Promise<BrowserResult>;
   browserState(): Promise<BrowserState>;
@@ -208,6 +212,12 @@ export class HttpDesktopAgent implements DesktopAgent {
   }
   async renderCheck() {
     await this.req("POST", "/render/check", {}, 30_000);
+  }
+  lookAtBox(look: BoxLook) {
+    return this.unlessOld(
+      () => this.json<BoxLookResult>("POST", "/render/box", look, 120_000),
+      tooOld("look at boxes"),
+    );
   }
   browser(call: BrowserCall) {
     return this.json<BrowserResult>("POST", "/browser", call, browserTimeoutMs(call));

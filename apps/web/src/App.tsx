@@ -33,6 +33,8 @@ import { setTheme, type Theme, useTheme } from "./theme";
 import { TOAST_ICON, type Toast, type ToastKind } from "./toast";
 
 // Pages you open now and then load when first opened; chat and tasks come with the app.
+const BoxesPage = lazy(() => import("./pages/Boxes").then((m) => ({ default: m.BoxesPage })));
+const BoxPage = lazy(() => import("./pages/Boxes").then((m) => ({ default: m.BoxPage })));
 const NegotiationPage = lazy(() =>
   import("./pages/Negotiation").then((m) => ({ default: m.NegotiationPage })),
 );
@@ -52,6 +54,7 @@ const VIEWS = [
   { path: "/", title: "Chat", icon: "chat", phone: true },
   { path: "/tasks", title: "Tasks", icon: "tasks", phone: true },
   { path: "/todo", title: "To-do", icon: "check", phone: false },
+  { path: "/boxes", title: "Boxes", icon: "box", phone: false },
   { path: "/search", title: "Search", icon: "search", phone: false },
   { path: "/live", title: "Live", icon: "monitor", phone: true },
   { path: "/schedules", title: "Schedules & Triggers", icon: "clock", phone: false },
@@ -75,9 +78,10 @@ const viewOf = (path: string) => {
   const first = path.split("/")[1] ?? "";
   return VIEWS.find((v) => v.path === (VIEW_OF[first] ?? `/${first}`)) ?? VIEWS[0];
 };
-/** On a phone, To-do, Spend and Schedules are reached from Settings, so its tab stays lit. */
+/** On a phone, To-do, Boxes, Spend and Schedules are reached from Settings, so its tab stays lit. */
 const TAB_OF: Record<string, string> = {
   "/todo": "/settings",
+  "/boxes": "/settings",
   "/spend": "/settings",
   "/schedules": "/settings",
 };
@@ -171,13 +175,14 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const wide = useMedia("(min-width: 900px)");
   const taskId = /^\/tasks\/(\d+)$/.exec(path)?.[1];
   const negotiationId = /^\/negotiations\/(\d+)$/.exec(path)?.[1];
+  const boxId = /^\/boxes\/(\d+)$/.exec(path)?.[1];
   const teachId = /^\/memory\/teach\/(\d+)$/.exec(path)?.[1];
   const approvalId = Number(params.get("approval"));
   const botPage = /^\/bots\/([a-z0-9-]+)$/.exec(path)?.[1];
   const groupPage = /^\/groups\/(new|\d+)$/.exec(path)?.[1];
   const chatId = path === "/" ? HATBOT_CHAT : Number(/^\/chat\/(\d+)$/.exec(path)?.[1] ?? 0);
   // A bot's or group's page is titled with its name and keeps its chat lit in the sidebar; a
-  // negotiation's with its listing.
+  // negotiation's with its listing, and a box's with its title.
   const pageChat = useStore((s) =>
     botPage
       ? s.conversations.find((c) => c.kind === "direct" && c.botIds[0] === botPage)
@@ -195,6 +200,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               ? chatName(s, pageChat)
               : "Group"
             : ((negotiationId ? s.negotiations[Number(negotiationId)]?.title : undefined) ??
+              (boxId ? s.boxes[Number(boxId)]?.title : undefined) ??
               view.title),
   );
 
@@ -442,6 +448,8 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               ))}
             {page === "/spend" && <Spend />}
             {page === "/todo" && <TodoPage toast={toast} />}
+            {page === "/boxes" &&
+              (boxId ? <BoxPage key={boxId} id={Number(boxId)} /> : <BoxesPage />)}
             {reading && (
               <Reader
                 key={params.toString()}

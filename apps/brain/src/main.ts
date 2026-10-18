@@ -4,6 +4,7 @@ import { AnthropicModelClient } from "./agent/model";
 import { loadConfig, urlHost } from "./config";
 import { openDb } from "./db";
 import { HttpDesktopAgent } from "./desktop/client";
+import { HttpHatboxAgent } from "./hatbox/client";
 import { NtfyNotifier } from "./notify";
 import { PLUGINS } from "./plugins";
 import { Secrets } from "./secrets";
@@ -24,6 +25,7 @@ const brain = await createServices({
   model,
   taskModel: model,
   agent: new HttpDesktopAgent(),
+  hatbox: new HttpHatboxAgent(),
   notifications: ntfy,
   ntfy,
   plugins: PLUGINS,
@@ -32,6 +34,7 @@ const brain = await createServices({
 });
 const { app, auth, approvals, chats, desktop, negotiations, plugins, settings, tasks } = brain;
 const { schedules, triggers, watchers, heartbeat, report, proposals, storage, ping } = brain;
+const { boxes } = brain;
 await brain.skills.refresh();
 // In the background: an MCP server that is slow to answer mustn't hold up the health check.
 const pluginsStarted = plugins
@@ -76,6 +79,8 @@ void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {
     safely("weekly report", () => report.tick());
     safely("proposals", () => proposals.tick());
     safely("storage", () => storage.tick());
+    safely("boxes", () => boxes.backends?.tick());
+    safely("box feeds", () => boxes.feeds?.tick());
   }, 10_000);
 });
 

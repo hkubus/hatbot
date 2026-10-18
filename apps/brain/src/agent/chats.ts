@@ -1,6 +1,6 @@
 // Your chats (PLAN.md §14): each bot's own, and groups of bots. One Thread runs each; what isn't tied
 // to one chat (tasks' messages, what you've seen) is here.
-import { type Conversation, HATBOT_ID, type Task } from "@hatbot/shared";
+import { type Box, type Conversation, HATBOT_ID, type Task } from "@hatbot/shared";
 import { BotError } from "../bots";
 import { resultText, Thread, type ThreadDeps } from "./thread";
 
@@ -270,6 +270,26 @@ export class Chats {
    */
   note(botId: string, text: string, taintedBy: string | null = null) {
     return this.direct(botId).add({ text, botId, taintedBy });
+  }
+
+  /**
+   * A note from a box's page (hatbox.send) or its backend (a notification), in the chat the box was
+   * made in while its bot is in it, else in the bot's own. The box's code wrote it, so it's untrusted:
+   * never your words, nor the bot's.
+   */
+  boxNote(box: Box, text: string) {
+    const made = box.conversationId === null ? null : this.thread(box.conversationId);
+    const thread =
+      made?.members().some((b) => b.id === box.botId) && !this.closed(box.conversationId ?? 0)
+        ? made
+        : this.direct(box.botId);
+    return thread.add({
+      kind: "box",
+      text,
+      botId: box.botId,
+      boxId: box.id,
+      taintedBy: `Box #${box.id} "${box.title}"`,
+    });
   }
 
   /** A task ended: `botId` tells you in the chat it was started from. */

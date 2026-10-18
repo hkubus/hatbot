@@ -1,12 +1,14 @@
 // API types shared by the brain, the web app and the future iOS app (PLAN.md §4.4).
 import { z } from "zod";
 import { BOT_ID } from "./bot-id";
+import type { Box } from "./box";
 import type { Negotiation } from "./negotiate";
 import type { PluginInfo } from "./plugin";
 import type { Schedule, Trigger } from "./schedule";
 import type { Watcher } from "./watch";
 
 export * from "./bot-id";
+export * from "./box";
 export * from "./chart";
 export * from "./checks";
 export * from "./negotiate";
@@ -107,9 +109,11 @@ export type ThreadMessage = {
   botId: string | null;
   /**
    * "task" and "schedule" messages are cards; their text is a plain-text fallback. "command": a command
-   * you typed, or what came of it (one with a task shows the task like a reply does).
+   * you typed, or what came of it (one with a task shows the task like a reply does). "box": a note the
+   * box `boxId` sent (hatbox.send, or its backend's scheduled() as a notification), shown as from the
+   * box: neither yours nor the bot's words.
    */
-  kind: "text" | "task" | "schedule" | "command";
+  kind: "text" | "task" | "schedule" | "command" | "box";
   text: string;
   status: "streaming" | "done" | "error";
   createdAt: string;
@@ -117,6 +121,8 @@ export type ThreadMessage = {
   scheduleId: number | null;
   /** A negotiation this reply started shows under it (PLAN.md §16.5). */
   negotiationId: number | null;
+  /** The box this reply made or changed last shows under it (PLAN.md §21.5). */
+  boxId: number | null;
   /** The conversation it belongs to; cards from background tasks have none. */
   episodeId: number | null;
   /** When a task's result changed it after it was sent. */
@@ -361,6 +367,8 @@ export type HatbotEvent =
   | { type: "message.task"; id: number; taskId: number }
   /** A negotiation now shows under this reply (PLAN.md §16.5). */
   | { type: "message.negotiation"; id: number; negotiationId: number }
+  /** A box this reply made or changed now shows under it (PLAN.md §21.5). */
+  | { type: "message.box"; id: number; boxId: number }
   /** A task's result changed this message. */
   | { type: "message.edited"; id: number; editedAt: string }
   /** The task shown under this reply ended: its bot is writing the reply again, to say what came of it. */
@@ -391,6 +399,8 @@ export type HatbotEvent =
   | { type: "watcher.updated"; watcher: Watcher }
   | { type: "watcher.deleted"; id: number }
   | { type: "negotiation.updated"; negotiation: Negotiation }
+  | { type: "box.updated"; box: Box }
+  | { type: "box.deleted"; id: number }
   | { type: "plugin.updated"; plugin: PluginInfo }
   | { type: "teach.updated"; session: TeachSession }
   | { type: "episode.updated"; episode: Episode }
@@ -598,6 +608,8 @@ export type Limits = {
   monthlyUsd: number;
   /** The last of the daily and monthly limits, which only alerts and the heartbeat spend. */
   alertReserveUsd: number;
+  /** What boxes may spend asking Haiku in a day (hatbox.ask); 0 stops them asking. */
+  boxesUsd: number;
 };
 /** Spend over a stretch of time: dollars, and tokens of every kind (input, cache, output). */
 export type SpendWindow = { usd: number; tokens: number };

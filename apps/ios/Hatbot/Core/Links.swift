@@ -7,14 +7,15 @@ enum AppLink: Equatable, Sendable {
   case approval(Int)
   case schedule(Int)
   case trigger(Int)
+  case box(Int)
   /// The chat, to write in.
   case newMessage
   case live
   case tasks
   case memory(String)
 
-  /// hatbot://tasks/12, hatbot://approvals/5, hatbot://schedules/2, hatbot://triggers/3; hatbot://new,
-  /// hatbot://live, hatbot://tasks; hatbot://memory/notes/servers.md.
+  /// hatbot://tasks/12, hatbot://approvals/5, hatbot://schedules/2, hatbot://triggers/3, hatbot://boxes/4;
+  /// hatbot://new, hatbot://live, hatbot://tasks; hatbot://memory/notes/servers.md.
   init?(url: URL) {
     guard url.scheme?.lowercased() == "hatbot", let host = url.host() else { return nil }
     let parts = url.pathComponents.filter { $0 != "/" }
@@ -30,6 +31,7 @@ enum AppLink: Equatable, Sendable {
       case "approvals": self = .approval(id)
       case "schedules": self = .schedule(id)
       case "triggers": self = .trigger(id)
+      case "boxes": self = .box(id)
       default: return nil
       }
     default: return nil
@@ -49,6 +51,7 @@ enum AppLink: Equatable, Sendable {
       case let .approval(id): "approvals/\(id)"
       case let .schedule(id): "schedules/\(id)"
       case let .trigger(id): "triggers/\(id)"
+      case let .box(id): "boxes/\(id)"
       case .newMessage: "new"
       case .live: "live"
       case .tasks: "tasks"

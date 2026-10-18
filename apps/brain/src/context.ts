@@ -4,6 +4,7 @@ import type { Archive } from "./archive";
 import type { Attachments } from "./attachments";
 import type { AuthService, FailureLimiter, Principal } from "./auth/service";
 import type { Bots } from "./bots";
+import type { Boxes } from "./boxes";
 import type { Checks } from "./checks";
 import type { Config } from "./config";
 import type { Db } from "./db";
@@ -39,6 +40,7 @@ export type Deps = {
   memory: MemoryStore;
   chats: Chats;
   bots: Bots;
+  boxes: Boxes;
   tasks: Tasks;
   approvals: Approvals;
   questions: Questions;

@@ -6,7 +6,7 @@ API with a bearer token. Notifications still come from the ntfy app.
 - `Hatbot/Core`: Foundation only. API types, the API client, the reconnecting WebSocket, the live
   store, Markdown blocks, cron in words. `Package.swift` builds it on its own so it compiles and
   tests anywhere Swift runs.
-- `Hatbot/Views`, `Hatbot/App`: SwiftUI and UIKit. Chat, Search, Tasks, To-do, Live, Memory and Settings;
+- `Hatbot/Views`, `Hatbot/App`: SwiftUI and UIKit. Chat, Search, Tasks, To-do, Boxes, Live, Memory and Settings;
   Schedules & Triggers, Watchers, Check everything and the Heartbeat open from Settings. Siri and
   Shortcuts actions are in `Hatbot/App/Intents.swift`.
 - `Share`: the share extension. It sends what you share, with a note, to Hatbot's chat.
@@ -89,6 +89,6 @@ and how many things need you; iOS refreshes it about every 15 minutes, and the a
 ## Links
 
 `hatbot://tasks/<id>` opens a task, `hatbot://approvals/<id>` the task an approval belongs to, and
-`hatbot://schedules/<id>` and `hatbot://triggers/<id>` their pages. Notifications use them when
+`hatbot://schedules/<id>`, `hatbot://triggers/<id>` and `hatbot://boxes/<id>` their pages. Notifications use them when
 Settings → Notifications says this app. `hatbot://new`, `hatbot://live` and `hatbot://tasks` are the
 home-screen quick actions, and `hatbot://memory/<path>` opens a memory file, as Spotlight does.
