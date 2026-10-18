@@ -1000,6 +1000,9 @@ export const TOOLS = [
   }),
 ];
 
+/** What the model is told when a tool's input doesn't fit its schema. */
+export const invalidInput = (error: z.ZodError) => `Invalid input: ${z.prettifyError(error)}`;
+
 /** A tool definition as sent to the API. */
 export const toolParam = (t: {
   name: string;
@@ -1069,8 +1072,7 @@ export async function runTool(
     return { content: `Unknown tool "${name}". Available: ${names.join(", ")}`, isError: true };
   }
   const parsed = tool.schema.safeParse(input);
-  if (!parsed.success)
-    return { content: `Invalid input: ${z.prettifyError(parsed.error)}`, isError: true };
+  if (!parsed.success) return { content: invalidInput(parsed.error), isError: true };
   try {
     // biome-ignore lint/suspicious/noExplicitAny: each tool's run matches its own schema
     return { content: await tool.run(parsed.data as any, ctx, signal), isError: false };

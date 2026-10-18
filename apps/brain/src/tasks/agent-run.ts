@@ -15,6 +15,7 @@ import {
   containerOf,
   DesktopTaskInput,
   inBatches,
+  invalidInput,
   LOOKUP_TOOLS,
   liveTool,
   missingSkill,
@@ -336,7 +337,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
   const desktopTask = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
     const p = DesktopTaskInput.safeParse(call.input);
-    if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+    if (!p.success) return result(call, invalidInput(p.error), true);
     const { title, goal, success_criteria } = p.data;
     const refused =
       research &&
@@ -368,7 +369,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
   const askBot = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
     const p = AskBotInput.safeParse(call.input);
-    if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+    if (!p.success) return result(call, invalidInput(p.error), true);
     const refused = research && refusedLinks(run, found.sources, p.data.request, "the bot");
     if (refused) return result(call, refused, true);
     // What this task read is screened first: a suspicion goes with the request.
@@ -583,7 +584,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   /** Sleeps without holding a slot, until the time is up or the task is told something. */
   const wait = async (call: Anthropic.Beta.BetaToolUseBlock) => {
     const p = Wait.safeParse(call.input);
-    if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+    if (!p.success) return result(call, invalidInput(p.error), true);
     // Not past the run's time limit.
     const left = Math.max(1, Math.floor((MAX_RUN_MS - ownMs()) / 60_000));
     const minutes = Math.min(p.data.minutes, left);
@@ -763,17 +764,13 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
               true,
             );
           if (p.success) finished = p.data;
-          return result(
-            call,
-            p.success ? "Finished." : `Invalid input: ${z.prettifyError(p.error)}`,
-            !p.success,
-          );
+          return result(call, p.success ? "Finished." : invalidInput(p.error), !p.success);
         }
         if (call.name === "finish_research") {
           if (researchFinishes++)
             return result(call, "Not run: call finish_research once a turn.", true);
           const p = FinishResearch.safeParse(call.input);
-          if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+          if (!p.success) return result(call, invalidInput(p.error), true);
           const broken = chartsChecked ? "" : chartsWrong(`${p.data.answer}\n\n${p.data.report}`);
           chartsChecked = true;
           if (broken)
@@ -803,13 +800,13 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         }
         if (call.name === "send_to_chat") {
           const p = SendToChat.safeParse(call.input);
-          if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+          if (!p.success) return result(call, invalidInput(p.error), true);
           const r = await sendToChat(tasks, id, p.data, ctx.desktop);
           return result(call, r.text, r.isError);
         }
         if (call.name === "notify_owner") {
           const p = NotifyOwner.safeParse(call.input);
-          if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+          if (!p.success) return result(call, invalidInput(p.error), true);
           if (notified >= MAX_NOTIFICATIONS)
             return result(call, "Not sent: this task has notified the owner enough.", true);
           notified++;

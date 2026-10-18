@@ -75,6 +75,7 @@ import {
   containerOf,
   INCOGNITO_TOOLS,
   inBatches,
+  invalidInput,
   LOOKUP_TOOLS,
   liveTool,
   runTool,
@@ -845,7 +846,7 @@ export class Thread {
     episodeId: number,
     botId: string,
     role: "user" | "assistant",
-    content: BlockParam[] | Anthropic.Beta.BetaContentBlock[],
+    content: BlockParam[] | Anthropic.Beta.BetaContentBlock[] | NoteMark | EffortMark,
   ) {
     this.d.db
       .query(
@@ -856,11 +857,7 @@ export class Thread {
 
   /** A note from the app to the bot, e.g. that a task ended: a system message, after a user turn. */
   private appendNote(episodeId: number, botId: string, note: string) {
-    this.d.db
-      .query(
-        "INSERT INTO episode_turns (episode_id, bot_id, role, content, created_at) VALUES (?, ?, 'user', ?, ?)",
-      )
-      .run(episodeId, botId, JSON.stringify({ note } satisfies NoteMark), this.now());
+    this.appendTurn(episodeId, botId, "user", { note });
   }
 
   /**
@@ -905,11 +902,7 @@ export class Thread {
       )
       .get(episodeId, botId);
     if (last && (JSON.parse(last.content) as EffortMark).effort === effort) return;
-    this.d.db
-      .query(
-        "INSERT INTO episode_turns (episode_id, bot_id, role, content, created_at) VALUES (?, ?, 'user', ?, ?)",
-      )
-      .run(episodeId, botId, JSON.stringify({ effort } satisfies EffortMark), this.now());
+    this.appendTurn(episodeId, botId, "user", { effort });
   }
 
   /** Whether the model has seen the episode yet: any bot, or with `botId` that one. */
@@ -1229,9 +1222,7 @@ export class Thread {
          ORDER BY m.id`,
       )
       .all(episodeId, this.conversationId);
-    const summarized = db
-      .query<{ summarized: number }, [number]>("SELECT summarized FROM episodes WHERE id = ?")
-      .get(episodeId)?.summarized;
+    const summarized = this.summarized(episodeId);
     const previous = this.threadSummary();
     let summary = previous;
     if (summarized && previous && rows.length && this.hasTurns(episodeId))
@@ -1240,11 +1231,7 @@ export class Thread {
       rows.map((r) => r.id),
       episodeId,
       () => {
-        if (summary !== previous)
-          db.query("UPDATE conversations SET summary = ? WHERE id = ?").run(
-            summary,
-            this.conversationId,
-          );
+        if (summary !== previous) this.saveSummary(summary);
       },
     );
     return true;
@@ -1291,10 +1278,7 @@ export class Thread {
   }
 
   private async writeSummary(episodeId: number) {
-    const done = this.d.db
-      .query<{ summarized: number }, [number]>("SELECT summarized FROM episodes WHERE id = ?")
-      .get(episodeId)?.summarized;
-    if (done) return;
+    if (this.summarized(episodeId)) return;
     const transcript = this.d.db
       .query<{ role: string; bot_id: string | null; text: string; created_at: string }, [number]>(
         "SELECT role, bot_id, text, created_at FROM messages WHERE episode_id = ? AND status != 'streaming' ORDER BY id",
@@ -1312,13 +1296,23 @@ export class Thread {
       });
       const { recap, summary } = parseSummary(out.trim());
       if (!summary) throw new Error(`no summary for episode ${episodeId}`);
-      this.d.db
-        .query("UPDATE conversations SET summary = ? WHERE id = ?")
-        .run(summary, this.conversationId);
+      this.saveSummary(summary);
       if (recap)
         this.d.db.query("UPDATE episodes SET recap = ? WHERE id = ?").run(recap, episodeId);
     }
     this.markSummarized(episodeId);
+  }
+
+  private summarized(episodeId: number): boolean {
+    return !!this.d.db
+      .query<{ summarized: number }, [number]>("SELECT summarized FROM episodes WHERE id = ?")
+      .get(episodeId)?.summarized;
+  }
+
+  private saveSummary(summary: string) {
+    this.d.db
+      .query("UPDATE conversations SET summary = ? WHERE id = ?")
+      .run(summary, this.conversationId);
   }
 
   private markSummarized(episodeId: number) {
@@ -1822,7 +1816,7 @@ export class Thread {
     const askOpus = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
       const result = (content: string, isError = false) => toolResult(call.id, content, isError);
       const p = AskOpus.safeParse(call.input);
-      if (!p.success) return result(`Invalid input: ${z.prettifyError(p.error)}`, true);
+      if (!p.success) return result(invalidInput(p.error), true);
       if (askedOpus)
         return result("Opus was already asked once in this reply. Work with its answer.", true);
       askedOpus = true;
@@ -2148,7 +2142,8 @@ export class Thread {
   }
 }
 
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** `s` as a regex matching it literally. */
+export const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** The bots `text` brings in with @name (or @id), in the order it names them. */
 export function mentionsIn(text: string, bots: Bot[]): Bot[] {
