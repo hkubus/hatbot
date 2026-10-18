@@ -81,7 +81,12 @@ test("Haiku's review and the page screening get the untrusted parts escaped", as
   expect(count(review, "</untrusted_sources>")).toBe(1);
   expect(count(review, "</action>")).toBe(1);
 
-  await screenPage(model, t.spend, 0, { url: null, title: "t", text: ESCAPE("page_json") });
+  await screenPage(
+    model,
+    t.spend,
+    { taskId: 0 },
+    { url: null, title: "t", text: ESCAPE("page_json") },
+  );
   const screening = String(model.creates[1]?.messages[0]?.content);
   expect(count(screening, "</page_json>")).toBe(1);
 });

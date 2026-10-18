@@ -29,7 +29,13 @@ import { tagJson, tagText, untrustedBlock } from "../agent/untrusted";
 import { ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import type { CallContext, PluginTool, Verdict } from "../plugins/plugin";
-import { describeCall, runPluginTool, untrustedDefinitions, verdictFor } from "../plugins/registry";
+import {
+  describeCall,
+  runPluginTool,
+  untrustedDefinitions,
+  untrustedOf,
+  verdictFor,
+} from "../plugins/registry";
 import { alertMessageSource, alertParts } from "../triggers";
 import { addNotes, askOwner, callsOf, endOf, requestsFor, Stop, thinkingFor } from "./loop";
 import {
@@ -765,9 +771,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         if (!parsed.success) return false;
         const cc = { task: { id, tainted: task.tainted }, signal };
         if (verdictFor(t, call.input, cc).action !== "allow") return false;
-        const untrusted =
-          typeof t.untrusted === "function" ? t.untrusted(parsed.data) : Boolean(t.untrusted);
-        return !untrusted && `${t.name.split("_")[0]}:${t.target(parsed.data)}`;
+        return !untrustedOf(t, parsed.data) && `${t.name.split("_")[0]}:${t.target(parsed.data)}`;
       };
       const results: BlockParam[] = await inBatches(calls, lookup, async (call) => {
         if (signal.aborted) return result(call, "Not run: the task was cancelled.", true);

@@ -665,7 +665,6 @@ export class Tasks {
       bot: this.botOf(task),
       bots: this.d.bots,
       tasks: this,
-      plugins: this.d.plugins,
       attachments: this.d.attachments,
       desktop: agent.withSignal?.(signal) ?? agent,
       proposals: this.d.proposals,

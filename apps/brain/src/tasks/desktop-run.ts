@@ -497,7 +497,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     // Never rejects: it may be left unread when the task stops first.
     const verdict = known
       ? Promise.resolve(known)
-      : screenPage(d.model, d.spend, id, { url, title: page.title, text }).then((v) => {
+      : screenPage(d.model, d.spend, { taskId: id }, { url, title: page.title, text }).then((v) => {
           if (!v.failed) verdicts.set(key, v);
           return v;
         });
