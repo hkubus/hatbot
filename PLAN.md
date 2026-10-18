@@ -305,7 +305,7 @@ Every piece of content entering a context is labelled **trusted** or **untrusted
 - `code_run` output, always
 - Home Assistant's free-text states (shown as `[text]`; a state shows only when it's a number, a time, one of HA's own words or an option), and `homeassistant_entity` except for plain-device domains
 - attachments, and research reports and `research/sites.md` read back from memory
-- what tainted work hands on: a tainted task's summary reaching the chat, another bot or Opus (`get_task` quotes its steps too), the running summary of a chat that read untrusted content, notes in the chat from watchers that read pages or untrusted tools and from the heartbeat, and `search_history` hits from tainted conversations, tasks or notes
+- what tainted work hands on: a tainted task's summary reaching the chat, another bot or Opus (`get_task` quotes its steps too), notes in the chat from watchers that read pages or untrusted tools and from the heartbeat, and `search_history` hits from tainted conversations, tasks or notes
 
 Once a task has read **any untrusted content**, it is *tainted*. In a tainted task, these **outward actions** need your approval:
 - sending or posting
@@ -314,7 +314,7 @@ Once a task has read **any untrusted content**, it is *tainted*. In a tainted ta
 - buying
 - changing remote state (SSH writes, Proxmox power actions, forge writes)
 
-**Taint carries on.** A summarized conversation that read untrusted content makes every new conversation in that chat start tainted, `/new` included, with the summary shown as untrusted JSON; deleting those conversations clears it. The summariser is told not to keep requests from quoted content. A `run_desktop_task` or `ask_bot` from a tainted chat or task starts tainted. Most Kuma down alerts carry a message, so alert tasks are usually tainted.
+**Taint ends with the conversation** (decided 2026-10-18, the owner's choice: they'd notice if something was off). A new conversation starts untainted, `/new` included, whatever the earlier ones read; the messages it carries over stay labelled untrusted where they were, and the summariser is told not to keep requests from quoted content. Only a suspected injection carries on (below). A `run_desktop_task` or `ask_bot` from a tainted chat or task starts tainted. Most Kuma down alerts carry a message, so alert tasks are usually tainted.
 
 **Automations after untrusted content**: in a tainted chat, any change to a schedule or watcher that's on, deleting one, switching a schedule, watcher or trigger off, or changing a Kuma trigger's `confirmChecks` goes to Haiku's review and then to you, and the approval lists every change. A rename always asks you. Switching one on, or changing one that's off, doesn't ask. In a suspected chat (below), making a schedule or watcher asks too.
 
@@ -336,7 +336,7 @@ How it's enforced:
   - Untrusted text only ever enters through tool results or the app's notes, labelled with its source and JSON-encoded; its blocks can't be closed from inside.
   - The system prompt states the untrusted-content policy, in its own section before Style, and tells you when a page tried to instruct the bot. A bot's role can add care but can't loosen the rules on untrusted content, approvals or payments.
   - Haiku 5.5 screens untrusted text for injection, in the chat, background tasks and desktop tasks alike: fetched pages, search-result titles, the web tools' code output, untrusted plugin output, PDFs (as documents), text attachments, files viewed in the code container, research notes read back, an alert's first message and untrusted task payloads. It runs in the background, each text once (by hash); a change, and the next reply, wait for the verdicts so far. Incognito isn't screened, since it can't change anything.
-  - **A suspicion**, or a screening check that failed, means no Haiku review: every change asks you, and the approval says why (the tray shows it too). It lasts for the rest of the task, and in a chat it carries into the next conversation and through the running summary until that conversation is deleted. Tasks the chat starts after it, and a suspected task's `ask_bot` hand-offs, start suspected.
+  - **A suspicion**, or a screening check that failed, means no Haiku review: every change asks you, and the approval says why (the tray shows it too). It lasts for the rest of the task, and in a chat it carries into the next conversation, tainting it, and through the running summary (shown as untrusted JSON) until that conversation is deleted. Tasks the chat starts after it, and a suspected task's `ask_bot` hand-offs, start suspected.
   - Anthropic's built-in computer-use and browser-use injection checks stay on.
 
 ### 6.2 Approvals

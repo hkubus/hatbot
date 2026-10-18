@@ -430,32 +430,30 @@ export class Thread {
 
   /**
    * The episode has read untrusted content, `by`: tasks and schedules it makes from here on start
-   * tainted. The first `by` is kept. `carried`: it came with the summary or the messages before, and
-   * wasn't read here. Only what an episode read itself taints the running summary, so deleting that
-   * episode clears it (PLAN.md §6.1).
+   * tainted. The first `by` is kept. It ends with the episode: the next one starts clean (PLAN.md §6.1).
    */
-  private taint(episodeId: number, by: string, carried = false) {
+  private taint(episodeId: number, by: string) {
     this.d.db
-      .query(
-        `UPDATE episodes SET tainted = 1, tainted_by = coalesce(tainted_by, ?1),
-         read_untrusted = CASE WHEN ?2 THEN read_untrusted ELSE coalesce(read_untrusted, ?1) END
-         WHERE id = ?3`,
-      )
-      .run(by, carried ? 1 : 0, episodeId);
+      .query("UPDATE episodes SET tainted = 1, tainted_by = coalesce(tainted_by, ?) WHERE id = ?")
+      .run(by, episodeId);
   }
 
   /**
-   * A new episode carries recent messages over. It starts tainted if any of them came from a tainted
-   * episode or a tainted task, or is a note with untrusted text in it (PLAN.md §6.1).
+   * A new episode carries recent messages over, still labelled untrusted where they were, but not
+   * their taint: it starts clean. Only what the earlier conversation was suspected of reading comes
+   * along, and taints it (PLAN.md §6.1).
    */
-  private inheritTaint(episodeId: number, beforeMessageId: number) {
+  private inheritSuspicion(episodeId: number, beforeMessageId: number) {
     const carried = [
       ...this.untrusted(this.list(beforeMessageId, RECENT_MESSAGES).map((m) => m.id)).values(),
     ];
-    if (carried[0]) this.taint(episodeId, carried[0].source, true);
-    // What the earlier conversation was suspected of reading comes along with its messages.
-    const suspected = carried.find((m) => m.suspected)?.suspected;
-    if (suspected) this.suspect(episodeId, suspected);
+    this.carrySuspicion(episodeId, carried.find((m) => m.suspected)?.suspected ?? null);
+  }
+
+  private carrySuspicion(episodeId: number, suspected: string | null) {
+    if (!suspected) return;
+    this.suspect(episodeId, suspected);
+    this.taint(episodeId, suspected);
   }
 
   /**
@@ -1014,20 +1012,21 @@ export class Thread {
   }
 
   /**
-   * What the running summary drew on that was untrusted, and what may be a prompt injection, or null.
-   * It was written from every summarized conversation, so one that read untrusted content itself
-   * taints it until that one is deleted; what a conversation only carried over doesn't.
+   * What the running summary drew on that may be a prompt injection, or null. It was written from
+   * every summarized conversation, so one suspected of reading one itself makes it suspect until that
+   * one is deleted; what a conversation only carried over doesn't. Mere untrusted reads don't carry.
    */
-  private summaryTrust(): { tainted: string | null; suspected: string | null } {
-    if (!this.threadSummary()) return { tainted: null, suspected: null };
-    const first = (column: string) =>
-      `(SELECT 'The summary of earlier conversations, which drew on: ' || ${column} FROM episodes
-        WHERE conversation_id = ?1 AND summarized = 1 AND ${column} IS NOT NULL ORDER BY id LIMIT 1)`;
-    return this.d.db
-      .query<{ tainted: string | null; suspected: string | null }, [number]>(
-        `SELECT ${first("read_untrusted")} AS tainted, ${first("read_suspected")} AS suspected`,
-      )
-      .get(this.conversationId) as { tainted: string | null; suspected: string | null };
+  private summarySuspected(): string | null {
+    if (!this.threadSummary()) return null;
+    return (
+      this.d.db
+        .query<{ s: string }, [number]>(
+          `SELECT 'The summary of earlier conversations, which drew on: ' || read_suspected AS s
+           FROM episodes WHERE conversation_id = ? AND summarized = 1 AND read_suspected IS NOT NULL
+           ORDER BY id LIMIT 1`,
+        )
+        .get(this.conversationId)?.s ?? null
+    );
   }
 
   private threadSummary(): string {
@@ -1356,8 +1355,8 @@ export class Thread {
       ...(incognito
         ? []
         : [
-            // One written from conversations that read untrusted content is data, like what they read.
-            this.summaryTrust().tainted
+            // One written from a conversation suspected of reading an injection is data, like what it read.
+            this.summarySuspected()
               ? untrustedBlock("summary_of_earlier_conversations", this.threadSummary())
               : `<summary_of_earlier_conversations>\n${this.threadSummary() || "(none yet)"}\n</summary_of_earlier_conversations>`,
           ]),
@@ -1596,12 +1595,10 @@ export class Thread {
         if (episode.isNew && !incognito) {
           // What the earlier conversations read is screened before it's carried on.
           await Promise.allSettled([...this.screeners.values()].map((s) => s.settled()));
-          // /new leaves the messages before, and what they had read, behind.
-          if (!episode.fresh) this.inheritTaint(episode.id, userId);
-          // The running summary carries on what the conversations folded into it read.
-          const summary = this.summaryTrust();
-          if (summary.tainted) this.taint(episode.id, summary.tainted, true);
-          if (summary.suspected) this.suspect(episode.id, summary.suspected);
+          // A new conversation starts untainted; only a suspected injection carries on. /new leaves
+          // the messages before behind, and that with them.
+          if (!episode.fresh) this.inheritSuspicion(episode.id, userId);
+          this.carrySuspicion(episode.id, this.summarySuspected());
         }
       } else {
         const commands = this.commandsSince(episode.id, userId);

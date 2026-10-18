@@ -276,7 +276,7 @@ test("a tainted task's summary reaches the chat labelled as data, and taints it"
   expect(episodeTaint(t)).toEqual({ tainted: 1, tainted_by: 'Task #1 "Prices"' });
 });
 
-test("taint and suspicion go on with the summary until their conversation is deleted; a failed check doesn't", async () => {
+test("a new conversation starts untainted; a suspicion goes on with the summary until its conversation is deleted", async () => {
   const suspected = (t: TestApp) =>
     t.db
       .query<{ s: string | null }, []>(
@@ -304,7 +304,7 @@ test("taint and suspicion go on with the summary until their conversation is del
   await t.thread.post("/new").done;
   await t.thread.post("hi").done;
   expect(suspected(t)).toBeNull();
-  expect(episodeTaint(t)?.tainted).toBe(1);
+  expect(episodeTaint(t)).toEqual({ tainted: 0, tainted_by: null });
 
   const chat = new FakeModel(
     [

@@ -551,11 +551,7 @@ test("/new starts a conversation that carries nothing over, and folds the last o
   );
   const t = await testApp(model);
   await t.thread.post("first").done;
-  t.db
-    .query(
-      "UPDATE episodes SET tainted = 1, tainted_by = 'https://example.com', read_untrusted = 'https://example.com'",
-    )
-    .run();
+  t.db.query("UPDATE episodes SET tainted = 1, tainted_by = 'https://example.com'").run();
   t.advance(60_000);
   await t.thread.post("/new").done;
   // A second /new is the same new conversation.
@@ -572,10 +568,10 @@ test("/new starts a conversation that carries nothing over, and folds the last o
       "SELECT tainted, fresh FROM episodes ORDER BY id",
     )
     .all();
-  // The summary it opens with was written from the tainted one, so it carries that on.
+  // A new conversation starts clean, though its summary was written from the tainted one.
   expect(episodes).toEqual([
     { tainted: 1, fresh: 0 },
-    { tainted: 1, fresh: 1 },
+    { tainted: 0, fresh: 1 },
   ]);
   const list = t.thread.list();
   expect(list.map((m) => [m.kind, m.text, m.episodeId])).toEqual([

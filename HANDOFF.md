@@ -73,7 +73,7 @@ Acceptance tests for parts that have never run live. The owner runs them; write 
 These came out of the M4 security review.
 
 1. **`memory_write` from a tainted chat or task:** closed 2026-10-16, with the owner's agreement. Writes and deletes to skills and the `INDEX.md` files become `write` proposals (PLAN §6.1); other memory files still commit directly.
-2. **Thread summaries:** closed 2026-10-17. If a summarized conversation read untrusted content, every new conversation in that chat starts tainted, `/new` included, until those conversations are deleted (PLAN §6.1). So in a chat that has used the web, later writes go through Haiku's review, and edits to skills, INDEX.md and homelab.md become proposals.
+2. **Thread summaries:** closed 2026-10-17, loosened 2026-10-18. Taint ends with the conversation: a new one starts untainted, whatever earlier ones read. Only a suspected injection carries on through the summary, until that conversation is deleted (PLAN §6.1).
 3. **SSH logs and files:** done. `ssh_check logs`/`errors` and `ssh_read_file` are untrusted and taint the task.
 
 ## 2. M5 — Teach-by-showing (built, not tried live)
@@ -111,7 +111,7 @@ These came out of the M4 security review.
 
 ## Chat commands (built 2026-10-13, not tried live)
 - `/new`, `/stop [task]`, `/task <what>` and `/remember <fact>` run in the brain without the model (`Thread.post` in `apps/brain/src/agent/thread.ts`; the list is `CHAT_COMMANDS` in `packages/shared`, mirrored in `apps/ios/Hatbot/Core/Thread.swift`). An unknown `/word` is an ordinary message.
-- `/new` starts a `fresh` episode (migration 18): no recent messages and no taint carried over, only the running summary. `/task` runs your words as an untainted background task. `/remember` appends to the Notes section of INDEX.md, as the owner. The model hears about commands in `<owner_commands>` with your next message.
+- `/new` starts a `fresh` episode (migration 18): no recent messages and no suspicion carried over with them, only the running summary. `/task` runs your words as an untainted background task. `/remember` appends to the Notes section of INDEX.md, as the owner. The model hears about commands in `<owner_commands>` with your next message.
 
 ## Incognito (built 2026-10-13, not tried live)
 - The chat toolbar's incognito button (web and iOS) switches to a conversation apart from the thread. `incognito: true` on `POST /thread/messages`; `GET /thread/messages?incognito=1` lists it; `DELETE /thread/incognito` ends it. The owner chose these rules:
