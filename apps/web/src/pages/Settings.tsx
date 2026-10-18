@@ -11,15 +11,13 @@ import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { ask, askText } from "../confirm";
 import { clearDrafts } from "../drafts";
-import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
-import { navigate } from "../router";
 import { parseLimit, parseName, SavedRow } from "../saved-row";
 import { setPaused, useStore } from "../store";
 import { Switch } from "../switch";
 import { setTheme, useTheme } from "../theme";
 import type { Toast } from "../toast";
-import { Group, Row, Seg } from "../ui";
+import { Group, LinkRow, Row, Seg } from "../ui";
 import { PluginPage, PluginsGroup } from "./Plugins";
 
 const Account = lazy(() => import("./Account").then((m) => ({ default: m.Account })));
@@ -158,18 +156,8 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
         </Group>
 
         <Group className="show-phone">
-          <button type="button" className="row link" onClick={() => navigate("/schedules")}>
-            <div className="txt">
-              <b>Schedules & Triggers</b>
-            </div>
-            <Icon name="chevron" className="chev" />
-          </button>
-          <button type="button" className="row link" onClick={() => navigate("/spend")}>
-            <div className="txt">
-              <b>Spend</b>
-            </div>
-            <Icon name="chevron" className="chev" />
-          </button>
+          <LinkRow to="/schedules" label="Schedules & Triggers" />
+          <LinkRow to="/spend" label="Spend" />
         </Group>
 
         <Group title="Spending limits">
@@ -244,19 +232,11 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
         </Group>
 
         <Group title="Looking after things">
-          <button
-            type="button"
-            className="row link"
-            onClick={() => navigate("/settings/heartbeat")}
-          >
-            <div className="txt">
-              <b>Heartbeat</b>
-            </div>
+          <LinkRow to="/settings/heartbeat" label="Heartbeat">
             <span className="val">
               {settings.heartbeat.enabled ? describeEvery(settings.heartbeat.everyMinutes) : "Off"}
             </span>
-            <Icon name="chevron" className="chev" />
-          </button>
+          </LinkRow>
           <Row label="Propose a memory tidy-up weekly">
             <Switch on={settings.memoryTidy} onChange={(memoryTidy) => update({ memoryTidy })} />
           </Row>
@@ -357,12 +337,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
         </Group>
 
         <Group title="Account">
-          <button type="button" className="row link" onClick={() => navigate("/settings/account")}>
-            <div className="txt">
-              <b>Password and sign-ins</b>
-            </div>
-            <Icon name="chevron" className="chev" />
-          </button>
+          <LinkRow to="/settings/account" label="Password and sign-ins" />
           <Row
             label="API tokens"
             sub={tokenEdit.error && <span className="form-error">{tokenEdit.error}</span>}
@@ -416,12 +391,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
         </Group>
 
         <Group>
-          <button type="button" className="row link" onClick={() => navigate("/settings/checks")}>
-            <div className="txt">
-              <b>Check everything</b>
-            </div>
-            <Icon name="chevron" className="chev" />
-          </button>
+          <LinkRow to="/settings/checks" label="Check everything" />
         </Group>
 
         <UpdateGroup toast={toast} />

@@ -4,10 +4,11 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { api, errorText } from "../api";
 import { plainText } from "../format";
 import { Icon } from "../icons";
+import { Link } from "../link";
 import { navigate } from "../router";
 import { botName, chatName, chatPath, getState, useStore } from "../store";
 import { StatusChip } from "../tasks";
-import { Group } from "../ui";
+import { Group, LinkRow } from "../ui";
 
 const ROUTINE = { schedule: "/schedules", trigger: "/triggers", watcher: "/watchers" } as const;
 
@@ -95,21 +96,19 @@ export function Search({ query }: { query: string }) {
               const chat = conversations.find((c) => c.id === m.conversationId);
               const who = m.botId ? botName(getState(), m.botId) : "You";
               return (
-                <div className="row" key={m.id}>
-                  <button
-                    type="button"
-                    className="row-main"
-                    onClick={() => navigate(`${chatPath(m.conversationId)}?message=${m.id}`)}
-                  >
-                    <div className="txt snippet">
-                      <b>{who}:</b> <Snippet text={m.snippet} />
-                    </div>
-                    <span className="val">
-                      {manyChats && chat ? `${chatName(getState(), chat)}, ` : ""}
-                      {day(m.createdAt)}
-                    </span>
-                  </button>
-                </div>
+                <Link
+                  key={m.id}
+                  className="row row-link"
+                  to={`${chatPath(m.conversationId)}?message=${m.id}`}
+                >
+                  <div className="txt snippet">
+                    <b>{who}:</b> <Snippet text={m.snippet} />
+                  </div>
+                  <span className="val">
+                    {manyChats && chat ? `${chatName(getState(), chat)}, ` : ""}
+                    {day(m.createdAt)}
+                  </span>
+                </Link>
               );
             })}
           </Group>
@@ -117,54 +116,36 @@ export function Search({ query }: { query: string }) {
         {results && results.tasks.length > 0 && (
           <Group title="Tasks">
             {results.tasks.map((t) => (
-              <div className="row" key={t.id}>
-                <button
-                  type="button"
-                  className="row-main"
-                  onClick={() => navigate(`/tasks/${t.id}`)}
-                >
-                  <div className="txt">
-                    <b>{t.title}</b>
-                  </div>
-                  <StatusChip status={t.status} />
-                  <span className="val">{day(t.createdAt)}</span>
-                </button>
-              </div>
+              <Link key={t.id} className="row row-link" to={`/tasks/${t.id}`}>
+                <div className="txt">
+                  <b>{t.title}</b>
+                </div>
+                <StatusChip status={t.status} />
+                <span className="val">{day(t.createdAt)}</span>
+              </Link>
             ))}
           </Group>
         )}
         {results && results.memory.length > 0 && (
           <Group title="Memory">
             {results.memory.map((h) => (
-              <div className="row" key={`${h.path}:${h.line}`}>
-                <button
-                  type="button"
-                  className="row-main"
-                  onClick={() => navigate(`/memory?path=${encodeURIComponent(h.path)}`)}
-                >
-                  <div className="txt snippet">{plainText(h.text)}</div>
-                  <span className="val mono">{h.path}</span>
-                </button>
-              </div>
+              <Link
+                key={`${h.path}:${h.line}`}
+                className="row row-link"
+                to={`/memory?path=${encodeURIComponent(h.path)}`}
+              >
+                <div className="txt snippet">{plainText(h.text)}</div>
+                <span className="val mono">{h.path}</span>
+              </Link>
             ))}
           </Group>
         )}
         {results && results.routines.length > 0 && (
           <Group title="Schedules, triggers and watchers">
             {results.routines.map((r) => (
-              <div className="row" key={`${r.kind}${r.id}`}>
-                <button
-                  type="button"
-                  className="row-main"
-                  onClick={() => navigate(`${ROUTINE[r.kind]}/${r.id}`)}
-                >
-                  <div className="txt">
-                    <b>{r.name}</b>
-                  </div>
-                  <span className="val">{r.kind[0]?.toUpperCase() + r.kind.slice(1)}</span>
-                  <Icon name="chevron" className="chev" />
-                </button>
-              </div>
+              <LinkRow key={`${r.kind}${r.id}`} to={`${ROUTINE[r.kind]}/${r.id}`} label={r.name}>
+                <span className="val">{r.kind[0]?.toUpperCase() + r.kind.slice(1)}</span>
+              </LinkRow>
             ))}
           </Group>
         )}

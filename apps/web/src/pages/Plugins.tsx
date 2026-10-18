@@ -5,12 +5,10 @@ import { useCallback, useEffect, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { NoForm } from "../form";
-import { Icon } from "../icons";
 import { PLUGIN_SETTINGS } from "../plugins";
-import { navigate } from "../router";
 import { loadPlugins, savePlugin, useStore } from "../store";
 import { Switch } from "../switch";
-import { BackHead, Group } from "../ui";
+import { BackHead, Group, LinkRow } from "../ui";
 
 const STATE: Record<PluginInfo["state"], string> = {
   off: "Off",
@@ -46,18 +44,9 @@ export function PluginsGroup() {
         const p = plugins[id];
         if (!p) return null;
         return (
-          <button
-            type="button"
-            key={id}
-            className="row link"
-            onClick={() => navigate(`/settings/plugins/${id}`)}
-          >
-            <div className="txt">
-              <b>{p.name}</b>
-            </div>
+          <LinkRow key={id} to={`/settings/plugins/${id}`} label={p.name}>
             <span className="val">{STATE[p.state]}</span>
-            <Icon name="chevron" className="chev" />
-          </button>
+          </LinkRow>
         );
       })}
     </Group>

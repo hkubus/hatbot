@@ -23,7 +23,7 @@ import {
   useStore,
 } from "../store";
 import { ApprovalCard, isActive, Shot, StatusChip, taskLine } from "../tasks";
-import { BackHead, Group, Seg } from "../ui";
+import { BackHead, Group, LinkRow, Seg } from "../ui";
 import { AssistantBody } from "./Chat";
 
 const time = (iso: string) =>
@@ -108,19 +108,16 @@ export function Tasks() {
         {(waiting.length > 0 || request) && (
           <Group title="Waiting for you">
             {request && (
-              <Link className="row row-link" to={`/tasks/${request.taskId}?live=1`}>
-                <div className="txt">
-                  <b>Take over the desktop</b>
-                </div>
+              <LinkRow to={`/tasks/${request.taskId}?live=1`} label="Take over the desktop">
                 <span className="val">{request.reason}</span>
-              </Link>
+              </LinkRow>
             )}
             {waiting.map((a) => {
               const n = a.kind === "mandate" ? negotiationOf({ negotiations }, a.id) : undefined;
               return (
-                <Link
+                <LinkRow
                   key={a.id}
-                  className="row row-link"
+                  label={`Can I go ahead? ${a.summary}`}
                   to={
                     a.taskId
                       ? `/tasks/${a.taskId}`
@@ -130,12 +127,7 @@ export function Tasks() {
                           ? `/chat/${a.conversationId}`
                           : "/"
                   }
-                >
-                  <div className="txt">
-                    <b>Can I go ahead? {a.summary}</b>
-                  </div>
-                  <Icon name="chevron" />
-                </Link>
+                />
               );
             })}
           </Group>
@@ -143,13 +135,9 @@ export function Tasks() {
         {talking.length > 0 && (
           <Group title="Negotiations">
             {talking.map((n) => (
-              <Link key={n.id} className="row row-link" to={`/negotiations/${n.id}`}>
-                <div className="txt">
-                  <b>{n.title}</b>
-                </div>
+              <LinkRow key={n.id} to={`/negotiations/${n.id}`} label={n.title}>
                 <NegotiationChip status={n.status} />
-                <Icon name="chevron" />
-              </Link>
+              </LinkRow>
             ))}
           </Group>
         )}
