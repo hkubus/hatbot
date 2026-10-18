@@ -72,9 +72,9 @@ if [[ -n ${HATBOT_UPDATE_SIGNERS:-} ]]; then
   git -C "$REPO" -c gpg.ssh.allowedSignersFile="$HATBOT_UPDATE_SIGNERS" verify-commit "$to" ||
     fail "${to:0:7} isn't signed by a key in $HATBOT_UPDATE_SIGNERS, so it wasn't deployed"
   # Only forward: whoever can push could move the branch back to an older signed commit, from before
-  # a fix. The fetch takes a forced push, so the live commit has to be in the new one's history.
-  if [[ -n $from ]] && git -C "$REPO" cat-file -e "$from^{commit}" 2>/dev/null &&
-    ! git -C "$REPO" merge-base --is-ancestor "$from" "$to"; then
+  # a fix. The fetch takes a forced push, so the live commit has to be in the new one's history. A live
+  # commit this repo hasn't seen isn't in it either (merge-base exits 128), so that's refused too.
+  if [[ -n $from ]] && ! git -C "$REPO" merge-base --is-ancestor "$from" "$to" 2>/dev/null; then
     fail "$branch moved back or was rewritten: ${to:0:7} doesn't come after the live ${from:0:7}, so it wasn't deployed. To deploy it anyway, run deploy.sh on the Proxmox host"
   fi
 fi

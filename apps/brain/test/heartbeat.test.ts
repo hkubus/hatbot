@@ -227,16 +227,13 @@ test("it's on by default, and runs only when it's on and due", async () => {
   const t = await testApp();
   expect(t.settings.get().heartbeat.enabled).toBe(true);
   t.settings.update({ heartbeat: { ...t.settings.get().heartbeat, enabled: false } });
-  t.heartbeat.tick();
-  await Bun.sleep(5);
+  expect(t.heartbeat.tick()).toBeUndefined();
   expect(t.heartbeat.info().at).toBeNull();
   await on(t);
-  t.heartbeat.tick();
-  await waitFor(() => t.heartbeat.info().at);
-  const at = t.heartbeat.info().at;
+  const at = (await t.heartbeat.tick())?.at ?? null;
+  expect(at).not.toBeNull();
   t.advance(10 * 60_000);
-  t.heartbeat.tick();
-  await Bun.sleep(5);
+  expect(t.heartbeat.tick()).toBeUndefined();
   expect(t.heartbeat.info().at).toBe(at);
 });
 
@@ -272,6 +269,33 @@ test("the triage's spend check is what its request may cost, not a flat amount",
   // Both looks, at the spend and at the monitor, are the model's.
   expect((await t.heartbeat.run()).note).toBe("Looked.\nLooked.");
   expect(t.taskModel.creates).toHaveLength(2);
+});
+
+test("the triage holds what it may cost while it runs, so a request made meanwhile can't pass a limit with it", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [kuma(["Jellyfin"])]);
+  await t.plugins.update("kuma", { enabled: true });
+  await on(t);
+  t.settings.update({ limits: { ...t.settings.get().limits, dailyUsd: 1, alertReserveUsd: 0 } });
+  t.spend.record({
+    model: "claude-haiku-5-5",
+    purpose: "chat",
+    usage: { input_tokens: 0, output_tokens: 0 },
+    extraUsd: 0.995,
+  });
+  const meanwhile: string[] = [];
+  t.taskModel.onCreate = () => {
+    try {
+      t.spend.check(0.004);
+    } catch (err) {
+      meanwhile.push((err as Error).message);
+    }
+    return '{"action": "nothing", "title": "", "message": ""}';
+  };
+  await t.heartbeat.run();
+  expect(meanwhile).toHaveLength(2);
+  expect(meanwhile[0]).toContain("Today's $1 limit");
+  // Let go once it's done.
+  expect(() => t.spend.check(0.004)).not.toThrow();
 });
 
 test("the weekly report sums up the week without the model, once, when it's due", async () => {

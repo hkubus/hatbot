@@ -195,6 +195,11 @@ test("hatbot-update.sh deploys signed commits only forward, not a branch moved b
     expect(back.deployed).toBeNull();
     expect(back.status.state).toBe("failed");
     expect(back.status.error).toContain("doesn't come after the live");
+    // The same from an update repository that has never seen the live commit, as after deploy.sh.
+    rmSync(join(dir, "state/repo.git"), { recursive: true });
+    const unseen = update(v2);
+    expect(unseen.deployed).toBeNull();
+    expect(unseen.status.error).toContain("doesn't come after the live");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
