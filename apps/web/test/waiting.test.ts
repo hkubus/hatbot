@@ -1,9 +1,8 @@
 import { expect, test } from "bun:test";
-import type { Approval, Conversation } from "@hatbot/shared";
+import type { Approval } from "@hatbot/shared";
 import { splitWaiting } from "../src/waiting";
+import { chat } from "./fixtures";
 
-const chat = (id: number, kind: Conversation["kind"], botIds: string[]): Conversation =>
-  ({ id, kind, botIds, title: "", unread: 0 }) as unknown as Conversation;
 const approval = (id: number, botId: string, conversationId: number | null = null) =>
   ({
     id,
