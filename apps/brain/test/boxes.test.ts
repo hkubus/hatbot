@@ -231,20 +231,31 @@ test("hatbox.feed: a plugin's read tool, run for the page on a timer without the
   await t.plugins.update("lab", { enabled: true });
   t.boxes.create({ botId: "hatbot", conversationId: 1, title: "Load", html: PAGE }, {});
   await t.thread.post("show the load in the box").done;
-  const feed = async () =>
-    ((await (await page(t, { op: "feed", name: "load" })).json()) as { value: BoxFeedValue }).value;
+  const feed = async (fresh?: true) =>
+    (
+      (await (await page(t, { op: "feed", name: "load", fresh })).json()) as {
+        value: BoxFeedValue;
+      }
+    ).value;
   expect((await feed()).value).toEqual({ node: "pve", load: 1 });
 
+  // A fresh read runs the tool again once what it has is over a minute old, not sooner.
   answer.load = 2;
-  t.advance(5 * 60_000);
-  await t.boxes.feeds?.tick();
-  expect(await feed()).toMatchObject({ value: { load: 2 }, at: new Date(t.clock()).toISOString() });
+  t.advance(60_000);
+  expect((await feed(true)).value).toMatchObject({ load: 1 });
+  t.advance(1_000);
+  expect((await feed(true)).value).toMatchObject({ load: 2 });
 
-  t.settings.update({ paused: true });
   answer.load = 3;
   t.advance(5 * 60_000);
   await t.boxes.feeds?.tick();
-  expect((await feed()).value).toMatchObject({ load: 2 });
+  expect(await feed()).toMatchObject({ value: { load: 3 }, at: new Date(t.clock()).toISOString() });
+
+  t.settings.update({ paused: true });
+  answer.load = 4;
+  t.advance(5 * 60_000);
+  await t.boxes.feeds?.tick();
+  expect((await feed(true)).value).toMatchObject({ load: 3 });
 
   t.settings.update({ paused: false });
   await t.plugins.update("lab", { enabled: false });
@@ -253,8 +264,8 @@ test("hatbox.feed: a plugin's read tool, run for the page on a timer without the
   t.advance(5 * 60_000);
   await t.boxes.feeds?.tick();
   // It keeps what it last read, saying why that's old.
-  const stopped = await feed();
-  expect(stopped.value).toMatchObject({ load: 2 });
+  const stopped = await feed(true);
+  expect(stopped.value).toMatchObject({ load: 3 });
   expect(stopped.error).toStartWith("Stopped");
   expect(model.requests).toHaveLength(2);
 });

@@ -86,7 +86,12 @@ export const BoxCall = z.discriminatedUnion("op", [
     maxTokens: z.number().int().min(1).max(MAX_BOX_ASK_TOKENS).optional(),
   }),
   z.object({ op: z.literal("send"), text: z.string().trim().min(1).max(MAX_BOX_NOTE) }),
-  z.object({ op: z.literal("feed"), name: z.string().max(MAX_BOX_FEED_NAME) }),
+  // `fresh`: run the feed's tool first, when its last run is over a minute old.
+  z.object({
+    op: z.literal("feed"),
+    name: z.string().max(MAX_BOX_FEED_NAME),
+    fresh: z.literal(true).optional(),
+  }),
 ]);
 export type BoxCall = z.infer<typeof BoxCall>;
 
