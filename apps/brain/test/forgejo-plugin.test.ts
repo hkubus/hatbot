@@ -110,6 +110,7 @@ beforeAll(() => {
           { commit: { sha: "0123456789abcdef", html_url: "https://git.test/c/0123" } },
           201,
         );
+      if (path === "/repos/kubus/hatbot/pulls/8/merge") return json({});
       if (path === "/repos/kubus/hatbot/pulls" && req.method === "POST")
         return json(
           { ...issue(9), head: { ref: "hatbot/x", sha: "d" }, base: { ref: "main" } },
@@ -223,6 +224,20 @@ test("commits update existing files by sha and create new ones on a new branch",
       call,
     ),
   ).rejects.toThrow("link is a symlink; you can't change those here.");
+
+  // A pull request, and a merge Forgejo's way.
+  const pr = { repo: "kubus/hatbot", head: "hatbot/docs", base: "main", title: "Docs", body: "B" };
+  expect(await fj("forgejo_open_pr").run(pr, call)).toBe(
+    "Opened pull request #9: https://git.test/kubus/hatbot/issues/9",
+  );
+  expect(seen.at(-1)?.body).toEqual({
+    head: "hatbot/docs",
+    base: "main",
+    title: "Docs",
+    body: "B",
+  });
+  await fj("forgejo_merge").run({ repo: "kubus/hatbot", number: 8, method: "squash" }, call);
+  expect(seen.at(-1)).toMatchObject({ method: "POST", body: { Do: "squash" } });
 });
 
 test("policy: new branches run, the default branch, workflows and merges ask", async () => {
@@ -336,6 +351,11 @@ test("an empty branch, branches git wouldn't take, and . or .. in names and path
   await refused("forgejo_file", { repo, path: "../../../../user/keys" });
   await refused("forgejo_ci", { repo, ref: ".." });
   await refused("forgejo_issue", { repo: "kubus/..", number: 1 });
+  for (const [head, base] of [
+    ["", "main"],
+    ["hatbot/x", "main/"],
+  ])
+    await refused("forgejo_open_pr", { repo, head, base, title: "t" });
   expect(seen).toEqual([]);
   expect(
     verdictFor(fj("forgejo_commit_files"), { repo, branch: "MAIN", message: "m", files }, call)
