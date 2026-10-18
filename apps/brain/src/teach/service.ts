@@ -290,6 +290,7 @@ export class Teach {
   /** One Opus call from the step log and a spread of the screenshots. */
   private async write(id: number) {
     const { archive, model, spend } = this.d;
+    let release = () => {};
     try {
       const steps = JSON.parse(this.row(id)?.events ?? "[]") as RecStep[];
       const { lines, screens } = describeSteps(steps);
@@ -316,7 +317,7 @@ export class Teach {
       }
       const p = priceOf(TEACH_MODEL);
       const inputTokens = lines.join("\n").length / 3 + picked.length * SCREEN_TOKENS + 3000;
-      spend.check((inputTokens * p.input + 8000 * p.output) / 1_000_000);
+      release = spend.hold((inputTokens * p.input + 8000 * p.output) / 1_000_000);
       const res = await model.create({
         model: TEACH_MODEL,
         max_tokens: 16000,
@@ -350,6 +351,8 @@ export class Teach {
           ? `Not written: ${err.message}`
           : `Failed: ${modelErrorText(err)}`;
       this.update(id, { status: "failed", error }, "drafting");
+    } finally {
+      release();
     }
   }
 

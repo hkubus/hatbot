@@ -9,7 +9,7 @@ import type { EventBus } from "../events";
 import type { Notifier } from "../notify";
 import { lastDue } from "../report";
 import type { SettingsStore } from "../settings";
-import { costOf, type Spend } from "../spend";
+import { fixedTokens, requestCeiling, type Spend } from "../spend";
 import type { Tasks } from "../tasks/service";
 import { type Skills, skillPath } from "../teach/skills";
 import { MemoryConflict, type MemoryStore } from "./store";
@@ -419,26 +419,35 @@ export class Proposals {
   }
 
   private async ask(system: string, content: string, purpose: string) {
-    const tokens = { input: content.length / 3, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0 };
-    this.d.spend.check(costOf(PROPOSAL_MODEL, { ...tokens, output: MAX_TOKENS }));
-    // Streamed: with thinking always on, the answer needs more room than a plain request allows.
-    const res = await this.d.model.stream(
-      {
-        model: PROPOSAL_MODEL,
-        max_tokens: MAX_TOKENS,
-        thinking: { type: "adaptive" },
-        output_config: {
-          effort: "medium",
-          format: { type: "json_schema", schema: PROPOSAL_SCHEMA },
-        },
-        system,
-        messages: [{ role: "user", content }],
-      },
-      {
-        onFailedUsage: (model, usage) => this.d.spend.recordResponse({ model, purpose, usage }),
-      },
+    const release = this.d.spend.hold(
+      requestCeiling(PROPOSAL_MODEL, {
+        prompt: fixedTokens(system, content),
+        maxTokens: MAX_TOKENS,
+      }),
     );
-    this.d.spend.recordResponse({ model: PROPOSAL_MODEL, purpose, usage: res.usage });
+    // Streamed: with thinking always on, the answer needs more room than a plain request allows.
+    const res = await this.d.model
+      .stream(
+        {
+          model: PROPOSAL_MODEL,
+          max_tokens: MAX_TOKENS,
+          thinking: { type: "adaptive" },
+          output_config: {
+            effort: "medium",
+            format: { type: "json_schema", schema: PROPOSAL_SCHEMA },
+          },
+          system,
+          messages: [{ role: "user", content }],
+        },
+        {
+          onFailedUsage: (model, usage) => this.d.spend.recordResponse({ model, purpose, usage }),
+        },
+      )
+      .then((r) => {
+        this.d.spend.recordResponse({ model: PROPOSAL_MODEL, purpose, usage: r.usage });
+        return r;
+      })
+      .finally(release);
     if (res.stop_reason === "max_tokens")
       throw new ProposalError(
         "The proposal was too long to finish. Try again, or tidy by hand.",

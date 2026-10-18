@@ -160,8 +160,9 @@ export async function applyNote(
     expires_in_days: days,
     allow: m.allow,
   };
+  let release = () => {};
   try {
-    d.spend.check(0.02);
+    release = d.spend.hold(0.02);
     const res = await d.model.create({
       model: NOTE_MODEL,
       max_tokens: 1000,
@@ -199,5 +200,7 @@ export async function applyNote(
   } catch (err) {
     console.error("applying a mandate note failed", err);
     return { error: "Haiku couldn't be asked" };
+  } finally {
+    release();
   }
 }
