@@ -811,4 +811,31 @@ export const migrations: string[] = [
   );
   CREATE INDEX box_notices_box ON box_notices (box_id, created_at);
   `,
+  // 45: boxes' actions, a plugin tool with a fixed input that the bot declared, you approved, and the
+  // box's page runs, each run under the tool's own policy; and the runs, counted for a box's daily limit,
+  // with the note each left in the chat (PLAN.md §21.16).
+  `
+  CREATE TABLE box_actions (
+    id INTEGER PRIMARY KEY,
+    box_id INTEGER NOT NULL REFERENCES boxes(id) ON DELETE CASCADE,
+    -- The bot that added it: it runs with that bot's tools, and not once the bot is deleted.
+    bot_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    input TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    -- The last run: when it ended, what the tool answered, or why it failed or didn't run.
+    last_at TEXT,
+    last_output TEXT,
+    last_error TEXT,
+    UNIQUE (box_id, name)
+  );
+  CREATE TABLE box_action_runs (
+    id INTEGER PRIMARY KEY,
+    box_id INTEGER NOT NULL REFERENCES boxes(id) ON DELETE CASCADE,
+    message_id INTEGER,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX box_action_runs_box ON box_action_runs (box_id, created_at);
+  `,
 ];

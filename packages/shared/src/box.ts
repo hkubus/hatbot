@@ -26,7 +26,14 @@ export type BoxVersion = {
 /** A secret the box's box.json declares, and whether you've set it: never its value. */
 export type BoxSecret = { name: string; set: boolean };
 
-export type BoxDetail = Box & { versions: BoxVersion[]; secrets: BoxSecret[] };
+/** An action the box's page may run (hatbox.action), and what it runs, in a line. */
+export type BoxActionInfo = { name: string; what: string };
+
+export type BoxDetail = Box & {
+  versions: BoxVersion[];
+  secrets: BoxSecret[];
+  actions: BoxActionInfo[];
+};
 
 /**
  * A version's page, for its Code view. A box with files (PLAN.md §21.6) has them too, and its `html` is
@@ -92,6 +99,12 @@ export const BoxCall = z.discriminatedUnion("op", [
     name: z.string().max(MAX_BOX_FEED_NAME),
     fresh: z.literal(true).optional(),
   }),
+  // An action the bot declared and you approved: runs it, or with `check`, says how the last run went.
+  z.object({
+    op: z.literal("action"),
+    name: z.string().max(MAX_BOX_FEED_NAME),
+    check: z.boolean().optional(),
+  }),
 ]);
 export type BoxCall = z.infer<typeof BoxCall>;
 
@@ -103,3 +116,15 @@ export type BoxAnswer = { value?: unknown };
  * JSON) and when it came; `error` says why its last run failed, or why it stopped.
  */
 export type BoxFeedValue = { value: unknown; at: string; error?: string };
+
+/**
+ * What hatbox.action(name) gives the page: the run's output, or "asked" when the tool's policy asks
+ * you first, and the run happens once you approve it.
+ */
+export type BoxActionAnswer = { status: "done"; output: string; ok: boolean } | { status: "asked" };
+
+/**
+ * hatbox.action(name, {check: true}): how its last run went, and whether a press is waiting for your
+ * approval. `at`: when the last run ended (or was refused), null before the first.
+ */
+export type BoxActionRun = { at: string | null; output?: string; error?: string; waiting?: true };

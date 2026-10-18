@@ -4,7 +4,7 @@ import type { BoxDetail, BoxFeedValue } from "@hatbot/shared";
 import { z } from "zod";
 import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { FRAME_CSP, previewed } from "../src/boxes";
-import { definePlugin, ready, tool } from "../src/plugins/plugin";
+import { allow, ask, definePlugin, ready, tool } from "../src/plugins/plugin";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { bot, lastUserText, signIn, type TestApp, testApp, waitFor } from "./helpers";
 
@@ -297,4 +297,105 @@ test("after reading untrusted content, giving a box a feed waits for the owner, 
   t.approvals.decide(asked.id, "deny", "web");
   await reply.done;
   expect(t.boxes.feeds?.list(1)).toEqual([]);
+});
+
+/** A plugin with one write tool: a restart it allows, anything else it asks about. */
+function rack(ran: string[]) {
+  return definePlugin({
+    id: "rack",
+    name: "Rack",
+    description: "",
+    config: z.object({}),
+    start: () =>
+      ready([
+        tool({
+          name: "rack_exec",
+          description: "",
+          access: "write",
+          schema: z.object({ command: z.string() }),
+          describe: ({ command }) => `On rack: ${command}`,
+          policy: ({ command }) =>
+            command.startsWith("systemctl restart ") ? allow() : ask("Commands need approval."),
+          run: async ({ command }) => {
+            ran.push(command);
+            return `ran ${command}`;
+          },
+        }),
+      ]),
+  });
+}
+
+test("hatbox.action: the bot declares it and the owner approves it once; each press then follows the tool's policy, and none run while paused", async () => {
+  const restart = {
+    box: 1,
+    name: "restart",
+    tool: "rack_exec",
+    tool_input: { command: "systemctl restart x" },
+  };
+  const reboot = { box: 1, name: "reboot", tool: "rack_exec", tool_input: { command: "reboot" } };
+  const model = new FakeModel([
+    { content: [toolUse("box_action", restart)] },
+    { content: [text("Not added.")] },
+    { content: [toolUse("box_action", restart)] },
+    { content: [text("Added.")] },
+    { content: [toolUse("box_action", reboot)] },
+    { content: [text("Added.")] },
+  ]);
+  const ran: string[] = [];
+  const t = await testApp(model, new FakeModel(), {}, [rack(ran)]);
+  await t.plugins.update("rack", { enabled: true });
+  t.boxes.create({ botId: "hatbot", conversationId: 1, title: "Rack", html: PAGE }, {});
+  const declare = async (decision: "approve" | "deny") => {
+    const reply = t.thread.post("add a button");
+    const asked = await waitFor(() => t.approvals.list(true)[0]);
+    t.approvals.decide(asked.id, decision, "web");
+    await reply.done;
+  };
+  const press = async (name: string, check?: boolean) => {
+    const res = await page(t, { op: "action", name, ...(check ? { check } : {}) });
+    return { status: res.status, ...((await res.json()) as { value?: unknown }) };
+  };
+
+  // Declaring asks the owner, and a refusal adds nothing. It never runs then.
+  await declare("deny");
+  expect((await press("restart")).status).toBe(404);
+  await declare("approve");
+  await declare("approve");
+  expect(ran).toEqual([]);
+  const detail = (await (
+    await t.call("GET", "/boxes/1", undefined, signIn(t))
+  ).json()) as BoxDetail;
+  expect(detail.actions.map((a) => a.what)).toEqual([
+    "On rack: reboot",
+    "On rack: systemctl restart x",
+  ]);
+
+  // Allowed by the tool's policy: it runs at once, and the page gets what it answered.
+  expect((await press("restart")).value).toEqual({
+    status: "done",
+    output: "ran systemctl restart x",
+    ok: true,
+  });
+  expect(t.thread.list().at(-1)).toMatchObject({ kind: "box", boxId: 1 });
+
+  // Asked by it: the owner approves this run, and only then does it run.
+  expect((await press("reboot")).value).toEqual({ status: "asked" });
+  expect((await press("reboot")).status).toBe(429);
+  expect((await press("reboot", true)).value).toMatchObject({ waiting: true });
+  expect(ran).toEqual(["systemctl restart x"]);
+  const asked = t.approvals.list(true)[0];
+  t.approvals.decide(asked?.id ?? 0, "approve", "web");
+  await waitFor(() => t.thread.list().at(-1)?.text.startsWith("Ran reboot"));
+  expect((await press("reboot", true)).value).toMatchObject({ output: "ran reboot" });
+
+  // Pause all cancels a press waiting for approval, and refuses new ones.
+  expect((await press("reboot")).value).toEqual({ status: "asked" });
+  await t.call("POST", "/pause-all", {}, signIn(t));
+  expect(t.approvals.list(true)).toEqual([]);
+  expect((await press("restart")).status).toBe(409);
+  await waitFor(() => t.thread.list().at(-1)?.text.startsWith("Didn't run reboot"));
+  expect(ran).toEqual(["systemctl restart x", "reboot"]);
+  // Those notes don't use up the page's own five an hour.
+  for (let i = 0; i < 5; i++)
+    expect((await page(t, { op: "send", text: `${i}` })).status).toBe(200);
 });

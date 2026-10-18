@@ -1,6 +1,7 @@
 // Built-in tools for the chat thread (PLAN.md §5.5): memory, history search, desktop tasks, schedules.
 import type Anthropic from "@anthropic-ai/sdk";
 import {
+  type ApprovalKind,
   type Bot,
   type Box,
   describeCondition,
@@ -39,6 +40,7 @@ import {
 import { z } from "zod";
 import type { Attachments } from "../attachments";
 import { type Bots, botFolder } from "../bots";
+import { type BoxAction, MAX_BOX_ACTIONS } from "../box-actions";
 import type { BoxFeed } from "../box-feeds";
 import { BoxError, type Boxes, FRAME_CSP, previewed } from "../boxes";
 import type { Db } from "../db";
@@ -125,7 +127,15 @@ export type ToolContext = {
    * Your note on the approval, for the tool's result, or why it mustn't go ahead. `always`: only you.
    */
   approve?: (
-    call: { tool: string; input: unknown; what: string; why: string; always?: boolean },
+    call: {
+      tool: string;
+      input: unknown;
+      what: string;
+      why: string;
+      always?: boolean;
+      /** What approving it is, when it isn't "other": an approval only the app may give, say. */
+      kind?: ApprovalKind;
+    },
     signal: AbortSignal,
   ) => Promise<{ content: string; isError: boolean }>;
 };
@@ -488,6 +498,10 @@ const BOX_TITLE = z.string().min(1).max(80).describe('Short, e.g. "Habit tracker
 /** A box's feed, for box_data. */
 const feedLine = (f: BoxFeed) =>
   `"${f.name}": ${f.tool} ${JSON.stringify(f.input)}, every ${f.everyMinutes} min${f.error ? `; ${f.error}` : ""}\n  ${f.at ? `Latest, ${f.at.slice(0, 16).replace("T", " ")} UTC: ${cut(JSON.stringify(f.value), 2000)}` : "Nothing yet"}`;
+
+/** A box's action, for box_data. */
+const actionLine = (a: BoxAction) =>
+  `"${a.name}": ${a.tool} ${JSON.stringify(a.input)}\n  ${a.at ? `Last run, ${a.at.slice(0, 16).replace("T", " ")} UTC: ${a.error ? cut(a.error, 2000) : cut(a.output ?? "", 2000)}` : "Not run yet"}`;
 
 /** What a feed gave, in a word or two. */
 const kindOf = (v: unknown) =>
@@ -942,7 +956,7 @@ export const TOOLS = [
   def({
     name: "box_create",
     description:
-      'Make a box: a small web app the owner keeps and opens from the chat, such as a tracker, a calculator, a planner or a dashboard. Not for a one-off answer: reply instead, with a chart block if it helps. A box is one self-contained HTML page, its CSS and JavaScript inline. It can\'t load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don\'t work; show messages and confirmations in the page. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app\'s colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku\'s answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes, and hatbox.feed(name) for what a feed you give it with box_feed last read (with {fresh: true}, read again when over a minute old). For more than a page, give files instead, built on the boxes guest into one page: index.html, which loads its scripts and styles by path (<script type="module" src="./app.ts">), the modules they import, npm packages in box.json, and server.ts for a backend (`export default { fetch(req), scheduled?() }` on Bun, keeping data with bun:sqlite in its working folder), which the page calls with await hatbox.fetch(path, init), answered like fetch. The backend reaches only the hosts box.json lists, and cron runs scheduled(), at most every 5 minutes, which may return {notify: "text"} to notify the owner, up to 10 times a day. An API key goes in box.json\'s secrets by name, read as process.env.NAME; the owner sets it on the box\'s page and you never see it: {"hosts": ["shop.example.com"], "cron": "0 * * * *", "packages": {"chart.js": "^4"}, "secrets": ["SHOP_KEY"]}. Then look at it with box_look and fix what\'s wrong before you say it\'s done.',
+      'Make a box: a small web app the owner keeps and opens from the chat, such as a tracker, a calculator, a planner or a dashboard. Not for a one-off answer: reply instead, with a chart block if it helps. A box is one self-contained HTML page, its CSS and JavaScript inline. It can\'t load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don\'t work; show messages and confirmations in the page. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app\'s colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku\'s answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes, hatbox.feed(name) for what a feed you give it with box_feed last read (with {fresh: true}, read again when over a minute old), and hatbox.action(name) to run an action you give it with box_action. For more than a page, give files instead, built on the boxes guest into one page: index.html, which loads its scripts and styles by path (<script type="module" src="./app.ts">), the modules they import, npm packages in box.json, and server.ts for a backend (`export default { fetch(req), scheduled?() }` on Bun, keeping data with bun:sqlite in its working folder), which the page calls with await hatbox.fetch(path, init), answered like fetch. The backend reaches only the hosts box.json lists, and cron runs scheduled(), at most every 5 minutes, which may return {notify: "text"} to notify the owner, up to 10 times a day. An API key goes in box.json\'s secrets by name, read as process.env.NAME; the owner sets it on the box\'s page and you never see it: {"hosts": ["shop.example.com"], "cron": "0 * * * *", "packages": {"chart.js": "^4"}, "secrets": ["SHOP_KEY"]}. Then look at it with box_look and fix what\'s wrong before you say it\'s done.',
     schema: z.object({
       title: BOX_TITLE,
       html: z.string().min(1).max(MAX_BOX_HTML).optional().describe("The whole page"),
@@ -1129,26 +1143,27 @@ export const TOOLS = [
   def({
     name: "box_data",
     description:
-      "What one of your boxes' page has saved with hatbox.store, by key, its feeds with what they last read, and which of its secrets the owner has set.",
+      "What one of your boxes' page has saved with hatbox.store, by key, its feeds with what they last read, its actions with how they last ran, and which of its secrets the owner has set.",
     schema: z.object({ box: z.number().int() }),
     run: async ({ box: id }, ctx) => {
       const box = ownBox(ctx, id);
       const data = ctx.boxes?.data(id) ?? {};
       const feeds = ctx.boxes?.feeds?.list(id) ?? [];
+      const actions = ctx.boxes?.actions?.list(id) ?? [];
       const secrets = secretsLine(ctx, id);
-      if (!Object.keys(data).length && !feeds.length)
+      if (!Object.keys(data).length && !feeds.length && !actions.length)
         return `Nothing saved yet.${secrets && `\n\n${secrets}`}`;
       // What the page saved is whatever its code and the owner's typing made of it; what its feeds
-      // read is whatever their tools found.
+      // read and its actions answered is whatever their tools found, when the page chose to run them.
       const saved = Object.keys(data).length
         ? cut(JSON.stringify(data, null, 1), 30_000)
         : "Nothing saved yet.";
-      return `${boxOutput(
-        ctx,
-        "box_data",
-        feeds.length ? `${saved}\n\nFeeds:\n${feeds.map(feedLine).join("\n")}` : saved,
-        `What box #${id} "${box.title}" saved`,
-      )}${secrets && `\n\n${secrets}`}`;
+      const text = [
+        saved,
+        ...(feeds.length ? [`Feeds:\n${feeds.map(feedLine).join("\n")}`] : []),
+        ...(actions.length ? [`Actions:\n${actions.map(actionLine).join("\n")}`] : []),
+      ].join("\n\n");
+      return `${boxOutput(ctx, "box_data", text, `What box #${id} "${box.title}" saved`)}${secrets && `\n\n${secrets}`}`;
     },
   }),
   def({
@@ -1202,7 +1217,7 @@ export const TOOLS = [
   def({
     name: "box_feed",
     description:
-      "Give one of your boxes a feed: one of your plugins' read tools, which the brain runs on a timer without a model, so the box's page shows the latest. The page reads it with await hatbox.feed(name), which gives {value, at, error} (value: the tool's output, parsed when it's JSON; at: when it came; error: why the last run failed, if it did) or undefined before there's one; hatbox.feed(name, {fresh: true}) runs the tool first if its last run is over a minute old. It runs once now; one that fails isn't added. The same name changes it; leave out tool to remove it. At most 10 a box.",
+      "Give one of your boxes a feed: one of your plugins' read tools, which the brain runs on a timer without a model, so the box's page shows the latest. The page reads it with await hatbox.feed(name), which gives {value, at, error} (value: the tool's output, parsed when it's JSON; at: when it came; error: why the last run failed, if it did) or undefined before there's one; hatbox.feed(name, {fresh: true}) runs the tool first if its last run is over a minute old. It runs once now; one that fails isn't added. The same name changes it; leave out tool to remove it. At most 10 a box. To change things from the page, use box_action.",
     schema: z.object({
       box: z.number().int(),
       name: z
@@ -1263,6 +1278,69 @@ export const TOOLS = [
       const first = await feeds.set(id, box.botId, { name, tool, input, everyMinutes: every });
       // Not what it gave: that's untrusted, and would make adding the next feed ask too.
       return `Added the feed "${name}": it ran and gave ${kindOf(first.value)}. It runs every ${every} min; the page reads it with await hatbox.feed(${JSON.stringify(name)}).${note}`;
+    },
+  }),
+  def({
+    name: "box_action",
+    description:
+      "Give one of your boxes an action: one of your plugins' tools with a fixed input, which the box's page runs with await hatbox.action(name), e.g. a button that restarts a service. Adding it waits for the owner's approval; it doesn't run then. Each run follows the tool's own rules: one that needs approval asks the owner every time. The page gets {status: \"done\", output, ok} once it ran, or {status: \"asked\"} while it waits for the owner; await hatbox.action(name, {check: true}) gives {at, output, error, waiting} for the last run, or undefined before one. Up to 20 runs a day a box, none while paused. The same name changes it; leave out tool to remove it. At most 10 a box.",
+    schema: z.object({
+      box: z.number().int(),
+      name: z
+        .string()
+        .min(1)
+        .max(MAX_BOX_FEED_NAME)
+        .describe('What the page asks hatbox.action for, e.g. "restart"'),
+      tool: z
+        .string()
+        .optional()
+        .describe("Your plugin's tool, e.g. ssh_pct_exec. Leave out to remove the action"),
+      tool_input: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe("The tool's input, the same on every run"),
+    }),
+    run: async ({ box: id, name, tool, tool_input }, ctx, signal) => {
+      const box = ownBox(ctx, id);
+      const actions = ctx.boxes?.actions;
+      if (!ctx.boxes || !actions) return "Boxes aren't available here.";
+      if (!tool)
+        return actions.remove(id, name)
+          ? `Removed the action "${name}".`
+          : `Box #${id} has no action "${name}".`;
+      const input = tool_input ?? {};
+      const others = actions.list(id).filter((a) => a.name !== name);
+      if (others.length >= MAX_BOX_ACTIONS)
+        return `Not added: a box has at most ${MAX_BOX_ACTIONS} actions; remove one first.`;
+      const { t, what, verdict } = actions.check(box.botId, tool, input);
+      // The page's code runs it whenever it likes, so the owner says yes to it, never Haiku.
+      if (!ctx.approve)
+        return "Not added: this needs the owner's approval, which can't be asked here.";
+      const hosts = ctx.boxes.hosts(id);
+      const r = await ctx.approve(
+        {
+          tool: "box_action",
+          input: { box: id, name, tool, tool_input: input },
+          what: `Let box #${id} "${box.title}" run "${name}": ${what} (${tool} ${JSON.stringify(input)}).${
+            hosts.length
+              ? ` The page gets what it answers, and the box can reach ${hosts.join(", ")}.`
+              : ""
+          }`,
+          why: `The box's page may run it whenever its code calls hatbox.action("${name}"), which isn't proof you pressed anything. Each run then follows ${t.name}'s own rules: as it is now, it ${
+            verdict.action === "allow" ? "runs without asking" : "asks you each time"
+          }.${ctx.boxes.taintedBy(id) ? " This box's page was written after reading untrusted content." : ""}`,
+          always: true,
+          kind: (verdict.action === "ask" ? verdict.kind : undefined) ?? t.kind,
+        },
+        signal,
+      );
+      if (r.isError) return r.content;
+      actions.set(id, box.botId, { name, tool, input });
+      return `Added the action "${name}": the page runs it with await hatbox.action(${JSON.stringify(name)}). ${
+        verdict.action === "allow"
+          ? "It runs without asking."
+          : 'Each run asks the owner first, so the page gets {status: "asked"} and checks later.'
+      }${r.content}`;
     },
   }),
   def({

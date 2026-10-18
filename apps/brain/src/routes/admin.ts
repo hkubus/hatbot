@@ -22,6 +22,7 @@ export function pauseAll(
   v.tasks.cancelAll();
   void v.desktop.setPaused(true);
   void v.boxes.backends?.stopAll();
+  v.boxes.actions?.stopAll();
   v.events.emit({ type: "paused", paused: true });
 }
 
