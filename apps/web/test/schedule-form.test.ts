@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
-// The brain's own croner.
-import { Cron } from "../../brain/node_modules/croner";
+import { Cron } from "croner";
 import { atIso, cronOk, localInput } from "../src/schedule-form";
 
 /** What the brain takes: five fields or a nickname like @daily, that croner can read. */
