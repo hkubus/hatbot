@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "../src/db";
 import { blobSha, HATBOT, MemoryError, MemoryStore } from "../src/memory/store";
-import { setUpOwner, testApp } from "./helpers";
+import { signIn, testApp } from "./helpers";
 
 const YOU = { name: "You", email: "owner@local" };
 let dir: string;
@@ -81,7 +81,7 @@ test("updates at once each read what the last wrote, so none is lost", async () 
 
 test("a save on top of an older copy is refused with what the file is now", async () => {
   const t = await testApp();
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   await t.memory.write("a.md", "one", HATBOT, "One");
   const got = (await (
     await t.call("GET", "/memory/file?path=a.md", undefined, { cookie })

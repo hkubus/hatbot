@@ -153,6 +153,9 @@ export async function setUpOwner(t: TestApp, password = "correct horse battery")
   return { secret, password, cookie };
 }
 
+/** A signed-in session, without hashing a password the way setUpOwner does. */
+export const signIn = (t: TestApp) => ({ cookie: `hatbot_session=${t.auth.createSession(null)}` });
+
 /** Polls until `fn` returns something truthy (async task runs). */
 export async function waitFor<T>(fn: () => T | undefined | null | false, ms = 2000): Promise<T> {
   const end = Date.now() + ms;

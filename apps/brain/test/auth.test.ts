@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Session, SignedOutOthers } from "@hatbot/shared";
 import { AuthService, FailureLimiter } from "../src/auth/service";
 import { resetLogin } from "../src/reset-login";
-import { ORIGIN, setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
+import { ORIGIN, setUpOwner, signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 const cookieOf = (res: Response, name: string) =>
   res.headers
@@ -199,7 +199,7 @@ describe("sign-in", () => {
 
   test("a body is read 16 KB at most before sign-in, 5 MB after with uploads apart, and a stranger's not at all", async () => {
     const t = await testApp();
-    const { cookie } = await setUpOwner(t);
+    const { cookie } = signIn(t);
     let pulled = 0;
     const chunks = () => {
       pulled = 0;
@@ -240,7 +240,7 @@ describe("sign-in", () => {
 
   test("a session lasts 30 days from its last use, and its cookie moves on with it", async () => {
     const t = await testApp();
-    const { cookie } = await setUpOwner(t);
+    const { cookie } = signIn(t);
     // Within the day, nothing moves.
     expect((await t.call("GET", "/tokens", undefined, { cookie })).headers.get("set-cookie")).toBe(
       null,

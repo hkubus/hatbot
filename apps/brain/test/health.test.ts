@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { ORIGIN, setUpOwner, testApp } from "./helpers";
+import { ORIGIN, signIn, testApp } from "./helpers";
 
 test("a malformed body is 400, and a wrong field says which, in every route group", async () => {
   const t = await testApp();
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   const raw = (method: string, path: string, body: string) =>
     t.app.request(`/api/v1${path}`, {
       method,

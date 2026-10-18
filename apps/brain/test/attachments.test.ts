@@ -3,7 +3,7 @@ import type { Attachment, ThreadMessage } from "@hatbot/shared";
 import { inlineLimit } from "../src/attachments";
 import type { CallContext } from "../src/plugins/plugin";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { ORIGIN, setUpOwner, type TestApp, testApp, unmarked } from "./helpers";
+import { ORIGIN, signIn, type TestApp, testApp, unmarked } from "./helpers";
 
 const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
 
@@ -20,7 +20,7 @@ async function upload(t: TestApp, cookie: string, file: File) {
 test("you upload a photo, send it with a message, and the model sees it; it taints the chat", async () => {
   const chat = new FakeModel([{ content: [text("A cat.")] }, { content: [text("Hi.")] }]);
   const t = await testApp(chat);
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
 
   const res = await upload(t, cookie, new File([PNG], "cat.png", { type: "image/png" }));
   expect(res.status).toBe(201);
@@ -82,7 +82,7 @@ test("what the model gets: text inline, PDFs as documents, images while a reques
     { content: [text("Three.")] },
   ]);
   const t = await testApp(chat);
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   const send = async (name: string, words: string) => {
     const a = (await (
       await upload(t, cookie, new File([PNG], name, { type: "image/png" }))
@@ -136,7 +136,7 @@ test("what the model gets: text inline, PDFs as documents, images while a reques
 test("a file is checked again each time it's shown, and an incognito one isn't kept", async () => {
   const chat = new FakeModel([{ content: [text("A cat.")] }, { content: [text("Shh.")] }]);
   const t = await testApp(chat);
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   const get = (id: number, headers: Record<string, string> = {}) =>
     t.app.request(`/api/v1/attachments/${id}`, { headers: { cookie, ...headers } });
   const send = async (incognito: boolean) => {
@@ -174,7 +174,7 @@ test("a file is checked again each time it's shown, and an incognito one isn't k
 
 test("downloads: images inline, anything else as a file, never sniffed, with a name in any language", async () => {
   const t = await testApp();
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   const name = "Zażółć 'gęślą' (1).pdf";
   const a = (await (
     await upload(t, cookie, new File(["%PDF-1.4"], name, { type: "application/pdf" }))

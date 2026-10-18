@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 import type { Approval, Commit, Task } from "@hatbot/shared";
 import { HATBOT } from "../src/memory/store";
-import { setUpOwner, testApp } from "./helpers";
+import { signIn, testApp } from "./helpers";
 
 test("tasks, approvals and memory history come a page at a time", async () => {
   const t = await testApp();
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   const get = async <T>(path: string) =>
     (await (await t.call("GET", path, undefined, { cookie })).json()) as T;
   const now = "2026-10-09T12:00:00.000Z";

@@ -2,13 +2,13 @@ import { expect, test } from "bun:test";
 import type { Approval, CheckReport, ChecksInfo } from "@hatbot/shared";
 import { Checks } from "../src/checks";
 import { NtfyNotifier } from "../src/notify";
-import { ORIGIN, setUpOwner, type TestApp, testApp } from "./helpers";
+import { ORIGIN, signIn, type TestApp, testApp } from "./helpers";
 
 const byId = (r: CheckReport) => Object.fromEntries(r.results.map((c) => [c.id, c]));
 
 test("Check everything tries each part and keeps the report, and a test approval's answer shows", async () => {
   const t = await testApp();
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   t.agent.health = {
     version: "abc1234",
     profile: "hatbot",

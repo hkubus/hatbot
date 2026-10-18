@@ -5,7 +5,7 @@ import { SCREENING_PROMPT } from "../src/agent/prompt";
 import { type DesktopAgent, DesktopError, HttpDesktopAgent } from "../src/desktop/client";
 import { limits } from "../src/tasks/desktop-run";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
-import { type TestApp, testApp, waitFor } from "./helpers";
+import { signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 const finish = (summary = "Booked it.") => ({
   content: [toolUse("finish_task", { outcome: "done", summary })],
@@ -20,9 +20,6 @@ const pending = (t: TestApp) => waitFor(() => t.approvals.list(true)[0]);
 /** What the last message of a request said. */
 const lastText = (req: { messages: { content: unknown }[] } | undefined) =>
   JSON.stringify(req?.messages.at(-1)?.content);
-
-/** A signed-in session, without hashing a password the way setUpOwner does. */
-const signIn = (t: TestApp) => ({ cookie: `hatbot_session=${t.auth.createSession(null)}` });
 
 test("chat starts a desktop task that runs, archives screenshots and reports back", async () => {
   const chat = new FakeModel([

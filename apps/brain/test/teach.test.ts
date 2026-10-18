@@ -9,7 +9,7 @@ import { HATBOT } from "../src/memory/store";
 import { type FieldCheck, OffPage, Recorder } from "../src/teach/recorder";
 import { Teach } from "../src/teach/service";
 import { FakeModel } from "./fake-model";
-import { setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
+import { signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 const SKILL = `---
 name: renew-library-books
@@ -193,7 +193,7 @@ async function teachApp() {
   work.onCreate = (p) =>
     p.system === TEACH_PROMPT ? SKILL : '{"suspected": false, "excerpt": ""}';
   await t.desktop.refresh();
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   const call = (method: string, path: string, body?: unknown) =>
     t.call(method, path, body, { cookie });
   return { t, work, call };

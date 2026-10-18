@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { Proposal } from "@hatbot/shared";
 import { HATBOT } from "../src/memory/store";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { setUpOwner, type TestApp, testApp } from "./helpers";
+import { signIn, type TestApp, testApp } from "./helpers";
 
 const writes = [
   toolUse("memory_write", { path: "skills/x.md", content: "# X\nDo it", reason: "Add skill x" }),
@@ -25,7 +25,6 @@ test("after reading untrusted content, the chat's writes to skills and INDEX.md 
     { content: [text("Saved.")] },
   ]);
   const t = await testApp(model);
-  await setUpOwner(t);
   // Untainted, a skill is written directly.
   await t.thread.post("add skill x").done;
   expect(await t.memory.read("skills/x.md")).toBe("# X\nDo it\n");
@@ -47,7 +46,7 @@ test("after reading untrusted content, the chat's writes to skills and INDEX.md 
 test("a held write applies as you, dismisses, and goes stale when the file changes", async () => {
   const model = new FakeModel([{ content: [text("hi")] }]);
   const t = await testApp(model);
-  const { cookie } = await setUpOwner(t);
+  const { cookie } = signIn(t);
   await t.thread.post("hello").done;
   t.db.query("UPDATE episodes SET tainted = 1, tainted_by = 'https://example.com'").run();
   const hold = async () => {
