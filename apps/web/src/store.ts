@@ -899,6 +899,10 @@ async function catchUp(reconnected: boolean) {
   if (active && ended.length) void loadTasks({ ids: ended }).catch(() => {});
 }
 
+/** One of the brain's WebSockets, by its path: wss: on an https: page. */
+export const openSocket = (path: string) =>
+  new WebSocket(`${location.origin.replace(/^http/, "ws")}${API_PREFIX}${path}`);
+
 let socket: WebSocket | null = null;
 let retry = 0;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -921,8 +925,7 @@ export function connect() {
     window.addEventListener("focus", wake);
     document.addEventListener("visibilitychange", wake);
   }
-  const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${API_PREFIX}/stream`;
-  const ws = new WebSocket(url);
+  const ws = openSocket("/stream");
   socket = ws;
   let wasOpen = false;
   // A socket that's been replaced (StrictMode opens two) says nothing more.
