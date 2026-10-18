@@ -1089,6 +1089,9 @@ export async function runTool(
   }
 }
 
+/** Core tools that need the desktop, left out when there's none. */
+export const DESKTOP_TOOLS = ["run_desktop_task", "send_file"];
+
 /**
  * The core tools an incognito conversation gets: lookups that leave nothing behind. Not history search,
  * which it doesn't see, or anything that writes or starts work that outlives it.

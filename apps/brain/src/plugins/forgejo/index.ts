@@ -16,7 +16,7 @@ import {
 } from "../forge";
 import { allow, ask, definePlugin, httpApi, needsSetup, PluginError, ready, tool } from "../plugin";
 
-const Repo = RepoOf("kubus/hatbot");
+const Repo = RepoOf("owner/repo");
 
 type User = { login: string };
 type Issue = {

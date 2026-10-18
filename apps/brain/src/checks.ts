@@ -451,7 +451,7 @@ export class Checks {
             if (err instanceof DesktopError && err.status === 423)
               return skip("You have control of the desktop.");
             if (err instanceof DesktopError && err.status === 503)
-              return fail("The shell isn't running. Run infra/deploy.sh once on the host.");
+              return fail("The shell isn't running. Run infra/deploy.sh once.");
             throw err;
           }
         }),
@@ -467,7 +467,7 @@ export class Checks {
             return ok("Watchers can run a page's scripts.");
           } catch (err) {
             if (err instanceof DesktopError && err.status === 503)
-              return fail("The renderer isn't running. Run infra/deploy.sh once on the host.");
+              return fail("The renderer isn't running. Run infra/deploy.sh once.");
             if (err instanceof DesktopError) return fail(err.message);
             throw err;
           }
