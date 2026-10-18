@@ -1,4 +1,5 @@
 // Push notifications through your ntfy server (PLAN.md §4.1, Notifier).
+import type { NtfyConfig } from "./secrets";
 
 export type NtfyAction =
   | { action: "view"; label: string; url: string; clear?: boolean }
@@ -43,20 +44,25 @@ export function guessableTopic(topic: string): boolean {
 }
 
 export class NtfyNotifier implements Notifier {
-  private url: string;
+  private url = "";
   /** No shared default: whoever reads the topic sees every notification, Approve buttons included. */
-  readonly topic: string;
-  private token: string;
+  topic = "";
+  private token = "";
 
   constructor(
-    env: Record<string, string | undefined> = process.env,
+    config: NtfyConfig,
     private fetcher: typeof fetch = fetch,
     private clock: () => number = Date.now,
   ) {
-    this.url = (env.NTFY_URL ?? "").replace(/\/$/, "");
-    this.topic = env.NTFY_TOPIC ?? "";
-    this.token = env.NTFY_TOKEN ?? "";
-    if (this.url && !this.topic) console.warn("NTFY_TOPIC isn't set, so no notifications are sent");
+    this.configure(config);
+  }
+
+  /** From the host's env files, or as set in Settings later. */
+  configure(config: NtfyConfig) {
+    this.url = config.url.replace(/\/$/, "");
+    this.topic = config.topic;
+    this.token = config.token;
+    if (this.url && !this.topic) console.warn("No ntfy topic is set, so no notifications are sent");
   }
 
   get configured() {

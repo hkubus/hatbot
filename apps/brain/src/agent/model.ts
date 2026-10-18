@@ -43,6 +43,11 @@ export class AnthropicModelClient implements ModelClient {
     this.client = new Anthropic(apiKey ? { apiKey } : {});
   }
 
+  /** A key set in Settings: calls from now on use it, ones under way finish on the old one. */
+  setApiKey(apiKey: string) {
+    this.client = new Anthropic(apiKey ? { apiKey } : {});
+  }
+
   stream(params: Omit<StreamParams, "stream">, handlers: StreamHandlers) {
     return withRetries(() => this.streamOnce(params, handlers), handlers);
   }

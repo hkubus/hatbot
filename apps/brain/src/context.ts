@@ -17,6 +17,7 @@ import type { Plugins } from "./plugins/registry";
 import type { Proxmox } from "./proxmox";
 import type { WeeklyReport } from "./report";
 import type { Schedules } from "./schedules";
+import type { Secrets } from "./secrets";
 import type { SettingsStore } from "./settings";
 import type { Spend } from "./spend";
 import type { Tasks } from "./tasks/service";
@@ -54,6 +55,7 @@ export type Deps = {
   teach: Teach;
   checks: Checks;
   negotiations: Negotiations;
+  secrets: Secrets;
 };
 
 export type AppEnv = {

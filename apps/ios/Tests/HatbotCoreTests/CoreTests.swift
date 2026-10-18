@@ -79,12 +79,12 @@ final class DecodingTests: XCTestCase {
   func testABotChangeSendsBackWhatItDoesntKnow() throws {
     let bot = try decode(
       Bot.self,
-      #"{"id":"coder","name":"Coder","instructions":"","chatModel":"claude-sonnet-6","chatEffort":"high","plugins":null,"createdAt":""}"#)
+      #"{"id":"coder","name":"Coder","instructions":"","chatModel":"claude-sonnet-6","chatEffort":"ultra","plugins":null,"createdAt":""}"#)
     let change = AppStore.BotChange(
       name: nil, instructions: "", chatModel: bot.chatModel, chatEffort: bot.chatEffort, plugins: nil)
     let sent = String(decoding: try JSONEncoder().encode(change), as: UTF8.self)
     XCTAssertTrue(sent.contains(#""chatModel":"claude-sonnet-6""#))
-    XCTAssertTrue(sent.contains(#""chatEffort":"high""#))
+    XCTAssertTrue(sent.contains(#""chatEffort":"ultra""#))
     XCTAssertTrue(sent.contains(#""plugins":null"#))
     XCTAssertFalse(sent.contains(#""name""#) || sent.contains(#""icon""#))
   }

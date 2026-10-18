@@ -79,7 +79,10 @@ async function ntfyCheck(t: TestApp, env: Record<string, string>, answers: Recor
       ? Response.json({ healthy: status === 200 }, { status })
       : new Response("", { status });
   }) as typeof fetch;
-  const ntfy = new NtfyNotifier({ NTFY_URL: "https://ntfy.test", ...env }, fetcher);
+  const ntfy = new NtfyNotifier(
+    { url: "https://ntfy.test", topic: env.NTFY_TOPIC ?? "", token: env.NTFY_TOKEN ?? "" },
+    fetcher,
+  );
   const checks = new Checks({
     db: t.db,
     config: { publicUrl: ORIGIN },

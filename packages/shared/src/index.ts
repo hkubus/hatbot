@@ -357,6 +357,9 @@ export type HatbotEvent =
   /** After each heartbeat run: clients refetch GET /heartbeat. */
   | { type: "heartbeat.updated" };
 
+/** The chat's effort, in Settings and per bot. Haiku 5.5 and Opus 5.5 both take each of them. */
+export const CHAT_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+
 /** The first bot. It can't be deleted, and /thread is its chat. */
 export const HATBOT_ID = "hatbot";
 
@@ -416,7 +419,7 @@ const botFields = {
   color: z.enum(BOT_COLORS),
   instructions: z.string().trim().max(8000),
   chatModel: z.enum(["claude-haiku-5-5", "claude-opus-5-5"]).nullable(),
-  chatEffort: z.enum(["low", "medium"]).nullable(),
+  chatEffort: z.enum(CHAT_EFFORTS).nullable(),
   plugins: z.array(z.string().min(1).max(40)).max(50).nullable(),
 };
 export const CreateBot = z.object({
@@ -567,9 +570,44 @@ export type SpendByModel = { model: string; usd: number };
 /** GET /spend/by-purpose: what the money went on, the most first. */
 export type SpendByPurpose = { purpose: string; costUsd: number };
 
+/** Where a connection's settings come from: Settings, the host's /etc/hatbot (deploy.sh), or nowhere. */
+export type ConnectionSource = "app" | "host" | null;
+/** GET /connections: the Anthropic API key and the ntfy server. The key and the token never come back. */
+export type Connections = {
+  /** `ending`: the key's last four characters, to tell keys apart. */
+  anthropic: { set: boolean; from: ConnectionSource; ending: string | null };
+  ntfy: { url: string; topic: string; tokenSet: boolean; from: ConnectionSource };
+};
+/** PUT /connections/anthropic. The brain tries the key before it keeps it. */
+export const SetApiKey = z.object({
+  key: z
+    .string()
+    .trim()
+    .min(20, "That's too short for an API key.")
+    .max(500)
+    .regex(/^\S+$/, "An API key has no spaces."),
+});
+/** PUT /connections/ntfy. A token left out stays as it is. */
+export const SetNtfy = z.object({
+  url: z
+    .string()
+    .trim()
+    .max(200)
+    .regex(
+      /^https?:\/\/[^\s/?#]+(\/[^\s?#]*)?$/,
+      "The server's address, like https://ntfy.example.com.",
+    )
+    .transform((u) => u.replace(/\/+$/, "")),
+  topic: z
+    .string()
+    .trim()
+    .regex(/^[-_A-Za-z0-9]{1,64}$/, "Letters, digits, - and _ only, up to 64."),
+  token: z.string().trim().min(1).max(200).optional(),
+});
+
 export type AppSettings = {
   limits: Limits;
-  chatEffort: "low" | "medium";
+  chatEffort: (typeof CHAT_EFFORTS)[number];
   /** The chat's model; on Haiku 5.5 it can ask Opus 5.5 for hard parts. */
   chatModel: "claude-haiku-5-5" | "claude-opus-5-5";
   owner: { name: string; email: string };

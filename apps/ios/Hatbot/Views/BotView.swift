@@ -132,7 +132,7 @@ struct BotView: View {
         Picker("Effort", selection: $form.chatEffort) {
           Text("As in Settings").tag(AppSettings.Effort?.none)
           ForEach(AppSettings.Effort.known.including(form.chatEffort), id: \.self) { e in
-            Text(e.rawValue.capitalized).tag(AppSettings.Effort?.some(e))
+            Text(e.name).tag(AppSettings.Effort?.some(e))
           }
         }
       }

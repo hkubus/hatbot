@@ -31,7 +31,7 @@ Steps 1 and 2 depend on where it runs.
 Then, either way:
 
 3. Point your reverse proxy at `http://<brain IP>:8080`. The setup script prints the IP.
-4. Install the app: `./deploy.sh ..` deploys the checkout you're in. It asks for the web app's public URL, your reverse proxy's IP, the API key, your ntfy server and topic, and the repository that **Settings → Updates** pulls from. Update runs that branch's code as root on the brain, so give it only a repository you control (your fork), or none and run `deploy.sh` again to update. Then it prints a setup code: open `https://<your domain>/setup` to set your password and TOTP.
+4. Install the app: `./deploy.sh ..` deploys the checkout you're in. It asks for the web app's public URL, your reverse proxy's IP, the API key, your ntfy server and topic, and the repository that **Settings → Updates** pulls from. Update runs that branch's code as root on the brain, so give it only a repository you control (your fork), or none and run `deploy.sh` again to update. Then it prints a setup code: open `https://<your domain>/setup` to set your password and TOTP. You can change the API key and ntfy later in **Settings → Connections**.
 5. Plugins: one env file each on the brain, then restart it (`infra/README.md`, "Plugins"). For the dead-man ping, add an Uptime Kuma Push monitor and put its URL in `HATBOT_PING_URL` ("When the brain itself is down").
 6. Optional, Proxmox only: `./pct-exec-setup.sh` lets Hatbot run commands in your other containers ("Commands in your containers").
 7. In the web app: **Settings → Check everything**, then send a test approval and approve it from your phone's lock screen. For alerts, add an Uptime Kuma trigger under **Schedules & Triggers** and give Kuma its webhook URL.

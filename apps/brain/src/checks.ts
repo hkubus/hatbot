@@ -31,7 +31,7 @@ const BIG_WAL_BYTES = 512 * 1024 ** 2;
 const SNAPSHOT_MAX_AGE_MS = 36 * 3600_000;
 /** Features the brain uses that an older desktop-agent doesn't have. */
 const DESKTOP_FEATURES = ["profiles", "exec", "files", "fields", "gates"];
-const NEW_TOPIC = "Run deploy.sh with NTFY_URL set to pick a random one.";
+const NEW_TOPIC = "Pick a random one in Settings → Connections.";
 const ONLY_YOU = "Allow only your ntfy user to read the topic.";
 
 export type ChecksDeps = {
@@ -57,8 +57,8 @@ export type ChecksDeps = {
   auth?: Pick<AuthService, "untrustedProxy">;
   /** The dead-man ping; absent in tests that don't need it. */
   ping?: Pick<DeadManPing, "configured" | "lastPing">;
-  /** False when ANTHROPIC_API_KEY is missing. */
-  apiKeySet?: boolean;
+  /** False when there's no API key, in Settings or on the host. */
+  apiKeySet?: () => boolean;
   /** The brain's time zone; the desktop's should match it. */
   timeZone?: string;
   /** For tests. */
@@ -236,7 +236,8 @@ export class Checks {
 
   private async modelCall() {
     if (this.d.settings.get().paused) return skip("Paused.");
-    if (this.d.apiKeySet === false) return fail("ANTHROPIC_API_KEY isn't set.");
+    if (this.d.apiKeySet?.() === false)
+      return fail("There's no API key. Add one in Settings → Connections.");
     try {
       await oneShot(
         this.d,
@@ -301,8 +302,10 @@ export class Checks {
   private async notifications() {
     const ntfy = this.d.ntfy;
     if (!ntfy?.configured)
-      return warn("NTFY_URL isn't set, so approvals and results only show in the app.");
-    if (!ntfy.topic) return fail(`NTFY_TOPIC isn't set, so nothing is sent. ${NEW_TOPIC}`);
+      return warn(
+        "No ntfy server is set up (Settings → Connections), so approvals and results only show in the app.",
+      );
+    if (!ntfy.topic) return fail(`There's no ntfy topic, so nothing is sent. ${NEW_TOPIC}`);
     await ntfy.health();
     // Whoever reads the topic sees every notification, and can press its Approve buttons.
     let open: boolean;
@@ -327,7 +330,7 @@ export class Checks {
       );
     if (!ntfy.hasToken)
       return warn(
-        "NTFY_TOKEN isn't set, so the server lets anyone send to the topic, and a notification that looks like Hatbot's may not be. Give Hatbot an ntfy user and token that may publish to it.",
+        "There's no ntfy token, so the server lets anyone send to the topic, and a notification that looks like Hatbot's may not be. Give Hatbot an ntfy user and token that may publish to it.",
       );
     return ok(
       "Your ntfy server answers, and only its users can read the topic. Send a test approval to try the buttons.",

@@ -189,4 +189,7 @@ export const MODELS = [
 export const EFFORTS = [
   ["low", "Low"],
   ["medium", "Medium"],
+  ["high", "High"],
+  ["xhigh", "Extra high"],
+  ["max", "Max"],
 ] as const;

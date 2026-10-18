@@ -1,6 +1,7 @@
 // The brain's services and their API, built the same way for the brain itself (main.ts) and for tests
 // (test/helpers.ts). Only the outside world is passed in: the models, the clock, the desktop, where
 // notifications go and the other network-facing clients.
+import { join } from "node:path";
 import { Chats } from "./agent/chats";
 import type { ModelClient } from "./agent/model";
 import { CORE_TOOL_NAMES } from "./agent/tools";
@@ -28,6 +29,7 @@ import { Plugins } from "./plugins/registry";
 import type { Proxmox } from "./proxmox";
 import { WeeklyReport } from "./report";
 import { Schedules } from "./schedules";
+import { Secrets } from "./secrets";
 import { SettingsStore } from "./settings";
 import { Spend } from "./spend";
 import { Storage } from "./storage";
@@ -57,7 +59,8 @@ export type Outside = {
   pluginEnv?: Record<string, string | undefined>;
   passwordCost?: PasswordCost;
   pingUrl?: string;
-  apiKeySet?: boolean;
+  /** The API key and ntfy server set in Settings; the brain's own reads data/secrets.json. */
+  secrets?: Secrets;
   /** Check everything's own requests, for tests. */
   fetch?: ChecksDeps["fetch"];
 };
@@ -68,6 +71,7 @@ export async function createServices(o: Outside) {
   const clock = o.clock ?? Date.now;
   const publicUrl = config.publicUrl;
   const auth = new AuthService(db, clock, o.passwordCost);
+  const secrets = o.secrets ?? new Secrets(join(config.dataDir, "secrets.json"));
   const events = new EventBus();
   const settings = new SettingsStore(db);
   const spend = new Spend(db, settings, events, clock);
@@ -162,7 +166,7 @@ export async function createServices(o: Outside) {
     ntfy: o.ntfy,
     auth,
     ping,
-    apiKeySet: o.apiKeySet,
+    apiKeySet: () => Boolean(secrets.apiKey()),
     fetch: o.fetch,
   });
   const loginLimits = {
@@ -196,6 +200,7 @@ export async function createServices(o: Outside) {
     ping,
     proxmox,
     checks,
+    secrets,
   };
   return { ...services, app: createApp(services) };
 }

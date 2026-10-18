@@ -1,7 +1,10 @@
+import { SetApiKey, SetNtfy } from "@hatbot/shared";
 import { Hono } from "hono";
 import { z } from "zod";
+import { modelErrorText } from "../agent/model";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv, Deps } from "../context";
+import { guessableTopic } from "../notify";
 import { SettingsPatch } from "../settings";
 import { json, query } from "./util";
 
@@ -22,6 +25,8 @@ export function pauseAll(v: Pick<Deps, "settings" | "chats" | "tasks" | "desktop
 export const adminRoutes = new Hono<AppEnv>()
   .use("/spend/*", requireAuth)
   .use("/settings", requireAuth)
+  .use("/connections", requireAuth)
+  .use("/connections/*", requireAuth)
   .use("/pause-all", requireAuth)
   .use("/resume", requireAuth)
   .use("/update", requireAuth)
@@ -41,6 +46,35 @@ export const adminRoutes = new Hono<AppEnv>()
     const settings = c.var.settings.update(c.req.valid("json"));
     c.var.events.emit({ type: "settings.updated", settings });
     return c.json(settings);
+  })
+  // The API key and ntfy server (PLAN.md §6.4): set here, they replace the host's until removed.
+  .get("/connections", (c) => c.json(c.var.secrets.view()))
+  .put("/connections/anthropic", json(SetApiKey), async (c) => {
+    try {
+      await c.var.secrets.setApiKey(c.req.valid("json").key);
+    } catch (err) {
+      return c.json({ error: `The key wasn't saved: ${modelErrorText(err)}.`, field: "key" }, 400);
+    }
+    return c.json(c.var.secrets.view());
+  })
+  .delete("/connections/anthropic", async (c) => {
+    await c.var.secrets.setApiKey(null);
+    return c.json(c.var.secrets.view());
+  })
+  .put("/connections/ntfy", json(SetNtfy), (c) => {
+    const ntfy = c.req.valid("json");
+    // Whoever guesses the topic may read every notification and press its Approve buttons.
+    if (guessableTopic(ntfy.topic))
+      return c.json(
+        { error: "That topic is easy to guess. Use a long random one.", field: "topic" },
+        400,
+      );
+    c.var.secrets.setNtfy(ntfy);
+    return c.json(c.var.secrets.view());
+  })
+  .delete("/connections/ntfy", (c) => {
+    c.var.secrets.setNtfy(null);
+    return c.json(c.var.secrets.view());
   })
   // Kill switch (PLAN.md §6.5). Resume is a separate, deliberate call.
   .post("/pause-all", (c) => {

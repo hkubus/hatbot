@@ -665,8 +665,10 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       ]);
       return true;
     };
-    // Code work writes whole files into tool calls, and research its report.
-    const maxTokens = research ? 64000 : task.effort ? 32000 : 16000;
+    // Code work writes whole files into tool calls, research its report; the chat's high efforts think longer.
+    const effort = task.effort ?? d.settings.get().chatEffort;
+    const roomy = task.effort || (effort !== "low" && effort !== "medium");
+    const maxTokens = research ? 64000 : roomy ? 32000 : 16000;
     for (let step = 0; ; step++) {
       if (signal.aborted) throw signal.reason;
       const maxSteps = research ? MAX_RESEARCH_STEPS : task.effort ? MAX_CODE_STEPS : MAX_STEPS;
@@ -689,7 +691,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         thinking: thinkingFor(task.model),
         // The chat's dial unless the task asked for more: the same kind of work, without a screen.
         output_config: {
-          effort: task.effort ?? d.settings.get().chatEffort,
+          effort,
           // Research paces itself to this many tokens, its helpers' apart.
           ...(research ? { task_budget: { type: "tokens" as const, total: RESEARCH_TOKENS } } : {}),
         },

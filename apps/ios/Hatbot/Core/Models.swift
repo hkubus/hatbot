@@ -537,7 +537,13 @@ struct AppSettings: Codable, Equatable, Sendable {
     init(rawValue: String) { self.rawValue = rawValue }
     static let low = Effort(rawValue: "low")
     static let medium = Effort(rawValue: "medium")
-    static let known = [low, medium]
+    static let high = Effort(rawValue: "high")
+    static let xhigh = Effort(rawValue: "xhigh")
+    static let max = Effort(rawValue: "max")
+    static let known = [low, medium, high, xhigh, max]
+
+    /// "Extra high"; one this app doesn't know, capitalized.
+    var name: String { self == .xhigh ? "Extra high" : rawValue.capitalized }
   }
 
   /// What tapping a notification opens.

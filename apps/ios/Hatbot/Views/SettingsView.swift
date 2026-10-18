@@ -82,7 +82,7 @@ struct SettingsView: View {
             }
             Picker("Effort", selection: setting(settings.chatEffort, \.chatEffort)) {
               ForEach(AppSettings.Effort.known.including(settings.chatEffort), id: \.self) { e in
-                Text(e.rawValue.capitalized).tag(e)
+                Text(e.name).tag(e)
               }
             }
           }

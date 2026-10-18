@@ -23,6 +23,7 @@ import { PluginPage, PluginsGroup } from "./Plugins";
 
 const Account = lazy(() => import("./Account").then((m) => ({ default: m.Account })));
 const Checks = lazy(() => import("./Checks").then((m) => ({ default: m.Checks })));
+const Connections = lazy(() => import("./Connections").then((m) => ({ default: m.Connections })));
 const HeartbeatPage = lazy(() => import("./Heartbeat").then((m) => ({ default: m.HeartbeatPage })));
 
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
@@ -48,6 +49,8 @@ export function Settings({
     <PluginPage key={plugin} id={plugin} toast={toast} />
   ) : path === "/settings/account" ? (
     <Account toast={toast} />
+  ) : path === "/settings/connections" ? (
+    <Connections toast={toast} />
   ) : path === "/settings/checks" ? (
     <Checks />
   ) : path === "/settings/heartbeat" ? (
@@ -308,6 +311,10 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
               />
             </Row>
           )}
+        </Group>
+
+        <Group title="Connections">
+          <LinkRow to="/settings/connections" label="Anthropic API key and ntfy server" />
         </Group>
 
         <Group title="Notifications">

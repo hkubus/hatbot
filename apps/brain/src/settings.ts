@@ -1,4 +1,4 @@
-import { BOT_ID } from "@hatbot/shared";
+import { BOT_ID, CHAT_EFFORTS } from "@hatbot/shared";
 import { z } from "zod";
 import type { Db } from "./db";
 
@@ -13,7 +13,7 @@ export const Settings = z.object({
     alertReserveUsd: z.number().min(0),
   }),
   /** Effort for the chat thread. Heavier work runs as tasks, at their own effort. */
-  chatEffort: z.enum(["low", "medium"]),
+  chatEffort: z.enum(CHAT_EFFORTS),
   /** The chat's model. On Haiku 5.5 the chat can ask Opus 5.5 once per reply (ask_opus). */
   chatModel: z.enum(["claude-haiku-5-5", "claude-opus-5-5"]),
   /** Name and email on memory commits you make from the UI. */
