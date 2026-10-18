@@ -1,6 +1,7 @@
 import {
   type Approval,
   type Attachment,
+  type MessageLink,
   matchingCommands,
   type Source,
   type ThreadMessage,
@@ -178,6 +179,7 @@ function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
   const task = useStore((s) => s.tasks[taskId]);
   const progress = useStore((s) => s.taskProgress[taskId]);
   const control = useStore((s) => s.desktop?.control);
+  const open = useLinkOpen(m.link) ?? { to: `/tasks/${taskId}`, label: "Open task" };
   useEffect(() => ensureTask(taskId), [taskId]);
   // Until it loads (it's fetched again after a reconnect if it failed), the card's own line.
   if (!task)
@@ -186,7 +188,7 @@ function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
         <div className="body">
           <div className="muted card-pending">{plainText(m.text) || `Task #${taskId}`}</div>
         </div>
-        <Meta m={m} open={{ to: `/tasks/${taskId}`, label: "Open task" }} />
+        <Meta m={m} open={open} />
       </>
     );
   const active = isActive(task);
@@ -212,11 +214,7 @@ function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
         {active && <div className="progress-note">{note}</div>}
         {m.attachments?.length ? <Files list={m.attachments} /> : null}
       </div>
-      <Meta
-        m={m}
-        copy={active ? undefined : (task.summary ?? task.title)}
-        open={{ to: `/tasks/${taskId}`, label: "Open task" }}
-      />
+      <Meta m={m} copy={active ? undefined : (task.summary ?? task.title)} open={open} />
     </>
   );
 }
@@ -283,6 +281,44 @@ function BoxResult({ id }: { id: number }) {
   );
 }
 
+/**
+ * Where a hand-off's other end is: the chat it's in, by its bot's name. Opened at the message, so
+ * the hand-off reads with what came of it.
+ */
+function useLinkOpen(link: MessageLink | undefined) {
+  const label = useStore((s) => {
+    if (!link) return "";
+    const c = s.conversations.find((x) => x.id === link.conversationId);
+    if (!c) return "Open in the other chat";
+    return c.kind === "direct" ? `Open in ${chatName(s, c)}'s chat` : `Open in ${chatName(s, c)}`;
+  });
+  return link
+    ? { to: `${chatPath(link.conversationId)}?message=${link.messageId}`, label }
+    : undefined;
+}
+
+/**
+ * Another bot handing this chat's bot work: its request, which this bot answers here like any message.
+ * One a task asked for has no chat to go back to; its task page says which task.
+ */
+function HandoffMessage({ m }: { m: ThreadMessage }) {
+  const name = useStore((s) => botName(s, m.botId));
+  const open =
+    useLinkOpen(m.link) ??
+    (m.taskId ? { to: `/tasks/${m.taskId}`, label: "Open task" } : undefined);
+  return (
+    <>
+      <div className="body">
+        <p>
+          <b>{name} asked:</b>
+        </p>
+        <AssistantBody text={m.text} />
+      </div>
+      <Meta m={m} copy={m.text} open={open} />
+    </>
+  );
+}
+
 /** A note a box's page sent (hatbox.send): the box's words, neither yours nor the bot's, as plain text. */
 function BoxNote({ m }: { m: ThreadMessage }) {
   const box = useStore((s) => (m.boxId ? s.boxes[m.boxId] : null));
@@ -323,6 +359,8 @@ function ReplyMessage({
 }) {
   const task = useStore((s) => (m.taskId ? s.tasks[m.taskId] : undefined));
   const used = useStore((s) => s.usage[m.id]);
+  // A hand-off: its chat shows the task's status too, and how the other bot answered.
+  const handedOff = useLinkOpen(m.link);
   const streaming = m.status === "streaming";
   const note = progress?.trim().split("\n").filter(Boolean).at(-1);
   const ended = task && !isActive(task) ? task : null;
@@ -365,9 +403,8 @@ function ReplyMessage({
               ? { to: `/negotiations/${m.negotiationId}`, label: "Open negotiation" }
               : m.boxId
                 ? { to: `/boxes/${m.boxId}`, label: "Open box" }
-                : m.taskId
-                  ? { to: `/tasks/${m.taskId}`, label: "Open task" }
-                  : undefined
+                : (handedOff ??
+                  (m.taskId ? { to: `/tasks/${m.taskId}`, label: "Open task" } : undefined))
           }
           retry={retryable && m.status === "error" ? () => retryReply(m) : undefined}
         />
@@ -620,6 +657,8 @@ export const Message = memo(function Message({
     inner = <ScheduleMessage m={m} scheduleId={m.scheduleId} />;
   } else if (m.kind === "box") {
     inner = <BoxNote m={m} />;
+  } else if (m.kind === "handoff") {
+    inner = <HandoffMessage m={m} />;
   } else {
     inner = (
       <ReplyMessage m={m} progress={progress} retryable={retryable} answerable={answerable} />

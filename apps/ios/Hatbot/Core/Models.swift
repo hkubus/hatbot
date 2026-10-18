@@ -38,9 +38,10 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
 
   /// "task" and "schedule" messages show the thing they point at; `text` is a fallback. "command": a
   /// command you typed, or what came of it. "box": a note the box `boxId` sent (hatbox.send), shown as
-  /// from the box: neither yours nor the bot's words.
+  /// from the box: neither yours nor the bot's words. "handoff": another bot (`botId`) handing this chat's
+  /// bot work; `text` is its request, and `taskId` the hand-off.
   enum Kind: String, LenientEnum {
-    case text, task, schedule, command, box
+    case text, task, schedule, command, box, handoff
     static let fallback = Kind.text
   }
 
@@ -81,6 +82,9 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   /// The box this reply made or changed last, shown under it, or the box that sent this note; missing
   /// otherwise.
   var boxId: Int?
+  /// A hand-off's other end: on the request, the message that asked; on that message, the request.
+  /// Missing otherwise, and on a request a task asked for.
+  var link: MessageLink?
 
   var isIncognito: Bool { incognito == true }
 
@@ -89,14 +93,14 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case id, role, kind, text, status, createdAt, taskId, scheduleId, episodeId, editedAt, seenAt, attachments
-    case incognito, conversationId, botId, sources, boxId
+    case incognito, conversationId, botId, sources, boxId, link
   }
 
   init(
     id: Int, role: Role, kind: Kind, text: String, status: Status, createdAt: String, taskId: Int? = nil,
     scheduleId: Int? = nil, episodeId: Int? = nil, editedAt: String? = nil, seenAt: String? = nil,
     attachments: [Attachment]? = nil, incognito: Bool? = nil, conversationId: Int? = nil, botId: String? = nil,
-    sources: [Source]? = nil, boxId: Int? = nil
+    sources: [Source]? = nil, boxId: Int? = nil, link: MessageLink? = nil
   ) {
     self.id = id
     self.role = role
@@ -116,6 +120,7 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
     self.botId = botId
     self.sources = sources
     self.boxId = boxId
+    self.link = link
   }
 
   init(from decoder: Decoder) throws {
@@ -137,8 +142,15 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
       conversationId: c.decodeIfPresent(Int.self, forKey: .conversationId),
       botId: c.decodeIfPresent(String.self, forKey: .botId),
       sources: c.decodeIfPresent([Source].self, forKey: .sources),
-      boxId: c.decodeIfPresent(Int.self, forKey: .boxId))
+      boxId: c.decodeIfPresent(Int.self, forKey: .boxId),
+      link: c.decodeIfPresent(MessageLink.self, forKey: .link))
   }
+}
+
+/// A message in another chat.
+struct MessageLink: Codable, Equatable, Hashable, Sendable {
+  let conversationId: Int
+  let messageId: Int
 }
 
 /// A web page a reply cites.
@@ -722,6 +734,8 @@ enum HatbotEvent: Decodable, Sendable {
   case messageDone(
     id: Int, text: String, status: ThreadMessage.Status, sources: [Source]? = nil, choices: [[String]]? = nil)
   case messageTask(id: Int, taskId: Int)
+  /// A hand-off's other end, for a message already sent.
+  case messageLink(id: Int, link: MessageLink)
   case messageEdited(id: Int, editedAt: String)
   case messageRewrite(id: Int)
   case messageSeen(ids: [Int], seenAt: String)
@@ -765,7 +779,7 @@ enum HatbotEvent: Decodable, Sendable {
   private enum Key: String, CodingKey {
     case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused, tokens, costUsd
     case task, step, approval, state, schedule, trigger, episode, editedAt, ids, seenAt, attachment
-    case bot, conversation, proposal, watcher, sources, at, question, choices, boxId, box
+    case bot, conversation, proposal, watcher, sources, at, question, choices, boxId, box, link
   }
 
   init(from decoder: Decoder) throws {
@@ -782,6 +796,7 @@ enum HatbotEvent: Decodable, Sendable {
       self = try .messageDone(
         id: v(.id), text: v(.text), status: v(.status), sources: maybe(.sources), choices: maybe(.choices))
     case "message.task": self = try .messageTask(id: v(.id), taskId: v(.taskId))
+    case "message.link": self = try .messageLink(id: v(.id), link: v(.link))
     case "message.edited": self = try .messageEdited(id: v(.id), editedAt: v(.editedAt))
     case "message.rewrite": self = try .messageRewrite(id: v(.id))
     case "message.seen": self = try .messageSeen(ids: v(.ids), seenAt: v(.seenAt))

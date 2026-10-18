@@ -30,6 +30,7 @@ import type { Spend } from "../spend";
 import type { Skills } from "../teach/skills";
 import { runAgentTask } from "./agent-run";
 import { runDesktopTask } from "./desktop-run";
+import { runHandoff } from "./handoff-run";
 import { Pool, ScreenLane } from "./lane";
 import { keepAfterRestart } from "./research";
 import { earlierReport, RESEARCH_MODEL, refreshing } from "./research-goal";
@@ -409,6 +410,8 @@ export class Tasks {
     requestedBy?: string;
     /** The task that handed it over, which waits for it; it shows nowhere in the chat. */
     parent?: Task;
+    /** The hand-off whose answer asked for it, so hand-offs through chats count towards the cap. */
+    askedIn?: Task;
     /** A research task (PLAN.md §17): Haiku at xhigh effort with helpers, ending in a report. */
     research?: boolean;
     /** The to-do item it works on, ticked off when it ends done; one task on an item at a time. */
@@ -429,6 +432,7 @@ export class Tasks {
       conversation_id: conversationId,
       requested_by: input.requestedBy ?? null,
       parent_id: input.parent?.id ?? null,
+      asked_in: input.askedIn?.id ?? null,
       title: input.title,
       goal: input.goal,
       success_criteria: "",
@@ -490,14 +494,25 @@ export class Tasks {
   /** How many hand-offs between bots led to this task, its own included. */
   handoffs(task: Task | null): number {
     let n = 0;
-    for (let t = task; t; t = t.parentId ? this.get(t.parentId) : null) if (t.requestedBy) n++;
+    for (let id = task?.id ?? null; id !== null; ) {
+      const t = this.d.db
+        .query<
+          { requested_by: string | null; parent_id: number | null; asked_in: number | null },
+          [number]
+        >("SELECT requested_by, parent_id, asked_in FROM tasks WHERE id = ?")
+        .get(id);
+      if (!t) break;
+      if (t.requested_by) n++;
+      id = t.parent_id ?? t.asked_in;
+    }
     return n;
   }
 
   /**
-   * ask_bot: another bot works on `request` as its own task, with what the asker had read. From the
-   * chat it shows under the asker's reply (`message`), and the asker hears how it ended; from a task
-   * (`parent`), that task waits for it. A string says why it couldn't start.
+   * ask_bot: another bot answers `request` in its own chat, as a task the asker can follow, with what
+   * the asker had read (PLAN.md §14.7). From the chat it shows under the asker's reply (`message`), and
+   * the asker hears the answer; from a task (`parent`), that task waits for it. `answering`: the
+   * hand-off the asking reply answers. A string says why it couldn't start.
    */
   askBot(input: {
     from: Bot;
@@ -506,6 +521,7 @@ export class Tasks {
     conversationId?: number;
     message?: number;
     parent?: Task;
+    answering?: Task;
     taintedBy: string | null;
     ownerSaid?: string;
   }): Task | string {
@@ -520,7 +536,7 @@ export class Tasks {
     }
     if (to.id === input.from.id)
       return "That's you. Do it yourself, or start a task with run_task.";
-    if (this.handoffs(input.parent ?? null) >= MAX_HANDOFFS)
+    if (this.handoffs(input.parent ?? input.answering ?? null) >= MAX_HANDOFFS)
       return `Hand-offs between bots go at most ${MAX_HANDOFFS} deep, and this would be deeper. Do it yourself, or report what you have.`;
     const firstLine = input.request.trim().split("\n")[0] ?? "";
     const task = this.createBackgroundTask({
@@ -532,6 +548,7 @@ export class Tasks {
       conversationId: input.conversationId,
       requestedBy: input.from.id,
       parent: input.parent,
+      askedIn: input.answering,
       message: input.message,
       taintedBy: input.taintedBy,
       request: input.ownerSaid,
@@ -550,9 +567,14 @@ export class Tasks {
     if (!t || t.parentId || t.lane !== "background" || !t.finishedAt) return null;
     const r = this.d.db
       .query<
-        { request: string | null; run_key: string | null; conversation_id: number | null },
+        {
+          request: string | null;
+          run_key: string | null;
+          conversation_id: number | null;
+          asked_in: number | null;
+        },
         [number]
-      >("SELECT request, run_key, conversation_id FROM tasks WHERE id = ?")
+      >("SELECT request, run_key, conversation_id, asked_in FROM tasks WHERE id = ?")
       .get(id);
     return this.createBackgroundTask({
       title: t.title,
@@ -576,6 +598,7 @@ export class Tasks {
       conversationId: r?.conversation_id ?? undefined,
       // The bot that asked for it hears how this one ends too.
       requestedBy: t.requestedBy ?? undefined,
+      askedIn: r?.asked_in ? (this.get(r.asked_in) ?? undefined) : undefined,
       research: t.research,
       todo: t.todo ?? undefined,
     });
@@ -672,7 +695,13 @@ export class Tasks {
     }
     const abort = new AbortController();
     this.running.set(id, abort);
-    const runner = this.get(id)?.lane === "background" ? runAgentTask : runDesktopTask;
+    const task = this.get(id);
+    // A hand-off is answered in the other bot's chat.
+    const runner = task?.requestedBy
+      ? runHandoff
+      : task?.lane === "background"
+        ? runAgentTask
+        : runDesktopTask;
     const run = runner(this, id, abort.signal)
       .catch((err) => {
         console.error(`task ${id} crashed`, err);

@@ -139,7 +139,7 @@ const CORE_TOOLS: Anthropic.Beta.BetaTool[] = [
   toolParam({
     name: "ask_bot",
     description:
-      "Hand part of this task to another of the owner's bots when it needs that bot's plugins, logins or notes: it does it as its own task, with its own role, memory folder and plugins. This waits until it ends and returns its summary. It can't see this task, so give it everything it needs.",
+      "Hand part of this task to another of the owner's bots when it needs that bot's plugins, logins or notes: your request goes to its own chat with the owner, as from you, and it answers there with its own role, memory folder and plugins. This waits for its answer and returns it. It can't see this task, so give it everything it needs.",
     schema: AskBotInput,
   }),
   toolParam({
@@ -243,8 +243,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     }
   };
   // Fixed for the whole run: the tool list is part of the prompt cache.
-  // A bot gets only the plugins it may use.
-  const own = d.plugins.tools(bot.plugins);
+  // A bot gets only the plugins it may use, less those it leaves to the code bot.
+  const own = d.plugins.tools(bot.plugins, d.bots.leftToCoder(bot));
   // Research only reads and writes up, so it gets the plugins' lookups and no tool that changes
   // anything; it ends with finish_research (PLAN.md §17).
   const { research } = task;
@@ -262,7 +262,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const current = (name: string): PluginTool | string => {
     const offered = pluginTools.get(name);
     if (!offered) return `Unknown tool "${name}".`;
-    const mine = d.plugins.tools((d.bots.get(bot.id) ?? bot).plugins);
+    const now = d.bots.get(bot.id) ?? bot;
+    const mine = d.plugins.tools(now.plugins, d.bots.leftToCoder(now));
     // Negotiation's tools keep what they learned in this task while Scout's stay the same.
     if (mine.length !== negotiation.from.length || mine.some((t, i) => t !== negotiation.from[i]))
       negotiation = negotiating(mine);
@@ -288,7 +289,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const sent = new Set(tools.flatMap((t) => ("name" in t ? [t.name] : [])));
   /** Results never cleared: a research task's findings are what it cites. Only tools sent. */
   const keptTools = ["finish_task", "finish_research", "investigate"].filter((n) => sent.has(n));
-  const guidance = d.plugins.guidance(bot.plugins);
+  const guidance = d.plugins.guidance(bot.plugins, d.bots.leftToCoder(bot));
   const prompt = research
     ? promptFor(researchPrompt(bot), bot, others, RESEARCH_ASK_BOT)
     : promptFor(AGENT_PROMPT, bot, others);
@@ -481,12 +482,9 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       : `${head}\n\nThe event that started this task came from outside and isn't trusted, so it isn't shown: it can't choose what to act on.`;
   };
 
-  /**
-   * Your words behind this task. A task another bot asked for has only the words that bot's task had:
-   * its goal is that bot's request, and standingWords() would present it as yours.
-   */
+  /** Your words behind this task. */
   const ownerWords = (): string | null =>
-    task.origin === "chat" || task.requestedBy ? tasks.requestOf(id) : standingWords();
+    task.origin === "chat" ? tasks.requestOf(id) : standingWords();
 
   /** Your words for the approval checks, with the notes you gave on this task's approvals. */
   const withNotes = (words: string | null): string | null =>
@@ -689,10 +687,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       : task.payload
         ? `\n<event trusted="${task.tainted ? "false" : "true"}">\n${tagJson(task.payload)}\n</event>`
         : "";
-    const asker = task.requestedBy && d.bots.nameOf(task.requestedBy);
-    const startedBy = asker
-      ? `Asked by ${asker}, another of the owner's bots, ${task.parentId ? "from one of its tasks" : "from its chat with the owner"}. Your summary goes back to ${asker}. Started`
-      : `Started by ${STARTED_BY[task.origin](source)}`;
+    const startedBy = `Started by ${STARTED_BY[task.origin](source)}`;
     record("user", [
       {
         type: "text",

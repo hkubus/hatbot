@@ -18,6 +18,7 @@ import {
   type Schedule,
   SKILL_NAME,
   type Source,
+  type Task,
   TODO_FILE,
   type Todo,
   todoLine,
@@ -112,6 +113,8 @@ export type ToolContext = {
   suspected?: () => Promise<boolean>;
   /** Your own latest messages in this conversation, for a task's approval check. */
   ownerSaid?: () => string;
+  /** The hand-off the reply answers, if it answers one: hand-offs it makes count from there. */
+  answering?: Task;
   /** A plugin tool as it is now, for a call: the reply's may be from before a change; a string says why not. */
   livePlugin?: (t: PluginTool) => PluginTool | string;
   /** Runs a plugin tool that changes something, after its checks and your approval if it needs one. */
@@ -223,6 +226,9 @@ function seenLine(ctx: ToolContext, w: Watcher): string {
     ctx.taint?.(`What the watcher "${w.name}" saw`, w.lastValue);
   return watcherLine(w, untrusted);
 }
+
+/** The calling bot is the one code and boxes go to (PLAN.md §14.7). */
+const isCodeBot = (ctx: ToolContext) => Boolean(ctx.bot && ctx.bots?.codeBot()?.id === ctx.bot.id);
 
 /** The bot was deleted while it wrote this reply: what it makes now would run as nobody's. */
 const gone = (ctx: ToolContext) => Boolean(ctx.bot && ctx.bots && !ctx.bots.active(ctx.bot.id));
@@ -425,12 +431,12 @@ const scheduleWhen = {
   at: z.string().optional().describe('Once: local date and time, e.g. "2026-10-11T08:00"'),
 };
 
-/** One of the calling bot's boxes: another bot's is theirs to change. */
+/** One of the calling bot's boxes: another bot's is theirs to change. The code bot's are all of them. */
 function ownBox(ctx: ToolContext, id: number): Box {
   const box = ctx.boxes?.get(id);
   if (!box) throw new BoxError(`There's no box #${id}.`);
   const me = ctx.bot?.id ?? HATBOT_ID;
-  if (box.botId !== me)
+  if (box.botId !== me && !isCodeBot(ctx))
     throw new BoxError(
       `Box #${id} is ${ctx.bots?.nameOf(box.botId) ?? box.botId}'s; leave it to them.`,
     );
@@ -1051,12 +1057,13 @@ export const TOOLS = [
     description: "Your boxes, the latest changed first.",
     schema: z.object({}),
     run: async (_, ctx) => {
-      const list = ctx.boxes?.list(ctx.bot?.id ?? HATBOT_ID) ?? [];
+      const me = ctx.bot?.id ?? HATBOT_ID;
+      const list = ctx.boxes?.list(isCodeBot(ctx) ? undefined : me) ?? [];
       if (!list.length) return "You haven't made any boxes.";
       return list
         .map(
           (b) =>
-            `#${b.id} "${b.title}" (version ${b.version}, changed ${localDay(new Date(b.updatedAt))})`,
+            `#${b.id} "${b.title}" (version ${b.version}, changed ${localDay(new Date(b.updatedAt))}${b.botId === me ? "" : `, made by ${ctx.bots?.nameOf(b.botId) ?? b.botId}`})`,
         )
         .join("\n");
     },
@@ -1260,7 +1267,13 @@ export const TOOLS = [
         if (r.isError) return r.content;
         note = r.content;
       }
-      const first = await feeds.set(id, box.botId, { name, tool, input, everyMinutes: every });
+      // It runs with the tools of the bot that added it, which is the code bot on another bot's box.
+      const first = await feeds.set(id, ctx.bot?.id ?? HATBOT_ID, {
+        name,
+        tool,
+        input,
+        everyMinutes: every,
+      });
       // Not what it gave: that's untrusted, and would make adding the next feed ask too.
       return `Added the feed "${name}": it ran and gave ${kindOf(first.value)}. It runs every ${every} min; the page reads it with await hatbox.feed(${JSON.stringify(name)}).${note}`;
     },
@@ -1350,7 +1363,7 @@ export const TOOLS = [
     schema: RunTaskInput,
     run: async (
       { title, goal, effort },
-      { tasks, messageId, tainted, ownerSaid, bot, conversationId, suspected },
+      { tasks, messageId, tainted, ownerSaid, bot, conversationId, suspected, answering },
     ) => {
       if (!tasks) return "Tasks aren't available.";
       const suspect = await suspected?.();
@@ -1364,6 +1377,8 @@ export const TOOLS = [
         message: messageId,
         taintedBy: chatTaint(tainted?.()),
         request: ownerSaid?.(),
+        // Answering a hand-off: it counts toward how deep hand-offs go.
+        askedIn: answering,
       });
       if (!task) return "The task couldn't start.";
       if (suspect) tasks.mark(task.id, "injection_suspected");
@@ -1377,7 +1392,7 @@ export const TOOLS = [
     schema: ResearchInput,
     run: async (
       { title, question, previous },
-      { tasks, memory, messageId, tainted, ownerSaid, bot, conversationId, suspected },
+      { tasks, memory, messageId, tainted, ownerSaid, bot, conversationId, suspected, answering },
     ) => {
       if (!tasks) return "Tasks aren't available.";
       if (previous && !(await memory.exists(previous)))
@@ -1392,6 +1407,7 @@ export const TOOLS = [
         message: messageId,
         taintedBy: chatTaint(tainted?.()),
         request: ownerSaid?.(),
+        askedIn: answering,
         research: true,
       });
       if (!task) return "The research couldn't start.";
@@ -1413,7 +1429,7 @@ export const TOOLS = [
     }),
     run: async (
       { item, details },
-      { tasks, memory, messageId, tainted, ownerSaid, bot, conversationId, suspected },
+      { tasks, memory, messageId, tainted, ownerSaid, bot, conversationId, suspected, answering },
     ) => {
       if (!tasks) return "Tasks aren't available.";
       const t = findTodo((await memory.readOrNull(TODO_FILE)) ?? "", item);
@@ -1429,6 +1445,7 @@ export const TOOLS = [
         message: messageId,
         taintedBy: chatTaint(tainted?.()),
         request: ownerSaid?.(),
+        askedIn: answering,
       });
       if (!task) return `A task is already working on "${t.text}".`;
       if (suspect) tasks.mark(task.id, "injection_suspected");
@@ -1438,11 +1455,11 @@ export const TOOLS = [
   def({
     name: "ask_bot",
     description:
-      "Hand work to another of the owner's bots when it needs that bot's plugins, logins or notes: it does it as its own task, with its own role, memory folder and plugins. Its progress shows under your reply, and you're told how it ended at the start of a later turn; then tell the owner what came of it. It can't see this conversation, so give it everything it needs. Don't wait for it.",
+      "Hand work to another of the owner's bots when it needs that bot's plugins, logins or notes: your request goes to its own chat with the owner, as from you, and it answers there with its own role, memory folder and plugins. Its progress shows under your reply, and you're told its answer at the start of a later turn; then tell the owner what came of it. It can't see this conversation, so give it everything it needs. Don't wait for it.",
     schema: AskBotInput,
     run: async (
       { bot: to, request },
-      { tasks, messageId, tainted, ownerSaid, bot, conversationId, suspected },
+      { tasks, messageId, tainted, ownerSaid, bot, conversationId, suspected, answering },
     ) => {
       if (!tasks || !bot) return "Other bots aren't available.";
       const suspect = await suspected?.();
@@ -1452,6 +1469,7 @@ export const TOOLS = [
         request,
         conversationId,
         message: messageId,
+        answering,
         taintedBy: chatTaint(tainted?.()) || null,
         ownerSaid: ownerSaid?.(),
       });
@@ -1902,6 +1920,9 @@ export async function runTool(
 
 /** Core tools that need the desktop, left out when there's none. */
 export const DESKTOP_TOOLS = ["run_desktop_task", "send_file"];
+
+/** The tools that write a box's code or change what it gets: the code bot's, when there is one. */
+export const BOX_CHANGE_TOOLS = ["box_create", "box_edit", "box_revert", "box_feed"];
 
 /**
  * The core tools an incognito conversation gets: lookups that leave nothing behind. Not history search,

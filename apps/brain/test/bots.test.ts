@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import type { Bot, Conversation, Task } from "@hatbot/shared";
-import { FakeModel, text, toolUse } from "./fake-model";
+import type { Bot, Conversation, Task, ThreadMessage } from "@hatbot/shared";
+import { FakeModel, type Scripted, text, toolUse } from "./fake-model";
 import { signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 const systemOf = (req: { system?: unknown } | undefined) => JSON.stringify(req?.system);
@@ -201,16 +201,62 @@ test("a deleted bot's chat takes no new messages, and what it left goes to Hatbo
   expect(t.settings.get().heartbeat).toMatchObject({ enabled: false, botId: "hatbot" });
 });
 
-test("a task can ask another bot and waits for it; taint goes both ways, and hand-offs nest 3 deep at most", async () => {
-  const work = new FakeModel([
+test("a hand-off is answered in the other bot's chat, each end linked to the other; taint goes both ways, and hand-offs nest 3 deep at most", async () => {
+  const chef: Scripted[] = [{ content: [text("Soup.")] }, { content: [text("Stew.")] }];
+  const model = new FakeModel([
     { content: [toolUse("ask_bot", { bot: "Chef", request: "Plan Sunday dinner" })] },
-    { content: [toolUse("finish_task", { outcome: "done", summary: "Soup.", notify: false })] },
+    { content: [text("Chef's on it.")] },
+    { content: [text("Chef says soup.")] },
+  ]);
+  // Chef's chat answers from its own script; once the scripts run out, every chat says OK.
+  model.route = (p) =>
+    systemOf(p).includes("owner's bots, Chef.")
+      ? (chef.shift() ?? { content: [text("OK.")] })
+      : model.script.length
+        ? undefined
+        : { content: [text("OK.")] };
+  const work = new FakeModel([
+    { content: [toolUse("ask_bot", { bot: "Chef", request: "Plan the weekend's meals" })] },
     {
-      content: [toolUse("finish_task", { outcome: "done", summary: "Chef: soup.", notify: false })],
+      content: [toolUse("finish_task", { outcome: "done", summary: "Chef: stew.", notify: false })],
     },
   ]);
-  const t = await testApp(new FakeModel(), work);
+  const t = await testApp(model, work);
   const c = bot(t, "Chef", "Plans meals.");
+  const chefChat = t.chats.direct("chef");
+
+  // From the chat: the request shows in Chef's chat as Hatbot's, and Chef answers it there.
+  await t.thread.post("What's for Sunday dinner?").done;
+  await t.tasks.idle();
+  await t.chats.idle();
+  const [request, answer] = chefChat.list();
+  const asked = t.thread.list().find((m) => m.taskId !== null) as ThreadMessage;
+  expect(request).toMatchObject({
+    kind: "handoff",
+    botId: "hatbot",
+    text: "Plan Sunday dinner",
+    link: { conversationId: t.thread.conversationId, messageId: asked.id },
+  });
+  expect(answer).toMatchObject({ botId: "chef", text: "Soup." });
+  expect(asked.link).toEqual({
+    conversationId: chefChat.conversationId,
+    messageId: request?.id as number,
+  });
+  expect(t.tasks.get(asked.taskId as number)).toMatchObject({
+    botId: "chef",
+    requestedBy: "hatbot",
+    status: "done",
+    summary: "Soup.",
+  });
+  // The request is Hatbot's words, not yours; Hatbot hears the answer and writes its reply again.
+  const chefs = model.requests.filter((r) => systemOf(r).includes("owner's bots, Chef."));
+  expect(JSON.stringify(chefs[0]?.messages)).toContain("asked you this from its chat");
+  expect(JSON.stringify(model.requests.at(-1)?.messages.at(-2))).toContain(
+    "(by Chef, which you asked)",
+  );
+  expect(t.thread.list().find((m) => m.id === asked.id)?.text).toBe("Chef says soup.");
+
+  // From a task that read untrusted content: the request comes tainted, and so does the answer.
   const parent = t.tasks.createBackgroundTask({
     title: "Weekend",
     goal: "Plan the weekend",
@@ -220,14 +266,15 @@ test("a task can ask another bot and waits for it; taint goes both ways, and han
   });
   if (!parent) throw new Error("no task");
   await t.tasks.idle();
-  const child = t.tasks.list({}).find((x) => x.botId === "chef");
-  expect(child).toMatchObject({ parentId: parent.id, requestedBy: "hatbot", tainted: true });
-  expect(JSON.stringify(work.requests[2]?.messages.at(-1))).toContain(
+  const child = t.tasks.list({}).find((x) => x.parentId === parent.id);
+  expect(child).toMatchObject({ requestedBy: "hatbot", tainted: true, summary: "Stew." });
+  expect(chefChat.list().find((m) => m.taskId === child?.id)?.link).toBeUndefined();
+  expect(JSON.stringify(work.requests[1]?.messages.at(-1))).toContain(
     '<summary from=\\"Chef\\" trusted=\\"false\\">',
   );
-  expect(t.tasks.get(parent.id)?.summary).toBe("Chef: soup.");
+  expect(t.tasks.get(parent.id)?.summary).toBe("Chef: stew.");
 
-  work.script.push(finish("1"), finish("2"), finish("3"));
+  // Hand-offs asked while answering one count too.
   const hatbot = t.bots.hatbot();
   let up: Task | undefined;
   for (let i = 0; i < 3; i++) {
@@ -235,17 +282,24 @@ test("a task can ask another bot and waits for it; taint goes both ways, and han
       from: i % 2 ? c : hatbot,
       to: i % 2 ? "hatbot" : "chef",
       request: `step ${i}`,
-      parent: up,
+      answering: up,
       taintedBy: null,
     });
     if (typeof next === "string") throw new Error(next);
     up = next;
   }
   expect(
-    typeof t.tasks.askBot({ from: c, to: "hatbot", request: "more", parent: up, taintedBy: null }),
+    typeof t.tasks.askBot({
+      from: c,
+      to: "hatbot",
+      request: "more",
+      answering: up,
+      taintedBy: null,
+    }),
   ).toBe("string");
   expect(typeof t.tasks.askBot({ from: c, to: "Chef", request: "x", taintedBy: null })).toBe(
     "string",
   );
   await t.tasks.idle();
+  await t.chats.idle();
 });

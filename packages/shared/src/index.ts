@@ -111,9 +111,10 @@ export type ThreadMessage = {
    * "task" and "schedule" messages are cards; their text is a plain-text fallback. "command": a command
    * you typed, or what came of it (one with a task shows the task like a reply does). "box": a note the
    * box `boxId` sent (hatbox.send, or its backend's scheduled() as a notification), shown as from the
-   * box: neither yours nor the bot's words.
+   * box: neither yours nor the bot's words. "handoff": another bot (`botId`) handing this chat's bot
+   * work (ask_bot, PLAN.md §14.7); its text is the request, and `taskId` the hand-off.
    */
-  kind: "text" | "task" | "schedule" | "command" | "box";
+  kind: "text" | "task" | "schedule" | "command" | "box" | "handoff";
   text: string;
   status: "streaming" | "done" | "error";
   createdAt: string;
@@ -123,6 +124,11 @@ export type ThreadMessage = {
   negotiationId: number | null;
   /** The box this reply made or changed last shows under it (PLAN.md §21.5). */
   boxId: number | null;
+  /**
+   * A hand-off's other end (PLAN.md §14.7): on the request in the other bot's chat, the message that
+   * asked; on that message, the request. Absent otherwise, and on a request a task asked for.
+   */
+  link?: MessageLink;
   /** The conversation it belongs to; cards from background tasks have none. */
   episodeId: number | null;
   /** When a task's result changed it after it was sent. */
@@ -141,6 +147,9 @@ export type ThreadMessage = {
    */
   choices?: string[][];
 };
+
+/** A message in another chat. */
+export type MessageLink = { conversationId: number; messageId: number };
 
 /** A web page a reply cites. */
 export type Source = { url: string; title: string };
@@ -365,6 +374,7 @@ export type HatbotEvent =
     }
   /** A task now shows under this reply. */
   | { type: "message.task"; id: number; taskId: number }
+  | { type: "message.link"; id: number; link: MessageLink }
   /** A negotiation now shows under this reply (PLAN.md §16.5). */
   | { type: "message.negotiation"; id: number; negotiationId: number }
   /** A box this reply made or changed now shows under it (PLAN.md §21.5). */

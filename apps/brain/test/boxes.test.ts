@@ -6,7 +6,7 @@ import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { FRAME_CSP, previewed } from "../src/boxes";
 import { definePlugin, ready, tool } from "../src/plugins/plugin";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { bot, lastUserText, signIn, type TestApp, testApp, waitFor } from "./helpers";
+import { bot, lastUserText, signIn, type TestApp, testApp, toolNames, waitFor } from "./helpers";
 
 const PAGE = "<!doctype html><title>Habits</title><button>Walk</button>";
 const open = async (t: TestApp, id: number) => {
@@ -85,17 +85,37 @@ test("a box written after reading untrusted content reads back as untrusted, in 
   expect(lastUserText(model.requests[4])).toContain('trusted=\\"false\\"');
 });
 
-test("a bot changes only its own boxes", async () => {
+test("a bot changes only its own boxes; with a code bot, every box is its to make and change", async () => {
   const model = new FakeModel([
     { content: [toolUse("box_edit", { box: 1, title: "Mine now" })] },
     { content: [text("Can't.")] },
+    { content: [text("Coder makes those.")] },
+    { content: [toolUse("box_edit", { box: 2, title: "Tidied" })] },
+    { content: [text("Done.")] },
+    { content: [toolUse("box_feed", { box: 2, name: "load", tool: "lab_load" })] },
+    { content: [text("I can't read that.")] },
   ]);
-  const t = await testApp(model);
+  const t = await testApp(model, new FakeModel(), {}, [lab({ load: 1 })]);
+  await t.plugins.update("lab", { enabled: true });
   const coder = bot(t, "Coder");
   t.boxes.create({ botId: coder.id, conversationId: null, title: "Builds", html: PAGE }, {});
   await t.thread.post("rename Coder's box").done;
   expect(lastUserText(model.requests[1])).toContain("is Coder's");
   expect(t.boxes.get(1)?.title).toBe("Builds");
+
+  // Naming the Code plugin makes Coder the code bot: Hatbot hands boxes to it, and it changes Hatbot's.
+  t.bots.update(coder.id, { plugins: ["code"] });
+  t.boxes.create({ botId: "hatbot", conversationId: null, title: "Habits", html: PAGE }, {});
+  await t.thread.post("make me a timer").done;
+  expect(toolNames(model.requests[2])).not.toContain("box_create");
+  expect(JSON.stringify(model.requests[2]?.system)).toContain("Code is Coder's");
+  await t.chats.direct(coder.id).post("tidy the habits box").done;
+  expect(toolNames(model.requests[3])).toContain("box_create");
+  expect(t.boxes.get(2)?.title).toBe("Tidied");
+  // A feed it adds runs with its own tools, not those of the bot whose box it is.
+  await t.chats.direct(coder.id).post("show the load in the habits box").done;
+  expect(lastUserText(model.requests[6])).toContain("Coder has no tool called lab_load");
+  expect(t.boxes.feeds?.list(2)).toEqual([]);
 });
 
 test("box_look: the bot sees its box drawn on the desktop with its errors, and with what the page saved as untrusted", async () => {

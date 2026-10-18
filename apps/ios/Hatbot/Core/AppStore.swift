@@ -265,6 +265,8 @@ final class AppStore {
       if let r = live(id) { r.progress = String((r.progress + text).suffix(400)) }
     case let .messageTask(id, taskId):
       if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].taskId = taskId }
+    case let .messageLink(id, link):
+      if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].link = link }
     case let .messageBox(id, boxId):
       if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].boxId = boxId }
     case let .messageUsage(id, used):
