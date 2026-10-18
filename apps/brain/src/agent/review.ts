@@ -1,10 +1,9 @@
 // Haiku's review of a change that would otherwise ask you to approve it (PLAN.md §6.1): if it isn't
 // destructive or dangerous, and nothing untrusted could have put it there, it goes ahead.
-import type Anthropic from "@anthropic-ai/sdk";
 import type { ApprovalKind } from "@hatbot/shared";
 import type { Verdict } from "../plugins/plugin";
-import { fixedTokens, requestCeiling, type Spend } from "../spend";
-import type { ModelClient } from "./model";
+import type { Spend } from "../spend";
+import { type ModelClient, oneShot } from "./model";
 import { REVIEW_PROMPT } from "./prompt";
 import { tagJson, tagText } from "./untrusted";
 
@@ -57,26 +56,18 @@ export async function safeToRun(
       `<action>\n${tagJson({ tool: action.tool, input: action.input, summary: action.what, would_ask_because: action.why })}\n</action>`,
     ].join("\n\n");
     // Past a limit it throws, and the change asks you instead.
-    d.spend.check(
-      requestCeiling(REVIEW_MODEL, {
-        prompt: fixedTokens(REVIEW_PROMPT, content),
-        maxTokens: REVIEW_MAX_TOKENS,
-      }),
+    const out = await oneShot(
+      d,
+      {
+        model: REVIEW_MODEL,
+        max_tokens: REVIEW_MAX_TOKENS,
+        thinking: { type: "adaptive" },
+        output_config: { effort: "low", format: { type: "json_schema", schema: VERDICT } },
+        system: REVIEW_PROMPT,
+        messages: [{ role: "user", content }],
+      },
+      { purpose: "review", ...ref },
     );
-    const res = await d.model.create({
-      model: REVIEW_MODEL,
-      max_tokens: REVIEW_MAX_TOKENS,
-      thinking: { type: "adaptive" },
-      output_config: { effort: "low", format: { type: "json_schema", schema: VERDICT } },
-      system: REVIEW_PROMPT,
-      messages: [{ role: "user", content }],
-    });
-    d.spend.recordResponse({ model: REVIEW_MODEL, purpose: "review", usage: res.usage, ...ref });
-    if (res.stop_reason !== "end_turn") return { safe: false, why: "" };
-    const out = res.content
-      .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("");
     const json = JSON.parse(out) as Record<string, unknown>;
     return { safe: json.safe === true, why: typeof json.why === "string" ? json.why : "" };
   } catch (err) {

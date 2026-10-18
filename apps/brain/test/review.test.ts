@@ -3,7 +3,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { ModelClient } from "../src/agent/model";
 import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { safeToRun } from "../src/agent/review";
-import { fixedTokens, priceOf, requestCeiling } from "../src/spend";
+import { estimateTokens, fixedTokens, priceOf, requestCeiling } from "../src/spend";
 import { FakeModel, text } from "./fake-model";
 import { testApp } from "./helpers";
 
@@ -152,7 +152,7 @@ test("the spend check prices all the output the review may write", async () => {
   const request = fake.creates[0];
   expect(checked).toEqual([
     requestCeiling("claude-haiku-5-5", {
-      prompt: fixedTokens(REVIEW_PROMPT, String(request?.messages[0]?.content)),
+      prompt: fixedTokens(REVIEW_PROMPT, null) + estimateTokens(request?.messages),
       maxTokens: request?.max_tokens ?? 0,
     }),
   ]);

@@ -19,7 +19,7 @@ test("the encoding is brotli where the client takes it, else gzip", () => {
 test("JSON answers come compressed; small ones and other types as they are", async () => {
   const t = await testApp();
   const { cookie } = await setUpOwner(t);
-  for (let i = 0; i < 30; i++) t.thread.addCard("text", `Message ${i}: ${"words ".repeat(40)}`, {});
+  for (let i = 0; i < 30; i++) t.thread.add({ text: `Message ${i}: ${"words ".repeat(40)}` });
   const get = (path: string, accept?: string) =>
     t.call("GET", path, undefined, { cookie, ...(accept ? { "accept-encoding": accept } : {}) });
 
