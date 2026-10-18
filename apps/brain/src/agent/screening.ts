@@ -27,12 +27,11 @@ export type Readable = string | { pdf: string };
 export async function screenPage(
   model: ModelClient,
   spend: Spend,
-  ref: number | { taskId?: number; episodeId?: number },
+  where: { taskId?: number; episodeId?: number },
   page: { url: string | null; title: string | null; text: Readable },
 ): Promise<Screening> {
   const pdf = typeof page.text === "string" ? null : page.text.pdf;
   if (typeof page.text === "string" && !page.text.trim()) return { suspected: false, excerpt: "" };
-  const where = typeof ref === "number" ? { taskId: ref } : ref;
   // JSON-encoded and labelled with its source, so the page can't pose as the prompt. A PDF goes as a
   // document before its label.
   const label = `<page_json>\n${tagJson({ url: page.url, title: page.title, text: pdf === null ? (page.text as string).slice(0, MAX_SCREENED_CHARS) : "(the PDF document above)" })}\n</page_json>`;

@@ -5,14 +5,23 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Bot, Task } from "@hatbot/shared";
 import { z } from "zod";
-import { modelErrorText } from "../agent/model";
+import { cutOff, modelErrorText, oneShot } from "../agent/model";
 import { RESEARCH_CHECK_PROMPT, RESEARCH_PROMPT, RESEARCH_WORKER_PROMPT } from "../agent/prompt";
+import type { Readable } from "../agent/screening";
 import { localStamp } from "../agent/thread";
-import { containerOf, serverToolWaiting, toolParam, webReads, webTools } from "../agent/tools";
+import {
+  containerOf,
+  serverToolWaiting,
+  toolParam,
+  webReads,
+  webTexts,
+  webTools,
+} from "../agent/tools";
 import { tagJson, untrustedFields } from "../agent/untrusted";
 import { botFolder, slugWords } from "../bots";
 import { MemoryConflict } from "../memory/store";
-import { BudgetError, estimateTokens, fixedTokens, requestCeiling } from "../spend";
+import { BudgetError, estimateTokens, requestCeiling } from "../spend";
+import { pathOf, TRACKING } from "./policy";
 import { refreshing } from "./research-goal";
 import type { Tasks } from "./service";
 
@@ -149,21 +158,20 @@ const folderOf = (bot: { id: string }) => {
 /** `read`: a helper read the page, so its link is one the task has (PLAN.md §17). */
 type Source = { n: number; url: string; title: string; date?: string; read?: boolean };
 
-const TRACKING = /^(utm_\w+|fbclid|gclid|dclid|msclkid|yclid|igshid|mc_cid|mc_eid)$/i;
-
 /** One page, one source: without its fragment, tracking parameters or a trailing slash. */
 export function pageUrl(url: string): string {
   const u = new URL(url.trim());
   u.hash = "";
   for (const key of [...u.searchParams.keys()]) if (TRACKING.test(key)) u.searchParams.delete(key);
-  if (u.pathname.length > 1) u.pathname = u.pathname.replace(/\/+$/, "");
+  u.pathname = pathOf(u.pathname);
   return u.href;
 }
 
 /**
  * Text as it's compared: one case, no markdown or quote marks, single spaces, numbers without their
  * thousands separators and with a decimal point, so "2 399,00 zł" on the page matches "2399.00 zł" in
- * a quote. A separator is a thousands one when three digits follow it, and no more.
+ * a quote. A number has thousands separators when one to three digits come before the first and three
+ * after each, so "2023 150 osób" stays two numbers.
  */
 export const plain = (text: string) =>
   text
@@ -171,7 +179,7 @@ export const plain = (text: string) =>
     .toLowerCase()
     .replace(/[*_`#>|"'“”„‘’«»]/g, " ")
     .replace(/\s+/g, " ")
-    .replace(/(\d)[ .,](?=\d{3}(?!\d))/g, "$1")
+    .replace(/(?<![\w.,])\d{1,3}(?:[ .,]\d{3})+(?!\d)/g, (n) => n.replace(/[ .,]/g, ""))
     .replace(/(\d),(?=\d)/g, "$1.")
     .trim();
 
@@ -179,13 +187,16 @@ const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
  * Whether a quote is in what a helper read: each part of it, around any "…". A number at either end
- * of a part is a whole number there, not the end of "2 399" or the start of "1,5".
+ * of a part is a whole number there, not the end of "2 399" or the start of "1,5". A letter or two
+ * beside a "…" says nothing, but a short quote on its own ("42") is still one.
  */
 export function quoteFound(quote: string, read: string): boolean {
-  const parts = quote
+  const pieces = quote
     .split(/\[?(?:\.\.\.|…)\]?/)
     .map(plain)
-    .filter((p) => p.length >= 3);
+    .filter(Boolean);
+  const long = pieces.filter((p) => p.length >= 3);
+  const parts = long.length ? long : pieces;
   return (
     parts.length > 0 &&
     parts.every((p) => {
@@ -199,65 +210,53 @@ export function quoteFound(quote: string, read: string): boolean {
   );
 }
 
+/** What a helper read, gathered from each reply. */
+type Read = {
+  texts: string[];
+  visited: Set<string>;
+  unreadable: { pages: Set<string>; code: boolean };
+};
+
 /**
- * What a helper read, as text to find its quotes in: the pages it fetched, what its code printed, and
- * search results' titles. Search snippets come encrypted, so a quote from one can't be confirmed.
+ * Adds what a helper read in a reply: as text to find its quotes in, the pages it fetched, what its
+ * code printed, and search results' titles (search snippets come encrypted, so a quote from one can't
+ * be confirmed); the pages its searches and fetches came back with, as sources' URLs; and what can't
+ * be read here: pages fetched as PDFs, and code whose output came encrypted (code that searches),
+ * which may hold any page.
  */
-function readIn(content: Anthropic.Beta.BetaContentBlock[]): string[] {
-  return content.flatMap((b) => {
-    if (b.type === "web_fetch_tool_result" && b.content.type === "web_fetch_result") {
-      const doc = b.content.content;
-      return [doc.title ?? "", doc.source.type === "text" ? doc.source.data : ""];
+function addRead(content: Anthropic.Beta.BetaContentBlock[], into: Read) {
+  const page = (url: string) => {
+    try {
+      return pageUrl(url);
+    } catch {
+      return null;
     }
-    if (b.type === "web_search_tool_result" && Array.isArray(b.content))
-      return b.content.map((r) => r.title);
-    if (
+  };
+  for (const b of content) {
+    if (b.type === "web_fetch_tool_result" && b.content.type === "web_fetch_result") {
+      const { title, source } = b.content.content;
+      into.texts.push(title ?? "", source.type === "text" ? source.data : "");
+      const url = page(b.content.url);
+      if (url) into.visited.add(url);
+      if (url && source.type !== "text") into.unreadable.pages.add(url);
+    } else if (b.type === "web_search_tool_result" && Array.isArray(b.content)) {
+      for (const r of b.content) {
+        into.texts.push(r.title);
+        const url = page(r.url);
+        if (url) into.visited.add(url);
+      }
+    } else if (
       (b.type === "code_execution_tool_result" && b.content.type === "code_execution_result") ||
       (b.type === "bash_code_execution_tool_result" &&
         b.content.type === "bash_code_execution_result")
     )
-      return [b.content.stdout];
-    return [];
-  });
-}
-
-/** The pages a helper's searches and fetches came back with, as sources' URLs. */
-function pagesIn(content: Anthropic.Beta.BetaContentBlock[]): string[] {
-  const urls = content.flatMap((b) => {
-    if (b.type === "web_search_tool_result" && Array.isArray(b.content))
-      return b.content.map((r) => r.url);
-    if (b.type === "web_fetch_tool_result" && b.content.type === "web_fetch_result")
-      return [b.content.url];
-    return [];
-  });
-  return urls.flatMap((url) => {
-    try {
-      return [pageUrl(url)];
-    } catch {
-      return [];
-    }
-  });
-}
-
-/**
- * What a helper read that can't be read here: pages fetched as PDFs, and whether its code's output
- * came encrypted (code that searches), which may hold any page.
- */
-function unreadableIn(content: Anthropic.Beta.BetaContentBlock[]) {
-  return {
-    pages: content.flatMap((b) =>
-      b.type === "web_fetch_tool_result" &&
-      b.content.type === "web_fetch_result" &&
-      b.content.content.source.type !== "text"
-        ? [pageUrl(b.content.url)]
-        : [],
-    ),
-    code: content.some(
-      (b) =>
-        b.type === "code_execution_tool_result" &&
-        b.content.type === "encrypted_code_execution_result",
-    ),
-  };
+      into.texts.push(b.content.stdout);
+    else if (
+      b.type === "code_execution_tool_result" &&
+      b.content.type === "encrypted_code_execution_result"
+    )
+      into.unreadable.code = true;
+  }
 }
 
 type Quoted = {
@@ -307,8 +306,8 @@ export class ResearchState {
   /** finish_research went through: what it ended with is the run's. */
   finished = false;
   /**
-   * The numbers are checked the first time it finishes as done; `unchecked` says why not, if the
-   * check failed.
+   * The numbers are checked the first time it finishes as done citing a source, and again after a
+   * check that failed; `unchecked` says why the last one failed.
    */
   checked = false;
   unchecked: string | null = null;
@@ -319,8 +318,8 @@ export type ResearchRun = {
   tasks: Tasks;
   task: Task;
   signal: AbortSignal;
-  /** Marks the task as having read untrusted content. */
-  taint: (source: string) => void;
+  /** Marks the task as having read untrusted content; `text`, when given, is screened. */
+  taint: (source: string, text?: Readable) => void;
   /** The lead's conversation so far: where the links a brief may name come from. */
   messages: Anthropic.Beta.BetaMessageParam[];
   /** What the lead's next request may cost: the helpers leave room for it, to write the report. */
@@ -361,6 +360,8 @@ function linksSeen(messages: Anthropic.Beta.BetaMessageParam[], sources: Researc
     for (const m of text.matchAll(LINK)) {
       seen.add(linkKey(m[0]));
       seen.add(hostKey(m[0]));
+      // Without its tracking parameters and fragment too: dropping them carries nothing.
+      if (URL.canParse(m[0])) seen.add(linkKey(pageUrl(m[0])));
     }
   };
   for (const m of messages) {
@@ -432,9 +433,12 @@ const REPORT_NOW: Anthropic.Beta.BetaToolChoiceTool = { type: "tool", name: "rep
 async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<HelperReport> {
   const { tasks, task, signal } = run;
   const { d } = tasks;
-  const texts: string[] = [];
-  const unreadable = { pages: new Set<string>(), code: false };
-  const visited = new Set<string>();
+  const read: Read = {
+    texts: [],
+    visited: new Set(),
+    unreadable: { pages: new Set(), code: false },
+  };
+  const { texts, unreadable, visited } = read;
   const done = (r: Findings & { note?: string }): HelperReport => ({
     ...r,
     read: plain(texts.join("\n")),
@@ -452,7 +456,7 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
   /** A paused turn carries on before anything else may be asked of it. */
   let paused = false;
   let mustReport = false;
-  let cutOff = false;
+  let wasCut = false;
   // Two more steps than the cap, for paused turns to finish before the last, forced one.
   for (let step = 0; step < MAX_WORKER_STEPS + 2; step++) {
     if (signal.aborted) throw signal.reason;
@@ -524,11 +528,7 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
     });
     messages.push({ role: "assistant", content: res.content as BlockParam[] });
     container = containerOf(res, container);
-    texts.push(...readIn(res.content));
-    for (const url of pagesIn(res.content)) visited.add(url);
-    const unread = unreadableIn(res.content);
-    for (const page of unread.pages) unreadable.pages.add(page);
-    unreadable.code ||= unread.code;
+    addRead(res.content, read);
     for (const read of webReads(res.content)) {
       tasks.addStep(task.id, {
         kind: "action",
@@ -538,6 +538,8 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
       });
       run.taint(read);
     }
+    // Screened for prompt injection like what the lead reads.
+    for (const page of webTexts(res.content)) run.taint(page.source, page.text);
     paused = res.stop_reason === "pause_turn";
     if (paused) continue;
     if (res.stop_reason === "refusal") return stopped("The helper declined this part.");
@@ -546,11 +548,11 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
     );
     const report = calls.find((c) => c.name === "report_findings");
     // A report cut off can look complete with its gaps cut short: it's asked for again, shorter.
-    const cut = res.stop_reason === "max_tokens";
+    const cut = cutOff(res);
     const parsed = !cut && report ? ReportFindings.safeParse(report.input) : undefined;
     if (parsed?.success) return done(parsed.data);
-    if (cut && cutOff) return stopped("The helper's report was cut off.");
-    if (cut) cutOff = mustReport = true;
+    if (cut && wasCut) return stopped("The helper's report was cut off.");
+    if (cut) wasCut = mustReport = true;
     // Not while the web tools' code is still running: then only tool results may follow.
     const nudge = cut
       ? "Your report was cut off. Report again with report_findings, with only the 10 most important findings and short gaps."
@@ -784,43 +786,33 @@ function evidenceFor(sources: ResearchSources, cited: number[]): string {
 
 /**
  * Haiku's check of the numbers cited as [n] against the quotes found in what the helpers read: the
- * problems it found, or why it couldn't check.
+ * problems it found, or why it couldn't check; null when the text cites no source.
  */
 async function checkNumbers(
   run: ResearchRun,
   sources: ResearchSources,
   text: string,
-): Promise<{ problems: Problem[] } | { failed: string }> {
+): Promise<{ problems: Problem[] } | { failed: string } | null> {
   const { d } = run.tasks;
   const cited = citedIn([text]).filter((n) => sources.get(n));
-  if (!cited.length) return { problems: [] };
+  if (!cited.length) return null;
   const content = `${untrustedFields("sources", evidenceFor(sources, cited))}\n\n<report>\n${text}\n</report>`;
+  const { id } = run.task;
   try {
     // Past a limit it throws, and the report says its numbers weren't checked.
-    d.spend.check(
-      requestCeiling(CHECK_MODEL, {
-        prompt: fixedTokens(RESEARCH_CHECK_PROMPT, content),
-        maxTokens: CHECK_TOKENS,
-      }),
-      { id: run.task.id, limitUsd: run.tasks.budget(run.task.id) },
+    const out = await oneShot(
+      d,
+      {
+        model: CHECK_MODEL,
+        max_tokens: CHECK_TOKENS,
+        thinking: { type: "adaptive" },
+        output_config: { effort: "low", format: { type: "json_schema", schema: CHECK_SCHEMA } },
+        system: RESEARCH_CHECK_PROMPT,
+        messages: [{ role: "user", content }],
+      },
+      { purpose: "research", taskId: id },
+      { task: { id, limitUsd: run.tasks.budget(id) } },
     );
-    const res = await d.model.create({
-      model: CHECK_MODEL,
-      max_tokens: CHECK_TOKENS,
-      thinking: { type: "adaptive" },
-      output_config: { effort: "low", format: { type: "json_schema", schema: CHECK_SCHEMA } },
-      system: RESEARCH_CHECK_PROMPT,
-      messages: [{ role: "user", content }],
-    });
-    d.spend.recordResponse({
-      model: CHECK_MODEL,
-      purpose: "research",
-      usage: res.usage,
-      taskId: run.task.id,
-    });
-    if (res.stop_reason !== "end_turn")
-      return { failed: `the check stopped at ${res.stop_reason}` };
-    const out = res.content.map((b) => (b.type === "text" ? b.text : "")).join("");
     let json: { problems?: unknown };
     try {
       json = JSON.parse(out);
@@ -871,14 +863,19 @@ export async function finishResearch(
         "Not finished: the report is empty. Write the full report, then call finish_research again.",
     };
   // Citations that aren't sources go back every time; the numbers are checked on the first report
-  // that's done, not on a failed one before it.
+  // that's done, not on a failed one before it or one that cites no source yet.
   const unknown = citedIn(texts).filter((n) => !sources.get(n));
-  const checking = !state.checked && result.outcome === "done";
-  if (checking) state.checked = true;
-  const check = checking ? await checkNumbers(run, sources, texts.join("\n\n")) : { problems: [] };
+  const check =
+    state.checked || result.outcome !== "done"
+      ? null
+      : await checkNumbers(run, sources, texts.join("\n\n"));
   // Cancelled while the check ran: nothing is saved.
   if (run.signal.aborted) throw run.signal.reason;
-  if ("failed" in check) {
+  if (check && "problems" in check) {
+    state.checked = true;
+    state.unchecked = null;
+  }
+  if (check && "failed" in check) {
     state.unchecked = check.failed;
     tasks.addStep(task.id, {
       kind: "note",
@@ -887,7 +884,7 @@ export async function finishResearch(
       url: null,
     });
   }
-  const problems = "problems" in check ? check.problems : [];
+  const problems = check && "problems" in check ? check.problems : [];
   if (unknown.length || problems.length) {
     tasks.addStep(task.id, {
       kind: "note",

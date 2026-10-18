@@ -5,7 +5,7 @@ import { z } from "zod";
 import { principalOf, requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
 import { DesktopBusy } from "../desktop/service";
-import { ProxmoxError } from "../proxmox";
+import { PluginError } from "../plugins/plugin";
 import { json } from "./util";
 
 /** Holds the screen lane while the desktop rolls back, so no task starts on it. */
@@ -30,12 +30,12 @@ export const desktopRoutes = new Hono<AppEnv>()
     // Same rules as /stream: a cookie needs the public Origin, an app uses its bearer token.
     async (c, next) => {
       const principal = principalOf(c, { renew: false });
-      if (!principal) return c.json({ error: "unauthorized" }, 401);
-      if (principal.kind === "session" && c.req.header("origin") !== c.var.config.publicUrl) {
-        return c.json({ error: "bad origin" }, 403);
-      }
+      if (!principal) return c.json({ error: "You're not signed in." }, 401);
+      const { publicUrl } = c.var.config;
+      if (principal.kind === "session" && c.req.header("origin") !== publicUrl)
+        return c.json({ error: `Open Hatbot at ${publicUrl} to make changes.` }, 403);
       if (!c.var.desktop.agent.configured)
-        return c.json({ error: "the desktop isn't set up" }, 503);
+        return c.json({ error: "The desktop isn't set up." }, 503);
       c.set("principal", principal);
       await next();
     },
@@ -120,7 +120,7 @@ export const desktopRoutes = new Hono<AppEnv>()
     try {
       return c.json({ configured: true, snapshots: await proxmox.desktopSnapshots() });
     } catch (err) {
-      return c.json({ error: err instanceof ProxmoxError ? err.message : "Proxmox failed" }, 502);
+      return c.json({ error: err instanceof PluginError ? err.message : "Proxmox failed" }, 502);
     }
   })
   // "Roll back desktop" in Settings (PLAN.md §8): back to a nightly snapshot, then started again.
@@ -136,9 +136,9 @@ export const desktopRoutes = new Hono<AppEnv>()
     try {
       await proxmox.rollbackDesktop(c.req.valid("json").name);
     } catch (err) {
-      const status = err instanceof ProxmoxError && err.status === 400 ? 400 : 502;
+      const status = err instanceof PluginError && err.status === 400 ? 400 : 502;
       return c.json(
-        { error: err instanceof ProxmoxError ? err.message : "Rollback failed" },
+        { error: err instanceof PluginError ? err.message : "Rollback failed" },
         status,
       );
     } finally {

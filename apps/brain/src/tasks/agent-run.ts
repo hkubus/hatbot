@@ -5,10 +5,10 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { type ApprovalKind, chartBlocks, chartProblem, type Task } from "@hatbot/shared";
 import { z } from "zod";
-import { cutOff, modelErrorText } from "../agent/model";
+import { cutOff, type StreamParams } from "../agent/model";
 import { AGENT_PROMPT, RESEARCH_ASK_BOT } from "../agent/prompt";
 import { mayReview, safeToRun } from "../agent/review";
-import { Screener } from "../agent/screening";
+import { type Readable, Screener } from "../agent/screening";
 import { localStamp, memoryIndex } from "../agent/thread";
 import {
   AskBotInput,
@@ -26,20 +26,18 @@ import {
   webTexts,
 } from "../agent/tools";
 import { tagJson, tagText, untrustedBlock } from "../agent/untrusted";
-import { type Outcome, ownerNote } from "../approvals";
+import { ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import type { CallContext, PluginTool, Verdict } from "../plugins/plugin";
-import { describeCall, runPluginTool, untrustedDefinitions, verdictFor } from "../plugins/registry";
 import {
-  BudgetError,
-  estimateTokens,
-  fixedTokens,
-  requestCeiling,
-  searchesIn,
-  usesReserve,
-} from "../spend";
+  describeCall,
+  runPluginTool,
+  untrustedDefinitions,
+  untrustedOf,
+  verdictFor,
+} from "../plugins/registry";
 import { alertMessageSource, alertParts } from "../triggers";
-import { Stop, UPDATES_MODELS } from "./desktop-run";
+import { addNotes, askOwner, callsOf, endOf, requestsFor, Stop, thinkingFor } from "./loop";
 import {
   FinishResearch,
   finishResearch,
@@ -198,7 +196,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const { d } = tasks;
   const task = tasks.get(id);
   if (!task) return;
-  const ctx = tasks.toolContext(task);
+  const ctx = tasks.toolContext(task, signal);
   const bot = tasks.botOf(task);
   const { attachments } = ctx;
   const messages: Anthropic.Beta.BetaMessageParam[] = [];
@@ -207,8 +205,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const sources = new Set<string>();
   let slot = false;
   let notified = 0;
-  /** Lets go of what the request in flight holds against the limits. */
-  let held = () => {};
+  const requests = requestsFor(tasks, task, signal);
   /** When it got its first slot, and the time since spent waiting for the owner or its own tasks. */
   let startedAt = 0;
   let awayMs = 0;
@@ -302,7 +299,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     });
   });
   /** It read untrusted content, `source`; `text`, when given, is screened. */
-  const taint = (source: string, text?: string) => {
+  const taint = (source: string, text?: Readable) => {
     if (text !== undefined) screener.add(source, text);
     sources.add(source);
     if (task.tainted) return;
@@ -329,13 +326,15 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     ...(isError ? { is_error: true } : {}),
   });
 
-  /** Waits for a task this one started, without holding a slot; it's cancelled with this one. */
-  const waitForChild = async (childId: number): Promise<Task> => {
-    const child = tasks.get(childId);
+  /**
+   * Waits for a task this one started, shown on the timeline as `name`, without holding a slot: one
+   * on the screen or another bot's may need it. It's cancelled with this one.
+   */
+  const waitForChild = async (childId: number, name?: string): Promise<Task> => {
     children.add(childId);
     tasks.addStep(id, {
       kind: "task",
-      name: child?.title ?? `Task #${childId}`,
+      name: name ?? tasks.get(childId)?.title ?? `Task #${childId}`,
       detail: "",
       url: `/tasks/${childId}`,
     });
@@ -361,24 +360,14 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const missing = await missingSkill(d.memory, p.data.skill);
     if (missing) return result(call, missing, true);
     const child = tasks.createDesktopTask({
-      title: p.data.title,
-      goal: p.data.goal,
-      successCriteria: p.data.success_criteria,
+      title,
+      goal,
+      successCriteria: success_criteria,
       skill: p.data.skill,
       origin: task.origin,
       parent: task,
     });
-    children.add(child.id);
-    tasks.addStep(id, {
-      kind: "task",
-      name: child.title,
-      detail: "",
-      url: `/tasks/${child.id}`,
-    });
-    // Waiting on the screen doesn't hold a slot other tasks could use.
-    const ended = await withoutSlot(() => tasks.waitFor(child.id, signal));
-    // Still in `children` if this task is cancelled meanwhile, so it's cancelled with it.
-    children.delete(child.id);
+    const ended = await waitForChild(child.id, child.title);
     // Its summary is made from web pages (PLAN.md §6.1).
     taint(`Desktop task #${child.id}`);
     return result(
@@ -408,17 +397,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     if (typeof child === "string") return result(call, child, true);
     if (tasks.get(id)?.injectionSuspected) tasks.mark(child.id, "injection_suspected");
     const name = d.bots.nameOf(child.botId);
-    children.add(child.id);
-    tasks.addStep(id, {
-      kind: "task",
-      name: `Asked ${name}: ${child.title}`,
-      detail: "",
-      url: `/tasks/${child.id}`,
-    });
-    // Waiting doesn't hold a slot: the bot asked needs one.
-    const ended = await withoutSlot(() => tasks.waitFor(child.id, signal));
-    // Still in `children` if this task is cancelled meanwhile, so it's cancelled with it.
-    children.delete(child.id);
+    const ended = await waitForChild(child.id, `Asked ${name}: ${child.title}`);
     if (ended.tainted) taint(`Task #${child.id} by ${name}`);
     const summary = ended.summary ?? "";
     return result(
@@ -440,44 +419,19 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
    * cancelled approval, ends the task.
    */
   const askApproval = async (input: { kind: ApprovalKind; summary: string; reason: string }) => {
-    const approval = d.approvals.create({
-      taskId: id,
-      botId: bot.id,
-      sources: [...sources],
-      ...input,
-    });
-    tasks.addStep(id, {
-      kind: "approval",
-      name: "Asked for approval",
-      detail: input.summary,
-      url: null,
-    });
-    tasks.setStatus(id, "waiting_approval");
-    // Waiting for you doesn't hold a slot other tasks could use.
-    const outcome: Outcome = await withoutSlot(() => d.approvals.wait(approval.id, signal));
-    tasks.addStep(id, {
-      kind: "approval",
-      name: `Approval ${outcome}`,
-      detail: input.summary,
-      url: null,
-    });
-    if (outcome === "expired")
-      throw new Stop("cancelled", "Nobody answered the approval within 24 hours.");
-    if (outcome === "cancelled") throw new Stop("cancelled", "The approval was cancelled.");
-    const note = d.approvals.get(approval.id)?.note ?? null;
-    if (note) {
-      notes.push(`[${localStamp(new Date())}] ${note}`);
-      tasks.addStep(id, { kind: "note", name: "Your note", detail: note, url: null });
-    }
-    return { outcome, note };
-  };
-
-  /** Asks for more money when the task hits its limit (PLAN.md §6.3). */
-  const askBudget = async () => {
-    const extra = tasks.raiseStep(id);
-    const { outcome } = await askApproval({ kind: "budget", ...tasks.budgetAsk(id, extra) });
-    if (outcome !== "approved") throw new Stop("failed", "Stopped at its spending limit.");
-    tasks.raiseBudget(id, extra);
+    const answer = await askOwner(
+      tasks,
+      id,
+      { botId: bot.id, sources: [...sources], ...input },
+      null,
+      (wait) => {
+        tasks.setStatus(id, "waiting_approval");
+        return withoutSlot(wait);
+      },
+      signal,
+    );
+    if (answer.note) notes.push(`[${localStamp(new Date(tasks.clock()))}] ${answer.note}`);
+    return answer;
   };
 
   /**
@@ -693,17 +647,33 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
     /** finish_task sends a summary whose charts don't draw back once, not every time. */
     let chartsChecked = false;
-    /** Research is told once to finish when near its limits, and once to end with finish_research. */
+    /** Research is told once to finish when near its limits. */
     let toldToFinish = false;
-    let askedToFinish = false;
     /** Where the web tools' code runs: the same one each step, so paused code can carry on. */
     let container: string | undefined;
     /** It was asked once to end with finish_task after a reply that called no tool. */
     let nudged = false;
+    /**
+     * Only finish_task ends a task: asked once, then it has failed. Research ends with finish_research,
+     * which saves the report: it's asked for once.
+     */
+    const nudge = () => {
+      if (nudged && research)
+        throw new Stop("failed", "Stopped: it ended without calling finish_research.");
+      if (nudged) return false;
+      nudged = true;
+      record("user", [
+        {
+          type: "text",
+          text: research
+            ? "End the research with finish_research, with the answer and the report."
+            : "(No message from the owner: your reply called no tool, and only finish_task ends the task. If it's done, or can't be done, call finish_task with the outcome. Otherwise carry on.)",
+        },
+      ]);
+      return true;
+    };
     // Code work writes whole files into tool calls, and research its report.
     const maxTokens = research ? 64000 : task.effort ? 32000 : 16000;
-    /** What the last request left in the cache, and when it started: entries last 5 minutes. */
-    let cache = { tokens: 0, at: 0 };
     for (let step = 0; ; step++) {
       if (signal.aborted) throw signal.reason;
       const maxSteps = research ? MAX_RESEARCH_STEPS : task.effort ? MAX_CODE_STEPS : MAX_STEPS;
@@ -714,95 +684,47 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           "failed",
           `Stopped: it ran for ${MAX_RUN_MS / 3600_000} hours without finishing.`,
         );
-      // What it may cost at most, held against the limits until it's recorded.
-      const cached = tasks.clock() - cache.at < 5 * 60_000 ? cache.tokens : 0;
-      const ceiling = requestCeiling(task.model, {
-        prompt: Math.max(estimateTokens(messages) + fixedTokens(system, tools), cached),
-        cached,
-        write: "5m",
-        maxTokens,
-        webSearches: searchesIn(tools),
-      });
-      // Research's helpers leave room for its next request.
-      run.reserveUsd = ceiling;
-      try {
-        held = d.spend.hold(
-          ceiling,
-          { id, limitUsd: tasks.budget(id) },
-          { reserve: usesReserve(task.origin) },
-        );
-      } catch (err) {
-        if (!(err instanceof BudgetError)) throw err;
-        if (err.limit !== "task")
-          throw new Stop(
-            "failed",
-            task.origin === "alert"
-              ? notInvestigated(err.limit, task.payload)
-              : `Stopped: ${err.message}`,
-          );
-        await askBudget();
-        continue;
-      }
-
-      const sentAt = tasks.clock();
-      const res = await d.model.stream(
-        {
-          model: task.model,
-          max_tokens: maxTokens,
-          betas: research ? [...BETAS, RESEARCH_BETA] : BETAS,
-          // Tools and system end here, the same for each of this bot's tasks, so they share the entry; the
-          // top-level breakpoint follows the conversation. Two of the four breakpoints allowed.
-          system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
-          cache_control: { type: "ephemeral" },
-          tools,
-          thinking: UPDATES_MODELS.has(task.model)
-            ? { type: "adaptive", display: "updates" }
-            : { type: "adaptive" },
-          // The chat's dial unless the task asked for more: the same kind of work, without a screen.
-          output_config: {
-            effort: task.effort ?? d.settings.get().chatEffort,
-            // Research paces itself to this many tokens, its helpers' apart.
-            ...(research
-              ? { task_budget: { type: "tokens" as const, total: RESEARCH_TOKENS } }
-              : {}),
-          },
-          // Old tool results are cleared on the server once the prompt passes 70k, below the 100k
-          // where Haiku 5.5 bills the whole request at 5x. Research's Opus lead has no such step, and a
-          // clearing rewrites the cache after it at the write price, so it clears late and in bulk.
-          context_management: {
-            edits: [
-              {
-                type: "clear_tool_uses_20250919",
-                trigger: { type: "input_tokens", value: research ? 150_000 : 70_000 },
-                keep: { type: "tool_uses", value: 6 },
-                clear_at_least: { type: "input_tokens", value: research ? 50_000 : 20_000 },
-                exclude_tools: keptTools,
-              },
-            ],
-          },
-          ...(container ? { container } : {}),
-          messages,
-        },
-        {
-          onText: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
-          onThinking: (text) => d.events.emit({ type: "task.progress", taskId: id, text }),
-          onFailedUsage: (model, usage) =>
-            d.spend.recordResponse({ model, purpose: "task", usage, taskId: id }),
-          signal,
-        },
-      );
-      held();
-      cache = {
-        tokens:
-          (res.usage.cache_read_input_tokens ?? 0) + (res.usage.cache_creation_input_tokens ?? 0),
-        at: sentAt,
-      };
-      d.spend.recordResponse({
+      const params: Omit<StreamParams, "stream"> = {
         model: task.model,
-        purpose: "task",
-        usage: res.usage,
-        taskId: id,
-      });
+        max_tokens: maxTokens,
+        betas: research ? [...BETAS, RESEARCH_BETA] : BETAS,
+        // Tools and system end here, the same for each of this bot's tasks, so they share the entry; the
+        // top-level breakpoint follows the conversation. Two of the four breakpoints allowed.
+        system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+        cache_control: { type: "ephemeral" },
+        tools,
+        thinking: thinkingFor(task.model),
+        // The chat's dial unless the task asked for more: the same kind of work, without a screen.
+        output_config: {
+          effort: task.effort ?? d.settings.get().chatEffort,
+          // Research paces itself to this many tokens, its helpers' apart.
+          ...(research ? { task_budget: { type: "tokens" as const, total: RESEARCH_TOKENS } } : {}),
+        },
+        // Old tool results are cleared on the server once the prompt passes 70k, below the 100k
+        // where Haiku 5.5 bills the whole request at 5x. Research's Opus lead has no such step, and a
+        // clearing rewrites the cache after it at the write price, so it clears late and in bulk.
+        context_management: {
+          edits: [
+            {
+              type: "clear_tool_uses_20250919",
+              trigger: { type: "input_tokens", value: research ? 150_000 : 70_000 },
+              keep: { type: "tool_uses", value: 6 },
+              clear_at_least: { type: "input_tokens", value: research ? 50_000 : 20_000 },
+              exclude_tools: keptTools,
+            },
+          ],
+        },
+        ...(container ? { container } : {}),
+        messages,
+      };
+      // Research's helpers leave room for its next request.
+      run.reserveUsd = requests.ceiling(params);
+      const overLimit =
+        task.origin === "alert"
+          ? (limit: "daily" | "monthly") => notInvestigated(limit, task.payload)
+          : undefined;
+      if (!(await requests.hold(run.reserveUsd, askApproval, overLimit))) continue;
+      const res = await requests.stream(params);
       record("assistant", res.content);
       container = containerOf(res, container);
       // What it read on the web: steps on the timeline, and untrusted (PLAN.md §6.1).
@@ -811,53 +733,9 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         taint(read);
       }
       for (const page of webTexts(res.content)) screener.add(page.source, page.text);
-      for (const b of res.content) {
-        const note = b.type === "text" ? b.text : b.type === "thinking" ? b.thinking : "";
-        if (note.trim())
-          tasks.addStep(id, { kind: "note", name: "Note", detail: note.trim(), url: null });
-      }
-
-      if (res.stop_reason === "refusal")
-        throw new Stop("failed", "The model declined to carry on with this task.");
-      if (res.stop_reason === "model_context_window_exceeded")
-        throw new Stop("failed", "Stopped: the task's conversation got too long.");
-      if (res.stop_reason === "pause_turn") continue;
-      const calls = res.content.filter(
-        (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use",
-      );
-      if (!calls.length) {
-        if (cutOff(res)) throw new Stop("failed", "Stopped: a reply was cut off.");
-        // Research ends with finish_research, which saves the report: it's asked for once.
-        if (research) {
-          if (askedToFinish)
-            throw new Stop("failed", "Stopped: it ended without calling finish_research.");
-          askedToFinish = true;
-          record("user", [
-            {
-              type: "text",
-              text: "End the research with finish_research, with the answer and the report.",
-            },
-          ]);
-          continue;
-        }
-        const text = res.content
-          .map((b) => (b.type === "text" ? b.text : ""))
-          .join("")
-          .trim();
-        // Only finish_task (or finish_research) ends a task: asked once, then it has failed.
-        if (!nudged) {
-          nudged = true;
-          const finish = research ? "finish_research" : "finish_task";
-          record("user", [
-            {
-              type: "text",
-              text: `(No message from the owner: your reply called no tool, and only ${finish} ends the task. If it's done, or can't be done, call ${finish} with the outcome. Otherwise carry on.)`,
-            },
-          ]);
-          continue;
-        }
-        throw new Stop("failed", text || "Stopped: it ended without finishing.");
-      }
+      addNotes(tasks, id, res);
+      const calls = callsOf(res, nudge);
+      if (!calls) continue;
 
       let finished: z.infer<typeof FinishTask> | null = null;
       /** A second finish_research in one turn would skip the check the first one got. */
@@ -875,9 +753,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         if (!parsed.success) return false;
         const cc = { task: { id, tainted: task.tainted }, signal };
         if (verdictFor(t, call.input, cc).action !== "allow") return false;
-        const untrusted =
-          typeof t.untrusted === "function" ? t.untrusted(parsed.data) : Boolean(t.untrusted);
-        return !untrusted && `${t.name.split("_")[0]}:${t.target(parsed.data)}`;
+        return !untrustedOf(t, parsed.data) && `${t.name.split("_")[0]}:${t.target(parsed.data)}`;
       };
       const results: BlockParam[] = await inBatches(calls, lookup, async (call) => {
         if (signal.aborted) return result(call, "Not run: the task was cancelled.", true);
@@ -1021,25 +897,13 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       record("user", results);
     }
   } catch (err) {
-    let ended: { status: "done" | "failed" | "cancelled"; summary: string; notify?: boolean };
-    if (err instanceof Stop)
-      ended = { status: err.status, summary: err.summary, notify: err.notify };
-    else if (signal.aborted) {
-      const paused = signal.reason instanceof Error && signal.reason.message === "paused";
-      ended = { status: "cancelled", summary: paused ? "Stopped by Pause all." : "Cancelled." };
-    } else {
-      console.error(`task ${id} failed`, err);
-      ended = {
-        status: "failed",
-        summary: `Something went wrong talking to the model (${modelErrorText(err)}).`,
-      };
-    }
+    const ended = endOf(err, id, signal);
     // Research that stops short keeps what it had (PLAN.md §17), unless you stopped it.
     if (research && ended.status !== "done" && !signal.aborted)
       ended.summary = await keepUnfinished(run, found, ended.summary);
     tasks.finish(id, ended.status, ended.summary, ended.notify);
   } finally {
-    held();
+    requests.release();
     if (slot) tasks.pool.release();
     for (const child of children) tasks.cancel(child);
     d.approvals.cancelForTask(id);

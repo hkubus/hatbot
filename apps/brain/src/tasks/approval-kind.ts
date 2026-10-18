@@ -9,25 +9,17 @@ import {
   fold,
   type Hold,
   heldWhat,
+  hostOf,
   paymentHost,
   samePage,
 } from "./policy";
 
-/** Card and BLIK fields, as their labels read on a page. */
+/**
+ * Card and BLIK fields, as their labels read on a page. BLIK alone is a way to pay that a shop's footer
+ * lists on every page; only its code field asks for one.
+ */
 const PAYMENT_FIELDS =
-  /(?<!\p{L})(card number|numer karty|cvv2?|cvc2?|security code|kod cvv|kod blik|blik code|blik|expiry date|data ważności karty)(?!\p{L})/iu;
-
-/** Buying or paying, in what the model says it's about to do: English, Polish and Czech. */
-const PURCHASE_WORDS =
-  /(?<!\p{L})(buy|buying|purchase|purchasing|checkout|check out|pay|paying|payment|place (?:the |an |my )?order|order(?: it)? now|deposit|kup\p{L}*|zamów\p{L}*|zamawia\p{L}*|zapła\p{L}*|opłac\p{L}*|opłać|płać|płac\p{L}*|zaliczk\p{L}*|zadatek|koupit|zaplat\p{L}*|objedn(?:at|ej|ejte|[aá]v[aá]m|[aá]vk[au])|dokon[cč]it (?:n[aá]kup|objedn[aá]vk\p{L}*))(?!\p{L})/iu;
-
-const hostOf = (url: string | null) => {
-  try {
-    return url ? new URL(url).hostname.toLowerCase() : null;
-  } catch {
-    return null;
-  }
-};
+  /(?<!\p{L})(card number|numer karty|cvv2?|cvc2?|security code|kod cvv|kod blik|blik code|expiry date|data ważności karty)(?!\p{L})/iu;
 
 /**
  * A held step that may buy or pay: at checkout, a buy, pay or order label, or in a frame Hatbot couldn't
@@ -55,7 +47,7 @@ export function approvalKind(
   if (held && "checkout" in held && paymentHost(held.checkout)) return "payment";
   if (
     kind === "purchase" ||
-    PURCHASE_WORDS.test(`${step.summary} ${step.reason ?? ""}`) ||
+    buyingLabel(`${step.summary} ${step.reason ?? ""}`) ||
     checkoutHost(page.url ?? undefined) ||
     (held && buysOrPays(held))
   )
@@ -63,22 +55,32 @@ export function approvalKind(
   return kind;
 }
 
-/** An approved confirm_intent: the page it was asked on, its kind, and the held step it was for. */
-export type Armed = { page: string | null; kind: ApprovalKind; hold: Hold | null };
+/**
+ * An approved confirm_intent: the page it was asked on, its kind, what it said it would do, and the held
+ * step it was for.
+ */
+export type Armed = { page: string | null; kind: ApprovalKind; summary: string; hold: Hold | null };
 
 const holdKey = (h: Hold) => ("label" in h ? `label:${fold(h.label)}` : JSON.stringify(h));
 
 /**
- * Why an approval doesn't cover this held step, or null when it does. One asked for a held step covers
- * that step again; one asked before trying covers the next held step on its page, unless that may buy or
- * pay and the approval was of a kind a notification can give.
+ * Why an approval doesn't cover this held step, or null when it does, on its page only. One asked for a
+ * held step covers that step. One asked before trying covers a step whose label it names, and not one
+ * that may buy or pay if a notification could give it; the run spends it on the first held step after
+ * it, covered or not, and drops it when the page changes.
  */
 export function notCovered(armed: Armed, hold: Hold, page: string | null): string | null {
   if (armed.page !== null && !samePage(page, armed.page))
     return `The owner's approval was for a step on ${armed.page}, not this page.`;
-  if (armed.hold && holdKey(armed.hold) !== holdKey(hold))
-    return `The owner's approval was for the step ${heldWhat(armed.hold)}, not this one. Call confirm_intent for this step.`;
-  if (!armed.hold && approvableFromNotification(armed.kind) && buysOrPays(hold))
+  if (armed.hold)
+    return holdKey(armed.hold) === holdKey(hold)
+      ? null
+      : `The owner's approval was for the step ${heldWhat(armed.hold)}, not this one. Call confirm_intent for this step.`;
+  if (approvableFromNotification(armed.kind) && buysOrPays(hold))
     return "The owner's approval wasn't for buying or paying, and this step may do either. Call confirm_intent for this step, with kind purchase or payment.";
+  // A step with no label to go by could be anything on the page.
+  const label = "label" in hold ? fold(hold.label) : "";
+  if (!label || !fold(armed.summary).includes(label))
+    return `The owner approved "${armed.summary}", not this step ${heldWhat(hold)}. Call confirm_intent for this step.`;
   return null;
 }

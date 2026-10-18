@@ -23,7 +23,7 @@ import type { Proposals } from "../memory/proposals";
 import { HATBOT, MemoryError, type MemoryStore } from "../memory/store";
 import { NEGOTIATE_TOOL_NAMES } from "../negotiate/names";
 import type { PluginTool } from "../plugins/plugin";
-import { describeCall, type Plugins, runPluginTool } from "../plugins/registry";
+import { describeCall, runPluginTool } from "../plugins/registry";
 import { ScheduleError, type Schedules } from "../schedules";
 import { refreshing } from "../tasks/research-goal";
 import type { Tasks } from "../tasks/service";
@@ -63,7 +63,6 @@ export type ToolContext = {
   desktop?: DesktopAgent;
   /** Adds a schedule's card to the thread. */
   scheduleCard?: (s: Schedule) => void;
-  plugins?: Plugins;
   /** The plugin tools this reply was offered, with negotiation's. */
   pluginTools?: PluginTool[];
   /** Where writes to skills and indexes go while the conversation or task is tainted. */

@@ -3,13 +3,14 @@ import type { AgentElement } from "@hatbot/shared/desktop";
 import { type Combo, combosIn, readCombo } from "@hatbot/shared/keys";
 
 /**
- * Lower case, accents dropped and ł read as l, so "ZAPŁAĆ", "Zapłać" and "Zaplac" match alike; invisible
- * format characters (a zero-width space inside "Kup") dropped.
+ * Lower case, accents dropped and ł read as l, so "ZAPŁAĆ", "Zapłać" and "Zaplac" match alike; letters
+ * that only look different read plainly ("Ｐａｙ" is "pay"), and invisible format characters (a
+ * zero-width space inside "Kup") dropped.
  */
 export const fold = (s: string) =>
   s
     .toLowerCase()
-    .normalize("NFD")
+    .normalize("NFKD")
     .replace(/[\p{M}\p{Cf}]/gu, "")
     .replace(/ł/g, "l")
     .replace(/\s+/g, " ")
@@ -24,42 +25,21 @@ const words = (list: string[]) => new RegExp(`${START}(?:${list.join("|")})`, "i
 const BUY = [
   // English, whole words.
   `(?:pay|payment|buy|purchase|order|checkout|check out|bid|place bid|donate)${END}`,
-  `(?:make|send|submit) (?:an |a )?offer${END}`,
-  `accept (?:the |this )?offer${END}`,
+  `(?:make|send|submit) (?:an |a )?offer${END}|accept (?:the |this )?offer${END}`,
   `(?:proceed|continue|go) to (?:payment|checkout)${END}`,
   // Polish: kupić, Kup teraz, Kupuję i płacę (not kupon).
-  "kup(?!on)",
-  `zakup(?!y|ow|ach|ami)`,
+  `kup(?!on)|zakup(?!y|ow|ach|ami)`,
   // zapłać, zapłata, opłać, wypłać, wpłać, płatność; płać on its own.
-  "zaplac",
-  "zaplat",
-  "oplac",
-  "wyplac",
-  "wplac",
-  "platnos",
-  `plac${END}`,
+  `zaplac|zaplat|oplac|wyplac|wplac|platnos|plac${END}`,
   // Płacę on its own or with how (folded, "place" is also English: "Place" alone, or before a way to pay).
   `place(?:$| (?:blik|kart|teraz|przelew|online|gotowk|z gory|za))`,
-  `do kas[ay]${END}`,
-  "(?:wykonaj|zlec|zatwierdz)\\p{L}* przelew",
-  "przelej",
-  `zamow(?:ic)?${END}`,
-  "zamawiam",
-  `zloz(?:yc)?${END}`,
-  "(?:za)?akceptuj\\p{L}* (?:ofert|cen|propozycj)",
-  "przyjmij ofert",
-  "przyjmuj\\p{L}* ofert",
-  "zaproponuj",
-  "licytuj",
+  `do kas[ay]${END}|(?:wykonaj|zlec|zatwierdz)\\p{L}* przelew|przelej`,
+  `zamow(?:ic)?${END}|zamawiam|zloz(?:yc)?${END}`,
+  "(?:za)?akceptuj\\p{L}* (?:ofert|cen|propozycj)|przyjmij ofert|przyjmuj\\p{L}* ofert",
+  "zaproponuj|licytuj",
   // Czech: koupit, zaplatit (above), platba, objednat, objednávku, nabídnout.
-  "koupit",
-  "platb",
-  `objedn(?:at|ej|ejte|avam)${END}`,
-  `objednavk[au]${END}`,
-  "dokoncit (?:nakup|objednavk)",
-  "prij(?:mout|mete|mi) nabid",
-  "nabidn",
-  "(?:ucinit|udelat|podat) nabid",
+  `koupit|platb|objedn(?:at|ej|ejte|avam)${END}|objednavk[au]${END}`,
+  "dokoncit (?:nakup|objednavk)|prij(?:mout|mete|mi) nabid|nabidn|(?:ucinit|udelat|podat) nabid",
 ];
 
 /**
@@ -71,29 +51,12 @@ const STRONG = words([
   ...BUY,
   `(?:send|post|publish|reply|book|reserve|transfer|sign up|register|subscribe|unsubscribe|withdraw|change password)${END}`,
   `cancel (?:order|subscription|booking|reservation)${END}`,
-  "podbij",
-  "wyroznij",
-  "wystaw",
-  `wysl(?:ij|ac|e)${END}`,
-  `wysylam${END}`,
-  `odesl(?:ij|ac)${END}`,
-  `odpowiedz${END}`,
-  "(?:o)?publikuj",
-  "(?:za)?rezerwuj",
-  "zarejestruj",
-  "zmien haslo",
-  "(?:za)?subskrybuj",
+  `podbij|wyroznij|wystaw|wysl(?:ij|ac|e)${END}|wysylam${END}|odesl(?:ij|ac)${END}|odpowiedz${END}`,
+  "(?:o)?publikuj|(?:za)?rezerwuj|zarejestruj|zmien haslo|(?:za)?subskrybuj",
   "anuluj (?:zamowienie|subskrypcj|rezerwacj)",
   // Czech: poslat, odeslat, rezervovat.
-  "poslat",
-  "odeslat",
-  `(?:posli|odesli)${END}`,
-  "odpovedet",
-  `odpovez${END}`,
-  "(?:za)?rezervov",
-  "(?:za)?registrov",
-  "publikovat",
-  "zverejnit",
+  `poslat|odeslat|(?:posli|odesli)${END}|odpovedet|odpovez${END}`,
+  "(?:za)?rezervov|(?:za)?registrov|publikovat|zverejnit",
   "zrusit (?:objednavk|predplatn|rezervac)",
 ]);
 const BUYING = words(BUY);
@@ -104,34 +67,13 @@ export const buyingLabel = (label: string) => BUYING.test(fold(label));
 /** Submitting, confirming, saving and deleting: consequential, except on a filter, sort or search control. */
 const SOFT = words([
   `(?:submit|confirm|delete|remove|apply|save changes)${END}`,
-  "potwierdz",
-  "zatwierdz",
-  `usun(?:ac)?${END}`,
-  "skasuj",
-  "zapisz zmiany",
-  "aplikuj",
-  "potvrd",
-  "potvrzuji",
-  "smazat",
-  `smaz${END}`,
-  `odstran(?:it)?${END}`,
-  "ulozit zmeny",
+  `potwierdz|zatwierdz|usun(?:ac)?${END}|skasuj|zapisz zmiany|aplikuj`,
+  `potvrd|potvrzuji|smazat|smaz${END}|odstran(?:it)?${END}|ulozit zmeny`,
 ]);
 
 /** Filters, sorting, results and search: "Apply filters", "Usuń filtry", "Seřadit". */
 const NARROWING = words([
-  "filt",
-  "sort",
-  "seradit",
-  "radit",
-  "wynik",
-  "vysledk",
-  "results",
-  "search",
-  "szuka",
-  "wyszuk",
-  "hleda",
-  "vyhled",
+  "filt|sort|seradit|radit|wynik|vysledk|results|search|szuka|wyszuk|hleda|vyhled",
 ]);
 
 /** A label that searches, filters or sorts ("Szukaj", "Pokaż wyniki"), and names nothing consequential. */
@@ -252,8 +194,9 @@ export function checkFor(
     return { press, at: [{ focused: true }] };
   }
   if (name === "type") {
-    // Typed into the address bar, these run in the page that's open, logged in.
-    if (/^\s*(?:javascript|data|vbscript):/i.test(text))
+    // Typed into the address bar, these run in the page that's open, logged in. The browser toolset types
+    // only into pages, and an address has no space after its colon, as "Data: 15 października" does.
+    if (!browser && /^\s*(?:javascript|data|vbscript):\S/i.test(text))
       return {
         refuse:
           "Hatbot doesn't type javascript:, data: or vbscript: addresses: in the address bar they run in the page. Use the browser's navigate to open a web address.",
@@ -269,50 +212,57 @@ export function checkFor(
   return null;
 }
 
-/** Two addresses are the same page: the same origin and path, a trailing slash aside. */
+/** A host without "www.", lowercased; null for something that isn't a web address. */
+export function hostOf(url: string | null | undefined): string | null {
+  try {
+    const u = new URL(url ?? "");
+    if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+    return u.hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
+
+/** `host` is `domain` or a host under it. */
+export const onHost = (host: string, domain: string) =>
+  host === domain || host.endsWith(`.${domain}`);
+
+/** A path without its trailing slash; the root stays "/". */
+export const pathOf = (path: string) => path.replace(/\/+$/, "") || "/";
+
+/** Query parameters that only say where a visit came from. */
+export const TRACKING =
+  /^(?:utm_\w*|fbclid|gclid|gbraid|wbraid|dclid|msclkid|yclid|mc_[ce]id|_ga|igshid)$/i;
+
+/**
+ * Two addresses are the same page: the same origin, path (a trailing slash aside) and query (in any
+ * order, tracking aside): ?id=1 and ?id=2 are two products.
+ */
 export function samePage(a: string | null | undefined, b: string | null | undefined): boolean {
   if (!a || !b) return false;
+  const page = (s: string) => {
+    const u = new URL(s);
+    const query = [...u.searchParams].filter(([k]) => !TRACKING.test(k)).map((p) => p.join("="));
+    return `${u.origin}${pathOf(u.pathname)}?${query.sort().join("&")}`;
+  };
   try {
-    const x = new URL(a);
-    const y = new URL(b);
-    const path = (p: string) => p.replace(/\/+$/, "") || "/";
-    return x.origin === y.origin && path(x.pathname) === path(y.pathname);
+    return page(a) === page(b);
   } catch {
     return a === b;
   }
 }
 
 /** Payment pages shops hand over to (PayU, Przelewy24, PayPal and the like). */
-const PAYMENT_HOSTS = [
-  "payu.com",
-  "payu.pl",
-  "przelewy24.pl",
-  "paypal.com",
-  "tpay.com",
-  "paynow.pl",
-  "imoje.pl",
-  "dotpay.pl",
-  "blik.com",
-  "autopay.pl",
-  "bluemedia.pl",
-  "gopay.cz",
-  "gopay.com",
-  "comgate.cz",
-  "checkout.stripe.com",
-  "buy.stripe.com",
-  "js.stripe.com",
-  "hooks.stripe.com",
-  "adyen.com",
-  "klarna.com",
-  "checkout.com",
-  "braintreegateway.com",
-  "pay.google.com",
-];
+const PAYMENT_HOSTS = (
+  "payu.com payu.pl przelewy24.pl paypal.com tpay.com paynow.pl imoje.pl dotpay.pl blik.com " +
+  "autopay.pl bluemedia.pl gopay.cz gopay.com comgate.cz checkout.stripe.com buy.stripe.com " +
+  "js.stripe.com hooks.stripe.com adyen.com klarna.com checkout.com braintreegateway.com pay.google.com"
+).split(" ");
 
 /** A payment provider's host, or one under it: a step there pays. */
 export function paymentHost(host: string): boolean {
   const h = host.toLowerCase();
-  return PAYMENT_HOSTS.some((p) => h === p || h.endsWith(`.${p}`));
+  return PAYMENT_HOSTS.some((p) => onHost(h, p));
 }
 /**
  * A checkout or payment step, by the word a part of its address's path starts with (Shopify's checkouts
@@ -455,7 +405,7 @@ export function heldBack(press: Press, hold: Hold, el: AgentElement | null = nul
   if ("unseen" in hold)
     return `Hatbot couldn't see what this ${act} would act on, so it can't tell whether it's safe. Take a screenshot or read the page again and retry. If it still can't, and this pays, sends, books or deletes anything, call confirm_intent first; if it doesn't, reach the same place another way.`;
   if ("outside" in hold)
-    return `the keyboard isn't on the page: it's in the browser's address bar or another window, where ${act} opens what was typed or presses something Hatbot can't see. To open a page, use the browser's navigate; to type in the page, click into its box first. If this answers a dialog you mean to answer, call confirm_intent first.`;
+    return `the keyboard isn't on the page: it's in the browser's address bar or another window, where ${press === "space" ? "Space may press" : "Enter opens what was typed, or presses"} something Hatbot can't see. To open a page, use the browser's navigate; to type in the page, click into its box first. If this answers a dialog you mean to answer, call confirm_intent first.`;
   if (hold.unlabelled === "beside")
     return `Enter here could send what's in this box, through a button beside it that has no label or none Hatbot can see, so Hatbot can't tell what it does. If it sends, buys, pays, books or deletes anything, call confirm_intent first. If it doesn't, reach the same place another way, such as a labelled button.${newLine}`;
   return `this ${act} is on a button with no label, so Hatbot can't tell what it does: it could send or pay as easily as open a menu. If it sends, buys, pays, books or deletes anything, call confirm_intent first. If it doesn't, reach the same place another way: Escape to close something, scrolling, or a labelled control.`;

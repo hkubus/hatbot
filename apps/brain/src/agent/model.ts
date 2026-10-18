@@ -97,20 +97,20 @@ export class AnthropicModelClient implements ModelClient {
 /**
  * One request that isn't streamed, its text. What it may cost is held against the limits until it's
  * recorded (PLAN.md §6.3): past one, it throws BudgetError and isn't sent. `reserve`: it may use
- * what's kept for alerts. A reply that didn't end its turn throws.
+ * what's kept for alerts. `task`: its own limit counts too. A reply that didn't end its turn throws.
  */
 export async function oneShot(
   d: { model: ModelClient; spend: Spend },
   params: CreateParams,
   ledger: { purpose: string; episodeId?: number; taskId?: number; botId?: string },
-  { reserve = false } = {},
+  { reserve = false, task }: { reserve?: boolean; task?: { id: number; limitUsd: number } } = {},
 ): Promise<string> {
   const release = d.spend.hold(
     requestCeiling(params.model, {
       prompt: fixedTokens(params.system, null) + estimateTokens(params.messages),
       maxTokens: params.max_tokens,
     }),
-    undefined,
+    task,
     { reserve },
   );
   try {

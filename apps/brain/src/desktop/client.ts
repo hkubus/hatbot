@@ -79,6 +79,20 @@ export function actionTimeoutMs(a: AgentAction): number {
   return 45_000 + (chars > 200 ? chars * 25 : 0);
 }
 
+/**
+ * `wait` and page loads may take up to 30 s. The browser types key by key at a person's pace, about
+ * 85 ms a key and now and then 400, so the wait grows with the text.
+ */
+export function browserTimeoutMs(call: BrowserCall): number {
+  const text = call.name === "type" ? call.input?.text : undefined;
+  return 45_000 + (typeof text === "string" ? text.length * 150 : 0);
+}
+
+/** What a desktop-agent too old for a call says: run Update. */
+const tooOld = (what: string) => (): never => {
+  throw new DesktopError(`desktop-agent is too old to ${what}; run Update.`, 404);
+};
+
 export class HttpDesktopAgent implements DesktopAgent {
   readonly configured: boolean;
 
@@ -127,14 +141,23 @@ export class HttpDesktopAgent implements DesktopAgent {
     return res;
   }
 
-  async status(deep = false) {
-    const res = await this.req(
-      "GET",
-      deep ? "/health?deep=1" : "/health",
-      undefined,
-      deep ? 15_000 : 3000,
-    );
-    return (await res.json()) as AgentStatus;
+  private async json<T>(method: string, path: string, body?: unknown, timeoutMs?: number) {
+    return (await (await this.req(method, path, body, timeoutMs)).json()) as T;
+  }
+
+  /** `call`, or `old` for a desktop-agent too old to answer it (a 404). */
+  private async unlessOld<T>(call: () => Promise<T>, old: () => T): Promise<T> {
+    try {
+      return await call();
+    } catch (err) {
+      if (err instanceof DesktopError && err.status === 404) return old();
+      throw err;
+    }
+  }
+
+  status(deep = false) {
+    const path = deep ? "/health?deep=1" : "/health";
+    return this.json<AgentStatus>("GET", path, undefined, deep ? 15_000 : 3000);
   }
   async screenshot() {
     return (await this.req("POST", "/screenshot")).bytes();
@@ -142,24 +165,18 @@ export class HttpDesktopAgent implements DesktopAgent {
   async zoom(region: number[]) {
     return (await this.req("POST", "/zoom", { region })).bytes();
   }
-  async action(a: AgentAction) {
-    return (await (
-      await this.req("POST", "/action", a, actionTimeoutMs(a))
-    ).json()) as AgentActionResult;
+  action(a: AgentAction) {
+    return this.json<AgentActionResult>("POST", "/action", a, actionTimeoutMs(a));
   }
-  async context(withText = false, secrets = false) {
+  context(withText = false, secrets = false) {
     const query = [withText && "text=1", secrets && "secrets=1"].filter(Boolean).join("&");
-    return (await (
-      await this.req("GET", `/context${query ? `?${query}` : ""}`)
-    ).json()) as AgentContext;
+    return this.json<AgentContext>("GET", `/context${query ? `?${query}` : ""}`);
   }
-  async inspect(x?: number, y?: number) {
-    return (await (await this.req("POST", "/inspect", { x, y })).json()) as AgentElement | null;
+  inspect(x?: number, y?: number) {
+    return this.json<AgentElement | null>("POST", "/inspect", { x, y });
   }
-  async exec(command: string, timeoutS: number) {
-    return (await (
-      await this.req("POST", "/exec", { command, timeoutS }, (timeoutS + 15) * 1000)
-    ).json()) as ShellResult;
+  exec(command: string, timeoutS: number) {
+    return this.json<ShellResult>("POST", "/exec", { command, timeoutS }, (timeoutS + 15) * 1000);
   }
   async putFile(path: string, bytes: Uint8Array) {
     await this.req("PUT", `/files?path=${encodeURIComponent(path)}`, undefined, 120_000, bytes);
@@ -176,59 +193,54 @@ export class HttpDesktopAgent implements DesktopAgent {
       bytes: await res.bytes(),
     };
   }
-  async fetch(url: string) {
-    try {
-      return (await (await this.req("POST", "/fetch", { url }, 30_000)).json()) as FetchResult;
-    } catch (err) {
-      if (err instanceof DesktopError && err.status === 404)
-        throw new DesktopError("desktop-agent is too old to fetch pages; run Update.", 404);
-      throw err;
-    }
+  fetch(url: string) {
+    return this.unlessOld(
+      () => this.json<FetchResult>("POST", "/fetch", { url }, 30_000),
+      tooOld("fetch pages"),
+    );
   }
-  async render(url: string) {
+  render(url: string) {
     // The desktop renders one page at a time, so this one may wait behind a few others.
-    try {
-      return (await (await this.req("POST", "/render", { url }, 120_000)).json()) as RenderResult;
-    } catch (err) {
-      if (err instanceof DesktopError && err.status === 404)
-        throw new DesktopError(
-          "desktop-agent is too old to run a page's scripts; run Update.",
-          404,
-        );
-      throw err;
-    }
+    return this.unlessOld(
+      () => this.json<RenderResult>("POST", "/render", { url }, 120_000),
+      tooOld("run a page's scripts"),
+    );
   }
   async renderCheck() {
     await this.req("POST", "/render/check", {}, 30_000);
   }
-  async browser(call: BrowserCall) {
-    // `wait` and page loads may take up to 30 s.
-    return (await (await this.req("POST", "/browser", call, 45_000)).json()) as BrowserResult;
+  browser(call: BrowserCall) {
+    return this.json<BrowserResult>("POST", "/browser", call, browserTimeoutMs(call));
   }
-  async browserState() {
-    return (await (await this.req("GET", "/browser/state")).json()) as BrowserState;
+  browserState() {
+    return this.json<BrowserState>("GET", "/browser/state");
   }
-  async browserInspect(at: BrowserInspect) {
-    return (await (await this.req("POST", "/browser/inspect", at)).json()) as AgentElement | null;
+  browserInspect(at: BrowserInspect) {
+    return this.json<AgentElement | null>("POST", "/browser/inspect", at);
   }
-  async useProfile(botId: string) {
-    try {
-      const res = await this.req("POST", "/browser/profile", { id: botId }, 45_000);
-      return ((await res.json()) as { profile: string | null }).profile !== null;
-    } catch (err) {
+  useProfile(botId: string) {
+    return this.unlessOld(
+      async () => {
+        const res = await this.json<{ profile: string | null }>(
+          "POST",
+          "/browser/profile",
+          { id: botId },
+          45_000,
+        );
+        return res.profile !== null;
+      },
       // An older desktop-agent: one profile for every bot.
-      if (err instanceof DesktopError && err.status === 404) return false;
-      throw err;
-    }
+      () => false,
+    );
   }
-  async resetBrowser() {
-    try {
-      await this.req("POST", "/browser/reset");
-      return true;
-    } catch (err) {
-      if (err instanceof DesktopError && err.status === 404) return false;
-      throw err;
-    }
+  resetBrowser() {
+    return this.unlessOld(
+      async () => {
+        await this.req("POST", "/browser/reset");
+        return true;
+      },
+      () => false,
+    );
   }
   async lock() {
     await this.req("POST", "/lock");

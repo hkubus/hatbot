@@ -1,6 +1,6 @@
 // Tasks (PLAN.md §5.1): storage, cards in the thread, the timeline, and starting runs.
 import {
-  type ACTIVE_TASK_STATUSES,
+  ACTIVE_TASK_STATUSES as ACTIVE,
   type Bot,
   HATBOT_ID,
   type Task,
@@ -139,13 +139,11 @@ const UNREPORTED = `t.reported_at IS NULL AND t.status IN ('done', 'failed', 'ca
   AND coalesce(t.conversation_id, 1) = ? AND coalesce(t.requested_by, t.bot_id) = ?
   AND EXISTS (SELECT 1 FROM messages m WHERE m.kind IN ('task', 'text', 'command') AND m.task_id = t.id)`;
 
-const ACTIVE: typeof ACTIVE_TASK_STATUSES = [
-  "queued",
-  "running",
-  "waiting_approval",
-  "waiting_takeover",
-];
 const FINAL: TaskStatus[] = ["done", "failed", "cancelled"];
+/** SQL for a status among these. */
+const among = (statuses: TaskStatus[]) => `IN (${statuses.map((s) => `'${s}'`).join(", ")})`;
+const STEP = `SELECT id, task_id AS taskId, kind, name, detail, screenshot, url, created_at AS createdAt
+  FROM task_steps`;
 export const RESTARTED = "Stopped: the brain restarted.";
 const errorText = (err: unknown) =>
   err instanceof Error ? err.message.slice(0, 200) : "unknown error";
@@ -181,17 +179,15 @@ export class Tasks {
     this.clock = d.clock ?? Date.now;
     // A restart ends every task that was in flight; their runs can't be resumed.
     this.interrupted = d.db
-      .query<{ id: number }, TaskStatus[]>(
-        `SELECT id FROM tasks WHERE status IN (${ACTIVE.map(() => "?").join(", ")}) ORDER BY id`,
-      )
-      .all(...ACTIVE)
+      .query<{ id: number }, []>(`SELECT id FROM tasks WHERE status ${among(ACTIVE)} ORDER BY id`)
+      .all()
       .map((r) => r.id);
     d.db
       .query(
         `UPDATE tasks SET status = 'failed', summary = coalesce(summary, ?),
-         finished_at = ? WHERE status IN (${ACTIVE.map(() => "?").join(", ")})`,
+         finished_at = ? WHERE status ${among(ACTIVE)}`,
       )
-      .run(RESTARTED, this.now(), ...ACTIVE);
+      .run(RESTARTED, this.now());
   }
 
   now() {
@@ -250,35 +246,21 @@ export class Tasks {
   ): Task[] {
     const where: string[] = [];
     const args: (number | string)[] = [];
-    if (opts.status === "active")
-      where.push(`t.status IN (${ACTIVE.map((s) => `'${s}'`).join(", ")})`);
-    if (opts.status === "done")
-      where.push(`t.status IN (${FINAL.map((s) => `'${s}'`).join(", ")})`);
+    if (opts.status) where.push(`t.status ${among(opts.status === "active" ? ACTIVE : FINAL)}`);
     // A schedule's or trigger's own runs, not the desktop tasks they started.
-    if (opts.scheduleId !== undefined) {
-      where.push("t.schedule_id = ? AND t.parent_id IS NULL");
-      args.push(opts.scheduleId);
-    }
-    if (opts.triggerId !== undefined) {
-      where.push("t.trigger_id = ? AND t.parent_id IS NULL");
-      args.push(opts.triggerId);
-    }
-    if (opts.watcherId !== undefined) {
-      where.push("t.watcher_id = ? AND t.parent_id IS NULL");
-      args.push(opts.watcherId);
-    }
-    if (opts.before !== undefined) {
-      where.push("t.id < ?");
-      args.push(opts.before);
-    }
-    if (opts.botId !== undefined) {
-      where.push("t.bot_id = ?");
-      args.push(opts.botId);
-    }
-    if (opts.origin !== undefined) {
-      where.push("t.origin = ?");
-      args.push(opts.origin);
-    }
+    const filters: [number | string | undefined, string][] = [
+      [opts.scheduleId, "t.schedule_id = ? AND t.parent_id IS NULL"],
+      [opts.triggerId, "t.trigger_id = ? AND t.parent_id IS NULL"],
+      [opts.watcherId, "t.watcher_id = ? AND t.parent_id IS NULL"],
+      [opts.before, "t.id < ?"],
+      [opts.botId, "t.bot_id = ?"],
+      [opts.origin, "t.origin = ?"],
+    ];
+    for (const [value, sql] of filters)
+      if (value !== undefined) {
+        where.push(sql);
+        args.push(value);
+      }
     if (opts.like !== undefined) {
       where.push(
         "(t.title LIKE ? ESCAPE '\\' OR t.goal LIKE ? ESCAPE '\\' OR coalesce(t.summary, '') LIKE ? ESCAPE '\\')",
@@ -298,20 +280,12 @@ export class Tasks {
   }
 
   steps(taskId: number): TaskStep[] {
-    return this.d.db
-      .query<TaskStep, [number]>(
-        `SELECT id, task_id AS taskId, kind, name, detail, screenshot, url, created_at AS createdAt
-         FROM task_steps WHERE task_id = ? ORDER BY id`,
-      )
-      .all(taskId);
+    return this.d.db.query<TaskStep, [number]>(`${STEP} WHERE task_id = ? ORDER BY id`).all(taskId);
   }
 
   step(taskId: number, stepId: number): TaskStep | null {
     return this.d.db
-      .query<TaskStep, [number, number]>(
-        `SELECT id, task_id AS taskId, kind, name, detail, screenshot, url, created_at AS createdAt
-         FROM task_steps WHERE id = ? AND task_id = ?`,
-      )
+      .query<TaskStep, [number, number]>(`${STEP} WHERE id = ? AND task_id = ?`)
       .get(stepId, taskId);
   }
 
@@ -615,7 +589,7 @@ export class Tasks {
   activeFor(runKey: string): Task | null {
     const r = this.d.db
       .query<Row, [string]>(
-        `${SELECT} WHERE t.run_key = ? AND t.status IN (${ACTIVE.map((s) => `'${s}'`).join(", ")}) ORDER BY t.id DESC LIMIT 1`,
+        `${SELECT} WHERE t.run_key = ? AND t.status ${among(ACTIVE)} ORDER BY t.id DESC LIMIT 1`,
       )
       .get(runKey);
     return r ? toTask(r) : null;
@@ -655,8 +629,9 @@ export class Tasks {
     Object.assign(this.d, parts);
   }
 
-  /** What a background task's tools need. */
-  toolContext(task: Task): ToolContext {
+  /** What a background task's tools need; their requests to the desktop end once `signal` aborts. */
+  toolContext(task: Task, signal: AbortSignal): ToolContext {
+    const { agent } = this.d.desktop;
     return {
       db: this.d.db,
       memory: this.d.memory,
@@ -664,9 +639,8 @@ export class Tasks {
       bot: this.botOf(task),
       bots: this.d.bots,
       tasks: this,
-      plugins: this.d.plugins,
       attachments: this.d.attachments,
-      desktop: this.d.desktop.agent,
+      desktop: agent.withSignal?.(signal) ?? agent,
       proposals: this.d.proposals,
       // The run marks `task` as it reads untrusted content.
       tainted: () => (task.tainted ? task.taintedBy || "What started it" : null),
