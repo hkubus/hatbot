@@ -347,6 +347,31 @@ final class ChatTests: XCTestCase {
     let bad = #"{"type":"line","x":["a","b"],"series":[{"data":[1]}]}"#
     XCTAssertEqual(Markdown.parse("```chart\n\(bad)\n```"), [.code(language: "chart", code: bad)])
   }
+
+  /// The other kinds check out by the shared spec's rules, and each is turned down where they matter.
+  func testChartKinds() throws {
+    let scatter = try XCTUnwrap(ChartSpec.parse(
+      #"{"type":"scatter","xUnit":"$","series":[{"points":[{"x":1,"y":2,"label":"A"},{"x":3,"y":4}]}]}"#))
+    XCTAssertEqual(scatter.scatter?.series[0].points[0].label, "A")
+    XCTAssertNil(ChartSpec.parse(#"{"type":"scatter","series":[{"name":null,"points":[{"x":1,"y":2}]}]}"#))
+
+    let range = #"{"type":"range","unit":"$","rows":[{"label":"Shop","low":2,"high":%@,"mark":3}]}"#
+    XCTAssertEqual(ChartSpec.parse(range.replacingOccurrences(of: "%@", with: "5"))?.ranges?.rows[0].mark, 3)
+    XCTAssertNil(ChartSpec.parse(range.replacingOccurrences(of: "%@", with: "1")))
+
+    let matrix = #"{"type":"matrix","rows":["A","B","C"],"columns":[{"name":"Price","better":"low"},{"name":"Speed"}],"values":%@}"#
+    let m = try XCTUnwrap(ChartSpec.parse(matrix.replacingOccurrences(of: "%@", with: "[[10,1],[20,null],[30,1]]"))?.matrix)
+    XCTAssertEqual([m.shade(row: 0, column: 0), m.shade(row: 1, column: 0), m.shade(row: 1, column: 1)], [1, 0.5, nil])
+    XCTAssertNil(ChartSpec.parse(matrix.replacingOccurrences(of: "%@", with: "[[10,1],[20],[30,1]]")))
+
+    let timeline = #"{"type":"timeline","events":[{"date":"2024-02","end":%@,"label":"Beta"},{"date":"2024","label":"Out","lane":"Web"}]}"#
+    let t = try XCTUnwrap(ChartSpec.parse(timeline.replacingOccurrences(of: "%@", with: #""2024-02-01""#))?.timeline)
+    XCTAssertEqual(t.lanes, ["", "Web"])
+    let feb = try XCTUnwrap(ChartSpec.dateRange("2024-02"))
+    XCTAssertEqual(feb.last.timeIntervalSince(feb.first), 28 * 86400)
+    XCTAssertNil(ChartSpec.parse(timeline.replacingOccurrences(of: "%@", with: #""2024-13""#)))
+    XCTAssertNil(ChartSpec.parse(timeline.replacingOccurrences(of: "%@", with: #""2023-12-31""#)))
+  }
 }
 
 /// Save turns on for a change you made, and only then.
