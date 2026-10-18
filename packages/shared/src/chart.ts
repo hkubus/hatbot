@@ -7,13 +7,26 @@ export const CHART_MAX_SERIES = 3;
 export const CHART_MAX_POINTS = 500;
 /** Horizontal bars take a row each, so fewer of them. */
 export const CHART_MAX_ROWS = 40;
+/** A matrix's columns share the width of a phone. */
+export const CHART_MAX_COLUMNS = 8;
+export const CHART_MAX_EVENTS = 60;
+/** Timeline lanes are told apart by row, not colour, but each needs its own row. */
+export const CHART_MAX_LANES = 8;
 
-export const ChartSpec = z
+const title = z.string().max(120).optional();
+/** "%", "GiB", "ms", or a currency symbol ("$", "€"), which goes in front. */
+const unit = z.string().max(12).optional();
+const label = z.string().min(1).max(60);
+/** 2024, 2024-03 or 2024-03-15. */
+const DATE = /^\d{4}(-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?)?$/;
+const date = z.string().regex(DATE, "a date is YYYY, YYYY-MM or YYYY-MM-DD");
+
+/** Line and bar: one value per x for each series. */
+const SeriesChart = z
   .object({
     type: z.enum(["line", "bar"]),
-    title: z.string().max(120).optional(),
-    /** "%", "GiB", "ms", or a currency symbol ("$", "€"), which goes in front. */
-    unit: z.string().max(12).optional(),
+    title,
+    unit,
     /** Bars: the series stack into one bar per x, as parts of its total. */
     stacked: z.boolean().optional(),
     /** Bars: one row per x, for rankings and long names. */
@@ -42,7 +55,131 @@ export const ChartSpec = z
   .refine((s) => !(s.type === "bar" && s.horizontal) || s.x.length <= CHART_MAX_ROWS, {
     message: `at most ${CHART_MAX_ROWS} horizontal bars`,
   });
+export type SeriesChart = z.infer<typeof SeriesChart>;
+
+/** Points on two measured axes, for trade-offs (price against noise). */
+const ScatterChart = z
+  .object({
+    type: z.literal("scatter"),
+    title,
+    xName: z.string().max(60).optional(),
+    xUnit: unit,
+    yName: z.string().max(60).optional(),
+    yUnit: unit,
+    series: z
+      .array(
+        z.object({
+          name: z.string().max(60).optional(),
+          points: z
+            .array(z.object({ x: z.number(), y: z.number(), label: label.optional() }))
+            .min(1),
+        }),
+      )
+      .min(1)
+      .max(CHART_MAX_SERIES),
+  })
+  .refine((s) => s.series.reduce((n, se) => n + se.points.length, 0) <= CHART_MAX_POINTS, {
+    message: `at most ${CHART_MAX_POINTS} points in all`,
+  });
+export type ScatterChart = z.infer<typeof ScatterChart>;
+
+/** A span from low to high for each row (prices across shops), with an optional mark inside it. */
+const RangeChart = z.object({
+  type: z.literal("range"),
+  title,
+  unit,
+  /** What the mark is: "median", "cheapest new". */
+  markName: z.string().max(60).optional(),
+  rows: z
+    .array(
+      z
+        .object({ label, low: z.number(), high: z.number(), mark: z.number().optional() })
+        .refine((r) => r.low <= r.high, { message: "low is above high" })
+        .refine((r) => r.mark === undefined || (r.mark >= r.low && r.mark <= r.high), {
+          message: "mark is outside low to high",
+        }),
+    )
+    .min(1)
+    .max(CHART_MAX_ROWS),
+});
+export type RangeChart = z.infer<typeof RangeChart>;
+
+/** Options against criteria, a value in each cell; each column is shaded from its worst to its best. */
+const MatrixChart = z
+  .object({
+    type: z.literal("matrix"),
+    title,
+    rows: z.array(label).min(1).max(CHART_MAX_ROWS),
+    columns: z
+      .array(
+        z.object({
+          name: label,
+          unit,
+          /** Which end is better: "low" for prices and noise. Higher is better by default. */
+          better: z.enum(["high", "low"]).optional(),
+        }),
+      )
+      .min(1)
+      .max(CHART_MAX_COLUMNS),
+    /** One list per row, a value per column; null where it isn't known. */
+    values: z.array(z.array(z.number().nullable())),
+  })
+  .refine((s) => s.values.length === s.rows.length, { message: "values needs one list per row" })
+  .refine((s) => s.values.every((r) => r.length === s.columns.length), {
+    message: "each row of values needs one value per column",
+  });
+export type MatrixChart = z.infer<typeof MatrixChart>;
+
+/** Dated events, or spans with an end, in order along one axis; lanes split them into rows. */
+const TimelineChart = z
+  .object({
+    type: z.literal("timeline"),
+    title,
+    events: z
+      .array(
+        z
+          .object({ date, end: date.optional(), label, lane: z.string().max(40).optional() })
+          .refine((e) => e.end === undefined || dateRange(e.date)[0] <= dateRange(e.end)[1], {
+            message: "end is before date",
+          }),
+      )
+      .min(1)
+      .max(CHART_MAX_EVENTS),
+  })
+  .refine((s) => new Set(s.events.map((e) => e.lane ?? "")).size <= CHART_MAX_LANES, {
+    message: `at most ${CHART_MAX_LANES} lanes`,
+  });
+export type TimelineChart = z.infer<typeof TimelineChart>;
+
+const KINDS = {
+  line: SeriesChart,
+  bar: SeriesChart,
+  scatter: ScatterChart,
+  range: RangeChart,
+  matrix: MatrixChart,
+  timeline: TimelineChart,
+};
+type Kind = keyof typeof KINDS;
+
+export const ChartSpec = z.union([
+  SeriesChart,
+  ScatterChart,
+  RangeChart,
+  MatrixChart,
+  TimelineChart,
+]);
 export type ChartSpec = z.infer<typeof ChartSpec>;
+
+/** The first and last day a timeline date covers, as UTC milliseconds: 2024-03 is all of March. */
+export function dateRange(d: string): [number, number] {
+  const [y, m, day] = d.split("-").map(Number) as [number, number?, number?];
+  if (day !== undefined) {
+    const t = Date.UTC(y, (m ?? 1) - 1, day);
+    return [t, t];
+  }
+  if (m !== undefined) return [Date.UTC(y, m - 1, 1), Date.UTC(y, m, 0)];
+  return [Date.UTC(y, 0, 1), Date.UTC(y, 11, 31)];
+}
 
 /** The spec in a chart block, or null if it isn't one (still streaming, or malformed). */
 export function parseChart(source: string): ChartSpec | null {
@@ -64,7 +201,11 @@ export function chartProblem(source: string): string | null {
   } catch (err) {
     return `it isn't valid JSON (${(err as Error).message})`;
   }
-  const p = ChartSpec.safeParse(json);
+  // Checked against its own kind, so the problem names that kind's fields, not every kind's.
+  const type = (json as { type?: unknown } | null)?.type;
+  const kind = typeof type === "string" && Object.hasOwn(KINDS, type) ? KINDS[type as Kind] : null;
+  if (!kind) return `type must be one of ${Object.keys(KINDS).join(", ")}`;
+  const p = kind.safeParse(json);
   if (p.success) return null;
   // The usual slip: a long series typed out by hand with a value too many or too few.
   const o = json as { x?: unknown; series?: unknown };
@@ -107,13 +248,14 @@ export function brokenCharts(markdown: string) {
 }
 
 /** Series names, with "Series 2" for one Hatbot left unnamed. */
-export const seriesNames = (s: ChartSpec) => s.series.map((se, i) => se.name || `Series ${i + 1}`);
+export const seriesNames = (s: { series: { name?: string }[] }) =>
+  s.series.map((se, i) => se.name || `Series ${i + 1}`);
 
 /** Whether the bars stack: asked for, and more than one series to stack. */
-export const isStacked = (s: ChartSpec) => s.type === "bar" && !!s.stacked && s.series.length > 1;
+export const isStacked = (s: SeriesChart) => s.type === "bar" && !!s.stacked && s.series.length > 1;
 
 /** Each x's stack of bars: [start, end] per series, positives up from 0 and negatives down. */
-export function stackSpans(s: ChartSpec): ([number, number] | null)[][] {
+export function stackSpans(s: SeriesChart): ([number, number] | null)[][] {
   return s.x.map((_, i) => {
     let up = 0;
     let down = 0;
@@ -129,7 +271,7 @@ export function stackSpans(s: ChartSpec): ([number, number] | null)[][] {
 }
 
 /** The sum at each x, or null where every series is a gap. */
-export const stackTotals = (s: ChartSpec) =>
+export const stackTotals = (s: SeriesChart) =>
   s.x.map((_, i) => {
     const vs = s.series.map((se) => se.data[i]).filter((v): v is number => v != null);
     return vs.length ? vs.reduce((a, b) => a + b, 0) : null;

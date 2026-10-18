@@ -1641,8 +1641,15 @@ a.btn:hover {
   height: 8px;
   border-radius: 2px;
 }
+.reply-chart .point {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
 .chart-plot {
   position: relative;
+  /* A wide matrix scrolls inside its box rather than widening the reply. */
+  min-width: 0;
 }
 .reply-chart svg {
   display: block;
@@ -1679,6 +1686,15 @@ a.btn:hover {
 .reply-chart .tick.row {
   fill: var(--text-2);
   dominant-baseline: middle;
+}
+/* A scatter's axis names, a timeline's lanes. */
+.reply-chart .tick.name,
+.reply-chart .tick.lane {
+  fill: var(--text-2);
+  dominant-baseline: middle;
+}
+.reply-chart .tick.lane {
+  font-weight: 600;
 }
 .reply-chart .line {
   fill: none;
@@ -1724,6 +1740,66 @@ a.btn:hover {
 }
 .chart-tip-row.total {
   padding-left: 18px;
+}
+/* A matrix: a table whose cells are shaded per column (charts/matrix.tsx). */
+.reply-chart .chart-matrix {
+  overflow-x: auto;
+  /* Room for the focus ring inside the scrolling box. */
+  padding: 3px;
+  margin: -3px;
+}
+/* Over .md's tables. */
+.reply-chart .chart-matrix table {
+  display: table;
+  overflow: visible;
+  overflow-wrap: normal;
+  border-collapse: separate;
+  border-spacing: 2px;
+  font-family: var(--font);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+  border-radius: 4px;
+}
+.reply-chart .chart-matrix table:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.reply-chart .chart-matrix th,
+.reply-chart .chart-matrix td {
+  border: 0;
+  border-radius: 4px;
+}
+.reply-chart .chart-matrix th {
+  padding: 3px 8px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.reply-chart .chart-matrix thead th {
+  text-align: right;
+  vertical-align: bottom;
+}
+.reply-chart .chart-matrix tbody th {
+  text-align: left;
+  font-weight: 400;
+  min-width: 6em;
+  max-width: 14em;
+}
+.reply-chart .chart-matrix .unit {
+  font-weight: 400;
+  color: var(--muted);
+}
+.reply-chart .chart-matrix td {
+  padding: 5px 8px;
+  text-align: right;
+  white-space: nowrap;
+  color: var(--text);
+}
+.reply-chart .chart-matrix td.none {
+  color: var(--soft);
+}
+.reply-chart .chart-matrix td.on {
+  box-shadow: inset 0 0 0 1.5px var(--text-2);
 }
 .sr-only {
   position: absolute;
@@ -2928,4 +3004,138 @@ a.row-main:hover {
 /* A negotiation's messages: time, then who wrote what. */
 .tl-step.no-icon {
   grid-template-columns: 42px minmax(0, 1fr);
+}
+
+/* The reader: a Markdown file, like a research report, at a width that's easy to read. */
+.page.reader {
+  /* No wider than the screen, whatever a table or chart inside would like. */
+  grid-template-columns: minmax(0, 1fr);
+}
+.reader-head {
+  flex-wrap: nowrap;
+}
+.reader-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 13px;
+}
+.reader .md {
+  min-width: 0;
+  font-family: var(--font-text);
+  font-size: 15px;
+  line-height: 1.65;
+  /* Not "anywhere": that would squeeze a table's columns to a letter instead of scrolling it. */
+  overflow-wrap: break-word;
+}
+.reader .md > * {
+  margin: 0 0 14px;
+}
+.reader .md > :last-child {
+  margin-bottom: 0;
+}
+.reader .md h1,
+.reader .md h2,
+.reader .md h3,
+.reader .md h4 {
+  font-family: var(--font);
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+.reader .md h1 {
+  font-size: 26px;
+  margin-bottom: 8px;
+}
+.reader .md h2 {
+  font-size: 19px;
+  margin: 30px 0 10px;
+}
+.reader .md h3 {
+  font-size: 16px;
+  margin: 24px 0 8px;
+}
+.reader .md h4 {
+  font-size: 15px;
+  margin: 20px 0 6px;
+}
+.reader .md p > em:only-child {
+  color: var(--muted);
+}
+.reader .md ul,
+.reader .md ol {
+  padding-left: 22px;
+}
+.reader .md li + li {
+  margin-top: 4px;
+}
+.reader .md li > p {
+  margin: 0;
+}
+.reader .md code {
+  font-family: var(--mono);
+  font-size: 13px;
+  background: var(--surface-2);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+.reader .md pre {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+  background: var(--surface-2);
+  padding: 10px 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+.reader .md pre code {
+  background: none;
+  padding: 0;
+}
+.reader .md blockquote {
+  margin-left: 0;
+  margin-right: 0;
+  border-left: 2px solid var(--line-strong);
+  padding-left: 12px;
+  color: var(--text-2);
+}
+/* A wide table scrolls in its own box, never the page. A chart's table for screen readers isn't one. */
+.reader .md > table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+.reader .md > table th,
+.reader .md > table td {
+  border: 0.5px solid var(--line-strong);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.reader .md > table th {
+  background: var(--surface-2);
+  font-weight: 600;
+}
+.reader .md hr {
+  border: 0;
+  border-top: 1px solid var(--line-strong);
+  margin: 26px 0;
+}
+.reader .md img {
+  max-width: 100%;
+  border-radius: 8px;
+}
+.reader .reply-chart {
+  width: 100%;
+  margin-bottom: 18px;
+}
+@media (max-width: 899px) {
+  .page.reader {
+    padding: 14px 16px 30px;
+  }
 }
