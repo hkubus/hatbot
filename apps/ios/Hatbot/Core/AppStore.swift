@@ -72,6 +72,11 @@ final class AppStore {
   var watchersLoaded = false
   /// Deleted while the app was open, so an open watcher says it's gone.
   var deletedWatchers = Set<Int>()
+  /// Boxes: all of them once Boxes has been opened (`boxesLoaded`), and any a chat has shown.
+  var boxes: [Int: Box] = [:]
+  var boxesLoaded = false
+  /// Deleted, here or elsewhere: an open box says so, and the chat stops showing it.
+  var deletedBoxes = Set<Int>()
   /// A short note to show briefly, like a memory commit.
   var toast: String? {
     didSet { if toast != nil { toastId += 1 } }
@@ -205,6 +210,8 @@ final class AppStore {
       Task {
         async let live: Void? = try? self.loadLive()
         if reconnected { try? await self.loadThread() }
+        // What changed while the app was away.
+        if reconnected && self.boxesLoaded { _ = try? await self.loadBoxes() }
         _ = await live
       }
     }
@@ -258,6 +265,8 @@ final class AppStore {
       if let r = live(id) { r.progress = String((r.progress + text).suffix(400)) }
     case let .messageTask(id, taskId):
       if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].taskId = taskId }
+    case let .messageBox(id, boxId):
+      if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].boxId = boxId }
     case let .messageUsage(id, used):
       live(id)?.usage = used
     case let .messageAttachment(id, a):
@@ -326,6 +335,11 @@ final class AppStore {
     case let .watcherDeleted(id):
       watchers[id] = nil
       deletedWatchers.insert(id)
+    case let .boxUpdated(b):
+      boxes[b.id] = b
+    case let .boxDeleted(id):
+      boxes[id] = nil
+      deletedBoxes.insert(id)
     case .unknown:
       break
     }
@@ -773,6 +787,18 @@ final class AppStore {
       } catch let error as APIError where error.status == 404 {
         deletedSchedules.insert(id)
       } catch { requested.remove("s\(id)") }
+    }
+  }
+
+  /// Loads a box the first time a chat shows it.
+  func ensureBox(_ id: Int) {
+    if boxes[id] != nil || deletedBoxes.contains(id) { return }
+    guard requested.insert("x\(id)").inserted else { return }
+    Task {
+      do {
+        _ = try await loadBox(id)
+      } catch let error as APIError where error.status == 404 {
+      } catch { requested.remove("x\(id)") }
     }
   }
 

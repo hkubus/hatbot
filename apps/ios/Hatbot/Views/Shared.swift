@@ -69,6 +69,9 @@ enum Route: Hashable {
   case checks
   case heartbeat
   case proposal(Proposal)
+  case box(Int)
+  /// A version's page as its source.
+  case boxCode(Int, version: Int)
   case spend
   case limits
   case devices
@@ -95,6 +98,8 @@ extension View {
       case .checks: ChecksView()
       case .heartbeat: HeartbeatView()
       case let .proposal(p): ProposalView(proposal: p)
+      case let .box(id): BoxView(id: id)
+      case let .boxCode(id, version): BoxCodeView(id: id, version: version)
       case .spend: SpendView()
       case .limits: LimitsView()
       case .devices: DevicesView()
