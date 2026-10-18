@@ -161,21 +161,19 @@ const CUSTOM_TOOLS: Anthropic.Beta.BetaTool[] = [
     description: "End the task and report the outcome to the owner.",
     schema: FinishTask,
   },
+  // Only in a negotiation's desktop tasks (PLAN.md §16.3).
+  {
+    name: "record_conversation",
+    description:
+      "Record the conversation with the seller as it is on screen now: every message, oldest first, who wrote it (the seller, or us: this account) and its text, copied exactly. Call it once the conversation is open, before sending anything, and again after. It says what to do next.",
+    schema: RecordConversation,
+  },
 ].map((t) => ({
   name: t.name,
   description: t.description,
   input_schema: z.toJSONSchema(t.schema) as Anthropic.Beta.BetaTool.InputSchema,
   eager_input_streaming: true,
 }));
-
-/** Only in a negotiation's desktop tasks (PLAN.md §16.3). */
-const RECORD_TOOL: Anthropic.Beta.BetaTool = {
-  name: "record_conversation",
-  description:
-    "Record the conversation with the seller as it is on screen now: every message, oldest first, who wrote it (the seller, or us: this account) and its text, copied exactly. Call it once the conversation is open, before sending anything, and again after. It says what to do next.",
-  input_schema: z.toJSONSchema(RecordConversation) as Anthropic.Beta.BetaTool.InputSchema,
-  eager_input_streaming: true,
-};
 
 /** The answer to a reply that called no tool. */
 const NUDGE =
@@ -452,18 +450,24 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       signal,
     );
 
+  /** Waits for you, ending the task when it's cancelled or `nobody` once 24 hours pass. */
+  const forOwner = async (nobody: string, wait: (until: AbortSignal) => Promise<void>) => {
+    const timeout = AbortSignal.timeout(TAKEOVER_TIMEOUT_MS);
+    try {
+      await wait(AbortSignal.any([signal, timeout]));
+    } catch (err) {
+      if (timeout.aborted && !signal.aborted) throw new Stop("cancelled", nobody);
+      throw err;
+    }
+  };
+
   /** Waits while you have the desktop, holding the screen lane: you're working on this task's behalf. */
   const waitForOwner = async () => {
     tasks.setStatus(id, "waiting_takeover");
     activeMs += tasks.clock() - since;
-    const timeout = AbortSignal.timeout(TAKEOVER_TIMEOUT_MS);
-    try {
-      await d.desktop.waitForHandback(AbortSignal.any([signal, timeout]));
-    } catch (err) {
-      if (timeout.aborted && !signal.aborted)
-        throw new Stop("cancelled", "Nobody handed the desktop back within 24 hours.");
-      throw err;
-    }
+    await forOwner("Nobody handed the desktop back within 24 hours.", (until) =>
+      d.desktop.waitForHandback(until),
+    );
     since = tasks.clock();
     tasks.setStatus(id, "running");
   };
@@ -545,6 +549,25 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     ...(isError ? { is_error: true } : {}),
     ...(call.toolset_name ? { toolset_name: call.toolset_name } : {}),
   });
+  const invalid = (call: Anthropic.Beta.BetaToolUseBlock, error: z.ZodError) =>
+    textResult(call, `Invalid input: ${z.prettifyError(error)}`, true);
+
+  /** A tool's handler, given its input once that's valid. */
+  const withInput =
+    <S extends z.ZodType>(
+      schema: S,
+      run: (call: Anthropic.Beta.BetaToolUseBlock, input: z.output<S>) => Promise<ToolResult>,
+    ) =>
+    async (call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> => {
+      const p = schema.safeParse(call.input);
+      return p.success ? run(call, p.data) : invalid(call, p.error);
+    };
+
+  /** A step not run: on the timeline as `detail`, and to the model as why. */
+  const notRun = (call: Anthropic.Beta.BetaToolUseBlock, detail: string, why = detail) => {
+    tasks.addStep(id, { kind: "note", name: "Held back", detail, url: lastUrl });
+    return textResult(call, `Not run: ${why}`, true);
+  };
 
   /**
    * Runs one toolset call (computer or browser): waits out a takeover, holds back a consequential click or
@@ -564,16 +587,10 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       );
     }
     const no = gate && refused(gate, call.name, input);
-    if (no) {
-      tasks.addStep(id, { kind: "note", name: "Held back", detail: no, url: lastUrl });
-      return textResult(call, `Not run: ${no}`, true);
-    }
+    if (no) return notRun(call, no);
     if (typesText(call.name, input)) typed = true;
     const check = checkFor(isBrowser ? "browser" : "computer", call.name, input);
-    if (check && "refuse" in check) {
-      tasks.addStep(id, { kind: "note", name: "Held back", detail: check.refuse, url: lastUrl });
-      return textResult(call, `Not run: ${check.refuse}`, true);
-    }
+    if (check && "refuse" in check) return notRun(call, check.refuse);
     // Each line break presses Enter, so each is checked on its own, with the text before it typed: a chat
     // box may show its Send button only once it holds text, and after a send the focus may have moved.
     const pieces =
@@ -647,10 +664,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         // Closed, or its mandate ran out, since the task started.
         gateState.stopped ||= tasks.negotiations?.sendStopped(id) ?? null;
         const g = gateCheck(gate, gateState, kind, el, hold);
-        if (g.action === "hold") {
-          tasks.addStep(id, { kind: "note", name: "Held back", detail: g.why, url: lastUrl });
-          return textResult(call, `Not run: ${g.why}`, true);
-        }
+        if (g.action === "hold") return notRun(call, g.why);
         // The send itself, or a click into a text box: neither needs confirm_intent.
         if (g.action !== "usual") hold = null;
         sending = g.action === "send";
@@ -663,18 +677,13 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       if (hold && was && (!uncovered || !was.hold)) armed = null;
       if (hold && (!was || uncovered)) {
         const what = `${call.name} ${heldWhat(hold)}`;
-        tasks.addStep(id, {
-          kind: "note",
-          name: "Held back",
-          detail: `${what} needs approval`,
-          url: lastUrl,
-        });
-        if (gate) return textResult(call, `Not run: ${gateHeld(gate, check.press, hold)}`, true);
+        const needs = `${what} needs approval`;
+        if (gate) return notRun(call, needs, gateHeld(gate, check.press, hold));
         lastHeld = { hold, page: here, what };
-        return textResult(
+        return notRun(
           call,
-          `Not run: ${heldBack(check.press, hold, el)}${uncovered ? ` ${uncovered}` : ""}`,
-          true,
+          needs,
+          `${heldBack(check.press, hold, el)}${uncovered ? ` ${uncovered}` : ""}`,
         );
       }
     }
@@ -739,14 +748,12 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   };
 
   /** record_conversation: the brain stores what the seller wrote, and says whether the send may go. */
-  const recordConversation = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> => {
-    const p = RecordConversation.safeParse(call.input);
-    if (!p.success) return textResult(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+  const recordConversation = withInput(RecordConversation, async (call, input) => {
     if (!gate || !tasks.negotiations)
       return textResult(call, "This task has no negotiation.", true);
     const tab = await agent.context(true).catch(() => null);
     const box = await agent.inspect().catch(() => null);
-    const r = tasks.negotiations.record(id, tab?.url ?? null, p.data.messages, {
+    const r = tasks.negotiations.record(id, tab?.url ?? null, input.messages, {
       sent: gateState.sent,
       typed,
       drafts: box?.fields ?? [],
@@ -761,11 +768,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       url: lastUrl,
     });
     return textResult(call, r.text);
-  };
+  });
 
-  const confirmIntent = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> => {
-    const p = ConfirmIntent.safeParse(call.input);
-    if (!p.success) return textResult(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+  const confirmIntent = withInput(ConfirmIntent, async (call, input) => {
     if (gate?.mode === "read")
       return textResult(
         call,
@@ -777,10 +782,10 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     if (gate)
       return textResult(
         call,
-        p.data.kind === "send"
+        input.kind === "send"
           ? "Not needed: the message is approved already, and the text in the box is checked before it goes. Type it exactly and send it with the Send button or Enter."
           : "Not asked: this task only sends the approved message. Don't click offer, buy, pay or delivery buttons; if one is in the way, finish and say why.",
-        p.data.kind !== "send",
+        input.kind !== "send",
       );
     const bytes = await agent.screenshot();
     // What the owner sees and approves: the step on this page, whose text says what kind of step it is.
@@ -797,16 +802,16 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     const held = lastHeld && samePage(lastHeld.page, page) ? lastHeld : null;
     lastHeld = null;
     const kind = approvalKind(
-      p.data.kind,
-      p.data,
+      input.kind,
+      input,
       { url: page, text: tab?.text ?? null },
       held?.hold,
     );
     const reason = held
-      ? `${p.data.reason ? `${p.data.reason} ` : ""}(Hatbot held: ${held.what}.)`
-      : p.data.reason;
+      ? `${input.reason ? `${input.reason} ` : ""}(Hatbot held: ${held.what}.)`
+      : input.reason;
     const { outcome, note } = await askApproval({
-      ...p.data,
+      ...input,
       ...(reason ? { reason } : {}),
       kind,
       screenshotStepId: step.id,
@@ -823,8 +828,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     // trying holds only while its page stays.
     const now = (await agent.context(false).catch(() => null))?.url ?? null;
     const away = page !== null && !samePage(now, page);
-    armed =
-      away && !held ? null : { page, kind, summary: p.data.summary, hold: held?.hold ?? null };
+    armed = away && !held ? null : { page, kind, summary: input.summary, hold: held?.hold ?? null };
     const moved = away
       ? ` While you waited, another task used the browser: the page you asked about (${page}) isn't on screen now${now ? ` (${now})` : ""}. ${held ? "Go back to it first; the approval holds only there." : "Go back to it, then call confirm_intent again."}`
       : "";
@@ -837,13 +841,11 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           : "Approved by the owner. Go ahead with exactly this action.") + moved,
       ),
     );
-  };
+  });
 
   /** The desktop's shell. Destructive patterns ask, as on your hosts (PLAN.md §5.5). */
-  const shellCall = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> => {
-    const p = DesktopShell.safeParse(call.input);
-    if (!p.success) return textResult(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
-    const { command, timeout_s: timeoutS = 60 } = p.data;
+  const shellCall = withInput(DesktopShell, async (call, input) => {
+    const { command, timeout_s: timeoutS = 60 } = input;
     if (d.desktop.get().control === "owner") await waitForOwner();
     const danger = destructive(command);
     let note: string | null = null;
@@ -871,16 +873,14 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       `${head}\n${r.output}${note ? `\n\n${ownerNote(note)}` : ""}`,
       r.timedOut || r.exitCode !== 0,
     );
-  };
+  });
 
-  const sendFile = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> => {
-    const p = SendFile.safeParse(call.input);
-    if (!p.success) return textResult(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+  const sendFile = withInput(SendFile, async (call, input) => {
     if (!d.attachments) return textResult(call, "Files can't be sent here.", true);
     try {
       const a = await d.attachments.fromDesktop(
         agent,
-        { download: p.data.download_id, path: p.data.path, name: p.data.name },
+        { download: input.download_id, path: input.path, name: input.name },
         { taskId: id },
       );
       tasks.addStep(id, { kind: "action", name: "send_file", detail: a.name, url: null });
@@ -889,20 +889,18 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       if (err instanceof DesktopError) return textResult(call, err.message, true);
       throw err;
     }
-  };
+  });
 
-  const requestTakeover = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> => {
-    const p = RequestTakeover.safeParse(call.input);
-    if (!p.success) return textResult(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
-    d.desktop.requestTakeover(id, p.data.reason);
+  const requestTakeover = withInput(RequestTakeover, async (call, input) => {
+    d.desktop.requestTakeover(id, input.reason);
     tasks.addStep(id, {
       kind: "takeover",
       name: "Asked you to take over",
-      detail: p.data.reason,
+      detail: input.reason,
       url: lastUrl,
     });
     void d.notifier.send({
-      title: `${d.bots.nameOf(task.botId)} needs you: ${p.data.reason}`.slice(0, 120),
+      title: `${d.bots.nameOf(task.botId)} needs you: ${input.reason}`.slice(0, 120),
       message: `Task #${id}: ${task.title}. Open the live view, take over, and hand back when you're done.`,
       priority: 4,
       click: `${d.config.publicUrl}/tasks/${id}?live=1`,
@@ -917,9 +915,6 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         tasks.setStatus(id, "waiting_takeover");
         let failed: unknown = null;
         let taken = () => {};
-        const asked = new Promise<void>((resolve) => {
-          taken = resolve;
-        });
         off = d.desktop.onTakeover(id, async () => {
           const late = AbortSignal.timeout(limits.takeoverReadyMs);
           try {
@@ -946,19 +941,19 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
             );
           }
         });
-        const timeout = AbortSignal.timeout(TAKEOVER_TIMEOUT_MS);
-        const until = AbortSignal.any([signal, timeout]);
-        try {
-          await new Promise<void>((resolve, reject) => {
-            if (until.aborted) return reject(until.reason);
-            until.addEventListener("abort", () => reject(until.reason), { once: true });
-            void asked.then(resolve);
-          });
-        } catch (err) {
-          if (timeout.aborted && !signal.aborted)
-            throw new Stop("cancelled", "Nobody took over the desktop within 24 hours.");
-          throw err;
-        }
+        await forOwner(
+          "Nobody took over the desktop within 24 hours.",
+          (until) =>
+            new Promise((resolve, reject) => {
+              const abort = () => reject(until.reason);
+              if (until.aborted) return abort();
+              until.addEventListener("abort", abort, { once: true });
+              taken = () => {
+                until.removeEventListener("abort", abort);
+                resolve();
+              };
+            }),
+        );
         if (failed) throw failed;
       }
       await waitForOwner();
@@ -972,7 +967,23 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     d.desktop.clearRequest(id);
     tasks.addStep(id, { kind: "takeover", name: "You handed back", detail: "", url: lastUrl });
     return textResult(call, await look("After takeover", "The owner handed the desktop back."));
-  };
+  });
+
+  /** The tools besides the computer and browser, by name; record_conversation only in a negotiation. */
+  const handlers = new Map([
+    ["confirm_intent", confirmIntent],
+    ["request_takeover", requestTakeover],
+    ["desktop_shell", shellCall],
+    ["send_file", sendFile],
+    [
+      "send_to_chat",
+      withInput(DesktopSendToChat, async (call, input) => {
+        const r = await sendToChat(tasks, id, input, agent);
+        return textResult(call, r.text, r.isError);
+      }),
+    ],
+    ...(gate ? [["record_conversation", recordConversation] as const] : []),
+  ]);
 
   // Its bot's name; the desktop model needs no role or memory.
   const system = promptFor(DESKTOP_PROMPT, { ...tasks.botOf(task), instructions: "" }, []);
@@ -985,7 +996,11 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     // top-level breakpoint follows the conversation. Two of the four breakpoints allowed.
     system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
     cache_control: { type: "ephemeral" },
-    tools: [computer.toJSON(), browser.toJSON(), ...CUSTOM_TOOLS, ...(gate ? [RECORD_TOOL] : [])],
+    tools: [
+      computer.toJSON(),
+      browser.toJSON(),
+      ...CUSTOM_TOOLS.filter((t) => gate || t.name !== "record_conversation"),
+    ],
     thinking: thinkingFor(model),
     output_config: { effort: "medium" },
     // Old screenshots are cleared on the server; clearing them here would break cached reasoning.
@@ -1075,6 +1090,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       const halted = new Set<string>();
       for (const call of calls) {
         const toolset = call.toolset_name ?? "";
+        const handler = handlers.get(call.name);
         if (signal.aborted) {
           results.push(textResult(call, "Not run: the task was cancelled.", true));
         } else if (cutOff(res)) {
@@ -1089,34 +1105,12 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           const r = await toolsetCall(call);
           if (r.is_error) halted.add(toolset);
           results.push(r);
-        } else if (call.name === "confirm_intent") {
-          results.push(await confirmIntent(call));
-        } else if (call.name === "request_takeover") {
-          results.push(await requestTakeover(call));
-        } else if (call.name === "desktop_shell") {
-          results.push(await shellCall(call));
-        } else if (call.name === "send_file") {
-          results.push(await sendFile(call));
-        } else if (call.name === "record_conversation" && gate) {
-          results.push(await recordConversation(call));
-        } else if (call.name === "send_to_chat") {
-          const p = DesktopSendToChat.safeParse(call.input);
-          if (!p.success)
-            results.push(textResult(call, `Invalid input: ${z.prettifyError(p.error)}`, true));
-          else {
-            const r = await sendToChat(tasks, id, p.data, agent);
-            results.push(textResult(call, r.text, r.isError));
-          }
+        } else if (handler) {
+          results.push(await handler(call));
         } else if (call.name === "finish_task") {
           const p = FinishTask.safeParse(call.input);
           if (p.success) finished = p.data;
-          results.push(
-            textResult(
-              call,
-              p.success ? "Finished." : `Invalid input: ${z.prettifyError(p.error)}`,
-              !p.success,
-            ),
-          );
+          results.push(p.success ? textResult(call, "Finished.") : invalid(call, p.error));
         } else {
           results.push(textResult(call, `Unknown tool "${call.name}".`, true));
         }
