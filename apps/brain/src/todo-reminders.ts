@@ -6,11 +6,9 @@ import type { Chats } from "./agent/chats";
 import type { Db } from "./db";
 import type { MemoryStore } from "./memory/store";
 import type { Notifier } from "./notify";
-import { getSetting, setSetting } from "./settings";
+import { getSetting, type SettingsStore, setSetting } from "./settings";
 
 const STATE_KEY = "todo:reminders";
-/** The morning list goes out at this local hour, or at the first look after it that day. */
-export const MORNING_HOUR = 9;
 /** An item whose time passed longer ago than this (the brain was down) is left to the morning list. */
 const LATE_MS = 6 * 3600_000;
 
@@ -24,6 +22,7 @@ type State = {
 export type TodoRemindersDeps = {
   db: Db;
   memory: MemoryStore;
+  settings: SettingsStore;
   notifier: Notifier;
   chats: Chats;
   publicUrl: string;
@@ -75,7 +74,8 @@ export class TodoReminders {
     // Only what's still open is kept.
     const keys = new Set(timed.map(keyOf));
     state.told = state.told.filter((k) => keys.has(k));
-    if (new Date(now).getHours() >= MORNING_HOUR && state.morning !== today) {
+    // At the hour set, or at the first look after it that day.
+    if (new Date(now).getHours() >= this.d.settings.get().todoHour && state.morning !== today) {
       state.morning = today;
       const dueToday = open.filter((t) => t.due === today);
       const overdue = open.filter((t) => (t.due ?? "") < today);

@@ -213,6 +213,8 @@ export type Task = {
   research: boolean;
   /** A research task's report, in memory. */
   reportPath: string | null;
+  /** The to-do item it works on (PLAN.md §19), ticked off when it ends done. */
+  todo: string | null;
   status: TaskStatus;
   /** It has read untrusted content (PLAN.md §6.1). */
   tainted: boolean;
@@ -670,6 +672,8 @@ export type AppSettings = {
   /** A tidy-up of memory proposed weekly, at the weekly report's time. */
   memoryTidy: boolean;
   weeklyReport: WeeklyReportSettings;
+  /** The local hour the to-do list's morning reminder goes out (PLAN.md §19). */
+  todoHour: number;
 };
 
 /**

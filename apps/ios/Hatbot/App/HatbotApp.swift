@@ -62,6 +62,7 @@ struct MainView: View {
   @State private var focus: Int?
   @State private var settingsPath: [Route] = []
   @State private var memoryPath: [Route] = []
+  @State private var todoPath: [Route] = []
 
   var body: some View {
     Sidebar(tab: $tab, open: $sidebar, atRoot: roots[tab, default: 0] > 0) { sections }
@@ -135,6 +136,7 @@ struct MainView: View {
         }
       }
     case .tasks: TasksView(path: $tasksPath)
+    case .todo: TodoView(path: $todoPath)
     case .live:
       NavigationStack {
         // While you have control, drags go to the desktop.

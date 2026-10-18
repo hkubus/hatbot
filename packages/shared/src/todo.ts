@@ -3,6 +3,8 @@
 //   - [ ] Call the plumber due:2026-10-21 14:00
 //   - [x] Replace the UPS battery done:2026-10-18
 
+import { z } from "zod";
+
 export const TODO_FILE = "todo.md";
 
 export type Todo = {
@@ -17,6 +19,24 @@ export type Todo = {
   at: string | null;
   doneOn: string | null;
 };
+
+/** An item as the apps show it, with the task working on it if one is. */
+export type TodoItem = Todo & { taskId: number | null };
+
+/** The to-do view: open items, and those ticked off in the last week (GET /todo). */
+export type TodoList = { items: TodoItem[] };
+
+export const AddTodo = z.object({
+  item: z.string().trim().min(1).max(300),
+  /** "2026-10-25", or "2026-10-25 14:00". */
+  due: z.string().max(20).optional(),
+});
+
+/** An item the apps show: its text, and its line when they read the list. */
+export const PickTodo = z.object({
+  text: z.string().min(1).max(1000),
+  line: z.number().int().min(0).optional(),
+});
 
 const ITEM = /^\s*[-*]\s+\[([ xX])\]\s+(.*)$/;
 const DUE = /(?:^|\s)due:(\d{4}-\d{2}-\d{2})(?:[ T]([01]\d:[0-5]\d|2[0-3]:[0-5]\d))?(?=\s|$)/;
@@ -71,6 +91,15 @@ export function findTodo(md: string, which: string): Todo | string {
   if (found.length === 1) return found[0] as Todo;
   if (!found.length) return `No open to-do matches "${which}".`;
   return `"${which}" matches ${found.length} open to-dos: ${found.map((t) => `"${t.text}"`).join(", ")}. Say which.`;
+}
+
+/**
+ * The open item with exactly this text: the one at `line` if it's still there, or else the only one.
+ * Not part of a text, as findTodo allows: a button or a task names one item, and mustn't tick another.
+ */
+export function todoAt(md: string, text: string, line?: number): Todo | null {
+  const same = parseTodos(md).filter((t) => !t.done && t.text === oneLine(text));
+  return same.find((t) => t.line === line) ?? (same.length === 1 ? (same[0] as Todo) : null);
 }
 
 /** The list with `t` ticked off on `date`. */

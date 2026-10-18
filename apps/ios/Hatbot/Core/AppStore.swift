@@ -1043,6 +1043,7 @@ final class AppStore {
     var heartbeat: AppSettings.Heartbeat?
     var weeklyReport: AppSettings.WeeklyReport?
     var memoryTidy: Bool?
+    var todoHour: Int?
   }
 
   /// All the settings, as saved.

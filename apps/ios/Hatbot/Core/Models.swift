@@ -224,6 +224,8 @@ struct AgentTask: Codable, Identifiable, Equatable, Sendable {
   var research: Bool?
   /// A research task's report, in memory; missing on brains from before research.
   var reportPath: String?
+  /// The to-do item it works on, ticked off when it ends done; missing on older brains.
+  var todo: String?
 
   var isActive: Bool { finishedAt == nil }
 }
@@ -599,6 +601,8 @@ struct AppSettings: Codable, Equatable, Sendable {
   var weeklyReport: WeeklyReport?
   /// A tidy-up of memory proposed weekly; missing on older brains.
   var memoryTidy: Bool?
+  /// The hour the to-do list's morning reminder goes out; missing on older brains.
+  var todoHour: Int?
 
   struct Heartbeat: Codable, Equatable, Sendable {
     var enabled: Bool

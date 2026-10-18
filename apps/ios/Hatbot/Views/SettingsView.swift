@@ -70,6 +70,11 @@ struct SettingsView: View {
           if let tidy = settings?.memoryTidy {
             Toggle("Propose a memory tidy-up weekly", isOn: setting(tidy, \.memoryTidy))
           }
+          if let hour = settings?.todoHour {
+            Picker("To-do reminder each morning at", selection: setting(hour, \.todoHour)) {
+              ForEach(0..<24, id: \.self) { h in Text(String(format: "%02d:00", h)).tag(h) }
+            }
+          }
         }
         if let settings {
           Section("Chat") {

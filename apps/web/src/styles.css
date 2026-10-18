@@ -2275,6 +2275,26 @@ button.text-link:hover {
   flex-shrink: 0;
   white-space: nowrap;
 }
+/* To-do: a new item's text gets the room, its date what it needs. */
+.todo-add > .field:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.todo-add > input[type="date"] {
+  flex: 0 0 auto;
+  width: auto;
+}
+.todo-box {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.todo-box:disabled {
+  cursor: default;
+}
 .form-actions {
   display: flex;
   flex-wrap: wrap;

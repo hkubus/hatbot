@@ -160,6 +160,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
         </Group>
 
         <Group className="show-phone">
+          <LinkRow to="/todo" label="To-do" />
           <LinkRow to="/schedules" label="Schedules & Triggers" />
           <LinkRow to="/spend" label="Spend" />
         </Group>
@@ -292,6 +293,19 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
               </button>
             </Row>
           )}
+          <Row label="To-do reminder each morning at">
+            <select
+              aria-label="To-do reminder each morning at"
+              value={settings.todoHour}
+              onChange={(e) => update({ todoHour: Number(e.target.value) })}
+            >
+              {HOURS.map((h) => (
+                <option key={h} value={h}>
+                  {String(h).padStart(2, "0")}:00
+                </option>
+              ))}
+            </select>
+          </Row>
         </Group>
 
         <Group title="Desktop">

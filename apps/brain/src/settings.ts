@@ -43,6 +43,8 @@ export const Settings = z.object({
     weekday: z.number().int().min(0).max(6),
     hour: z.number().int().min(0).max(23),
   }),
+  /** The to-do list's morning reminder goes out at this local hour (PLAN.md §19). */
+  todoHour: z.number().int().min(0).max(23),
 });
 export type Settings = z.infer<typeof Settings>;
 /** A change to settings: limits may change one at a time. */
@@ -69,6 +71,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   memoryTidy: false,
   weeklyReport: { enabled: true, weekday: 1, hour: 9 },
+  todoHour: 9,
 };
 
 /** What the settings table keeps under `key`, or null. */

@@ -731,4 +731,6 @@ export const migrations: string[] = [
   `,
   // 39: what a task had read when it asked you, as approvals keep (PLAN.md §20).
   `ALTER TABLE questions ADD COLUMN sources TEXT NOT NULL DEFAULT '[]';`,
+  // 40: the to-do item a task works on, ticked off when it ends done (PLAN.md §19).
+  `ALTER TABLE tasks ADD COLUMN todo TEXT;`,
 ];
