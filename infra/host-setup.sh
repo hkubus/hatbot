@@ -642,7 +642,8 @@ provision() { # provision CTID SCRIPT ENV...
     info "skipped; later: pct push $id $HERE/$script /root/$script && pct exec $id -- env $* bash /root/$script"
   fi
 }
-provision "$BRAIN_ID" brain-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BOXES_IP=$BOXES_IP"
+provision "$BRAIN_ID" brain-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BOXES_IP=$BOXES_IP" \
+  "DESKTOP_MAC=$DESKTOP_MAC" "BOXES_MAC=$BOXES_MAC"
 provision "$DESKTOP_ID" desktop-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS"
 [[ -z $BOXES ]] ||
   provision "$BOXES" boxes-provision.sh "BOXES_IP=$BOXES_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS"
