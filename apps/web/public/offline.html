@@ -13,14 +13,8 @@
       :root {
         color-scheme: light dark;
         font-family: system-ui, sans-serif;
-        background: #f5f5f7;
-        color: #3a3a3c;
-      }
-      @media (prefers-color-scheme: dark) {
-        :root {
-          background: #161617;
-          color: #d1d1d6;
-        }
+        background: light-dark(#f5f5f7, #161617);
+        color: light-dark(#3a3a3c, #d1d1d6);
       }
       body {
         margin: 0;
