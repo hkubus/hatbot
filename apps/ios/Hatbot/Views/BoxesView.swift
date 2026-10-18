@@ -371,7 +371,7 @@ private struct BoxWebView: UIViewRepresentable {
   }
 }
 
-/// A version's page as its source, read-only.
+/// A version's page as its source, read-only: a box with files shows them, one after another.
 struct BoxCodeView: View {
   let id: Int
   let version: Int
@@ -399,7 +399,7 @@ struct BoxCodeView: View {
     .navigationTitle("Code")
     .navigationBarTitleDisplayMode(.inline)
     .task(id: tries) {
-      await attempt($error) { html = try await store.boxPage(id, version: version).html }
+      await attempt($error) { html = try await store.boxPage(id, version: version).source }
     }
   }
 }

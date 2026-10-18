@@ -545,17 +545,32 @@ struct BoxDetail: Decodable, Equatable, Sendable {
   }
 }
 
-/// A version's page, for its Code view.
+/// A version's page, for its Code view. A box with files (PLAN.md §21.6) has them too, and its `html` is
+/// the page built from them.
 struct BoxPage: Decodable, Equatable, Sendable {
   let version: BoxVersion
   let html: String
+  let files: [BoxFile]?
 
-  private enum Key: String, CodingKey { case html }
+  private enum Key: String, CodingKey { case html, files }
 
   init(from decoder: Decoder) throws {
     version = try BoxVersion(from: decoder)
-    html = try decoder.container(keyedBy: Key.self).decode(String.self, forKey: .html)
+    let c = try decoder.container(keyedBy: Key.self)
+    html = try c.decode(String.self, forKey: .html)
+    files = try c.decodeIfPresent([BoxFile].self, forKey: .files)
   }
+
+  /// What Code shows: the files one after another, as the web does, or else the page.
+  var source: String {
+    guard let files else { return html }
+    return files.map { "--- \($0.path) ---\n\($0.content)" }.joined(separator: "\n\n")
+  }
+}
+
+struct BoxFile: Decodable, Equatable, Sendable {
+  let path: String
+  let content: String
 }
 
 struct MemoryFile: Codable, Identifiable, Equatable, Sendable {
