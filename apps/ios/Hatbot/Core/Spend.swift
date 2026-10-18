@@ -101,6 +101,7 @@ enum SpendCharts {
     "research": "Research",
     "check": "Checks",
     "teach": "Teaching",
+    "boxes": "Boxes",
   ]
 
   static func hourly(_ hours: [SpendHour], timeZone: TimeZone = .current) -> ChartSpec? {
