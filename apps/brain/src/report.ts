@@ -5,7 +5,7 @@ import type { Bots } from "./bots";
 import type { Db } from "./db";
 import type { MemoryStore } from "./memory/store";
 import type { Notifier } from "./notify";
-import type { SettingsStore } from "./settings";
+import { getSetting, type SettingsStore, setSetting } from "./settings";
 import { type Storage, storageLine } from "./storage";
 
 const LAST_KEY = "report:last";
@@ -69,11 +69,7 @@ export class WeeklyReport {
     this.sending = true;
     try {
       const { text, line } = await this.make();
-      this.d.db
-        .query(
-          "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-        )
-        .run(LAST_KEY, new Date(this.clock()).toISOString());
+      setSetting(this.d.db, LAST_KEY, new Date(this.clock()).toISOString());
       this.d.chats.note("hatbot", text);
       void this.d.notifier.send({
         title: "Your week",
@@ -88,9 +84,7 @@ export class WeeklyReport {
   }
 
   private lastSent(): number | null {
-    const v = this.d.db
-      .query<{ value: string }, [string]>("SELECT value FROM settings WHERE key = ?")
-      .get(LAST_KEY)?.value;
+    const v = getSetting(this.d.db, LAST_KEY);
     return v ? Date.parse(v) : null;
   }
 

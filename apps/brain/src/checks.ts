@@ -16,7 +16,7 @@ import { guessableTopic, type NtfyNotifier } from "./notify";
 import { type DeadManPing, errorText } from "./ping";
 import type { Plugins } from "./plugins/registry";
 import type { Proxmox } from "./proxmox";
-import type { SettingsStore } from "./settings";
+import { getSetting, type SettingsStore, setSetting } from "./settings";
 import type { Spend } from "./spend";
 import { bytes, type Storage, storageLine } from "./storage";
 import type { Updates } from "./updates";
@@ -86,9 +86,12 @@ export class Checks {
   }
 
   info(): ChecksInfo {
-    const report = this.setting<CheckReport>("checks:last");
-    const approvalId = this.setting<number>("checks:approval");
-    return { report, approval: approvalId ? this.d.approvals.get(approvalId) : null };
+    const report = getSetting(this.d.db, "checks:last");
+    const approvalId = this.approvalId();
+    return {
+      report: report === null ? null : (JSON.parse(report) as CheckReport),
+      approval: approvalId ? this.d.approvals.get(approvalId) : null,
+    };
   }
 
   /** Runs every check at once; a second call while one runs gets the same report. */
@@ -104,7 +107,7 @@ export class Checks {
    * ntfy, its buttons, and the way back in through your reverse proxy.
    */
   tryApproval(): Approval {
-    const previous = this.setting<number>("checks:approval");
+    const previous = this.approvalId();
     if (previous && this.d.approvals.get(previous)?.status === "pending")
       this.d.approvals.cancel(previous);
     const approval = this.d.approvals.create({
@@ -113,7 +116,7 @@ export class Checks {
       summary: "Test approval from Check everything",
       reason: "Approve or deny it from the notification. Nothing happens either way.",
     });
-    this.save("checks:approval", approval.id);
+    setSetting(this.d.db, "checks:approval", JSON.stringify(approval.id));
     return approval;
   }
 
@@ -142,7 +145,7 @@ export class Checks {
       }),
     );
     const report: CheckReport = { startedAt, finishedAt: this.now(), results, storage };
-    this.save("checks:last", report);
+    setSetting(this.d.db, "checks:last", JSON.stringify(report));
     return report;
   }
 
@@ -532,19 +535,10 @@ export class Checks {
     return ok(pending.length ? `${pending.length} waiting for you.` : "None waiting.");
   }
 
-  private setting<T>(key: string): T | null {
-    const row = this.d.db
-      .query<{ value: string }, [string]>("SELECT value FROM settings WHERE key = ?")
-      .get(key);
-    return row ? (JSON.parse(row.value) as T) : null;
-  }
-
-  private save(key: string, value: unknown) {
-    this.d.db
-      .query(
-        "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-      )
-      .run(key, JSON.stringify(value));
+  /** The test approval tryApproval sent last. */
+  private approvalId(): number | null {
+    const v = getSetting(this.d.db, "checks:approval");
+    return v === null ? null : (JSON.parse(v) as number);
   }
 }
 

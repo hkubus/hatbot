@@ -2,6 +2,7 @@
 import type { DesktopState } from "@hatbot/shared";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
+import { getSetting, setSetting } from "../settings";
 import type { DesktopAgent } from "./client";
 
 /** Take over couldn't give the task that asked the screen: another task is mid-step, or it ended. */
@@ -35,11 +36,8 @@ export class Desktop {
     /** Where your control is kept, so a brain restart doesn't hand the desktop back. */
     private db?: Db,
   ) {
-    const kept = db
-      ?.query<{ value: string }, []>("SELECT value FROM settings WHERE key = 'desktop_control'")
-      .get();
     // A request isn't kept: a restart ends the task that asked.
-    if (kept?.value === "owner") this.state.control = "owner";
+    if (db && getSetting(db, "desktop_control") === "owner") this.state.control = "owner";
   }
 
   get(): DesktopState {
@@ -49,12 +47,8 @@ export class Desktop {
   private set(patch: Partial<DesktopState>) {
     const next = { ...this.state, ...patch };
     if (JSON.stringify(next) === JSON.stringify(this.state)) return;
-    if (next.control !== this.state.control)
-      this.db
-        ?.query(
-          "INSERT INTO settings (key, value) VALUES ('desktop_control', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-        )
-        .run(next.control);
+    if (next.control !== this.state.control && this.db)
+      setSetting(this.db, "desktop_control", next.control);
     this.state = next;
     this.events.emit({ type: "desktop.state", state: this.get() });
   }

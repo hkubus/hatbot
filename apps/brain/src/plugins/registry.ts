@@ -5,6 +5,7 @@ import { z } from "zod";
 import { untrustedBlock } from "../agent/untrusted";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
+import { getSetting, setSetting } from "../settings";
 import {
   allow,
   type CallContext,
@@ -106,11 +107,7 @@ export class Plugins {
     }
     if (patch.enabled !== undefined) s.enabled = patch.enabled;
     s.retries = 0;
-    this.d.db
-      .query(
-        "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-      )
-      .run(`plugin:${id}`, JSON.stringify({ enabled: s.enabled, config: s.config }));
+    setSetting(this.d.db, `plugin:${id}`, JSON.stringify({ enabled: s.enabled, config: s.config }));
     if (s.enabled) await this.restart(s);
     else await this.stop(s);
     return this.info(s);
@@ -354,10 +351,8 @@ export class Plugins {
 
 /** A plugin's row in settings as saved: whether it's on, and its settings, unchecked. */
 export function saved(db: Db, id: string): { enabled?: boolean; config?: unknown } {
-  const row = db
-    .query<{ value: string }, [string]>("SELECT value FROM settings WHERE key = ?")
-    .get(`plugin:${id}`);
-  return row ? JSON.parse(row.value) : {};
+  const row = getSetting(db, `plugin:${id}`);
+  return row === null ? {} : JSON.parse(row);
 }
 
 /**

@@ -10,7 +10,7 @@ import { UserError } from "../errors";
 import type { EventBus } from "../events";
 import type { Notifier } from "../notify";
 import { lastDue } from "../report";
-import type { SettingsStore } from "../settings";
+import { getSetting, type SettingsStore, setSetting } from "../settings";
 import { fixedTokens, requestCeiling, type Spend } from "../spend";
 import type { Tasks } from "../tasks/service";
 import { type Skills, skillPath } from "../teach/skills";
@@ -129,15 +129,9 @@ export class Proposals {
     if (s.paused || !s.memoryTidy || this.tidying) return;
     const now = this.clock();
     const due = lastDue(now, s.weeklyReport.weekday, s.weeklyReport.hour);
-    const last = this.d.db
-      .query<{ value: string }, [string]>("SELECT value FROM settings WHERE key = ?")
-      .get(TIDY_KEY)?.value;
+    const last = getSetting(this.d.db, TIDY_KEY);
     if ((last && Date.parse(last) >= due) || now - due > 86400_000) return;
-    this.d.db
-      .query(
-        "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-      )
-      .run(TIDY_KEY, this.now());
+    setSetting(this.d.db, TIDY_KEY, this.now());
     void this.tidy().catch((err) => this.failed("The weekly tidy-up of memory failed", err));
   }
 
