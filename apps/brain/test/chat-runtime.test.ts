@@ -1,4 +1,4 @@
-import { expect, spyOn, test } from "bun:test";
+import { expect, test } from "bun:test";
 import Anthropic from "@anthropic-ai/sdk";
 import type { ThreadMessage } from "@hatbot/shared";
 import { Chats } from "../src/agent/chats";
@@ -148,22 +148,12 @@ test("a stream that fails is tried three times at most, after retry-after; not o
   expect(retryAfterMs(limited({}))).toBeNull();
   // It waits as long as retry-after asks, not its own shorter delay; the wait itself is skipped.
   const waits: number[] = [];
-  const realTimeout = globalThis.setTimeout;
-  const timer = spyOn(globalThis, "setTimeout").mockImplementation(((
-    fn: () => void,
-    ms?: number,
-  ) => {
-    waits.push(ms ?? 0);
-    return realTimeout(fn, 0);
-  }) as typeof setTimeout);
   tries = 0;
-  try {
-    expect(await withRetries(failing(1, limited({ "retry-after-ms": "60" })), {}, [0, 0])).toBe(
-      "ok",
-    );
-  } finally {
-    timer.mockRestore();
-  }
+  expect(
+    await withRetries(failing(1, limited({ "retry-after-ms": "60" })), {}, [0, 0], async (ms) => {
+      waits.push(ms);
+    }),
+  ).toBe("ok");
   expect(waits).toEqual([60]);
   tries = 0;
   await expect(

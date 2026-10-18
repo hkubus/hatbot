@@ -8,9 +8,10 @@ import { z } from "zod";
 import { cutOff, modelErrorText, oneShot } from "../agent/model";
 import { RESEARCH_CHECK_PROMPT, RESEARCH_PROMPT, RESEARCH_WORKER_PROMPT } from "../agent/prompt";
 import type { Readable } from "../agent/screening";
-import { localStamp } from "../agent/thread";
+import { escapeRe, localStamp } from "../agent/thread";
 import {
   containerOf,
+  invalidInput,
   serverToolWaiting,
   toolParam,
   webReads,
@@ -183,8 +184,6 @@ export const plain = (text: string) =>
     .replace(/(\d),(?=\d)/g, "$1.")
     .trim();
 
-const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
 /**
  * Whether a quote is in what a helper read: each part of it, around any "…". A number at either end
  * of a part is a whole number there, not the end of "2 399" or the start of "1,5". A letter or two
@@ -204,7 +203,7 @@ export function quoteFound(quote: string, read: string): boolean {
       const end = /\d$/.test(p);
       if (!start && !end) return read.includes(p);
       return new RegExp(
-        `${start ? String.raw`(?<!\d|\d\.)` : ""}${escaped(p)}${end ? String.raw`(?!\d|\.\d)` : ""}`,
+        `${start ? String.raw`(?<!\d|\d\.)` : ""}${escapeRe(p)}${end ? String.raw`(?!\d|\.\d)` : ""}`,
       ).test(read);
     })
   );
@@ -570,7 +569,7 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
             content: cut
               ? "Cut off at max_tokens."
               : c === report && parsed && !parsed.success
-                ? `Invalid input: ${z.prettifyError(parsed.error)}`
+                ? invalidInput(parsed.error)
                 : `Unknown tool "${c.name}".`,
           }),
         ),
@@ -613,7 +612,7 @@ export async function investigate(
   input: unknown,
 ): Promise<{ content: string; isError: boolean }> {
   const p = Investigate.safeParse(input);
-  if (!p.success) return { content: `Invalid input: ${z.prettifyError(p.error)}`, isError: true };
+  if (!p.success) return { content: invalidInput(p.error), isError: true };
   const { parts } = p.data;
   const refused = refusedLinks(
     run,
@@ -986,8 +985,7 @@ async function saveReport(run: { tasks: Tasks; task: Task }, content: string): P
     const message = `Research: ${task.title}`;
     for (const name of names) {
       try {
-        const sha = await d.memory.writeIf(name, `${content}\n`, "", author, message);
-        if (sha) d.events.emit({ type: "memory.committed", sha, message, author: author.name });
+        await d.memory.writeIf(name, `${content}\n`, "", author, message);
         path = name;
         break;
       } catch (err) {

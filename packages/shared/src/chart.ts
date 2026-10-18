@@ -98,6 +98,14 @@ export function chartBlocks(markdown: string): { start: number; end: number; sou
   return blocks;
 }
 
+/** The chart blocks in a reply that don't draw: each with why, and `n`, which one it is from 1. */
+export function brokenCharts(markdown: string) {
+  return chartBlocks(markdown).flatMap((b, i) => {
+    const problem = chartProblem(b.source);
+    return problem ? [{ ...b, problem, n: i + 1 }] : [];
+  });
+}
+
 /** Series names, with "Series 2" for one Hatbot left unnamed. */
 export const seriesNames = (s: ChartSpec) => s.series.map((se, i) => se.name || `Series ${i + 1}`);
 

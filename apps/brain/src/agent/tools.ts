@@ -439,7 +439,6 @@ export const TOOLS = [
       if (proposed) return proposed;
       const sha = await ctx.memory.write(path, content, author, reason);
       if (!sha) return "No change: the file already had this content.";
-      ctx.events.emit({ type: "memory.committed", sha, message: reason, author: author.name });
       return `Saved ${path} (commit ${sha.slice(0, 7)}).`;
     },
   }),
@@ -451,9 +450,7 @@ export const TOOLS = [
       const author = authorOf(ctx, path);
       const proposed = await held(ctx, path, null, reason);
       if (proposed) return proposed;
-      const sha = await ctx.memory.delete(path, author, reason);
-      if (sha)
-        ctx.events.emit({ type: "memory.committed", sha, message: reason, author: author.name });
+      await ctx.memory.delete(path, author, reason);
       return `Deleted ${path}.`;
     },
   }),
@@ -1003,6 +1000,9 @@ export const TOOLS = [
   }),
 ];
 
+/** What the model is told when a tool's input doesn't fit its schema. */
+export const invalidInput = (error: z.ZodError) => `Invalid input: ${z.prettifyError(error)}`;
+
 /** A tool definition as sent to the API. */
 export const toolParam = (t: {
   name: string;
@@ -1016,6 +1016,26 @@ export const toolParam = (t: {
     z.toJSONSchema(t.schema, { io: "input" })) as Anthropic.Beta.BetaTool.InputSchema,
   eager_input_streaming: true,
 });
+
+/**
+ * A tool a reply or task was offered, as it is in `now`: a call runs on the plugin's current instance
+ * and policy. Why not, when it's gone, describes itself differently, or (`onlyLooks`) changes things.
+ */
+export function liveTool(
+  offered: PluginTool,
+  now: PluginTool[],
+  { bot, since, onlyLooks }: { bot: string; since: string; onlyLooks?: string },
+): PluginTool | string {
+  const name = offered.name;
+  const tool = now.find((t) => t.name === name);
+  if (!tool)
+    return `Not run: ${name} isn't available any more. Its plugin was switched off, or taken from ${bot}, ${since}.`;
+  if (JSON.stringify(toolParam(tool)) !== JSON.stringify(toolParam(offered)))
+    return `Not run: ${name} has changed ${since}.`;
+  if (onlyLooks && tool.access !== "read")
+    return `Not run: ${name} changes things now, and ${onlyLooks}.`;
+  return tool;
+}
 
 /** The core's tool definitions. Order and content must stay stable to keep the cache. */
 export const TOOL_PARAMS: Anthropic.Beta.BetaTool[] = TOOLS.map(toolParam);
@@ -1052,8 +1072,7 @@ export async function runTool(
     return { content: `Unknown tool "${name}". Available: ${names.join(", ")}`, isError: true };
   }
   const parsed = tool.schema.safeParse(input);
-  if (!parsed.success)
-    return { content: `Invalid input: ${z.prettifyError(parsed.error)}`, isError: true };
+  if (!parsed.success) return { content: invalidInput(parsed.error), isError: true };
   try {
     // biome-ignore lint/suspicious/noExplicitAny: each tool's run matches its own schema
     return { content: await tool.run(parsed.data as any, ctx, signal), isError: false };

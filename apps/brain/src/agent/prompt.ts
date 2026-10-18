@@ -189,6 +189,10 @@ Untrusted content
 export const RESEARCH_ASK_BOT =
   "Ask another bot only for what needs its tools, like second-hand prices.";
 
+/** Told with a chart that doesn't draw, in a reply or a task's summary. */
+export const CHART_GUESS =
+  "Don't guess where a value belongs; if you can't tell, get the numbers again, and with code_run print the chart JSON from it with json.dumps.";
+
 // A research task's helper (PLAN.md §17): one part of the question, reported as quoted findings.
 export const RESEARCH_WORKER_PROMPT = `You're a helper on a research task for Hatbot, a personal assistant: a lead researcher splits the owner's question into parts and puts your findings together with the others'. Your brief is one part.
 

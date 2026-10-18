@@ -24,6 +24,40 @@ function validInput(m: unknown): m is LiveInput {
   return typeof o.x === "number" && typeof o.y === "number";
 }
 
+/**
+ * One viewer's frames. On a slow connection, skip frames rather than fall behind the desktop: the
+ * newest goes out once the viewer catches up, since a desktop that has gone still sends nothing more.
+ * `later` runs a look again after a while.
+ */
+export function frameRelay(
+  send: (frame: ArrayBuffer) => void,
+  buffered: () => number,
+  later = (fn: () => void) => void setTimeout(fn, 100),
+) {
+  let behind: ArrayBuffer | null = null;
+  let waiting = false;
+  const flush = () => {
+    waiting = false;
+    if (!behind) return;
+    if (buffered() < LIVE_BUFFER_BYTES) {
+      send(behind);
+      behind = null;
+    } else {
+      waiting = true;
+      later(flush);
+    }
+  };
+  return {
+    push(frame: ArrayBuffer) {
+      behind = frame;
+      if (!waiting) flush();
+    },
+    stop() {
+      behind = null;
+    },
+  };
+}
+
 export const desktopRoutes = new Hono<AppEnv>()
   .get(
     "/desktop/live",
@@ -43,8 +77,7 @@ export const desktopRoutes = new Hono<AppEnv>()
     upgradeWebSocket((c) => {
       const { desktop, teach, auth, principal } = (c as Context<AppEnv>).var;
       let upstream: WebSocket | null = null;
-      let behind: ArrayBuffer | null = null;
-      let waiting: ReturnType<typeof setTimeout> | undefined;
+      let frames: ReturnType<typeof frameRelay> | undefined;
       let forget: (() => void) | undefined;
       let sent = false;
       return {
@@ -53,22 +86,13 @@ export const desktopRoutes = new Hono<AppEnv>()
           forget = auth.onEnd(principal, () => ws.close(1008, "Signed out"));
           const { url, headers } = desktop.agent.liveSocket();
           const raw = ws.raw as { getBufferedAmount?: () => number } | undefined;
-          // On a slow connection, skip frames rather than fall behind the desktop. The newest goes out
-          // once the viewer catches up: a desktop that has gone still sends nothing more.
-          const flush = () => {
-            waiting = undefined;
-            if (!behind) return;
-            if ((raw?.getBufferedAmount?.() ?? 0) < LIVE_BUFFER_BYTES) {
-              ws.send(behind);
-              behind = null;
-            } else waiting = setTimeout(flush, 100);
-          };
+          frames = frameRelay(
+            (frame) => ws.send(frame),
+            () => raw?.getBufferedAmount?.() ?? 0,
+          );
           upstream = new WebSocket(url, { headers } as unknown as string[]);
           upstream.binaryType = "arraybuffer";
-          upstream.onmessage = (e) => {
-            behind = e.data as ArrayBuffer;
-            if (!waiting) flush();
-          };
+          upstream.onmessage = (e) => frames?.push(e.data as ArrayBuffer);
           upstream.onclose = () => ws.close(1011, "desktop disconnected");
           upstream.onerror = () => ws.close(1011, "desktop unreachable");
         },
@@ -87,7 +111,7 @@ export const desktopRoutes = new Hono<AppEnv>()
           }
         },
         onClose() {
-          clearTimeout(waiting);
+          frames?.stop();
           upstream?.close();
           forget?.();
           if (sent) teach.viewerGone();

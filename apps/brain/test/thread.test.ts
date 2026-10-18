@@ -110,7 +110,11 @@ test("tool calls run and their results go back to the model; bad input is an err
       { type: "tool_use", name: "memory_write" },
     ],
   });
-  expect(t.events.some((e) => e.type === "memory.committed")).toBe(true);
+  // The store tells the commit; nothing tells it twice.
+  expect(t.events.filter((e) => e.type === "memory.committed").map((e) => e.message)).toEqual([
+    "Start memory",
+    "Note tea",
+  ]);
 });
 
 test("a conversation goes on within 30 minutes; idle past that, it gets a recap and the next opens with the summary", async () => {

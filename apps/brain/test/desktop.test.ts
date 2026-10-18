@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { openDb } from "../src/db";
 import { Desktop } from "../src/desktop/service";
 import { EventBus } from "../src/events";
+import { frameRelay } from "../src/routes/desktop";
 import { FakeDesktop } from "./fake-desktop";
 
 test("you keep control of the desktop across a brain restart", async () => {
@@ -22,4 +23,25 @@ test("you keep control of the desktop across a brain restart", async () => {
   await again.handback();
   expect(new Desktop(agent, new EventBus(), db).get().control).toBe("hatbot");
   expect(agent.locked).toBe(false);
+});
+
+test("a live viewer that fell behind gets the newest frame once it catches up", () => {
+  const sent: number[] = [];
+  let buffered = 1 << 20;
+  let retry: (() => void) | undefined;
+  const relay = frameRelay(
+    (f) => sent.push(new Uint8Array(f)[0] ?? -1),
+    () => buffered,
+    (fn) => {
+      retry = fn;
+    },
+  );
+  for (let i = 1; i <= 3; i++) relay.push(new Uint8Array([i]).buffer);
+  expect(sent).toEqual([]);
+  // Still behind: it looks again later.
+  retry?.();
+  expect(sent).toEqual([]);
+  buffered = 0;
+  retry?.();
+  expect(sent).toEqual([3]);
 });

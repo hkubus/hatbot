@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
   type Bot,
+  brokenCharts,
   type ChatCommand,
   chartBlocks,
   chartProblem,
@@ -57,6 +58,7 @@ import {
   oneShot,
 } from "./model";
 import {
+  CHART_GUESS,
   EXPERT_PROMPT,
   FORGET_PROMPT,
   groupPrompt,
@@ -73,7 +75,9 @@ import {
   containerOf,
   INCOGNITO_TOOLS,
   inBatches,
+  invalidInput,
   LOOKUP_TOOLS,
+  liveTool,
   runTool,
   TOOL_PARAMS,
   toolParam,
@@ -498,26 +502,17 @@ export class Thread {
       .run(what, own ? 1 : 0, episodeId);
   }
 
-  /**
-   * A plugin tool the reply was offered, as it is now: the definitions sent stay fixed for the reply,
-   * but a call runs on the plugin's current instance and policy. Why not, when the plugin was switched
-   * off or taken from the bot since the reply began, or now describes the tool differently.
-   */
+  /** A plugin tool the reply was offered, as it is now (see liveTool). */
   private livePlugin(bot: Bot, offered: PluginTool, incognito: boolean): PluginTool | string {
     const { plugins, bots } = this.d;
     // Negotiation's tools aren't a plugin's.
     if (!plugins.pluginOf(offered.name)) return offered;
-    const now = plugins
-      .tools((bots.get(bot.id) ?? bot).plugins)
-      .find((t) => t.name === offered.name);
-    if (!now)
-      return `Not run: ${offered.name} isn't available any more. Its plugin was switched off, or taken from ${bot.name}, during this reply.`;
-    if (JSON.stringify(toolParam(now)) !== JSON.stringify(toolParam(offered)))
-      return `Not run: ${offered.name} has changed during this reply.`;
-    // Incognito changes nothing.
-    if (incognito && now.access !== "read")
-      return `Not run: ${offered.name} changes things now, and this conversation only looks.`;
-    return now;
+    return liveTool(offered, plugins.tools((bots.get(bot.id) ?? bot).plugins), {
+      bot: bot.name,
+      since: "during this reply",
+      // Incognito changes nothing.
+      onlyLooks: incognito ? "this conversation only looks" : undefined,
+    });
   }
 
   /** The episode's screener, made on first use. */
@@ -719,7 +714,7 @@ export class Thread {
 
   /** /new, /task and /remember, in turn with replies. */
   private async command(c: ChatCommand, message: ThreadMessage, bot: Bot) {
-    const { tasks, memory, events, settings } = this.d;
+    const { tasks, memory, settings } = this.d;
     const incognito = !!message.incognito;
     // A new incognito conversation: the one before it is gone, /new included.
     if (incognito && c.name === "new") return this.deleteIncognito();
@@ -753,14 +748,7 @@ export class Thread {
       const reason = `Remember: ${titleOf(c.arg, 60)}`;
       try {
         const fact = c.arg;
-        const sha = await memory.update(
-          "INDEX.md",
-          (index) => withNote(index ?? "", fact),
-          owner,
-          reason,
-        );
-        if (sha)
-          events.emit({ type: "memory.committed", sha, message: reason, author: owner.name });
+        await memory.update("INDEX.md", (index) => withNote(index ?? "", fact), owner, reason);
         note("Saved to memory.");
       } catch (err) {
         if (!(err instanceof MemoryError)) console.error("/remember failed", err);
@@ -858,7 +846,7 @@ export class Thread {
     episodeId: number,
     botId: string,
     role: "user" | "assistant",
-    content: BlockParam[] | Anthropic.Beta.BetaContentBlock[],
+    content: BlockParam[] | Anthropic.Beta.BetaContentBlock[] | NoteMark | EffortMark,
   ) {
     this.d.db
       .query(
@@ -869,11 +857,7 @@ export class Thread {
 
   /** A note from the app to the bot, e.g. that a task ended: a system message, after a user turn. */
   private appendNote(episodeId: number, botId: string, note: string) {
-    this.d.db
-      .query(
-        "INSERT INTO episode_turns (episode_id, bot_id, role, content, created_at) VALUES (?, ?, 'user', ?, ?)",
-      )
-      .run(episodeId, botId, JSON.stringify({ note } satisfies NoteMark), this.now());
+    this.appendTurn(episodeId, botId, "user", { note });
   }
 
   /**
@@ -918,11 +902,7 @@ export class Thread {
       )
       .get(episodeId, botId);
     if (last && (JSON.parse(last.content) as EffortMark).effort === effort) return;
-    this.d.db
-      .query(
-        "INSERT INTO episode_turns (episode_id, bot_id, role, content, created_at) VALUES (?, ?, 'user', ?, ?)",
-      )
-      .run(episodeId, botId, JSON.stringify({ effort } satisfies EffortMark), this.now());
+    this.appendTurn(episodeId, botId, "user", { effort });
   }
 
   /** Whether the model has seen the episode yet: any bot, or with `botId` that one. */
@@ -1242,9 +1222,7 @@ export class Thread {
          ORDER BY m.id`,
       )
       .all(episodeId, this.conversationId);
-    const summarized = db
-      .query<{ summarized: number }, [number]>("SELECT summarized FROM episodes WHERE id = ?")
-      .get(episodeId)?.summarized;
+    const summarized = this.summarized(episodeId);
     const previous = this.threadSummary();
     let summary = previous;
     if (summarized && previous && rows.length && this.hasTurns(episodeId))
@@ -1253,11 +1231,7 @@ export class Thread {
       rows.map((r) => r.id),
       episodeId,
       () => {
-        if (summary !== previous)
-          db.query("UPDATE conversations SET summary = ? WHERE id = ?").run(
-            summary,
-            this.conversationId,
-          );
+        if (summary !== previous) this.saveSummary(summary);
       },
     );
     return true;
@@ -1304,10 +1278,7 @@ export class Thread {
   }
 
   private async writeSummary(episodeId: number) {
-    const done = this.d.db
-      .query<{ summarized: number }, [number]>("SELECT summarized FROM episodes WHERE id = ?")
-      .get(episodeId)?.summarized;
-    if (done) return;
+    if (this.summarized(episodeId)) return;
     const transcript = this.d.db
       .query<{ role: string; bot_id: string | null; text: string; created_at: string }, [number]>(
         "SELECT role, bot_id, text, created_at FROM messages WHERE episode_id = ? AND status != 'streaming' ORDER BY id",
@@ -1325,13 +1296,23 @@ export class Thread {
       });
       const { recap, summary } = parseSummary(out.trim());
       if (!summary) throw new Error(`no summary for episode ${episodeId}`);
-      this.d.db
-        .query("UPDATE conversations SET summary = ? WHERE id = ?")
-        .run(summary, this.conversationId);
+      this.saveSummary(summary);
       if (recap)
         this.d.db.query("UPDATE episodes SET recap = ? WHERE id = ?").run(recap, episodeId);
     }
     this.markSummarized(episodeId);
+  }
+
+  private summarized(episodeId: number): boolean {
+    return !!this.d.db
+      .query<{ summarized: number }, [number]>("SELECT summarized FROM episodes WHERE id = ?")
+      .get(episodeId)?.summarized;
+  }
+
+  private saveSummary(summary: string) {
+    this.d.db
+      .query("UPDATE conversations SET summary = ? WHERE id = ?")
+      .run(summary, this.conversationId);
   }
 
   private markSummarized(episodeId: number) {
@@ -1835,7 +1816,7 @@ export class Thread {
     const askOpus = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
       const result = (content: string, isError = false) => toolResult(call.id, content, isError);
       const p = AskOpus.safeParse(call.input);
-      if (!p.success) return result(`Invalid input: ${z.prettifyError(p.error)}`, true);
+      if (!p.success) return result(invalidInput(p.error), true);
       if (askedOpus)
         return result("Opus was already asked once in this reply. Work with its answer.", true);
       askedOpus = true;
@@ -2042,12 +2023,7 @@ export class Thread {
             return finish("done");
           }
           // A chart that doesn't draw shows the owner a wall of numbers; ask once for it again.
-          const broken = fixedCharts
-            ? []
-            : chartBlocks(text).flatMap((b, i) => {
-                const problem = chartProblem(b.source);
-                return problem ? [{ ...b, problem, n: i + 1 }] : [];
-              });
+          const broken = fixedCharts ? [] : brokenCharts(text);
           if (broken.length) {
             fixedCharts = true;
             chartFix = { broken, text: "" };
@@ -2055,7 +2031,7 @@ export class Thread {
             this.appendTurn(episode.id, bot.id, "user", [
               {
                 type: "text",
-                text: `(No message from the owner: the app checked your reply. ${broken.length > 1 ? "These chart blocks don't" : "This chart block doesn't"} draw, so the owner sees ${broken.length > 1 ? "them" : "it"} as code:\n${broken.map((b) => `- chart ${b.n}: ${b.problem}`).join("\n")}\nAnswer with only the corrected chart ${broken.length > 1 ? "blocks, each in its own fenced chart block, in this order" : "block, in a fenced chart block"}, and nothing else: it replaces the broken one in your reply. Long series are easy to miscount by hand. Don't guess where a value belongs; if you can't tell, get the numbers again, and with code_run print the chart JSON from it with json.dumps.)`,
+                text: `(No message from the owner: the app checked your reply. ${broken.length > 1 ? "These chart blocks don't" : "This chart block doesn't"} draw, so the owner sees ${broken.length > 1 ? "them" : "it"} as code:\n${broken.map((b) => `- chart ${b.n}: ${b.problem}`).join("\n")}\nAnswer with only the corrected chart ${broken.length > 1 ? "blocks, each in its own fenced chart block, in this order" : "block, in a fenced chart block"}, and nothing else: it replaces the broken one in your reply. Long series are easy to miscount by hand. ${CHART_GUESS})`,
               },
             ]);
             continue;
@@ -2166,7 +2142,8 @@ export class Thread {
   }
 }
 
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** `s` as a regex matching it literally. */
+export const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** The bots `text` brings in with @name (or @id), in the order it names them. */
 export function mentionsIn(text: string, bots: Bot[]): Bot[] {
@@ -2359,10 +2336,8 @@ export function localStamp(d: Date): string {
  * has one.
  */
 export async function memoryIndex(memory: MemoryStore, botId: string): Promise<string> {
-  const index = (await memory.exists("INDEX.md"))
-    ? await memory.read("INDEX.md")
-    : "(no INDEX.md yet)";
+  const index = (await memory.readOrNull("INDEX.md")) ?? "(no INDEX.md yet)";
   const own = botIndex(botId);
-  const mine = own && (await memory.exists(own)) ? await memory.read(own) : null;
+  const mine = own ? await memory.readOrNull(own) : null;
   return `<memory_index>\n${index.trim()}\n</memory_index>${mine === null ? "" : `\n<your_memory_index path="${own}">\n${mine.trim()}\n</your_memory_index>`}`;
 }

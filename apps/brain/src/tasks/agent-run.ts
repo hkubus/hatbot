@@ -3,10 +3,10 @@
 // model Settings choose (Haiku by default) with Hatbot's own tools and the plugins' tools, in the
 // background lane, reporting back through finish_task.
 import type Anthropic from "@anthropic-ai/sdk";
-import { type ApprovalKind, chartBlocks, chartProblem, type Task } from "@hatbot/shared";
+import { type ApprovalKind, brokenCharts, type Task } from "@hatbot/shared";
 import { z } from "zod";
 import { cutOff, type StreamParams } from "../agent/model";
-import { AGENT_PROMPT, RESEARCH_ASK_BOT } from "../agent/prompt";
+import { AGENT_PROMPT, CHART_GUESS, RESEARCH_ASK_BOT } from "../agent/prompt";
 import { mayReview, safeToRun } from "../agent/review";
 import { type Readable, Screener } from "../agent/screening";
 import { localStamp, memoryIndex } from "../agent/thread";
@@ -15,7 +15,9 @@ import {
   containerOf,
   DesktopTaskInput,
   inBatches,
+  invalidInput,
   LOOKUP_TOOLS,
+  liveTool,
   missingSkill,
   runTool,
   serverToolWaiting,
@@ -96,14 +98,10 @@ const FinishTask = z.object({
 });
 
 /** What's wrong with the summary's charts, or "" if they all draw. */
-function brokenCharts(summary: string): string {
-  return chartBlocks(summary)
-    .flatMap((b, i) => {
-      const problem = chartProblem(b.source);
-      return problem ? [`chart ${i + 1} doesn't draw (${problem}).`] : [];
-    })
+const chartsWrong = (summary: string) =>
+  brokenCharts(summary)
+    .map((b) => `chart ${b.n} doesn't draw (${b.problem}).`)
     .join(" ");
-}
 
 const Wait = z.object({
   minutes: z.number().int().min(1).max(240).describe("How long to wait at most"),
@@ -247,11 +245,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       .filter((t) => !research || t.access === "read")
       .map((t) => [t.name, t]),
   );
-  /**
-   * A plugin tool the task was offered, as it is now: the definitions sent stay fixed for the cache,
-   * but a call runs on the plugin's current instance and policy. Why not, when the plugin was
-   * switched off or taken from the bot since the task began, or now describes the tool differently.
-   */
+  /** A plugin tool the task was offered, as it is now (see liveTool). */
   const current = (name: string): PluginTool | string => {
     const offered = pluginTools.get(name);
     if (!offered) return `Unknown tool "${name}".`;
@@ -259,15 +253,12 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     // Negotiation's tools keep what they learned in this task while Scout's stay the same.
     if (mine.length !== negotiation.from.length || mine.some((t, i) => t !== negotiation.from[i]))
       negotiation = negotiating(mine);
-    const now = [...mine, ...negotiation.tools].find((t) => t.name === name);
-    if (!now)
-      return `Not run: ${name} isn't available any more. Its plugin was switched off, or taken from ${bot.name}, after this task started.`;
-    if (JSON.stringify(toolParam(now)) !== JSON.stringify(toolParam(offered)))
-      return `Not run: ${name} has changed since this task started.`;
-    // Research gets lookups only: a tool that has come to change things since doesn't run in it.
-    if (research && now.access !== "read")
-      return `Not run: ${name} changes things now, and research only looks things up.`;
-    return now;
+    return liveTool(offered, [...mine, ...negotiation.tools], {
+      bot: bot.name,
+      since: "since this task started",
+      // Research gets lookups only: a tool that has come to change things since doesn't run in it.
+      onlyLooks: research ? "research only looks things up" : undefined,
+    });
   };
   const others = d.bots.list().filter((b) => b.id !== bot.id);
   const tools = [
@@ -346,7 +337,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
   const desktopTask = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
     const p = DesktopTaskInput.safeParse(call.input);
-    if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+    if (!p.success) return result(call, invalidInput(p.error), true);
     const { title, goal, success_criteria } = p.data;
     const refused =
       research &&
@@ -378,7 +369,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
   const askBot = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
     const p = AskBotInput.safeParse(call.input);
-    if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+    if (!p.success) return result(call, invalidInput(p.error), true);
     const refused = research && refusedLinks(run, found.sources, p.data.request, "the bot");
     if (refused) return result(call, refused, true);
     // What this task read is screened first: a suspicion goes with the request.
@@ -593,7 +584,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   /** Sleeps without holding a slot, until the time is up or the task is told something. */
   const wait = async (call: Anthropic.Beta.BetaToolUseBlock) => {
     const p = Wait.safeParse(call.input);
-    if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+    if (!p.success) return result(call, invalidInput(p.error), true);
     // Not past the run's time limit.
     const left = Math.max(1, Math.floor((MAX_RUN_MS - ownMs()) / 60_000));
     const minutes = Math.min(p.data.minutes, left);
@@ -764,27 +755,23 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         if (call.name === "finish_task") {
           const p = FinishTask.safeParse(call.input);
           // A chart that doesn't draw shows the owner a wall of numbers: send it back once.
-          const broken = p.success && !chartsChecked ? brokenCharts(p.data.summary) : "";
+          const broken = p.success && !chartsChecked ? chartsWrong(p.data.summary) : "";
           if (p.success) chartsChecked = true;
           if (broken)
             return result(
               call,
-              `Not finished: ${broken} Call finish_task again with it fixed. Don't guess where a value belongs; if you can't tell, get the numbers again, and with code_run print the chart JSON from it with json.dumps.`,
+              `Not finished: ${broken} Call finish_task again with it fixed. ${CHART_GUESS}`,
               true,
             );
           if (p.success) finished = p.data;
-          return result(
-            call,
-            p.success ? "Finished." : `Invalid input: ${z.prettifyError(p.error)}`,
-            !p.success,
-          );
+          return result(call, p.success ? "Finished." : invalidInput(p.error), !p.success);
         }
         if (call.name === "finish_research") {
           if (researchFinishes++)
             return result(call, "Not run: call finish_research once a turn.", true);
           const p = FinishResearch.safeParse(call.input);
-          if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
-          const broken = chartsChecked ? "" : brokenCharts(`${p.data.answer}\n\n${p.data.report}`);
+          if (!p.success) return result(call, invalidInput(p.error), true);
+          const broken = chartsChecked ? "" : chartsWrong(`${p.data.answer}\n\n${p.data.report}`);
           chartsChecked = true;
           if (broken)
             return result(
@@ -813,13 +800,13 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         }
         if (call.name === "send_to_chat") {
           const p = SendToChat.safeParse(call.input);
-          if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+          if (!p.success) return result(call, invalidInput(p.error), true);
           const r = await sendToChat(tasks, id, p.data, ctx.desktop);
           return result(call, r.text, r.isError);
         }
         if (call.name === "notify_owner") {
           const p = NotifyOwner.safeParse(call.input);
-          if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
+          if (!p.success) return result(call, invalidInput(p.error), true);
           if (notified >= MAX_NOTIFICATIONS)
             return result(call, "Not sent: this task has notified the owner enough.", true);
           notified++;

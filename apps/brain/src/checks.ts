@@ -1,7 +1,7 @@
 // Settings → Check everything: a quick, real try of each part Hatbot depends on, so a deploy step
 // that was missed shows up here instead of in the middle of a task.
 import type { Approval, CheckReport, CheckResult, ChecksInfo, StorageInfo } from "@hatbot/shared";
-import { type ModelClient, modelErrorText } from "./agent/model";
+import { type ModelClient, modelErrorText, oneShot } from "./agent/model";
 import type { Approvals } from "./approvals";
 import type { Archive } from "./archive";
 import type { AuthService } from "./auth/service";
@@ -234,20 +234,19 @@ export class Checks {
   private async modelCall() {
     if (this.d.settings.get().paused) return skip("Paused.");
     if (this.d.apiKeySet === false) return fail("ANTHROPIC_API_KEY isn't set.");
-    let release = () => {};
     try {
-      release = this.d.spend.hold(0.001);
-      const res = await this.d.model.create({
-        model: CHECK_MODEL,
-        max_tokens: 16,
-        messages: [{ role: "user", content: "Reply with the word OK." }],
-      });
-      this.d.spend.recordResponse({ model: CHECK_MODEL, purpose: "check", usage: res.usage });
+      await oneShot(
+        this.d,
+        {
+          model: CHECK_MODEL,
+          max_tokens: 16,
+          messages: [{ role: "user", content: "Reply with the word OK." }],
+        },
+        { purpose: "check" },
+      );
       return ok("Haiku 5.5 answered.");
     } catch (err) {
       return fail(`The call failed: ${modelErrorText(err)}`);
-    } finally {
-      release();
     }
   }
 
