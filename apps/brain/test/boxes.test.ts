@@ -98,7 +98,7 @@ test("a bot changes only its own boxes", async () => {
   expect(t.boxes.get(1)?.title).toBe("Builds");
 });
 
-test("box_look: the bot sees its box drawn on the desktop with its errors, tries it with steps, and sees what the page saved as untrusted", async () => {
+test("box_look: the bot sees its box drawn on the desktop with its errors, tries it with steps, and sees what the page saved as untrusted; a saved change is checked and opened", async () => {
   const steps = [
     { type: "#name", text: "Walk" },
     { click: "#add" },
@@ -110,6 +110,15 @@ test("box_look: the bot sees its box drawn on the desktop with its errors, tries
     { content: [text("No walks yet.")] },
     { content: [toolUse("box_look", { box: 1, with_data: true, width: "desktop", dark: true })] },
     { content: [text("Your walks show.")] },
+    {
+      content: [
+        toolUse("box_edit", {
+          box: 1,
+          html: "<!doctype html><script>localStorage.walks = 1; draw()</script>",
+        }),
+      ],
+    },
+    { content: [text("Saved.")] },
     { content: [toolUse("box_look", { box: 1 })] },
     { content: [text("Can't look.")] },
   ]);
@@ -155,11 +164,19 @@ test("box_look: the bot sees its box drawn on the desktop with its errors, tries
   expect(lastUserText(model.requests[3])).toContain('trusted=\\"false\\"');
   expect(lastUserText(model.requests[3])).toContain('"type":"image"');
 
+  // A change is read for what the sandbox blocks, and opened once for its errors, with no picture.
+  await t.thread.post("keep the walks").done;
+  expect(t.agent.looks).toHaveLength(3);
+  const saved = lastUserText(model.requests[5]);
+  expect(saved).toContain("uses localStorage");
+  expect(saved).toContain("draw is not defined");
+  expect(saved).not.toContain('"type":"image"');
+
   // Without the desktop, a sentence.
   t.agent.configured = false;
   await t.thread.post("look again").done;
-  expect(t.agent.looks).toHaveLength(2);
-  expect(lastUserText(model.requests[5])).not.toContain('"type":"image"');
+  expect(t.agent.looks).toHaveLength(3);
+  expect(lastUserText(model.requests[7])).not.toContain('"type":"image"');
 });
 
 test("hatbox.ask: Haiku answers the page with no tools, as Boxes in Spend, within the boxes' own daily limit, and not while paused", async () => {

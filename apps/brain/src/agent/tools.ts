@@ -39,6 +39,7 @@ import {
 import {
   BOX_CONFIG,
   BOX_PAGE,
+  BOX_SERVER,
   type BoxFile,
   badFiles,
   boxConfig,
@@ -665,6 +666,131 @@ function unsetSecrets(ctx: ToolContext, id: number): string {
     : "";
 }
 
+const INLINE_SCRIPT = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+const IMPORTS = /(^|[;}\n])\s*import\s*[\w{*'"]|\bimport\s*\(/;
+const TYPESCRIPT = [
+  /\binterface\s+[A-Z]\w*\s*(<[^>]*>)?\s*\{/,
+  /\btype\s+[A-Z]\w*\s*(<[^>]*>)?\s*=[^=]/,
+  /\b(let|const|var)\s+[\w$]+\s*:\s*[\w$[{(<]/,
+  /\bfunction\b[^(]*\([^)]*\)\s*:\s*[\w$<[{]/,
+  /\(\s*[\w$]+\??\s*:\s*(string|number|boolean|any|unknown|\w*Event|HTML\w*Element)\b[^()]*\)\s*(=>|\{)/,
+  /\bas\s+(const|HTML\w*Element)\b/,
+];
+const FROM_WEB =
+  /<(script|link|img|source|video|audio|iframe|embed|object|track|image|use)\b[^>]*?\s(src|href|srcset|data|poster|xlink:href)\s*=\s*["']?\s*(https?:)?\/\/|url\(\s*["']?\s*(https?:)?\/\/|@import\s+(url\()?\s*["']?(https?:)?\/\//i;
+const FETCHES_WEB = /\b(fetch|EventSource|WebSocket)\s*\(\s*["'`](https?|wss?):/;
+const STORAGE = /\b(localStorage|sessionStorage|indexedDB)\b|\bdocument\.cookie\b/;
+const DIALOG =
+  /(?<![\w$.]|function\s+)(alert|confirm|prompt)\s*\((?![^)]*\)\s*\{)|\bwindow\.(alert|confirm|prompt)\s*\(/;
+
+/** Code without its comments, roughly: enough that one naming localStorage isn't taken for a use. */
+const uncommented = (code: string) =>
+  code.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+
+/**
+ * Simple mistakes in a box's page that fail without saying much, found by reading it: the brain never
+ * runs or builds a box's code. A box with files is built by Bun, which leaves inline scripts as they
+ * are. Its backend (server.ts) isn't checked.
+ */
+export function pitfalls(files: BoxFile[], built: boolean): string[] {
+  const found = new Set<string>();
+  for (const f of files) {
+    if (f.path === BOX_SERVER || f.path === BOX_CONFIG) continue;
+    const name = built ? f.path : "The page";
+    const html = f.path.endsWith(".html");
+    const scripts = html
+      ? [...f.content.matchAll(INLINE_SCRIPT)]
+          .filter(([, attrs = ""]) => {
+            const type = /\btype\s*=\s*["']?([^"'\s>]+)/i.exec(attrs)?.[1];
+            const js = !type || /^(module|(text|application)\/javascript)$/i.test(type);
+            return js && !/\bsrc\s*=/i.test(attrs);
+          })
+          .map(([, , code = ""]) => uncommented(code))
+      : /\.(m?[jt]sx?)$/.test(f.path)
+        ? [uncommented(f.content)]
+        : [];
+    const inline = built ? `${f.path}: an inline <script>` : "The page's <script>";
+    for (const code of html ? scripts : []) {
+      if (IMPORTS.test(code))
+        found.add(
+          built
+            ? `${inline} uses import, which the build leaves as it is, so it fails; load the code by path instead (<script type="module" src="./app.ts">).`
+            : `${inline} uses import, which fails: a box of one page has nothing to import.`,
+        );
+      if (TYPESCRIPT.some((t) => t.test(code)))
+        found.add(`${inline} has TypeScript in it, which runs as it is and fails.`);
+      if (FETCHES_WEB.test(code))
+        found.add(
+          `${name} fetches from the web, which the page can't; a backend can, reached with hatbox.fetch.`,
+        );
+    }
+    if ((html || f.path.endsWith(".css")) && FROM_WEB.test(f.content))
+      found.add(
+        `${name} loads something from the web (a script, style, picture or font), which the box's CSP refuses; inline it.`,
+      );
+    for (const code of scripts) {
+      const storage = STORAGE.exec(code)?.[0];
+      if (storage)
+        found.add(
+          `${name} uses ${storage}, which the box's sandbox blocks; keep data with hatbox.store.`,
+        );
+      const dialog = DIALOG.exec(code);
+      if (dialog)
+        found.add(
+          `${name} calls ${dialog[1] ?? dialog[2]}(), which does nothing in the box's sandbox; show it in the page.`,
+        );
+    }
+  }
+  return [...found];
+}
+
+/**
+ * For a box just made or changed: what reading its page found, the build's warnings, and its errors once
+ * opened on the desktop, as box_look does without steps (no picture), so simple breakage shows even if
+ * the model doesn't look. Nothing of the desktop's when there's none or it fails.
+ */
+async function checked(
+  ctx: ToolContext,
+  signal: AbortSignal,
+  tool: string,
+  id: number,
+  warned = "",
+): Promise<string> {
+  const page = ctx.boxes?.page(id);
+  if (!page) return "";
+  const found = pitfalls(
+    page.files ?? [{ path: BOX_PAGE, content: page.html }],
+    Boolean(page.files),
+  );
+  const parts = [
+    found.length && `Check these before you finish:\n${found.map((x) => `- ${x}`).join("\n")}`,
+    warned &&
+      `The build warned:\n${boxOutput(ctx, tool, warned, `What building box "${page.title}" printed`)}`,
+  ];
+  const desktop = ctx.desktop?.configured
+    ? (ctx.desktop.withSignal?.(signal) ?? ctx.desktop)
+    : null;
+  try {
+    const { html, lines } = previewed(page.html, false, {});
+    const look =
+      desktop &&
+      (await desktop.lookAtBox({ html, csp: FRAME_CSP, width: 390, height: 844, dark: false }));
+    if (look) {
+      const errors = look.errors.map((e) => lookError(e, page.files ? null : lines)).join("\n");
+      const by = ctx.boxes?.taintedBy(id);
+      parts.push(
+        errors
+          ? `Opened it, with errors:\n${boxOutput(ctx, "box_look", errors, by ? `Box #${id} "${page.title}", written after reading: ${by}` : null)}`
+          : "Opened it: no errors.",
+      );
+    }
+  } catch {
+    // Without the desktop it's only not checked.
+  }
+  const text = parts.filter(Boolean).join("\n\n");
+  return text && `\n\n${text}`;
+}
+
 /**
  * A box's files built on the boxes guest, once hosts its backend couldn't reach before are approved
  * (in a tainted chat, or always for a box with secrets), and a change to the code of one with secrets
@@ -683,7 +809,7 @@ async function builtBox(
     /** The box's files before this change. */
     before?: BoxFile[];
   },
-): Promise<{ id: number; page: string; note: string } | string> {
+): Promise<{ id: number; page: string; note: string; warned: string } | string> {
   const guest = backends(ctx);
   const bad = badFiles(b.files);
   if (bad) return `Not saved: ${bad}`;
@@ -714,7 +840,7 @@ async function builtBox(
   const result = await guest.build(id, version, b.files);
   if (!result.ok || result.page === undefined)
     return `Not saved: the build failed. What it printed:\n\n${boxOutput(ctx, b.tool, result.output || "(nothing)", `What building box "${b.title}" printed`)}`;
-  return { id, page: result.page, note };
+  return { id, page: result.page, note, warned: result.output.replace(/^Built\.$/m, "").trim() };
 }
 
 /** A tool's result with a picture the model sees too (box_look). */
@@ -984,7 +1110,7 @@ export const TOOLS = [
   def({
     name: "box_create",
     description:
-      'Make a box: a small web app the owner keeps and opens from the chat, such as a tracker, a calculator, a planner or a dashboard. Not for a one-off answer: reply instead, with a chart block if it helps. A box is one self-contained HTML page, its CSS and JavaScript inline. It can\'t load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don\'t work; show messages and confirmations in the page. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app\'s colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku\'s answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes, and hatbox.feed(name) for what a feed you give it with box_feed last read. For more than a page, give files instead, built on the boxes guest into one page: index.html, which loads its scripts and styles by path (<script type="module" src="./app.ts">), the modules they import, npm packages in box.json, and server.ts for a backend (`export default { fetch(req), scheduled?() }` on Bun, keeping data with bun:sqlite in its working folder), which the page calls with await hatbox.fetch(path, init), answered like fetch. The backend reaches only the hosts box.json lists, and cron runs scheduled(), at most every 5 minutes, which may return {notify: "text"} to notify the owner, up to 10 times a day. An API key goes in box.json\'s secrets by name, read as process.env.NAME; the owner sets it on the box\'s page and you never see it: {"hosts": ["shop.example.com"], "cron": "0 * * * *", "packages": {"chart.js": "^4"}, "secrets": ["SHOP_KEY"]}. Then try it with box_look, with steps that use it as the owner would, check what it saved, and fix what\'s wrong before you say it\'s done.',
+      'Make a box: a small web app the owner keeps and opens from the chat, such as a tracker, a calculator, a planner or a dashboard. Not for a one-off answer: reply instead, with a chart block if it helps. A box is one self-contained HTML page, its CSS and JavaScript inline. It can\'t load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don\'t work; show messages and confirmations in the page. localStorage, sessionStorage, indexedDB and cookies are blocked. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app\'s colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku\'s answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes, and hatbox.feed(name) for what a feed you give it with box_feed last read. For more than a page, give files instead, built on the boxes guest into one page: index.html, which loads its scripts and styles by path (<script type="module" src="./app.ts">; inline scripts aren\'t built, so import and TypeScript fail there), the modules they import, npm packages in box.json, and server.ts for a backend (`export default { fetch(req), scheduled?() }` on Bun, keeping data with bun:sqlite in its working folder), which the page calls with await hatbox.fetch(path, init), answered like fetch. The backend reaches only the hosts box.json lists, and cron runs scheduled(), at most every 5 minutes, which may return {notify: "text"} to notify the owner, up to 10 times a day. An API key goes in box.json\'s secrets by name, read as process.env.NAME; the owner sets it on the box\'s page and you never see it: {"hosts": ["shop.example.com"], "cron": "0 * * * *", "packages": {"chart.js": "^4"}, "secrets": ["SHOP_KEY"]}. Then try it with box_look, with steps that use it as the owner would, check what it saved, and fix what\'s wrong before you say it\'s done.',
     schema: z.object({
       title: BOX_TITLE,
       html: z.string().min(1).max(MAX_BOX_HTML).optional().describe("The whole page"),
@@ -1009,7 +1135,7 @@ export const TOOLS = [
           },
           made,
         );
-        return `Made it. ${shown(ctx, box)}${unsetSecrets(ctx, box.id)}${b.note}`;
+        return `Made it. ${shown(ctx, box)}${unsetSecrets(ctx, box.id)}${b.note}${await checked(ctx, signal, "box_create", box.id, b.warned)}`;
       }
       if (!html) return "Not made: give the page as html.";
       const box = ctx.boxes.create(
@@ -1021,7 +1147,7 @@ export const TOOLS = [
         },
         { messageId: ctx.messageId, taintedBy: chatTaint(ctx.tainted?.()) },
       );
-      return `Made it. ${shown(ctx, box)}`;
+      return `Made it. ${shown(ctx, box)}${await checked(ctx, signal, "box_create", box.id)}`;
     },
   }),
   def({
@@ -1062,7 +1188,7 @@ export const TOOLS = [
         if (same && name === box.title) return "No change: the files and title are as they were.";
         const made = { messageId: ctx.messageId, taintedBy: chatTaint(ctx.tainted?.()) };
         const b = same
-          ? { page: current.html, note: "" }
+          ? { page: current.html, note: "", warned: "" }
           : await builtBox(ctx, signal, {
               tool: "box_edit",
               id,
@@ -1073,9 +1199,9 @@ export const TOOLS = [
             });
         if (typeof b === "string") return b;
         const saved = ctx.boxes.save(id, name, b.page, made, list);
-        return saved
-          ? `Saved. ${shown(ctx, saved)}${unsetSecrets(ctx, id)}${b.note}`
-          : "No change.";
+        if (!saved) return "No change.";
+        const again = same ? "" : await checked(ctx, signal, "box_edit", id, b.warned);
+        return `Saved. ${shown(ctx, saved)}${unsetSecrets(ctx, id)}${b.note}${again}`;
       }
       const page = edited(html ?? current.html, edits ?? []);
       if (page.length > MAX_BOX_HTML) return "Not changed: the page would be too long.";
@@ -1083,9 +1209,8 @@ export const TOOLS = [
         messageId: ctx.messageId,
         taintedBy: chatTaint(ctx.tainted?.()),
       });
-      return saved
-        ? `Saved. ${shown(ctx, saved)}`
-        : "No change: the page and title are as they were.";
+      if (!saved) return "No change: the page and title are as they were.";
+      return `Saved. ${shown(ctx, saved)}${page === current.html ? "" : await checked(ctx, signal, "box_edit", id)}`;
     },
   }),
   def({
