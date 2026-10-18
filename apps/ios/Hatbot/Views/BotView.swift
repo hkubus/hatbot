@@ -187,16 +187,8 @@ struct BotView: View {
       Button(pick.key == nil ? "Clear it" : "Use the template", role: .destructive) { fill(pick.key) }
       Button("Keep mine", role: .cancel) {}
     }
-    .confirmationDialog("Delete \(stored?.name ?? "this bot")?", isPresented: $confirmDelete, titleVisibility: .visible) {
-      Button("Delete", role: .destructive) {
-        Task {
-          guard let id else { return }
-          await attempt($error) {
-            try await store.deleteBot(id)
-            dismiss()
-          }
-        }
-      }
+    .confirmingDelete("Delete \(stored?.name ?? "this bot")?", isPresented: $confirmDelete, error: $error) {
+      if let id { try await store.deleteBot(id) }
     }
     .task(id: id) {
       if let stored {

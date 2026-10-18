@@ -159,7 +159,6 @@ struct WatchersView: View {
 struct WatcherDetailView: View {
   let id: Int
   @Environment(AppStore.self) private var store
-  @Environment(\.dismiss) private var dismiss
   @State private var values: [WatcherValue] = []
   @State private var notFound = false
 
@@ -259,15 +258,8 @@ struct WatcherDetailView: View {
       }
     }
     .refreshable { await load() }
-    .confirmationDialog("Delete “\(w.name)”?", isPresented: $confirmDelete, titleVisibility: .visible) {
-      Button("Delete", role: .destructive) {
-        Task {
-          await attempt($error) {
-            try await store.deleteWatcher(id)
-            dismiss()
-          }
-        }
-      }
+    .confirmingDelete("Delete “\(w.name)”?", isPresented: $confirmDelete, error: $error) {
+      try await store.deleteWatcher(id)
     }
   }
 

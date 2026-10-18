@@ -136,6 +136,37 @@ extension Binding where Value: Equatable {
   }
 }
 
+extension View {
+  /// Asks before deleting what the page shows; once it's deleted, the page closes.
+  func confirmingDelete(
+    _ title: String, isPresented: Binding<Bool>, error: Binding<String?>,
+    delete: @escaping @MainActor () async throws -> Void
+  ) -> some View {
+    modifier(ConfirmDelete(title: title, isPresented: isPresented, error: error, delete: delete))
+  }
+}
+
+private struct ConfirmDelete: ViewModifier {
+  let title: String
+  @Binding var isPresented: Bool
+  @Binding var error: String?
+  let delete: @MainActor () async throws -> Void
+  @Environment(\.dismiss) private var dismiss
+
+  func body(content: Content) -> some View {
+    content.confirmationDialog(title, isPresented: $isPresented, titleVisibility: .visible) {
+      Button("Delete", role: .destructive) {
+        Task {
+          await attempt($error) {
+            try await delete()
+            dismiss()
+          }
+        }
+      }
+    }
+  }
+}
+
 extension String {
   /// "14:05", in the phone's own time format.
   var timeText: String {

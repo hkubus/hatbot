@@ -176,16 +176,8 @@ struct ScheduleDetailView: View {
           .disabled(busy || !f.valid || !changed)
       }
     }
-    .confirmationDialog("Delete “\(f.name)”?", isPresented: $confirmDelete, titleVisibility: .visible) {
-      Button("Delete", role: .destructive) {
-        Task {
-          guard let id else { return }
-          await attempt($error) {
-            try await store.deleteSchedule(id)
-            dismiss()
-          }
-        }
-      }
+    .confirmingDelete("Delete “\(f.name)”?", isPresented: $confirmDelete, error: $error) {
+      if let id { try await store.deleteSchedule(id) }
     }
   }
 
@@ -215,7 +207,6 @@ struct ScheduleDetailView: View {
 struct TriggerDetailView: View {
   let id: Int
   @Environment(AppStore.self) private var store
-  @Environment(\.dismiss) private var dismiss
   @State private var name = ""
   @State private var prompt = ""
   @State private var loaded = false
@@ -337,15 +328,8 @@ struct TriggerDetailView: View {
         Task { await attempt($error) { secret = try await store.newTriggerSecret(id) } }
       }
     }
-    .confirmationDialog("Delete “\(t.name)”?", isPresented: $confirmDelete, titleVisibility: .visible) {
-      Button("Delete", role: .destructive) {
-        Task {
-          await attempt($error) {
-            try await store.deleteTrigger(id)
-            dismiss()
-          }
-        }
-      }
+    .confirmingDelete("Delete “\(t.name)”?", isPresented: $confirmDelete, error: $error) {
+      try await store.deleteTrigger(id)
     }
   }
 

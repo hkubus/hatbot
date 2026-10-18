@@ -59,17 +59,9 @@ struct GroupView: View {
           .disabled(busy || !changed || !valid)
       }
     }
-    .confirmationDialog("Delete \(store.chatName(stored))? Its messages go with it.", isPresented: $confirmDelete, titleVisibility: .visible) {
-      Button("Delete", role: .destructive) {
-        Task {
-          guard let id else { return }
-          await attempt($error) {
-            try await store.deleteGroup(id)
-            dismiss()
-          }
-        }
-      }
-    }
+    .confirmingDelete(
+      "Delete \(store.chatName(stored))? Its messages go with it.", isPresented: $confirmDelete, error: $error
+    ) { if let id { try await store.deleteGroup(id) } }
     .task(id: id) {
       if let stored {
         title = stored.title ?? ""
