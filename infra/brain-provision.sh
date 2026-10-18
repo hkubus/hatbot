@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Hatbot: provision the brain container (PLAN.md §4.1, §7, §9).
-# Runs inside hatbot-brain as root. host-setup.sh pushes and starts it; safe to re-run.
+# Runs inside the brain as root. host-setup.sh or ssh-setup.sh pushes and starts it; safe to re-run.
 # The app and its service unit come later, from deploy.sh.
-#   DESKTOP_IP     the desktop's IP; it may not open connections to the brain
+#   DESKTOP_IP     the desktop's IP; it may not open connections to the brain (empty: no desktop)
 
 set -euo pipefail
-DESKTOP_IP=${DESKTOP_IP:?set DESKTOP_IP}
+DESKTOP_IP=${DESKTOP_IP:-}
 BUN_VERSION=${BUN_VERSION:-1.4.2}
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
 
@@ -70,6 +70,8 @@ fi
 cat /var/lib/hatbot/.ssh/id_ed25519.pub
 
 say "Firewall: the desktop may only answer, never connect in"
+desktop_rule=''
+[[ -z $DESKTOP_IP ]] || desktop_rule="ip saddr $DESKTOP_IP ct state new counter drop"
 cat >/etc/nftables.conf <<EOF
 #!/usr/sbin/nft -f
 # Managed by hatbot infra/brain-provision.sh.
@@ -78,7 +80,7 @@ flush ruleset
 table inet filter {
   chain input {
     type filter hook input priority filter; policy accept;
-    ip saddr $DESKTOP_IP ct state new counter drop
+    $desktop_rule
   }
 }
 EOF

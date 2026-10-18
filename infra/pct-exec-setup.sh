@@ -15,10 +15,11 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$HERE/lib.sh"
 # shellcheck source=/dev/null
 source /etc/hatbot/host.env 2>/dev/null || die "/etc/hatbot/host.env not found; run host-setup.sh first"
+[[ ${HATBOT_TRANSPORT:-pct} == pct ]] || die "Hatbot wasn't set up by host-setup.sh; this is for Proxmox installs"
 : "${BRAIN_ID:?}" "${DESKTOP_ID:?}"
 [[ $EUID -eq 0 ]] || die "run as root"
 command -v pct >/dev/null || die "pct not found: run this on the Proxmox host"
-ct_running "$BRAIN_ID" || die "the brain (CT $BRAIN_ID) is not running"
+guest_up "$BRAIN_ID" || die "the brain (CT $BRAIN_ID) is not running"
 
 WRAPPER=/usr/local/sbin/hatbot-pct-exec
 SUDOERS=/etc/sudoers.d/hatbot-pct-exec

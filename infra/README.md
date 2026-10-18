@@ -1,20 +1,24 @@
 # infra
 
-Scripts that set up Hatbot on the Proxmox host (PLAN.md §9).
+Scripts that set up Hatbot on a Proxmox host, or on any two Debian 13 machines over SSH (PLAN.md §9).
 
 | Script | Runs | Does |
 |---|---|---|
-| `host-setup.sh` | on the host, as root | both containers on the LAN, the desktop's firewall, Proxmox user/roles/token, snapshots, backups; then runs the two provision scripts |
+| `host-setup.sh` | on the Proxmox host, as root | both containers on the LAN, the desktop's firewall, Proxmox user/roles/token, snapshots, backups; then runs the two provision scripts |
+| `ssh-setup.sh` | anywhere with ssh | without Proxmox: checks two Debian 13 machines (or just a brain), writes the desktop's secrets, runs the two provision scripts over SSH |
 | `brain-provision.sh` | inside `hatbot-brain` | Bun, memory repo, SSH key, firewall |
-| `deploy.sh` | on the host, as root | installs the app: `desktop-deploy.sh` puts desktop-agent on the desktop, `brain-deploy.sh` a new release on the brain |
+| `deploy.sh` | where the setup ran | installs the app: `desktop-deploy.sh` puts desktop-agent on the desktop, `brain-deploy.sh` a new release on the brain |
 | `hatbot-update.sh` | inside `hatbot-brain`, as root | the Update button in Settings: pulls from git, updates desktop-agent, then runs `brain-deploy.sh` |
-| `desktop-provision.sh` | inside `hatbot-desktop` | `desk` user, Xvnc + XFCE, Chromium, Bun, firewall |
-| `verify.sh` | on the host, as root | checks isolation, token permissions, snapshots and backups; changes nothing |
+| `desktop-provision.sh` | inside `hatbot-desktop` | `desk` user, Xvnc + XFCE, Chromium, Bun, firewall (in, and out for its programs) |
+| `verify.sh` | where the setup ran | checks isolation, and on Proxmox token permissions, snapshots and backups; changes nothing |
 | `smoke.sh` | anywhere, with an API token | Settings → Check everything from a shell: the API, desktop, plugins, notifications; changes nothing |
-| `pct-exec-setup.sh` | on the host, as root | optional: lets Hatbot run commands in your containers (`ssh_pct_exec`) |
-| `test-firewall.sh` | anywhere, as root | tests the desktop firewall in throwaway network namespaces |
+| `pct-exec-setup.sh` | on the Proxmox host, as root | optional: lets Hatbot run commands in your containers (`ssh_pct_exec`) |
+| `reset-login.sh` | where the setup ran | forgets the password and authenticator, prints a new setup code |
+| `test-firewall.sh` | anywhere, as root | tests the desktop's firewalls in throwaway network namespaces |
 
 ## Run it
+
+On Proxmox (without it, see "Without Proxmox" below):
 
 1. Copy this folder to the host. From the host's shell:
 
@@ -45,12 +49,34 @@ Re-running `host-setup.sh` is safe. It finds the containers by name and skips wh
 
 If your router forwards ports to the LAN (the web app's reverse proxy, say), the desktop could come back in through your public address. Block it with `HATBOT_PUBLIC_IPS="203.0.113.7"` (space-separated, IPv4) in `/etc/hatbot/host.env` and re-run `host-setup.sh`. `verify.sh` fails if the desktop can reach the web app's public URL.
 
-## Deploy the app
+## Without Proxmox
 
-Run this on the host for the first install, and whenever the host-side scripts change. It deploys the last commit of the checkout in CT 124:
+`ssh-setup.sh` sets up two Debian 13 machines you reach over SSH: VMs (libvirt, VirtualBox, Hyper-V), Incus or LXD containers, cloud servers or spare boxes. Run it from any machine with ssh, such as your laptop, with a key both accept, as `root@host` or as a user with passwordless sudo. Use fresh machines: provisioning writes `/etc/nftables.conf`, whose `flush ruleset` drops other rules, so it refuses machines with Docker, ufw, firewalld or rules of their own (`FORCE=1` goes ahead anyway).
 
 ```sh
-./deploy.sh 124:/root/hatbot
+./ssh-setup.sh --dry-run   # checks both machines, shows the plan, changes nothing
+./ssh-setup.sh
+./verify.sh
+```
+
+It asks for each machine's SSH address, and finds the addresses they reach each other on (`BRAIN_IP`, `DESKTOP_IP`). Answer `none` for the desktop to run the brain alone: no desktop tasks, page watchers, live view or sandbox. Its answers go to `host.env` (`/etc/hatbot/` as root, otherwise `~/.config/hatbot/`; `HATBOT_STATE` picks another), where `deploy.sh`, `verify.sh` and `reset-login.sh` find them.
+
+What's different from Proxmox:
+
+- **The desktop's fence is on the desktop.** Its nftables output chain lets `desk` (Chromium) and the shell's and renderer's throwaway users reach the internet only: no private ranges, its LAN, the brain, cloud metadata (169.254.169.254) or `HATBOT_PUBLIC_IPS`, and no IPv6. Something that gets root on the desktop could lift it. On Proxmox the host's bridge filter holds even then, so if your hypervisor can filter the desktop's traffic (a VLAN of its own, network ACLs), do that too.
+- **Keep the two on a private network**, or a VPN (WireGuard, Tailscale): VNC and desktop-agent speak plain TCP, so `ssh-setup.sh` refuses a public `DESKTOP_IP`.
+- **A LAN DNS resolver** stays reachable from the desktop, on port 53 only. To keep it off the LAN entirely, point the desktop at public resolvers and run `ssh-setup.sh` again.
+- **No Proxmox token, snapshots or backups.** Settings → Desktop has no rollback; back up the brain's `/var/lib/hatbot` and `/archive` yourself. The Proxmox plugin still works with a token you write to `/etc/hatbot/proxmox.env` by hand (see `host-setup.sh`, step 4).
+
+Commands below written `pct exec <brain> -- …` are `ssh <brain> …` here.
+
+## Deploy the app
+
+Run this where you ran the setup, for the first install and whenever the host-side scripts change. It deploys the last commit of a checkout:
+
+```sh
+./deploy.sh ..                 # the checkout this folder is in
+./deploy.sh 124:/root/hatbot   # on Proxmox: the checkout in CT 124
 ```
 
 The first run asks for:
@@ -61,7 +87,7 @@ The first run asks for:
 
  Then it prints a setup code. Open `https://<your hatbot host>/setup` and enter the code to set your password and TOTP. The code changes whenever the brain restarts before setup is done. To read the current one, run `pct exec <brain> -- journalctl -u hatbot-brain | grep 'setup code'`.
 
-To change the password or the authenticator, use **Settings → Password and sign-ins**; either change signs out every other browser and app. If you've lost them, `./reset-login.sh` on the host forgets both, signs out everything, restarts the brain and prints a new setup code.
+To change the password or the authenticator, use **Settings → Password and sign-ins**; either change signs out every other browser and app. If you've lost them, `./reset-login.sh` forgets both, signs out everything, restarts the brain and prints a new setup code.
 
 Each deploy is a new release in `/var/lib/hatbot/releases` inside the brain, and `/var/lib/hatbot/app` links to the live one. Before switching, the brain stops and its database is copied into the new release (`hatbot.sqlite.before`). If the new release fails its health check, the previous one goes back live with that copy of the database, so a migration it can't read is undone. The last 3 are kept. To change the URL or proxy later, run with `HATBOT_PUBLIC_URL=… HATBOT_TRUSTED_PROXIES=… ./deploy.sh …`; for ntfy, set `NTFY_URL=…`; for updates, `HATBOT_GIT_URL=…`.
 
@@ -72,7 +98,7 @@ After that, **Settings → Updates → Update** pulls the branch and deploys it:
 - The brain only writes `/var/lib/hatbot/update-request`. `hatbot-update.path` runs `hatbot-update` as root, which reads the git token from `/etc/hatbot/update.env` (root only), so the brain service never holds it.
 - desktop-agent receives its new code over its own API; a root service on the desktop (`hatbot-desktop-agent-update.path`) installs it. The first `deploy.sh` run after this feature sets that up.
 - It refuses while a task is running, because the brain restarts.
-- It doesn't touch the host. If a commit changes host-side scripts (`host-setup.sh`, `deploy.sh`, `desktop-deploy.sh` and so on), Settings says so; run `deploy.sh` on the host for those.
+- It doesn't touch the host. If a commit changes host-side scripts (`host-setup.sh`, `deploy.sh`, `desktop-deploy.sh` and so on), Settings says so; run `deploy.sh` for those.
 - Logs: `/var/lib/hatbot-update/last.log` on the brain, and `journalctl -u hatbot-desktop-agent-update` on the desktop.
 
 ### Signed commits only
@@ -84,7 +110,7 @@ pct exec <brain> -- sh -c 'echo "you@example.com namespaces=\"git\" ssh-ed25519 
 pct exec <brain> -- sh -c 'echo HATBOT_UPDATE_SIGNERS=/etc/hatbot/allowed_signers >> /etc/hatbot/update.env'
 ```
 
-Until there's a key, Check everything warns under "Last update". Sign your commits (`git config gpg.format ssh`, `git config user.signingkey ~/.ssh/id_ed25519.pub`, `git config commit.gpgsign true`). From then on an update whose newest commit fails `git verify-commit` stops before deploying anything, and Settings says why. So does one whose newest commit doesn't come after the live one: a branch moved back to an older signed commit, or rewritten. To deploy that on purpose, run `deploy.sh` on the host. The check is in `hatbot-update` itself, so it starts working after the next update (or deploy) installs this version of it. `deploy.sh` keeps the line when it rewrites `update.env`.
+Until there's a key, Check everything warns under "Last update". Sign your commits (`git config gpg.format ssh`, `git config user.signingkey ~/.ssh/id_ed25519.pub`, `git config commit.gpgsign true`). From then on an update whose newest commit fails `git verify-commit` stops before deploying anything, and Settings says why. So does one whose newest commit doesn't come after the live one: a branch moved back to an older signed commit, or rewritten. To deploy that on purpose, run `deploy.sh`. The check is in `hatbot-update` itself, so it starts working after the next update (or deploy) installs this version of it. `deploy.sh` keeps the line when it rewrites `update.env`.
 
 ## Commands in your containers (optional)
 
@@ -153,7 +179,7 @@ Set any of these as environment variables, or answer the prompts. Defaults are i
 
 ## Good to know
 
-- The desktop's firewall is an nftables table on the host, `bridge hatbot`, loaded by `hatbot-firewall.service`. It filters the desktop's port on the LAN bridge and pins its MAC, so don't change the desktop's MAC or NIC in the GUI (verify.sh checks they match). It doesn't touch the Proxmox firewall. Don't start or restart `nftables.service` on the host: its `flush ruleset` wipes every table, including Proxmox's.
+- On Proxmox, the desktop's firewall is an nftables table on the host, `bridge hatbot`, loaded by `hatbot-firewall.service`. It filters the desktop's port on the LAN bridge and pins its MAC, so don't change the desktop's MAC or NIC in the GUI (verify.sh checks they match). It doesn't touch the Proxmox firewall. Don't start or restart `nftables.service` on the host: its `flush ruleset` wipes every table, including Proxmox's.
 - The brain listens on port 8080 on the LAN, for your reverse proxy. The desktop can't reach it.
 - The brain's secrets live in `/etc/hatbot/*.env` inside the brain (mode 640, group `hatbot`). The desktop only holds its VNC password and its agent token.
 - ntfy runs on its own server, not on Hatbot's guests. The brain only publishes to it, with the URL, topic and token `deploy.sh` saved in `/etc/hatbot/ntfy.env`. For instant iPhone notifications, set `upstream-base-url: https://ntfy.sh` on your ntfy server.
