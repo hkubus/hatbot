@@ -198,10 +198,7 @@ export class Plugins {
   }
 
   private load(plugin: Plugin): { enabled: boolean; config: unknown } {
-    const row = this.d.db
-      .query<{ value: string }, [string]>("SELECT value FROM settings WHERE key = ?")
-      .get(`plugin:${plugin.id}`);
-    const stored = row ? (JSON.parse(row.value) as { enabled?: boolean; config?: unknown }) : {};
+    const stored = saved(this.d.db, plugin.id);
     const config = plugin.config.safeParse(stored.config ?? {});
     if (!config.success) {
       console.error(`plugin ${plugin.id}: stored settings are invalid; using defaults`);
@@ -351,6 +348,14 @@ export class Plugins {
   private emit(s: Slot) {
     this.d.events.emit({ type: "plugin.updated", plugin: this.info(s) });
   }
+}
+
+/** A plugin's row in settings as saved: whether it's on, and its settings, unchecked. */
+export function saved(db: Db, id: string): { enabled?: boolean; config?: unknown } {
+  const row = db
+    .query<{ value: string }, [string]>("SELECT value FROM settings WHERE key = ?")
+    .get(`plugin:${id}`);
+  return row ? JSON.parse(row.value) : {};
 }
 
 /**

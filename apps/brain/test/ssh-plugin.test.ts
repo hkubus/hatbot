@@ -369,7 +369,7 @@ test("read_file reads a stretch of lines at a time and says where to read on", a
   expect(await read({ path: wide })).toContain("line 1 is longer than 15,000 characters");
 
   await expect(read({ path: join(dir, "nope.txt") })).rejects.toThrow(
-    `Couldn't read ${join(dir, "nope.txt")} on nas: sed: `,
+    `Couldn't read nas:${join(dir, "nope.txt")}: sed: `,
   );
 });
 
