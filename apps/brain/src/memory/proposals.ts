@@ -225,8 +225,10 @@ export class Proposals {
         ? `\n\nLeft out for length, so don't touch or index-remove them: ${left.join(", ")}`
         : "";
       const out = await this.ask(TIDY_PROMPT, `${files.join("\n\n")}${note}`, "tidy");
-      // Skills are changed through their own fixes.
-      const changes = out.changes.filter((c) => !c.path.startsWith("skills/"));
+      // Skills are changed through their own fixes, by whatever path: notes/../skills/x.md too.
+      const changes = out.changes.filter(
+        (c) => !this.d.memory.resolve(c.path).rel.startsWith("skills/"),
+      );
       return await this.store("tidy", out.title, out.reason, changes, null);
     } finally {
       this.tidying = false;

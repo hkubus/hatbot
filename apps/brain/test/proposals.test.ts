@@ -42,6 +42,8 @@ test("a tidy-up is proposed as a diff, and applied as you in one commit", async 
         { path: "network.md", delete: true },
         { path: "home.md", content: "# Home\nRouter: 192.168.1.1 (also the network notes)\n" },
         { path: "skills/x.md", content: "nope" },
+        { path: "notes/../skills/y.md", content: "nope" },
+        { path: "./skills/z.md", content: "nope" },
       ],
     });
   });
