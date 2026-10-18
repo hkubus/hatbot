@@ -52,7 +52,12 @@ export const MAX_SCREENS = 200;
 /** How often the address on screen is asked for: a new one is seen up to this late, and the asking. */
 export const PAGE_POLL_MS = 1500;
 
-const MODIFIERS: Record<string, string> = { Control: "ctrl", Alt: "alt", Meta: "super" };
+// A Map: a key named "constructor" or "__proto__" isn't a modifier.
+const MODIFIERS = new Map([
+  ["Control", "ctrl"],
+  ["Alt", "alt"],
+  ["Meta", "super"],
+]);
 
 type TextStep = Extract<RecStep, { kind: "text" }>;
 type KeyStep = Extract<RecStep, { kind: "key" }>;
@@ -300,7 +305,7 @@ export class Recorder {
           this.altGraph = m.down;
           return;
         }
-        const mod = MODIFIERS[m.key];
+        const mod = MODIFIERS.get(m.key);
         if (mod) {
           if (m.down) this.held.add(mod);
           else this.held.delete(mod);
