@@ -473,7 +473,8 @@ export class Boxes {
         this.send(this.existing(id), c.text);
         return {};
       case "feed": {
-        const latest = this.connected().feeds.latest(id, c.name);
+        const { feeds } = this.connected();
+        const latest = c.fresh ? await feeds.fresh(id, c.name) : feeds.latest(id, c.name);
         return latest ? { value: latest } : {};
       }
     }
@@ -717,7 +718,7 @@ const HATBOX = `(() => {
       return call("ask", args);
     },
     send: (text) => call("send", { text: String(text) }),
-    feed: (name) => call("feed", { name: String(name) }),
+    feed: (name, o) => call("feed", o?.fresh ? { name: String(name), fresh: true } : { name: String(name) }),
     fetch: boxFetch,
     theme,
   });

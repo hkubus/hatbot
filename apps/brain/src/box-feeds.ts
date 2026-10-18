@@ -11,6 +11,8 @@ import type { SettingsStore } from "./settings";
 /** A box has at most this many feeds; this many run at once. */
 export const MAX_BOX_FEEDS = 10;
 const PARALLEL = 4;
+/** hatbox.feed(name, {fresh: true}) runs the tool again only once the last run is this old. */
+const FRESH_MS = 60_000;
 
 /** Why a feed can never run as it is: it stops, until its bot adds it again. */
 class Stopped extends BoxError {}
@@ -64,7 +66,8 @@ function parsed(out: string): unknown {
 }
 
 export class BoxFeeds {
-  private running = new Set<number>();
+  /** Each feed's run in flight, by id, so a fresh read waits on it rather than running twice. */
+  private running = new Map<number, Promise<void>>();
 
   constructor(
     private d: {
@@ -103,6 +106,26 @@ export class BoxFeeds {
     if (!r?.value_at) return null;
     const f = toFeed(r);
     return { value: f.value, at: r.value_at, ...(f.error ? { error: f.error } : {}) };
+  }
+
+  /**
+   * hatbox.feed(name, {fresh: true}): runs the feed now when it last ran over a minute ago, as the
+   * timer would (so not while paused, and a stopped feed stays stopped), then gives the latest.
+   */
+  async fresh(boxId: number, name: string): Promise<BoxFeedValue | null> {
+    const r = this.row(boxId, name);
+    if (!r) return null;
+    const busy = this.running.get(r.id);
+    if (busy) await busy;
+    else if (r.next_run_at !== null && !this.d.settings.get().paused) {
+      // From the last run's start, not the last value: a failing tool isn't run on every call.
+      const ran = Math.max(
+        r.value_at ? Date.parse(r.value_at) : 0,
+        Date.parse(r.next_run_at) - r.every_minutes * 60_000,
+      );
+      if (this.d.clock() - ran > FRESH_MS) await this.run(r);
+    }
+    return this.latest(boxId, name);
   }
 
   /**
@@ -167,39 +190,40 @@ export class BoxFeeds {
     await Promise.all(due.map((r) => this.run(r)));
   }
 
-  private async run(r: Row) {
-    this.running.add(r.id);
+  private run(r: Row): Promise<void> {
+    const p = this.runOnce(r).finally(() => this.running.delete(r.id));
+    this.running.set(r.id, p);
+    return p;
+  }
+
+  private async runOnce(r: Row) {
     const { db } = this.d;
     // Only the feed as it was read: one changed meanwhile keeps its new self.
     const same = "WHERE id = ? AND tool = ? AND input = ?";
+    // The next run counts from this one, so an outage doesn't queue up a run per missed time.
+    db.query(`UPDATE box_feeds SET next_run_at = ? ${same} AND next_run_at IS NOT NULL`).run(
+      this.after(r.every_minutes),
+      r.id,
+      r.tool,
+      r.input,
+    );
     try {
-      // The next run counts from this one, so an outage doesn't queue up a run per missed time.
-      db.query(`UPDATE box_feeds SET next_run_at = ? ${same} AND next_run_at IS NOT NULL`).run(
-        this.after(r.every_minutes),
+      const value = await this.read(r.bot_id, r.tool, JSON.parse(r.input));
+      db.query(`UPDATE box_feeds SET value = ?, value_at = ?, error = NULL ${same}`).run(
+        JSON.stringify(value),
+        this.now(),
         r.id,
         r.tool,
         r.input,
       );
-      try {
-        const value = await this.read(r.bot_id, r.tool, JSON.parse(r.input));
-        db.query(`UPDATE box_feeds SET value = ?, value_at = ?, error = NULL ${same}`).run(
-          JSON.stringify(value),
-          this.now(),
-          r.id,
-          r.tool,
-          r.input,
-        );
-      } catch (err) {
-        if (!(err instanceof BoxError)) console.error(`box feed ${r.id} failed`, err);
-        const stop = err instanceof Stopped;
-        const why = err instanceof BoxError ? err.message : "It failed; see the brain's log.";
-        // A failed run keeps the last result; a stopped feed keeps it too, saying why it's old.
-        db.query(
-          `UPDATE box_feeds SET error = ?, next_run_at = CASE WHEN ? THEN NULL ELSE next_run_at END ${same}`,
-        ).run(stop ? `Stopped: ${why}` : why, stop ? 1 : 0, r.id, r.tool, r.input);
-      }
-    } finally {
-      this.running.delete(r.id);
+    } catch (err) {
+      if (!(err instanceof BoxError)) console.error(`box feed ${r.id} failed`, err);
+      const stop = err instanceof Stopped;
+      const why = err instanceof BoxError ? err.message : "It failed; see the brain's log.";
+      // A failed run keeps the last result; a stopped feed keeps it too, saying why it's old.
+      db.query(
+        `UPDATE box_feeds SET error = ?, next_run_at = CASE WHEN ? THEN NULL ELSE next_run_at END ${same}`,
+      ).run(stop ? `Stopped: ${why}` : why, stop ? 1 : 0, r.id, r.tool, r.input);
     }
   }
 
