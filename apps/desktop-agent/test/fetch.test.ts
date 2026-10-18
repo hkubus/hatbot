@@ -33,74 +33,37 @@ const resolve = async (host: string) => {
 // The real check, except that public.test is a public name that happens to be served here.
 const realExceptPublic = (host: string) =>
   host === "public.test" ? Promise.resolve("127.0.0.1") : resolveHost(host, []);
+/**
+ * The desktop itself, as a URL's host: a name, IPv4 shorthands, and IPv6 forms (IPv4-mapped dotted and
+ * hex, long-hand, -compatible, NAT64).
+ */
+const DESKTOP = [
+  ...["localhost", "0.0.0.0", "2130706433", "0177.0.0.1", "0x7f.1", "127.1", "017700000001"],
+  ...["[::1]", "[::]", "[::ffff:127.0.0.1]", "[::ffff:7f00:1]", "[0:0:0:0:0:ffff:7f00:1]"],
+  ...["[::127.0.0.1]", "[::7f00:1]", "[64:ff9b::7f00:1]"],
+];
 
 test("loopback, private and link-local addresses are refused, in every form", () => {
   for (const ip of [
-    "127.0.0.1",
-    "10.1.2.3",
-    "192.168.55.225",
-    "169.254.169.254",
-    "100.64.0.1",
-    "0.0.0.0",
-    "192.0.2.10",
-    "255.255.255.255",
-  ])
-    expect(privateAddress(ip)).toBe(true);
-  for (const ip of [
-    "::",
-    "::1",
-    "fe80::1",
-    "fe80::1%eth0",
-    "fd00::5",
-    "fec0::1",
-    "ff02::1",
-    // IPv4-mapped, dotted and hex, and long-hand.
-    "::ffff:127.0.0.1",
-    "::ffff:7f00:1",
-    "::FFFF:7F00:0001",
-    "0:0:0:0:0:ffff:7f00:1",
-    "::ffff:a9fe:a9fe",
-    "::ffff:c0a8:3701",
-    // IPv4-compatible and -translated.
-    "::127.0.0.1",
-    "::7f00:1",
-    "::ffff:0:7f00:1",
-    // NAT64, 6to4, Teredo and documentation.
-    "64:ff9b::7f00:1",
-    "64:ff9b::127.0.0.1",
-    "2002:7f00:1::1",
-    "2001:0:4136:e378:8000:63bf:3fff:fdd2",
-    "2001:db8::1",
-    "3fff::1",
-    // Not addresses at all.
-    "2130706433",
-    "0177.0.0.1",
-    "localhost",
+    ...["127.0.0.1", "10.1.2.3", "192.168.55.225", "169.254.169.254", "100.64.0.1", "0.0.0.0"],
+    ...["192.0.2.10", "255.255.255.255"],
+    ...["fe80::1", "fe80::1%eth0", "fd00::5", "fec0::1", "ff02::1", "::FFFF:7F00:0001"],
+    ...["::ffff:a9fe:a9fe", "::ffff:c0a8:3701", "::ffff:0:7f00:1", "64:ff9b::127.0.0.1"],
+    // 6to4, Teredo and documentation.
+    ...["2002:7f00:1::1", "2001:0:4136:e378:8000:63bf:3fff:fdd2", "2001:db8::1", "3fff::1"],
+    // The desktop's own; a host that isn't an address at all (localhost, 2130706433) counts too.
+    ...DESKTOP.map((h) => h.replace(/^\[|\]$/g, "")),
     "",
   ])
-    expect(privateAddress(ip)).toBe(true);
+    expect([ip, privateAddress(ip)]).toEqual([ip, true]);
   for (const ip of ["9.9.9.9", "1.1.1.1", "2a00:1450:4001::1", "2606:4700::1111"])
-    expect(privateAddress(ip)).toBe(false);
+    expect([ip, privateAddress(ip)]).toEqual([ip, false]);
 });
 
 test("the desktop itself can't be fetched, however its address is written", async () => {
   await expect(fetchPage(`${base}/hop`)).rejects.toBeInstanceOf(FetchError);
   for (const url of [
-    "http://localhost:9222/json",
-    "http://[::ffff:127.0.0.1]:9222/json/list",
-    "http://[::ffff:7f00:1]:9222/json/list",
-    "http://[0:0:0:0:0:ffff:7f00:1]:9222/",
-    "http://[::127.0.0.1]:9222/",
-    "http://[::7f00:1]:9222/",
-    "http://[::1]:9222/",
-    "http://[::]:9222/",
-    "http://0.0.0.0:9222/",
-    "http://2130706433:9222/",
-    "http://0177.0.0.1:9222/",
-    "http://0x7f.1:9222/",
-    "http://127.1:9222/",
-    "http://017700000001:9222/",
-    "http://[64:ff9b::7f00:1]:9222/",
+    ...DESKTOP.map((h) => `http://${h}:9222/json/list`),
     "http://169.254.169.254/latest/meta-data/",
   ]) {
     const err = await fetchPage(url).catch((e) => e);
@@ -111,15 +74,7 @@ test("the desktop itself can't be fetched, however its address is written", asyn
 });
 
 test("a redirect to the desktop is refused, in every form", async () => {
-  for (const to of [
-    `http://[::ffff:127.0.0.1]:${server.port}/hop`,
-    `http://[::ffff:7f00:1]:${server.port}/hop`,
-    `http://[::127.0.0.1]:${server.port}/hop`,
-    `http://0.0.0.0:${server.port}/hop`,
-    `http://2130706433:${server.port}/hop`,
-    `http://0177.0.0.1:${server.port}/hop`,
-    `http://localhost:${server.port}/hop`,
-  ]) {
+  for (const to of DESKTOP.map((h) => `http://${h}:${server.port}/hop`)) {
     const err = await fetchPage(
       `http://public.test:${server.port}/to?u=${encodeURIComponent(to)}`,
       { resolve: realExceptPublic },
@@ -138,7 +93,8 @@ test("the request goes to the address that was checked, not to a second lookup",
 });
 
 test("redirects are followed up to five, each hop checked", async () => {
-  const r = await fetchPage(`${base}/hop?n=5`, { resolve });
+  // A scheme in capitals is still http.
+  const r = await fetchPage(`HTTP://127.0.0.1:${server.port}/hop?n=5`, { resolve });
   expect(r.body).toBe("arrived");
   expect(r.url).toBe(`${base}/hop?n=0`);
   await expect(fetchPage(`${base}/hop?n=6`, { resolve })).rejects.toThrow("redirects");

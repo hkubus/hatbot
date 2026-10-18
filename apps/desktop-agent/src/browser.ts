@@ -10,6 +10,7 @@ import type {
   BrowserTab,
 } from "@hatbot/shared/desktop";
 import { between, keyGap, type Point, path } from "./human";
+import { keysym, modifier, modifiers } from "./keys";
 import {
   FORM_INPUT,
   INSPECT,
@@ -23,15 +24,6 @@ import {
 const CDP = process.env.HATBOT_CDP ?? "http://127.0.0.1:9222";
 const COMMAND_TIMEOUT_MS = 30_000;
 const MAX_READ_CHARS = 50_000;
-
-/** Whether Chromium's DevTools answers, for GET /health?deep=1. */
-export async function devToolsUp(): Promise<boolean> {
-  try {
-    return (await fetch(`${CDP}/json/version`, { signal: AbortSignal.timeout(2000) })).ok;
-  } catch {
-    return false;
-  }
-}
 
 /** A failure the model should read: becomes an error result. */
 export class BrowserError extends Error {}
@@ -154,62 +146,41 @@ class Connection {
   }
 }
 
-// Keys: DOM key names, codes and Windows virtual key codes, as Chromium's input pipeline expects them.
+// Keys: DOM key names, codes and Windows virtual key codes, as Chromium's input pipeline expects them, by
+// the X keysym keys.ts reads a name as: the screen and the brain's checks go by the same lists.
 type KeyDef = { key: string; code: string; keyCode: number; text?: string };
+const ENTER: KeyDef = { key: "Enter", code: "Enter", keyCode: 13, text: "\r" };
+const PAGE_UP: KeyDef = { key: "PageUp", code: "PageUp", keyCode: 33 };
+const PAGE_DOWN: KeyDef = { key: "PageDown", code: "PageDown", keyCode: 34 };
 const NAMED_KEYS: Record<string, KeyDef> = {
-  enter: { key: "Enter", code: "Enter", keyCode: 13, text: "\r" },
-  tab: { key: "Tab", code: "Tab", keyCode: 9 },
-  escape: { key: "Escape", code: "Escape", keyCode: 27 },
-  backspace: { key: "Backspace", code: "Backspace", keyCode: 8 },
-  delete: { key: "Delete", code: "Delete", keyCode: 46 },
-  insert: { key: "Insert", code: "Insert", keyCode: 45 },
-  arrowup: { key: "ArrowUp", code: "ArrowUp", keyCode: 38 },
-  arrowdown: { key: "ArrowDown", code: "ArrowDown", keyCode: 40 },
-  arrowleft: { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37 },
-  arrowright: { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
-  home: { key: "Home", code: "Home", keyCode: 36 },
-  end: { key: "End", code: "End", keyCode: 35 },
-  pageup: { key: "PageUp", code: "PageUp", keyCode: 33 },
-  pagedown: { key: "PageDown", code: "PageDown", keyCode: 34 },
+  Return: ENTER,
+  KP_Enter: ENTER,
+  Tab: { key: "Tab", code: "Tab", keyCode: 9 },
+  Escape: { key: "Escape", code: "Escape", keyCode: 27 },
+  BackSpace: { key: "Backspace", code: "Backspace", keyCode: 8 },
+  Delete: { key: "Delete", code: "Delete", keyCode: 46 },
+  Insert: { key: "Insert", code: "Insert", keyCode: 45 },
+  Up: { key: "ArrowUp", code: "ArrowUp", keyCode: 38 },
+  Down: { key: "ArrowDown", code: "ArrowDown", keyCode: 40 },
+  Left: { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37 },
+  Right: { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
+  Home: { key: "Home", code: "Home", keyCode: 36 },
+  End: { key: "End", code: "End", keyCode: 35 },
+  Page_Up: PAGE_UP,
+  Prior: PAGE_UP,
+  Page_Down: PAGE_DOWN,
+  Next: PAGE_DOWN,
   space: { key: " ", code: "Space", keyCode: 32, text: " " },
-  contextmenu: { key: "ContextMenu", code: "ContextMenu", keyCode: 93 },
-  capslock: { key: "CapsLock", code: "CapsLock", keyCode: 20 },
-  printscreen: { key: "PrintScreen", code: "PrintScreen", keyCode: 44 },
+  Menu: { key: "ContextMenu", code: "ContextMenu", keyCode: 93 },
+  Caps_Lock: { key: "CapsLock", code: "CapsLock", keyCode: 20 },
+  Print: { key: "PrintScreen", code: "PrintScreen", keyCode: 44 },
 };
-const KEY_ALIASES: Record<string, string> = {
-  return: "enter",
-  esc: "escape",
-  del: "delete",
-  up: "arrowup",
-  down: "arrowdown",
-  left: "arrowleft",
-  right: "arrowright",
-  page_up: "pageup",
-  pgup: "pageup",
-  page_down: "pagedown",
-  pgdn: "pagedown",
-  menu: "contextmenu",
-  print: "printscreen",
-};
-/** Modifier name to its key and its bit in CDP's `modifiers` (Alt 1, Ctrl 2, Meta 4, Shift 8). */
+/** A modifier to its key and its bit in CDP's `modifiers` (Alt 1, Ctrl 2, Meta 4, Shift 8). */
 const MODIFIER_KEYS: Record<string, KeyDef & { bit: number }> = {
   alt: { key: "Alt", code: "AltLeft", keyCode: 18, bit: 1 },
   ctrl: { key: "Control", code: "ControlLeft", keyCode: 17, bit: 2 },
-  meta: { key: "Meta", code: "MetaLeft", keyCode: 91, bit: 4 },
+  super: { key: "Meta", code: "MetaLeft", keyCode: 91, bit: 4 },
   shift: { key: "Shift", code: "ShiftLeft", keyCode: 16, bit: 8 },
-};
-const MODIFIER_ALIASES: Record<string, string> = {
-  alt: "alt",
-  option: "alt",
-  ctrl: "ctrl",
-  control: "ctrl",
-  meta: "meta",
-  super: "meta",
-  cmd: "meta",
-  command: "meta",
-  win: "meta",
-  windows: "meta",
-  shift: "shift",
 };
 // US layout: the unshifted key each symbol is on.
 const SYMBOL_KEYS: Record<string, [string, number]> = {
@@ -261,17 +232,14 @@ function charKey(ch: string): KeyDef {
   return { key: ch, code: sym?.[0] ?? "", keyCode: sym?.[1] ?? 0, text: ch };
 }
 
+/** A key by its name or character; keys.ts refuses one off its lists. */
 function keyDef(name: string): KeyDef {
-  if ([...name].length === 1) {
-    if (!/^[\p{L}\p{N}\p{P}\p{S}]$/u.test(name)) throw new BrowserError(`Unknown key "${name}".`);
-    return charKey(name);
-  }
-  const lower = name.toLowerCase();
-  const named = NAMED_KEYS[KEY_ALIASES[lower] ?? lower];
-  if (named) return named;
-  const f = /^f([1-9]|1\d|2[0-4])$/.exec(lower);
-  if (f) return { key: `F${f[1]}`, code: `F${f[1]}`, keyCode: 111 + Number(f[1]) };
-  throw new BrowserError(`Unknown key "${name}".`);
+  const sym = keysym(name);
+  if ([...name].length === 1) return charKey(name);
+  const f = /^F(\d+)$/.exec(sym);
+  const def = f ? { key: sym, code: sym, keyCode: 111 + Number(f[1]) } : NAMED_KEYS[sym];
+  if (!def) throw new BrowserError(`The browser has no "${name}" key.`);
+  return def;
 }
 
 /** "ctrl+shift+a" to its modifiers and main key. A lone "+" (or a trailing "++") is the plus key. */
@@ -284,29 +252,24 @@ function chord(text: string): { mods: (KeyDef & { bit: number })[]; key: KeyDef 
   const mods: (KeyDef & { bit: number })[] = [];
   let key: KeyDef | null = null;
   for (const p of parts) {
-    const m = MODIFIER_ALIASES[p.toLowerCase()];
+    const m = modifier(p);
     // Modifiers first, as on the screen, where xdotool presses them in order.
-    if (m && p.length > 1 && key)
+    if (m && key)
       throw new BrowserError(
         `"${text}": put the modifiers first and one key last, like ctrl+shift+t.`,
       );
-    if (m && p.length > 1) mods.push(MODIFIER_KEYS[m] as KeyDef & { bit: number });
+    if (m) mods.push(MODIFIER_KEYS[m] as KeyDef & { bit: number });
     else if (key) throw new BrowserError(`"${text}" names more than one key.`);
     else key = keyDef(p);
   }
   return { mods, key };
 }
 
-function modifierBits(text: unknown): number {
-  if (typeof text !== "string" || !text.trim()) return 0;
-  let bits = 0;
-  for (const p of text.split("+")) {
-    const m = MODIFIER_ALIASES[p.trim().toLowerCase()];
-    if (!m) throw new BrowserError(`"${p}" is not a modifier key (ctrl, shift, alt, meta).`);
-    bits |= (MODIFIER_KEYS[m] as { bit: number }).bit;
-  }
-  return bits;
-}
+const modifierBits = (text: unknown) =>
+  modifiers(typeof text === "string" ? text : null).reduce(
+    (bits, m) => bits | (MODIFIER_KEYS[m]?.bit ?? 0),
+    0,
+  );
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Page-supplied text that goes into a tab entry: no control characters or line separators, and capped. */
@@ -357,10 +320,22 @@ export class Browser {
    */
   constructor(
     private downloadDir: string | null = null,
-    endpoint = CDP,
+    private endpoint = CDP,
   ) {
     this.cdp = new Connection(endpoint);
     this.cdp.on((method, p, sessionId) => this.event(method, p, sessionId));
+  }
+
+  /** Whether Chromium's DevTools answers. */
+  async devToolsUp(timeoutMs = 2000): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.endpoint}/json/version`, {
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
   }
 
   /** Closes Chromium, every window and tab. hatbot-chromium.service opens it again. */
@@ -494,6 +469,13 @@ export class Browser {
         return;
       }
     }
+  }
+
+  /** Connected, with titles and URLs fresh and the active tab the one on screen. */
+  private async sync() {
+    await this.ready();
+    await this.refresh();
+    await this.syncActive();
   }
 
   /** Titles and URLs as they are now: the discovery events can lag behind a navigation. */
@@ -765,10 +747,8 @@ export class Browser {
   }
 
   private async viewport(targetId: string) {
-    return this.run<{ width: number; height: number; url: string; title: string }>(
-      targetId,
-      VIEWPORT,
-    );
+    type Viewport = { width: number; height: number; scrollX: number; scrollY: number };
+    return this.run<Viewport & { url: string; title: string }>(targetId, VIEWPORT);
   }
 
   private async point(targetId: string, target: unknown): Promise<{ x: number; y: number }> {
@@ -806,6 +786,20 @@ export class Browser {
     );
   }
 
+  /** Presses or lets go of a mouse button, kept in `buttons` for the moves while it's held. */
+  private button(
+    s: string,
+    p: Point,
+    down: boolean,
+    button: keyof typeof BUTTONS = "left",
+    extra = {},
+  ) {
+    if (down) this.buttons |= BUTTONS[button];
+    else this.buttons &= ~BUTTONS[button];
+    const type = down ? "mousePressed" : "mouseReleased";
+    return this.mouse(s, type, p, { button, clickCount: 1, ...extra });
+  }
+
   /** Moves the pointer to `p` along a person-like path, from wherever it last was in the tab. */
   private async moveTo(targetId: string, s: string, p: Point, extra: Json = {}) {
     const from = this.pointers.get(targetId) ?? {
@@ -833,11 +827,9 @@ export class Browser {
     await sleep(between(40, 120));
     for (let i = 1; i <= count; i++) {
       if (i > 1) await sleep(between(60, 110));
-      this.buttons |= BUTTONS[button];
-      await this.mouse(s, "mousePressed", p, { button, clickCount: i, modifiers });
+      await this.button(s, p, true, button, { clickCount: i, modifiers });
       await sleep(between(50, 110));
-      this.buttons &= ~BUTTONS[button];
-      await this.mouse(s, "mouseReleased", p, { button, clickCount: i, modifiers });
+      await this.button(s, p, false, button, { clickCount: i, modifiers });
     }
     await this.afterInput(targetId, since);
     return { kind: "none" };
@@ -891,24 +883,8 @@ export class Browser {
       if (ch === "\n") await this.press(s, "Enter");
       else if (ch === "\t") await this.press(s, "Tab");
       else {
-        const def = charKey(ch);
-        await this.cdp.send(
-          "Input.dispatchKeyEvent",
-          {
-            type: "keyDown",
-            key: ch,
-            code: def.code,
-            windowsVirtualKeyCode: def.keyCode,
-            text: ch,
-            unmodifiedText: ch,
-          },
-          s,
-        );
-        await this.cdp.send(
-          "Input.dispatchKeyEvent",
-          { type: "keyUp", key: ch, code: def.code, windowsVirtualKeyCode: def.keyCode },
-          s,
-        );
+        await this.keyEvent(s, charKey(ch), true, 0);
+        await this.keyEvent(s, charKey(ch), false, 0);
       }
     }
   }
@@ -968,13 +944,9 @@ export class Browser {
           );
         const scale = Math.min(v.width / (x1 - x0), v.height / (y1 - y0));
         // The clip is in page coordinates: add the scroll offset.
-        const { scrollX, scrollY } = await this.run<{ scrollX: number; scrollY: number }>(
-          t,
-          VIEWPORT,
-        );
         return this.capture(t, {
-          x: x0 + scrollX,
-          y: y0 + scrollY,
+          x: x0 + v.scrollX,
+          y: y0 + v.scrollY,
           width: x1 - x0,
           height: y1 - y0,
           scale,
@@ -1006,14 +978,8 @@ export class Browser {
         const t = tab();
         const p = await this.coordinate(t, input.target);
         const s = await this.session(t);
-        const down = name === "left_mouse_down";
         await this.moveTo(t, s, p);
-        if (down) this.buttons |= 1;
-        else this.buttons &= ~1;
-        await this.mouse(s, down ? "mousePressed" : "mouseReleased", p, {
-          button: "left",
-          clickCount: 1,
-        });
+        await this.button(s, p, name === "left_mouse_down");
         return { kind: "none" };
       }
       case "left_click_drag": {
@@ -1022,8 +988,7 @@ export class Browser {
         const to = await this.coordinate(t, input.target);
         const s = await this.session(t);
         await this.moveTo(t, s, from);
-        this.buttons |= 1;
-        await this.mouse(s, "mousePressed", from, { button: "left", clickCount: 1 });
+        await this.button(s, from, true);
         await sleep(between(80, 150));
         // Slower while dragging, as a hand is.
         for (const step of path(from, to)) {
@@ -1032,8 +997,7 @@ export class Browser {
         }
         this.pointers.set(t, to);
         await sleep(between(60, 120));
-        this.buttons &= ~1;
-        await this.mouse(s, "mouseReleased", to, { button: "left", clickCount: 1 });
+        await this.button(s, to, false);
         return { kind: "none" };
       }
       case "scroll": {
@@ -1228,9 +1192,7 @@ export class Browser {
    * tabs don't pile up from task to task.
    */
   async reset(): Promise<{ closed: number }> {
-    await this.ready();
-    await this.refresh();
-    await this.syncActive();
+    await this.sync();
     const keep = this.active ?? this.pages()[0]?.targetId;
     let closed = 0;
     for (const t of this.pages()) {
@@ -1254,20 +1216,25 @@ export class Browser {
     script: string | null,
     arg: unknown = {},
   ): Promise<{ url: string; title: string; value: T | undefined } | null> {
-    await this.ready();
-    await this.refresh();
-    await this.syncActive();
+    await this.sync();
     const t = this.active ? this.targets.get(this.active) : undefined;
     if (!t) return null;
     const value = script === null ? undefined : await this.run<T>(t.targetId, script, arg);
     return { url: t.url, title: t.title, value };
   }
 
+  /**
+   * What `script` returns in every other tab that was on screen at the last look: a popup's window (a
+   * sign-in, 3-D Secure) shows beside the active tab's. Null for one that couldn't be asked.
+   */
+  async alsoShown<T>(script: string, arg: unknown = {}): Promise<(T | null)[]> {
+    const others = this.shown.filter((t) => t !== this.active && this.targets.has(t));
+    return Promise.all(others.map((t) => this.run<T>(t, script, arg).catch(() => null)));
+  }
+
   /** The open tabs, and what changed since the last report. */
   async state(): Promise<BrowserState> {
-    await this.ready();
-    await this.refresh();
-    await this.syncActive();
+    await this.sync();
     const pages = this.pages();
     const opened: BrowserStateChange[] = pages
       .filter((t) => !this.reported.has(t.targetId))
@@ -1304,9 +1271,7 @@ export class Browser {
     script: string,
     arg: { x: number; y: number; focused: boolean },
   ): Promise<AgentElement | null> {
-    await this.ready();
-    await this.refresh();
-    await this.syncActive();
+    await this.sync();
     const t = await this.screenTab(arg);
     if (!t) return null;
     return this.intoFrames(t, await this.run<Inspected | null>(t, script, arg));

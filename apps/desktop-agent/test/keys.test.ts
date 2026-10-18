@@ -36,8 +36,13 @@ test("only listed names are pressed: no keycodes, hex or Unicode keysyms, or mod
     "KP_Enter+a",
     "space+Tab",
     "\u0085",
+    // Every object has these, but they aren't keys.
+    "constructor+Return",
+    "__proto__+Return",
   ])
     expect(() => combo(name)).toThrow(KeyError);
+  expect(() => modifiers("constructor")).toThrow(KeyError);
+  expect(browserKey("constructor")).toBe("constructor");
   expect(combo("Control_L+l")).toBe("ctrl+l");
   expect(combo("KP_Enter")).toBe("KP_Enter");
   expect(combo("Next")).toBe("Next");
@@ -64,6 +69,8 @@ test("desktop-agent presses exactly the names the brain's checks read, as the sa
     "KP_Space",
     "Linefeed",
     "ISO_Left_Tab",
+    "constructor",
+    "__proto__",
   ];
   for (const name of names) {
     const read = readKey(name);

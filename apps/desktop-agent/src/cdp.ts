@@ -3,7 +3,7 @@
 // fake the answers.
 import type { AgentContext, AgentElement } from "@hatbot/shared/desktop";
 import { type Browser, ChromiumDown } from "./browser";
-import { ELEMENT } from "./page";
+import { ELEMENT, WALK } from "./page";
 
 const MAX_TEXT = 20_000;
 
@@ -13,12 +13,16 @@ const MAX_TEXT = 20_000;
  * or its shape: one character (a code's box per digit), a short number field (a code), a long one (a card
  * number), or text drawn as dots. Names are split at camelCase, capitals, digits, dashes and underscores,
  * so OTPCode, otp1 and nr_karty read as words. Text areas too: a key or a recovery phrase goes in one.
+ * Not a promo code, an email to verify, or the number of a house or of things to buy.
  */
 export const SECRET = `
-  const SECRET_HINT = /pass|has[lł]|\\bpwd?\\b|\\bcc(?: ?(?:num(?:ber)?|no)|\\b)|\\bcard ?(?:num(?:ber)?|no)\\b|(?:credit|debit) ?card|\\b(?:numer|nr) ?kart|\\bcvc|\\bcvv|\\bcsc\\b|\\b(?:otp|pin)(?:code)?\\b|totp|\\b2 ?fa\\b|\\bmfa\\b|\\bkod(?! ?poczt)|(?<!zip |post |postal )\\bcode\\b|security ?code|one time|\\btoken|\\bblik|\\bsms|verif|secret|private ?key|api ?key|recovery|mnemonic/;
+  const SECRET_HINT = /pass(?:word|wd|wort|phrase|code)|\\bpass\\b|has[lł]|\\bpwd?\\b|\\bcc(?: ?(?:num(?:ber)?|no)|\\b)|\\bcard ?(?:num(?:ber)?|no)\\b|(?:credit|debit) ?card|\\b(?:numer|nr) ?kart|\\bcvc|\\bcvv|\\bcsc\\b|\\b(?:otp|pin)(?:code)?\\b|totp|\\b2 ?fa\\b|\\bmfa\\b|\\bkod(?! ?(?:poczt|rabat|promo))|(?<!\\b(?:zip|post(?:al)?|promo(?:tional)?|coupon|discount|rabat) )\\bcode\\b|security ?code|one time|\\btoken|\\bblik|\\bsms|verif(?![a-z]* (?:your |the )?e ?mail)|secret|private ?key|api ?key|recovery(?! ?(?:e ?mail|phone))|mnemonic/;
+  const ORDINARY = /\\bzip\\b|post(?:al)? ?code|poczt|house|street|building|apartment|\\bapt\\b|domu|mieszkani|lokal|\\bqty\\b|quantity|ilo[sś][cć]/;
   const CARD_SHAPE = /(?:[0-9x•*] ?){4}(?:[ -]?(?:[0-9x•*]){4}){2,}/i;
+  // Inputs nobody types into: a checkbox's value is "on", a button's is its label.
+  const UNTYPED = ['hidden', 'checkbox', 'radio', 'submit', 'button', 'reset', 'image', 'file', 'range', 'color'];
   const isSecret = (el) => {
-    if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') || el.type === 'hidden') return false;
+    if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') || UNTYPED.includes(el.type)) return false;
     if (el.type === 'password') return true;
     const hints = [el.getAttribute('autocomplete'), el.getAttribute('name'), el.id,
       el.getAttribute('placeholder'), el.getAttribute('aria-label')].join(' ')
@@ -30,14 +34,15 @@ export const SECRET = `
       const look = (el.ownerDocument.defaultView || window).getComputedStyle(el);
       if ((look.webkitTextSecurity || 'none') !== 'none') return true;
     } catch {}
-    if (el.tagName !== 'INPUT') return false;
+    if (el.tagName !== 'INPUT' || ORDINARY.test(hints)) return false;
     if (CARD_SHAPE.test(el.getAttribute('placeholder') || '')) return true;
-    if (el.maxLength === 1 && el.type !== 'checkbox' && el.type !== 'radio') return true;
-    const numeric = el.inputMode === 'numeric' || el.type === 'tel' || el.type === 'number'
-      || /\\\\d|0-9/.test(el.pattern || '');
-    if (numeric && el.maxLength > 0 && el.maxLength <= 8) return true;
+    if (el.maxLength === 1) return true;
+    const numeric = el.inputMode === 'numeric' || el.type === 'tel' || /\\\\d|0-9/.test(el.pattern || '');
+    // A code; type=number counts things (how many to buy).
+    if (numeric && el.type !== 'number' && el.maxLength > 0 && el.maxLength <= 8) return true;
     // A card number, spaces and all; a phone number is shorter, and says it's one.
-    return numeric && el.type !== 'tel' && el.maxLength >= 16 && el.maxLength <= 23;
+    return (numeric || el.type === 'number') && el.type !== 'tel' && el.maxLength >= 16
+      && el.maxLength <= 23;
   };
 `;
 
@@ -46,12 +51,12 @@ export const SECRET = `
 // fields count in open shadow roots and same-origin frames too. A payment frame from another address
 // can't be read, and autofill or a paste may have filled it without typing, so one that's showing counts.
 export const CONTEXT_JS = `(o) => {
+  ${WALK}
   ${SECRET}
   // Card fields' frames, by who serves them or what they say they are: whole words, not "karty
   // graficzne" in a video's title.
   const PAY_HOST = /(?:^|\\.)(?:stripe\\.com|stripe\\.network|adyen\\.com|adyenpayments\\.com|braintreegateway\\.com|braintree-api\\.com|payu\\.com|przelewy24\\.pl|tpay\\.com|paynow\\.pl|imoje\\.pl|blik\\.com|checkout\\.com|squareup\\.com|klarna\\.com)$/i;
   const PAY_WORDS = /\\b(?:card ?(?:number|num|no)|credit card|debit card|card payment|cvc|cvv|security code|numer karty|karty płatniczej|karta płatnicza|payment (?:input|frame|field|form|details)|3d ?secure|3ds)\\b/i;
-  const shown = (e) => e.getClientRects().length > 0;
   // A frame you could see: not hidden, and big enough on screen to hold a field (Stripe.js leaves an
   // invisible one, a pixel high, on every page that loads it).
   const onScreen = (e) => {
@@ -67,21 +72,11 @@ export const CONTEXT_JS = `(o) => {
     return PAY_HOST.test(host) || PAY_WORDS.test(['title', 'name', 'aria-label']
       .map((a) => e.getAttribute(a) || '').join(' '));
   };
-  const secretIn = (root) => {
-    for (const e of root.querySelectorAll('*')) {
-      if ((e.tagName === 'INPUT' || e.tagName === 'TEXTAREA') && e.value && isSecret(e) && shown(e)) return true;
-      if (e.shadowRoot && secretIn(e.shadowRoot)) return true;
-      if (e.tagName === 'IFRAME' || e.tagName === 'FRAME') {
-        let d = null;
-        try { d = e.contentDocument; } catch {}
-        if (d ? secretIn(d) : onScreen(e) && payFrame(e)) return true;
-      }
-    }
-    return false;
-  };
+  const secret = (e) => ((e.tagName === 'INPUT' || e.tagName === 'TEXTAREA') && e.value && isSecret(e)
+    && shownBox(e)) || (isFrame(e) && !frameDoc(e) && onScreen(e) && payFrame(e));
   const out = {};
   if (o.text) out.text = (document.body ? document.body.innerText : "").slice(0, o.max);
-  if (o.secrets) out.secretShown = secretIn(document);
+  if (o.secrets) out.secretShown = allIn(document).some(secret);
   return out;
 }`;
 
@@ -110,11 +105,15 @@ export async function context(
         return bare && { ...bare, value: { secretShown: true } };
       });
     if (!tab) return { url: null, title: null };
+    // A popup's window shows too, and one that can't be read may be showing a secret.
+    const others = secrets ? await browser.alsoShown<Page["value"]>(CONTEXT_JS, { secrets }) : [];
+    const secretShown =
+      (tab.value?.secretShown ?? true) || others.some((o) => o?.secretShown !== false);
     return {
       url: tab.url,
       title: tab.title,
       ...(withText ? { text: tab.value?.text ?? "" } : {}),
-      ...(secrets ? { secretShown: tab.value?.secretShown ?? true } : {}),
+      ...(secrets ? { secretShown } : {}),
     };
   } catch (err) {
     // Chromium isn't running, so it shows nothing; anything else may be a page showing one.
@@ -139,8 +138,7 @@ export const ELEMENT_JS = `(o) => {
   // Nothing focused is the page itself, which still says whether it has the keyboard: when it doesn't,
   // Enter goes to the address bar or another window.
   if ((!el || el === el.ownerDocument.body) && o.focused)
-    return { tag: 'body', role: null, type: null, label: '', inForm: false, url: location.href,
-      editable: false, fields: fieldsFor(document.body), secret: false, pageFocus: document.hasFocus() };
+    return { ...pageInfo(), secret: false, pageFocus: document.hasFocus() };
   if (!el || el === el.ownerDocument.body) return null;
   // Teach mode drops what's typed here. A frame's focus can't be seen from the page, so it counts too, as
   // does a custom element's whose shadow root is closed: it can't take the focus itself, unless it's the

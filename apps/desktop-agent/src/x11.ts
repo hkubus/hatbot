@@ -1,7 +1,7 @@
 // The X display: input through xdotool, pixels through ffmpeg's x11grab.
 import type { AgentActionResult } from "@hatbot/shared/desktop";
 import { between, path } from "./human";
-import { combo, KeyError, modifiers } from "./keys";
+import { combo, modifiers } from "./keys";
 
 export class ActionError extends Error {}
 
@@ -73,52 +73,23 @@ export async function screenSize(): Promise<{ width: number; height: number }> {
 }
 
 /** One frame. x11grab waits a frame interval before grabbing; at its default 30 fps that's most of the time. */
-async function grab(args: string[]): Promise<Uint8Array> {
-  const { out, err, code } = await spawn([
-    "ffmpeg",
-    "-loglevel",
-    "error",
-    "-f",
-    "x11grab",
-    "-framerate",
-    "1000",
-    ...args,
-  ]);
+async function grab(args: string[], deadlineMs = DEADLINE_MS): Promise<Uint8Array> {
+  const { out, err, code } = await spawn(
+    ["ffmpeg", "-loglevel", "error", "-f", "x11grab", "-framerate", "1000", ...args],
+    0,
+    deadlineMs,
+  );
   if (code !== 0 || !out.length)
     throw new Error(`ffmpeg exited ${code}: ${err.trim().slice(0, 300)}`);
   return out;
 }
 
 /** Whether one frame can be grabbed, for GET /health?deep=1. */
-export async function displayUp(): Promise<boolean> {
-  try {
-    const { out, code } = await spawn(
-      [
-        "ffmpeg",
-        "-loglevel",
-        "error",
-        "-f",
-        "x11grab",
-        "-framerate",
-        "1000",
-        "-video_size",
-        "1x1",
-        "-i",
-        display,
-        "-frames:v",
-        "1",
-        "-f",
-        "rawvideo",
-        "-",
-      ],
-      0,
-      3000,
-    );
-    return code === 0 && out.length > 0;
-  } catch {
-    return false;
-  }
-}
+export const displayUp = () =>
+  grab(["-video_size", "1x1", "-i", display, "-frames:v", "1", "-f", "rawvideo", "-"], 3000).then(
+    () => true,
+    () => false,
+  );
 
 // Lossless WebP: exact pixels for the model, and about a third of PNG's size in the archive.
 const WEBP = [
@@ -198,19 +169,13 @@ const num = (v: unknown, name: string, min: number, max: number): number => {
   return Math.min(max, Math.max(min, v));
 };
 
-const BUTTONS = {
-  left_click: 1,
-  right_click: 3,
-  middle_click: 2,
-  double_click: 1,
-  triple_click: 1,
-} as const;
-const REPEATS = {
-  left_click: 1,
-  right_click: 1,
-  middle_click: 1,
-  double_click: 2,
-  triple_click: 3,
+/** Each click's X button and how many times it's pressed. */
+const CLICKS = {
+  left_click: [1, 1],
+  right_click: [3, 1],
+  middle_click: [2, 1],
+  double_click: [1, 2],
+  triple_click: [1, 3],
 } as const;
 const WHEEL = { up: "4", down: "5", left: "6", right: "7" } as const;
 /** Live view frame rates: while the owner has control, and while they (or nobody) only watch. */
@@ -218,20 +183,6 @@ export const LIVE_FPS_CONTROL = 15;
 export const LIVE_FPS_WATCHING = 5;
 /** Longer text than this is typed fast, in chunks this long; the brain's timeout for `type` assumes it. */
 const HUMAN_TYPING_CHARS = 200;
-
-/** Runs one computer toolset member (not screenshot or zoom). */
-export async function act(
-  size: { width: number; height: number },
-  name: string,
-  input: Record<string, unknown>,
-): Promise<AgentActionResult> {
-  try {
-    return await actInner(size, name, input);
-  } catch (err) {
-    if (err instanceof KeyError) throw new ActionError(err.message);
-    throw err;
-  }
-}
 
 /** xdotool steps that move the pointer to `to` along a person-like path from where it is. */
 async function glide([x, y]: [number, number]): Promise<string[]> {
@@ -260,7 +211,8 @@ async function glide([x, y]: [number, number]): Promise<string[]> {
   ];
 }
 
-async function actInner(
+/** Runs one computer toolset member (not screenshot or zoom). A name off the key lists throws KeyError. */
+export async function act(
   size: { width: number; height: number },
   name: string,
   input: Record<string, unknown>,
@@ -327,14 +279,8 @@ async function actInner(
     case "middle_click":
     case "double_click":
     case "triple_click": {
-      const click = [
-        "click",
-        "--repeat",
-        String(REPEATS[name]),
-        "--delay",
-        "80",
-        String(BUTTONS[name]),
-      ];
+      const [button, times] = CLICKS[name];
+      const click = ["click", "--repeat", String(times), "--delay", "80", String(button)];
       await xdotool(...at(), ...held(click));
       return {};
     }
