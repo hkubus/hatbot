@@ -20,7 +20,7 @@ import { Icon } from "../icons";
 import { navigate } from "../router";
 import { loadPlugins, putWatcher, useStore } from "../store";
 import { Switch } from "../switch";
-import { BackHead, SaveBar } from "../ui";
+import { BackHead, Group, SaveBar, Seg } from "../ui";
 
 const EVERY = [5, 15, 30, 60, 180, 360, 720, 1440];
 const WHEN: { when: WatchCondition["when"]; label: string }[] = [
@@ -45,41 +45,34 @@ export function WatcherList({ onError }: { onError: (error: string) => void }) {
     .filter((w): w is Watcher => Boolean(w))
     .sort((a, b) => a.name.localeCompare(b.name));
   return (
-    <section className="group">
-      <h2>Watchers</h2>
-      <div className="group-box">
-        {shown.map((w) => (
-          <div className="row" key={w.id}>
-            <button
-              type="button"
-              className="row-main"
-              onClick={() => navigate(`/watchers/${w.id}`)}
-            >
-              <div className="txt">
-                <b>{w.name}</b>
-              </div>
-              {w.lastError ? (
-                <span className={w.errors ? "val bad" : "val"}>{trouble(w)?.short}</span>
-              ) : (
-                <span className="val">{w.enabled ? (w.lastValue ?? "") : "Off"}</span>
-              )}
-              <Icon name="chevron" className="chev" />
-            </button>
-            <Switch
-              on={w.enabled}
-              onChange={(enabled) =>
-                patchWatcher(w.id, { enabled }).catch((err) => onError(errorText(err)))
-              }
-            />
-          </div>
-        ))}
-        {!shown.length && (
-          <div className="row">
-            <span className="muted">None yet. Ask Hatbot to tell you when something changes.</span>
-          </div>
-        )}
-      </div>
-    </section>
+    <Group title="Watchers">
+      {shown.map((w) => (
+        <div className="row" key={w.id}>
+          <button type="button" className="row-main" onClick={() => navigate(`/watchers/${w.id}`)}>
+            <div className="txt">
+              <b>{w.name}</b>
+            </div>
+            {w.lastError ? (
+              <span className={w.errors ? "val bad" : "val"}>{trouble(w)?.short}</span>
+            ) : (
+              <span className="val">{w.enabled ? (w.lastValue ?? "") : "Off"}</span>
+            )}
+            <Icon name="chevron" className="chev" />
+          </button>
+          <Switch
+            on={w.enabled}
+            onChange={(enabled) =>
+              patchWatcher(w.id, { enabled }).catch((err) => onError(errorText(err)))
+            }
+          />
+        </div>
+      ))}
+      {!shown.length && (
+        <div className="row">
+          <span className="muted">None yet. Ask Hatbot to tell you when something changes.</span>
+        </div>
+      )}
+    </Group>
   );
 }
 
@@ -349,26 +342,20 @@ export function WatcherEdit({ id }: { id: number | null }) {
           </label>
           <div className="form-row">
             <span className="label">Look at</span>
-            <div className="seg">
-              <button
-                type="button"
-                className={form.kind === "page" ? "active" : ""}
-                aria-pressed={form.kind === "page"}
-                onClick={() => set({ kind: "page" })}
-              >
-                A page
-              </button>
-              <button
-                type="button"
-                className={form.kind === "tool" ? "active" : ""}
-                aria-pressed={form.kind === "tool"}
-                onClick={() =>
-                  set({ kind: "tool", pick: form.pick === "selector" ? "path" : form.pick })
-                }
-              >
-                A plugin
-              </button>
-            </div>
+            <Seg
+              value={form.kind}
+              options={[
+                ["page", "A page"],
+                ["tool", "A plugin"],
+              ]}
+              onChange={(kind) =>
+                set(
+                  kind === "tool"
+                    ? { kind, pick: form.pick === "selector" ? "path" : form.pick }
+                    : { kind },
+                )
+              }
+            />
           </div>
           {form.kind === "page" ? (
             <label>
@@ -433,27 +420,17 @@ export function WatcherEdit({ id }: { id: number | null }) {
           )}
           <div className="form-row">
             <span className="label">Value</span>
-            <div className="seg">
-              {(
+            <Seg
+              value={form.pick}
+              options={(
                 [
                   ["selector", "CSS selector"],
                   ["path", "JSON path"],
                   ["page", form.kind === "page" ? "Whole page" : "Whole answer"],
                 ] as const
-              )
-                .filter(([pick]) => !(rendered && pick === "path"))
-                .map(([pick, label]) => (
-                  <button
-                    type="button"
-                    key={pick}
-                    className={form.pick === pick ? "active" : ""}
-                    aria-pressed={form.pick === pick}
-                    onClick={() => set({ pick })}
-                  >
-                    {label}
-                  </button>
-                ))}
-            </div>
+              ).filter(([pick]) => !(rendered && pick === "path"))}
+              onChange={(pick) => set({ pick })}
+            />
           </div>
           {form.pick === "selector" && (
             <input

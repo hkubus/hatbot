@@ -7,7 +7,7 @@ import { ask } from "../confirm";
 import { deviceName } from "../device";
 import { LoadError, loadErrorText } from "../load";
 import type { Toast } from "../toast";
-import { BackHead } from "../ui";
+import { BackHead, Group, Row } from "../ui";
 import { AddToAuthenticator, OtpInput } from "./Login";
 
 const changed = (what: string, ended: number) =>
@@ -246,31 +246,22 @@ function Sessions({ toast, version }: { toast: Toast; version: number }) {
   if (loadError) return <LoadError error={loadError} retry={load} />;
   if (!sessions) return null;
   return (
-    <section className="group">
-      <h2>Signed in</h2>
-      <div className="group-box">
-        {sessions.map((s) => (
-          <div className="row" key={s.id}>
-            <div className="txt">
-              <b>{deviceName(s.userAgent)}</b>
-            </div>
-            <span className="val">{s.current ? "This browser" : since(s.createdAt)}</span>
-            {!s.current && (
-              <button type="button" className="btn sm danger-text" onClick={() => end(s)}>
-                Sign out
-              </button>
-            )}
-          </div>
-        ))}
-        <div className="row">
-          <div className="txt">
-            <b>Every other browser and app</b>
-          </div>
-          <button type="button" className="btn sm danger-text" onClick={endOthers}>
-            Sign out
-          </button>
-        </div>
-      </div>
-    </section>
+    <Group title="Signed in">
+      {sessions.map((s) => (
+        <Row key={s.id} label={deviceName(s.userAgent)}>
+          <span className="val">{s.current ? "This browser" : since(s.createdAt)}</span>
+          {!s.current && (
+            <button type="button" className="btn sm danger-text" onClick={() => end(s)}>
+              Sign out
+            </button>
+          )}
+        </Row>
+      ))}
+      <Row label="Every other browser and app">
+        <button type="button" className="btn sm danger-text" onClick={endOthers}>
+          Sign out
+        </button>
+      </Row>
+    </Group>
   );
 }

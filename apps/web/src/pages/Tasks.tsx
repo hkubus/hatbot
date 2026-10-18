@@ -23,7 +23,7 @@ import {
   useStore,
 } from "../store";
 import { ApprovalCard, isActive, Shot, StatusChip, taskLine } from "../tasks";
-import { BackHead } from "../ui";
+import { BackHead, Group, Seg } from "../ui";
 import { AssistantBody } from "./Chat";
 
 const time = (iso: string) =>
@@ -106,78 +106,62 @@ export function Tasks() {
     <section className="view">
       <div className="page">
         {(waiting.length > 0 || request) && (
-          <section className="group">
-            <h2>Waiting for you</h2>
-            <div className="group-box">
-              {request && (
-                <Link className="row row-link" to={`/tasks/${request.taskId}?live=1`}>
+          <Group title="Waiting for you">
+            {request && (
+              <Link className="row row-link" to={`/tasks/${request.taskId}?live=1`}>
+                <div className="txt">
+                  <b>Take over the desktop</b>
+                </div>
+                <span className="val">{request.reason}</span>
+              </Link>
+            )}
+            {waiting.map((a) => {
+              const n = a.kind === "mandate" ? negotiationOf({ negotiations }, a.id) : undefined;
+              return (
+                <Link
+                  key={a.id}
+                  className="row row-link"
+                  to={
+                    a.taskId
+                      ? `/tasks/${a.taskId}`
+                      : n
+                        ? `/negotiations/${n.id}`
+                        : a.conversationId && a.conversationId !== HATBOT_CHAT
+                          ? `/chat/${a.conversationId}`
+                          : "/"
+                  }
+                >
                   <div className="txt">
-                    <b>Take over the desktop</b>
+                    <b>Can I go ahead? {a.summary}</b>
                   </div>
-                  <span className="val">{request.reason}</span>
-                </Link>
-              )}
-              {waiting.map((a) => {
-                const n = a.kind === "mandate" ? negotiationOf({ negotiations }, a.id) : undefined;
-                return (
-                  <Link
-                    key={a.id}
-                    className="row row-link"
-                    to={
-                      a.taskId
-                        ? `/tasks/${a.taskId}`
-                        : n
-                          ? `/negotiations/${n.id}`
-                          : a.conversationId && a.conversationId !== HATBOT_CHAT
-                            ? `/chat/${a.conversationId}`
-                            : "/"
-                    }
-                  >
-                    <div className="txt">
-                      <b>Can I go ahead? {a.summary}</b>
-                    </div>
-                    <Icon name="chevron" />
-                  </Link>
-                );
-              })}
-            </div>
-          </section>
-        )}
-        {talking.length > 0 && (
-          <section className="group">
-            <h2>Negotiations</h2>
-            <div className="group-box">
-              {talking.map((n) => (
-                <Link key={n.id} className="row row-link" to={`/negotiations/${n.id}`}>
-                  <div className="txt">
-                    <b>{n.title}</b>
-                  </div>
-                  <NegotiationChip status={n.status} />
                   <Icon name="chevron" />
                 </Link>
-              ))}
-            </div>
-          </section>
+              );
+            })}
+          </Group>
+        )}
+        {talking.length > 0 && (
+          <Group title="Negotiations">
+            {talking.map((n) => (
+              <Link key={n.id} className="row row-link" to={`/negotiations/${n.id}`}>
+                <div className="txt">
+                  <b>{n.title}</b>
+                </div>
+                <NegotiationChip status={n.status} />
+                <Icon name="chevron" />
+              </Link>
+            ))}
+          </Group>
         )}
         <div className="page-head">
-          <div className="seg">
-            <button
-              type="button"
-              className={filter === "active" ? "active" : ""}
-              aria-pressed={filter === "active"}
-              onClick={() => setFilter("active")}
-            >
-              Active
-            </button>
-            <button
-              type="button"
-              className={filter === "done" ? "active" : ""}
-              aria-pressed={filter === "done"}
-              onClick={() => setFilter("done")}
-            >
-              Finished
-            </button>
-          </div>
+          <Seg
+            value={filter}
+            options={[
+              ["active", "Active"],
+              ["done", "Finished"],
+            ]}
+            onChange={setFilter}
+          />
         </div>
         {loadError && <LoadError error={loadError} retry={() => setAttempt((n) => n + 1)} />}
         {ids && !shown.length && (

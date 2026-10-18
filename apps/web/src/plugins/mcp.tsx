@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useAction } from "../action";
 import { useLeaveGuard } from "../confirm";
 import { Switch } from "../switch";
+import { Seg } from "../ui";
 import type { PluginSettingsProps } from ".";
 
 type Mode = "chat" | "allow" | "ask" | "always" | "off";
@@ -181,19 +182,14 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
                 value={s.name}
                 onChange={(e) => set(i, { name: e.target.value.toLowerCase() })}
               />
-              <div className="seg">
-                {(["http", "stdio"] as const).map((t) => (
-                  <button
-                    type="button"
-                    key={t}
-                    className={s.transport === t ? "active" : ""}
-                    aria-pressed={s.transport === t}
-                    onClick={() => set(i, { transport: t })}
-                  >
-                    {t === "http" ? "HTTP" : "Command"}
-                  </button>
-                ))}
-              </div>
+              <Seg
+                value={s.transport}
+                options={[
+                  ["http", "HTTP"],
+                  ["stdio", "Command"],
+                ]}
+                onChange={(transport) => set(i, { transport })}
+              />
             </div>
             {st?.state === "failed" && <div className="form-error">{st.error}</div>}
             {s.transport === "http" ? (

@@ -19,7 +19,7 @@ import { atIso, cronOk, localInput } from "../schedule-form";
 import { loadSchedules, putSchedule, putTrigger, saveSchedule, useStore } from "../store";
 import { Switch } from "../switch";
 import { whenText } from "../tasks";
-import { BackHead, SaveBar } from "../ui";
+import { BackHead, Group, SaveBar, Seg } from "../ui";
 import { WatcherEdit, WatcherList } from "./Watchers";
 
 const KIND = { webhook: "Webhook", kuma: "Uptime Kuma" } as const;
@@ -90,64 +90,58 @@ function List() {
         {error && <div className="form-error">{error}</div>}
         {ids && (
           <>
-            <section className="group">
-              <h2>Schedules</h2>
-              <div className="group-box">
-                {shownSchedules.map((s) => (
-                  <div className="row" key={s.id}>
-                    <button
-                      type="button"
-                      className="row-main"
-                      onClick={() => navigate(`/schedules/${s.id}`)}
-                    >
-                      <div className="txt">
-                        <b>{s.name}</b>
-                      </div>
-                      <span className="val">{s.enabled ? whenText(s) : "Off"}</span>
-                      <Icon name="chevron" className="chev" />
-                    </button>
-                    <Switch
-                      on={s.enabled}
-                      onChange={(enabled) =>
-                        saveSchedule(s.id, { enabled }).catch((err) => setError(errorText(err)))
-                      }
-                    />
-                  </div>
-                ))}
-                {!shownSchedules.length && (
-                  <div className="row">
-                    <span className="muted">None yet. Ask Hatbot in chat, or add one here.</span>
-                  </div>
-                )}
-              </div>
-            </section>
+            <Group title="Schedules">
+              {shownSchedules.map((s) => (
+                <div className="row" key={s.id}>
+                  <button
+                    type="button"
+                    className="row-main"
+                    onClick={() => navigate(`/schedules/${s.id}`)}
+                  >
+                    <div className="txt">
+                      <b>{s.name}</b>
+                    </div>
+                    <span className="val">{s.enabled ? whenText(s) : "Off"}</span>
+                    <Icon name="chevron" className="chev" />
+                  </button>
+                  <Switch
+                    on={s.enabled}
+                    onChange={(enabled) =>
+                      saveSchedule(s.id, { enabled }).catch((err) => setError(errorText(err)))
+                    }
+                  />
+                </div>
+              ))}
+              {!shownSchedules.length && (
+                <div className="row">
+                  <span className="muted">None yet. Ask Hatbot in chat, or add one here.</span>
+                </div>
+              )}
+            </Group>
             <WatcherList onError={setError} />
-            <section className="group">
-              <h2>Triggers</h2>
-              <div className="group-box">
-                {shownTriggers.map((t) => (
-                  <div className="row" key={t.id}>
-                    <button
-                      type="button"
-                      className="row-main"
-                      onClick={() => navigate(`/triggers/${t.id}`)}
-                    >
-                      <div className="txt">
-                        <b>{t.name}</b>
-                      </div>
-                      <span className="val">{t.enabled ? KIND[t.kind] : "Off"}</span>
-                      <Icon name="chevron" className="chev" />
-                    </button>
-                    <Switch on={t.enabled} onChange={(enabled) => toggleTrigger(t, enabled)} />
-                  </div>
-                ))}
-                {!shownTriggers.length && (
-                  <div className="row">
-                    <span className="muted">None yet.</span>
-                  </div>
-                )}
-              </div>
-            </section>
+            <Group title="Triggers">
+              {shownTriggers.map((t) => (
+                <div className="row" key={t.id}>
+                  <button
+                    type="button"
+                    className="row-main"
+                    onClick={() => navigate(`/triggers/${t.id}`)}
+                  >
+                    <div className="txt">
+                      <b>{t.name}</b>
+                    </div>
+                    <span className="val">{t.enabled ? KIND[t.kind] : "Off"}</span>
+                    <Icon name="chevron" className="chev" />
+                  </button>
+                  <Switch on={t.enabled} onChange={(enabled) => toggleTrigger(t, enabled)} />
+                </div>
+              ))}
+              {!shownTriggers.length && (
+                <div className="row">
+                  <span className="muted">None yet.</span>
+                </div>
+              )}
+            </Group>
           </>
         )}
       </div>
@@ -281,24 +275,14 @@ function ScheduleEdit({ id }: { id: number | null }) {
           </label>
           <div className="form-row">
             <span className="label">When</span>
-            <div className="seg">
-              <button
-                type="button"
-                className={form.repeat ? "active" : ""}
-                aria-pressed={form.repeat}
-                onClick={() => set({ repeat: true })}
-              >
-                Repeats
-              </button>
-              <button
-                type="button"
-                className={form.repeat ? "" : "active"}
-                aria-pressed={!form.repeat}
-                onClick={() => set({ repeat: false })}
-              >
-                Once
-              </button>
-            </div>
+            <Seg
+              value={form.repeat}
+              options={[
+                [true, "Repeats"],
+                [false, "Once"],
+              ]}
+              onChange={(repeat) => set({ repeat })}
+            />
           </div>
           {form.repeat ? (
             <label>
@@ -527,25 +511,17 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
           {!stored && (
             <div className="form-row">
               <span className="label">Kind</span>
-              <div className="seg">
-                {(["webhook", "kuma"] as const).map((k) => (
-                  <button
-                    type="button"
-                    key={k}
-                    className={form.kind === k ? "active" : ""}
-                    aria-pressed={form.kind === k}
-                    onClick={() =>
-                      set({
-                        kind: k,
-                        name: k === "kuma" && !form.name ? "Uptime Kuma" : form.name,
-                        prompt: k === "kuma" && !form.prompt ? KUMA_PROMPT : form.prompt,
-                      })
-                    }
-                  >
-                    {KIND[k]}
-                  </button>
-                ))}
-              </div>
+              <Seg
+                value={form.kind}
+                options={(["webhook", "kuma"] as const).map((k) => [k, KIND[k]] as const)}
+                onChange={(k) =>
+                  set({
+                    kind: k,
+                    name: k === "kuma" && !form.name ? "Uptime Kuma" : form.name,
+                    prompt: k === "kuma" && !form.prompt ? KUMA_PROMPT : form.prompt,
+                  })
+                }
+              />
             </div>
           )}
           <label>
@@ -575,19 +551,11 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
           {form.kind === "kuma" && (
             <div className="form-row">
               <span className="label">Start a task after</span>
-              <div className="seg">
-                {CONFIRM.map((label, n) => (
-                  <button
-                    type="button"
-                    key={label}
-                    className={form.confirmChecks === n ? "active" : ""}
-                    aria-pressed={form.confirmChecks === n}
-                    onClick={() => set({ confirmChecks: n })}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <Seg
+                value={form.confirmChecks}
+                options={CONFIRM.map((label, n) => [n, label] as const)}
+                onChange={(confirmChecks) => set({ confirmChecks })}
+              />
             </div>
           )}
           {form.kind === "webhook" && (

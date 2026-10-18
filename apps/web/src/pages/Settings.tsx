@@ -19,6 +19,7 @@ import { setPaused, useStore } from "../store";
 import { Switch } from "../switch";
 import { setTheme, useTheme } from "../theme";
 import type { Toast } from "../toast";
+import { Group, Row, Seg } from "../ui";
 import { PluginPage, PluginsGroup } from "./Plugins";
 
 const Account = lazy(() => import("./Account").then((m) => ({ default: m.Account })));
@@ -142,373 +143,286 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
   return (
     <section className="view">
       <div className="page">
-        <section className="group">
-          <h2>Appearance</h2>
-          <div className="group-box">
-            <div className="row">
-              <div className="txt">
-                <b>Theme</b>
-              </div>
-              <div className="seg">
-                {(["system", "light", "dark"] as const).map((t) => (
-                  <button
-                    type="button"
-                    key={t}
-                    className={theme === t ? "active" : ""}
-                    aria-pressed={theme === t}
-                    onClick={() => setTheme(t)}
-                  >
-                    {t[0]?.toUpperCase() + t.slice(1)}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="group show-phone">
-          <div className="group-box">
-            <button type="button" className="row link" onClick={() => navigate("/schedules")}>
-              <div className="txt">
-                <b>Schedules & Triggers</b>
-              </div>
-              <Icon name="chevron" className="chev" />
-            </button>
-            <button type="button" className="row link" onClick={() => navigate("/spend")}>
-              <div className="txt">
-                <b>Spend</b>
-              </div>
-              <Icon name="chevron" className="chev" />
-            </button>
-          </div>
-        </section>
-
-        <section className="group">
-          <h2>Spending limits</h2>
-          <div className="group-box">
-            {(
-              [
-                ["dailyUsd", "Per day"],
-                ["monthlyUsd", "Per month"],
-                ["taskUsd", "Per task"],
-                ["researchUsd", "Per research task"],
-                ["alertReserveUsd", "Kept for alerts"],
-              ] as const
-            ).map(([key, label]) => (
-              <SavedRow
-                key={key}
-                label={label}
-                saved={settings.limits[key]}
-                // Nothing kept for alerts is allowed; a limit of nothing isn't.
-                parse={(text) => parseLimit(text, key === "alertReserveUsd")}
-                save={(n) => put({ limits: { [key]: n } })}
-                prefix="$"
-                input={{
-                  type: "number",
-                  inputMode: "decimal",
-                  min: key === "alertReserveUsd" ? "0" : "0.01",
-                  step: "0.01",
-                }}
-              />
-            ))}
-          </div>
-        </section>
-
-        <section className="group">
-          <h2>Chat</h2>
-          <div className="group-box">
-            <div className="row">
-              <div className="txt">
-                <b>Model</b>
-              </div>
-              <select
-                aria-label="Chat model"
-                value={settings.chatModel}
-                onChange={(e) => update({ chatModel: e.target.value as AppSettings["chatModel"] })}
-              >
-                <option value="claude-haiku-5-5">Haiku 5.5, asks Opus for hard parts</option>
-                <option value="claude-opus-5-5">Opus 5.5</option>
-              </select>
-            </div>
-            <div className="row">
-              <div className="txt">
-                <b>Effort</b>
-              </div>
-              <select
-                aria-label="Chat effort"
-                value={settings.chatEffort}
-                onChange={(e) =>
-                  update({ chatEffort: e.target.value as AppSettings["chatEffort"] })
-                }
-              >
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-              </select>
-            </div>
-            <SavedRow
-              label="Your name on memory edits"
-              saved={settings.owner.name}
-              parse={parseName}
-              save={(name) => put({ owner: { ...settings.owner, name } })}
-              input={{ type: "text" }}
+        <Group title="Appearance">
+          <Row label="Theme">
+            <Seg
+              value={theme}
+              options={[
+                ["system", "System"],
+                ["light", "Light"],
+                ["dark", "Dark"],
+              ]}
+              onChange={setTheme}
             />
-          </div>
-        </section>
+          </Row>
+        </Group>
 
-        <section className="group">
-          <h2>Tasks</h2>
-          <div className="group-box">
-            <div className="row">
-              <div className="txt">
-                <b>Model for background tasks</b>
-              </div>
-              <select
-                aria-label="Model for background tasks"
-                value={settings.taskModel}
-                onChange={(e) => update({ taskModel: e.target.value as AppSettings["taskModel"] })}
-              >
-                <option value="claude-haiku-5-5">Haiku 5.5</option>
-                <option value="claude-opus-5-5">Opus 5.5</option>
-              </select>
+        <Group className="show-phone">
+          <button type="button" className="row link" onClick={() => navigate("/schedules")}>
+            <div className="txt">
+              <b>Schedules & Triggers</b>
             </div>
-          </div>
-        </section>
+            <Icon name="chevron" className="chev" />
+          </button>
+          <button type="button" className="row link" onClick={() => navigate("/spend")}>
+            <div className="txt">
+              <b>Spend</b>
+            </div>
+            <Icon name="chevron" className="chev" />
+          </button>
+        </Group>
 
-        <section className="group">
-          <h2>Looking after things</h2>
-          <div className="group-box">
-            <button
-              type="button"
-              className="row link"
-              onClick={() => navigate("/settings/heartbeat")}
+        <Group title="Spending limits">
+          {(
+            [
+              ["dailyUsd", "Per day"],
+              ["monthlyUsd", "Per month"],
+              ["taskUsd", "Per task"],
+              ["researchUsd", "Per research task"],
+              ["alertReserveUsd", "Kept for alerts"],
+            ] as const
+          ).map(([key, label]) => (
+            <SavedRow
+              key={key}
+              label={label}
+              saved={settings.limits[key]}
+              // Nothing kept for alerts is allowed; a limit of nothing isn't.
+              parse={(text) => parseLimit(text, key === "alertReserveUsd")}
+              save={(n) => put({ limits: { [key]: n } })}
+              prefix="$"
+              input={{
+                type: "number",
+                inputMode: "decimal",
+                min: key === "alertReserveUsd" ? "0" : "0.01",
+                step: "0.01",
+              }}
+            />
+          ))}
+        </Group>
+
+        <Group title="Chat">
+          <Row label="Model">
+            <select
+              aria-label="Chat model"
+              value={settings.chatModel}
+              onChange={(e) => update({ chatModel: e.target.value as AppSettings["chatModel"] })}
             >
-              <div className="txt">
-                <b>Heartbeat</b>
-              </div>
-              <span className="val">
-                {settings.heartbeat.enabled
-                  ? describeEvery(settings.heartbeat.everyMinutes)
-                  : "Off"}
-              </span>
-              <Icon name="chevron" className="chev" />
-            </button>
-            <div className="row">
-              <div className="txt">
-                <b>Propose a memory tidy-up weekly</b>
-              </div>
-              <Switch on={settings.memoryTidy} onChange={(memoryTidy) => update({ memoryTidy })} />
-            </div>
-            <div className="row">
-              <div className="txt">
-                <b>Weekly report</b>
-              </div>
-              <Switch
-                on={settings.weeklyReport.enabled}
-                onChange={(enabled) =>
-                  update({ weeklyReport: { ...settings.weeklyReport, enabled } })
-                }
-              />
-            </div>
-            {settings.weeklyReport.enabled && (
-              <div className="row">
-                <div className="txt">
-                  <b>Sent on</b>
-                </div>
-                <select
-                  aria-label="Sent on"
-                  value={settings.weeklyReport.weekday}
-                  onChange={(e) =>
-                    update({
-                      weeklyReport: { ...settings.weeklyReport, weekday: Number(e.target.value) },
-                    })
-                  }
-                >
-                  {WEEKDAYS.map((d, i) => (
-                    <option key={d} value={i}>
-                      {d}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  aria-label="Sent at"
-                  value={settings.weeklyReport.hour}
-                  onChange={(e) =>
-                    update({
-                      weeklyReport: { ...settings.weeklyReport, hour: Number(e.target.value) },
-                    })
-                  }
-                >
-                  {HOURS.map((h) => (
-                    <option key={h} value={h}>
-                      {String(h).padStart(2, "0")}:00
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  className="btn sm"
-                  onClick={() =>
-                    api("/report/send", { body: {} }).then(
-                      () => toast("Sent to Hatbot's chat"),
-                      () => toast("Couldn't send", "error"),
-                    )
-                  }
-                >
-                  Send now
-                </button>
-              </div>
-            )}
-          </div>
-        </section>
+              <option value="claude-haiku-5-5">Haiku 5.5, asks Opus for hard parts</option>
+              <option value="claude-opus-5-5">Opus 5.5</option>
+            </select>
+          </Row>
+          <Row label="Effort">
+            <select
+              aria-label="Chat effort"
+              value={settings.chatEffort}
+              onChange={(e) => update({ chatEffort: e.target.value as AppSettings["chatEffort"] })}
+            >
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+            </select>
+          </Row>
+          <SavedRow
+            label="Your name on memory edits"
+            saved={settings.owner.name}
+            parse={parseName}
+            save={(name) => put({ owner: { ...settings.owner, name } })}
+            input={{ type: "text" }}
+          />
+        </Group>
 
-        <section className="group">
-          <h2>Desktop</h2>
-          <div className="group-box">
-            <div className="row">
-              <div className="txt">
-                <b>Model for desktop tasks</b>
-              </div>
-              <select
-                aria-label="Model for desktop tasks"
-                value={settings.desktopModel}
-                onChange={(e) =>
-                  update({ desktopModel: e.target.value as AppSettings["desktopModel"] })
-                }
-              >
-                <option value="claude-haiku-5-5">Haiku 5.5</option>
-                <option value="claude-opus-5-5">Opus 5.5</option>
-              </select>
-            </div>
-            {settings.desktopModel === "claude-haiku-5-5" && (
-              <div className="row">
-                <div className="txt">
-                  <b>Try again on Opus when Haiku fails</b>
-                </div>
-                <Switch
-                  on={settings.desktopEscalate}
-                  onChange={(desktopEscalate) => update({ desktopEscalate })}
-                />
-              </div>
-            )}
-          </div>
-        </section>
+        <Group title="Tasks">
+          <Row label="Model for background tasks">
+            <select
+              aria-label="Model for background tasks"
+              value={settings.taskModel}
+              onChange={(e) => update({ taskModel: e.target.value as AppSettings["taskModel"] })}
+            >
+              <option value="claude-haiku-5-5">Haiku 5.5</option>
+              <option value="claude-opus-5-5">Opus 5.5</option>
+            </select>
+          </Row>
+        </Group>
 
-        <section className="group">
-          <h2>Notifications</h2>
-          <div className="group-box">
-            <div className="row">
-              <div className="txt">
-                <b>Tapping one opens</b>
-              </div>
+        <Group title="Looking after things">
+          <button
+            type="button"
+            className="row link"
+            onClick={() => navigate("/settings/heartbeat")}
+          >
+            <div className="txt">
+              <b>Heartbeat</b>
+            </div>
+            <span className="val">
+              {settings.heartbeat.enabled ? describeEvery(settings.heartbeat.everyMinutes) : "Off"}
+            </span>
+            <Icon name="chevron" className="chev" />
+          </button>
+          <Row label="Propose a memory tidy-up weekly">
+            <Switch on={settings.memoryTidy} onChange={(memoryTidy) => update({ memoryTidy })} />
+          </Row>
+          <Row label="Weekly report">
+            <Switch
+              on={settings.weeklyReport.enabled}
+              onChange={(enabled) =>
+                update({ weeklyReport: { ...settings.weeklyReport, enabled } })
+              }
+            />
+          </Row>
+          {settings.weeklyReport.enabled && (
+            <Row label="Sent on">
               <select
-                aria-label="Tapping one opens"
-                value={settings.notificationsOpen}
+                aria-label="Sent on"
+                value={settings.weeklyReport.weekday}
                 onChange={(e) =>
                   update({
-                    notificationsOpen: e.target.value as AppSettings["notificationsOpen"],
+                    weeklyReport: { ...settings.weeklyReport, weekday: Number(e.target.value) },
                   })
                 }
               >
-                <option value="web">The web app</option>
-                <option value="app">The iOS app</option>
+                {WEEKDAYS.map((d, i) => (
+                  <option key={d} value={i}>
+                    {d}
+                  </option>
+                ))}
               </select>
-            </div>
-          </div>
-        </section>
+              <select
+                aria-label="Sent at"
+                value={settings.weeklyReport.hour}
+                onChange={(e) =>
+                  update({
+                    weeklyReport: { ...settings.weeklyReport, hour: Number(e.target.value) },
+                  })
+                }
+              >
+                {HOURS.map((h) => (
+                  <option key={h} value={h}>
+                    {String(h).padStart(2, "0")}:00
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="btn sm"
+                onClick={() =>
+                  api("/report/send", { body: {} }).then(
+                    () => toast("Sent to Hatbot's chat"),
+                    () => toast("Couldn't send", "error"),
+                  )
+                }
+              >
+                Send now
+              </button>
+            </Row>
+          )}
+        </Group>
 
-        <section className="group">
-          <h2>Account</h2>
-          <div className="group-box">
-            <button
-              type="button"
-              className="row link"
-              onClick={() => navigate("/settings/account")}
+        <Group title="Desktop">
+          <Row label="Model for desktop tasks">
+            <select
+              aria-label="Model for desktop tasks"
+              value={settings.desktopModel}
+              onChange={(e) =>
+                update({ desktopModel: e.target.value as AppSettings["desktopModel"] })
+              }
             >
-              <div className="txt">
-                <b>Password and sign-ins</b>
-              </div>
-              <Icon name="chevron" className="chev" />
+              <option value="claude-haiku-5-5">Haiku 5.5</option>
+              <option value="claude-opus-5-5">Opus 5.5</option>
+            </select>
+          </Row>
+          {settings.desktopModel === "claude-haiku-5-5" && (
+            <Row label="Try again on Opus when Haiku fails">
+              <Switch
+                on={settings.desktopEscalate}
+                onChange={(desktopEscalate) => update({ desktopEscalate })}
+              />
+            </Row>
+          )}
+        </Group>
+
+        <Group title="Notifications">
+          <Row label="Tapping one opens">
+            <select
+              aria-label="Tapping one opens"
+              value={settings.notificationsOpen}
+              onChange={(e) =>
+                update({
+                  notificationsOpen: e.target.value as AppSettings["notificationsOpen"],
+                })
+              }
+            >
+              <option value="web">The web app</option>
+              <option value="app">The iOS app</option>
+            </select>
+          </Row>
+        </Group>
+
+        <Group title="Account">
+          <button type="button" className="row link" onClick={() => navigate("/settings/account")}>
+            <div className="txt">
+              <b>Password and sign-ins</b>
+            </div>
+            <Icon name="chevron" className="chev" />
+          </button>
+          <Row
+            label="API tokens"
+            sub={tokenEdit.error && <span className="form-error">{tokenEdit.error}</span>}
+          >
+            <button type="button" className="btn sm" onClick={createToken}>
+              New token
             </button>
-            <div className="row">
-              <div className="txt">
-                <b>API tokens</b>
-                {tokenEdit.error && <span className="form-error">{tokenEdit.error}</span>}
+          </Row>
+          {newToken && (
+            <div className="row" style={{ display: "grid", gap: 6 }}>
+              <div className="muted" style={{ fontSize: 12 }}>
+                Copy this token now. It won't be shown again.
               </div>
-              <button type="button" className="btn sm" onClick={createToken}>
-                New token
-              </button>
+              <div className="token-new">{newToken.token}</div>
             </div>
-            {newToken && (
-              <div className="row" style={{ display: "grid", gap: 6 }}>
-                <div className="muted" style={{ fontSize: 12 }}>
-                  Copy this token now. It won't be shown again.
-                </div>
-                <div className="token-new">{newToken.token}</div>
-              </div>
-            )}
-            {tokens.map((t) => (
-              <div className="row" key={t.id}>
-                <div className="txt">
-                  <b>{t.name}</b>
-                </div>
-                <span className="val">
-                  {t.lastUsedAt
-                    ? `Used ${new Date(t.lastUsedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`
-                    : "Never used"}
-                </span>
-                <button type="button" className="btn sm danger-text" onClick={() => revoke(t)}>
-                  Revoke
-                </button>
-              </div>
-            ))}
-            <div className="row">
-              <div className="txt">
-                <b>Sign out</b>
-              </div>
-              <button type="button" className="btn sm" onClick={signOut}>
-                Sign out
+          )}
+          {tokens.map((t) => (
+            <Row key={t.id} label={t.name}>
+              <span className="val">
+                {t.lastUsedAt
+                  ? `Used ${new Date(t.lastUsedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`
+                  : "Never used"}
+              </span>
+              <button type="button" className="btn sm danger-text" onClick={() => revoke(t)}>
+                Revoke
               </button>
-            </div>
-          </div>
-        </section>
+            </Row>
+          ))}
+          <Row label="Sign out">
+            <button type="button" className="btn sm" onClick={signOut}>
+              Sign out
+            </button>
+          </Row>
+        </Group>
 
         <PluginsGroup />
 
-        <section className="group">
-          <h2>Safety</h2>
-          <div className="group-box">
-            <div className="row">
-              <div className="txt">
-                <b>Pause all activity</b>
-                {pausing.error && <span className="form-error">{pausing.error}</span>}
-              </div>
-              <button type="button" className={`btn sm ${paused ? "" : "danger"}`} onClick={pause}>
-                {paused ? "Resume" : "Pause all"}
-              </button>
-            </div>
-            <div className="row">
-              <div className="txt">
-                <b>Let Haiku allow safe changes</b>
-              </div>
-              <Switch
-                on={settings.reviewChanges}
-                onChange={(on) => update({ reviewChanges: on })}
-              />
-            </div>
-            <RollbackRow toast={toast} />
-          </div>
-        </section>
-
-        <section className="group">
-          <div className="group-box">
-            <button type="button" className="row link" onClick={() => navigate("/settings/checks")}>
-              <div className="txt">
-                <b>Check everything</b>
-              </div>
-              <Icon name="chevron" className="chev" />
+        <Group title="Safety">
+          <Row
+            label="Pause all activity"
+            sub={pausing.error && <span className="form-error">{pausing.error}</span>}
+          >
+            <button type="button" className={`btn sm ${paused ? "" : "danger"}`} onClick={pause}>
+              {paused ? "Resume" : "Pause all"}
             </button>
-          </div>
-        </section>
+          </Row>
+          <Row label="Let Haiku allow safe changes">
+            <Switch on={settings.reviewChanges} onChange={(on) => update({ reviewChanges: on })} />
+          </Row>
+          <RollbackRow toast={toast} />
+        </Group>
+
+        <Group>
+          <button type="button" className="row link" onClick={() => navigate("/settings/checks")}>
+            <div className="txt">
+              <b>Check everything</b>
+            </div>
+            <Icon name="chevron" className="chev" />
+          </button>
+        </Group>
 
         <UpdateGroup toast={toast} />
       </div>
@@ -571,11 +485,7 @@ function RollbackRow({ toast }: { toast: Toast }) {
   };
 
   return (
-    <div className="row">
-      <div className="txt">
-        <b>Roll back desktop</b>
-        {error && <span className="form-error">{error}</span>}
-      </div>
+    <Row label="Roll back desktop" sub={error && <span className="form-error">{error}</span>}>
       {snaps.length > 0 ? (
         <>
           <select
@@ -597,7 +507,7 @@ function RollbackRow({ toast }: { toast: Toast }) {
       ) : (
         !error && <span className="val">No snapshots yet</span>
       )}
-    </div>
+    </Row>
   );
 }
 
@@ -672,36 +582,30 @@ function UpdateGroup({ toast }: { toast: Toast }) {
   const notes = !busy && info.status?.state === "done" ? info.status.notes : [];
 
   return (
-    <section className="group">
-      <h2>Updates</h2>
-      <div className="group-box">
-        <div className="row">
-          <div className="txt">
-            <b>Version</b>
-          </div>
-          <span className="val">
-            {info.current?.sha
-              ? `${short(info.current.sha)}${info.current.subject ? ` ${info.current.subject}` : ""}`
-              : "Unknown"}
-          </span>
+    <Group title="Updates">
+      <Row label="Version">
+        <span className="val">
+          {info.current?.sha
+            ? `${short(info.current.sha)}${info.current.subject ? ` ${info.current.subject}` : ""}`
+            : "Unknown"}
+        </span>
+      </Row>
+      <div className="row">
+        <div className="txt">
+          <b>Update from git</b>
+          {error && <span className="form-error">{error}</span>}
+          {notes.map((n) => (
+            <span key={n}>{n}</span>
+          ))}
         </div>
-        <div className="row">
-          <div className="txt">
-            <b>Update from git</b>
-            {error && <span className="form-error">{error}</span>}
-            {notes.map((n) => (
-              <span key={n}>{n}</span>
-            ))}
-          </div>
-          {info.source ? (
-            <button type="button" className="btn sm" disabled={busy} onClick={update}>
-              {busy ? `${step}…` : "Update"}
-            </button>
-          ) : (
-            <span className="val">Not set up</span>
-          )}
-        </div>
+        {info.source ? (
+          <button type="button" className="btn sm" disabled={busy} onClick={update}>
+            {busy ? `${step}…` : "Update"}
+          </button>
+        ) : (
+          <span className="val">Not set up</span>
+        )}
       </div>
-    </section>
+    </Group>
   );
 }

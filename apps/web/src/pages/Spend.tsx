@@ -13,6 +13,7 @@ import { LoadError, loadErrorText } from "../load";
 import { spendAxis, withToday } from "../spend";
 import { useStore } from "../store";
 import { tokenText } from "../tasks";
+import { Seg } from "../ui";
 
 /** What the ledger's purposes are, in words. */
 const PURPOSE_NAMES: Record<string, string> = {
@@ -155,24 +156,14 @@ function SpendCard({ title, points, limit }: { title: string; points: Point[]; l
       <div className="chart-head">
         <h3>{title}</h3>
         <span className="spacer" />
-        <div className="seg">
-          <button
-            type="button"
-            className={mode === "chart" ? "active" : ""}
-            aria-pressed={mode === "chart"}
-            onClick={() => setMode("chart")}
-          >
-            Chart
-          </button>
-          <button
-            type="button"
-            className={mode === "table" ? "active" : ""}
-            aria-pressed={mode === "table"}
-            onClick={() => setMode("table")}
-          >
-            Table
-          </button>
-        </div>
+        <Seg
+          value={mode}
+          options={[
+            ["chart", "Chart"],
+            ["table", "Table"],
+          ]}
+          onChange={setMode}
+        />
       </div>
       {mode === "chart" ? (
         points.length > 0 && <BarChart points={points} limit={limit} label={title} />

@@ -10,7 +10,7 @@ import { PLUGIN_SETTINGS } from "../plugins";
 import { navigate } from "../router";
 import { loadPlugins, savePlugin, useStore } from "../store";
 import { Switch } from "../switch";
-import { BackHead } from "../ui";
+import { BackHead, Group } from "../ui";
 
 const STATE: Record<PluginInfo["state"], string> = {
   off: "Off",
@@ -31,39 +31,36 @@ export function PluginsGroup() {
   useEffect(load, [load]);
   if (!error && !ids?.length) return null;
   return (
-    <section className="group">
-      <h2>Plugins</h2>
-      <div className="group-box">
-        {error && (
-          <div className="row">
-            <div className="txt">
-              <span className="form-error">{error}</span>
-            </div>
-            <button type="button" className="btn sm" onClick={load}>
-              Retry
-            </button>
+    <Group title="Plugins">
+      {error && (
+        <div className="row">
+          <div className="txt">
+            <span className="form-error">{error}</span>
           </div>
-        )}
-        {(ids ?? []).map((id) => {
-          const p = plugins[id];
-          if (!p) return null;
-          return (
-            <button
-              type="button"
-              key={id}
-              className="row link"
-              onClick={() => navigate(`/settings/plugins/${id}`)}
-            >
-              <div className="txt">
-                <b>{p.name}</b>
-              </div>
-              <span className="val">{STATE[p.state]}</span>
-              <Icon name="chevron" className="chev" />
-            </button>
-          );
-        })}
-      </div>
-    </section>
+          <button type="button" className="btn sm" onClick={load}>
+            Retry
+          </button>
+        </div>
+      )}
+      {(ids ?? []).map((id) => {
+        const p = plugins[id];
+        if (!p) return null;
+        return (
+          <button
+            type="button"
+            key={id}
+            className="row link"
+            onClick={() => navigate(`/settings/plugins/${id}`)}
+          >
+            <div className="txt">
+              <b>{p.name}</b>
+            </div>
+            <span className="val">{STATE[p.state]}</span>
+            <Icon name="chevron" className="chev" />
+          </button>
+        );
+      })}
+    </Group>
   );
 }
 
@@ -162,19 +159,16 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
         )}
 
         {p.tools.length > 0 && (
-          <section className="group">
-            <h2>Tools</h2>
-            <div className="group-box">
-              {p.tools.map((t) => (
-                <div className="row" key={t.name}>
-                  <div className="txt">
-                    <b className="mono">{t.name}</b>
-                  </div>
-                  <span className="val">{t.access === "read" ? "Reads" : "Changes"}</span>
+          <Group title="Tools">
+            {p.tools.map((t) => (
+              <div className="row" key={t.name}>
+                <div className="txt">
+                  <b className="mono">{t.name}</b>
                 </div>
-              ))}
-            </div>
-          </section>
+                <span className="val">{t.access === "read" ? "Reads" : "Changes"}</span>
+              </div>
+            ))}
+          </Group>
         )}
       </div>
     </section>

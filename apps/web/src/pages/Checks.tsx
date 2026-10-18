@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { useStore } from "../store";
-import { BackHead } from "../ui";
+import { BackHead, Group, Row } from "../ui";
 
 const CHIP: Record<CheckState, { label: string; className: string }> = {
   ok: { label: "OK", className: "chip ok" },
@@ -69,44 +69,35 @@ export function Checks() {
         {error && <div className="form-error">{error}</div>}
 
         {report && (
-          <section className="group">
-            <h2>{problems.length ? `${problems.length} to look at` : "All good"}</h2>
-            <div className="group-box">
-              {[...report.results]
-                .sort((a, b) => rank(a.state) - rank(b.state))
-                .map((r) => (
-                  <div className="row" key={r.id}>
-                    <div className="txt">
-                      <b>{r.name}</b>
-                      <span>{r.detail}</span>
-                    </div>
-                    <span className={CHIP[r.state].className}>{CHIP[r.state].label}</span>
-                  </div>
-                ))}
-            </div>
-          </section>
+          <Group title={problems.length ? `${problems.length} to look at` : "All good"}>
+            {[...report.results]
+              .sort((a, b) => rank(a.state) - rank(b.state))
+              .map((r) => (
+                <Row key={r.id} label={r.name} sub={<span>{r.detail}</span>}>
+                  <span className={CHIP[r.state].className}>{CHIP[r.state].label}</span>
+                </Row>
+              ))}
+          </Group>
         )}
 
-        <section className="group">
-          <h2>From your phone</h2>
-          <div className="group-box">
-            <div className="row">
-              <div className="txt">
-                <b>Test approval</b>
-                {shown && (
-                  <span>
-                    {ANSWER[shown.status]}
-                    {shown.decidedVia === "ntfy" ? " from the notification" : ""}
-                    {shown.decidedAt ? `, ${when(shown.decidedAt)}` : ""}
-                  </span>
-                )}
-              </div>
-              <button type="button" className="btn sm" onClick={tryApproval}>
-                Send
-              </button>
-            </div>
-          </div>
-        </section>
+        <Group title="From your phone">
+          <Row
+            label="Test approval"
+            sub={
+              shown && (
+                <span>
+                  {ANSWER[shown.status]}
+                  {shown.decidedVia === "ntfy" ? " from the notification" : ""}
+                  {shown.decidedAt ? `, ${when(shown.decidedAt)}` : ""}
+                </span>
+              )
+            }
+          >
+            <button type="button" className="btn sm" onClick={tryApproval}>
+              Send
+            </button>
+          </Row>
+        </Group>
       </div>
     </section>
   );
