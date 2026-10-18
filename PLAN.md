@@ -1007,7 +1007,9 @@ The brain puts a small script at the top of every box's page.
 - `hatbox.store.get(key)`, `.set(key, value)`, `.delete(key)` and `.keys()`: JSON values, up to 1 MB each and 5 MB a box, kept in the brain. Each returns a promise.
 - `hatbox.theme`: `dark` or not, and the app's colours as CSS variables on the page (`--hb-bg`, `--hb-text`, `--hb-accent`, …), updated when the theme changes.
 - `hatbox.fetch(path, init)` (X2): the box's backend, with bodies up to 5 MB.
-- Later (X4): `hatbox.ask` (Haiku, no tools, its own daily limit, "Boxes" in Spend), `hatbox.feed` (a plugin's read tool the brain runs on a schedule, as watchers do; adding one after untrusted content asks, and the approval says whether the box can also reach hosts) and `hatbox.send` (a note in the chat from the box: untrusted, never your words).
+- `hatbox.ask(prompt, {system, maxTokens})` (X4): Haiku with no tools; its answer, as text. Boxes have a daily limit of their own for it ("Boxes" in Spend), and it's refused while paused. The chat's model never sees it, unless the page saves it and the bot reads `box_data`.
+- `hatbox.send(text)` (X4): a note in the box's chat from the box, a few an hour: untrusted, never your words. The bot doesn't reply to it on its own; it reads it with your next message.
+- `hatbox.feed(name)` (X4): the latest result of a feed the bot gave the box (`box_feed`), a plugin's read tool the brain runs on a timer, as watchers do: `{value, at, error?}`. Adding one after untrusted content asks you, and the approval says whether the box can also reach hosts.
 
 The app answers only messages from the box's own frame, and stops answering once the frame has left the box's page.
 
@@ -1016,12 +1018,14 @@ The app answers only messages from the box's own frame, and stops answering once
 - `box_versions`: box_id, n, title, html, message_id, tainted_by, created_at.
 - `box_store`: box_id, key, value, updated_at.
 - `messages.box_id`, and a `message.box` event, as for negotiations: the reply that made or changed a box shows it.
+- X4, migration 43: `box_feeds`: box_id, bot_id (whose tools it runs with), name, tool, input, every_minutes, value, value_at, error, next_run_at (null once it stopped), created_at. A box's notes are messages of kind `box` with its `box_id`.
 
 ### 21.4 Tools (chat only)
 - `box_create(title, html)`: a new box, shown under the reply.
 - `box_edit(box, edits?, html?, title?)`: exact find-and-replace edits (each must match once) or the whole page, as a new version.
 - `box_list`, `box_read(box, version?)`, and `box_revert(box, version)`, which makes a new version with the old page.
-- `box_data(box)`: what the page saved. Untrusted.
+- `box_data(box)`: what the page saved, and from X4 its feeds with what they last read. Untrusted.
+- `box_feed(box, name, tool?, tool_input?, every_minutes?)` (X4): gives a box a feed, changes it, or without `tool` removes it.
 - The system prompt says a box is for something the owner will keep or come back to; a one-off answer stays in the reply, where charts already draw. A box is one self-contained file with no outside requests; it saves with `hatbox.store` and follows the theme.
 
 ### 21.5 Apps
@@ -1040,7 +1044,7 @@ The app answers only messages from the box's own frame, and stops answering once
 - **X1, page boxes**: migration 41, the tools, versions, the frame and `hatbox.store`, the web app. Done when "make me a habit tracker" makes a box that keeps its ticks across reloads and browsers.
 - **X2, the boxes guest**: the guest, `apps/hatbox`, builds, server boxes, egress by host, idle stop, logs and backend calls for the model, schedules, Pause all. Done when "check this shop's price every hour and chart it" works with only the shop's host let through.
 - **X3, iOS.**
-- **X4**: `hatbox.ask`, `hatbox.feed` and `hatbox.send`.
+- **X4**: `hatbox.ask`, `hatbox.feed` and `hatbox.send`. Built 2026-10-18 (§21.11).
 - **Not planned**: sharing a box by public link (a second origin, and strangers reaching the guest), WebSockets from backends, and languages other than TypeScript.
 
 ### 21.8 As built (X1, 2026-10-18)
@@ -1052,3 +1056,14 @@ Tried in Chromium against a dev brain: a habit tracker kept its ticks across rel
 - **The theme:** `--hb-bg`, `--hb-surface`, `--hb-text`, `--hb-muted`, `--hb-line`, `--hb-accent`, `--hb-on-accent`, `--hb-attention`, `--hb-danger`, `--hb-success`, `--hb-font` and `--hb-mono`, with `light-dark()` and the page's `color-scheme`; a `hatboxtheme` event fires on the window when it changes.
 - **Versions:** `box_edit` with nothing changed makes none. Restore on an older version (the web's version menu) makes a new version with its page, as `box_revert` does. A reply that touches several boxes shows the last.
 - **Tools:** `box_create`, `box_edit`, `box_list`, `box_read`, `box_revert` and `box_data` are in a chat's tools only (not tasks', not incognito). They're core tools, not a plugin's writes, so they don't count towards the chat's two changes. A version records what the conversation had read (`tainted_by`); `box_read` of a box any version of which has it, and every `box_data`, come back untrusted and taint the conversation.
+
+### 21.11 As built (X4, 2026-10-18)
+Covered by the brain's tests (one each for ask, send and feed, and one for a feed's approval); not yet tried against a dev brain, or with the model writing a page that uses them.
+
+- **Where:** `apps/brain/src/boxes.ts` (`ask`, `send`, the page's `hatbox.ask`, `.send` and `.feed`, and `connect`, which hands the boxes the settings, spend, the background model, the chats and the feeds once they exist), `box-feeds.ts`, `Chats.boxNote`, the notes in `agent/thread.ts`, `box_feed` in `agent/tools.ts`; the ops in `BoxCall` (`packages/shared/src/box.ts`). The apps pass the new calls on unchanged.
+- **Ask:** `{op: "ask", prompt, system?, maxTokens?}`: up to 50,000 characters of prompt and 10,000 of system, and up to 8,000 tokens (4,000 by default, thinking included, at low effort). It goes to Haiku 5.5 as a one-off request, recorded with purpose `boxes` and the box's bot. Before it's sent, the most it may cost, with what asks in flight may still cost, must fit under what's left of `limits.boxesUsd` today (Settings → Spending limits → Boxes per day; $0.50 by default, 0 stops it), and the brain's own limits apply as usual. Over it the call fails with 429, while paused with 409; the page's promise rejects with the reason.
+- **Send:** `{op: "send", text}`, up to 2,000 characters, five an hour a box (counted from its notes in `messages`). The note goes to the chat the box was made in while its bot is in it, else to the bot's own; it's an assistant message of kind `box`, with `box_id` and `tainted_by` `Box #<id> "<title>"`, so it counts as unread. The web shows "From <title>: <text>" in plain text with Open box, and no bot name above it in a group. No reply of its own: the page is code nobody read line by line, so a reply would let it start turns, tools and spend without you. With your next message, the bot reads the notes that came since it last replied, in a `<box_notes>` block (in a new conversation, its recent messages already have them), quoted as untrusted; they taint the conversation and are screened. Allowed while paused, since nothing runs.
+- **Feed:** `box_feed` runs the tool once before it's added (one that fails isn't), then every `every_minutes` (5 to 10,080, default 60), up to 10 a box, four at once, from the brain's 10-second timer, without the model. It runs with the bot's tools (the box's bot, who added it), keeps the output (parsed when it's JSON, at most 1 MB), and the page's `{op: "feed", name}` gets `{value, at, error?}`, or nothing for a feed it doesn't have. A failed run keeps the last value and sets `error`. A feed whose tool is gone, isn't a read tool, doesn't take its input, or whose plugin is off or not the bot's, or whose bot was deleted, stops: `error` says "Stopped: …" and it doesn't run again until the bot adds it again; a plugin starting or failing only fails that run. None run while paused. The tool's result tells the model only what kind of value it gave, not the value, so adding a second feed doesn't need an approval because of the first; what feeds read comes back untrusted in `box_data`.
+- **Approval:** adding or changing a feed in a conversation that has read untrusted content, or on a box a version of which tainted work wrote, asks you every time, past Haiku's review (`always`), since the page then sees your data and Haiku never sees what the page does with it. It names the tool, its input and how often, and says whether the box can reach hosts (`Boxes.hosts(id)`, `[]` until X2) and so could send what it reads there. Removing a feed doesn't ask.
+- **Deviations from §21.2:** feeds ask on a tainted box's page as well as in a tainted chat, and always skip Haiku's review; the plan said only "asks".
+- **iOS** (X3's): render kind `box` messages as from the box ("From <title>: …", plain text, Open box), leave them out of the reply a retry looks for and of the bot names in a group; `Limits.boxesUsd` and its row in Spending limits (0 allowed); `boxes` as "Boxes" among Spend's purposes. The bridge needs nothing.
