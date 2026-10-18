@@ -807,6 +807,37 @@ test("/stop stops the reply being written; with a number, that task", async () =
   expect(t.thread.unread()).not.toContain(t.thread.list().at(-1)?.id as number);
 });
 
+test("/stop reaches a reply still waiting for the summary", async () => {
+  const gate = Promise.withResolvers<void>();
+  const asked = Promise.withResolvers<void>();
+  const model = new FakeModel(
+    [{ content: [text("one")] }, { content: [text("two")] }],
+    ["<recap>Said one.</recap><summary>They said one.</summary>"],
+  );
+  const create = model.create.bind(model);
+  model.create = async (p) => {
+    asked.resolve();
+    await gate.promise;
+    return create(p);
+  };
+  const t = await testApp(model);
+  await t.thread.post("first").done;
+  t.advance(31 * 60_000);
+  const reply = t.thread.post("second");
+  await asked.promise;
+  await t.thread.post("/stop").done;
+  gate.resolve();
+  await reply.done;
+  expect(model.requests).toHaveLength(1);
+  expect(t.thread.list().map((m) => m.text)).toEqual([
+    "first",
+    "one",
+    "second",
+    "/stop",
+    "_Stopped._",
+  ]);
+});
+
 test("/stop after a lull doesn't reopen the conversation that was summarized", async () => {
   const model = new FakeModel(
     [{ content: [text("one")] }, { content: [text("two")] }],

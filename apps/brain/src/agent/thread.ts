@@ -1618,8 +1618,6 @@ export class Thread {
     group: { nudged: boolean; round: ThreadMessage | null } | null = null,
     again: ThreadMessage | null = null,
   ): Promise<Said | undefined> {
-    const { db, events, spend, model, plugins } = this.d;
-    const incognito = !!(user ?? again)?.incognito;
     // Told already, with a message of yours that came first.
     if (
       !user &&
@@ -1628,6 +1626,29 @@ export class Thread {
       !this.d.tasks?.hasUnreported(this.conversationId, bot.id)
     )
       return;
+    // It can be stopped from here on: while it waits for a summary too.
+    const abort = new AbortController();
+    this.current = abort;
+    this.currentBot = bot.id;
+    this.currentIncognito = !!(user ?? again)?.incognito;
+    try {
+      return await this.write(user, bot, group, again, abort);
+    } finally {
+      this.current = null;
+      this.currentBot = null;
+    }
+  }
+
+  /** The reply itself, which `abort` stops: see `reply`. */
+  private async write(
+    user: ThreadMessage | null,
+    bot: Bot,
+    group: { nudged: boolean; round: ThreadMessage | null } | null,
+    again: ThreadMessage | null,
+    abort: AbortController,
+  ): Promise<Said | undefined> {
+    const { db, events, spend, model, plugins } = this.d;
+    const incognito = !!(user ?? again)?.incognito;
     const userId = user?.id ?? Number.MAX_SAFE_INTEGER;
     const { system, pluginTools, chatModel, chatEffort, onHaiku, tools, prefix } = this.turnSetup(
       bot,
@@ -1960,16 +1981,13 @@ export class Thread {
     let waited = 0;
     let commands = 0;
     let container: string | undefined;
-    const abort = new AbortController();
     // What the reply reads from outside, screened for prompt injection while it goes on (PLAN.md
     // §6.1). Incognito can't change anything, so there's nothing to screen for.
     const screener = incognito ? null : this.screenerFor(episode.id);
     const screen = (source: string, text: Readable) => screener?.add(source, text);
-    this.current = abort;
-    this.currentBot = bot.id;
-    this.currentIncognito = incognito;
     try {
       for (let step = 0; ; step++) {
+        abort.signal.throwIfAborted();
         const s = this.d.settings.get();
         if (s.paused) return finish("error", "_Paused. Resume to continue._");
         if (step >= MAX_STEPS || this.clock() - started - waited > MAX_TURN_MS) {
@@ -2242,13 +2260,11 @@ export class Thread {
           };
         });
         this.appendTurn(episode.id, bot.id, "user", results);
-        abort.signal.throwIfAborted();
       }
     } catch (err) {
-      if (abort.signal.aborted)
-        return abort.signal.reason === STOPPED
-          ? { ...finish("done", "_Stopped._"), stopped: true }
-          : finish("error", "_Paused. Resume to continue._");
+      if (abort.signal.reason === STOPPED)
+        return { ...finish("done", "_Stopped._"), stopped: true };
+      if (abort.signal.aborted) return finish("error", "_Paused. Resume to continue._");
       // ask_opus checks its own cost.
       if (err instanceof BudgetError) return finish("error", `_Stopped: ${err.message}_`);
       console.error("chat turn failed", err);
@@ -2257,8 +2273,6 @@ export class Thread {
         `_Something went wrong talking to the model (${modelErrorText(err)})._`,
       );
     } finally {
-      this.current = null;
-      this.currentBot = null;
       this.live.delete(out.id);
       for (const release of holding) release();
     }
