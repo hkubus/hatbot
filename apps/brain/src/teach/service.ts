@@ -1,14 +1,14 @@
 // Teach-by-showing (PLAN.md §1, §5.4): record the owner doing a chore, have Opus draft a skill, save it once reviewed.
 import type Anthropic from "@anthropic-ai/sdk";
 import { SKILL_NAME, type TeachSession } from "@hatbot/shared";
-import { type ModelClient, modelErrorText } from "../agent/model";
+import { type ModelClient, modelErrorText, oneShot } from "../agent/model";
 import { TEACH_PROMPT } from "../agent/prompt";
 import type { Archive } from "../archive";
 import type { Db } from "../db";
 import type { Desktop } from "../desktop/service";
 import type { EventBus } from "../events";
 import type { SettingsStore } from "../settings";
-import { BudgetError, priceOf, type Spend } from "../spend";
+import { BudgetError, type Spend } from "../spend";
 import type { ScreenLane } from "../tasks/lane";
 import { describeSteps, OffPage, PAGE_POLL_MS, Recorder, type RecStep } from "./recorder";
 import { type Skills, skillPath } from "./skills";
@@ -18,8 +18,6 @@ export const TEACH_MODEL = "claude-opus-5-5";
 const TEACH_LANE = -2;
 /** Screenshots sent with the recording, spread across it. */
 const SCREENS_SENT = 16;
-/** Roughly what a 1280x800 screenshot costs in input tokens. */
-const SCREEN_TOKENS = 1500;
 
 export class TeachError extends Error {
   constructor(
@@ -289,8 +287,7 @@ export class Teach {
 
   /** One Opus call from the step log and a spread of the screenshots. */
   private async write(id: number) {
-    const { archive, model, spend } = this.d;
-    let release = () => {};
+    const { archive } = this.d;
     try {
       const steps = JSON.parse(this.row(id)?.events ?? "[]") as RecStep[];
       const { lines, screens } = describeSteps(steps);
@@ -315,26 +312,20 @@ export class Teach {
           },
         });
       }
-      const p = priceOf(TEACH_MODEL);
-      const inputTokens = lines.join("\n").length / 3 + picked.length * SCREEN_TOKENS + 3000;
-      release = spend.hold((inputTokens * p.input + 8000 * p.output) / 1_000_000);
-      const res = await model.create({
-        model: TEACH_MODEL,
-        max_tokens: 16000,
-        thinking: { type: "adaptive" },
-        output_config: { effort: "medium" },
-        system: TEACH_PROMPT,
-        messages: [{ role: "user", content }],
-      });
-      spend.recordResponse({ model: TEACH_MODEL, purpose: "teach", usage: res.usage });
-      const text = res.content
-        .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
-        .map((b) => b.text)
-        .join("\n")
-        .trim()
-        .replace(/^```(?:markdown|md)?\n([\s\S]*)\n```$/, "$1");
-      if (res.stop_reason !== "end_turn" || !text)
-        throw new Error("The model stopped before the skill was finished.");
+      const out = await oneShot(
+        this.d,
+        {
+          model: TEACH_MODEL,
+          max_tokens: 16000,
+          thinking: { type: "adaptive" },
+          output_config: { effort: "medium" },
+          system: TEACH_PROMPT,
+          messages: [{ role: "user", content }],
+        },
+        { purpose: "teach" },
+      );
+      const text = out.trim().replace(/^```(?:markdown|md)?\n([\s\S]*)\n```$/, "$1");
+      if (!text) throw new Error("The model stopped before the skill was finished.");
       this.update(
         id,
         {
@@ -351,8 +342,6 @@ export class Teach {
           ? `Not written: ${err.message}`
           : `Failed: ${modelErrorText(err)}`;
       this.update(id, { status: "failed", error }, "drafting");
-    } finally {
-      release();
     }
   }
 
