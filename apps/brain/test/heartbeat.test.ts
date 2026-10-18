@@ -55,21 +55,12 @@ test("the heartbeat looks when it's due, and tells you once about something new,
   await t.plugins.update("kuma", { enabled: true });
   await t.desktop.refresh();
   t.taskModel.onCreate = () => '{"action": "notify", "message": "Jellyfin is down."}';
-  const run = t.heartbeat.run.bind(t.heartbeat);
-  const looks: ReturnType<typeof run>[] = [];
-  t.heartbeat.run = () => {
-    const look = run();
-    looks.push(look);
-    return look;
-  };
   t.settings.update({ heartbeat: { ...t.settings.get().heartbeat, enabled: false } });
-  t.heartbeat.tick();
-  expect(looks).toHaveLength(0);
+  expect(t.heartbeat.tick()).toBeUndefined();
   t.settings.update({
     heartbeat: { ...t.settings.get().heartbeat, enabled: true, everyMinutes: 30 },
   });
-  t.heartbeat.tick();
-  expect(await looks[0]).toMatchObject({
+  expect(await t.heartbeat.tick()).toMatchObject({
     action: "notify",
     found: ["Jellyfin is down"],
     note: "Jellyfin is down.",
@@ -77,14 +68,12 @@ test("the heartbeat looks when it's due, and tells you once about something new,
   expect(told(t).at(-1)?.message).toBe("Jellyfin is down.");
   expect(t.thread.list().at(-1)?.text).toContain("Jellyfin is down.");
   t.advance(10 * 60_000);
-  t.heartbeat.tick();
-  expect(looks).toHaveLength(1);
+  expect(t.heartbeat.tick()).toBeUndefined();
 
   // Due again, still down: nothing new, so no model call.
   const calls = t.taskModel.creates.length;
   t.advance(20 * 60_000);
-  t.heartbeat.tick();
-  expect((await looks[1])?.action).toBe("nothing");
+  expect((await t.heartbeat.tick())?.action).toBe("nothing");
   expect(t.taskModel.creates.length).toBe(calls);
   // Back up, then down again: told again. The looks that found something are kept.
   down.length = 0;
@@ -215,7 +204,7 @@ test("text a stranger wrote can't talk the triage out of telling you", async () 
   });
 });
 
-test("the triage's spend check is what its request may cost, not a flat amount", async () => {
+test("the triage's spend check is what its request may cost, which it holds while it runs", async () => {
   const down = ["Jellyfin"];
   const t = await testApp(new FakeModel(), new FakeModel(), {}, [kuma(down)]);
   await t.plugins.update("kuma", { enabled: true });
@@ -228,10 +217,21 @@ test("the triage's spend check is what its request may cost, not a flat amount",
     usage: { input_tokens: 0, output_tokens: 0 },
     extraUsd: 0.995,
   });
-  t.taskModel.onCreate = () => '{"action": "notify", "message": "Looked."}';
+  // A request made meanwhile can't pass the limit with it.
+  const meanwhile: unknown[] = [];
+  t.taskModel.onCreate = () => {
+    try {
+      t.spend.check(0.004);
+    } catch (err) {
+      meanwhile.push(err);
+    }
+    return '{"action": "notify", "message": "Looked."}';
+  };
   // Both looks, at the spend and at the monitor, are the model's.
   expect((await t.heartbeat.run()).note).toBe("Looked.\nLooked.");
-  expect(t.taskModel.creates).toHaveLength(2);
+  expect(meanwhile).toHaveLength(2);
+  // Let go once it's done.
+  expect(() => t.spend.check(0.004)).not.toThrow();
 });
 
 test("the weekly report goes out once when it's due, and one that fails is tried again an hour later", async () => {

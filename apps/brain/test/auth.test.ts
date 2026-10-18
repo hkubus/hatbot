@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Session, SignedOutOthers } from "@hatbot/shared";
-import { FailureLimiter } from "../src/auth/service";
+import { AuthService, FailureLimiter } from "../src/auth/service";
 import { resetLogin } from "../src/reset-login";
 import { ORIGIN, setUpOwner, type TestApp, testApp, waitFor } from "./helpers";
 
@@ -9,6 +9,9 @@ const cookieOf = (res: Response, name: string) =>
     .getSetCookie()
     .find((c) => c.startsWith(`${name}=`))
     ?.split(";")[0];
+
+/** The mark a sign-in gave its browser. */
+const markOf = (res: Response) => cookieOf(res, "hatbot_device")?.split("=")[1];
 
 const login = (t: TestApp, body: object, headers: Record<string, string> = {}) =>
   t.call("POST", "/auth/login", body, headers);
@@ -29,10 +32,17 @@ describe("sign-in", () => {
     expect((await t.call("POST", "/auth/setup/start", { code: t.auth.setupCode })).status).toBe(
       403,
     );
+    t.advance(30_000);
+    const mark = markOf(
+      await login(t, { password: "correct horse battery", totp: t.code(secret) }),
+    );
+    expect(t.auth.knownDevice(mark)).not.toBeNull();
 
-    // The reset forgets the password and authenticator, and signs out everything.
+    // The reset forgets the password and authenticator, signs out everything, and, once the brain
+    // restarts, every browser.
     resetLogin(t.db);
     expect((await t.call("GET", "/tokens", undefined, { cookie })).status).toBe(401);
+    expect(new AuthService(t.db).knownDevice(mark)).toBeNull();
     expect((await t.call("POST", "/auth/setup/start", { code: t.auth.setupCode })).status).toBe(
       200,
     );
@@ -41,7 +51,9 @@ describe("sign-in", () => {
   test("a login gives the web a session cookie and the app a token, each good until signed out", async () => {
     const t = await testApp();
     const { secret, password } = await setUpOwner(t);
-    expect((await t.call("GET", "/tokens")).status).toBe(401);
+    const stranger = await t.call("GET", "/tokens");
+    expect(stranger.status).toBe(401);
+    expect(await stranger.json()).toEqual({ error: "You're not signed in." });
     const web = await login(t, { password, totp: t.code(secret) });
     const flags = web.headers.get("set-cookie") ?? "";
     for (const flag of ["HttpOnly", "Secure", "SameSite=Strict"]) expect(flags).toContain(flag);
@@ -62,11 +74,15 @@ describe("sign-in", () => {
     expect((await t.call("GET", "/tokens", undefined, cli)).status).toBe(200);
     expect((await t.call("DELETE", `/tokens/${made.id}`, undefined, { cookie })).status).toBe(200);
     expect((await t.call("GET", "/tokens", undefined, cli)).status).toBe(401);
-    // A cookie write from another site is refused.
-    expect(
-      (await t.call("POST", "/tokens", { name: "x" }, { cookie, origin: "https://evil.test" }))
-        .status,
-    ).toBe(403);
+    // A cookie write from another site is refused, saying where to make it.
+    const csrf = await t.call(
+      "POST",
+      "/tokens",
+      { name: "x" },
+      { cookie, origin: "https://evil.test" },
+    );
+    expect(csrf.status).toBe(403);
+    expect(await csrf.json()).toEqual({ error: `Open Hatbot at ${ORIGIN} to make changes.` });
 
     // Signing out ends the session, and the browser drops its cached files; the app's, its token.
     const out = await t.call("POST", "/auth/logout", {}, { cookie });
@@ -113,7 +129,9 @@ describe("sign-in", () => {
     t.advance(16 * 60_000);
     expect((await login(t, { password, totp: t.code(secret) })).status).toBe(200);
 
-    // Behind a proxy that isn't trusted, every client is one address: noticed, and Check everything says so.
+    // Behind a proxy that isn't trusted, every client is one address: noticed, and Check everything
+    // says so when its own request came through it. One from before, which anyone on your network
+    // can send, doesn't warn for good.
     const via = (address: string) => ({
       requestIP: () => ({ address, family: "IPv4", port: 40000 }),
     });
@@ -121,10 +139,14 @@ describe("sign-in", () => {
     await t.app.request("/api/v1/health", forwarded, via("8.8.4.4"));
     expect(t.auth.untrustedProxy).toBeNull();
     await t.app.request("/api/v1/health", forwarded, via("192.168.1.10"));
-    expect(t.auth.untrustedProxy).toBe("192.168.1.10");
-    const check = (await t.checks.run()).results.find((r) => r.id === "public-url");
-    expect(check?.state).toBe("warn");
-    expect(check?.detail).toContain("192.168.1.10");
+    expect(t.auth.untrustedProxy?.ip).toBe("192.168.1.10");
+    const check = async () => (await t.checks.run()).results.find((r) => r.id === "public-url");
+    // The clock stands still, so that request stands for the check's own.
+    const now = await check();
+    expect(now?.state).toBe("warn");
+    expect(now?.detail).toContain("192.168.1.10");
+    t.advance(1000);
+    expect((await check())?.state).toBe("ok");
   });
 
   test("failures everywhere hold sign-in for all but known browsers; it's told for wrong tries, hourly", async () => {
@@ -245,17 +267,22 @@ describe("your account", () => {
     const { secret, password, cookie } = await setUpOwner(t);
     const other = await login(t, { password, totp: t.code(secret) });
     const otherCookie = other.headers.get("set-cookie")?.split(";")[0] ?? "";
+    // The other browser is one sign-in knows, past the limit everyone else is held at.
+    const otherMark = markOf(other);
     t.advance(30_000);
     const app = await login(t, { password, totp: t.code(secret), client: "app", device: "iPhone" });
     const { token } = (await app.json()) as { token: string };
     t.advance(30_000);
     const works = async (headers: Record<string, string>) =>
       (await t.call("GET", "/tokens", undefined, headers)).status === 200;
-    return { t, secret, password, cookie, otherCookie, token, works };
+    const known = (mark: string | undefined) => t.auth.knownDevice(mark) !== null;
+    expect(known(otherMark)).toBe(true);
+    return { t, secret, password, cookie, otherCookie, otherMark, token, works, known };
   }
 
-  test("changing the password needs the old one and a code, and signs out everywhere else", async () => {
-    const { t, secret, password, cookie, otherCookie, token, works } = await signedInTwice();
+  test("changing the password needs the old one and a code, and signs out and forgets everywhere else", async () => {
+    const { t, secret, password, cookie, otherCookie, otherMark, token, works, known } =
+      await signedInTwice();
     const change = (body: object) =>
       t.call(
         "POST",
@@ -267,6 +294,9 @@ describe("your account", () => {
     expect((await change({ newPassword: "short" })).status).toBe(400);
     const res = await change({});
     expect((await res.json()) as SignedOutOthers).toEqual({ ok: true, ended: 2 });
+    expect(known(otherMark)).toBe(false);
+    // The browser that asked is marked again.
+    expect(known(markOf(res))).toBe(true);
     expect(await works({ cookie })).toBe(true);
     expect(await works({ cookie: otherCookie })).toBe(false);
     expect(await works({ authorization: `Bearer ${token}` })).toBe(false);
@@ -278,7 +308,8 @@ describe("your account", () => {
   });
 
   test("a new authenticator takes over only once the browser that asked confirms it in time", async () => {
-    const { t, secret, password, cookie, otherCookie, token, works } = await signedInTwice();
+    const { t, secret, password, cookie, otherCookie, otherMark, token, works, known } =
+      await signedInTwice();
     const start = async () => {
       t.advance(30_000);
       const res = await t.call(
@@ -334,6 +365,7 @@ describe("your account", () => {
       Bun.password.verify = verify;
       release();
     }
+    expect(known(otherMark)).toBe(false);
     expect(await works({ cookie })).toBe(true);
     expect(await works({ authorization: `Bearer ${token}` })).toBe(false);
     t.advance(30_000);
@@ -343,7 +375,8 @@ describe("your account", () => {
   });
 
   test("you see where you're signed in, and signing out the others stops them, mid-request too", async () => {
-    const { t, secret, password, cookie, otherCookie, token, works } = await signedInTwice();
+    const { t, secret, password, cookie, otherCookie, otherMark, token, works, known } =
+      await signedInTwice();
     const sessions = async () =>
       (await (await t.call("GET", "/auth/sessions", undefined, { cookie })).json()) as Session[];
     const list = await sessions();
@@ -392,6 +425,8 @@ describe("your account", () => {
     await waitFor(() => mint.reading() && upload.reading());
     const all = await t.call("POST", "/auth/sign-out-others", {}, { cookie });
     expect((await all.json()) as SignedOutOthers).toEqual({ ok: true, ended: 2 });
+    expect(known(otherMark)).toBe(false);
+    expect(known(markOf(all))).toBe(true);
     mint.finish();
     upload.finish();
     expect((await mint.res).status).toBe(401);
