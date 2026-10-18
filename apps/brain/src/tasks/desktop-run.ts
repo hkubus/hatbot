@@ -1168,10 +1168,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
 
   try {
     // The owner saved it (PLAN.md §5.4), so it's trusted like the task itself.
+    const steps = task.skill ? await d.memory.readOrNull(skillPath(task.skill)) : null;
     const skill =
-      task.skill && (await d.memory.exists(skillPath(task.skill)))
-        ? `<skill name="${task.skill}">\n${(await d.memory.read(skillPath(task.skill))).trim()}\n</skill>\n\n`
-        : "";
+      steps === null ? "" : `<skill name="${task.skill}">\n${steps.trim()}\n</skill>\n\n`;
     await acquire();
     // Tabs an earlier task left open would be in this one's way, and in its context. A task of the same
     // bot that's waiting for you mid-run keeps its page: this one starts in a tab of its own instead.

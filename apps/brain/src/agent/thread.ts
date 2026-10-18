@@ -2352,10 +2352,8 @@ export function localStamp(d: Date): string {
  * has one.
  */
 export async function memoryIndex(memory: MemoryStore, botId: string): Promise<string> {
-  const index = (await memory.exists("INDEX.md"))
-    ? await memory.read("INDEX.md")
-    : "(no INDEX.md yet)";
+  const index = (await memory.readOrNull("INDEX.md")) ?? "(no INDEX.md yet)";
   const own = botIndex(botId);
-  const mine = own && (await memory.exists(own)) ? await memory.read(own) : null;
+  const mine = own ? await memory.readOrNull(own) : null;
   return `<memory_index>\n${index.trim()}\n</memory_index>${mine === null ? "" : `\n<your_memory_index path="${own}">\n${mine.trim()}\n</your_memory_index>`}`;
 }
