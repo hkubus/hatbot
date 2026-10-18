@@ -23,6 +23,7 @@ import type { MemoryStore } from "../memory/store";
 import type { Negotiations } from "../negotiate/service";
 import type { Notifier } from "../notify";
 import type { Plugins } from "../plugins/registry";
+import type { Questions } from "../questions";
 import type { SettingsStore } from "../settings";
 import type { Spend } from "../spend";
 import type { Skills } from "../teach/skills";
@@ -40,6 +41,7 @@ export type TasksDeps = {
   model: ModelClient;
   desktop: Desktop;
   approvals: Approvals;
+  questions: Questions;
   notifier: Notifier;
   archive: Archive;
   /** Files tasks send the owner. */

@@ -152,7 +152,8 @@ struct ChatView: View {
                   .padding(.leading, 14)
                   .padding(.top, 10)
               }
-              MessageRow(m: m, tail: tail)
+              // A question's choices can be tapped until anything comes after it.
+              MessageRow(m: m, tail: tail, answerable: m.id == store.messages.last?.id)
                 .equatable()
                 .padding(.top, joined || named ? 2 : 10)
             }
@@ -377,12 +378,18 @@ private struct Composer: View {
 
   var body: some View {
     VStack(spacing: 6) {
-      // The oldest approval waiting for you; the next shows once you've answered it.
-      if let a = store.pendingApprovals.first {
+      // The oldest approval waiting for you, then the oldest question; the next shows once you've
+      // answered it.
+      let waiting = store.pendingApprovals.count + store.pendingQuestions.count
+      if waiting > 0 {
         VStack(alignment: .leading, spacing: 10) {
-          ApprovalBody(approval: a).id(a.id)
-          if store.pendingApprovals.count > 1 {
-            Text("\(store.pendingApprovals.count - 1) more waiting")
+          if let a = store.pendingApprovals.first {
+            ApprovalBody(approval: a).id(a.id)
+          } else if let q = store.pendingQuestions.first {
+            QuestionBody(question: q).id("q\(q.id)")
+          }
+          if waiting > 1 {
+            Text("\(waiting - 1) more waiting")
               .font(.footnote)
               .foregroundStyle(.secondary)
           }
@@ -635,6 +642,8 @@ private struct MessageRow: View, Equatable {
   let m: ThreadMessage
   /// The last of a run from the same sender, so its bubble has a tail.
   let tail: Bool
+  /// The latest message: its choices can be tapped.
+  var answerable = false
   @Environment(\.openRoute) private var router
   @Environment(AppStore.self) private var store
   @Environment(\.scenePhase) private var scenePhase
@@ -719,6 +728,7 @@ private struct MessageRow: View, Equatable {
     default: ReplyMessage(m: m)
     }
     if m.status != .streaming, let list = m.sources, !list.isEmpty { MessageSources(list: list) }
+    if answerable, m.status != .streaming, let list = m.choices, !list.isEmpty { Choices(list: list) }
     if let list = m.attachments, !list.isEmpty { MessageFiles(list: list, alignment: .leading) }
   }
 
@@ -788,7 +798,9 @@ private struct MessageRow: View, Equatable {
 
   private func open(_ route: Route) { router?.open(route) }
 
-  nonisolated static func == (a: Self, b: Self) -> Bool { a.m == b.m && a.tail == b.tail }
+  nonisolated static func == (a: Self, b: Self) -> Bool {
+    a.m == b.m && a.tail == b.tail && a.answerable == b.answerable
+  }
 }
 
 /// A reply, with the task it started (if any) working under it. Once the task finishes or fails, its bot
@@ -1008,6 +1020,98 @@ struct ApprovalBody: View {
       do {
         try await store.decide(approval.id, decision, note: note)
         decided = decision
+      } catch {
+        self.error = message(for: error)
+        busy = false
+      }
+    }
+  }
+}
+
+/// A task's question waiting for you: tap an answer, or write your own. Plain text, like an approval.
+struct QuestionBody: View {
+  let question: Question
+  /// Off on the task's own page.
+  var linksTask = true
+  @Environment(AppStore.self) private var store
+  @Environment(\.openRoute) private var router
+  @State private var busy = false
+  @State private var error: String?
+  @State private var own = ""
+  @State private var answered = false
+
+  var body: some View {
+    let q = question
+    Text(q.question).bold().textSelection(.enabled)
+    Group {
+      ForEach(q.choices, id: \.self) { c in
+        Button { answer(c) } label: { Text(c).frame(maxWidth: .infinity) }
+          .glassButton(prominent: true)
+          .controlSize(.large)
+      }
+      HStack(spacing: 8) {
+        TextField(q.choices.isEmpty ? "Your answer" : "Or write your own", text: $own, axis: .vertical)
+          .lineLimit(1...4)
+          .textFieldStyle(.roundedBorder)
+        Button("Send") { answer(own) }
+          .disabled(own.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+      }
+    }
+    .disabled(busy)
+    .sensoryFeedback(.success, trigger: answered)
+    if linksTask, let router {
+      Button("Open task") { router.open(.task(q.taskId)) }
+        .font(.subheadline)
+        .buttonStyle(.borderless)
+    }
+    if let error {
+      Text(error).font(.footnote).foregroundStyle(.red)
+    }
+  }
+
+  private func answer(_ text: String) {
+    let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty, !busy else { return }
+    busy = true
+    error = nil
+    Task {
+      do {
+        try await store.answer(question.id, text)
+        answered = true
+      } catch {
+        self.error = message(for: error)
+        busy = false
+      }
+    }
+  }
+}
+
+/// The answers a question at the end of a reply offers: a tap sends one as your message.
+private struct Choices: View {
+  let list: [String]
+  @Environment(AppStore.self) private var store
+  @State private var busy = false
+  @State private var error: String?
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      ForEach(list, id: \.self) { c in
+        Button(c) { pick(c) }
+          .glassButton()
+          .disabled(busy)
+      }
+      if let error {
+        Text(error).font(.footnote).foregroundStyle(.red)
+      }
+    }
+  }
+
+  private func pick(_ text: String) {
+    busy = true
+    error = nil
+    Task {
+      do {
+        try await store.send(text)
       } catch {
         self.error = message(for: error)
         busy = false

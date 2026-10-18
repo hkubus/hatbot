@@ -53,6 +53,7 @@ import {
 import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
 import type { Watchers } from "../watch/service";
+import { AskOwner, CHAT_ASK_DESCRIPTION } from "./ask";
 import {
   afterFallback,
   type CreateParams,
@@ -112,16 +113,18 @@ const MAX_CHAT_COMMANDS = 2;
 const STOPPED = "stopped";
 const DELETED = "deleted";
 export const MESSAGE_COLUMNS =
-  "id, role, conversation_id AS conversationId, bot_id AS botId, kind, text, status, created_at AS createdAt, task_id AS taskId, schedule_id AS scheduleId, negotiation_id AS negotiationId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt, incognito, sources";
-export type MessageRow = Omit<ThreadMessage, "incognito" | "sources"> & {
+  "id, role, conversation_id AS conversationId, bot_id AS botId, kind, text, status, created_at AS createdAt, task_id AS taskId, schedule_id AS scheduleId, negotiation_id AS negotiationId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt, incognito, sources, choices";
+export type MessageRow = Omit<ThreadMessage, "incognito" | "sources" | "choices"> & {
   incognito: number;
   sources: string | null;
+  choices: string | null;
 };
-/** A message as the app gets it: `incognito` and `sources` only on the ones that have them. */
-export const messageOf = ({ incognito, sources, ...m }: MessageRow): ThreadMessage => ({
+/** A message as the app gets it: `incognito`, `sources` and `choices` only on the ones that have them. */
+export const messageOf = ({ incognito, sources, choices, ...m }: MessageRow): ThreadMessage => ({
   ...m,
   ...(incognito ? { incognito: true as const } : {}),
   ...(sources ? { sources: JSON.parse(sources) as Source[] } : {}),
+  ...(choices ? { choices: JSON.parse(choices) as string[] } : {}),
 });
 /** How a task ended, in the place of the reply that started it when its bot doesn't write that again. */
 export const resultText = (t: Pick<Task, "status" | "summary">) =>
@@ -165,6 +168,12 @@ const AskOpus = z.object({
 });
 
 /** Offered only when the chat runs on Haiku 5.5. */
+const ASK_OWNER = toolParam({
+  name: "ask_owner",
+  description: CHAT_ASK_DESCRIPTION,
+  schema: AskOwner,
+});
+
 const ASK_OPUS = toolParam({
   name: "ask_opus",
   description:
@@ -816,6 +825,7 @@ export class Thread {
         // Alone, Hatbot's tools stay as they were, and its cache with them.
         .filter((t) => others.length || t.name !== "ask_bot")
         .filter((t) => this.d.desktop?.configured || !DESKTOP_TOOLS.includes(t.name)),
+      ASK_OWNER,
       ...(onHaiku ? [ASK_OPUS] : []),
       ...pluginTools.map(toolParam),
       ...CHAT_WEB_TOOLS,
@@ -1764,6 +1774,8 @@ export class Thread {
     /** The pages the reply cites, and the titles of those it fetched (`addSources`). */
     const cited: Source[] = [];
     const fetched = new Map<string, string>();
+    /** The answers a question that ends the reply offers (ask_owner). */
+    let choices: string[] = [];
     const finish = (status: "done" | "error", note?: string): Said => {
       // A chart being fixed is out of view; the reply ends with what's shown.
       chartFix = null;
@@ -1775,10 +1787,13 @@ export class Thread {
         say(note);
       }
       this.live.delete(out.id);
-      db.query("UPDATE messages SET text = ?, status = ?, sources = ? WHERE id = ?").run(
+      db.query(
+        "UPDATE messages SET text = ?, status = ?, sources = ?, choices = ? WHERE id = ?",
+      ).run(
         text,
         status,
         cited.length ? JSON.stringify(cited) : null,
+        choices.length ? JSON.stringify(choices) : null,
         out.id,
       );
       this.touch(episode.id);
@@ -1788,6 +1803,7 @@ export class Thread {
         text,
         status,
         ...(cited.length ? { sources: cited } : {}),
+        ...(choices.length ? { choices } : {}),
       });
       if (rewrite) {
         const editedAt = this.now();
@@ -2064,6 +2080,15 @@ export class Thread {
           }
           return finish("done");
         }
+        // A question ends the reply. Its call gets no result now: the owner's next message is the
+        // answer, and answered() puts the result with it.
+        const asked = toolUses.length === 1 && !cutOff(res) && toolUses[0]?.name === "ask_owner";
+        const question = asked ? AskOwner.safeParse(toolUses[0]?.input) : null;
+        if (question?.success) {
+          say(text && !separate ? `\n\n${question.data.question}` : question.data.question);
+          choices = question.data.choices;
+          return finish("done");
+        }
 
         // Every tool_use needs a result, or the episode can't continue. Lookups in a row run at once.
         const lookup = (call: Anthropic.Beta.BetaToolUseBlock) =>
@@ -2081,6 +2106,16 @@ export class Thread {
             );
           if (!offered.has(call.name))
             return toolResult(call.id, `${call.name} isn't available in this conversation.`, true);
+          if (call.name === "ask_owner") {
+            const p = AskOwner.safeParse(call.input);
+            return toolResult(
+              call.id,
+              p.success
+                ? "Not asked: call ask_owner on its own, once the other tools are done."
+                : invalidInput(p.error),
+              true,
+            );
+          }
           if (call.name === "ask_opus" && onHaiku) {
             progress("Asking Opus…");
             return askOpus(call);
@@ -2264,7 +2299,9 @@ export function answered(turns: Turn[]): Turn[] {
     const missing = calls.filter((c) => !results.some((r) => r.tool_use_id === c.id));
     if (!missing.length) continue;
     const filled = missing.map((c) =>
-      toolResult(c.id, "Stopped before this finished; it may or may not have run.", true),
+      c.name === "ask_owner"
+        ? toolResult(c.id, "Asked. The owner's answer is their message below.")
+        : toolResult(c.id, "Stopped before this finished; it may or may not have run.", true),
     );
     const rest = content.filter((b) => b.type !== "tool_result");
     out.push({ role: "user", content: [...results, ...filled, ...rest] });

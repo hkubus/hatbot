@@ -3,6 +3,7 @@ import {
   API_PREFIX,
   type Approval,
   describeCron,
+  type Question,
   type Schedule,
   type Task,
   type TaskStatus,
@@ -12,13 +13,14 @@ import { errorText } from "./api";
 import { plainText, stamp } from "./format";
 import { Icon } from "./icons";
 import { navigate } from "./router";
-import { decideApproval, ensureApproval, useStore } from "./store";
+import { answerQuestion, decideApproval, ensureApproval, useStore } from "./store";
 
 const STATUS: Record<TaskStatus, [string, string]> = {
   queued: ["", "Queued"],
   running: ["brand", "Running"],
   waiting_approval: ["attn", "Needs approval"],
   waiting_takeover: ["attn", "Needs you"],
+  waiting_answer: ["attn", "Asks you"],
   done: ["ok", "Done"],
   failed: ["bad", "Failed"],
   cancelled: ["", "Cancelled"],
@@ -70,6 +72,8 @@ export function taskLine(t: Task, progress?: string): string {
       return "Waiting for your approval.";
     case "waiting_takeover":
       return "Waiting for you to take over.";
+    case "waiting_answer":
+      return "Waiting for your answer.";
     default:
       return lastLine(progress) ?? "Working…";
   }
@@ -230,6 +234,69 @@ export function PendingApproval({
           <Icon name="check" />
           Approve
         </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A task's question waiting for you: tap an answer, or write your own. A card on its task's page, and in
+ * the chat's tray. Plain text, like an approval.
+ */
+export function PendingQuestion({ q, links }: { q: Question; links?: React.ReactNode }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [own, setOwn] = useState("");
+  const answer = async (text: string) => {
+    if (!text.trim() || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await answerQuestion(q.id, text.trim());
+    } catch (err) {
+      setError(errorText(err));
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="approval">
+      <div className="approval-text">
+        <p className="question-what">{q.question}</p>
+      </div>
+      <form
+        className="answer-row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void answer(own);
+        }}
+      >
+        <input
+          className="field"
+          aria-label="Your answer"
+          placeholder={q.choices.length ? "Or write your own" : "Your answer"}
+          maxLength={4000}
+          value={own}
+          onChange={(e) => setOwn(e.target.value)}
+        />
+        <button type="submit" className="btn" disabled={busy || !own.trim()}>
+          Send
+        </button>
+      </form>
+      {error && <div className="form-error">{error}</div>}
+      <div className="approval-actions">
+        {links}
+        <span className="spacer" />
+        {q.choices.map((c) => (
+          <button
+            key={c}
+            type="button"
+            className="btn primary"
+            disabled={busy}
+            onClick={() => answer(c)}
+          >
+            {c}
+          </button>
+        ))}
       </div>
     </div>
   );

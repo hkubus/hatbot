@@ -24,6 +24,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 - **More than one bot**, each with its own role, chat, memory folder and browser profile, handing work to each other (§14).
 - **Looking after things**: a heartbeat that looks for problems and acts on them with your instructions, watchers, Check everything and a weekly report (§15).
 - A **to-do list** in memory that Hatbot keeps and reminds you of (§19).
+- **Questions** with answers to tap, in the chat and from background tasks, which wait for your answer (§20).
 
 ### v1 is not
 - Email or calendar. You use Proton Mail and no calendar.
@@ -962,3 +963,11 @@ Your to-dos, kept by Hatbot and reminded. Agreed 2026-10-18.
 - **Trusted:** `todo.md` is a trusted file (§6.1). After reading untrusted content, a change to it is a proposal you apply, so a page can't add "pay this invoice" for you to be reminded of.
 - **Reminders** (`apps/brain/src/todo-reminders.ts`), without the model, so one can't be triaged away: at 9:00 (or the first minute after, that day), a list of what's due today and overdue, in Hatbot's chat and as a notification that opens the list; and an item due at a time, at that time, once. One whose time passed more than 6 hours ago (the brain was down) is left to the morning list. Pause all doesn't stop them: they do nothing but tell you.
 - **Not built:** working on an item from the list (a task with its text, ticking it off when done), handing items to bots with `@name`, done and overdue counts in the weekly report, tickable checkboxes in the web and iOS apps, a Siri action to add one, and setting the morning hour.
+
+## 20. Questions (built 2026-10-18)
+Hatbot asks you, with the likely answers as buttons. Agreed 2026-10-18.
+
+- **Tool:** `ask_owner(question, choices?)`: up to 4 choices of up to 60 characters (`MAX_CHOICES`, `MAX_CHOICE_CHARS`); you tap one or write your own. Not for passwords, codes or card numbers: those go through takeover. Its schema and wording are in `apps/brain/src/agent/ask.ts`.
+- **In the chat:** it ends the reply. The question is the reply's last paragraph and its choices are stored on the message (`messages.choices`, migration 38). The buttons work while it's the chat's latest message, and a tap sends the choice as your message. The tool call gets no result then; the next message you send carries it ("Asked. The owner's answer is their message below."), so the history stays valid. Called alongside other tools, it's sent back to be called on its own. Incognito has it too.
+- **In a background task** (not research): `ask_owner` also takes `wait_hours` (¼–24, default 4). The task goes to `waiting_answer`, gives up its slot and doesn't use the model while it waits, like an approval. You're notified with the question and its choices, and it shows in the tray of the chat its bot is in (or the chat the task came from) and on the task's page, with the buttons and a field for your own answer (`POST /questions/:id`). The answer comes back to the model as yours; with none in time it's told so and carries on with what's safest, or finishes and says what it needed. At most 3 per task. A task that ends drops its open questions, and a restart drops them all (`apps/brain/src/questions.ts`).
+- **Not built:** answering from the notification itself (ntfy action buttons), questions from research, and several questions in one.

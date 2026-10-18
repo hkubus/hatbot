@@ -35,6 +35,13 @@ struct TasksView: View {
             }
           }
         }
+        ForEach(store.pendingQuestions) { q in
+          Section {
+            VStack(alignment: .leading, spacing: 10) { QuestionBody(question: q, linksTask: false) }
+              .padding(.vertical, 4)
+            NavigationLink("Task", value: Route.task(q.taskId))
+          }
+        }
         Section {
           if let error {
             Text(error).foregroundStyle(.red)
@@ -144,6 +151,7 @@ struct TaskDetailView: View {
 
   private func content(_ task: AgentTask) -> some View {
     let pending = store.pendingApprovals.filter { $0.taskId == taskId }
+    let asked = store.pendingQuestions.filter { $0.taskId == taskId }
     let screen = task.lane == .screen && task.isActive
     let showLive = screen && (watch || store.desktop?.request?.taskId == taskId)
     return List {
@@ -153,6 +161,12 @@ struct TaskDetailView: View {
       ForEach(pending) { a in
         Section {
           VStack(alignment: .leading, spacing: 10) { ApprovalBody(approval: a, linksTask: false) }
+            .padding(.vertical, 4)
+        }
+      }
+      ForEach(asked) { q in
+        Section {
+          VStack(alignment: .leading, spacing: 10) { QuestionBody(question: q, linksTask: false) }
             .padding(.vertical, 4)
         }
       }

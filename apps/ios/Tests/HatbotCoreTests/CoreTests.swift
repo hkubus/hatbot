@@ -29,11 +29,11 @@ final class DecodingTests: XCTestCase {
     else { return XCTFail("an older brain's delta") }
     let done = #"{"type":"message.done","id":1,"text":"x","status":"done""#
     guard
-      case let .messageDone(_, _, _, sources) = try decode(
+      case let .messageDone(_, _, _, sources, _) = try decode(
         HatbotEvent.self, done + #","sources":[{"url":"https://a.example","title":"A"}]}"#)
     else { return XCTFail("not done") }
     XCTAssertEqual(sources, [Source(url: "https://a.example", title: "A")])
-    guard case .messageDone(_, _, _, nil) = try decode(HatbotEvent.self, done + "}")
+    guard case .messageDone(_, _, _, nil, nil) = try decode(HatbotEvent.self, done + "}")
     else { return XCTFail("an older brain's done") }
   }
 

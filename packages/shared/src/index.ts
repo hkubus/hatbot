@@ -129,6 +129,11 @@ export type ThreadMessage = {
   incognito?: true;
   /** The web pages it cites, in the order it first cites them. Absent when none. */
   sources?: Source[];
+  /**
+   * A reply that asks you something: answers to tap, each sent as your message. Absent when it
+   * offers none.
+   */
+  choices?: string[];
 };
 
 /** A web page a reply cites. */
@@ -163,6 +168,8 @@ export type TaskStatus =
   | "running"
   | "waiting_approval"
   | "waiting_takeover"
+  /** It asked you something (ask_owner) and waits for your answer. */
+  | "waiting_answer"
   | "done"
   | "failed"
   | "cancelled";
@@ -171,6 +178,7 @@ export const ACTIVE_TASK_STATUSES: TaskStatus[] = [
   "running",
   "waiting_approval",
   "waiting_takeover",
+  "waiting_answer",
 ];
 
 export type Task = {
@@ -288,6 +296,28 @@ export const TokenDecision = z.object({
   sig: z.string().min(1).max(200),
 });
 
+/** A background task's question to you (PLAN.md §20). */
+export type Question = {
+  id: number;
+  botId: string;
+  taskId: number;
+  /** The chat the task was started from, if any, which shows it too. */
+  conversationId: number | null;
+  question: string;
+  /** Answers to tap; you can always write your own. */
+  choices: string[];
+  status: "pending" | "answered" | "expired" | "cancelled";
+  answer: string | null;
+  createdAt: string;
+  expiresAt: string;
+  answeredAt: string | null;
+};
+export const AnswerQuestion = z.object({ answer: z.string().trim().min(1).max(4000) });
+
+/** At most this many choices, each at most this long: they're buttons. */
+export const MAX_CHOICES = 4;
+export const MAX_CHOICE_CHARS = 60;
+
 export type DesktopState = {
   /** desktop-agent answers. */
   online: boolean;
@@ -313,6 +343,7 @@ export type HatbotEvent =
       text: string;
       status: "done" | "error";
       sources?: Source[];
+      choices?: string[];
     }
   /** A task now shows under this reply. */
   | { type: "message.task"; id: number; taskId: number }
@@ -338,6 +369,8 @@ export type HatbotEvent =
   | { type: "task.progress"; taskId: number; text: string }
   | { type: "approval.created"; approval: Approval }
   | { type: "approval.resolved"; approval: Approval }
+  | { type: "question.created"; question: Question }
+  | { type: "question.resolved"; question: Question }
   | { type: "desktop.state"; state: DesktopState }
   | { type: "schedule.updated"; schedule: Schedule }
   | { type: "schedule.deleted"; id: number }

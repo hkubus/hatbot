@@ -70,6 +70,8 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   var incognito: Bool?
   /// The web pages it cites, in the order it first cites them; missing when none.
   var sources: [Source]?
+  /// The answers to tap when it ends with a question; missing otherwise.
+  var choices: [String]?
   /// The chat it's in: a bot's own, or a group. Missing on brains from before bots.
   var conversationId: Int?
   /// The bot that wrote it; nil for yours.
@@ -171,6 +173,7 @@ enum TaskStatus: String, LenientEnum {
   case queued, running
   case waitingApproval = "waiting_approval"
   case waitingTakeover = "waiting_takeover"
+  case waitingAnswer = "waiting_answer"
   case done, failed, cancelled
   static let fallback = TaskStatus.running
 }
@@ -256,6 +259,25 @@ struct TaskWithSteps: Decodable, Sendable {
   let steps: [TaskStep]
   /// Missing on brains from before task files.
   let attachments: [Attachment]?
+}
+
+/// A background task's question to you (PLAN.md §20); it waits for your answer.
+struct Question: Codable, Identifiable, Equatable, Sendable {
+  enum Status: String, LenientEnum {
+    case pending, answered, expired, cancelled
+    static let fallback = Status.cancelled
+  }
+
+  let id: Int
+  var botId: String
+  var taskId: Int
+  var conversationId: Int?
+  var question: String
+  var choices: [String]
+  var status: Status
+  var answer: String?
+  var createdAt: String
+  var expiresAt: String
 }
 
 struct Approval: Codable, Identifiable, Equatable, Sendable {
@@ -618,7 +640,8 @@ enum HatbotEvent: Decodable, Sendable {
   /// `at`: where `text` starts in the reply, in UTF-16 units; an older brain doesn't say.
   case messageDelta(id: Int, text: String, at: Int? = nil)
   case messageProgress(id: Int, text: String)
-  case messageDone(id: Int, text: String, status: ThreadMessage.Status, sources: [Source]? = nil)
+  case messageDone(
+    id: Int, text: String, status: ThreadMessage.Status, sources: [Source]? = nil, choices: [String]? = nil)
   case messageTask(id: Int, taskId: Int)
   case messageEdited(id: Int, editedAt: String)
   case messageRewrite(id: Int)
@@ -635,6 +658,8 @@ enum HatbotEvent: Decodable, Sendable {
   case taskProgress(taskId: Int, text: String)
   case approvalCreated(Approval)
   case approvalResolved(Approval)
+  case questionCreated(Question)
+  case questionResolved(Question)
   case desktopState(DesktopState)
   case scheduleUpdated(Schedule)
   case scheduleDeleted(id: Int)
@@ -657,7 +682,7 @@ enum HatbotEvent: Decodable, Sendable {
   private enum Key: String, CodingKey {
     case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused, tokens, costUsd
     case task, step, approval, state, schedule, trigger, episode, editedAt, ids, seenAt, attachment
-    case bot, conversation, proposal, watcher, sources, at
+    case bot, conversation, proposal, watcher, sources, at, question, choices
   }
 
   init(from decoder: Decoder) throws {
@@ -670,7 +695,9 @@ enum HatbotEvent: Decodable, Sendable {
     case "message.created": self = try .messageCreated(v(.message))
     case "message.delta": self = try .messageDelta(id: v(.id), text: v(.text), at: maybe(.at))
     case "message.progress": self = try .messageProgress(id: v(.id), text: v(.text))
-    case "message.done": self = try .messageDone(id: v(.id), text: v(.text), status: v(.status), sources: maybe(.sources))
+    case "message.done":
+      self = try .messageDone(
+        id: v(.id), text: v(.text), status: v(.status), sources: maybe(.sources), choices: maybe(.choices))
     case "message.task": self = try .messageTask(id: v(.id), taskId: v(.taskId))
     case "message.edited": self = try .messageEdited(id: v(.id), editedAt: v(.editedAt))
     case "message.rewrite": self = try .messageRewrite(id: v(.id))
@@ -686,6 +713,8 @@ enum HatbotEvent: Decodable, Sendable {
     case "task.progress": self = try .taskProgress(taskId: v(.taskId), text: v(.text))
     case "approval.created": self = try .approvalCreated(v(.approval))
     case "approval.resolved": self = try .approvalResolved(v(.approval))
+    case "question.created": self = try .questionCreated(v(.question))
+    case "question.resolved": self = try .questionResolved(v(.question))
     case "desktop.state": self = try .desktopState(v(.state))
     case "schedule.updated": self = try .scheduleUpdated(v(.schedule))
     case "schedule.deleted": self = try .scheduleDeleted(id: v(.id))

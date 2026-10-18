@@ -14,6 +14,7 @@ import {
   type NegotiationMessage,
   type PluginInfo,
   type Proposal,
+  type Question,
   type Schedule,
   type SpendSummary,
   type Task,
@@ -59,6 +60,8 @@ type State = {
   /** Latest progress note per running task. */
   taskProgress: Record<number, string>;
   approvals: Record<number, Approval>;
+  /** Background tasks' questions to you. */
+  questions: Record<number, Question>;
   desktop: DesktopState | null;
   /** null: deleted, or never existed. */
   schedules: Record<number, Schedule | null>;
@@ -111,6 +114,7 @@ let state: State = {
   taskFiles: {},
   taskProgress: {},
   approvals: {},
+  questions: {},
   desktop: null,
   schedules: {},
   triggers: {},
@@ -554,8 +558,9 @@ export async function saveSchedule(id: number, patch: Partial<Schedule> & { at?:
 
 async function loadLive() {
   void loadBots().catch(() => {});
-  const [pending, desktop, teach, unread] = await Promise.all([
+  const [pending, asked, desktop, teach, unread] = await Promise.all([
     api<Approval[]>("/approvals?pending=1"),
+    api<Question[]>("/questions").catch(() => null),
     api<DesktopState>("/desktop/status").catch(() => null),
     api<{ recording: TeachSession | null; drafts: TeachSession[] }>("/teach").catch(() => null),
     api<number[]>("/thread/unread").catch(() => null),
@@ -570,6 +575,8 @@ async function loadLive() {
   for (const a of Object.values(approvals))
     if (a.status === "pending" && !pending.some((p) => p.id === a.id)) delete approvals[a.id];
   for (const a of pending) approvals[a.id] = a;
+  // Questions answered or dropped while we were away aren't listed.
+  if (asked) set({ questions: Object.fromEntries(asked.map((q) => [q.id, q])) });
   set({ approvals, desktop });
   if (teach) {
     // A recording that ended while we were away isn't listed any more.
@@ -589,6 +596,10 @@ export async function decideApproval(id: number, decision: "approve" | "deny", n
     body: { decision, ...(note.trim() ? { note: note.trim() } : {}) },
   });
   put("approvals", a.id, a);
+}
+
+export async function answerQuestion(id: number, answer: string) {
+  put("questions", id, await api<Question>(`/questions/${id}`, { body: { answer } }));
 }
 
 export async function cancelTask(id: number) {
@@ -637,9 +648,10 @@ export async function saveSkill(
 export const recording = (s: State) =>
   Object.values(s.teach).find((t) => t.status === "recording") ?? null;
 
-/** Approvals waiting for you, plus a takeover request. */
+/** Approvals and questions waiting for you, plus a takeover request. */
 export const needsYou = (s: State) =>
   Object.values(s.approvals).filter((a) => a.status === "pending").length +
+  Object.values(s.questions).filter((q) => q.status === "pending").length +
   (s.desktop?.request ? 1 : 0);
 
 let toast: Toast = () => {};
@@ -705,6 +717,7 @@ function onMessages(list: ThreadMessage[], e: HatbotEvent): ThreadMessage[] {
         text: e.text,
         status: e.status,
         ...(e.sources ? { sources: e.sources } : {}),
+        ...(e.choices ? { choices: e.choices } : {}),
       }));
     default:
       return list;
@@ -818,6 +831,9 @@ function apply(e: HatbotEvent) {
     case "approval.created":
     case "approval.resolved":
       return put("approvals", e.approval.id, e.approval);
+    case "question.created":
+    case "question.resolved":
+      return put("questions", e.question.id, e.question);
     case "desktop.state":
       return set({ desktop: e.state });
     case "schedule.updated":

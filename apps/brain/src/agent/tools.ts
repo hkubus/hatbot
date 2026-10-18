@@ -1258,6 +1258,7 @@ export const CORE_TOOL_NAMES = [
   "confirm_intent",
   "request_takeover",
   "record_conversation",
+  "ask_owner",
   ...NEGOTIATE_TOOL_NAMES,
 ];
 

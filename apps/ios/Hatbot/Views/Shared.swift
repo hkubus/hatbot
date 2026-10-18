@@ -198,7 +198,7 @@ struct TypingDots: View {
 extension TaskStatus {
   var tint: Color {
     switch self {
-    case .waitingApproval, .waitingTakeover: .attention
+    case .waitingApproval, .waitingTakeover, .waitingAnswer: .attention
     case .running: .accentColor
     case .done: .green
     case .failed: .red

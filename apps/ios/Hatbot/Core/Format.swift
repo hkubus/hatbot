@@ -71,6 +71,7 @@ enum Format {
     case .queued: return t.lane == .screen ? "Waiting for the screen." : "Queued."
     case .waitingApproval: return "Waiting for your approval."
     case .waitingTakeover: return "Waiting for you to take over."
+    case .waitingAnswer: return "Waiting for your answer."
     default: return lastLine(progress) ?? "Working…"
     }
   }
@@ -81,6 +82,7 @@ enum Format {
     case .running: "Running"
     case .waitingApproval: "Needs approval"
     case .waitingTakeover: "Needs you"
+    case .waitingAnswer: "Asks you"
     case .done: "Done"
     case .failed: "Failed"
     case .cancelled: "Cancelled"

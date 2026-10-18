@@ -28,6 +28,7 @@ import type { Plugin } from "./plugins/plugin";
 import { Plugins } from "./plugins/registry";
 import { selfPlugin } from "./plugins/self";
 import { Proxmox } from "./proxmox";
+import { Questions } from "./questions";
 import { WeeklyReport } from "./report";
 import { Schedules } from "./schedules";
 import { Secrets } from "./secrets";
@@ -115,6 +116,7 @@ export async function createServices(o: Outside) {
     () => settings.get().notificationsOpen,
   );
   const approvals = new Approvals(db, events, notifier, publicUrl, clock, bots);
+  const questions = new Questions(db, events, notifier, publicUrl, clock, bots);
 
   // What most services take; each gets its own copy, since some add to theirs later (attach()).
   const core = {
@@ -137,6 +139,7 @@ export async function createServices(o: Outside) {
     chats,
     notifier,
     approvals,
+    questions,
   };
   const tasks = new Tasks({ ...core });
   const teach = new Teach({ ...core, lane: tasks.lane });

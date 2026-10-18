@@ -56,7 +56,14 @@ import {
   sendMessage,
   useStore,
 } from "../store";
-import { isActive, PendingApproval, taskLine, tokenText, whenText } from "../tasks";
+import {
+  isActive,
+  PendingApproval,
+  PendingQuestion,
+  taskLine,
+  tokenText,
+  whenText,
+} from "../tasks";
 import { splitWaiting } from "../waiting";
 
 /** How long an unread message stays on screen before it counts as seen. */
@@ -268,10 +275,12 @@ function ReplyMessage({
   m,
   progress,
   retryable,
+  answerable,
 }: {
   m: ThreadMessage;
   progress?: string;
   retryable: boolean;
+  answerable: boolean;
 }) {
   const task = useStore((s) => (m.taskId ? s.tasks[m.taskId] : undefined));
   const used = useStore((s) => s.usage[m.id]);
@@ -301,6 +310,7 @@ function ReplyMessage({
           </div>
         )}
         {!streaming && m.sources?.length ? <Sources list={m.sources} /> : null}
+        {answerable && m.choices?.length ? <Choices list={m.choices} /> : null}
         {m.negotiationId && <NegotiationResult id={m.negotiationId} />}
         {ended && !finished && m.text && <hr className="result-rule" />}
         {m.taskId && !finished && <TaskResult taskId={m.taskId} />}
@@ -385,6 +395,34 @@ function ScheduleMessage({ m, scheduleId }: { m: ThreadMessage; scheduleId: numb
 }
 
 /** The pages a reply cites, in a line. */
+/** The answers a question at the end of a reply offers: a tap sends one as your message. */
+function Choices({ list }: { list: string[] }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const pick = async (text: string) => {
+    setBusy(true);
+    setError("");
+    try {
+      await sendMessage(text, [], randomId());
+    } catch (err) {
+      setError(sendError(err, getState().connected));
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <div className="choices">
+        {list.map((c) => (
+          <button key={c} type="button" className="btn" disabled={busy} onClick={() => pick(c)}>
+            {c}
+          </button>
+        ))}
+      </div>
+      {error && <div className="form-error">{error}</div>}
+    </>
+  );
+}
+
 function Sources({ list }: { list: Source[] }) {
   return (
     <div className="sources">
@@ -448,12 +486,15 @@ export const Message = memo(function Message({
   animate,
   unread,
   retryable = false,
+  answerable = false,
 }: {
   m: ThreadMessage;
   progress?: string;
   animate: boolean;
   /** The latest reply, errored: it can be tried again. */
   retryable?: boolean;
+  /** The latest message, a question: its choices can be tapped. */
+  answerable?: boolean;
   /** Sent or edited since you last saw it. */
   unread: boolean;
 }) {
@@ -481,7 +522,9 @@ export const Message = memo(function Message({
   } else if (m.kind === "schedule" && m.scheduleId) {
     inner = <ScheduleMessage m={m} scheduleId={m.scheduleId} />;
   } else {
-    inner = <ReplyMessage m={m} progress={progress} retryable={retryable} />;
+    inner = (
+      <ReplyMessage m={m} progress={progress} retryable={retryable} answerable={answerable} />
+    );
   }
 
   return (
@@ -606,19 +649,21 @@ export function Chat({ id }: { id: number }) {
   const messages = useStore((s) => s.messages);
   const episodes = useStore((s) => s.episodes);
   const approvals = useStore((s) => s.approvals);
+  const questions = useStore((s) => s.questions);
   const chat = useStore(currentChat);
   const chats = useStore((s) => s.conversations);
-  // This chat's approvals, and a line for the rest: each chat's bots ask in their own.
+  // This chat's approvals and tasks' questions, and a line for the rest: each chat's bots ask in their own.
   const waiting = useMemo(
     () =>
       splitWaiting(
-        Object.values(approvals)
-          .filter((a) => a.status === "pending")
-          .sort((a, b) => a.id - b.id),
+        [
+          ...Object.values(approvals).filter((a) => a.status === "pending"),
+          ...Object.values(questions).filter((q) => q.status === "pending"),
+        ].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
         chat,
         chats,
       ),
-    [approvals, chat, chats],
+    [approvals, questions, chat, chats],
   );
   const [unfolded, setUnfolded] = useState<Set<number>>(() => new Set());
   const progress = useStore((s) => s.progress);
@@ -778,6 +823,8 @@ export function Chat({ id }: { id: number }) {
   // Only the latest reply can be tried again, and only if it errored.
   const lastReply = messages.findLast((m) => m.role === "assistant" && m.kind !== "command");
   const retryableId = lastReply?.status === "error" ? lastReply.id : 0;
+  // A question's choices stay tappable until anything comes after it.
+  const answerableId = messages.at(-1)?.choices?.length ? (messages.at(-1)?.id ?? 0) : 0;
   // A screen reader hears each new reply once it's finished, not every streamed word.
   const said =
     lastReply && lastReply.status !== "streaming" && lastReply.id >= animateFrom.current
@@ -817,6 +864,7 @@ export function Chat({ id }: { id: number }) {
         animate={m.id >= animateFrom.current}
         unread={unread.includes(m.id)}
         retryable={m.id === retryableId}
+        answerable={m.id === answerableId}
       />
     </Fragment>
   );
@@ -895,9 +943,25 @@ export function Chat({ id }: { id: number }) {
         )}
         {(waiting.here.length > 0 || waiting.rest > 0) && (
           <div className="approval-tray">
-            {waiting.here.map((a) => (
-              <TrayApproval key={a.id} a={a} />
-            ))}
+            {waiting.here.map((a) =>
+              "question" in a ? (
+                <PendingQuestion
+                  key={`q${a.id}`}
+                  q={a}
+                  links={
+                    <button
+                      type="button"
+                      className="btn sm ghost"
+                      onClick={() => navigate(`/tasks/${a.taskId}`)}
+                    >
+                      Open task
+                    </button>
+                  }
+                />
+              ) : (
+                <TrayApproval key={a.id} a={a} />
+              ),
+            )}
             {waiting.rest > 0 && (
               <button
                 type="button"

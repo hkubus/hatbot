@@ -658,4 +658,75 @@ export const migrations: string[] = [
     WHERE injection_suspected NOT LIKE 'The summary of earlier conversations%'
     AND injection_suspected NOT LIKE '%, which couldn''t be checked';
   `,
+  /*
+   * 38: questions (PLAN.md §20): a task waits for your answer, and a reply in the chat offers answers
+   * to tap. tasks again: its status gains waiting_answer.
+   */ `
+  ${REBUILD}
+  CREATE TABLE tasks_new (
+    id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    goal TEXT NOT NULL,
+    success_criteria TEXT NOT NULL DEFAULT '',
+    origin TEXT NOT NULL,
+    lane TEXT NOT NULL CHECK (lane IN ('screen', 'background')),
+    model TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'waiting_approval', 'waiting_takeover', 'waiting_answer', 'done', 'failed', 'cancelled')),
+    tainted INTEGER NOT NULL DEFAULT 0,
+    injection_suspected INTEGER NOT NULL DEFAULT 0,
+    budget_usd REAL NOT NULL,
+    summary TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ')),
+    started_at TEXT,
+    finished_at TEXT,
+    reported_at TEXT,
+    schedule_id INTEGER REFERENCES schedules(id) ON DELETE SET NULL,
+    trigger_id INTEGER REFERENCES triggers(id) ON DELETE SET NULL,
+    parent_id INTEGER REFERENCES tasks(id),
+    source TEXT,
+    run_key TEXT,
+    payload TEXT,
+    effort TEXT CHECK (effort IN ('low', 'medium', 'high')),
+    skill TEXT,
+    request TEXT,
+    tainted_by TEXT,
+    bot_id TEXT NOT NULL DEFAULT 'hatbot',
+    conversation_id INTEGER REFERENCES conversations(id),
+    requested_by TEXT,
+    watcher_id INTEGER REFERENCES watchers(id) ON DELETE SET NULL,
+    escalated_from TEXT,
+    research INTEGER NOT NULL DEFAULT 0,
+    report_path TEXT
+  );
+  INSERT INTO tasks_new (id, title, goal, success_criteria, origin, lane, model, status, tainted, injection_suspected, budget_usd, summary, created_at, started_at, finished_at, reported_at, schedule_id, trigger_id, parent_id, source, run_key, payload, effort, skill, request, tainted_by, bot_id, conversation_id, requested_by, watcher_id, escalated_from, research, report_path)
+  SELECT id, title, goal, success_criteria, origin, lane, model, status, tainted, injection_suspected, budget_usd, summary, created_at, started_at, finished_at, reported_at, schedule_id, trigger_id, parent_id, source, run_key, payload, effort, skill, request, tainted_by, bot_id, conversation_id, requested_by, watcher_id, escalated_from, research, report_path FROM tasks;
+  DROP TABLE tasks;
+  ALTER TABLE tasks_new RENAME TO tasks;
+  CREATE INDEX tasks_status ON tasks (status);
+  CREATE INDEX tasks_run_key ON tasks (run_key, status);
+  CREATE INDEX tasks_watcher ON tasks (watcher_id);
+  CREATE INDEX tasks_schedule ON tasks (schedule_id);
+  CREATE INDEX tasks_trigger ON tasks (trigger_id);
+  CREATE INDEX tasks_skill ON tasks (skill);
+  CREATE INDEX tasks_parent ON tasks (parent_id);
+
+  CREATE TABLE questions (
+    id INTEGER PRIMARY KEY,
+    bot_id TEXT NOT NULL,
+    task_id INTEGER NOT NULL REFERENCES tasks(id),
+    conversation_id INTEGER REFERENCES conversations(id),
+    question TEXT NOT NULL,
+    -- JSON array of strings
+    choices TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'answered', 'expired', 'cancelled')),
+    answer TEXT,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    answered_at TEXT
+  );
+  CREATE INDEX questions_status ON questions (status, id);
+  CREATE INDEX questions_task ON questions (task_id);
+
+  ALTER TABLE messages ADD COLUMN choices TEXT;
+  `,
 ];

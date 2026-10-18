@@ -57,6 +57,7 @@ const safely = (name: string, fn: () => unknown) => {
 };
 setInterval(() => safely("desktop refresh", () => desktop.refresh()), 30_000);
 setInterval(() => safely("approvals", () => approvals.expireDue()), 60_000);
+setInterval(() => safely("questions", () => brain.questions.expireDue()), 60_000);
 setInterval(() => safely("sign-in prune", () => auth.prune()), 3600_000);
 setInterval(() => safely("negotiations", () => negotiations.due()), 60_000);
 setInterval(() => safely("chat sweep", () => chats.sweep()), 60_000);

@@ -379,7 +379,7 @@ export class Negotiations {
       .query<{ task_id: number }, [number]>(
         `SELECT nt.task_id FROM negotiation_tasks nt JOIN tasks t ON t.id = nt.task_id
          WHERE nt.negotiation_id = ? AND nt.message_id IS NULL
-           AND t.status IN ('queued', 'running', 'waiting_approval', 'waiting_takeover') LIMIT 1`,
+           AND t.status IN ('queued', 'running', 'waiting_approval', 'waiting_takeover', 'waiting_answer') LIMIT 1`,
       )
       .get(id);
     return r?.task_id ?? null;

@@ -5,6 +5,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { type ApprovalKind, brokenCharts, type Task } from "@hatbot/shared";
 import { z } from "zod";
+import { ownerAnswer, TASK_ASK_DESCRIPTION, TaskAskOwner } from "../agent/ask";
 import { cutOff, type StreamParams } from "../agent/model";
 import { AGENT_PROMPT, CHART_GUESS, RESEARCH_ASK_BOT } from "../agent/prompt";
 import { mayReview, safeToRun } from "../agent/review";
@@ -68,6 +69,8 @@ const MAX_CODE_STEPS = 80;
  * runs aren't held up for ever. Time waiting for the owner, or for tasks it started, doesn't count.
  */
 const MAX_RUN_MS = 4 * 3600_000;
+/** Questions one task may ask the owner (ask_owner). */
+const MAX_QUESTIONS = 3;
 const BETAS: Anthropic.Beta.AnthropicBeta[] = [
   "thinking-display-updates-2026-08-18",
   "context-management-2025-06-27",
@@ -149,6 +152,11 @@ const CORE_TOOLS: Anthropic.Beta.BetaTool[] = [
     name: "send_to_chat",
     description: SEND_TO_CHAT_DESCRIPTION,
     schema: SendToChat,
+  }),
+  toolParam({
+    name: "ask_owner",
+    description: TASK_ASK_DESCRIPTION,
+    schema: TaskAskOwner,
   }),
   toolParam({
     name: "notify_owner",
@@ -604,6 +612,39 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     return result(call, woke ? "Woke early: an event arrived (below)." : `Waited ${minutes} min.`);
   };
 
+  /** Asks the owner and waits without a slot, for their answer or until the time runs out. */
+  const ask = async (call: Anthropic.Beta.BetaToolUseBlock) => {
+    const p = TaskAskOwner.safeParse(call.input);
+    if (!p.success) return result(call, invalidInput(p.error), true);
+    if (d.questions.countFor(id) >= MAX_QUESTIONS)
+      return result(
+        call,
+        `Not asked: a task asks at most ${MAX_QUESTIONS} questions. Decide yourself, and say what you assumed in finish_task.`,
+        true,
+      );
+    const { question, choices, wait_hours: hours } = p.data;
+    const q = d.questions.create({
+      botId: bot.id,
+      taskId: id,
+      conversationId: task.conversationId,
+      question,
+      choices,
+      waitMs: hours * 3600_000,
+    });
+    tasks.addStep(id, { kind: "note", name: "Asked you", detail: question, url: null });
+    tasks.setStatus(id, "waiting_answer");
+    const answer = await withoutSlot(() => d.questions.wait(q.id, signal));
+    if (answer === null) {
+      tasks.addStep(id, { kind: "note", name: "No answer", detail: question, url: null });
+      return result(
+        call,
+        `No answer within ${hours === 1 ? "an hour" : `${hours} hours`}. Carry on with what's safest and say what you assumed, or finish_task and say what you need.`,
+      );
+    }
+    tasks.addStep(id, { kind: "note", name: "Your answer", detail: answer, url: null });
+    return result(call, ownerAnswer(answer));
+  };
+
   /** Research: the helpers' sources, and how finishing has gone. */
   const found = new ResearchState();
   const run = { tasks, task, signal, taint, messages, reserveUsd: 0 };
@@ -798,6 +839,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         if (call.name === "run_desktop_task") return desktopTask(call);
         if (call.name === "ask_bot") return askBot(call);
         if (call.name === "wait") return wait(call);
+        if (call.name === "ask_owner") return ask(call);
         if (call.name === "send_file") {
           // On the task, so it shows wherever the task does.
           const r = await runTool(call.name, call.input, { ...ctx, taskId: id });
@@ -901,6 +943,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     if (slot) tasks.pool.release();
     for (const child of children) tasks.cancel(child);
     d.approvals.cancelForTask(id);
+    d.questions.cancelForTask(id);
   }
 }
 

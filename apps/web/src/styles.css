@@ -2474,6 +2474,28 @@ pre.payload {
 }
 
 /* Files on messages and in the composer. */
+/* A task's question: prose, unlike an approval's command; your own answer beside Send, on phones too. */
+.question-what {
+  font-weight: 600;
+}
+.answer-row {
+  display: flex;
+  gap: 6px;
+}
+.answer-row > .field {
+  flex: 1;
+  min-width: 0;
+}
+.answer-row > .btn {
+  flex-shrink: 0;
+}
+/* A question's answers, under the reply that asks it. */
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 2px;
+}
 .sources {
   margin: 6px 0 2px;
   font-size: 13px;

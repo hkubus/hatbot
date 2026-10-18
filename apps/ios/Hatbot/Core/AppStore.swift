@@ -52,6 +52,8 @@ final class AppStore {
   /// Latest progress note per running task.
   var taskProgress: [Int: String] = [:]
   var approvals: [Int: Approval] = [:]
+  /// Background tasks' questions to you.
+  var questions: [Int: Question] = [:]
   var desktop: DesktopState?
   var schedules: [Int: Schedule] = [:]
   /// Schedules a message points at that no longer exist.
@@ -145,9 +147,14 @@ final class AppStore {
       for: conversationId)
   }
 
-  /// Approvals waiting for you, plus a takeover request.
+  /// Approvals and questions waiting for you, plus a takeover request.
   var needsYou: Int {
-    approvals.values.filter { $0.status == .pending }.count + (desktop?.request == nil ? 0 : 1)
+    approvals.values.filter { $0.status == .pending }.count + pendingQuestions.count
+      + (desktop?.request == nil ? 0 : 1)
+  }
+
+  var pendingQuestions: [Question] {
+    questions.values.filter { $0.status == .pending }.sorted { $0.id < $1.id }
   }
 
   var pendingApprovals: [Approval] {
@@ -257,7 +264,7 @@ final class AppStore {
       if let i = messages.firstIndex(where: { $0.id == id }), !(messages[i].attachments ?? []).contains(where: { $0.id == a.id }) {
         messages[i].attachments = (messages[i].attachments ?? []) + [a]
       }
-    case let .messageDone(id, _, _, _):
+    case let .messageDone(id, _, _, _, _):
       follow(event)
       addUnread(id)
       refreshConversations()
@@ -280,6 +287,8 @@ final class AppStore {
       taskProgress[taskId] = String(((taskProgress[taskId] ?? "") + text).suffix(400))
     case let .approvalCreated(a), let .approvalResolved(a):
       approvals[a.id] = a
+    case let .questionCreated(q), let .questionResolved(q):
+      questions[q.id] = q
     case let .desktopState(state):
       desktop = state
     case let .scheduleUpdated(s):
@@ -369,12 +378,13 @@ final class AppStore {
       }
     case let .messageDelta(id, text, at):
       if let r = live(id) { r.text = Delta.added(text, to: r.text, at: at) }
-    case let .messageDone(id, text, status, sources):
+    case let .messageDone(id, text, status, sources, choices):
       replies[id] = nil
       if let i = messages.firstIndex(where: { $0.id == id }) {
         messages[i].text = text
         messages[i].status = status
         if let sources { messages[i].sources = sources }
+        if let choices { messages[i].choices = choices }
       }
     default: break
     }
@@ -786,6 +796,8 @@ final class AppStore {
     let active = tasks.values.filter { steps[$0.id] != nil && $0.isActive }.map(\.id)
     async let chats: Void = loadBots()
     async let approvalsLoad: [Approval] = api.get("/approvals?pending=1")
+    // A brain from before questions answers 404.
+    async let questionsLoad: [Question]? = try? api.get("/questions")
     async let stateLoad: DesktopState? = try? api.get("/desktop/status")
     // A brain from before unread answers 404.
     async let unreadLoad: [Int]? = try? api.get("/thread/unread")
@@ -799,6 +811,8 @@ final class AppStore {
       if !pending.contains(where: { $0.id == a.id }) { approvals[a.id] = nil }
     }
     for a in pending { approvals[a.id] = a }
+    // Those answered or dropped meanwhile aren't listed.
+    if let asked = await questionsLoad { questions = Dictionary(uniqueKeysWithValues: asked.map { ($0.id, $0) }) }
     desktop = state
     if let list = await unreadLoad { unread = list }
     _ = await (chats, taskLoads)
@@ -813,6 +827,12 @@ final class AppStore {
     let body = Body(decision: decision, note: trimmed.isEmpty ? nil : trimmed)
     let a: Approval = try await api.post("/approvals/\(id)", body: body)
     approvals[a.id] = a
+  }
+
+  func answer(_ id: Int, _ answer: String) async throws {
+    struct Body: Encodable { let answer: String }
+    let q: Question = try await api.post("/questions/\(id)", body: Body(answer: answer))
+    questions[q.id] = q
   }
 
   func cancelTask(_ id: Int) async throws {

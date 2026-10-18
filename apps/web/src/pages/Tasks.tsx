@@ -23,7 +23,7 @@ import {
   negotiationOf,
   useStore,
 } from "../store";
-import { ApprovalCard, isActive, Shot, StatusChip, taskLine } from "../tasks";
+import { ApprovalCard, isActive, PendingQuestion, Shot, StatusChip, taskLine } from "../tasks";
 import { BackHead, Group, LinkRow, Seg } from "../ui";
 
 /** A page of finished tasks; the list pages back from the oldest shown. */
@@ -38,6 +38,7 @@ export function Tasks() {
   const [attempt, setAttempt] = useState(0);
   const tasks = useStore((s) => s.tasks);
   const approvals = useStore((s) => s.approvals);
+  const questions = useStore((s) => s.questions);
   const request = useStore((s) => s.desktop?.request ?? null);
   const negotiations = useStore((s) => s.negotiations);
   const waiting = useMemo(
@@ -47,6 +48,7 @@ export function Tasks() {
         .sort((a, b) => a.id - b.id),
     [approvals],
   );
+  const asked = Object.values(questions).filter((q) => q.status === "pending");
   const talking = useMemo(
     () =>
       Object.values(negotiations)
@@ -92,13 +94,16 @@ export function Tasks() {
   return (
     <section className="view">
       <div className="page">
-        {(waiting.length > 0 || request) && (
+        {(waiting.length > 0 || asked.length > 0 || request) && (
           <Group title="Waiting for you">
             {request && (
               <LinkRow to={`/tasks/${request.taskId}?live=1`} label="Take over the desktop">
                 <span className="val">{request.reason}</span>
               </LinkRow>
             )}
+            {asked.map((q) => (
+              <LinkRow key={`q${q.id}`} label={q.question} to={`/tasks/${q.taskId}`} />
+            ))}
             {waiting.map((a) => {
               const n = a.kind === "mandate" ? negotiationOf({ negotiations }, a.id) : undefined;
               return (
@@ -299,6 +304,7 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   const progress = useStore((s) => s.taskProgress[id]);
   const request = useStore((s) => s.desktop?.request);
   const approvals = useStore((s) => s.approvals);
+  const questions = useStore((s) => s.questions);
   const [watch, setWatch] = useState(live);
   const { missing, error: loadError, load } = useItem(id, loadTask);
   const { busy, error, run } = useAction();
@@ -328,6 +334,7 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
 
   const active = isActive(task);
   const pending = Object.values(approvals).filter((a) => a.taskId === id && a.status === "pending");
+  const asked = Object.values(questions).filter((q) => q.taskId === id && q.status === "pending");
   // Open the live view when Hatbot asks you to take over.
   const screen = task.lane === "screen";
   const showLive = screen && active && (watch || request?.taskId === id);
@@ -400,6 +407,11 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
 
         {pending.map((a) => (
           <ApprovalCard key={a.id} approvalId={a.id} showDetails={false} />
+        ))}
+        {asked.map((q) => (
+          <div key={q.id} className="card attn">
+            <PendingQuestion q={q} />
+          </div>
         ))}
         {showLive && <LiveView taskId={id} />}
 

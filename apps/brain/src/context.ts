@@ -15,6 +15,7 @@ import type { MemoryStore } from "./memory/store";
 import type { Negotiations } from "./negotiate/service";
 import type { Plugins } from "./plugins/registry";
 import type { Proxmox } from "./proxmox";
+import type { Questions } from "./questions";
 import type { WeeklyReport } from "./report";
 import type { Schedules } from "./schedules";
 import type { Secrets } from "./secrets";
@@ -40,6 +41,7 @@ export type Deps = {
   bots: Bots;
   tasks: Tasks;
   approvals: Approvals;
+  questions: Questions;
   desktop: Desktop;
   archive: Archive;
   attachments: Attachments;
