@@ -25,42 +25,21 @@ const words = (list: string[]) => new RegExp(`${START}(?:${list.join("|")})`, "i
 const BUY = [
   // English, whole words.
   `(?:pay|payment|buy|purchase|order|checkout|check out|bid|place bid|donate)${END}`,
-  `(?:make|send|submit) (?:an |a )?offer${END}`,
-  `accept (?:the |this )?offer${END}`,
+  `(?:make|send|submit) (?:an |a )?offer${END}|accept (?:the |this )?offer${END}`,
   `(?:proceed|continue|go) to (?:payment|checkout)${END}`,
   // Polish: kupić, Kup teraz, Kupuję i płacę (not kupon).
-  "kup(?!on)",
-  `zakup(?!y|ow|ach|ami)`,
+  `kup(?!on)|zakup(?!y|ow|ach|ami)`,
   // zapłać, zapłata, opłać, wypłać, wpłać, płatność; płać on its own.
-  "zaplac",
-  "zaplat",
-  "oplac",
-  "wyplac",
-  "wplac",
-  "platnos",
-  `plac${END}`,
+  `zaplac|zaplat|oplac|wyplac|wplac|platnos|plac${END}`,
   // Płacę on its own or with how (folded, "place" is also English: "Place" alone, or before a way to pay).
   `place(?:$| (?:blik|kart|teraz|przelew|online|gotowk|z gory|za))`,
-  `do kas[ay]${END}`,
-  "(?:wykonaj|zlec|zatwierdz)\\p{L}* przelew",
-  "przelej",
-  `zamow(?:ic)?${END}`,
-  "zamawiam",
-  `zloz(?:yc)?${END}`,
-  "(?:za)?akceptuj\\p{L}* (?:ofert|cen|propozycj)",
-  "przyjmij ofert",
-  "przyjmuj\\p{L}* ofert",
-  "zaproponuj",
-  "licytuj",
+  `do kas[ay]${END}|(?:wykonaj|zlec|zatwierdz)\\p{L}* przelew|przelej`,
+  `zamow(?:ic)?${END}|zamawiam|zloz(?:yc)?${END}`,
+  "(?:za)?akceptuj\\p{L}* (?:ofert|cen|propozycj)|przyjmij ofert|przyjmuj\\p{L}* ofert",
+  "zaproponuj|licytuj",
   // Czech: koupit, zaplatit (above), platba, objednat, objednávku, nabídnout.
-  "koupit",
-  "platb",
-  `objedn(?:at|ej|ejte|avam)${END}`,
-  `objednavk[au]${END}`,
-  "dokoncit (?:nakup|objednavk)",
-  "prij(?:mout|mete|mi) nabid",
-  "nabidn",
-  "(?:ucinit|udelat|podat) nabid",
+  `koupit|platb|objedn(?:at|ej|ejte|avam)${END}|objednavk[au]${END}`,
+  "dokoncit (?:nakup|objednavk)|prij(?:mout|mete|mi) nabid|nabidn|(?:ucinit|udelat|podat) nabid",
 ];
 
 /**
@@ -72,29 +51,12 @@ const STRONG = words([
   ...BUY,
   `(?:send|post|publish|reply|book|reserve|transfer|sign up|register|subscribe|unsubscribe|withdraw|change password)${END}`,
   `cancel (?:order|subscription|booking|reservation)${END}`,
-  "podbij",
-  "wyroznij",
-  "wystaw",
-  `wysl(?:ij|ac|e)${END}`,
-  `wysylam${END}`,
-  `odesl(?:ij|ac)${END}`,
-  `odpowiedz${END}`,
-  "(?:o)?publikuj",
-  "(?:za)?rezerwuj",
-  "zarejestruj",
-  "zmien haslo",
-  "(?:za)?subskrybuj",
+  `podbij|wyroznij|wystaw|wysl(?:ij|ac|e)${END}|wysylam${END}|odesl(?:ij|ac)${END}|odpowiedz${END}`,
+  "(?:o)?publikuj|(?:za)?rezerwuj|zarejestruj|zmien haslo|(?:za)?subskrybuj",
   "anuluj (?:zamowienie|subskrypcj|rezerwacj)",
   // Czech: poslat, odeslat, rezervovat.
-  "poslat",
-  "odeslat",
-  `(?:posli|odesli)${END}`,
-  "odpovedet",
-  `odpovez${END}`,
-  "(?:za)?rezervov",
-  "(?:za)?registrov",
-  "publikovat",
-  "zverejnit",
+  `poslat|odeslat|(?:posli|odesli)${END}|odpovedet|odpovez${END}`,
+  "(?:za)?rezervov|(?:za)?registrov|publikovat|zverejnit",
   "zrusit (?:objednavk|predplatn|rezervac)",
 ]);
 const BUYING = words(BUY);
@@ -105,34 +67,13 @@ export const buyingLabel = (label: string) => BUYING.test(fold(label));
 /** Submitting, confirming, saving and deleting: consequential, except on a filter, sort or search control. */
 const SOFT = words([
   `(?:submit|confirm|delete|remove|apply|save changes)${END}`,
-  "potwierdz",
-  "zatwierdz",
-  `usun(?:ac)?${END}`,
-  "skasuj",
-  "zapisz zmiany",
-  "aplikuj",
-  "potvrd",
-  "potvrzuji",
-  "smazat",
-  `smaz${END}`,
-  `odstran(?:it)?${END}`,
-  "ulozit zmeny",
+  `potwierdz|zatwierdz|usun(?:ac)?${END}|skasuj|zapisz zmiany|aplikuj`,
+  `potvrd|potvrzuji|smazat|smaz${END}|odstran(?:it)?${END}|ulozit zmeny`,
 ]);
 
 /** Filters, sorting, results and search: "Apply filters", "Usuń filtry", "Seřadit". */
 const NARROWING = words([
-  "filt",
-  "sort",
-  "seradit",
-  "radit",
-  "wynik",
-  "vysledk",
-  "results",
-  "search",
-  "szuka",
-  "wyszuk",
-  "hleda",
-  "vyhled",
+  "filt|sort|seradit|radit|wynik|vysledk|results|search|szuka|wyszuk|hleda|vyhled",
 ]);
 
 /** A label that searches, filters or sorts ("Szukaj", "Pokaż wyniki"), and names nothing consequential. */
@@ -294,31 +235,11 @@ export function samePage(a: string | null | undefined, b: string | null | undefi
 }
 
 /** Payment pages shops hand over to (PayU, Przelewy24, PayPal and the like). */
-const PAYMENT_HOSTS = [
-  "payu.com",
-  "payu.pl",
-  "przelewy24.pl",
-  "paypal.com",
-  "tpay.com",
-  "paynow.pl",
-  "imoje.pl",
-  "dotpay.pl",
-  "blik.com",
-  "autopay.pl",
-  "bluemedia.pl",
-  "gopay.cz",
-  "gopay.com",
-  "comgate.cz",
-  "checkout.stripe.com",
-  "buy.stripe.com",
-  "js.stripe.com",
-  "hooks.stripe.com",
-  "adyen.com",
-  "klarna.com",
-  "checkout.com",
-  "braintreegateway.com",
-  "pay.google.com",
-];
+const PAYMENT_HOSTS = (
+  "payu.com payu.pl przelewy24.pl paypal.com tpay.com paynow.pl imoje.pl dotpay.pl blik.com " +
+  "autopay.pl bluemedia.pl gopay.cz gopay.com comgate.cz checkout.stripe.com buy.stripe.com " +
+  "js.stripe.com hooks.stripe.com adyen.com klarna.com checkout.com braintreegateway.com pay.google.com"
+).split(" ");
 
 /** A payment provider's host, or one under it: a step there pays. */
 export function paymentHost(host: string): boolean {
