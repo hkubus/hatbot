@@ -1,6 +1,13 @@
 // Boxes (PLAN.md §21): the small web apps your bots made, and one as large as the window allows, its
 // page sandboxed on an opaque origin, with what it saves going through the app to the brain.
-import type { Box, BoxAnswer, BoxDetail, BoxSecret, BoxPage as BoxSource } from "@hatbot/shared";
+import type {
+  Box,
+  BoxActionInfo,
+  BoxAnswer,
+  BoxDetail,
+  BoxSecret,
+  BoxPage as BoxSource,
+} from "@hatbot/shared";
 import { useEffect, useRef, useState } from "react";
 import { useAction } from "../action";
 import { ApiError, api, errorText } from "../api";
@@ -65,8 +72,8 @@ export function BoxPage({ id }: { id: number }) {
   const [attempt, setAttempt] = useState(0);
   /** The version showing; null for the current one, which follows the bot's changes. */
   const [picked, setPicked] = useState<number | null>(null);
-  /** Instead of the page: its source, or its secrets. */
-  const [view, setView] = useState<"page" | "code" | "secrets">("page");
+  /** Instead of the page: its source, its secrets, or its actions. */
+  const [view, setView] = useState<"page" | "code" | "secrets" | "actions">("page");
   const { busy, error, run } = useAction();
   // What was read last: the box.updated it puts in the store needn't read it again.
   const seen = useRef("");
@@ -74,7 +81,7 @@ export function BoxPage({ id }: { id: number }) {
   const show = (d: BoxDetail) => {
     seen.current = d.updatedAt;
     setDetail(d);
-    const { versions: _, secrets: _secrets, ...box } = d;
+    const { versions: _, secrets: _secrets, actions: _actions, ...box } = d;
     putBox(box);
   };
   // biome-ignore lint/correctness/useExhaustiveDependencies: a change, or Retry, reads it again
@@ -153,6 +160,15 @@ export function BoxPage({ id }: { id: number }) {
               {view === "secrets" ? "Page" : "Secrets"}
             </button>
           )}
+          {detail.actions.length > 0 && (
+            <button
+              type="button"
+              className="btn sm"
+              onClick={() => setView((v) => (v === "actions" ? "page" : "actions"))}
+            >
+              {view === "actions" ? "Page" : "Actions"}
+            </button>
+          )}
           <button
             type="button"
             className="btn sm"
@@ -172,6 +188,12 @@ export function BoxPage({ id }: { id: number }) {
             id={id}
             secrets={detail.secrets}
             onChange={(secrets) => setDetail({ ...detail, secrets })}
+          />
+        ) : view === "actions" && detail.actions.length ? (
+          <BoxActions
+            id={id}
+            actions={detail.actions}
+            onChange={(actions) => setDetail({ ...detail, actions })}
           />
         ) : (
           <BoxFrame id={id} version={version} title={detail.title} />
@@ -260,6 +282,51 @@ function BoxSecrets({
             </Row>
           ),
         )}
+      </Group>
+      {error && <div className="form-error">{error}</div>}
+    </div>
+  );
+}
+
+/**
+ * What the bot let the box's page run, once you approved it (PLAN.md §21.16): each run still follows
+ * its tool's own rules. Removing one is yours; the bot can add it again only by asking you.
+ */
+function BoxActions({
+  id,
+  actions,
+  onChange,
+}: {
+  id: number;
+  actions: BoxActionInfo[];
+  onChange: (actions: BoxActionInfo[]) => void;
+}) {
+  const { busy, error, run } = useAction();
+  const remove = async (name: string) => {
+    if (
+      !(await ask({ text: `Remove ${name}? The box's page can't run it any more.`, ok: "Remove" }))
+    )
+      return;
+    await run(async () => {
+      await api(`/boxes/${id}/actions/${encodeURIComponent(name)}`, { method: "DELETE" });
+      onChange(actions.filter((a) => a.name !== name));
+    });
+  };
+  return (
+    <div className="box-secrets">
+      <Group title="Actions">
+        {actions.map((a) => (
+          <Row key={a.name} label={a.name} sub={<span className="mono">{a.what}</span>}>
+            <button
+              type="button"
+              className="btn sm ghost"
+              disabled={busy}
+              onClick={() => remove(a.name)}
+            >
+              Remove
+            </button>
+          </Row>
+        ))}
       </Group>
       {error && <div className="form-error">{error}</div>}
     </div>
