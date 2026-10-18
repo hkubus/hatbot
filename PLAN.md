@@ -970,7 +970,7 @@ Your to-dos, kept by Hatbot and reminded. Agreed 2026-10-18.
 - **Working on an item:** *Work on it* in the apps (a swipe or long press on iOS), or `todo_work(item, details?)` in the chat, starts a background task with the item's text as its goal (and the details), in Hatbot's chat. The task keeps the item (`todo` on the task, migration 40), one at a time per item; the item shows *Working on it*, linking to the task. When the task ends done, the item is ticked off as todo_done would, so after untrusted content that's a proposal; failed or cancelled leaves it open. Run again keeps the link.
 - **Siri:** *Add a To-do* (App Intent, with an optional date; the day only, since a time Siri fills in would make a timed reminder) adds an item through `POST /todo`, like the app.
 - **Weekly report:** a line with how many items were ticked off in the last seven days and how many open ones are past their date, when either isn't 0.
-- **Not built:** handing items to bots with `@name`.
+- **Left on purpose** (§12.1): handing items to bots with `@name`.
 
 ## 20. Questions (built 2026-10-18)
 Hatbot asks you, with the likely answers as buttons. Agreed 2026-10-18.
