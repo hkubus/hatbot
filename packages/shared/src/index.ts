@@ -15,6 +15,7 @@ export * from "./schedule";
 export * from "./search";
 export * from "./templates";
 export * from "./thread";
+export * from "./todo";
 export * from "./watch";
 
 export const API_PREFIX = "/api/v1";

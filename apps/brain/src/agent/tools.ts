@@ -4,14 +4,22 @@ import {
   type Bot,
   describeCondition,
   describeCron,
+  dueTag,
+  findTodo,
   HATBOT_ID,
+  localDay,
   MAX_WATCH_MINUTES,
   minWatchMinutes,
+  parseTodos,
   type Schedule,
   SKILL_NAME,
   type Source,
+  TODO_FILE,
+  todoLine,
   type Watcher,
   type WatchSource,
+  withDone,
+  withTodo,
 } from "@hatbot/shared";
 import { z } from "zod";
 import type { Attachments } from "../attachments";
@@ -41,6 +49,8 @@ import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE, untrustedBlock } fr
 
 export type ToolContext = {
   db: Db;
+  /** Now, for the dates tools write. */
+  clock?: () => number;
   memory: MemoryStore;
   events: EventBus;
   /** The bot calling: whose memory commits these are, and whose tasks and schedules it starts. */
@@ -218,10 +228,10 @@ function authorOf(ctx: ToolContext, path: string) {
 }
 
 /**
- * Files every later chat and task reads and trusts: skills, the memory indexes, and homelab.md, the
- * map of the homelab that every bot shares and alert tasks act on.
+ * Files every later chat and task reads and trusts: skills, the memory indexes, homelab.md, the map of
+ * the homelab that every bot shares and alert tasks act on, and the to-do list, which reminds you.
  */
-const TRUSTED_FILE = /^(skills\/.+|INDEX\.md|bots\/[^/]+\/INDEX\.md|homelab\.md)$/;
+const TRUSTED_FILE = /^(skills\/.+|INDEX\.md|bots\/[^/]+\/INDEX\.md|homelab\.md|todo\.md)$/;
 
 /** Research's reports and notes, in research/ or a bot's own: written from what it read on the web. */
 const RESEARCH_FILE = /^(bots\/[^/]+\/)?research\//;
@@ -253,7 +263,7 @@ async function held(
     return content === null
       ? `Nothing to delete: ${rel} doesn't exist.`
       : "No change: the file already had this content.";
-  return "Saved as a proposal; the owner applies it. After reading untrusted content, changes to skills, INDEX.md and homelab.md wait for them.";
+  return "Saved as a proposal; the owner applies it. After reading untrusted content, changes to skills, INDEX.md, homelab.md and todo.md wait for them.";
 }
 
 /** Why a task the chat starts is tainted, from what the chat had read. */
@@ -402,6 +412,37 @@ type ToolDef<S extends z.ZodType> = {
   run: (input: z.infer<S>, ctx: ToolContext, signal: AbortSignal) => Promise<string>;
 };
 
+/**
+ * Changes the to-do list: at once, or, after reading untrusted content, as a proposal (held), so a page
+ * can't put "pay this invoice" on it. `change` throws a MemoryError when it can't be made.
+ */
+async function changeTodos(
+  ctx: ToolContext,
+  reason: string,
+  change: (md: string) => string,
+): Promise<string | null> {
+  const author = authorOf(ctx, TODO_FILE);
+  if (ctx.tainted?.()) {
+    const md = (await ctx.memory.readOrNull(TODO_FILE)) ?? "";
+    const proposed = await held(ctx, TODO_FILE, change(md), reason);
+    if (proposed) return proposed;
+  }
+  await ctx.memory.update(TODO_FILE, (md) => change(md ?? ""), author, reason);
+  return null;
+}
+
+const DUE = /^(\d{4}-\d{2}-\d{2})(?: (\d{2}:\d{2}))?$/;
+
+/** "2026-10-25" or "2026-10-25 14:00" as a tag, when it's a real date and time. */
+function dueInput(due: string): string {
+  const [, date = "", at] = DUE.exec(due) ?? [];
+  const [y, m, d] = date.split("-").map(Number) as [number, number, number];
+  const [h, min] = (at ?? "00:00").split(":").map(Number) as [number, number];
+  const real = date && localDay(new Date(y, m - 1, d)) === date && h < 24 && min < 60;
+  if (!real) throw new MemoryError(`"${due}" isn't a date like 2026-10-25, or 2026-10-25 14:00.`);
+  return dueTag(date, at);
+}
+
 const def = <S extends z.ZodType>(t: ToolDef<S>) => t;
 
 export const TOOLS = [
@@ -464,6 +505,67 @@ export const TOOLS = [
       const out = hits.map((h) => `${h.path}:${h.line}: ${h.text}`).join("\n") || "No matches.";
       const research = hits.find((h) => RESEARCH_FILE.test(h.path));
       return research ? researchNotes(ctx, "memory_search", research.path, out) : out;
+    },
+  }),
+  def({
+    name: "todo_list",
+    description:
+      "The owner's to-do list (todo.md in memory): open items with their due dates. The open ones are also shown at the start of each conversation.",
+    schema: z.object({
+      done: z.boolean().optional().describe("Also the items ticked off in the last 30 days"),
+    }),
+    run: async ({ done }, { memory, clock = Date.now }) => {
+      const todos = parseTodos((await memory.readOrNull(TODO_FILE)) ?? "");
+      const since = localDay(new Date(clock() - 30 * 86400_000));
+      const open = todos.filter((t) => !t.done).map((t) => `- ${todoLine(t)}`);
+      const ticked = todos
+        .filter((t) => done && t.done && (t.doneOn ?? "") >= since)
+        .map((t) => `- ${t.text}${t.doneOn ? ` (done ${t.doneOn})` : ""}`);
+      if (!open.length && !ticked.length) return "The to-do list is empty.";
+      return [
+        open.join("\n") || "Nothing open.",
+        ticked.length ? `Done:\n${ticked.join("\n")}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+    },
+  }),
+  def({
+    name: "todo_add",
+    description:
+      "Add an item to the owner's to-do list (todo.md in memory). Give due when there's a date: the owner is reminded each morning about what's due or overdue, and with a time also at that time. One item per call. For work you should run later or regularly, create a schedule instead.",
+    schema: z.object({
+      item: z.string().min(1).max(300).describe("What's to do, in a line"),
+      due: z
+        .string()
+        .optional()
+        .describe('The owner\'s local date, "2026-10-25", or with a time, "2026-10-25 14:00"'),
+    }),
+    run: async ({ item, due }, ctx) => {
+      const line = due ? `${item} ${dueInput(due)}` : item;
+      const proposed = await changeTodos(ctx, `To-do: ${cut(item, 60)}`, (md) =>
+        withTodo(md, line),
+      );
+      return proposed ?? `Added to the to-do list: ${line}`;
+    },
+  }),
+  def({
+    name: "todo_done",
+    description:
+      "Tick off an item on the owner's to-do list, when they say it's done or you did it. It stays in the list as done.",
+    schema: z.object({
+      item: z.string().min(1).describe("The item's text, or enough of it to pick it out"),
+    }),
+    run: async ({ item }, ctx) => {
+      const today = localDay(new Date((ctx.clock ?? Date.now)()));
+      let ticked = "";
+      const proposed = await changeTodos(ctx, `Done: ${cut(item, 60)}`, (md) => {
+        const t = findTodo(md, item);
+        if (typeof t === "string") throw new MemoryError(t);
+        ticked = t.text;
+        return withDone(md, t, today);
+      });
+      return proposed ?? `Ticked off: ${ticked}`;
     },
   }),
   def({
@@ -1100,13 +1202,20 @@ export const INCOGNITO_TOOLS = [
   "memory_list",
   "memory_read",
   "memory_search",
+  "todo_list",
   "schedule_list",
   "trigger_list",
   "watch_list",
 ];
 
 /** Core tools that only look things up, so several can run at once. */
-export const LOOKUP_TOOLS = ["memory_list", "memory_read", "memory_search", "search_history"];
+export const LOOKUP_TOOLS = [
+  "memory_list",
+  "memory_read",
+  "memory_search",
+  "todo_list",
+  "search_history",
+];
 
 /**
  * Runs a turn's tool calls in order, except that calls in a row that may run together do: what

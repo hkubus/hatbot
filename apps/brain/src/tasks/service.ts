@@ -635,6 +635,7 @@ export class Tasks {
     const { agent } = this.d.desktop;
     return {
       db: this.d.db,
+      clock: this.clock,
       memory: this.d.memory,
       events: this.d.events,
       bot: this.botOf(task),

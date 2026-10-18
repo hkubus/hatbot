@@ -79,6 +79,9 @@ const SHARED_TOOLS = [
   "memory_write",
   "memory_delete",
   "memory_search",
+  "todo_list",
+  "todo_add",
+  "todo_done",
   "search_history",
   "send_file",
 ];

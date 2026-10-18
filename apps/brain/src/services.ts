@@ -37,6 +37,7 @@ import { Storage } from "./storage";
 import { Tasks } from "./tasks/service";
 import { Teach } from "./teach/service";
 import { Skills } from "./teach/skills";
+import { TodoReminders } from "./todo-reminders";
 import { Triggers } from "./triggers";
 import { Updates } from "./updates";
 import { Watchers } from "./watch/service";
@@ -141,6 +142,7 @@ export async function createServices(o: Outside) {
   const triggers = new Triggers(db, events, settings, tasks, notifier, publicUrl, clock);
   const watchers = new Watchers({ ...core, tasks, desktop: agent });
   const heartbeat = new Heartbeat({ ...core, tasks });
+  const todoReminders = new TodoReminders({ ...core });
   const proposals = new Proposals({ ...core, tasks });
   const report = new WeeklyReport({ ...core });
   const negotiations = new Negotiations({ ...core, tasks });
@@ -195,6 +197,7 @@ export async function createServices(o: Outside) {
     triggers,
     watchers,
     heartbeat,
+    todoReminders,
     proposals,
     report,
     negotiations,

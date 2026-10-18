@@ -23,6 +23,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 - A native **iOS app** (SwiftUI, sideloaded with SideStore) for chat, tasks, approvals and the live view (§4.7).
 - **More than one bot**, each with its own role, chat, memory folder and browser profile, handing work to each other (§14).
 - **Looking after things**: a heartbeat that looks for problems and acts on them with your instructions, watchers, Check everything and a weekly report (§15).
+- A **to-do list** in memory that Hatbot keeps and reminds you of (§19).
 
 ### v1 is not
 - Email or calendar. You use Proton Mail and no calendar.
@@ -950,3 +951,13 @@ Hatbot can read its own code and propose changes to it as Forgejo pull requests,
 - **Approvals:** it's a forge write in a tainted task, so it needs approval: Haiku's review, or the owner. Hatbot never merges its own pull requests (the guidance says so, and `forgejo_merge` always asks). Deploying stays with the owner too: Update deploys only commits signed by `HATBOT_UPDATE_SIGNERS`, and the bot's commits aren't signed, so a change goes live only through the owner's signed merge.
 - **How it's used:** the owner asks in the chat, and the chat starts a task (`run_task`, effort high). Tasks share the sandbox's one checkout, so run one at a time.
 - **Not built:** updating a pull request after review comments (push to its branch again), and suggesting improvements on a schedule.
+
+## 19. To-do list (built 2026-10-18)
+Your to-dos, kept by Hatbot and reminded. Agreed 2026-10-18.
+
+- **Where:** `todo.md` in memory, markdown checkboxes, so it can be read, changed and reverted like any memory file (`packages/shared/src/todo.ts`). Tags: `due:2026-10-25`, or `due:2026-10-25 14:00` for a time, in the brain's local time; a ticked item gets `done:<date>` and stays.
+- **Tools:** `todo_list` (a lookup, in incognito too), `todo_add(item, due?)` and `todo_done(item)`, which names an open item by its text or part of it and asks again when that matches several. The chat and background tasks have them. Other changes (wording, a new date) are memory_write of `todo.md`. `/todo <item>` adds as you wrote it, tags included; `/todo` alone lists what's open.
+- **Seen:** a conversation or task opens with up to 20 open items in `<todo>`, after the memory indexes.
+- **Trusted:** `todo.md` is a trusted file (§6.1). After reading untrusted content, a change to it is a proposal you apply, so a page can't add "pay this invoice" for you to be reminded of.
+- **Reminders** (`apps/brain/src/todo-reminders.ts`), without the model, so one can't be triaged away: at 9:00 (or the first minute after, that day), a list of what's due today and overdue, in Hatbot's chat and as a notification that opens the list; and an item due at a time, at that time, once. One whose time passed more than 6 hours ago (the brain was down) is left to the morning list. Pause all doesn't stop them: they do nothing but tell you.
+- **Not built:** working on an item from the list (a task with its text, ticking it off when done), handing items to bots with `@name`, done and overdue counts in the weekly report, tickable checkboxes in the web and iOS apps, a Siri action to add one, and setting the morning hour.

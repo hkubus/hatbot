@@ -62,6 +62,7 @@ setInterval(() => safely("approvals", () => approvals.expireDue()), 60_000);
 setInterval(() => safely("sign-in prune", () => auth.prune()), 3600_000);
 setInterval(() => safely("negotiations", () => negotiations.due()), 60_000);
 setInterval(() => safely("chat sweep", () => chats.sweep()), 60_000);
+setInterval(() => safely("to-do reminders", () => brain.todoReminders.tick()), 60_000);
 // Runs missed while the brain was down start once plugins are up, so they get their tools.
 void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {
   safely("schedules", () => schedules.tick());

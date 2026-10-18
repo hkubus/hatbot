@@ -45,6 +45,7 @@ export const CHAT_COMMANDS = [
   { name: "stop", args: "[task number]", description: "Stop the reply, or a task" },
   { name: "task", args: "<what to do>", description: "Run it as a background task" },
   { name: "remember", args: "<fact>", description: "Save it to memory as written" },
+  { name: "todo", args: "[item]", description: "Add it to the to-do list, or show the list" },
 ] as const;
 
 export type ChatCommand = { name: (typeof CHAT_COMMANDS)[number]["name"]; arg: string };

@@ -8,6 +8,7 @@ const writes = [
   toolUse("memory_write", { path: "skills/x.md", content: "# X\nDo it", reason: "Add skill x" }),
   toolUse("memory_write", { path: "notes/x.md", content: "A note", reason: "Note x" }),
   toolUse("memory_delete", { path: "INDEX.md", reason: "Clear the index" }),
+  toolUse("todo_add", { item: "Pay invoice 4471" }),
 ];
 const pending = (t: TestApp) =>
   t.db
@@ -17,7 +18,7 @@ const pending = (t: TestApp) =>
     .all()
     .map((p) => ({ ...p, path: (JSON.parse(p.changes) as Proposal["changes"])[0]?.path }));
 
-test("after reading untrusted content, the chat's writes to skills and INDEX.md wait for you", async () => {
+test("after reading untrusted content, the chat's writes to skills, INDEX.md and the to-do list wait for you", async () => {
   const model = new FakeModel([
     { content: writes.slice(0, 1) },
     { content: [text("Saved.")] },
@@ -36,9 +37,11 @@ test("after reading untrusted content, the chat's writes to skills and INDEX.md 
   expect(await t.memory.read("notes/x.md")).toBe("A note\n");
   expect(await t.memory.exists("skills/x.md")).toBe(false);
   expect(await t.memory.exists("INDEX.md")).toBe(true);
+  expect(await t.memory.exists("todo.md")).toBe(false);
   expect(pending(t)).toMatchObject([
     { kind: "write", path: "skills/x.md" },
     { kind: "write", path: "INDEX.md" },
+    { kind: "write", path: "todo.md" },
   ]);
   expect(t.proposals.list("pending")[0]?.reason).toContain("https://example.com");
 });

@@ -11,10 +11,14 @@ import {
   type Episode,
   HATBOT_ID,
   parseCommand,
+  parseTodos,
   type Schedule,
   type Source,
   type Task,
   type ThreadMessage,
+  TODO_FILE,
+  todoLine,
+  withTodo,
 } from "@hatbot/shared";
 import { z } from "zod";
 import { type Approvals, ownerNote } from "../approvals";
@@ -711,7 +715,7 @@ export class Thread {
     note(this.d.tasks?.cancel(id) ? `Stopping task #${id}.` : `Task #${id} isn't running.`);
   }
 
-  /** /new, /task and /remember, in turn with replies. */
+  /** /new, /task, /remember and /todo, in turn with replies. */
   private async command(c: ChatCommand, message: ThreadMessage, bot: Bot) {
     const { tasks, memory, settings } = this.d;
     const incognito = !!message.incognito;
@@ -752,6 +756,29 @@ export class Thread {
       } catch (err) {
         if (!(err instanceof MemoryError)) console.error("/remember failed", err);
         note(`Couldn't save it: ${err instanceof MemoryError ? err.message : "memory failed"}`);
+      }
+    } else if (c.name === "todo") {
+      if (!c.arg) {
+        const open = parseTodos((await memory.readOrNull(TODO_FILE)) ?? "").filter((t) => !t.done);
+        return void note(
+          open.length
+            ? `To-do:\n${open.map((t) => `- ${todoLine(t)}`).join("\n")}`
+            : "Nothing on the to-do list. Add to it with /todo <item>.",
+        );
+      }
+      const item = c.arg;
+      try {
+        const reason = `To-do: ${titleOf(item, 60)}`;
+        await memory.update(
+          TODO_FILE,
+          (md) => withTodo(md ?? "", item),
+          settings.get().owner,
+          reason,
+        );
+        note("Added to the to-do list.");
+      } catch (err) {
+        if (!(err instanceof MemoryError)) console.error("/todo failed", err);
+        note(`Couldn't add it: ${err instanceof MemoryError ? err.message : "memory failed"}`);
       }
     }
   }
@@ -2331,12 +2358,23 @@ export function localStamp(d: Date): string {
 }
 
 /**
- * The memory a bot opens a conversation or task with: INDEX.md, and its own folder's INDEX.md when it
- * has one.
+ * The memory a bot opens a conversation or task with: INDEX.md, its own folder's INDEX.md when it has
+ * one, and the to-do list's open items.
  */
 export async function memoryIndex(memory: MemoryStore, botId: string): Promise<string> {
   const index = (await memory.readOrNull("INDEX.md")) ?? "(no INDEX.md yet)";
   const own = botIndex(botId);
   const mine = own ? await memory.readOrNull(own) : null;
-  return `<memory_index>\n${index.trim()}\n</memory_index>${mine === null ? "" : `\n<your_memory_index path="${own}">\n${mine.trim()}\n</your_memory_index>`}`;
+  return `<memory_index>\n${index.trim()}\n</memory_index>${mine === null ? "" : `\n<your_memory_index path="${own}">\n${mine.trim()}\n</your_memory_index>`}${await openTodos(memory)}`;
+}
+
+const TODOS_SHOWN = 20;
+
+/** The to-do list's open items, the first TODOS_SHOWN of them, as a conversation or task opens with them. */
+async function openTodos(memory: MemoryStore): Promise<string> {
+  const open = parseTodos((await memory.readOrNull(TODO_FILE)) ?? "").filter((t) => !t.done);
+  if (!open.length) return "";
+  const more = open.length > TODOS_SHOWN ? `\n(${open.length - TODOS_SHOWN} more: todo_list)` : "";
+  const lines = open.slice(0, TODOS_SHOWN).map((t) => `- ${todoLine(t)}`);
+  return `\n<todo path="${TODO_FILE}">\n${lines.join("\n")}${more}\n</todo>`;
 }
