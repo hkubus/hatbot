@@ -10,6 +10,7 @@ import {
   withRetries,
 } from "../src/agent/model";
 import { safeToRun } from "../src/agent/review";
+import { screenPage } from "../src/agent/screening";
 import { EventBus } from "../src/events";
 import { type BudgetError, requestCeiling, searchesIn } from "../src/spend";
 import { Tasks } from "../src/tasks/service";
@@ -720,6 +721,10 @@ test("summaries and Haiku's reviews wait while the limits are spent", async () =
     { tool: "ssh_exec", input: {}, what: "Restart nginx", why: "It changes a host." },
   );
   expect(review.safe).toBe(false);
+  expect(model.creates).toHaveLength(0);
+  // Nor is what was read screened: it counts as suspected.
+  const page = { url: null, title: "Read https://x.example", text: "Hello." };
+  expect(await screenPage(model, t.spend, {}, page)).toMatchObject({ failed: true });
   expect(model.creates).toHaveLength(0);
   t.settings.update({ limits: { taskUsd: 3, dailyUsd: 10, monthlyUsd: 200, alertReserveUsd: 0 } });
   await t.thread.sweep();

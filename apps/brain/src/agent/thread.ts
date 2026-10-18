@@ -48,7 +48,14 @@ import {
 import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
 import type { Watchers } from "../watch/service";
-import { afterFallback, cutOff, type ModelClient, modelErrorText } from "./model";
+import {
+  afterFallback,
+  type CreateParams,
+  cutOff,
+  type ModelClient,
+  modelErrorText,
+  oneShot,
+} from "./model";
 import {
   EXPERT_PROMPT,
   FORGET_PROMPT,
@@ -1338,43 +1345,32 @@ export class Thread {
     }[],
   ): Promise<string> {
     const transcript = rows.map((m) => this.transcript(m)).join("\n");
-    const names = this.members().map((b) => b.name);
     const content = `<summary>\n${this.threadSummary()}\n</summary>\n\n<deleted_conversation>\n${transcript}\n</deleted_conversation>`;
     // The owner asked for it, and it's small: it may use what's kept for alerts, so a busy day
     // doesn't stop a deletion.
-    this.d.spend.check(
-      requestCeiling(SUMMARY_MODEL, {
-        prompt: fixedTokens(FORGET_PROMPT, content),
-        maxTokens: 4000,
-      }),
-      undefined,
+    const out = await oneShot(
+      this.d,
+      this.summaryRequest(FORGET_PROMPT, content),
+      { purpose: "summary", botId: this.bot().id },
       { reserve: true },
     );
-    const res = await this.d.model.create({
+    const summary = /<summary>([\s\S]*?)<\/summary>/.exec(out)?.[1];
+    if (summary === undefined)
+      throw new Error(`no summary in the rewrite for episode ${episodeId}`);
+    return summary.trim();
+  }
+
+  /** A request to Haiku about the running summary, with the chat's bots named in the prompt. */
+  private summaryRequest(prompt: string, content: string): CreateParams {
+    const names = this.members().map((b) => b.name);
+    return {
       model: SUMMARY_MODEL,
       max_tokens: 4000,
       thinking: { type: "adaptive" },
       output_config: { effort: "low" },
-      system:
-        names.length === 1 && names[0] === "Hatbot"
-          ? FORGET_PROMPT
-          : FORGET_PROMPT.replace(/\bHatbot\b/g, names.join(" and ")),
+      system: prompt.replace(/\bHatbot\b/g, names.join(" and ") || "Hatbot"),
       messages: [{ role: "user", content }],
-    });
-    this.d.spend.recordResponse({
-      model: SUMMARY_MODEL,
-      purpose: "summary",
-      usage: res.usage,
-      botId: this.bot().id,
-    });
-    const out = res.content
-      .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("\n");
-    const summary = /<summary>([\s\S]*?)<\/summary>/.exec(out)?.[1];
-    if (res.stop_reason !== "end_turn" || summary === undefined)
-      throw new Error(`no summary in the rewrite for episode ${episodeId} (${res.stop_reason})`);
-    return summary.trim();
+    };
   }
 
   private async writeSummary(episodeId: number) {
@@ -1391,45 +1387,19 @@ export class Thread {
       .join("\n");
     // One with only commands in it (/new and nothing after) has nothing to summarize.
     if (transcript && this.hasTurns(episodeId)) {
-      const names = this.members().map((b) => b.name);
       const content = `<previous_summary>\n${this.threadSummary() || "(none)"}\n</previous_summary>\n\n<conversation>\n${transcript}\n</conversation>`;
-      this.d.spend.check(
-        requestCeiling(SUMMARY_MODEL, {
-          prompt: fixedTokens(SUMMARY_PROMPT, content),
-          maxTokens: 4000,
-        }),
-      );
-      const res = await this.d.model.create({
-        model: SUMMARY_MODEL,
-        max_tokens: 4000,
-        thinking: { type: "adaptive" },
-        output_config: { effort: "low" },
-        system:
-          names.length === 1 && names[0] === "Hatbot"
-            ? SUMMARY_PROMPT
-            : SUMMARY_PROMPT.replace(/\bHatbot\b/g, names.join(" and ")),
-        messages: [{ role: "user", content }],
-      });
-      this.d.spend.recordResponse({
-        model: SUMMARY_MODEL,
+      const out = await oneShot(this.d, this.summaryRequest(SUMMARY_PROMPT, content), {
         purpose: "summary",
-        usage: res.usage,
         episodeId,
         botId: this.bot().id,
       });
-      const out = res.content
-        .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
-        .map((b) => b.text)
-        .join("\n")
-        .trim();
-      const { recap, summary } = parseSummary(out);
-      if (res.stop_reason === "end_turn" && summary) {
-        this.d.db
-          .query("UPDATE conversations SET summary = ? WHERE id = ?")
-          .run(summary, this.conversationId);
-        if (recap)
-          this.d.db.query("UPDATE episodes SET recap = ? WHERE id = ?").run(recap, episodeId);
-      } else throw new Error(`no summary for episode ${episodeId} (${res.stop_reason})`);
+      const { recap, summary } = parseSummary(out.trim());
+      if (!summary) throw new Error(`no summary for episode ${episodeId}`);
+      this.d.db
+        .query("UPDATE conversations SET summary = ? WHERE id = ?")
+        .run(summary, this.conversationId);
+      if (recap)
+        this.d.db.query("UPDATE episodes SET recap = ? WHERE id = ?").run(recap, episodeId);
     }
     this.markSummarized(episodeId);
   }
@@ -1935,7 +1905,7 @@ export class Thread {
       const content = `<question>\n${question}\n</question>\n\n<context>\n${context || "(none)"}\n</context>${quoted ? `\n\n${untrustedBlock("quoted", quoted)}` : ""}`;
       const held = hold(
         requestCeiling(EXPERT_MODEL, {
-          prompt: fixedTokens(EXPERT_PROMPT, content),
+          prompt: fixedTokens(EXPERT_PROMPT, null) + estimateTokens([{ content }]),
           maxTokens: MAX_TOKENS,
           fallbacks: true,
         }),
