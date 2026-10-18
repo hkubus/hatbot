@@ -1,6 +1,7 @@
 // The thread (PLAN.md §10.2, §10.4): Messages-style bubbles, grouped by sender with a tail on the
 // last, a centered time after a pause, Copy and Open in a long-press menu. A task shows under the reply
-// that started it; approvals wait above the composer. Finished conversations fold up under their recap.
+// that started it, and a box under the reply that made or changed it; approvals wait above the composer.
+// Finished conversations fold up under their recap.
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -727,15 +728,16 @@ private struct MessageRow: View, Equatable {
     case .schedule where m.scheduleId != nil: ScheduleMessage(scheduleId: m.scheduleId!)
     default: ReplyMessage(m: m)
     }
+    if let id = m.boxId, !store.deletedBoxes.contains(id) { BoxResult(boxId: id) }
     if m.status != .streaming, let list = m.sources, !list.isEmpty { MessageSources(list: list) }
     if answerable, m.status != .streaming, let list = m.choices, !list.isEmpty { Choices(lists: list) }
     if let list = m.attachments, !list.isEmpty { MessageFiles(list: list, alignment: .leading) }
   }
 
   /// A plain reply, read as one: Markdown left out, and not word by word as it streams. Others, with
-  /// tasks, schedules or approvals to act on, keep their parts.
+  /// tasks, schedules, boxes or approvals to act on, keep their parts.
   private var spokenText: String? {
-    guard m.kind == .text || m.kind == .command, m.taskId == nil else { return nil }
+    guard m.kind == .text || m.kind == .command, m.taskId == nil, m.boxId == nil else { return nil }
     return m.status == .streaming ? "Writing" : Markdown.plain(m.text)
   }
 
@@ -769,6 +771,7 @@ private struct MessageRow: View, Equatable {
         // A finished or failed task's result in the reply's place.
         copyButton(task.map { ReplyMessage.showsResult(m, $0) } == true ? result ?? "" : m.text)
       }
+      if let boxId = m.boxId { Button("Open box", systemImage: "chevron.right") { open(.box(boxId)) } }
       if let taskId = m.taskId { openButton(taskId) }
       if m.status == .error && m.role == .assistant {
         Button("Try again", systemImage: "arrow.clockwise") { retry() }
@@ -893,6 +896,27 @@ private struct TaskResult: View {
     store.desktop?.control == .owner && task.status == .running
       ? "Paused while you have control."
       : Format.taskLine(task, progress: store.taskProgress[taskId])
+  }
+}
+
+/// The box a reply made or changed, with Open.
+private struct BoxResult: View {
+  let boxId: Int
+  @Environment(AppStore.self) private var store
+  @Environment(\.openRoute) private var router
+
+  var body: some View {
+    HStack(spacing: 10) {
+      if let box = store.boxes[boxId] {
+        Image(systemName: "shippingbox").foregroundStyle(.secondary)
+        Text(box.title).fontWeight(.semibold).lineLimit(2)
+        Spacer(minLength: 8)
+        Button("Open") { router?.open(.box(boxId)) }
+          .glassButton()
+          .controlSize(.small)
+      }
+    }
+    .onAppear { store.ensureBox(boxId) }
   }
 }
 

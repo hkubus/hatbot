@@ -5,7 +5,7 @@ import SwiftUI
 import UIKit
 
 enum AppTab: Hashable, CaseIterable {
-  case chat, search, tasks, todo, live, memory, settings
+  case chat, search, tasks, todo, boxes, live, memory, settings
 
   var title: String {
     switch self {
@@ -13,6 +13,7 @@ enum AppTab: Hashable, CaseIterable {
     case .search: "Search"
     case .tasks: "Tasks"
     case .todo: "To-do"
+    case .boxes: "Boxes"
     case .live: "Live"
     case .memory: "Memory"
     case .settings: "Settings"
@@ -25,6 +26,7 @@ enum AppTab: Hashable, CaseIterable {
     case .search: "magnifyingglass"
     case .tasks: "checklist"
     case .todo: "checkmark.square"
+    case .boxes: "shippingbox"
     case .live: "display"
     case .memory: "book"
     case .settings: "gearshape"

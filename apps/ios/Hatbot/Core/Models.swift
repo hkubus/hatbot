@@ -77,6 +77,8 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   var conversationId: Int?
   /// The bot that wrote it; nil for yours.
   var botId: String?
+  /// The box this reply made or changed last, shown under it; missing otherwise.
+  var boxId: Int?
 
   var isIncognito: Bool { incognito == true }
 
@@ -85,14 +87,14 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case id, role, kind, text, status, createdAt, taskId, scheduleId, episodeId, editedAt, seenAt, attachments
-    case incognito, conversationId, botId, sources
+    case incognito, conversationId, botId, sources, boxId
   }
 
   init(
     id: Int, role: Role, kind: Kind, text: String, status: Status, createdAt: String, taskId: Int? = nil,
     scheduleId: Int? = nil, episodeId: Int? = nil, editedAt: String? = nil, seenAt: String? = nil,
     attachments: [Attachment]? = nil, incognito: Bool? = nil, conversationId: Int? = nil, botId: String? = nil,
-    sources: [Source]? = nil
+    sources: [Source]? = nil, boxId: Int? = nil
   ) {
     self.id = id
     self.role = role
@@ -111,6 +113,7 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
     self.conversationId = conversationId
     self.botId = botId
     self.sources = sources
+    self.boxId = boxId
   }
 
   init(from decoder: Decoder) throws {
@@ -131,7 +134,8 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
       incognito: c.decodeIfPresent(Bool.self, forKey: .incognito),
       conversationId: c.decodeIfPresent(Int.self, forKey: .conversationId),
       botId: c.decodeIfPresent(String.self, forKey: .botId),
-      sources: c.decodeIfPresent([Source].self, forKey: .sources))
+      sources: c.decodeIfPresent([Source].self, forKey: .sources),
+      boxId: c.decodeIfPresent(Int.self, forKey: .boxId))
   }
 }
 
@@ -504,6 +508,54 @@ struct TriggerWithSecret: Decodable, Sendable {
   var postURL: String { trigger.kind == .kuma ? "\(trigger.url)?token=\(secret)" : trigger.url }
 }
 
+/// A small web app a bot made for you (PLAN.md §21; packages/shared/src/box.ts).
+struct Box: Codable, Identifiable, Equatable, Sendable {
+  let id: Int
+  /// The bot that made it; only it changes the box.
+  var botId: String
+  /// The chat it was made in.
+  var conversationId: Int?
+  var title: String
+  /// The version that opens.
+  var version: Int
+  var createdAt: String
+  var updatedAt: String
+}
+
+struct BoxVersion: Codable, Equatable, Sendable {
+  var n: Int
+  var title: String
+  var createdAt: String
+  /// The reply that made it; nil for one you made in the app.
+  var messageId: Int?
+}
+
+/// A box with its versions, oldest first.
+struct BoxDetail: Decodable, Equatable, Sendable {
+  let box: Box
+  let versions: [BoxVersion]
+
+  private enum Key: String, CodingKey { case versions }
+
+  init(from decoder: Decoder) throws {
+    box = try Box(from: decoder)
+    versions = try decoder.container(keyedBy: Key.self).decode([BoxVersion].self, forKey: .versions)
+  }
+}
+
+/// A version's page, for its Code view.
+struct BoxPage: Decodable, Equatable, Sendable {
+  let version: BoxVersion
+  let html: String
+
+  private enum Key: String, CodingKey { case html }
+
+  init(from decoder: Decoder) throws {
+    version = try BoxVersion(from: decoder)
+    html = try decoder.container(keyedBy: Key.self).decode(String.self, forKey: .html)
+  }
+}
+
 struct MemoryFile: Codable, Identifiable, Equatable, Sendable {
   var path: String
   var size: Int
@@ -657,6 +709,8 @@ enum HatbotEvent: Decodable, Sendable {
   case messageDeleted(ids: [Int])
   case messageUsage(id: Int, ReplyUsage)
   case messageAttachment(id: Int, Attachment)
+  /// A box this reply made or changed now shows under it.
+  case messageBox(id: Int, boxId: Int)
   case spendUpdated(todayUsd: Double, monthUsd: Double)
   case memoryCommitted(sha: String, message: String, author: String)
   case paused(Bool)
@@ -684,12 +738,14 @@ enum HatbotEvent: Decodable, Sendable {
   /// The heartbeat looked again.
   case heartbeatUpdated
   case watcherDeleted(id: Int)
+  case boxUpdated(Box)
+  case boxDeleted(id: Int)
   case unknown(String)
 
   private enum Key: String, CodingKey {
     case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused, tokens, costUsd
     case task, step, approval, state, schedule, trigger, episode, editedAt, ids, seenAt, attachment
-    case bot, conversation, proposal, watcher, sources, at, question, choices
+    case bot, conversation, proposal, watcher, sources, at, question, choices, boxId, box
   }
 
   init(from decoder: Decoder) throws {
@@ -712,6 +768,7 @@ enum HatbotEvent: Decodable, Sendable {
     case "message.deleted": self = try .messageDeleted(ids: v(.ids))
     case "message.usage": self = try .messageUsage(id: v(.id), ReplyUsage(tokens: v(.tokens), costUsd: v(.costUsd)))
     case "message.attachment": self = try .messageAttachment(id: v(.id), v(.attachment))
+    case "message.box": self = try .messageBox(id: v(.id), boxId: v(.boxId))
     case "spend.updated": self = try .spendUpdated(todayUsd: v(.todayUsd), monthUsd: v(.monthUsd))
     case "memory.committed": self = try .memoryCommitted(sha: v(.sha), message: v(.message), author: v(.author))
     case "paused": self = try .paused(v(.paused))
@@ -737,6 +794,8 @@ enum HatbotEvent: Decodable, Sendable {
     case "settings.updated": self = .settingsUpdated
     case "heartbeat.updated": self = .heartbeatUpdated
     case "watcher.deleted": self = try .watcherDeleted(id: v(.id))
+    case "box.updated": self = try .boxUpdated(v(.box))
+    case "box.deleted": self = try .boxDeleted(id: v(.id))
     default: self = .unknown(type)
     }
   }
