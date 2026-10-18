@@ -9,6 +9,8 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { type DesktopAgent, DesktopError } from "../../desktop/client";
+import type { Schedules } from "../../schedules";
+import { getSetting, setSetting } from "../../settings";
 import { Branch, Num, Repo, repoPath, validRef } from "../forge";
 import { definePlugin, httpApi, needsSetup, PluginError, ready, tool } from "../plugin";
 
@@ -30,6 +32,18 @@ const CAREFUL = [
   /^bun\.lock$/,
   /^bunfig\.toml$/,
 ];
+
+/** Branches of suggestions a schedule asked for: one is open at a time. */
+const SUGGESTION = "hatbot/suggest/";
+const SUGGEST_KEY = "self:suggest";
+const SUGGEST_CRON = { weekly: "0 10 * * 1", monthly: "0 10 1 * *" } as const;
+const SUGGEST_PROMPT = `Look over your own code and suggest at most one small improvement, as a pull request for the owner to review. The owner set this schedule; only open a pull request if it's clearly worth their time.
+
+1. Call self_checkout. If you don't have it, say the Own code plugin is off and finish. It lists your open pull requests: if one on a ${SUGGESTION} branch is still open, finish and say it's waiting for the owner, without looking further.
+2. Read AGENTS.md and PLAN.md, then the code, with self_run. Look for one small change that's clearly better: a bug, a missing check, a confusing or dead piece of code, a slow path. Not a new feature, a rewrite, a new dependency, or anything PLAN.md says was left on purpose, and nothing under infra/, .forgejo/, .github/ or scripts/.
+3. Make the change and run the tests, lint and typecheck as AGENTS.md says. If they don't all pass, or you aren't sure it's an improvement, don't propose it.
+4. Propose it with self_propose on a branch under ${SUGGESTION}, saying what you found, why it's worth changing and how you tested it. One pull request at most.
+5. If nothing is worth changing, finish and say so in a line. Never merge.`;
 
 type Pull = {
   number: number;
@@ -92,7 +106,12 @@ function rawChanges(raw: string) {
   return out;
 }
 
-export const selfPlugin = (d: { desktop: DesktopAgent; dir: string }) =>
+export const selfPlugin = (d: {
+  desktop: DesktopAgent;
+  dir: string;
+  /** Where the suggestions schedule goes; made after the plugins. */
+  schedules: () => Pick<Schedules, "get" | "create" | "update" | "delete">;
+}) =>
   definePlugin({
     id: "self",
     name: "Own code",
@@ -108,7 +127,7 @@ export const selfPlugin = (d: { desktop: DesktopAgent; dir: string }) =>
       },
     ],
     config: z.object({}),
-    start: ({ env }) => {
+    start: ({ env, db }) => {
       if (!d.desktop.configured)
         return needsSetup("The desktop isn't set up yet; Hatbot reads and tests its code there.");
       const base = env.FORGEJO_URL?.replace(/\/$/, "");
@@ -337,6 +356,13 @@ export const selfPlugin = (d: { desktop: DesktopAgent; dir: string }) =>
           ? `\nIt touches ${careful.join(", ")}, which ${where} asks the owner to read closely.`
           : "";
 
+      /** The suggestions schedule, by id and creation time: a deleted schedule's id can come back. */
+      const suggestions = () => {
+        const [id, created] = (getSetting(db, SUGGEST_KEY) ?? "").split(" ");
+        const s = d.schedules().get(Number(id));
+        return s && s.createdAt === created ? s : null;
+      };
+
       const tools = [
         tool({
           name: "self_checkout",
@@ -445,6 +471,13 @@ export const selfPlugin = (d: { desktop: DesktopAgent; dir: string }) =>
           }),
           describe: ({ branch, title }) => `Open a pull request on ${repo}: ${title} (${branch})`,
           run: async ({ branch, title, body }, call) => {
+            if (branch.startsWith(SUGGESTION)) {
+              const waiting = (await openPulls()).find((p) => p.head.ref.startsWith(SUGGESTION));
+              if (waiting)
+                throw new PluginError(
+                  `Your suggestion #${waiting.number} is still open: suggest another once the owner has merged or closed it.`,
+                );
+            }
             const { patch, from } = await checkoutDiff(call.signal);
             const into = await defaultBranch();
             const pushed = await commitAndPush({
@@ -524,11 +557,41 @@ export const selfPlugin = (d: { desktop: DesktopAgent; dir: string }) =>
         }),
       ];
       return ready(tools, {
-        guidance: `Your own code is ${repo} on Forgejo. Change it only when the owner asks, never on your own initiative, and as a task (run_task, effort high). self_checkout puts it in the sandbox; self_run reads, changes and tests it there (its AGENTS.md says how to build and test; run the tests, lint and typecheck before proposing); self_propose opens a pull request from what changed, one change per pull request. To answer review comments on one of your pull requests ("address the comments on #12"), self_checkout with its number, which shows them, then self_update pushes the fix to it. Never merge your own pull requests: the owner reviews and merges them.`,
+        guidance: `Your own code is ${repo} on Forgejo. Change it only when the owner asks, or when their suggestions schedule asks you for one, never on your own initiative, and as a task (run_task, effort high). self_checkout puts it in the sandbox; self_run reads, changes and tests it there (its AGENTS.md says how to build and test; run the tests, lint and typecheck before proposing); self_propose opens a pull request from what changed, one change per pull request. To answer review comments on one of your pull requests ("address the comments on #12"), self_checkout with its number, which shows them, then self_update pushes the fix to it. Never merge your own pull requests: the owner reviews and merges them.`,
         test: async () => {
           const { login } = await user();
           const branch = await defaultBranch();
           return `Signed in as ${login}; ${repo}'s default branch is ${branch}.`;
+        },
+        actions: {
+          /** How often the suggestions schedule runs: off, weekly, monthly, or its own cron. */
+          suggestions: async () => {
+            const s = suggestions();
+            if (!s?.enabled || !s.cron) return { every: "off" };
+            const every = Object.entries(SUGGEST_CRON).find(([, cron]) => cron === s.cron)?.[0];
+            return { every: every ?? "other", cron: s.cron, id: s.id };
+          },
+          suggest: async (args) => {
+            const parsed = z
+              .object({ every: z.enum(["off", "weekly", "monthly"]) })
+              .safeParse(args);
+            if (!parsed.success) throw new PluginError("Choose off, weekly or monthly.");
+            const { every } = parsed.data;
+            const schedules = d.schedules();
+            const s = suggestions();
+            if (every === "off") {
+              if (s) schedules.delete(s.id);
+              setSetting(db, SUGGEST_KEY, "");
+              return { every };
+            }
+            const cron = SUGGEST_CRON[every];
+            const name = "Suggest an improvement to its code";
+            const now = s
+              ? schedules.update(s.id, { cron, enabled: true })
+              : schedules.create({ name, prompt: SUGGEST_PROMPT, cron }, "owner");
+            if (now) setSetting(db, SUGGEST_KEY, `${now.id} ${now.createdAt}`);
+            return { every, cron, id: now?.id };
+          },
         },
       });
     },

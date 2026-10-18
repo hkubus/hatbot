@@ -193,3 +193,29 @@ test("someone else's pull request isn't checked out, and a branch that moved sin
   expect(sh(origin, "git rev-parse hatbot/fix").output.trim()).toBe(moved);
   expect(forgejo.seen.some((s) => s.method === "POST")).toBe(false);
 });
+
+test("suggestions run on a schedule set on the plugin's page, one open pull request at a time", async () => {
+  const { t, origin, run } = await setup();
+  const suggest = (every: string) =>
+    t.plugins.action("self", "suggest", { every }) as Promise<{ id: number }>;
+  const { id } = await suggest("weekly");
+  expect(t.schedules.get(id)).toMatchObject({
+    cron: "0 10 * * 1",
+    createdVia: "owner",
+    enabled: true,
+  });
+  expect((await suggest("monthly")).id).toBe(id);
+  expect(t.schedules.get(id)?.cron).toBe("0 10 1 * *");
+
+  pulls[20] = { login: "hatbot", ref: "hatbot/suggest/older" };
+  expect(await run("self_checkout", {})).toContain("#20 hatbot/suggest/older");
+  await run("self_run", { command: "echo 'Better.' >> README.md", timeout_s: 30 });
+  await expect(
+    run("self_propose", { branch: "hatbot/suggest/newer", title: "Better", body: "" }),
+  ).rejects.toThrow("#20 is still open");
+  expect(sh(origin, "git branch --list 'hatbot/*'").output).toBe("");
+
+  await suggest("off");
+  expect(t.schedules.get(id)).toBeNull();
+  expect(await t.plugins.action("self", "suggestions", {})).toEqual({ every: "off" });
+});

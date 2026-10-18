@@ -88,7 +88,11 @@ export async function createServices(o: Outside) {
   const storage = new Storage({ db, archive, clock });
   const desktop = new Desktop(agent, events, db);
   const files = { desktop: agent, attachments };
-  const own = selfPlugin({ desktop: agent, dir: join(config.dataDir, "self") });
+  const own = selfPlugin({
+    desktop: agent,
+    dir: join(config.dataDir, "self"),
+    schedules: () => schedules,
+  });
   const plugins = new Plugins([...o.plugins, codePlugin(files), own], {
     db,
     events,
