@@ -6,10 +6,10 @@ import type {
   SpendSummary,
 } from "@hatbot/shared";
 import { useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { api, errorText } from "../api";
 import { useWidth } from "../chart";
 import { day, modelName, time, usd } from "../format";
-import { LoadError, loadErrorText } from "../load";
+import { LoadError } from "../load";
 import { spendAxis, withToday } from "../spend";
 import { useStore } from "../store";
 import { tokenText } from "../tasks";
@@ -224,7 +224,7 @@ export function Spend() {
   }, []);
 
   // A refresh that fails leaves what's showing; only the first load says so.
-  const failed = (err: unknown) => setLoadError(loadErrorText(err));
+  const failed = (err: unknown) => setLoadError(errorText(err));
   const loadNow = () => {
     api<SpendSummary>("/spend/summary").then(setSummary, failed);
     api<SpendHour[]>("/spend/hourly?hours=24").then(setHours, failed);

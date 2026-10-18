@@ -6,7 +6,7 @@ import { ApiError, api, errorText } from "../api";
 import { ask } from "../confirm";
 import { deviceName } from "../device";
 import { day } from "../format";
-import { LoadError, loadErrorText } from "../load";
+import { LoadError } from "../load";
 import type { Toast } from "../toast";
 import { BackHead, Group, Row } from "../ui";
 import { AddToAuthenticator, OtpInput } from "./Login";
@@ -215,7 +215,7 @@ function Sessions({ toast, version }: { toast: Toast; version: number }) {
 
   const load = useCallback(() => {
     setLoadError("");
-    api<Session[]>("/auth/sessions").then(setSessions, (err) => setLoadError(loadErrorText(err)));
+    api<Session[]>("/auth/sessions").then(setSessions, (err) => setLoadError(errorText(err)));
   }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: loads again after a change signs others out
   useEffect(load, [load, version]);

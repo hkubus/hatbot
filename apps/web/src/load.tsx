@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, errorText } from "./api";
 
-/** What went wrong loading something, in a few words. */
-export const loadErrorText = (err: unknown) => errorText(err, "Can't reach Hatbot.");
-
 /** A page or list that didn't load: one plain line with Retry. */
 export function LoadError({ error, retry }: { error: string; retry: () => void }) {
   return (
@@ -27,7 +24,7 @@ export function useItem(id: number, fetch: (id: number) => Promise<unknown>) {
     setError("");
     fetch(id).catch((err) => {
       if (err instanceof ApiError && err.status === 404) setMissing(true);
-      else setError(loadErrorText(err));
+      else setError(errorText(err));
     });
   }, [id, fetch]);
   useEffect(load, [load]);

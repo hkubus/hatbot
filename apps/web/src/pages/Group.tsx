@@ -2,9 +2,9 @@
 import { MAX_GROUP_BOTS } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
 import { useAction } from "../action";
+import { errorText } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm, toggled, useStoredForm } from "../form";
-import { loadErrorText } from "../load";
 import { navigate } from "../router";
 import { chatPath, createGroup, deleteGroup, loadBots, saveGroup, useStore } from "../store";
 import { Switch } from "../switch";
@@ -32,7 +32,7 @@ export function GroupPage({ id, toast }: { id: string; toast: (t: string) => voi
     setLoadError("");
     loadBots().then(
       () => setLoaded(true),
-      (err) => setLoadError(loadErrorText(err)),
+      (err) => setLoadError(errorText(err)),
     );
   }, []);
   useEffect(() => {

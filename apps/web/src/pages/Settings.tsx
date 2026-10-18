@@ -12,7 +12,7 @@ import { api, errorText } from "../api";
 import { ask, askText } from "../confirm";
 import { clearDrafts } from "../drafts";
 import { day, stamp } from "../format";
-import { LoadError, loadErrorText } from "../load";
+import { LoadError } from "../load";
 import { parseLimit, parseName, SavedRow } from "../saved-row";
 import { setPaused, useStore } from "../store";
 import { Switch } from "../switch";
@@ -77,7 +77,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
         setSettings(s);
         setTokens(t);
       },
-      (err) => setLoadError(loadErrorText(err)),
+      (err) => setLoadError(errorText(err)),
     );
   }, []);
   useEffect(load, [load]);
@@ -406,7 +406,7 @@ function RollbackRow({ toast }: { toast: Toast }) {
       },
       (err) => {
         setSnaps([]);
-        setError(errorText(err, "Couldn't reach Proxmox"));
+        setError(errorText(err, "Couldn't reach Proxmox."));
       },
     );
   }, []);
@@ -522,7 +522,7 @@ function UpdateGroup({ toast }: { toast: Toast }) {
     } catch (err) {
       watching.current = null;
       setBusy(false);
-      setError(errorText(err, "Couldn't reach Hatbot"));
+      setError(errorText(err));
     }
   };
   const step = info.status?.state === "running" ? info.status.step : "Starting";

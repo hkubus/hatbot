@@ -2,11 +2,11 @@
 import { type AppSettings, describeEvery, type HeartbeatInfo } from "@hatbot/shared";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useAction } from "../action";
-import { api } from "../api";
+import { api, errorText } from "../api";
 import { BotPicker } from "../automations";
 import { useLeaveGuard } from "../confirm";
 import { plainText, stamp } from "../format";
-import { LoadError, loadErrorText } from "../load";
+import { LoadError } from "../load";
 import { navigate } from "../router";
 import { useStore } from "../store";
 import { Switch } from "../switch";
@@ -41,7 +41,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
         setInstructions((cur) => (was === null || cur === was ? s.heartbeat.instructions : cur));
         savedInstructions.current = s.heartbeat.instructions;
       },
-      (err) => setLoadError(loadErrorText(err)),
+      (err) => setLoadError(errorText(err)),
     );
   }, [settingsVersion, attempt]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: refetch after each heartbeat

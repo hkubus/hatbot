@@ -6,7 +6,7 @@ import { ask, askText, useLeaveGuard } from "../confirm";
 import { lineDiff } from "../diff";
 import { dayTime } from "../format";
 import { Icon } from "../icons";
-import { LoadError, loadErrorText } from "../load";
+import { LoadError } from "../load";
 import { type Doc, isDirty, loading, newDoc, readDoc, readFailed } from "../memory-doc";
 import { navigate } from "../router";
 import { bumpMemory, loadProposals, putProposal, startTeach, useStore } from "../store";
@@ -136,7 +136,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
       },
       (err) => {
         if (stale) return;
-        const error = loadErrorText(err);
+        const error = errorText(err);
         setHist((h) =>
           h?.path === path ? { ...h, error } : { path, log: [], older: false, error },
         );
@@ -162,7 +162,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
                 older: l.length === PAGE,
               },
         ),
-      (err) => toast(errorText(err, "Couldn't reach Hatbot"), "error"),
+      (err) => toast(errorText(err), "error"),
     );
   };
 
@@ -211,7 +211,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
         if (!stale) setDiff(r.diff);
       },
       (err) => {
-        if (!stale) toast(errorText(err, "Couldn't reach Hatbot"), "error");
+        if (!stale) toast(errorText(err), "error");
       },
     );
     return () => {
@@ -323,7 +323,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
   const skill = skills.find((s) => s.name === skillName);
   const troubled = skill ? new Set([...skill.failed, ...skill.takeovers]).size : 0;
 
-  const failed = (err: unknown) => toast(errorText(err, "Couldn't reach Hatbot"), "error");
+  const failed = (err: unknown) => toast(errorText(err), "error");
   const tidy = () =>
     run(async () => {
       // It's worked out in the background now; the proposal arrives as an event.
@@ -365,7 +365,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
       if (how === "apply") bumpMemory();
       void select({ kind: "file", path: p.changes[0]?.path ?? "INDEX.md" });
     } catch (err) {
-      toast(errorText(err, "Couldn't reach Hatbot"), "error");
+      toast(errorText(err), "error");
     }
   };
 

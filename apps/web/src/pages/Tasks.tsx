@@ -1,14 +1,14 @@
 import { latestNoteOnly, OPEN_NEGOTIATION_STATUSES, type Task } from "@hatbot/shared";
 import { useEffect, useMemo, useState } from "react";
 import { useAction } from "../action";
-import { api } from "../api";
+import { api, errorText } from "../api";
 import { ask } from "../confirm";
 import { NoForm } from "../form";
 import { modelName, plainText, shortStamp, time, timeOrDay, usd } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LiveView, StepIcon } from "../live";
-import { LoadError, loadErrorText, useItem } from "../load";
+import { LoadError, useItem } from "../load";
 import { NegotiationChip } from "../negotiations";
 import { navigate } from "../router";
 import {
@@ -66,7 +66,7 @@ export function Tasks() {
         setIds(list);
         setHasOlder(list.length === TASK_PAGE);
       },
-      (err) => setLoadError(loadErrorText(err)),
+      (err) => setLoadError(errorText(err)),
     );
   }, [filter, attempt]);
 
@@ -79,7 +79,7 @@ export function Tasks() {
         setIds((s) => [...(s ?? []), ...list]);
         setHasOlder(list.length === TASK_PAGE);
       },
-      (err) => setLoadError(loadErrorText(err)),
+      (err) => setLoadError(errorText(err)),
     );
   };
 

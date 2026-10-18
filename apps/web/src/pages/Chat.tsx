@@ -39,7 +39,7 @@ import {
 import { plainText, time } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
-import { LoadError, loadErrorText } from "../load";
+import { LoadError } from "../load";
 import { splitBlocks } from "../md-blocks";
 import { touchScreen } from "../media";
 import { negotiationText } from "../negotiations";
@@ -805,7 +805,7 @@ export function Chat({ id }: { id: number }) {
         animateFrom.current = (getState().messages.at(-1)?.id ?? 0) + 1;
         setReady(true);
       },
-      (err) => setLoadError(loadErrorText(err)),
+      (err) => setLoadError(errorText(err)),
     );
   }, [incognito, id, attempt]);
 

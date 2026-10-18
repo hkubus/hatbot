@@ -63,7 +63,7 @@ export function Login({ onDone }: { onDone: () => void }) {
         onDone();
       },
       (err) => {
-        setError(errorText(err, "Couldn't reach Hatbot"));
+        setError(errorText(err));
         setTotp("");
       },
     );
@@ -163,7 +163,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
       setError(
         err instanceof ApiError && err.status === 403
           ? "That setup code isn't right."
-          : errorText(err, "Couldn't reach Hatbot"),
+          : errorText(err),
       );
     }
   };
@@ -179,7 +179,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
       setError(
         err instanceof ApiError && err.status === 403
           ? "That code didn't match. Try the next one."
-          : errorText(err, "Couldn't reach Hatbot"),
+          : errorText(err),
       );
       setTotp("");
     }

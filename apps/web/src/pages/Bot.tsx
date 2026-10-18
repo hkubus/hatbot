@@ -2,10 +2,10 @@
 import { BOT_COLORS, BOT_ICONS, BOT_TEMPLATES, type Bot, HATBOT_ID } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
 import { useAction } from "../action";
+import { errorText } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm, toggled, useStoredForm } from "../form";
 import { BotMark } from "../icons";
-import { loadErrorText } from "../load";
 import { navigate } from "../router";
 import { chatPath, createBot, deleteBot, loadBots, loadPlugins, saveBot, useStore } from "../store";
 import { Switch } from "../switch";
@@ -70,7 +70,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
     setLoadError("");
     loadBots().then(
       () => setLoaded(true),
-      (err) => setLoadError(loadErrorText(err)),
+      (err) => setLoadError(errorText(err)),
     );
   }, []);
 
