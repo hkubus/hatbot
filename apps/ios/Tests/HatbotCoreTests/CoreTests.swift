@@ -778,8 +778,6 @@ final class LookingAfterThingsTests: XCTestCase {
     XCTAssertEqual(AppSettings.Heartbeat.everyChoices(with: 15), [5, 10, 15, 30, 60, 120, 240])
     XCTAssertEqual(AppSettings.Heartbeat.everyChoices(with: 20), [5, 10, 15, 20, 30, 60, 120, 240])
     XCTAssertEqual(AppSettings.Heartbeat.everyChoices(with: 1440).last, 1440)
-    XCTAssertEqual(
-      [5, 60, 90, 120].map(AppSettings.Heartbeat.every), ["5 minutes", "Hour", "90 minutes", "2 hours"])
     XCTAssertEqual(["hatbot", "sysadmin"].including("sysadmin"), ["hatbot", "sysadmin"])
     XCTAssertEqual(["hatbot"].including("sysadmin"), ["hatbot", "sysadmin"])
   }
@@ -832,8 +830,8 @@ final class LookingAfterThingsTests: XCTestCase {
     let watcher = try JSONDecoder().decode(Watcher.self, from: Data(w.utf8))
     XCTAssertEqual(watcher.condition.description, "Below 500")
     XCTAssertEqual(watcher.source.text, "https://shop.test/gpu")
-    XCTAssertEqual(Watcher.every(90), "Every 90 minutes")
-    XCTAssertEqual(Watcher.every(120), "Every 2 hours")
+    XCTAssertEqual(Format.every(90), "Every 90 minutes")
+    XCTAssertEqual(Format.every(120), "Every 2 hours")
     XCTAssertNil(watcher.source.render)
     let rendered = w.replacingOccurrences(of: #""selector""#, with: #""render":true,"selector""#)
     XCTAssertEqual(try JSONDecoder().decode(Watcher.self, from: Data(rendered.utf8)).source.render, true)

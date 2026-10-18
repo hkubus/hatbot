@@ -146,7 +146,7 @@ struct WatchersView: View {
   private func line(_ w: Watcher) -> String {
     if !w.enabled { return "Off" }
     if let e = w.lastError { return e }
-    return "\(w.condition.description), \(Watcher.every(w.everyMinutes).lowercased())"
+    return "\(w.condition.description), \(Format.every(w.everyMinutes).lowercased())"
   }
 
   private func load() async {
@@ -220,7 +220,7 @@ struct WatcherDetailView: View {
         if let p = w.source.path { LabeledContent("Path", value: p) }
         if let p = w.source.pattern { LabeledContent("Pattern", value: p) }
         LabeledContent("Counts when", value: w.condition.description)
-        LabeledContent("How often", value: Watcher.every(w.everyMinutes))
+        LabeledContent("How often", value: Format.every(w.everyMinutes))
         if w.once { LabeledContent("Then", value: "Switches off") }
         LabeledContent("Bot", value: store.botName(w.botId))
       }
@@ -427,9 +427,9 @@ struct HeartbeatView: View {
       if let s = Binding($settings) {
         Section {
           Toggle("On", isOn: s.enabled).onChange(of: s.wrappedValue.enabled) { save() }
-          Picker("Every", selection: s.everyMinutes) {
+          Picker("How often", selection: s.everyMinutes) {
             ForEach(AppSettings.Heartbeat.everyChoices(with: s.wrappedValue.everyMinutes), id: \.self) { m in
-              Text(AppSettings.Heartbeat.every(m)).tag(m)
+              Text(Format.every(m)).tag(m)
             }
           }
           .onChange(of: s.wrappedValue.everyMinutes) { save() }
