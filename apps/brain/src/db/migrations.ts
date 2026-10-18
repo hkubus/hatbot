@@ -763,4 +763,19 @@ export const migrations: string[] = [
   );
   ALTER TABLE messages ADD COLUMN box_id INTEGER;
   `,
+  // 42: boxes with files, built on the boxes guest, and when a box's schedule last ran (PLAN.md §21.6).
+  // A box's number isn't given out again once it's deleted: the guest keeps a backend's data under it.
+  `
+  CREATE TABLE box_files (
+    box_id INTEGER NOT NULL,
+    n INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    content TEXT NOT NULL,
+    PRIMARY KEY (box_id, n, path),
+    FOREIGN KEY (box_id, n) REFERENCES box_versions(box_id, n) ON DELETE CASCADE
+  );
+  ALTER TABLE boxes ADD COLUMN ran_at TEXT;
+  CREATE TABLE box_ids (id INTEGER PRIMARY KEY AUTOINCREMENT);
+  INSERT INTO sqlite_sequence (name, seq) SELECT 'box_ids', COALESCE(MAX(id), 0) FROM boxes;
+  `,
 ];

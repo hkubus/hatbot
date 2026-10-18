@@ -13,7 +13,10 @@ export const MAX_UPDATE_BYTES = 10 * 1024 * 1024;
 const MAX_PUT_BYTES = 6 * 1024 * 1024;
 const FEATURES: string[] = [];
 
-const json = (body: unknown, status = 200) => Response.json(body, { status });
+// The agent's own refusals are marked, to tell them from a backend's answer with the same status; a
+// backend can't send the header (passedHeaders drops x-hatbox-…).
+const json = (body: unknown, status = 200) =>
+  Response.json(body, { status, headers: status >= 400 ? { "x-hatbox-error": "1" } : {} });
 const versionOf = (req: Request) => Number(req.headers.get("x-hatbox-version")) || 0;
 
 export function routes(

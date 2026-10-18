@@ -161,7 +161,7 @@ export function BoxPage({ id }: { id: number }) {
   );
 }
 
-/** A version's page, as its source, read-only. */
+/** A version's page, as its source, read-only: a box with files shows them, one after another. */
 function BoxCode({ id, version }: { id: number; version: number }) {
   const [html, setHtml] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -171,7 +171,11 @@ function BoxCode({ id, version }: { id: number; version: number }) {
     let stale = false;
     setError("");
     api<BoxSource>(`/boxes/${id}/versions/${version}`).then(
-      (p) => !stale && setHtml(p.html),
+      (p) =>
+        !stale &&
+        setHtml(
+          p.files ? p.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n") : p.html,
+        ),
       (err) => !stale && setError(errorText(err)),
     );
     return () => {

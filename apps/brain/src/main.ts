@@ -4,6 +4,7 @@ import { AnthropicModelClient } from "./agent/model";
 import { loadConfig, urlHost } from "./config";
 import { openDb } from "./db";
 import { HttpDesktopAgent } from "./desktop/client";
+import { HttpHatboxAgent } from "./hatbox/client";
 import { NtfyNotifier } from "./notify";
 import { PLUGINS } from "./plugins";
 import { Secrets } from "./secrets";
@@ -24,6 +25,7 @@ const brain = await createServices({
   model,
   taskModel: model,
   agent: new HttpDesktopAgent(),
+  hatbox: new HttpHatboxAgent(),
   notifications: ntfy,
   ntfy,
   plugins: PLUGINS,
@@ -76,6 +78,7 @@ void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {
     safely("weekly report", () => report.tick());
     safely("proposals", () => proposals.tick());
     safely("storage", () => storage.tick());
+    safely("boxes", () => brain.boxes.backends?.tick());
   }, 10_000);
 });
 
