@@ -6,7 +6,7 @@ import { MANDATE_CONTACTS, type Mandate, type Negotiation } from "@hatbot/shared
 import { z } from "zod";
 import type { ModelClient } from "../agent/model";
 import type { Spend } from "../spend";
-import { allowance } from "./policy";
+import { allowance, zl } from "./policy";
 
 /** The mandate as negotiate_start takes it, and as Haiku gives it back from a note. */
 export const MandateInput = z.object({
@@ -29,9 +29,6 @@ export const MandateInput = z.object({
     .describe("Contact details messages may carry; none unless the owner said so"),
 });
 export type MandateInput = z.infer<typeof MandateInput>;
-
-const zl = (n: number, currency = "PLN") =>
-  `${n.toLocaleString("en-GB", { maximumFractionDigits: 2 })} ${currency === "PLN" ? "zł" : currency}`;
 
 /** Why these numbers aren't a mandate, or null when they are. */
 export function mandateProblem(

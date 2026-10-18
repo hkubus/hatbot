@@ -6,7 +6,7 @@ import { askAlways, block, covered, PluginError, type PluginTool, tool } from ".
 import { appraisalText, appraise, type ListingFacts, listingFacts, parseKey } from "./appraise";
 import { collapse } from "./gate";
 import { MandateInput, mandateProblem, toMandate } from "./mandate";
-import { type SendInput, sendPolicy } from "./policy";
+import { type SendInput, sendPolicy, zl } from "./policy";
 import { MAX_TEXT, type Negotiations } from "./service";
 
 const ListingKey = z
@@ -17,9 +17,6 @@ const ListingKey = z
   .refine((k) => parseKey(k) !== null, 'A listing key as Scout gives it, e.g. "OLX:123456789"')
   .describe('The listing\'s key as Scout gives it (marketplaceListingKey), e.g. "OLX:123456789"');
 const Id = z.number().int().positive().describe("The negotiation's number");
-
-const zl = (n: number, currency = "PLN") =>
-  `${Math.round(n).toLocaleString("en-GB")} ${currency === "PLN" ? "zł" : currency}`;
 
 /** A negotiation in a line, for lists. */
 export function negotiationLine(n: Negotiation): string {
@@ -142,7 +139,7 @@ export function negotiateTools(
       access: "write",
       commands: () => 0,
       describe: (i) => {
-        // The listing's currency, when it was appraised in this turn; it's PLN on most listings.
+        // The listing's currency, when it was appraised in this turn; until then, only the numbers.
         const money = (x: number) => zl(x, appraised.get(i.listing)?.appraisal.currency);
         return `Negotiate for ${i.listing}: open at ${money(i.mandate.opening)}, aim for ${money(i.mandate.target)}, at most ${money(i.mandate.limit)}`;
       },

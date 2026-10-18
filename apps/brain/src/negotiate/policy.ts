@@ -43,8 +43,11 @@ export const NEW_PER_DAY = 10;
 /** Two messages in a row, with no reply between, are at least this far apart. */
 export const PACE_MS = 2 * 60_000;
 
-const zl = (n: number, currency: string) =>
-  `${n.toLocaleString("en-GB", { maximumFractionDigits: 2 })} ${currency === "PLN" ? "zł" : currency}`;
+/** An amount in its currency, zł for PLN; only the number while the currency isn't known. */
+export function zl(n: number, currency?: string): string {
+  const x = n.toLocaleString("en-GB", { maximumFractionDigits: 2 });
+  return currency ? `${x} ${currency === "PLN" ? "zł" : currency}` : x;
+}
 
 /** The policy for one message: block, ask (why), or allow as covered by the mandate. */
 export function sendPolicy(n: Negotiation, input: SendInput, f: SendFacts): Verdict {

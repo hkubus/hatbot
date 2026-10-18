@@ -17,7 +17,7 @@ export const TEACH_MODEL = "claude-opus-5-5";
 /** Holds the screen lane while you record, so no task starts on the desktop. */
 const TEACH_LANE = -2;
 /** Screenshots sent with the recording, spread across it. */
-const MAX_SCREENS = 16;
+const SCREENS_SENT = 16;
 /** Roughly what a 1280x800 screenshot costs in input tokens. */
 const SCREEN_TOKENS = 1500;
 
@@ -300,7 +300,7 @@ export class Teach {
       // Full size: the log's coordinates are in the screenshots' pixels.
       const picked = spread(
         screens.map((path, i) => ({ path, n: i + 1 })),
-        MAX_SCREENS,
+        SCREENS_SENT,
       );
       for (const { path, n } of picked) {
         const file = archive.file(path);
