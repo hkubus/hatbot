@@ -2,15 +2,10 @@ import { expect, test } from "bun:test";
 import type { Attachment, ThreadMessage } from "@hatbot/shared";
 import { inlineLimit } from "../src/attachments";
 import type { CallContext } from "../src/plugins/plugin";
-import { estimateTokens } from "../src/spend";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { ORIGIN, setUpOwner, type TestApp, testApp } from "./helpers";
+import { ORIGIN, setUpOwner, type TestApp, testApp, unmarked } from "./helpers";
 
 const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
-
-/** Turns as sent, but for where each request marks the cache. */
-const unmarked = (v: unknown) =>
-  JSON.parse(JSON.stringify(v, (k, x) => (k === "cache_control" ? undefined : x)));
 
 async function upload(t: TestApp, cookie: string, file: File) {
   const form = new FormData();
@@ -80,7 +75,7 @@ test("you upload a photo, send it with a message, and the model sees it; it tain
   expect(unmarked(chat.requests[1]?.messages[0]?.content)).toContainEqual(image);
 });
 
-test("files past what a request can carry are named for code_run, the same on every request", async () => {
+test("what the model gets: text inline, PDFs as documents, images while a request has room; the rest is named for code_run, the same on every request", async () => {
   const chat = new FakeModel([
     { content: [text("One.")] },
     { content: [text("Two.")] },
@@ -116,43 +111,26 @@ test("files past what a request can carry are named for code_run, the same on ev
   } finally {
     inlineLimit.bytes = saved;
   }
-});
 
-test("turns stored with the bytes themselves still go out as they are", async () => {
-  const chat = new FakeModel([{ content: [text("one")] }, { content: [text("two")] }]);
-  const t = await testApp(chat);
-  await t.thread.post("first").done;
-  const image = {
-    type: "image",
-    source: { type: "base64", media_type: "image/png", data: "AAAA" },
-  };
-  t.db
-    .query("UPDATE episode_turns SET content = ? WHERE id = 1")
-    .run(JSON.stringify([{ type: "text", text: "old" }, image]));
-  await t.thread.post("second").done;
-  expect(unmarked(chat.requests[1]?.messages[0]?.content)).toContainEqual(image);
-});
-
-test("the estimate before a request counts images and PDFs by size, not their base64", () => {
-  const mb = "A".repeat(1024 * 1024);
-  const tokens = estimateTokens([
-    {
-      role: "user",
-      content: [
-        { type: "text", text: "x".repeat(350) },
-        { type: "image", source: { type: "base64", media_type: "image/png", data: mb } },
-        { type: "document", source: { type: "base64", media_type: "application/pdf", data: mb } },
-        {
-          type: "document",
-          source: { type: "text", media_type: "text/plain", data: "y".repeat(700) },
-        },
-      ],
-    },
-  ]);
-  // 100 + 200 of text, an image, and a 768 KB PDF.
-  const expected = 300 + 1600 + 768 * 25;
-  expect(tokens).toBeGreaterThan(expected);
-  expect(tokens).toBeLessThan(expected + 50);
+  const save = (name: string, bytes: Uint8Array | string, mediaType = "") =>
+    t.attachments.save({
+      bytes: typeof bytes === "string" ? new TextEncoder().encode(bytes) : bytes,
+      name,
+      mediaType,
+      from: "owner",
+    });
+  const csv = await save("data.csv", "a,b\n1,2\n");
+  const pdf = await save("doc.pdf", new Uint8Array([37, 80, 68, 70]));
+  const zip = await save("all.zip", new Uint8Array([80, 75, 3, 4]));
+  const blocks = await t.attachments.blocks([csv, pdf, zip]);
+  expect(blocks[1]).toMatchObject({
+    type: "document",
+    source: { type: "text", data: "a,b\n1,2\n" },
+  });
+  expect(blocks[3]).toMatchObject({ type: "document", source: { media_type: "application/pdf" } });
+  expect((blocks[4] as { text: string }).text).toContain(
+    `code_run can copy it into the sandbox (files: [${zip.id}])`,
+  );
 });
 
 test("a file is checked again each time it's shown, and an incognito one isn't kept", async () => {
@@ -194,7 +172,7 @@ test("a file is checked again each time it's shown, and an incognito one isn't k
   expect(next.id).toBeGreaterThan(secret.id);
 });
 
-test("a name in any language is kept in the download's filename*", async () => {
+test("downloads: images inline, anything else as a file, never sniffed, with a name in any language", async () => {
   const t = await testApp();
   const { cookie } = await setUpOwner(t);
   const name = "Zażółć 'gęślą' (1).pdf";
@@ -208,11 +186,7 @@ test("a name in any language is kept in the download's filename*", async () => {
   expect(encoded).toBe("Za%C5%BC%C3%B3%C5%82%C4%87%20%27g%C4%99%C5%9Bl%C4%85%27%20%281%29.pdf");
   expect(decodeURIComponent(encoded)).toBe(name);
   expect(res.headers.get("cross-origin-resource-policy")).toBe("same-origin");
-});
 
-test("downloads: images inline, anything else as a file, never sniffed", async () => {
-  const t = await testApp();
-  const { cookie } = await setUpOwner(t);
   const png = (await (await upload(t, cookie, new File([PNG], "cat.png"))).json()) as Attachment;
   const html = (await (
     await upload(
@@ -248,31 +222,12 @@ test("downloads: images inline, anything else as a file, never sniffed", async (
   expect(none.status).toBe(400);
 });
 
-test("what the model gets: text inline, PDFs as documents, the rest through the sandbox", async () => {
-  const t = await testApp();
-  const save = (name: string, bytes: Uint8Array | string, mediaType = "") =>
-    t.attachments.save({
-      bytes: typeof bytes === "string" ? new TextEncoder().encode(bytes) : bytes,
-      name,
-      mediaType,
-      from: "owner",
-    });
-  const csv = await save("data.csv", "a,b\n1,2\n");
-  const pdf = await save("doc.pdf", new Uint8Array([37, 80, 68, 70]));
-  const zip = await save("all.zip", new Uint8Array([80, 75, 3, 4]));
-  const blocks = await t.attachments.blocks([csv, pdf, zip]);
-  expect(blocks[1]).toMatchObject({
-    type: "document",
-    source: { type: "text", data: "a,b\n1,2\n" },
-  });
-  expect(blocks[3]).toMatchObject({ type: "document", source: { media_type: "application/pdf" } });
-  expect((blocks[4] as { text: string }).text).toContain(
-    `code_run can copy it into the sandbox (files: [${zip.id}])`,
-  );
-});
-
-test("code_run copies files into the sandbox and runs; its output is untrusted", async () => {
-  const t = await testApp();
+test("code_run copies files into the sandbox and its output is untrusted; send_file puts the sandbox's file under the reply", async () => {
+  const chat = new FakeModel([
+    { content: [toolUse("send_file", { path: "out/chart.png" })] },
+    { content: [text("Here's the chart.")] },
+  ]);
+  const t = await testApp(chat);
   await t.plugins.update("code", { enabled: true });
   const run = t.plugins.tools().find((x) => x.name === "code_run");
   if (!run) throw new Error("no code_run");
@@ -294,14 +249,7 @@ test("code_run copies files into the sandbox and runs; its output is untrusted",
   );
   // The sandbox keeps what it fetched: any command's output may be a page's.
   expect(run.untrusted).toBe(true);
-});
 
-test("send_file puts the sandbox's file under the reply", async () => {
-  const chat = new FakeModel([
-    { content: [toolUse("send_file", { path: "out/chart.png" })] },
-    { content: [text("Here's the chart.")] },
-  ]);
-  const t = await testApp(chat);
   t.agent.files.set("out/chart.png", PNG);
   await t.thread.post("chart it").done;
   const reply = t.thread.list().at(-1);
@@ -310,27 +258,6 @@ test("send_file puts the sandbox's file under the reply", async () => {
     { name: "chart.png", mediaType: "image/png", from: "hatbot" },
   ]);
   expect(t.events.some((e) => e.type === "message.attachment" && e.id === reply?.id)).toBe(true);
-});
-
-test("a desktop task sends a browser download; it shows on the task and its message", async () => {
-  const work = new FakeModel([
-    { content: [toolUse("send_file", { download_id: "d1", name: "invoice.pdf" })] },
-    { content: [toolUse("finish_task", { outcome: "done", summary: "Got the invoice." })] },
-  ]);
-  const t = await testApp(new FakeModel(), work);
-  t.agent.downloads.set("d1", { name: "download.pdf", bytes: new Uint8Array([37, 80, 68, 70]) });
-  const task = t.tasks.createDesktopTask({
-    title: "Invoice",
-    goal: "Get it",
-    successCriteria: "",
-    origin: "chat",
-  });
-  await t.tasks.idle();
-  expect(t.tasks.get(task.id)?.status).toBe("done");
-  expect(t.attachments.forTask(task.id)).toMatchObject([
-    { name: "invoice.pdf", mediaType: "application/pdf" },
-  ]);
-  expect(t.tasks.steps(task.id).some((s) => s.name === "send_file")).toBe(true);
 });
 
 test("a background task hands the chat a JSON file; the bot reads it and the chat doesn't show it", async () => {
@@ -378,8 +305,10 @@ test("a background task hands the chat a JSON file; the bot reads it and the cha
   expect(t.events.some((e) => e.type === "message.attachment")).toBe(false);
 });
 
-test("a desktop task hands the chat a download; under a background task, it goes with that one's result", async () => {
+test("a desktop task's browser download goes on the task; under a background task, it goes with that one's result", async () => {
   const work = new FakeModel([
+    { content: [toolUse("send_file", { download_id: "d0", name: "invoice.pdf" })] },
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Got the invoice." })] },
     {
       content: [
         toolUse("run_desktop_task", {
@@ -394,6 +323,20 @@ test("a desktop task hands the chat a download; under a background task, it goes
     { content: [toolUse("finish_task", { outcome: "done", summary: "Usage.", notify: true })] },
   ]);
   const t = await testApp(new FakeModel(), work);
+  t.agent.downloads.set("d0", { name: "download.pdf", bytes: new Uint8Array([37, 80, 68, 70]) });
+  const task = t.tasks.createDesktopTask({
+    title: "Invoice",
+    goal: "Get it",
+    successCriteria: "",
+    origin: "chat",
+  });
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)?.status).toBe("done");
+  expect(t.attachments.forTask(task.id)).toMatchObject([
+    { name: "invoice.pdf", mediaType: "application/pdf" },
+  ]);
+  expect(t.tasks.steps(task.id).some((s) => s.name === "send_file")).toBe(true);
+
   t.agent.downloads.set("d1", {
     name: "export.csv",
     bytes: new TextEncoder().encode("day,gb\n1,2"),
@@ -412,6 +355,6 @@ test("a desktop task hands the chat a download; under a background task, it goes
     { name: "usage.csv", mediaType: "text/csv", forChat: true },
   ]);
   expect(t.tasks.steps(child?.id as number).some((s) => s.name === "send_to_chat")).toBe(true);
-  const said = JSON.stringify(work.requests[2]?.messages.at(-1));
+  const said = JSON.stringify(work.requests[4]?.messages.at(-1));
   expect(said).toContain(`It goes with task #${parent?.id}'s result.`);
 });

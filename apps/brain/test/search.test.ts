@@ -2,13 +2,19 @@ import { expect, test } from "bun:test";
 import { MATCH_END, MATCH_START, type SearchResults } from "@hatbot/shared";
 import { HATBOT } from "../src/memory/store";
 import { FakeModel, text } from "./fake-model";
-import { setUpOwner, testApp } from "./helpers";
+import { bot, setUpOwner, testApp } from "./helpers";
 
-test("search finds chat messages, tasks, memory and schedules", async () => {
+test("search finds chat messages, tasks, memory and schedules, and leaves out a deleted bot's chat and a deleted group", async () => {
   const t = await testApp(
-    new FakeModel([{ content: [text("The WireGuard tunnel uses port 51820.")] }]),
+    new FakeModel([
+      { content: [text("The WireGuard tunnel uses port 51820.")] },
+      { content: [text("WireGuard needs a key.")] },
+      { content: [text("WireGuard, then.")] },
+    ]),
   );
   const { cookie } = await setUpOwner(t);
+  const search = async (q: string) =>
+    (await (await t.call("GET", `/search?q=${q}`, undefined, { cookie })).json()) as SearchResults;
   await t.thread.post("which port does wireguard use?").done;
   t.tasks.createBackgroundTask({
     title: "Rotate WireGuard keys",
@@ -27,9 +33,8 @@ test("search finds chat messages, tasks, memory and schedules", async () => {
   );
   t.schedules.create({ name: "Backups", prompt: "Check PBS", cron: "0 9 * * *" }, "owner");
 
-  const res = await t.call("GET", "/search?q=wiregu", undefined, { cookie });
-  const r = (await res.json()) as SearchResults;
   // A prefix of the last word matches, so results come while you type.
+  const r = await search("wiregu");
   expect(r.messages.map((m) => m.botId)).toEqual(expect.arrayContaining([null, "hatbot"]));
   expect(r.messages.find((m) => m.botId === "hatbot")?.snippet).toBe(
     `The ${MATCH_START}WireGuard${MATCH_END} tunnel uses port 51820.`,
@@ -39,46 +44,20 @@ test("search finds chat messages, tasks, memory and schedules", async () => {
     { path: "notes/network.md", line: 2, text: "WireGuard on the router." },
   ]);
   expect(r.routines).toEqual([{ kind: "schedule", id: 1, name: "WireGuard check" }]);
-
-  const none = (await (
-    await t.call("GET", "/search?q=%25", undefined, { cookie })
-  ).json()) as SearchResults;
-  expect(none.tasks).toEqual([]);
+  expect((await search("%25")).tasks).toEqual([]);
   expect((await t.call("GET", "/search?q=x")).status).toBe(401);
-});
 
-test("search leaves out a deleted bot's chat and a deleted group", async () => {
-  const t = await testApp(
-    new FakeModel([
-      { content: [text("Pancakes need flour.")] },
-      { content: [text("Pancakes, then.")] },
-      { content: [text("Pancakes are on the list.")] },
-    ]),
-  );
-  const { cookie } = await setUpOwner(t);
-  t.bots.create({
-    name: "Chef",
-    instructions: "",
-    chatModel: null,
-    chatEffort: null,
-    plugins: null,
-  });
-  await t.chats.direct("chef").post("how about pancakes").done;
+  // A bot's chat goes away with the bot; a group with it stays until it's deleted.
+  bot(t, "Chef");
+  await t.chats.direct("chef").post("wireguard keys?").done;
   const res = await t.call("POST", "/conversations", { botIds: ["chef", "hatbot"] }, { cookie });
   const group = (await res.json()) as { id: number };
-  await t.chats.thread(group.id)?.post("pancakes or waffles?").done;
-  await t.thread.post("add pancakes to the list").done;
+  await t.chats.thread(group.id)?.post("wireguard or tailscale?").done;
   const found = async () =>
-    (
-      (await (
-        await t.call("GET", "/search?q=pancakes", undefined, { cookie })
-      ).json()) as SearchResults
-    ).messages.map((m) => m.conversationId);
-  expect(new Set(await found())).toEqual(new Set([1, 2, group.id]));
-
-  // Its chat goes away with the bot; a group with it stays until it's deleted.
+    new Set((await search("wireguard")).messages.map((m) => m.conversationId));
+  expect(await found()).toEqual(new Set([1, 2, group.id]));
   await t.call("DELETE", "/bots/chef", undefined, { cookie });
-  expect(new Set(await found())).toEqual(new Set([1, group.id]));
+  expect(await found()).toEqual(new Set([1, group.id]));
   await t.call("DELETE", `/conversations/${group.id}`, undefined, { cookie });
-  expect(new Set(await found())).toEqual(new Set([1]));
+  expect(await found()).toEqual(new Set([1]));
 });
