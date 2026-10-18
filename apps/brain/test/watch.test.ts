@@ -37,10 +37,15 @@ test("values are picked by selector, path, pattern, or the page's text", async (
   );
 });
 
-test("a page without a full address says what to write", () => {
-  const r = WatchSourceInput.safeParse({ kind: "page", url: "example.com/shop" });
-  expect(r.success).toBe(false);
-  expect(r.error?.issues[0]?.message).toBe("Use a full address starting with https://");
+test("a page without a full web address says what to write", () => {
+  for (const url of ["example.com/shop", "file:///etc/passwd", "javascript:alert(1)"]) {
+    const r = WatchSourceInput.safeParse({ kind: "page", url });
+    expect(r.success).toBe(false);
+    expect(r.error?.issues[0]?.message).toBe("Use a full address starting with https://");
+  }
+  expect(WatchSourceInput.safeParse({ kind: "page", url: "http://shop.example/" }).success).toBe(
+    true,
+  );
 });
 
 test("a pattern that backtracks without end is stopped, and the brain keeps answering", async () => {
