@@ -1125,7 +1125,7 @@ test("deleting a conversation takes it out of the chat, search, files and the su
     .query<{ path: string }, [number]>("SELECT path FROM attachments WHERE id = ?")
     .get(a.id)?.path as string;
   await t.thread.post("my wireguard port is 51820", [a.id]).done;
-  const card = t.thread.addCard("task", "Checked the wireguard tunnel.", {});
+  const card = t.thread.add({ kind: "task", text: "Checked the wireguard tunnel." });
   t.advance(31 * 60_000);
   await t.thread.sweep();
   await t.thread.post("hello").done;

@@ -260,7 +260,7 @@ export class Chats {
     text: string,
     ref: { taskId?: number; scheduleId?: number },
   ) {
-    return (this.thread(conversationId) ?? this.direct(botId)).addCard(kind, text, ref, botId);
+    return (this.thread(conversationId) ?? this.direct(botId)).add({ kind, text, ...ref, botId });
   }
 
   /**
@@ -268,7 +268,7 @@ export class Chats {
    * its text came from untrusted content, this; a conversation that reads it is tainted.
    */
   note(botId: string, text: string, taintedBy: string | null = null) {
-    return this.direct(botId).addCard("text", text, {}, botId, taintedBy);
+    return this.direct(botId).add({ text, botId, taintedBy });
   }
 
   /** A task ended: `botId` tells you in the chat it was started from. */

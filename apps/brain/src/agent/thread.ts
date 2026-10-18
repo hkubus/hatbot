@@ -305,36 +305,51 @@ export class Thread {
   }
 
   /**
-   * A task or schedule card from `botId`. `text` is what search and summaries see. `taintedBy`: its
-   * text came from untrusted content, this.
+   * Adds a message to the chat, and tells the apps. A bot's (`botId`, by default this chat's) unless
+   * `role` is "user". `text` is what search and summaries see, e.g. a task or schedule card's.
+   * `taintedBy`: its text came from untrusted content, this. `seen`: you just did what it answers.
    */
-  addCard(
-    kind: "task" | "schedule" | "text",
-    text: string,
-    ref: { taskId?: number; scheduleId?: number },
-    botId = this.bot().id,
-    taintedBy: string | null = null,
-  ) {
+  add(m: {
+    role?: "user" | "assistant";
+    kind?: "text" | "command" | "task" | "schedule";
+    text: string;
+    status?: "done" | "streaming";
+    botId?: string;
+    episodeId?: number | null;
+    incognito?: boolean;
+    taskId?: number;
+    scheduleId?: number;
+    taintedBy?: string | null;
+    seen?: boolean;
+    attachmentIds?: number[];
+  }): ThreadMessage {
+    const role = m.role ?? "assistant";
+    const now = this.now();
     const row = this.d.db
-      .query<
-        MessageRow,
-        [number, string, string, string, string, number | null, number | null, string | null]
-      >(
-        `INSERT INTO messages (conversation_id, bot_id, role, kind, text, status, created_at, task_id, schedule_id, tainted_by)
-         VALUES (?, ?, 'assistant', ?, ?, 'done', ?, ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
+      .query<MessageRow, (string | number | null)[]>(
+        `INSERT INTO messages (conversation_id, bot_id, episode_id, role, kind, text, status, created_at,
+           seen_at, incognito, task_id, schedule_id, tainted_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
       )
       .get(
         this.conversationId,
-        botId,
-        kind,
-        text,
-        this.now(),
-        ref.taskId ?? null,
-        ref.scheduleId ?? null,
-        taintedBy,
+        role === "user" ? null : (m.botId ?? this.bot().id),
+        m.episodeId ?? null,
+        role,
+        m.kind ?? "text",
+        m.text,
+        m.status ?? "done",
+        now,
+        m.seen ? now : null,
+        m.incognito ? 1 : 0,
+        m.taskId ?? null,
+        m.scheduleId ?? null,
+        m.taintedBy ?? null,
       );
-    if (!row) throw new Error("card insert failed");
-    const message = messageOf(row);
+    if (!row) throw new Error("message insert failed");
+    const added = messageOf(row);
+    const files = this.d.attachments?.bind(m.attachmentIds ?? [], added.id) ?? [];
+    const message = files.length ? { ...added, attachments: files } : added;
     this.d.events.emit({ type: "message.created", message });
     return message;
   }
@@ -361,15 +376,13 @@ export class Thread {
     incognito = false,
   ): { message: ThreadMessage; done: Promise<void> } {
     const command = attachmentIds.length ? null : parseCommand(text);
-    const message = this.insertMessage(
-      "user",
+    const message = this.add({
+      role: "user",
+      kind: command ? "command" : "text",
       text,
-      "done",
-      undefined,
       attachmentIds,
-      command,
       incognito,
-    );
+    });
     // Writing again instead of answering an approval moves on without it.
     if (this.waiting !== null) this.d.approvals?.cancel(this.waiting);
     // Stopping can't wait its turn behind the reply it stops.
@@ -692,23 +705,8 @@ export class Thread {
   }
 
   /** What came of a command, as a line in the chat. You just did it, so it's already seen. */
-  private commandNote(
-    text: string,
-    episodeId: number | null,
-    incognito = false,
-    botId = this.bot().id,
-  ): ThreadMessage {
-    const now = this.now();
-    const row = this.d.db
-      .query<MessageRow, [number, string, number | null, string, string, string, number]>(
-        `INSERT INTO messages (conversation_id, bot_id, episode_id, role, kind, text, status, created_at, seen_at, incognito)
-         VALUES (?, ?, ?, 'assistant', 'command', ?, 'done', ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
-      )
-      .get(this.conversationId, botId, episodeId, text, now, now, incognito ? 1 : 0);
-    if (!row) throw new Error("note insert failed");
-    const message = messageOf(row);
-    this.d.events.emit({ type: "message.created", message });
-    return message;
+  private commandNote(text: string, episodeId: number | null, incognito: boolean) {
+    return this.add({ kind: "command", text, episodeId, incognito, seen: true });
   }
 
   /** /stop: the reply being written, or with a number, that task. */
@@ -746,19 +744,14 @@ export class Thread {
       incognito,
     );
     if (!this.file(message, episode.id)) return;
+    const note = (text: string) => this.commandNote(text, episode.id, incognito);
     if (incognito)
-      return void this.commandNote(
-        `/${c.name} doesn't work in incognito; it would outlast the conversation.`,
-        episode.id,
-        true,
-      );
+      return void note(`/${c.name} doesn't work in incognito; it would outlast the conversation.`);
     if (c.name === "task") {
-      if (!c.arg)
-        return void this.commandNote("Say what to do, like /task check the backups.", episode.id);
-      if (!tasks) return void this.commandNote("Tasks aren't available.", episode.id);
-      if (tasks.paused())
-        return void this.commandNote("Hatbot is paused. Resume to start tasks.", episode.id);
-      const note = this.commandNote("Started a task.", episode.id);
+      if (!c.arg) return void note("Say what to do, like /task check the backups.");
+      if (!tasks) return void note("Tasks aren't available.");
+      if (tasks.paused()) return void note("Hatbot is paused. Resume to start tasks.");
+      const started = note("Started a task.");
       // Your own words: the task isn't tainted by what the conversation read.
       tasks.createBackgroundTask({
         title: titleOf(c.arg),
@@ -766,15 +759,11 @@ export class Thread {
         origin: "chat",
         botId: bot.id,
         conversationId: this.conversationId,
-        message: note.id,
+        message: started.id,
         request: c.arg,
       });
     } else if (c.name === "remember") {
-      if (!c.arg)
-        return void this.commandNote(
-          "Say what to remember, like /remember the NAS is at .20.",
-          episode.id,
-        );
+      if (!c.arg) return void note("Say what to remember, like /remember the NAS is at .20.");
       const owner = settings.get().owner;
       const reason = `Remember: ${titleOf(c.arg, 60)}`;
       try {
@@ -787,13 +776,10 @@ export class Thread {
         );
         if (sha)
           events.emit({ type: "memory.committed", sha, message: reason, author: owner.name });
-        this.commandNote("Saved to memory.", episode.id);
+        note("Saved to memory.");
       } catch (err) {
         if (!(err instanceof MemoryError)) console.error("/remember failed", err);
-        this.commandNote(
-          `Couldn't save it: ${err instanceof MemoryError ? err.message : "memory failed"}`,
-          episode.id,
-        );
+        note(`Couldn't save it: ${err instanceof MemoryError ? err.message : "memory failed"}`);
       }
     }
   }
@@ -884,43 +870,6 @@ export class Thread {
 
   private now() {
     return new Date(this.clock()).toISOString();
-  }
-
-  private insertMessage(
-    role: "user" | "assistant",
-    text: string,
-    status: string,
-    episodeId?: number,
-    attachmentIds: number[] = [],
-    command: ChatCommand | null = null,
-    incognito = false,
-    botId: string | null = null,
-  ): ThreadMessage {
-    const row = this.d.db
-      .query<
-        MessageRow,
-        [number, string | null, number | null, string, string, string, string, string, number]
-      >(
-        `INSERT INTO messages (conversation_id, bot_id, episode_id, role, kind, text, status, created_at, incognito)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
-      )
-      .get(
-        this.conversationId,
-        botId,
-        episodeId ?? null,
-        role,
-        command ? "command" : "text",
-        text,
-        status,
-        this.now(),
-        incognito ? 1 : 0,
-      );
-    if (!row) throw new Error("message insert failed");
-    const inserted = messageOf(row);
-    const files = this.d.attachments?.bind(attachmentIds, inserted.id) ?? [];
-    const message = files.length ? { ...inserted, attachments: files } : inserted;
-    this.d.events.emit({ type: "message.created", message });
-    return message;
   }
 
   private appendTurn(
@@ -1787,7 +1736,13 @@ export class Thread {
     const out =
       (rewrite ?? again)
         ? this.rewriteMessage((rewrite ?? again) as ThreadMessage)
-        : this.insertMessage("assistant", "", "streaming", episode.id, [], null, incognito, bot.id);
+        : this.add({
+            text: "",
+            status: "streaming",
+            episodeId: episode.id,
+            incognito,
+            botId: bot.id,
+          });
     this.touch(episode.id);
     let text = "";
     let separate = false;
@@ -2236,14 +2191,14 @@ export class Thread {
                   return { content: r.note ? `\n\n${ownerNote(r.note)}` : "", isError: false };
                 }),
               scheduleCard: (sc: Schedule) =>
-                this.addCard(
-                  "schedule",
-                  `Schedule "${sc.name}": ${sc.cron ? describeCron(sc.cron) : `once at ${sc.runAt}`}. ${sc.prompt}`,
-                  { scheduleId: sc.id },
-                  bot.id,
+                this.add({
+                  kind: "schedule",
+                  text: `Schedule "${sc.name}": ${sc.cron ? describeCron(sc.cron) : `once at ${sc.runAt}`}. ${sc.prompt}`,
+                  scheduleId: sc.id,
+                  botId: bot.id,
                   // Its prompt was written after reading untrusted content.
-                  this.trust(episode.id).tainted,
-                ),
+                  taintedBy: this.trust(episode.id).tainted,
+                }),
             },
             abort.signal,
           );
