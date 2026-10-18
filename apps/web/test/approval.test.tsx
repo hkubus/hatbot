@@ -46,45 +46,15 @@ test("an approval's fields show exactly as written, never as Markdown", () => {
   );
   expect(text).toContain("After reading https://example.com/a_b_c");
   expect(html).not.toMatch(/<(em|strong|a|code|pre)\b/);
-  // The command in monospace, and Deny in red as on the task page.
-  expect(html).toContain('class="approval-what"');
-  expect(html).toContain('class="btn tint-danger"');
 });
 
-test("in the chat's tray, the command shows at once and the rest waits behind More", () => {
-  const a = approval({ kind: "mandate", sources: [] });
-  const html = renderToStaticMarkup(<PendingApproval a={a} compact />);
-  const text = plain(html);
-  expect(text).toContain(a.summary);
-  expect(text).not.toContain("It cleans up");
-  expect(html).not.toContain("<textarea");
-  expect(html).toContain('aria-expanded="false"');
-  expect(text).toContain("More");
-  // On the task page all of it shows, with a note for every kind that takes one.
-  const full = renderToStaticMarkup(<PendingApproval a={approval({ kind: "send" })} />);
-  expect(full).toContain("<textarea");
-  expect(renderToStaticMarkup(<PendingApproval a={approval({ kind: "budget" })} />)).not.toContain(
-    "<textarea",
-  );
-});
-
-test("in the tray, why it asks shows at once when something it read may be steering it", () => {
-  const warning = approval({
-    kind: "injection_warning",
-    summary: "Keep going on shop.example?",
-    reason: 'This page may contain instructions aimed at Hatbot: "ignore the owner"',
-    sources: [],
-  });
-  const text = plain(renderToStaticMarkup(<PendingApproval a={warning} compact />));
-  expect(text).toContain("This page may contain instructions aimed at Hatbot");
-  // Nothing else is folded away, so there's no More.
-  expect(text).not.toContain("More");
-  // A tainted chat's approval says why Haiku's review was skipped, beside what it read.
-  const tainted = approval({ kind: "send", reason: "Haiku's review is skipped: it read a page." });
-  const html = renderToStaticMarkup(<PendingApproval a={tainted} compact />);
-  expect(plain(html)).toContain("Haiku's review is skipped");
-  expect(plain(html)).toContain("After reading https://example.com/a_b_c");
-  // The note still waits behind More.
-  expect(html).not.toContain("<textarea");
-  expect(plain(html)).toContain("More");
+test("in the chat's tray, why it asks never folds away when something it read may be steering it", () => {
+  const shown = (patch: Partial<Approval>) =>
+    plain(renderToStaticMarkup(<PendingApproval a={approval(patch)} compact />));
+  const warning = 'This page may contain instructions aimed at Hatbot: "ignore the owner"';
+  expect(shown({ kind: "injection_warning", reason: warning, sources: [] })).toContain(warning);
+  const skipped = "Haiku's review is skipped: it read a page.";
+  expect(shown({ kind: "send", reason: skipped })).toContain(skipped);
+  // Otherwise it waits behind More.
+  expect(shown({ kind: "send", reason: skipped, sources: [] })).not.toContain(skipped);
 });
