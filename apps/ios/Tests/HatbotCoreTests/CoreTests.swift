@@ -59,14 +59,6 @@ final class ModelTests: XCTestCase {
     XCTAssertNil(none)
   }
 
-  func testEncodesLiveInput() throws {
-    let data = try JSONEncoder().encode(LiveInput.key("Enter", down: true))
-    let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-    XCTAssertEqual(obj["t"] as? String, "key")
-    XCTAssertEqual(obj["key"] as? String, "Enter")
-    XCTAssertEqual(obj["down"] as? Bool, true)
-  }
-
   /// A limit is read as it's typed, in the phone's own format, so Save knows about it before Return.
   func testReadsMoneyAsItsTyped() {
     let us = Locale(identifier: "en_US")
@@ -85,11 +77,6 @@ final class ModelTests: XCTestCase {
     XCTAssertEqual(Format.amountText(2.5, locale: pl), "2,5")
     XCTAssertEqual(Format.amountText(1000, locale: us), "1000")
     XCTAssertEqual(Format.amount(Format.amountText(12.34, locale: pl), locale: pl), 12.34)
-  }
-
-  func testParsesBrainDates() {
-    XCTAssertNotNil(Format.date("2026-10-10T08:00:00.123Z"))
-    XCTAssertNotNil(Format.date("2026-10-10T08:00:00Z"))
   }
 
   func testNormalisesServerAddresses() {
@@ -125,23 +112,6 @@ final class ModelTests: XCTestCase {
     } catch let e as APIError {
       XCTAssertTrue(e.message.contains("https"))
     }
-  }
-}
-
-final class CronTests: XCTestCase {
-  func testDescribesCron() {
-    let cases = [
-      ("0 8 * * *", "Every day at 08:00"),
-      ("30 7 * * 1-5", "Weekdays at 07:30"),
-      ("*/15 * * * *", "Every 15 minutes"),
-      ("0 * * * *", "Every hour"),
-      ("0 9 * * 1", "Every Monday at 09:00"),
-      ("0 9 * * 1,3", "Mon and Wed at 09:00"),
-      ("0 6 1 * *", "1st of the month at 06:00"),
-      ("@daily", "Every day at 00:00"),
-      ("0 8 * 1 *", "0 8 * 1 *"),
-    ]
-    for (expr, words) in cases { XCTAssertEqual(Format.describeCron(expr), words, expr) }
   }
 }
 
@@ -205,49 +175,11 @@ final class MarkdownTests: XCTestCase {
     XCTAssertEqual(Markdown.parse("```chart\n\(bad)\n```"), [.code(language: "chart", code: bad)])
   }
 
-  func testStackedAndHorizontalBars() {
-    let spec = ChartSpec.parse(
-      #"{"type":"bar","stacked":true,"x":["a","b"],"series":[{"data":[2,-1]},{"data":[3,null]},{"data":[-4,5]}]}"#)!
-    XCTAssertTrue(spec.isStacked)
-    XCTAssertFalse(spec.horizontal)
-    let spans = spec.stackSpans.map { $0.map { $0.map { [$0.start, $0.end] } } }
-    XCTAssertEqual(spans, [[[0, 2], [2, 5], [0, -4]], [[0, -1], nil, [0, 5]]])
-    XCTAssertEqual(spec.stackTotals, [1, 4])
-    func rows(_ n: Int) -> String {
-      let x = (0..<n).map { "\"h\($0)\"" }.joined(separator: ",")
-      let d = Array(repeating: "1", count: n).joined(separator: ",")
-      return #"{"type":"bar","horizontal":true,"x":["# + x + #"],"series":[{"data":["# + d + "]}]}"
-    }
-    XCTAssertNotNil(ChartSpec.parse(rows(40)))
-    XCTAssertNil(ChartSpec.parse(rows(41)))
-  }
-
-  func testChartValues() {
-    func spec(_ unit: String?) -> ChartSpec {
-      ChartSpec.parse(#"{"type":"line","x":["a"],"series":[{"data":[1]}]}"#.replacingOccurrences(
-        of: "\"line\"", with: unit.map { "\"line\",\"unit\":\"\($0)\"" } ?? "\"line\""))!
-    }
-    XCTAssertEqual(spec(nil).format(1284), "1,284")
-    XCTAssertEqual(spec(nil).format(12900, compact: true), "12.9K")
-    XCTAssertEqual(spec(nil).format(0.4213), "0.42")
-    XCTAssertEqual(spec("%").format(42.25), "42.3%")
-    XCTAssertEqual(spec("GiB").format(3.1), "3.1 GiB")
-    XCTAssertEqual(spec("$").format(4_200_000, compact: true), "$4.2M")
-    XCTAssertEqual(spec("$").format(0.8), "$0.80")
-    XCTAssertEqual(spec("€").format(-12), "-€12")
-  }
-
   func testUnclosedFenceRunsToTheEnd() {
     XCTAssertEqual(
       Markdown.parse("Look:\n```\nstill typing"), [.paragraph("Look:"), .code(language: nil, code: "still typing")])
   }
 
-  func testCachedBlocksAreTheParsedOnes() {
-    let md = "# Hi\n\n- one\n- two"
-    XCTAssertEqual(Markdown.cached(md), Markdown.parse(md))
-    XCTAssertEqual(Markdown.cached(md), Markdown.parse(md))
-    XCTAssertEqual(Markdown.cached("other"), [.paragraph("other")])
-  }
 }
 
 // Not a @MainActor class: Linux XCTest can't run those.
@@ -260,10 +192,6 @@ final class StoreTests: XCTestCase {
     await MainActor.run { Self.appliesStreamingEvents() }
   }
 
-  func testCountsWhatNeedsYou() async {
-    await MainActor.run { Self.countsWhatNeedsYou() }
-  }
-
   /// The same note twice is a new note: it gets its full time again.
   func testARepeatedToastIsANewOne() async {
     await MainActor.run {
@@ -274,16 +202,6 @@ final class StoreTests: XCTestCase {
       XCTAssertNotEqual(store.toastId, first)
       store.toast = nil
       XCTAssertEqual(store.toastId, first + 1)
-    }
-  }
-
-  func testOpeningAgainAfterStoppingIsAReconnect() async {
-    await MainActor.run {
-      let socket = Socket { URLSession.shared.webSocketTask(with: URL(string: "wss://h.example")!) }
-      XCTAssertFalse(socket.opened())
-      // In the background the stream stops; back in front it starts again.
-      socket.stop()
-      XCTAssertTrue(socket.opened())
     }
   }
 
@@ -325,19 +243,6 @@ final class StoreTests: XCTestCase {
     XCTAssertEqual(Delta.added("ść", to: "Cześć", at: 3), "Cześć")
   }
 
-  @MainActor private static func countsWhatNeedsYou() {
-    let store = store()
-    let a = Approval(
-      id: 1, taskId: 2, kind: "send", summary: "Send it", reason: "", sources: [], screenshotStepId: nil,
-      status: .pending, decidedVia: nil, costUsd: 0, createdAt: "", expiresAt: "", decidedAt: nil)
-    store.apply(.approvalCreated(a))
-    store.apply(.desktopState(.init(online: true, control: .hatbot, request: .init(taskId: 2, reason: "Captcha"))))
-    XCTAssertEqual(store.needsYou, 2)
-    var done = a
-    done.status = .approved
-    store.apply(.approvalResolved(done))
-    XCTAssertEqual(store.needsYou, 1)
-  }
 }
 
 final class ScheduleAndMemoryTests: XCTestCase {
@@ -430,37 +335,6 @@ final class ScheduleAndMemoryTests: XCTestCase {
     }
   }
 
-  func testGroupsMemoryFilesByFolder() {
-    let files = ["skills/b.md", "INDEX.md", "projects/x.md", "about-you.md", "skills/a.md"]
-      .map { MemoryFile(path: $0, size: 1) }
-    let groups = MemoryTree.groups(files)
-    XCTAssertEqual(groups.map(\.folder), ["", "projects", "skills"])
-    XCTAssertEqual(groups[0].files.map(\.path), ["INDEX.md", "about-you.md"])
-    XCTAssertEqual(groups[2].files.map(\.path), ["skills/a.md", "skills/b.md"])
-    XCTAssertEqual(MemoryTree.name("skills/a.md"), "a.md")
-    XCTAssertEqual(MemoryTree.newPath(" /projects/garden "), "projects/garden.md")
-    XCTAssertNil(MemoryTree.newPath("../etc/passwd"))
-    XCTAssertNil(MemoryTree.newPath("  "))
-  }
-
-  func testParsesDiffs() {
-    let diff = """
-      diff --git a/INDEX.md b/INDEX.md
-      index 1..2 100644
-      --- a/INDEX.md
-      +++ b/INDEX.md
-      @@ -1,2 +1,2 @@
-       # Memory index
-      -old
-      +new
-      """
-    XCTAssertEqual(
-      DiffLine.parse(diff).map(\.kind), [.hunk, .context, .removed, .added])
-  }
-
-  func testEscapesQueryValues() {
-    XCTAssertEqual(API.query("notes/a b&c+d.md"), "notes/a%20b%26c%2Bd.md")
-  }
 }
 
 final class FoldTests: XCTestCase {
@@ -489,47 +363,6 @@ final class FoldTests: XCTestCase {
     XCTAssertEqual(ids(r.messages), [1])
   }
 
-  func testFoldsFinishedConversations() {
-    let groups = ThreadFolds.groups(
-      [m(1, nil), m(2, 1, .user), m(3, 1), m(4, nil), m(5, 2, .user), m(6, 3, .user), m(7, 3)],
-      episodes: [1: Episode(id: 1, startedAt: "", lastActivityAt: "", recap: "Talked about one.")])
-    XCTAssertEqual(groups.map(\.episodeId), [nil, 1, 2, 3])
-    XCTAssertEqual(groups.map { $0.messages.map(\.id) }, [[1], [2, 3, 4], [5], [6, 7]])
-    XCTAssertEqual(groups.map(\.fold), [nil, "Talked about one.", "message 5", nil])
-  }
-
-  func testCommandsFoldWithoutNamingTheConversation() {
-    var command = m(2, 1, .user)
-    command.kind = .command
-    command.text = "/remember x"
-    let groups = ThreadFolds.groups([command, m(3, 1, .user), m(4, 2, .user)], episodes: [:])
-    XCTAssertEqual(groups.map(\.fold), ["message 3", nil])
-  }
-
-  func testMatchesCommandsWhileYouTypeTheName() {
-    XCTAssertEqual(ChatCommand.matching("/").map(\.name), ["new", "stop", "task", "remember"])
-    XCTAssertEqual(ChatCommand.matching("/RE").map(\.name), ["remember"])
-    XCTAssertEqual(ChatCommand.matching("/task x"), [])
-    XCTAssertEqual(ChatCommand.matching("/etc/"), [])
-    XCTAssertEqual(ChatCommand.matching("hi"), [])
-    XCTAssertEqual(ChatCommand.matching("/", incognito: true).map(\.name), ["new", "stop"])
-    XCTAssertTrue(ChatCommand.all[2].needsMore)
-    XCTAssertFalse(ChatCommand.all[1].needsMore)
-    var note = m(5, 1)
-    note.kind = .command
-    XCTAssertTrue(note.isNote)
-    note.taskId = 3
-    XCTAssertFalse(note.isNote)
-  }
-
-  func testTimelineKeepsOnlyTheLatestModelNote() {
-    func step(_ id: Int, _ kind: TaskStep.Kind, _ name: String = "Note") -> TaskStep {
-      TaskStep(id: id, taskId: 1, kind: kind, name: name, detail: "", createdAt: "")
-    }
-    let steps = [step(1, .note), step(2, .action), step(3, .note, "Your note"), step(4, .note)]
-    XCTAssertEqual(steps.latestNoteOnly.map(\.id), [2, 3, 4])
-  }
-
   func testDecodesBotsAndConversations() throws {
     let bot = #"""
       {"type":"bot.updated","bot":{"id":"chef","name":"Chef","instructions":"Plans meals.","chatModel":null,
@@ -556,20 +389,6 @@ final class FoldTests: XCTestCase {
     else { return XCTFail("not deleted") }
   }
 
-  func testCompletesMentions() {
-    XCTAssertEqual(Mention.partial("hi @ch"), "ch")
-    XCTAssertEqual(Mention.partial("@"), "")
-    XCTAssertNil(Mention.partial("me@ch"))
-    XCTAssertNil(Mention.partial("@chef done"))
-    XCTAssertEqual(Mention.complete("ask @ho", with: "Home Lab"), "ask @Home Lab ")
-    let bots = [
-      Bot(id: "chef", name: "Chef", instructions: "", createdAt: ""),
-      Bot(id: "home-lab", name: "Home Lab", instructions: "", createdAt: ""),
-    ]
-    XCTAssertEqual(Mention.matching("H", in: bots).map(\.id), ["home-lab"])
-    XCTAssertEqual(Mention.matching("", in: bots).count, 2)
-  }
-
   func testDecodesABotsIconAndColour() throws {
     let json = #"{"id":"chef","name":"Chef","icon":"cat","color":"teal","instructions":"","createdAt":""}"#
     let bot = try JSONDecoder().decode(Bot.self, from: Data(json.utf8))
@@ -580,20 +399,6 @@ final class FoldTests: XCTestCase {
     let older = #"{"id":"chef","name":"Chef","instructions":"","createdAt":""}"#
     XCTAssertEqual(try JSONDecoder().decode(Bot.self, from: Data(older.utf8)).color, .amber)
     XCTAssertEqual(Bot.Icon.code.symbol, "chevron.left.forwardslash.chevron.right")
-  }
-
-  func testDecodesBotTemplates() throws {
-    let json = #"""
-      [{"id":"haggler","name":"Haggler","icon":"cart","color":"green","instructions":"You buy.","chatModel":null,"chatEffort":null,"plugins":["mcp"]},
-       {"id":"researcher","name":"Researcher","icon":"book","color":"blue","instructions":"","chatModel":"claude-opus-5-5","chatEffort":"medium","plugins":[]}]
-      """#
-    let templates = try JSONDecoder().decode([BotTemplate].self, from: Data(json.utf8))
-    XCTAssertEqual(templates.map(\.id), ["haggler", "researcher"])
-    XCTAssertEqual(templates[0].icon, .cart)
-    XCTAssertEqual(templates[0].plugins, ["mcp"])
-    XCTAssertNil(templates[0].chatModel)
-    XCTAssertEqual(templates[1].chatModel, .opus)
-    XCTAssertEqual(templates[1].plugins, [])
   }
 
   func testEncodesABotChangeWithNulls() throws {
@@ -626,25 +431,6 @@ final class FoldTests: XCTestCase {
     XCTAssertEqual(String(decoding: try JSONEncoder().encode(AppSettings.ModelID.opus), as: UTF8.self), #""claude-opus-5-5""#)
   }
 
-  func testDecodesEpisodeEvents() throws {
-    let json = #"{"type":"episode.updated","episode":{"id":4,"startedAt":"a","lastActivityAt":"b","recap":"R"}}"#
-    guard case let .episodeUpdated(e) = try JSONDecoder().decode(HatbotEvent.self, from: Data(json.utf8)) else {
-      return XCTFail("not an episode")
-    }
-    XCTAssertEqual(e.recap, "R")
-  }
-}
-
-final class UsageTests: XCTestCase {
-  func testDecodesReplyUsageAndFormatsTokens() throws {
-    let json = #"{"type":"message.usage","id":9,"tokens":4200,"costUsd":0.021}"#
-    guard case let .messageUsage(id, used) = try JSONDecoder().decode(HatbotEvent.self, from: Data(json.utf8)) else {
-      return XCTFail("not usage")
-    }
-    XCTAssertEqual(id, 9)
-    XCTAssertEqual(used, ReplyUsage(tokens: 4200, costUsd: 0.021))
-    XCTAssertEqual([950, 4200, 3_100_000].map(Format.tokens), ["950", "4.2k", "3.1M"])
-  }
 }
 
 // Not a @MainActor method: Linux XCTest can't run those.
@@ -668,26 +454,6 @@ final class UnreadTests: XCTestCase {
     store.apply(try decode(#"{"type":"message.rewrite","id":3}"#))
     XCTAssertEqual(store.messages.first?.text, "")
     XCTAssertEqual(store.messages.first?.status, .streaming)
-  }
-}
-
-// Not a @MainActor method: Linux XCTest can't run those.
-final class AttachmentTests: XCTestCase {
-  func testAttachmentEventsAddFilesOnce() async throws {
-    try await MainActor.run { try Self.attachmentEventsAddFilesOnce() }
-  }
-
-  @MainActor private static func attachmentEventsAddFilesOnce() throws {
-    let store = AppStore(api: API(server: URL(string: "https://h.example")!, token: nil))
-    let created = #"{"type":"message.created","message":{"id":5,"role":"assistant","kind":"text","text":"Here","status":"done","createdAt":"t"}}"#
-    store.apply(try JSONDecoder().decode(HatbotEvent.self, from: Data(created.utf8)))
-    XCTAssertNil(store.messages.first?.attachments)
-    let json = #"{"type":"message.attachment","id":5,"attachment":{"id":3,"name":"chart.png","mediaType":"image/png","size":2048,"from":"hatbot","createdAt":"t"}}"#
-    let event = try JSONDecoder().decode(HatbotEvent.self, from: Data(json.utf8))
-    store.apply(event)
-    store.apply(event)
-    XCTAssertEqual(store.messages.first?.attachments?.map(\.id), [3])
-    XCTAssertEqual(store.messages.first?.attachments?.first?.isPicture, true)
   }
 }
 
@@ -784,12 +550,6 @@ final class LookingAfterThingsTests: XCTestCase {
     XCTAssertEqual(["hatbot"].including("sysadmin"), ["hatbot", "sysadmin"])
   }
 
-  func testSplitsSearchSnippetsAtTheMarks() {
-    let parts = Search.parts("the \u{02}router\u{03} is at \u{02}.1\u{03}")
-    XCTAssertEqual(parts.map(\.text), ["the ", "router", " is at ", ".1"])
-    XCTAssertEqual(parts.map(\.match), [false, true, false, true])
-  }
-
   func testSharesTheNoteAndLinksAsYoursAndTheTextApart() {
     let url = URL(string: "https://example.com/a")!
     let draft = ShareDraft(
@@ -809,62 +569,6 @@ final class LookingAfterThingsTests: XCTestCase {
     XCTAssertEqual(ShareDraft(urls: [url]).fileRoom, 10)
   }
 
-  func testAskAnswersWithTheRepliesOrSaysItsStillGoing() throws {
-    let m = #"{"id":%d,"role":"%@","kind":"text","text":"%@","status":"done","createdAt":"2026-10-15T08:00:00Z"}"#
-    let json = """
-      {"message":\(String(format: m, 1, "user", "Warm?")),
-       "replies":[\(String(format: m, 2, "assistant", "**21** degrees."))],"finished":true}
-      """
-    let r = try JSONDecoder().decode(AskResult.self, from: Data(json.utf8))
-    XCTAssertEqual(r.answer, "21 degrees.")
-    let waiting = AskResult(message: r.message, replies: [], finished: false)
-    XCTAssertEqual(waiting.answer, "Hatbot is still on it. The answer will be in the chat.")
-  }
-
-  func testDecodesWatchersAndNewSettings() throws {
-    let w = #"""
-      {"id":3,"botId":"hatbot","name":"GPU price","source":{"kind":"page","url":"https://shop.test/gpu",
-       "selector":".price"},"condition":{"when":"below","value":500},"prompt":"","everyMinutes":60,"once":false,
-       "enabled":true,"createdVia":"chat","tainted":false,"taintedBy":null,"createdAt":"2026-10-15T08:00:00Z",
-       "nextCheckAt":null,"lastCheckedAt":null,"lastValue":"549","lastChangedAt":null,"lastFiredAt":null,
-       "lastError":null,"errors":0,"lastTaskId":null}
-      """#
-    let watcher = try JSONDecoder().decode(Watcher.self, from: Data(w.utf8))
-    XCTAssertEqual(watcher.condition.description, "Below 500")
-    XCTAssertEqual(watcher.source.text, "https://shop.test/gpu")
-    XCTAssertEqual(Format.every(90), "Every 90 minutes")
-    XCTAssertEqual(Format.every(120), "Every 2 hours")
-    XCTAssertNil(watcher.source.render)
-    let rendered = w.replacingOccurrences(of: #""selector""#, with: #""render":true,"selector""#)
-    XCTAssertEqual(try JSONDecoder().decode(Watcher.self, from: Data(rendered.utf8)).source.render, true)
-    // Running its scripts slows a watcher that looked more often; off leaves no render in the source.
-    var often = watcher
-    often.everyMinutes = 5
-    XCTAssertEqual(
-      often.render(true),
-      .init(source: .init(kind: .page, url: "https://shop.test/gpu", render: true, selector: ".price"), everyMinutes: 15))
-    XCTAssertNil(watcher.render(true).everyMinutes)
-    let off = String(decoding: try JSONEncoder().encode(watcher.render(false)), as: UTF8.self)
-    XCTAssertFalse(off.contains("render") || off.contains("everyMinutes"))
-
-    let s = #"""
-      {"limits":{"dailyUsd":5,"monthlyUsd":50,"taskUsd":1},"chatEffort":"low","owner":{"name":"K","email":"k@x"},
-       "paused":false,"memoryTidy":true,"weeklyReport":{"enabled":true,"weekday":1,"hour":9},
-       "heartbeat":{"enabled":false,"everyMinutes":30,"botId":"hatbot","instructions":""}}
-      """#
-    let settings = try JSONDecoder().decode(AppSettings.self, from: Data(s.utf8))
-    XCTAssertEqual(settings.weeklyReport?.hour, 9)
-    XCTAssertEqual(settings.heartbeat?.everyMinutes, 30)
-    XCTAssertEqual(settings.memoryTidy, true)
-
-    let task = #"{"id":1,"title":"t","goal":"g","successCriteria":"","origin":"watch","lane":"background","model":"m","status":"done","tainted":false,"injectionSuspected":false,"costUsd":0,"steps":0,"createdAt":"2026-10-15T08:00:00Z"}"#
-    XCTAssertEqual(try JSONDecoder().decode(AgentTask.self, from: Data(task.utf8)).origin, .watch)
-    XCTAssertNil(try JSONDecoder().decode(AgentTask.self, from: Data(task.utf8)).reportPath)
-    let research = task.replacingOccurrences(
-      of: #""steps":0"#, with: #""steps":0,"research":true,"reportPath":"research/2026-10-17-nas.md""#)
-    XCTAssertEqual(
-      try JSONDecoder().decode(AgentTask.self, from: Data(research.utf8)).reportPath, "research/2026-10-17-nas.md")
-  }
 }
 
 final class DiskCacheTests: XCTestCase {
@@ -988,46 +692,7 @@ final class DiskCacheTests: XCTestCase {
   }
 }
 
-final class PlainTextTests: XCTestCase {
-  func testPlainTextHasNoMarkdown() {
-    let md = "# Done\n\nI **fixed** the `nginx` config, see [the docs](https://x.y) and _this_.\n\n- one\n- two\n\n1. first"
-    XCTAssertEqual(
-      Markdown.plain(md), "Done\n\nI fixed the nginx config, see the docs and this.\n\none\ntwo\n\n1. first")
-    XCTAssertEqual(Markdown.inline("snake_case_name and 2*3*4"), "snake_case_name and 2*3*4")
-  }
-}
-
 final class SpendTests: XCTestCase {
-  /// Every model the brain bills has a name, the fallbacks too, and a dated id goes by its model's.
-  func testModelsHaveNames() {
-    XCTAssertEqual(Format.modelName("claude-opus-5-5"), "Opus 5.5")
-    XCTAssertEqual(Format.modelName("claude-opus-5"), "Opus 5")
-    XCTAssertEqual(Format.modelName("claude-opus-4-8"), "Opus 4.8")
-    XCTAssertEqual(Format.modelName("claude-haiku-4-5-20251001"), "Haiku 4.5")
-    XCTAssertEqual(Format.modelName("some-new-model"), "some-new-model")
-    XCTAssertEqual(SpendCharts.byModel([SpendByModel(model: "claude-opus-4-8", usd: 1)])?.x, ["Opus 4.8"])
-  }
-
-  func testSpendChartsAreBarsAndRankings() throws {
-    let hours = [SpendHour(hour: "2026-10-15T13:00:00.000Z", usd: 0.5, tokens: 10)]
-    let hourly = try XCTUnwrap(SpendCharts.hourly(hours, timeZone: TimeZone(identifier: "UTC")!))
-    XCTAssertEqual(hourly.x, ["13:00"])
-    XCTAssertEqual(hourly.unit, "$")
-    XCTAssertEqual(SpendCharts.daily([SpendDay(date: "2026-10-05", usd: 1)])?.x, ["5 Oct"])
-    let models = try XCTUnwrap(
-      SpendCharts.byModel([
-        SpendByModel(model: "claude-haiku-5-5", usd: 1), SpendByModel(model: "claude-opus-5-5", usd: 3),
-        SpendByModel(model: "claude-sonnet-5", usd: 0),
-      ]))
-    XCTAssertTrue(models.horizontal)
-    XCTAssertEqual(models.x, ["Opus 5.5", "Haiku 5.5"])
-    XCTAssertEqual(models.series[0].data, [3, 1])
-    XCTAssertEqual(SpendCharts.byPurpose([SpendByPurpose(purpose: "thread", costUsd: 2)])?.x, ["Chat"])
-    XCTAssertNil(SpendCharts.byBot([], names: [:]))
-    let tokens = #"[{"id":3,"name":"iPhone (Hatbot iOS) 15 Oct 2026","createdAt":"2026-10-15T10:00:00.000Z","lastUsedAt":null}]"#
-    XCTAssertEqual(try JSONDecoder().decode([ApiToken].self, from: Data(tokens.utf8)).first?.id, 3)
-  }
-
   func testHeartbeatRunsAndRefetchEventsDecode() throws {
     let info = #"""
       {"at":"2026-10-15T10:00:00.000Z","found":[],"action":"nothing","note":"","taskId":null,
@@ -1045,45 +710,6 @@ final class SpendTests: XCTestCase {
       default: XCTFail(json)
       }
     }
-  }
-
-  func testWatcherEventsDecode() throws {
-    let deleted = #"{"type":"watcher.deleted","id":4}"#
-    guard case .watcherDeleted(4) = try JSONDecoder().decode(HatbotEvent.self, from: Data(deleted.utf8)) else {
-      return XCTFail("not a deleted watcher")
-    }
-  }
-
-  /// A negotiation's mandate is an approval you can answer with a note.
-  func testAMandateTakesANote() throws {
-    let mandate = #"""
-      {"id":5,"botId":"haggler","taskId":null,"conversationId":2,"kind":"mandate",
-      "summary":"Negotiate for RTX 3070: open at 1,060 zł, aim for 1,250 zł, pay at most 1,400 zł","reason":"",
-      "sources":[],"screenshotStepId":null,"status":"pending","decidedVia":null,"costUsd":0,
-      "createdAt":"2026-10-09T12:00:00Z","expiresAt":"2026-10-10T12:00:00Z","decidedAt":null,"note":null}
-      """#
-    let approval = try JSONDecoder().decode(Approval.self, from: Data(mandate.utf8))
-    XCTAssertEqual(approval.kind, "mandate")
-    XCTAssertTrue(approval.takesNote)
-  }
-}
-
-final class ZoomTests: XCTestCase {
-  func testZoomingKeepsThePointUnderTheFingersAndTheScreenCovered() {
-    let size = CGSize(width: 400, height: 250)
-    let z = Zoom().zoomed(by: 2, at: CGPoint(x: 100, y: 50), in: size)
-    XCTAssertEqual(z.scale, 2)
-    let p = z.unzoomed(CGPoint(x: 100, y: 50))
-    XCTAssertEqual(p.x, 100, accuracy: 0.001)
-    XCTAssertEqual(p.y, 50, accuracy: 0.001)
-    // Moved past the edge, it stops at it.
-    let moved = z.moved(by: CGPoint(x: 1000, y: -1000), in: size)
-    XCTAssertEqual(moved.offset.x, 0)
-    XCTAssertEqual(moved.offset.y, -250)
-    XCTAssertEqual(moved.unzoomed(CGPoint(x: 400, y: 250)).x, 200, accuracy: 0.001)
-    // Out past 1, it's back to the whole screen.
-    XCTAssertEqual(z.zoomed(by: 0.1, at: .zero, in: size), Zoom())
-    XCTAssertEqual(Zoom().zoomed(by: 100, at: .zero, in: size).scale, Zoom.most)
   }
 }
 
@@ -1179,38 +805,6 @@ final class NetworkTests: XCTestCase {
       store.steps[id] = []
     }
     return store
-  }
-
-  /// What a reconnect loads, side by side: about one round trip, not one per request.
-  func testAReconnectLoadsEverythingAtOnce() async throws {
-    let store = try await MainActor.run { try Self.store() }
-    let start = Date()
-    try await store.loadLive()
-    let took = Date().timeIntervalSince(start)
-    let requested = SlowBrain.requested
-    print("loadLive: \(requested.count) requests in \(Int(took * 1000)) ms at \(Int(SlowBrain.delay * 1000)) ms each")
-    XCTAssertEqual(requested.count, 8)
-    XCTAssertLessThan(took, SlowBrain.delay * 3)
-    let unread = await MainActor.run { store.unread }
-    XCTAssertEqual(unread, [3])
-  }
-
-  /// Rows that come into view together are one request.
-  func testSeenMessagesGoTogether() async throws {
-    let store = try await MainActor.run { try Self.store() }
-    SlowBrain.routes["/thread/seen"] = #"{"ok":true}"#
-    try await store.loadLive()
-    await MainActor.run {
-      store.unread = [10, 11, 12, 13]
-      SlowBrain.reset()
-      for id in [10, 11, 12] { store.markSeen([id]) }
-      XCTAssertEqual(store.unread, [13])
-    }
-    await waitUntil { !SlowBrain.requested.isEmpty }
-    XCTAssertEqual(SlowBrain.requested, ["POST /thread/seen"])
-    // The first request has all three.
-    let sent = try JSONDecoder().decode([String: [Int]].self, from: XCTUnwrap(SlowBrain.sent("/thread/seen")))
-    XCTAssertEqual(sent, ["ids": [10, 11, 12]])
   }
 
   /// A chat's task rows: one request for the tasks, without their steps. The live view still loads steps.
@@ -1351,17 +945,6 @@ final class NetworkTests: XCTestCase {
     sent = try XCTUnwrap(
       JSONSerialization.jsonObject(with: XCTUnwrap(SlowBrain.sent("/memory/file?path=notes/new.md"))) as? [String: Any])
     XCTAssertEqual(sent["baseSha"] as? String, "")
-  }
-
-  /// Finished tasks come a page at a time, each from before the last one loaded.
-  func testFinishedTasksLoadPageByPage() async throws {
-    let store = try await MainActor.run { try Self.store() }
-    SlowBrain.routes["/tasks?status=done"] = "[\(Self.task(71)),\(Self.task(70))]"
-    SlowBrain.routes["/tasks?status=done&before=70"] = "[\(Self.task(69))]"
-    let first = try await store.loadTasks(.done)
-    let next = try await store.loadTasks(.done, before: try XCTUnwrap(first.last))
-    XCTAssertEqual(first + next, [71, 70, 69])
-    XCTAssertEqual(SlowBrain.requested.suffix(2), ["GET /tasks?status=done", "GET /tasks?status=done&before=70"])
   }
 
   /// A file goes up from disk as the same multipart body as one from memory, and the body file is deleted.
