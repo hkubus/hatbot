@@ -75,6 +75,9 @@ confirm() {
 # FORCE=1 turns a refusal into a warning.
 refuse() { if ((FORCE)); then warn "$1; continuing because FORCE=1"; else die "$1. Set FORCE=1 to go ahead anyway."; fi; }
 is_private() { [[ $1 =~ ^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.) ]]; }
+# What the brain knows a guest by over IPv6, where its IP doesn't count: its MACs and global addresses.
+macs_of() { guest_exec "$1" ip -o link show </dev/null | sed -n 's#.* link/ether \([0-9a-f:]*\) .*#\1#p' | sort -u | paste -sd' ' -; }
+ip6s_of() { guest_exec "$1" ip -6 -o addr show scope global </dev/null | awk '{ sub(/\/.*/, "", $4); print $4 }' | sort -u | paste -sd' ' -; }
 
 save_state() {
   ((DRY_RUN)) && return
@@ -139,6 +142,7 @@ if [[ -n $BOXES_SSH ]]; then
 fi
 
 # Addresses: the desktop's own, and the brain's as the desktop will see it.
+DESKTOP_MAC='' DESKTOP_IP6='' BOXES_MAC='' BOXES_IP6=''
 if [[ -n $DESKTOP_SSH ]]; then
   if [[ -z $DESKTOP_IP ]]; then
     def=$(guest_exec "$DESKTOP_SSH" ip -4 route get 1.1.1.1 </dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')
@@ -157,6 +161,7 @@ if [[ -n $DESKTOP_SSH ]]; then
   # VNC and desktop-agent speak plain TCP: a password and a token, no TLS.
   is_private "$DESKTOP_IP" ||
     refuse "$DESKTOP_IP is a public address, and the brain talks to the desktop unencrypted; put both on a private network or a VPN (WireGuard, Tailscale)"
+  DESKTOP_MAC=$(macs_of "$DESKTOP_SSH") DESKTOP_IP6=$(ip6s_of "$DESKTOP_SSH")
   ok "brain $BRAIN_IP, desktop $DESKTOP_IP"
 fi
 # The boxes guest's, and the brain's as it sees it if there's no desktop to ask.
@@ -179,6 +184,7 @@ if [[ -n $BOXES_SSH ]]; then
   # The boxes agent speaks plain HTTP, with a token and no TLS.
   is_private "$BOXES_IP" ||
     refuse "$BOXES_IP is a public address, and the brain talks to the boxes agent unencrypted; put both on a private network or a VPN (WireGuard, Tailscale)"
+  BOXES_MAC=$(macs_of "$BOXES_SSH") BOXES_IP6=$(ip6s_of "$BOXES_SSH")
   ok "brain $BRAIN_IP, boxes guest $BOXES_IP"
 else
   BOXES_IP=''
@@ -263,7 +269,8 @@ provision() { # provision GUEST SCRIPT ENV...
     info "skipped; run ssh-setup.sh again to do it"
   fi
 }
-provision "$BRAIN_SSH" brain-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BOXES_IP=$BOXES_IP"
+provision "$BRAIN_SSH" brain-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BOXES_IP=$BOXES_IP" \
+  "DESKTOP_MAC=$DESKTOP_MAC" "DESKTOP_IP6=$DESKTOP_IP6" "BOXES_MAC=$BOXES_MAC" "BOXES_IP6=$BOXES_IP6"
 [[ -z $DESKTOP_SSH ]] ||
   provision "$DESKTOP_SSH" desktop-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS" SSH_IN=1
 [[ -z $BOXES_SSH ]] ||
