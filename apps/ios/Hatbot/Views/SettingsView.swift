@@ -60,7 +60,7 @@ struct SettingsView: View {
             }
             Button("Send the report now") {
               Task {
-                await act {
+                await attempt($error) {
                   _ = try await store.sendReport()
                   store.toast = "Sent to the chat"
                 }
@@ -123,7 +123,7 @@ struct SettingsView: View {
             Toggle("Let Haiku allow safe changes", isOn: setting(review, \.reviewChanges))
           }
           if store.paused {
-            Button("Resume") { Task { await act { try await store.setPaused(false) } } }
+            Button("Resume") { Task { await attempt($error) { try await store.setPaused(false) } } }
           } else {
             Button("Pause all", role: .destructive) { confirmPause = true }
           }
@@ -137,7 +137,7 @@ struct SettingsView: View {
       .navigationTitle("Settings")
       .sidebarButton()
       .confirmationDialog("Pause all?", isPresented: $confirmPause, titleVisibility: .visible) {
-        Button("Pause all", role: .destructive) { Task { await act { try await store.setPaused(true) } } }
+        Button("Pause all", role: .destructive) { Task { await attempt($error) { try await store.setPaused(true) } } }
       }
       .confirmationDialog("Sign out of Hatbot?", isPresented: $confirmSignOut, titleVisibility: .visible) {
         Button("Sign out", role: .destructive) { Task { await session.signOut() } }
@@ -164,14 +164,14 @@ struct SettingsView: View {
       changes += 1
       saving += 1
       // Each answer is shown; a change still saving shows over it.
-      await act { settings = try await store.saveSettings(change) }
+      await attempt($error) { settings = try await store.saveSettings(change) }
       saving -= 1
     }
   }
 
   private func load() async {
     let seen = changes
-    await act {
+    await attempt($error) {
       async let s = store.loadSettings()
       async let sp = store.loadSpend()
       let (loaded, summary) = try await (s, sp)
@@ -179,10 +179,5 @@ struct SettingsView: View {
       // Each change's own answer brings the settings: this one may be from before it.
       if seen == changes && saving == 0 { settings = loaded }
     }
-  }
-
-  private func act(_ work: () async throws -> Void) async {
-    error = nil
-    do { try await work() } catch { self.error = message(for: error) }
   }
 }

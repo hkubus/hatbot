@@ -191,11 +191,9 @@ struct BotView: View {
       Button("Delete", role: .destructive) {
         Task {
           guard let id else { return }
-          do {
+          await attempt($error) {
             try await store.deleteBot(id)
             dismiss()
-          } catch {
-            self.error = message(for: error)
           }
         }
       }
@@ -241,8 +239,7 @@ struct BotView: View {
   private func save() async {
     busy = true
     defer { busy = false }
-    error = nil
-    do {
+    await attempt($error) {
       if let id {
         form = Form(try await store.saveBot(id, form.change(rename: !isHatbot)))
         store.toast = "Saved"
@@ -251,8 +248,6 @@ struct BotView: View {
         store.toast = "Made \(bot.name)"
         if let made { made(bot) } else { dismiss() }
       }
-    } catch {
-      self.error = message(for: error)
     }
   }
 }

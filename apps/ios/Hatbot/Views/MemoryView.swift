@@ -97,12 +97,7 @@ struct MemoryView: View {
   }
 
   private func load() async {
-    do {
-      files = try await store.memoryTree()
-      error = nil
-    } catch {
-      self.error = message(for: error)
-    }
+    await attempt($error) { files = try await store.memoryTree() }
     // Brains from before proposals answer 404; the files still show.
     try? await store.loadProposals()
     skills = (try? await store.loadSkills()) ?? []
@@ -243,13 +238,10 @@ struct MemoryFileView: View {
         editing = true
         return
       }
-      do {
+      await attempt($error) {
         let file = try await store.memoryFile(path)
         content = file.content
         baseSha = file.sha
-        error = nil
-      } catch {
-        self.error = message(for: error)
       }
     }
   }
@@ -305,12 +297,10 @@ struct MemoryFileView: View {
   }
 
   private func delete() async {
-    do {
+    await attempt($error) {
       try await store.deleteMemoryFile(path)
       store.toast = "Deleted \(path)"
       dismiss()
-    } catch {
-      self.error = message(for: error)
     }
   }
 }
@@ -342,12 +332,7 @@ struct MemoryHistoryView: View {
   }
 
   private func load() async {
-    do {
-      commits = try await store.memoryLog(path: path)
-      error = nil
-    } catch {
-      self.error = message(for: error)
-    }
+    await attempt($error) { commits = try await store.memoryLog(path: path) }
   }
 }
 
@@ -384,21 +369,15 @@ struct CommitView: View {
     .confirmationDialog("Revert “\(commit.message)”?", isPresented: $confirmRevert, titleVisibility: .visible) {
       Button("Revert", role: .destructive) {
         Task {
-          do {
+          await attempt($error) {
             let sha = try await store.revert(commit.sha)
             store.toast = sha.map { "Reverted. New commit \($0.prefix(7))" } ?? "Nothing to revert"
-          } catch {
-            self.error = message(for: error)
           }
         }
       }
     }
     .task(id: commit.sha) {
-      do {
-        lines = DiffLine.parse(try await store.memoryDiff(commit.sha))
-      } catch {
-        self.error = message(for: error)
-      }
+      await attempt($error) { lines = DiffLine.parse(try await store.memoryDiff(commit.sha)) }
     }
   }
 }

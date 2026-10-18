@@ -238,14 +238,7 @@ struct ChatView: View {
       ) {
         Button("Delete", role: .destructive) {
           guard let id = deleting else { return }
-          Task {
-            do {
-              error = nil
-              try await store.deleteEpisode(id)
-            } catch {
-              self.error = message(for: error)
-            }
-          }
+          Task { await attempt($error) { try await store.deleteEpisode(id) } }
         }
       }
       .routes()
@@ -271,11 +264,7 @@ struct ChatView: View {
         // Coming back to a chat that's loaded and live: the events kept it current. Otherwise the latest
         // page is merged in.
         if store.messages.isEmpty || !store.connected {
-          do {
-            try await store.loadThread()
-          } catch {
-            self.error = message(for: error)
-          }
+          await attempt($error) { try await store.loadThread() }
         }
         loaded = true
       }

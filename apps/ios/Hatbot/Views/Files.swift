@@ -68,7 +68,8 @@ private struct FullPicture: View {
   var body: some View {
     ImageViewer(image: large ?? small, label: attachment.name)
       .task {
-        large = try? await ImageCache.attachments.image(api, "/attachments/\(attachment.id)", longSide: 3000, keep: false)
+        large = try? await ImageCache.attachments.image(
+          api, "/attachments/\(attachment.id)", longSide: 3000, keep: false)
       }
   }
 }

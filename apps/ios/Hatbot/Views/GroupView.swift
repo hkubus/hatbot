@@ -63,11 +63,9 @@ struct GroupView: View {
       Button("Delete", role: .destructive) {
         Task {
           guard let id else { return }
-          do {
+          await attempt($error) {
             try await store.deleteGroup(id)
             dismiss()
-          } catch {
-            self.error = message(for: error)
           }
         }
       }
@@ -83,9 +81,8 @@ struct GroupView: View {
   private func save(_ title: String) async {
     busy = true
     defer { busy = false }
-    error = nil
     let change = AppStore.GroupChange(title: title, botIds: members)
-    do {
+    await attempt($error) {
       if let id {
         try await store.saveGroup(id, change)
         store.toast = "Saved"
@@ -93,8 +90,6 @@ struct GroupView: View {
         let c = try await store.createGroup(change)
         if let made { made(c) } else { dismiss() }
       }
-    } catch {
-      self.error = message(for: error)
     }
   }
 }

@@ -104,6 +104,21 @@ func message(for error: Error) -> String {
   (error as? APIError)?.message ?? "Couldn't reach Hatbot."
 }
 
+/// Does `work`, then shows in `error` what went wrong, or clears it if nothing did. An earlier error
+/// stays up while it works, rather than going and coming back. A page given `missing` sets it instead
+/// when what it shows isn't there.
+@MainActor
+func attempt(_ error: Binding<String?>, missing: Binding<Bool>? = nil, _ work: () async throws -> Void) async {
+  do {
+    try await work()
+    error.wrappedValue = nil
+  } catch let e as APIError where e.status == 404 && missing != nil {
+    missing?.wrappedValue = true
+  } catch let e {
+    error.wrappedValue = message(for: e)
+  }
+}
+
 extension Binding where Value: Equatable {
   /// A switch or picker that saves as soon as it's changed. `shown` holds the change while it saves;
   /// then `value` shows again, saved or put back, unless it's been changed again meanwhile.
