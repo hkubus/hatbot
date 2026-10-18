@@ -655,8 +655,9 @@ export class Tasks {
     Object.assign(this.d, parts);
   }
 
-  /** What a background task's tools need. */
-  toolContext(task: Task): ToolContext {
+  /** What a background task's tools need; their requests to the desktop end once `signal` aborts. */
+  toolContext(task: Task, signal: AbortSignal): ToolContext {
+    const { agent } = this.d.desktop;
     return {
       db: this.d.db,
       memory: this.d.memory,
@@ -666,7 +667,7 @@ export class Tasks {
       tasks: this,
       plugins: this.d.plugins,
       attachments: this.d.attachments,
-      desktop: this.d.desktop.agent,
+      desktop: agent.withSignal?.(signal) ?? agent,
       proposals: this.d.proposals,
       // The run marks `task` as it reads untrusted content.
       tainted: () => (task.tainted ? task.taintedBy || "What started it" : null),

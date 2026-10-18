@@ -198,7 +198,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const { d } = tasks;
   const task = tasks.get(id);
   if (!task) return;
-  const ctx = tasks.toolContext(task);
+  const ctx = tasks.toolContext(task, signal);
   const bot = tasks.botOf(task);
   const { attachments } = ctx;
   const messages: Anthropic.Beta.BetaMessageParam[] = [];
