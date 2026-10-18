@@ -2,7 +2,7 @@
 // A desktop task that isn't one asks first before a click or Enter that could send what's in a text box
 // on a marketplace, whatever the button is called; an icon-only Send has no label to catch.
 import type { AgentElement } from "@hatbot/shared/desktop";
-import { narrowingLabel } from "../tasks/policy";
+import { narrowingLabel, onHost } from "../tasks/policy";
 
 /** The marketplaces negotiations run on. */
 export const MARKETPLACE_HOSTS = ["olx.pl", "allegrolokalnie.pl", "vinted.pl"];
@@ -12,7 +12,7 @@ export function marketplaceOf(url: string | null | undefined): string | null {
   if (!url) return null;
   try {
     const host = new URL(url).hostname.toLowerCase();
-    return MARKETPLACE_HOSTS.find((h) => host === h || host.endsWith(`.${h}`)) ?? null;
+    return MARKETPLACE_HOSTS.find((h) => onHost(host, h)) ?? null;
   } catch {
     return null;
   }

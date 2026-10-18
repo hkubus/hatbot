@@ -8,7 +8,9 @@ import {
   fold,
   type Hold,
   heldWhat,
+  hostOf,
   type Press,
+  pathOf,
   pressOf,
 } from "../tasks/policy";
 
@@ -64,17 +66,6 @@ export const collapse = (s: string) =>
  */
 const exact = (s: string) => s.normalize("NFC").replace(/[​-‍⁠﻿]/g, "").replace(/\s+/g, " ").trim();
 
-/** A host without "www.", lowercased; null for something that isn't a web address. */
-export function hostOf(url: string): string | null {
-  try {
-    const u = new URL(url);
-    if (u.protocol !== "https:" && u.protocol !== "http:") return null;
-    return u.hostname.toLowerCase().replace(/^www\./, "");
-  } catch {
-    return null;
-  }
-}
-
 export const sameHost = (a: string, b: string) => {
   const h = hostOf(a);
   return h !== null && h === hostOf(b);
@@ -85,8 +76,7 @@ export function sameAddress(tab: string, want: string): boolean {
   if (!sameHost(tab, want)) return false;
   const a = new URL(tab);
   const b = new URL(want);
-  const path = (p: string) => p.replace(/\/+$/, "") || "/";
-  if (path(a.pathname) !== path(b.pathname)) return false;
+  if (pathOf(a.pathname) !== pathOf(b.pathname)) return false;
   for (const [k, v] of b.searchParams) if (a.searchParams.get(k) !== v) return false;
   return true;
 }
