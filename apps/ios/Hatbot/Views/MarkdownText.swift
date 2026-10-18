@@ -1,5 +1,6 @@
 // Renders Hatbot's Markdown: blocks from Markdown.parse, inline formatting and links through
-// AttributedString, charts through ChartView. Raw HTML is shown as text, never rendered.
+// AttributedString, charts through ChartView (those drawn from a file once the brain sends their
+// values). Raw HTML is shown as text, never rendered.
 import SwiftUI
 import UIKit
 
@@ -50,8 +51,10 @@ struct MarkdownText: View {
       CodeBlock(code: code)
     case let .chart(spec):
       ChartView(spec: spec)
+    case let .chartFile(file):
+      FileChart(file: file)
     case .chartPending:
-      RoundedRectangle(cornerRadius: 8).fill(.fill.tertiary).frame(height: ChartView.height)
+      ChartPlaceholder()
     case let .table(header, rows):
       ScrollView(.horizontal) {
         Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
@@ -110,6 +113,51 @@ struct MarkdownText: View {
       return blocks
     }
   }
+}
+
+/// Same footprint as a chart, while its block streams in or its values load.
+private struct ChartPlaceholder: View {
+  var body: some View {
+    RoundedRectangle(cornerRadius: 8).fill(.fill.tertiary).frame(height: ChartView.height)
+  }
+}
+
+/// A chart whose values are in a file: the brain's thinned copy of them, or what it says is wrong with
+/// the file in the chart's place.
+private struct FileChart: View {
+  let file: ChartFile
+  @Environment(AppStore.self) private var store
+  @State private var spec: ChartSpec?
+  @State private var error: String?
+
+  var body: some View {
+    Group {
+      if let spec {
+        ChartView(spec: spec)
+      } else if let error {
+        Text(error).font(.footnote).foregroundStyle(.secondary)
+      } else {
+        ChartPlaceholder()
+      }
+    }
+    .task(id: file) {
+      do {
+        let loaded = try await file.load(store.api)
+        spec = loaded
+        error = loaded == nil ? Self.failed : nil
+      } catch let e as APIError where e.status != 0 {
+        spec = nil
+        error = e.message
+      } catch {
+        // Scrolled away while loading: it tries again when it's back.
+        guard !Task.isCancelled else { return }
+        spec = nil
+        self.error = Self.failed
+      }
+    }
+  }
+
+  private static let failed = "The chart's data didn't load."
 }
 
 /// A code block, with Copy in its corner.
