@@ -4,6 +4,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./bot-id": "./src/bot-id.ts",
     "./desktop": "./src/desktop.ts",
     "./keys": "./src/keys.ts"
   },

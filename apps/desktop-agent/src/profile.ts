@@ -2,10 +2,9 @@
 // runs Chromium on the profile named in the state directory, and comes back on it when Chromium closes.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { BOT_ID } from "@hatbot/shared/bot-id";
 import { type Browser, BrowserError } from "./browser";
 
-/** A bot's id, which names its profile. */
-const PROFILE = /^[a-z][a-z0-9-]{0,30}$/;
 /** Written by the service as it starts Chromium: the profile it's on. */
 const RUNNING = process.env.HATBOT_CHROMIUM_PROFILE ?? "/run/hatbot-chromium/profile";
 const SWITCH_TIMEOUT_MS = 30_000;
@@ -33,7 +32,7 @@ export async function useProfile(
   runningPath = RUNNING,
   pollMs = 300,
 ): Promise<string | null> {
-  if (!PROFILE.test(id)) throw new BrowserError("That isn't a profile name.");
+  if (!BOT_ID.test(id)) throw new BrowserError("That isn't a profile name.");
   const running = runningProfile(runningPath);
   if (!running || !stateDir) return null;
   if (running === id) return id;
