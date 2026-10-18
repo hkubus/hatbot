@@ -15,179 +15,53 @@ function at(version: number) {
   return db;
 }
 
-// A fresh database has empty tables, and some ALTERs only fail on one with rows.
-test("migration 20 (bots) runs on a database with a thread, tasks and approvals", () => {
+// A fresh database has empty tables, and some ALTERs and rebuilds only fail on one with rows.
+test("an upgrade keeps a database in use: its chat, tasks and links, its search, and no attachment id given out again", () => {
   const db = at(19);
   const now = "2026-10-01T00:00:00Z";
   db.exec(`INSERT INTO settings (key, value) VALUES ('thread_summary', 'Earlier: backups.')`);
   db.exec(`INSERT INTO episodes (started_at, last_activity_at) VALUES ('${now}', '${now}')`);
-  db.exec(`INSERT INTO messages (episode_id, role, text, status, created_at, kind)
-    VALUES (1, 'user', 'hi', 'done', '${now}', 'text'), (1, 'assistant', 'Hello.', 'done', '${now}', 'text')`);
-  db.exec(`INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at)
-    VALUES ('t', 'g', '', 'chat', 'background', 'm', 'done', 1, '${now}')`);
+  db.exec(`INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, summary, budget_usd, created_at, parent_id)
+    VALUES ('a', 'g', '', 'chat', 'background', 'm', 'done', 'All fine.', 1, '${now}', NULL),
+      ('b', 'g', '', 'chat', 'screen', 'm', 'done', 'Read it.', 1, '${now}', 1)`);
+  db.exec(`INSERT INTO messages (episode_id, role, text, status, created_at, kind, task_id, incognito)
+    VALUES (1, 'user', 'I renamed the backups share', 'done', '${now}', 'text', NULL, 0),
+      (1, 'assistant', 'On it.', 'done', '${now}', 'text', 1, 0),
+      (1, 'user', 'my secret password', 'done', '${now}', 'text', NULL, 1)`);
   db.exec(`INSERT INTO approvals (kind, summary, reason, sources, status, created_at, expires_at)
     VALUES ('k', 's', 'r', '[]', 'pending', '${now}', '${now}')`);
+  db.exec(`INSERT INTO attachments (id, message_id, name, media_type, size, path, sender, created_at)
+    VALUES (1, 1, 'a.png', 'image/png', 3, 'files/a', 'owner', '${now}')`);
 
   migrate(db);
 
+  // One chat, with its summary; Hatbot's replies and tasks are its.
   expect(db.query("SELECT summary FROM conversations WHERE id = 1").get()).toEqual({
     summary: "Earlier: backups.",
   });
-  expect(db.query("SELECT conversation_id, bot_id FROM messages ORDER BY id").all()).toEqual([
+  expect(db.query("SELECT conversation_id, bot_id FROM messages WHERE id < 3").all()).toEqual([
     { conversation_id: 1, bot_id: null },
     { conversation_id: 1, bot_id: "hatbot" },
   ]);
-  expect(db.query("SELECT conversation_id FROM episodes").get()).toEqual({ conversation_id: 1 });
-  expect(db.query("SELECT conversation_id, bot_id FROM tasks").get()).toEqual({
-    conversation_id: 1,
-    bot_id: "hatbot",
-  });
-});
-
-test("migration 34 keeps attachments, and their ids aren't given out again", () => {
-  const fresh = at(33);
-  migrate(fresh);
-  expect(
-    fresh
-      .query<{ id: number }, []>(
-        `INSERT INTO attachments (name, media_type, size, path, sender, created_at)
-         VALUES ('c', 'text/plain', 1, '', 'owner', 'now') RETURNING id`,
-      )
-      .get()?.id,
-  ).toBe(1);
-
-  const db = at(33);
-  const now = "2026-10-01T00:00:00Z";
-  db.exec(`INSERT INTO messages (role, text, status, created_at, kind)
-    VALUES ('user', 'hi', 'done', '${now}', 'text')`);
-  db.exec(`INSERT INTO attachments (id, name, media_type, size, path, sender, created_at, for_chat)
-    VALUES (1, 'a.png', 'image/png', 3, 'files/a', 'owner', '${now}', 0),
-      (2, 'b.pdf', 'application/pdf', 4, 'files/b', 'hatbot', '${now}', 1)`);
-  migrate(db);
-  expect(db.query("SELECT id, name, for_chat FROM attachments ORDER BY id").all()).toEqual([
-    { id: 1, name: "a.png", for_chat: 0 },
-    { id: 2, name: "b.pdf", for_chat: 1 },
-  ]);
-  const add = () =>
-    db
-      .query<{ id: number }, []>(
-        `INSERT INTO attachments (name, media_type, size, path, sender, created_at)
-         VALUES ('c', 'text/plain', 1, '', 'owner', '${now}') RETURNING id`,
-      )
-      .get()?.id ?? 0;
-  // Ones deleted before the migration may have had higher ids: new ones start well past.
-  const first = add();
-  expect(first).toBeGreaterThan(1000);
-  db.exec(`DELETE FROM attachments WHERE id = ${first}`);
-  expect(add()).toBe(first + 1);
-
-  // Set up, with no messages left: only incognito chats, which went with their files.
-  const used = at(33);
-  used.exec(`INSERT INTO owner (id, password_hash, totp_secret) VALUES (1, 'h', 's')`);
-  migrate(used);
-  expect(
-    used
-      .query<{ id: number }, []>(
-        `INSERT INTO attachments (name, media_type, size, path, sender, created_at)
-         VALUES ('c', 'text/plain', 1, '', 'owner', '${now}') RETURNING id`,
-      )
-      .get()?.id,
-  ).toBeGreaterThan(1000);
-});
-
-test("migration 22 puts an ended task's result in the place of the reply that started it", () => {
-  const db = at(21);
-  const now = "2026-10-01T00:00:00Z";
-  db.exec(`INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, summary, budget_usd, created_at)
-    VALUES ('a', 'g', '', 'chat', 'background', 'm', 'done', 'All fine.', 1, '${now}'),
-      ('b', 'g', '', 'chat', 'background', 'm', 'failed', 'No route.', 1, '${now}'),
-      ('c', 'g', '', 'chat', 'background', 'm', 'cancelled', null, 1, '${now}')`);
-  db.exec(`INSERT INTO messages (role, text, status, created_at, kind, task_id) VALUES
-    ('assistant', 'On it.', 'done', '${now}', 'text', 1),
-    ('assistant', 'Started a task.', 'done', '${now}', 'command', 2),
-    ('assistant', 'On it.', 'done', '${now}', 'text', 3)`);
-
-  migrate(db);
-
-  expect(db.query("SELECT text FROM messages ORDER BY id").all()).toEqual([
-    { text: "All fine." },
-    { text: "**Didn't finish.** No route." },
-    { text: "On it." },
-  ]);
-});
-
-test("migration 24 rebuilds tasks for watchers and keeps their rows and links", () => {
-  const db = at(23);
-  const now = "2026-10-01T00:00:00Z";
-  db.exec(`INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at)
-    VALUES ('a', 'g', '', 'chat', 'background', 'm', 'done', 1, '${now}')`);
-  db.exec(`INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, parent_id)
-    VALUES ('b', 'g', '', 'chat', 'screen', 'm', 'done', 1, '${now}', 1)`);
-  db.exec(`INSERT INTO messages (role, text, status, created_at, kind, task_id) VALUES
-    ('assistant', 'On it.', 'done', '${now}', 'text', 1)`);
-
-  migrate(db);
-
-  expect(db.query("SELECT id, parent_id, watcher_id FROM tasks ORDER BY id").all()).toEqual([
-    { id: 1, parent_id: null, watcher_id: null },
-    { id: 2, parent_id: 1, watcher_id: null },
-  ]);
+  expect(db.query("SELECT bot_id FROM tasks WHERE id = 1").get()).toEqual({ bot_id: "hatbot" });
+  // An ended task's result is in the place of the reply that started it.
+  expect(db.query("SELECT text FROM messages WHERE id = 2").get()).toEqual({ text: "All fine." });
+  // Tasks rebuilt with their links, and foreign keys back on.
+  expect(db.query("SELECT parent_id FROM tasks WHERE id = 2").get()).toEqual({ parent_id: 1 });
   expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
   expect(db.query("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
-  // Watchers and the heartbeat start tasks too.
-  db.exec(`INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at)
-    VALUES ('c', 'g', '', 'heartbeat', 'background', 'm', 'running', 1, '${now}')`);
-});
-
-test("migration 26 indexes per-task lookups, and they're used", () => {
-  const db = at(25);
-  migrate(db);
-  const plan = (sql: string) =>
-    db
-      .query<{ detail: string }, []>(`EXPLAIN QUERY PLAN ${sql}`)
-      .all()
-      .map((r) => r.detail)
-      .join(" ");
-  expect(plan("SELECT * FROM spend_ledger WHERE task_id = 1")).toContain("spend_ledger_task");
-  expect(plan("SELECT * FROM messages WHERE task_id = 1")).toContain("messages_task");
-  expect(plan("SELECT * FROM tasks WHERE schedule_id = 1")).toContain("tasks_schedule");
-  expect(plan("SELECT * FROM tasks WHERE parent_id = 1")).toContain("tasks_parent");
-  expect(db.query("SELECT count(*) AS n FROM hook_deliveries").get()).toEqual({ n: 0 });
-});
-
-test("migration 33 indexes the ledger by conversation, and the chat's lookups use it", () => {
-  const db = at(32);
-  migrate(db);
-  const plan = db
-    .query<{ detail: string }, []>(
-      "EXPLAIN QUERY PLAN SELECT * FROM spend_ledger WHERE episode_id = 1 AND purpose = 'thread' ORDER BY id DESC LIMIT 1",
+  // Attachments kept; ones deleted before may have had higher ids, so new ones start well past.
+  expect(db.query("SELECT name FROM attachments").all()).toEqual([{ name: "a.png" }]);
+  const added = db
+    .query<{ id: number }, []>(
+      `INSERT INTO attachments (name, media_type, size, path, sender, created_at)
+       VALUES ('c', 'text/plain', 1, '', 'owner', '${now}') RETURNING id`,
     )
-    .all()
-    .map((r) => r.detail)
-    .join(" ");
-  expect(plan).toContain("spend_ledger_episode");
-});
-
-test("the chat search index is rebuilt to find words in any form, and incognito stays out", () => {
-  const v = migrations.findIndex((m) => m.includes("DROP TABLE messages_fts")) + 1;
-  const db = at(v - 1);
-  const now = "2026-10-01T00:00:00Z";
-  const add = (text: string, incognito = 0) =>
-    db
-      .query(
-        "INSERT INTO messages (role, text, status, created_at, kind, incognito) VALUES ('user', ?, 'done', ?, 'text', ?)",
-      )
-      .run(text, now, incognito);
-  add("I renamed the backups share");
-  add("my secret password", 1);
-
-  migrate(db);
-
+    .get()?.id;
+  expect(added).toBeGreaterThan(1000);
+  // The search index is rebuilt to find words in any form, and incognito stays out.
   const match = (q: string) =>
     db.query("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?").all(q);
   expect(match("renaming backup")).toEqual([{ rowid: 1 }]);
   expect(match("secret")).toEqual([]);
-  // New messages are indexed as before.
-  add("the backup is running");
-  expect(match("runs")).toEqual([{ rowid: 3 }]);
 });

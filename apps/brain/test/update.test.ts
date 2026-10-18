@@ -16,27 +16,14 @@ async function setup() {
   return { t, cookie, write, post, get };
 }
 
-test("the Update button is off until deploy.sh sets a source", async () => {
-  const { post, get } = await setup();
-  expect((await get()).source).toBeNull();
-  expect((await post()).status).toBe(503);
-});
+const SOURCE = { url: "https://git.example/me/hatbot.git", branch: "main" };
 
-test("asks hatbot-update by writing the request file, once at a time", async () => {
+test("Update asks hatbot-update by writing the request file, once at a time, and not while an update or a task runs", async () => {
   const { t, write, post, get } = await setup();
-  write("source.json", { url: "https://git.example/me/hatbot.git", branch: "main" });
-  write("release.json", { sha: "abc", subject: "Old" });
-
-  const res = await post();
-  expect(res.status).toBe(202);
-  expect(existsSync(join(t.updateDir, "request"))).toBe(true);
-  expect((await get()).requested).toBe(true);
-  expect((await post()).status).toBe(409);
-});
-
-test("waits while an update runs, but not on one that died long ago", async () => {
-  const { write, post, t } = await setup();
-  write("source.json", { url: "https://git.example/me/hatbot.git", branch: "main" });
+  // Off until deploy.sh sets a source.
+  expect((await post()).status).toBe(503);
+  write("source.json", SOURCE);
+  // An update that's running, but not one that died long ago.
   write("status.json", {
     state: "running",
     step: "Fetching",
@@ -45,61 +32,41 @@ test("waits while an update runs, but not on one that died long ago", async () =
   });
   expect((await post()).status).toBe(409);
   t.advance(60 * 60_000);
-  expect((await post()).status).toBe(202);
-});
-
-test("won't restart the brain under a running task", async () => {
-  const { write, post, t } = await setup();
-  write("source.json", { url: "https://git.example/me/hatbot.git", branch: "main" });
+  // The brain isn't restarted under a running task.
   t.db.run(
     "INSERT INTO tasks (title, goal, origin, lane, model, status, budget_usd) VALUES ('x', 'x', 'chat', 'screen', 'm', 'running', 1)",
   );
-  const res = await post();
-  expect(res.status).toBe(409);
-  expect(((await res.json()) as { error: string }).error).toMatch(/task is running/);
+  expect((await post()).status).toBe(409);
+  t.db.run("UPDATE tasks SET status = 'done'");
+  expect((await post()).status).toBe(202);
+  expect(existsSync(join(t.updateDir, "request"))).toBe(true);
+  expect((await get()).requested).toBe(true);
+  expect((await post()).status).toBe(409);
 });
 
-test("Check everything warns while Update deploys commits nobody signed", async () => {
-  const { t, write, get } = await setup();
-  const check = async () =>
-    (await t.checks.run()).results.find((r) => r.id === "updates") as {
-      state: string;
-      detail: string;
-    };
-  write("source.json", { url: "https://git.example/me/hatbot.git", branch: "main", signed: false });
-  expect((await get()).source).toEqual({
-    url: "https://git.example/me/hatbot.git",
-    branch: "main",
-    signed: false,
-  });
-  const unsigned = await check();
-  expect(unsigned.state).toBe("warn");
-  expect(unsigned.detail).toContain("whoever can push to it can run code on the brain");
+test("Check everything warns while Update deploys commits nobody signed, and about what's left to do by hand", async () => {
+  const { t, write } = await setup();
+  const check = async () => (await t.checks.run()).results.find((r) => r.id === "updates");
+  const status = (notes: string[]) =>
+    write("status.json", {
+      state: "done",
+      step: "Updated",
+      startedAt: "2026-10-09T11:59:00Z",
+      notes,
+    });
+  write("source.json", { ...SOURCE, signed: false });
   // An update that left a note to do by hand, as one without a desktop always does, says both.
-  write("status.json", {
-    state: "done",
-    step: "Updated",
-    startedAt: "2026-10-09T11:59:00Z",
-    notes: ["The desktop isn't set up; only the brain was updated."],
-  });
+  status(["The desktop isn't set up; only the brain was updated."]);
   const both = await check();
-  expect(both.state).toBe("warn");
-  expect(both.detail).toContain("whoever can push to it can run code on the brain");
-  expect(both.detail).toContain(
-    "Still to do by hand after the last update: The desktop isn't set up",
-  );
-  write("status.json", {
-    state: "done",
-    step: "Updated",
-    startedAt: "2026-10-09T11:59:00Z",
-    notes: [],
-  });
-  write("source.json", { url: "https://git.example/me/hatbot.git", branch: "main", signed: true });
-  expect((await check()).state).toBe("ok");
+  expect(both?.state).toBe("warn");
+  expect(both?.detail).toContain("whoever can push to it can run code on the brain");
+  expect(both?.detail).toContain("The desktop isn't set up");
+  status([]);
+  write("source.json", { ...SOURCE, signed: true });
+  expect((await check())?.state).toBe("ok");
   // An older brain-deploy.sh doesn't say, which isn't taken for either.
-  write("source.json", { url: "https://git.example/me/hatbot.git", branch: "main" });
-  expect((await get()).source?.signed).toBeUndefined();
-  expect((await check()).state).toBe("ok");
+  write("source.json", SOURCE);
+  expect((await check())?.state).toBe("ok");
 });
 
 /** What hatbot-update.sh needs of jq, for machines without it. */

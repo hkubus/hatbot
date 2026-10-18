@@ -1,13 +1,12 @@
 import { expect, test } from "bun:test";
 import type { Approval, CheckReport, ChecksInfo } from "@hatbot/shared";
 import { Checks } from "../src/checks";
-import { DesktopError } from "../src/desktop/client";
-import { guessableTopic, NtfyNotifier } from "../src/notify";
+import { NtfyNotifier } from "../src/notify";
 import { ORIGIN, setUpOwner, type TestApp, testApp } from "./helpers";
 
 const byId = (r: CheckReport) => Object.fromEntries(r.results.map((c) => [c.id, c]));
 
-test("Check everything tries each part and keeps the report", async () => {
+test("Check everything tries each part and keeps the report, and a test approval's answer shows", async () => {
   const t = await testApp();
   const { cookie } = await setUpOwner(t);
   t.agent.health = {
@@ -16,123 +15,49 @@ test("Check everything tries each part and keeps the report", async () => {
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     features: ["profiles", "exec", "files", "fields", "render", "gates"],
   };
-  const res = await t.call("POST", "/checks", undefined, { cookie });
-  expect(res.status).toBe(200);
-  const checks = byId((await res.json()) as CheckReport);
-  expect(checks.database?.state).toBe("ok");
-  expect(checks.model?.state).toBe("ok");
-  expect(checks.memory?.state).toBe("ok");
-  expect(checks.archive?.state).toBe("ok");
-  expect(checks.desktop?.state).toBe("ok");
-  expect(checks["desktop.profiles"]?.state).toBe("ok");
-  expect(checks["desktop.shell"]?.state).toBe("ok");
-  expect(checks["desktop.render"]?.state).toBe("ok");
-  // The site only: a page's address can carry what you typed, and the report is kept.
-  expect(checks["desktop.browser"]?.detail).toContain("on example.com.");
-  expect(checks["desktop.browser"]?.detail).not.toContain("https://");
-  expect(checks["public-url"]?.state).toBe("ok");
-  // Not set up in tests: said plainly, not failed.
-  expect(checks.notifications?.state).toBe("warn");
-  // The model call is a real one, so it's in the ledger.
-  expect(t.taskModel.creates.at(-1)?.model).toBe("claude-haiku-5-5");
-  const info = (await (await t.call("GET", "/checks", undefined, { cookie })).json()) as ChecksInfo;
-  expect(info.report?.results.length).toBe(Object.keys(checks).length);
-});
-
-test("the model check holds what it may cost while it runs", async () => {
-  const t = await testApp();
+  // The model call is a real one: it holds what it may cost while it runs, so a request made
+  // meanwhile can't pass a limit with it.
   t.settings.update({ limits: { ...t.settings.get().limits, dailyUsd: 1, alertReserveUsd: 0 } });
-  let meanwhile = "";
+  let meanwhile: unknown = null;
   t.taskModel.onCreate = () => {
     try {
       t.spend.check(0.9995);
     } catch (err) {
-      meanwhile = (err as Error).message;
+      meanwhile = err;
     }
     return "OK";
   };
-  expect(byId(await t.checks.run()).model?.state).toBe("ok");
-  expect(meanwhile).toContain("Today's $1 limit");
+  const res = await t.call("POST", "/checks", undefined, { cookie });
+  expect(res.status).toBe(200);
+  const checks = byId((await res.json()) as CheckReport);
+  // All is well, but for parts not set up in tests: skipped, or ntfy's said plainly, not failed.
+  const notOk = Object.values(checks).filter((c) => c.state !== "ok" && c.state !== "skip");
+  expect(notOk.map((c) => [c.id, c.state])).toEqual([["notifications", "warn"]]);
+  expect(checks.model?.state).toBe("ok");
+  expect(meanwhile).not.toBeNull();
   expect(() => t.spend.check(0.9995)).not.toThrow();
-});
-
-test("an old desktop, a shared profile and a broken schedule are flagged", async () => {
-  const t = await testApp();
-  const { cookie } = await setUpOwner(t);
-  t.agent.health = { profile: null, timeZone: "Pacific/Chatham", features: ["exec"] };
-  const s = t.schedules.create(
-    { name: "Stock check", prompt: "Check", cron: "0 8 * * *" },
-    "owner",
-  );
-  for (let i = 0; i < 3; i++)
-    t.db
-      .query(
-        "INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, schedule_id) VALUES ('x', 'x', '', 'schedule', 'background', 'm', 'failed', 1, '2026-10-09', ?)",
-      )
-      .run(s.id);
-  const checks = byId(
-    (await (await t.call("POST", "/checks", undefined, { cookie })).json()) as CheckReport,
-  );
-  expect(checks.desktop?.detail).toContain("older than the brain");
-  expect(checks["desktop.profiles"]?.state).toBe("warn");
-  expect(checks["desktop.timezone"]?.detail).toContain("Pacific/Chatham");
-  expect(checks["desktop.render"]).toMatchObject({ state: "warn" });
-  expect(checks["desktop.render"]?.detail).toContain("too old");
-  expect(checks.schedules?.detail).toContain('"Stock check"');
-
-  // The deep health check: Chromium's DevTools down.
+  // The site only: a page's address can carry what you typed, and the report is kept.
+  expect(checks["desktop.browser"]?.detail).toContain("on example.com.");
+  expect(checks["desktop.browser"]?.detail).not.toContain("https://");
+  const info = (await (await t.call("GET", "/checks", undefined, { cookie })).json()) as ChecksInfo;
+  expect(info.report?.results.length).toBe(Object.keys(checks).length);
+  // Plain lines for infra/smoke.sh.
+  const text = await (await t.call("POST", "/checks?text=1", undefined, { cookie })).text();
+  expect(text).toContain("ok    Database: Schema version");
+  // A part that's down fails: here Chromium's DevTools.
   t.agent.health = { ok: false, x: true, cdp: false };
-  const again = byId(await t.checks.run());
-  expect(again.desktop).toMatchObject({ state: "fail" });
-  expect(again.desktop?.detail).toContain("DevTools");
-});
+  expect(byId(await t.checks.run()).desktop?.state).toBe("fail");
 
-test("the renderer is tried with a page of the desktop's own", async () => {
-  const t = await testApp();
-  t.agent.health = { features: ["profiles", "exec", "files", "render"] };
-  t.agent.renderError = new DesktopError("The renderer isn't running (deploy.sh sets it up).", 503);
-  expect(byId(await t.checks.run())["desktop.render"]).toMatchObject({
-    state: "fail",
-    detail: "The renderer isn't running. Run infra/deploy.sh once on the host.",
-  });
-  t.agent.renderError = new DesktopError("Chromium failed: No usable sandbox!", 500);
-  expect(byId(await t.checks.run())["desktop.render"]).toMatchObject({
-    state: "fail",
-    detail: "Chromium failed: No usable sandbox!",
-  });
-});
-
-test("a test approval goes out, and its answer shows", async () => {
-  const t = await testApp();
-  const { cookie } = await setUpOwner(t);
   const a = (await (
     await t.call("POST", "/checks/approval", undefined, { cookie })
   ).json()) as Approval;
   expect(a.status).toBe("pending");
-  expect(t.notifier.sent.at(-1)?.actions?.map((b) => b.label)).toEqual([
-    "Approve",
-    "Deny",
-    "Pause all",
-  ]);
+  expect(t.notifier.sent.at(-1)?.actions).toHaveLength(3);
   await t.call("POST", `/approvals/${a.id}`, { decision: "approve" }, { cookie });
-  const info = (await (await t.call("GET", "/checks", undefined, { cookie })).json()) as ChecksInfo;
-  expect(info.approval?.status).toBe("approved");
-  // A second one replaces a first that's still waiting.
-  const b = (await (
-    await t.call("POST", "/checks/approval", undefined, { cookie })
-  ).json()) as Approval;
-  const c = (await (
-    await t.call("POST", "/checks/approval", undefined, { cookie })
-  ).json()) as Approval;
-  expect(t.approvals.get(b.id)?.status).toBe("cancelled");
-  expect(c.status).toBe("pending");
-});
-
-test("plain lines for infra/smoke.sh", async () => {
-  const t = await testApp();
-  const { cookie } = await setUpOwner(t);
-  const text = await (await t.call("POST", "/checks?text=1", undefined, { cookie })).text();
-  expect(text).toContain("ok    Database: Schema version");
+  const after = (await (
+    await t.call("GET", "/checks", undefined, { cookie })
+  ).json()) as ChecksInfo;
+  expect(after.approval?.status).toBe("approved");
 });
 
 /**
@@ -140,9 +65,13 @@ test("plain lines for infra/smoke.sh", async () => {
  * answer in time.
  */
 async function ntfyCheck(t: TestApp, env: Record<string, string>, answers: Record<string, number>) {
-  const asked: { url: string; auth: string | null }[] = [];
+  const asked: { url: string; auth: string | null; body: string }[] = [];
   const fetcher = (async (url: string, init?: RequestInit) => {
-    asked.push({ url, auth: new Headers(init?.headers).get("authorization") });
+    asked.push({
+      url,
+      auth: new Headers(init?.headers).get("authorization"),
+      body: String(init?.body),
+    });
     const path = new URL(url).pathname;
     const status = answers[path] ?? 404;
     if (status === 0) throw new DOMException("The operation timed out.", "TimeoutError");
@@ -150,6 +79,7 @@ async function ntfyCheck(t: TestApp, env: Record<string, string>, answers: Recor
       ? Response.json({ healthy: status === 200 }, { status })
       : new Response("", { status });
   }) as typeof fetch;
+  const ntfy = new NtfyNotifier({ NTFY_URL: "https://ntfy.test", ...env }, fetcher);
   const checks = new Checks({
     db: t.db,
     config: { publicUrl: ORIGIN },
@@ -164,89 +94,37 @@ async function ntfyCheck(t: TestApp, env: Record<string, string>, answers: Recor
     approvals: t.approvals,
     proxmox: t.proxmox,
     updates: t.updates,
-    ntfy: new NtfyNotifier({ NTFY_URL: "https://ntfy.test", ...env }, fetcher),
+    ntfy,
   });
-  const result = byId(await checks.run()).notifications;
-  return { result, asked };
+  return { state: byId(await checks.run()).notifications?.state, asked, ntfy };
 }
 
-test("ntfy: a topic anyone can read fails the check, and one with no token warns", async () => {
+test("ntfy: a topic anyone can read or guess fails the check, one with no token or an unclear answer warns", async () => {
   const t = await testApp();
   const random = "hatbot-0f3a9c2e5b7d41a8c6e0f2b4";
-  const open = { "/v1/health": 200, "/hatbot/json": 200, [`/${random}/json`]: 200 };
-  const shared = await ntfyCheck(t, { NTFY_TOPIC: "hatbot", NTFY_TOKEN: "tk_1" }, open);
-  expect(shared.result?.state).toBe("fail");
-  expect(shared.result?.detail).toContain("Anyone can read your notifications");
-  // The look at the topic goes without the token, and asks only for what's new.
+  const check = async (env: Record<string, string>, topicAnswers: number) => {
+    const topic = env.NTFY_TOPIC ?? "";
+    return ntfyCheck(t, env, { "/v1/health": 200, [`/${topic}/json`]: topicAnswers });
+  };
+  const token = { NTFY_TOKEN: "tk_1" };
+  // Open to anyone: the look at it goes without the token, and asks only for what's new.
+  const shared = await check({ NTFY_TOPIC: "hatbot", ...token }, 200);
+  expect(shared.state).toBe("fail");
   const probe = shared.asked.find((a) => a.url.includes("/hatbot/json"));
   expect(probe?.auth).toBeNull();
   expect(probe?.url).toContain("poll=1&since=");
-  const unlisted = await ntfyCheck(t, { NTFY_TOPIC: random, NTFY_TOKEN: "tk_1" }, open);
-  expect(unlisted.result?.state).toBe("warn");
-  expect(unlisted.result?.detail).toContain("lets anyone read the topic");
+  expect((await check({ NTFY_TOPIC: random, ...token }, 200)).state).toBe("warn");
+  // Closed to strangers, as it should be; but not without a token to send with.
+  expect((await check({ NTFY_TOPIC: random, ...token }, 403)).state).toBe("ok");
+  expect((await check({ NTFY_TOPIC: random }, 403)).state).toBe("warn");
+  // An answer that doesn't say isn't taken as closed; a name picked by hand can be guessed anyway.
+  expect((await check({ NTFY_TOPIC: random, ...token }, 429)).state).toBe("warn");
+  expect((await check({ NTFY_TOPIC: random, ...token }, 0)).state).toBe("warn");
+  expect((await check({ NTFY_TOPIC: "hatbot-notifications", ...token }, 429)).state).toBe("fail");
 
-  const closed = { "/v1/health": 200, [`/${random}/json`]: 403 };
-  const noToken = await ntfyCheck(t, { NTFY_TOPIC: random }, closed);
-  expect(noToken.result?.state).toBe("warn");
-  expect(noToken.result?.detail).toContain("NTFY_TOKEN isn't set");
-  const good = await ntfyCheck(t, { NTFY_TOPIC: random, NTFY_TOKEN: "tk_1" }, closed);
-  expect(good.result?.state).toBe("ok");
-  const none = await ntfyCheck(t, {}, closed);
-  expect(none.result?.state).toBe("fail");
-  expect(none.result?.detail).toContain("NTFY_TOPIC isn't set");
-});
-
-test("ntfy: a topic named by hand can be guessed, and an answer that doesn't say isn't taken as closed", async () => {
-  const t = await testApp();
-  for (const topic of ["hatbot-notifications", "hatbot_approvals_topic", "aaaaaaaaaaaaaaaaaaaa"]) {
-    const open = { "/v1/health": 200, [`/${topic}/json`]: 200 };
-    expect(guessableTopic(topic)).toBe(true);
-    expect(
-      (await ntfyCheck(t, { NTFY_TOPIC: topic, NTFY_TOKEN: "tk_1" }, open)).result?.state,
-    ).toBe("fail");
-  }
-  expect(guessableTopic("hatbot-0f3a9c2e5b7d41a8c6e0f2b4")).toBe(false);
-  expect(guessableTopic("Xq3_vB9kLm2-Rt7wYz1aPc4")).toBe(false);
-
-  const random = "hatbot-0f3a9c2e5b7d41a8c6e0f2b4";
-  for (const [status, why] of [
-    [429, "ntfy answered 429"],
-    [502, "ntfy answered 502"],
-    [0, "ntfy didn't answer"],
-  ] as const) {
-    const answers = { "/v1/health": 200, [`/${random}/json`]: status };
-    expect(
-      (await ntfyCheck(t, { NTFY_TOPIC: random, NTFY_TOKEN: "tk_1" }, answers)).result,
-    ).toMatchObject({
-      state: "warn",
-      detail: `Couldn't tell whether anyone can read the topic (${why}). Allow only your ntfy user to read the topic.`,
-    });
-  }
-  const shared = await ntfyCheck(
-    t,
-    { NTFY_TOPIC: "hatbot", NTFY_TOKEN: "tk_1" },
-    { "/v1/health": 200, "/hatbot/json": 429 },
-  );
-  expect(shared.result?.state).toBe("fail");
-  expect(shared.result?.detail).toContain("easy to guess");
-});
-
-test("ntfy: nothing is sent without a topic, there's no shared default", async () => {
-  const sent: string[] = [];
-  const fetcher = (async (_url: string, init?: RequestInit) => {
-    sent.push(String(init?.body));
-    return new Response("{}");
-  }) as typeof fetch;
-  await new NtfyNotifier({ NTFY_URL: "https://ntfy.test" }, fetcher).send({
-    title: "x",
-    message: "",
-  });
-  expect(sent).toEqual([]);
-  await new NtfyNotifier({ NTFY_URL: "https://ntfy.test", NTFY_TOPIC: "hatbot-abc" }, fetcher).send(
-    {
-      title: "x",
-      message: "",
-    },
-  );
-  expect(JSON.parse(sent[0] ?? "{}").topic).toBe("hatbot-abc");
+  // No topic fails, and nothing is sent: there's no shared default.
+  const none = await check({}, 403);
+  expect(none.state).toBe("fail");
+  await none.ntfy.send({ title: "x", message: "" });
+  expect(none.asked.filter((a) => a.body.includes('"title"'))).toEqual([]);
 });

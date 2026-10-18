@@ -56,7 +56,8 @@ Acceptance tests for parts that have never run live. The owner runs them; write 
 
 ## How to work here
 
-- **Run:** `export PATH=$HOME/.bun/bin:$PATH` (`bun` isn't on PATH). Then `bun test`, `bun run check` (Biome) and `bun run typecheck`, all three before every commit.
+- **Run:** `export PATH=$HOME/.bun/bin:$PATH` (`bun` isn't on PATH). Then `bun test`, `bun run check` (Biome) and `bun run typecheck`, all three before every commit. The Update test's jq stand-in runs on `bun`, so it fails without that PATH where jq isn't installed.
+- **Tests:** one test per rule (allow and refuse) and per real past bug, plus one end-to-end test per feature; no tests of wording, mappers or constants. No sleeps: advance `testApp()`'s clock, await what a tick returns, or `waitFor` a condition. `testApp()` hashes passwords at argon2id's lowest cost (`AuthService`'s third argument); the brain itself never passes one.
 - **Chromium tests:** desktop-agent's tests that drive a real Chromium (cdp, inspect, render) take seconds, so `bun test` skips them. Run `HATBOT_CHROMIUM_TESTS=1 bun test ./apps/desktop-agent` before shipping desktop-agent changes (`HATBOT_CHROMIUM` picks the binary).
 - **Commits:** one commit per finished piece, on `main`, in the style of the history ("Plugins: …", "MCP plugin: …"). Commit locally; push only when the owner asks. End commit messages with the `Co-Authored-By` line your harness gives you.
 - **Stopping the dev brain:** use `fuser -k <port>/tcp`. `pkill -f "bun src/main.ts"` kills your own shell.
