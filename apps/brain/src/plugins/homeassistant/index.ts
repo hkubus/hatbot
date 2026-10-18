@@ -15,9 +15,10 @@ import {
   tool,
 } from "../plugin";
 
+const ENTITY_ID = /^[a-z0-9_]+\.[a-z0-9_]+$/;
 const EntityId = z
   .string()
-  .regex(/^[a-z0-9_]+\.[a-z0-9_]+$/, "domain.object_id")
+  .regex(ENTITY_ID, "domain.object_id")
   .describe('An entity id, e.g. "light.kitchen"');
 const Domain = z.string().regex(/^[a-z0-9_]+$/, "a lowercase domain");
 
@@ -41,33 +42,13 @@ type State = {
  * rest can carry what strangers wrote: a phone's last notification, a mail's subject, an update's
  * release notes, a to-do item, what's playing.
  */
-const TRUSTED_DOMAINS = new Set([
-  "light",
-  "switch",
-  "fan",
-  "climate",
-  "binary_sensor",
-  "cover",
-  "lock",
-  "alarm_control_panel",
-  "input_boolean",
-  "input_number",
-  "humidifier",
-  "water_heater",
-  "vacuum",
-  "siren",
-  "valve",
-  "number",
-  "counter",
-  "timer",
-  "button",
-  "scene",
-  "script",
-  "automation",
-  "sun",
-  "zone",
-  "person",
-]);
+const TRUSTED_DOMAINS = new Set(
+  (
+    "light switch fan climate binary_sensor cover lock alarm_control_panel input_boolean " +
+    "input_number humidifier water_heater vacuum siren valve number counter timer button scene " +
+    "script automation sun zone person"
+  ).split(" "),
+);
 /** States that can't say anything: a number, a time, or a word Home Assistant's own states use. */
 const NUMBER = /^[+-]?\d+(\.\d+)?([eE][+-]?\d+)?$/;
 const TIME = /^(\d{4}-\d{2}-\d{2}([T ][\d:.]+([+-]\d{2}:\d{2}|Z)?)?|\d{1,2}:\d{2}(:\d{2})?)$/;
@@ -106,24 +87,12 @@ const NAMED_OUTSIDE = new Set(["device_tracker", "media_player", "calendar", "to
  * Everyday device control: runs without asking. Not notify: it can message anyone. A switch or a
  * button that opens a gate is one of the owner's access entities, which always ask.
  */
-const EVERYDAY = new Set([
-  "light",
-  "switch",
-  "fan",
-  "media_player",
-  "climate",
-  "scene",
-  "button",
-  "number",
-  "select",
-  "vacuum",
-  "humidifier",
-  "water_heater",
-  "remote",
-  "tts",
-  "counter",
-  "timer",
-]);
+const EVERYDAY = new Set(
+  (
+    "light switch fan media_player climate scene button number select vacuum humidifier " +
+    "water_heater remote tts counter timer"
+  ).split(" "),
+);
 
 /** Domains that ask, and why, in a sentence. */
 const CAREFUL: Record<string, string> = {
@@ -164,7 +133,6 @@ const idsOf = (ids: unknown): string[] =>
     .flatMap((x) => String(x).split(","))
     .map(idOf)
     .filter(Boolean);
-const ENTITY_ID = /^[a-z0-9_]+\.[a-z0-9_]+$/;
 
 const Config = z.object({
   /**
@@ -172,15 +140,7 @@ const Config = z.object({
    * button, or a script or an integration's scene that opens a door: every change to them, and to a
    * scene or group that holds one, waits for the owner.
    */
-  access: z
-    .array(
-      z
-        .string()
-        .trim()
-        .toLowerCase()
-        .regex(/^[a-z0-9_]+\.[a-z0-9_]+$/, "domain.object_id"),
-    )
-    .default([]),
+  access: z.array(z.string().trim().toLowerCase().regex(ENTITY_ID, "domain.object_id")).default([]),
 });
 
 export const homeassistantPlugin = definePlugin({
