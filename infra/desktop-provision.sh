@@ -4,6 +4,7 @@
 #   DESKTOP_IP  this container's IP; Xvnc listens only there
 #   BRAIN_IP    the brain's IP; the only host allowed to connect in
 #   HATBOT_PUBLIC_IPS  optional: your public IPv4s, which the desktop's programs may not reach either
+#   SSH_IN      1 when it's managed over SSH (ssh-setup.sh): sshd stays reachable, except from the brain
 # Reads VNC_PASSWORD from /etc/hatbot-desktop/secrets.env (written by host-setup.sh).
 
 set -euo pipefail
@@ -97,7 +98,7 @@ systemctl daemon-reload
 systemctl enable -q hatbot-xvnc hatbot-session
 systemctl restart hatbot-xvnc hatbot-session
 
-say "Firewall: only the brain may connect in (VNC 5901, desktop-agent 7070); the desktop's programs reach only the internet"
+say "Firewall: only the brain may connect in (VNC 5901, desktop-agent 7070), and SSH if set up over it; the desktop's programs reach only the internet"
 # On Proxmox the host also filters the desktop's bridge port (host-setup.sh), which holds even against
 # root in here. Elsewhere this output chain is all there is: what browses and runs commands (desk, and
 # the shell's and renderer's DynamicUsers, 61184-65519) may open connections to the internet only, not
@@ -120,6 +121,12 @@ done
 dns=$(awk '$1 == "nameserver" && $2 ~ /^[0-9.]+$/ && $2 !~ /^127\./ { print $2 }' /etc/resolv.conf | paste -sd, - | sed 's/,/, /g')
 dns_rule=''
 [[ -z $dns ]] || dns_rule="ip daddr { $dns } meta l4proto { tcp, udp } th dport 53 accept"
+ssh_rule=''
+if [[ ${SSH_IN:-} == 1 ]]; then
+  ports=$(/usr/sbin/sshd -T 2>/dev/null | awk '$1 == "port" { print $2 }' | paste -sd, - | sed 's/,/, /g')
+  ssh_rule="ip saddr != $BRAIN_IP tcp dport { ${ports:-22} } accept
+    meta nfproto ipv6 tcp dport { ${ports:-22} } accept"
+fi
 cat >/etc/nftables.conf <<EOF
 #!/usr/sbin/nft -f
 # Managed by hatbot infra/desktop-provision.sh.
@@ -140,6 +147,7 @@ table inet filter {
     iif lo accept
     ct state established,related accept
     ip saddr $BRAIN_IP tcp dport { 5901, 7070 } accept
+    $ssh_rule
     icmp type echo-request accept
   }
 

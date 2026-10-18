@@ -148,7 +148,7 @@ for ip in $HATBOT_PUBLIC_IPS; do
 done
 
 desktop_plan="none: no desktop tasks, page watchers or live view"
-[[ -z $DESKTOP_SSH ]] || desktop_plan="$DESKTOP_SSH ($DESKTOP_IP): Xvnc, XFCE, Chromium; only the brain may connect in, and its programs reach only the internet"
+[[ -z $DESKTOP_SSH ]] || desktop_plan="$DESKTOP_SSH ($DESKTOP_IP): Xvnc, XFCE, Chromium; only the brain and SSH may connect in, and its programs reach only the internet"
 cat <<EOF
 
    Plan:
@@ -204,7 +204,7 @@ provision() { # provision GUEST SCRIPT ENV...
 }
 provision "$BRAIN_SSH" brain-provision.sh "DESKTOP_IP=$DESKTOP_IP"
 [[ -z $DESKTOP_SSH ]] ||
-  provision "$DESKTOP_SSH" desktop-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS"
+  provision "$DESKTOP_SSH" desktop-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS" SSH_IN=1
 
 # ---------- 4. Done ----------
 step "4/4 Done"

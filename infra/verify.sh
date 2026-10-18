@@ -41,13 +41,14 @@ expect() { # expect "name" command...  -> passes if the command succeeds
   if "$@" >/dev/null 2>&1; then result OK "$name"; else result FAIL "$name"; fi
 }
 
-# tcp_from host|desktop|desk IP PORT -> succeeds if a TCP connection opens within 4 s. desk is the
+# tcp_from host|brain|desktop|desk IP PORT -> succeeds if a TCP connection opens within 4 s. desk is the
 # desktop's browsing user; on Proxmox the host's firewall covers all of the desktop, elsewhere only desk
 # and the sandboxes.
 tcp_from() {
   local who=$1 ip=$2 port=$3
   case $who in
     host) timeout 4 bash -c "exec 3<>/dev/tcp/$ip/$port" 2>/dev/null ;;
+    brain) on_brain timeout 4 bash -c "exec 3<>/dev/tcp/$ip/$port" </dev/null 2>/dev/null ;;
     desktop) on_desktop timeout 4 bash -c "exec 3<>/dev/tcp/$ip/$port" </dev/null 2>/dev/null ;;
     desk) on_desktop runuser -u desk -- timeout 4 bash -c "exec 3<>/dev/tcp/$ip/$port" </dev/null 2>/dev/null ;;
   esac
@@ -105,7 +106,12 @@ if [[ -n $DESKTOP ]]; then
     on_desktop runuser -u desk -- curl -fsS -m 10 -o /dev/null https://deb.debian.org/
   ((PVE)) && blocked "desktop can't reach the Proxmox host" "$HOST_LAN_IP" 8006 22
   [[ -z $LAN_GW ]] || blocked "desktop can't reach the LAN gateway" "$LAN_GW" 443 80 53 22
-  blocked "desktop can't open connections to the brain" "$BRAIN_IP" 8080 22
+  # Without Proxmox the brain's own firewall turns the whole desktop away, root too.
+  if ((PVE)); then
+    blocked "desktop can't open connections to the brain" "$BRAIN_IP" 8080 22
+  else
+    OPEN_FROM=brain FROM=desktop blocked "desktop can't open connections to the brain" "$BRAIN_IP" 8080 22
+  fi
   # The web app's public URL usually leads back into the LAN (a port forward on your router); the desktop
   # must not get there. HATBOT_PUBLIC_IPS in host.env blocks those addresses.
   # shellcheck disable=SC2016 # expands inside the brain
@@ -134,10 +140,15 @@ if [[ -n $DESKTOP ]]; then
   expect "brain reaches the desktop's VNC (RFB handshake on $DESKTOP_IP:5901)" vnc_answers
   expect "Xvnc and the XFCE session are active" \
     on_desktop systemctl is-active --quiet hatbot-xvnc hatbot-session
-  expect "Chromium is running (sandbox works in the container)" \
-    on_desktop pgrep -u desk -f chrome-profile
-  expect "Chromium's CDP answers on the desktop's localhost only" \
-    on_desktop curl -fsS -m 5 -o /dev/null http://127.0.0.1:9222/json/version
+  # desktop-agent starts Chromium.
+  if on_desktop test -e /etc/systemd/system/hatbot-desktop-agent.service </dev/null; then
+    expect "Chromium is running (sandbox works in the container)" \
+      on_desktop pgrep -u desk -f chrome-profile
+    expect "Chromium's CDP answers on the desktop's localhost only" \
+      on_desktop curl -fsS -m 5 -o /dev/null http://127.0.0.1:9222/json/version
+  else
+    printf '   %sskip%s  Chromium (not installed yet; deploy.sh installs it)\n' "$yel" "$rst"
+  fi
   # shell_exec COMMAND -> the JSON answer of the desktop's shell (desktop_shell), which runs it as its own user.
   shell_exec() {
     on_desktop curl -sS -m 20 --unix-socket /run/hatbot-shell/shell.sock \

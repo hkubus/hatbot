@@ -170,7 +170,8 @@ echo
 ip netns exec hh nft delete table bridge hatbot
 guest=$(awk '/^cat >\/etc\/nftables.conf <<EOF$/ { f = 1; next } f && /^EOF$/ { exit } f' "$HERE/desktop-provision.sh" |
   BRAIN_IP=192.168.55.224 desk_uid=1000 blocked='192.168.55.0/24, 192.168.55.224, 5.6.7.8' \
-    dns_rule='ip daddr { 192.168.55.1 } meta l4proto { tcp, udp } th dport 53 accept' envsubst)
+    dns_rule='ip daddr { 192.168.55.1 } meta l4proto { tcp, udp } th dport 53 accept' \
+    ssh_rule='ip saddr != 192.168.55.224 tcp dport { 22 } accept' envsubst)
 ip netns exec desk nft -f - <<<"$guest" || exit 1
 for AS in 1000 61184; do
   echo "as uid $AS:"
@@ -207,6 +208,8 @@ AS=''
 expect_open brain 192.168.55.225 7070
 expect_closed brain 192.168.55.225 22
 expect_closed hh 192.168.55.225 7070
+# Set up over SSH, it stays reachable over SSH.
+expect_open hh 192.168.55.225 22
 
 printf '\n%d failed\n' "$fails"
 ((fails == 0))
