@@ -838,6 +838,28 @@ test("/stop reaches a reply still waiting for the summary", async () => {
   ]);
 });
 
+test("a reply its bot is deleted from under says so", async () => {
+  const model = new HangingModel();
+  const t = await testApp(model);
+  const coder = t.bots.create({
+    name: "Coder",
+    instructions: "",
+    chatModel: null,
+    chatEffort: null,
+    plugins: null,
+  });
+  const thread = t.chats.direct(coder.id);
+  const reply = thread.post("write me an essay");
+  await model.started.promise;
+  t.bots.delete(coder.id);
+  t.chats.abortBot(coder.id);
+  await reply.done;
+  expect(thread.list().at(-1)).toMatchObject({
+    text: "Let me think about \n\n---\n\n_Stopped: this bot was deleted._",
+    status: "done",
+  });
+});
+
 test("/stop after a lull doesn't reopen the conversation that was summarized", async () => {
   const model = new FakeModel(
     [{ content: [text("one")] }, { content: [text("two")] }],

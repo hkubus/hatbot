@@ -94,6 +94,7 @@ const SAVE_TEXT_MS = 3000;
 const MAX_CHAT_COMMANDS = 2;
 /** Why a reply was cut off: /stop, rather than Pause all. */
 const STOPPED = "stopped";
+const DELETED = "deleted";
 export const MESSAGE_COLUMNS =
   "id, role, conversation_id AS conversationId, bot_id AS botId, kind, text, status, created_at AS createdAt, task_id AS taskId, schedule_id AS scheduleId, negotiation_id AS negotiationId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt, incognito, sources";
 export type MessageRow = Omit<ThreadMessage, "incognito" | "sources"> & {
@@ -637,9 +638,10 @@ export class Thread {
     return { content: note ? `${r.content}\n\n${ownerNote(note)}` : r.content, isError: r.isError };
   }
 
-  /** Pause all: stops the reply in progress; with `botId`, only that bot's. */
+  /** Pause all: stops the reply in progress; with `botId`, only that bot's, as it was deleted. */
   abortCurrent(botId?: string) {
-    if (botId === undefined || botId === this.currentBot) this.current?.abort();
+    if (botId === undefined) this.current?.abort();
+    else if (botId === this.currentBot) this.current?.abort(DELETED);
   }
 
   /**
@@ -2264,6 +2266,8 @@ export class Thread {
     } catch (err) {
       if (abort.signal.reason === STOPPED)
         return { ...finish("done", "_Stopped._"), stopped: true };
+      if (abort.signal.reason === DELETED)
+        return { ...finish("done", "_Stopped: this bot was deleted._"), stopped: true };
       if (abort.signal.aborted) return finish("error", "_Paused. Resume to continue._");
       // ask_opus checks its own cost.
       if (err instanceof BudgetError) return finish("error", `_Stopped: ${err.message}_`);
