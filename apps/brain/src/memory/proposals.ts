@@ -1,8 +1,9 @@
 // Proposals: changes to memory written by the model for you to look over as a diff, then apply or
 // dismiss. A tidy-up of the whole memory (weekly, or when you ask), fixes to skills that keep failing
 // or needing you, and writes to skills and indexes from work that had read untrusted content.
-import type Anthropic from "@anthropic-ai/sdk";
+import { transformJSONSchema } from "@anthropic-ai/sdk/lib/transform-json-schema";
 import type { Proposal, SkillStatus } from "@hatbot/shared";
+import { z } from "zod";
 import { type ModelClient, modelErrorText } from "../agent/model";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
@@ -69,29 +70,17 @@ const toProposal = (r: Row): Proposal => ({
 /** Room for adaptive thinking and the files' whole new content. */
 const MAX_TOKENS = 32000;
 
+const Change = z.object({
+  path: z.string(),
+  content: z.string().default(""),
+  delete: z.boolean().default(false),
+});
 /** The answer's shape: Opus 5.5 can't be made to call a tool, so it answers in this JSON. */
-const PROPOSAL_SCHEMA = {
-  type: "object",
-  properties: {
-    title: { type: "string" },
-    reason: { type: "string" },
-    changes: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          path: { type: "string" },
-          content: { type: "string" },
-          delete: { type: "boolean" },
-        },
-        required: ["path", "content", "delete"],
-        additionalProperties: false,
-      },
-    },
-  },
-  required: ["title", "reason", "changes"],
-  additionalProperties: false,
-};
+const Answer = z.object({
+  title: z.string().default(""),
+  reason: z.string().default(""),
+  changes: z.array(Change),
+});
 
 const ANSWER = `Answer with a JSON object: "title", what the change does in a few words; "reason", why, in a sentence or three, for the owner reading the diff; and "changes", only the files that change, each with its "path" (e.g. people/anna.md), its whole new "content", and "delete" true to delete it instead (with empty content). No changes when nothing needs doing.`;
 
@@ -378,7 +367,7 @@ export class Proposals {
     kind: Proposal["kind"],
     title: string,
     reason: string,
-    proposed: { path: string; content?: string; delete?: boolean }[],
+    proposed: z.input<typeof Change>[],
     skill: string | null,
   ): Promise<Proposal | null> {
     const changes: Proposal["changes"] = [];
@@ -432,7 +421,7 @@ export class Proposals {
           thinking: { type: "adaptive" },
           output_config: {
             effort: "medium",
-            format: { type: "json_schema", schema: PROPOSAL_SCHEMA },
+            format: { type: "json_schema", schema: transformJSONSchema(z.toJSONSchema(Answer)) },
           },
           system,
           messages: [{ role: "user", content }],
@@ -453,27 +442,12 @@ export class Proposals {
       );
     if (res.stop_reason === "refusal")
       throw new ProposalError("The model declined to write it.", 409);
-    let input: {
-      title?: string;
-      reason?: string;
-      changes?: { path: string; content?: string; delete?: boolean }[];
-    };
     try {
-      input = JSON.parse(
-        res.content
-          .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
-          .map((b) => b.text)
-          .join(""),
+      return Answer.parse(
+        JSON.parse(res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("")),
       );
     } catch {
-      input = {};
-    }
-    if (!input || typeof input !== "object" || !Array.isArray(input.changes))
       throw new ProposalError("The model's answer couldn't be read. Try again.", 409);
-    return {
-      title: String(input.title ?? ""),
-      reason: String(input.reason ?? ""),
-      changes: input.changes.filter((c) => typeof c?.path === "string"),
-    };
+    }
   }
 }
