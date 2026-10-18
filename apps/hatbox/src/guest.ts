@@ -292,13 +292,13 @@ export class Guest {
 
   private async launch(id: number) {
     const dir = join(this.o.run, String(id));
+    // Made afresh, without what the backend left in it last time.
+    this.clear(dir);
     mkdirSync(dir, { recursive: true });
     // The backend's own user makes its socket here. Sticky, so it can't replace the agent's, and a link
     // it makes isn't followed by the agent (fs.protected_symlinks) to another box's socket.
     chmodSync(dir, 0o1777);
     const egressSocket = join(dir, "egress.sock");
-    rmSync(egressSocket, { force: true });
-    rmSync(join(dir, "box.sock"), { force: true });
     const egress = Bun.serve({
       unix: egressSocket,
       maxRequestBodySize: MAX_BOX_BODY + 64 * 1024,
@@ -416,14 +416,15 @@ export class Guest {
   }
 
   /**
-   * Gone, or moved aside: a build's own user may leave a folder the agent can't empty, which then
-   * mustn't stand in the way of the next one.
+   * Gone, or moved aside: a build's or a backend's own user may leave a folder the agent can't empty,
+   * which then mustn't stand in the way of the next one. Moved within its parent, so on the same
+   * filesystem (the run folders are in /run), where no unit sees it.
    */
   private clear(path: string) {
     try {
       rmSync(path, { recursive: true, force: true });
     } catch {
-      const trash = this.dir("build", "trash");
+      const trash = join(dirname(path), "trash");
       mkdirSync(trash, { recursive: true });
       renameSync(path, join(trash, `${Date.now()}-${Math.random().toString(36).slice(2)}`));
     }
