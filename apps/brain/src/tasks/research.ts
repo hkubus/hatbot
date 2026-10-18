@@ -5,7 +5,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Bot, Task } from "@hatbot/shared";
 import { z } from "zod";
-import { modelErrorText } from "../agent/model";
+import { cutOff, modelErrorText } from "../agent/model";
 import { RESEARCH_CHECK_PROMPT, RESEARCH_PROMPT, RESEARCH_WORKER_PROMPT } from "../agent/prompt";
 import type { Readable } from "../agent/screening";
 import { localStamp } from "../agent/thread";
@@ -171,7 +171,8 @@ export function pageUrl(url: string): string {
 /**
  * Text as it's compared: one case, no markdown or quote marks, single spaces, numbers without their
  * thousands separators and with a decimal point, so "2 399,00 zł" on the page matches "2399.00 zł" in
- * a quote. A separator is a thousands one when three digits follow it, and no more.
+ * a quote. A number has thousands separators when one to three digits come before the first and three
+ * after each, so "2023 150 osób" stays two numbers.
  */
 export const plain = (text: string) =>
   text
@@ -179,7 +180,7 @@ export const plain = (text: string) =>
     .toLowerCase()
     .replace(/[*_`#>|"'“”„‘’«»]/g, " ")
     .replace(/\s+/g, " ")
-    .replace(/(\d)[ .,](?=\d{3}(?!\d))/g, "$1")
+    .replace(/(?<![\w.,])\d{1,3}(?:[ .,]\d{3})+(?!\d)/g, (n) => n.replace(/[ .,]/g, ""))
     .replace(/(\d),(?=\d)/g, "$1.")
     .trim();
 
@@ -187,13 +188,16 @@ const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
  * Whether a quote is in what a helper read: each part of it, around any "…". A number at either end
- * of a part is a whole number there, not the end of "2 399" or the start of "1,5".
+ * of a part is a whole number there, not the end of "2 399" or the start of "1,5". A letter or two
+ * beside a "…" says nothing, but a short quote on its own ("42") is still one.
  */
 export function quoteFound(quote: string, read: string): boolean {
-  const parts = quote
+  const pieces = quote
     .split(/\[?(?:\.\.\.|…)\]?/)
     .map(plain)
-    .filter((p) => p.length >= 3);
+    .filter(Boolean);
+  const long = pieces.filter((p) => p.length >= 3);
+  const parts = long.length ? long : pieces;
   return (
     parts.length > 0 &&
     parts.every((p) => {
@@ -315,8 +319,8 @@ export class ResearchState {
   /** finish_research went through: what it ended with is the run's. */
   finished = false;
   /**
-   * The numbers are checked the first time it finishes as done; `unchecked` says why not, if the
-   * check failed.
+   * The numbers are checked the first time it finishes as done citing a source, and again after a
+   * check that failed; `unchecked` says why the last one failed.
    */
   checked = false;
   unchecked: string | null = null;
@@ -460,7 +464,7 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
   /** A paused turn carries on before anything else may be asked of it. */
   let paused = false;
   let mustReport = false;
-  let cutOff = false;
+  let wasCut = false;
   // Two more steps than the cap, for paused turns to finish before the last, forced one.
   for (let step = 0; step < MAX_WORKER_STEPS + 2; step++) {
     if (signal.aborted) throw signal.reason;
@@ -556,11 +560,11 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
     );
     const report = calls.find((c) => c.name === "report_findings");
     // A report cut off can look complete with its gaps cut short: it's asked for again, shorter.
-    const cut = res.stop_reason === "max_tokens";
+    const cut = cutOff(res);
     const parsed = !cut && report ? ReportFindings.safeParse(report.input) : undefined;
     if (parsed?.success) return done(parsed.data);
-    if (cut && cutOff) return stopped("The helper's report was cut off.");
-    if (cut) cutOff = mustReport = true;
+    if (cut && wasCut) return stopped("The helper's report was cut off.");
+    if (cut) wasCut = mustReport = true;
     // Not while the web tools' code is still running: then only tool results may follow.
     const nudge = cut
       ? "Your report was cut off. Report again with report_findings, with only the 10 most important findings and short gaps."
@@ -794,34 +798,41 @@ function evidenceFor(sources: ResearchSources, cited: number[]): string {
 
 /**
  * Haiku's check of the numbers cited as [n] against the quotes found in what the helpers read: the
- * problems it found, or why it couldn't check.
+ * problems it found, or why it couldn't check; null when the text cites no source.
  */
 async function checkNumbers(
   run: ResearchRun,
   sources: ResearchSources,
   text: string,
-): Promise<{ problems: Problem[] } | { failed: string }> {
+): Promise<{ problems: Problem[] } | { failed: string } | null> {
   const { d } = run.tasks;
   const cited = citedIn([text]).filter((n) => sources.get(n));
-  if (!cited.length) return { problems: [] };
+  if (!cited.length) return null;
   const content = `${untrustedFields("sources", evidenceFor(sources, cited))}\n\n<report>\n${text}\n</report>`;
+  const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content }];
   try {
-    // Past a limit it throws, and the report says its numbers weren't checked.
-    d.spend.check(
+    // Past a limit it throws, and the report says its numbers weren't checked. Held while it runs, so
+    // the chat and other tasks count it too.
+    const release = d.spend.hold(
       requestCeiling(CHECK_MODEL, {
-        prompt: fixedTokens(RESEARCH_CHECK_PROMPT, content),
+        prompt: estimateTokens(messages) + fixedTokens(RESEARCH_CHECK_PROMPT, []),
         maxTokens: CHECK_TOKENS,
       }),
       { id: run.task.id, limitUsd: run.tasks.budget(run.task.id) },
     );
-    const res = await d.model.create({
-      model: CHECK_MODEL,
-      max_tokens: CHECK_TOKENS,
-      thinking: { type: "adaptive" },
-      output_config: { effort: "low", format: { type: "json_schema", schema: CHECK_SCHEMA } },
-      system: RESEARCH_CHECK_PROMPT,
-      messages: [{ role: "user", content }],
-    });
+    let res: Anthropic.Beta.BetaMessage;
+    try {
+      res = await d.model.create({
+        model: CHECK_MODEL,
+        max_tokens: CHECK_TOKENS,
+        thinking: { type: "adaptive" },
+        output_config: { effort: "low", format: { type: "json_schema", schema: CHECK_SCHEMA } },
+        system: RESEARCH_CHECK_PROMPT,
+        messages,
+      });
+    } finally {
+      release();
+    }
     d.spend.recordResponse({
       model: CHECK_MODEL,
       purpose: "research",
@@ -881,14 +892,19 @@ export async function finishResearch(
         "Not finished: the report is empty. Write the full report, then call finish_research again.",
     };
   // Citations that aren't sources go back every time; the numbers are checked on the first report
-  // that's done, not on a failed one before it.
+  // that's done, not on a failed one before it or one that cites no source yet.
   const unknown = citedIn(texts).filter((n) => !sources.get(n));
-  const checking = !state.checked && result.outcome === "done";
-  if (checking) state.checked = true;
-  const check = checking ? await checkNumbers(run, sources, texts.join("\n\n")) : { problems: [] };
+  const check =
+    state.checked || result.outcome !== "done"
+      ? null
+      : await checkNumbers(run, sources, texts.join("\n\n"));
   // Cancelled while the check ran: nothing is saved.
   if (run.signal.aborted) throw run.signal.reason;
-  if ("failed" in check) {
+  if (check && "problems" in check) {
+    state.checked = true;
+    state.unchecked = null;
+  }
+  if (check && "failed" in check) {
     state.unchecked = check.failed;
     tasks.addStep(task.id, {
       kind: "note",
@@ -897,7 +913,7 @@ export async function finishResearch(
       url: null,
     });
   }
-  const problems = "problems" in check ? check.problems : [];
+  const problems = check && "problems" in check ? check.problems : [];
   if (unknown.length || problems.length) {
     tasks.addStep(task.id, {
       kind: "note",

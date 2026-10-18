@@ -6,7 +6,7 @@ import { runTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
 import { HATBOT } from "../src/memory/store";
 import { definePlugin, ready, tool } from "../src/plugins/plugin";
-import { BudgetError, fixedTokens, requestCeiling } from "../src/spend";
+import { BudgetError, estimateTokens, fixedTokens, requestCeiling } from "../src/spend";
 import { plain as plainRead, quoteFound } from "../src/tasks/research";
 import { Tasks } from "../src/tasks/service";
 import { FakeModel, type Scripted, text, toolUse } from "./fake-model";
@@ -293,6 +293,32 @@ test("a failed finish doesn't use up the number check, and citations that aren't
   expect(await t.memory.read(task.reportPath as string)).not.toContain("weren't checked");
 });
 
+test("a report that cites no source yet, or whose check failed, doesn't use up the number check", async () => {
+  const work = new FakeModel([
+    INVESTIGATE,
+    finish("It's quiet [7].", "Report [7]."),
+    finish("It's **19 dB** [1], see [8].", "Report [1]."),
+    finish("It's **19 dB** [1].", "Report [1]."),
+    finish("It's **22.4 dB(A)** [1].", "Report [1]."),
+  ]);
+  helpers(work);
+  let checks = 0;
+  work.onCreate = (p) => {
+    if (p.system !== RESEARCH_CHECK_PROMPT) return undefined;
+    // The first check fails; the second runs.
+    if (++checks === 1) throw new Error("overloaded");
+    return '{"problems": [{"text": "It\'s **19 dB** [1]", "why": "The quote says 22.4 dB(A)."}]}';
+  };
+  const { t, task } = await research(work);
+  const leads = work.requests.filter((r) => r.model === "claude-opus-5-5");
+  expect(resultsIn(leads[2])).toContain("These citations aren't source numbers: [7].");
+  expect(resultsIn(leads[3])).toContain("These citations aren't source numbers: [8].");
+  expect(resultsIn(leads[4])).toContain('- "It\'s **19 dB** [1]": "The quote says 22.4 dB(A)."');
+  expect(checks).toBe(2);
+  expect(task.summary).toStartWith("It's **22.4 dB(A)** [[1]]");
+  expect(await t.memory.read(task.reportPath as string)).not.toContain("weren't checked");
+});
+
 test("running research again refreshes its report, and the chat can name one to refresh", async () => {
   const work = new FakeModel([INVESTIGATE, finish("Still the DS925+ [1].", "Report [1].")]);
   helpers(work);
@@ -533,6 +559,14 @@ test("a quote is found in what the helper read, whatever the spaces and number f
   expect(quoteFound("Głośność 22", page)).toBe(false);
   // Numbers in a list aren't one number.
   expect(plainRead("2024, 2025")).toBe("2024, 2025");
+  // Nor two numbers side by side: only thousands groups are joined.
+  const survey = plainRead("W 2023 150 osób oceniło go na 4,5. Odpowiedź: 42. Cena 12 500 zł.");
+  expect(quoteFound("150 osób", survey)).toBe(true);
+  expect(quoteFound("12500 zł", survey)).toBe(true);
+  // A short quote on its own is still found, as a whole number.
+  expect(quoteFound("42", survey)).toBe(true);
+  expect(quoteFound("4", survey)).toBe(false);
+  expect(quoteFound("7", survey)).toBe(false);
 });
 
 test("a price copied wrong is unconfirmed, and the check doesn't see it", async () => {
@@ -723,7 +757,7 @@ test("the number check is priced at all of its output first, and a limit leaves 
     } else {
       expect(checked).toEqual([
         requestCeiling("claude-haiku-5-5", {
-          prompt: fixedTokens(RESEARCH_CHECK_PROMPT, String(sent?.messages[0]?.content)),
+          prompt: estimateTokens(sent?.messages) + fixedTokens(RESEARCH_CHECK_PROMPT, []),
           maxTokens: sent?.max_tokens ?? 0,
         }),
       ]);
@@ -1021,6 +1055,23 @@ test("a helper's report cut off at max_tokens is asked for again, shorter, once"
       expect(findings).toContain("No findings.\nThe helper's report was cut off.");
     else expect(findings).toContain('[1] "Synology DS925+ | x-kom"');
   }
+});
+
+test("a helper whose context ran out is asked for its report again, shorter, too", async () => {
+  const work = new FakeModel([ONE_PART, finish("Get the DS925+.", "Report.")]);
+  const replies = [
+    {
+      content: [toolUse("report_findings", { findings: [PRICE], gaps: "Lots" })],
+      stop_reason: "model_context_window_exceeded" as const,
+    },
+    { content: [toolUse("report_findings", { findings: [PRICE], gaps: "" })] },
+  ];
+  work.route = (p) => (isHelper(p) ? replies.shift() : undefined);
+  const t = await testApp(new FakeModel(), work);
+  await startResearch(t);
+  const helper = work.requests.filter(isHelper);
+  expect(helper.map(forced)).toEqual([false, true]);
+  expect(JSON.stringify(helper[1]?.messages.at(-1))).toContain("Your report was cut off.");
 });
 
 test("a helper that declines or fails says so, and the others' findings still come back", async () => {
