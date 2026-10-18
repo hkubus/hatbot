@@ -1,5 +1,5 @@
 // desktop-agent: runs on the desktop, takes orders only from the brain (PLAN.md §4.2).
-import { createHash, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
@@ -38,20 +38,6 @@ const [host, port] = (process.env.HATBOT_AGENT_LISTEN ?? "127.0.0.1:7070").split
 const version = (() => {
   try {
     return readFileSync(join(import.meta.dir, "../VERSION"), "utf8").trim();
-  } catch {
-    return undefined;
-  }
-})();
-/**
- * The sha256 of the installed desktop-deploy.sh. Updates from the brain don't replace it (only deploy.sh
- * does), so the brain compares it with its own copy's to tell when deploy.sh must be run again.
- */
-const installer = (() => {
-  try {
-    const bytes = readFileSync(
-      process.env.HATBOT_INSTALLER ?? "/usr/local/sbin/hatbot-desktop-agent-deploy",
-    );
-    return createHash("sha256").update(bytes).digest("hex");
   } catch {
     return undefined;
   }
@@ -112,8 +98,7 @@ const authorized = (req: Request) => {
   return got.length === want.length && timingSafeEqual(got, want);
 };
 const json = (body: unknown, status = 200) => Response.json(body, { status });
-// `installer` is local until it joins AgentStatus in packages/shared.
-const health = (): AgentStatus & { installer?: string } => ({
+const health = (): AgentStatus => ({
   ok: true,
   ...size,
   locked,
@@ -121,25 +106,11 @@ const health = (): AgentStatus & { installer?: string } => ({
   profile: runningProfile(),
   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   features: FEATURES,
-  installer,
 });
-/** GET /health?deep=1: plain health, plus whether the screen can be grabbed and DevTools and the shell answer. */
-type DeepHealth = Omit<AgentStatus, "ok"> & {
-  ok: boolean;
-  x: boolean;
-  cdp: boolean;
-  shell: boolean;
-};
-async function deepHealth(): Promise<DeepHealth> {
-  const shellUp = fetch("http://shell/", {
-    unix: SHELL_SOCKET,
-    signal: AbortSignal.timeout(2000),
-  } as RequestInit).then(
-    () => true,
-    () => false,
-  );
-  const [x, cdp, shell] = await Promise.all([displayUp(), browser.devToolsUp(), shellUp]);
-  return { ...health(), ok: x && cdp, x, cdp, shell };
+/** GET /health?deep=1: plain health, plus whether the screen can be grabbed and DevTools answers. */
+async function deepHealth(): Promise<AgentStatus> {
+  const [x, cdp] = await Promise.all([displayUp(), browser.devToolsUp()]);
+  return { ...health(), ok: x && cdp, x, cdp };
 }
 const image = (bytes: Uint8Array) =>
   new Response(bytes, { headers: { "content-type": "image/webp", "cache-control": "no-store" } });

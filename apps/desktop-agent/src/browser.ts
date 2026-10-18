@@ -471,6 +471,13 @@ export class Browser {
     }
   }
 
+  /** Connected, with titles and URLs fresh and the active tab the one on screen. */
+  private async sync() {
+    await this.ready();
+    await this.refresh();
+    await this.syncActive();
+  }
+
   /** Titles and URLs as they are now: the discovery events can lag behind a navigation. */
   private async refresh() {
     const { targetInfos } = await this.cdp.send<{ targetInfos: TargetInfo[] }>("Target.getTargets");
@@ -740,10 +747,8 @@ export class Browser {
   }
 
   private async viewport(targetId: string) {
-    return this.run<{ width: number; height: number; url: string; title: string }>(
-      targetId,
-      VIEWPORT,
-    );
+    type Viewport = { width: number; height: number; scrollX: number; scrollY: number };
+    return this.run<Viewport & { url: string; title: string }>(targetId, VIEWPORT);
   }
 
   private async point(targetId: string, target: unknown): Promise<{ x: number; y: number }> {
@@ -781,6 +786,20 @@ export class Browser {
     );
   }
 
+  /** Presses or lets go of a mouse button, kept in `buttons` for the moves while it's held. */
+  private button(
+    s: string,
+    p: Point,
+    down: boolean,
+    button: keyof typeof BUTTONS = "left",
+    extra = {},
+  ) {
+    if (down) this.buttons |= BUTTONS[button];
+    else this.buttons &= ~BUTTONS[button];
+    const type = down ? "mousePressed" : "mouseReleased";
+    return this.mouse(s, type, p, { button, clickCount: 1, ...extra });
+  }
+
   /** Moves the pointer to `p` along a person-like path, from wherever it last was in the tab. */
   private async moveTo(targetId: string, s: string, p: Point, extra: Json = {}) {
     const from = this.pointers.get(targetId) ?? {
@@ -808,11 +827,9 @@ export class Browser {
     await sleep(between(40, 120));
     for (let i = 1; i <= count; i++) {
       if (i > 1) await sleep(between(60, 110));
-      this.buttons |= BUTTONS[button];
-      await this.mouse(s, "mousePressed", p, { button, clickCount: i, modifiers });
+      await this.button(s, p, true, button, { clickCount: i, modifiers });
       await sleep(between(50, 110));
-      this.buttons &= ~BUTTONS[button];
-      await this.mouse(s, "mouseReleased", p, { button, clickCount: i, modifiers });
+      await this.button(s, p, false, button, { clickCount: i, modifiers });
     }
     await this.afterInput(targetId, since);
     return { kind: "none" };
@@ -866,24 +883,8 @@ export class Browser {
       if (ch === "\n") await this.press(s, "Enter");
       else if (ch === "\t") await this.press(s, "Tab");
       else {
-        const def = charKey(ch);
-        await this.cdp.send(
-          "Input.dispatchKeyEvent",
-          {
-            type: "keyDown",
-            key: ch,
-            code: def.code,
-            windowsVirtualKeyCode: def.keyCode,
-            text: ch,
-            unmodifiedText: ch,
-          },
-          s,
-        );
-        await this.cdp.send(
-          "Input.dispatchKeyEvent",
-          { type: "keyUp", key: ch, code: def.code, windowsVirtualKeyCode: def.keyCode },
-          s,
-        );
+        await this.keyEvent(s, charKey(ch), true, 0);
+        await this.keyEvent(s, charKey(ch), false, 0);
       }
     }
   }
@@ -943,13 +944,9 @@ export class Browser {
           );
         const scale = Math.min(v.width / (x1 - x0), v.height / (y1 - y0));
         // The clip is in page coordinates: add the scroll offset.
-        const { scrollX, scrollY } = await this.run<{ scrollX: number; scrollY: number }>(
-          t,
-          VIEWPORT,
-        );
         return this.capture(t, {
-          x: x0 + scrollX,
-          y: y0 + scrollY,
+          x: x0 + v.scrollX,
+          y: y0 + v.scrollY,
           width: x1 - x0,
           height: y1 - y0,
           scale,
@@ -981,14 +978,8 @@ export class Browser {
         const t = tab();
         const p = await this.coordinate(t, input.target);
         const s = await this.session(t);
-        const down = name === "left_mouse_down";
         await this.moveTo(t, s, p);
-        if (down) this.buttons |= 1;
-        else this.buttons &= ~1;
-        await this.mouse(s, down ? "mousePressed" : "mouseReleased", p, {
-          button: "left",
-          clickCount: 1,
-        });
+        await this.button(s, p, name === "left_mouse_down");
         return { kind: "none" };
       }
       case "left_click_drag": {
@@ -997,8 +988,7 @@ export class Browser {
         const to = await this.coordinate(t, input.target);
         const s = await this.session(t);
         await this.moveTo(t, s, from);
-        this.buttons |= 1;
-        await this.mouse(s, "mousePressed", from, { button: "left", clickCount: 1 });
+        await this.button(s, from, true);
         await sleep(between(80, 150));
         // Slower while dragging, as a hand is.
         for (const step of path(from, to)) {
@@ -1007,8 +997,7 @@ export class Browser {
         }
         this.pointers.set(t, to);
         await sleep(between(60, 120));
-        this.buttons &= ~1;
-        await this.mouse(s, "mouseReleased", to, { button: "left", clickCount: 1 });
+        await this.button(s, to, false);
         return { kind: "none" };
       }
       case "scroll": {
@@ -1203,9 +1192,7 @@ export class Browser {
    * tabs don't pile up from task to task.
    */
   async reset(): Promise<{ closed: number }> {
-    await this.ready();
-    await this.refresh();
-    await this.syncActive();
+    await this.sync();
     const keep = this.active ?? this.pages()[0]?.targetId;
     let closed = 0;
     for (const t of this.pages()) {
@@ -1229,9 +1216,7 @@ export class Browser {
     script: string | null,
     arg: unknown = {},
   ): Promise<{ url: string; title: string; value: T | undefined } | null> {
-    await this.ready();
-    await this.refresh();
-    await this.syncActive();
+    await this.sync();
     const t = this.active ? this.targets.get(this.active) : undefined;
     if (!t) return null;
     const value = script === null ? undefined : await this.run<T>(t.targetId, script, arg);
@@ -1249,9 +1234,7 @@ export class Browser {
 
   /** The open tabs, and what changed since the last report. */
   async state(): Promise<BrowserState> {
-    await this.ready();
-    await this.refresh();
-    await this.syncActive();
+    await this.sync();
     const pages = this.pages();
     const opened: BrowserStateChange[] = pages
       .filter((t) => !this.reported.has(t.targetId))
@@ -1288,9 +1271,7 @@ export class Browser {
     script: string,
     arg: { x: number; y: number; focused: boolean },
   ): Promise<AgentElement | null> {
-    await this.ready();
-    await this.refresh();
-    await this.syncActive();
+    await this.sync();
     const t = await this.screenTab(arg);
     if (!t) return null;
     return this.intoFrames(t, await this.run<Inspected | null>(t, script, arg));
