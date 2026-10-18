@@ -1,5 +1,6 @@
 // The weekly report: the last seven days in a few lines, made without the model, in Hatbot's chat and
 // as a notification.
+import { localDay, parseTodos, TODO_FILE } from "@hatbot/shared";
 import type { Chats } from "./agent/chats";
 import type { Bots } from "./bots";
 import type { Db } from "./db";
@@ -167,6 +168,13 @@ export class WeeklyReport {
     if (counted) lines.push(`- Watchers saw ${plural(counted, "change")} that counted.`);
     if (failing.length) lines.push(`- Watchers that can't read their page: ${failing.join(", ")}.`);
     if (commits) lines.push(`- Memory: ${plural(commits, "change")}.`);
+    // Ticked off on one of the last seven days, and open past their date.
+    const todos = parseTodos((await this.d.memory.readOrNull(TODO_FILE)) ?? "");
+    const weekAgo = localDay(new Date(this.clock() - WEEK));
+    const today = localDay(new Date(this.clock()));
+    const ticked = todos.filter((t) => t.done && (t.doneOn ?? "") > weekAgo).length;
+    const overdue = todos.filter((t) => !t.done && t.due && t.due < today).length;
+    if (ticked || overdue) lines.push(`- To-do: ${ticked} done, ${overdue} overdue.`);
     const storage = await this.d.storage.measure().catch(() => null);
     if (storage) lines.push(`- Storage: ${storageLine(storage)}`);
     const line = [

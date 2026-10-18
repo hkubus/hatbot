@@ -52,7 +52,13 @@ test("the to-do list: added and ticked off in the chat, shown to the next conver
   const opening = JSON.stringify(model.requests.at(-1)?.messages);
   expect(opening).toContain("- Renew the domain (due 2026-10-09)\\n- Buy filters\\n</todo>");
 
+  // The morning list goes out at the hour set.
+  t.settings.update({ todoHour: 10 });
   at(t, 2026, 10, 11, 9, 5);
   await t.todoReminders.tick();
+  expect(reminders(t)).toHaveLength(2);
+  at(t, 2026, 10, 11, 10);
+  await t.todoReminders.tick();
   expect(reminders(t).slice(2)).toEqual(["Overdue:\n- Renew the domain (due 2026-10-09)"]);
+  expect((await t.report.make()).text).toContain("- To-do: 1 done, 1 overdue.");
 });
