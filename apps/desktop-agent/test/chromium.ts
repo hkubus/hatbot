@@ -1,4 +1,5 @@
-// A headless Chromium with DevTools on, for tests that drive browser.ts or render.ts. CI may have none.
+// A headless Chromium with DevTools on, for tests that drive browser.ts or render.ts. They take seconds,
+// so they run only with HATBOT_CHROMIUM_TESTS=1.
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,13 +20,13 @@ function candidates(): string[] {
   ].filter((p): p is string => Boolean(p && existsSync(p)));
 }
 
+/** Whether the tests that need a real Chromium run. */
+export const withChromium = Boolean(process.env.HATBOT_CHROMIUM_TESTS);
+
 export type Chromium = { path: string; endpoint: string; stop: () => Promise<void> };
 
-/**
- * Starts the first one that runs here (a sandbox it can't have fails one), and resolves with its
- * DevTools address; null, said once, when none does.
- */
-export async function startChromium(): Promise<Chromium | null> {
+/** Starts the first one that runs here (a sandbox it can't have fails one), with its DevTools address. */
+export async function startChromium(): Promise<Chromium> {
   for (const path of candidates()) {
     const dir = mkdtempSync(join(tmpdir(), "hatbot-cdp-"));
     const proc = Bun.spawn(
@@ -50,8 +51,7 @@ export async function startChromium(): Promise<Chromium | null> {
     if (port) return { path, endpoint: `http://127.0.0.1:${port}`, stop };
     await stop();
   }
-  console.log("No Chromium that runs here: the tests that need one are skipped.");
-  return null;
+  throw new Error("No Chromium runs here: set HATBOT_CHROMIUM to one.");
 }
 
 /** Serves `pages` as HTML by path, on loopback; pages added later are served too. */

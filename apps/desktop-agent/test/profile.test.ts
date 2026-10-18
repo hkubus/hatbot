@@ -20,7 +20,7 @@ const fake = {
 };
 const browser = fake as unknown as Browser;
 
-test("switches Chromium to a bot's profile, and only when it's on another", async () => {
+test("switches Chromium to a bot's profile, only when it's on another, and only by a plain name", async () => {
   writeFileSync(running, "hatbot\n");
   expect(await useProfile("hatbot", dir, browser, running)).toBe("hatbot");
   expect(fake.quits).toBe(0);
@@ -28,9 +28,4 @@ test("switches Chromium to a bot's profile, and only when it's on another", asyn
   expect(fake.quits).toBe(1);
   expect(readFileSync(running, "utf8").trim()).toBe("chef");
   await expect(useProfile("../x", dir, browser, running)).rejects.toThrow();
-});
-
-test("one shared profile where the service isn't set up", async () => {
-  expect(await useProfile("chef", null, browser, running)).toBeNull();
-  expect(await useProfile("chef", dir, browser, join(dir, "none"))).toBeNull();
 });

@@ -57,6 +57,7 @@ Acceptance tests for parts that have never run live. The owner runs them; write 
 ## How to work here
 
 - **Run:** `export PATH=$HOME/.bun/bin:$PATH` (`bun` isn't on PATH). Then `bun test`, `bun run check` (Biome) and `bun run typecheck`, all three before every commit.
+- **Chromium tests:** desktop-agent's tests that drive a real Chromium (cdp, inspect, render) take seconds, so `bun test` skips them. Run `HATBOT_CHROMIUM_TESTS=1 bun test ./apps/desktop-agent` before shipping desktop-agent changes (`HATBOT_CHROMIUM` picks the binary).
 - **Commits:** one commit per finished piece, on `main`, in the style of the history ("Plugins: …", "MCP plugin: …"). Commit locally; push only when the owner asks. End commit messages with the `Co-Authored-By` line your harness gives you.
 - **Stopping the dev brain:** use `fuser -k <port>/tcp`. `pkill -f "bun src/main.ts"` kills your own shell.
 - **Forgejo** (`git.gaycats.ovh`) sometimes hangs or resets connections. Retry later; the GitHub mirror runs CI.
