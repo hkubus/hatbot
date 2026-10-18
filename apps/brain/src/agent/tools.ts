@@ -1383,15 +1383,32 @@ export const TOOLS = [
   def({
     name: "box_call",
     description:
-      "Send one of your boxes' backend a request, as its page's hatbox.fetch does, to try it.",
+      "Send one of your boxes' backend a request, as its page's hatbox.fetch does, to try it. Or, with scheduled, run its scheduled() once now: what it returns as notify is shown to you, not sent to the owner.",
     schema: z.object({
       box: z.number().int(),
-      path: z.string().startsWith("/").max(2000).describe('e.g. "/api/prices?days=7"'),
+      path: z
+        .string()
+        .startsWith("/")
+        .max(2000)
+        .optional()
+        .describe('e.g. "/api/prices?days=7"; not with scheduled'),
       method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).optional(),
       body: z.string().max(100_000).optional().describe("JSON or text"),
+      scheduled: z.boolean().optional().describe("Run scheduled() instead of a request"),
     }),
-    run: async ({ box: id, path, method, body }, ctx) => {
+    run: async ({ box: id, path, method, body, scheduled }, ctx) => {
       const box = ownBox(ctx, id);
+      const by = `What box #${id} "${box.title}"'s backend answered`;
+      if (scheduled) {
+        const r = await backends(ctx).runNow(id);
+        const said = r.ok
+          ? r.notify
+            ? `scheduled() ran and returned this to notify (not sent): ${r.notify}`
+            : "scheduled() ran, with nothing to notify."
+          : `scheduled() failed: ${r.error || "no reason given"}`;
+        return boxOutput(ctx, "box_call", said, by);
+      }
+      if (!path) return "Give a path, or scheduled.";
       let type = "application/json";
       try {
         JSON.parse(body ?? "");
@@ -1410,12 +1427,7 @@ export const TOOLS = [
       const answer = textual
         ? cut(new TextDecoder().decode(bytes), 30_000)
         : `(${bytes.byteLength} bytes of ${kind})`;
-      return boxOutput(
-        ctx,
-        "box_call",
-        `${res.status}${kind ? `, ${kind}` : ""}\n\n${answer}`,
-        `What box #${id} "${box.title}"'s backend answered`,
-      );
+      return boxOutput(ctx, "box_call", `${res.status}${kind ? `, ${kind}` : ""}\n\n${answer}`, by);
     },
   }),
   def({

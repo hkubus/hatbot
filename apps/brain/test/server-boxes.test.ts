@@ -186,15 +186,23 @@ test("a server box's schedule runs when due, at most every 5 minutes; Pause all 
   expect((await boxFetch(t, { path: "/" })).status).toBe(503);
 });
 
-test("a backend's scheduled() notifies you, opening the box, with a note the bot reads as untrusted; 10 a day, and none once paused", async () => {
-  const model = new FakeModel([{ content: [text("Hello.")] }, { content: [text("Cheaper.")] }]);
+test("a backend's scheduled() notifies you, opening the box, with a note the bot reads as untrusted; 10 a day, and none once paused; run by the bot, it tells only the bot", async () => {
+  const model = new FakeModel([
+    { content: [toolUse("box_call", { box: 1, scheduled: true })] },
+    { content: [text("Hello.")] },
+    { content: [text("Cheaper.")] },
+  ]);
   const t = await testApp(model);
   const config = { hosts: [], cron: "*/5 * * * *" };
   t.boxes.create(
     { botId: "hatbot", conversationId: 1, title: "Prices", html: PAGE, files: files(config) },
     {},
   );
-  await t.thread.post("hi").done;
+  t.hatbox.run = { ok: true, notify: "Price dropped to €39" };
+  await t.thread.post("try its schedule").done;
+  expect(t.hatbox.runs).toEqual([1]);
+  expect(lastUserText(model.requests[1])).toContain("Price dropped to €39");
+  expect(lastUserText(model.requests[1])).toContain('trusted=\\"false\\"');
   t.hatbox.run = { ok: true, notify: "Price dropped to €40" };
   const tick = async () => {
     t.advance(5 * 60_000);
@@ -206,8 +214,8 @@ test("a backend's scheduled() notifies you, opening the box, with a note the bot
   ]);
   expect(t.thread.list().at(-1)).toMatchObject({ kind: "box", boxId: 1 });
   await t.thread.post("anything new?").done;
-  expect(lastUserText(model.requests[1])).toContain("Price dropped to €40");
-  expect(lastUserText(model.requests[1])).toContain('trusted=\\"false\\"');
+  expect(lastUserText(model.requests[2])).toContain("Price dropped to €40");
+  expect(lastUserText(model.requests[2])).toContain('trusted=\\"false\\"');
 
   // The eleventh in a day isn't sent: the box's log says so. The page's own notes count apart.
   for (let i = 0; i < 10; i++) await tick();
