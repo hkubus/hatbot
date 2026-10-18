@@ -4,16 +4,11 @@ import SwiftUI
 import UIKit
 
 extension Color {
-  /// Hatbot's amber (PLAN.md §10.2). Blue means "needs you", red destructive, green done.
+  /// Hatbot's amber (PLAN.md §10.2), for fills. Blue means "needs you", red destructive, green done.
+  /// Amber as text, and the app's tint, is the AccentColor asset (`accentColor`): the brand's amber gives
+  /// only 2.75:1 on white, and that one reads at 4.5:1 or better on white, grey bubbles and the sidebar's
+  /// selected row.
   static let brand = Color(light: 0xE8820C, dark: 0xFF9F2E)
-  /// Amber as text and the app's tint. In light mode the brand's amber gives only 2.75:1 on white; this
-  /// one reads at 4.5:1 or better on white, grey bubbles and the sidebar's selected row. Fills keep `brand`.
-  static let brandText = Color(
-    uiColor: UIColor { traits in
-      let high = traits.accessibilityContrast == .high
-      return traits.userInterfaceStyle == .dark
-        ? UIColor(hex: high ? 0xFFB866 : 0xFF9F2E, alpha: 1) : UIColor(hex: high ? 0x7A4000 : 0x9C5200, alpha: 1)
-    })
   static let attention = Color.blue
   /// Solid, with white text, like Messages' blue; Hatbot's grey is Messages' too. A darker amber than
   /// the brand's, so the white reads at 4.9:1 (the brand's own gives 2.75:1).
@@ -155,7 +150,7 @@ extension TaskStatus {
   var tint: Color {
     switch self {
     case .waitingApproval, .waitingTakeover: .attention
-    case .running: .brandText
+    case .running: .accentColor
     case .done: .green
     case .failed: .red
     case .queued, .cancelled: .secondary

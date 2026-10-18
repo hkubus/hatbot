@@ -30,7 +30,6 @@ struct HatbotApp: App {
       .environment(session)
       // Links in replies, sources and task steps: only the kinds that can't start anything else.
       .environment(\.openURL, OpenURLAction { url in AppLink.opens(url) ? .systemAction : .discarded })
-      .tint(.brandText)
       .onChange(of: session.store == nil) { _, out in
         // The widget and the control read the brain as you, or say to sign in.
         WidgetCenter.shared.reloadAllTimelines()

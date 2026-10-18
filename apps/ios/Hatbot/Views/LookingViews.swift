@@ -104,7 +104,7 @@ private struct Snippet: View {
 
   var body: some View {
     Search.parts(text).reduce(Text("")) { out, part in
-      out + (part.match ? Text(part.text).bold().foregroundColor(.brandText) : Text(part.text))
+      out + (part.match ? Text(part.text).bold().foregroundColor(.accentColor) : Text(part.text))
     }
     .lineLimit(3)
   }
@@ -254,7 +254,7 @@ struct WatcherDetailView: View {
             VStack(alignment: .leading, spacing: 3) {
               Text(v.value).font(.system(.callout, design: .monospaced)).lineLimit(3)
               Text(v.fired ? "\(v.createdAt.stampText), counted" : v.createdAt.stampText)
-                .font(.footnote).foregroundStyle(v.fired ? Color.brandText : .secondary)
+                .font(.footnote).foregroundStyle(v.fired ? Color.accentColor : .secondary)
             }
           }
         }

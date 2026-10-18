@@ -702,7 +702,7 @@ private struct MessageRow: View, Equatable {
         if m.status != .streaming, let editedAt {
           Text("Edited \(editedAt.timeText)")
             .font(.caption2)
-            .foregroundStyle(Color.brandText)
+            .foregroundStyle(Color.accentColor)
             .padding(.leading, Bubble.tailWidth + 12)
         }
       }
