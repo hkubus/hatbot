@@ -6,7 +6,6 @@ import { openDb } from "./db";
 import { HttpDesktopAgent } from "./desktop/client";
 import { NtfyNotifier } from "./notify";
 import { PLUGINS } from "./plugins";
-import { Proxmox } from "./proxmox";
 import { Secrets } from "./secrets";
 import { createServices } from "./services";
 import { webHandler } from "./web";
@@ -27,7 +26,6 @@ const brain = await createServices({
   agent: new HttpDesktopAgent(),
   notifications: ntfy,
   ntfy,
-  proxmox: new Proxmox(),
   plugins: PLUGINS,
   pingUrl: process.env.HATBOT_PING_URL,
   secrets,

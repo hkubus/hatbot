@@ -193,6 +193,7 @@ export const sshPlugin = definePlugin({
   id: "ssh",
   name: "SSH",
   description: "Run commands on your hosts",
+  env: [{ name: "HATBOT_BRAIN_ID", optional: true, hint: "101" }],
   config: Config,
   start: ({ env, config, db, files }) => {
     const home = env.HOME ?? homedir();
@@ -211,7 +212,7 @@ export const sshPlugin = definePlugin({
     /** Why a container can't be reached from here, if it can't. */
     const guestRefused = (guest: number): string | null =>
       !brainId
-        ? `Containers are off until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env.`
+        ? `Containers are off until HATBOT_BRAIN_ID is set in Settings → Proxmox.`
         : guest === brainId || guest === desktopId
           ? `CT ${guest} is the brain you run on or your desktop; it isn't reached from here.`
           : null;
@@ -368,7 +369,7 @@ export const sshPlugin = definePlugin({
     const reachesCareful = (host: string): string | null => {
       if (!hosts.get(host)?.proxmox) return null;
       if (!brainId)
-        return `Containers are off until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env, and commands on ${host} can reach them.`;
+        return `Containers are off until HATBOT_BRAIN_ID is set in Settings → Proxmox, and commands on ${host} can reach them.`;
       const guests = carefulGuests();
       return guests.length
         ? `The owner asked to approve every change to CT ${guests.join(", CT ")}, and commands on ${host} can reach its containers.`
@@ -676,7 +677,7 @@ export const sshPlugin = definePlugin({
       };
 
     return ready(tools, {
-      guidance: `You can reach these hosts over SSH: ${config.hosts.map((h) => `${h.name} (${h.user}@${h.address}${h.careful ? ", every change asks the owner" : ""})`).join("; ")}. Read memory for what runs where. Look with ssh_check and ssh_read_file; ssh_exec and ssh_write_file change things. Commands that look destructive need approval (the safety review or the owner); a restart (systemctl restart) needs none of its own.${pctHosts.length ? ` ${pctHosts.join(" and ")} ${pctHosts.length > 1 ? "are Proxmox hosts" : "is a Proxmox host"}: ssh_pct_exec runs a command inside one of its containers, by ID. While a container is careful, changes on its host wait for the owner too.` : marked.length ? ` Its containers can't be reached until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env.` : ""} ssh_copy_file moves files between hosts${pctHosts.length ? ", containers" : ""}, the sandbox and the chat: the owner's attachments onto a host, a host's file to the owner or into the sandbox to work on.`,
+      guidance: `You can reach these hosts over SSH: ${config.hosts.map((h) => `${h.name} (${h.user}@${h.address}${h.careful ? ", every change asks the owner" : ""})`).join("; ")}. Read memory for what runs where. Look with ssh_check and ssh_read_file; ssh_exec and ssh_write_file change things. Commands that look destructive need approval (the safety review or the owner); a restart (systemctl restart) needs none of its own.${pctHosts.length ? ` ${pctHosts.join(" and ")} ${pctHosts.length > 1 ? "are Proxmox hosts" : "is a Proxmox host"}: ssh_pct_exec runs a command inside one of its containers, by ID. While a container is careful, changes on its host wait for the owner too.` : marked.length ? ` Its containers can't be reached until HATBOT_BRAIN_ID is set in Settings → Proxmox.` : ""} ssh_copy_file moves files between hosts${pctHosts.length ? ", containers" : ""}, the sandbox and the chat: the owner's attachments onto a host, a host's file to the owner or into the sandbox to work on.`,
       test: async () => {
         const lines = await Promise.all(
           config.hosts.map(async (h) => {
@@ -689,7 +690,7 @@ export const sshPlugin = definePlugin({
           }),
         );
         if (marked.length && !brainId)
-          lines.push("Containers: off until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env.");
+          lines.push("Containers: off until HATBOT_BRAIN_ID is set in Settings → Proxmox.");
         return lines.join("\n");
       },
       actions,

@@ -1,10 +1,11 @@
 // Starts the plugins you've switched on, keeps their settings, and hands their tools to the chat and
 // to tasks (PLAN.md §4.5).
-import type { PluginInfo, PluginState } from "@hatbot/shared";
+import type { PluginEnvInfo, PluginInfo, PluginState } from "@hatbot/shared";
 import { z } from "zod";
 import { untrustedBlock } from "../agent/untrusted";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
+import type { Secrets } from "../secrets";
 import { getSetting, setSetting } from "../settings";
 import {
   allow,
@@ -41,7 +42,10 @@ type Slot = {
 export type PluginsDeps = {
   db: Db;
   events: EventBus;
+  /** The host's environment: /etc/hatbot/*.env, as systemd loads them. */
   env?: Record<string, string | undefined>;
+  /** What's set in Settings in place of the host's. */
+  secrets: Secrets;
   files?: PluginFiles;
   /** The core's own tool names; plugin tools can't take them. */
   reserved: string[];
@@ -49,7 +53,7 @@ export type PluginsDeps = {
 
 export class Plugins {
   private slots = new Map<string, Slot>();
-  private env: Record<string, string | undefined>;
+  private hostEnv: Record<string, string | undefined>;
   /** Waits between tries for a plugin that's down; tests shorten them. */
   retryMs = RETRY_MS;
 
@@ -57,7 +61,7 @@ export class Plugins {
     plugins: Plugin[],
     private d: PluginsDeps,
   ) {
-    this.env = d.env ?? process.env;
+    this.hostEnv = d.env ?? process.env;
     for (const plugin of plugins) {
       if (!/^[a-z][a-z0-9]{1,20}$/.test(plugin.id)) throw new Error(`bad plugin id "${plugin.id}"`);
       if (this.slots.has(plugin.id)) throw new Error(`two plugins named "${plugin.id}"`);
@@ -110,6 +114,43 @@ export class Plugins {
     setSetting(this.d.db, `plugin:${id}`, JSON.stringify({ enabled: s.enabled, config: s.config }));
     if (s.enabled) await this.restart(s);
     else await this.stop(s);
+    return this.info(s);
+  }
+
+  /** The environment plugins start with: the host's, and over it what's set in Settings. */
+  env(): Record<string, string | undefined> {
+    return { ...this.hostEnv, ...this.d.secrets.pluginEnv() };
+  }
+
+  /**
+   * Sets a plugin's environment variables, or for one that takes them its secrets by name; null goes
+   * back to the host's. Every plugin that reads one restarts with it.
+   */
+  async setSecrets(id: string, values: Record<string, string | null>): Promise<PluginInfo> {
+    const s = this.slots.get(id);
+    if (!s) throw new PluginError(`No plugin "${id}".`);
+    const names = Object.keys(values);
+    if (s.plugin.named) {
+      this.d.secrets.setNamed(id, values);
+      s.retries = 0;
+      if (s.enabled) await this.restart(s);
+      else this.emit(s);
+      return this.info(s);
+    }
+    const own = new Set((s.plugin.env ?? []).map((v) => v.name));
+    const other = names.filter((n) => !own.has(n));
+    if (other.length) throw new PluginError(`${s.plugin.name} doesn't read ${other.join(", ")}.`);
+    this.d.secrets.setPluginEnv(values);
+    const readers = [...this.slots.values()].filter((r) =>
+      r.plugin.env?.some((v) => names.includes(v.name)),
+    );
+    await Promise.all(
+      readers.map(async (r) => {
+        r.retries = 0;
+        if (r.enabled) await this.restart(r);
+        else this.emit(r);
+      }),
+    );
     return this.info(s);
   }
 
@@ -220,7 +261,8 @@ export class Plugins {
     try {
       instance = await s.plugin.start({
         config: s.config,
-        env: this.env,
+        env: this.env(),
+        named: s.plugin.named ? this.d.secrets.named(s.plugin.id) : {},
         db: this.d.db,
         files: this.d.files,
       });
@@ -333,7 +375,8 @@ export class Plugins {
       enabled: s.enabled,
       state: s.state,
       message: s.message ?? (s.state === "ready" ? (s.instance?.down?.() ?? null) : null),
-      secrets: (s.plugin.secrets ?? []).map((name) => ({ name, set: Boolean(this.env[name]) })),
+      env: (s.plugin.env ?? []).map((v) => this.envInfo(v)),
+      named: s.plugin.named ? Object.keys(this.d.secrets.named(s.plugin.id)).sort() : null,
       config: s.config,
       tools: (s.instance?.tools ?? []).map((t) => ({
         name: t.name,
@@ -341,6 +384,21 @@ export class Plugins {
         description: t.description,
       })),
       testable: Boolean(s.instance?.test),
+    };
+  }
+
+  /** What Settings is told of one variable: never a secret's value. */
+  private envInfo(v: NonNullable<Plugin["env"]>[number]): PluginEnvInfo {
+    const app = this.d.secrets.pluginEnv()[v.name];
+    const value = app ?? this.hostEnv[v.name] ?? "";
+    return {
+      name: v.name,
+      secret: Boolean(v.secret),
+      optional: Boolean(v.optional),
+      hint: v.hint ?? null,
+      set: Boolean(value),
+      from: app !== undefined ? "app" : value ? "host" : null,
+      value: v.secret || !value ? null : value,
     };
   }
 

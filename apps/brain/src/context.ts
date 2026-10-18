@@ -43,7 +43,8 @@ export type Deps = {
   desktop: Desktop;
   archive: Archive;
   attachments: Attachments;
-  proxmox: Proxmox;
+  /** Made as it's set now: Settings can change it. */
+  proxmox: () => Proxmox;
   updates: Updates;
   schedules: Schedules;
   triggers: Triggers;

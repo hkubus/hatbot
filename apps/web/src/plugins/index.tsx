@@ -1,5 +1,5 @@
 // Each plugin's settings form in Settings (PLAN.md §4.5), by plugin id. A plugin without one only has
-// its switch, secrets and Test button.
+// its switch, environment and Test button.
 import type { ComponentType } from "react";
 import { HomeAssistantSettings } from "./homeassistant";
 import { McpSettings } from "./mcp";

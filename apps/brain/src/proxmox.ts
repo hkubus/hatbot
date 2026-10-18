@@ -129,7 +129,7 @@ export class Proxmox {
       host: url?.hostname ?? "",
       port: Number(url?.port || 8006),
       fingerprint: normalizeFp(env.PROXMOX_TLS_FINGERPRINT ?? ""),
-      setting: "PROXMOX_TLS_FINGERPRINT in /etc/hatbot/proxmox.env",
+      setting: "PROXMOX_TLS_FINGERPRINT in Settings → Proxmox",
       auth: `PVEAPIToken=${env.PROXMOX_TOKEN_ID}=${env.PROXMOX_TOKEN_SECRET}`,
     };
     this.node = env.PROXMOX_NODE ?? "";
@@ -154,7 +154,7 @@ export class Proxmox {
   }
 
   private request(method: "GET" | "POST", path: string, form?: Record<string, string>) {
-    if (!this.hasApi) throw new PluginError("Proxmox isn't set up (no /etc/hatbot/proxmox.env).");
+    if (!this.hasApi) throw new PluginError("Proxmox isn't set up: see Settings → Proxmox.");
     return pinnedRequest(this.api, method, path, form);
   }
 

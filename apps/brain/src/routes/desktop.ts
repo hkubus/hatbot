@@ -139,7 +139,7 @@ export const desktopRoutes = new Hono<AppEnv>()
     return c.json(c.var.desktop.get());
   })
   .get("/desktop/snapshots", async (c) => {
-    const { proxmox } = c.var;
+    const proxmox = c.var.proxmox();
     if (!proxmox.configured) return c.json({ configured: false, snapshots: [] });
     try {
       return c.json({ configured: true, snapshots: await proxmox.desktopSnapshots() });
@@ -149,7 +149,8 @@ export const desktopRoutes = new Hono<AppEnv>()
   })
   // "Roll back desktop" in Settings (PLAN.md §8): back to a nightly snapshot, then started again.
   .post("/desktop/rollback", json(z.object({ name: z.string().min(1).max(40) })), async (c) => {
-    const { proxmox, tasks, desktop } = c.var;
+    const { tasks, desktop } = c.var;
+    const proxmox = c.var.proxmox();
     if (!proxmox.configured) return c.json({ error: "Proxmox isn't set up." }, 503);
     if (tasks.lane.holderId === ROLLBACK) return c.json({ error: "Already rolling back." }, 409);
     if (tasks.list({ status: "active" }).some((t) => t.lane === "screen"))

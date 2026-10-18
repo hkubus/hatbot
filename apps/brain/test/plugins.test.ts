@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import type { PluginInfo, Task } from "@hatbot/shared";
 import { z } from "zod";
 import {
@@ -31,10 +32,13 @@ function labPlugin(calls: string[] = []): Plugin {
     id: "lab",
     name: "Lab",
     description: "A fake homelab",
-    secrets: ["LAB_TOKEN"],
+    env: [
+      { name: "LAB_URL", optional: true },
+      { name: "LAB_TOKEN", secret: true },
+    ],
     config: z.object({ greeting: z.string().default("hi") }),
     start: ({ env, config }) => {
-      if (!env.LAB_TOKEN) return needsSetup("Add LAB_TOKEN to /etc/hatbot/lab.env.");
+      if (!env.LAB_TOKEN) return needsSetup("Set LAB_TOKEN below.");
       return ready(
         [
           tool({
@@ -107,7 +111,7 @@ const said = (model: FakeModel, i: number) => JSON.stringify(model.requests[i]?.
 const bare = (id: string, start: Plugin["start"]) =>
   definePlugin({ id, name: id, description: "", config: z.object({}), start });
 
-test("Settings: off until switched on, what's missing, bad settings refused, and the test button", async () => {
+test("Settings: off until switched on, what's missing and set there, bad settings refused, and the test button", async () => {
   const t = await testApp(new FakeModel(), new FakeModel(), {}, [labPlugin()], {});
   const { cookie } = signIn(t);
   const api = (method: string, path: string, body?: unknown) =>
@@ -120,12 +124,32 @@ test("Settings: off until switched on, what's missing, bad settings refused, and
     tools: [],
     config: { greeting: "hi" },
   });
-  expect(off.secrets).toEqual([{ name: "LAB_TOKEN", set: false }]);
+  expect(off.env.map((v) => [v.name, v.set])).toEqual([
+    ["LAB_URL", false],
+    ["LAB_TOKEN", false],
+  ]);
   // No token: on, but not set up, and no tools.
   const on = (await (await api("PATCH", "/plugins/lab", { enabled: true })).json()) as PluginInfo;
   expect(on).toMatchObject({ enabled: true, state: "needs_setup" });
   expect(t.plugins.tools()).toHaveLength(0);
   expect((await api("PATCH", "/plugins/lab", { config: { greeting: 5 } })).status).toBe(400);
+
+  // Set on its page, the token starts it at once; the app is told it's set, never what to.
+  const put = (values: Record<string, string | null>) =>
+    api("PUT", "/plugins/lab/secrets", { values });
+  expect((await put({ OTHER_TOKEN: "x" })).status).toBe(400);
+  const fixed = (await (
+    await put({ LAB_URL: "http://lab.lan", LAB_TOKEN: "lab-token-from-app" })
+  ).json()) as PluginInfo;
+  expect(fixed.state).toBe("ready");
+  expect(fixed.env.map((v) => [v.from, v.value])).toEqual([
+    ["app", "http://lab.lan"],
+    ["app", null],
+  ]);
+  expect(await (await api("GET", "/plugins")).text()).not.toContain("lab-token-from-app");
+  expect(readFileSync(t.secrets.path, "utf8")).toContain("lab-token-from-app");
+  const back = (await (await put({ LAB_TOKEN: null })).json()) as PluginInfo;
+  expect(back.state).toBe("needs_setup");
 
   // With it, new settings restart the plugin, and the test button runs its check.
   const set = await lab(new FakeModel());

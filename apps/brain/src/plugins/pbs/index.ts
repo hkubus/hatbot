@@ -63,20 +63,25 @@ export const pbsPlugin = definePlugin({
   id: "pbs",
   name: "Proxmox Backup Server",
   description: "Check your backups, verify them, and clean up old ones",
-  secrets: ["PBS_URL", "PBS_TOKEN_ID", "PBS_TOKEN_SECRET", "PBS_TLS_FINGERPRINT"],
+  env: [
+    { name: "PBS_URL", hint: "https://192.168.1.11:8007" },
+    { name: "PBS_TOKEN_ID", hint: "hatbot@pbs!hatbot" },
+    { name: "PBS_TOKEN_SECRET", secret: true },
+    { name: "PBS_TLS_FINGERPRINT", hint: "AB:CD:EF:…" },
+  ],
   config: z.object({}),
   start: async ({ env }) => {
     const url = env.PBS_URL ? new URL(env.PBS_URL) : null;
     if (!url || !env.PBS_TOKEN_ID || !env.PBS_TOKEN_SECRET || !env.PBS_TLS_FINGERPRINT)
       return needsSetup(
-        "Create an API token for Hatbot in PBS (Configuration → Access Control → API Token) and give it (Permissions → Add → API Token Permission) the DatastoreAudit role on /datastore and the Audit role on /: it sees backups and tasks, not what's in them. To let it start verifies, add DatastoreReader on the datastores; for garbage collection and deleting backups, DatastoreAdmin. Both can also read every backup's contents. Then put PBS_URL, PBS_TOKEN_ID, PBS_TOKEN_SECRET and PBS_TLS_FINGERPRINT (from the PBS dashboard's Show Fingerprint) in /etc/hatbot/pbs.env on the brain and restart it.",
+        "Create an API token for Hatbot in PBS (Configuration → Access Control → API Token) and give it (Permissions → Add → API Token Permission) the DatastoreAudit role on /datastore and the Audit role on /: it sees backups and tasks, not what's in them. To let it start verifies, add DatastoreReader on the datastores; for garbage collection and deleting backups, DatastoreAdmin. Both can also read every backup's contents. Then set them below.",
       );
     const pbs = {
       name: "Proxmox Backup Server",
       host: url.hostname,
       port: Number(url.port || 8007),
       fingerprint: env.PBS_TLS_FINGERPRINT,
-      setting: "PBS_TLS_FINGERPRINT in /etc/hatbot/pbs.env",
+      setting: "PBS_TLS_FINGERPRINT in Settings → PBS",
       auth: `PBSAPIToken=${env.PBS_TOKEN_ID}:${env.PBS_TOKEN_SECRET}`,
     };
     const get = <T>(path: string) => pinnedRequest(pbs, "GET", path) as Promise<T>;

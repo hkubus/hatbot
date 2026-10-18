@@ -89,7 +89,7 @@ test("a task's MCP call asks first, then runs, its output marked untrusted", asy
   await expect(t.tool("mcp_fix_broken").run({}, call)).rejects.toThrow("fix says: disk on fire");
 });
 
-test("a stdio server gets what mcp.env sets, not the brain's own secrets, nor by placeholder", async () => {
+test("a stdio server gets what mcp.env and its page set, not the brain's own secrets, nor by placeholder", async () => {
   // The brain's own environment holds its secrets.
   process.env.HATBOT_TEST_SECRET = "sk-must-not-leak";
   try {
@@ -103,8 +103,16 @@ test("a stdio server gets what mcp.env sets, not the brain's own secrets, nor by
   }
   // biome-ignore lint/suspicious/noTemplateCurlyInString: the plugin's own placeholder syntax
   const t = await mcp({ ...fixture, env: { KEY: "${ANTHROPIC_API_KEY}" } });
-  expect(t.info.message).toContain("ANTHROPIC_API_KEY isn't set in ");
+  expect(t.info.message).toContain("ANTHROPIC_API_KEY isn't set:");
   expect(t.plugins.tools()).toHaveLength(0);
+
+  // A secret added on MCP's page is there at once, by its name.
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: the plugin's own placeholder syntax
+  const app = await mcp({ ...fixture, env: { KEY: "${APP_KEY}" } });
+  expect((await app.plugins.setSecrets("mcp", { APP_KEY: "from-settings" })).named).toEqual([
+    "APP_KEY",
+  ]);
+  expect(await app.tool("mcp_fix_secret").run({ name: "KEY" }, call)).toBe("KEY=from-settings");
 });
 
 test("money tools always ask and never go to the review, whatever their mode; the owner's kinds win", async () => {

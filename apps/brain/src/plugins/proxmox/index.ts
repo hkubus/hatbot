@@ -1,5 +1,5 @@
 // Proxmox (PLAN.md §5.5, §9.3): see every guest, start and reboot them, and ask before shutting one
-// down. Uses the scoped token from /etc/hatbot/proxmox.env, which can't change configs or destroy.
+// down. Uses the scoped token host-setup.sh makes, which can't change configs or destroy.
 import { z } from "zod";
 import { Proxmox } from "../../proxmox";
 import {
@@ -50,19 +50,20 @@ export const proxmoxPlugin = definePlugin({
   id: "proxmox",
   name: "Proxmox",
   description: "See your guests, start and reboot them",
-  secrets: [
-    "PROXMOX_URL",
-    "PROXMOX_NODE",
-    "PROXMOX_TOKEN_ID",
-    "PROXMOX_TOKEN_SECRET",
-    "PROXMOX_TLS_FINGERPRINT",
+  env: [
+    { name: "PROXMOX_URL", hint: "https://192.168.1.10:8006" },
+    { name: "PROXMOX_NODE", hint: "pve" },
+    { name: "PROXMOX_TOKEN_ID", hint: "hatbot@pve!hatbot" },
+    { name: "PROXMOX_TOKEN_SECRET", secret: true },
+    { name: "PROXMOX_TLS_FINGERPRINT", hint: "AB:CD:EF:…" },
+    { name: "HATBOT_BRAIN_ID", optional: true, hint: "101" },
   ],
   config: Config,
   start: ({ env, config }) => {
     const pve = new Proxmox(env);
     if (!pve.hasApi)
       return needsSetup(
-        "The brain has no Proxmox token. Run infra/host-setup.sh on the host; it writes /etc/hatbot/proxmox.env.",
+        "The brain has no Proxmox token. infra/host-setup.sh makes one that can't change configs or destroy, and sets it up; or set these below.",
       );
     const brain = Number(pve.brainId) || null;
     const desktop = Number(pve.desktopId) || null;
@@ -274,7 +275,7 @@ export const proxmoxPlugin = definePlugin({
     const special = [
       brain
         ? `Guest ${brain} is the brain you run on; never power it.`
-        : "Powering guests is off until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env, so the brain can't be powered off by mistake.",
+        : "Powering guests is off until HATBOT_BRAIN_ID is set in Settings → Proxmox, so the brain can't be powered off by mistake.",
       desktop ? `Guest ${desktop} is your desktop.` : null,
       careful.size
         ? `Power actions on ${[...careful].join(", ")}, and commands and files in them, always wait for the owner.`
@@ -286,7 +287,7 @@ export const proxmoxPlugin = definePlugin({
       test: async () => {
         const list = await guests();
         const running = list.filter((g) => g.status === "running").length;
-        return `Connected to ${pve.node}: ${list.length} guests, ${running} running.${brain ? "" : " Powering guests is off until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env."}`;
+        return `Connected to ${pve.node}: ${list.length} guests, ${running} running.${brain ? "" : " Powering guests is off until HATBOT_BRAIN_ID is set in Settings → Proxmox."}`;
       },
     });
   },

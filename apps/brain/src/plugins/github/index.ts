@@ -119,14 +119,17 @@ export const githubPlugin = definePlugin({
   id: "github",
   name: "GitHub",
   description: "Issues, pull requests and code, as Hatbot's bot account",
-  secrets: ["GITHUB_TOKEN", "GITHUB_API_URL"],
+  env: [
+    { name: "GITHUB_TOKEN", secret: true },
+    { name: "GITHUB_API_URL", optional: true, hint: "https://ghe.example.com/api/v3" },
+  ],
   config: z.object({}),
   start: ({ env }) => {
     const base = (env.GITHUB_API_URL || "https://api.github.com").replace(/\/$/, "");
     const token = env.GITHUB_TOKEN;
     if (!token)
       return needsSetup(
-        "Create a fine-grained token for Hatbot's GitHub bot account (contents, issues and pull requests read/write; commit statuses, checks and actions read) and put GITHUB_TOKEN in /etc/hatbot/github.env on the brain, then restart it. GITHUB_API_URL is only for GitHub Enterprise.",
+        "Create a fine-grained token for Hatbot's GitHub bot account (contents, issues and pull requests read/write; commit statuses, checks and actions read), and set it below.",
       );
 
     const { send, api } = httpApi("GitHub", base, {

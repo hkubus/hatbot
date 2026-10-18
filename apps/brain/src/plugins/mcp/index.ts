@@ -90,7 +90,7 @@ const Server = z.object({
   name: z.string().regex(/^[a-z][a-z0-9]{0,15}$/, "Lowercase letters and digits, e.g. github"),
   transport: z.enum(["http", "stdio"]).default("http"),
   url: z.string().url().optional(),
-  /** Request headers; values may use ${NAME} for secrets in /etc/hatbot/mcp.env. */
+  /** Request headers; values may use ${NAME} for a secret set on MCP's page, or in /etc/hatbot/mcp.env. */
   headers: z.record(z.string(), z.string()).default({}),
   command: z.string().min(1).optional(),
   args: z.array(z.string()).default([]),
@@ -168,18 +168,25 @@ export function secretNames(file: string): Set<string> | null {
   return new Set(names.filter((n): n is string => Boolean(n)));
 }
 
-/** ${NAME} from the brain's environment, when the secrets file sets it, or an error naming what's missing. */
+/**
+ * ${NAME}: a secret set on MCP's page, or else from the brain's environment when the secrets file sets
+ * it; or an error naming what's missing.
+ */
 function expand(
   values: Record<string, string>,
   env: Record<string, string | undefined>,
-  secrets: { file: string; names: Set<string> | null },
+  secrets: { file: string; names: Set<string> | null; named: Record<string, string> },
 ) {
   const missing: string[] = [];
   const out = Object.fromEntries(
     Object.entries(values).map(([k, v]) => [
       k,
       v.replace(/\$\{([A-Z0-9_]+)\}/g, (_, name: string) => {
-        const value = secrets.names?.has(name) ? env[name] : undefined;
+        const value = Object.hasOwn(secrets.named, name)
+          ? secrets.named[name]
+          : secrets.names?.has(name)
+            ? env[name]
+            : undefined;
         if (value === undefined) missing.push(name);
         return value ?? "";
       }),
@@ -189,7 +196,10 @@ function expand(
     throw new PluginError(
       `Hatbot can't read ${secrets.file} to find ${missing.join(", ")}: make it root:hatbot, mode 640.`,
     );
-  if (missing.length) throw new PluginError(`${missing.join(", ")} isn't set in ${secrets.file}.`);
+  if (missing.length)
+    throw new PluginError(
+      `${missing.join(", ")} isn't set: add it under Secrets on MCP's page, or to ${secrets.file}.`,
+    );
   return out;
 }
 
@@ -334,8 +344,9 @@ export const mcpPlugin = definePlugin({
   id: "mcp",
   name: "MCP",
   description: "Tools from Model Context Protocol servers",
+  named: true,
   config: Config,
-  start: async ({ env, config }) => {
+  start: async ({ env, named, config }) => {
     const conns: Conn[] = config.servers
       .filter((s) => s.enabled)
       .map((server) => ({ server, client: null, tools: [], error: null }));
@@ -343,7 +354,7 @@ export const mcpPlugin = definePlugin({
     let stopped = false;
     const reconnecting = new Map<Conn, Promise<void>>();
     const file = env.HATBOT_MCP_ENV_FILE || SECRETS_FILE;
-    const secrets = { file, names: secretNames(file) };
+    const secrets = { file, names: secretNames(file), named };
 
     /** Reconnects once for every call that failed at the same time. */
     const reconnect = (c: Conn) => {

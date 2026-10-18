@@ -117,14 +117,17 @@ export const uptimeKumaPlugin = definePlugin({
   id: "uptimekuma",
   name: "Uptime Kuma",
   description: "Monitors' status, response times and certificates, read-only",
-  secrets: ["UPTIME_KUMA_URL", "UPTIME_KUMA_API_KEY"],
+  env: [
+    { name: "UPTIME_KUMA_URL", hint: "http://uptime.lan:3001" },
+    { name: "UPTIME_KUMA_API_KEY", secret: true },
+  ],
   config: z.object({}),
   start: ({ env }) => {
     const base = env.UPTIME_KUMA_URL?.replace(/\/$/, "");
     const key = env.UPTIME_KUMA_API_KEY;
     if (!base || !key)
       return needsSetup(
-        "Create an API key in Uptime Kuma (Settings → API Keys) and put UPTIME_KUMA_URL and UPTIME_KUMA_API_KEY in /etc/hatbot/uptimekuma.env on the brain, then restart it.",
+        "Create an API key in Uptime Kuma (Settings → API Keys), and set it and Uptime Kuma's address below.",
       );
 
     // Kuma takes an API key as basic auth's password, with no username.
@@ -135,7 +138,7 @@ export const uptimeKumaPlugin = definePlugin({
       const res = await send("GET", "/metrics").catch((err) => {
         if (err instanceof PluginError && (err.status === 401 || err.status === 403))
           throw new PluginError(
-            `Uptime Kuma refused the API key (${err.status}). Check UPTIME_KUMA_API_KEY in /etc/hatbot/uptimekuma.env: the key may be expired or turned off.`,
+            `Uptime Kuma refused the API key (${err.status}). Check UPTIME_KUMA_API_KEY in Settings → Uptime Kuma: the key may be expired or turned off.`,
           );
         throw err;
       });

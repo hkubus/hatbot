@@ -147,14 +147,17 @@ export const homeassistantPlugin = definePlugin({
   id: "homeassistant",
   name: "Home Assistant",
   description: "The house's devices and sensors: look at them and control them",
-  secrets: ["HOMEASSISTANT_URL", "HOMEASSISTANT_TOKEN"],
+  env: [
+    { name: "HOMEASSISTANT_URL", hint: "http://homeassistant.lan:8123" },
+    { name: "HOMEASSISTANT_TOKEN", secret: true },
+  ],
   config: Config,
   start: ({ env, config }) => {
     const base = env.HOMEASSISTANT_URL?.replace(/\/$/, "");
     const token = env.HOMEASSISTANT_TOKEN;
     if (!base || !token)
       return needsSetup(
-        "Create a long-lived access token in Home Assistant (your profile, Security) and put HOMEASSISTANT_URL and HOMEASSISTANT_TOKEN in /etc/hatbot/homeassistant.env on the brain, then restart it.",
+        "Create a long-lived access token in Home Assistant (your profile, Security), and set it and Home Assistant's address below.",
       );
 
     const { api } = httpApi("Home Assistant", `${base}/api`, {

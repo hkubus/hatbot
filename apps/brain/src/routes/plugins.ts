@@ -1,4 +1,4 @@
-import { UpdatePlugin } from "@hatbot/shared";
+import { SetPluginSecrets, UpdatePlugin } from "@hatbot/shared";
 import { Hono } from "hono";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware";
@@ -6,7 +6,7 @@ import type { AppEnv } from "../context";
 import { PluginError } from "../plugins/plugin";
 import { found, json } from "./util";
 
-// Plugins in Settings (PLAN.md §4.5): switch on or off, change settings, test.
+// Plugins in Settings (PLAN.md §4.5): switch on or off, change settings and secrets, test.
 export const pluginRoutes = new Hono<AppEnv>()
   .use("/plugins", requireAuth)
   .use("/plugins/*", requireAuth)
@@ -17,6 +17,13 @@ export const pluginRoutes = new Hono<AppEnv>()
     const id = c.req.param("id");
     if (!plugins.get(id)) return c.json({ error: "That's gone." }, 404);
     return c.json(await plugins.update(id, c.req.valid("json")));
+  })
+  // A secret is only ever sent: what comes back says it's set, not what to.
+  .put("/plugins/:id/secrets", json(SetPluginSecrets), async (c) => {
+    const { plugins } = c.var;
+    const id = c.req.param("id");
+    if (!plugins.get(id)) return c.json({ error: "That's gone." }, 404);
+    return c.json(await plugins.setSecrets(id, c.req.valid("json").values));
   })
   .post("/plugins/:id/actions/:name", json(z.unknown()), async (c) => {
     const { id, name } = c.req.param();

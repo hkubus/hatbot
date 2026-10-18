@@ -1,12 +1,14 @@
-// Plugins in Settings (PLAN.md §4.5): the list, and a page per plugin with its switch, secrets,
-// settings and Test button.
-import type { PluginInfo } from "@hatbot/shared";
-import { useCallback, useEffect, useState } from "react";
+// Plugins in Settings (PLAN.md §4.5): the list, and a page per plugin with its switch, what it reads
+// from the environment (set here in place of the host's env files), settings and Test button. Secrets
+// are only ever sent, never shown.
+import type { PluginEnvInfo, PluginInfo } from "@hatbot/shared";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
+import { ask } from "../confirm";
 import { NoForm } from "../form";
 import { PLUGIN_SETTINGS } from "../plugins";
-import { loadPlugins, savePlugin, useStore } from "../store";
+import { loadPlugins, savePlugin, savePluginSecrets, useStore } from "../store";
 import { Switch } from "../switch";
 import { BackHead, Group, LinkRow } from "../ui";
 
@@ -128,14 +130,10 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
           {p.message && <div className="form-error">{p.message}</div>}
           {error && <div className="form-error">{error}</div>}
           {result && <div className={result.ok ? "" : "form-error"}>{result.message}</div>}
-          {p.secrets.length > 0 && (
-            <dl className="kv secrets">
-              {p.secrets.map((s) => (
-                <SecretRow key={s.name} name={s.name} set={s.set} />
-              ))}
-            </dl>
-          )}
         </div>
+
+        {p.env.length > 0 && <EnvForm key={JSON.stringify(p.env)} p={p} toast={toast} />}
+        {p.named && <NamedSecrets p={p} names={p.named} toast={toast} />}
 
         {Settings && (
           <Settings
@@ -164,11 +162,168 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
   );
 }
 
-function SecretRow({ name, set }: { name: string; set: boolean }) {
+const SOURCE = { app: "Set here", host: "From the host's env file" };
+
+/** What the plugin reads from the environment: each set here wins over the host's. */
+function EnvForm({ p, toast }: { p: PluginInfo; toast: (t: string) => void }) {
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(p.env.map((v) => [v.name, v.value ?? ""])),
+  );
+  const { busy, error, run } = useAction();
+  const changes = Object.fromEntries(
+    p.env
+      .filter((v) => (values[v.name] ?? "").trim() !== (v.value ?? ""))
+      .map((v) => [v.name, (values[v.name] ?? "").trim()]),
+  );
+  // Emptying one set here forgets it; one the host set can't be emptied from here.
+  const forgets = Object.entries(changes).filter(([, value]) => !value);
+  const bad = forgets.some(([name]) => p.env.find((v) => v.name === name)?.from !== "app");
+
+  const send = (values: Record<string, string | null>) =>
+    run(async () => {
+      await savePluginSecrets(p.id, values);
+      toast(p.enabled ? `Saved; ${p.name} restarted with it.` : "Saved");
+    });
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    send(Object.fromEntries(Object.entries(changes).map(([n, v]) => [n, v || null])));
+  };
+  const forget = async (v: PluginEnvInfo) => {
+    if (
+      await ask({ text: `Forget the ${v.name} set here and use the host's?`, ok: "Use the host's" })
+    )
+      send({ [v.name]: null });
+  };
+
   return (
-    <>
-      <dt className="mono">{name}</dt>
-      <dd>{set ? "Set" : "Missing"}</dd>
-    </>
+    <form className="panel form" onSubmit={submit}>
+      <h3 className="section-title">Connection</h3>
+      {p.env.map((v) => (
+        <div key={v.name}>
+          <span className="label">
+            <span className="mono">{v.name}</span>
+            {v.optional && " (optional)"} ·{" "}
+            {v.from ? SOURCE[v.from] : v.optional ? "Not set" : "Missing"}
+          </span>
+          <div className="form-row">
+            <input
+              className="field mono"
+              aria-label={v.name}
+              type={v.secret ? "password" : "text"}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={v.secret && v.set ? "Unchanged" : (v.hint ?? "")}
+              value={values[v.name] ?? ""}
+              onChange={(e) => setValues({ ...values, [v.name]: e.target.value })}
+            />
+            {v.from === "app" && (
+              <button
+                type="button"
+                className="btn sm ghost"
+                disabled={busy}
+                onClick={() => forget(v)}
+              >
+                Use the host's
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+      {bad && (
+        <div className="form-error">
+          A value from the host's env file can only be replaced here.
+        </div>
+      )}
+      {error && <div className="form-error">{error}</div>}
+      <div className="form-actions">
+        <button
+          type="submit"
+          className="btn accent"
+          disabled={busy || bad || !Object.keys(changes).length}
+        >
+          Save
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** Secrets by any name, for a plugin that takes them: MCP's ${NAME}. */
+function NamedSecrets({
+  p,
+  names,
+  toast,
+}: {
+  p: PluginInfo;
+  names: string[];
+  toast: (t: string) => void;
+}) {
+  const [name, setName] = useState("");
+  const [value, setValue] = useState("");
+  const { busy, error, run } = useAction();
+  const add = (e: FormEvent) => {
+    e.preventDefault();
+    run(async () => {
+      await savePluginSecrets(p.id, { [name.trim()]: value });
+      setName("");
+      setValue("");
+      toast("Saved");
+    });
+  };
+  const remove = async (n: string) => {
+    if (await ask({ text: `Remove ${n}? Servers that use it stop connecting.`, ok: "Remove" }))
+      run(async () => {
+        await savePluginSecrets(p.id, { [n]: null });
+        toast("Removed");
+      });
+  };
+
+  return (
+    <form className="panel form" onSubmit={add}>
+      <h3 className="section-title">Secrets</h3>
+      <div className="muted">
+        A server's headers and environment use one as ${"{NAME}"}. Names set in /etc/hatbot/mcp.env
+        on the brain work too.
+      </div>
+      {names.map((n) => (
+        <div className="form-row" key={n}>
+          <span className="mono">{n}</span>
+          <button type="button" className="btn sm ghost" disabled={busy} onClick={() => remove(n)}>
+            Remove
+          </button>
+        </div>
+      ))}
+      <div className="form-row">
+        <input
+          className="field mono"
+          aria-label="Name"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="NAME"
+          value={name}
+          onChange={(e) => setName(e.target.value.toUpperCase())}
+        />
+        <input
+          className="field mono"
+          aria-label="Value"
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="Value"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+        />
+      </div>
+      {error && <div className="form-error">{error}</div>}
+      <div className="form-actions">
+        <button
+          type="submit"
+          className="btn accent"
+          disabled={busy || !name.trim() || !value.trim()}
+        >
+          {names.includes(name.trim()) ? "Replace" : "Add"}
+        </button>
+      </div>
+    </form>
   );
 }

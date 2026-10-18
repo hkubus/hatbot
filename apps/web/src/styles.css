@@ -753,10 +753,6 @@ svg.i {
   margin: 0;
   overflow-wrap: anywhere;
 }
-/* A plugin's secrets: names as long as PROXMOX_TLS_FINGERPRINT. */
-.kv.secrets {
-  grid-template-columns: fit-content(70%) minmax(0, 1fr);
-}
 .diff {
   font-family: var(--mono);
   font-size: 12px;
@@ -2273,6 +2269,11 @@ button.text-link:hover {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+/* A button beside a field keeps its one line; the field gives way. */
+.form-row > .btn {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .form-actions {
   display: flex;

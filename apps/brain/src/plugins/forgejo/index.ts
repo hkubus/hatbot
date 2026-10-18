@@ -55,14 +55,17 @@ export const forgejoPlugin = definePlugin({
   id: "forgejo",
   name: "Forgejo",
   description: "Issues, pull requests and code, as Hatbot's bot account",
-  secrets: ["FORGEJO_URL", "FORGEJO_TOKEN"],
+  env: [
+    { name: "FORGEJO_URL", hint: "https://git.example.com" },
+    { name: "FORGEJO_TOKEN", secret: true },
+  ],
   config: z.object({}),
   start: ({ env }) => {
     const base = env.FORGEJO_URL?.replace(/\/$/, "");
     const token = env.FORGEJO_TOKEN;
     if (!base || !token)
       return needsSetup(
-        "Create a token for Hatbot's Forgejo bot account (repository and issue read/write) and put FORGEJO_URL and FORGEJO_TOKEN in /etc/hatbot/forgejo.env on the brain, then restart it.",
+        "Create a token for Hatbot's Forgejo bot account (repository and issue read/write), and set it and Forgejo's address below.",
       );
 
     const { api } = httpApi("Forgejo", `${base}/api/v1`, {

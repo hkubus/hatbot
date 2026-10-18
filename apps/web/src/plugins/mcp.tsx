@@ -205,7 +205,7 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
                 </label>
                 <label>
                   <span className="label">
-                    Headers, one NAME=value per line; ${"{SECRET}"} reads mcp.env
+                    Headers, one NAME=value per line; ${"{SECRET}"} reads a secret above
                   </span>
                   <textarea
                     className="field mono"
@@ -244,7 +244,7 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
                 </label>
                 <label>
                   <span className="label">
-                    Environment, one NAME=value per line; ${"{SECRET}"} reads mcp.env
+                    Environment, one NAME=value per line; ${"{SECRET}"} reads a secret above
                   </span>
                   <textarea
                     className="field mono"

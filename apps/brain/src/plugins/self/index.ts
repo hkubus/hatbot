@@ -74,7 +74,16 @@ export const selfPlugin = (d: { desktop: DesktopAgent; dir: string }) =>
     id: "self",
     name: "Own code",
     description: "Read and test Hatbot's own code, and propose changes as Forgejo pull requests",
-    secrets: ["FORGEJO_URL", "FORGEJO_TOKEN", "HATBOT_SELF_REPO"],
+    env: [
+      { name: "FORGEJO_URL", hint: "https://git.example.com" },
+      { name: "FORGEJO_TOKEN", secret: true },
+      { name: "HATBOT_SELF_REPO", hint: "owner/hatbot" },
+      {
+        name: "HATBOT_SELF_GIT_URL",
+        optional: true,
+        hint: "https://git.example.com/owner/hatbot.git",
+      },
+    ],
     config: z.object({}),
     start: ({ env }) => {
       if (!d.desktop.configured)
@@ -84,7 +93,7 @@ export const selfPlugin = (d: { desktop: DesktopAgent; dir: string }) =>
       const repo = env.HATBOT_SELF_REPO ?? "";
       if (!base || !token || !Repo("").safeParse(repo).success)
         return needsSetup(
-          "Put HATBOT_SELF_REPO, Hatbot's repository as owner/name, next to FORGEJO_URL and FORGEJO_TOKEN in /etc/hatbot/forgejo.env on the brain, then restart it. The bot account needs write access to that repository, to push branches.",
+          "Set HATBOT_SELF_REPO, Hatbot's repository as owner/name, and Forgejo's address and token (the Forgejo plugin's) below. The bot account needs write access to that repository, to push branches.",
         );
       const gitUrl = env.HATBOT_SELF_GIT_URL ?? `${base}/${repo}.git`;
       const cache = join(d.dir, "repo.git");

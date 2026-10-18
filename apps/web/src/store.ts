@@ -496,6 +496,13 @@ export async function savePlugin(id: string, patch: { enabled?: boolean; config?
   return p;
 }
 
+/** Each value set on the brain, or null for the host's again; the plugins that read them restart. */
+export async function savePluginSecrets(id: string, values: Record<string, string | null>) {
+  const p = await api<PluginInfo>(`/plugins/${id}/secrets`, { method: "PUT", body: { values } });
+  put("plugins", p.id, p);
+  return p;
+}
+
 export const putProposal = (p: Proposal) => put("proposals", p.id, p);
 // A page has asked for them, even if none came: a reconnect looks again.
 let proposalsLoaded = false;

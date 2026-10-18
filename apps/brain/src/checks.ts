@@ -46,7 +46,8 @@ export type ChecksDeps = {
   desktop: Desktop;
   plugins: Plugins;
   approvals: Approvals;
-  proxmox: Proxmox;
+  /** Made as it's set now: Settings can change it. */
+  proxmox: () => Proxmox;
   updates: Updates;
   /** Your ntfy server; null when it isn't set up. */
   ntfy: Pick<
@@ -351,7 +352,7 @@ export class Checks {
   }
 
   private async snapshots() {
-    const px = this.d.proxmox;
+    const px = this.d.proxmox();
     if (!px.configured) return skip("The Proxmox token or the desktop's id isn't set.");
     const snaps = await px.desktopSnapshots();
     const newest = snaps

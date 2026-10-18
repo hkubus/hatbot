@@ -194,9 +194,21 @@ export type PluginFiles = {
 
 export type PluginContext<C> = {
   config: C;
+  /** The brain's environment, with what's set in Settings in place of the host's. */
   env: Record<string, string | undefined>;
+  /** For a plugin that takes them, the secrets set in Settings by name. */
+  named: Record<string, string>;
   db: Db;
   files?: PluginFiles;
+};
+
+export type PluginEnvVar = {
+  name: string;
+  /** Only ever sent: Settings says it's set, never what to. */
+  secret?: boolean;
+  optional?: boolean;
+  /** What goes in it, shown in the empty field. */
+  hint?: string;
 };
 
 export type Plugin<C = unknown> = {
@@ -206,8 +218,13 @@ export type Plugin<C = unknown> = {
   description: string;
   /** Its settings. Every field needs a default: `parse({})` must succeed. */
   config: z.ZodType<C>;
-  /** Environment variables it reads from /etc/hatbot/*.env; Settings shows which are missing. */
-  secrets?: string[];
+  /**
+   * What it reads from the environment: /etc/hatbot/*.env on the brain, or set on its page in Settings,
+   * which wins. A change there restarts every plugin that reads it.
+   */
+  env?: PluginEnvVar[];
+  /** It takes secrets by any name too (MCP's ${NAME}), added on its page. */
+  named?: boolean;
   start: (ctx: PluginContext<C>) => Promise<PluginInstance> | PluginInstance;
 };
 

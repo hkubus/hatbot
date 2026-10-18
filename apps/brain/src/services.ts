@@ -27,7 +27,7 @@ import { codePlugin } from "./plugins/code";
 import type { Plugin } from "./plugins/plugin";
 import { Plugins } from "./plugins/registry";
 import { selfPlugin } from "./plugins/self";
-import type { Proxmox } from "./proxmox";
+import { Proxmox } from "./proxmox";
 import { WeeklyReport } from "./report";
 import { Schedules } from "./schedules";
 import { Secrets } from "./secrets";
@@ -55,7 +55,8 @@ export type Outside = {
   notifications: Notifier;
   /** Your ntfy server, for Check everything; null when there's none to check. */
   ntfy: ChecksDeps["ntfy"];
-  proxmox: Proxmox;
+  /** Tests' own; the brain's is made from the environment and Settings, afresh each time. */
+  proxmox?: Proxmox;
   /** Besides the Code plugin, which is always there. */
   plugins: Plugin[];
   pluginEnv?: Record<string, string | undefined>;
@@ -91,6 +92,7 @@ export async function createServices(o: Outside) {
     db,
     events,
     env: o.pluginEnv,
+    secrets,
     files,
     reserved: CORE_TOOL_NAMES,
   });
@@ -162,7 +164,7 @@ export async function createServices(o: Outside) {
 
   const updates = new Updates(config, clock);
   const ping = new DeadManPing({ db, url: o.pingUrl, clock });
-  const { proxmox } = o;
+  const proxmox = () => o.proxmox ?? new Proxmox(plugins.env());
   const checks = new Checks({
     ...core,
     proxmox,
