@@ -257,7 +257,7 @@ export function outside(
   return why;
 }
 
-const CONTACT_NAMES: Record<MandateContact, string> = {
+export const CONTACT_NAMES: Record<MandateContact, string> = {
   phone: "a phone number",
   email: "an e-mail address",
   address: "an address",
