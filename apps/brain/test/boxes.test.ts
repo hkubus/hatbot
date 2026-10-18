@@ -36,7 +36,7 @@ test("a box: made in the chat, opened on an opaque origin, keeping what its page
   expect(html).toStartWith("<!doctype html><style>");
   expect(html).toContain("window.hatbox");
 
-  const store = (body: unknown) => t.call("POST", "/boxes/1/store", body, signIn(t));
+  const store = (body: unknown) => t.call("POST", "/boxes/1/call", body, signIn(t));
   expect((await store({ op: "set", key: "walk", value: [true, false] })).status).toBe(200);
   expect(await (await store({ op: "get", key: "walk" })).json()).toEqual({ value: [true, false] });
   const big = await store({ op: "set", key: "big", value: "x".repeat(1024 * 1024) });

@@ -206,7 +206,7 @@ export class Boxes {
     return box;
   }
 
-  /** A call from the box's page through the app: hatbox.store (PLAN.md §21.2). */
+  /** A call from the box's page through the app (PLAN.md §21.2). */
   call(id: number, c: BoxCall): BoxAnswer {
     switch (c.op) {
       case "get": {
@@ -292,32 +292,42 @@ export class Boxes {
 const BASE_CSS = `:root{--hb-bg:light-dark(#f5f5f7,#161617);--hb-surface:light-dark(#fff,#1e1e20);--hb-text:light-dark(#1d1d1f,#f5f5f7);--hb-muted:light-dark(#6e6e73,#98989d);--hb-line:light-dark(rgba(0,0,0,.09),rgba(255,255,255,.09));--hb-accent:light-dark(#e8820c,#ff9f2e);--hb-on-accent:#1d1d1f;--hb-attention:light-dark(#007aff,#0a84ff);--hb-danger:light-dark(#ff3b30,#ff453a);--hb-success:light-dark(#34c759,#30d158);--hb-font:system-ui,-apple-system,"Segoe UI",sans-serif;--hb-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}:where(:root){background:var(--hb-bg);color:var(--hb-text);font-family:var(--hb-font)}`;
 
 /**
- * window.hatbox (PLAN.md §21.2): hatbox.store's calls go to the app as messages, which answers them
- * for this box only; the app also sends the theme. Links to other pages open in a new tab, since the
- * frame can't leave the box.
+ * window.hatbox (PLAN.md §21.2). Each call goes to the app, which passes it on to the brain for this
+ * box only (POST /boxes/:id/call), so a new kind of call needs nothing new in the apps. In the web app
+ * the page is a frame and calls are messages to its parent, which also sends the theme; in the iOS app
+ * it's the web view's own page, and calls go to WebKit's `hatbox` handler, which replies. Links to
+ * other pages open in a new tab, since the frame can't leave the box.
  */
 const HATBOX = `(() => {
   const root = document.documentElement;
   const theme = { dark: __DARK__ };
   const scheme = () => { root.style.colorScheme = theme.dark ? "dark" : "light"; };
   scheme();
+  const setDark = (dark) => {
+    theme.dark = Boolean(dark);
+    scheme();
+    dispatchEvent(new Event("hatboxtheme"));
+  };
+  const native = parent === window ? window.webkit?.messageHandlers?.hatbox : undefined;
   let next = 1;
   const waiting = new Map();
-  const call = (op, key, value) => new Promise((resolve, reject) => {
-    if (parent === window) return reject(new Error("Open this box in Hatbot."));
-    const id = next++;
-    waiting.set(id, { resolve, reject });
-    parent.postMessage({ hatbox: id, op, key, value }, "*");
-  });
+  const call = (op, args) => {
+    if (native)
+      return native.postMessage({ ...args, op }).catch((e) => {
+        throw new Error(typeof e === "string" ? e : e?.message || "Couldn't reach Hatbot.");
+      });
+    return new Promise((resolve, reject) => {
+      if (parent === window) return reject(new Error("Open this box in Hatbot."));
+      const id = next++;
+      waiting.set(id, { resolve, reject });
+      parent.postMessage({ ...args, op, hatbox: id }, "*");
+    });
+  };
+  if (native) Object.defineProperty(window, "__hatboxTheme", { value: setDark });
   addEventListener("message", (e) => {
     const d = e.data;
     if (e.source !== parent || parent === window || !d || typeof d.hatbox !== "number") return;
-    if (d.hatbox === 0) {
-      theme.dark = Boolean(d.dark);
-      scheme();
-      dispatchEvent(new Event("hatboxtheme"));
-      return;
-    }
+    if (d.hatbox === 0) return setDark(d.dark);
     const w = waiting.get(d.hatbox);
     if (!w) return;
     waiting.delete(d.hatbox);
@@ -332,10 +342,10 @@ const HATBOX = `(() => {
   }, true);
   window.hatbox = Object.freeze({
     store: Object.freeze({
-      get: (key) => call("get", String(key)),
-      set: (key, value) => call("set", String(key), value),
-      delete: (key) => call("delete", String(key)),
-      keys: () => call("keys"),
+      get: (key) => call("get", { key: String(key) }),
+      set: (key, value) => call("set", { key: String(key), value }),
+      delete: (key) => call("delete", { key: String(key) }),
+      keys: () => call("keys", {}),
     }),
     theme,
   });

@@ -225,14 +225,16 @@ function BoxFrame({ id, version, title }: { id: number; version: number; title: 
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
       const w = frame.current?.contentWindow;
-      const d = e.data as { hatbox?: unknown; op?: unknown; key?: unknown; value?: unknown };
       // The page's origin is opaque. A second load means the frame went somewhere else.
       if (!w || e.source !== w || e.origin !== "null" || loads.current > 1) return;
-      if (!d || typeof d.hatbox !== "number" || d.hatbox < 1) return;
+      if (!e.data || typeof e.data !== "object" || Array.isArray(e.data)) return;
+      // The brain checks the call: a new kind needs nothing here.
+      const { hatbox: n, ...call } = e.data as { hatbox?: unknown };
+      if (typeof n !== "number" || n < 1) return;
       const reply = (answer: object) => {
-        if (loads.current <= 1) w.postMessage({ hatbox: d.hatbox, ...answer }, "*");
+        if (loads.current <= 1) w.postMessage({ ...answer, hatbox: n }, "*");
       };
-      api<BoxAnswer>(`/boxes/${id}/store`, { body: { op: d.op, key: d.key, value: d.value } }).then(
+      api<BoxAnswer>(`/boxes/${id}/call`, { body: call }).then(
         (a) => reply({ value: a.value }),
         (err) => reply({ error: errorText(err) }),
       );

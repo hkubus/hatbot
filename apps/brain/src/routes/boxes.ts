@@ -61,8 +61,8 @@ export const boxRoutes = new Hono<AppEnv>()
     boxes.revert(id(c), c.req.valid("json").version, { messageId: null });
     return found(c, boxes.detail(id(c)), GONE);
   })
-  // hatbox.store, from the box's page through the app.
-  .post("/boxes/:id/store", json(BoxCall), (c) => {
+  // Whatever the box's page asks of window.hatbox, passed on as it is by the app.
+  .post("/boxes/:id/call", json(BoxCall), (c) => {
     const { boxes } = c.var;
     if (!boxes.get(id(c))) return c.json({ error: GONE }, 404);
     return c.json(boxes.call(id(c), c.req.valid("json")));
