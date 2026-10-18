@@ -116,6 +116,7 @@ test("the page says when a secret field holds something a screenshot would show"
     ...input(f),
     value: f.value,
     getClientRects: () => (f.shown === false ? [] : [{}]),
+    ownerDocument: { defaultView: { getComputedStyle: () => ({ visibility: "visible" }) } },
   });
   type Ask = { secrets?: boolean; text?: boolean; max?: number };
   const run = (fields: ReturnType<typeof field>[], ask: Ask = { secrets: true }) => {

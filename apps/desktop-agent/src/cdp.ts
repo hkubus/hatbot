@@ -3,7 +3,7 @@
 // fake the answers.
 import type { AgentContext, AgentElement } from "@hatbot/shared/desktop";
 import { type Browser, ChromiumDown } from "./browser";
-import { ELEMENT } from "./page";
+import { ELEMENT, WALK } from "./page";
 
 const MAX_TEXT = 20_000;
 
@@ -51,12 +51,12 @@ export const SECRET = `
 // fields count in open shadow roots and same-origin frames too. A payment frame from another address
 // can't be read, and autofill or a paste may have filled it without typing, so one that's showing counts.
 export const CONTEXT_JS = `(o) => {
+  ${WALK}
   ${SECRET}
   // Card fields' frames, by who serves them or what they say they are: whole words, not "karty
   // graficzne" in a video's title.
   const PAY_HOST = /(?:^|\\.)(?:stripe\\.com|stripe\\.network|adyen\\.com|adyenpayments\\.com|braintreegateway\\.com|braintree-api\\.com|payu\\.com|przelewy24\\.pl|tpay\\.com|paynow\\.pl|imoje\\.pl|blik\\.com|checkout\\.com|squareup\\.com|klarna\\.com)$/i;
   const PAY_WORDS = /\\b(?:card ?(?:number|num|no)|credit card|debit card|card payment|cvc|cvv|security code|numer karty|karty płatniczej|karta płatnicza|payment (?:input|frame|field|form|details)|3d ?secure|3ds)\\b/i;
-  const shown = (e) => e.getClientRects().length > 0;
   // A frame you could see: not hidden, and big enough on screen to hold a field (Stripe.js leaves an
   // invisible one, a pixel high, on every page that loads it).
   const onScreen = (e) => {
@@ -72,21 +72,11 @@ export const CONTEXT_JS = `(o) => {
     return PAY_HOST.test(host) || PAY_WORDS.test(['title', 'name', 'aria-label']
       .map((a) => e.getAttribute(a) || '').join(' '));
   };
-  const secretIn = (root) => {
-    for (const e of root.querySelectorAll('*')) {
-      if ((e.tagName === 'INPUT' || e.tagName === 'TEXTAREA') && e.value && isSecret(e) && shown(e)) return true;
-      if (e.shadowRoot && secretIn(e.shadowRoot)) return true;
-      if (e.tagName === 'IFRAME' || e.tagName === 'FRAME') {
-        let d = null;
-        try { d = e.contentDocument; } catch {}
-        if (d ? secretIn(d) : onScreen(e) && payFrame(e)) return true;
-      }
-    }
-    return false;
-  };
+  const secret = (e) => ((e.tagName === 'INPUT' || e.tagName === 'TEXTAREA') && e.value && isSecret(e)
+    && shownBox(e)) || (isFrame(e) && !frameDoc(e) && onScreen(e) && payFrame(e));
   const out = {};
   if (o.text) out.text = (document.body ? document.body.innerText : "").slice(0, o.max);
-  if (o.secrets) out.secretShown = secretIn(document);
+  if (o.secrets) out.secretShown = allIn(document).some(secret);
   return out;
 }`;
 
@@ -148,8 +138,7 @@ export const ELEMENT_JS = `(o) => {
   // Nothing focused is the page itself, which still says whether it has the keyboard: when it doesn't,
   // Enter goes to the address bar or another window.
   if ((!el || el === el.ownerDocument.body) && o.focused)
-    return { tag: 'body', role: null, type: null, label: '', inForm: false, url: location.href,
-      editable: false, fields: fieldsFor(document.body), secret: false, pageFocus: document.hasFocus() };
+    return { ...pageInfo(), secret: false, pageFocus: document.hasFocus() };
   if (!el || el === el.ownerDocument.body) return null;
   // Teach mode drops what's typed here. A frame's focus can't be seen from the page, so it counts too, as
   // does a custom element's whose shadow root is closed: it can't take the focus itself, unless it's the
