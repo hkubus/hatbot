@@ -7,7 +7,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 - **No vendor cloud.** It runs on your hardware.
 - **Predictable cost.** Spending limits are enforced.
 
-> Status: design agreed 2026-10-09. M0–M5, the iOS app, more than one bot (§14), looking after things (§15), negotiation's N1 and N2 (§16), research (§17) and own code (§18) are built, and so are the fixes from the 2026-10-17 code review. The owner deployed and tried them live by 2026-10-18. Only negotiation has work still planned (§16, "Not done"); everything else not built was left on purpose and is listed in §12.1 (owner's call, 2026-10-18).
+> Status: design agreed 2026-10-09. M0–M5, the iOS app, more than one bot (§14), looking after things (§15), negotiation's N1 and N2 (§16), research (§17) and own code (§18) are built, and so are the fixes from the 2026-10-17 code review. The owner deployed and tried them live by 2026-10-18. Only negotiation (§16, "Not done") and boxes (§21, planned 2026-10-18) have work still planned; everything else not built was left on purpose and is listed in §12.1 (owner's call, 2026-10-18).
 
 ---
 
@@ -634,7 +634,7 @@ Known gaps, kept because closing them costs more than they risk. Reopen one only
 - desktop-agent keeps its own list of payment hosts for Teach's card-frame check, apart from the brain's.
 - The try-again note and the chart-fix note are user turns opening "(No message from the owner: …)": the API takes a system message only after a user turn.
 
-Features left out on purpose (the owner's call, 2026-10-18): only negotiation (§16) has work still planned.
+Features left out on purpose (the owner's call, 2026-10-18): only negotiation (§16) and boxes (§21) have work still planned.
 - Research: no page reader that runs JavaScript. It would fetch any URL the model names, and so could send out what the task has read; pages that need a browser go to `run_desktop_task`, which asks before consequential steps. And no research started from schedules: a schedule's task can do lighter research itself.
 - Each stdio MCP server running as its own user, which needs a root-side launcher (§4.5).
 - Settings → Plugins and teach mode in the iOS app: they stay web-only.
@@ -982,3 +982,63 @@ Hatbot asks you, with the likely answers as buttons. Agreed 2026-10-18.
 - **In a background task**, research too: `ask_owner` also takes `wait_hours` (¼–24, default 4). Each question is its own (`apps/brain/src/questions.ts`), and the task waits for all of them: it goes to `waiting_answer`, gives up its slot and doesn't use the model, like an approval. Each shows in the tray of the chat its bot is in (or the chat the task came from) and on the task's page, with the buttons and a field for your own answer (`POST /questions/:id`). The answers come back to the model as yours; one with none in time is marked so, and the model carries on with what's safest, or finishes and says what it needed. At most 3 asks per task. A task that ends drops its open questions, and a restart drops them all.
 - **What it had read:** a question keeps the untrusted things its task had read when it asked (`questions.sources`, migration 39), like an approval, and shows "After reading …" under it in the apps and on the notification: a page could have steered it. Research has always read pages by the time it asks.
 - **Notifications:** each question is a notification. Up to 3 choices (ntfy's limit) are buttons on it, each signed for its question and choice (`POST /questions/:id/token-answer`, as for approvals, §6.2), until the question expires; one with 4 lists them and opens the task.
+
+## 21. Boxes (planned 2026-10-18)
+Small web apps a bot makes for you and you keep, like Claude's artifacts: a habit tracker, a calculator, a dashboard. You open one from the chat. A box can also have a backend of its own, on a guest of its own. Agreed 2026-10-18. In the code, the runtime and the page's API are called **Hatbox**.
+
+### 21.1 Decisions
+| Area | Decision |
+|---|---|
+| Kinds | A **page box** is one HTML page, with its data kept in the brain (`hatbox.store`); it needs nothing else to run. A **server box** adds `server.ts` (`export default { fetch(req), scheduled?() }`, on Bun, with `bun:sqlite` in a folder of its own), run on the boxes guest (§21.6) |
+| Source | In the brain's SQLite, each change a version (`box_versions`), all kept. Not in memory: memory takes only markdown, is trusted on every read, and code would fill its search. The boxes guest holds only the running copies and their data |
+| Showing | Never as a page on the app's origin, where it would have your session. The brain serves a box at `GET /api/v1/boxes/:id/frame?v=&t=`, with a signed 10-minute token in place of the cookie (so the iOS app can open it too) and `Content-Security-Policy: sandbox allow-scripts allow-forms; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'`. The page gets an opaque origin and no network: it reaches only its own data and backend, through `window.hatbox`, which the app answers for that one box. Not `srcdoc`: that takes the app's own CSP, which allows no inline scripts |
+| Opening | A full page, `/boxes/:id`, under Hatbot's toolbar, so a box can't pass for the app's own screens. Approvals never show inside a box |
+| Building | The brain never builds or runs a box's code (`bun build` macros run code). In X1 a box is one self-contained HTML file. From X2, imports and npm packages are built on the boxes guest in a throwaway unit (`bun install --ignore-scripts`, `bun build`, inlined into one file of up to 5 MB) and the result is kept in the brain, so a page box still opens while the guest is down |
+| Backend | A guest of its own, `hatbot-boxes`, not the desktop: it doesn't share the desktop's 1.5 GiB with Chromium, a desktop rollback doesn't take box data back with it, and it's further from the browser profiles. Each box is a `hatbox@<id>` unit with its own DynamicUser, `PrivateNetwork=yes` and 128 MB (384 MB for all boxes), listening on a Unix socket that the guest's agent relays. It starts on the first request and stops after 15 idle minutes. Not the brain, which holds the keys (§4.5), and not a cloud service (§1) |
+| Egress | A box's process has no network. Its `fetch` goes through the agent, which lets through only the hosts in the box's `box.json` and checks addresses as `/fetch` does. New hosts in a tainted chat go to Haiku's review, then you, listing them (owner's choice, 2026-10-18) |
+| Trust | Making and changing a box is free and doesn't count towards the chat's two changes (§4.5), as memory writes don't. What a box gives the model is untrusted: what its page saved (`box_data`), and from X2 its logs, a call to its backend and a failed build. A box changed by tainted work reads back as untrusted, as research reports do. A box can still send out what it shows (it can navigate its frame away, and you can follow its links), so what's gated is what a box can see and reach, not what it shows |
+| Bots | A box belongs to the bot that made it and the chat it was made in. Only that bot changes it; you see them all. A deleted bot's boxes go to Hatbot. Not in incognito |
+| Deleting | Yours, in the app. The bot has no tool for it |
+| Pause all | Stops every backend and box schedule (X2). Page boxes still open: nothing of theirs runs on a server |
+| Without the guest | Page boxes only |
+
+### 21.2 The page's API (`window.hatbox`)
+The brain puts a small script at the top of every box's page.
+- `hatbox.store.get(key)`, `.set(key, value)`, `.delete(key)` and `.keys()`: JSON values, up to 1 MB each and 5 MB a box, kept in the brain. Each returns a promise.
+- `hatbox.theme`: `dark` or not, and the app's colours as CSS variables on the page (`--hb-bg`, `--hb-text`, `--hb-accent`, …), updated when the theme changes.
+- `hatbox.fetch(path, init)` (X2): the box's backend, with bodies up to 5 MB.
+- Later (X4): `hatbox.ask` (Haiku, no tools, its own daily limit, "Boxes" in Spend), `hatbox.feed` (a plugin's read tool the brain runs on a schedule, as watchers do; adding one after untrusted content asks, and the approval says whether the box can also reach hosts) and `hatbox.send` (a note in the chat from the box: untrusted, never your words).
+
+The app answers only messages from the box's own frame, and stops answering once the frame has left the box's page.
+
+### 21.3 Data (migration 41)
+- `boxes`: id, bot_id, conversation_id, title, version (the current one), created_at, updated_at.
+- `box_versions`: box_id, n, title, html, message_id, tainted_by, created_at.
+- `box_store`: box_id, key, value, updated_at.
+- `messages.box_id`, and a `message.box` event, as for negotiations: the reply that made or changed a box shows it.
+
+### 21.4 Tools (chat only)
+- `box_create(title, html)`: a new box, shown under the reply.
+- `box_edit(box, edits?, html?, title?)`: exact find-and-replace edits (each must match once) or the whole page, as a new version.
+- `box_list`, `box_read(box, version?)`, and `box_revert(box, version)`, which makes a new version with the old page.
+- `box_data(box)`: what the page saved. Untrusted.
+- The system prompt says a box is for something the owner will keep or come back to; a one-off answer stays in the reply, where charts already draw. A box is one self-contained file with no outside requests; it saves with `hatbox.store` and follows the theme.
+
+### 21.5 Apps
+- **Chat**: the reply that made or changed a box shows its title, with **Open**.
+- **Web**: Boxes in the sidebar (from Settings on a phone) lists them, latest change first. `/boxes/:id` shows the box as large as the window allows, under a toolbar with its title, the version menu, Code (the page's source, read-only) and Delete.
+- **iOS** (X3): Boxes in the drawer. A box opens in a `WKWebView` with a non-persistent data store at the signed address; the bridge is a `WKScriptMessageHandler`, and the view doesn't navigate away from the box. `Box` in `Models.swift`, `Route.box`, `hatbot://boxes/<id>`.
+
+### 21.6 The boxes guest (X2)
+- `hatbot-boxes`: an unprivileged LXC, Debian 13, 2 vCPU, 768 MiB (+512 MiB swap), 8 GB on SSD, tagged `hatbot` in pool `hatbot`, with nightly snapshots kept 7 days and PBS backups. `host-setup.sh`'s preflight counts it; `ssh-setup.sh` takes a third machine, or none.
+- The host's `bridge hatbot` table filters its port as it does the desktop's: internet only, no LAN or host, and only the brain reaches its agent, on 7071. Inside, an output chain lets only the agent's user out, and box units have no network at all.
+- `apps/hatbox`: a small Bun daemon like desktop-agent, behind a bearer secret, importing only `@hatbot/shared`'s sub-paths. `PUT /boxes/:id` (plain files only: no set-id bits, no paths outside), `/build`, `/http/*` (headers both ways), `/scheduled`, `/logs`, `/stop`, `DELETE`, and `GET /boxes` (which versions it has, so the brain sends again what's missing).
+- Units: `hatbox@.service`, `hatbox-build@.service` and `hatbox.slice`; a polkit rule lets the agent's user start and stop only those. Update sends the agent its code as it does desktop-agent's; units and firewall rules come with `deploy.sh`. `verify.sh` and `test-firewall.sh` check that box units have no network.
+- Schedules: `scheduled()` runs at most every 5 minutes, started by the brain's scheduler, without the model.
+
+### 21.7 Milestones
+- **X1, page boxes**: migration 41, the tools, versions, the frame and `hatbox.store`, the web app. Done when "make me a habit tracker" makes a box that keeps its ticks across reloads and browsers.
+- **X2, the boxes guest**: the guest, `apps/hatbox`, builds, server boxes, egress by host, idle stop, logs and backend calls for the model, schedules, Pause all. Done when "check this shop's price every hour and chart it" works with only the shop's host let through.
+- **X3, iOS.**
+- **X4**: `hatbox.ask`, `hatbox.feed` and `hatbox.send`.
+- **Not planned**: sharing a box by public link (a second origin, and strangers reaching the guest), WebSockets from backends, and languages other than TypeScript.
