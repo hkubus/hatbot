@@ -472,7 +472,7 @@ function screensOf(t: TestApp, id: number): string[] {
 }
 
 async function record(t: TestApp, call: Call, show?: () => Promise<void>) {
-  const res = await call("POST", "/teach/start");
+  const res = await call("POST", "/teach/start", {});
   expect(res.status).toBe(200);
   const session = (await res.json()) as TeachSession;
   expect(session.status).toBe("recording");
@@ -683,6 +683,31 @@ test("discarding a recording deletes its screenshots, a restart's too", async ()
   expect(again.get(second.id)?.status).toBe("discarded");
 });
 
+test("a recording discarded while it stops stays discarded", async () => {
+  const { t, work, call } = await teachApp();
+  const session = await record(t, call);
+  const stopping = t.teach.stop();
+  await t.teach.discard(session.id);
+  expect((await stopping).status).toBe("discarded");
+  await Bun.sleep(5);
+  expect(t.teach.get(session.id)?.status).toBe("discarded");
+  expect(work.creates.some((p) => p.system === TEACH_PROMPT)).toBe(false);
+});
+
+test("typing into a frame isn't kept", async () => {
+  const { t, work, call } = await teachApp();
+  const session = await record(t, call, async () => {
+    t.agent.element = { tag: "frame", role: null, type: null, label: "", inForm: false };
+    for (const m of typeText("4111111111111111")) t.teach.input(m);
+    await Bun.sleep(1);
+  });
+  await call("POST", "/teach/stop");
+  await waitFor(() => t.teach.get(session.id)?.status === "draft");
+  const body = JSON.stringify(work.creates.find((p) => p.system === TEACH_PROMPT)?.messages);
+  expect(body).not.toContain("4111");
+  expect(body).toContain("typed 16 characters into a password or code field");
+});
+
 test("a skill name that's taken needs replace; bad names are refused", async () => {
   const { t, call } = await teachApp();
   await t.memory.write("skills/renew-library-books.md", "# Old\n", t.settings.get().owner, "Old");
@@ -721,7 +746,8 @@ test("teach can't start while a task has the desktop; an empty recording isn't d
   const t = await testApp(new FakeModel(), work);
   await t.desktop.refresh();
   const { cookie } = await setUpOwner(t);
-  const call = (method: string, path: string) => t.call(method, path, undefined, { cookie });
+  const call = (method: string, path: string, body?: unknown) =>
+    t.call(method, path, body, { cookie });
   const task = t.tasks.createDesktopTask({
     title: "Log in",
     goal: "Log in",
@@ -732,18 +758,27 @@ test("teach can't start while a task has the desktop; an empty recording isn't d
   // Asking for you leaves the screen free; once you take over for it, the task has it.
   expect((await call("POST", "/desktop/takeover")).status).toBe(200);
   expect(t.tasks.lane.holderId).toBe(task.id);
-  const busy = await call("POST", "/teach/start");
+  const busy = await call("POST", "/teach/start", {});
   expect(busy.status).toBe(409);
   await t.tasks.cancel(task.id);
   await t.tasks.idle();
 
-  await call("POST", "/teach/start");
+  await call("POST", "/teach/start", {});
   const stopped = (await (await call("POST", "/teach/stop")).json()) as TeachSession;
   expect(stopped.status).toBe("failed");
   expect(stopped.error).toContain("Nothing was recorded");
   expect((await call("POST", `/teach/${stopped.id}/draft`)).status).toBe(409);
   expect((await call("GET", "/teach")).status).toBe(200);
   expect((await t.call("POST", "/teach/start")).status).toBe(401);
+  // A body that isn't an object, or a name a skill can't have, is refused before anything starts.
+  expect((await call("POST", "/teach/start", null)).status).toBe(400);
+  const bad = await call("POST", "/teach/start", { replaces: "Renew Books" });
+  expect(bad.status).toBe(400);
+  expect(await bad.json()).toEqual({
+    error: "Use lowercase letters, digits and dashes.",
+    field: "replaces",
+  });
+  expect(t.desktop.get().control).toBe("hatbot");
 });
 
 test("a failed draft can be written again", async () => {

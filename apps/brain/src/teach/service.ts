@@ -151,7 +151,7 @@ export class Teach {
     return { recording: this.rec ? this.get(this.rec.id) : null, drafts };
   }
 
-  private update(id: number, patch: Partial<Omit<Row, "id">>, onlyIf?: Row["status"]) {
+  private update(id: number, patch: Partial<Omit<Row, "id">>, onlyIf?: Row["status"]): boolean {
     const keys = Object.keys(patch);
     const res = this.d.db
       .query(
@@ -159,6 +159,7 @@ export class Teach {
       )
       .run(...(Object.values(patch) as (string | null)[]), id, ...(onlyIf ? [onlyIf] : []));
     if (res.changes) this.emit(id);
+    return res.changes > 0;
   }
 
   private emit(id: number) {
@@ -197,7 +198,11 @@ export class Teach {
         // went somewhere CDP can't see.
         if (!el || el.pageFocus === false) throw new OffPage("the keyboard isn't on a page");
         return {
-          secret: Boolean(el.secret) || el.type === "password" || el.tag === "iframe",
+          secret:
+            Boolean(el.secret) ||
+            el.type === "password" ||
+            el.tag === "iframe" ||
+            el.tag === "frame",
           url: el.url ?? null,
         };
       },
@@ -254,13 +259,18 @@ export class Teach {
     if (id === undefined) throw new TeachError("Nothing is being recorded.", 409);
     const steps = (await this.endRecording(id)) ?? [];
     const acted = actions(steps) > 0;
-    this.update(id, {
-      status: acted ? "drafting" : "failed",
-      stopped_at: this.now(),
-      events: JSON.stringify(steps),
-      error: acted ? null : "Nothing was recorded. Take over and show Hatbot the chore.",
-    });
-    if (acted) void this.write(id);
+    // Discarded while the recording was ending: it stays thrown away.
+    const ended = this.update(
+      id,
+      {
+        status: acted ? "drafting" : "failed",
+        stopped_at: this.now(),
+        events: JSON.stringify(steps),
+        error: acted ? null : "Nothing was recorded. Take over and show Hatbot the chore.",
+      },
+      "recording",
+    );
+    if (acted && ended) void this.write(id);
     return this.get(id) as TeachSession;
   }
 
