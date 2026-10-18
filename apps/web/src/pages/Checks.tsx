@@ -3,9 +3,8 @@ import type { Approval, CheckReport, CheckState, ChecksInfo } from "@hatbot/shar
 import { useEffect, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
-import { Icon } from "../icons";
-import { navigate } from "../router";
 import { useStore } from "../store";
+import { BackHead } from "../ui";
 
 const CHIP: Record<CheckState, { label: string; className: string }> = {
   ok: { label: "OK", className: "chip ok" },
@@ -62,16 +61,11 @@ export function Checks() {
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">
-          <button type="button" className="btn sm ghost back" onClick={() => navigate("/settings")}>
-            <Icon name="chevron" />
-            Settings
-          </button>
-          <span className="spacer" />
+        <BackHead to="/settings" label="Settings">
           <button type="button" className="btn sm" disabled={running} onClick={check}>
             {running ? "Checking…" : report ? "Check again" : "Check everything"}
           </button>
-        </div>
+        </BackHead>
         {error && <div className="form-error">{error}</div>}
 
         {report && (

@@ -4,11 +4,12 @@ import { useCallback, useEffect, useState } from "react";
 import { useAction } from "../action";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm, toggled, useStoredForm } from "../form";
-import { BotMark, Icon } from "../icons";
+import { BotMark } from "../icons";
 import { loadErrorText } from "../load";
 import { navigate } from "../router";
-import { createBot, deleteBot, loadBots, loadPlugins, saveBot, useStore } from "../store";
+import { chatPath, createBot, deleteBot, loadBots, loadPlugins, saveBot, useStore } from "../store";
 import { Switch } from "../switch";
+import { BackHead, SaveBar } from "../ui";
 
 type Form = {
   name: string;
@@ -80,14 +81,14 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
     if (!isNew) load();
   }, [isNew, load]);
 
-  const back = () => navigate(chat ? (chat.id === 1 ? "/" : `/chat/${chat.id}`) : "/");
+  const back = chat ? chatPath(chat.id) : "/";
   if (!isNew && (!stored || !listed || !form))
     return (
       <NoForm
         error={loadError}
         missing={loaded && !listed ? "This bot doesn't exist." : ""}
         retry={load}
-        back={{ label: "Chat", go: back }}
+        back={{ label: "Chat", to: back }}
       />
     );
   if (!form) return null;
@@ -144,18 +145,13 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">
-          <button type="button" className="btn sm ghost back" onClick={back}>
-            <Icon name="chevron" />
-            Chat
-          </button>
-          <span className="spacer" />
+        <BackHead to={back} label="Chat">
           {!isNew && !isHatbot && (
             <button type="button" className="btn sm danger-text" onClick={remove}>
               Delete
             </button>
           )}
-        </div>
+        </BackHead>
 
         <div className="panel form">
           {isNew && (
@@ -325,17 +321,12 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
               </dd>
             </dl>
           )}
-          {error && <div className="form-error">{error}</div>}
-          <div className="form-actions">
-            <button
-              type="button"
-              className="btn accent"
-              disabled={busy || !changed || !form.name.trim()}
-              onClick={save}
-            >
-              {isNew ? "Create" : "Save"}
-            </button>
-          </div>
+          <SaveBar
+            error={error}
+            disabled={busy || !changed || !form.name.trim()}
+            onSave={save}
+            label={isNew ? "Create" : "Save"}
+          />
         </div>
       </div>
     </section>

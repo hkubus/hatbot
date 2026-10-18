@@ -6,11 +6,11 @@ import { api } from "../api";
 import { BotPicker, stamp } from "../automations";
 import { useLeaveGuard } from "../confirm";
 import { plainText } from "../format";
-import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
 import { navigate } from "../router";
 import { useStore } from "../store";
 import { Switch } from "../switch";
+import { BackHead, SaveBar } from "../ui";
 
 const EVERY = [5, 10, 15, 30, 60, 120, 360];
 const DID: Record<string, string> = {
@@ -78,12 +78,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">
-          <button type="button" className="btn sm ghost back" onClick={() => navigate("/settings")}>
-            <Icon name="chevron" />
-            Settings
-          </button>
-          <span className="spacer" />
+        <BackHead to="/settings" label="Settings">
           {/* It looks with what's saved: off while you have unsaved instructions. */}
           <button
             type="button"
@@ -94,7 +89,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
           >
             Look now
           </button>
-        </div>
+        </BackHead>
         <div className="panel form">
           <div className="form-row">
             <span className="label">On</span>
@@ -128,17 +123,11 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
               onChange={(e) => setInstructions(e.target.value)}
             />
           </label>
-          {error && <div className="form-error">{error}</div>}
-          <div className="form-actions">
-            <button
-              type="button"
-              className="btn accent"
-              disabled={!instructions.trim() || instructions === hb.instructions}
-              onClick={() => save({ instructions })}
-            >
-              Save
-            </button>
-          </div>
+          <SaveBar
+            error={error}
+            disabled={!instructions.trim() || instructions === hb.instructions}
+            onSave={() => save({ instructions })}
+          />
         </div>
         {info?.at && (
           <div className="panel">

@@ -3,9 +3,9 @@ import { useEffect, useState } from "react";
 import { useAction } from "../action";
 import { ApiError } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
-import { Icon } from "../icons";
 import { navigate } from "../router";
 import { discardTeach, loadTeach, redraftTeach, saveSkill, useStore } from "../store";
+import { BackButton, BackHead } from "../ui";
 
 const NAME = /^[a-z0-9][a-z0-9-]{0,59}$/;
 
@@ -57,19 +57,12 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
       });
   };
 
-  const back = (
-    <button type="button" className="btn sm ghost back" onClick={() => navigate("/memory")}>
-      <Icon name="chevron" />
-      Memory
-    </button>
-  );
-
   if (session.status === "draft")
     return (
       <section className="view">
         <div className="editor">
           <div className="editor-bar">
-            {back}
+            <BackButton to="/memory" label="Memory" />
             <span className="path">skills/</span>
             <input
               className="field mono"
@@ -107,7 +100,7 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">{back}</div>
+        <BackHead to="/memory" label="Memory" />
         <div className="panel">
           {session.status === "recording" && <p>Still recording. Stop it from the live view.</p>}
           {session.status === "drafting" && <p>Writing the skill from your recording…</p>}

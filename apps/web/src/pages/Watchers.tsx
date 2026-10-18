@@ -20,6 +20,7 @@ import { Icon } from "../icons";
 import { navigate } from "../router";
 import { loadPlugins, putWatcher, useStore } from "../store";
 import { Switch } from "../switch";
+import { BackHead, SaveBar } from "../ui";
 
 const EVERY = [5, 15, 30, 60, 180, 360, 720, 1440];
 const WHEN: { when: WatchCondition["when"]; label: string }[] = [
@@ -238,7 +239,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
         error={listed.error}
         missing={listed.missing ? "This watcher doesn't exist." : ""}
         retry={listed.load}
-        back={{ label: "Watchers", go: () => navigate("/schedules") }}
+        back={{ label: "Watchers", to: "/schedules" }}
       />
     );
 
@@ -313,16 +314,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">
-          <button
-            type="button"
-            className="btn sm ghost back"
-            onClick={() => navigate("/schedules")}
-          >
-            <Icon name="chevron" />
-            Watchers
-          </button>
-          <span className="spacer" />
+        <BackHead to="/schedules" label="Watchers">
           {stored && (
             <>
               <button
@@ -339,7 +331,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
               </button>
             </>
           )}
-        </div>
+        </BackHead>
         {stored?.lastError && (
           <div className={stored.errors ? "form-error" : "muted"}>{trouble(stored)?.long}</div>
         )}
@@ -592,17 +584,12 @@ export function WatcherEdit({ id }: { id: number | null }) {
               <dd>{stored.enabled && stored.nextCheckAt ? stamp(stored.nextCheckAt) : "Off"}</dd>
             </dl>
           )}
-          {(error || checking.error) && <div className="form-error">{error || checking.error}</div>}
-          <div className="form-actions">
-            <button
-              type="button"
-              className="btn accent"
-              disabled={busy || !changed || !ready}
-              onClick={save}
-            >
-              {stored ? "Save" : "Create"}
-            </button>
-          </div>
+          <SaveBar
+            error={error || checking.error}
+            disabled={busy || !changed || !ready}
+            onSave={save}
+            label={stored ? "Save" : "Create"}
+          />
         </div>
 
         {stored && values.length > 0 && (

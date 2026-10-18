@@ -10,6 +10,7 @@ import { PLUGIN_SETTINGS } from "../plugins";
 import { navigate } from "../router";
 import { loadPlugins, savePlugin, useStore } from "../store";
 import { Switch } from "../switch";
+import { BackHead } from "../ui";
 
 const STATE: Record<PluginInfo["state"], string> = {
   off: "Off",
@@ -97,7 +98,7 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
         error={error}
         missing={loaded ? "This plugin doesn't exist." : ""}
         retry={load}
-        back={{ label: "Settings", go: () => navigate("/settings") }}
+        back={{ label: "Settings", to: "/settings" }}
       />
     );
 
@@ -125,18 +126,13 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">
-          <button type="button" className="btn sm ghost back" onClick={() => navigate("/settings")}>
-            <Icon name="chevron" />
-            Settings
-          </button>
-          <span className="spacer" />
+        <BackHead to="/settings" label="Settings">
           {p.testable && p.state === "ready" && (
             <button type="button" className="btn sm" disabled={testing.busy} onClick={test}>
               {testing.busy ? "Testing…" : "Test"}
             </button>
           )}
-        </div>
+        </BackHead>
 
         <div className="panel form">
           <div className="form-row">

@@ -23,6 +23,7 @@ import {
   useStore,
 } from "../store";
 import { ApprovalCard, isActive, Shot, StatusChip, taskLine } from "../tasks";
+import { BackHead } from "../ui";
 import { AssistantBody } from "./Chat";
 
 const time = (iso: string) =>
@@ -383,12 +384,7 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">
-          <button type="button" className="btn sm ghost back" onClick={() => navigate("/tasks")}>
-            <Icon name="chevron" />
-            Tasks
-          </button>
-          <span className="spacer" />
+        <BackHead to="/tasks" label="Tasks">
           {screen && active && !showLive && (
             <button type="button" className="btn sm" onClick={() => setWatch(true)}>
               <Icon name="monitor" />
@@ -406,7 +402,7 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
               Run again
             </button>
           )}
-        </div>
+        </BackHead>
         {error && <div className="form-error">{error}</div>}
         {again !== null && (
           <div className="panel form">

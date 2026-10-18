@@ -5,10 +5,9 @@ import { useAction } from "../action";
 import { ApiError, api, errorText } from "../api";
 import { ask } from "../confirm";
 import { deviceName } from "../device";
-import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
-import { navigate } from "../router";
 import type { Toast } from "../toast";
+import { BackHead } from "../ui";
 import { AddToAuthenticator, OtpInput } from "./Login";
 
 const changed = (what: string, ended: number) =>
@@ -36,12 +35,7 @@ export function Account({ toast }: { toast: Toast }) {
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">
-          <button type="button" className="btn sm ghost back" onClick={() => navigate("/settings")}>
-            <Icon name="chevron" />
-            Settings
-          </button>
-        </div>
+        <BackHead to="/settings" label="Settings" />
         <PasswordForm toast={toast} onChanged={reload} />
         <AuthenticatorForm toast={toast} onChanged={reload} />
         <Sessions toast={toast} version={version} />

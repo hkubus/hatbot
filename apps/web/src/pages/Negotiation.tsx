@@ -4,12 +4,12 @@ import { useCallback, useEffect, useState } from "react";
 import { useAction } from "../action";
 import { ApiError, api } from "../api";
 import { ask } from "../confirm";
-import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
 import { money, NegotiationChip, negotiationText } from "../negotiations";
 import { navigate } from "../router";
 import { botName, loadNegotiation, useStore } from "../store";
 import { ApprovalCard } from "../tasks";
+import { BackHead } from "../ui";
 
 const time = (iso: string) =>
   new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
@@ -72,12 +72,7 @@ export function NegotiationPage({ id }: { id: number }) {
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">
-          <button type="button" className="btn sm ghost back" onClick={() => navigate("/tasks")}>
-            <Icon name="chevron" />
-            Tasks
-          </button>
-          <span className="spacer" />
+        <BackHead to="/tasks" label="Tasks">
           {n.conversationUrl && (
             <a
               className="btn sm"
@@ -93,7 +88,7 @@ export function NegotiationPage({ id }: { id: number }) {
               Stop
             </button>
           )}
-        </div>
+        </BackHead>
         {error && <div className="form-error">{error}</div>}
 
         {n.approvalId !== null && <ApprovalCard approvalId={n.approvalId} showDetails={false} />}

@@ -19,6 +19,7 @@ import { atIso, cronOk, localInput } from "../schedule-form";
 import { loadSchedules, putSchedule, putTrigger, saveSchedule, useStore } from "../store";
 import { Switch } from "../switch";
 import { whenText } from "../tasks";
+import { BackHead, SaveBar } from "../ui";
 import { WatcherEdit, WatcherList } from "./Watchers";
 
 const KIND = { webhook: "Webhook", kuma: "Uptime Kuma" } as const;
@@ -194,7 +195,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
         error={listed.error}
         missing={listed.missing ? "This schedule doesn't exist." : ""}
         retry={listed.load}
-        back={{ label: "Schedules", go: () => navigate("/schedules") }}
+        back={{ label: "Schedules", to: "/schedules" }}
       />
     );
 
@@ -247,16 +248,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">
-          <button
-            type="button"
-            className="btn sm ghost back"
-            onClick={() => navigate("/schedules")}
-          >
-            <Icon name="chevron" />
-            Schedules
-          </button>
-          <span className="spacer" />
+        <BackHead to="/schedules" label="Schedules">
           {stored && (
             <>
               <button
@@ -274,7 +266,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
               </button>
             </>
           )}
-        </div>
+        </BackHead>
 
         <div className="panel form">
           <label>
@@ -361,17 +353,12 @@ function ScheduleEdit({ id }: { id: number | null }) {
               <dd>{stored.enabled && stored.nextRunAt ? stamp(stored.nextRunAt) : "Off"}</dd>
             </dl>
           )}
-          {error && <div className="form-error">{error}</div>}
-          <div className="form-actions">
-            <button
-              type="button"
-              className="btn accent"
-              disabled={busy || !changed || !form.name.trim() || !form.prompt.trim()}
-              onClick={save}
-            >
-              {stored ? "Save" : "Create"}
-            </button>
-          </div>
+          <SaveBar
+            error={error}
+            disabled={busy || !changed || !form.name.trim() || !form.prompt.trim()}
+            onSave={save}
+            label={stored ? "Save" : "Create"}
+          />
         </div>
 
         {stored && <Runs filter={{ scheduleId: stored.id }} />}
@@ -463,7 +450,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
         error={listed.error}
         missing={listed.missing ? "This trigger doesn't exist." : ""}
         retry={listed.load}
-        back={{ label: "Triggers", go: () => navigate("/schedules") }}
+        back={{ label: "Triggers", to: "/schedules" }}
       />
     );
 
@@ -521,16 +508,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">
-          <button
-            type="button"
-            className="btn sm ghost back"
-            onClick={() => navigate("/schedules")}
-          >
-            <Icon name="chevron" />
-            Triggers
-          </button>
-          <span className="spacer" />
+        <BackHead to="/schedules" label="Triggers">
           {stored && (
             <>
               <button type="button" className="btn sm" onClick={rotate}>
@@ -541,7 +519,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
               </button>
             </>
           )}
-        </div>
+        </BackHead>
 
         {secret && <Setup t={secret} />}
 
@@ -626,17 +604,12 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
               <dd>{stored.lastFiredAt ? stamp(stored.lastFiredAt) : "None yet"}</dd>
             </dl>
           )}
-          {error && <div className="form-error">{error}</div>}
-          <div className="form-actions">
-            <button
-              type="button"
-              className="btn accent"
-              disabled={busy || !changed || !form.name.trim() || !form.prompt.trim()}
-              onClick={save}
-            >
-              {stored ? "Save" : "Create"}
-            </button>
-          </div>
+          <SaveBar
+            error={error}
+            disabled={busy || !changed || !form.name.trim() || !form.prompt.trim()}
+            onSave={save}
+            label={stored ? "Save" : "Create"}
+          />
         </div>
 
         {stored && <Runs filter={{ triggerId: stored.id }} />}
