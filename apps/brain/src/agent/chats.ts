@@ -36,10 +36,12 @@ type Row = {
 
 export class Chats {
   private threads = new Map<number, Thread>();
-  private parts: Partial<Parts> = {};
+  /** Every chat's, so what attach adds reaches the chats open already. */
+  private d: ThreadDeps;
   private clock: () => number;
 
-  constructor(private d: ThreadDeps) {
+  constructor(d: ThreadDeps) {
+    this.d = { ...d };
     this.clock = d.clock ?? Date.now;
     // A restart cuts off any reply that was streaming: it keeps what was saved of it, and says so.
     const note = "_This reply was cut off._";
@@ -63,7 +65,7 @@ export class Chats {
       .query("SELECT 1 FROM conversations WHERE id = ? AND deleted_at IS NULL")
       .get(conversationId);
     if (!exists) return null;
-    const thread = new Thread({ ...this.d, ...this.parts }, conversationId);
+    const thread = new Thread(this.d, conversationId);
     this.threads.set(conversationId, thread);
     return thread;
   }
@@ -148,8 +150,7 @@ export class Chats {
 
   /** Called once the services that need the chats exist. */
   attach(parts: Parts) {
-    Object.assign(this.parts, parts);
-    for (const t of this.threads.values()) t.attach(parts);
+    Object.assign(this.d, parts);
   }
 
   /** Every chat that has been opened since the brain started. */

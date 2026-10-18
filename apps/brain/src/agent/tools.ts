@@ -64,7 +64,7 @@ export type ToolContext = {
   /** Adds a schedule's card to the thread. */
   scheduleCard?: (s: Schedule) => void;
   plugins?: Plugins;
-  /** The plugin tools this reply was offered, with negotiation's; all of the plugins' without it. */
+  /** The plugin tools this reply was offered, with negotiation's. */
   pluginTools?: PluginTool[];
   /** Where writes to skills and indexes go while the conversation or task is tainted. */
   proposals?: Proposals;
@@ -1036,7 +1036,7 @@ export async function runTool(
     TOOLS.find((t) => t.name === name) ??
     TOOLS.find((t) => t.name.toLowerCase() === name.toLowerCase());
   if (!tool) {
-    const offered = ctx.pluginTools ?? ctx.plugins?.tools() ?? [];
+    const offered = ctx.pluginTools ?? [];
     const found = offered.find((t) => t.name === name);
     const plugin = found && ctx.livePlugin ? ctx.livePlugin(found) : found;
     if (typeof plugin === "string") return { content: plugin, isError: true };

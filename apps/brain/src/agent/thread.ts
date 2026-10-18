@@ -125,16 +125,14 @@ const BETAS: Anthropic.Beta.AnthropicBeta[] = [
   "thinking-binding-controls-2026-08-01",
   "mid-conversation-output-config-2026-07-01",
 ];
+const hash16 = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
 /**
  * What an episode's thinking blocks are bound to: the system prompt, the tools and the model. The API
  * rejects replayed thinking when these change, so an update or a plugin switched on or off that changes
  * them starts a new episode.
  */
 const prefixOf = (model: string, system: string, tools: Anthropic.Beta.BetaToolUnion[]) =>
-  createHash("sha256")
-    .update(JSON.stringify([model, system, tools]))
-    .digest("hex")
-    .slice(0, 16);
+  hash16(JSON.stringify([model, system, tools]));
 
 const AskOpus = z.object({
   question: z
@@ -392,13 +390,22 @@ export class Thread {
     }
     const group = this.group() !== null;
     const first = group ? this.responders(text) : [this.bot()];
-    const done = this.chain.then(async () => {
+    const done = this.enqueue(async () => {
       if (command) await this.command(command, message, first[0] as Bot);
       else if (group) await this.round(message, first);
       else await this.reply(message, first[0] as Bot);
     });
-    this.chain = done.catch((err) => console.error("thread turn failed", err));
     return { message, done };
+  }
+
+  /** Runs `turn` once the turns queued before it are done; one that fails doesn't hold up the rest. */
+  private enqueue<T>(turn: () => Promise<T>): Promise<T> {
+    const done = this.chain.then(turn);
+    this.chain = done.then(
+      () => {},
+      (err) => console.error("thread turn failed", err),
+    );
+    return done;
   }
 
   /**
@@ -414,23 +421,6 @@ export class Thread {
       for (const b of mentionsIn(said.text, this.members()))
         if (b.id !== bot.id && !queue.some((q) => q.id === b.id)) queue.push(b);
     }
-  }
-
-  attach(
-    parts: Pick<
-      ThreadDeps,
-      | "tasks"
-      | "schedules"
-      | "triggers"
-      | "watchers"
-      | "approvals"
-      | "attachments"
-      | "desktop"
-      | "negotiations"
-      | "proposals"
-    >,
-  ) {
-    Object.assign(this.d, parts);
   }
 
   /**
@@ -712,12 +702,7 @@ export class Thread {
   /** /stop: the reply being written, or with a number, that task. */
   private stop(arg: string, message: ThreadMessage) {
     const incognito = !!message.incognito;
-    const episodeId =
-      this.d.db
-        .query<{ id: number }, [number, number]>(
-          "SELECT id FROM episodes WHERE conversation_id = ? AND incognito = ? ORDER BY id DESC LIMIT 1",
-        )
-        .get(this.conversationId, incognito ? 1 : 0)?.id ?? null;
+    const episodeId = this.latest(incognito)?.id ?? null;
     // Filed with the latest conversation, which may be summarized already: /stop doesn't reopen it.
     if (episodeId !== null) this.file(message, episodeId, false);
     const note = (text: string) => void this.commandNote(text, episodeId, incognito);
@@ -834,14 +819,11 @@ export class Thread {
   /** What an episode is bound to: the prompt, tools and model of each bot in it. */
   private prefixFor(bot: Bot, incognito: boolean): string {
     if (!this.group()) return this.turnSetup(bot, incognito).prefix;
-    return createHash("sha256")
-      .update(
-        this.members()
-          .map((b) => this.turnSetup(b, incognito).prefix)
-          .join(","),
-      )
-      .digest("hex")
-      .slice(0, 16);
+    return hash16(
+      this.members()
+        .map((b) => this.turnSetup(b, incognito).prefix)
+        .join(","),
+    );
   }
 
   /** In a group: what was said since `bot` last spoke, by you and the other bots. */
@@ -963,20 +945,7 @@ export class Thread {
     incognito = false,
   ): Promise<{ id: number; isNew: boolean; fresh: boolean; long?: boolean }> {
     let long = false;
-    const last = this.d.db
-      .query<
-        {
-          id: number;
-          last_activity_at: string;
-          summarized: number;
-          prefix: string | null;
-          fresh: number;
-        },
-        [number, number]
-      >(
-        "SELECT id, last_activity_at, summarized, prefix, fresh FROM episodes WHERE conversation_id = ? AND incognito = ? ORDER BY id DESC LIMIT 1",
-      )
-      .get(this.conversationId, incognito ? 1 : 0);
+    const last = this.latest(incognito);
     const open = last && this.clock() - Date.parse(last.last_activity_at) < EPISODE_IDLE_MS;
     if (last && open && (!fresh || last.fresh)) {
       const untouched = !this.hasTurns(last.id);
@@ -1010,6 +979,24 @@ export class Thread {
       .get(this.conversationId, this.now(), this.now(), prefix, fresh ? 1 : 0, incognito ? 1 : 0);
     if (!row) throw new Error("episode insert failed");
     return { id: row.id, isNew: true, fresh, long };
+  }
+
+  /** The conversation's latest episode, or the latest incognito one. */
+  private latest(incognito: boolean) {
+    return this.d.db
+      .query<
+        {
+          id: number;
+          last_activity_at: string;
+          summarized: number;
+          prefix: string | null;
+          fresh: number;
+        },
+        [number, number]
+      >(
+        "SELECT id, last_activity_at, summarized, prefix, fresh FROM episodes WHERE conversation_id = ? AND incognito = ? ORDER BY id DESC LIMIT 1",
+      )
+      .get(this.conversationId, incognito ? 1 : 0);
   }
 
   /**
@@ -1138,13 +1125,25 @@ export class Thread {
    * next one.
    */
   private async deleteIncognito(onlyFiled = false) {
-    const { db } = this.d;
-    const ids = db
+    const ids = this.d.db
       .query<{ id: number }, [number]>(
         `SELECT id FROM messages WHERE conversation_id = ? AND incognito = 1${onlyFiled ? " AND episode_id IS NOT NULL" : ""}`,
       )
       .all(this.conversationId)
       .map((r) => r.id);
+    await this.purge(ids, null);
+  }
+
+  /**
+   * Deletes messages with their files, and an episode with its turns (null: the incognito ones), for
+   * good: out of the write-ahead log too, not only the tables. What they cost stays in the ledger,
+   * without them. `also` runs in the same transaction.
+   */
+  private async purge(ids: number[], episodeId: number | null, also?: () => void) {
+    const { db } = this.d;
+    const where = episodeId === null ? "conversation_id = ? AND incognito = 1" : "id = ?";
+    const is = episodeId ?? this.conversationId;
+    const episodes = `(SELECT id FROM episodes WHERE ${where})`;
     await this.d.attachments?.removeFor(ids);
     const list = ids.map(() => "?").join(", ");
     db.transaction(() => {
@@ -1152,16 +1151,17 @@ export class Thread {
         db.query(`DELETE FROM attachments WHERE message_id IN (${list})`).run(...ids);
         db.query(`DELETE FROM messages WHERE id IN (${list})`).run(...ids);
       }
-      const c = this.conversationId;
-      const episodes = "(SELECT id FROM episodes WHERE conversation_id = ? AND incognito = 1)";
-      db.query(`DELETE FROM episode_turns WHERE episode_id IN ${episodes}`).run(c);
-      db.query(`UPDATE spend_ledger SET episode_id = NULL WHERE episode_id IN ${episodes}`).run(c);
-      db.query("DELETE FROM episodes WHERE conversation_id = ? AND incognito = 1").run(c);
+      db.query(`DELETE FROM episode_turns WHERE episode_id IN ${episodes}`).run(is);
+      db.query(`UPDATE spend_ledger SET episode_id = NULL WHERE episode_id IN ${episodes}`).run(is);
+      db.query(`DELETE FROM episodes WHERE ${where}`).run(is);
+      also?.();
     })();
-    if (!ids.length) return;
-    // Out of the write-ahead log too, not only the database file.
+    if (episodeId === null && !ids.length) return;
+    // Out of the search index's segments too; incognito messages are never in it.
+    if (episodeId !== null)
+      db.query("INSERT INTO messages_fts (messages_fts) VALUES ('optimize')").run();
     db.query("PRAGMA wal_checkpoint(TRUNCATE)").get();
-    this.d.events.emit({ type: "message.deleted", ids });
+    if (ids.length) this.d.events.emit({ type: "message.deleted", ids });
   }
 
   /**
@@ -1201,21 +1201,12 @@ export class Thread {
    * deleting nothing, if Haiku can't rewrite the summary.
    */
   async deleteEpisode(episodeId: number): Promise<boolean> {
-    const latest = this.d.db
-      .query<{ id: number }, [number]>(
-        "SELECT max(id) AS id FROM episodes WHERE conversation_id = ? AND incognito = 0",
-      )
-      .get(this.conversationId)?.id;
     if (!this.ownEpisode(episodeId)) return false;
-    if (episodeId !== latest) return this.inSummaryTurn(() => this.forget(episodeId));
+    if (episodeId !== this.latest(false)?.id)
+      return this.inSummaryTurn(() => this.forget(episodeId));
     // The reply in progress may be in it: stopped, and deleted once it has ended.
     if (this.current && !this.currentIncognito) this.current.abort(STOPPED);
-    const done = this.chain.then(() => this.inSummaryTurn(() => this.forget(episodeId)));
-    this.chain = done.then(
-      () => {},
-      () => {},
-    );
-    return done;
+    return this.enqueue(() => this.inSummaryTurn(() => this.forget(episodeId)));
   }
 
   private ownEpisode(episodeId: number): boolean {
@@ -1258,27 +1249,17 @@ export class Thread {
     let summary = previous;
     if (summarized && previous && rows.length && this.hasTurns(episodeId))
       summary = await this.summaryWithout(episodeId, rows);
-    const ids = rows.map((r) => r.id);
-    await this.d.attachments?.removeFor(ids);
-    const list = ids.map(() => "?").join(", ");
-    db.transaction(() => {
-      if (ids.length) {
-        db.query(`DELETE FROM attachments WHERE message_id IN (${list})`).run(...ids);
-        db.query(`DELETE FROM messages WHERE id IN (${list})`).run(...ids);
-      }
-      db.query("DELETE FROM episode_turns WHERE episode_id = ?").run(episodeId);
-      db.query("UPDATE spend_ledger SET episode_id = NULL WHERE episode_id = ?").run(episodeId);
-      db.query("DELETE FROM episodes WHERE id = ?").run(episodeId);
-      if (summary !== previous)
-        db.query("UPDATE conversations SET summary = ? WHERE id = ?").run(
-          summary,
-          this.conversationId,
-        );
-    })();
-    // Out of the search index's segments and the write-ahead log too, not only the tables.
-    db.query("INSERT INTO messages_fts (messages_fts) VALUES ('optimize')").run();
-    db.query("PRAGMA wal_checkpoint(TRUNCATE)").get();
-    if (ids.length) this.d.events.emit({ type: "message.deleted", ids });
+    await this.purge(
+      rows.map((r) => r.id),
+      episodeId,
+      () => {
+        if (summary !== previous)
+          db.query("UPDATE conversations SET summary = ? WHERE id = ?").run(
+            summary,
+            this.conversationId,
+          );
+      },
+    );
     return true;
   }
 
@@ -1453,16 +1434,16 @@ export class Thread {
    * A bot deleted since doesn't: the task's result takes that reply's place.
    */
   taskEnded(botId = this.bot().id) {
-    const done = this.chain
-      .then(async () => {
+    return this.enqueue(async () => {
+      try {
         const bot = this.d.bots.active(botId);
         if (!bot) return;
         if (this.group()) await this.round(null, [bot]);
         else await this.reply(null, bot);
-      })
-      .finally(() => this.settleRewrites());
-    this.chain = done.catch((err) => console.error("thread turn failed", err));
-    return done;
+      } finally {
+        this.settleRewrites();
+      }
+    });
   }
 
   /**
@@ -1471,14 +1452,12 @@ export class Thread {
    */
   retry(messageId: number): Promise<void> | null {
     if (this.current || !this.retryable(messageId)) return null;
-    const done = this.chain.then(async () => {
+    return this.enqueue(async () => {
       // Something may have come first in the queue.
       const again = this.retryable(messageId);
       const bot = again && this.d.bots.active(again.botId ?? HATBOT_ID);
       if (again && bot) await this.reply(null, bot, null, again);
     });
-    this.chain = done.catch((err) => console.error("thread turn failed", err));
-    return done;
   }
 
   /**
@@ -1500,11 +1479,7 @@ export class Thread {
          AND (role = 'user' OR kind = 'text') LIMIT 1`,
       )
       .get(this.conversationId, row.incognito, messageId);
-    const episode = db
-      .query<{ id: number; summarized: number }, [number, number]>(
-        "SELECT id, summarized FROM episodes WHERE conversation_id = ? AND incognito = ? ORDER BY id DESC LIMIT 1",
-      )
-      .get(this.conversationId, row.incognito);
+    const episode = this.latest(!!row.incognito);
     if (later || episode?.id !== row.episodeId || episode.summarized) return null;
     return messageOf(row);
   }
