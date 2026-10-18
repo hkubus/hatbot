@@ -7,6 +7,7 @@ import type { StorageInfo } from "@hatbot/shared";
 import type { Archive } from "./archive";
 import type { Db } from "./db";
 import { inWorker } from "./db/worker";
+import { getSetting, setSetting } from "./settings";
 
 const HISTORY_KEY = "storage:history";
 const UPKEEP_KEY = "storage:upkeep";
@@ -107,7 +108,11 @@ export class Storage {
     const history = this.history().filter((s) => s.day !== today);
     // The newest sample from a week ago or before.
     const then = history.filter((s) => s.day <= weekAgo).at(-1);
-    this.save(HISTORY_KEY, [...history, { day: today, total: totalBytes }].slice(-KEEP_SAMPLES));
+    setSetting(
+      this.d.db,
+      HISTORY_KEY,
+      JSON.stringify([...history, { day: today, total: totalBytes }].slice(-KEEP_SAMPLES)),
+    );
     return {
       at: new Date(now).toISOString(),
       databaseBytes,
@@ -126,14 +131,15 @@ export class Storage {
     const now = this.clock();
     if (new Date(now).getHours() < UPKEEP_HOUR) return;
     const day = dayOf(now);
-    if (this.setting<string>(UPKEEP_KEY) === day) return;
+    const upkept = getSetting(this.d.db, UPKEEP_KEY);
+    if (upkept !== null && JSON.parse(upkept) === day) return;
     void this.upkeep(day);
   }
 
   async upkeep(day = dayOf(this.clock())) {
     this.busy = true;
     // Marked first, so one that fails isn't tried again every few seconds.
-    this.save(UPKEEP_KEY, day);
+    setSetting(this.d.db, UPKEEP_KEY, JSON.stringify(day));
     try {
       this.d.db.exec("PRAGMA optimize");
       await this.snapshot(day);
@@ -159,21 +165,7 @@ export class Storage {
   }
 
   private history(): Sample[] {
-    return this.setting<Sample[]>(HISTORY_KEY) ?? [];
-  }
-
-  private setting<T>(key: string): T | null {
-    const row = this.d.db
-      .query<{ value: string }, [string]>("SELECT value FROM settings WHERE key = ?")
-      .get(key);
-    return row ? (JSON.parse(row.value) as T) : null;
-  }
-
-  private save(key: string, value: unknown) {
-    this.d.db
-      .query(
-        "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-      )
-      .run(key, JSON.stringify(value));
+    const v = getSetting(this.d.db, HISTORY_KEY);
+    return v === null ? [] : ((JSON.parse(v) as Sample[] | null) ?? []);
   }
 }

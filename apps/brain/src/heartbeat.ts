@@ -10,7 +10,7 @@ import type { Desktop } from "./desktop/service";
 import type { EventBus } from "./events";
 import type { Notifier } from "./notify";
 import type { Plugins } from "./plugins/registry";
-import type { SettingsStore } from "./settings";
+import { getSetting, type SettingsStore, setSetting } from "./settings";
 import type { Spend } from "./spend";
 import { RESTARTED, type Tasks } from "./tasks/service";
 
@@ -346,23 +346,17 @@ export class Heartbeat {
   }
 
   private state(): State {
-    const row = this.d.db
-      .query<{ value: string }, [string]>("SELECT value FROM settings WHERE key = ?")
-      .get(STATE_KEY);
+    const row = getSetting(this.d.db, STATE_KEY);
     const empty: State = {
       lastRunAt: null,
       seen: {},
       last: { at: null, found: [], action: null, note: "", taskId: null },
       recent: [],
     };
-    return row ? { ...empty, ...(JSON.parse(row.value) as Partial<State>) } : empty;
+    return row === null ? empty : { ...empty, ...(JSON.parse(row) as Partial<State>) };
   }
 
   private save(s: State) {
-    this.d.db
-      .query(
-        "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-      )
-      .run(STATE_KEY, JSON.stringify(s));
+    setSetting(this.d.db, STATE_KEY, JSON.stringify(s));
   }
 }
