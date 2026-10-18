@@ -37,6 +37,7 @@ const NegotiationPage = lazy(() =>
   import("./pages/Negotiation").then((m) => ({ default: m.NegotiationPage })),
 );
 const Memory = lazy(() => import("./pages/Memory").then((m) => ({ default: m.Memory })));
+const Reader = lazy(() => import("./pages/Reader").then((m) => ({ default: m.Reader })));
 const SchedulesView = lazy(() =>
   import("./pages/Schedules").then((m) => ({ default: m.SchedulesView })),
 );
@@ -56,6 +57,7 @@ const VIEWS = [
   { path: "/spend", title: "Spend", icon: "gauge", phone: false },
   { path: "/settings", title: "Settings", icon: "sliders", phone: true },
 ] as const satisfies readonly { path: string; title: string; icon: IconName; phone: boolean }[];
+type View = (typeof VIEWS)[number];
 
 /** Pages that belong to another view than their first segment names. */
 const VIEW_OF: Record<string, string> = {
@@ -63,6 +65,7 @@ const VIEW_OF: Record<string, string> = {
   bots: "/",
   groups: "/",
   negotiations: "/tasks",
+  read: "/memory",
   triggers: "/schedules",
   watchers: "/schedules",
 };
@@ -151,7 +154,13 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   }, [connected]);
   const [toasts, setToasts] = useState<{ id: number; text: string; kind: ToastKind }[]>([]);
   const [insp, setInsp] = useState(() => localStorage.getItem("hatbot:insp") === "1");
-  const view = viewOf(path);
+  // The reader is Memory's for a note; an attachment's stays with the view it was opened from.
+  const reading = path === "/read";
+  const openedFrom = useRef<View>(VIEWS[0]);
+  const view = reading && !params.get("path") ? openedFrom.current : viewOf(path);
+  if (!reading) openedFrom.current = view;
+  /** The view whose page shows: none while reading. */
+  const page = reading ? "" : view.path;
   // The side panel is hidden on a phone; it isn't drawn either, or its live view would stream unseen.
   const wide = useMedia("(min-width: 900px)");
   const taskId = /^\/tasks\/(\d+)$/.exec(path)?.[1];
@@ -398,14 +407,14 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           {chatId > 0 && <Chat key={chatId} id={chatId} />}
           {botPage && <BotPage key={botPage} id={botPage} toast={toast} />}
           {groupPage && <GroupPage key={groupPage} id={groupPage} toast={toast} />}
-          {view.path === "/tasks" &&
+          {page === "/tasks" &&
             !negotiationId &&
             (taskId ? (
               <TaskDetail key={taskId} id={Number(taskId)} live={params.get("live") === "1"} />
             ) : (
               <Tasks />
             ))}
-          {view.path === "/live" && (
+          {page === "/live" && (
             <section className="view">
               <div className="page live-page">
                 <LiveView />
@@ -414,8 +423,8 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           )}
           <Suspense fallback={<section className="view" />}>
             {negotiationId && <NegotiationPage key={negotiationId} id={Number(negotiationId)} />}
-            {view.path === "/schedules" && <SchedulesView path={path} params={params} />}
-            {view.path === "/memory" &&
+            {page === "/schedules" && <SchedulesView path={path} params={params} />}
+            {page === "/memory" &&
               (teachId ? (
                 <SkillDraft key={teachId} id={Number(teachId)} toast={toast} />
               ) : (
@@ -425,12 +434,17 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
                   open={params.get("path") ?? ""}
                 />
               ))}
-            {view.path === "/spend" && <Spend />}
-            {view.path === "/settings" && (
-              <Settings path={path} toast={toast} onSignOut={onSignOut} />
+            {page === "/spend" && <Spend />}
+            {reading && (
+              <Reader
+                key={params.toString()}
+                path={params.get("path") ?? ""}
+                file={Number(params.get("file")) || 0}
+              />
             )}
+            {page === "/settings" && <Settings path={path} toast={toast} onSignOut={onSignOut} />}
           </Suspense>
-          {view.path === "/search" && <Search query={params.get("q") ?? ""} />}
+          {page === "/search" && <Search query={params.get("q") ?? ""} />}
         </main>
 
         {insp && wide && view.path !== "/live" && (

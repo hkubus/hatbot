@@ -497,6 +497,15 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
               <>
                 <span className="path">{sel.path}</span>
                 <span className="spacer" />
+                {exists && sel.path.endsWith(".md") && (
+                  <button
+                    type="button"
+                    className="btn sm"
+                    onClick={() => navigate(`/read?path=${enc(sel.path)}`)}
+                  >
+                    Read
+                  </button>
+                )}
                 {exists && sel.path !== "INDEX.md" && (
                   <button type="button" className="btn sm ghost danger-text" onClick={remove}>
                     Delete

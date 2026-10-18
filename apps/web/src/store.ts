@@ -2,6 +2,7 @@
 import {
   API_PREFIX,
   type Approval,
+  type Attachment,
   type Bot,
   type Conversation,
   type DesktopState,
@@ -53,6 +54,8 @@ type State = {
   tasks: Record<number, Task>;
   /** Steps of the tasks that have been opened or shown as a card. */
   steps: Record<number, TaskStep[]>;
+  /** Files the tasks that have been opened attached, like a research report. */
+  taskFiles: Record<number, Attachment[]>;
   /** Latest progress note per running task. */
   taskProgress: Record<number, string>;
   approvals: Record<number, Approval>;
@@ -105,6 +108,7 @@ let state: State = {
   connected: false,
   tasks: {},
   steps: {},
+  taskFiles: {},
   taskProgress: {},
   approvals: {},
   desktop: null,
@@ -390,9 +394,14 @@ export function bumpMemory() {
 }
 
 export async function loadTask(id: number) {
-  const { task, steps } = await api<{ task: Task; steps: TaskStep[] }>(`/tasks/${id}`);
+  const { task, steps, attachments } = await api<{
+    task: Task;
+    steps: TaskStep[];
+    attachments?: Attachment[];
+  }>(`/tasks/${id}`);
   put("tasks", id, task);
   put("steps", id, steps);
+  put("taskFiles", id, attachments ?? []);
 }
 
 const requested = new Set<string>();

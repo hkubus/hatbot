@@ -1,5 +1,5 @@
 import { latestNoteOnly, OPEN_NEGOTIATION_STATUSES, type Task } from "@hatbot/shared";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { ask } from "../confirm";
@@ -9,6 +9,7 @@ import { Icon } from "../icons";
 import { Link } from "../link";
 import { LiveView, StepIcon } from "../live";
 import { LoadError, useItem } from "../load";
+import { AssistantBody, isMarkdownFile } from "../markdown";
 import { NegotiationChip } from "../negotiations";
 import { navigate } from "../router";
 import {
@@ -24,7 +25,6 @@ import {
 } from "../store";
 import { ApprovalCard, isActive, Shot, StatusChip, taskLine } from "../tasks";
 import { BackHead, Group, LinkRow, Seg } from "../ui";
-import { AssistantBody } from "./Chat";
 
 /** A page of finished tasks; the list pages back from the oldest shown. */
 const TASK_PAGE = 50;
@@ -215,7 +215,19 @@ export function From({ task }: { task: Task }) {
   return task.triggerId ? go(`/triggers/${task.triggerId}`, name) : name;
 }
 
+/** Where a research task's report opens: its note, or the copy attached to the task when that's gone. */
+function reportLink(task: Task, file: { id: number; name: string } | undefined) {
+  if (task.reportPath)
+    return {
+      to: `/read?path=${encodeURIComponent(task.reportPath)}${file ? `&file=${file.id}` : ""}`,
+      label: task.reportPath,
+    };
+  return file ? { to: `/read?file=${file.id}`, label: file.name } : null;
+}
+
 function Details({ task }: { task: Task }) {
+  const files = useStore((s) => s.taskFiles[task.id]);
+  const report = task.research ? reportLink(task, files?.find(isMarkdownFile)) : null;
   return (
     <dl className="kv">
       <dt>From</dt>
@@ -259,16 +271,12 @@ function Details({ task }: { task: Task }) {
       )}
       <dt>Cost</dt>
       <dd className="tnum">{usd(task.costUsd)}</dd>
-      {task.reportPath && (
+      {report && (
         <>
           <dt>Report</dt>
           <dd>
-            <button
-              type="button"
-              className="text-link"
-              onClick={() => navigate(`/memory?path=${encodeURIComponent(task.reportPath ?? "")}`)}
-            >
-              {task.reportPath}
+            <button type="button" className="text-link" onClick={() => navigate(report.to)}>
+              {report.label}
             </button>
           </dd>
         </>
@@ -296,6 +304,17 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   const { busy, error, run } = useAction();
   /** The goal being edited to run it again; null when that form is closed. */
   const [again, setAgain] = useState<string | null>(null);
+  // A research task attaches its report as it ends: fetched again then, to link it.
+  const ended = !!task && !isActive(task);
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (!task?.research) return;
+    if (!ended) wasRunning.current = true;
+    else if (wasRunning.current) {
+      wasRunning.current = false;
+      void loadTask(id).catch(() => {});
+    }
+  }, [ended, task?.research, id]);
 
   if (missing || !task)
     return (
