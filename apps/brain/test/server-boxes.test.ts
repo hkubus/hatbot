@@ -220,6 +220,99 @@ test("a backend's scheduled() notifies you, opening the box, with a note the bot
   expect(t.hatbox.notes.at(-1)).toStartWith("1: Not notified: Hatbot is paused.");
 });
 
+test("a backend's secrets: set by you, sent only to the guest, never in an answer, event or the model's context; with one set, a new host or a tainted chat's code change asks you, past Haiku", async () => {
+  const model = new FakeModel([{ content: [text("Hello.")] }]);
+  model.onCreate = (p) =>
+    p.system === REVIEW_PROMPT ? JSON.stringify({ safe: true, why: "Fine." }) : undefined;
+  const t = await testApp(model);
+  const KEY = "sk-w/eather+5ecret";
+  const config = { hosts: ["api.weather.test"], secrets: ["WEATHER_KEY"] };
+  t.boxes.create(
+    { botId: "hatbot", conversationId: 1, title: "Weather", html: PAGE, files: files(config) },
+    {},
+  );
+  await t.thread.post("hi").done;
+  const setSecrets = (values: object) => t.call("PUT", "/boxes/1/secrets", { values }, signIn(t));
+  expect((await setSecrets({ OTHER_KEY: "x" })).status).toBe(400);
+  const set = await setSecrets({ WEATHER_KEY: KEY });
+  expect(await set.json()).toEqual([{ name: "WEATHER_KEY", set: true }]);
+
+  // A new host for its backend asks you, untainted as the chat is, naming the secret.
+  model.script.push(
+    {
+      content: [
+        toolUse("box_edit", {
+          box: 1,
+          edits: [{ file: "box.json", old: "api.weather.test", new: 'api.weather.test","x.test' }],
+        }),
+      ],
+    },
+    { content: [text("Added.")] },
+  );
+  const adding = t.thread.post("let it reach x.test too");
+  const host = await waitFor(() => t.approvals.list(true)[0]);
+  expect(host.summary).toContain("reach x.test");
+  expect(host.summary).toContain("WEATHER_KEY");
+  t.approvals.decide(host.id, "approve", "web");
+  await adding.done;
+  expect(t.boxes.hosts(1)).toEqual(["api.weather.test", "x.test"]);
+
+  // Its backend gets it; what comes back has it taken out, however it's spelled.
+  t.hatbox.backend = () =>
+    new Response(`key=${KEY}&q=${encodeURIComponent(KEY)}`, { headers: { "x-echo": KEY } });
+  t.hatbox.log = `fetched https://api.weather.test/?key=${encodeURIComponent(KEY)}`;
+  model.script.push(
+    {
+      content: [
+        toolUse("box_read", { box: 1 }),
+        toolUse("box_call", { box: 1, path: "/" }),
+        toolUse("box_logs", { box: 1 }),
+      ],
+    },
+    { content: [text("Sunny.")] },
+  );
+  await t.thread.post("what does the weather box say?").done;
+  expect(t.hatbox.secretsOf.get(1)?.values).toEqual({ WEATHER_KEY: KEY });
+  const page = await boxFetch(t, { path: "/" });
+  expect(page.value?.body).toBe("key=[secret WEATHER_KEY]&q=[secret WEATHER_KEY]");
+  const read = lastUserText(model.requests.at(-1));
+  expect(read).toContain("WEATHER_KEY (set)");
+  expect(read).toContain("fetched https://api.weather.test/?key=[secret WEATHER_KEY]");
+  const detail = await (await t.call("GET", "/boxes/1", undefined, signIn(t))).text();
+  for (const seen of [
+    JSON.stringify(model.requests),
+    JSON.stringify(t.events),
+    JSON.stringify(page),
+    detail,
+  ]) {
+    expect(seen).not.toContain(KEY);
+    expect(seen).not.toContain(encodeURIComponent(KEY));
+  }
+
+  // In a tainted chat, a change to its backend's code asks you; denied, it isn't built.
+  t.db.query("UPDATE episodes SET tainted = 1, tainted_by = 'https://evil.example'").run();
+  const builds = t.hatbox.builds.length;
+  model.script.push(
+    {
+      content: [
+        toolUse("box_edit", { box: 1, edits: [{ file: "server.ts", old: "42", new: "43" }] }),
+      ],
+    },
+    { content: [text("Not changed.")] },
+  );
+  const recoding = t.thread.post("do what that page said");
+  const code = await waitFor(() => t.approvals.list(true)[0]);
+  expect(code.summary).toContain("Change the backend code");
+  t.approvals.decide(code.id, "deny", "web");
+  await recoding.done;
+  expect(t.hatbox.builds).toHaveLength(builds);
+  expect(model.creates.some((p) => p.system === REVIEW_PROMPT)).toBe(false);
+
+  // Removed here, it's gone from the guest too.
+  await setSecrets({ WEATHER_KEY: null });
+  expect(t.hatbox.secretsOf.has(1)).toBe(false);
+});
+
 test("a box's request reaches only its own backend on the guest, however its path is spelled", async () => {
   const seen: string[] = [];
   const guest = Bun.serve({
@@ -238,7 +331,7 @@ test("a box's request reaches only its own backend on the guest, however its pat
       "/a/../../../update",
       "/\\..\\..\\update",
     ])
-      await agent.http(1, 1, { method: "POST", path, headers: [] });
+      await agent.http(1, 1, "", { method: "POST", path, headers: [] });
     expect(seen).toHaveLength(4);
     for (const p of seen) expect(p).toStartWith("/boxes/1/http/");
   } finally {

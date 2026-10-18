@@ -1,7 +1,7 @@
 // Boxes (PLAN.md §21): small web apps a bot makes for you, every version kept, and what their pages
 // save. The brain never runs a box's code: it serves the page sandboxed, on an opaque origin with no
 // network, and keeps what the page saves through the app, which answers only that box's frame.
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import {
   API_PREFIX,
   type Box,
@@ -9,6 +9,7 @@ import {
   type BoxCall,
   type BoxDetail,
   type BoxPage,
+  type BoxSecret,
   type BoxVersion,
   HATBOT_ID,
   MAX_BOX_STORE,
@@ -19,6 +20,7 @@ import {
   BOX_SERVER,
   type BoxConfig,
   type BoxFile,
+  type BoxSecrets,
   boxConfig,
   MAX_BOX_NOTIFY,
 } from "@hatbot/shared/hatbox";
@@ -31,6 +33,7 @@ import { UserError } from "./errors";
 import type { EventBus } from "./events";
 import type { Backends } from "./hatbox/backends";
 import type { Notifier } from "./notify";
+import type { Secrets } from "./secrets";
 import type { SettingsStore } from "./settings";
 import { BudgetError, estimateTokens, fixedTokens, requestCeiling, type Spend } from "./spend";
 
@@ -104,6 +107,8 @@ export class Boxes {
     private db: Db,
     private events: EventBus,
     private clock: () => number = Date.now,
+    /** Where boxes' secrets are kept: with the brain's other secrets, out of the database. */
+    private vault?: Secrets,
   ) {
     this.key = secretKey(db, "box_key");
   }
@@ -143,7 +148,7 @@ export class Boxes {
         `SELECT ${VERSION_COLUMNS} FROM box_versions WHERE box_id = ? ORDER BY n`,
       )
       .all(id);
-    return { ...box, versions };
+    return { ...box, versions, secrets: this.secrets(id) };
   }
 
   /** A version's page, the current one unless `n` is given. */
@@ -177,13 +182,72 @@ export class Boxes {
     try {
       return boxConfig(this.files(id).find((f) => f.path === BOX_CONFIG)?.content);
     } catch {
-      return { hosts: [], packages: {} };
+      return { hosts: [], packages: {}, secrets: [] };
     }
   }
 
   /** The hosts the box's backend may reach, from its box.json. */
   hosts(id: number): string[] {
     return this.config(id).hosts;
+  }
+
+  /** The secrets the current version's box.json declares, and whether you've set each; no values. */
+  secrets(id: number): BoxSecret[] {
+    const set = this.vault?.box(id) ?? {};
+    return this.config(id).secrets.map((name) => ({ name, set: name in set }));
+  }
+
+  /**
+   * The secrets of the box you've set, whether its box.json declares them now or not: a later version
+   * could declare one again.
+   */
+  setSecretNames(id: number): string[] {
+    return Object.keys(this.vault?.box(id) ?? {});
+  }
+
+  hasSecrets(id: number): boolean {
+    return this.setSecretNames(id).length > 0;
+  }
+
+  /**
+   * What the backend starts with: the secrets its box.json declares that you've set, and a name for
+   * that set of them, which tells the guest whether it has them.
+   */
+  secretValues(id: number): BoxSecrets {
+    const set = this.vault?.box(id) ?? {};
+    const values = Object.fromEntries(
+      this.config(id).secrets.flatMap((n) => (set[n] === undefined ? [] : [[n, set[n]]])),
+    );
+    const digest = Object.keys(values).length
+      ? createHash("sha256").update(JSON.stringify(values)).digest("hex").slice(0, 32)
+      : "";
+    return { values, digest };
+  }
+
+  /** You set or (null) remove some of the box's secrets. Only names its box.json declares are set. */
+  async setSecrets(id: number, changes: Record<string, string | null>): Promise<BoxSecret[]> {
+    if (!this.vault) throw new BoxError("Boxes can't have secrets here.", 503);
+    const declared = this.config(id).secrets;
+    const unknown = Object.keys(changes).find((n) => changes[n] !== null && !declared.includes(n));
+    if (unknown) throw new BoxError(`${unknown} isn't one of this box's secrets.`);
+    this.vault.setBox(id, changes);
+    await this.backends?.sendSecrets(id);
+    return this.secrets(id);
+  }
+
+  /**
+   * `text` from the box's guest with every value of its secrets taken out, also as a URL or JSON
+   * would spell it: for what the model, the page or a log sees.
+   */
+  redact(id: number, text: string): string {
+    for (const [name, value] of Object.entries(this.vault?.box(id) ?? {}))
+      for (const form of new Set([
+        value,
+        encodeURIComponent(value),
+        JSON.stringify(value).slice(1, -1),
+      ]))
+        text = text.replaceAll(form, `[secret ${name}]`);
+    return text;
   }
 
   /** Whether the current version has a backend. */
@@ -326,8 +390,12 @@ export class Boxes {
       this.db.query("UPDATE messages SET box_id = NULL WHERE box_id = ?").run(id);
       return this.db.query("DELETE FROM boxes WHERE id = ?").run(id).changes > 0;
     })();
-    if (gone) this.events.emit({ type: "box.deleted", id });
-    if (gone) void this.backends?.remove(id);
+    if (gone) {
+      this.events.emit({ type: "box.deleted", id });
+      void this.backends?.remove(id);
+      const names = this.setSecretNames(id);
+      if (names.length) this.vault?.setBox(id, Object.fromEntries(names.map((n) => [n, null])));
+    }
     return gone;
   }
 

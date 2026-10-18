@@ -1,6 +1,8 @@
 // Server boxes' backends, on the boxes guest (PLAN.md §21.6): built there, asked through it, their
 // schedules started from here without the model, and all stopped by Pause all. The brain keeps every
-// version's files and built page; the guest only the running copies, sent again when it hasn't got one.
+// version's files and built page, and the boxes' secrets; the guest only the running copies, and the
+// secrets in memory, sent again when it hasn't got them. What comes back from the guest has the box's
+// secrets taken out before the model, the page or a log sees it.
 import type { BoxAnswer, BoxCall } from "@hatbot/shared";
 import {
   type BoxBuild,
@@ -57,48 +59,98 @@ export class Backends {
   /** Builds a version's files on the guest; a backend in them is the one that runs from then on. */
   async build(id: number, version: number, files: BoxFile[]): Promise<BoxBuild> {
     if (!this.agent.configured) throw new BoxError(NO_GUEST, 503);
-    return this.guest(() => this.agent.build(id, version, files));
+    const built = await this.guest(id, () => this.agent.build(id, version, files));
+    return { ...built, output: this.boxes.redact(id, built.output) };
   }
 
   /** The agent's failures, as what the model or the page is told. */
-  private async guest<T>(fn: () => Promise<T>): Promise<T> {
+  private async guest<T>(id: number, fn: () => Promise<T>): Promise<T> {
     try {
       return await fn();
     } catch (err) {
-      if (err instanceof HatboxError && !err.missing) throw new BoxError(err.message, 502);
+      if (err instanceof HatboxError && !err.missing && !err.secrets)
+        throw new BoxError(this.boxes.redact(id, err.message), 502);
       throw err;
     }
   }
 
-  /** `fn` with the box's current version, which is sent to the guest again first if it hasn't got it. */
-  private async current<T>(id: number, fn: (version: number) => Promise<T>): Promise<T> {
+  /**
+   * `fn` with the box's current version and its secrets, which are sent to the guest again first if it
+   * hasn't got them.
+   */
+  private async current<T>(
+    id: number,
+    fn: (version: number, secrets: string) => Promise<T>,
+  ): Promise<T> {
     if (!this.agent.configured) throw new BoxError(NO_GUEST, 503);
     if (this.settings.get().paused) throw new BoxError(PAUSED, 503);
     const box = this.boxes.get(id);
     if (!box) throw new BoxError(`There's no box #${id}.`, 404);
     if (!this.boxes.server(id)) throw new BoxError(`Box #${id} has no backend.`);
-    try {
-      return await this.guest(() => fn(box.version));
-    } catch (err) {
-      if (!(err instanceof HatboxError && err.missing)) throw err;
+    const secrets = this.boxes.secretValues(id);
+    let built = false;
+    let sent = false;
+    for (;;) {
+      try {
+        return await this.guest(id, () => fn(box.version, secrets.digest));
+      } catch (err) {
+        if (!(err instanceof HatboxError)) throw err;
+        if (err.secrets && !sent) {
+          sent = true;
+          await this.guest(id, () => this.agent.secrets(id, secrets));
+        } else if (err.missing && !built) {
+          built = true;
+          if (!(await this.build(id, box.version, this.boxes.files(id))).ok)
+            throw new BoxError(
+              `Box #${id} doesn't build on the boxes guest now; box_logs may say why.`,
+              502,
+            );
+        } else throw new BoxError(this.boxes.redact(id, err.message), 502);
+      }
     }
-    const built = await this.build(id, box.version, this.boxes.files(id));
-    if (!built.ok)
-      throw new BoxError(
-        `Box #${id} doesn't build on the boxes guest now; box_logs may say why.`,
-        502,
-      );
-    return this.guest(() => fn(box.version));
   }
 
   /** A request to the box's backend, from its page or the model. */
-  request(id: number, r: BoxRequest): Promise<Response> {
+  async request(id: number, r: BoxRequest): Promise<Response> {
     const method = r.method.toUpperCase();
     if (!METHODS.has(method)) throw new BoxError(`A box's backend doesn't take ${r.method}.`);
     if (r.body && r.body.byteLength > MAX_BOX_BODY)
       throw new BoxError("A request to a box carries at most 5 MB.", 413);
     const body = method === "GET" || method === "HEAD" ? undefined : r.body;
-    return this.current(id, (version) => this.agent.http(id, version, { ...r, method, body }));
+    const res = await this.current(id, (version, secrets) =>
+      this.agent.http(id, version, secrets, { ...r, method, body }),
+    );
+    return this.redacted(id, res);
+  }
+
+  /**
+   * The backend's answer without its secrets' values, which the page and the model never get: a text
+   * body and the headers. Its code could still hide one (in base64, say); this keeps one it prints by
+   * mistake from reaching them.
+   */
+  private async redacted(id: number, res: Response): Promise<Response> {
+    if (!this.boxes.hasSecrets(id)) return res;
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    let body: Uint8Array | string = bytes;
+    try {
+      body = this.boxes.redact(id, utf8.decode(bytes));
+    } catch {}
+    const headers = passedHeaders(res.headers).map(
+      ([k, v]) => [k, this.boxes.redact(id, v)] as [string, string],
+    );
+    return new Response([101, 204, 205, 304].includes(res.status) ? null : body, {
+      status: res.status,
+      headers,
+    });
+  }
+
+  /** The box's secrets as you've just set them, to the guest, which restarts a running backend with them. */
+  async sendSecrets(id: number): Promise<void> {
+    if (!this.agent.configured || !this.boxes.server(id)) return;
+    // One the guest misses now, it gets with the backend's next request.
+    await this.agent
+      .secrets(id, this.boxes.secretValues(id))
+      .catch((err) => console.error(`couldn't send box #${id}'s secrets to the guest`, err));
   }
 
   /** hatbox.fetch, from the box's page. */
@@ -126,10 +178,10 @@ export class Backends {
     return { value };
   }
 
-  logs(id: number): Promise<string> {
+  async logs(id: number): Promise<string> {
     if (!this.agent.configured) throw new BoxError(NO_GUEST, 503);
     if (!this.boxes.get(id)) throw new BoxError(`There's no box #${id}.`, 404);
-    return this.guest(() => this.agent.logs(id));
+    return this.boxes.redact(id, await this.guest(id, () => this.agent.logs(id)));
   }
 
   /**
@@ -151,11 +203,13 @@ export class Backends {
       this.boxes.ran(b.id, new Date(now).toISOString());
       this.running.add(b.id);
       runs.push(
-        this.current(b.id, (version) => this.agent.scheduled(b.id, version))
+        this.current(b.id, (version, secrets) => this.agent.scheduled(b.id, version, secrets))
           .then((r) =>
             r.ok
               ? r.notify && this.notify(b.id, r.notify)
-              : console.error(`box #${b.id}'s scheduled() failed: ${r.error}`),
+              : console.error(
+                  `box #${b.id}'s scheduled() failed: ${this.boxes.redact(b.id, r.error ?? "")}`,
+                ),
           )
           .catch((err) => console.error(`box #${b.id}'s schedule didn't run`, err))
           .finally(() => this.running.delete(b.id)),
@@ -173,7 +227,7 @@ export class Backends {
    * (Boxes.notify). One that isn't sent is noted in the box's log instead.
    */
   private async notify(id: number, text: string) {
-    const said = text.trim();
+    const said = this.boxes.redact(id, text).trim();
     if (!said) return;
     // A run that started before Pause all ends after it.
     const refused = this.settings.get().paused ? "Hatbot is paused." : this.boxes.notify(id, said);

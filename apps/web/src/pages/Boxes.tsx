@@ -1,6 +1,6 @@
 // Boxes (PLAN.md §21): the small web apps your bots made, and one as large as the window allows, its
 // page sandboxed on an opaque origin, with what it saves going through the app to the brain.
-import type { Box, BoxAnswer, BoxDetail, BoxPage as BoxSource } from "@hatbot/shared";
+import type { Box, BoxAnswer, BoxDetail, BoxSecret, BoxPage as BoxSource } from "@hatbot/shared";
 import { useEffect, useRef, useState } from "react";
 import { useAction } from "../action";
 import { ApiError, api, errorText } from "../api";
@@ -12,7 +12,7 @@ import { useMedia } from "../media";
 import { navigate } from "../router";
 import { loadBoxes, putBox, useStore } from "../store";
 import { useTheme } from "../theme";
-import { BackHead, Group, LinkRow, Select } from "../ui";
+import { BackHead, Group, LinkRow, Row, Select } from "../ui";
 
 export function BoxesPage() {
   const boxes = useStore((s) => s.boxes);
@@ -65,7 +65,8 @@ export function BoxPage({ id }: { id: number }) {
   const [attempt, setAttempt] = useState(0);
   /** The version showing; null for the current one, which follows the bot's changes. */
   const [picked, setPicked] = useState<number | null>(null);
-  const [code, setCode] = useState(false);
+  /** Instead of the page: its source, or its secrets. */
+  const [view, setView] = useState<"page" | "code" | "secrets">("page");
   const { busy, error, run } = useAction();
   // What was read last: the box.updated it puts in the store needn't read it again.
   const seen = useRef("");
@@ -73,7 +74,7 @@ export function BoxPage({ id }: { id: number }) {
   const show = (d: BoxDetail) => {
     seen.current = d.updatedAt;
     setDetail(d);
-    const { versions: _, ...box } = d;
+    const { versions: _, secrets: _secrets, ...box } = d;
     putBox(box);
   };
   // biome-ignore lint/correctness/useExhaustiveDependencies: a change, or Retry, reads it again
@@ -143,21 +144,125 @@ export function BoxPage({ id }: { id: number }) {
               Restore
             </button>
           )}
-          <button type="button" className="btn sm" onClick={() => setCode((c) => !c)}>
-            {code ? "Page" : "Code"}
+          {detail.secrets.length > 0 && (
+            <button
+              type="button"
+              className="btn sm"
+              onClick={() => setView((v) => (v === "secrets" ? "page" : "secrets"))}
+            >
+              {view === "secrets" ? "Page" : "Secrets"}
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn sm"
+            onClick={() => setView((v) => (v === "code" ? "page" : "code"))}
+          >
+            {view === "code" ? "Page" : "Code"}
           </button>
           <button type="button" className="btn sm danger-text" disabled={busy} onClick={remove}>
             Delete
           </button>
         </BackHead>
         {error && <div className="form-error">{error}</div>}
-        {code ? (
+        {view === "code" ? (
           <BoxCode id={id} version={version} />
+        ) : view === "secrets" && detail.secrets.length ? (
+          <BoxSecrets
+            id={id}
+            secrets={detail.secrets}
+            onChange={(secrets) => setDetail({ ...detail, secrets })}
+          />
         ) : (
           <BoxFrame id={id} version={version} title={detail.title} />
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * The secrets the box's backend reads, as its box.json names them (PLAN.md §21.6): you set them here,
+ * only its backend gets them, and they're never shown again, here or to the bot.
+ */
+function BoxSecrets({
+  id,
+  secrets,
+  onChange,
+}: {
+  id: number;
+  secrets: BoxSecret[];
+  onChange: (secrets: BoxSecret[]) => void;
+}) {
+  const [editing, setEditing] = useState<string | null>(null);
+  const [value, setValue] = useState("");
+  const { busy, error, run } = useAction();
+  const edit = (name: string | null) => {
+    setEditing(name);
+    setValue("");
+  };
+  const save = (values: Record<string, string | null>) =>
+    run(async () => {
+      onChange(await api<BoxSecret[]>(`/boxes/${id}/secrets`, { method: "PUT", body: { values } }));
+      edit(null);
+    });
+  const remove = async (name: string) => {
+    if (await ask({ text: `Remove ${name}? The box's backend stops getting it.`, ok: "Remove" }))
+      save({ [name]: null });
+  };
+  return (
+    <div className="box-secrets">
+      <Group title="Secrets">
+        {secrets.map((s) =>
+          editing === s.name ? (
+            <form
+              key={s.name}
+              className="row"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (value.trim()) save({ [s.name]: value.trim() });
+              }}
+            >
+              <div className="txt">
+                <b className="mono">{s.name}</b>
+              </div>
+              <input
+                className="field mono"
+                type="password"
+                aria-label={s.name}
+                autoComplete="off"
+                spellCheck={false}
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+              />
+              <button type="submit" className="btn sm accent" disabled={busy || !value.trim()}>
+                Save
+              </button>
+              <button type="button" className="btn sm ghost" onClick={() => edit(null)}>
+                Cancel
+              </button>
+            </form>
+          ) : (
+            <Row key={s.name} label={<span className="mono">{s.name}</span>}>
+              <button type="button" className="btn sm" disabled={busy} onClick={() => edit(s.name)}>
+                {s.set ? "Change" : "Set"}
+              </button>
+              {s.set && (
+                <button
+                  type="button"
+                  className="btn sm ghost"
+                  disabled={busy}
+                  onClick={() => remove(s.name)}
+                >
+                  Remove
+                </button>
+              )}
+            </Row>
+          ),
+        )}
+      </Group>
+      {error && <div className="form-error">{error}</div>}
+    </div>
   );
 }
 

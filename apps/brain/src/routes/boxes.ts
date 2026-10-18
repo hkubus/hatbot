@@ -1,4 +1,4 @@
-import { BoxCall, OpenBox, RevertBox } from "@hatbot/shared";
+import { BoxCall, OpenBox, RevertBox, SetBoxSecrets } from "@hatbot/shared";
 import { Hono } from "hono";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
@@ -60,6 +60,12 @@ export const boxRoutes = new Hono<AppEnv>()
     if (!boxes.get(id(c))) return c.json({ error: GONE }, 404);
     boxes.revert(id(c), c.req.valid("json").version, { messageId: null });
     return found(c, boxes.detail(id(c)), GONE);
+  })
+  // Yours to set, on the box's page: only its backend gets them, and no answer carries a value.
+  .put("/boxes/:id/secrets", json(SetBoxSecrets), async (c) => {
+    const { boxes } = c.var;
+    if (!boxes.get(id(c))) return c.json({ error: GONE }, 404);
+    return c.json(await boxes.setSecrets(id(c), c.req.valid("json").values));
   })
   // Whatever the box's page asks of window.hatbox, passed on as it is by the app.
   .post("/boxes/:id/call", json(BoxCall), async (c) => {

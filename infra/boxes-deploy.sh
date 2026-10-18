@@ -105,7 +105,9 @@ EOF
 # A box's backend, started on its first request and stopped after 15 idle minutes, both by the agent; no
 # [Install]. A user of its own, no network (it reaches the agent through its socket directory, and the
 # internet only through the agent), its data in a state directory only it can enter, and of the agent's
-# files only its own app, read-only.
+# files only its own app, read-only. Its secrets it asks of the agent through that socket as it starts,
+# so only this unit gets them: LoadCredential= would have PID 1 read, as root, a file the agent's user
+# wrote, and SetCredential= means writing units.
 cat >/etc/systemd/system/hatbox@.service <<'EOF'
 [Unit]
 Description=Hatbot box %i

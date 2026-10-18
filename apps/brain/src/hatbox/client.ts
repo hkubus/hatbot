@@ -1,5 +1,12 @@
 // HTTP client for the boxes guest's agent, apps/hatbox (PLAN.md §21.6).
-import type { BoxBuild, BoxFile, BoxRun, GuestBox, HatboxStatus } from "@hatbot/shared/hatbox";
+import type {
+  BoxBuild,
+  BoxFile,
+  BoxRun,
+  BoxSecrets,
+  GuestBox,
+  HatboxStatus,
+} from "@hatbot/shared/hatbox";
 
 export class HatboxError extends Error {
   constructor(
@@ -8,6 +15,8 @@ export class HatboxError extends Error {
     readonly status: number,
     /** The guest doesn't have the version asked for: the brain sends it again. */
     readonly missing = false,
+    /** The guest doesn't have the box's secrets as they are: the brain sends them. */
+    readonly secrets = false,
   ) {
     super(message);
   }
@@ -29,10 +38,15 @@ export interface HatboxAgent {
   boxes(): Promise<GuestBox[]>;
   /** Sends a version's files, then builds them: the page inlined into one file, and the backend. */
   build(id: number, version: number, files: BoxFile[]): Promise<BoxBuild>;
-  /** A request to the backend, started if it isn't; its answer as it is, whatever the status. */
-  http(id: number, version: number, req: BoxRequest): Promise<Response>;
+  /**
+   * A request to the backend, started if it isn't; its answer as it is, whatever the status. `secrets`
+   * names the set of secrets it starts with (BoxSecrets' digest), "" for none.
+   */
+  http(id: number, version: number, secrets: string, req: BoxRequest): Promise<Response>;
   /** Runs the backend's scheduled(): why it failed, or what it asked to tell you. */
-  scheduled(id: number, version: number): Promise<BoxRun>;
+  scheduled(id: number, version: number, secrets: string): Promise<BoxRun>;
+  /** The box's secrets, which its backend starts with from then on. */
+  secrets(id: number, s: BoxSecrets): Promise<void>;
   /** A line in the box's log, from the brain. */
   note(id: number, line: string): Promise<void>;
   logs(id: number): Promise<string>;
@@ -56,6 +70,7 @@ export class HttpHatboxAgent implements HatboxAgent {
     path: string,
     o: {
       version?: number;
+      secrets?: string;
       body?: string | Uint8Array;
       headers?: [string, string][];
       timeoutMs?: number;
@@ -70,6 +85,7 @@ export class HttpHatboxAgent implements HatboxAgent {
           ...(o.headers ?? []),
           ["authorization", `Bearer ${this.token}`],
           ...(o.version ? [["x-hatbox-version", String(o.version)] as [string, string]] : []),
+          ...(o.secrets ? [["x-hatbox-secrets", o.secrets] as [string, string]] : []),
         ],
         body: o.body,
         redirect: "manual",
@@ -80,11 +96,16 @@ export class HttpHatboxAgent implements HatboxAgent {
     }
     // The agent's own refusals say so; a backend's answer, whatever its status, is passed on.
     if (res.headers.has("x-hatbox-error")) {
-      const e = (await res.json().catch(() => ({}))) as { error?: string; missing?: boolean };
+      const e = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        missing?: boolean;
+        secrets?: boolean;
+      };
       throw new HatboxError(
         e.error ?? `The boxes guest answered ${res.status}.`,
         res.status,
         e.missing,
+        e.secrets,
       );
     }
     return res;
@@ -106,20 +127,31 @@ export class HttpHatboxAgent implements HatboxAgent {
     const res = await this.req("POST", `/boxes/${id}/build`, { version, timeoutMs: 5 * 60_000 });
     return (await res.json()) as BoxBuild;
   }
-  async http(id: number, version: number, r: BoxRequest) {
+  async http(id: number, version: number, secrets: string, r: BoxRequest) {
     // Resolved on its own first, so no "..", in any spelling, leads out of the box's own paths.
     const inBox = new URL(r.path, "http://box");
     return this.req(r.method, `/boxes/${id}/http${inBox.pathname}${inBox.search}`, {
       version,
+      secrets,
       headers: r.headers,
       body: r.body,
       // The backend may have to start, and then has a minute to answer.
       timeoutMs: 80_000,
     });
   }
-  async scheduled(id: number, version: number) {
-    const res = await this.req("POST", `/boxes/${id}/scheduled`, { version, timeoutMs: 80_000 });
+  async scheduled(id: number, version: number, secrets: string) {
+    const res = await this.req("POST", `/boxes/${id}/scheduled`, {
+      version,
+      secrets,
+      timeoutMs: 80_000,
+    });
     return (await res.json()) as BoxRun;
+  }
+  async secrets(id: number, s: BoxSecrets) {
+    await this.req("PUT", `/boxes/${id}/secrets`, {
+      body: JSON.stringify(s),
+      headers: [["content-type", "application/json"]],
+    });
   }
   async note(id: number, line: string) {
     await this.req("POST", `/boxes/${id}/log`, {

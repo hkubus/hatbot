@@ -3278,6 +3278,10 @@ a.row-main:hover {
   display: block;
   background: var(--bg);
 }
+.box-secrets {
+  align-self: start;
+  max-width: 640px;
+}
 .box-code {
   margin: 0;
   overflow: auto;

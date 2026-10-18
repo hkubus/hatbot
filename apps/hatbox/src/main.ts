@@ -22,7 +22,10 @@ const version = (() => {
 })();
 
 const local = process.env.HATBOX_UNITS === "local";
-if (local) console.error("HATBOX_UNITS=local: backends run as this user, with its network");
+if (local)
+  console.error(
+    "HATBOX_UNITS=local: backends run as this user, with its network, and could ask for each other's secrets",
+  );
 const guest = new Guest({
   state,
   run,

@@ -59,7 +59,7 @@ const PAGE: BoxFile[] = [
   { path: "app.ts", content: 'document.body.append("made by app.ts");' },
 ];
 
-test("a server box is built into one page and a backend that starts when asked, stops when idle and is deleted", async () => {
+test("a server box is built into one page and a backend that starts when asked, with its secrets, stops when idle and is deleted", async () => {
   const a = agent();
   const files = [
     ...PAGE,
@@ -70,7 +70,7 @@ test("a server box is built into one page and a backend that starts when asked, 
 export default {
   fetch(req: Request) {
     const url = new URL(req.url);
-    return Response.json({ n: next(), path: url.pathname, q: url.searchParams.get("q"), auth: req.headers.get("authorization"), sent: req.headers.get("x-sent") });
+    return Response.json({ n: next(), path: url.pathname, q: url.searchParams.get("q"), auth: req.headers.get("authorization"), sent: req.headers.get("x-sent"), key: process.env.WEATHER_KEY ?? null });
   },
   scheduled() { console.log("ran on schedule"); return { notify: "Price dropped to €40" }; },
 };`,
@@ -85,9 +85,11 @@ export default {
   expect(built.page).toContain("from style.css");
   expect(await (await a.send("/boxes")).json()).toEqual([{ id: 1, version: 1 }]);
 
-  const ask = async (path: string) =>
+  const ask = async (path: string, secrets = "") =>
     (await (
-      await a.send(`/boxes/1/http${path}`, { headers: { "x-sent": "yes" } })
+      await a.send(`/boxes/1/http${path}`, {
+        headers: { "x-sent": "yes", ...(secrets ? { "x-hatbox-secrets": secrets } : {}) },
+      })
     ).json()) as Record<string, unknown>;
   // The brain's token isn't passed to the box.
   expect(await ask("/api/count?q=1")).toEqual({
@@ -96,6 +98,7 @@ export default {
     q: "1",
     auth: null,
     sent: "yes",
+    key: null,
   });
   expect((await ask("/")).n).toBe(2);
   // A version the guest hasn't built: the brain is told to send it again.
@@ -115,6 +118,20 @@ export default {
   a.clock.now += IDLE_MS;
   await a.guest.sweep();
   expect((await ask("/")).n).toBe(1);
+
+  // Its secrets, in its environment. A request naming others than the agent holds is refused, for the
+  // brain to send them; the backend running with the old ones starts again with the new.
+  const secrets = (body: object) =>
+    a.send("/boxes/1/secrets", { method: "PUT", body: JSON.stringify(body) });
+  expect((await secrets({ values: { WEATHER_KEY: "sk-1" }, digest: "d1" })).status).toBe(204);
+  const unsent = await a.send("/boxes/1/http/");
+  expect([unsent.status, ((await unsent.json()) as { secrets?: boolean }).secrets]).toEqual([
+    409,
+    true,
+  ]);
+  expect(await ask("/", "d1")).toMatchObject({ n: 1, key: "sk-1" });
+  await secrets({ values: {}, digest: "" });
+  expect(await ask("/")).toMatchObject({ n: 1, key: null });
 
   await a.send("/boxes/1", { method: "DELETE" });
   expect(await (await a.send("/boxes")).json()).toEqual([]);

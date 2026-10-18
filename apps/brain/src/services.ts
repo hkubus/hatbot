@@ -108,7 +108,7 @@ export async function createServices(o: Outside) {
     reserved: CORE_TOOL_NAMES,
   });
   const bots = new Bots(db, events, clock);
-  const boxes = new Boxes(db, events, clock);
+  const boxes = new Boxes(db, events, clock, secrets);
   boxes.backends = new Backends(boxes, o.hatbox ?? new HttpHatboxAgent("", ""), settings, clock);
   // Not given the rest at first: attach() hands it what needs the chats in turn.
   const chats = new Chats({
