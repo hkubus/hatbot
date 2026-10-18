@@ -104,6 +104,12 @@ const SYMBOLS: Record<string, string> = {
 
 export class KeyError extends Error {}
 
+/** A table's own entry: every object has a "constructor" and a "__proto__", which aren't keys. */
+const own = (table: Record<string, string>, name: string) =>
+  Object.hasOwn(table, name) ? table[name] : undefined;
+/** The modifier a name is (ctrl, shift, alt or super), if it's one. */
+export const modifier = (name: string) => own(MODIFIERS, name.toLowerCase());
+
 /** A letter, digit, punctuation mark or symbol, not a control character or a space. */
 const printable = (s: string) => [...s].length === 1 && /^[\p{L}\p{N}\p{P}\p{S}]$/u.test(s);
 
@@ -114,8 +120,8 @@ export function keysym(name: string): string {
     return SYMBOLS[name] ?? name;
   }
   const lower = name.toLowerCase();
-  if (MODIFIERS[lower]) return MODIFIERS[lower];
-  if (NAMED[lower]) return NAMED[lower];
+  const sym = modifier(name) ?? own(NAMED, lower);
+  if (sym) return sym;
   const f = /^f([1-9]|1\d|2[0-4])$/.exec(lower);
   if (f) return `F${f[1]}`;
   throw new KeyError(
@@ -133,7 +139,7 @@ export function combo(text: string): string {
   if (t === "+") return "plus";
   const parts = t.endsWith("++") ? [...t.slice(0, -2).split("+"), "+"] : t.split("+");
   if (parts.some((p) => !p)) throw new KeyError(`Can't read the key combination "${text}".`);
-  if (parts.slice(0, -1).some((p) => !MODIFIERS[p.toLowerCase()]))
+  if (parts.slice(0, -1).some((p) => !modifier(p)))
     throw new KeyError(`"${text}": put the modifiers first and one key last, like ctrl+shift+t.`);
   return parts.map(keysym).join("+");
 }
@@ -142,7 +148,7 @@ export function combo(text: string): string {
 export function modifiers(text: string | null | undefined): string[] {
   if (!text?.trim()) return [];
   return text.split("+").map((p) => {
-    const m = MODIFIERS[p.trim().toLowerCase()];
+    const m = modifier(p.trim());
     if (!m) throw new KeyError(`"${p}" is not a modifier key (ctrl, shift, alt, super).`);
     return m;
   });
@@ -161,7 +167,8 @@ export function browserKey(key: string): string | null {
     Meta: "Super_L",
     AltGraph: "ISO_Level3_Shift",
   };
-  if (special[key]) return special[key];
+  const held = own(special, key);
+  if (held) return held;
   try {
     return keysym(key);
   } catch (err) {
