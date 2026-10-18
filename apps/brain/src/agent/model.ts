@@ -194,12 +194,13 @@ export function retryAfterMs(err: unknown, now = Date.now()): number | null {
 /**
  * Runs a streamed request, trying it again up to twice when it fails (the SDK doesn't retry streams
  * itself), after the API's retry-after when it gives one. `onRetry` tells the caller to drop what that
- * attempt streamed.
+ * attempt streamed. Tests pass their own `wait`.
  */
 export async function withRetries<T>(
   attempt: () => Promise<T>,
   handlers: Pick<StreamHandlers, "onRetry" | "signal">,
   delays = retryDelays.ms,
+  wait = sleep,
 ): Promise<T> {
   for (let i = 0; ; i++) {
     try {
@@ -209,10 +210,10 @@ export async function withRetries<T>(
       if (delay === undefined || handlers.signal?.aborted || !retryable(err)) throw err;
       const asked = retryAfterMs(err);
       if (asked !== null && asked > MAX_RETRY_AFTER_MS) throw err;
-      const wait = Math.max(delay, asked ?? 0);
-      console.warn(`model stream failed (${modelErrorText(err)}); trying again in ${wait} ms`);
+      const ms = Math.max(delay, asked ?? 0);
+      console.warn(`model stream failed (${modelErrorText(err)}); trying again in ${ms} ms`);
       handlers.onRetry?.();
-      await sleep(wait, handlers.signal);
+      await wait(ms, handlers.signal);
     }
   }
 }
