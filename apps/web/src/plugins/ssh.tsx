@@ -124,7 +124,7 @@ export function SshSettings({ config, save, action, running }: PluginSettingsPro
               />
             </div>
             <div className="form-row">
-              <span className="label">Ask before every command</span>
+              <span className="label">Ask before every change</span>
               <Switch on={h.careful} onChange={(careful) => set(i, { careful })} />
             </div>
             <div className="form-row">
