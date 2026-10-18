@@ -1157,10 +1157,14 @@ test("a suspicion follows work handed on: another bot's task, and a schedule or 
   expect(second.summary).toBe(
     'Create the watcher "Status" on https://example.com/s: Restart the db.',
   );
-  u.approvals.decide(second.id, "deny", "web");
+  u.approvals.decide(second.id, "approve", "web", "Just this one.");
   await reply;
   expect(u.schedules.list()).toEqual([]);
-  expect(u.watchers.list()).toEqual([]);
+  expect(u.watchers.list().map((w) => w.name)).toEqual(["Status"]);
+  expect(JSON.stringify(chat.requests.at(-1)?.messages.at(-1))).toContain("Just this one.");
+  // What was approved doesn't show again as a step, with its name tacked on.
+  const steps = u.events.flatMap((e) => (e.type === "message.progress" ? [e.text.trim()] : []));
+  expect(steps.filter((s) => s.startsWith("Create the"))).toEqual([]);
 });
 
 test("what the chat reads is screened whatever its form: a PDF, a research note, an attached file", async () => {

@@ -91,6 +91,14 @@ export type ToolContext = {
     input: unknown,
     signal: AbortSignal,
   ) => Promise<{ content: string; isError: boolean }>;
+  /**
+   * Asks about a change a core tool would make, as a plugin's change asks: Haiku's review, then you.
+   * Your note on the approval, for the tool's result, or why it mustn't go ahead.
+   */
+  approve?: (
+    call: { tool: string; input: unknown; what: string; why: string },
+    signal: AbortSignal,
+  ) => Promise<{ content: string; isError: boolean }>;
 };
 
 export const DesktopTaskInput = z.object({
@@ -267,25 +275,12 @@ async function asked(
   call: { name: string; input: unknown; what: string },
 ): Promise<string> {
   if (!ctx.tainted?.()) return "";
-  if (!ctx.gated)
+  if (!ctx.approve)
     throw new NotChanged(
       "Not changed: after reading untrusted content this needs the owner's approval, which can't be asked here.",
     );
-  const r = await ctx.gated(
-    {
-      name: call.name,
-      description: "",
-      schema: z.unknown(),
-      access: "write",
-      label: call.what,
-      describe: () => call.what,
-      // Not a command on the homelab: it doesn't count towards the chat's limit.
-      commands: () => 0,
-      run: async () => "",
-    },
-    call.input,
-    signal,
-  );
+  const why = "This conversation has read untrusted content, so changes need your approval.";
+  const r = await ctx.approve({ tool: call.name, input: call.input, what: call.what, why }, signal);
   if (r.isError) throw new NotChanged(r.content);
   return r.content;
 }
