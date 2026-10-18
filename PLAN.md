@@ -7,7 +7,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 - **No vendor cloud.** It runs on your hardware.
 - **Predictable cost.** Spending limits are enforced.
 
-> Status: design agreed 2026-10-09. M0–M5, the iOS app, more than one bot (§14), looking after things (§15), negotiation's N1 and N2 (§16), research (§17) and own code (§18) are built, and so are the fixes from the 2026-10-17 code review. The owner deployed and tried them live by 2026-10-18. What isn't built is under each section's "Not built" or "Not done", and what was left on purpose is in §12.1.
+> Status: design agreed 2026-10-09. M0–M5, the iOS app, more than one bot (§14), looking after things (§15), negotiation's N1 and N2 (§16), research (§17) and own code (§18) are built, and so are the fixes from the 2026-10-17 code review. The owner deployed and tried them live by 2026-10-18. Only negotiation has work still planned (§16, "Not done"); everything else not built was left on purpose and is listed in §12.1 (owner's call, 2026-10-18).
 
 ---
 
@@ -164,7 +164,7 @@ Integrations are plugins: Proxmox, Proxmox Backup Server, SSH, Home Assistant, U
 - **MCP tools**: each tool's mode is Off, Ask first, Always ask, Allow, or Chat, no asking (stored as `chat`; a read the chat calls freely). A tool also has a kind (Pays or moves money, Buys or orders, Changes accounts or keys, Other changes), set in Settings or guessed from its name and description. A tool that pays, buys or changes accounts always asks, with that kind (so in the app, §6.2), and can't be Chat. A Chat or Allow mode is pinned to the tool's definition (name, description, input schema): when the server changes it, the tool asks again until you pick its mode again. An untrusted server's tool descriptions taint every chat and task until you press Accept in Settings → Plugins → MCP, which shows each description and input schema; a changed definition taints again. Definitions the API wouldn't take are left out with the reason under the tool: an input schema that isn't valid JSON Schema 2020-12 (checked with ajv) or refers to what it doesn't define, a top-level `anyOf`/`oneOf`/`allOf`/`not`/`if`, a schema over 16,000 characters, a property name the API refuses, or a tool that only runs as an MCP task. At most 50 tools per server are offered. A failed call is sent again only when it can't have reached the server, or in Chat mode.
 - **Set in the web app** (built 2026-10-18): every variable a plugin reads has a field on its page. What's set there is kept with the API key in `/var/lib/hatbot/secrets.json` (§6.4) and wins over `/etc/hatbot/*.env`, which still work; saving restarts every plugin that reads it (the Forgejo token restarts Forgejo and Own code), with no brain restart. A secret is only ever sent: the app is told whether it's set and where from, never the value; the rest (addresses, token IDs, fingerprints) it's shown. A name a plugin doesn't declare is refused. The brain's core Proxmox client (Check everything, desktop snapshots) is made from the same values each time it's used.
 - **MCP secrets**: `${NAME}` in a server's headers or environment reads a secret added on MCP's page under any name, or else a name set in `/etc/hatbot/mcp.env` (root:hatbot, mode 640; `brain-provision.sh` creates it). Nothing else in the brain's environment.
-- **MCP stdio servers** run inside the brain as the `hatbot` user with a clean environment (no inherited secrets), but that user can read `/etc/hatbot/*.env` and `secrets.json`. The form says so and suggests a pinned version. Run only servers you trust that way; prefer HTTP servers elsewhere. Running each as its own user would need a root-side launcher (a systemd unit per server, say), since the brain's unit has `NoNewPrivileges=yes`; not built.
+- **MCP stdio servers** run inside the brain as the `hatbot` user with a clean environment (no inherited secrets), but that user can read `/etc/hatbot/*.env` and `secrets.json`. The form says so and suggests a pinned version. Run only servers you trust that way; prefer HTTP servers elsewhere. Running each as its own user would need a root-side launcher (a systemd unit per server, say), since the brain's unit has `NoNewPrivileges=yes`; left on purpose (§12.1).
 - **Web**: Settings lists the plugins; each has a page with its switch, its environment (above), its settings form (`apps/web/src/plugins/<id>.tsx`), a Test button and its tools.
 
 ### 4.6 `infra/`
@@ -634,6 +634,12 @@ Known gaps, kept because closing them costs more than they risk. Reopen one only
 - desktop-agent keeps its own list of payment hosts for Teach's card-frame check, apart from the brain's.
 - The try-again note and the chart-fix note are user turns opening "(No message from the owner: …)": the API takes a system message only after a user turn.
 
+Features left out on purpose (the owner's call, 2026-10-18): only negotiation (§16) has work still planned.
+- Research: no page reader that runs JavaScript. It would fetch any URL the model names, and so could send out what the task has read; pages that need a browser go to `run_desktop_task`, which asks before consequential steps. And no research started from schedules: a schedule's task can do lighter research itself.
+- Each stdio MCP server running as its own user, which needs a root-side launcher (§4.5).
+- Settings → Plugins and teach mode in the iOS app: they stay web-only.
+- To-do items handed to other bots with `@name` (§19): ask the bot in the chat instead.
+
 ---
 
 ## 13. Assumptions to confirm during M0
@@ -939,9 +945,7 @@ Deep research as its own kind of background task. The chat starts it with `resea
 - **Refreshing:** Run again on a research task, or `research` with `previous`, names the earlier report in the goal ("Earlier report to refresh: …"); a rerun keeps it and the bot that asked. The task reads that report first and leads with what changed.
 - **Sites:** `research/sites.md` in the bot's notes says which sites were useful and which weren't, and for what. It's written from web pages, so it's a hint, not a list of sites to trust. The task reads it before searching and adds to it.
 - **Second-hand prices:** with a buying bot such as Haggler, research asks it with `ask_bot`.
-- **Not built:**
-  - A page reader that runs JavaScript. It would fetch any URL the model names, and so could send out what the task has read. Pages that need a browser go to `run_desktop_task`, which asks before consequential steps.
-  - Starting research from schedules.
+- **Left on purpose** (§12.1): a page reader that runs JavaScript, and starting research from schedules.
 
 ## 18. Own code (built 2026-10-18)
 Hatbot can read its own code and propose changes to it as Forgejo pull requests, when the owner asks. It doesn't go looking for things to change on its own (§1). The **Own code** plugin (`apps/brain/src/plugins/self/`) needs the desktop, and `HATBOT_SELF_REPO` (owner/name), `FORGEJO_URL` and `FORGEJO_TOKEN`, set on its page. The bot account needs write access to the repository, to push branches. It's off until switched on.
