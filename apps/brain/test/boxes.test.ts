@@ -98,9 +98,15 @@ test("a bot changes only its own boxes", async () => {
   expect(t.boxes.get(1)?.title).toBe("Builds");
 });
 
-test("box_look: the bot sees its box drawn on the desktop with its errors, and with what the page saved as untrusted", async () => {
+test("box_look: the bot sees its box drawn on the desktop with its errors, tries it with steps, and sees what the page saved as untrusted", async () => {
+  const steps = [
+    { type: "#name", text: "Walk" },
+    { click: "#add" },
+    { click: "#gone" },
+    { press: "Enter" },
+  ];
   const model = new FakeModel([
-    { content: [toolUse("box_look", { box: 1 })] },
+    { content: [toolUse("box_look", { box: 1, steps })] },
     { content: [text("No walks yet.")] },
     { content: [toolUse("box_look", { box: 1, with_data: true, width: "desktop", dark: true })] },
     { content: [text("Your walks show.")] },
@@ -119,11 +125,16 @@ test("box_look: the bot sees its box drawn on the desktop with its errors, and w
     png,
     width: 390,
     height: 844,
-    errors: [{ message: "Uncaught ReferenceError: draw is not defined", line }],
+    errors: [
+      { message: "Uncaught ReferenceError: draw is not defined", line },
+      { message: "Uncaught Error: no name", line, step: 2 },
+    ],
+    steps: [{ ok: true }, { ok: true }, { ok: false, error: "Nothing matches #gone." }],
+    store: '{"walks":4}',
   };
 
-  await t.thread.post("does the tracker look right?").done;
-  expect(t.agent.looks[0]).toMatchObject({ csp: FRAME_CSP, width: 390, dark: false });
+  await t.thread.post("does the tracker work?").done;
+  expect(t.agent.looks[0]).toMatchObject({ csp: FRAME_CSP, width: 390, dark: false, steps });
   // An empty store: only the bot's own code is at work, so it's trusted.
   expect(t.agent.looks[0]?.html).not.toContain('"walks"');
   const seen = lastUserText(model.requests[1]);
@@ -131,6 +142,11 @@ test("box_look: the bot sees its box drawn on the desktop with its errors, and w
     `{"type":"image","source":{"type":"base64","media_type":"image/png","data":"${png}"}}`,
   );
   expect(seen).toContain("draw is not defined (line 2)");
+  // Each step's outcome, the one after a failure not run, an error at its step, and what was saved.
+  expect(seen).toContain("Nothing matches #gone.");
+  expect(seen).toContain("4. press Enter: not run");
+  expect(seen).toContain("no name (line 2, step 2)");
+  expect(seen).toContain('{\\"walks\\":4}');
   expect(seen).not.toContain('trusted=\\"false\\"');
 
   await t.thread.post("and with my walks, on a computer, in dark?").done;

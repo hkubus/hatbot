@@ -3,6 +3,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import {
   type Bot,
   type Box,
+  BoxCall,
   describeCondition,
   describeCron,
   dueTag,
@@ -26,7 +27,15 @@ import {
   withDone,
   withTodo,
 } from "@hatbot/shared";
-import { type BoxLookError, MAX_LOOK_HEIGHT } from "@hatbot/shared/desktop";
+import {
+  BOX_KEYS,
+  type BoxLookAnswer,
+  type BoxLookError,
+  type BoxLookFetch,
+  type BoxStep,
+  MAX_LOOK_HEIGHT,
+  MAX_LOOK_STEPS,
+} from "@hatbot/shared/desktop";
 import {
   BOX_CONFIG,
   BOX_PAGE,
@@ -473,9 +482,42 @@ function boxOutput(
 
 /** An error box_look's page hit, at its line in the page: Hatbox's script comes `lines` above it. */
 function lookError(e: BoxLookError, lines: number | null): string {
-  const at = lines !== null && e.line && e.line > lines ? ` (line ${e.line - lines})` : "";
-  return `- ${e.message}${at}${e.count ? ` (${e.count} times)` : ""}`;
+  const at = [
+    lines !== null && e.line && e.line > lines && `line ${e.line - lines}`,
+    e.step && `step ${e.step}`,
+    e.count && `${e.count} times`,
+  ].filter(Boolean);
+  return `- ${e.message}${at.length ? ` (${at.join(", ")})` : ""}`;
 }
+
+/** A box_look step, in a few words. */
+function stepLabel(s: BoxStep): string {
+  if ("click" in s) return `click ${s.click}`;
+  if ("type" in s) return `type ${JSON.stringify(cut(s.text, 40))} into ${s.type}`;
+  if ("press" in s) return `press ${s.press}`;
+  if ("wait" in s) return `wait for ${s.wait}`;
+  if ("wait_ms" in s) return `wait ${s.wait_ms} ms`;
+  return `eval ${cut(s.eval.replace(/\s+/g, " "), 60)}`;
+}
+
+const SELECTOR = z.string().min(1).max(1000).describe("A CSS selector");
+const BOX_STEP = z.union([
+  z.object({ click: SELECTOR }),
+  z.object({ type: SELECTOR, text: z.string().max(10_000).describe("Replaces what's in it") }),
+  z.object({ press: z.enum(BOX_KEYS).describe("To the focused element") }),
+  z.object({
+    wait: SELECTOR.describe("Until this CSS selector matches"),
+    ms: z.number().int().min(0).max(5000).optional().describe("2000 if left out"),
+  }),
+  z.object({ wait_ms: z.number().int().min(0).max(3000) }),
+  z.object({
+    eval: z
+      .string()
+      .min(1)
+      .max(10_000)
+      .describe("JavaScript run in the page, awaited; its value comes back as JSON"),
+  }),
+]);
 
 /** Shows the box under the reply, and says so. */
 function shown(ctx: ToolContext, box: Box): string {
@@ -942,7 +984,7 @@ export const TOOLS = [
   def({
     name: "box_create",
     description:
-      'Make a box: a small web app the owner keeps and opens from the chat, such as a tracker, a calculator, a planner or a dashboard. Not for a one-off answer: reply instead, with a chart block if it helps. A box is one self-contained HTML page, its CSS and JavaScript inline. It can\'t load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don\'t work; show messages and confirmations in the page. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app\'s colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku\'s answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes, and hatbox.feed(name) for what a feed you give it with box_feed last read. For more than a page, give files instead, built on the boxes guest into one page: index.html, which loads its scripts and styles by path (<script type="module" src="./app.ts">), the modules they import, npm packages in box.json, and server.ts for a backend (`export default { fetch(req), scheduled?() }` on Bun, keeping data with bun:sqlite in its working folder), which the page calls with await hatbox.fetch(path, init), answered like fetch. The backend reaches only the hosts box.json lists, and cron runs scheduled(), at most every 5 minutes, which may return {notify: "text"} to notify the owner, up to 10 times a day. An API key goes in box.json\'s secrets by name, read as process.env.NAME; the owner sets it on the box\'s page and you never see it: {"hosts": ["shop.example.com"], "cron": "0 * * * *", "packages": {"chart.js": "^4"}, "secrets": ["SHOP_KEY"]}. Then look at it with box_look and fix what\'s wrong before you say it\'s done.',
+      'Make a box: a small web app the owner keeps and opens from the chat, such as a tracker, a calculator, a planner or a dashboard. Not for a one-off answer: reply instead, with a chart block if it helps. A box is one self-contained HTML page, its CSS and JavaScript inline. It can\'t load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don\'t work; show messages and confirmations in the page. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app\'s colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku\'s answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes, and hatbox.feed(name) for what a feed you give it with box_feed last read. For more than a page, give files instead, built on the boxes guest into one page: index.html, which loads its scripts and styles by path (<script type="module" src="./app.ts">), the modules they import, npm packages in box.json, and server.ts for a backend (`export default { fetch(req), scheduled?() }` on Bun, keeping data with bun:sqlite in its working folder), which the page calls with await hatbox.fetch(path, init), answered like fetch. The backend reaches only the hosts box.json lists, and cron runs scheduled(), at most every 5 minutes, which may return {notify: "text"} to notify the owner, up to 10 times a day. An API key goes in box.json\'s secrets by name, read as process.env.NAME; the owner sets it on the box\'s page and you never see it: {"hosts": ["shop.example.com"], "cron": "0 * * * *", "packages": {"chart.js": "^4"}, "secrets": ["SHOP_KEY"]}. Then try it with box_look, with steps that use it as the owner would, check what it saved, and fix what\'s wrong before you say it\'s done.',
     schema: z.object({
       title: BOX_TITLE,
       html: z.string().min(1).max(MAX_BOX_HTML).optional().describe("The whole page"),
@@ -985,7 +1027,7 @@ export const TOOLS = [
   def({
     name: "box_edit",
     description:
-      "Change one of your boxes, as a new version; the earlier ones are kept. Give edits for a few changes, or the whole new page as html. A box with files takes edits to any of them, whole files to add or replace, and files to remove. Then look at it again with box_look.",
+      "Change one of your boxes, as a new version; the earlier ones are kept. Give edits for a few changes, or the whole new page as html. A box with files takes edits to any of them, whole files to add or replace, and files to remove. Then try it again with box_look and its steps.",
     schema: z.object({
       box: z.number().int().describe("The box's number"),
       edits: z
@@ -1154,7 +1196,7 @@ export const TOOLS = [
   def({
     name: "box_look",
     description:
-      "See one of your boxes as the owner would: a picture of the top of its page on a phone, or a desktop, with the errors it hit (uncaught exceptions, unhandled rejections, console.error, and what the browser refused it). It's drawn on the desktop with no network. hatbox.store starts empty and keeps what the page saves for that one look; hatbox.ask, .send, .feed and .fetch fail there. with_data starts it with what the page saved, and what comes back is then untrusted.",
+      "See one of your boxes as the owner would: a picture of the top of its page on a phone, or a desktop, with the errors it hit (uncaught exceptions, unhandled rejections, console.error, and what the browser refused it). It's drawn on the desktop with no network. hatbox.store starts empty and keeps what the page saves for that one look; hatbox.ask, .send and .feed fail there, and .fetch unless backend. with_data starts it with what the page saved, and what comes back is then untrusted. Use steps to try what the box does as the owner would (add an item, press its buttons), then check what it saved, which is shown after the steps. backend lets the page's hatbox.fetch reach the box's real backend, live: what it sends really changes the backend's data, and what comes back is untrusted.",
     schema: z.object({
       box: z.number().int(),
       width: z
@@ -1163,18 +1205,54 @@ export const TOOLS = [
         .describe("phone (390 px wide) if left out; desktop is 1280"),
       dark: z.boolean().optional().describe("In the dark theme"),
       with_data: z.boolean().optional().describe("With what the page saved, as the owner sees it"),
+      steps: z
+        .array(BOX_STEP)
+        .max(MAX_LOOK_STEPS)
+        .optional()
+        .describe(
+          "Tried in order once the page has loaded, 25 seconds in all; the first that fails ends the run. The picture is taken after them",
+        ),
+      backend: z
+        .boolean()
+        .optional()
+        .describe("For a box with a backend: the page's hatbox.fetch reaches it"),
     }),
-    run: async ({ box: id, width, dark = false, with_data }, ctx) => {
+    run: async ({ box: id, width, dark = false, with_data, steps, backend }, ctx) => {
       const box = ownBox(ctx, id);
       const page = ctx.boxes?.page(id);
       if (!ctx.boxes || !page) return `There's no box #${id}.`;
+      if (backend && !ctx.boxes.server(id))
+        return `Box #${id} has no backend; look without backend.`;
+      const guest = backend ? backends(ctx) : null;
       if (!ctx.desktop?.configured)
         return "Not looked at: that needs the desktop, and it isn't set up.";
       const store = with_data ? ctx.boxes.data(id) : {};
       const phone = width !== "desktop";
       const screen = phone ? { width: 390, height: 844 } : { width: 1280, height: 800 };
-      const { html, lines } = previewed(page.html, dark, store);
-      const look = await ctx.desktop.lookAtBox({ html, csp: FRAME_CSP, ...screen, dark });
+      const { html, lines } = previewed(page.html, dark, store, Boolean(guest));
+      // What the page asked its backend, and how each went, for the model.
+      const fetched: string[] = [];
+      const answer = async (f: BoxLookFetch): Promise<BoxLookAnswer["answer"]> => {
+        const call = BoxCall.safeParse({ ...f, op: "fetch" });
+        const what = `${String(f.method ?? "GET").toUpperCase()} ${cut(String(f.path), 200)}`;
+        if (!call.success || call.data.op !== "fetch") {
+          fetched.push(`- ${what}: refused`);
+          return { error: "That isn't a request a box's page can make." };
+        }
+        try {
+          const a = await (guest as Backends).fetch(id, call.data);
+          fetched.push(`- ${what}: ${(a.value as { status: number }).status}`);
+          return a;
+        } catch (err) {
+          const why = err instanceof BoxError ? err.message : "Couldn't reach its backend.";
+          fetched.push(`- ${what}: ${why}`);
+          return { error: why };
+        }
+      };
+      const look = await ctx.desktop.lookAtBox(
+        { html, csp: FRAME_CSP, ...screen, dark, ...(steps?.length ? { steps } : {}) },
+        guest ? answer : undefined,
+      );
       const tall =
         look.height > MAX_LOOK_HEIGHT
           ? ` The page is ${look.height} px tall; the picture shows the top ${MAX_LOOK_HEIGHT}.`
@@ -1185,12 +1263,36 @@ export const TOOLS = [
           : "";
       // A built page's lines aren't its files'.
       const errors = look.errors.map((e) => lookError(e, page.files ? null : lines));
-      const text = `Box #${id} "${page.title}", version ${page.n}, on a ${phone ? "phone" : "desktop"} ${screen.width} px wide, ${dark ? "dark" : "light"}, ${with_data ? "with what the page saved" : "with an empty store"}.${tall}${wide}\n\n${errors.length ? `Errors:\n${errors.join("\n")}` : "No errors."}`;
-      // With the owner's data in it, both the errors and the picture show what the page made of it.
+      const tried = (steps ?? []).map((s, i) => {
+        const r = look.steps?.[i];
+        const how = !r
+          ? "not run"
+          : r.ok
+            ? (r.value ?? "done")
+            : `failed: ${r.error ?? "it didn't work"}`;
+        return `${i + 1}. ${stepLabel(s)}: ${how}`;
+      });
+      const parts = [
+        `Box #${id} "${page.title}", version ${page.n}, on a ${phone ? "phone" : "desktop"} ${screen.width} px wide, ${dark ? "dark" : "light"}, ${with_data ? "with what the page saved" : "with an empty store"}${guest ? ", reaching its backend" : ""}.${tall}${wide}`,
+        tried.length && `Steps:\n${tried.join("\n")}`,
+        guest &&
+          (fetched.length
+            ? `Requests to its backend:\n${fetched.join("\n")}`
+            : "It made no requests to its backend."),
+        errors.length ? `Errors:\n${errors.join("\n")}` : "No errors.",
+        (tried.length || guest) &&
+          look.store !== undefined &&
+          (look.store === "{}" ? "Nothing saved by the end." : `Saved by the end: ${look.store}`),
+      ];
+      const text = parts.filter(Boolean).join("\n\n");
+      // With the owner's data in it, both the errors and the picture show what the page made of it; with
+      // its backend, what the backend answered.
       const tainted = ctx.boxes.taintedBy(id);
       const by = with_data
         ? `What box #${id} "${box.title}" showed with what it saved`
-        : tainted && `Box #${id} "${box.title}", written after reading: ${tainted}`;
+        : guest
+          ? `What box #${id} "${box.title}" showed with its backend's answers`
+          : tainted && `Box #${id} "${box.title}", written after reading: ${tainted}`;
       const screened = with_data ? `${text}\n\n${cut(JSON.stringify(store), 30_000)}` : text;
       const out = boxOutput(ctx, "box_look", text, by || null, screened);
       return {

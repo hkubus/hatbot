@@ -6,6 +6,9 @@ import type {
   AgentElement,
   AgentStatus,
   BoxLook,
+  BoxLookAnswer,
+  BoxLookFetch,
+  BoxLookLine,
   BoxLookResult,
   BrowserCall,
   BrowserInspect,
@@ -51,8 +54,14 @@ export interface DesktopAgent {
   render(url: string): Promise<RenderResult>;
   /** Renders a page of the desktop's own whose script writes its text. Throws when that fails. */
   renderCheck(): Promise<void>;
-  /** A box's page drawn in the same Chromium, with no network, and the errors it hit (box_look). */
-  lookAtBox(look: BoxLook): Promise<BoxLookResult>;
+  /**
+   * A box's page drawn in the same Chromium, with no network, and the errors it hit (box_look), once
+   * its steps are tried. With `backend`, the page's hatbox.fetch is answered by it, live.
+   */
+  lookAtBox(
+    look: BoxLook,
+    backend?: (f: BoxLookFetch) => Promise<BoxLookAnswer["answer"]>,
+  ): Promise<BoxLookResult>;
   /** One browser toolset member, run on Chromium over CDP. */
   browser(call: BrowserCall): Promise<BrowserResult>;
   browserState(): Promise<BrowserState>;
@@ -213,11 +222,55 @@ export class HttpDesktopAgent implements DesktopAgent {
   async renderCheck() {
     await this.req("POST", "/render/check", {}, 30_000);
   }
-  lookAtBox(look: BoxLook) {
-    return this.unlessOld(
-      () => this.json<BoxLookResult>("POST", "/render/box", look, 120_000),
+  async lookAtBox(look: BoxLook, backend?: (f: BoxLookFetch) => Promise<BoxLookAnswer["answer"]>) {
+    const result = await this.unlessOld(
+      () =>
+        backend
+          ? this.relayedLook({ ...look, relay: crypto.randomUUID() }, backend)
+          : this.json<BoxLookResult>("POST", "/render/box", look, 120_000),
       tooOld("look at boxes"),
     );
+    // An older renderer leaves out what it doesn't know.
+    if (!result) return tooOld("let a look reach a box's backend")();
+    if (look.steps?.length && !result.steps) return tooOld("try a box's steps")();
+    return result;
+  }
+
+  /**
+   * A look whose page reaches the box's backend: the renderer streams the page's fetches as they come,
+   * each answered here on /render/box/answer, then the result.
+   */
+  private async relayedLook(
+    look: BoxLook,
+    backend: (f: BoxLookFetch) => Promise<BoxLookAnswer["answer"]>,
+  ): Promise<BoxLookResult | null> {
+    const res = await this.req("POST", "/render/box", look, 120_000);
+    if (!res.headers.get("content-type")?.includes("ndjson")) return null;
+    const answer = async (f: BoxLookFetch) => {
+      const said = await backend(f).catch(() => ({ error: "Couldn't reach its backend." }));
+      const a: BoxLookAnswer = { look: look.relay as string, id: f.id, answer: said };
+      // A look that ended meanwhile no longer waits for it.
+      await this.req("POST", "/render/box/answer", a, 30_000).catch(() => {});
+    };
+    const decoder = new TextDecoder();
+    let rest = "";
+    try {
+      for await (const chunk of res.body as ReadableStream<Uint8Array>) {
+        const lines = (rest + decoder.decode(chunk, { stream: true })).split("\n");
+        rest = lines.pop() ?? "";
+        for (const text of lines) {
+          if (!text.trim()) continue;
+          const line = JSON.parse(text) as BoxLookLine;
+          if ("fetch" in line) void answer(line.fetch);
+          else if ("result" in line) return line.result;
+          else throw new DesktopError(line.error, line.status ?? 502);
+        }
+      }
+    } catch (err) {
+      if (err instanceof DesktopError) throw err;
+      this.signal?.throwIfAborted();
+    }
+    throw new DesktopError("The desktop isn't answering.", 0);
   }
   browser(call: BrowserCall) {
     return this.json<BrowserResult>("POST", "/browser", call, browserTimeoutMs(call));

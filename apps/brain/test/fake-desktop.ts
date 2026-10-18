@@ -4,6 +4,8 @@ import type {
   AgentElement,
   AgentStatus,
   BoxLook,
+  BoxLookAnswer,
+  BoxLookFetch,
   BoxLookResult,
   BrowserCall,
   BrowserInspect,
@@ -139,8 +141,13 @@ export class FakeDesktop implements DesktopAgent {
   /** Boxes it was asked to draw, and what it gives back. */
   looks: BoxLook[] = [];
   look: BoxLookResult = { png: "", width: 390, height: 844, errors: [] };
-  async lookAtBox(look: BoxLook) {
+  /** What a look's page asks its backend, when the look reaches it, and the answers it got. */
+  lookFetches: Omit<BoxLookFetch, "id">[] = [];
+  lookAnswers: BoxLookAnswer["answer"][] = [];
+  async lookAtBox(look: BoxLook, backend?: (f: BoxLookFetch) => Promise<BoxLookAnswer["answer"]>) {
     this.looks.push(look);
+    for (const [i, f] of (backend ? this.lookFetches : []).entries())
+      this.lookAnswers.push(await (backend as NonNullable<typeof backend>)({ id: i + 1, ...f }));
     return this.look;
   }
   async browserState(): Promise<BrowserState> {
