@@ -36,12 +36,7 @@ struct SpendView: View {
   }
 
   private func load() async {
-    do {
-      detail = try await store.loadSpendDetail()
-      error = nil
-    } catch {
-      self.error = message(for: error)
-    }
+    await attempt($error) { detail = try await store.loadSpendDetail() }
   }
 }
 
@@ -99,12 +94,10 @@ struct LimitsView: View {
   }
 
   private func load() async {
-    do {
+    await attempt($error) {
       let s = try await store.loadSettings()
       limits = s.limits
       saved = s.limits
-    } catch {
-      self.error = message(for: error)
     }
   }
 
@@ -129,12 +122,9 @@ struct LimitsView: View {
   private func save() async {
     guard let limits else { return }
     saving = true
-    error = nil
-    do {
-      saved = try await store.setLimits(limits).limits
+    await attempt($error) {
+      saved = try await store.saveSettings(.init(limits: limits)).limits
       dismiss()
-    } catch {
-      self.error = message(for: error)
     }
     saving = false
   }
@@ -160,7 +150,8 @@ private struct MoneyField: View {
     .onAppear { text = Format.amountText(value) }
     .onChange(of: text) { _, typed in
       if let amount = Format.amount(typed) {
-        value = amount
+        // Shown to the cent: a limit like 0.125 stays itself until you type another.
+        if typed != Format.amountText(value) { value = amount }
         unreadable.remove(label)
       } else {
         unreadable.insert(label)
@@ -222,21 +213,13 @@ struct DevicesView: View {
   }
 
   private func load() async {
-    do {
-      tokens = try await store.loadTokens()
-      error = nil
-    } catch {
-      self.error = message(for: error)
-    }
+    await attempt($error) { tokens = try await store.loadTokens() }
   }
 
   private func revoke(_ t: ApiToken) async {
-    error = nil
-    do {
+    await attempt($error) {
       try await store.revokeToken(t.id)
       tokens?.removeAll { $0.id == t.id }
-    } catch {
-      self.error = message(for: error)
     }
   }
 }

@@ -5,6 +5,7 @@ import SwiftUI
 struct TasksView: View {
   @Binding var path: [Route]
   @Environment(AppStore.self) private var store
+  @Environment(\.sectionShown) private var sectionShown
   @State private var filter = AppStore.TaskFilter.active
   @State private var finishedIds: [Int]?
   /// Finished tasks go back further than the pages loaded so far.
@@ -65,7 +66,8 @@ struct TasksView: View {
       }
       .navigationBarTitleDisplayMode(.inline)
       .refreshable { await load() }
-      .task(id: filter) { await load() }
+      // The section is kept while another shows: coming back to it loads the list again.
+      .task(id: sectionShown ? filter : nil) { if sectionShown { await load() } }
       .routes()
     }
   }
@@ -79,27 +81,22 @@ struct TasksView: View {
   }
 
   private func load() async {
-    error = nil
-    do {
+    await attempt($error) {
       let ids = try await store.loadTasks(filter)
       if filter == .done {
         finishedIds = ids
         moreFinished = ids.count == AppStore.page
       }
-    } catch {
-      self.error = message(for: error)
     }
   }
 
   private func loadEarlier() async {
     guard let last = finishedIds?.last else { return }
-    do {
+    await attempt($error) {
       let ids = try await store.loadTasks(.done, before: last)
       let have = Set(finishedIds ?? [])
       finishedIds = (finishedIds ?? []) + ids.filter { !have.contains($0) }
       moreFinished = ids.count == AppStore.page
-    } catch {
-      self.error = message(for: error)
     }
   }
 }
@@ -141,13 +138,7 @@ struct TaskDetailView: View {
     }
     .navigationBarTitleDisplayMode(.inline)
     .task(id: taskId) {
-      do {
-        try await store.loadTask(taskId)
-      } catch let error as APIError where error.status == 404 {
-        missing = true
-      } catch {
-        self.error = message(for: error)
-      }
+      await attempt($error, missing: $missing) { try await store.loadTask(taskId) }
     }
   }
 
@@ -218,10 +209,8 @@ struct TaskDetailView: View {
               let goal = rerunGoal?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
               rerunGoal = nil
               Task {
-                do {
+                await attempt($error) {
                   rerun = try await store.rerunTask(taskId, goal: goal == task.goal ? nil : goal).id
-                } catch {
-                  self.error = message(for: error)
                 }
               }
             }
@@ -233,9 +222,7 @@ struct TaskDetailView: View {
     .navigationDestination(item: $rerun) { id in TaskDetailView(taskId: id) }
     .confirmationDialog("Cancel “\(task.title)”?", isPresented: $confirmCancel, titleVisibility: .visible) {
       Button("Cancel task", role: .destructive) {
-        Task {
-          do { try await store.cancelTask(taskId) } catch { self.error = message(for: error) }
-        }
+        Task { await attempt($error) { try await store.cancelTask(taskId) } }
       }
       Button("Keep running", role: .cancel) {}
     }

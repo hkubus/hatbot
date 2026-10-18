@@ -30,12 +30,14 @@ struct HatbotApp: App {
       .environment(session)
       // Links in replies, sources and task steps: only the kinds that can't start anything else.
       .environment(\.openURL, OpenURLAction { url in AppLink.opens(url) ? .systemAction : .discarded })
-      .tint(.brandText)
       .onChange(of: session.store == nil) { _, out in
+        // The widget and the control read the brain as you, or say to sign in.
+        WidgetCenter.shared.reloadAllTimelines()
+        ControlCenter.shared.reloadAllControls()
         if out {
           Spotlight.clear()
-          AttachmentCache.shared.clear()
-          ScreenCache.shared.clear()
+          ImageCache.attachments.clear()
+          ImageCache.screens.clear()
           Task { await Badge.show(0) }
         }
       }
@@ -203,10 +205,11 @@ private struct Toast: View {
         .glassSurface(in: .capsule)
         .padding(.top, 4)
         .transition(.move(edge: .top).combined(with: .opacity))
-        .task(id: text) {
-          // A newer note ends this wait early; that one then gets its own 2.8 s.
+        .task(id: store.toastId) {
+          // A newer note, or the same one again, ends this wait early; that one then gets its own 2.8 s.
+          let id = store.toastId
           do { try await Task.sleep(for: .seconds(2.8)) } catch { return }
-          if store.toast == text { withAnimation { store.toast = nil } }
+          if store.toastId == id { withAnimation { store.toast = nil } }
         }
     }
   }

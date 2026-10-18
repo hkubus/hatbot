@@ -24,7 +24,7 @@ struct BotView: View {
     var icon = Bot.Icon.sparkles
     var color = Bot.Tint.amber
     var instructions = ""
-    var chatModel: AppSettings.ChatModel?
+    var chatModel: AppSettings.ModelID?
     var chatEffort: AppSettings.Effort?
     var plugins: [String]?
 
@@ -123,19 +123,15 @@ struct BotView: View {
       }
       Section {
         Picker("Model", selection: $form.chatModel) {
-          Text("As in Settings").tag(AppSettings.ChatModel?.none)
-          Text("Haiku 5.5").tag(AppSettings.ChatModel?.some(.haiku))
-          Text("Opus 5.5").tag(AppSettings.ChatModel?.some(.opus))
-          // One set elsewhere that this app doesn't know: shown, and kept, as it is.
-          if let m = form.chatModel, !AppSettings.ChatModel.known.contains(m) {
-            Text(m.rawValue).tag(AppSettings.ChatModel?.some(m))
+          Text("As in Settings").tag(AppSettings.ModelID?.none)
+          // One set elsewhere that this app doesn't know is kept as it is.
+          ForEach(AppSettings.ModelID.known.including(form.chatModel), id: \.self) { m in
+            Text(m.name).tag(AppSettings.ModelID?.some(m))
           }
         }
         Picker("Effort", selection: $form.chatEffort) {
           Text("As in Settings").tag(AppSettings.Effort?.none)
-          Text("Low").tag(AppSettings.Effort?.some(.low))
-          Text("Medium").tag(AppSettings.Effort?.some(.medium))
-          if let e = form.chatEffort, !AppSettings.Effort.known.contains(e) {
+          ForEach(AppSettings.Effort.known.including(form.chatEffort), id: \.self) { e in
             Text(e.rawValue.capitalized).tag(AppSettings.Effort?.some(e))
           }
         }
@@ -191,18 +187,8 @@ struct BotView: View {
       Button(pick.key == nil ? "Clear it" : "Use the template", role: .destructive) { fill(pick.key) }
       Button("Keep mine", role: .cancel) {}
     }
-    .confirmationDialog("Delete \(stored?.name ?? "this bot")?", isPresented: $confirmDelete, titleVisibility: .visible) {
-      Button("Delete", role: .destructive) {
-        Task {
-          guard let id else { return }
-          do {
-            try await store.deleteBot(id)
-            dismiss()
-          } catch {
-            self.error = message(for: error)
-          }
-        }
-      }
+    .confirmingDelete("Delete \(stored?.name ?? "this bot")?", isPresented: $confirmDelete, error: $error) {
+      if let id { try await store.deleteBot(id) }
     }
     .task(id: id) {
       if let stored {
@@ -245,8 +231,7 @@ struct BotView: View {
   private func save() async {
     busy = true
     defer { busy = false }
-    error = nil
-    do {
+    await attempt($error) {
       if let id {
         form = Form(try await store.saveBot(id, form.change(rename: !isHatbot)))
         store.toast = "Saved"
@@ -255,8 +240,6 @@ struct BotView: View {
         store.toast = "Made \(bot.name)"
         if let made { made(bot) } else { dismiss() }
       }
-    } catch {
-      self.error = message(for: error)
     }
   }
 }
