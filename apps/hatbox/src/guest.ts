@@ -113,8 +113,9 @@ export class Guest {
     const dir = this.dir("build", id);
     this.clear(dir);
     mkdirSync(join(dir, "src"), { recursive: true });
-    // The build runs as a user of its own, which writes its results here.
-    chmodSync(dir, 0o777);
+    // The build runs as a user of its own, which writes its results here. Sticky, so it can't move or
+    // replace what the agent put here.
+    chmodSync(dir, 0o1777);
     for (const f of files) {
       const path = join(dir, "src", f.path);
       mkdirSync(dirname(path), { recursive: true });
@@ -192,8 +193,9 @@ export class Guest {
         cwd: dir,
         env: {
           PATH: process.env.PATH ?? "",
-          HOME: process.env.HOME ?? dir,
-          BUN_INSTALL_CACHE_DIR: process.env.BUN_INSTALL_CACHE_DIR ?? "",
+          HOME: this.dir("cache"),
+          // Kept between builds, in the agent's own state.
+          BUN_INSTALL_CACHE_DIR: this.dir("cache"),
         },
         stdin: "ignore",
         stdout: "pipe",
