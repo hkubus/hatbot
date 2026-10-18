@@ -70,11 +70,7 @@ function hideRun(run: Combos) {
   if (hidden) for (const s of run.steps) s.hidden = hidden;
 }
 
-/**
- * Typing, or characters with a modifier (a paste), and where it went. Once hidden, a screenshot of that
- * page may show it (a card number in a payment frame stays there when you click Pay), for the rest of the
- * recording; and so may any screenshot until the address next changes.
- */
+/** Typing, or characters with a modifier (a paste), and where it went: what snap() keeps no screenshot of. */
 type Typed = {
   hidden: () => boolean;
   checked: Promise<unknown>;
@@ -381,6 +377,10 @@ export class Recorder {
 
 const secs = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
 const BUTTON = { 1: "left", 2: "middle", 3: "right" } as const;
+const NOT_RECORDED = {
+  secret: "in a password or code field (not recorded)",
+  unknown: "(not recorded: the field couldn't be checked)",
+};
 
 /**
  * The steps as lines for the model. A button press and release in the same spot is a click; moves are
@@ -424,20 +424,16 @@ export function describeSteps(steps: RecStep[]): { lines: string[]; screens: str
         break;
       case "key":
         lines.push(
-          s.hidden === "secret"
-            ? `${at} pressed a key with a modifier in a password or code field (not recorded)`
-            : s.hidden === "unknown"
-              ? `${at} pressed a key with a modifier (not recorded: the field couldn't be checked)`
-              : `${at} key ${s.key}${shot(s.screen)}`,
+          s.hidden
+            ? `${at} pressed a key with a modifier ${NOT_RECORDED[s.hidden]}`
+            : `${at} key ${s.key}${shot(s.screen)}`,
         );
         break;
       case "text":
         lines.push(
-          s.hidden === "secret"
-            ? `${at} typed ${s.chars} characters into a password or code field (not recorded)`
-            : s.hidden === "unknown"
-              ? `${at} typed ${s.chars} characters (not recorded: the field couldn't be checked)`
-              : `${at} typed ${JSON.stringify(s.text)}`,
+          s.hidden
+            ? `${at} typed ${s.chars} characters ${NOT_RECORDED[s.hidden]}`
+            : `${at} typed ${JSON.stringify(s.text)}`,
         );
         break;
       case "page":

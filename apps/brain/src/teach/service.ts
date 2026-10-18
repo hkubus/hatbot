@@ -88,15 +88,11 @@ export class Teach {
     this.clock = d.clock ?? Date.now;
     // A restart loses a recording in progress (its steps were in memory) and a draft being written.
     const lost = d.db
-      .query<{ id: number; started_at: string }, []>(
-        "SELECT id, started_at FROM teach_sessions WHERE status = 'recording'",
+      .query<{ id: number }, []>(
+        "UPDATE teach_sessions SET status = 'discarded' WHERE status = 'recording' RETURNING id",
       )
       .all();
-    d.db.query("UPDATE teach_sessions SET status = 'discarded' WHERE status = 'recording'").run();
-    for (const r of lost)
-      void d.archive
-        .removeScreens(`teach-${r.id}`, Date.parse(r.started_at), this.clock())
-        .catch((err) => console.error("teach screenshots not removed", err));
+    for (const { id } of lost) void this.forgetScreens(id);
     d.db
       .query(
         "UPDATE teach_sessions SET status = 'failed', error = 'Stopped: the brain restarted.' WHERE status = 'drafting'",
@@ -378,13 +374,6 @@ export class Teach {
   private async forgetScreens(id: number) {
     const r = this.row(id);
     if (!r) return;
-    const steps = JSON.parse(r.events ?? "[]") as RecStep[];
-    if (steps.some((s) => "screen" in s && s.screen)) {
-      for (const s of steps) if ("screen" in s) delete s.screen;
-      this.d.db
-        .query("UPDATE teach_sessions SET events = ? WHERE id = ?")
-        .run(JSON.stringify(steps), id);
-    }
     const to = r.stopped_at ? Date.parse(r.stopped_at) : this.clock();
     await this.d.archive
       .removeScreens(`teach-${id}`, Date.parse(r.started_at), to)

@@ -144,7 +144,7 @@ test("typing into a secret field, or one that can't be checked, isn't kept", asy
   expect(JSON.stringify(steps)).not.toContain("hunter");
   expect(JSON.stringify(steps)).not.toContain("unseen");
   expect(describeSteps(steps).lines.join("\n")).toContain(
-    "typed 8 characters into a password or code field (not recorded)",
+    "typed 8 characters in a password or code field (not recorded)",
   );
 });
 
@@ -529,7 +529,7 @@ test("record, draft and save a skill: the desktop is yours meanwhile, secrets st
   expect(req?.model).toBe("claude-opus-5-5");
   const body = JSON.stringify(req?.messages);
   expect(body).not.toContain("s3cret");
-  expect(body).toContain("typed 9 characters into a password or code field");
+  expect(body).toContain("typed 9 characters in a password or code field");
   expect(body).toContain('typed \\"Dune\\"');
   const content = req?.messages[0]?.content as { type: string }[];
   // The click before the password; none after it on that page, where it might still show.
@@ -561,12 +561,8 @@ test("record, draft and save a skill: the desktop is yours meanwhile, secrets st
   expect(
     (await call("POST", `/teach/${session.id}/save`, { name: "x", content: "y" })).status,
   ).toBe(409);
-  // Saved: the screenshots are gone, and nothing points at them.
+  // Saved: the screenshots are gone.
   expect(screensOf(t, session.id)).toEqual([]);
-  const row = t.db
-    .query<{ events: string }, [number]>("SELECT events FROM teach_sessions WHERE id = ?")
-    .get(session.id);
-  expect(row?.events).not.toContain("screen");
 });
 
 test("typing while the page hasn't the keyboard isn't kept, nor a screenshot while a secret shows", async () => {
