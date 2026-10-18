@@ -168,6 +168,8 @@ beforeAll(() => {
       if (path === `${r}/git/refs` || path === `${r}/git/refs/heads/main`)
         return json({ ref: "x" }, 201);
       if (path === `${r}/pulls/8/merge`) return json({ merged: true });
+      if (path === `${r}/pulls` && req.method === "POST")
+        return json({ number: 9, html_url: "https://github.test/hkubus/hatbot/pull/9" }, 201);
       if (path === `${r}/commits/main/check-runs`)
         return json({
           check_runs: [
@@ -374,6 +376,21 @@ test("commits many files as one commit on a new branch, and won't delete what is
     ),
   ).rejects.toThrow("gone.md doesn't exist on main.");
   expect(posted("/git/trees")).toBeUndefined();
+
+  // A draft pull request, and a merge GitHub's way.
+  const pr = { repo: "hkubus/hatbot", head: "hatbot/docs", base: "main", title: "Docs", body: "B" };
+  expect(await gh("github_open_pr").run({ ...pr, draft: true }, call)).toBe(
+    "Opened pull request #9: https://github.test/hkubus/hatbot/pull/9",
+  );
+  expect(seen.at(-1)?.body).toEqual({
+    head: "hatbot/docs",
+    base: "main",
+    title: "Docs",
+    body: "B",
+    draft: true,
+  });
+  await gh("github_merge").run({ repo: "hkubus/hatbot", number: 8, method: "squash" }, call);
+  expect(seen.at(-1)).toMatchObject({ method: "PUT", body: { merge_method: "squash" } });
 });
 
 test("a commit keeps each file's mode, and won't write over links or submodules", async () => {

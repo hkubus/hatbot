@@ -3,9 +3,10 @@
 // Uses the system's OpenSSH client.
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { ApprovalKind } from "@hatbot/shared";
 import { z } from "zod";
 import { MAX_ATTACHMENT_BYTES, sizeText } from "../../attachments";
-import { DesktopError } from "../../desktop/client";
+import { type DesktopAgent, DesktopError } from "../../desktop/client";
 import {
   allow,
   ask,
@@ -17,7 +18,8 @@ import {
   tool,
   type Verdict,
 } from "../plugin";
-import { commandCount, destructive, statusOnly } from "./policy";
+import { saved } from "../registry";
+import { commandCount, destructive, inContainer, statusOnly } from "./policy";
 
 const OUTPUT_CHARS = 15_000;
 /** The most lines ssh_read_file shows in one call. */
@@ -34,7 +36,7 @@ const Host = z.object({
     .regex(/^[a-z_][a-z0-9_-]{0,31}$/, "A Unix user name")
     .default("hatbot"),
   port: z.number().int().min(1).max(65535).default(22),
-  /** Every command on it asks you first. */
+  /** Every change on it asks you first. */
   careful: z.boolean().default(false),
   /** A Proxmox host with infra/pct-exec-setup.sh run: ssh_pct_exec reaches its containers. */
   proxmox: z.boolean().default(false),
@@ -60,6 +62,9 @@ const CHECKS = {
 const KEEP_BYTES = 1024 * 1024;
 /** A command that writes more than this is stopped: nothing useful is that long. */
 const FLOOD_BYTES = 256 * 1024 * 1024;
+/** Keys only, never a password prompt; a new host's key is learned, a changed one refused. */
+const SSH_OPTIONS =
+  "BatchMode=yes IdentitiesOnly=yes StrictHostKeyChecking=accept-new ConnectTimeout=10 ServerAliveInterval=15 LogLevel=ERROR";
 /** Printed on the host before the command runs, so a failed command isn't taken for a failed login. */
 const CONNECTED = "hatbot-ssh-connected\n";
 /** A command's result that holds nothing it printed, only how it ended: nobody else wrote that. */
@@ -233,20 +238,9 @@ export const sshPlugin = definePlugin({
           key,
           "-p",
           String(h.port),
-          "-o",
-          "BatchMode=yes",
-          "-o",
-          "IdentitiesOnly=yes",
-          "-o",
-          "StrictHostKeyChecking=accept-new",
+          ...SSH_OPTIONS.split(" ").flatMap((o) => ["-o", o]),
           "-o",
           `UserKnownHostsFile=${knownHosts}`,
-          "-o",
-          "ConnectTimeout=10",
-          "-o",
-          "ServerAliveInterval=15",
-          "-o",
-          "LogLevel=ERROR",
           "-l",
           h.user,
           "--",
@@ -299,13 +293,10 @@ export const sshPlugin = definePlugin({
 
     /** The Proxmox plugin's guests whose power actions always ask, read live from its settings. */
     const carefulGuests = (): number[] => {
-      const row = db
-        .query<{ value: string }, [string]>("SELECT value FROM settings WHERE key = ?")
-        .get("plugin:proxmox");
       const parsed = z
-        .object({ config: z.object({ careful: z.array(z.number()).default([]) }) })
-        .safeParse(row ? JSON.parse(row.value) : {});
-      return parsed.success ? parsed.data.config.careful : [];
+        .object({ careful: z.array(z.number()).default([]) })
+        .safeParse(saved(db, "proxmox").config ?? {});
+      return parsed.success ? parsed.data.careful : [];
     };
 
     /** A file's host and path; with `guest`, inside that Proxmox host's container. */
@@ -325,9 +316,13 @@ export const sshPlugin = definePlugin({
       r.guest !== undefined
         ? `sudo -n /usr/local/sbin/hatbot-pct-exec ${r.guest} ${quote(command)}`
         : `${r.sudo ? "sudo -n " : ""}sh -c ${quote(command)}`;
-    const failed = (r: Remote, doing: string, res: { code: number; stderr: string }) =>
+    const failed = (
+      r: Remote,
+      doing: string,
+      res: { code: number; stderr: string; timedOut: boolean },
+    ) =>
       new PluginError(
-        `Couldn't ${doing} ${where(r)}: ${res.stderr.trim().slice(0, 300) || `exit code ${res.code}`}`,
+        `Couldn't ${doing} ${where(r)}: ${res.stderr.trim().slice(0, 300) || (res.timedOut ? "it took too long" : `exit code ${res.code}`)}`,
       );
 
     const pull = async (r: Remote, signal: AbortSignal): Promise<Uint8Array> => {
@@ -380,6 +375,14 @@ export const sshPlugin = definePlugin({
         : null;
     };
 
+    /** Where it's careful, the owner answers whatever the call is; the reason it'd ask still shows. */
+    const verdict = (careful: string | null, why: string | null, kind?: ApprovalKind): Verdict =>
+      careful
+        ? askAlways(why ? `${careful} ${why}` : careful, kind)
+        : why
+          ? ask(why, kind)
+          : allow();
+
     /** Writing a file on a host: its own files run, the rest asks. */
     const writePolicy = (r: Remote): Verdict => {
       const refused = r.guest === undefined ? null : guestRefused(r.guest);
@@ -405,13 +408,17 @@ export const sshPlugin = definePlugin({
       const kind = keys ? "account_security" : undefined;
       const careful =
         carefulOf(r.host, r.guest) ?? (r.guest === undefined ? reachesCareful(r.host) : null);
-      if (careful) return askAlways(why ? `${careful} ${why}` : careful, kind);
-      return why ? ask(why, kind) : allow();
+      return verdict(careful, why, kind);
     };
 
-    const sandbox = () => {
+    /** The desktop's sandbox; what it says when it fails is fine to show. */
+    const sandbox = async <T>(use: (d: DesktopAgent) => Promise<T>): Promise<T> => {
       if (!files?.desktop.configured) throw new PluginError("The desktop's sandbox isn't set up.");
-      return files.desktop;
+      try {
+        return await use(files.desktop);
+      } catch (err) {
+        throw err instanceof DesktopError ? new PluginError(err.message) : err;
+      }
     };
 
     const hostField = z.string().describe(`One of: ${hostNames.join(", ") || "(none yet)"}`);
@@ -450,7 +457,7 @@ export const sshPlugin = definePlugin({
         label: "Reading a file",
         schema: z.object({
           host: hostField,
-          path: z.string().regex(/^[~/][^\0\n]*$/, "An absolute path, or one starting with ~/"),
+          path: remotePath,
           sudo: z.boolean().optional(),
           offset: z
             .number()
@@ -476,10 +483,7 @@ export const sshPlugin = definePlugin({
           const end = first + want;
           const cmd = `${sudo ? "sudo -n " : ""}sed -n -e '${first},${end}p' -e '${end}q' -- ${shellPath(path)}`;
           const r = await connect(h, cmd, { timeoutMs: 30_000, signal });
-          if (r.code !== 0 || r.timedOut)
-            throw new PluginError(
-              `Couldn't read ${path} on ${host}: ${r.stderr.trim().slice(0, 300) || (r.timedOut ? "it took too long" : `exit code ${r.code}`)}`,
-            );
+          if (r.code !== 0 || r.timedOut) throw failed({ host, path }, "read", r);
           const got = r.stdout ? r.stdout.split("\n") : [];
           if (r.stdout.endsWith("\n")) got.pop();
           if (!got.length)
@@ -508,27 +512,23 @@ export const sshPlugin = definePlugin({
         schema: z.object({
           host: hostField,
           command: z.string().min(1).max(10_000),
-          timeout_s: z
-            .number()
-            .int()
-            .min(1)
-            .max(1800)
-            .optional()
-            .describe("How long to let it run; default 120"),
+          timeout_s: Timeout,
         }),
         describe: ({ host, command }) => `On ${host}: ${command}`,
         target: ({ host }) => host,
         commands: ({ command }) => commandCount(command),
         policy: ({ host, command }) => {
-          if (/pct-exec/.test(command.replace(/['"\\]/g, "")))
+          if (inContainer(command))
             return block(
               "Use ssh_pct_exec to run commands in containers: there each container's own rules apply.",
             );
           const d = destructive(command);
           // A careful host waits for the owner whatever the command; the pattern's reason still shows.
-          const careful = carefulOf(host) ?? (statusOnly(command) ? null : reachesCareful(host));
-          if (careful) return askAlways(d ? `${careful} This command ${d.why}.` : careful, d?.kind);
-          return d ? ask(`This command ${d.why}.`, d.kind) : allow();
+          // On a Proxmox host only a look that writes nothing passes: a file can run later (~/.bashrc).
+          const careful =
+            carefulOf(host) ??
+            (statusOnly(command, { writes: false }) ? null : reachesCareful(host));
+          return verdict(careful, d && `This command ${d.why}.`, d?.kind);
         },
         run: async ({ host, command, timeout_s }, { signal }) =>
           (await exec(hostOf(host), command, (timeout_s ?? 120) * 1000, signal)).text,
@@ -545,13 +545,7 @@ export const sshPlugin = definePlugin({
                 host: z.string().describe(`The Proxmox host: ${pctHosts.join(", ")}`),
                 guest: z.number().int().min(100).max(999_999_999).describe("The container's ID"),
                 command: z.string().min(1).max(10_000),
-                timeout_s: z
-                  .number()
-                  .int()
-                  .min(1)
-                  .max(1800)
-                  .optional()
-                  .describe("How long to let it run; default 120"),
+                timeout_s: Timeout,
               }),
               describe: ({ host, guest, command }) => `In CT ${guest} on ${host}: ${command}`,
               // The container's own; its host's commands don't touch it.
@@ -562,10 +556,7 @@ export const sshPlugin = definePlugin({
                 if (refused) return block(refused);
                 const d = destructive(command, "container");
                 // A careful guest is careful about everything, not only power actions.
-                const careful = carefulOf(host, guest);
-                if (careful)
-                  return askAlways(d ? `${careful} This command ${d.why}.` : careful, d?.kind);
-                return d ? ask(`This command ${d.why}.`, d.kind) : allow();
+                return verdict(carefulOf(host, guest), d && `This command ${d.why}.`, d?.kind);
               },
               run: async ({ host, guest, command, timeout_s }, { signal }) => {
                 const h = placeOf({ host, guest, path: "/" });
@@ -582,7 +573,7 @@ export const sshPlugin = definePlugin({
         access: "write",
         schema: z.object({
           host: hostField,
-          path: z.string().regex(/^[~/][^\0\n]*$/, "An absolute path, or one starting with ~/"),
+          path: remotePath,
           content: z.string().max(500_000),
           sudo: z.boolean().optional().describe("Write as root, for files the user can't write"),
         }),
@@ -613,40 +604,35 @@ export const sshPlugin = definePlugin({
         commands: ({ to }) => ("host" in to ? 1 : 0),
         policy: ({ to }) => ("host" in to ? writePolicy(to) : allow()),
         run: async ({ from, to }, { signal, sendFile }) => {
-          try {
-            let name: string;
-            let bytes: Uint8Array;
-            if ("host" in from) {
-              bytes = await pull(from, signal);
-              name = baseName(from.path);
-            } else if ("sandbox" in from) {
-              bytes = await sandbox().getFile(from.sandbox);
-              name = baseName(from.sandbox);
-            } else {
-              const a = files?.attachments.get(from.attachment);
-              const b = a && (await files?.attachments.bytes(a.id));
-              if (!a || !b) throw new PluginError(`There's no attachment #${from.attachment}.`);
-              name = a.name;
-              bytes = b;
-            }
-            const size = sizeText(bytes.byteLength);
-            if ("owner" in to) {
-              if (!sendFile) throw new PluginError("Files can't be sent to the owner from here.");
-              const a = await sendFile(to.name?.trim() || name, bytes);
-              return `Sent "${a.name}" (${a.mediaType}, ${size}) to the owner.`;
-            }
-            if ("sandbox" in to) {
-              const path = into(to.sandbox, name);
-              await sandbox().putFile(path, bytes);
-              return `Copied ${where(from)} to the sandbox: ${path} (${size}).`;
-            }
-            const dest = { ...to, path: into(to.path, name) };
-            await push(dest, bytes, signal);
-            return `Copied ${where(from)} to ${where(dest)} (${size}).`;
-          } catch (err) {
-            if (err instanceof DesktopError) throw new PluginError(err.message);
-            throw err;
+          let name: string;
+          let bytes: Uint8Array;
+          if ("host" in from) {
+            bytes = await pull(from, signal);
+            name = baseName(from.path);
+          } else if ("sandbox" in from) {
+            bytes = await sandbox((d) => d.getFile(from.sandbox));
+            name = baseName(from.sandbox);
+          } else {
+            const a = files?.attachments.get(from.attachment);
+            const b = a && (await files?.attachments.bytes(a.id));
+            if (!a || !b) throw new PluginError(`There's no attachment #${from.attachment}.`);
+            name = a.name;
+            bytes = b;
           }
+          const size = sizeText(bytes.byteLength);
+          if ("owner" in to) {
+            if (!sendFile) throw new PluginError("Files can't be sent to the owner from here.");
+            const a = await sendFile(to.name?.trim() || name, bytes);
+            return `Sent "${a.name}" (${a.mediaType}, ${size}) to the owner.`;
+          }
+          if ("sandbox" in to) {
+            const path = into(to.sandbox, name);
+            await sandbox((d) => d.putFile(path, bytes));
+            return `Copied ${where(from)} to the sandbox: ${path} (${size}).`;
+          }
+          const dest = { ...to, path: into(to.path, name) };
+          await push(dest, bytes, signal);
+          return `Copied ${where(from)} to ${where(dest)} (${size}).`;
         },
       }),
     ];
@@ -687,11 +673,8 @@ export const sshPlugin = definePlugin({
       };
 
     return ready(tools, {
-      guidance: hostNames.length
-        ? `You can reach these hosts over SSH: ${config.hosts.map((h) => `${h.name} (${h.user}@${h.address}${h.careful ? ", every command asks the owner" : ""})`).join("; ")}. Read memory for what runs where. Look with ssh_check and ssh_read_file; ssh_exec and ssh_write_file change things. Commands that look destructive need approval (the safety review or the owner); a restart (systemctl restart) needs none of its own.${pctHosts.length ? ` ${pctHosts.join(" and ")} ${pctHosts.length > 1 ? "are Proxmox hosts" : "is a Proxmox host"}: ssh_pct_exec runs a command inside one of its containers, by ID. While a container is careful, changes on its host wait for the owner too.` : marked.length ? ` Its containers can't be reached until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env.` : ""} ssh_copy_file moves files between hosts${pctHosts.length ? ", containers" : ""}, the sandbox and the chat: the owner's attachments onto a host, a host's file to the owner or into the sandbox to work on.`
-        : undefined,
+      guidance: `You can reach these hosts over SSH: ${config.hosts.map((h) => `${h.name} (${h.user}@${h.address}${h.careful ? ", every change asks the owner" : ""})`).join("; ")}. Read memory for what runs where. Look with ssh_check and ssh_read_file; ssh_exec and ssh_write_file change things. Commands that look destructive need approval (the safety review or the owner); a restart (systemctl restart) needs none of its own.${pctHosts.length ? ` ${pctHosts.join(" and ")} ${pctHosts.length > 1 ? "are Proxmox hosts" : "is a Proxmox host"}: ssh_pct_exec runs a command inside one of its containers, by ID. While a container is careful, changes on its host wait for the owner too.` : marked.length ? ` Its containers can't be reached until HATBOT_BRAIN_ID is set in /etc/hatbot/proxmox.env.` : ""} ssh_copy_file moves files between hosts${pctHosts.length ? ", containers" : ""}, the sandbox and the chat: the owner's attachments onto a host, a host's file to the owner or into the sandbox to work on.`,
       test: async () => {
-        if (!hostNames.length) throw new PluginError("Add a host first.");
         const lines = await Promise.all(
           config.hosts.map(async (h) => {
             try {
@@ -714,6 +697,13 @@ export const sshPlugin = definePlugin({
 const COPY_TIMEOUT_MS = 5 * 60_000;
 
 const remotePath = z.string().regex(/^[~/][^\0\n]*$/, "An absolute path, or one starting with ~/");
+const Timeout = z
+  .number()
+  .int()
+  .min(1)
+  .max(1800)
+  .optional()
+  .describe("How long to let it run; default 120");
 
 const RemoteFile = (host: z.ZodString) =>
   z.object({

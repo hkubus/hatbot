@@ -120,9 +120,16 @@ export class Plugins {
   async test(id: string): Promise<string> {
     const s = this.slots.get(id);
     if (!s) throw new PluginError(`No plugin "${id}".`);
-    if (s.state !== "ready" || !s.instance) throw new PluginError(`${s.plugin.name} isn't ready.`);
-    if (!s.instance.test) throw new PluginError(`${s.plugin.name} has no test.`);
-    return s.instance.test();
+    const { instance, generation } = s;
+    if (s.state !== "ready" || !instance) throw new PluginError(`${s.plugin.name} isn't ready.`);
+    if (!instance.test) throw new PluginError(`${s.plugin.name} has no test.`);
+    try {
+      return await instance.test();
+    } finally {
+      // A test can change what it offers (PBS checks its token again), as recovering can.
+      if (generation === s.generation && !(await this.recheck(s, instance, "after its test")))
+        this.later(s);
+    }
   }
 
   /** What the ready plugins find wrong now, for the heartbeat. One that can't be asked says so. */
@@ -164,24 +171,26 @@ export class Plugins {
   }
 
   /**
-   * Tools of the ready plugins, for the chat and tasks, in a stable order (it's part of the prompt
-   * cache). With `only`, just those of the plugins a bot may use.
+   * The ready plugins in a stable order: it's part of the prompt cache. With `only`, just those a
+   * bot may use.
    */
-  tools(only: string[] | null = null): PluginTool[] {
+  private readyOnes(only: string[] | null) {
     return [...this.slots.values()]
-      .filter((s) => s.state === "ready" && s.instance && (!only || only.includes(s.plugin.id)))
-      .sort((a, b) => a.plugin.id.localeCompare(b.plugin.id))
-      .flatMap((s) => s.instance?.tools ?? []);
+      .filter((s) => s.state === "ready" && (!only || only.includes(s.plugin.id)))
+      .sort((a, b) => a.plugin.id.localeCompare(b.plugin.id));
+  }
+
+  /** Tools of the ready plugins, for the chat and tasks. */
+  tools(only: string[] | null = null): PluginTool[] {
+    return this.readyOnes(only).flatMap((s) => s.instance?.tools ?? []);
   }
 
   /** The ready plugins' paragraphs for the system prompt. */
   guidance(only: string[] | null = null): string {
-    return [...this.slots.values()]
-      .filter(
-        (s) => s.state === "ready" && s.instance?.guidance && (!only || only.includes(s.plugin.id)),
+    return this.readyOnes(only)
+      .flatMap((s) =>
+        s.instance?.guidance ? `${s.plugin.name}\n${s.instance.guidance.trim()}` : [],
       )
-      .sort((a, b) => a.plugin.id.localeCompare(b.plugin.id))
-      .map((s) => `${s.plugin.name}\n${s.instance?.guidance?.trim()}`)
       .join("\n\n");
   }
 
@@ -191,10 +200,7 @@ export class Plugins {
   }
 
   private load(plugin: Plugin): { enabled: boolean; config: unknown } {
-    const row = this.d.db
-      .query<{ value: string }, [string]>("SELECT value FROM settings WHERE key = ?")
-      .get(`plugin:${plugin.id}`);
-    const stored = row ? (JSON.parse(row.value) as { enabled?: boolean; config?: unknown }) : {};
+    const stored = saved(this.d.db, plugin.id);
     const config = plugin.config.safeParse(stored.config ?? {});
     if (!config.success) {
       console.error(`plugin ${plugin.id}: stored settings are invalid; using defaults`);
@@ -268,21 +274,28 @@ export class Plugins {
       const generation = s.generation;
       await instance.recover().catch((err) => console.error(`plugin ${s.plugin.id}: recover`, err));
       if (generation !== s.generation) return;
-      // What came back is checked like what it started with: a bad tool would fail every request.
-      try {
-        this.checkTools(s.plugin, instance.tools);
-      } catch (err) {
-        console.error(`plugin ${s.plugin.id}: after recovering`, err);
-        await this.stop(s);
-        s.state = "error";
-        s.message = "Its tools changed into ones Hatbot can't offer; see the brain's log.";
-      }
-      this.emit(s);
+      await this.recheck(s, instance, "after recovering");
       this.later(s);
       return;
     }
     console.log(`plugin ${s.plugin.id}: starting again (try ${s.retries})`);
     await this.restart(s);
+  }
+
+  /** What a ready plugin offers now is checked like what it started with: a bad tool would fail every request. */
+  private async recheck(s: Slot, instance: PluginInstance, after: string): Promise<boolean> {
+    try {
+      this.checkTools(s.plugin, instance.tools);
+      this.emit(s);
+      return true;
+    } catch (err) {
+      console.error(`plugin ${s.plugin.id}: ${after}`, err);
+      await this.stop(s);
+      s.state = "error";
+      s.message = "Its tools changed into ones Hatbot can't offer; see the brain's log.";
+      this.emit(s);
+      return false;
+    }
   }
 
   private async stop(s: Slot) {
@@ -339,6 +352,21 @@ export class Plugins {
   }
 }
 
+/** A plugin's row in settings as saved: whether it's on, and its settings, unchecked. */
+export function saved(db: Db, id: string): { enabled?: boolean; config?: unknown } {
+  const row = db
+    .query<{ value: string }, [string]>("SELECT value FROM settings WHERE key = ?")
+    .get(`plugin:${id}`);
+  return row ? JSON.parse(row.value) : {};
+}
+
+/**
+ * Whether a call's output is untrusted content. `input` is the parsed input; with `output`, once the
+ * call has returned it.
+ */
+export const untrustedOf = (t: PluginTool, input: unknown, output?: string): boolean =>
+  typeof t.untrusted === "function" ? t.untrusted(input, output) : Boolean(t.untrusted);
+
 /**
  * Runs a plugin tool: checks its input, and labels untrusted output so it can't pose as instructions
  * (PLAN.md §6.1). Policy is the caller's job; this only runs it. `text`: the output without its label,
@@ -354,8 +382,6 @@ export async function runPluginTool(
     const content = `Invalid input: ${z.prettifyError(parsed.error)}`;
     return { content, isError: true, untrusted: false, text: content };
   }
-  const untrustedOf = (output?: string) =>
-    typeof t.untrusted === "function" ? t.untrusted(parsed.data, output) : Boolean(t.untrusted);
   const label = (text: string, untrusted: boolean) =>
     untrusted ? untrustedBlock("tool_output", text, { tool: t.name }) : text;
   let out: string;
@@ -365,7 +391,7 @@ export async function runPluginTool(
     if (call.signal.aborted) throw err;
     // An untrusted source's error message is untrusted too.
     if (err instanceof PluginError) {
-      const untrusted = untrustedOf();
+      const untrusted = untrustedOf(t, parsed.data);
       return {
         content: label(err.message, untrusted),
         isError: true,
@@ -377,7 +403,7 @@ export async function runPluginTool(
     const content = "The tool failed with an internal error.";
     return { content, isError: true, untrusted: false, text: content };
   }
-  const untrusted = untrustedOf(out);
+  const untrusted = untrustedOf(t, parsed.data, out);
   if (out.length > MAX_OUTPUT_CHARS)
     out = `${out.slice(0, MAX_OUTPUT_CHARS)}\n… (cut; ${out.length} characters in all)`;
   return { content: label(out, untrusted), isError: false, untrusted, text: out };
