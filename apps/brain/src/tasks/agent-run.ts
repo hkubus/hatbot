@@ -326,13 +326,15 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     ...(isError ? { is_error: true } : {}),
   });
 
-  /** Waits for a task this one started, without holding a slot; it's cancelled with this one. */
-  const waitForChild = async (childId: number): Promise<Task> => {
-    const child = tasks.get(childId);
+  /**
+   * Waits for a task this one started, shown on the timeline as `name`, without holding a slot: one
+   * on the screen or another bot's may need it. It's cancelled with this one.
+   */
+  const waitForChild = async (childId: number, name?: string): Promise<Task> => {
     children.add(childId);
     tasks.addStep(id, {
       kind: "task",
-      name: child?.title ?? `Task #${childId}`,
+      name: name ?? tasks.get(childId)?.title ?? `Task #${childId}`,
       detail: "",
       url: `/tasks/${childId}`,
     });
@@ -358,24 +360,14 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const missing = await missingSkill(d.memory, p.data.skill);
     if (missing) return result(call, missing, true);
     const child = tasks.createDesktopTask({
-      title: p.data.title,
-      goal: p.data.goal,
-      successCriteria: p.data.success_criteria,
+      title,
+      goal,
+      successCriteria: success_criteria,
       skill: p.data.skill,
       origin: task.origin,
       parent: task,
     });
-    children.add(child.id);
-    tasks.addStep(id, {
-      kind: "task",
-      name: child.title,
-      detail: "",
-      url: `/tasks/${child.id}`,
-    });
-    // Waiting on the screen doesn't hold a slot other tasks could use.
-    const ended = await withoutSlot(() => tasks.waitFor(child.id, signal));
-    // Still in `children` if this task is cancelled meanwhile, so it's cancelled with it.
-    children.delete(child.id);
+    const ended = await waitForChild(child.id, child.title);
     // Its summary is made from web pages (PLAN.md §6.1).
     taint(`Desktop task #${child.id}`);
     return result(
@@ -405,17 +397,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     if (typeof child === "string") return result(call, child, true);
     if (tasks.get(id)?.injectionSuspected) tasks.mark(child.id, "injection_suspected");
     const name = d.bots.nameOf(child.botId);
-    children.add(child.id);
-    tasks.addStep(id, {
-      kind: "task",
-      name: `Asked ${name}: ${child.title}`,
-      detail: "",
-      url: `/tasks/${child.id}`,
-    });
-    // Waiting doesn't hold a slot: the bot asked needs one.
-    const ended = await withoutSlot(() => tasks.waitFor(child.id, signal));
-    // Still in `children` if this task is cancelled meanwhile, so it's cancelled with it.
-    children.delete(child.id);
+    const ended = await waitForChild(child.id, `Asked ${name}: ${child.title}`);
     if (ended.tainted) taint(`Task #${child.id} by ${name}`);
     const summary = ended.summary ?? "";
     return result(
