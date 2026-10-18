@@ -3,7 +3,14 @@ import type { WatchCondition, WatchSource } from "@hatbot/shared";
 import type { PatternJob } from "./pattern";
 
 /** A check that didn't find a value; the message is for the owner and the model. */
-export class WatchError extends Error {}
+export class WatchError extends Error {
+  constructor(
+    message: string,
+    readonly status: 400 | 404 = 400,
+  ) {
+    super(message);
+  }
+}
 
 /** Values are compared and stored at most this long. */
 const MAX_VALUE_CHARS = 4000;

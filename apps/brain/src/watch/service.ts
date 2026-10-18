@@ -4,7 +4,6 @@ import {
   type CreateWatcher,
   describeCondition,
   HATBOT_ID,
-  MAX_WATCH_MINUTES,
   minWatchMinutes,
   type UpdateWatcher,
   type WatchCondition,
@@ -114,8 +113,6 @@ const saved = (s: WatchSource) => JSON.stringify({ ...s, render: s.render || und
 
 /** Throws when a watcher would look more often than its source allows. */
 function oftenEnough(source: WatchSource, everyMinutes: number) {
-  if (everyMinutes > MAX_WATCH_MINUTES)
-    throw new WatchError("A watcher looks at least once a week.");
   const min = minWatchMinutes(source);
   if (everyMinutes < min)
     throw new WatchError(
@@ -182,24 +179,7 @@ export class Watchers {
     oftenEnough(input.source, input.everyMinutes);
     const first = await this.read(input.source, input.botId);
     const row = this.d.db
-      .query<
-        { id: number },
-        [
-          string,
-          string,
-          string,
-          string,
-          string,
-          number,
-          number,
-          number,
-          string,
-          number,
-          string | null,
-          string,
-          string | null,
-        ]
-      >(
+      .query<{ id: number }, (string | number | null)[]>(
         `INSERT INTO watchers (bot_id, name, source, condition, prompt, every_minutes, once, enabled, created_via, tainted, tainted_by, created_at, next_check_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       )
@@ -241,8 +221,6 @@ export class Watchers {
     oftenEnough(source, every);
     const sourceChanged = patch.source && saved(patch.source) !== saved(w.source);
     const first = sourceChanged ? await this.read(source, botId) : null;
-    // Deleted while its new source was read.
-    if (!this.get(id)) return null;
     const enabled = patch.enabled ?? w.enabled;
     // What it does or where it looks: yours to trust again.
     const rewritten = patch.prompt !== undefined || patch.source !== undefined;
@@ -255,13 +233,9 @@ export class Watchers {
           ? by.taintedBy
           : null
       : null;
-    const next = !enabled
-      ? null
-      : sourceChanged || (enabled && !w.enabled) || every !== w.everyMinutes
-        ? this.now()
-        : w.nextCheckAt;
     // Switched on again, or looking somewhere new: what it counted before doesn't hold it back.
     const recount = sourceChanged || (enabled && !w.enabled);
+    const next = !enabled ? null : recount || every !== w.everyMinutes ? this.now() : w.nextCheckAt;
     this.d.db
       .query(
         `UPDATE watchers SET name = ?, bot_id = ?, source = ?, condition = ?, prompt = ?, every_minutes = ?, once = ?,
@@ -290,7 +264,7 @@ export class Watchers {
         this.now(),
         id,
       );
-    // Like a new watcher, that look is its first value.
+    // Like a new watcher, that look is its first value. Null: deleted while its new source was read.
     const updated = this.get(id);
     if (!updated) return null;
     if (first) await this.saw(updated, first.value, first.untrusted);
@@ -372,13 +346,8 @@ export class Watchers {
     const errors = w.errors + 1;
     // One that keeps failing looks less often: each wait twice the last, up to six hours.
     const every = Math.max(minWatchMinutes(w.source), w.everyMinutes);
-    const wait =
-      errors < BACKOFF_AFTER_ERRORS
-        ? every
-        : Math.max(
-            every,
-            Math.min(BACKOFF_MAX_MINUTES, every * 2 ** (errors - BACKOFF_AFTER_ERRORS + 1)),
-          );
+    const doubled = every * 2 ** (errors - BACKOFF_AFTER_ERRORS + 1);
+    const wait = Math.max(every, Math.min(BACKOFF_MAX_MINUTES, doubled));
     this.d.db
       .query(
         `UPDATE watchers SET last_checked_at = ?, last_error = ?, errors = ?,
@@ -618,24 +587,21 @@ export function describeLook(s: WatchSource): string {
 
 /** Its condition, from the chat tools' flat fields. */
 export function conditionOf(input: {
-  when?: string;
+  when?: WatchCondition["when"];
   text?: string;
   value?: number;
 }): WatchCondition | string {
-  switch (input.when ?? "changed") {
+  const when = input.when ?? "changed";
+  switch (when) {
     case "changed":
-      return { when: "changed" };
+      return { when };
     case "contains":
     case "missing":
-      return input.text
-        ? { when: input.when as "contains" | "missing", text: input.text }
-        : `"${input.when}" needs text.`;
+      return input.text ? { when, text: input.text } : `"${when}" needs text.`;
     case "below":
     case "above":
       return typeof input.value === "number"
-        ? { when: input.when as "below" | "above", value: input.value }
-        : `"${input.when}" needs a value.`;
-    default:
-      return `Unknown condition "${input.when}".`;
+        ? { when, value: input.value }
+        : `"${when}" needs a value.`;
   }
 }
