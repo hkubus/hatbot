@@ -468,7 +468,7 @@ final class SignOutAndCacheTests: XCTestCase {
     let opened = DiskCache.openedFiles.appendingPathComponent("9", isDirectory: true)
     try FileManager.default.createDirectory(at: opened, withIntermediateDirectories: true)
     try Data("invoice".utf8).write(to: opened.appendingPathComponent("invoice.pdf"))
-    SlowBrain.routes = ["/auth/logout": "{}"]
+    SlowBrain.reset(["/auth/logout": "{}"])
     let vault = MemoryVault("t")
     let session = try await MainActor.run {
       let s = try Session.saved(vault: vault, cacheDir: dir)
@@ -491,14 +491,12 @@ final class SignOutAndCacheTests: XCTestCase {
   func testALoadThatEndsAfterSigningOutKeepsNothing() async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: dir) }
-    SlowBrain.routes = [
+    SlowBrain.reset([
       "/auth/logout": "{}",
       "/thread/messages?limit=50":
         #"[{"id":7,"role":"user","kind":"text","text":"secret","status":"done","createdAt":"2026-10-15T10:00:00Z"}]"#,
-    ]
-    SlowBrain.slower = ["/thread/messages?limit=50": 0.5]
-    defer { SlowBrain.slower = [:] }
-    SlowBrain.reset()
+    ])
+    SlowBrain.slower = ["/thread/messages?limit=50": 0.3]
     let session = try await MainActor.run { try Session.saved(vault: MemoryVault("t"), cacheDir: dir) }
     // As the sidebar does: the store lives on in a task of its own.
     let load = await MainActor.run {
@@ -515,10 +513,10 @@ final class SignOutAndCacheTests: XCTestCase {
 
   /// A 401 that answers a request the old token made, after you've signed in again, leaves you signed in.
   func testALate401FromTheOldTokenDoesntSignYouOut() async throws {
-    SlowBrain.routes = [
+    SlowBrain.reset([
       "/auth/me": #"{"setupDone":true,"authenticated":false}"#,
       "/auth/login": #"{"token":"new"}"#,
-    ]
+    ])
     let vault = MemoryVault("old")
     let session = try await MainActor.run { try Session.saved(vault: vault) }
     let old = try await MainActor.run { try XCTUnwrap(session.store?.api) }
@@ -536,9 +534,10 @@ final class SignOutAndCacheTests: XCTestCase {
   }
 }
 
-/// Answers from a table after a delay, like a phone's round trip to the brain.
+/// Answers from a table after a short delay, as the brain does. A test that acts while a request is
+/// still on its way makes that path `slower`.
 final class SlowBrain: URLProtocol, @unchecked Sendable {
-  static let delay: TimeInterval = 0.15
+  static let delay: TimeInterval = 0.01
   nonisolated(unsafe) static var routes: [String: String] = [:]
   /// Paths that answer more slowly than `delay`.
   nonisolated(unsafe) static var slower: [String: TimeInterval] = [:]
@@ -551,7 +550,11 @@ final class SlowBrain: URLProtocol, @unchecked Sendable {
   static var requested: [String] { lock.withLock { paths } }
   /// The last body sent to a path.
   static func sent(_ path: String) -> Data? { lock.withLock { bodies[path] } }
-  static func reset() {
+  /// Starts again with these routes, none slower or failing, and nothing requested yet.
+  static func reset(_ routes: [String: String] = [:]) {
+    self.routes = routes
+    slower = [:]
+    statuses = [:]
     lock.withLock {
       paths = []
       bodies = [:]
@@ -611,34 +614,21 @@ final class NetworkTests: XCTestCase {
     #"{"id":\#(id),"title":"t","goal":"g","successCriteria":"","origin":"chat","lane":"background","model":"m","status":"running","tainted":false,"injectionSuspected":false,"costUsd":0,"steps":0,"createdAt":"2026-10-15T08:00:00Z"}"#
   }
 
-  @MainActor private static func store(cache: DiskCache? = nil) throws -> AppStore {
-    SlowBrain.routes = [
-      "/bots": "[]",
-      "/conversations": "[]",
-      "/approvals?pending=1": "[]",
-      "/thread/unread": "[3]",
-    ]
-    for id in 1...3 { SlowBrain.routes["/tasks/\(id)"] = #"{"task":\#(task(id)),"steps":[]}"# }
+  @MainActor private static func store(cache: DiskCache? = nil) -> AppStore {
     SlowBrain.reset()
-    let store = AppStore(
+    return AppStore(
       api: API(server: URL(string: "https://h.example")!, token: "t", session: SlowBrain.session()), cache: cache)
-    // Three running tasks the chat has shown: a reconnect brings them up to date.
-    for id in 1...3 {
-      store.tasks[id] = try JSONDecoder().decode(AgentTask.self, from: Data(task(id).utf8))
-      store.steps[id] = []
-    }
-    return store
   }
 
   /// A chat's task rows load in one request. A brain from before ids= sends its newest tasks instead:
   /// the rows it left out load one at a time.
   func testTaskRowsLoadTogether() async throws {
-    let store = try await MainActor.run { try Self.store() }
+    let store = await MainActor.run { Self.store() }
     SlowBrain.routes["/tasks?ids=20,21,22"] = "[\(Self.task(20)),\(Self.task(22))]"
     SlowBrain.routes["/tasks?ids=30,40"] = "[\(Self.task(99)),\(Self.task(30))]"
     SlowBrain.routes["/tasks/40"] = #"{"task":\#(Self.task(40)),"steps":[]}"#
     await MainActor.run {
-      for id in [20, 21, 22, 20, 1] { store.ensureTask(id) }
+      for id in [20, 21, 22, 20] { store.ensureTask(id) }
     }
     await waitUntil { store.tasks[22] != nil }
     await MainActor.run {
@@ -661,12 +651,11 @@ final class NetworkTests: XCTestCase {
 
   /// An earlier page that arrives after you've gone to another chat stays out of that one.
   func testAnEarlierPageForAChatYouLeftIsDropped() async throws {
-    let store = try await MainActor.run { try Self.store() }
+    let store = await MainActor.run { Self.store() }
     SlowBrain.routes["/conversations/1/messages?limit=50&before=60"] = "[\(Self.message(5, in: 1))]"
     SlowBrain.routes["/conversations/2/messages?limit=50"] = "[\(Self.message(70, in: 2))]"
     // The earlier page answers after the other chat has loaded.
-    SlowBrain.slower = ["/conversations/1/messages?limit=50&before=60": 0.4]
-    defer { SlowBrain.slower = [:] }
+    SlowBrain.slower = ["/conversations/1/messages?limit=50&before=60": 0.2]
     try await MainActor.run {
       Self.twoChats(store)
       store.messages = [try JSONDecoder().decode(ThreadMessage.self, from: Data(Self.message(60, in: 1).utf8))]
@@ -683,9 +672,11 @@ final class NetworkTests: XCTestCase {
   /// A reply streaming while the chat loads: its text isn't doubled, and nothing sent after the page
   /// was read is lost.
   func testAReplyLoadedMidWayIsNeitherDoubledNorCut() async throws {
-    let store = try await MainActor.run { try Self.store() }
+    let store = await MainActor.run { Self.store() }
     SlowBrain.routes["/thread/messages?limit=50"] =
       #"[{"id":9,"role":"assistant","kind":"text","text":"Hello","status":"streaming","createdAt":"2026-10-15T08:00:00Z"}]"#
+    // Still on its way while the deltas come.
+    SlowBrain.slower = ["/thread/messages?limit=50": 0.2]
     try await MainActor.run {
       store.messages = [try JSONDecoder().decode(ThreadMessage.self, from: Data(#"{"id":9,"role":"assistant","kind":"text","text":"Hel","status":"streaming","createdAt":"2026-10-15T08:00:00Z"}"#.utf8))]
     }
@@ -708,9 +699,11 @@ final class NetworkTests: XCTestCase {
   /// An older brain's delta doesn't say where it goes: one that came while the chat loaded isn't added
   /// again to the page.
   func testAnOlderBrainsDeltaIsntDoubledByALoad() async throws {
-    let store = try await MainActor.run { try Self.store() }
+    let store = await MainActor.run { Self.store() }
     SlowBrain.routes["/thread/messages?limit=50"] =
       #"[{"id":9,"role":"assistant","kind":"text","text":"Hello","status":"streaming","createdAt":"2026-10-15T08:00:00Z"}]"#
+    // Still on its way while the deltas come.
+    SlowBrain.slower = ["/thread/messages?limit=50": 0.2]
     try await MainActor.run {
       store.messages = [try JSONDecoder().decode(ThreadMessage.self, from: Data(#"{"id":9,"role":"assistant","kind":"text","text":"Hel","status":"streaming","createdAt":"2026-10-15T08:00:00Z"}"#.utf8))]
     }
@@ -725,7 +718,7 @@ final class NetworkTests: XCTestCase {
   /// A save goes on top of the version that was read; one saved meanwhile comes back as a conflict
   /// with the newer copy, and nothing is written.
   func testMemorySavesSayWhichVersionTheyEdit() async throws {
-    let store = try await MainActor.run { try Self.store() }
+    let store = await MainActor.run { Self.store() }
     let file = "/memory/file?path=notes/servers.md"
     SlowBrain.routes[file] = #"{"path":"notes/servers.md","content":"nas\n","sha":"aaa"}"#
     let read = try await store.memoryFile("notes/servers.md")
@@ -741,7 +734,6 @@ final class NetworkTests: XCTestCase {
     // Changed elsewhere since: refused, with what it is now.
     SlowBrain.routes[file] = #"{"error":"changed","sha":"bbb","content":"nas\nkuma\n"}"#
     SlowBrain.statuses[file] = 409
-    defer { SlowBrain.statuses = [:] }
     do {
       try await store.saveMemoryFile("notes/servers.md", content: "mine\n", baseSha: "aaa")
       XCTFail("saved over a newer copy")
@@ -757,7 +749,7 @@ final class NetworkTests: XCTestCase {
 
   /// A file goes up from disk as the same multipart body as one from memory, and the body file is deleted.
   func testUploadsAFileFromDisk() async throws {
-    let store = try await MainActor.run { try Self.store() }
+    let store = await MainActor.run { Self.store() }
     let file = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).bin")
     defer { try? FileManager.default.removeItem(at: file) }
     // Over a megabyte, so it's copied in more than one piece.
@@ -792,7 +784,7 @@ final class NetworkTests: XCTestCase {
       (group, .conversationDeleted(id: 2), false), (chefs, .botDeleted(id: "chef"), true),
     ]
     for (chat, deleted, refetches) in cases {
-      let store = try await MainActor.run { try Self.store() }
+      let store = await MainActor.run { Self.store() }
       SlowBrain.routes["/conversations"] = #"[{"id":1,"kind":"direct","botIds":["hatbot"],"unread":0}]"#
       SlowBrain.routes["/conversations/1/messages?limit=50"] = "[\(Self.message(60, in: 1))]"
       SlowBrain.routes["/conversations/\(chat.id)/messages?limit=50"] = "[\(Self.message(70, in: chat.id))]"
@@ -818,7 +810,7 @@ final class NetworkTests: XCTestCase {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: dir) }
     let cache = DiskCache(dir: dir)
-    let store = try await MainActor.run { try Self.store(cache: cache) }
+    let store = await MainActor.run { Self.store(cache: cache) }
     SlowBrain.routes["/conversations/1/messages?limit=50"] = "[\(Self.message(60, in: 1))]"
     SlowBrain.routes["/conversations/2/messages?limit=50"] = "[\(Self.message(70, in: 2))]"
     SlowBrain.routes["/conversations/2"] = "{}"
