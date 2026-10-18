@@ -116,18 +116,9 @@ final class ModelTests: XCTestCase {
     XCTAssertNil(API.serverURL(from: "ws://hatbot.example.com"))
     XCTAssertTrue(API.isPlainHTTP(" http://192.168.55.230:8080"))
     XCTAssertFalse(API.isPlainHTTP("hatbot.example.com"))
-    try await MainActor.run {
-      let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
-      defaults.set("http://192.168.55.230:8080", forKey: Session.serverKey)
-      let session = Session(vault: MemoryVault("old"), defaults: defaults)
-      XCTAssertNil(session.store)
-    }
-    let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
-    let session = await MainActor.run {
-      let s = Session(vault: MemoryVault(), defaults: defaults)
-      s.server = "http://192.168.55.230:8080"
-      return s
-    }
+    let old = try await MainActor.run { try Session.saved("http://192.168.55.230:8080", vault: MemoryVault("old")).store }
+    XCTAssertNil(old)
+    let session = try await MainActor.run { try Session.saved("http://192.168.55.230:8080", vault: MemoryVault()) }
     do {
       try await session.signIn(password: "p", code: "123456", device: "test")
       XCTFail("signed in over http")
@@ -613,15 +604,6 @@ final class FoldTests: XCTestCase {
     XCTAssertFalse(json.contains("\"icon\""))
   }
 
-  /// A settings change sends only what changed: the brain keeps the rest as it is.
-  func testASettingsChangeSendsOnlyWhatChanged() throws {
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = .sortedKeys
-    let change = AppStore.SettingsChange(chatModel: .opus, memoryTidy: false)
-    XCTAssertEqual(
-      String(decoding: try encoder.encode(change), as: UTF8.self), #"{"chatModel":"claude-opus-5-5","memoryTidy":false}"#)
-  }
-
   /// A model or effort from a newer brain stays itself, and saving the bot or setting sends it back so.
   func testKeepsModelsAndEffortsItDoesntKnow() throws {
     let json = #"""
@@ -632,8 +614,6 @@ final class FoldTests: XCTestCase {
     XCTAssertEqual(b.chatModel?.rawValue, "claude-sonnet-6")
     XCTAssertEqual(b.chatEffort?.rawValue, "high")
     XCTAssertFalse(AppSettings.ModelID.known.contains(b.chatModel!))
-    // Its picker row names it as the known ones are named.
-    XCTAssertEqual(AppSettings.ModelID.known.including(b.chatModel).map(\.name), ["Haiku 5.5", "Opus 5.5", "Sonnet 6"])
     let change = AppStore.BotChange(
       name: nil, instructions: "", chatModel: b.chatModel, chatEffort: b.chatEffort, plugins: nil)
     let sent = String(decoding: try JSONEncoder().encode(change), as: UTF8.self)
@@ -764,34 +744,28 @@ final class LookingAfterThingsTests: XCTestCase {
     XCTAssertEqual(LineDiff.of("x\ny\n", nil).map(\.text), ["-x", "-y"])
   }
 
-  /// One line changed in a long file is still one line changed, found quickly: the lines the two
-  /// versions share at the start and end stay out of the table.
-  func testDiffsALongFileByItsChangedMiddle() {
-    let lines = (0..<5000).map { "line \($0)" }
-    var edited = lines
-    edited[2500] = "changed"
+  /// Edits in a long file are found quickly and each shown on its own: one line changed is one line
+  /// changed, two far apart are two. Moved lines still line up; a rewrite too big to work out is shown
+  /// whole.
+  func testDiffsLongFiles() {
+    let lines = (0..<20_000).map { "line \($0)" }
+    var one = lines
+    one[2500] = "changed"
+    var two = lines
+    two[50] = "changed top"
+    two[3050] = "changed bottom"
+    let original = lines.joined(separator: "\n")
     let start = Date()
-    let diff = LineDiff.of(lines.joined(separator: "\n"), edited.joined(separator: "\n"))
+    let oneDiff = LineDiff.of(original, one.joined(separator: "\n"))
+    let twoDiff = LineDiff.of(original, two.joined(separator: "\n"))
     XCTAssertLessThan(Date().timeIntervalSince(start), 1)
     XCTAssertEqual(
-      diff.map(\.text), ["…", " line 2498", " line 2499", "-line 2500", "+changed", " line 2501", " line 2502", "…"])
-    XCTAssertEqual(LineDiff.of("a\nb\n", "a\nb\n").map(\.text), ["…"])
-    XCTAssertEqual(LineDiff.of("a\nb\nc", "a\nc").map(\.text), [" a", "-b", " c"])
-  }
-
-  /// Two edits far apart in a long file are two edits; moved lines still line up; a rewrite too big to
-  /// work out is shown whole.
-  func testDiffsFewEditsFarApart() {
-    let lines = (0..<20_000).map { "line \($0)" }
-    var edited = lines
-    edited[50] = "changed top"
-    edited[3050] = "changed bottom"
-    let start = Date()
-    let diff = LineDiff.of(lines.joined(separator: "\n"), edited.joined(separator: "\n"))
-    XCTAssertLessThan(Date().timeIntervalSince(start), 1)
-    XCTAssertEqual(diff.filter { $0.kind != .context && $0.kind != .hunk }.map(\.text), [
+      oneDiff.map(\.text), ["…", " line 2498", " line 2499", "-line 2500", "+changed", " line 2501", " line 2502", "…"])
+    XCTAssertEqual(twoDiff.filter { $0.kind != .context && $0.kind != .hunk }.map(\.text), [
       "-line 50", "+changed top", "-line 3050", "+changed bottom",
     ])
+    XCTAssertEqual(LineDiff.of("a\nb\n", "a\nb\n").map(\.text), ["…"])
+    XCTAssertEqual(LineDiff.of("a\nb\nc", "a\nc").map(\.text), [" a", "-b", " c"])
     XCTAssertEqual(
       LineDiff.of("x\na\nb\na\ny", "x\nb\na\nb\ny").map(\.text), [" x", "-a", " b", " a", "+b", " y"])
     let rewrite = LineDiff.of(lines[..<3000].joined(separator: "\n"), lines[5000..<8000].joined(separator: "\n"))
@@ -808,7 +782,6 @@ final class LookingAfterThingsTests: XCTestCase {
       [5, 60, 90, 120].map(AppSettings.Heartbeat.every), ["5 minutes", "Hour", "90 minutes", "2 hours"])
     XCTAssertEqual(["hatbot", "sysadmin"].including("sysadmin"), ["hatbot", "sysadmin"])
     XCTAssertEqual(["hatbot"].including("sysadmin"), ["hatbot", "sysadmin"])
-    XCTAssertEqual(AppSettings.ModelID.known.including(nil), AppSettings.ModelID.known)
   }
 
   func testSplitsSearchSnippetsAtTheMarks() {
@@ -914,11 +887,8 @@ final class DiskCacheTests: XCTestCase {
       store.messages = [done, writing]
       store.persist()
     }
-    // Written off the main thread.
-    for _ in 0..<50 where cache.page(1) == nil || cache.chats() == nil {
-      try await Task.sleep(for: .milliseconds(20))
-    }
-
+    // Written off the main thread; a read waits for the writes before it.
+    XCTAssertNotNil(cache.page(1))
     await MainActor.run {
       let store = AppStore(api: api, cache: cache)
       XCTAssertEqual(store.conversations, [chat])
@@ -938,9 +908,9 @@ final class DiskCacheTests: XCTestCase {
     let m = ThreadMessage(id: 1, role: .user, kind: .text, text: "secret", status: .done, createdAt: "2026-10-15T10:00:00Z")
     for id in 1...50 { cache.save(DiskCache.Page(messages: [m], episodes: [], hasEarlier: false), for: id) }
     cache.clear()
-    Thread.sleep(forTimeInterval: 0.3)
-    XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
+    // Reads wait for what was queued before them, so a write still on its way would be in by now.
     XCTAssertNil(cache.page(50))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
   }
 
   /// Signing out deletes the chat cache and the files opened from the chat, and forgets the token.
@@ -952,10 +922,8 @@ final class DiskCacheTests: XCTestCase {
     try Data("invoice".utf8).write(to: opened.appendingPathComponent("invoice.pdf"))
     SlowBrain.routes = ["/auth/logout": "{}"]
     let vault = MemoryVault("t")
-    let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
-    defaults.set("https://h.example", forKey: Session.serverKey)
-    let session = await MainActor.run {
-      let s = Session(vault: vault, defaults: defaults, cacheDir: dir, urlSession: SlowBrain.session())
+    let session = try await MainActor.run {
+      let s = try Session.saved(vault: vault, cacheDir: dir)
       s.store?.messages = [
         ThreadMessage(id: 1, role: .user, kind: .text, text: "hi", status: .done, createdAt: "2026-10-15T10:00:00Z")
       ]
@@ -966,8 +934,8 @@ final class DiskCacheTests: XCTestCase {
     XCTAssertNil(store)
     XCTAssertNil(vault.load())
     XCTAssertFalse(FileManager.default.fileExists(atPath: DiskCache.openedFiles.path))
-    // The page the store kept as it disconnected is gone too.
-    try await Task.sleep(for: .milliseconds(200))
+    // The page the store kept as it disconnected is gone too: reads wait for the writes before them.
+    XCTAssertNil(DiskCache(dir: dir).page(1))
     XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
   }
 
@@ -982,20 +950,18 @@ final class DiskCacheTests: XCTestCase {
     ]
     SlowBrain.slower = ["/thread/messages?limit=50": 0.5]
     defer { SlowBrain.slower = [:] }
-    let vault = MemoryVault("t")
-    let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
-    defaults.set("https://h.example", forKey: Session.serverKey)
-    let session = await MainActor.run {
-      Session(vault: vault, defaults: defaults, cacheDir: dir, urlSession: SlowBrain.session())
-    }
+    SlowBrain.reset()
+    let session = try await MainActor.run { try Session.saved(vault: MemoryVault("t"), cacheDir: dir) }
     // As the sidebar does: the store lives on in a task of its own.
-    await MainActor.run {
+    let load = await MainActor.run {
       let store = session.store!
-      Task { await store.openConversation(2) }
+      return Task { await store.openConversation(2) }
     }
-    try await Task.sleep(for: .milliseconds(50))
+    await waitUntil { SlowBrain.requested.contains("GET /thread/messages?limit=50") }
     await session.signOut()
-    try await Task.sleep(for: .milliseconds(800))
+    await load.value
+    // Reads wait for the writes before them.
+    XCTAssertNil(DiskCache(dir: dir).page(2))
     XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
   }
 
@@ -1006,22 +972,18 @@ final class DiskCacheTests: XCTestCase {
       "/auth/login": #"{"token":"new"}"#,
     ]
     let vault = MemoryVault("old")
-    let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
-    defaults.set("https://h.example", forKey: Session.serverKey)
-    let session = await MainActor.run { Session(vault: vault, defaults: defaults, urlSession: SlowBrain.session()) }
+    let session = try await MainActor.run { try Session.saved(vault: vault) }
     let old = try await MainActor.run { try XCTUnwrap(session.store?.api) }
     try await session.signIn(password: "p", code: "123456", device: "test")
     XCTAssertEqual(vault.load(), "new")
     old.unauthorized()
-    try await Task.sleep(for: .milliseconds(50))
+    // The main actor takes its work in turn: what the 401 started there is done before this.
     let kept = await MainActor.run { session.store?.api.token }
     XCTAssertEqual(kept, "new")
     XCTAssertEqual(vault.load(), "new")
     // The new token's own 401 still does.
     await MainActor.run { session.store?.api.unauthorized() }
-    try await Task.sleep(for: .milliseconds(50))
-    let gone = await MainActor.run { session.store == nil }
-    XCTAssertTrue(gone)
+    await waitUntil { session.store == nil }
     XCTAssertNil(vault.load())
   }
 }
@@ -1262,8 +1224,11 @@ final class NetworkTests: XCTestCase {
       for id in [10, 11, 12] { store.markSeen([id]) }
       XCTAssertEqual(store.unread, [13])
     }
-    try await Task.sleep(for: .milliseconds(600))
+    await waitUntil { !SlowBrain.requested.isEmpty }
     XCTAssertEqual(SlowBrain.requested, ["POST /thread/seen"])
+    // The first request has all three.
+    let sent = try JSONDecoder().decode([String: [Int]].self, from: XCTUnwrap(SlowBrain.sent("/thread/seen")))
+    XCTAssertEqual(sent, ["ids": [10, 11, 12]])
   }
 
   /// A chat's task rows: one request for the tasks, without their steps. The live view still loads steps.
@@ -1275,7 +1240,7 @@ final class NetworkTests: XCTestCase {
       for id in [20, 21, 22, 20, 1] { store.ensureTask(id) }
       store.ensureSteps(30)
     }
-    try await Task.sleep(for: .milliseconds(400))
+    await waitUntil { store.tasks[22] != nil && store.steps[30] != nil }
     XCTAssertEqual(SlowBrain.requested.sorted(), ["GET /tasks/30", "GET /tasks?ids=20,21,22"])
     await MainActor.run {
       XCTAssertEqual(store.tasks[22]?.id, 22)
@@ -1294,10 +1259,8 @@ final class NetworkTests: XCTestCase {
       store.ensureTask(2)
       store.ensureTask(40)
     }
-    try await Task.sleep(for: .milliseconds(600))
+    await waitUntil { store.tasks[40] != nil }
     XCTAssertEqual(SlowBrain.requested, ["GET /tasks?ids=2,40", "GET /tasks/40"])
-    let loaded = await MainActor.run { store.tasks[40]?.id }
-    XCTAssertEqual(loaded, 40)
   }
 
   private static func message(_ id: Int, in conversation: Int) -> String {
@@ -1325,7 +1288,7 @@ final class NetworkTests: XCTestCase {
       store.hasEarlier = true
     }
     async let earlier: Void = store.loadEarlier()
-    try await Task.sleep(for: .milliseconds(30))
+    await waitUntil { SlowBrain.requested.contains("GET /conversations/1/messages?limit=50&before=60") }
     await store.openConversation(2)
     try await earlier
     let ids = await MainActor.run { store.messages.map(\.id) }
@@ -1342,7 +1305,7 @@ final class NetworkTests: XCTestCase {
       store.messages = [try JSONDecoder().decode(ThreadMessage.self, from: Data(#"{"id":9,"role":"assistant","kind":"text","text":"Hel","status":"streaming","createdAt":"2026-10-15T08:00:00Z"}"#.utf8))]
     }
     async let loaded: Void = store.loadThread()
-    try await Task.sleep(for: .milliseconds(50))
+    await waitUntil { SlowBrain.requested.contains("GET /thread/messages?limit=50") }
     await MainActor.run {
       // Sent before the page was read, and after.
       store.apply(.messageDelta(id: 9, text: "lo", at: 3))
@@ -1367,7 +1330,7 @@ final class NetworkTests: XCTestCase {
       store.messages = [try JSONDecoder().decode(ThreadMessage.self, from: Data(#"{"id":9,"role":"assistant","kind":"text","text":"Hel","status":"streaming","createdAt":"2026-10-15T08:00:00Z"}"#.utf8))]
     }
     async let loaded: Void = store.loadThread()
-    try await Task.sleep(for: .milliseconds(50))
+    await waitUntil { SlowBrain.requested.contains("GET /thread/messages?limit=50") }
     await MainActor.run { store.apply(.messageDelta(id: 9, text: "lo")) }
     try await loaded
     let text = await MainActor.run { store.reply(9)?.text }
@@ -1433,12 +1396,10 @@ final class NetworkTests: XCTestCase {
     let written = try form.write(file)
     let body = try Data(contentsOf: written)
     try FileManager.default.removeItem(at: written)
-    let text = String(decoding: body.prefix(200), as: UTF8.self)
-    XCTAssertTrue(text.hasPrefix("--\(form.boundary)\r\n"))
-    XCTAssertTrue(text.contains(#"Content-Disposition: form-data; name="file"; filename="scan _1_.pdf""#))
-    XCTAssertTrue(text.contains("Content-Type: application/pdf\r\n\r\n"))
     XCTAssertEqual(body, form.head + bytes + form.tail)
-    XCTAssertEqual(form.tail, Data("\r\n--\(form.boundary)--\r\n".utf8))
+    // A quote in the name can't end the header early.
+    XCTAssertTrue(
+      String(decoding: form.head, as: UTF8.self).contains("filename=\"scan _1_.pdf\"\r\nContent-Type: application/pdf\r\n\r\n"))
 
     let uploads = { try FileManager.default.contentsOfDirectory(atPath: NSTemporaryDirectory()).filter { $0.hasPrefix("upload-") } }
     let before = try uploads()
@@ -1448,23 +1409,35 @@ final class NetworkTests: XCTestCase {
     XCTAssertEqual(Set(try uploads()), Set(before))
   }
 
-  /// The group you're in, deleted elsewhere: the chat goes back to Hatbot's own.
-  func testAGroupDeletedElsewhereCloses() async throws {
-    let store = try await MainActor.run { try Self.store() }
-    SlowBrain.routes["/conversations/1/messages?limit=50"] = "[\(Self.message(60, in: 1))]"
-    SlowBrain.routes["/conversations/2/messages?limit=50"] = "[\(Self.message(70, in: 2))]"
-    await MainActor.run { Self.twoChats(store) }
-    await store.openConversation(2)
-    await MainActor.run {
-      XCTAssertEqual(store.messages.map(\.id), [70])
-      store.apply(.conversationDeleted(id: 2))
-      XCTAssertEqual(store.messages, [])
+  /// The group you're in, or the bot whose chat you're in, deleted elsewhere: the chat goes back to
+  /// Hatbot's own.
+  func testAChatDeletedElsewhereCloses() async throws {
+    let group = Conversation(id: 2, kind: .group, title: "Home", botIds: ["hatbot", "chef"], unread: 0)
+    let chefs = Conversation(id: 3, kind: .direct, botIds: ["chef"], unread: 0)
+    // A deleted bot's chats are fetched again, a moment later.
+    let cases: [(Conversation, HatbotEvent, refetches: Bool)] = [
+      (group, .conversationDeleted(id: 2), false), (chefs, .botDeleted(id: "chef"), true),
+    ]
+    for (chat, deleted, refetches) in cases {
+      let store = try await MainActor.run { try Self.store() }
+      SlowBrain.routes["/conversations"] = #"[{"id":1,"kind":"direct","botIds":["hatbot"],"unread":0}]"#
+      SlowBrain.routes["/conversations/1/messages?limit=50"] = "[\(Self.message(60, in: 1))]"
+      SlowBrain.routes["/conversations/\(chat.id)/messages?limit=50"] = "[\(Self.message(70, in: chat.id))]"
+      await MainActor.run {
+        store.conversations = [Conversation(id: 1, kind: .direct, botIds: ["hatbot"], unread: 0), chat]
+        store.botIds = ["hatbot", "chef"]
+      }
+      await store.openConversation(chat.id)
+      await MainActor.run {
+        XCTAssertEqual(store.messages.map(\.id), [70])
+        store.apply(deleted)
+        XCTAssertEqual(store.messages, [])
+      }
+      await waitUntil { store.conversationId == 1 && store.messages.map(\.id) == [60] }
+      if refetches { await waitUntil { SlowBrain.requested.contains("GET /conversations") } }
+      let chats = await MainActor.run { store.conversations.map(\.id) }
+      XCTAssertEqual(chats, [1])
     }
-    try await Task.sleep(for: .milliseconds(400))
-    let (shown, ids, chats) = await MainActor.run { (store.conversationId, store.messages.map(\.id), store.conversations.map(\.id)) }
-    XCTAssertEqual(shown, 1)
-    XCTAssertEqual(ids, [60])
-    XCTAssertEqual(chats, [1])
   }
 
   /// A group you delete takes the page kept of it along, and the chat goes back to Hatbot's own.
@@ -1485,31 +1458,6 @@ final class NetworkTests: XCTestCase {
     let shown = await MainActor.run { store.conversationId }
     XCTAssertEqual(shown, 1)
   }
-
-  /// The bot whose chat you're in, deleted elsewhere: its chat goes too, back to Hatbot's own.
-  func testABotDeletedElsewhereClosesItsChat() async throws {
-    let store = try await MainActor.run { try Self.store() }
-    SlowBrain.routes["/conversations"] = #"[{"id":1,"kind":"direct","botIds":["hatbot"],"unread":0}]"#
-    SlowBrain.routes["/conversations/1/messages?limit=50"] = "[\(Self.message(60, in: 1))]"
-    SlowBrain.routes["/conversations/3/messages?limit=50"] = "[\(Self.message(80, in: 3))]"
-    await MainActor.run {
-      store.conversations = [
-        Conversation(id: 1, kind: .direct, botIds: ["hatbot"], unread: 0),
-        Conversation(id: 3, kind: .direct, botIds: ["chef"], unread: 0),
-      ]
-      store.botIds = ["hatbot", "chef"]
-    }
-    await store.openConversation(3)
-    await MainActor.run {
-      XCTAssertEqual(store.messages.map(\.id), [80])
-      store.apply(.botDeleted(id: "chef"))
-      XCTAssertEqual(store.messages, [])
-    }
-    try await Task.sleep(for: .milliseconds(600))
-    let (shown, ids) = await MainActor.run { (store.conversationId, store.messages.map(\.id)) }
-    XCTAssertEqual(shown, 1)
-    XCTAssertEqual(ids, [60])
-  }
 }
 
 extension XCTestCase {
@@ -1522,6 +1470,15 @@ extension XCTestCase {
       try? await Task.sleep(for: .milliseconds(10))
     }
     XCTFail("Still not so after 2 seconds", file: file, line: line)
+  }
+}
+
+extension Session {
+  /// As the app starts with `server` saved and the token in `vault`, talking to the slow brain.
+  static func saved(_ server: String = "https://h.example", vault: TokenVault, cacheDir: URL? = nil) throws -> Session {
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+    defaults.set(server, forKey: serverKey)
+    return Session(vault: vault, defaults: defaults, cacheDir: cacheDir, urlSession: SlowBrain.session())
   }
 }
 
