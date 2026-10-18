@@ -3,6 +3,7 @@
 # Runs inside hatbot-desktop as root. host-setup.sh pushes and starts it; safe to re-run.
 #   DESKTOP_IP  this container's IP; Xvnc listens only there
 #   BRAIN_IP    the brain's IP; the only host allowed to connect in
+#   HATBOT_PUBLIC_IPS  optional: your public IPv4s, which the desktop's programs may not reach either
 # Reads VNC_PASSWORD from /etc/hatbot-desktop/secrets.env (written by host-setup.sh).
 
 set -euo pipefail
@@ -96,19 +97,60 @@ systemctl daemon-reload
 systemctl enable -q hatbot-xvnc hatbot-session
 systemctl restart hatbot-xvnc hatbot-session
 
-say "Firewall: only the brain may connect in (VNC 5901, desktop-agent 7070)"
+say "Firewall: only the brain may connect in (VNC 5901, desktop-agent 7070); the desktop's programs reach only the internet"
+# On Proxmox the host also filters the desktop's bridge port (host-setup.sh), which holds even against
+# root in here. Elsewhere this output chain is all there is: what browses and runs commands (desk, and
+# the shell's and renderer's DynamicUsers, 61184-65519) may open connections to the internet only, not
+# to the LAN, the brain, cloud metadata or your public addresses. Root's services (DNS forwarding, DHCP,
+# apt) are left alone.
+desk_uid=$(id -u desk)
+lan_dev=$(ip -4 route show default | awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }')
+lan_net=$(ip -4 -o addr show dev "$lan_dev" | awk '{ print $4; exit }')
+lan_net=$(python3 -c 'import ipaddress, sys; print(ipaddress.ip_interface(sys.argv[1]).network)' "$lan_net")
+blocked="$lan_net, $BRAIN_IP"
+for ip in ${HATBOT_PUBLIC_IPS:-}; do
+  [[ $ip =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?$ ]] || {
+    echo "HATBOT_PUBLIC_IPS: $ip isn't an IPv4 address" >&2
+    exit 1
+  }
+  blocked+=", $ip"
+done
+# A resolver on the LAN stays reachable, on port 53 only. One on 127.0.0.53 (systemd-resolved) forwards
+# as its own user, which this doesn't filter.
+dns=$(awk '$1 == "nameserver" && $2 ~ /^[0-9.]+$/ && $2 !~ /^127\./ { print $2 }' /etc/resolv.conf | paste -sd, - | sed 's/,/, /g')
+dns_rule=''
+[[ -z $dns ]] || dns_rule="ip daddr { $dns } meta l4proto { tcp, udp } th dport 53 accept"
 cat >/etc/nftables.conf <<EOF
 #!/usr/sbin/nft -f
 # Managed by hatbot infra/desktop-provision.sh.
 flush ruleset
 
 table inet filter {
+  set blocked {
+    type ipv4_addr
+    flags interval
+    auto-merge
+    elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12,
+                 192.0.0.0/24, 192.0.2.0/24, 192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24,
+                 203.0.113.0/24, 224.0.0.0/3, $blocked }
+  }
+
   chain input {
     type filter hook input priority filter; policy drop;
     iif lo accept
     ct state established,related accept
     ip saddr $BRAIN_IP tcp dport { 5901, 7070 } accept
     icmp type echo-request accept
+  }
+
+  chain output {
+    type filter hook output priority filter; policy accept;
+    oif lo accept
+    ct state established,related accept
+    meta skuid != { $desk_uid, 61184-65519 } accept
+    meta nfproto ipv6 counter reject
+    $dns_rule
+    ip daddr @blocked counter reject
   }
 }
 EOF
