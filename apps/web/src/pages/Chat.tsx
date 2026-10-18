@@ -310,7 +310,7 @@ function ReplyMessage({
           </div>
         )}
         {!streaming && m.sources?.length ? <Sources list={m.sources} /> : null}
-        {answerable && m.choices?.length ? <Choices list={m.choices} /> : null}
+        {answerable && m.choices?.length ? <Choices lists={m.choices} /> : null}
         {m.negotiationId && <NegotiationResult id={m.negotiationId} />}
         {ended && !finished && m.text && <hr className="result-rule" />}
         {m.taskId && !finished && <TaskResult taskId={m.taskId} />}
@@ -395,11 +395,15 @@ function ScheduleMessage({ m, scheduleId }: { m: ThreadMessage; scheduleId: numb
 }
 
 /** The pages a reply cites, in a line. */
-/** The answers a question at the end of a reply offers: a tap sends one as your message. */
-function Choices({ list }: { list: string[] }) {
+/**
+ * The answers the questions at the end of a reply offer. For one, a tap sends it as your message; for
+ * several, you pick or write each answer and send them together, numbered like the questions.
+ */
+function Choices({ lists }: { lists: string[][] }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const pick = async (text: string) => {
+  const [answers, setAnswers] = useState<string[]>(() => lists.map(() => ""));
+  const send = async (text: string) => {
     setBusy(true);
     setError("");
     try {
@@ -409,15 +413,66 @@ function Choices({ list }: { list: string[] }) {
       setBusy(false);
     }
   };
+  const set = (i: number, answer: string) =>
+    setAnswers((a) => a.map((x, j) => (j === i ? answer : x)));
+  const one = lists.length === 1 ? lists[0] : undefined;
   return (
     <>
-      <div className="choices">
-        {list.map((c) => (
-          <button key={c} type="button" className="btn" disabled={busy} onClick={() => pick(c)}>
-            {c}
-          </button>
-        ))}
-      </div>
+      {one ? (
+        <div className="choices">
+          {one.map((c) => (
+            <button key={c} type="button" className="btn" disabled={busy} onClick={() => send(c)}>
+              {c}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <form
+          className="choice-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void send(answers.map((a, i) => `${i + 1}. ${a.trim()}`).join("\n"));
+          }}
+        >
+          {lists.map((list, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: the questions are fixed, in order
+            <div key={i} className="choices">
+              <span className="choice-num tnum">{i + 1}.</span>
+              {list.length ? (
+                list.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className={`btn ${answers[i] === c ? "primary" : ""}`}
+                    aria-pressed={answers[i] === c}
+                    disabled={busy}
+                    onClick={() => set(i, c)}
+                  >
+                    {c}
+                  </button>
+                ))
+              ) : (
+                <input
+                  className="field"
+                  aria-label={`Answer ${i + 1}`}
+                  maxLength={1000}
+                  value={answers[i]}
+                  onChange={(e) => set(i, e.target.value)}
+                />
+              )}
+            </div>
+          ))}
+          <div>
+            <button
+              type="submit"
+              className="btn primary"
+              disabled={busy || answers.some((a) => !a.trim())}
+            >
+              Send
+            </button>
+          </div>
+        </form>
+      )}
       {error && <div className="form-error">{error}</div>}
     </>
   );

@@ -2496,6 +2496,25 @@ pre.payload {
   gap: 6px;
   margin: 8px 0 2px;
 }
+.choice-form {
+  display: grid;
+  gap: 2px;
+}
+.choice-form .choices {
+  align-items: center;
+  margin: 4px 0 0;
+}
+.choice-num {
+  min-width: 1.4em;
+  color: var(--muted);
+}
+.choice-form .field {
+  flex: 1;
+  min-width: 0;
+}
+.choice-form > div:last-child {
+  margin-top: 6px;
+}
 .sources {
   margin: 6px 0 2px;
   font-size: 13px;

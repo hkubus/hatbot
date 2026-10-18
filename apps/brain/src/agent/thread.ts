@@ -53,7 +53,7 @@ import {
 import type { Tasks } from "../tasks/service";
 import type { Triggers } from "../triggers";
 import type { Watchers } from "../watch/service";
-import { AskOwner, CHAT_ASK_DESCRIPTION } from "./ask";
+import { AskOwner, askedText, CHAT_ASK_DESCRIPTION } from "./ask";
 import {
   afterFallback,
   type CreateParams,
@@ -124,7 +124,7 @@ export const messageOf = ({ incognito, sources, choices, ...m }: MessageRow): Th
   ...m,
   ...(incognito ? { incognito: true as const } : {}),
   ...(sources ? { sources: JSON.parse(sources) as Source[] } : {}),
-  ...(choices ? { choices: JSON.parse(choices) as string[] } : {}),
+  ...(choices ? { choices: JSON.parse(choices) as string[][] } : {}),
 });
 /** How a task ended, in the place of the reply that started it when its bot doesn't write that again. */
 export const resultText = (t: Pick<Task, "status" | "summary">) =>
@@ -1774,8 +1774,8 @@ export class Thread {
     /** The pages the reply cites, and the titles of those it fetched (`addSources`). */
     const cited: Source[] = [];
     const fetched = new Map<string, string>();
-    /** The answers a question that ends the reply offers (ask_owner). */
-    let choices: string[] = [];
+    /** The answers the questions that end the reply offer, a list for each (ask_owner). */
+    let choices: string[][] = [];
     const finish = (status: "done" | "error", note?: string): Said => {
       // A chart being fixed is out of view; the reply ends with what's shown.
       chartFix = null;
@@ -2085,8 +2085,10 @@ export class Thread {
         const asked = toolUses.length === 1 && !cutOff(res) && toolUses[0]?.name === "ask_owner";
         const question = asked ? AskOwner.safeParse(toolUses[0]?.input) : null;
         if (question?.success) {
-          say(text && !separate ? `\n\n${question.data.question}` : question.data.question);
-          choices = question.data.choices;
+          const { questions } = question.data;
+          const asking = askedText(questions);
+          say(text && !separate ? `\n\n${asking}` : asking);
+          if (questions.some((q) => q.choices.length)) choices = questions.map((q) => q.choices);
           return finish("done");
         }
 

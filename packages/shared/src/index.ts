@@ -130,10 +130,10 @@ export type ThreadMessage = {
   /** The web pages it cites, in the order it first cites them. Absent when none. */
   sources?: Source[];
   /**
-   * A reply that asks you something: answers to tap, each sent as your message. Absent when it
-   * offers none.
+   * A reply that asks you something: the answers to tap, a list for each question it asks (empty for
+   * an open one), sent as your message. Absent when it offers none.
    */
-  choices?: string[];
+  choices?: string[][];
 };
 
 /** A web page a reply cites. */
@@ -313,10 +313,18 @@ export type Question = {
   answeredAt: string | null;
 };
 export const AnswerQuestion = z.object({ answer: z.string().trim().min(1).max(4000) });
+/** A notification's answer button: which choice, signed for that question and choice. */
+export const TokenAnswer = z.object({
+  choice: z.number().int().min(0),
+  exp: z.number().int(),
+  sig: z.string().min(1).max(200),
+});
 
 /** At most this many choices, each at most this long: they're buttons. */
 export const MAX_CHOICES = 4;
 export const MAX_CHOICE_CHARS = 60;
+/** Questions asked at once. */
+export const MAX_QUESTIONS_AT_ONCE = 3;
 
 export type DesktopState = {
   /** desktop-agent answers. */
@@ -343,7 +351,7 @@ export type HatbotEvent =
       text: string;
       status: "done" | "error";
       sources?: Source[];
-      choices?: string[];
+      choices?: string[][];
     }
   /** A task now shows under this reply. */
   | { type: "message.task"; id: number; taskId: number }

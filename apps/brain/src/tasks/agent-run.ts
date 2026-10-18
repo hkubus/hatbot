@@ -69,8 +69,8 @@ const MAX_CODE_STEPS = 80;
  * runs aren't held up for ever. Time waiting for the owner, or for tasks it started, doesn't count.
  */
 const MAX_RUN_MS = 4 * 3600_000;
-/** Questions one task may ask the owner (ask_owner). */
-const MAX_QUESTIONS = 3;
+/** Times one task may ask the owner (ask_owner). */
+const MAX_ASKS = 3;
 const BETAS: Anthropic.Beta.AnthropicBeta[] = [
   "thinking-display-updates-2026-08-18",
   "context-management-2025-06-27",
@@ -613,36 +613,52 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   };
 
   /** Asks the owner and waits without a slot, for their answer or until the time runs out. */
+  /** ask_owner calls so far; a run lasts only as long as the brain, like the task. */
+  let asks = 0;
+  /** Asks the owner and waits without a slot, for every answer or until the time runs out. */
   const ask = async (call: Anthropic.Beta.BetaToolUseBlock) => {
     const p = TaskAskOwner.safeParse(call.input);
     if (!p.success) return result(call, invalidInput(p.error), true);
-    if (d.questions.countFor(id) >= MAX_QUESTIONS)
+    if (asks >= MAX_ASKS)
       return result(
         call,
-        `Not asked: a task asks at most ${MAX_QUESTIONS} questions. Decide yourself, and say what you assumed in finish_task.`,
+        `Not asked: a task asks at most ${MAX_ASKS} times. Decide yourself, and say what you assumed in finish_task.`,
         true,
       );
-    const { question, choices, wait_hours: hours } = p.data;
-    const q = d.questions.create({
-      botId: bot.id,
-      taskId: id,
-      conversationId: task.conversationId,
-      question,
-      choices,
-      waitMs: hours * 3600_000,
-    });
-    tasks.addStep(id, { kind: "note", name: "Asked you", detail: question, url: null });
+    asks++;
+    const { questions, wait_hours: hours } = p.data;
+    const asked = questions.map((q) =>
+      d.questions.create({
+        botId: bot.id,
+        taskId: id,
+        conversationId: task.conversationId,
+        question: q.question,
+        choices: q.choices,
+        waitMs: hours * 3600_000,
+      }),
+    );
+    for (const q of asked)
+      tasks.addStep(id, { kind: "note", name: "Asked you", detail: q.question, url: null });
     tasks.setStatus(id, "waiting_answer");
-    const answer = await withoutSlot(() => d.questions.wait(q.id, signal));
-    if (answer === null) {
-      tasks.addStep(id, { kind: "note", name: "No answer", detail: question, url: null });
-      return result(
-        call,
-        `No answer within ${hours === 1 ? "an hour" : `${hours} hours`}. Carry on with what's safest and say what you assumed, or finish_task and say what you need.`,
-      );
+    const answers = await withoutSlot(() =>
+      Promise.all(asked.map((q) => d.questions.wait(q.id, signal))),
+    );
+    for (const [i, answer] of answers.entries())
+      tasks.addStep(id, {
+        kind: "note",
+        name: answer === null ? "No answer" : "Your answer",
+        detail: answer ?? asked[i]?.question ?? "",
+        url: null,
+      });
+    const unanswered = `No answer within ${hours === 1 ? "an hour" : `${hours} hours`}. Carry on with what's safest and say what you assumed, or finish_task and say what you need.`;
+    if (asked.length === 1) {
+      const [answer] = answers;
+      return result(call, answer ? ownerAnswer(answer) : unanswered);
     }
-    tasks.addStep(id, { kind: "note", name: "Your answer", detail: answer, url: null });
-    return result(call, ownerAnswer(answer));
+    const each = asked.map(
+      (q, i) => `${i + 1}. ${q.question}\n${answers[i] ? ownerAnswer(answers[i]) : "No answer."}`,
+    );
+    return result(call, [...each, ...(answers.includes(null) ? [unanswered] : [])].join("\n\n"));
   };
 
   /** Research: the helpers' sources, and how finishing has gone. */

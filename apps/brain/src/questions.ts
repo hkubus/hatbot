@@ -1,6 +1,8 @@
 // A background task's questions to you (PLAN.md §20): it waits, without the model, for your answer
 // from the chat or the task's page, until it runs out of time.
+import { createHmac } from "node:crypto";
 import type { Question } from "@hatbot/shared";
+import { sameText, secretKey } from "./auth/keys";
 import type { Bots } from "./bots";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
@@ -46,8 +48,12 @@ export type NewQuestion = {
 /** Your answer, or null when there was none in time or the question was dropped. */
 export type Answer = string | null;
 
+/** ntfy shows at most 3 buttons: a question with more choices is answered in the app. */
+const MAX_BUTTONS = 3;
+
 export class Questions {
   private waiters = new Map<number, (a: Answer) => void>();
+  private key: Buffer;
 
   constructor(
     private db: Db,
@@ -57,6 +63,7 @@ export class Questions {
     private clock: () => number = Date.now,
     private bots?: Bots,
   ) {
+    this.key = secretKey(db, "question_key");
     // Nothing waits on questions from before a restart: their tasks were stopped.
     db.query(
       "UPDATE questions SET status = 'cancelled', answered_at = ? WHERE status = 'pending'",
@@ -79,15 +86,6 @@ export class Questions {
       .map(toQuestion);
   }
 
-  /** How many a task has asked, to keep it from asking all day. */
-  countFor(taskId: number): number {
-    return (
-      this.db
-        .query<{ n: number }, [number]>("SELECT count(*) AS n FROM questions WHERE task_id = ?")
-        .get(taskId)?.n ?? 0
-    );
-  }
-
   create(q: NewQuestion): Question {
     const row = this.db
       .query<{ id: number }, [string, number, number | null, string, string, string, string]>(
@@ -106,13 +104,47 @@ export class Questions {
     const question = this.get(row?.id ?? -1);
     if (!question) throw new Error("question insert failed");
     this.events.emit({ type: "question.created", question });
-    void this.notifier.send({
-      title: `${this.bots?.nameOf(question.botId) ?? "Hatbot"} asks`,
-      message: [question.question, ...question.choices.map((c) => `- ${c}`)].join("\n"),
-      priority: 4,
-      click: `${this.publicUrl}/tasks/${question.taskId}`,
-    });
+    void this.notify(question);
     return question;
+  }
+
+  /** The question with a button for each choice, when they fit; else its choices, to answer in the app. */
+  private async notify(q: Question) {
+    const exp = Math.floor(Date.parse(q.expiresAt) / 1000);
+    const buttons = q.choices.length <= MAX_BUTTONS;
+    await this.notifier.send({
+      title: `${this.bots?.nameOf(q.botId) ?? "Hatbot"} asks`,
+      message: [q.question, ...(buttons ? [] : q.choices.map((c) => `- ${c}`))].join("\n"),
+      priority: 4,
+      click: `${this.publicUrl}/tasks/${q.taskId}`,
+      ...(buttons && q.choices.length
+        ? {
+            actions: q.choices.map((label, choice) => ({
+              action: "http" as const,
+              label,
+              url: `${this.publicUrl}/api/v1/questions/${q.id}/token-answer`,
+              method: "POST" as const,
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ choice, exp, sig: this.sign(q.id, choice, exp) }),
+              clear: true,
+            })),
+          }
+        : {}),
+    });
+  }
+
+  sign(id: number, choice: number, exp: number): string {
+    return createHmac("sha256", this.key).update(`${id}:${choice}:${exp}`).digest("base64url");
+  }
+
+  /**
+   * A notification's button: the choice its signature stands for, while the link holds. Undefined when
+   * the signature or time is wrong, null when it isn't waiting any more.
+   */
+  answerByToken(id: number, choice: number, exp: number, sig: string): Question | null | undefined {
+    if (exp * 1000 < this.clock() || !sameText(sig, this.sign(id, choice, exp))) return undefined;
+    const label = this.get(id)?.choices[choice];
+    return label === undefined ? undefined : this.answer(id, label);
   }
 
   /** Resolves with the answer, or null when it expires or is dropped. */

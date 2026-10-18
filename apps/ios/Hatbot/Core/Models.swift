@@ -70,8 +70,9 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   var incognito: Bool?
   /// The web pages it cites, in the order it first cites them; missing when none.
   var sources: [Source]?
-  /// The answers to tap when it ends with a question; missing otherwise.
-  var choices: [String]?
+  /// The answers to tap when it ends with questions, a list for each (empty for an open one); missing
+  /// otherwise.
+  var choices: [[String]]?
   /// The chat it's in: a bot's own, or a group. Missing on brains from before bots.
   var conversationId: Int?
   /// The bot that wrote it; nil for yours.
@@ -641,7 +642,7 @@ enum HatbotEvent: Decodable, Sendable {
   case messageDelta(id: Int, text: String, at: Int? = nil)
   case messageProgress(id: Int, text: String)
   case messageDone(
-    id: Int, text: String, status: ThreadMessage.Status, sources: [Source]? = nil, choices: [String]? = nil)
+    id: Int, text: String, status: ThreadMessage.Status, sources: [Source]? = nil, choices: [[String]]? = nil)
   case messageTask(id: Int, taskId: Int)
   case messageEdited(id: Int, editedAt: String)
   case messageRewrite(id: Int)

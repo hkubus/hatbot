@@ -728,7 +728,7 @@ private struct MessageRow: View, Equatable {
     default: ReplyMessage(m: m)
     }
     if m.status != .streaming, let list = m.sources, !list.isEmpty { MessageSources(list: list) }
-    if answerable, m.status != .streaming, let list = m.choices, !list.isEmpty { Choices(list: list) }
+    if answerable, m.status != .streaming, let list = m.choices, !list.isEmpty { Choices(lists: list) }
     if let list = m.attachments, !list.isEmpty { MessageFiles(list: list, alignment: .leading) }
   }
 
@@ -1086,27 +1086,59 @@ struct QuestionBody: View {
   }
 }
 
-/// The answers a question at the end of a reply offers: a tap sends one as your message.
+/// The answers the questions at the end of a reply offer. For one, a tap sends it as your message; for
+/// several, you pick or write each answer and send them together, numbered like the questions.
 private struct Choices: View {
-  let list: [String]
+  let lists: [[String]]
   @Environment(AppStore.self) private var store
   @State private var busy = false
   @State private var error: String?
+  @State private var answers: [String]
+
+  init(lists: [[String]]) {
+    self.lists = lists
+    _answers = State(initialValue: lists.map { _ in "" })
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
-      ForEach(list, id: \.self) { c in
-        Button(c) { pick(c) }
-          .glassButton()
-          .disabled(busy)
+      if lists.count == 1, let one = lists.first {
+        ForEach(one, id: \.self) { c in
+          Button(c) { send(c) }
+            .glassButton()
+        }
+      } else {
+        ForEach(lists.indices, id: \.self) { i in
+          // Stacked, like one question's: a row of long answers won't fit a phone.
+          VStack(alignment: .leading, spacing: 6) {
+            Text("\(i + 1).").foregroundStyle(.secondary).monospacedDigit()
+            if lists[i].isEmpty {
+              TextField("Answer \(i + 1)", text: $answers[i])
+                .textFieldStyle(.roundedBorder)
+            } else {
+              ForEach(lists[i], id: \.self) { c in
+                Button(c) { answers[i] = c }
+                  .glassButton(prominent: answers[i] == c)
+                  .accessibilityAddTraits(answers[i] == c ? .isSelected : [])
+              }
+            }
+          }
+        }
+        Button("Send") {
+          send(answers.enumerated().map { "\($0 + 1). \($1.trimmingCharacters(in: .whitespacesAndNewlines))" }
+            .joined(separator: "\n"))
+        }
+        .glassButton(prominent: true)
+        .disabled(answers.contains { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
       }
       if let error {
         Text(error).font(.footnote).foregroundStyle(.red)
       }
     }
+    .disabled(busy)
   }
 
-  private func pick(_ text: String) {
+  private func send(_ text: String) {
     busy = true
     error = nil
     Task {
