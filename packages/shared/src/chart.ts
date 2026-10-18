@@ -1,10 +1,14 @@
 // Charts in replies: a ```chart fenced block holding this JSON. The clients draw it in Hatbot's own
-// style; anywhere else (Copy, search, an older client) it stays a readable code block.
+// style; anywhere else (Copy, search, an older client) it stays a readable code block. Line, bar and
+// scatter can name a file with their values instead (ChartFile), for more than are worth typing out.
 import { z } from "zod";
 
 /** Past three series the colours stop telling apart for colour-blind readers. */
 export const CHART_MAX_SERIES = 3;
+/** Values typed into a block, or drawn from a file once the brain has thinned it. */
 export const CHART_MAX_POINTS = 500;
+/** Rows in a file a chart draws from (ChartFile). */
+export const CHART_FILE_MAX_ROWS = 100_000;
 /** Horizontal bars take a row each, so fewer of them. */
 export const CHART_MAX_ROWS = 40;
 /** A matrix's columns share the width of a phone. */
@@ -20,6 +24,9 @@ const label = z.string().min(1).max(60);
 /** 2024, 2024-03 or 2024-03-15. */
 const DATE = /^\d{4}(-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?)?$/;
 const date = z.string().regex(DATE, "a date is YYYY, YYYY-MM or YYYY-MM-DD");
+/** Values and a file together: which would it draw? */
+const notWithData = z.never({ error: "give the values or data, not both" }).optional();
+const noData = z.never({ error: "only line, bar and scatter can draw from a file" }).optional();
 
 /** Line and bar: one value per x for each series. */
 const SeriesChart = z
@@ -31,6 +38,7 @@ const SeriesChart = z
     stacked: z.boolean().optional(),
     /** Bars: one row per x, for rankings and long names. */
     horizontal: z.boolean().optional(),
+    data: notWithData,
     x: z
       .array(z.union([z.string().max(60), z.number()]))
       .min(1)
@@ -66,6 +74,7 @@ const ScatterChart = z
     xUnit: unit,
     yName: z.string().max(60).optional(),
     yUnit: unit,
+    data: notWithData,
     series: z
       .array(
         z.object({
@@ -90,6 +99,7 @@ const RangeChart = z.object({
   unit,
   /** What the mark is: "median", "cheapest new". */
   markName: z.string().max(60).optional(),
+  data: noData,
   rows: z
     .array(
       z
@@ -109,6 +119,7 @@ const MatrixChart = z
   .object({
     type: z.literal("matrix"),
     title,
+    data: noData,
     rows: z.array(label).min(1).max(CHART_MAX_ROWS),
     columns: z
       .array(
@@ -135,6 +146,7 @@ const TimelineChart = z
   .object({
     type: z.literal("timeline"),
     title,
+    data: noData,
     events: z
       .array(
         z
@@ -150,6 +162,40 @@ const TimelineChart = z
     message: `at most ${CHART_MAX_LANES} lanes`,
   });
 export type TimelineChart = z.infer<typeof TimelineChart>;
+
+/** An attachment's id: a CSV, TSV or JSON file holding the values (apps/brain/src/chart-data.ts). */
+const data = z.number().int().positive();
+const SeriesFile = z.object({
+  type: z.enum(["line", "bar"]),
+  title,
+  unit,
+  stacked: z.boolean().optional(),
+  horizontal: z.boolean().optional(),
+  data,
+  x: notWithData,
+  series: notWithData,
+});
+const ScatterFile = z.object({
+  type: z.literal("scatter"),
+  title,
+  xName: z.string().max(60).optional(),
+  xUnit: unit,
+  yName: z.string().max(60).optional(),
+  yUnit: unit,
+  data,
+  series: notWithData,
+});
+const FILE_KINDS = { line: SeriesFile, bar: SeriesFile, scatter: ScatterFile };
+
+/**
+ * A chart that draws from a file. The clients get its values, thinned to CHART_MAX_POINTS, from
+ * GET /api/attachments/:data/chart?type= (ChartData), and draw them as the ChartSpec they make.
+ */
+export const ChartFile = z.union([SeriesFile, ScatterFile]);
+export type ChartFile = z.infer<typeof ChartFile>;
+
+/** What GET /api/attachments/:id/chart gives: the values a ChartFile leaves out. */
+export type ChartData = Pick<SeriesChart, "x" | "series"> | Pick<ScatterChart, "series">;
 
 const KINDS = {
   line: SeriesChart,
@@ -193,7 +239,22 @@ export function parseChart(source: string): ChartSpec | null {
   return p.success ? p.data : null;
 }
 
-/** Why a chart block's source doesn't draw, in words the model can fix it from; null if it does. */
+/** The file chart in a chart block, or null if it isn't one. */
+export function parseChartFile(source: string): ChartFile | null {
+  let json: unknown;
+  try {
+    json = JSON.parse(source);
+  } catch {
+    return null;
+  }
+  const p = ChartFile.safeParse(json);
+  return p.success ? p.data : null;
+}
+
+/**
+ * Why a chart block's source doesn't draw, in words the model can fix it from; null if it does. For a
+ * file chart, only the block: whether the file draws is the brain's to check.
+ */
 export function chartProblem(source: string): string | null {
   let json: unknown;
   try {
@@ -205,6 +266,13 @@ export function chartProblem(source: string): string | null {
   const type = (json as { type?: unknown } | null)?.type;
   const kind = typeof type === "string" && Object.hasOwn(KINDS, type) ? KINDS[type as Kind] : null;
   if (!kind) return `type must be one of ${Object.keys(KINDS).join(", ")}`;
+  if (
+    (json as { data?: unknown }).data !== undefined &&
+    Object.hasOwn(FILE_KINDS, type as string)
+  ) {
+    const p = FILE_KINDS[type as keyof typeof FILE_KINDS].safeParse(json);
+    return p.success ? null : z.prettifyError(p.error).replace(/\s*\n\s*/g, "; ");
+  }
   const p = kind.safeParse(json);
   if (p.success) return null;
   // The usual slip: a long series typed out by hand with a value too many or too few.

@@ -3,10 +3,8 @@ import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
   type Bot,
-  brokenCharts,
   type ChatCommand,
   chartBlocks,
-  chartProblem,
   describeCron,
   type Episode,
   HATBOT_ID,
@@ -24,6 +22,7 @@ import { z } from "zod";
 import { type Approvals, ownerNote } from "../approvals";
 import type { Attachments } from "../attachments";
 import { type Bots, botIndex, promptFor } from "../bots";
+import { brokenChartsOf, chartProblemOf } from "../chart-data";
 import type { Db } from "../db";
 import type { DesktopAgent } from "../desktop/client";
 import type { EventBus } from "../events";
@@ -2059,13 +2058,13 @@ export class Thread {
             for (let i = broken.length - 1; i >= 0; i--) {
               const b = broken[i] as { start: number; end: number };
               const fix = fixes[i]?.source;
-              if (fix !== undefined && !chartProblem(fix))
+              if (fix !== undefined && !(await chartProblemOf(fix, this.d.attachments)))
                 text = `${text.slice(0, b.start)}${fix}\n${text.slice(b.end)}`;
             }
             return finish("done");
           }
           // A chart that doesn't draw shows the owner a wall of numbers; ask once for it again.
-          const broken = fixedCharts ? [] : brokenCharts(text);
+          const broken = fixedCharts ? [] : await brokenChartsOf(text, this.d.attachments);
           if (broken.length) {
             fixedCharts = true;
             chartFix = { broken, text: "" };

@@ -38,6 +38,7 @@ struct HatbotApp: App {
           Spotlight.clear()
           ImageCache.attachments.clear()
           ImageCache.screens.clear()
+          ChartFile.clear()
           Task { await Badge.show(0) }
         }
       }

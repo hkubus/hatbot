@@ -1,6 +1,6 @@
 // send_to_chat: a task hands the bot in the chat a file, like a JSON series to draw as a chart. It's
 // stored on the task that reports to the chat, and only that bot reads it, with the task's result.
-import { CHART_MAX_POINTS } from "@hatbot/shared";
+import { CHART_FILE_MAX_ROWS } from "@hatbot/shared";
 import { z } from "zod";
 import { sizeText } from "../attachments";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
@@ -56,7 +56,7 @@ export const DesktopSendToChat = z
   )
   .refine(needsName, NAME_ERROR);
 
-export const SEND_TO_CHAT_DESCRIPTION = `Hand the bot in the chat a file to use when it's told how this task ended: data for it to show the owner, like a JSON series to draw as a chart, or a CSV table. The owner doesn't get it as a file; send_file is for that. A chart draws at most ${CHART_MAX_POINTS} points, so reduce a long series first (average or max per hour or day), aiming for about 200. Text up to 400 KB and images are read whole; the bot reaches bigger files through its sandbox.`;
+export const SEND_TO_CHAT_DESCRIPTION = `Hand the bot in the chat a file to use when it's told how this task ended: data for it to show the owner, like a JSON series to draw as a chart, or a CSV table. The owner doesn't get it as a file; send_file is for that. It can chart up to ${CHART_FILE_MAX_ROWS.toLocaleString("en-US")} rows from a CSV or JSON file, so there's no need to thin a series. Text up to 400 KB and images are read whole; the bot reaches bigger files through its sandbox.`;
 
 /**
  * Stores the file for the chat on the task that reports there: this one, or the task that started it.

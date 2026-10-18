@@ -10,6 +10,7 @@ import { z } from "zod";
 import type { Thread } from "../agent/thread";
 import { MAX_ATTACHMENT_BYTES } from "../attachments";
 import { requireAuth } from "../auth/middleware";
+import { chartData } from "../chart-data";
 import type { AppEnv } from "../context";
 import { BudgetError } from "../spend";
 import { found, id, json, query, signedOut } from "./util";
@@ -34,6 +35,7 @@ const ListMessages = z.object({
   incognito: z.enum(["0", "1"]).optional(),
 });
 const EpisodeIds = z.object({ ids: z.string().regex(/^\d+(,\d+){0,199}$/) });
+const ChartQuery = z.object({ type: z.enum(["line", "bar", "scatter"]) });
 
 export const threadRoutes = new Hono<AppEnv>()
   .use("/thread/*", requireAuth)
@@ -83,6 +85,26 @@ export const threadRoutes = new Hono<AppEnv>()
         "cache-control": cache,
         ...(cache === "no-store" ? {} : { etag }),
       },
+    });
+  })
+  // A chart block's values from its file (chart-data.ts), thinned to what a chart draws.
+  .get("/attachments/:id/chart", query(ChartQuery), async (c) => {
+    const id = Number(c.req.param("id"));
+    const a = Number.isInteger(id) ? c.var.attachments.get(id) : null;
+    if (!a) return c.json({ error: "That's gone." }, 404);
+    const { type } = c.req.valid("query");
+    const read = await chartData(c.var.attachments, id, type);
+    if ("problem" in read)
+      return read.gone
+        ? c.json({ error: "That's gone." }, 404)
+        : c.json({ error: `This chart's file doesn't draw: ${read.problem}.` }, 422);
+    const etag = `"${a.id}-${Date.parse(a.createdAt).toString(36)}-${type}"`;
+    const cache = c.var.attachments.cacheable(id) ? "private, no-cache" : "no-store";
+    if (cache !== "no-store" && c.req.header("if-none-match") === etag)
+      return new Response(null, { status: 304, headers: { etag, "cache-control": cache } });
+    return c.json(read.data, 200, {
+      "cache-control": cache,
+      ...(cache === "no-store" ? {} : { etag }),
     });
   })
   .get("/conversations", (c) => c.json(c.var.chats.list()))

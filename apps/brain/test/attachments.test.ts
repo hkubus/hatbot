@@ -3,7 +3,7 @@ import type { Attachment, ThreadMessage } from "@hatbot/shared";
 import { inlineLimit } from "../src/attachments";
 import type { CallContext } from "../src/plugins/plugin";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { ORIGIN, signIn, type TestApp, testApp, unmarked } from "./helpers";
+import { lastUserText, ORIGIN, signIn, type TestApp, testApp, unmarked } from "./helpers";
 
 const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
 
@@ -258,6 +258,44 @@ test("code_run copies files into the sandbox and its output is untrusted; send_f
     { name: "chart.png", mediaType: "image/png", from: "hatbot" },
   ]);
   expect(t.events.some((e) => e.type === "message.attachment" && e.id === reply?.id)).toBe(true);
+});
+
+test("a chart draws from a CSV the sandbox made: kept out of the chat, its file checked, thinned with its spike", async () => {
+  const chart = (id: number) =>
+    `\`\`\`chart\n{"type": "line", "title": "CPU", "data": ${id}}\n\`\`\``;
+  const chat = new FakeModel([
+    { content: [toolUse("send_file", { path: "out/cpu.csv", chart: true })] },
+    { content: [text(`${chart(2)}\n\n${chart(1)}`)] },
+    { content: [text(chart(2))] },
+  ]);
+  const t = await testApp(chat);
+  const { cookie } = signIn(t);
+  await t.attachments.save({
+    bytes: new TextEncoder().encode("t,a,b,c,d\n1,1,2,3,4"),
+    name: "wide.csv",
+    mediaType: "text/csv",
+    from: "owner",
+  });
+  const rows = Array.from({ length: 20_000 }, (_, i) => `${i},${i === 12_345 ? 99 : 1 + (i % 7)}`);
+  t.agent.files.set("out/cpu.csv", new TextEncoder().encode(`t,cpu\n${rows.join("\n")}`));
+  await t.plugins.update("code", { enabled: true });
+
+  await t.thread.post("chart CPU").done;
+  expect(lastUserText(chat.requests[2])).toContain(
+    "chart 2: its file, attachment #1: it has 4 value columns",
+  );
+  const reply = t.thread.list().at(-1);
+  expect(reply?.text).toBe(`${chart(2)}\n\n${chart(2)}`);
+  expect(reply?.attachments).toBeUndefined();
+  expect(t.events.some((e) => e.type === "message.attachment")).toBe(false);
+
+  const res = await t.call("GET", "/attachments/2/chart?type=line", undefined, { cookie });
+  const data = (await res.json()) as { x: number[]; series: { name: string; data: number[] }[] };
+  expect(data.x.length).toBeLessThanOrEqual(500);
+  expect(data.series[0]?.name).toBe("cpu");
+  expect(Math.max(...(data.series[0]?.data ?? []))).toBe(99);
+  const bars = await t.call("GET", "/attachments/2/chart?type=bar", undefined, { cookie });
+  expect(bars.status).toBe(422);
 });
 
 test("a background task hands the chat a JSON file; the bot reads it and the chat doesn't show it", async () => {
