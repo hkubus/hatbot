@@ -1,6 +1,7 @@
 import { BoxCall, OpenBox, RevertBox } from "@hatbot/shared";
 import { Hono } from "hono";
 import { requireAuth } from "../auth/middleware";
+import { FRAME_CSP } from "../boxes";
 import type { AppEnv } from "../context";
 import { found, id, json } from "./util";
 
@@ -11,8 +12,7 @@ import { found, id, json } from "./util";
  */
 const FRAME_HEADERS = {
   "content-type": "text/html; charset=utf-8",
-  "content-security-policy":
-    "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'",
+  "content-security-policy": FRAME_CSP,
   "x-content-type-options": "nosniff",
   "referrer-policy": "no-referrer",
   "cross-origin-resource-policy": "same-origin",

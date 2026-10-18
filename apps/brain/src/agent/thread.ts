@@ -87,6 +87,7 @@ import {
   liveTool,
   runTool,
   TOOL_PARAMS,
+  type ToolImage,
   toolParam,
   webCalls,
   webReads,
@@ -2236,7 +2237,7 @@ export class Thread {
             },
             abort.signal,
           );
-          return toolResult(call.id, r.content, r.isError);
+          return toolResult(call.id, r.content, r.isError, r.image);
         });
         this.appendTurn(episode.id, bot.id, "user", results);
       }
@@ -2325,12 +2326,25 @@ export function markPrevious(turns: Turn[]): Turn[] {
   return out;
 }
 
-/** A tool call's result, for the turn after the call. */
-const toolResult = (id: string, content: string, isError = false): BlockParam => ({
+/** A tool call's result, for the turn after the call, with the picture it gave if any (box_look). */
+const toolResult = (
+  id: string,
+  content: string,
+  isError = false,
+  image?: ToolImage,
+): BlockParam => ({
   type: "tool_result",
   tool_use_id: id,
   is_error: isError,
-  content,
+  content: image
+    ? [
+        { type: "text", text: content },
+        {
+          type: "image",
+          source: { type: "base64", media_type: image.mediaType, data: image.data },
+        },
+      ]
+    : content,
 });
 
 /**
@@ -2400,6 +2414,7 @@ function toolLabel(name: string, plugins: Plugins): string {
     box_logs: "Reading a box's logs",
     box_call: "Trying a box's backend",
     box_feed: "Giving a box a feed",
+    box_look: "Looking at a box",
   };
   const plugin = plugins.pluginOf(name);
   return labels[name] ?? `Using ${plugin?.name ?? name}`;

@@ -3,6 +3,8 @@ import type {
   AgentContext,
   AgentElement,
   AgentStatus,
+  BoxLook,
+  BoxLookResult,
   BrowserCall,
   BrowserInspect,
   BrowserResult,
@@ -133,6 +135,13 @@ export class FakeDesktop implements DesktopAgent {
   }
   async renderCheck() {
     if (this.renderError) throw this.renderError;
+  }
+  /** Boxes it was asked to draw, and what it gives back. */
+  looks: BoxLook[] = [];
+  look: BoxLookResult = { png: "", width: 390, height: 844, errors: [] };
+  async lookAtBox(look: BoxLook) {
+    this.looks.push(look);
+    return this.look;
   }
   async browserState(): Promise<BrowserState> {
     return {
