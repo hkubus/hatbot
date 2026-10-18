@@ -182,29 +182,31 @@ enum Picture {
   static func cost(_ image: UIImage) -> Int {
     image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0
   }
-
-  static func cache(megabytes: Int) -> NSCache<NSString, UIImage> {
-    let c = NSCache<NSString, UIImage>()
-    c.totalCostLimit = megabytes << 20
-    return c
-  }
 }
 
-/// Screenshots need the bearer token, so they don't go through AsyncImage.
+/// Attachments and screenshots need the bearer token, so they don't go through AsyncImage.
 @MainActor
-final class ScreenCache {
-  static let shared = ScreenCache()
+final class ImageCache {
+  /// The chat's pictures, at the size the chat shows them (about 2 MB each).
+  static let attachments = ImageCache(megabytes: 48)
   /// The desktop's screens, about 6 MB each.
-  private let cache = Picture.cache(megabytes: 40)
+  static let screens = ImageCache(megabytes: 40)
+  private let cache = NSCache<NSString, UIImage>()
 
-  func image(_ api: API, taskId: Int, stepId: Int) async throws -> UIImage {
-    let key = "\(api.server.absoluteString)/\(taskId)/\(stepId)" as NSString
+  init(megabytes: Int) {
+    cache.totalCostLimit = megabytes << 20
+  }
+
+  /// The picture at `path`, at most `longSide` pixels on its long side. One that isn't kept (opened full
+  /// screen, say) is decoded for that and let go when it closes.
+  func image(_ api: API, _ path: String, longSide: CGFloat, keep: Bool = true) async throws -> UIImage {
+    let key = "\(api.server.absoluteString)\(path)/\(Int(longSide))" as NSString
     if let hit = cache.object(forKey: key) { return hit }
-    let data = try await api.data("/tasks/\(taskId)/screens/\(stepId)")
-    guard let image = await Task.detached(operation: { Picture.decode(data, longSide: 1920) }).value else {
+    let data = try await api.data(path)
+    guard let image = await Task.detached(operation: { Picture.decode(data, longSide: longSide) }).value else {
       throw APIError(status: 0, message: "Not an image")
     }
-    cache.setObject(image, forKey: key, cost: Picture.cost(image))
+    if keep { cache.setObject(image, forKey: key, cost: Picture.cost(image)) }
     return image
   }
 
@@ -242,7 +244,7 @@ struct Screenshot: View {
     }
     .task(id: stepId) {
       do {
-        image = try await ScreenCache.shared.image(store.api, taskId: taskId, stepId: stepId)
+        image = try await ImageCache.screens.image(store.api, "/tasks/\(taskId)/screens/\(stepId)", longSide: 1920)
       } catch {
         failed = true
       }

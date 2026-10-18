@@ -37,8 +37,8 @@ struct HatbotApp: App {
         ControlCenter.shared.reloadAllControls()
         if out {
           Spotlight.clear()
-          AttachmentCache.shared.clear()
-          ScreenCache.shared.clear()
+          ImageCache.attachments.clear()
+          ImageCache.screens.clear()
           Task { await Badge.show(0) }
         }
       }

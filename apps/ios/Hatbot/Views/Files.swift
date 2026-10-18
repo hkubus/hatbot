@@ -5,43 +5,6 @@ import QuickLook
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Attachments need the bearer token, so they don't go through AsyncImage.
-@MainActor
-final class AttachmentCache {
-  static let shared = AttachmentCache()
-  /// The chat's pictures, at the size the chat shows them (about 2 MB each).
-  private let images = Picture.cache(megabytes: 48)
-
-  /// A picture at most `longSide` pixels on its long side. Only the chat's size is kept: one opened full
-  /// screen is decoded for that and let go when it closes.
-  func image(_ api: API, id: Int, longSide: CGFloat, keep: Bool = true) async throws -> UIImage {
-    let key = "\(api.server.absoluteString)/\(id)/\(Int(longSide))" as NSString
-    if let hit = images.object(forKey: key) { return hit }
-    let data = try await api.data("/attachments/\(id)")
-    guard let image = await Task.detached(operation: { Picture.decode(data, longSide: longSide) }).value else {
-      throw APIError(status: 0, message: "Not an image")
-    }
-    if keep { images.setObject(image, forKey: key, cost: Picture.cost(image)) }
-    return image
-  }
-
-  /// Signed out.
-  func clear() {
-    images.removeAllObjects()
-  }
-
-  /// The file saved where Quick Look can open it, under its own name.
-  func file(_ api: API, _ a: Attachment) async throws -> URL {
-    let dir = DiskCache.openedFiles.appendingPathComponent("\(a.id)", isDirectory: true)
-    let url = dir.appendingPathComponent(a.name.replacingOccurrences(of: "/", with: "_"))
-    if FileManager.default.fileExists(atPath: url.path) { return url }
-    let data = try await api.data("/attachments/\(a.id)?download")
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    try data.write(to: url)
-    return url
-  }
-}
-
 /// A message's files, aligned to its side.
 struct MessageFiles: View {
   let list: [Attachment]
@@ -85,7 +48,8 @@ private struct PictureFile: View {
     }
     .task(id: attachment.id) {
       do {
-        image = try await AttachmentCache.shared.image(store.api, id: attachment.id, longSide: Self.side * scale)
+        image = try await ImageCache.attachments.image(
+          store.api, "/attachments/\(attachment.id)", longSide: Self.side * scale)
       } catch {
         failed = true
       }
@@ -103,7 +67,9 @@ private struct FullPicture: View {
 
   var body: some View {
     ImageViewer(image: large ?? small, label: attachment.name)
-      .task { large = try? await AttachmentCache.shared.image(api, id: attachment.id, longSide: 3000, keep: false) }
+      .task {
+        large = try? await ImageCache.attachments.image(api, "/attachments/\(attachment.id)", longSide: 3000, keep: false)
+      }
   }
 }
 
@@ -119,7 +85,7 @@ private struct FileRow: View {
       guard !loading else { return }
       loading = true
       Task {
-        url = try? await AttachmentCache.shared.file(store.api, attachment)
+        url = try? await file()
         loading = false
       }
     } label: {
@@ -135,6 +101,17 @@ private struct FileRow: View {
     }
     .buttonStyle(.plain)
     .quickLookPreview($url)
+  }
+
+  /// The file saved where Quick Look can open it, under its own name.
+  private func file() async throws -> URL {
+    let dir = DiskCache.openedFiles.appendingPathComponent("\(attachment.id)", isDirectory: true)
+    let url = dir.appendingPathComponent(attachment.name.replacingOccurrences(of: "/", with: "_"))
+    if FileManager.default.fileExists(atPath: url.path) { return url }
+    let data = try await store.api.data("/attachments/\(attachment.id)?download")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    try data.write(to: url)
+    return url
   }
 }
 
