@@ -36,10 +36,10 @@ import {
   setDraftFiles,
   useDraftFiles,
 } from "../drafts";
-import { plainText } from "../format";
+import { plainText, time } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
-import { LoadError, loadErrorText } from "../load";
+import { LoadError } from "../load";
 import { splitBlocks } from "../md-blocks";
 import { touchScreen } from "../media";
 import { negotiationText } from "../negotiations";
@@ -47,13 +47,13 @@ import { navigate, useRoute } from "../router";
 import {
   botName,
   chatName,
+  chatPath,
   currentChat,
   deleteEpisode,
   ensureNegotiation,
   ensureSchedule,
   ensureTask,
   getState,
-  HATBOT_CHAT,
   loadEarlier,
   loadThread,
   markSeen,
@@ -68,9 +68,6 @@ import { splitWaiting } from "../waiting";
 
 /** How long an unread message stays on screen before it counts as seen. */
 const SEEN_AFTER_MS = 1500;
-
-const time = (iso: string) =>
-  new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
 const DAY = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" });
 const DAY_YEAR = new Intl.DateTimeFormat("en-GB", {
@@ -671,7 +668,18 @@ export function fileDrops(
   setDropping: (on: boolean) => void,
 ): [string, (e: Event) => void][] {
   const files = (e: DragEvent) => !!e.dataTransfer?.types.includes("Files");
+  // Each element the drag enters, it leaves again: once it has left as many as it entered, it's out
+  // of the window or given up. Not relatedTarget, which Safari leaves null on every dragleave.
+  let depth = 0;
   return [
+    [
+      "dragenter",
+      (e) => {
+        if (!files(e as DragEvent)) return;
+        depth++;
+        setDropping(true);
+      },
+    ],
     [
       "dragover",
       (e) => {
@@ -680,14 +688,20 @@ export function fileDrops(
         setDropping(true);
       },
     ],
-    // Out of the window, or the drag given up.
-    ["dragleave", (e) => !(e as DragEvent).relatedTarget && setDropping(false)],
+    [
+      "dragleave",
+      () => {
+        depth = Math.max(0, depth - 1);
+        if (!depth) setDropping(false);
+      },
+    ],
     [
       "drop",
       (e) => {
         const list = (e as DragEvent).dataTransfer?.files;
         if (!files(e as DragEvent)) return;
         e.preventDefault();
+        depth = 0;
         setDropping(false);
         if (list?.length) attach(list);
       },
@@ -791,7 +805,7 @@ export function Chat({ id }: { id: number }) {
         animateFrom.current = (getState().messages.at(-1)?.id ?? 0) + 1;
         setReady(true);
       },
-      (err) => setLoadError(loadErrorText(err)),
+      (err) => setLoadError(errorText(err)),
     );
   }, [incognito, id, attempt]);
 
@@ -1023,13 +1037,7 @@ export function Chat({ id }: { id: number }) {
                 type="button"
                 className="tray-more"
                 onClick={() =>
-                  navigate(
-                    !waiting.elsewhere
-                      ? "/tasks"
-                      : waiting.elsewhere.id === HATBOT_CHAT
-                        ? "/"
-                        : `/chat/${waiting.elsewhere.id}`,
-                  )
+                  navigate(waiting.elsewhere ? chatPath(waiting.elsewhere.id) : "/tasks")
                 }
               >
                 {waiting.here.length ? `${waiting.rest} more` : waiting.rest} waiting in{" "}
@@ -1054,10 +1062,7 @@ export function Chat({ id }: { id: number }) {
 
 /** A reply as a screen reader says it: who, then its text without Markdown's marks, cut short. */
 export function spoken(m: ThreadMessage, name: string): string {
-  const text = m.text
-    .replace(/[*_`#>|~]+/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const text = plainText(m.text);
   if (!text) return "";
   return `${name}: ${text.length > 400 ? `${text.slice(0, 399)}…` : text}`;
 }

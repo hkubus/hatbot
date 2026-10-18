@@ -38,7 +38,6 @@ export const Login = z.object({
   client: z.enum(["web", "app"]).default("web"),
   device: z.string().min(1).max(100).optional(),
 });
-export type LoginResponse = { ok: true; token?: string };
 
 export const CreateToken = z.object({ name: z.string().min(1).max(100) });
 export type ApiToken = { id: number; name: string; createdAt: string; lastUsedAt: string | null };
@@ -65,8 +64,6 @@ export type Session = {
 };
 /** How many other sessions and tokens a change signed out. */
 export type SignedOutOthers = { ok: true; ended: number };
-
-export type ApiError = { error: string };
 
 export const PostMessage = z
   .object({
@@ -97,14 +94,6 @@ export const PutMemoryFile = z.object({
     .regex(/^([0-9a-f]{40})?$/)
     .optional(),
 });
-
-/** GET /memory/file. */
-export type MemoryFileContent = {
-  path: string;
-  content: string;
-  /** Git's blob id of `content`; send it back as `baseSha`. */
-  sha: string;
-};
 
 export type ThreadMessage = {
   id: number;

@@ -79,6 +79,14 @@ enum Format {
     }
   }
 
+  /// "Every hour", "Every 15 minutes", "Every 2 days".
+  static func every(_ minutes: Int) -> String {
+    func unit(_ n: Int, _ word: String) -> String { n == 1 ? "Every \(word)" : "Every \(n) \(word)s" }
+    if minutes % 1440 == 0 { return unit(minutes / 1440, "day") }
+    if minutes % 60 == 0 { return unit(minutes / 60, "hour") }
+    return unit(minutes, "minute")
+  }
+
   /// "Every day at 08:00", or "Once, Sat 11 Oct, 08:00".
   static func when(cron: String?, runAt: String?) -> String {
     if let cron { return describeCron(cron) }

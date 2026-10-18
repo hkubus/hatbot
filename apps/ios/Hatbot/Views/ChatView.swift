@@ -23,9 +23,6 @@ struct ChatView: View {
   @State private var farFromBottom = false
   static let readingWidth: CGFloat = 720
   @State private var nearBottom = true
-  /// The round button's glyph box, growing with Dynamic Type like its glyph.
-  @ScaledMetric(relativeTo: .body) private var glyphWidth: CGFloat = 26
-  @ScaledMetric(relativeTo: .body) private var glyphHeight: CGFloat = 30
 
   /// What the list shows: times, folds, and the messages that aren't folded away.
   fileprivate enum Row: Identifiable {
@@ -186,9 +183,7 @@ struct ChatView: View {
           Button {
             withAnimation { position.scrollTo(edge: .bottom) }
           } label: {
-            Image(systemName: "arrow.down")
-              .font(.body.weight(.semibold))
-              .frame(width: glyphWidth, height: glyphHeight)
+            RoundGlyph(name: "arrow.down")
           }
           .glassButton()
           .buttonBorderShape(.circle)
@@ -200,8 +195,18 @@ struct ChatView: View {
       .scrollDismissesKeyboard(.interactively)
       .edgeBar(.top) {
         VStack(spacing: 0) {
-          if store.unreachable { UnreachableBanner() }
-          if store.paused { PausedBanner() }
+          // The event stream has been down for a few seconds.
+          if store.unreachable {
+            Banner(text: "Can't reach Hatbot.", systemImage: "wifi.slash") {}
+              .transition(.move(edge: .top).combined(with: .opacity))
+          }
+          if store.paused {
+            Banner(text: "All activity is paused.", systemImage: "pause.circle.fill") {
+              Button("Resume") { Task { try? await store.setPaused(false) } }
+                .buttonStyle(.borderless)
+                .fontWeight(.semibold)
+            }
+          }
         }
         .animation(.snappy, value: store.unreachable)
       }
@@ -243,14 +248,7 @@ struct ChatView: View {
       ) {
         Button("Delete", role: .destructive) {
           guard let id = deleting else { return }
-          Task {
-            do {
-              error = nil
-              try await store.deleteEpisode(id)
-            } catch {
-              self.error = message(for: error)
-            }
-          }
+          Task { await attempt($error) { try await store.deleteEpisode(id) } }
         }
       }
       .routes()
@@ -276,11 +274,7 @@ struct ChatView: View {
         // Coming back to a chat that's loaded and live: the events kept it current. Otherwise the latest
         // page is merged in.
         if store.messages.isEmpty || !store.connected {
-          do {
-            try await store.loadThread()
-          } catch {
-            self.error = message(for: error)
-          }
+          await attempt($error) { try await store.loadThread() }
         }
         loaded = true
       }
@@ -347,9 +341,6 @@ private struct Composer: View {
   @State private var pickingPhotos = false
   @State private var pickingFiles = false
   @State private var sending = false
-  /// The round buttons' glyph box, growing with Dynamic Type like their glyphs.
-  @ScaledMetric(relativeTo: .body) private var glyphWidth: CGFloat = 26
-  @ScaledMetric(relativeTo: .body) private var glyphHeight: CGFloat = 30
 
   /// Whose draft and files these are: each chat has its own, and its incognito conversation another.
   private var key: String { "\(store.conversationId)\(store.incognito ? "i" : "")" }
@@ -416,9 +407,7 @@ private struct Composer: View {
           Button("Photos", systemImage: "photo.on.rectangle") { pickingPhotos = true }
           Button("Files", systemImage: "folder") { pickingFiles = true }
         } label: {
-          Image(systemName: "paperclip")
-            .font(.body.weight(.semibold))
-            .frame(width: glyphWidth, height: glyphHeight)
+          RoundGlyph(name: "paperclip")
         }
         .glassButton()
         .buttonBorderShape(.circle)
@@ -429,10 +418,7 @@ private struct Composer: View {
           .padding(.vertical, 11)
           .glassSurface(in: .rect(cornerRadius: 22), interactive: true)
         Button { send() } label: {
-          Image(systemName: "arrow.up")
-            .font(.body.weight(.semibold))
-            .foregroundStyle(canSend ? Color.onBrand : .secondary)
-            .frame(width: glyphWidth, height: glyphHeight)
+          RoundGlyph(name: "arrow.up").foregroundStyle(canSend ? Color.onBrand : .secondary)
         }
         .glassButton(prominent: true)
         .buttonBorderShape(.circle)
@@ -460,9 +446,9 @@ private struct Composer: View {
       guard !picked.isEmpty else { return }
       photos = []
       Task {
-        for (i, item) in picked.enumerated() {
-          let index = files.count + i + 1
-          guard let photo = await Self.load(item, index: index) else {
+        for item in picked {
+          // attach() adds each one to `files`, so the next is numbered after it.
+          guard let photo = await Self.load(item, index: files.count + 1) else {
             error = "Couldn't read that photo."
             continue
           }
@@ -506,40 +492,38 @@ private struct Composer: View {
   }
 
   private var mentionList: some View {
-    VStack(spacing: 0) {
-      ForEach(mentionable) { b in
-        Button {
-          draft = Mention.complete(draft, with: b.name)
-        } label: {
-          HStack(alignment: .firstTextBaseline) {
-            Text("@\(b.name)").fontWeight(.medium)
-            Spacer(minLength: 12)
-            Text(b.instructions.split(separator: "\n").first.map(String.init) ?? "")
-              .font(.footnote).foregroundStyle(.secondary).lineLimit(1)
-          }
-          .padding(.horizontal, 16)
-          .padding(.vertical, 10)
-          .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-      }
-    }
-    .padding(.vertical, 4)
-    .glassSurface(in: .rect(cornerRadius: 22))
+    suggestions(
+      mentionable, name: { Text("@\($0.name)").fontWeight(.medium) },
+      about: { $0.instructions.split(separator: "\n").first.map(String.init) ?? "" }
+    ) { b in draft = Mention.complete(draft, with: b.name) }
   }
 
   /// What "/…" could mean. One that needs more goes in the composer to finish; the rest run at once.
   private var commandList: some View {
+    suggestions(
+      commands,
+      name: { c in
+        let args = Text(c.args.isEmpty ? "" : " \(c.args)").foregroundStyle(.secondary)
+        return Text("\(Text("/\(c.name)").fontWeight(.medium))\(args)")
+      },
+      about: { $0.description }
+    ) { c in if c.needsMore { draft = "/\(c.name) " } else { send("/\(c.name)") } }
+  }
+
+  /// A list over the field of what you could mean, each with a line about it; a tap picks one.
+  private func suggestions<Item: Identifiable>(
+    _ items: [Item], name: @escaping (Item) -> Text, about: @escaping (Item) -> String,
+    pick: @escaping (Item) -> Void
+  ) -> some View {
     VStack(spacing: 0) {
-      ForEach(commands) { c in
+      ForEach(items) { item in
         Button {
-          if c.needsMore { draft = "/\(c.name) " } else { send("/\(c.name)") }
+          pick(item)
         } label: {
           HStack(alignment: .firstTextBaseline) {
-            let args = Text(c.args.isEmpty ? "" : " \(c.args)").foregroundStyle(.secondary)
-            Text("\(Text("/\(c.name)").fontWeight(.medium))\(args)")
+            name(item)
             Spacer(minLength: 12)
-            Text(c.description).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+            Text(about(item)).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
           }
           .padding(.horizontal, 16)
           .padding(.vertical, 10)
@@ -584,32 +568,28 @@ private struct Composer: View {
   }
 }
 
-struct PausedBanner: View {
-  @Environment(AppStore.self) private var store
+/// A round button's glyph, in a box that grows with Dynamic Type like the glyph.
+private struct RoundGlyph: View {
+  let name: String
+  @ScaledMetric(relativeTo: .body) private var width: CGFloat = 26
+  @ScaledMetric(relativeTo: .body) private var height: CGFloat = 30
 
   var body: some View {
-    HStack {
-      Label("All activity is paused.", systemImage: "pause.circle.fill")
-      Spacer()
-      Button("Resume") { Task { try? await store.setPaused(false) } }
-        .buttonStyle(.borderless)
-        .fontWeight(.semibold)
-    }
-    .font(.subheadline)
-    .padding(.horizontal, 16)
-    .padding(.vertical, 10)
-    .glassSurface(in: .capsule)
-    .padding(.horizontal, 12)
-    .padding(.vertical, 6)
+    Image(systemName: name).font(.body.weight(.semibold)).frame(width: width, height: height)
   }
 }
 
-/// The event stream has been down for a few seconds.
-struct UnreachableBanner: View {
+/// A line across the top of the chat, with what you can do about it after.
+private struct Banner<Trailing: View>: View {
+  let text: String
+  let systemImage: String
+  @ViewBuilder var trailing: Trailing
+
   var body: some View {
     HStack {
-      Label("Can't reach Hatbot.", systemImage: "wifi.slash")
+      Label(text, systemImage: systemImage)
       Spacer()
+      trailing
     }
     .font(.subheadline)
     .padding(.horizontal, 16)
@@ -617,7 +597,6 @@ struct UnreachableBanner: View {
     .glassSurface(in: .capsule)
     .padding(.horizontal, 12)
     .padding(.vertical, 6)
-    .transition(.move(edge: .top).combined(with: .opacity))
   }
 }
 
@@ -702,7 +681,7 @@ private struct MessageRow: View, Equatable {
         if m.status != .streaming, let editedAt {
           Text("Edited \(editedAt.timeText)")
             .font(.caption2)
-            .foregroundStyle(Color.brandText)
+            .foregroundStyle(Color.accentColor)
             .padding(.leading, Bubble.tailWidth + 12)
         }
       }

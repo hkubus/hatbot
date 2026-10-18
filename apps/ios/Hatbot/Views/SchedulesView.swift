@@ -49,12 +49,7 @@ struct SchedulesView: View {
   }
 
   private func load() async {
-    do {
-      try await store.loadSchedules()
-      error = nil
-    } catch {
-      self.error = message(for: error)
-    }
+    await attempt($error) { try await store.loadSchedules() }
     loaded = true
   }
 
@@ -105,13 +100,9 @@ struct ScheduleDetailView: View {
         form = Form()
         return
       }
-      do {
+      await attempt($error, missing: $missing) {
         try await store.loadSchedule(id)
         if let s = store.schedules[id] { form = Form(s) }
-      } catch let error as APIError where error.status == 404 {
-        missing = true
-      } catch {
-        self.error = message(for: error)
       }
     }
   }
@@ -185,26 +176,15 @@ struct ScheduleDetailView: View {
           .disabled(busy || !f.valid || !changed)
       }
     }
-    .confirmationDialog("Delete “\(f.name)”?", isPresented: $confirmDelete, titleVisibility: .visible) {
-      Button("Delete", role: .destructive) {
-        Task {
-          guard let id else { return }
-          do {
-            try await store.deleteSchedule(id)
-            dismiss()
-          } catch {
-            self.error = message(for: error)
-          }
-        }
-      }
+    .confirmingDelete("Delete “\(f.name)”?", isPresented: $confirmDelete, error: $error) {
+      if let id { try await store.deleteSchedule(id) }
     }
   }
 
   private func save(_ f: Form) async {
     busy = true
     defer { busy = false }
-    error = nil
-    do {
+    await attempt($error) {
       if let id {
         form = Form(try await store.saveSchedule(id, f.change))
         store.toast = "Saved"
@@ -213,19 +193,13 @@ struct ScheduleDetailView: View {
         store.toast = "Scheduled \(f.name)"
         dismiss()
       }
-    } catch {
-      self.error = message(for: error)
     }
   }
 
   private func run(_ id: Int) async {
     busy = true
     defer { busy = false }
-    do {
-      started = try await store.runSchedule(id).id
-    } catch {
-      self.error = message(for: error)
-    }
+    await attempt($error) { started = try await store.runSchedule(id).id }
   }
 }
 
@@ -233,7 +207,6 @@ struct ScheduleDetailView: View {
 struct TriggerDetailView: View {
   let id: Int
   @Environment(AppStore.self) private var store
-  @Environment(\.dismiss) private var dismiss
   @State private var name = ""
   @State private var prompt = ""
   @State private var loaded = false
@@ -258,17 +231,13 @@ struct TriggerDetailView: View {
     .navigationTitle(store.triggers[id]?.name ?? "Trigger")
     .navigationBarTitleDisplayMode(.inline)
     .task(id: id) {
-      do {
+      await attempt($error, missing: $missing) {
         try await store.loadTrigger(id)
         if let t = store.triggers[id] {
           name = t.name
           prompt = t.prompt
         }
         loaded = true
-      } catch let error as APIError where error.status == 404 {
-        missing = true
-      } catch {
-        self.error = message(for: error)
       }
     }
   }
@@ -341,7 +310,7 @@ struct TriggerDetailView: View {
       ToolbarItem(placement: .confirmationAction) {
         Button("Save") {
           Task {
-            await act {
+            await attempt($error) {
               _ = try await store.saveTrigger(id, AppStore.TriggerChange(name: name, prompt: prompt))
               store.toast = "Saved"
             }
@@ -356,40 +325,20 @@ struct TriggerDetailView: View {
       titleVisibility: .visible
     ) {
       Button("New secret", role: .destructive) {
-        Task { await act { secret = try await store.newTriggerSecret(id) } }
+        Task { await attempt($error) { secret = try await store.newTriggerSecret(id) } }
       }
     }
-    .confirmationDialog("Delete “\(t.name)”?", isPresented: $confirmDelete, titleVisibility: .visible) {
-      Button("Delete", role: .destructive) {
-        Task {
-          await act {
-            try await store.deleteTrigger(id)
-            dismiss()
-          }
-        }
-      }
+    .confirmingDelete("Delete “\(t.name)”?", isPresented: $confirmDelete, error: $error) {
+      try await store.deleteTrigger(id)
     }
   }
 
-  /// A switch or picker that saves as soon as it's changed, and shows the change while it saves.
+  /// A switch or picker that saves as soon as it's changed; then the trigger shows what was saved.
   private func saving<V: Equatable>(_ value: V, _ key: WritableKeyPath<AppStore.TriggerChange, V?>) -> Binding<V> {
-    Binding(
-      get: { setting[keyPath: key] ?? value },
-      set: { new in
-        setting[keyPath: key] = new
-        var just = AppStore.TriggerChange()
-        just[keyPath: key] = new
-        let change = just
-        Task {
-          await act { _ = try await store.saveTrigger(id, change) }
-          // Saved, or put back: the trigger shows which.
-          if setting[keyPath: key] == new { setting[keyPath: key] = nil }
-        }
-      })
-  }
-
-  private func act(_ work: () async throws -> Void) async {
-    error = nil
-    do { try await work() } catch { self.error = message(for: error) }
+    .saving(value, shown: $setting[dynamicMember: key]) { new in
+      var change = AppStore.TriggerChange()
+      change[keyPath: key] = new
+      await attempt($error) { _ = try await store.saveTrigger(id, change) }
+    }
   }
 }

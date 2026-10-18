@@ -1,12 +1,14 @@
 import { latestNoteOnly, OPEN_NEGOTIATION_STATUSES, type Task } from "@hatbot/shared";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ApiError, api, errorText } from "../api";
+import { useEffect, useMemo, useState } from "react";
+import { useAction } from "../action";
+import { api, errorText } from "../api";
 import { ask } from "../confirm";
-import { modelName, plainText, usd } from "../format";
+import { NoForm } from "../form";
+import { modelName, plainText, shortStamp, time, timeOrDay, usd } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LiveView, StepIcon } from "../live";
-import { LoadError, loadErrorText } from "../load";
+import { LoadError, useItem } from "../load";
 import { NegotiationChip } from "../negotiations";
 import { navigate } from "../router";
 import {
@@ -14,7 +16,6 @@ import {
   cancelTask,
   chatName,
   chatPath,
-  HATBOT_CHAT,
   loadNegotiations,
   loadTask,
   loadTasks,
@@ -22,20 +23,8 @@ import {
   useStore,
 } from "../store";
 import { ApprovalCard, isActive, Shot, StatusChip, taskLine } from "../tasks";
+import { BackHead, Group, LinkRow, Seg } from "../ui";
 import { AssistantBody } from "./Chat";
-
-const time = (iso: string) =>
-  new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-function when(iso: string) {
-  const d = new Date(iso);
-  if (d.toDateString() === new Date().toDateString()) return time(iso);
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-}
-
-const stamp = (iso: string) =>
-  new Date(iso).toDateString() === new Date().toDateString()
-    ? time(iso)
-    : `${when(iso)}, ${time(iso)}`;
 
 /** A page of finished tasks; the list pages back from the oldest shown. */
 const TASK_PAGE = 50;
@@ -44,7 +33,7 @@ export function Tasks() {
   const [filter, setFilter] = useState<"active" | "done">("active");
   const [ids, setIds] = useState<number[] | null>(null);
   const [hasOlder, setHasOlder] = useState(false);
-  const [loadingOlder, setLoadingOlder] = useState(false);
+  const loadingOlder = useAction();
   const [loadError, setLoadError] = useState("");
   const [attempt, setAttempt] = useState(0);
   const tasks = useStore((s) => s.tasks);
@@ -77,22 +66,21 @@ export function Tasks() {
         setIds(list);
         setHasOlder(list.length === TASK_PAGE);
       },
-      (err) => setLoadError(loadErrorText(err)),
+      (err) => setLoadError(errorText(err)),
     );
   }, [filter, attempt]);
 
   const older = async () => {
     const before = ids?.length ? Math.min(...ids) : undefined;
     if (!before) return;
-    setLoadingOlder(true);
-    try {
-      const list = await loadTasks({ status: filter, before, limit: TASK_PAGE });
-      setIds((s) => [...(s ?? []), ...list]);
-      setHasOlder(list.length === TASK_PAGE);
-    } catch (err) {
-      setLoadError(loadErrorText(err));
-    }
-    setLoadingOlder(false);
+    await loadingOlder.run(
+      async () => {
+        const list = await loadTasks({ status: filter, before, limit: TASK_PAGE });
+        setIds((s) => [...(s ?? []), ...list]);
+        setHasOlder(list.length === TASK_PAGE);
+      },
+      (err) => setLoadError(errorText(err)),
+    );
   };
 
   // Tasks that start or finish while the list is open move between the two lists.
@@ -105,78 +93,50 @@ export function Tasks() {
     <section className="view">
       <div className="page">
         {(waiting.length > 0 || request) && (
-          <section className="group">
-            <h2>Waiting for you</h2>
-            <div className="group-box">
-              {request && (
-                <Link className="row row-link" to={`/tasks/${request.taskId}?live=1`}>
-                  <div className="txt">
-                    <b>Take over the desktop</b>
-                  </div>
-                  <span className="val">{request.reason}</span>
-                </Link>
-              )}
-              {waiting.map((a) => {
-                const n = a.kind === "mandate" ? negotiationOf({ negotiations }, a.id) : undefined;
-                return (
-                  <Link
-                    key={a.id}
-                    className="row row-link"
-                    to={
-                      a.taskId
-                        ? `/tasks/${a.taskId}`
-                        : n
-                          ? `/negotiations/${n.id}`
-                          : a.conversationId && a.conversationId !== HATBOT_CHAT
-                            ? `/chat/${a.conversationId}`
-                            : "/"
-                    }
-                  >
-                    <div className="txt">
-                      <b>Can I go ahead? {a.summary}</b>
-                    </div>
-                    <Icon name="chevron" />
-                  </Link>
-                );
-              })}
-            </div>
-          </section>
+          <Group title="Waiting for you">
+            {request && (
+              <LinkRow to={`/tasks/${request.taskId}?live=1`} label="Take over the desktop">
+                <span className="val">{request.reason}</span>
+              </LinkRow>
+            )}
+            {waiting.map((a) => {
+              const n = a.kind === "mandate" ? negotiationOf({ negotiations }, a.id) : undefined;
+              return (
+                <LinkRow
+                  key={a.id}
+                  label={`Can I go ahead? ${a.summary}`}
+                  to={
+                    a.taskId
+                      ? `/tasks/${a.taskId}`
+                      : n
+                        ? `/negotiations/${n.id}`
+                        : a.conversationId
+                          ? chatPath(a.conversationId)
+                          : "/"
+                  }
+                />
+              );
+            })}
+          </Group>
         )}
         {talking.length > 0 && (
-          <section className="group">
-            <h2>Negotiations</h2>
-            <div className="group-box">
-              {talking.map((n) => (
-                <Link key={n.id} className="row row-link" to={`/negotiations/${n.id}`}>
-                  <div className="txt">
-                    <b>{n.title}</b>
-                  </div>
-                  <NegotiationChip status={n.status} />
-                  <Icon name="chevron" />
-                </Link>
-              ))}
-            </div>
-          </section>
+          <Group title="Negotiations">
+            {talking.map((n) => (
+              <LinkRow key={n.id} to={`/negotiations/${n.id}`} label={n.title}>
+                <NegotiationChip status={n.status} />
+              </LinkRow>
+            ))}
+          </Group>
         )}
         <div className="page-head">
-          <div className="seg">
-            <button
-              type="button"
-              className={filter === "active" ? "active" : ""}
-              aria-pressed={filter === "active"}
-              onClick={() => setFilter("active")}
-            >
-              Active
-            </button>
-            <button
-              type="button"
-              className={filter === "done" ? "active" : ""}
-              aria-pressed={filter === "done"}
-              onClick={() => setFilter("done")}
-            >
-              Finished
-            </button>
-          </div>
+          <Seg
+            value={filter}
+            options={[
+              ["active", "Active"],
+              ["done", "Finished"],
+            ]}
+            onChange={setFilter}
+          />
         </div>
         {loadError && <LoadError error={loadError} retry={() => setAttempt((n) => n + 1)} />}
         {ids && !shown.length && (
@@ -205,7 +165,7 @@ export function Tasks() {
                     <td>
                       <StatusChip status={t.status} />
                     </td>
-                    <td className="muted">{when(t.startedAt ?? t.createdAt)}</td>
+                    <td className="muted">{timeOrDay(t.startedAt ?? t.createdAt)}</td>
                     <td className="num">{usd(t.costUsd)}</td>
                   </tr>
                 ))}
@@ -217,7 +177,7 @@ export function Tasks() {
           <button
             type="button"
             className="btn sm ghost load-earlier"
-            disabled={loadingOlder}
+            disabled={loadingOlder.busy}
             onClick={older}
           >
             Older
@@ -271,7 +231,7 @@ function Details({ task }: { task: Task }) {
         </>
       )}
       <dt>Started</dt>
-      <dd>{task.startedAt ? stamp(task.startedAt) : "–"}</dd>
+      <dd>{task.startedAt ? shortStamp(task.startedAt) : "–"}</dd>
       <dt>Model</dt>
       <dd>{modelName(task.model)}</dd>
       <dt>Trust</dt>
@@ -332,32 +292,19 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   const request = useStore((s) => s.desktop?.request);
   const approvals = useStore((s) => s.approvals);
   const [watch, setWatch] = useState(live);
-  const [missing, setMissing] = useState(false);
-  const [loadError, setLoadError] = useState("");
-  const [error, setError] = useState("");
+  const { missing, error: loadError, load } = useItem(id, loadTask);
+  const { busy, error, run } = useAction();
   /** The goal being edited to run it again; null when that form is closed. */
   const [again, setAgain] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
-  const load = useCallback(() => {
-    setLoadError("");
-    loadTask(id).catch((err) => {
-      if (err instanceof ApiError && err.status === 404) setMissing(true);
-      else setLoadError(loadErrorText(err));
-    });
-  }, [id]);
-  useEffect(load, [load]);
-
-  if (missing) return <div className="empty">This task doesn't exist.</div>;
-  if (!task)
+  if (missing || !task)
     return (
-      <section className="view">
-        {loadError && (
-          <div className="page narrow">
-            <LoadError error={loadError} retry={load} />
-          </div>
-        )}
-      </section>
+      <NoForm
+        error={loadError}
+        missing={missing ? "This task doesn't exist." : ""}
+        retry={load}
+        back={{ label: "Tasks", to: "/tasks" }}
+      />
     );
 
   const active = isActive(task);
@@ -369,37 +316,22 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   const cancel = async () => {
     if (!(await ask({ text: `Cancel "${task.title}"?`, ok: "Cancel task", cancel: "Keep it" })))
       return;
-    try {
-      await cancelTask(id);
-    } catch (err) {
-      setError(errorText(err));
-    }
+    await run(() => cancelTask(id));
   };
 
-  const rerun = async () => {
-    setBusy(true);
-    setError("");
-    try {
+  const rerun = () =>
+    run(async () => {
       const t = await api<Task>(`/tasks/${id}/rerun`, {
         body: { goal: again === task.goal ? undefined : again },
       });
       setAgain(null);
       navigate(`/tasks/${t.id}`);
-    } catch (err) {
-      setError(errorText(err));
-    }
-    setBusy(false);
-  };
+    });
 
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">
-          <button type="button" className="btn sm ghost back" onClick={() => navigate("/tasks")}>
-            <Icon name="chevron" />
-            Tasks
-          </button>
-          <span className="spacer" />
+        <BackHead to="/tasks" label="Tasks">
           {screen && active && !showLive && (
             <button type="button" className="btn sm" onClick={() => setWatch(true)}>
               <Icon name="monitor" />
@@ -417,7 +349,7 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
               Run again
             </button>
           )}
-        </div>
+        </BackHead>
         {error && <div className="form-error">{error}</div>}
         {again !== null && (
           <div className="panel form">

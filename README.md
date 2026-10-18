@@ -24,7 +24,7 @@ On the Proxmox host, as root:
 5. Plugins: one env file each on the brain, then restart it (`infra/README.md`, "Plugins"). For the dead-man ping, add an Uptime Kuma Push monitor and put its URL in `HATBOT_PING_URL` ("When the brain itself is down").
 6. Optional: `./pct-exec-setup.sh` lets Hatbot run commands in your other containers ("Commands in your containers").
 7. In the web app: **Settings → Check everything**, then send a test approval and approve it from your phone's lock screen. For alerts, add an Uptime Kuma trigger under **Schedules & Triggers** and give Kuma its webhook URL.
-8. The iPhone app (optional): add the SideStore source `https://hkubus.github.io/hatbot/source.json`, or build your own (`apps/ios/README.md`). A fork's iOS workflow uses the repository variable `BUNDLE_PREFIX`, a reverse domain you own.
+8. The iPhone app (optional): add the SideStore source `https://hkubus.github.io/hatbot/source.json`, or build your own (`apps/ios/README.md`). It needs an `https://` public URL: `deploy.sh` also takes `http://`, which only the web app works with. A fork's iOS workflow uses the repository variable `BUNDLE_PREFIX`, a reverse domain you own.
 
 `infra/README.md` explains each step, updates and rollbacks. `bun run licenses` lists the dependencies' licences; Hatbot takes no copyleft ones.
 

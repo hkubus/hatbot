@@ -104,7 +104,7 @@ private struct Snippet: View {
 
   var body: some View {
     Search.parts(text).reduce(Text("")) { out, part in
-      out + (part.match ? Text(part.text).bold().foregroundColor(.brandText) : Text(part.text))
+      out + (part.match ? Text(part.text).bold().foregroundColor(.accentColor) : Text(part.text))
     }
     .lineLimit(3)
   }
@@ -146,16 +146,11 @@ struct WatchersView: View {
   private func line(_ w: Watcher) -> String {
     if !w.enabled { return "Off" }
     if let e = w.lastError { return e }
-    return "\(w.condition.description), \(Watcher.every(w.everyMinutes).lowercased())"
+    return "\(w.condition.description), \(Format.every(w.everyMinutes).lowercased())"
   }
 
   private func load() async {
-    do {
-      try await store.loadWatchers()
-      error = nil
-    } catch {
-      self.error = message(for: error)
-    }
+    await attempt($error) { try await store.loadWatchers() }
   }
 }
 
@@ -164,7 +159,6 @@ struct WatchersView: View {
 struct WatcherDetailView: View {
   let id: Int
   @Environment(AppStore.self) private var store
-  @Environment(\.dismiss) private var dismiss
   @State private var values: [WatcherValue] = []
   @State private var notFound = false
 
@@ -204,36 +198,23 @@ struct WatcherDetailView: View {
       Section {
         Toggle(
           "On",
-          isOn: Binding(
-            get: { enabled ?? w.enabled },
-            set: { on in
-              enabled = on
-              Task {
-                await act { _ = try await store.setWatcherEnabled(id, on) }
-                // Saved, or put back: the watcher shows which. Unless it's been switched again meanwhile.
-                if enabled == on { enabled = nil }
-              }
-            }))
+          isOn: .saving(w.enabled, shown: $enabled) { on in
+            await attempt($error) { _ = try await store.setWatcherEnabled(id, on) }
+          })
         LabeledContent(w.source.kind == .page ? "Page" : "Tool", value: w.source.text)
         if w.source.kind == .page {
           Toggle(
             "Run the page's scripts",
-            isOn: Binding(
-              get: { render ?? (w.source.render == true) },
-              set: { on in
-                render = on
-                Task {
-                  await act { _ = try await store.setWatcherRender(id, on) }
-                  render = nil
-                }
-              }))
+            isOn: .saving(w.source.render == true, shown: $render) { on in
+              await attempt($error) { _ = try await store.setWatcherRender(id, on) }
+            })
           .disabled(render != nil)
         }
         if let s = w.source.selector { LabeledContent("Selector", value: s) }
         if let p = w.source.path { LabeledContent("Path", value: p) }
         if let p = w.source.pattern { LabeledContent("Pattern", value: p) }
         LabeledContent("Counts when", value: w.condition.description)
-        LabeledContent("How often", value: Watcher.every(w.everyMinutes))
+        LabeledContent("How often", value: Format.every(w.everyMinutes))
         if w.once { LabeledContent("Then", value: "Switches off") }
         LabeledContent("Bot", value: store.botName(w.botId))
       }
@@ -252,7 +233,7 @@ struct WatcherDetailView: View {
         Button(busy ? "Looking…" : "Look now") {
           Task {
             busy = true
-            await act {
+            await attempt($error) {
               _ = try await store.checkWatcher(id)
               values = try await store.watcherValues(id)
             }
@@ -267,7 +248,7 @@ struct WatcherDetailView: View {
             VStack(alignment: .leading, spacing: 3) {
               Text(v.value).font(.system(.callout, design: .monospaced)).lineLimit(3)
               Text(v.fired ? "\(v.createdAt.stampText), counted" : v.createdAt.stampText)
-                .font(.footnote).foregroundStyle(v.fired ? Color.brandText : .secondary)
+                .font(.footnote).foregroundStyle(v.fired ? Color.accentColor : .secondary)
             }
           }
         }
@@ -277,34 +258,18 @@ struct WatcherDetailView: View {
       }
     }
     .refreshable { await load() }
-    .confirmationDialog("Delete “\(w.name)”?", isPresented: $confirmDelete, titleVisibility: .visible) {
-      Button("Delete", role: .destructive) {
-        Task {
-          await act {
-            try await store.deleteWatcher(id)
-            dismiss()
-          }
-        }
-      }
+    .confirmingDelete("Delete “\(w.name)”?", isPresented: $confirmDelete, error: $error) {
+      try await store.deleteWatcher(id)
     }
   }
 
   private func load() async {
-    do {
+    await attempt($error, missing: $notFound) {
       async let w = store.loadWatcher(id)
       async let v = store.watcherValues(id)
       _ = try await w
       values = try await v
-    } catch let e as APIError where e.status == 404 {
-      notFound = true
-    } catch {
-      self.error = message(for: error)
     }
-  }
-
-  private func act(_ work: () async throws -> Void) async {
-    error = nil
-    do { try await work() } catch { self.error = message(for: error) }
   }
 }
 
@@ -365,11 +330,11 @@ struct ChecksView: View {
       }
     }
     .task {
-      do {
+      await attempt($error) {
         let info = try await store.loadChecks()
         report = info.report
         approvalId = info.approval?.id
-      } catch { self.error = message(for: error) }
+      }
     }
   }
 
@@ -389,15 +354,13 @@ struct ChecksView: View {
 
   private func sendApproval() async {
     sending = true
-    error = nil
-    do { approvalId = try await store.sendTestApproval().id } catch { self.error = message(for: error) }
+    await attempt($error) { approvalId = try await store.sendTestApproval().id }
     sending = false
   }
 
   private func run() async {
     running = true
-    error = nil
-    do { report = try await store.runChecks() } catch { self.error = message(for: error) }
+    await attempt($error) { report = try await store.runChecks() }
     running = false
   }
 }
@@ -440,14 +403,15 @@ struct HeartbeatView: View {
       if let s = Binding($settings) {
         Section {
           Toggle("On", isOn: s.enabled).onChange(of: s.wrappedValue.enabled) { save() }
-          Picker("Every", selection: s.everyMinutes) {
+          Picker("How often", selection: s.everyMinutes) {
             ForEach(AppSettings.Heartbeat.everyChoices(with: s.wrappedValue.everyMinutes), id: \.self) { m in
-              Text(AppSettings.Heartbeat.every(m)).tag(m)
+              Text(Format.every(m)).tag(m)
             }
           }
           .onChange(of: s.wrappedValue.everyMinutes) { save() }
           Picker("Bot", selection: s.botId) {
-            ForEach(s.wrappedValue.botChoices(store.botIds), id: \.self) { id in Text(store.botName(id)).tag(id) }
+            // With the one set now when it isn't among them: deleted, or not loaded yet.
+            ForEach(store.botIds.including(s.wrappedValue.botId), id: \.self) { id in Text(store.botName(id)).tag(id) }
           }
           .onChange(of: s.wrappedValue.botId) { save() }
         }
@@ -472,7 +436,7 @@ struct HeartbeatView: View {
           Task {
             looking = true
             defer { looking = false }
-            do { info = try await store.runHeartbeat() } catch { self.error = message(for: error) }
+            await attempt($error) { info = try await store.runHeartbeat() }
           }
         }
         .disabled(looking)
@@ -498,15 +462,13 @@ struct HeartbeatView: View {
       Task { if let all = try? await store.loadSettings() { settings = all.heartbeat } }
     }
     .task {
-      do {
+      await attempt($error) {
         async let s = store.loadSettings()
         async let i = store.loadHeartbeat()
         let (all, last) = try await (s, i)
         settings = all.heartbeat
         info = last
         if store.botIds.isEmpty { await store.loadBots() }
-      } catch {
-        self.error = message(for: error)
       }
     }
   }
@@ -523,14 +485,7 @@ struct HeartbeatView: View {
 
   private func save() {
     guard let s = settings else { return }
-    Task {
-      do {
-        error = nil
-        settings = try await store.setHeartbeat(s).heartbeat
-      } catch {
-        self.error = message(for: error)
-      }
-    }
+    Task { await attempt($error) { settings = try await store.saveSettings(.init(heartbeat: s)).heartbeat } }
   }
 }
 
@@ -598,12 +553,9 @@ struct ProposalView: View {
   /// Does it, then goes back to the list.
   private func act(_ work: () async throws -> Void) async {
     busy = true
-    error = nil
-    do {
+    await attempt($error) {
       try await work()
       dismiss()
-    } catch {
-      self.error = message(for: error)
     }
     busy = false
   }

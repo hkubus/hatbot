@@ -21,13 +21,8 @@ export class LiveQueue {
   ) {}
 
   push(m: LiveInput) {
-    const id =
-      m.t === "key" && [...m.key].length > 1
-        ? `key ${m.key}`
-        : m.t === "button"
-          ? `button ${m.button}`
-          : null;
-    if (id && (m.t === "key" || m.t === "button")) {
+    if ((m.t === "key" && [...m.key].length > 1) || m.t === "button") {
+      const id = m.t === "key" ? `key ${m.key}` : `button ${m.button}`;
       if (m.down) this.held.set(id, m);
       else this.held.delete(id);
     }

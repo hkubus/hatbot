@@ -5,7 +5,7 @@ import type { LiveInput } from "@hatbot/shared/desktop";
 import { useEffect, useRef, useState } from "react";
 import { errorText } from "./api";
 import { ask } from "./confirm";
-import { plainText } from "./format";
+import { plainText, time } from "./format";
 import { Held } from "./held";
 import { Icon } from "./icons";
 import { navigate } from "./router";
@@ -21,9 +21,6 @@ import {
   useStore,
 } from "./store";
 import { taskLine } from "./tasks";
-
-const time = (iso: string) =>
-  new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
 type Conn = "connecting" | "live" | "offline";
 

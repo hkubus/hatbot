@@ -69,7 +69,11 @@ final class AppStore {
   /// Deleted while the app was open, so an open watcher says it's gone.
   var deletedWatchers = Set<Int>()
   /// A short note to show briefly, like a memory commit.
-  var toast: String?
+  var toast: String? {
+    didSet { if toast != nil { toastId += 1 } }
+  }
+  /// Each note's own, so the same one again is shown for its full time again.
+  private(set) var toastId = 0
   /// The chat that's showing: a bot's own, or a group. Hatbot's own is the first.
   private(set) var conversationId = 1
   /// Your bots, deleted ones too once seen: old messages still name them.
@@ -209,7 +213,8 @@ final class AppStore {
 
   func apply(_ event: HatbotEvent) {
     switch event {
-    case .messageRewrite, .messageDelta, .messageDone:
+    // An older brain's delta doesn't say where it goes, so it can't tell whether the page has it.
+    case .messageRewrite, .messageDelta(_, _, _?), .messageDone:
       for load in missed.keys { missed[load]?.append(event) }
     default: break
     }
@@ -242,8 +247,6 @@ final class AppStore {
       if let r = live(id) { r.progress = String((r.progress + text).suffix(400)) }
     case let .messageTask(id, taskId):
       if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].taskId = taskId }
-    case let .messageNegotiation(id, negotiationId):
-      if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].negotiationId = negotiationId }
     case let .messageUsage(id, used):
       live(id)?.usage = used
     case let .messageAttachment(id, a):
@@ -293,9 +296,7 @@ final class AppStore {
       bots[b.id] = b
       if !botIds.contains(b.id) { botIds.append(b.id) }
     case let .botDeleted(id):
-      botIds.removeAll { $0 == id }
-      // Its own chat goes with it.
-      for c in conversations where c.kind == .direct && c.botIds.first == id { chatGone(c.id) }
+      botGone(id)
       refreshConversations()
     case let .conversationUpdated(c):
       put(c)
@@ -312,7 +313,7 @@ final class AppStore {
     case let .watcherDeleted(id):
       watchers[id] = nil
       deletedWatchers.insert(id)
-    case .negotiationUpdated, .unknown:
+    case .unknown:
       break
     }
   }
@@ -422,7 +423,13 @@ final class AppStore {
     }
   }
 
-  /// A chat deleted elsewhere. If it's the one you're in, back to Hatbot's own chat, keeping none of it.
+  /// A bot deleted, here or elsewhere: its own chat goes with it.
+  private func botGone(_ id: String) {
+    botIds.removeAll { $0 == id }
+    for c in conversations where c.kind == .direct && c.botIds.first == id { chatGone(c.id) }
+  }
+
+  /// A chat deleted, here or elsewhere. If it's the one you're in, back to Hatbot's own chat, keeping none of it.
   private func chatGone(_ id: Int) {
     conversations.removeAll { $0.id == id }
     cache?.forget(id)
@@ -534,7 +541,7 @@ final class AppStore {
   struct BotChange: Encodable, Sendable {
     var name: String?
     var instructions: String
-    var chatModel: AppSettings.ChatModel?
+    var chatModel: AppSettings.ModelID?
     var chatEffort: AppSettings.Effort?
     var plugins: [String]?
     /// nil: left as it is, or for a new bot, the brain picks.
@@ -572,9 +579,8 @@ final class AppStore {
 
   func deleteBot(_ id: String) async throws {
     let _: Empty = try await api.delete("/bots/\(id)")
-    botIds.removeAll { $0 == id }
+    botGone(id)
     await loadBots()
-    if !conversations.contains(where: { $0.id == conversationId }) { await openConversation(1) }
   }
 
   /// A group chat's name and bots.
@@ -596,8 +602,7 @@ final class AppStore {
 
   func deleteGroup(_ id: Int) async throws {
     let _: Empty = try await api.delete("/conversations/\(id)")
-    conversations.removeAll { $0.id == id }
-    if conversationId == id { await openConversation(1) }
+    chatGone(id)
   }
 
   private func put(_ c: Conversation) {
@@ -1000,38 +1005,23 @@ final class AppStore {
     try await api.get("/settings")
   }
 
-  func setChatEffort(_ effort: AppSettings.Effort) async throws -> AppSettings {
-    struct Body: Encodable { let chatEffort: AppSettings.Effort }
-    return try await api.put("/settings", body: Body(chatEffort: effort))
+  /// Settings to change; the ones left nil aren't sent, and stay as they are.
+  struct SettingsChange: Encodable, Sendable {
+    var limits: Limits?
+    var chatEffort: AppSettings.Effort?
+    var notificationsOpen: AppSettings.Opens?
+    var desktopModel: AppSettings.ModelID?
+    var desktopEscalate: Bool?
+    var taskModel: AppSettings.ModelID?
+    var chatModel: AppSettings.ModelID?
+    var reviewChanges: Bool?
+    var heartbeat: AppSettings.Heartbeat?
+    var weeklyReport: AppSettings.WeeklyReport?
+    var memoryTidy: Bool?
   }
 
-  func setReviewChanges(_ on: Bool) async throws -> AppSettings {
-    struct Body: Encodable { let reviewChanges: Bool }
-    return try await api.put("/settings", body: Body(reviewChanges: on))
-  }
-
-  func setChatModel(_ model: AppSettings.ChatModel) async throws -> AppSettings {
-    struct Body: Encodable { let chatModel: AppSettings.ChatModel }
-    return try await api.put("/settings", body: Body(chatModel: model))
-  }
-
-  func setDesktopModel(_ model: AppSettings.DesktopModel) async throws -> AppSettings {
-    struct Body: Encodable { let desktopModel: AppSettings.DesktopModel }
-    return try await api.put("/settings", body: Body(desktopModel: model))
-  }
-
-  func setDesktopEscalate(_ on: Bool) async throws -> AppSettings {
-    struct Body: Encodable { let desktopEscalate: Bool }
-    return try await api.put("/settings", body: Body(desktopEscalate: on))
-  }
-
-  func setTaskModel(_ model: AppSettings.TaskModel) async throws -> AppSettings {
-    struct Body: Encodable { let taskModel: AppSettings.TaskModel }
-    return try await api.put("/settings", body: Body(taskModel: model))
-  }
-
-  func setNotificationsOpen(_ opens: AppSettings.Opens) async throws -> AppSettings {
-    struct Body: Encodable { let notificationsOpen: AppSettings.Opens }
-    return try await api.put("/settings", body: Body(notificationsOpen: opens))
+  /// All the settings, as saved.
+  func saveSettings(_ change: SettingsChange) async throws -> AppSettings {
+    try await api.put("/settings", body: change)
   }
 }

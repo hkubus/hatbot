@@ -2,13 +2,13 @@
 // settings and Test button.
 import type { PluginInfo } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
+import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { NoForm } from "../form";
-import { Icon } from "../icons";
 import { PLUGIN_SETTINGS } from "../plugins";
-import { navigate } from "../router";
 import { loadPlugins, savePlugin, useStore } from "../store";
 import { Switch } from "../switch";
+import { BackHead, Group, LinkRow } from "../ui";
 
 const STATE: Record<PluginInfo["state"], string> = {
   off: "Off",
@@ -29,46 +29,34 @@ export function PluginsGroup() {
   useEffect(load, [load]);
   if (!error && !ids?.length) return null;
   return (
-    <section className="group">
-      <h2>Plugins</h2>
-      <div className="group-box">
-        {error && (
-          <div className="row">
-            <div className="txt">
-              <span className="form-error">{error}</span>
-            </div>
-            <button type="button" className="btn sm" onClick={load}>
-              Retry
-            </button>
+    <Group title="Plugins">
+      {error && (
+        <div className="row">
+          <div className="txt">
+            <span className="form-error">{error}</span>
           </div>
-        )}
-        {(ids ?? []).map((id) => {
-          const p = plugins[id];
-          if (!p) return null;
-          return (
-            <button
-              type="button"
-              key={id}
-              className="row link"
-              onClick={() => navigate(`/settings/plugins/${id}`)}
-            >
-              <div className="txt">
-                <b>{p.name}</b>
-              </div>
-              <span className="val">{STATE[p.state]}</span>
-              <Icon name="chevron" className="chev" />
-            </button>
-          );
-        })}
-      </div>
-    </section>
+          <button type="button" className="btn sm" onClick={load}>
+            Retry
+          </button>
+        </div>
+      )}
+      {(ids ?? []).map((id) => {
+        const p = plugins[id];
+        if (!p) return null;
+        return (
+          <LinkRow key={id} to={`/settings/plugins/${id}`} label={p.name}>
+            <span className="val">{STATE[p.state]}</span>
+          </LinkRow>
+        );
+      })}
+    </Group>
   );
 }
 
 export function PluginPage({ id, toast }: { id: string; toast: (t: string) => void }) {
   const p = useStore((s) => s.plugins[id]);
-  const [error, setError] = useState("");
-  const [testing, setTesting] = useState(false);
+  const { error, setError, run } = useAction();
+  const testing = useAction();
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   /** The switch as you just set it, until the brain answers. */
   const [turning, setTurning] = useState<boolean | null>(null);
@@ -84,7 +72,7 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
       () => setLoaded(true),
       (err) => setError(errorText(err)),
     );
-  }, []);
+  }, [setError]);
 
   useEffect(() => {
     if (!p) load();
@@ -96,55 +84,41 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
         error={error}
         missing={loaded ? "This plugin doesn't exist." : ""}
         retry={load}
-        back={{ label: "Settings", go: () => navigate("/settings") }}
+        back={{ label: "Settings", to: "/settings" }}
       />
     );
 
   const Settings = PLUGIN_SETTINGS[p.id];
   const toggle = async (enabled: boolean) => {
-    setError("");
     setResult(null);
     // It flips at once; a failed save flips it back.
     setTurning(enabled);
-    try {
-      await savePlugin(p.id, { enabled });
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setTurning(null);
-    }
+    await run(() => savePlugin(p.id, { enabled }));
+    setTurning(null);
   };
   const save = async (config: unknown) => {
     await savePlugin(p.id, { config });
     toast("Saved");
   };
 
-  const test = async () => {
-    setTesting(true);
+  const test = () => {
     setResult(null);
-    try {
-      setResult(await api<{ ok: boolean; message: string }>(`/plugins/${p.id}/test`, { body: {} }));
-    } catch (err) {
-      setResult({ ok: false, message: errorText(err) });
-    }
-    setTesting(false);
+    void testing.run(
+      async () => setResult(await api<typeof result>(`/plugins/${p.id}/test`, { body: {} })),
+      (err) => setResult({ ok: false, message: errorText(err) }),
+    );
   };
 
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">
-          <button type="button" className="btn sm ghost back" onClick={() => navigate("/settings")}>
-            <Icon name="chevron" />
-            Settings
-          </button>
-          <span className="spacer" />
+        <BackHead to="/settings" label="Settings">
           {p.testable && p.state === "ready" && (
-            <button type="button" className="btn sm" disabled={testing} onClick={test}>
-              {testing ? "Testing…" : "Test"}
+            <button type="button" className="btn sm" disabled={testing.busy} onClick={test}>
+              {testing.busy ? "Testing…" : "Test"}
             </button>
           )}
-        </div>
+        </BackHead>
 
         <div className="panel form">
           <div className="form-row">
@@ -174,19 +148,16 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
         )}
 
         {p.tools.length > 0 && (
-          <section className="group">
-            <h2>Tools</h2>
-            <div className="group-box">
-              {p.tools.map((t) => (
-                <div className="row" key={t.name}>
-                  <div className="txt">
-                    <b className="mono">{t.name}</b>
-                  </div>
-                  <span className="val">{t.access === "read" ? "Reads" : "Changes"}</span>
+          <Group title="Tools">
+            {p.tools.map((t) => (
+              <div className="row" key={t.name}>
+                <div className="txt">
+                  <b className="mono">{t.name}</b>
                 </div>
-              ))}
-            </div>
-          </section>
+                <span className="val">{t.access === "read" ? "Reads" : "Changes"}</span>
+              </div>
+            ))}
+          </Group>
         )}
       </div>
     </section>

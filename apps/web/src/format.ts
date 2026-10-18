@@ -1,7 +1,36 @@
-// Money, model names and Markdown made plain, the same on every page.
+// Money, model names, times and Markdown made plain, the same on every page.
 
 /** Dollars to the cent; a cost under half a cent shows as "<$0.01", not "$0.00". */
 export const usd = (v: number) => (v > 0 && v < 0.005 ? "<$0.01" : `$${v.toFixed(2)}`);
+
+/** "08:05". */
+export const time = (iso: string) =>
+  new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+
+/** "11 Oct". */
+export const day = (date: string | Date) =>
+  new Date(date).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+
+const today = (iso: string) => new Date(iso).toDateString() === new Date().toDateString();
+
+/** "08:05" today, else "11 Oct". */
+export const timeOrDay = (iso: string) => (today(iso) ? time(iso) : day(iso));
+
+/** "11 Oct, 08:05". */
+export const dayTime = (iso: string) => `${day(iso)}, ${time(iso)}`;
+
+/** "08:05" today, else "11 Oct, 08:05". */
+export const shortStamp = (iso: string) => (today(iso) ? time(iso) : dayTime(iso));
+
+/** "Sat 11 Oct, 08:05". */
+export const stamp = (iso: string) =>
+  new Date(iso).toLocaleString("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 
 /**
  * "Opus 5.5" for claude-opus-5-5, "Opus 4.8" for a fallback's claude-opus-4-8, worked out from the

@@ -1,7 +1,5 @@
-import { errorText } from "./api";
-
-/** What went wrong loading something, in a few words. */
-export const loadErrorText = (err: unknown) => errorText(err, "Can't reach Hatbot.");
+import { useCallback, useEffect, useState } from "react";
+import { ApiError, errorText } from "./api";
 
 /** A page or list that didn't load: one plain line with Retry. */
 export function LoadError({ error, retry }: { error: string; retry: () => void }) {
@@ -13,4 +11,22 @@ export function LoadError({ error, retry }: { error: string; retry: () => void }
       </button>
     </div>
   );
+}
+
+/**
+ * Loads a page's one item into the store: `missing` once the brain says there's no such one, or
+ * what went wrong, with `load` to try again.
+ */
+export function useItem(id: number, fetch: (id: number) => Promise<unknown>) {
+  const [missing, setMissing] = useState(false);
+  const [error, setError] = useState("");
+  const load = useCallback(() => {
+    setError("");
+    fetch(id).catch((err) => {
+      if (err instanceof ApiError && err.status === 404) setMissing(true);
+      else setError(errorText(err));
+    });
+  }, [id, fetch]);
+  useEffect(load, [load]);
+  return { missing, error, load };
 }

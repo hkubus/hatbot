@@ -3,19 +3,10 @@
 import { HATBOT_ID, type Task } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
 import { errorText } from "./api";
-import { plainText } from "./format";
+import { plainText, stamp } from "./format";
 import { Link } from "./link";
 import { loadSchedules, loadTasks, useStore } from "./store";
 import { StatusChip } from "./tasks";
-
-export const stamp = (iso: string) =>
-  new Date(iso).toLocaleString("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 
 /**
  * An edit page's item, loaded with the rest when it isn't in the store: `missing` once they've

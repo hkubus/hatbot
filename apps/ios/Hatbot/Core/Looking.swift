@@ -82,14 +82,6 @@ struct Watcher: Codable, Identifiable, Equatable, Sendable {
     let slower = on && everyMinutes < Self.minRenderMinutes
     return RenderChange(source: s, everyMinutes: slower ? Self.minRenderMinutes : nil)
   }
-
-  /// "Every hour", "Every 15 minutes", "Every 2 days".
-  static func every(_ minutes: Int) -> String {
-    func unit(_ n: Int, _ word: String) -> String { n == 1 ? "Every \(word)" : "Every \(n) \(word)s" }
-    if minutes % 1440 == 0 { return unit(minutes / 1440, "day") }
-    if minutes % 60 == 0 { return unit(minutes / 60, "hour") }
-    return unit(minutes, "minute")
-  }
 }
 
 /// A value that differed from the one before, and whether it counted.
@@ -205,22 +197,9 @@ struct HeartbeatInfo: Codable, Equatable, Sendable {
 }
 
 extension AppSettings.Heartbeat {
-  /// How often it can look, from the Every picker, with the one set now when it's another (on the web,
-  /// say), so the picker has a row for it.
+  /// How often it can look, from the Every picker, with the one set now in its place.
   static func everyChoices(with current: Int) -> [Int] {
-    let common = [5, 10, 15, 30, 60, 120, 240]
-    return common.contains(current) ? common : (common + [current]).sorted()
-  }
-
-  /// "5 minutes", "Hour", "2 hours", "90 minutes".
-  static func every(_ minutes: Int) -> String {
-    if minutes % 60 == 0 { return minutes == 60 ? "Hour" : "\(minutes / 60) hours" }
-    return minutes == 1 ? "1 minute" : "\(minutes) minutes"
-  }
-
-  /// The bots it can run as, with the one set now when it isn't among them (deleted, or not loaded yet).
-  func botChoices(_ botIds: [String]) -> [String] {
-    botIds.contains(botId) ? botIds : botIds + [botId]
+    [5, 10, 15, 30, 60, 120, 240].including(current).sorted()
   }
 }
 

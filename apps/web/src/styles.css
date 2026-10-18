@@ -2113,18 +2113,6 @@ a.btn:hover {
     display: none;
   }
 }
-.row.link {
-  width: 100%;
-  border-width: 0 0 0.5px;
-  border-style: solid;
-  border-color: var(--line);
-  background: none;
-  text-align: left;
-  color: inherit;
-}
-.row.link:last-child {
-  border-bottom-width: 0;
-}
 @media (max-width: 899px) {
   .app.insp {
     grid-template-columns: minmax(0, 1fr);
@@ -2168,10 +2156,6 @@ a.btn:hover {
   display: flex;
   align-items: center;
   gap: 10px;
-  border: 0;
-  background: none;
-  padding: 0;
-  text-align: left;
   color: inherit;
 }
 .row-main .val {
@@ -2889,9 +2873,13 @@ dialog.ask .field {
   text-decoration: none;
 }
 .table tbody tr.link-row:hover,
-.row.link:hover,
 .row-link:hover {
   background: rgba(127, 127, 127, 0.06);
+}
+/* A whole row isn't underlined like a link in text. */
+.row-link:hover,
+a.row-main:hover {
+  text-decoration: none;
 }
 .link-row {
   position: relative;

@@ -9,7 +9,7 @@ import {
 } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { errorText } from "./api";
-import { plainText } from "./format";
+import { plainText, stamp } from "./format";
 import { Icon } from "./icons";
 import { navigate } from "./router";
 import { decideApproval, ensureApproval, useStore } from "./store";
@@ -239,11 +239,5 @@ export function PendingApproval({
 export function whenText(s: Pick<Schedule, "cron" | "runAt">): string {
   if (s.cron) return describeCron(s.cron);
   if (!s.runAt) return "";
-  return `Once, ${new Date(s.runAt).toLocaleString("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  })}`;
+  return `Once, ${stamp(s.runAt)}`;
 }
