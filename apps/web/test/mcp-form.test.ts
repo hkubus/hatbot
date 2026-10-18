@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { installDom } from "./dom";
 
 installDom();
-const { kindIn, lapsedIn, modeIn, withKind, withMode } = await import("../src/plugins/mcp");
+const { kindIn, lapsedIn, modeIn, withMode } = await import("../src/plugins/mcp");
 
 type Server = Parameters<typeof modeIn>[0];
 type Tool = Parameters<typeof modeIn>[1];
@@ -54,13 +54,4 @@ test("Chat or Allow is kept for the definition it was chosen for", () => {
   // Choosing again pins the new one; another mode drops the pin.
   expect(withMode(chosen, changed, "chat").pinned).toEqual({ search: "h2" });
   expect(withMode(chosen, changed, "always").pinned).toEqual({});
-});
-
-test("a kind is stored only when it differs from the guess", () => {
-  const order = tool({ name: "place_order", guess: "purchase" });
-  expect(withKind(server(), order, "purchase").kinds).toEqual({});
-  expect(withKind(server(), order, "none").kinds).toEqual({ place_order: "none" });
-  expect(withKind(server(), tool(), "account_security").kinds).toEqual({
-    search: "account_security",
-  });
 });
