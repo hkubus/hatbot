@@ -14,6 +14,7 @@ import { Secrets } from "../src/secrets";
 import { createServices } from "../src/services";
 import type { Teach } from "../src/teach/service";
 import { FakeDesktop } from "./fake-desktop";
+import { FakeHatbox } from "./fake-hatbox";
 import { FakeModel } from "./fake-model";
 
 class FakeNotifier implements Notifier {
@@ -83,6 +84,7 @@ export async function testApp(
   const db = await fromTemplate(config.memoryDir);
   taskModel.onCreate ??= () => '{"suspected": false, "excerpt": ""}';
   const agent = new FakeDesktop();
+  const hatbox = new FakeHatbox();
   const sent = new FakeNotifier();
   const proxmox = new Proxmox(proxmoxEnv);
   proxmox.pollMs = 5;
@@ -93,6 +95,7 @@ export async function testApp(
     model,
     taskModel,
     agent,
+    hatbox,
     notifications: sent,
     ntfy: null,
     proxmox,
@@ -134,6 +137,7 @@ export async function testApp(
     model,
     taskModel,
     agent,
+    hatbox,
     notifier: sent,
     /** Hatbot's own chat. */
     thread: s.chats.hatbot(),

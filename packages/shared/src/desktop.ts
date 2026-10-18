@@ -41,6 +41,44 @@ export type RenderResult = {
   html: string;
 };
 
+/**
+ * POST /render/box: a box's page as its owner would see it, for box_look (PLAN.md §21.12), in the same
+ * headless Chromium with no network at all.
+ */
+export type BoxLook = {
+  /** The whole page, Hatbox's preview script in it: it reaches nothing outside itself. */
+  html: string;
+  /** The Content-Security-Policy it's served with: the frame's. */
+  csp: string;
+  /** The screen in CSS pixels, e.g. 390 × 844 for a phone. */
+  width: number;
+  height: number;
+  dark: boolean;
+};
+
+/** An error the page hit: its own, or the browser's about it (a CSP refusal). */
+export type BoxLookError = {
+  message: string;
+  /** In the page as served, from 1. */
+  line?: number;
+  /** The same message again, this many times in all. */
+  count?: number;
+};
+
+export type BoxLookResult = {
+  /** A PNG of the top of the page, up to MAX_LOOK_HEIGHT tall, as base64. */
+  png: string;
+  /** The page's whole size in CSS pixels, which may be more than the screen. */
+  width: number;
+  height: number;
+  /** In the order they came, at most MAX_LOOK_ERRORS. */
+  errors: BoxLookError[];
+};
+
+/** How much of a page box_look's picture shows, in CSS pixels. */
+export const MAX_LOOK_HEIGHT = 1800;
+export const MAX_LOOK_ERRORS = 20;
+
 /** POST /action. `screenshot` and `zoom` have their own endpoints, which return an image. */
 export type AgentAction = {
   name: Exclude<ComputerMember, "screenshot" | "zoom">;

@@ -27,9 +27,10 @@ export const botRoutes = new Hono<AppEnv>()
     const id = c.req.param("id");
     const moved = c.var.bots.delete(id);
     if (!moved) return c.json({ error: "That's gone." }, 404);
-    const { events, schedules, triggers, watchers, settings, chats } = c.var;
+    const { events, schedules, triggers, watchers, settings, chats, boxes } = c.var;
     // Its reply in progress stops: it mustn't make more as a bot that's gone.
     chats.abortBot(id);
+    boxes.orphan(id);
     // A heartbeat that ran as it is switched off, as its automations are.
     const { heartbeat } = settings.get();
     if (heartbeat.botId === id)

@@ -29,6 +29,12 @@
         "@hatbot/shared": "workspace:*",
       },
     },
+    "apps/hatbox": {
+      "name": "@hatbot/hatbox",
+      "dependencies": {
+        "@hatbot/shared": "workspace:*",
+      },
+    },
     "apps/web": {
       "name": "@hatbot/web",
       "dependencies": {
@@ -81,6 +87,8 @@
     "@hatbot/brain": ["@hatbot/brain@workspace:apps/brain"],
 
     "@hatbot/desktop-agent": ["@hatbot/desktop-agent@workspace:apps/desktop-agent"],
+
+    "@hatbot/hatbox": ["@hatbot/hatbox@workspace:apps/hatbox"],
 
     "@hatbot/shared": ["@hatbot/shared@workspace:packages/shared"],
 

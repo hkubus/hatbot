@@ -733,4 +733,82 @@ export const migrations: string[] = [
   `ALTER TABLE questions ADD COLUMN sources TEXT NOT NULL DEFAULT '[]';`,
   // 40: the to-do item a task works on, ticked off when it ends done (PLAN.md §19).
   `ALTER TABLE tasks ADD COLUMN todo TEXT;`,
+  // 41: boxes, small web apps a bot makes, with their versions and what their pages keep (PLAN.md §21).
+  `
+  CREATE TABLE boxes (
+    id INTEGER PRIMARY KEY,
+    bot_id TEXT NOT NULL,
+    conversation_id INTEGER REFERENCES conversations(id),
+    title TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE box_versions (
+    box_id INTEGER NOT NULL REFERENCES boxes(id) ON DELETE CASCADE,
+    n INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    html TEXT NOT NULL,
+    message_id INTEGER,
+    tainted_by TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (box_id, n)
+  );
+  CREATE TABLE box_store (
+    box_id INTEGER NOT NULL REFERENCES boxes(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (box_id, key)
+  );
+  ALTER TABLE messages ADD COLUMN box_id INTEGER;
+  `,
+  // 42: boxes with files, built on the boxes guest, and when a box's schedule last ran (PLAN.md §21.6).
+  // A box's number isn't given out again once it's deleted: the guest keeps a backend's data under it.
+  `
+  CREATE TABLE box_files (
+    box_id INTEGER NOT NULL,
+    n INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    content TEXT NOT NULL,
+    PRIMARY KEY (box_id, n, path),
+    FOREIGN KEY (box_id, n) REFERENCES box_versions(box_id, n) ON DELETE CASCADE
+  );
+  ALTER TABLE boxes ADD COLUMN ran_at TEXT;
+  CREATE TABLE box_ids (id INTEGER PRIMARY KEY AUTOINCREMENT);
+  INSERT INTO sqlite_sequence (name, seq) SELECT 'box_ids', COALESCE(MAX(id), 0) FROM boxes;
+  `,
+  // 43: boxes' feeds, a plugin's read tool run for a box's page on a timer (PLAN.md §21.2, X4).
+  `
+  CREATE TABLE box_feeds (
+    id INTEGER PRIMARY KEY,
+    box_id INTEGER NOT NULL REFERENCES boxes(id) ON DELETE CASCADE,
+    -- The bot that added it: it runs with that bot's tools, and stops once the bot is deleted.
+    bot_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    input TEXT NOT NULL,
+    every_minutes INTEGER NOT NULL,
+    -- The latest result, as JSON, and when it came.
+    value TEXT,
+    value_at TEXT,
+    error TEXT,
+    -- NULL once it stopped: its tool is gone, or its bot.
+    next_run_at TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (box_id, name)
+  );
+  CREATE INDEX box_feeds_due ON box_feeds (next_run_at);
+  `,
+  // 44: what boxes' backends notified you of, a few a day each, with the note each left in the chat
+  // (PLAN.md §21.6, X6).
+  `
+  CREATE TABLE box_notices (
+    id INTEGER PRIMARY KEY,
+    box_id INTEGER NOT NULL REFERENCES boxes(id) ON DELETE CASCADE,
+    message_id INTEGER,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX box_notices_box ON box_notices (box_id, created_at);
+  `,
 ];

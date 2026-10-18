@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hatbot: update desktop-agent and the brain from git (the Update button in Settings).
+# Hatbot: update desktop-agent, the boxes agent and the brain from git (the Update button in Settings).
 # brain-deploy.sh installs this as /usr/local/sbin/hatbot-update. It runs as root from
 # hatbot-update.path when the brain writes /var/lib/hatbot/update-request, so the brain itself never
 # holds the git token or root. Settings come from /etc/hatbot/update.env, which deploy.sh writes.
@@ -89,8 +89,8 @@ fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 git -C "$REPO" archive --format=tar "$to" >"$tmp/app.tar"
-# The brain first: if it fails and goes back to the old version, the desktop hasn't changed either.
-# A new brain copes with the old desktop-agent for the minute until it's updated.
+# The brain first: if it fails and goes back to the old version, the desktop and the boxes guest haven't
+# changed either. A new brain copes with their old agents for the minute until they're updated.
 step="Updating the brain"
 status running "$step"
 # The new release's own deploy script, so changes to it apply too. It restarts the brain, rolls
@@ -134,6 +134,42 @@ if [[ -r $ETC/desktop.env ]] && source "$ETC/desktop.env" && [[ -n ${DESKTOP_AGE
   esac
 else
   note "The desktop isn't set up; only the brain was updated."
+fi
+
+# The boxes agent, the same way. Without a boxes guest (no boxes.env) there's nothing to say.
+# shellcheck source=/dev/null
+if [[ -r $ETC/boxes.env ]] && source "$ETC/boxes.env" && [[ -n ${HATBOX_AGENT_URL:-} ]] &&
+  git -C "$REPO" cat-file -e "$to:apps/hatbox/src/main.ts" 2>/dev/null; then
+  step="Updating the boxes guest"
+  status running "$step"
+  mkdir -p "$tmp/hatbox/node_modules/@hatbot/shared"
+  git -C "$REPO" archive "$to" apps/hatbox | tar -C "$tmp/hatbox" -xf - --strip-components=2
+  git -C "$REPO" archive "$to" packages/shared/package.json packages/shared/src |
+    tar -C "$tmp/hatbox/node_modules/@hatbot/shared" -xf - --strip-components=2
+  echo "$to" >"$tmp/hatbox/VERSION"
+  tar -C "$tmp/hatbox" -cf "$tmp/hatbox.tar" .
+  hatbox() { printf 'Authorization: Bearer %s\n' "${HATBOX_AGENT_TOKEN:-}" | curl -sS -m 30 -H @- "$@"; }
+  code=$(hatbox -o "$tmp/hatbox.out" -w '%{http_code}' --data-binary @"$tmp/hatbox.tar" \
+    -H 'content-type: application/x-tar' "$HATBOX_AGENT_URL/update" || true)
+  case $code in
+    202)
+      updated=0
+      for _ in $(seq 1 60); do
+        sleep 2
+        if [[ $(hatbox -m 3 "$HATBOX_AGENT_URL/health" 2>/dev/null | jq -r '.version // empty' 2>/dev/null) == "$to" ]]; then
+          updated=1
+          break
+        fi
+      done
+      ((updated)) || note "The boxes agent didn't come back on the new version; it keeps the old one. See journalctl -u hatbox-agent-update on the boxes guest."
+      ;;
+    404 | 501)
+      note "The boxes agent can't update itself yet; run deploy.sh once."
+      ;;
+    *)
+      note "The boxes agent refused the update ($code: $(head -c 200 "$tmp/hatbox.out" 2>/dev/null))."
+      ;;
+  esac
 fi
 
 trap - ERR

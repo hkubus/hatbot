@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hatbot: deploy the app to the brain and the desktop (PLAN.md §9.4).
+# Hatbot: deploy the app to the brain, the desktop and the boxes guest (PLAN.md §9.4, §21.6).
 # Run where you ran host-setup.sh (as root on the Proxmox host) or ssh-setup.sh. Each run installs a new
 # release; one that fails its health check is rolled back.
 #   ./deploy.sh ~/hatbot           deploy HEAD of a git checkout on this machine
@@ -238,6 +238,28 @@ else
   guest_push "$DESKTOP" "$HERE/desktop-deploy.sh" /root/desktop-deploy.sh 700
   if ! guest_exec "$DESKTOP" env DESKTOP_IP="$DESKTOP_IP" bash /root/desktop-deploy.sh /root/hatbot-desktop-agent.tar; then
     warn "desktop-agent failed to install; the brain is deployed anyway, but desktop tasks won't run"
+  fi
+fi
+
+if [[ -z $BOXES ]]; then
+  info "no boxes guest; boxes are only pages"
+elif ! tar -tf "$tmp/app.tar" apps/hatbox/src/main.ts >/dev/null 2>&1; then
+  warn "this commit has no apps/hatbox; the boxes guest is left as it is"
+elif ! guest_up "$BOXES"; then
+  warn "the boxes guest ($(guest_label "$BOXES")) is not running or can't be reached; deploying without it"
+else
+  : "${BOXES_IP:?}"
+  # The boxes agent, laid out like desktop-agent's archive: it imports shared's sub-paths.
+  mkdir -p "$tmp/hatbox/node_modules/@hatbot/shared"
+  tar -C "$tmp/hatbox" -xf "$tmp/app.tar" --strip-components=2 apps/hatbox
+  tar -C "$tmp/hatbox/node_modules/@hatbot/shared" -xf "$tmp/app.tar" --strip-components=2 \
+    packages/shared/package.json packages/shared/src
+  [[ -z $src_sha ]] || echo "$src_sha" >"$tmp/hatbox/VERSION"
+  tar -C "$tmp/hatbox" -cf "$tmp/hatbox.tar" .
+  guest_push "$BOXES" "$tmp/hatbox.tar" /root/hatbox-agent.tar 600
+  guest_push "$BOXES" "$HERE/boxes-deploy.sh" /root/boxes-deploy.sh 700
+  if ! guest_exec "$BOXES" env BOXES_IP="$BOXES_IP" bash /root/boxes-deploy.sh /root/hatbox-agent.tar; then
+    warn "the boxes agent failed to install; the brain is deployed anyway, but boxes' backends won't run"
   fi
 fi
 

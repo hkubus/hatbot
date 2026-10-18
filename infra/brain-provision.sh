@@ -3,9 +3,15 @@
 # Runs inside the brain as root. host-setup.sh or ssh-setup.sh pushes and starts it; safe to re-run.
 # The app and its service unit come later, from deploy.sh.
 #   DESKTOP_IP     the desktop's IP; it may not open connections to the brain (empty: no desktop)
+#   BOXES_IP       the boxes guest's IP; the same (empty: no boxes guest)
+#   DESKTOP_MAC, DESKTOP_IP6, BOXES_MAC, BOXES_IP6
+#                  their MACs and global IPv6 addresses, space-separated (optional): the same over IPv6
 
 set -euo pipefail
 DESKTOP_IP=${DESKTOP_IP:-}
+BOXES_IP=${BOXES_IP:-}
+DESKTOP_MAC=${DESKTOP_MAC:-} DESKTOP_IP6=${DESKTOP_IP6:-}
+BOXES_MAC=${BOXES_MAC:-} BOXES_IP6=${BOXES_IP6:-}
 BUN_VERSION=${BUN_VERSION:-1.4.2}
 export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
 
@@ -69,9 +75,18 @@ if [[ ! -f /var/lib/hatbot/.ssh/id_ed25519 ]]; then
 fi
 cat /var/lib/hatbot/.ssh/id_ed25519.pub
 
-say "Firewall: the desktop may only answer, never connect in"
-desktop_rule=''
-[[ -z $DESKTOP_IP ]] || desktop_rule="ip saddr $DESKTOP_IP ct state new counter drop"
+say "Firewall: the desktop and the boxes guest may only answer, never connect in"
+# Over IPv6 a guest's IP doesn't count: on a link it shares with the brain it can use a link-local address
+# or make one up, so there it's known by its MAC; over a VPN, by the addresses the VPN gave it. Neighbour
+# discovery isn't tracked, so it's never new and still passes.
+drop_new() { # drop_new IP MACS IP6S
+  printf 'ip saddr %s ct state new counter drop' "$1"
+  [[ -z $2 ]] || printf '\n    ether saddr { %s } meta nfproto ipv6 ct state new counter drop' "${2// /, }"
+  [[ -z $3 ]] || printf '\n    ip6 saddr { %s } ct state new counter drop' "${3// /, }"
+}
+desktop_rule='' boxes_rule=''
+[[ -z $DESKTOP_IP ]] || desktop_rule=$(drop_new "$DESKTOP_IP" "$DESKTOP_MAC" "$DESKTOP_IP6")
+[[ -z $BOXES_IP ]] || boxes_rule=$(drop_new "$BOXES_IP" "$BOXES_MAC" "$BOXES_IP6")
 cat >/etc/nftables.conf <<EOF
 #!/usr/sbin/nft -f
 # Managed by hatbot infra/brain-provision.sh.
@@ -81,6 +96,7 @@ table inet filter {
   chain input {
     type filter hook input priority filter; policy accept;
     $desktop_rule
+    $boxes_rule
   }
 }
 EOF

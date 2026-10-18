@@ -29,6 +29,7 @@ const PURPOSE_NAMES: Record<string, string> = {
   teach: "Teaching",
   tidy: "Memory tidy-ups",
   "skill-fix": "Skill fixes",
+  boxes: "Boxes",
 };
 const purposeName = (p: string) =>
   PURPOSE_NAMES[p] ?? p.charAt(0).toUpperCase() + p.slice(1).replace(/-/g, " ");

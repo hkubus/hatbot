@@ -157,10 +157,38 @@ final class SafetyTests: XCTestCase {
     let link = { (s: String) in AppLink(url: URL(string: s)!) }
     XCTAssertEqual(link("HATBOT://tasks/12"), .task(12))
     XCTAssertEqual(link("hatbot://new"), .newMessage)
+    XCTAssertEqual(link("hatbot://boxes/7"), .box(7))
     XCTAssertNil(link("hatbot://tasks/1/2"))
     XCTAssertNil(link("https://tasks/1"))
     let memory = AppLink.memory("notes/my servers.md")
     XCTAssertEqual(AppLink(url: memory.url), memory)
+  }
+
+  /// A box's web view loads only its own page, and once that shows, moves only within it. Web pages it
+  /// links to open outside the app; nothing else loads.
+  func testABoxStaysOnItsPage() throws {
+    let page = "https://h.example/api/v1/boxes/3/frame?v=2&exp=1760000000&sig=abc"
+    let address = try XCTUnwrap(URL(string: page))
+    let site = try XCTUnwrap(URL(string: "https://example.com/recipe"))
+    let cases: [(String, mainFrame: Bool?, link: Bool, loaded: Bool, BoxNavigation)] = [
+      ("HTTPS://H.EXAMPLE/api/v1/boxes/3/frame?v=2&exp=1760000000&sig=abc", true, false, false, .allow),
+      ("https://h.example/api/v1/boxes/4/frame?v=1&exp=1760000000&sig=def", true, false, false, .leave),
+      (page, true, false, true, .leave),
+      (page + "#done", true, true, true, .allow),
+      (site.absoluteString, true, true, true, .open(site)),
+      (site.absoluteString, true, false, true, .leave),
+      ("data:text/html,hi", true, true, true, .leave),
+      (site.absoluteString, nil, true, true, .open(site)),
+      (page, nil, true, true, .refuse),
+      ("javascript:alert(1)", nil, true, true, .refuse),
+      ("about:blank", false, false, true, .allow),
+      (site.absoluteString, false, false, true, .refuse),
+    ]
+    for (url, mainFrame, link, loaded, expected) in cases {
+      let to = try XCTUnwrap(URL(string: url))
+      let got = BoxNavigation.decide(to, mainFrame: mainFrame, link: link, address: address, loaded: loaded)
+      XCTAssertEqual(got, expected, "\(url), main frame \(String(describing: mainFrame)), loaded \(loaded)")
+    }
   }
 
   /// Text shared from another app is someone else's words: it goes as a file the brain treats as
@@ -856,6 +884,44 @@ final class NetworkTests: XCTestCase {
     XCTAssertEqual(a.id, 7)
     XCTAssertEqual(SlowBrain.requested.last, "POST /attachments")
     XCTAssertEqual(Set(try uploads()), Set(before))
+  }
+
+  /// A box's call goes to that box as the page sent it, as the web app's JSON.stringify would, without
+  /// crashing on what JSON can't hold; the brain's value, or its error, comes back.
+  func testABoxsCallGoesToItsBoxAsThePageSentIt() async throws {
+    let store = await MainActor.run { Self.store() }
+    SlowBrain.routes["/boxes/3/call"] = #"{"value":"kept"}"#
+    let body: [String: Any] = [
+      "op": "set", "key": "day", "value": ["on": Date(timeIntervalSince1970: 1_760_000_000), "done": true, "n": Double.nan],
+    ]
+    let call = try XCTUnwrap(BoxBridge.json(body))
+    let kept = try await store.callBox(3, json: call)
+    XCTAssertEqual(BoxBridge.value(kept) as? String, "kept")
+    struct Sent: Decodable {
+      struct Value: Decodable {
+        let on: String
+        let done: Bool
+        let n: Double?
+      }
+      let op, key: String
+      let value: Value
+    }
+    let sent = try JSONDecoder().decode(Sent.self, from: try XCTUnwrap(SlowBrain.sent("/boxes/3/call")))
+    XCTAssertEqual([sent.op, sent.key, sent.value.on], ["set", "day", "2025-10-09T08:53:20.000Z"])
+    XCTAssertTrue(sent.value.done)
+    XCTAssertNil(sent.value.n)
+    XCTAssertNil(BoxBridge.json("day"))
+    SlowBrain.routes["/boxes/3/call"] = "{}"
+    let none = try await store.callBox(3, json: call)
+    XCTAssertNil(BoxBridge.value(none))
+    SlowBrain.routes["/boxes/3/call"] = #"{"error":"A box keeps at most 1 MB under one key."}"#
+    SlowBrain.statuses["/boxes/3/call"] = 400
+    do {
+      _ = try await store.callBox(3, json: call)
+      XCTFail("no error")
+    } catch let e as APIError {
+      XCTAssertEqual(e.message, "A box keeps at most 1 MB under one key.")
+    }
   }
 
   /// The group you're in, or the bot whose chat you're in, deleted elsewhere: the chat goes back to

@@ -1,6 +1,7 @@
 // The thread (PLAN.md §10.2, §10.4): Messages-style bubbles, grouped by sender with a tail on the
 // last, a centered time after a pause, Copy and Open in a long-press menu. A task shows under the reply
-// that started it; approvals wait above the composer. Finished conversations fold up under their recap.
+// that started it, and a box under the reply that made or changed it; a box's notes show as from the
+// box. Approvals wait above the composer. Finished conversations fold up under their recap.
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -81,12 +82,14 @@ struct ChatView: View {
   }
 
   /// Runs of messages from the same sender sit close together, with a tail on the last. In a group
-  /// each bot is a sender of its own.
+  /// each bot is a sender of its own. A box's notes are the box's, not its bot's.
   private static func grouped(_ rows: [Row]) -> [Row] {
     func sender(_ row: Row?) -> String? {
       if case let .message(m, _, _)? = row, !m.isNote { key(m) } else { nil }
     }
-    func key(_ m: ThreadMessage) -> String { m.role == .user ? "owner" : "bot:\(m.botId ?? "")" }
+    func key(_ m: ThreadMessage) -> String {
+      m.role == .user ? "owner" : m.kind == .box ? "box:\(m.boxId ?? 0)" : "bot:\(m.botId ?? "")"
+    }
     return rows.indices.map { i in
       guard case let .message(m, _, _) = rows[i] else { return rows[i] }
       let before = i > 0 ? rows[i - 1] : nil
@@ -142,8 +145,8 @@ struct ChatView: View {
               }
               .padding(.top, 10)
             case let .message(m, joined, tail):
-              // In a group, the bot's name above each run of its messages.
-              let named = group && !joined && m.role == .assistant && !m.isNote
+              // In a group, the bot's name above each run of its messages; a box's note isn't its words.
+              let named = group && !joined && m.role == .assistant && !m.isNote && m.kind != .box
               if named {
                 Text(store.botName(m.botId))
                   .font(.caption.weight(.semibold))
@@ -685,7 +688,7 @@ private struct MessageRow: View, Equatable {
           .background(Color.botBubble, in: shape)
           .contentShape(.contextMenuPreview, shape)
           .contextMenu { menu }
-          .modifier(Spoken(label: store.botName(m.botId) + (unread ? ", unread" : ""), text: spokenText))
+          .modifier(Spoken(label: speaker + (unread ? ", unread" : ""), text: spokenText))
         // Like Messages' "Edited": the task's result changed this message after it was sent.
         if m.status != .streaming, let editedAt {
           Text("Edited \(editedAt.timeText)")
@@ -725,17 +728,25 @@ private struct MessageRow: View, Equatable {
     switch m.kind {
     case .task where m.taskId != nil: TaskMessage(taskId: m.taskId!)
     case .schedule where m.scheduleId != nil: ScheduleMessage(scheduleId: m.scheduleId!)
+    case .box: BoxNote(m: m)
     default: ReplyMessage(m: m)
     }
+    if m.kind != .box, let id = m.boxId, !store.deletedBoxes.contains(id) { BoxResult(boxId: id) }
     if m.status != .streaming, let list = m.sources, !list.isEmpty { MessageSources(list: list) }
     if answerable, m.status != .streaming, let list = m.choices, !list.isEmpty { Choices(lists: list) }
     if let list = m.attachments, !list.isEmpty { MessageFiles(list: list, alignment: .leading) }
   }
 
+  /// Who it's from: a box's note is the box's.
+  private var speaker: String {
+    m.kind == .box ? "From \(m.boxId.flatMap { store.boxes[$0]?.title } ?? "a box")" : store.botName(m.botId)
+  }
+
   /// A plain reply, read as one: Markdown left out, and not word by word as it streams. Others, with
-  /// tasks, schedules or approvals to act on, keep their parts.
+  /// tasks, schedules, boxes or approvals to act on, keep their parts.
   private var spokenText: String? {
-    guard m.kind == .text || m.kind == .command, m.taskId == nil else { return nil }
+    if m.kind == .box { return m.text }
+    guard m.kind == .text || m.kind == .command, m.taskId == nil, m.boxId == nil else { return nil }
     return m.status == .streaming ? "Writing" : Markdown.plain(m.text)
   }
 
@@ -747,7 +758,7 @@ private struct MessageRow: View, Equatable {
     switch m.kind {
     case .text, .command: return done
     case .task: return done > m.createdAt ? done : nil
-    case .schedule: return nil
+    case .schedule, .box: return nil
     }
   }
 
@@ -760,6 +771,12 @@ private struct MessageRow: View, Equatable {
         copyButton(s.prompt)
         Button("Open schedule", systemImage: "chevron.right") { open(.schedule(id)) }
       }
+    case .box:
+      copyButton(m.text)
+      // Gone, or not loaded yet: nothing to open.
+      if let id = m.boxId, store.boxes[id] != nil {
+        Button("Open box", systemImage: "chevron.right") { open(.box(id)) }
+      }
     default:
       let task = m.taskId.flatMap { store.tasks[$0] }
       let result = task.flatMap { $0.isActive ? nil : $0.summary }
@@ -769,6 +786,7 @@ private struct MessageRow: View, Equatable {
         // A finished or failed task's result in the reply's place.
         copyButton(task.map { ReplyMessage.showsResult(m, $0) } == true ? result ?? "" : m.text)
       }
+      if let boxId = m.boxId { Button("Open box", systemImage: "chevron.right") { open(.box(boxId)) } }
       if let taskId = m.taskId { openButton(taskId) }
       if m.status == .error && m.role == .assistant {
         Button("Try again", systemImage: "arrow.clockwise") { retry() }
@@ -893,6 +911,41 @@ private struct TaskResult: View {
     store.desktop?.control == .owner && task.status == .running
       ? "Paused while you have control."
       : Format.taskLine(task, progress: store.taskProgress[taskId])
+  }
+}
+
+/// The box a reply made or changed, with Open.
+private struct BoxResult: View {
+  let boxId: Int
+  @Environment(AppStore.self) private var store
+  @Environment(\.openRoute) private var router
+
+  var body: some View {
+    HStack(spacing: 10) {
+      if let box = store.boxes[boxId] {
+        Image(systemName: "shippingbox").foregroundStyle(.secondary)
+        Text(box.title).fontWeight(.semibold).lineLimit(2)
+        Spacer(minLength: 8)
+        Button("Open") { router?.open(.box(boxId)) }
+          .glassButton()
+          .controlSize(.small)
+      }
+    }
+    .onAppear { store.ensureBox(boxId) }
+  }
+}
+
+/// A note a box's page sent (hatbox.send): the box's words, neither yours nor the bot's, as plain text.
+private struct BoxNote: View {
+  let m: ThreadMessage
+  @Environment(AppStore.self) private var store
+
+  var body: some View {
+    let title = m.boxId.flatMap { store.boxes[$0]?.title } ?? "a box"
+    // Verbatim, never Markdown: nobody read what the page sends.
+    Text("\(Text(verbatim: "From \(title):").bold()) \(Text(verbatim: m.text))")
+      .textSelection(.enabled)
+      .onAppear { if let id = m.boxId { store.ensureBox(id) } }
   }
 }
 

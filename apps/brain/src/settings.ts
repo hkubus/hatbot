@@ -11,6 +11,8 @@ export const Settings = z.object({
     monthlyUsd: z.number().positive(),
     /** The last of the daily and monthly limits, which only alerts and the heartbeat spend (PLAN.md §6.3). */
     alertReserveUsd: z.number().min(0),
+    /** What boxes' pages may spend asking Haiku in a day (PLAN.md §21.2); 0 stops them. */
+    boxesUsd: z.number().min(0),
   }),
   /** Effort for the chat thread. Heavier work runs as tasks, at their own effort. */
   chatEffort: z.enum(CHAT_EFFORTS),
@@ -52,7 +54,14 @@ export const SettingsPatch = Settings.extend({ limits: Settings.shape.limits.par
 export type SettingsPatch = z.infer<typeof SettingsPatch>;
 
 export const DEFAULT_SETTINGS: Settings = {
-  limits: { taskUsd: 3, researchUsd: 5, dailyUsd: 10, monthlyUsd: 200, alertReserveUsd: 1 },
+  limits: {
+    taskUsd: 3,
+    researchUsd: 5,
+    dailyUsd: 10,
+    monthlyUsd: 200,
+    alertReserveUsd: 1,
+    boxesUsd: 0.5,
+  },
   chatEffort: "low",
   chatModel: "claude-haiku-5-5",
   owner: { name: "You", email: "owner@local" },

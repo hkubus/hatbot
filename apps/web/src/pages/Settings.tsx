@@ -161,6 +161,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
 
         <Group className="show-phone">
           <LinkRow to="/todo" label="To-do" />
+          <LinkRow to="/boxes" label="Boxes" />
           <LinkRow to="/schedules" label="Schedules & Triggers" />
           <LinkRow to="/spend" label="Spend" />
         </Group>
@@ -173,20 +174,21 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
               ["taskUsd", "Per task"],
               ["researchUsd", "Per research task"],
               ["alertReserveUsd", "Kept for alerts"],
+              ["boxesUsd", "Boxes per day"],
             ] as const
           ).map(([key, label]) => (
             <SavedRow
               key={key}
               label={label}
               saved={settings.limits[key]}
-              // Nothing kept for alerts is allowed; a limit of nothing isn't.
-              parse={(text) => parseLimit(text, key === "alertReserveUsd")}
+              // Nothing kept for alerts is allowed, and boxes asking nothing; a limit of nothing isn't.
+              parse={(text) => parseLimit(text, key === "alertReserveUsd" || key === "boxesUsd")}
               save={(n) => put({ limits: { [key]: n } })}
               prefix="$"
               input={{
                 type: "number",
                 inputMode: "decimal",
-                min: key === "alertReserveUsd" ? "0" : "0.01",
+                min: key === "alertReserveUsd" || key === "boxesUsd" ? "0" : "0.01",
                 step: "0.01",
               }}
             />

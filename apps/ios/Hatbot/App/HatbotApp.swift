@@ -1,6 +1,6 @@
 // The app: sign-in until there's a token, then chat, with the other sections in a sidebar (PLAN.md §10.3).
-// Notifications come from the ntfy app; hatbot:// links open tasks, approvals, schedules and triggers,
-// and quick actions and Spotlight results open theirs (App/Extras.swift).
+// Notifications come from the ntfy app; hatbot:// links open tasks, approvals, schedules, triggers and
+// boxes, and quick actions and Spotlight results open theirs (App/Extras.swift).
 import CoreSpotlight
 import SwiftUI
 import UIKit
@@ -64,6 +64,7 @@ struct MainView: View {
   @State private var settingsPath: [Route] = []
   @State private var memoryPath: [Route] = []
   @State private var todoPath: [Route] = []
+  @State private var boxesPath: [Route] = []
 
   var body: some View {
     Sidebar(tab: $tab, open: $sidebar, atRoot: roots[tab, default: 0] > 0) { sections }
@@ -138,6 +139,7 @@ struct MainView: View {
       }
     case .tasks: TasksView(path: $tasksPath)
     case .todo: TodoView(path: $todoPath)
+    case .boxes: BoxesView(path: $boxesPath)
     case .live:
       NavigationStack {
         // While you have control, drags go to the desktop.
@@ -154,7 +156,7 @@ struct MainView: View {
   }
 
   /// hatbot://tasks/12 opens a task, hatbot://approvals/5 the approval's task; schedules and triggers
-  /// open under Settings, like on the web app on a phone.
+  /// open under Settings, like on the web app on a phone, and hatbot://boxes/4 a box under Boxes.
   private func open(_ url: URL) {
     sidebar = false
     switch AppLink(url: url) {
@@ -177,6 +179,9 @@ struct MainView: View {
     case let .trigger(id):
       tab = .settings
       settingsPath = [.schedules, .trigger(id)]
+    case let .box(id):
+      tab = .boxes
+      boxesPath = [.box(id)]
     case .newMessage:
       tab = .chat
       chatPath = []
