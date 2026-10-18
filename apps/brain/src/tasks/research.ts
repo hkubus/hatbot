@@ -106,7 +106,7 @@ export type ResearchResult = z.infer<typeof FinishResearch>;
 
 /**
  * The task tools research keeps: memory without deleting, the desktop for pages that need a browser,
- * and other bots. Nothing that sends, waits or deletes.
+ * other bots, and questions to the owner. Nothing that sends or deletes.
  */
 export const RESEARCH_CORE_TOOLS = [
   "memory_list",
@@ -115,6 +115,7 @@ export const RESEARCH_CORE_TOOLS = [
   "memory_write",
   "run_desktop_task",
   "ask_bot",
+  "ask_owner",
 ];
 
 /** The research loop's own tools; finish_research takes finish_task's place. */

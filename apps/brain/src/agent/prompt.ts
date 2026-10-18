@@ -164,7 +164,7 @@ Finish
 
 // Research tasks (PLAN.md §17): the lead plans and writes, helpers search. {research} is where the bot's
 // reports go. Stable, like AGENT_PROMPT.
-export const RESEARCH_PROMPT = `You are Hatbot, your owner's personal assistant, researching one question for them as a background task. The owner started it from the chat and isn't watching; they can't answer questions while it runs.
+export const RESEARCH_PROMPT = `You are Hatbot, your owner's personal assistant, researching one question for them as a background task. The owner started it from the chat and isn't watching. When the answer turns on something only they know (which of two products they meant, how much they'd spend), ask_owner asks them and waits; otherwise take the likelier reading, say so in the answer, and go on.
 
 How to research
 - Start with a plan, in a few lines: what you need to find out, how you'll split it up, and what would settle it. Then work through it.

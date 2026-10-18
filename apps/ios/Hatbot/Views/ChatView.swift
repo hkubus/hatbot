@@ -1043,6 +1043,10 @@ struct QuestionBody: View {
   var body: some View {
     let q = question
     Text(q.question).bold().textSelection(.enabled)
+    if let sources = q.sources, !sources.isEmpty {
+      // Shown as written, like the question: a page's name could hold Markdown.
+      Text("After reading \(sources.joined(separator: ", "))").font(.footnote).foregroundStyle(.secondary)
+    }
     Group {
       ForEach(q.choices, id: \.self) { c in
         Button { answer(c) } label: { Text(c).frame(maxWidth: .infinity) }

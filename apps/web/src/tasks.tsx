@@ -262,6 +262,7 @@ export function PendingQuestion({ q, links }: { q: Question; links?: React.React
     <div className="approval">
       <div className="approval-text">
         <p className="question-what">{q.question}</p>
+        {q.sources.length > 0 && <p className="muted">After reading {q.sources.join(", ")}</p>}
       </div>
       <form
         className="answer-row"

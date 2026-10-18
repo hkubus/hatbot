@@ -634,6 +634,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         conversationId: task.conversationId,
         question: q.question,
         choices: q.choices,
+        sources: [...sources],
         waitMs: hours * 3600_000,
       }),
     );

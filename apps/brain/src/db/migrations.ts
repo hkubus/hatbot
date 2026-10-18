@@ -729,4 +729,6 @@ export const migrations: string[] = [
 
   ALTER TABLE messages ADD COLUMN choices TEXT;
   `,
+  // 39: what a task had read when it asked you, as approvals keep (PLAN.md §20).
+  `ALTER TABLE questions ADD COLUMN sources TEXT NOT NULL DEFAULT '[]';`,
 ];

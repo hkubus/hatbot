@@ -15,6 +15,7 @@ type Row = {
   conversation_id: number | null;
   question: string;
   choices: string;
+  sources: string;
   status: Question["status"];
   answer: string | null;
   created_at: string;
@@ -29,6 +30,7 @@ const toQuestion = (r: Row): Question => ({
   conversationId: r.conversation_id,
   question: r.question,
   choices: JSON.parse(r.choices),
+  sources: JSON.parse(r.sources),
   status: r.status,
   answer: r.answer,
   createdAt: r.created_at,
@@ -42,6 +44,7 @@ export type NewQuestion = {
   conversationId: number | null;
   question: string;
   choices: string[];
+  sources: string[];
   waitMs: number;
 };
 
@@ -88,9 +91,12 @@ export class Questions {
 
   create(q: NewQuestion): Question {
     const row = this.db
-      .query<{ id: number }, [string, number, number | null, string, string, string, string]>(
-        `INSERT INTO questions (bot_id, task_id, conversation_id, question, choices, created_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      .query<
+        { id: number },
+        [string, number, number | null, string, string, string, string, string]
+      >(
+        `INSERT INTO questions (bot_id, task_id, conversation_id, question, choices, sources, created_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       )
       .get(
         q.botId,
@@ -98,6 +104,7 @@ export class Questions {
         q.conversationId,
         q.question,
         JSON.stringify(q.choices),
+        JSON.stringify(q.sources),
         this.now(),
         new Date(this.clock() + q.waitMs).toISOString(),
       );
@@ -114,7 +121,11 @@ export class Questions {
     const buttons = q.choices.length <= MAX_BUTTONS;
     await this.notifier.send({
       title: `${this.bots?.nameOf(q.botId) ?? "Hatbot"} asks`,
-      message: [q.question, ...(buttons ? [] : q.choices.map((c) => `- ${c}`))].join("\n"),
+      message: [
+        q.question,
+        ...(buttons ? [] : q.choices.map((c) => `- ${c}`)),
+        ...(q.sources.length ? [`After reading ${q.sources.join(", ")}`] : []),
+      ].join("\n"),
       priority: 4,
       click: `${this.publicUrl}/tasks/${q.taskId}`,
       ...(buttons && q.choices.length

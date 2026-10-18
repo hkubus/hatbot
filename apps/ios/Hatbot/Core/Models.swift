@@ -275,6 +275,8 @@ struct Question: Codable, Identifiable, Equatable, Sendable {
   var conversationId: Int?
   var question: String
   var choices: [String]
+  /// Untrusted things the task had read when it asked. Missing on brains from before.
+  var sources: [String]?
   var status: Status
   var answer: String?
   var createdAt: String

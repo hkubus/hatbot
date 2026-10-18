@@ -322,6 +322,36 @@ test("research gets lookups and memory, and no tool that changes things", async 
 
 const lastResult = (req: Params | undefined) => JSON.stringify(req?.messages.at(-1)?.content);
 
+test("research can ask you, and the question says what it had read", async () => {
+  const work = new FakeModel([
+    INVESTIGATE,
+    {
+      content: [
+        toolUse("ask_owner", {
+          questions: [
+            { question: "The DS925+ or the cheaper DS425+?", choices: ["DS925+", "DS425+"] },
+          ],
+        }),
+      ],
+    },
+    finish("Get the **DS925+** [1].", "## Answer\n\nThe DS925+ [1]."),
+  ]);
+  helpers(work);
+  work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
+  const t = await testApp(new FakeModel(), work);
+  const task = t.tasks.createBackgroundTask({
+    title: "Quiet NAS for four drives",
+    goal: "Which quiet four-bay NAS, under 3,000 zł?",
+    origin: "chat",
+    research: true,
+  });
+  const asked = await waitFor(() => t.questions.pending()[0]);
+  expect(asked.sources.join()).toContain(PRICE.url);
+  t.questions.answer(asked.id, "DS925+");
+  await waitFor(() => t.tasks.get(task?.id as number)?.finishedAt);
+  expect(lastResult(work.requests.findLast((r) => !isHelper(r)))).toContain("DS925+");
+});
+
 test("research's notes, read back, are untrusted and taint the reader; other notes aren't", async () => {
   const t = await testApp();
   const injected =

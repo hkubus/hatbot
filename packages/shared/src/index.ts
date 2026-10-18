@@ -306,6 +306,8 @@ export type Question = {
   question: string;
   /** Answers to tap; you can always write your own. */
   choices: string[];
+  /** Untrusted things the task had read when it asked: a page could have steered the question. */
+  sources: string[];
   status: "pending" | "answered" | "expired" | "cancelled";
   answer: string | null;
   createdAt: string;
