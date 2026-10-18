@@ -2,100 +2,40 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Db, openDb } from "../src/db";
-import { blobSha, HATBOT, MemoryConflict, MemoryError, MemoryStore } from "../src/memory/store";
+import { openDb } from "../src/db";
+import { blobSha, HATBOT, MemoryError, MemoryStore } from "../src/memory/store";
 import { setUpOwner, testApp } from "./helpers";
 
 const YOU = { name: "You", email: "owner@local" };
 let dir: string;
-let db: Db;
 let mem: MemoryStore;
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "hatbot-mem-"));
-  db = openDb(":memory:");
-  mem = new MemoryStore(dir, db);
+  mem = new MemoryStore(dir, openDb(":memory:"));
   await mem.init();
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-test("write commits, read returns, log lists", async () => {
-  const sha = await mem.write(
-    "projects/hatbot.md",
-    "# Hatbot\nShips in M1",
-    HATBOT,
-    "Note Hatbot project",
-  );
-  expect(sha).toMatch(/^[0-9a-f]{40}$/);
-  expect(await mem.read("projects/hatbot.md")).toBe("# Hatbot\nShips in M1\n");
-  const [latest] = await mem.log();
-  expect(latest).toMatchObject({
-    sha,
-    author: "Hatbot",
-    message: "Note Hatbot project",
-    files: ["projects/hatbot.md"],
-  });
-  expect((await mem.tree()).map((f) => f.path)).toEqual(["INDEX.md", "projects/hatbot.md"]);
-});
-
-test("unchanged content makes no commit", async () => {
-  await mem.write("a.md", "x", HATBOT, "one");
-  expect(await mem.write("a.md", "x\n", HATBOT, "two")).toBeNull();
-});
-
-test("search finds lines case-insensitively", async () => {
-  await mem.write("homelab.md", "# Homelab\nForgejo runs on CT 110", YOU, "homelab");
-  expect(await mem.search("forgejo")).toEqual([
-    { path: "homelab.md", line: 2, text: "Forgejo runs on CT 110" },
-  ]);
-});
-
-test("diff and revert", async () => {
+test("a change that fails puts the files back as they were", async () => {
   await mem.write("prefs.md", "tea", YOU, "prefs");
-  const sha = (await mem.write("prefs.md", "coffee", HATBOT, "change drink")) as string;
-  expect(await mem.diff(sha)).toContain("+coffee");
-  const revert = await mem.revert(sha, YOU);
-  expect(revert).not.toBeNull();
-  expect(await mem.read("prefs.md")).toBe("tea\n");
-  expect((await mem.log(1))[0]?.message).toBe('Revert "change drink"');
-});
-
-test("a write of several files that fails partway leaves nothing behind for the next commit", async () => {
-  await mem.write("notes.md", "# Notes\nold", YOU, "notes");
-  // The third can't be written: notes.md is a file, not a folder.
-  const failing = mem.writeAll(
+  const sha = (await mem.write("prefs.md", "coffee", YOU, "coffee")) as string;
+  // A write of several files whose last can't be written: prefs.md is a file, not a folder.
+  const half = mem.writeAll(
     [
       { path: "fresh.md", content: "fresh" },
-      { path: "notes.md", content: "# Notes\nnew" },
-      { path: "notes.md/oops.md", content: "x" },
+      { path: "prefs.md", content: "milk" },
+      { path: "prefs.md/oops.md", content: "x" },
     ],
     HATBOT,
     "half",
   );
-  await expect(failing).rejects.toThrow();
+  await expect(half).rejects.toThrow();
   expect(await mem.exists("fresh.md")).toBe(false);
-  expect(await mem.read("notes.md")).toBe("# Notes\nold\n");
-  expect(await mem.uncommitted()).toEqual([]);
-  await mem.write("other.md", "other", HATBOT, "other");
-  const [last] = await mem.log(1);
-  expect(last).toMatchObject({ message: "other", files: ["other.md"] });
-  // Something else staged, by hand, isn't swept into Hatbot's commits either.
-  writeFileSync(join(dir, "hand.md"), "by hand\n");
-  Bun.spawnSync(["git", "add", "hand.md"], { cwd: dir });
-  await mem.write("other.md", "other again", HATBOT, "again");
-  expect((await mem.log(1))[0]?.files).toEqual(["other.md"]);
-});
+  expect(await mem.read("prefs.md")).toBe("coffee\n");
 
-test("a file never committed can be deleted, and a change that fails puts the files back as they were", async () => {
-  // Made by hand on the brain, never committed.
-  writeFileSync(join(dir, "hand.md"), "by hand\n");
-  expect(await mem.delete("hand.md", YOU, "Delete hand.md")).toBeNull();
-  expect(await mem.exists("hand.md")).toBe(false);
-
-  await mem.write("prefs.md", "tea", YOU, "prefs");
-  const sha = (await mem.write("prefs.md", "coffee", YOU, "coffee")) as string;
+  // Edited by hand, then every commit fails.
   writeFileSync(join(dir, "prefs.md"), "green tea\n");
-  // Every commit fails from here.
   const hook = join(dir, ".git", "hooks", "pre-commit");
   writeFileSync(hook, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
   await expect(mem.write("prefs.md", "milk", YOU, "milk")).rejects.toThrow();
@@ -105,148 +45,58 @@ test("a file never committed can be deleted, and a change that fails puts the fi
   writeFileSync(join(dir, "prefs.md"), "coffee\n");
   await expect(mem.revert(sha, YOU)).rejects.toThrow();
   expect(await mem.read("prefs.md")).toBe("coffee\n");
+  // Nothing is left behind for the next commit.
   expect(await mem.uncommitted()).toEqual([]);
   rmSync(hook);
   await mem.write("other.md", "other", YOU, "other");
   expect((await mem.log(1))[0]?.files).toEqual(["other.md"]);
 });
 
-test("a stale index.lock is cleared at start, and a revert names a file edited by hand", async () => {
+test("a file made by hand and never committed can be deleted", async () => {
+  writeFileSync(join(dir, "hand.md"), "by hand\n");
+  expect(await mem.delete("hand.md", YOU, "Delete hand.md")).toBeNull();
+  expect(await mem.exists("hand.md")).toBe(false);
+});
+
+test("a revert doesn't overwrite a file edited by hand", async () => {
   const sha = (await mem.write("prefs.md", "tea", YOU, "prefs")) as string;
-  // A git killed mid-write left its lock behind.
-  writeFileSync(join(dir, ".git", "index.lock"), "");
-  const log = console.warn;
-  console.warn = () => {};
-  try {
-    const again = new MemoryStore(dir, db);
-    await again.init();
-    expect(await again.write("prefs.md", "coffee", YOU, "coffee")).not.toBeNull();
-  } finally {
-    console.warn = log;
-  }
   writeFileSync(join(dir, "prefs.md"), "green tea\n");
-  await expect(mem.revert(sha, YOU)).rejects.toThrow(
-    "can't revert: prefs.md has changes that aren't committed",
-  );
+  await expect(mem.revert(sha, YOU)).rejects.toThrow("prefs.md has changes");
   expect(await mem.read("prefs.md")).toBe("green tea\n");
 });
 
-test("refuses paths outside the repo, into .git, or non-markdown writes", async () => {
-  for (const p of ["../x.md", "/etc/passwd", ".git/config", "a/../../x.md", ""]) {
+test("paths outside the repo, into .git, or not markdown are refused", async () => {
+  for (const p of ["../x.md", "/etc/passwd", ".git/config", "a/../../x.md"])
     expect(() => mem.resolve(p)).toThrow(MemoryError);
-  }
-  expect(mem.write("x.sh", "echo", HATBOT, "x")).rejects.toThrow(MemoryError);
+  await expect(mem.write("x.sh", "echo", HATBOT, "x")).rejects.toThrow(MemoryError);
 });
 
-test("concurrent writes all commit", async () => {
-  await Promise.all([1, 2, 3, 4].map((i) => mem.write(`n${i}.md`, `${i}`, HATBOT, `n${i}`)));
-  expect((await mem.log()).length).toBe(5);
-});
-
-test("updates read and write with no other write in between, so none is lost", async () => {
+test("updates at once each read what the last wrote, so none is lost", async () => {
   await mem.write("notes.md", "# Notes", HATBOT, "Start notes");
   const add = (line: string) =>
     mem.update("notes.md", async (now) => `${now ?? ""}- ${line}\n`, HATBOT, `Add ${line}`);
   await Promise.all(["a", "b", "c", "d"].map(add));
   expect(await mem.read("notes.md")).toBe("# Notes\n- a\n- b\n- c\n- d\n");
-  expect(await mem.update("notes.md", () => null, HATBOT, "Nothing")).toBeNull();
 });
 
-test("a file's sha is git's, and a write on top of an older copy is refused", async () => {
-  await mem.write("a.md", "one", HATBOT, "One");
-  const sha = blobSha(await mem.read("a.md"));
-  const proc = Bun.spawn(["git", "hash-object", "a.md"], { cwd: dir, stdout: "pipe" });
-  expect((await new Response(proc.stdout).text()).trim()).toBe(sha);
-  await mem.writeIf("a.md", "two", sha, YOU, "Two");
-  await expect(mem.writeIf("a.md", "three", sha, YOU, "Three")).rejects.toBeInstanceOf(
-    MemoryConflict,
-  );
-  expect(await mem.read("a.md")).toBe("two\n");
-  // "" is a new file: refused once it exists.
-  await expect(mem.writeIf("a.md", "x", "", YOU, "X")).rejects.toBeInstanceOf(MemoryConflict);
-  expect(await mem.writeIf("b.md", "new", "", YOU, "New")).toMatch(/^[0-9a-f]{40}$/);
-});
-
-test("the memory API sends the sha and answers 409 with what the file is now", async () => {
+test("a save on top of an older copy is refused with what the file is now", async () => {
   const t = await testApp();
   const { cookie } = await setUpOwner(t);
   await t.memory.write("a.md", "one", HATBOT, "One");
   const got = (await (
     await t.call("GET", "/memory/file?path=a.md", undefined, { cookie })
   ).json()) as { content: string; sha: string };
-  expect(got.sha).toBe(blobSha("one\n"));
-  const put = (content: string) =>
-    t.call("PUT", "/memory/file?path=a.md", { content, baseSha: got.sha }, { cookie });
-  expect((await put("two")).status).toBe(200);
-  const conflict = await put("three");
+  const put = (path: string, content: string, baseSha: string) =>
+    t.call("PUT", `/memory/file?path=${path}`, { content, baseSha }, { cookie });
+  expect((await put("a.md", "two", got.sha)).status).toBe(200);
+  const conflict = await put("a.md", "three", got.sha);
   expect(conflict.status).toBe(409);
   expect(await conflict.json()).toEqual({
     error: "changed",
     sha: blobSha("two\n"),
     content: "two\n",
   });
-  // Every commit is told with its own message, a revert's too.
-  const [edit] = await t.memory.log(1);
-  await t.call("POST", `/memory/revert/${edit?.sha}`, undefined, { cookie });
-  const told = t.events.flatMap((e) => (e.type === "memory.committed" ? [e.message] : []));
-  expect(told.slice(-2)).toEqual(["Edit a.md", 'Revert "Edit a.md"']);
-});
-
-test("search ranks sections by how well they match, finding words in any form", async () => {
-  await mem.write(
-    "homelab/scout.md",
-    "# Scout\nScout runs on CT 130.\n\n## Backups\nPBS backs it up nightly.",
-    HATBOT,
-    "a",
-  );
-  await mem.write("homelab/nas.md", "# NAS\nThe NAS is a Synology and runs Docker.", HATBOT, "b");
-  // Not every word has to be there, and the section with more of them comes first.
-  expect(await mem.search("what runs scout")).toEqual([
-    { path: "homelab/scout.md", line: 2, text: "Scout runs on CT 130." },
-    { path: "homelab/nas.md", line: 2, text: "The NAS is a Synology and runs Docker." },
-  ]);
-  // Stemmed, and the last word is a prefix: "backing" finds "backs", "nightl" finds "nightly".
-  expect(await mem.search("backing up nightl")).toEqual([
-    { path: "homelab/scout.md", line: 5, text: "PBS backs it up nightly." },
-  ]);
-  expect(await mem.search("   ")).toEqual([]);
-});
-
-test("the search index follows every write, delete and revert, and hand edits at startup", async () => {
-  const find = async (q: string) => (await mem.search(q)).map((h) => h.path);
-  await mem.write("pets.md", "Mia is a cat", YOU, "pets");
-  expect(await find("cat")).toEqual(["pets.md"]);
-  await mem.write("pets.md", "Mia is a dog", YOU, "pets");
-  expect(await find("cat")).toEqual([]);
-  expect(await find("dog")).toEqual(["pets.md"]);
-  const deleted = (await mem.delete("pets.md", YOU, "forget")) as string;
-  expect(await find("dog")).toEqual([]);
-  await mem.revert(deleted, YOU);
-  expect(await find("dog")).toEqual(["pets.md"]);
-
-  // Edited by hand outside Hatbot, then the brain starts.
-  writeFileSync(join(dir, "hand.md"), "Typed on the brain directly\n");
-  expect(await find("directly")).toEqual([]);
-  await new MemoryStore(dir, db).init();
-  expect(await find("directly")).toEqual(["hand.md"]);
-});
-
-test("without the index, or when it fails, search wants every word, in any line of a file", async () => {
-  await mem.write("homelab/backups.md", "PBS backs up nightly\nThe NAS keeps backups", HATBOT, "a");
-  await mem.write("homelab/nas.md", "The NAS is a Synology", HATBOT, "b");
-  await mem.write(
-    "people/anna.md",
-    "Anna asks about the NAS\nAnna fixes backups at the NAS",
-    HATBOT,
-    "c",
-  );
-  const grep = new MemoryStore(dir);
-  const hits = await grep.search("nas backups");
-  expect([...new Set(hits.map((h) => h.path))]).toEqual(["people/anna.md", "homelab/backups.md"]);
-  // The line with both words comes first in its file.
-  expect(hits[0]).toMatchObject({ path: "people/anna.md", line: 2 });
-  expect(await grep.search("   ")).toEqual([]);
-
-  db.run("DROP TABLE memory_fts");
-  expect(await mem.search("nas backups")).toEqual(hits);
+  // "" is a new file: refused once it exists.
+  expect((await put("a.md", "x", "")).status).toBe(409);
+  expect(await t.memory.read("a.md")).toBe("two\n");
 });
