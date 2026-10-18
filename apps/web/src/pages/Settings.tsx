@@ -11,6 +11,7 @@ import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { ask, askText } from "../confirm";
 import { clearDrafts } from "../drafts";
+import { day, stamp } from "../format";
 import { LoadError, loadErrorText } from "../load";
 import { parseLimit, parseName, SavedRow } from "../saved-row";
 import { setPaused, useStore } from "../store";
@@ -357,9 +358,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
           {tokens.map((t) => (
             <Row key={t.id} label={t.name}>
               <span className="val">
-                {t.lastUsedAt
-                  ? `Used ${new Date(t.lastUsedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`
-                  : "Never used"}
+                {t.lastUsedAt ? `Used ${day(t.lastUsedAt)}` : "Never used"}
               </span>
               <button type="button" className="btn sm danger-text" onClick={() => revoke(t)}>
                 Revoke
@@ -402,16 +401,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
 
 type Snapshot = { name: string; description: string; createdAt: string | null };
 
-const snapLabel = (s: Snapshot) =>
-  s.createdAt
-    ? new Date(s.createdAt).toLocaleString("en-GB", {
-        weekday: "short",
-        day: "numeric",
-        month: "short",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    : s.name;
+const snapLabel = (s: Snapshot) => (s.createdAt ? stamp(s.createdAt) : s.name);
 
 /** Rolls the desktop back to a nightly snapshot through the Proxmox API (PLAN.md §8). */
 function RollbackRow({ toast }: { toast: Toast }) {

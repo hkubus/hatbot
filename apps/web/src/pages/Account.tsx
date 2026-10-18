@@ -5,6 +5,7 @@ import { useAction } from "../action";
 import { ApiError, api, errorText } from "../api";
 import { ask } from "../confirm";
 import { deviceName } from "../device";
+import { day } from "../format";
 import { LoadError, loadErrorText } from "../load";
 import type { Toast } from "../toast";
 import { BackHead, Group, Row } from "../ui";
@@ -12,8 +13,8 @@ import { AddToAuthenticator, OtpInput } from "./Login";
 
 const changed = (what: string, ended: number) =>
   ended ? `${what}. Every other browser and app is signed out.` : what;
-const since = (iso: string) =>
-  `Since ${new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`;
+
+const since = (iso: string) => `Since ${day(iso)}`;
 
 /**
  * Signs a browser out; what went wrong, or null. One signed out already, from another tab or by

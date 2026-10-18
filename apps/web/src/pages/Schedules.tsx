@@ -10,9 +10,10 @@ import {
 import { type ReactNode, useEffect, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
-import { BotPicker, Runs, stamp, useListed } from "../automations";
+import { BotPicker, Runs, useListed } from "../automations";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm, useStoredForm } from "../form";
+import { stamp } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { navigate } from "../router";

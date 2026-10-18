@@ -36,7 +36,7 @@ import {
   setDraftFiles,
   useDraftFiles,
 } from "../drafts";
-import { plainText } from "../format";
+import { plainText, time } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LoadError, loadErrorText } from "../load";
@@ -68,9 +68,6 @@ import { splitWaiting } from "../waiting";
 
 /** How long an unread message stays on screen before it counts as seen. */
 const SEEN_AFTER_MS = 1500;
-
-const time = (iso: string) =>
-  new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
 const DAY = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" });
 const DAY_YEAR = new Intl.DateTimeFormat("en-GB", {

@@ -3,9 +3,9 @@ import { type AppSettings, describeEvery, type HeartbeatInfo } from "@hatbot/sha
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useAction } from "../action";
 import { api } from "../api";
-import { BotPicker, stamp } from "../automations";
+import { BotPicker } from "../automations";
 import { useLeaveGuard } from "../confirm";
-import { plainText } from "../format";
+import { plainText, stamp } from "../format";
 import { LoadError, loadErrorText } from "../load";
 import { navigate } from "../router";
 import { useStore } from "../store";

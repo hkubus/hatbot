@@ -4,7 +4,7 @@ import { useAction } from "../action";
 import { api } from "../api";
 import { ask } from "../confirm";
 import { NoForm } from "../form";
-import { modelName, plainText, usd } from "../format";
+import { modelName, plainText, shortStamp, time, timeOrDay, usd } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LiveView, StepIcon } from "../live";
@@ -26,19 +26,6 @@ import {
 import { ApprovalCard, isActive, Shot, StatusChip, taskLine } from "../tasks";
 import { BackHead, Group, LinkRow, Seg } from "../ui";
 import { AssistantBody } from "./Chat";
-
-const time = (iso: string) =>
-  new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-function when(iso: string) {
-  const d = new Date(iso);
-  if (d.toDateString() === new Date().toDateString()) return time(iso);
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-}
-
-const stamp = (iso: string) =>
-  new Date(iso).toDateString() === new Date().toDateString()
-    ? time(iso)
-    : `${when(iso)}, ${time(iso)}`;
 
 /** A page of finished tasks; the list pages back from the oldest shown. */
 const TASK_PAGE = 50;
@@ -179,7 +166,7 @@ export function Tasks() {
                     <td>
                       <StatusChip status={t.status} />
                     </td>
-                    <td className="muted">{when(t.startedAt ?? t.createdAt)}</td>
+                    <td className="muted">{timeOrDay(t.startedAt ?? t.createdAt)}</td>
                     <td className="num">{usd(t.costUsd)}</td>
                   </tr>
                 ))}
@@ -245,7 +232,7 @@ function Details({ task }: { task: Task }) {
         </>
       )}
       <dt>Started</dt>
-      <dd>{task.startedAt ? stamp(task.startedAt) : "–"}</dd>
+      <dd>{task.startedAt ? shortStamp(task.startedAt) : "–"}</dd>
       <dt>Model</dt>
       <dd>{modelName(task.model)}</dd>
       <dt>Trust</dt>

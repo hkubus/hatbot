@@ -4,6 +4,7 @@ import { useAction } from "../action";
 import { ApiError, api, errorText } from "../api";
 import { ask, askText, useLeaveGuard } from "../confirm";
 import { lineDiff } from "../diff";
+import { dayTime } from "../format";
 import { Icon } from "../icons";
 import { LoadError, loadErrorText } from "../load";
 import { type Doc, isDirty, loading, newDoc, readDoc, readFailed } from "../memory-doc";
@@ -20,13 +21,6 @@ type History = { path: string; log: Commit[]; older: boolean; error: string };
 const enc = encodeURIComponent;
 /** Commits in a page of History. */
 const PAGE = 50;
-const when = (iso: string) =>
-  new Date(iso).toLocaleString("en-GB", {
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 
 function DiffView({ diff }: { diff: string }) {
   const lines = diff
@@ -439,7 +433,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
               {drafts.map((d) => (
                 <button type="button" key={d.id} onClick={() => navigate(`/memory/teach/${d.id}`)}>
                   <Icon name="file" />
-                  {d.name ?? `Recording, ${when(d.startedAt)}`}
+                  {d.name ?? `Recording, ${dayTime(d.startedAt)}`}
                 </button>
               ))}
             </>
@@ -595,7 +589,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
                 <div>
                   <div>{c.message}</div>
                   <div className="who">
-                    {c.author} · {c.files.join(", ")} · {when(c.date)}
+                    {c.author} · {c.files.join(", ")} · {dayTime(c.date)}
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 4 }}>

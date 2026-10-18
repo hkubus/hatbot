@@ -4,19 +4,13 @@ import { useAction } from "../action";
 import { api } from "../api";
 import { ask } from "../confirm";
 import { NoForm } from "../form";
+import { day, timeOrDay } from "../format";
 import { useItem } from "../load";
 import { money, NegotiationChip, negotiationText } from "../negotiations";
 import { navigate } from "../router";
 import { botName, loadNegotiation, useStore } from "../store";
 import { ApprovalCard } from "../tasks";
 import { BackHead } from "../ui";
-
-const time = (iso: string) =>
-  new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-const when = (iso: string) =>
-  new Date(iso).toDateString() === new Date().toDateString()
-    ? time(iso)
-    : new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 
 const OUT: Partial<Record<NegotiationMessage["status"], string>> = {
   sending: "Sending…",
@@ -107,12 +101,7 @@ export function NegotiationPage({ id }: { id: number }) {
             <dt>Delivery</dt>
             <dd>{m.delivery}</dd>
             <dt>Until</dt>
-            <dd>
-              {new Date(m.expiresAt).toLocaleDateString("en-GB", {
-                day: "numeric",
-                month: "short",
-              })}
-            </dd>
+            <dd>{day(m.expiresAt)}</dd>
             <dt>Contact details</dt>
             <dd>{m.allow.length ? m.allow.join(", ") : "None"}</dd>
             {a && (
@@ -154,7 +143,7 @@ export function NegotiationPage({ id }: { id: number }) {
                   key={x.id}
                   className={`tl-step no-icon ${x.status === "failed" ? "tl-error" : ""}`}
                 >
-                  <span className="t">{when(x.sentAt ?? x.createdAt)}</span>
+                  <span className="t">{timeOrDay(x.sentAt ?? x.createdAt)}</span>
                   <div className="tl-text">
                     <div>
                       <b>{x.direction === "in" ? "Seller" : bot}</b> {x.text}

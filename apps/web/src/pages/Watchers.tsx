@@ -13,9 +13,10 @@ import {
 import { useEffect, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
-import { BotPicker, Runs, stamp, useListed } from "../automations";
+import { BotPicker, Runs, useListed } from "../automations";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm, useStoredForm } from "../form";
+import { stamp } from "../format";
 import { navigate } from "../router";
 import { loadPlugins, putWatcher, useStore } from "../store";
 import { Switch } from "../switch";

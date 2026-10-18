@@ -8,7 +8,7 @@ import type {
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useWidth } from "../chart";
-import { modelName, usd } from "../format";
+import { day, modelName, time, usd } from "../format";
 import { LoadError, loadErrorText } from "../load";
 import { spendAxis, withToday } from "../spend";
 import { useStore } from "../store";
@@ -35,10 +35,6 @@ const purposeName = (p: string) =>
 const parseDay = (d: string) => new Date(`${d}T12:00:00`);
 const fmtDay = (d: string) =>
   parseDay(d).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
-const fmtShort = (d: string) =>
-  parseDay(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-const fmtHour = (iso: string) =>
-  new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
 /** One bar: its dollars, the label under it (if any), and what the tooltip and table say. */
 type Point = { key: string; usd: number; axis?: string; title: string; detail: string };
@@ -278,14 +274,14 @@ export function Spend() {
   const hourPoints: Point[] = hours.map((h, i) => ({
     key: h.hour,
     usd: h.usd,
-    axis: i % 6 === 0 ? fmtHour(h.hour) : undefined,
-    title: `${fmtHour(h.hour)}–${fmtHour(new Date(Date.parse(h.hour) + 3600_000).toISOString())}`,
+    axis: i % 6 === 0 ? time(h.hour) : undefined,
+    title: `${time(h.hour)}–${time(new Date(Date.parse(h.hour) + 3600_000).toISOString())}`,
     detail: `${usd(h.usd)} · ${tokenText(h.tokens)} tokens`,
   }));
   const dayPoints: Point[] = days.map((d, i) => ({
     key: d.date,
     usd: d.usd,
-    axis: i % 7 === 0 ? fmtShort(d.date) : undefined,
+    axis: i % 7 === 0 ? day(parseDay(d.date)) : undefined,
     title: fmtDay(d.date),
     detail: usd(d.usd),
   }));
