@@ -22,10 +22,6 @@ const Preview = z.object({ source: WatchSourceInput, botId: z.string().optional(
 export const watcherRoutes = new Hono<AppEnv>()
   .use("/watchers", requireAuth)
   .use("/watchers/*", requireAuth)
-  .onError((err, c) => {
-    if (err instanceof WatchError) return c.json({ error: err.message }, err.status);
-    throw err;
-  })
   .get("/watchers", (c) => c.json(c.var.watchers.list()))
   .post("/watchers", json(CreateWatcher), async (c) => {
     knownBot(c, c.req.valid("json").botId);

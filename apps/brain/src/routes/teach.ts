@@ -16,10 +16,6 @@ const id = (raw: string) => {
 export const teachRoutes = new Hono<AppEnv>()
   .use("/teach", requireAuth)
   .use("/teach/*", requireAuth)
-  .onError((err, c) => {
-    if (err instanceof TeachError) return c.json({ error: err.message }, err.status);
-    throw err;
-  })
   .get("/teach", (c) => c.json(c.var.teach.current()))
   // replaces: a skill to record again; the draft keeps its name.
   .post("/teach/start", json(z.object({ replaces: SaveSkill.shape.name.optional() })), async (c) =>

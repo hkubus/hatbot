@@ -6,6 +6,8 @@ import { HTTPException } from "hono/http-exception";
 import type { AuthService } from "./auth/service";
 import { compressJson } from "./compress";
 import type { AppEnv, Deps } from "./context";
+import { UserError } from "./errors";
+import { PluginError } from "./plugins/plugin";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
 import { botRoutes } from "./routes/bots";
@@ -80,6 +82,9 @@ export function createApp(deps: Deps) {
         err.res ??
         c.json({ error: err.message || "Something in that request isn't right." }, err.status)
       );
+    if (err instanceof UserError) return c.json({ error: err.message }, err.status);
+    // A plugin's own refusal, such as bad settings, is shown as it is. Its status is the service's.
+    if (err instanceof PluginError) return c.json({ error: err.message }, 400);
     console.error(err);
     return c.json({ error: "Something went wrong." }, 500);
   });

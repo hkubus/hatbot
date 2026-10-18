@@ -5,6 +5,7 @@ import type { CreateBot, UpdateBot } from "@hatbot/shared";
 import { BOT_COLORS, type Bot, HATBOT_ID } from "@hatbot/shared";
 import type { z } from "zod";
 import type { Db } from "./db";
+import { UserError } from "./errors";
 import type { EventBus } from "./events";
 import { type Author, HATBOT } from "./memory/store";
 
@@ -32,7 +33,7 @@ const toBot = (r: Row): Bot => ({
   createdAt: r.created_at,
 });
 
-export class BotError extends Error {}
+export class BotError extends UserError {}
 
 /** What a deleted bot's schedules, triggers and watchers were: they're Hatbot's now, switched off. */
 export type Moved = { schedules: number[]; triggers: number[]; watchers: number[] };

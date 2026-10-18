@@ -2,7 +2,6 @@ import { CreateSchedule, CreateTrigger, UpdateSchedule, UpdateTrigger } from "@h
 import { type Context, Hono } from "hono";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
-import { ScheduleError } from "../schedules";
 import type { Received } from "../triggers";
 import { json } from "./util";
 
@@ -23,12 +22,7 @@ export const scheduleRoutes = new Hono<AppEnv>()
   .get("/schedules", (c) => c.json(c.var.schedules.list()))
   .post("/schedules", json(CreateSchedule), (c) => {
     if (!knownBot(c, c.req.valid("json").botId)) return c.json({ error: "No such bot." }, 400);
-    try {
-      return c.json(c.var.schedules.create(c.req.valid("json"), "owner"), 201);
-    } catch (err) {
-      if (err instanceof ScheduleError) return c.json({ error: err.message }, 400);
-      throw err;
-    }
+    return c.json(c.var.schedules.create(c.req.valid("json"), "owner"), 201);
   })
   .get("/schedules/:id", (c) => {
     const s = c.var.schedules.get(id(c));
@@ -36,13 +30,8 @@ export const scheduleRoutes = new Hono<AppEnv>()
   })
   .patch("/schedules/:id", json(UpdateSchedule), (c) => {
     if (!knownBot(c, c.req.valid("json").botId)) return c.json({ error: "No such bot." }, 400);
-    try {
-      const s = c.var.schedules.update(id(c), c.req.valid("json"));
-      return s ? c.json(s) : c.json({ error: "That's gone." }, 404);
-    } catch (err) {
-      if (err instanceof ScheduleError) return c.json({ error: err.message }, 400);
-      throw err;
-    }
+    const s = c.var.schedules.update(id(c), c.req.valid("json"));
+    return s ? c.json(s) : c.json({ error: "That's gone." }, 404);
   })
   .delete("/schedules/:id", (c) =>
     c.var.schedules.delete(id(c)) ? c.json({ ok: true }) : c.json({ error: "That's gone." }, 404),

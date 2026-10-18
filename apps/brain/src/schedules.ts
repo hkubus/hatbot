@@ -3,6 +3,7 @@ import { HATBOT_ID, type Schedule } from "@hatbot/shared";
 import { Cron } from "croner";
 import { orphaned } from "./bots";
 import type { Db } from "./db";
+import { UserError } from "./errors";
 import type { EventBus } from "./events";
 import type { SettingsStore } from "./settings";
 import type { Tasks } from "./tasks/service";
@@ -10,7 +11,7 @@ import type { Tasks } from "./tasks/service";
 /** Runs closer together than this cost too much to be worth it. */
 const MIN_GAP_MS = 5 * 60_000;
 
-export class ScheduleError extends Error {}
+export class ScheduleError extends UserError {}
 
 type Row = {
   id: number;

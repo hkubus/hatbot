@@ -35,9 +35,4 @@ export const pluginRoutes = new Hono<AppEnv>()
       console.error("plugin test failed", err);
       return c.json({ ok: false, message: "The test failed; see the brain's log." });
     }
-  })
-  // A plugin's own refusal, such as bad settings, is shown as it is; anything else is the app's.
-  .onError((err, c) => {
-    if (err instanceof PluginError) return c.json({ error: err.message }, 400);
-    throw err;
   });

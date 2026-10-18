@@ -10,7 +10,6 @@ import { z } from "zod";
 import type { Thread } from "../agent/thread";
 import { MAX_ATTACHMENT_BYTES } from "../attachments";
 import { requireAuth } from "../auth/middleware";
-import { BotError } from "../bots";
 import type { AppEnv } from "../context";
 import { BudgetError } from "../spend";
 import { json, query, signedOut } from "./util";
@@ -90,14 +89,12 @@ export const threadRoutes = new Hono<AppEnv>()
   // Group chats (PLAN.md §14.4): bots' own chats come and go with the bots.
   .post("/conversations", json(CreateGroup), (c) => {
     const { title, botIds } = c.req.valid("json");
-    return groupError(() => c.json(c.var.chats.createGroup(title, botIds), 201), c);
+    return c.json(c.var.chats.createGroup(title, botIds), 201);
   })
-  .patch("/conversations/:id", json(UpdateGroup), (c) =>
-    groupError(() => {
-      const group = c.var.chats.updateGroup(Number(c.req.param("id")), c.req.valid("json"));
-      return group ? c.json(group) : c.json({ error: "That's gone." }, 404);
-    }, c),
-  )
+  .patch("/conversations/:id", json(UpdateGroup), (c) => {
+    const group = c.var.chats.updateGroup(Number(c.req.param("id")), c.req.valid("json"));
+    return group ? c.json(group) : c.json({ error: "That's gone." }, 404);
+  })
   .delete("/conversations/:id", (c) =>
     c.var.chats.deleteGroup(Number(c.req.param("id")))
       ? c.json({ ok: true })
@@ -147,15 +144,6 @@ for (const [at, threadOf] of [
         return c.json({ ok: true });
       }),
     );
-}
-
-function groupError(f: () => Response, c: Ctx): Response {
-  try {
-    return f();
-  } catch (err) {
-    if (err instanceof BotError) return c.json({ error: err.message }, 400);
-    throw err;
-  }
 }
 
 /** A deleted bot's chat is gone from the app; a page still showing it can't start the bot again. */
