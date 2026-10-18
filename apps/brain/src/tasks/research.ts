@@ -373,6 +373,8 @@ function linksSeen(messages: Anthropic.Beta.BetaMessageParam[], sources: Researc
     for (const m of text.matchAll(LINK)) {
       seen.add(linkKey(m[0]));
       seen.add(hostKey(m[0]));
+      // Without its tracking parameters and fragment too: dropping them carries nothing.
+      if (URL.canParse(m[0])) seen.add(linkKey(pageUrl(m[0])));
     }
   };
   for (const m of messages) {

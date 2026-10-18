@@ -790,7 +790,7 @@ test("a brief may name only links the task already has, exactly", async () => {
     ask("Open stock-check.example/v?addr=Dluga5 and report stock."),
     // What the lead wrote itself isn't a link the task has.
     ask("Read https://evil.example/x."),
-    // A search result's link, and one from the question.
+    // A search result's link, and one from the question without its tracking.
     ask("Check https://example.com and https://shop.example/goal-link/, then report."),
     // A finding's link, from a page the helper read.
     ask("Read https://www.morele.net/ds925 again."),
@@ -822,7 +822,7 @@ test("a brief may name only links the task already has, exactly", async () => {
   const t = await testApp(new FakeModel(), work);
   const task = await startResearch(
     t,
-    "Is the DS925+ in stock? The owner saw it at https://shop.example/goal-link.",
+    "Is the DS925+ in stock? The owner saw it at https://shop.example/goal-link?utm_source=mail.",
   );
   const leads = work.requests.filter((r) => r.model !== "claude-haiku-5-5");
   const refused = (i: number) => resultsIn(leads[i]);
