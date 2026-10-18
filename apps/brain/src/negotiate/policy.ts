@@ -464,6 +464,8 @@ const RELATIVE: RegExp[] = [
   // Any share but 100%, which is a manner of speaking ("sprawna w 100%").
   /(?<![\d.,])(?!100(?![\d.,]))\d+(?:[.,]\d+)?\s?(?:%|procent\p{L}*|percent)/giu,
   /(?<![\p{L}])(?:netto|(?:\+|plus)\s*vat)(?![\p{L}])/giu,
+  // Shipping on top with no amount: "1400 zł + wysyłka" is more than 1400 zł, by how much isn't said.
+  /(?:\+|(?<![\p{L}])plus)\s*(?:(?:koszt\p{L}*|op[łl]at\p{L}*|cost\s+of)\s+)?(?:wysy[łl]k\p{L}*|przesy[łl]k\p{L}*|dostaw\p{L}*|kurier\p{L}*|shipping|postage|delivery)(?![\p{L}])(?!\s*(?:\p{L}+\s+){0,2}\d)/giu,
   /\d+(?:[.,]\d+)?\s*(?:zł|zl|pln|złotych)?\s+(?:wi[ęe]cej|mniej|taniej|dro[żz]ej|extra|more|less|cheaper|off)(?![\p{L}])/giu,
   /(?<![\p{L}])(?:zej[śs][ćc]|zejd\p{L}*|opu[śs]ci\p{L}*|opuszcz\p{L}*|obni[żz]\p{L}*|podnie[śs]\p{L}*|podnios\p{L}*|podbi\p{L}*|zwi[ęe]ksz\p{L}*|spu[śs]ci\p{L}*|dorzuc\p{L}*|do[łl]o[żz]\p{L}*)\s+(?:o\s+)?\d+/giu,
   /(?<![\p{L}])(?:(?:\d+|dwa|trzy|two|three)\s*(?:x|×|razy|times)\s+(?:tyle|that|as\s+much)|podw[óo]jnie|potr[óo]jnie|pay\s+double|double\s+(?:the|your|that|it|what)|triple\s+(?:the|your|that|it)|o\s+po[łl]ow[ęe]|(?:p[óo][łl]|po[łl]ow[ęe]|po[łl]owa)\s+ceny|half\s+(?:the\s+)?price|half\s+of\s+(?:the|your|what))(?![\p{L}])/giu,
@@ -1305,6 +1307,10 @@ const ADDRESS: { re: RegExp; street?: number; city?: number }[] = [
 ];
 const APPS =
   /(?<![\p{L}])(?:whats\s?app\p{L}*|wh?ats?\s?up|[łlw]h?[ao](?:ts|c|s)ap+\p{L}*|wa\.me|telegram\p{L}*|t\.me|signal\p{L}*|viber\p{L}*|messenger\p{L}*|facebook\p{L}*|fb\.com|fejs\p{L}*|instagram\p{L}*|insta\p{L}*|snap\p{L}*|whatsik\p{L}*|whats-app\p{L}*|wechat|discord\p{L}*|skype\p{L}*|threema|sms\p{L}*|esem\p{L}*|imessage)(?![\p{L}])/iu;
+/** A text message a carrier sends: "kod odbioru dostanie Pan SMS-em od InPost" isn't another app. */
+const SMS = /(?<![\p{L}])(?:sms|esem)\p{L}*/giu;
+const CARRIER =
+  /(?<![\p{L}])(?:inpost\p{L}*|paczkomat\p{L}*|paczk\p{L}*|przesy[łl]k\p{L}*|kurier\p{L}*|dpd|dhl|gls|poczt\p{L}*|orlen\p{L}*|kod\p{L}*\s+odbioru)(?![\p{L}])/iu;
 /** WA, TG, FB, IG: on their own, not in Wa-wa or a domain. */
 const APP_SHORT =
   /(?<![\p{L}\p{N}.@-])(?:wa|tg|fb|ig|snap)(?![\p{L}\p{N}-])|(?<![\p{L}])na\s+tele(?![\p{L}])/iu;
@@ -1334,7 +1340,11 @@ export function contactsIn(raw: string): { kind: MandateContact; raw: string }[]
     const at = address.index ?? 0;
     out.push({ kind: "address", raw: text.slice(at, at + 40).split(/[,;\n]/)[0] ?? "" });
   }
-  const app = APPS.exec(text)?.[0] ?? APP_SHORT.exec(text)?.[0];
+  const apps = text
+    .split(/(?<=[.!?\n])/)
+    .map((s) => (CARRIER.test(s) ? s.replace(SMS, " ") : s))
+    .join("");
+  const app = APPS.exec(apps)?.[0] ?? APP_SHORT.exec(text)?.[0];
   if (app) out.push({ kind: "apps", raw: app });
   return out;
 }

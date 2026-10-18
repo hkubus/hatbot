@@ -1181,6 +1181,13 @@ describe("every known way around the check asks", () => {
       rows: [["Zgoda", { agree: true, offer: 1000 }]],
     },
     {
+      what: "a seller's price with shipping on top, by an amount not said",
+      n: tight(),
+      f: sellerSaid("1000 zł + wysyłka"),
+      says: "the seller's price can't be read",
+      rows: [["Zgoda, 1000 zł.", { agree: true, offer: 1000 }]],
+    },
+    {
       what: "paying part now and the rest later",
       n: tight(),
       f: sellerSaid("Najniżej 1500 zł"),
@@ -1190,6 +1197,9 @@ describe("every known way around the check asks", () => {
         ["Dam 1000 zł, a brakującą kwotę dopłacę za tydzień.", { offer: 1000 }],
         ["Dam 1000 zł i resztę po sprawdzeniu karty.", { offer: 1000 }],
         ["I'll pay 1000 now and the rest next week.", { offer: 1000 }],
+        ["Dam 1000 zł + wysyłka.", { offer: 1000 }],
+        ["Dam 1000 zł plus koszt wysyłki.", { offer: 1000 }],
+        ["I'll pay 1000 plus shipping.", { offer: 1000 }],
       ],
     },
     {

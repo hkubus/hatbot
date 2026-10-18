@@ -1514,6 +1514,8 @@ test("the scam screen lets graphics cards, parcel codes, serial numbers and the 
     "Wsp. do monitora gratis",
     "Kod z aplikacji InPost do odbioru",
     "Kod potwierdzenia nadania mam",
+    "Wyślę jutro, a kod odbioru dostanie Pan SMS-em od InPost.",
+    "Paczkomat wyśle esemesa z kodem",
     "SN: AB12 CD34 EF56 GH78",
     "Wysyłka przez www.olx.pl.",
     "Wysyłka przez www.olx.pl, ok?",
@@ -1525,6 +1527,7 @@ test("the scam screen lets graphics cards, parcel codes, serial numbers and the 
     "Podaj numer karty płatniczej",
     "Wyślij dane karty kredytowej",
     "Pisz na wsp",
+    "Paczka jutro. Resztę ustalimy SMS-em",
     "Kod z aplikacji bankowej poproszę",
     "Podaj kod do potwierdzenia transakcji",
   ])
