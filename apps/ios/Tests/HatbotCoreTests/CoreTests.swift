@@ -577,6 +577,8 @@ final class FoldTests: XCTestCase {
     XCTAssertEqual(bot.color, .teal)
     let newer = json.replacingOccurrences(of: "\"cat\"", with: "\"rocket\"")
     XCTAssertEqual(try JSONDecoder().decode(Bot.self, from: Data(newer.utf8)).icon, .hat)
+    let older = #"{"id":"chef","name":"Chef","instructions":"","createdAt":""}"#
+    XCTAssertEqual(try JSONDecoder().decode(Bot.self, from: Data(older.utf8)).color, .amber)
     XCTAssertEqual(Bot.Icon.code.symbol, "chevron.left.forwardslash.chevron.right")
   }
 
