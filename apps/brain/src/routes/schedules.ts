@@ -125,7 +125,7 @@ const kumaHook = async (c: Context<AppEnv>) => {
     console.log(
       `${hook}: refused, ${token ? "wrong secret" : "no secret"} or no such Kuma trigger`,
     );
-    return c.json({ error: "unauthorized" }, 401);
+    return c.json({ error: "You're not signed in." }, 401);
   }
   const event = await kumaEvent(c);
   if (event === "too large") return c.json({ error: "too large" }, 413);
@@ -155,7 +155,7 @@ export const hookRoutes = new Hono<AppEnv>()
     const check = triggers.verifyWebhook(id(c), (h) => c.req.header(h), bytes);
     if (!check.ok) {
       console.log(`${hook}: refused, missing or wrong signature, or no such webhook trigger`);
-      return c.json({ error: "unauthorized" }, 401);
+      return c.json({ error: "You're not signed in." }, 401);
     }
     const r = triggers.receiveWebhook(
       id(c),

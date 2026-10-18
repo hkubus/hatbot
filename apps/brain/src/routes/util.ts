@@ -24,7 +24,7 @@ export const signedOut = (c: Context) => {
 export const json = <S extends z.ZodType>(schema: S) =>
   zValidator("json", schema, (r, c) =>
     signedOut(c)
-      ? c.json({ error: "unauthorized" }, 401)
+      ? c.json({ error: "You're not signed in." }, 401)
       : r.success
         ? undefined
         : badRequest(c, r.error),
