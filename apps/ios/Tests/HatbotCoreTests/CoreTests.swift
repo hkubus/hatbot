@@ -363,6 +363,17 @@ final class FormTests: XCTestCase {
     XCTAssertEqual(Format.amount(Format.amountText(12.34, locale: pl), locale: pl), 12.34)
   }
 
+  /// Save stays off until a limit field reads as a change: not for a limit shown rounded to the cent,
+  /// and not for a field left blank, which would save the last number it read.
+  func testSaveStaysOffForALimitShownRoundedOrBlank() {
+    let us = Locale(identifier: "en_US")
+    let shown = Format.amountText(0.125, locale: us)
+    XCTAssertNotEqual(Format.amount(shown, locale: us), 0.125)
+    XCTAssertEqual(Format.typedAmount(shown, editing: 0.125, locale: us), 0.125)
+    XCTAssertEqual(Format.typedAmount("0.5", editing: 0.125, locale: us), 0.5)
+    XCTAssertNil(Format.typedAmount("", editing: 5, locale: us))
+  }
+
   /// A schedule's page has changes only when you've made some, repeating or not. The time a repeating
   /// one would start from if made a one-off is made from the clock, and isn't one.
   func testAScheduleUnchangedIsUnchanged() throws {
