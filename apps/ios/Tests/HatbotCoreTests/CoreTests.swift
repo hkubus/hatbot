@@ -348,6 +348,23 @@ final class ChatTests: XCTestCase {
     XCTAssertEqual(Markdown.parse("```chart\n\(bad)\n```"), [.code(language: "chart", code: bad)])
   }
 
+  /// A block can name a file for its values instead; the brain's values go into it and through the same
+  /// checks. Values typed in as well make it neither.
+  func testChartFromFile() throws {
+    let json = #"{"type":"line","title":"CPU","unit":"%","data":812}"#
+    guard case let .chartFile(file)? = Markdown.parse("```chart\n\(json)\n```").first else {
+      return XCTFail("not a file chart")
+    }
+    XCTAssertEqual(file.id, 812)
+    let spec = try XCTUnwrap(file.spec(merging: Data(#"{"x":[1,2],"series":[{"data":[5,null]}],"title":"no"}"#.utf8)))
+    XCTAssertEqual([spec.title, spec.unit], ["CPU", "%"])
+    XCTAssertEqual(spec.series[0].data, [5, nil])
+    XCTAssertNil(file.spec(merging: Data(#"{"x":[1,2],"series":[{"data":[5]}]}"#.utf8)))
+
+    let both = #"{"type":"line","data":812,"x":["a"],"series":[{"data":[1]}]}"#
+    XCTAssertEqual(Markdown.parse("```chart\n\(both)\n```"), [.code(language: "chart", code: both)])
+  }
+
   /// The other kinds check out by the shared spec's rules, and each is turned down where they matter.
   func testChartKinds() throws {
     let scatter = try XCTUnwrap(ChartSpec.parse(

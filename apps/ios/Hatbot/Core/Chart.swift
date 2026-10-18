@@ -1,7 +1,7 @@
 // Charts in replies: a ```chart fenced block holding this JSON (packages/shared/src/chart.ts).
 // Line and bar keep their values in `x` and `series`; scatter, range, matrix and timeline each in
 // their own part, set for that kind only. ChartView draws all six; one that doesn't check out stays
-// a code block.
+// a code block. A line, bar or scatter block can name an attachment for its values instead (ChartFile).
 import Foundation
 
 struct ChartSpec: Decodable, Equatable, Sendable {
@@ -142,7 +142,7 @@ struct ChartSpec: Decodable, Equatable, Sendable {
   var timeline: Timeline?
 
   private enum CodingKeys: String, CodingKey {
-    case type, title, unit, stacked, horizontal, x, series, markName, rows, columns, values, events
+    case type, title, unit, stacked, horizontal, x, series, markName, rows, columns, values, events, data
   }
 
   /// x labels are strings or numbers.
@@ -162,6 +162,10 @@ struct ChartSpec: Decodable, Equatable, Sendable {
   init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     type = try c.decode(Kind.self, forKey: .type)
+    // Values typed in and a file as well: which one is meant isn't clear, so neither is drawn.
+    if c.contains(.data) {
+      throw DecodingError.dataCorruptedError(forKey: .data, in: c, debugDescription: "values and a file")
+    }
     title = try c.optional(.title)
     switch type {
     case .line, .bar:
@@ -183,9 +187,10 @@ struct ChartSpec: Decodable, Equatable, Sendable {
   }
 
   /// The spec in a chart block, or nil if it isn't one.
-  static func parse(_ source: String) -> ChartSpec? {
-    guard let spec = try? JSONDecoder().decode(ChartSpec.self, from: Data(source.utf8)), spec.checksOut
-    else { return nil }
+  static func parse(_ source: String) -> ChartSpec? { parse(Data(source.utf8)) }
+
+  static func parse(_ json: Data) -> ChartSpec? {
+    guard let spec = try? JSONDecoder().decode(ChartSpec.self, from: json), spec.checksOut else { return nil }
     return spec
   }
 
@@ -335,6 +340,75 @@ struct ChartSpec: Decodable, Equatable, Sendable {
     f.minimumFractionDigits = fraction.lowerBound
     f.maximumFractionDigits = fraction.upperBound
     return f.string(from: NSNumber(value: v)) ?? String(v)
+  }
+}
+
+/// A line, bar or scatter block with `"data": <attachment id>` in place of its values (`x` and
+/// `series`). The brain reads the file (CSV or JSON), thins it to what a block may hold and answers
+/// GET /attachments/:id/chart with the values; merged into the block's own keys, they make a ChartSpec
+/// that goes through the same checks as one typed in.
+struct ChartFile: Equatable, Sendable {
+  var id: Int
+  var type: ChartSpec.Kind
+  var title: String?
+  /// The block's keys less `data`, as JSON.
+  private var keys: Data
+
+  private struct Head: Decodable {
+    var type: ChartSpec.Kind
+    var data: Int
+    var title: String?
+  }
+
+  /// The file block in a chart block, or nil if it isn't one.
+  static func parse(_ source: String) -> ChartFile? {
+    let json = Data(source.utf8)
+    guard let head = try? JSONDecoder().decode(Head.self, from: json), head.data > 0,
+      [ChartSpec.Kind.line, .bar, .scatter].contains(head.type),
+      var block = (try? JSONSerialization.jsonObject(with: json)) as? [String: Any]
+    else { return nil }
+    block["data"] = nil
+    let values = head.type == .scatter ? ["series"] : ["x", "series"]
+    guard !values.contains(where: { block[$0] != nil }),
+      let keys = try? JSONSerialization.data(withJSONObject: block)
+    else { return nil }
+    let file = ChartFile(id: head.data, type: head.type, title: head.title, keys: keys)
+    // The rest of the block (title, unit, names) checks out the same way a typed one does, so it's
+    // tried with a single made-up value.
+    let stand = head.type == .scatter
+      ? #"{"series":[{"points":[{"x":0,"y":0}]}]}"#
+      : #"{"x":[0],"series":[{"data":[0]}]}"#
+    return file.spec(merging: Data(stand.utf8)) == nil ? nil : file
+  }
+
+  /// The chart with the brain's values in it, or nil if they don't check out. Only the values are
+  /// taken from the answer; the title and units stay the block's.
+  func spec(merging response: Data) -> ChartSpec? {
+    guard var block = (try? JSONSerialization.jsonObject(with: keys)) as? [String: Any],
+      let answer = (try? JSONSerialization.jsonObject(with: response)) as? [String: Any]
+    else { return nil }
+    for key in type == .scatter ? ["series"] : ["x", "series"] { block[key] = answer[key] }
+    return (try? JSONSerialization.data(withJSONObject: block)).flatMap { ChartSpec.parse($0) }
+  }
+
+  /// The brain's answers by server, file and kind, kept for the session: the chat draws its charts
+  /// again as you scroll.
+  nonisolated(unsafe) private static let answers = NSCache<NSString, CacheBox<Data>>()
+
+  /// The chart, fetched; nil if the values don't check out. Throws APIError with the brain's sentence
+  /// when it can't make one from the file.
+  func load(_ api: API) async throws -> ChartSpec? {
+    let path = "/attachments/\(id)/chart?type=\(type.rawValue)"
+    let key = NSString(string: api.server.absoluteString + path)
+    if let hit = Self.answers.object(forKey: key) { return spec(merging: hit.value) }
+    let data = try await api.data(path)
+    Self.answers.setObject(CacheBox(data), forKey: key)
+    return spec(merging: data)
+  }
+
+  /// Signed out.
+  static func clear() {
+    answers.removeAllObjects()
   }
 }
 

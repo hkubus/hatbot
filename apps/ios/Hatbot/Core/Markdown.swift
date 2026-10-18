@@ -19,6 +19,8 @@ enum MDBlock: Equatable, Sendable {
   case code(language: String?, code: String)
   /// A ```chart block that checks out; one that doesn't stays code.
   case chart(ChartSpec)
+  /// A ```chart block whose values are in a file, fetched when it's shown.
+  case chartFile(ChartFile)
   /// A ```chart block still streaming in.
   case chartPending
   case table(header: [String], rows: [[String]])
@@ -57,6 +59,7 @@ enum Markdown {
         items.map { ($0.marker == "•" ? "" : "\($0.marker) ") + inline($0.text) }.joined(separator: "\n")
       case let .code(_, code): code
       case let .chart(spec): spec.title ?? "A chart."
+      case let .chartFile(file): file.title ?? "A chart."
       case .chartPending, .rule: ""
       case let .table(header, rows):
         ([header] + rows).map { $0.map(inline).joined(separator: ", ") }.joined(separator: "\n")
@@ -110,6 +113,10 @@ enum Markdown {
         if language == "chart" {
           if let spec = ChartSpec.parse(source) {
             blocks.append(.chart(spec))
+            continue
+          }
+          if let file = ChartFile.parse(source) {
+            blocks.append(.chartFile(file))
             continue
           }
           if !closed {
