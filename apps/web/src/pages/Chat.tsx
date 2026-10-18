@@ -283,6 +283,28 @@ function BoxResult({ id }: { id: number }) {
   );
 }
 
+/** A note a box's page sent (hatbox.send): the box's words, neither yours nor the bot's, as plain text. */
+function BoxNote({ m }: { m: ThreadMessage }) {
+  const box = useStore((s) => (m.boxId ? s.boxes[m.boxId] : null));
+  useEffect(() => {
+    if (m.boxId) ensureBox(m.boxId);
+  }, [m.boxId]);
+  return (
+    <>
+      <div className="body">
+        <p className="box-note">
+          <b>From {box?.title ?? "a box"}:</b> {m.text}
+        </p>
+      </div>
+      <Meta
+        m={m}
+        copy={m.text}
+        open={box ? { to: `/boxes/${box.id}`, label: "Open box" } : undefined}
+      />
+    </>
+  );
+}
+
 /**
  * Hatbot's reply, with the task it started (if any) working under it. Once the task finishes or fails,
  * its bot writes the reply again to say what came of it; if it doesn't, the task's result shows in the
@@ -596,6 +618,8 @@ export const Message = memo(function Message({
     inner = <TaskMessage m={m} taskId={m.taskId} />;
   } else if (m.kind === "schedule" && m.scheduleId) {
     inner = <ScheduleMessage m={m} scheduleId={m.scheduleId} />;
+  } else if (m.kind === "box") {
+    inner = <BoxNote m={m} />;
   } else {
     inner = (
       <ReplyMessage m={m} progress={progress} retryable={retryable} answerable={answerable} />
@@ -896,7 +920,9 @@ export function Chat({ id }: { id: number }) {
   };
 
   // Only the latest reply can be tried again, and only if it errored.
-  const lastReply = messages.findLast((m) => m.role === "assistant" && m.kind !== "command");
+  const lastReply = messages.findLast(
+    (m) => m.role === "assistant" && m.kind !== "command" && m.kind !== "box",
+  );
   const retryableId = lastReply?.status === "error" ? lastReply.id : 0;
   // A question's choices stay tappable until anything comes after it.
   const answerableId = messages.at(-1)?.choices?.length ? (messages.at(-1)?.id ?? 0) : 0;
@@ -917,7 +943,8 @@ export function Chat({ id }: { id: number }) {
   // In a group, the bot's name above each run of its messages.
   let lastSender: string | null = null;
   const senderBefore = (m: ThreadMessage) => {
-    const sender = m.role === "assistant" ? m.botId : null;
+    // A box's note isn't its bot's words.
+    const sender = m.role === "assistant" && m.kind !== "box" ? m.botId : null;
     const show = members && sender && sender !== lastSender && m.kind !== "command";
     lastSender = sender;
     return show ? (

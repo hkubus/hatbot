@@ -3245,6 +3245,11 @@ a.row-main:hover {
   white-space: nowrap;
   font-weight: 600;
 }
+.box-note {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .box-line svg.i {
   flex: none;
   width: 15px;

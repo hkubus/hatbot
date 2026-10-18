@@ -14,6 +14,7 @@ import {
   MAX_BOX_STORE,
   MAX_BOX_VALUE,
 } from "@hatbot/shared";
+import type { Chats } from "./agent/chats";
 import { type CreateParams, type ModelClient, modelErrorText, oneShot } from "./agent/model";
 import { sameText, secretKey } from "./auth/keys";
 import type { Db } from "./db";
@@ -56,13 +57,16 @@ const OPEN_MS = 10 * 60_000;
 /** hatbox.ask's model, and what it may write when the page doesn't say, thinking included. */
 export const BOX_ASK_MODEL = "claude-haiku-5-5";
 const ASK_TOKENS = 4000;
+/** Notes a box's page may put in the chat in an hour (hatbox.send). */
+const NOTES_PER_HOUR = 5;
 
-/** What hatbox.ask needs: the boxes get it once the services it needs exist (connect). */
+/** What hatbox.ask and .send need: the boxes get it once the chats exist (connect). */
 export type BoxDeps = {
   settings: SettingsStore;
   spend: Spend;
   /** The background model, for hatbox.ask. */
   model: ModelClient;
+  chats: Chats;
 };
 
 export class Boxes {
@@ -83,7 +87,7 @@ export class Boxes {
     return new Date(this.clock()).toISOString();
   }
 
-  /** Called once the services hatbox.ask needs exist. */
+  /** Called once the chats exist: hatbox.ask and .send need them. */
   connect(d: BoxDeps) {
     this.d = d;
   }
@@ -274,6 +278,9 @@ export class Boxes {
       }
       case "ask":
         return { value: await this.ask(this.existing(id), c) };
+      case "send":
+        this.send(this.existing(id), c.text);
+        return {};
     }
   }
 
@@ -324,6 +331,20 @@ export class Boxes {
     } finally {
       this.asking -= most;
     }
+  }
+
+  /** A note from the page in the box's chat (hatbox.send), a few an hour. */
+  private send(box: Box, text: string) {
+    const since = new Date(this.clock() - 3600_000).toISOString();
+    const sent =
+      this.db
+        .query<{ n: number }, [number, string]>(
+          "SELECT count(*) AS n FROM messages WHERE box_id = ? AND kind = 'box' AND created_at > ?",
+        )
+        .get(box.id, since)?.n ?? 0;
+    if (sent >= NOTES_PER_HOUR)
+      throw new BoxError(`A box sends at most ${NOTES_PER_HOUR} notes an hour.`, 429);
+    this.connected().chats.boxNote(box, text);
   }
 
   /** Everything the box's page saved, by key. */
@@ -428,6 +449,7 @@ const HATBOX = `(() => {
       if (maxTokens !== undefined) args.maxTokens = Number(maxTokens);
       return call("ask", args);
     },
+    send: (text) => call("send", { text: String(text) }),
     theme,
   });
 })();`;
