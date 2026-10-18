@@ -3,22 +3,13 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, normalize, sep } from "node:path";
+import type { Commit, MemoryFile, MemoryHit } from "@hatbot/shared";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
 import { ftsQuery } from "../search";
 
 export type Author = { name: string; email: string };
 export const HATBOT: Author = { name: "Hatbot", email: "hatbot@local" };
-
-export type MemoryFile = { path: string; size: number };
-export type Commit = {
-  sha: string;
-  author: string;
-  date: string;
-  message: string;
-  files: string[];
-};
-export type SearchHit = { path: string; line: number; text: string };
 
 export class MemoryError extends Error {}
 
@@ -187,18 +178,14 @@ export class MemoryStore {
     }
   }
 
+  /** A file's content, or null when there's no such file. */
+  async readOrNull(path: string): Promise<string | null> {
+    return (await this.exists(path)) ? this.read(path) : null;
+  }
+
   /** Writes a file and commits it. Returns the commit, or null if the content didn't change. */
   write(path: string, content: string, author: Author, message: string): Promise<string | null> {
     return this.writeAll([{ path, content }], author, message);
-  }
-
-  /** Writes and deletes (`content` null) files in one commit. */
-  change(
-    files: { path: string; content: string | null }[],
-    author: Author,
-    message: string,
-  ): Promise<string | null> {
-    return this.serial(() => this.apply(files, author, message));
   }
 
   /**
@@ -213,9 +200,7 @@ export class MemoryStore {
     message: string,
   ): Promise<string | null> {
     return this.serial(async () => {
-      const read = async (path: string) =>
-        (await this.exists(path)) ? await this.read(path) : null;
-      const files = await fn(read);
+      const files = await fn((path) => this.readOrNull(path));
       return files ? this.apply(files, author, message) : null;
     });
   }
@@ -337,7 +322,7 @@ export class MemoryStore {
    * Sections with any of the words, in any form ("runs" finds "run"), the best match first, each as
    * its line with the most of them. Without the index, or if it fails, lines with every word.
    */
-  async search(query: string, limit = 50): Promise<SearchHit[]> {
+  async search(query: string, limit = 50): Promise<MemoryHit[]> {
     const fts = this.db && ftsQuery(query, " OR ");
     if (fts && this.db) {
       try {
@@ -366,7 +351,7 @@ export class MemoryStore {
    * Files with every word somewhere in them, the ones with the most matching lines first, and in each
    * the lines with the most of the words.
    */
-  private async grep(query: string, limit: number): Promise<SearchHit[]> {
+  private async grep(query: string, limit: number): Promise<MemoryHit[]> {
     const words = [...new Set(query.toLowerCase().split(/\s+/).filter(Boolean))].slice(0, 10);
     if (!words.length) return [];
     const res = await this.git(
@@ -383,7 +368,7 @@ export class MemoryStore {
       ],
       { allowFail: true },
     );
-    const files = new Map<string, { hit: SearchHit; words: number }[]>();
+    const files = new Map<string, { hit: MemoryHit; words: number }[]>();
     for (const line of res.stdout.split("\n")) {
       const m = /^(.*?):(\d+):(.*)$/.exec(line);
       if (!m) continue;

@@ -385,7 +385,7 @@ export class Proposals {
     for (const c of proposed) {
       // Throws on a path outside memory or not Markdown.
       const { rel } = this.d.memory.resolve(c.path, { markdown: true });
-      const before = (await this.d.memory.exists(rel)) ? await this.d.memory.read(rel) : null;
+      const before = await this.d.memory.readOrNull(rel);
       const after = c.delete ? null : (c.content ?? "");
       if (before === after || (before === null && after === null)) continue;
       if (after !== null && !after.trim()) continue;
