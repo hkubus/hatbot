@@ -4,7 +4,7 @@ import { z } from "zod";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
 import { pauseAll } from "./admin";
-import { json, query } from "./util";
+import { found, id, json, query } from "./util";
 
 const Rerun = z.object({ goal: z.string().max(8000).optional() });
 const TokenPause = z.object({ exp: z.number().int(), sig: z.string().min(1).max(200) });
@@ -39,7 +39,7 @@ export const taskRoutes = new Hono<AppEnv>()
     },
   )
   .get("/tasks/:id", (c) => {
-    const taskId = Number(c.req.param("id"));
+    const taskId = id(c);
     const task = c.var.tasks.get(taskId);
     if (!task) return c.json({ error: "That's gone." }, 404);
     return c.json({
@@ -50,7 +50,7 @@ export const taskRoutes = new Hono<AppEnv>()
   })
   // Runs an ended task again, with its goal as you edited it.
   .post("/tasks/:id/rerun", json(Rerun), (c) => {
-    const old = c.var.tasks.get(Number(c.req.param("id")));
+    const old = c.var.tasks.get(id(c));
     if (!old) return c.json({ error: "That's gone." }, 404);
     if (old.parentId || old.lane !== "background")
       return c.json({ error: "Run the task that started it again." }, 400);
@@ -64,12 +64,11 @@ export const taskRoutes = new Hono<AppEnv>()
     );
   })
   .post("/tasks/:id/cancel", (c) => {
-    if (!c.var.tasks.cancel(Number(c.req.param("id"))))
-      return c.json({ error: "That task isn't running." }, 409);
+    if (!c.var.tasks.cancel(id(c))) return c.json({ error: "That task isn't running." }, 409);
     return c.json({ ok: true });
   })
   .get("/tasks/:id/screens/:stepId", (c) => {
-    const step = c.var.tasks.step(Number(c.req.param("id")), Number(c.req.param("stepId")));
+    const step = c.var.tasks.step(id(c), Number(c.req.param("stepId")));
     const file = step?.screenshot ? c.var.archive.file(step.screenshot) : null;
     if (!file) return c.json({ error: "That's gone." }, 404);
     return new Response(file, {
@@ -85,7 +84,7 @@ export const taskRoutes = new Hono<AppEnv>()
 export const approvalRoutes = new Hono<AppEnv>()
   // An ntfy button: no session, the signed token is the authority (PLAN.md §6.2).
   .post("/approvals/:id/token-decision", json(TokenDecision), (c) => {
-    const approvalId = Number(c.req.param("id"));
+    const approvalId = id(c);
     const { decision, exp, sig } = c.req.valid("json");
     if (!c.var.approvals.verify(approvalId, decision, exp, sig))
       return c.json({ error: "This link has expired." }, 403);
@@ -120,13 +119,10 @@ export const approvalRoutes = new Hono<AppEnv>()
       return c.json(c.var.approvals.list(pending === "1", before));
     },
   )
-  .get("/approvals/:id", (c) => {
-    const approval = c.var.approvals.get(Number(c.req.param("id")));
-    return approval ? c.json(approval) : c.json({ error: "That's gone." }, 404);
-  })
+  .get("/approvals/:id", (c) => found(c, c.var.approvals.get(id(c))))
   .post("/approvals/:id", json(DecideApproval), (c) => {
     const { decision, note } = c.req.valid("json");
-    const approval = c.var.approvals.decide(Number(c.req.param("id")), decision, "web", note);
+    const approval = c.var.approvals.decide(id(c), decision, "web", note);
     if (!approval) return c.json({ error: "That was already answered." }, 409);
     return c.json(approval);
   });

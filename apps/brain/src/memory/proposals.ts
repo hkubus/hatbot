@@ -6,6 +6,7 @@ import type { Proposal, SkillStatus } from "@hatbot/shared";
 import { z } from "zod";
 import { type ModelClient, modelErrorText } from "../agent/model";
 import type { Db } from "../db";
+import { UserError } from "../errors";
 import type { EventBus } from "../events";
 import type { Notifier } from "../notify";
 import { lastDue } from "../report";
@@ -20,14 +21,7 @@ const TIDY_KEY = "tidy:last";
 /** Memory larger than this is tidied in part: the files that fit. */
 const MAX_INPUT_CHARS = 200_000;
 
-export class ProposalError extends Error {
-  constructor(
-    message: string,
-    readonly status: 400 | 404 | 409 = 400,
-  ) {
-    super(message);
-  }
-}
+export class ProposalError extends UserError {}
 
 export type ProposalsDeps = {
   db: Db;

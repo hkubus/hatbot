@@ -5,13 +5,14 @@ import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, join, normalize, sep } from "node:path";
 import type { Commit, MemoryFile, MemoryHit } from "@hatbot/shared";
 import type { Db } from "../db";
+import { UserError } from "../errors";
 import type { EventBus } from "../events";
 import { ftsQuery } from "../search";
 
 export type Author = { name: string; email: string };
 export const HATBOT: Author = { name: "Hatbot", email: "hatbot@local" };
 
-export class MemoryError extends Error {}
+export class MemoryError extends UserError {}
 
 /** A file changed since it was read: what it is now. */
 export class MemoryConflict extends MemoryError {
@@ -166,7 +167,7 @@ export class MemoryStore {
     try {
       return await readFile(abs, "utf8");
     } catch {
-      throw new MemoryError(`not found: ${path}`);
+      throw new MemoryError(`not found: ${path}`, 404);
     }
   }
 
@@ -313,7 +314,7 @@ export class MemoryStore {
   delete(path: string, author: Author, message: string): Promise<string | null> {
     return this.serial(async () => {
       const { rel } = this.resolve(path);
-      if (!(await this.exists(rel))) throw new MemoryError(`not found: ${path}`);
+      if (!(await this.exists(rel))) throw new MemoryError(`not found: ${path}`, 404);
       return this.apply([{ path: rel, content: null }], author, message);
     });
   }

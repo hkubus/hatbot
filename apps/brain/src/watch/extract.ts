@@ -1,16 +1,10 @@
 // Picks a watcher's value out of a page or a tool's output, without the model.
 import type { WatchCondition, WatchSource } from "@hatbot/shared";
+import { UserError } from "../errors";
 import type { PatternJob } from "./pattern";
 
 /** A check that didn't find a value; the message is for the owner and the model. */
-export class WatchError extends Error {
-  constructor(
-    message: string,
-    readonly status: 400 | 404 = 400,
-  ) {
-    super(message);
-  }
-}
+export class WatchError extends UserError {}
 
 /** Values are compared and stored at most this long. */
 const MAX_VALUE_CHARS = 4000;

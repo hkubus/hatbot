@@ -1,10 +1,12 @@
 // API types shared by the brain, the web app and the future iOS app (PLAN.md §4.4).
 import { z } from "zod";
+import { BOT_ID } from "./bot-id";
 import type { Negotiation } from "./negotiate";
 import type { PluginInfo } from "./plugin";
 import type { Schedule, Trigger } from "./schedule";
 import type { Watcher } from "./watch";
 
+export * from "./bot-id";
 export * from "./chart";
 export * from "./checks";
 export * from "./negotiate";
@@ -357,8 +359,6 @@ export type HatbotEvent =
 
 /** The first bot. It can't be deleted, and /thread is its chat. */
 export const HATBOT_ID = "hatbot";
-/** A bot's id: made from its first name, and fixed after that. */
-export const BOT_ID = /^[a-z][a-z0-9-]{0,30}$/;
 
 /** The icons a bot can have. The web draws them; iOS maps them to SF Symbols. */
 export const BOT_ICONS = [

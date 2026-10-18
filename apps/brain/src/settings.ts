@@ -1,3 +1,4 @@
+import { BOT_ID } from "@hatbot/shared";
 import { z } from "zod";
 import type { Db } from "./db";
 
@@ -32,7 +33,7 @@ export const Settings = z.object({
   heartbeat: z.object({
     enabled: z.boolean(),
     everyMinutes: z.number().int().min(5).max(1440),
-    botId: z.string().regex(/^[a-z][a-z0-9-]{0,30}$/),
+    botId: z.string().regex(BOT_ID),
     instructions: z.string().trim().min(1).max(4000),
   }),
   /** A tidy-up of memory proposed weekly, with the report. */
@@ -70,15 +71,25 @@ export const DEFAULT_SETTINGS: Settings = {
   weeklyReport: { enabled: true, weekday: 1, hour: 9 },
 };
 
+/** What the settings table keeps under `key`, or null. */
+export const getSetting = (db: Db, key: string): string | null =>
+  db.query<{ value: string }, [string]>("SELECT value FROM settings WHERE key = ?").get(key)
+    ?.value ?? null;
+
+/** Keeps `value` in the settings table under `key`, in place of what was there. */
+export function setSetting(db: Db, key: string, value: string) {
+  db.query(
+    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+  ).run(key, value);
+}
+
 export class SettingsStore {
   constructor(private db: Db) {}
 
   get(): Settings {
-    const row = this.db
-      .query<{ value: string }, []>("SELECT value FROM settings WHERE key = 'app'")
-      .get();
+    const row = getSetting(this.db, "app");
     const stored = row
-      ? (JSON.parse(row.value) as Partial<Settings> & { reviewTaintedChanges?: boolean })
+      ? (JSON.parse(row) as Partial<Settings> & { reviewTaintedChanges?: boolean })
       : {};
     // reviewChanges was reviewTaintedChanges, for tainted work only.
     if (stored.reviewTaintedChanges !== undefined)
@@ -91,11 +102,7 @@ export class SettingsStore {
   update(patch: SettingsPatch): Settings {
     const now = this.get();
     const next = Settings.parse({ ...now, ...patch, limits: { ...now.limits, ...patch.limits } });
-    this.db
-      .query(
-        "INSERT INTO settings (key, value) VALUES ('app', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-      )
-      .run(JSON.stringify(next));
+    setSetting(this.db, "app", JSON.stringify(next));
     return next;
   }
 }

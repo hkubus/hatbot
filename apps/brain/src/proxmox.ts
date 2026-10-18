@@ -9,9 +9,6 @@ import { isIP } from "node:net";
 import { checkServerIdentity, connect } from "node:tls";
 import { PluginError } from "./plugins/plugin";
 
-/** What Proxmox calls throw, as the desktop's routes know it. */
-export { PluginError as ProxmoxError };
-
 export type Snapshot = { name: string; description: string; createdAt: string | null };
 
 const normalizeFp = (fp: string) => fp.replace(/:/g, "").toUpperCase();

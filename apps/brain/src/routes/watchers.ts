@@ -4,17 +4,10 @@ import { z } from "zod";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
 import { WatchError } from "../watch/service";
-import { json } from "./util";
-
-const id = (c: { req: { param: (k: string) => string | undefined } }) => Number(c.req.param("id"));
+import { found, id, json, knownBot } from "./util";
 
 const gone = (): never => {
   throw new WatchError("That's gone.", 404);
-};
-
-/** Throws unless it's unset or a bot that isn't deleted. */
-const knownBot = (c: { var: AppEnv["Variables"] }, botId: string | undefined) => {
-  if (botId !== undefined && !c.var.bots.active(botId)) throw new WatchError("No such bot.");
 };
 
 const Preview = z.object({ source: WatchSourceInput, botId: z.string().optional() });
@@ -22,10 +15,6 @@ const Preview = z.object({ source: WatchSourceInput, botId: z.string().optional(
 export const watcherRoutes = new Hono<AppEnv>()
   .use("/watchers", requireAuth)
   .use("/watchers/*", requireAuth)
-  .onError((err, c) => {
-    if (err instanceof WatchError) return c.json({ error: err.message }, err.status);
-    throw err;
-  })
   .get("/watchers", (c) => c.json(c.var.watchers.list()))
   .post("/watchers", json(CreateWatcher), async (c) => {
     knownBot(c, c.req.valid("json").botId);
@@ -37,7 +26,7 @@ export const watcherRoutes = new Hono<AppEnv>()
     knownBot(c, botId);
     return c.json(await c.var.watchers.preview(source, botId ?? HATBOT_ID));
   })
-  .get("/watchers/:id", (c) => c.json(c.var.watchers.get(id(c)) ?? gone()))
+  .get("/watchers/:id", (c) => found(c, c.var.watchers.get(id(c))))
   .get("/watchers/:id/values", (c) => {
     if (!c.var.watchers.get(id(c))) gone();
     const limit = Math.min(500, Math.max(1, Number(c.req.query("limit") ?? 100) || 100));
@@ -45,7 +34,7 @@ export const watcherRoutes = new Hono<AppEnv>()
   })
   .patch("/watchers/:id", json(UpdateWatcher), async (c) => {
     knownBot(c, c.req.valid("json").botId);
-    return c.json((await c.var.watchers.update(id(c), c.req.valid("json"))) ?? gone());
+    return found(c, await c.var.watchers.update(id(c), c.req.valid("json")));
   })
   .post("/watchers/:id/check", async (c) => {
     if (!c.var.watchers.get(id(c))) gone();

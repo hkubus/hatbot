@@ -99,4 +99,5 @@ test("a save on top of an older copy is refused with what the file is now", asyn
   // "" is a new file: refused once it exists.
   expect((await put("a.md", "x", "")).status).toBe(409);
   expect(await t.memory.read("a.md")).toBe("two\n");
+  expect((await t.call("GET", "/memory/file?path=b.md", undefined, { cookie })).status).toBe(404);
 });

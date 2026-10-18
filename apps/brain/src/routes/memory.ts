@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
-import { blobSha, MemoryConflict, MemoryError } from "../memory/store";
+import { blobSha, MemoryConflict } from "../memory/store";
 import { json, query } from "./util";
 
 const PathQuery = z.object({ path: z.string().min(1) });
@@ -13,7 +13,6 @@ export const memoryRoutes = new Hono<AppEnv>()
   .onError((err, c) => {
     if (err instanceof MemoryConflict)
       return c.json({ error: "changed", sha: err.sha, content: err.content }, 409);
-    if (err instanceof MemoryError) return c.json({ error: err.message }, 400);
     throw err;
   })
   .get("/memory/tree", async (c) => c.json(await c.var.memory.tree()))

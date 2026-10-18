@@ -15,7 +15,7 @@ import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { principalOf, requireAuth, SESSION_COOKIE, setSessionCookie } from "../auth/middleware";
 import type { AppEnv } from "../context";
-import { badRequest, json } from "./util";
+import { badRequest, id, json } from "./util";
 
 /** Marks a browser or app that has signed in here before. Only sign-in routes see it. */
 const DEVICE_COOKIE = "hatbot_device";
@@ -158,7 +158,7 @@ export const authRoutes = new Hono<AppEnv>()
   })
   .get("/auth/sessions", requireAuth, (c) => c.json(c.var.auth.listSessions(c.var.principal)))
   .delete("/auth/sessions/:id{[0-9]+}", requireAuth, (c) =>
-    c.var.auth.endSession(Number(c.req.param("id")))
+    c.var.auth.endSession(id(c))
       ? c.json({ ok: true })
       : c.json({ error: "That browser is already signed out." }, 404),
   )
@@ -169,7 +169,7 @@ export const authRoutes = new Hono<AppEnv>()
     c.json(c.var.auth.createToken(c.req.valid("json").name), 201),
   )
   .delete("/tokens/:id{[0-9]+}", requireAuth, (c) =>
-    c.var.auth.deleteToken(Number(c.req.param("id")))
+    c.var.auth.deleteToken(id(c))
       ? c.json({ ok: true })
       : c.json({ error: "That token is already revoked." }, 404),
   );

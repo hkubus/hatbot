@@ -1,6 +1,7 @@
 // Watchers: look at a page or a plugin's value on a timer, without the model, and wake a bot only
 // when it changes the way you asked.
 import { z } from "zod";
+import { BOT_ID } from "./bot-id";
 
 /** Where the value comes from, and how it's picked out. */
 export type WatchSource = {
@@ -112,7 +113,7 @@ const fields = {
   everyMinutes: z.number().int().min(MIN_WATCH_MINUTES).max(MAX_WATCH_MINUTES),
   once: z.boolean(),
   enabled: z.boolean(),
-  botId: z.string().regex(/^[a-z][a-z0-9-]{0,30}$/),
+  botId: z.string().regex(BOT_ID),
 };
 
 export const CreateWatcher = z.object({

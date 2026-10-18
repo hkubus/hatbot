@@ -6,6 +6,7 @@ import { TEACH_PROMPT } from "../agent/prompt";
 import type { Archive } from "../archive";
 import type { Db } from "../db";
 import type { Desktop } from "../desktop/service";
+import { UserError } from "../errors";
 import type { EventBus } from "../events";
 import type { SettingsStore } from "../settings";
 import { BudgetError, type Spend } from "../spend";
@@ -19,14 +20,7 @@ const TEACH_LANE = -2;
 /** Screenshots sent with the recording, spread across it. */
 const SCREENS_SENT = 16;
 
-export class TeachError extends Error {
-  constructor(
-    message: string,
-    readonly status: 400 | 404 | 409 | 503,
-  ) {
-    super(message);
-  }
-}
+export class TeachError extends UserError {}
 
 export type TeachDeps = {
   db: Db;

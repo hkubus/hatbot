@@ -2,18 +2,11 @@ import { CreateSchedule, CreateTrigger, UpdateSchedule, UpdateTrigger } from "@h
 import { type Context, Hono } from "hono";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
-import { ScheduleError } from "../schedules";
 import type { Received } from "../triggers";
-import { json } from "./util";
+import { found, id, json, knownBot } from "./util";
 
 /** Webhook bodies bigger than this are refused. */
 const MAX_HOOK_BYTES = 256 * 1024;
-
-const id = (c: { req: { param: (k: string) => string | undefined } }) => Number(c.req.param("id"));
-
-/** Unset, or a bot that isn't deleted. */
-const knownBot = (c: { var: AppEnv["Variables"] }, botId: string | undefined) =>
-  botId === undefined || c.var.bots.active(botId) !== null;
 
 export const scheduleRoutes = new Hono<AppEnv>()
   .use("/schedules", requireAuth)
@@ -22,27 +15,13 @@ export const scheduleRoutes = new Hono<AppEnv>()
   .use("/triggers/*", requireAuth)
   .get("/schedules", (c) => c.json(c.var.schedules.list()))
   .post("/schedules", json(CreateSchedule), (c) => {
-    if (!knownBot(c, c.req.valid("json").botId)) return c.json({ error: "No such bot." }, 400);
-    try {
-      return c.json(c.var.schedules.create(c.req.valid("json"), "owner"), 201);
-    } catch (err) {
-      if (err instanceof ScheduleError) return c.json({ error: err.message }, 400);
-      throw err;
-    }
+    knownBot(c, c.req.valid("json").botId);
+    return c.json(c.var.schedules.create(c.req.valid("json"), "owner"), 201);
   })
-  .get("/schedules/:id", (c) => {
-    const s = c.var.schedules.get(id(c));
-    return s ? c.json(s) : c.json({ error: "That's gone." }, 404);
-  })
+  .get("/schedules/:id", (c) => found(c, c.var.schedules.get(id(c))))
   .patch("/schedules/:id", json(UpdateSchedule), (c) => {
-    if (!knownBot(c, c.req.valid("json").botId)) return c.json({ error: "No such bot." }, 400);
-    try {
-      const s = c.var.schedules.update(id(c), c.req.valid("json"));
-      return s ? c.json(s) : c.json({ error: "That's gone." }, 404);
-    } catch (err) {
-      if (err instanceof ScheduleError) return c.json({ error: err.message }, 400);
-      throw err;
-    }
+    knownBot(c, c.req.valid("json").botId);
+    return found(c, c.var.schedules.update(id(c), c.req.valid("json")));
   })
   .delete("/schedules/:id", (c) =>
     c.var.schedules.delete(id(c)) ? c.json({ ok: true }) : c.json({ error: "That's gone." }, 404),
@@ -55,22 +34,15 @@ export const scheduleRoutes = new Hono<AppEnv>()
   })
   .get("/triggers", (c) => c.json(c.var.triggers.list()))
   .post("/triggers", json(CreateTrigger), (c) => {
-    if (!knownBot(c, c.req.valid("json").botId)) return c.json({ error: "No such bot." }, 400);
+    knownBot(c, c.req.valid("json").botId);
     return c.json(c.var.triggers.create(c.req.valid("json")), 201);
   })
-  .get("/triggers/:id", (c) => {
-    const t = c.var.triggers.get(id(c));
-    return t ? c.json(t) : c.json({ error: "That's gone." }, 404);
-  })
+  .get("/triggers/:id", (c) => found(c, c.var.triggers.get(id(c))))
   .patch("/triggers/:id", json(UpdateTrigger), (c) => {
-    if (!knownBot(c, c.req.valid("json").botId)) return c.json({ error: "No such bot." }, 400);
-    const t = c.var.triggers.update(id(c), c.req.valid("json"));
-    return t ? c.json(t) : c.json({ error: "That's gone." }, 404);
+    knownBot(c, c.req.valid("json").botId);
+    return found(c, c.var.triggers.update(id(c), c.req.valid("json")));
   })
-  .post("/triggers/:id/secret", (c) => {
-    const t = c.var.triggers.rotate(id(c));
-    return t ? c.json(t) : c.json({ error: "That's gone." }, 404);
-  })
+  .post("/triggers/:id/secret", (c) => found(c, c.var.triggers.rotate(id(c))))
   .delete("/triggers/:id", (c) =>
     c.var.triggers.delete(id(c)) ? c.json({ ok: true }) : c.json({ error: "That's gone." }, 404),
   );
@@ -153,7 +125,7 @@ const kumaHook = async (c: Context<AppEnv>) => {
     console.log(
       `${hook}: refused, ${token ? "wrong secret" : "no secret"} or no such Kuma trigger`,
     );
-    return c.json({ error: "unauthorized" }, 401);
+    return c.json({ error: "Wrong or missing secret." }, 401);
   }
   const event = await kumaEvent(c);
   if (event === "too large") return c.json({ error: "too large" }, 413);
@@ -183,7 +155,7 @@ export const hookRoutes = new Hono<AppEnv>()
     const check = triggers.verifyWebhook(id(c), (h) => c.req.header(h), bytes);
     if (!check.ok) {
       console.log(`${hook}: refused, missing or wrong signature, or no such webhook trigger`);
-      return c.json({ error: "unauthorized" }, 401);
+      return c.json({ error: "Wrong or missing signature." }, 401);
     }
     const r = triggers.receiveWebhook(
       id(c),
