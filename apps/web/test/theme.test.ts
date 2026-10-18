@@ -1,17 +1,17 @@
 import { expect, test } from "bun:test";
-import { barColor } from "../src/theme";
+import { barColor, type Theme } from "../src/theme";
 
-const LIGHT_TAG = "(prefers-color-scheme: light)";
-const DARK_TAG = "(prefers-color-scheme: dark)";
-
-test("a chosen theme colours the browser's bar whatever the system's scheme", () => {
-  expect(barColor("dark", LIGHT_TAG)).toBe("#161617");
-  expect(barColor("dark", DARK_TAG)).toBe("#161617");
-  expect(barColor("light", DARK_TAG)).toBe("#f5f5f7");
-  expect(barColor("light", LIGHT_TAG)).toBe("#f5f5f7");
-});
-
-test("the system theme gives each tag its own scheme's colour back", () => {
-  expect(barColor("system", LIGHT_TAG)).toBe("#f5f5f7");
-  expect(barColor("system", DARK_TAG)).toBe("#161617");
+test("a chosen theme colours the browser's bar whatever the system's scheme; system follows it", () => {
+  const LIGHT = "#f5f5f7";
+  const DARK = "#161617";
+  // The bar's colour under the light tag, then under the dark one.
+  const cases: [Theme, string, string][] = [
+    ["light", LIGHT, LIGHT],
+    ["dark", DARK, DARK],
+    ["system", LIGHT, DARK],
+  ];
+  for (const [theme, light, dark] of cases) {
+    expect(barColor(theme, "(prefers-color-scheme: light)")).toBe(light);
+    expect(barColor(theme, "(prefers-color-scheme: dark)")).toBe(dark);
+  }
 });

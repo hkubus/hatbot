@@ -80,7 +80,7 @@ beforeEach(() => {
   new Function("self", "caches", "fetch", SOURCE)(self, caches, fetch);
 });
 
-/** Installs the worker (it keeps the offline page), then runs one fetch through it. */
+/** Installs the worker, which keeps the offline page. */
 async function install() {
   const waits: Promise<unknown>[] = [];
   handlers.install?.({ waitUntil: (p: Promise<unknown>) => waits.push(p) });
