@@ -1,8 +1,9 @@
 // MCP's settings: servers, and for each of their tools whether Hatbot may use it.
 import { useEffect, useState } from "react";
-import { errorText } from "../api";
+import { useAction } from "../action";
 import { useLeaveGuard } from "../confirm";
 import { Switch } from "../switch";
+import { Seg, Select } from "../ui";
 import type { PluginSettingsProps } from ".";
 
 type Mode = "chat" | "allow" | "ask" | "always" | "off";
@@ -141,8 +142,7 @@ const fromRow = ({ key: _, headersText, argsText, envText, ...s }: Row): Server 
 export function McpSettings({ config, save, action, running }: PluginSettingsProps<Config>) {
   const [servers, setServers] = useState<Row[]>(() => config.servers.map(toRow));
   const [status, setStatus] = useState<Record<string, Status>>({});
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { busy, error, run } = useAction();
 
   useEffect(() => {
     if (!running) return;
@@ -159,16 +159,7 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
     JSON.stringify(config.servers.map((s) => fromRow(toRow(s))));
   useLeaveGuard(changed);
 
-  const submit = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      await save({ servers: servers.map(fromRow) });
-    } catch (err) {
-      setError(errorText(err));
-    }
-    setBusy(false);
-  };
+  const submit = () => run(() => save({ servers: servers.map(fromRow) }));
 
   return (
     <>
@@ -191,19 +182,14 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
                 value={s.name}
                 onChange={(e) => set(i, { name: e.target.value.toLowerCase() })}
               />
-              <div className="seg">
-                {(["http", "stdio"] as const).map((t) => (
-                  <button
-                    type="button"
-                    key={t}
-                    className={s.transport === t ? "active" : ""}
-                    aria-pressed={s.transport === t}
-                    onClick={() => set(i, { transport: t })}
-                  >
-                    {t === "http" ? "HTTP" : "Command"}
-                  </button>
-                ))}
-              </div>
+              <Seg
+                value={s.transport}
+                options={[
+                  ["http", "HTTP"],
+                  ["stdio", "Command"],
+                ]}
+                onChange={(transport) => set(i, { transport })}
+              />
             </div>
             {st?.state === "failed" && <div className="form-error">{st.error}</div>}
             {s.transport === "http" ? (
@@ -322,30 +308,20 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
                         </pre>
                       </details>
                     </div>
-                    <select
-                      aria-label={`What ${t.name} does`}
+                    <Select
+                      label={`What ${t.name} does`}
                       value={kindIn(s, t)}
-                      onChange={(e) => set(i, withKind(s, t, e.target.value as Kind))}
-                    >
-                      {KINDS.map(([k, label]) => (
-                        <option key={k} value={k}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      aria-label={`When ${t.name} asks`}
+                      options={KINDS}
+                      onChange={(kind) => set(i, withKind(s, t, kind))}
+                    />
+                    <Select
+                      label={`When ${t.name} asks`}
                       value={modeIn(s, t)}
-                      onChange={(e) => set(i, withMode(s, t, e.target.value as Mode))}
-                    >
-                      {MODES.filter(
+                      options={MODES.filter(
                         ([m]) => kindIn(s, t) === "none" || (m !== "ask" && m !== "chat"),
-                      ).map(([m, label]) => (
-                        <option key={m} value={m}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
+                      )}
+                      onChange={(mode) => set(i, withMode(s, t, mode))}
+                    />
                   </div>
                 ))}
               </div>

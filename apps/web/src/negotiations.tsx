@@ -1,5 +1,6 @@
 // A negotiation's state in a line, shared by the chat, the Tasks page and its own page (PLAN.md §16).
 import type { Negotiation, NegotiationStatus } from "@hatbot/shared";
+import { time } from "./format";
 
 const STATUS: Record<NegotiationStatus, [string, string]> = {
   awaiting_mandate: ["attn", "Needs approval"],
@@ -32,9 +33,9 @@ export function negotiationText(n: Negotiation): string {
       return "Waiting for your approval.";
     case "open":
       if (!last) {
-        const at = n.nextFollowUpAt ? Date.parse(n.nextFollowUpAt) : 0;
-        return at > Date.now()
-          ? `Writes to the seller at ${new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}.`
+        const at = n.nextFollowUpAt;
+        return at && Date.parse(at) > Date.now()
+          ? `Writes to the seller at ${time(at)}.`
           : "Writing to the seller.";
       }
       if (last.direction === "in") return `The seller wrote ${quote(last.text)}`;

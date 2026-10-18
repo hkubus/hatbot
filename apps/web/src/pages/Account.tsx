@@ -1,19 +1,20 @@
 // Settings → Password and sign-ins: a new password or authenticator, and where you're signed in.
 import type { Session, SetupStartResponse, SignedOutOthers } from "@hatbot/shared";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { useAction } from "../action";
 import { ApiError, api, errorText } from "../api";
 import { ask } from "../confirm";
 import { deviceName } from "../device";
-import { Icon } from "../icons";
-import { LoadError, loadErrorText } from "../load";
-import { navigate } from "../router";
+import { day } from "../format";
+import { LoadError } from "../load";
 import type { Toast } from "../toast";
+import { BackHead, Group, Row } from "../ui";
 import { AddToAuthenticator, OtpInput } from "./Login";
 
 const changed = (what: string, ended: number) =>
   ended ? `${what}. Every other browser and app is signed out.` : what;
-const since = (iso: string) =>
-  `Since ${new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}`;
+
+const since = (iso: string) => `Since ${day(iso)}`;
 
 /**
  * Signs a browser out; what went wrong, or null. One signed out already, from another tab or by
@@ -35,12 +36,7 @@ export function Account({ toast }: { toast: Toast }) {
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">
-          <button type="button" className="btn sm ghost back" onClick={() => navigate("/settings")}>
-            <Icon name="chevron" />
-            Settings
-          </button>
-        </div>
+        <BackHead to="/settings" label="Settings" />
         <PasswordForm toast={toast} onChanged={reload} />
         <AuthenticatorForm toast={toast} onChanged={reload} />
         <Sessions toast={toast} version={version} />
@@ -54,15 +50,12 @@ function PasswordForm({ toast, onChanged }: { toast: Toast; onChanged: () => voi
   const [next, setNext] = useState("");
   const [again, setAgain] = useState("");
   const [totp, setTotp] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { busy, error, setError, run } = useAction();
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    setError("");
     if (next !== again) return setError("The new passwords don't match.");
-    setBusy(true);
-    try {
+    await run(async () => {
       const r = await api<SignedOutOthers>("/auth/password", {
         body: { password, totp, newPassword: next },
       });
@@ -71,12 +64,8 @@ function PasswordForm({ toast, onChanged }: { toast: Toast; onChanged: () => voi
       setAgain("");
       toast(changed("Password changed", r.ended));
       onChanged();
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setTotp("");
-      setBusy(false);
-    }
+    });
+    setTotp("");
   };
 
   return (
@@ -134,8 +123,7 @@ function AuthenticatorForm({ toast, onChanged }: { toast: Toast; onChanged: () =
   const [next, setNext] = useState<SetupStartResponse | null>(null);
   const [qr, setQr] = useState("");
   const [code, setCode] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { busy, error, setError, run } = useAction();
 
   useEffect(() => {
     if (!next) return setQr("");
@@ -146,34 +134,22 @@ function AuthenticatorForm({ toast, onChanged }: { toast: Toast; onChanged: () =
 
   const start = async (e: FormEvent) => {
     e.preventDefault();
-    setError("");
-    setBusy(true);
-    try {
+    await run(async () => {
       setNext(await api<SetupStartResponse>("/auth/totp/start", { body: { password, totp } }));
       setPassword("");
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setTotp("");
-      setBusy(false);
-    }
+    });
+    setTotp("");
   };
 
   const finish = async (e: FormEvent) => {
     e.preventDefault();
-    setError("");
-    setBusy(true);
-    try {
+    await run(async () => {
       const r = await api<SignedOutOthers>("/auth/totp", { body: { totp: code } });
       setNext(null);
       toast(changed("Authenticator changed", r.ended));
       onChanged();
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setCode("");
-      setBusy(false);
-    }
+    });
+    setCode("");
   };
 
   if (!next)
@@ -239,7 +215,7 @@ function Sessions({ toast, version }: { toast: Toast; version: number }) {
 
   const load = useCallback(() => {
     setLoadError("");
-    api<Session[]>("/auth/sessions").then(setSessions, (err) => setLoadError(loadErrorText(err)));
+    api<Session[]>("/auth/sessions").then(setSessions, (err) => setLoadError(errorText(err)));
   }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: loads again after a change signs others out
   useEffect(load, [load, version]);
@@ -271,31 +247,22 @@ function Sessions({ toast, version }: { toast: Toast; version: number }) {
   if (loadError) return <LoadError error={loadError} retry={load} />;
   if (!sessions) return null;
   return (
-    <section className="group">
-      <h2>Signed in</h2>
-      <div className="group-box">
-        {sessions.map((s) => (
-          <div className="row" key={s.id}>
-            <div className="txt">
-              <b>{deviceName(s.userAgent)}</b>
-            </div>
-            <span className="val">{s.current ? "This browser" : since(s.createdAt)}</span>
-            {!s.current && (
-              <button type="button" className="btn sm danger-text" onClick={() => end(s)}>
-                Sign out
-              </button>
-            )}
-          </div>
-        ))}
-        <div className="row">
-          <div className="txt">
-            <b>Every other browser and app</b>
-          </div>
-          <button type="button" className="btn sm danger-text" onClick={endOthers}>
-            Sign out
-          </button>
-        </div>
-      </div>
-    </section>
+    <Group title="Signed in">
+      {sessions.map((s) => (
+        <Row key={s.id} label={deviceName(s.userAgent)}>
+          <span className="val">{s.current ? "This browser" : since(s.createdAt)}</span>
+          {!s.current && (
+            <button type="button" className="btn sm danger-text" onClick={() => end(s)}>
+              Sign out
+            </button>
+          )}
+        </Row>
+      ))}
+      <Row label="Every other browser and app">
+        <button type="button" className="btn sm danger-text" onClick={endOthers}>
+          Sign out
+        </button>
+      </Row>
+    </Group>
   );
 }

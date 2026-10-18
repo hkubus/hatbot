@@ -11,75 +11,32 @@ import {
   type WatchSource,
 } from "@hatbot/shared";
 import { useEffect, useState } from "react";
+import { useAction } from "../action";
 import { api, errorText } from "../api";
-import { BotPicker, Runs, stamp, useListed } from "../automations";
+import { BotPicker, Runs, useListed } from "../automations";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm, useStoredForm } from "../form";
-import { Icon } from "../icons";
+import { stamp } from "../format";
 import { navigate } from "../router";
 import { loadPlugins, putWatcher, useStore } from "../store";
 import { Switch } from "../switch";
+import { BackHead, SaveBar, Seg, Select } from "../ui";
 
 const EVERY = [5, 15, 30, 60, 180, 360, 720, 1440];
-const WHEN: { when: WatchCondition["when"]; label: string }[] = [
-  { when: "changed", label: "Changes" },
-  { when: "contains", label: "Contains" },
-  { when: "missing", label: "Doesn't contain" },
-  { when: "below", label: "Below" },
-  { when: "above", label: "Above" },
+const WHEN: [WatchCondition["when"], string][] = [
+  ["changed", "Changes"],
+  ["contains", "Contains"],
+  ["missing", "Doesn't contain"],
+  ["below", "Below"],
+  ["above", "Above"],
 ];
 type Pick = "page" | "selector" | "path";
 
-const patchWatcher = async (id: number, body: object) => {
+export const patchWatcher = async (id: number, body: object) => {
   const w = await api<Watcher>(`/watchers/${id}`, { method: "PATCH", body });
   putWatcher(w);
   return w;
 };
-
-/** The Watchers group on the Schedules page. */
-export function WatcherList({ onError }: { onError: (error: string) => void }) {
-  const watchers = useStore((s) => s.watchers);
-  const shown = Object.values(watchers)
-    .filter((w): w is Watcher => Boolean(w))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  return (
-    <section className="group">
-      <h2>Watchers</h2>
-      <div className="group-box">
-        {shown.map((w) => (
-          <div className="row" key={w.id}>
-            <button
-              type="button"
-              className="row-main"
-              onClick={() => navigate(`/watchers/${w.id}`)}
-            >
-              <div className="txt">
-                <b>{w.name}</b>
-              </div>
-              {w.lastError ? (
-                <span className="val bad">{trouble(w)?.short}</span>
-              ) : (
-                <span className="val">{w.enabled ? (w.lastValue ?? "") : "Off"}</span>
-              )}
-              <Icon name="chevron" className="chev" />
-            </button>
-            <Switch
-              on={w.enabled}
-              onChange={(enabled) =>
-                patchWatcher(w.id, { enabled }).catch((err) => onError(errorText(err)))
-              }
-            />
-          </div>
-        ))}
-        {!shown.length && (
-          <div className="row">
-            <span className="muted">None yet. Ask Hatbot to tell you when something changes.</span>
-          </div>
-        )}
-      </div>
-    </section>
-  );
-}
 
 type Form = {
   name: string;
@@ -190,7 +147,7 @@ const fieldsOf = (f: Form) => ({
 
 /**
  * What's wrong, for its row and its page: it can't read what it looks at, or it counted so often
- * that it was switched off. That last read worked, so it isn't a failed one.
+ * that it was switched off. That last read worked, so it isn't a failed one, and isn't shown as one.
  */
 export function trouble(w: Watcher): { short: string; long: string } | null {
   if (!w.lastError) return null;
@@ -213,9 +170,8 @@ export function WatcherEdit({ id }: { id: number | null }) {
   /** What went wrong with Try it, shown beside it. */
   const [previewError, setPreviewError] = useState("");
   const [values, setValues] = useState<WatcherValue[]>([]);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [checking, setChecking] = useState(false);
+  const { busy, error, setError, run } = useAction();
+  const checking = useAction();
   const listed = useListed("watchers", id, stored);
   // Deleted elsewhere: there's nothing left to save.
   const edited = dirty && stored !== null;
@@ -238,7 +194,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
         error={listed.error}
         missing={listed.missing ? "This watcher doesn't exist." : ""}
         retry={listed.load}
-        back={{ label: "Watchers", go: () => navigate("/schedules") }}
+        back={{ label: "Watchers", to: "/schedules" }}
       />
     );
 
@@ -267,23 +223,17 @@ export function WatcherEdit({ id }: { id: number | null }) {
     const source = sourceOf(form);
     if (typeof source === "string") return setPreviewError(source);
     setPreviewError("");
-    setBusy(true);
-    try {
-      setPreview(
-        await api<WatchPreview>("/watchers/preview", {
-          body: { source, botId: form.botId },
-        }),
-      );
-    } catch (err) {
-      setPreviewError(errorText(err));
-    }
-    setBusy(false);
+    await run(
+      async () =>
+        setPreview(
+          await api<WatchPreview>("/watchers/preview", { body: { source, botId: form.botId } }),
+        ),
+      (err) => setPreviewError(errorText(err)),
+    );
   };
   const save = async () => {
     if (typeof body === "string") return setError(body);
-    setBusy(true);
-    setError("");
-    try {
+    await run(async () => {
       if (stored) {
         const w = await patchWatcher(stored.id, { ...fields, ...body });
         saved(form, formOf(w));
@@ -293,23 +243,13 @@ export function WatcherEdit({ id }: { id: number | null }) {
         release();
         navigate(`/watchers/${w.id}`, true);
       }
-    } catch (err) {
-      setError(errorText(err));
-    }
-    setBusy(false);
+    });
   };
   // Checks what's saved: off while you have unsaved changes, and while it's checking.
-  const checkNow = async () => {
-    if (!stored) return;
-    setChecking(true);
-    setError("");
-    try {
-      putWatcher(await api<Watcher>(`/watchers/${stored.id}/check`, { body: {} }));
-    } catch (err) {
-      setError(errorText(err));
-    }
-    setChecking(false);
-  };
+  const checkNow = () =>
+    checking.run(async () => {
+      if (stored) putWatcher(await api<Watcher>(`/watchers/${stored.id}/check`, { body: {} }));
+    });
   const remove = async () => {
     if (
       !stored ||
@@ -319,46 +259,37 @@ export function WatcherEdit({ id }: { id: number | null }) {
       }))
     )
       return;
-    try {
+    await run(async () => {
       await api(`/watchers/${stored.id}`, { method: "DELETE" });
       release();
       navigate("/schedules");
-    } catch (err) {
-      setError(errorText(err));
-    }
+    });
   };
 
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">
-          <button
-            type="button"
-            className="btn sm ghost back"
-            onClick={() => navigate("/schedules")}
-          >
-            <Icon name="chevron" />
-            Watchers
-          </button>
-          <span className="spacer" />
+        <BackHead to="/schedules" label="Watchers">
           {stored && (
             <>
               <button
                 type="button"
                 className="btn sm"
-                disabled={edited || checking}
+                disabled={edited || checking.busy}
                 title={edited ? "Save your changes first" : undefined}
                 onClick={checkNow}
               >
-                {checking ? "Checking…" : "Check now"}
+                {checking.busy ? "Checking…" : "Check now"}
               </button>
               <button type="button" className="btn sm danger-text" onClick={remove}>
                 Delete
               </button>
             </>
           )}
-        </div>
-        {stored?.lastError && <div className="form-error">{trouble(stored)?.long}</div>}
+        </BackHead>
+        {stored?.lastError && (
+          <div className={stored.errors ? "form-error" : "muted"}>{trouble(stored)?.long}</div>
+        )}
 
         <div className="panel form">
           <label>
@@ -373,26 +304,20 @@ export function WatcherEdit({ id }: { id: number | null }) {
           </label>
           <div className="form-row">
             <span className="label">Look at</span>
-            <div className="seg">
-              <button
-                type="button"
-                className={form.kind === "page" ? "active" : ""}
-                aria-pressed={form.kind === "page"}
-                onClick={() => set({ kind: "page" })}
-              >
-                A page
-              </button>
-              <button
-                type="button"
-                className={form.kind === "tool" ? "active" : ""}
-                aria-pressed={form.kind === "tool"}
-                onClick={() =>
-                  set({ kind: "tool", pick: form.pick === "selector" ? "path" : form.pick })
-                }
-              >
-                A plugin
-              </button>
-            </div>
+            <Seg
+              value={form.kind}
+              options={[
+                ["page", "A page"],
+                ["tool", "A plugin"],
+              ]}
+              onChange={(kind) =>
+                set(
+                  kind === "tool"
+                    ? { kind, pick: form.pick === "selector" ? "path" : form.pick }
+                    : { kind },
+                )
+              }
+            />
           </div>
           {form.kind === "page" ? (
             <label>
@@ -457,27 +382,17 @@ export function WatcherEdit({ id }: { id: number | null }) {
           )}
           <div className="form-row">
             <span className="label">Value</span>
-            <div className="seg">
-              {(
+            <Seg
+              value={form.pick}
+              options={(
                 [
                   ["selector", "CSS selector"],
                   ["path", "JSON path"],
                   ["page", form.kind === "page" ? "Whole page" : "Whole answer"],
                 ] as const
-              )
-                .filter(([pick]) => !(rendered && pick === "path"))
-                .map(([pick, label]) => (
-                  <button
-                    type="button"
-                    key={pick}
-                    className={form.pick === pick ? "active" : ""}
-                    aria-pressed={form.pick === pick}
-                    onClick={() => set({ pick })}
-                  >
-                    {label}
-                  </button>
-                ))}
-            </div>
+              ).filter(([pick]) => !(rendered && pick === "path"))}
+              onChange={(pick) => set({ pick })}
+            />
           </div>
           {form.pick === "selector" && (
             <input
@@ -524,18 +439,13 @@ export function WatcherEdit({ id }: { id: number | null }) {
 
           <div className="form-row">
             <span className="label">Counts when it</span>
-            <select
+            <Select
               className="field"
-              aria-label="Counts when it"
+              label="Counts when it"
               value={form.when}
-              onChange={(e) => set({ when: e.target.value as WatchCondition["when"] })}
-            >
-              {WHEN.map((w) => (
-                <option key={w.when} value={w.when}>
-                  {w.label}
-                </option>
-              ))}
-            </select>
+              options={WHEN}
+              onChange={(when) => set({ when })}
+            />
           </div>
           {(form.when === "contains" || form.when === "missing") && (
             <input
@@ -608,17 +518,12 @@ export function WatcherEdit({ id }: { id: number | null }) {
               <dd>{stored.enabled && stored.nextCheckAt ? stamp(stored.nextCheckAt) : "Off"}</dd>
             </dl>
           )}
-          {error && <div className="form-error">{error}</div>}
-          <div className="form-actions">
-            <button
-              type="button"
-              className="btn accent"
-              disabled={busy || !changed || !ready}
-              onClick={save}
-            >
-              {stored ? "Save" : "Create"}
-            </button>
-          </div>
+          <SaveBar
+            error={error || checking.error}
+            disabled={busy || !changed || !ready}
+            onSave={save}
+            label={stored ? "Save" : "Create"}
+          />
         </div>
 
         {stored && values.length > 0 && (

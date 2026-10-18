@@ -1,21 +1,16 @@
 // A negotiation's page (PLAN.md §16.5): its mandate, what's been said, and every message with the seller.
 import { type NegotiationMessage, OPEN_NEGOTIATION_STATUSES } from "@hatbot/shared";
-import { useCallback, useEffect, useState } from "react";
-import { ApiError, api, errorText } from "../api";
+import { useAction } from "../action";
+import { api } from "../api";
 import { ask } from "../confirm";
-import { Icon } from "../icons";
-import { LoadError, loadErrorText } from "../load";
+import { NoForm } from "../form";
+import { day, timeOrDay } from "../format";
+import { useItem } from "../load";
 import { money, NegotiationChip, negotiationText } from "../negotiations";
 import { navigate } from "../router";
 import { botName, loadNegotiation, useStore } from "../store";
 import { ApprovalCard } from "../tasks";
-
-const time = (iso: string) =>
-  new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-const when = (iso: string) =>
-  new Date(iso).toDateString() === new Date().toDateString()
-    ? time(iso)
-    : new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+import { BackHead } from "../ui";
 
 const OUT: Partial<Record<NegotiationMessage["status"], string>> = {
   sending: "Sending…",
@@ -27,30 +22,17 @@ export function NegotiationPage({ id }: { id: number }) {
   const n = useStore((s) => s.negotiations[id]);
   const messages = useStore((s) => s.negotiationMessages[id]);
   const bot = useStore((s) => (n ? botName(s, n.botId) : ""));
-  const [missing, setMissing] = useState(false);
-  const [loadError, setLoadError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const { missing, error: loadError, load } = useItem(id, loadNegotiation);
+  const { busy, error, run } = useAction();
 
-  const load = useCallback(() => {
-    setLoadError("");
-    loadNegotiation(id).catch((err) => {
-      if (err instanceof ApiError && err.status === 404) setMissing(true);
-      else setLoadError(loadErrorText(err));
-    });
-  }, [id]);
-  useEffect(load, [load]);
-
-  if (missing) return <div className="empty">This negotiation doesn't exist.</div>;
-  if (!n || !messages)
+  if (missing || !n || !messages)
     return (
-      <section className="view">
-        {loadError && (
-          <div className="page narrow">
-            <LoadError error={loadError} retry={load} />
-          </div>
-        )}
-      </section>
+      <NoForm
+        error={loadError}
+        missing={missing ? "This negotiation doesn't exist." : ""}
+        retry={load}
+        back={{ label: "Tasks", to: "/tasks" }}
+      />
     );
 
   const m = n.mandate;
@@ -64,25 +46,15 @@ export function NegotiationPage({ id }: { id: number }) {
       !(await ask({ text: "Stop this negotiation? Nothing more goes to the seller.", ok: "Stop" }))
     )
       return;
-    setBusy(true);
-    setError("");
-    try {
+    await run(async () => {
       await api(`/negotiations/${id}/close`, { body: {} });
       await loadNegotiation(id);
-    } catch (err) {
-      setError(errorText(err));
-    }
-    setBusy(false);
+    });
   };
   return (
     <section className="view">
       <div className="page narrow">
-        <div className="page-head">
-          <button type="button" className="btn sm ghost back" onClick={() => navigate("/tasks")}>
-            <Icon name="chevron" />
-            Tasks
-          </button>
-          <span className="spacer" />
+        <BackHead to="/tasks" label="Tasks">
           {n.conversationUrl && (
             <a
               className="btn sm"
@@ -98,7 +70,7 @@ export function NegotiationPage({ id }: { id: number }) {
               Stop
             </button>
           )}
-        </div>
+        </BackHead>
         {error && <div className="form-error">{error}</div>}
 
         {n.approvalId !== null && <ApprovalCard approvalId={n.approvalId} showDetails={false} />}
@@ -129,12 +101,7 @@ export function NegotiationPage({ id }: { id: number }) {
             <dt>Delivery</dt>
             <dd>{m.delivery}</dd>
             <dt>Until</dt>
-            <dd>
-              {new Date(m.expiresAt).toLocaleDateString("en-GB", {
-                day: "numeric",
-                month: "short",
-              })}
-            </dd>
+            <dd>{day(m.expiresAt)}</dd>
             <dt>Contact details</dt>
             <dd>{m.allow.length ? m.allow.join(", ") : "None"}</dd>
             {a && (
@@ -176,7 +143,7 @@ export function NegotiationPage({ id }: { id: number }) {
                   key={x.id}
                   className={`tl-step no-icon ${x.status === "failed" ? "tl-error" : ""}`}
                 >
-                  <span className="t">{when(x.sentAt ?? x.createdAt)}</span>
+                  <span className="t">{timeOrDay(x.sentAt ?? x.createdAt)}</span>
                   <div className="tl-text">
                     <div>
                       <b>{x.direction === "in" ? "Seller" : bot}</b> {x.text}
