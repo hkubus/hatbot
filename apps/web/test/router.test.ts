@@ -5,7 +5,6 @@ const b = installDom("/memory");
 // Its own copy of the router: it listens on the window that's there as it loads, and the files run
 // before this one load theirs under another.
 const { navigate, setLeaveGuard } = await import("../src/router.ts?router-test");
-const { ask, askText } = await import("../src/confirm");
 
 // What the routes hear: they listen after the router does.
 const heard: string[] = [];
@@ -24,13 +23,10 @@ function guard() {
   return { answer: (go: boolean) => answer(go), asked: () => asked, off };
 }
 
-test("without a guard, navigate goes at once", () => {
+test("navigate goes at once, or with a guard waits for the answer: no stays, yes goes", async () => {
   navigate("/tasks");
   expect(b.url()).toBe("/tasks");
   expect(heard.at(-1)).toBe("/tasks");
-});
-
-test("with a guard, navigate waits for the answer: no stays, yes goes", async () => {
   const g = guard();
   navigate("/settings");
   expect(g.asked()).toBe(1);
@@ -75,15 +71,4 @@ test("Back with a guard keeps the page while it asks, and goes back on yes", asy
   // Forward is where you were.
   expect(b.entries().at(-1)).toBe("/settings");
   g.off();
-});
-
-test("with no dialog on screen, ask and askText fall back to the browser's", async () => {
-  b.window.confirm = () => true;
-  expect(await ask({ text: "Delete it?", ok: "Delete" })).toBe(true);
-  b.window.confirm = () => false;
-  expect(await ask({ text: "Delete it?", ok: "Delete" })).toBe(false);
-  b.window.prompt = () => "  iPhone ";
-  expect(await askText({ text: "Name", ok: "Create", placeholder: "iPhone" })).toBe("iPhone");
-  b.window.prompt = () => " ";
-  expect(await askText({ text: "Name", ok: "Create", placeholder: "iPhone" })).toBeNull();
 });

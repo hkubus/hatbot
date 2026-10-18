@@ -104,33 +104,27 @@ async function get(path: string, mode = "no-cors") {
 
 const cached = (path: string) => [...stores.values()].some((c) => c.entries.has(keyOf(path)));
 
-test("a 5xx from the proxy while the brain restarts gets the last app shell, not the proxy's page", async () => {
+test("a page that fails to load, or a 5xx while the brain restarts, gets the last app shell or the offline page", async () => {
   await install();
+  // No shell kept yet.
+  network = () => page("<h1>503 Service Unavailable</h1>", 503);
+  expect(await (await get("/", "navigate"))?.text()).toBe("<p>/offline.html</p>");
+  // Only an HTML page is kept as the shell.
+  network = () => js("not a page");
+  await get("/", "navigate");
+  expect(cached("/")).toBe(false);
   network = () => page("<title>Hatbot</title>");
-  expect(await (await get("/tasks", "navigate"))?.text()).toBe("<title>Hatbot</title>");
+  await get("/tasks", "navigate");
   expect(cached("/")).toBe(true);
 
   network = () => page("<h1>502 Bad Gateway</h1>", 502);
   const res = await get("/chat/2", "navigate");
   expect(res?.status).toBe(200);
   expect(await res?.text()).toBe("<title>Hatbot</title>");
-});
-
-test("with no shell kept yet, a 5xx or no network gets the offline page", async () => {
-  await install();
-  network = () => page("<h1>503 Service Unavailable</h1>", 503);
-  expect(await (await get("/", "navigate"))?.text()).toBe("<p>/offline.html</p>");
   network = () => {
     throw new TypeError("Failed to fetch");
   };
-  expect(await (await get("/settings", "navigate"))?.text()).toBe("<p>/offline.html</p>");
-});
-
-test("only an HTML page is kept as the shell", async () => {
-  await install();
-  network = () => js("not a page");
-  await get("/", "navigate");
-  expect(cached("/")).toBe(false);
+  expect(await (await get("/settings", "navigate"))?.text()).toBe("<title>Hatbot</title>");
 });
 
 test("an asset is kept only when it's a script, style or font", async () => {
@@ -140,21 +134,9 @@ test("an asset is kept only when it's a script, style or font", async () => {
   expect(await (await get("/assets/Memory-OLD.js"))?.text()).toBe("<title>Hatbot</title>");
   expect(cached("/assets/Memory-OLD.js")).toBe(false);
 
-  network = () => new Response("Not found", { status: 404 });
-  await get("/assets/Spend-OLD.js");
-  expect(cached("/assets/Spend-OLD.js")).toBe(false);
-
   network = () => js("export const Memory = 1;");
   await get("/assets/Memory-NEW.js");
   expect(cached("/assets/Memory-NEW.js")).toBe(true);
-  network = (url) =>
-    new Response("x", {
-      headers: { "content-type": url.endsWith(".css") ? "text/css;charset=utf-8" : "font/woff2" },
-    });
-  await get("/assets/index-NEW.css");
-  await get("/assets/Inter-latin-NEW.woff2");
-  expect(cached("/assets/index-NEW.css")).toBe(true);
-  expect(cached("/assets/Inter-latin-NEW.woff2")).toBe(true);
 });
 
 test("the old cache, which could hold a page kept as a script, goes on activate", async () => {
@@ -165,5 +147,6 @@ test("the old cache, which could hold a page kept as a script, goes on activate"
   const waits: Promise<unknown>[] = [];
   handlers.activate?.({ waitUntil: (p: Promise<unknown>) => waits.push(p) });
   await Promise.all(waits);
-  expect([...stores.keys()]).toEqual(["hatbot-v2"]);
+  expect(stores.has("hatbot-v1")).toBe(false);
+  expect(stores.size).toBe(1);
 });

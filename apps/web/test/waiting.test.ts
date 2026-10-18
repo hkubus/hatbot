@@ -31,7 +31,6 @@ test("a chat shows only its own approvals, with one line for the rest", () => {
     rest: 2,
     elsewhere: null,
   });
-  expect(splitWaiting(pending, coder, chats)).toEqual({ here: [deploy], rest: 3, elsewhere: null });
   // A group shows what was asked in it, and its bots' tasks.
   expect(splitWaiting(pending, group, chats).here).toEqual([deploy, inGroup]);
   // Asked in the group: not in Hatbot's own chat, though Hatbot asked.

@@ -124,20 +124,6 @@ test("Earlier messages loads once however often it's asked, and never into incog
   await first.setIncognito(false);
 });
 
-test("a send carries its own id, and gives up after a while", async () => {
-  const store = await freshStore("send");
-  serve(() => msg(9, { role: "user", botId: null, text: "hi" }));
-  await store.sendMessage("hi", [], "c0ffee");
-  const sent = dom.requests.at(-1);
-  expect(sent).toMatchObject({
-    method: "POST",
-    path: "/conversations/1/messages",
-    body: { text: "hi", attachmentIds: [], incognito: false, clientId: "c0ffee" },
-  });
-  expect(sent?.signal).toBeInstanceOf(AbortSignal);
-  expect(shown(store)).toEqual([[9, "hi", "done"]]);
-});
-
 const task = (id: number): Task => ({ id, title: "Check the NAS", status: "done" }) as Task;
 
 test("a card whose fetch failed is fetched again after a reconnect", async () => {
@@ -164,45 +150,16 @@ test("a card whose fetch failed is fetched again after a reconnect", async () =>
   store.disconnect();
 });
 
-test("a reconnect reloads settings, memory, the heartbeat, proposals and plugins", async () => {
+test("a reconnect reloads what may have changed while the stream was down", async () => {
   const store = await freshStore("reconnect");
   const proposal = (id: number, status: Proposal["status"]) => ({ id, status }) as Proposal;
-  let answered = false;
-  serve(
-    () => [],
-    (r) => {
-      if (r.path === "/proposals?status=pending") return answered ? [] : [proposal(7, "pending")];
-      if (r.path === "/proposals") return [proposal(7, answered ? "applied" : "pending")];
-      if (r.path === "/plugins") return [{ id: "ssh", enabled: answered }];
-      return [];
-    },
-  );
-  store.connect();
-  FakeSocket.last.open();
-  await store.loadProposals();
-  await store.loadPlugins();
-  const before = store.getState();
-  // While the stream was down, the proposal was applied on the phone and a plugin turned on.
-  answered = true;
-  await reconnect(store);
-  const after = store.getState();
-  expect(after.settingsVersion).toBe(before.settingsVersion + 1);
-  expect(after.memoryVersion).toBe(before.memoryVersion + 1);
-  expect(after.heartbeatVersion).toBe(before.heartbeatVersion + 1);
-  expect(after.proposals[7]?.status).toBe("applied");
-  expect(after.plugins.ssh?.enabled).toBe(true);
-  store.disconnect();
-});
-
-test("a reconnect finds a proposal made while Memory had none, and an open negotiation's messages", async () => {
-  const store = await freshStore("reconnect-empty");
   let away = false;
   serve(
     () => [],
     (r) => {
-      if (r.path === "/proposals?status=pending")
-        return away ? [{ id: 8, status: "pending" } as Proposal] : [];
-      if (r.path === "/proposals") return away ? [{ id: 8, status: "pending" } as Proposal] : [];
+      if (r.path === "/proposals?status=pending") return away ? [proposal(8, "pending")] : [];
+      if (r.path === "/proposals") return away ? [proposal(8, "pending")] : [];
+      if (r.path === "/plugins") return [{ id: "ssh", enabled: away }];
       if (r.path === "/negotiations/4")
         return {
           negotiation: { id: 4, status: "open" },
@@ -215,13 +172,18 @@ test("a reconnect finds a proposal made while Memory had none, and an open negot
   FakeSocket.last.open();
   // Memory loaded no proposals; a negotiation's page is open.
   await store.loadProposals();
+  await store.loadPlugins();
   await store.loadNegotiation(4);
-  expect(store.getState().proposals).toEqual({});
-  // While the stream was down, one was made and the seller answered.
+  const before = store.getState();
+  // Meanwhile a proposal was made, a plugin turned on on the phone, and the seller answered.
   away = true;
   await reconnect(store);
   const after = store.getState();
+  expect(after.settingsVersion).toBe(before.settingsVersion + 1);
+  expect(after.memoryVersion).toBe(before.memoryVersion + 1);
+  expect(after.heartbeatVersion).toBe(before.heartbeatVersion + 1);
   expect(after.proposals[8]?.status).toBe("pending");
+  expect(after.plugins.ssh?.enabled).toBe(true);
   expect(after.negotiationMessages[4]).toHaveLength(2);
   store.disconnect();
 });

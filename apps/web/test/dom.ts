@@ -64,10 +64,7 @@ export function installDom(start = "/") {
   let frame = 0;
   const requests: Request[] = [];
   let answer: Answer = () => ({});
-  const win = new EventTarget() as EventTarget & {
-    confirm?: (text: string) => boolean;
-    prompt?: (text: string) => string | null;
-  };
+  const win = new EventTarget();
   const entries = [start];
   let at = 0;
   const location = {
@@ -90,7 +87,7 @@ export function installDom(start = "/") {
     go(n: number) {
       at = Math.max(0, Math.min(entries.length - 1, at + n));
       // The browser tells the page a little later.
-      setTimeout(() => win.dispatchEvent(new Event("popstate")), 0);
+      queueMicrotask(() => win.dispatchEvent(new Event("popstate")));
     },
     back() {
       history.go(-1);
@@ -169,4 +166,4 @@ export function installDom(start = "/") {
 }
 
 /** Lets pending promises and timers run. */
-export const settle = () => new Promise((r) => setTimeout(r, 5));
+export const settle = () => new Promise((r) => setTimeout(r, 0));
