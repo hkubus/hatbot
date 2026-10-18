@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
   type Bot,
+  brokenCharts,
   type ChatCommand,
   chartBlocks,
   chartProblem,
@@ -57,6 +58,7 @@ import {
   oneShot,
 } from "./model";
 import {
+  CHART_GUESS,
   EXPERT_PROMPT,
   FORGET_PROMPT,
   groupPrompt,
@@ -2027,12 +2029,7 @@ export class Thread {
             return finish("done");
           }
           // A chart that doesn't draw shows the owner a wall of numbers; ask once for it again.
-          const broken = fixedCharts
-            ? []
-            : chartBlocks(text).flatMap((b, i) => {
-                const problem = chartProblem(b.source);
-                return problem ? [{ ...b, problem, n: i + 1 }] : [];
-              });
+          const broken = fixedCharts ? [] : brokenCharts(text);
           if (broken.length) {
             fixedCharts = true;
             chartFix = { broken, text: "" };
@@ -2040,7 +2037,7 @@ export class Thread {
             this.appendTurn(episode.id, bot.id, "user", [
               {
                 type: "text",
-                text: `(No message from the owner: the app checked your reply. ${broken.length > 1 ? "These chart blocks don't" : "This chart block doesn't"} draw, so the owner sees ${broken.length > 1 ? "them" : "it"} as code:\n${broken.map((b) => `- chart ${b.n}: ${b.problem}`).join("\n")}\nAnswer with only the corrected chart ${broken.length > 1 ? "blocks, each in its own fenced chart block, in this order" : "block, in a fenced chart block"}, and nothing else: it replaces the broken one in your reply. Long series are easy to miscount by hand. Don't guess where a value belongs; if you can't tell, get the numbers again, and with code_run print the chart JSON from it with json.dumps.)`,
+                text: `(No message from the owner: the app checked your reply. ${broken.length > 1 ? "These chart blocks don't" : "This chart block doesn't"} draw, so the owner sees ${broken.length > 1 ? "them" : "it"} as code:\n${broken.map((b) => `- chart ${b.n}: ${b.problem}`).join("\n")}\nAnswer with only the corrected chart ${broken.length > 1 ? "blocks, each in its own fenced chart block, in this order" : "block, in a fenced chart block"}, and nothing else: it replaces the broken one in your reply. Long series are easy to miscount by hand. ${CHART_GUESS})`,
               },
             ]);
             continue;

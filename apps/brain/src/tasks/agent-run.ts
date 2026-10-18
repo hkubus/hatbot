@@ -3,10 +3,10 @@
 // model Settings choose (Haiku by default) with Hatbot's own tools and the plugins' tools, in the
 // background lane, reporting back through finish_task.
 import type Anthropic from "@anthropic-ai/sdk";
-import { type ApprovalKind, chartBlocks, chartProblem, type Task } from "@hatbot/shared";
+import { type ApprovalKind, brokenCharts, type Task } from "@hatbot/shared";
 import { z } from "zod";
 import { cutOff, type StreamParams } from "../agent/model";
-import { AGENT_PROMPT, RESEARCH_ASK_BOT } from "../agent/prompt";
+import { AGENT_PROMPT, CHART_GUESS, RESEARCH_ASK_BOT } from "../agent/prompt";
 import { mayReview, safeToRun } from "../agent/review";
 import { type Readable, Screener } from "../agent/screening";
 import { localStamp, memoryIndex } from "../agent/thread";
@@ -97,14 +97,10 @@ const FinishTask = z.object({
 });
 
 /** What's wrong with the summary's charts, or "" if they all draw. */
-function brokenCharts(summary: string): string {
-  return chartBlocks(summary)
-    .flatMap((b, i) => {
-      const problem = chartProblem(b.source);
-      return problem ? [`chart ${i + 1} doesn't draw (${problem}).`] : [];
-    })
+const chartsWrong = (summary: string) =>
+  brokenCharts(summary)
+    .map((b) => `chart ${b.n} doesn't draw (${b.problem}).`)
     .join(" ");
-}
 
 const Wait = z.object({
   minutes: z.number().int().min(1).max(240).describe("How long to wait at most"),
@@ -758,12 +754,12 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         if (call.name === "finish_task") {
           const p = FinishTask.safeParse(call.input);
           // A chart that doesn't draw shows the owner a wall of numbers: send it back once.
-          const broken = p.success && !chartsChecked ? brokenCharts(p.data.summary) : "";
+          const broken = p.success && !chartsChecked ? chartsWrong(p.data.summary) : "";
           if (p.success) chartsChecked = true;
           if (broken)
             return result(
               call,
-              `Not finished: ${broken} Call finish_task again with it fixed. Don't guess where a value belongs; if you can't tell, get the numbers again, and with code_run print the chart JSON from it with json.dumps.`,
+              `Not finished: ${broken} Call finish_task again with it fixed. ${CHART_GUESS}`,
               true,
             );
           if (p.success) finished = p.data;
@@ -778,7 +774,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
             return result(call, "Not run: call finish_research once a turn.", true);
           const p = FinishResearch.safeParse(call.input);
           if (!p.success) return result(call, `Invalid input: ${z.prettifyError(p.error)}`, true);
-          const broken = chartsChecked ? "" : brokenCharts(`${p.data.answer}\n\n${p.data.report}`);
+          const broken = chartsChecked ? "" : chartsWrong(`${p.data.answer}\n\n${p.data.report}`);
           chartsChecked = true;
           if (broken)
             return result(
