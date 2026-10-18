@@ -80,7 +80,7 @@ export async function testApp(
   events.on((e) => seen.push(e));
   const settings = new SettingsStore(db);
   const spend = new Spend(db, settings, events, clock);
-  const memory = new MemoryStore(tempDir("hatbot-test-mem-"), db);
+  const memory = new MemoryStore(tempDir("hatbot-test-mem-"), db, events);
   await memory.init();
   const skills = new Skills(db, memory, clock);
   skills.watch(events);

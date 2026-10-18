@@ -1300,7 +1300,9 @@ test("a seller's message that looks like a scam holds the negotiation until you 
   expect(second.reason).toContain("Telegram");
   t.approvals.decide(second.id, "deny", "web");
   await waitFor(() => t.negotiations.get(n.id)?.status === "abandoned");
-  await waitFor(() => t.events.some((e) => e.type === "memory.committed"));
+  await waitFor(() =>
+    t.events.some((e) => e.type === "memory.committed" && e.message.startsWith("Negotiation #")),
+  );
   expect(await t.memory.read("negotiations.md")).toContain("the owner ended it");
   await t.plugins.stopAll();
 });

@@ -4,6 +4,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, normalize, sep } from "node:path";
 import type { Db } from "../db";
+import type { EventBus } from "../events";
 import { ftsQuery } from "../search";
 
 export type Author = { name: string; email: string };
@@ -85,10 +86,14 @@ function bestLine(marked: string, first: number): { line: number; text: string }
 export class MemoryStore {
   private queue: Promise<unknown> = Promise.resolve();
 
-  /** With `db`, search ranks sections through its full-text index, which every commit keeps current. */
+  /**
+   * With `db`, search ranks sections through its full-text index, which every commit keeps current.
+   * With `events`, every commit is told as memory.committed.
+   */
   constructor(
     readonly dir: string,
     private db?: Db,
+    private events?: EventBus,
   ) {}
 
   /** Creates the repo if it doesn't exist (the brain's provisioning normally does this). */
@@ -498,6 +503,7 @@ export class MemoryStore {
         console.error("memory index update failed", err),
       );
     }
+    this.events?.emit({ type: "memory.committed", sha, message, author: author.name });
     return sha;
   }
 

@@ -62,8 +62,6 @@ function sectionOf(index: string): string {
 const byName = (a: SkillInfo, b: SkillInfo) => a.name.localeCompare(b.name);
 
 export class Skills {
-  private events?: EventBus;
-
   constructor(
     private db: Db,
     readonly memory: MemoryStore,
@@ -72,7 +70,6 @@ export class Skills {
 
   /** Keeps the index current as memory changes. */
   watch(events: EventBus) {
-    this.events = events;
     events.on((e) => {
       if (e.type === "memory.committed")
         void this.refresh().catch((err) => console.error("skills refresh failed", err));
@@ -105,8 +102,7 @@ export class Skills {
    */
   async refresh(): Promise<SkillInfo[]> {
     let found: SkillInfo[] = [];
-    const message = "List the skills in INDEX.md";
-    const sha = await this.memory.edit(
+    await this.memory.edit(
       async (read) => {
         found = await this.scan(read);
         const index = await read("INDEX.md");
@@ -117,9 +113,8 @@ export class Skills {
         return [{ path: "INDEX.md", content: next }];
       },
       HATBOT,
-      message,
+      "List the skills in INDEX.md",
     );
-    if (sha) this.events?.emit({ type: "memory.committed", sha, message, author: HATBOT.name });
     const now = new Date(this.clock()).toISOString();
     this.db.transaction(() => {
       this.db.query("DELETE FROM skills_index").run();

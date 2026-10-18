@@ -1099,19 +1099,12 @@ export class Negotiations {
     const folder = botFolder(n.botId);
     const path = folder ? `${folder}/negotiations.md` : "negotiations.md";
     // Read and written in one go, so two closes at once both keep their notes.
-    const sha = await this.d.memory.update(
+    await this.d.memory.update(
       path,
       (current) => `${(current ?? "# Negotiations\n").trimEnd()}\n\n${lines.join("\n")}\n`,
       this.d.bots.author(n.botId),
       `Negotiation #${n.id}: ${outcome}`,
     );
-    if (sha)
-      this.d.events.emit({
-        type: "memory.committed",
-        sha,
-        message: `Negotiation #${n.id}: ${outcome}`,
-        author: this.d.bots.nameOf(n.botId),
-      });
     return path;
   }
 

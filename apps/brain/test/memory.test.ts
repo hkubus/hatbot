@@ -185,6 +185,11 @@ test("the memory API sends the sha and answers 409 with what the file is now", a
     sha: blobSha("two\n"),
     content: "two\n",
   });
+  // Every commit is told with its own message, a revert's too.
+  const [edit] = await t.memory.log(1);
+  await t.call("POST", `/memory/revert/${edit?.sha}`, undefined, { cookie });
+  const told = t.events.flatMap((e) => (e.type === "memory.committed" ? [e.message] : []));
+  expect(told.slice(-2)).toEqual(["Edit a.md", 'Revert "Edit a.md"']);
 });
 
 test("search ranks sections by how well they match, finding words in any form", async () => {

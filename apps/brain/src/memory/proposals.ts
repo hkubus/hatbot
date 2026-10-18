@@ -332,8 +332,6 @@ export class Proposals {
         409,
       );
     }
-    if (sha)
-      this.d.events.emit({ type: "memory.committed", sha, message: p.title, author: owner.name });
     return { proposal: this.resolve(id, "applied"), sha };
   }
 

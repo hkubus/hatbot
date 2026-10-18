@@ -43,7 +43,7 @@ const auth = new AuthService(db);
 const events = new EventBus();
 const settings = new SettingsStore(db);
 const spend = new Spend(db, settings, events);
-const memory = new MemoryStore(config.memoryDir, db);
+const memory = new MemoryStore(config.memoryDir, db, events);
 await memory.init();
 const skills = new Skills(db, memory);
 await skills.refresh();

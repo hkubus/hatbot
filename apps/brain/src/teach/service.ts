@@ -366,13 +366,6 @@ export class Teach {
       throw new TeachError(`There's already a skill called ${input.name}.`, 409);
     const owner = this.d.settings.get().owner;
     const sha = await this.d.skills.save(input.name, input.content, owner);
-    if (sha)
-      this.d.events.emit({
-        type: "memory.committed",
-        sha,
-        message: `Add skill ${input.name}`,
-        author: owner.name,
-      });
     this.update(id, { status: "saved", name: input.name, draft: input.content }, "draft");
     await this.forgetScreens(id);
     return { session: this.get(id) as TeachSession, path: skillPath(input.name), sha };
