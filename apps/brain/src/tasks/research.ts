@@ -21,6 +21,7 @@ import { tagJson, untrustedFields } from "../agent/untrusted";
 import { botFolder, slugWords } from "../bots";
 import { MemoryConflict } from "../memory/store";
 import { BudgetError, estimateTokens, requestCeiling } from "../spend";
+import { pathOf, TRACKING } from "./policy";
 import { refreshing } from "./research-goal";
 import type { Tasks } from "./service";
 
@@ -157,14 +158,12 @@ const folderOf = (bot: { id: string }) => {
 /** `read`: a helper read the page, so its link is one the task has (PLAN.md §17). */
 type Source = { n: number; url: string; title: string; date?: string; read?: boolean };
 
-const TRACKING = /^(utm_\w+|fbclid|gclid|dclid|msclkid|yclid|igshid|mc_cid|mc_eid)$/i;
-
 /** One page, one source: without its fragment, tracking parameters or a trailing slash. */
 export function pageUrl(url: string): string {
   const u = new URL(url.trim());
   u.hash = "";
   for (const key of [...u.searchParams.keys()]) if (TRACKING.test(key)) u.searchParams.delete(key);
-  if (u.pathname.length > 1) u.pathname = u.pathname.replace(/\/+$/, "");
+  u.pathname = pathOf(u.pathname);
   return u.href;
 }
 

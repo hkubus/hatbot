@@ -212,8 +212,26 @@ export function checkFor(
   return null;
 }
 
+/** A host without "www.", lowercased; null for something that isn't a web address. */
+export function hostOf(url: string | null | undefined): string | null {
+  try {
+    const u = new URL(url ?? "");
+    if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+    return u.hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
+
+/** `host` is `domain` or a host under it. */
+export const onHost = (host: string, domain: string) =>
+  host === domain || host.endsWith(`.${domain}`);
+
+/** A path without its trailing slash; the root stays "/". */
+export const pathOf = (path: string) => path.replace(/\/+$/, "") || "/";
+
 /** Query parameters that only say where a visit came from. */
-const TRACKING =
+export const TRACKING =
   /^(?:utm_\w*|fbclid|gclid|gbraid|wbraid|dclid|msclkid|yclid|mc_[ce]id|_ga|igshid)$/i;
 
 /**
@@ -225,7 +243,7 @@ export function samePage(a: string | null | undefined, b: string | null | undefi
   const page = (s: string) => {
     const u = new URL(s);
     const query = [...u.searchParams].filter(([k]) => !TRACKING.test(k)).map((p) => p.join("="));
-    return `${u.origin}${u.pathname.replace(/\/+$/, "") || "/"}?${query.sort().join("&")}`;
+    return `${u.origin}${pathOf(u.pathname)}?${query.sort().join("&")}`;
   };
   try {
     return page(a) === page(b);
@@ -244,7 +262,7 @@ const PAYMENT_HOSTS = (
 /** A payment provider's host, or one under it: a step there pays. */
 export function paymentHost(host: string): boolean {
   const h = host.toLowerCase();
-  return PAYMENT_HOSTS.some((p) => h === p || h.endsWith(`.${p}`));
+  return PAYMENT_HOSTS.some((p) => onHost(h, p));
 }
 /**
  * A checkout or payment step, by the word a part of its address's path starts with (Shopify's checkouts

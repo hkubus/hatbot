@@ -9,6 +9,7 @@ import {
   fold,
   type Hold,
   heldWhat,
+  hostOf,
   paymentHost,
   samePage,
 } from "./policy";
@@ -19,14 +20,6 @@ import {
  */
 const PAYMENT_FIELDS =
   /(?<!\p{L})(card number|numer karty|cvv2?|cvc2?|security code|kod cvv|kod blik|blik code|expiry date|data ważności karty)(?!\p{L})/iu;
-
-const hostOf = (url: string | null) => {
-  try {
-    return url ? new URL(url).hostname.toLowerCase() : null;
-  } catch {
-    return null;
-  }
-};
 
 /**
  * A held step that may buy or pay: at checkout, a buy, pay or order label, or in a frame Hatbot couldn't
