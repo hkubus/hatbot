@@ -1,9 +1,8 @@
 // The heartbeat: every few minutes, a look at what went wrong without the model. Only something new
 // goes to Haiku, which tells you, starts a task, or lets it be (PLAN.md §16).
-import type Anthropic from "@anthropic-ai/sdk";
 import { HATBOT_ID, type HeartbeatInfo, type HeartbeatRun } from "@hatbot/shared";
 import type { Chats } from "./agent/chats";
-import type { ModelClient } from "./agent/model";
+import { type ModelClient, oneShot } from "./agent/model";
 import { tagJson } from "./agent/untrusted";
 import type { Bots } from "./bots";
 import type { Db } from "./db";
@@ -12,7 +11,7 @@ import type { EventBus } from "./events";
 import type { Notifier } from "./notify";
 import type { Plugins } from "./plugins/registry";
 import type { SettingsStore } from "./settings";
-import { estimateTokens, fixedTokens, requestCeiling, type Spend } from "./spend";
+import type { Spend } from "./spend";
 import { RESTARTED, type Tasks } from "./tasks/service";
 
 export const HEARTBEAT_MODEL = "claude-haiku-5-5";
@@ -322,46 +321,28 @@ export class Heartbeat {
 
   private async triage(instructions: string, list: string) {
     const content = `The owner's instructions:\n${instructions}\n\n<findings_json>\n${tagJson(list)}\n</findings_json>`;
-    const messages = [{ role: "user" as const, content }];
-    const release = this.d.spend.hold(
-      requestCeiling(HEARTBEAT_MODEL, {
-        prompt: estimateTokens(messages) + fixedTokens(TRIAGE_PROMPT, []),
-        maxTokens: TRIAGE_MAX_TOKENS,
-      }),
-      undefined,
-      { reserve: true },
-    );
-    try {
-      const res = await this.d.model.create({
+    const out = await oneShot(
+      this.d,
+      {
         model: HEARTBEAT_MODEL,
         max_tokens: TRIAGE_MAX_TOKENS,
         thinking: { type: "adaptive" },
         output_config: { effort: "low", format: { type: "json_schema", schema: CHOICE } },
         system: TRIAGE_PROMPT,
-        messages,
-      });
-      this.d.spend.recordResponse({
-        model: HEARTBEAT_MODEL,
-        purpose: "heartbeat",
-        usage: res.usage,
-      });
-      if (res.stop_reason !== "end_turn") throw new Error(`it stopped at ${res.stop_reason}`);
-      const out = res.content
-        .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
-        .map((b) => b.text)
-        .join("");
-      const parsed = JSON.parse(out) as Record<string, unknown>;
-      const action = ["nothing", "notify", "task"].includes(String(parsed.action))
-        ? String(parsed.action)
-        : "notify";
-      return {
-        action,
-        title: String(parsed.title ?? "").slice(0, 80),
-        message: String(parsed.message ?? "").slice(0, 2000),
-      };
-    } finally {
-      release();
-    }
+        messages: [{ role: "user", content }],
+      },
+      { purpose: "heartbeat" },
+      { reserve: true },
+    );
+    const parsed = JSON.parse(out) as Record<string, unknown>;
+    const action = ["nothing", "notify", "task"].includes(String(parsed.action))
+      ? String(parsed.action)
+      : "notify";
+    return {
+      action,
+      title: String(parsed.title ?? "").slice(0, 80),
+      message: String(parsed.message ?? "").slice(0, 2000),
+    };
   }
 
   private state(): State {

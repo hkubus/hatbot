@@ -21,7 +21,7 @@ test("Check everything tries each part and keeps the report, and a test approval
   let meanwhile: unknown = null;
   t.taskModel.onCreate = () => {
     try {
-      t.spend.check(0.9995);
+      t.spend.check(1);
     } catch (err) {
       meanwhile = err;
     }
