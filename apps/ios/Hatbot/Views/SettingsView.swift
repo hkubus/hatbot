@@ -75,26 +75,21 @@ struct SettingsView: View {
           Section("Chat") {
             if let model = settings.chatModel {
               Picker("Model", selection: setting(model, \.chatModel)) {
-                Text("Haiku 5.5, asks Opus for hard parts").tag(AppSettings.ChatModel.haiku)
-                Text("Opus 5.5").tag(AppSettings.ChatModel.opus)
-                // One set elsewhere that this app doesn't know: shown as it is.
-                if !AppSettings.ChatModel.known.contains(model) { Text(model.rawValue).tag(model) }
+                ForEach(AppSettings.ModelID.known.including(model), id: \.self) { m in
+                  Text(m == .haiku ? "\(m.name), asks Opus for hard parts" : m.name).tag(m)
+                }
               }
             }
             Picker("Effort", selection: setting(settings.chatEffort, \.chatEffort)) {
-              Text("Low").tag(AppSettings.Effort.low)
-              Text("Medium").tag(AppSettings.Effort.medium)
-              if !AppSettings.Effort.known.contains(settings.chatEffort) {
-                Text(settings.chatEffort.rawValue.capitalized).tag(settings.chatEffort)
+              ForEach(AppSettings.Effort.known.including(settings.chatEffort), id: \.self) { e in
+                Text(e.rawValue.capitalized).tag(e)
               }
             }
           }
           if let model = settings.taskModel {
             Section("Tasks") {
               Picker("Model for background tasks", selection: setting(model, \.taskModel)) {
-                Text("Haiku 5.5").tag(AppSettings.TaskModel.haiku)
-                Text("Opus 5.5").tag(AppSettings.TaskModel.opus)
-                if !AppSettings.TaskModel.known.contains(model) { Text(model.rawValue).tag(model) }
+                ForEach(AppSettings.ModelID.known.including(model), id: \.self) { m in Text(m.name).tag(m) }
               }
             }
           }
@@ -102,9 +97,7 @@ struct SettingsView: View {
             let desktop = setting(model, \.desktopModel)
             Section("Desktop") {
               Picker("Model for desktop tasks", selection: desktop) {
-                Text("Haiku 5.5").tag(AppSettings.DesktopModel.haiku)
-                Text("Opus 5.5").tag(AppSettings.DesktopModel.opus)
-                if !AppSettings.DesktopModel.known.contains(model) { Text(model.rawValue).tag(model) }
+                ForEach(AppSettings.ModelID.known.including(model), id: \.self) { m in Text(m.name).tag(m) }
               }
               if desktop.wrappedValue == .haiku, let escalate = settings.desktopEscalate {
                 Toggle("Try again on Opus when Haiku fails", isOn: setting(escalate, \.desktopEscalate))

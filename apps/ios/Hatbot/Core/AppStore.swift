@@ -543,7 +543,7 @@ final class AppStore {
   struct BotChange: Encodable, Sendable {
     var name: String?
     var instructions: String
-    var chatModel: AppSettings.ChatModel?
+    var chatModel: AppSettings.ModelID?
     var chatEffort: AppSettings.Effort?
     var plugins: [String]?
     /// nil: left as it is, or for a new bot, the brain picks.
@@ -1012,10 +1012,10 @@ final class AppStore {
     var limits: Limits?
     var chatEffort: AppSettings.Effort?
     var notificationsOpen: AppSettings.Opens?
-    var desktopModel: AppSettings.DesktopModel?
+    var desktopModel: AppSettings.ModelID?
     var desktopEscalate: Bool?
-    var taskModel: AppSettings.TaskModel?
-    var chatModel: AppSettings.ChatModel?
+    var taskModel: AppSettings.ModelID?
+    var chatModel: AppSettings.ModelID?
     var reviewChanges: Bool?
     var heartbeat: AppSettings.Heartbeat?
     var weeklyReport: AppSettings.WeeklyReport?

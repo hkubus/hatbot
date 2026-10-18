@@ -434,7 +434,8 @@ struct HeartbeatView: View {
           }
           .onChange(of: s.wrappedValue.everyMinutes) { save() }
           Picker("Bot", selection: s.botId) {
-            ForEach(s.wrappedValue.botChoices(store.botIds), id: \.self) { id in Text(store.botName(id)).tag(id) }
+            // With the one set now when it isn't among them: deleted, or not loaded yet.
+            ForEach(store.botIds.including(s.wrappedValue.botId), id: \.self) { id in Text(store.botName(id)).tag(id) }
           }
           .onChange(of: s.wrappedValue.botId) { save() }
         }

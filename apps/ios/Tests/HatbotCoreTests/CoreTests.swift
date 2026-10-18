@@ -631,15 +631,17 @@ final class FoldTests: XCTestCase {
     let b = try JSONDecoder().decode(Bot.self, from: Data(json.utf8))
     XCTAssertEqual(b.chatModel?.rawValue, "claude-sonnet-6")
     XCTAssertEqual(b.chatEffort?.rawValue, "high")
-    XCTAssertFalse(AppSettings.ChatModel.known.contains(b.chatModel!))
+    XCTAssertFalse(AppSettings.ModelID.known.contains(b.chatModel!))
+    // Its picker row names it as the known ones are named.
+    XCTAssertEqual(AppSettings.ModelID.known.including(b.chatModel).map(\.name), ["Haiku 5.5", "Opus 5.5", "Sonnet 6"])
     let change = AppStore.BotChange(
       name: nil, instructions: "", chatModel: b.chatModel, chatEffort: b.chatEffort, plugins: nil)
     let sent = String(decoding: try JSONEncoder().encode(change), as: UTF8.self)
     XCTAssertTrue(sent.contains(#""chatModel":"claude-sonnet-6""#))
     XCTAssertTrue(sent.contains(#""chatEffort":"high""#))
     // Known ones are the same values as before.
-    XCTAssertEqual(try JSONDecoder().decode(AppSettings.DesktopModel.self, from: Data(#""claude-haiku-5-5""#.utf8)), .haiku)
-    XCTAssertEqual(String(decoding: try JSONEncoder().encode(AppSettings.TaskModel.opus), as: UTF8.self), #""claude-opus-5-5""#)
+    XCTAssertEqual(try JSONDecoder().decode(AppSettings.ModelID.self, from: Data(#""claude-haiku-5-5""#.utf8)), .haiku)
+    XCTAssertEqual(String(decoding: try JSONEncoder().encode(AppSettings.ModelID.opus), as: UTF8.self), #""claude-opus-5-5""#)
   }
 
   func testDecodesEpisodeEvents() throws {
@@ -804,9 +806,9 @@ final class LookingAfterThingsTests: XCTestCase {
     XCTAssertEqual(AppSettings.Heartbeat.everyChoices(with: 1440).last, 1440)
     XCTAssertEqual(
       [5, 60, 90, 120].map(AppSettings.Heartbeat.every), ["5 minutes", "Hour", "90 minutes", "2 hours"])
-    let hb = AppSettings.Heartbeat(enabled: true, everyMinutes: 15, botId: "sysadmin", instructions: "")
-    XCTAssertEqual(hb.botChoices(["hatbot", "sysadmin"]), ["hatbot", "sysadmin"])
-    XCTAssertEqual(hb.botChoices(["hatbot"]), ["hatbot", "sysadmin"])
+    XCTAssertEqual(["hatbot", "sysadmin"].including("sysadmin"), ["hatbot", "sysadmin"])
+    XCTAssertEqual(["hatbot"].including("sysadmin"), ["hatbot", "sysadmin"])
+    XCTAssertEqual(AppSettings.ModelID.known.including(nil), AppSettings.ModelID.known)
   }
 
   func testSplitsSearchSnippetsAtTheMarks() {

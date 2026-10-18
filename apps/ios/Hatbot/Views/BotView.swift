@@ -24,7 +24,7 @@ struct BotView: View {
     var icon = Bot.Icon.sparkles
     var color = Bot.Tint.amber
     var instructions = ""
-    var chatModel: AppSettings.ChatModel?
+    var chatModel: AppSettings.ModelID?
     var chatEffort: AppSettings.Effort?
     var plugins: [String]?
 
@@ -123,19 +123,15 @@ struct BotView: View {
       }
       Section {
         Picker("Model", selection: $form.chatModel) {
-          Text("As in Settings").tag(AppSettings.ChatModel?.none)
-          Text("Haiku 5.5").tag(AppSettings.ChatModel?.some(.haiku))
-          Text("Opus 5.5").tag(AppSettings.ChatModel?.some(.opus))
-          // One set elsewhere that this app doesn't know: shown, and kept, as it is.
-          if let m = form.chatModel, !AppSettings.ChatModel.known.contains(m) {
-            Text(m.rawValue).tag(AppSettings.ChatModel?.some(m))
+          Text("As in Settings").tag(AppSettings.ModelID?.none)
+          // One set elsewhere that this app doesn't know is kept as it is.
+          ForEach(AppSettings.ModelID.known.including(form.chatModel), id: \.self) { m in
+            Text(m.name).tag(AppSettings.ModelID?.some(m))
           }
         }
         Picker("Effort", selection: $form.chatEffort) {
           Text("As in Settings").tag(AppSettings.Effort?.none)
-          Text("Low").tag(AppSettings.Effort?.some(.low))
-          Text("Medium").tag(AppSettings.Effort?.some(.medium))
-          if let e = form.chatEffort, !AppSettings.Effort.known.contains(e) {
+          ForEach(AppSettings.Effort.known.including(form.chatEffort), id: \.self) { e in
             Text(e.rawValue.capitalized).tag(AppSettings.Effort?.some(e))
           }
         }

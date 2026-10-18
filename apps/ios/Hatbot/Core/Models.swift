@@ -358,7 +358,7 @@ struct Bot: Codable, Identifiable, Equatable, Sendable {
   /// Its role, in the owner's words.
   var instructions: String
   /// nil: as in Settings.
-  var chatModel: AppSettings.ChatModel?
+  var chatModel: AppSettings.ModelID?
   var chatEffort: AppSettings.Effort?
   /// nil: every plugin that's on.
   var plugins: [String]?
@@ -404,7 +404,7 @@ extension Bot {
     icon = try c.decodeIfPresent(Icon.self, forKey: .icon) ?? .hat
     color = try c.decodeIfPresent(Tint.self, forKey: .color) ?? .amber
     instructions = try c.decode(String.self, forKey: .instructions)
-    chatModel = try c.decodeIfPresent(AppSettings.ChatModel.self, forKey: .chatModel)
+    chatModel = try c.decodeIfPresent(AppSettings.ModelID.self, forKey: .chatModel)
     chatEffort = try c.decodeIfPresent(AppSettings.Effort.self, forKey: .chatEffort)
     plugins = try c.decodeIfPresent([String].self, forKey: .plugins)
     createdAt = try c.decode(String.self, forKey: .createdAt)
@@ -418,7 +418,7 @@ struct BotTemplate: Decodable, Identifiable, Equatable, Sendable {
   var icon: Bot.Icon
   var color: Bot.Tint
   var instructions: String
-  var chatModel: AppSettings.ChatModel?
+  var chatModel: AppSettings.ModelID?
   var chatEffort: AppSettings.Effort?
   var plugins: [String]?
 }
@@ -562,13 +562,13 @@ struct AppSettings: Codable, Equatable, Sendable {
   /// Missing on brains from before the setting.
   var notificationsOpen: Opens?
   /// The model that drives desktop tasks; missing on brains from before the setting.
-  var desktopModel: DesktopModel?
+  var desktopModel: ModelID?
   /// A desktop task Haiku fails at carries on once on Opus; missing on older brains.
   var desktopEscalate: Bool?
   /// The model background tasks run on; missing on brains from before the setting.
-  var taskModel: TaskModel?
+  var taskModel: ModelID?
   /// The chat's model; missing on brains from before the setting.
-  var chatModel: ChatModel?
+  var chatModel: ModelID?
   /// Changes Haiku finds safe go ahead without asking; missing on older brains.
   var reviewChanges: Bool?
   /// Every few minutes a look over what went wrong; missing on older brains.
@@ -592,28 +592,25 @@ struct AppSettings: Codable, Equatable, Sendable {
     var hour: Int
   }
 
-  struct ChatModel: RawRepresentable, Codable, Hashable, Sendable {
+  /// The chat's, a bot's, background tasks' or desktop tasks' model.
+  struct ModelID: RawRepresentable, Codable, Hashable, Sendable {
     let rawValue: String
     init(rawValue: String) { self.rawValue = rawValue }
-    static let haiku = ChatModel(rawValue: "claude-haiku-5-5")
-    static let opus = ChatModel(rawValue: "claude-opus-5-5")
+    static let haiku = ModelID(rawValue: "claude-haiku-5-5")
+    static let opus = ModelID(rawValue: "claude-opus-5-5")
     static let known = [haiku, opus]
-  }
 
-  struct DesktopModel: RawRepresentable, Codable, Hashable, Sendable {
-    let rawValue: String
-    init(rawValue: String) { self.rawValue = rawValue }
-    static let opus = DesktopModel(rawValue: "claude-opus-5-5")
-    static let haiku = DesktopModel(rawValue: "claude-haiku-5-5")
-    static let known = [opus, haiku]
+    /// "Opus 5.5"; one of another shape as it is.
+    var name: String { Format.modelName(rawValue) }
   }
+}
 
-  struct TaskModel: RawRepresentable, Codable, Hashable, Sendable {
-    let rawValue: String
-    init(rawValue: String) { self.rawValue = rawValue }
-    static let haiku = TaskModel(rawValue: "claude-haiku-5-5")
-    static let opus = TaskModel(rawValue: "claude-opus-5-5")
-    static let known = [haiku, opus]
+extension Array where Element: Equatable {
+  /// A picker's choices, and the value set now when it isn't one of them (set on the web, newer than this
+  /// app, or gone), so the picker has a row for it.
+  func including(_ current: Element?) -> [Element] {
+    guard let current, !contains(current) else { return self }
+    return self + [current]
   }
 }
 
