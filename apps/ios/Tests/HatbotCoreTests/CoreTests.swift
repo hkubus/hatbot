@@ -802,6 +802,7 @@ final class NetworkTests: XCTestCase {
       await MainActor.run {
         store.conversations = [Conversation(id: 1, kind: .direct, botIds: ["hatbot"], unread: 0), chat]
         store.botIds = ["hatbot", "chef"]
+        store.refreshDelay = .zero
       }
       await store.openConversation(chat.id)
       await MainActor.run {
