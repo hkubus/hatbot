@@ -757,7 +757,7 @@ test("the number check is priced at all of its output first, and a limit leaves 
     } else {
       expect(checked).toEqual([
         requestCeiling("claude-haiku-5-5", {
-          prompt: estimateTokens(sent?.messages) + fixedTokens(RESEARCH_CHECK_PROMPT, []),
+          prompt: estimateTokens(sent?.messages) + fixedTokens(RESEARCH_CHECK_PROMPT, null),
           maxTokens: sent?.max_tokens ?? 0,
         }),
       ]);

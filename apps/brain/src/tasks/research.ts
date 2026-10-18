@@ -5,7 +5,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Bot, Task } from "@hatbot/shared";
 import { z } from "zod";
-import { cutOff, modelErrorText } from "../agent/model";
+import { cutOff, modelErrorText, oneShot } from "../agent/model";
 import { RESEARCH_CHECK_PROMPT, RESEARCH_PROMPT, RESEARCH_WORKER_PROMPT } from "../agent/prompt";
 import type { Readable } from "../agent/screening";
 import { localStamp } from "../agent/thread";
@@ -20,7 +20,7 @@ import {
 import { tagJson, untrustedFields } from "../agent/untrusted";
 import { botFolder, slugWords } from "../bots";
 import { MemoryConflict } from "../memory/store";
-import { BudgetError, estimateTokens, fixedTokens, requestCeiling } from "../spend";
+import { BudgetError, estimateTokens, requestCeiling } from "../spend";
 import { refreshing } from "./research-goal";
 import type { Tasks } from "./service";
 
@@ -811,39 +811,22 @@ async function checkNumbers(
   const cited = citedIn([text]).filter((n) => sources.get(n));
   if (!cited.length) return null;
   const content = `${untrustedFields("sources", evidenceFor(sources, cited))}\n\n<report>\n${text}\n</report>`;
-  const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content }];
+  const { id } = run.task;
   try {
-    // Past a limit it throws, and the report says its numbers weren't checked. Held while it runs, so
-    // the chat and other tasks count it too.
-    const release = d.spend.hold(
-      requestCeiling(CHECK_MODEL, {
-        prompt: estimateTokens(messages) + fixedTokens(RESEARCH_CHECK_PROMPT, []),
-        maxTokens: CHECK_TOKENS,
-      }),
-      { id: run.task.id, limitUsd: run.tasks.budget(run.task.id) },
-    );
-    let res: Anthropic.Beta.BetaMessage;
-    try {
-      res = await d.model.create({
+    // Past a limit it throws, and the report says its numbers weren't checked.
+    const out = await oneShot(
+      d,
+      {
         model: CHECK_MODEL,
         max_tokens: CHECK_TOKENS,
         thinking: { type: "adaptive" },
         output_config: { effort: "low", format: { type: "json_schema", schema: CHECK_SCHEMA } },
         system: RESEARCH_CHECK_PROMPT,
-        messages,
-      });
-    } finally {
-      release();
-    }
-    d.spend.recordResponse({
-      model: CHECK_MODEL,
-      purpose: "research",
-      usage: res.usage,
-      taskId: run.task.id,
-    });
-    if (res.stop_reason !== "end_turn")
-      return { failed: `the check stopped at ${res.stop_reason}` };
-    const out = res.content.map((b) => (b.type === "text" ? b.text : "")).join("");
+        messages: [{ role: "user", content }],
+      },
+      { purpose: "research", taskId: id },
+      { task: { id, limitUsd: run.tasks.budget(id) } },
+    );
     let json: { problems?: unknown };
     try {
       json = JSON.parse(out);
