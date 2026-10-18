@@ -13,7 +13,7 @@ import type { CallContext, PluginTool } from "../src/plugins/plugin";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { sendConfirm } from "../src/tasks/desktop-run";
 import { computer, FakeModel, text, toolUse } from "./fake-model";
-import { type TestApp, testApp, waitFor } from "./helpers";
+import { type TestApp, tempDirs, testApp, waitFor } from "./helpers";
 
 sendConfirm.everyMs = 1;
 
@@ -44,7 +44,9 @@ const noted = (m: Partial<Record<string, unknown>>) =>
 
 /** The MCP plugin with the stand-in Scout, its read tools set to Chat. */
 async function withScout(t: TestApp, modes: Record<string, string> = {}) {
-  const log = join(mkdtempSync(join(tmpdir(), "hatbot-scout-")), "calls.jsonl");
+  const dir = mkdtempSync(join(tmpdir(), "hatbot-scout-"));
+  tempDirs.push(dir);
+  const log = join(dir, "calls.jsonl");
   const server = {
     name: "scout",
     transport: "stdio",
