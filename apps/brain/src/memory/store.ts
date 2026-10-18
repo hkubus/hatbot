@@ -167,7 +167,7 @@ export class MemoryStore {
     try {
       return await readFile(abs, "utf8");
     } catch {
-      throw new MemoryError(`not found: ${path}`);
+      throw new MemoryError(`not found: ${path}`, 404);
     }
   }
 
@@ -314,7 +314,7 @@ export class MemoryStore {
   delete(path: string, author: Author, message: string): Promise<string | null> {
     return this.serial(async () => {
       const { rel } = this.resolve(path);
-      if (!(await this.exists(rel))) throw new MemoryError(`not found: ${path}`);
+      if (!(await this.exists(rel))) throw new MemoryError(`not found: ${path}`, 404);
       return this.apply([{ path: rel, content: null }], author, message);
     });
   }
