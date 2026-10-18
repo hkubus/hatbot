@@ -1,5 +1,6 @@
 // Schedules and triggers (PLAN.md §5.6, §8): types, request bodies, and cron in words.
 import { z } from "zod";
+import { BOT_ID } from "./bot-id";
 
 export type Schedule = {
   id: number;
@@ -35,7 +36,7 @@ const when = {
   at: z.string().trim().min(1).max(40).optional(),
 };
 
-const botId = z.string().regex(/^[a-z][a-z0-9-]{0,30}$/);
+const botId = z.string().regex(BOT_ID);
 
 export const CreateSchedule = z
   .object({
