@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Tests the desktop firewall from host-setup.sh in throwaway network namespaces: a bridge with the
-# desktop, the brain and a gateway that also stands in for the internet (9.9.9.9).
-# Run as root on any Linux box with nft, iproute2, python3 and envsubst. Touches nothing outside the namespaces.
-# Without root, in namespaces of your own:
-#   unshare -rnm --propagation private sh -c 'mount -t tmpfs none /run && mkdir /run/netns && ./test-firewall.sh'
+# Tests the desktop firewalls in throwaway network namespaces: a bridge with the desktop, the brain and a
+# gateway that also stands in for the internet (9.9.9.9). First the host's, from host-setup.sh, then the
+# desktop's own, from desktop-provision.sh, which is all there is without Proxmox (ssh-setup.sh).
+# Run as root on any Linux box with nft, iproute2, python3, setpriv and envsubst. Touches nothing outside
+# the namespaces. Without root, in namespaces of your own (with subordinate IDs in /etc/subuid):
+#   unshare --map-auto --map-root-user -nm --propagation private \
+#     sh -c 'mount -t tmpfs none /run && mkdir /run/netns && ./test-firewall.sh'
 
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -85,8 +87,15 @@ report() { # report ok|FAIL text
   [[ $1 == ok ]] || fails=$((fails + 1))
   printf '%-5s %s\n' "$1" "$2"
 }
+# AS=UID runs the probes as that user.
+as() { # as NS COMMAND...
+  local ns=$1
+  shift
+  if [[ -n ${AS:-} ]]; then set -- setpriv --reuid="$AS" --regid="$AS" --clear-groups "$@"; fi
+  ip netns exec "$ns" "$@"
+}
 conn() { # conn NS IP PORT [SRC-IP] [SRC-PORT] -> 0 if it connects
-  ip netns exec "$1" python3 -c "
+  as "$1" python3 -c "
 import socket
 s = socket.socket(); s.settimeout(2)
 if '${4:-}' or '${5:-}': s.bind(('${4:-}', int('${5:-0}')))
@@ -115,7 +124,7 @@ expect_open brain 192.168.55.1 443
 
 # UDP: public DNS is the desktop's resolver; the LAN's isn't reachable.
 udp() { # udp NS IP PORT -> 0 if the echo comes back
-  ip netns exec "$1" python3 -c "
+  as "$1" python3 -c "
 import socket
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(2)
 s.sendto(b'hi', ('$2', $3)); s.recvfrom(512)" 2>/dev/null
@@ -152,6 +161,52 @@ if ip netns exec desk ping -6 -c 1 -W 1 fd00::1 >/dev/null 2>&1; then
 else
   report ok "desk → IPv6 blocked"
 fi
+
+ip -n desk addr del 192.168.55.50/24 dev eth0
+
+# The desktop's own firewall, without the host's: desk (uid 1000) and the shell's DynamicUsers reach
+# only the internet, and the LAN's resolver on port 53; root's services aren't filtered.
+echo
+ip netns exec hh nft delete table bridge hatbot
+guest=$(awk '/^cat >\/etc\/nftables.conf <<EOF$/ { f = 1; next } f && /^EOF$/ { exit } f' "$HERE/desktop-provision.sh" |
+  BRAIN_IP=192.168.55.224 desk_uid=1000 blocked='192.168.55.0/24, 192.168.55.224, 5.6.7.8' \
+    dns_rule='ip daddr { 192.168.55.1 } meta l4proto { tcp, udp } th dport 53 accept' envsubst)
+ip netns exec desk nft -f - <<<"$guest" || exit 1
+for AS in 1000 61184; do
+  echo "as uid $AS:"
+  expect_open desk 9.9.9.9 443
+  expect_closed desk 192.168.55.1 443
+  for a in 10.0.0.1 169.254.169.254; do expect_closed desk "$a" 80; done
+  expect_closed desk 5.6.7.8 443
+  expect_closed desk 192.168.55.113 22
+  expect_closed desk 192.168.55.224 8080
+done
+AS=1000
+if udp desk 192.168.55.1 53; then report ok "desk → 192.168.55.1:53/udp open"; else report FAIL "desk → 192.168.55.1:53/udp should be open"; fi
+AS=''
+echo "as root:"
+expect_open desk 192.168.55.1 443
+# IPv6 over TCP: open for root, so the refusal below is the firewall's. The input chain drops neighbour
+# discovery, so the neighbours are pinned.
+ip -n desk neigh replace fd00::1 lladdr bc:24:11:00:00:02 dev eth0 nud permanent
+ip -n gw neigh replace fd00::5 lladdr bc:24:11:ab:cd:ef dev eth0 nud permanent
+ip netns exec gw python3 -c "
+import socket
+s = socket.socket(socket.AF_INET6); s.bind(('fd00::1', 443)); s.listen(8)
+while True:
+    c, _ = s.accept(); c.close()" &
+PIDS+=" $!"
+for _ in $(seq 1 20); do ip netns exec gw ss -Hltn 'sport = 443' | grep -q fd00::1 && break; sleep 0.1; done
+conn6() { as desk python3 -c "
+import socket
+s = socket.socket(socket.AF_INET6); s.settimeout(2); s.connect(('fd00::1', 443))" 2>/dev/null; }
+if conn6; then report ok "desk → [fd00::1]:443 open"; else report FAIL "desk → [fd00::1]:443 should be open"; fi
+AS=1000
+if conn6; then report FAIL "desk → IPv6 should be blocked (uid 1000)"; else report ok "desk → IPv6 blocked (uid 1000)"; fi
+AS=''
+expect_open brain 192.168.55.225 7070
+expect_closed brain 192.168.55.225 22
+expect_closed hh 192.168.55.225 7070
 
 printf '\n%d failed\n' "$fails"
 ((fails == 0))

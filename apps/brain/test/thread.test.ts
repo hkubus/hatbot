@@ -888,3 +888,13 @@ test("deleting a conversation takes it out of the chat, search, files and the su
   expect(lastUserText(model.requests.at(-1))).not.toContain("hello");
   expect(t.thread.list().map((m) => m.text)).toEqual(["still there?", "Yes."]);
 });
+
+test("without a desktop, the chat isn't offered the tools that need one", async () => {
+  const chat = new FakeModel([{ content: [text("Hi.")] }]);
+  const t = await testApp(chat);
+  t.agent.configured = false;
+  await t.thread.post("hello").done;
+  expect(toolNames(chat.requests[0])).not.toContain("run_desktop_task");
+  expect(toolNames(chat.requests[0])).not.toContain("send_file");
+  expect(toolNames(chat.requests[0])).toContain("run_task");
+});

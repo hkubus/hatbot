@@ -34,5 +34,5 @@ jobs:
       - name: shellcheck
         working-directory: infra
         run: shellcheck -x *.sh
-      # The desktop's firewall from host-setup.sh, in throwaway network namespaces.
+      # The desktop's firewalls (host-setup.sh's and its own), in throwaway network namespaces.
       - run: sudo bash infra/test-firewall.sh

@@ -13,6 +13,7 @@ import { localStamp, memoryIndex } from "../agent/thread";
 import {
   AskBotInput,
   containerOf,
+  DESKTOP_TOOLS,
   DesktopTaskInput,
   inBatches,
   invalidInput,
@@ -265,6 +266,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     ...CORE_TOOLS.filter(
       (t) =>
         (others.length || t.name !== "ask_bot") &&
+        (ctx.desktop?.configured || !DESKTOP_TOOLS.includes(t.name)) &&
         (!research || RESEARCH_CORE_TOOLS.includes(t.name)),
     ),
     ...(research ? RESEARCH_TOOLS : []),

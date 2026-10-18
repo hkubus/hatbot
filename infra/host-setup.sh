@@ -20,6 +20,8 @@ source "$HERE/lib.sh"
 STATE=/etc/hatbot/host.env
 # shellcheck source=/dev/null
 [[ -r $STATE ]] && source "$STATE"
+[[ ${HATBOT_TRANSPORT:-pct} == pct ]] || die "$STATE is from ssh-setup.sh; this machine's Hatbot isn't on Proxmox"
+HATBOT_TRANSPORT=pct
 
 # ---------- Settings ----------
 BRAIN_ID=${BRAIN_ID:-}
@@ -123,7 +125,7 @@ save_state() {
   {
     echo "# Written by hatbot infra/host-setup.sh; edit and re-run to change."
     local v
-    for v in BRAIN_ID DESKTOP_ID BRAIN_IP DESKTOP_IP SSD_STORE HDD_STORE ARCHIVE_SIZE LAN_BRIDGE DNS HATBOT_PUBLIC_IPS; do
+    for v in HATBOT_TRANSPORT BRAIN_ID DESKTOP_ID BRAIN_IP DESKTOP_IP SSD_STORE HDD_STORE ARCHIVE_SIZE LAN_BRIDGE DNS HATBOT_PUBLIC_IPS; do
       printf '%s=%q\n' "$v" "${!v}"
     done
   } >"$STATE"
@@ -410,7 +412,7 @@ if ((!DRY_RUN)); then
 fi
 
 for id in "$BRAIN_ID" "$DESKTOP_ID"; do
-  if ((!DRY_RUN)) && ct_running "$id"; then ok "CT $id running"; else run pct start "$id"; fi
+  if ((!DRY_RUN)) && guest_up "$id"; then ok "CT $id running"; else run pct start "$id"; fi
 done
 if ((!DRY_RUN)); then
   wait_ct "$BRAIN_ID"
@@ -442,7 +444,7 @@ run pveum acl modify "/pool/$POOL" --users "$PVE_USER" --roles HatbotSnapshots
 
 have_token=0
 pveum user token list "$PVE_USER" --output-format json 2>/dev/null | json_values tokenid | grep -qx "$TOKEN_NAME" && have_token=1
-if ((have_token)) && ct_has_file "$BRAIN_ID" /etc/hatbot/proxmox.env; then
+if ((have_token)) && guest_has_file "$BRAIN_ID" /etc/hatbot/proxmox.env; then
   ok "token exists and the brain has its secret"
 else
   if ((have_token)); then
@@ -478,7 +480,7 @@ run pveum acl modify "/pool/$POOL" --tokens "$TOKEN_ID" --roles HatbotSnapshots
 
 # ---------- 5. Brain <-> desktop secrets ----------
 step "5/8 Brain ↔ desktop secrets"
-if ct_has_file "$BRAIN_ID" /etc/hatbot/desktop.env && ct_has_file "$DESKTOP_ID" /etc/hatbot-desktop/secrets.env; then
+if guest_has_file "$BRAIN_ID" /etc/hatbot/desktop.env && guest_has_file "$DESKTOP_ID" /etc/hatbot-desktop/secrets.env; then
   ok "both sides have them"
 else
   agent_token=$(openssl rand -hex 32)
@@ -510,7 +512,7 @@ provision() { # provision CTID SCRIPT ENV...
   fi
 }
 provision "$BRAIN_ID" brain-provision.sh "DESKTOP_IP=$DESKTOP_IP"
-provision "$DESKTOP_ID" desktop-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BRAIN_IP=$BRAIN_IP"
+provision "$DESKTOP_ID" desktop-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS"
 
 # ---------- 7. Nightly desktop snapshots ----------
 step "7/8 Nightly desktop snapshots"
@@ -588,7 +590,7 @@ cat <<EOF
 
    Next:
    1. Check isolation and permissions:   $HERE/verify.sh
-   2. Install the app:   $HERE/deploy.sh <CTID>:<path to the hatbot checkout>   (see README.md)
+   2. Install the app:   $HERE/deploy.sh <path to the hatbot checkout>   (see README.md)
    3. Reverse proxy:  your domain (e.g. hatbot.example.com) → http://$BRAIN_IP:8080 (with WebSockets)
    4. Before M4: add the brain's SSH key (/var/lib/hatbot/.ssh/id_ed25519.pub) to a "hatbot" user on hosts it may manage.
 EOF

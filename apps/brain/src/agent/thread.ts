@@ -73,6 +73,7 @@ import {
   addSources,
   CHAT_WEB_TOOLS,
   containerOf,
+  DESKTOP_TOOLS,
   INCOGNITO_TOOLS,
   inBatches,
   invalidInput,
@@ -788,7 +789,8 @@ export class Thread {
     const tools = [
       ...(incognito ? TOOL_PARAMS.filter((t) => INCOGNITO_TOOLS.includes(t.name)) : TOOL_PARAMS)
         // Alone, Hatbot's tools stay as they were, and its cache with them.
-        .filter((t) => others.length || t.name !== "ask_bot"),
+        .filter((t) => others.length || t.name !== "ask_bot")
+        .filter((t) => this.d.desktop?.configured || !DESKTOP_TOOLS.includes(t.name)),
       ...(onHaiku ? [ASK_OPUS] : []),
       ...pluginTools.map(toolParam),
       ...CHAT_WEB_TOOLS,

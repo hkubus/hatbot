@@ -44,7 +44,7 @@ step=Fetching
 status running "$step"
 # shellcheck source=/dev/null
 [[ -r $ETC/update.env ]] && source "$ETC/update.env"
-[[ -n ${HATBOT_GIT_URL:-} ]] || fail "updates aren't set up; run deploy.sh on the Proxmox host"
+[[ -n ${HATBOT_GIT_URL:-} ]] || fail "updates aren't set up; run deploy.sh to set them up"
 branch=${HATBOT_GIT_BRANCH:-main}
 [[ -d $REPO ]] || git init -q --bare "$REPO"
 # The token goes in through the environment, so it never shows up in the process list.
@@ -75,15 +75,15 @@ if [[ -n ${HATBOT_UPDATE_SIGNERS:-} ]]; then
   # a fix. The fetch takes a forced push, so the live commit has to be in the new one's history. A live
   # commit this repo hasn't seen isn't in it either (merge-base exits 128), so that's refused too.
   if [[ -n $from ]] && ! git -C "$REPO" merge-base --is-ancestor "$from" "$to" 2>/dev/null; then
-    fail "$branch moved back or was rewritten: ${to:0:7} doesn't come after the live ${from:0:7}, so it wasn't deployed. To deploy it anyway, run deploy.sh on the Proxmox host"
+    fail "$branch moved back or was rewritten: ${to:0:7} doesn't come after the live ${from:0:7}, so it wasn't deployed. To deploy it anyway, run deploy.sh"
   fi
 fi
 
-# Host-side scripts only change through deploy.sh or host-setup.sh on the Proxmox host.
+# Host-side scripts only change through deploy.sh, host-setup.sh or ssh-setup.sh.
 if [[ -n $from ]] && git -C "$REPO" cat-file -e "$from^{commit}" 2>/dev/null; then
   changed=$(git -C "$REPO" diff --name-only "$from" "$to" -- infra \
     ':!infra/brain-deploy.sh' ':!infra/hatbot-update.sh' ':!infra/README.md' | xargs -r -n1 basename | paste -sd, -)
-  [[ -z $changed ]] || note "Host scripts changed ($changed); run deploy.sh on the Proxmox host to apply them."
+  [[ -z $changed ]] || note "Host scripts changed ($changed); run deploy.sh again to apply them."
 fi
 
 tmp=$(mktemp -d)
@@ -126,7 +126,7 @@ if [[ -r $ETC/desktop.env ]] && source "$ETC/desktop.env" && [[ -n ${DESKTOP_AGE
       ((updated)) || note "desktop-agent didn't come back on the new version; it keeps the old one. See journalctl -u hatbot-desktop-agent-update on the desktop."
       ;;
     404 | 501)
-      note "desktop-agent can't update itself yet; run deploy.sh on the Proxmox host once."
+      note "desktop-agent can't update itself yet; run deploy.sh once."
       ;;
     *)
       note "desktop-agent refused the update ($code: $(head -c 200 "$tmp/agent.out" 2>/dev/null))."
