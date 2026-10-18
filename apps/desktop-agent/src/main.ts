@@ -9,7 +9,7 @@ import type {
   BrowserInspect,
   LiveInput,
 } from "@hatbot/shared/desktop";
-import { Browser, BrowserError, devToolsUp } from "./browser";
+import { Browser, BrowserError } from "./browser";
 import { context, inspect } from "./cdp";
 import { FetchError, fetchPage } from "./fetch";
 import { browserKey } from "./keys";
@@ -129,7 +129,7 @@ async function deepHealth(): Promise<DeepHealth> {
     () => true,
     () => false,
   );
-  const [x, cdp, shell] = await Promise.all([displayUp(), devToolsUp(), shellUp]);
+  const [x, cdp, shell] = await Promise.all([displayUp(), browser.devToolsUp(), shellUp]);
   return { ...health(), ok: x && cdp, x, cdp, shell };
 }
 const image = (bytes: Uint8Array) =>

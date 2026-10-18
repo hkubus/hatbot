@@ -8,7 +8,6 @@ import { type Browser, BrowserError } from "./browser";
 const PROFILE = /^[a-z][a-z0-9-]{0,30}$/;
 /** Written by the service as it starts Chromium: the profile it's on. */
 const RUNNING = process.env.HATBOT_CHROMIUM_PROFILE ?? "/run/hatbot-chromium/profile";
-const CDP = process.env.HATBOT_CDP ?? "http://127.0.0.1:9222";
 const SWITCH_TIMEOUT_MS = 30_000;
 
 const read = (path: string) => {
@@ -20,19 +19,20 @@ const read = (path: string) => {
 };
 
 /** The profile Chromium is on; null where it isn't run by hatbot-chromium.service (one shared profile). */
-export const runningProfile = () => read(RUNNING);
+export const runningProfile = (path = RUNNING) => read(path);
 
 /**
  * Switches Chromium to `id`'s profile, closing it if it's on another: its tabs go with it. Null where
- * there's only the one shared profile.
+ * there's only the one shared profile. `runningPath`: where the service says which one it's on.
  */
 export async function useProfile(
   id: string,
   stateDir: string | null,
   browser: Browser,
+  runningPath = RUNNING,
 ): Promise<string | null> {
   if (!PROFILE.test(id)) throw new BrowserError("That isn't a profile name.");
-  const running = runningProfile();
+  const running = runningProfile(runningPath);
   if (!running || !stateDir) return null;
   if (running === id) return id;
   writeFileSync(join(stateDir, "browser-profile"), `${id}\n`, { mode: 0o644 });
@@ -40,12 +40,7 @@ export async function useProfile(
   const end = Date.now() + SWITCH_TIMEOUT_MS;
   while (Date.now() < end) {
     await Bun.sleep(300);
-    if (runningProfile() !== id) continue;
-    const up = await fetch(`${CDP}/json/version`, { signal: AbortSignal.timeout(1000) }).then(
-      (r) => r.ok,
-      () => false,
-    );
-    if (up) return id;
+    if (runningProfile(runningPath) === id && (await browser.devToolsUp(1000))) return id;
   }
   throw new BrowserError(`Chromium didn't come back on the ${id} profile.`);
 }

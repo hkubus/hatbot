@@ -1,53 +1,12 @@
 import { afterAll, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
 import { handle, loadError, oneAtATime } from "../src/render";
+import { startChromium } from "./chromium";
 
-/** A Chromium that runs here: $HATBOT_CHROMIUM, the system's, or Playwright's. CI may have none. */
-async function findChromium(): Promise<string | null> {
-  const pw = process.env.PLAYWRIGHT_BROWSERS_PATH ?? join(homedir(), ".cache/ms-playwright");
-  const candidates = [
-    process.env.HATBOT_CHROMIUM,
-    ...["chromium", "chromium-browser", "google-chrome", "google-chrome-stable"].map((n) =>
-      Bun.which(n),
-    ),
-    ...(existsSync(pw) ? readdirSync(pw) : [])
-      .filter((d) => d.startsWith("chromium-"))
-      .sort()
-      .reverse()
-      .map((d) => join(pw, d, "chrome-linux/chrome")),
-  ].filter((p): p is string => Boolean(p && existsSync(p)));
-  for (const path of candidates) if (await runs(path)) return path;
-  return null;
-}
-
-/** Whether it starts and prints a page; a sandbox it can't have here fails it. */
-async function runs(path: string): Promise<boolean> {
-  const dir = mkdtempSync(join(tmpdir(), "hatbot-render-probe-"));
-  try {
-    const proc = Bun.spawn(
-      [
-        path,
-        "--headless=new",
-        "--dump-dom",
-        `--user-data-dir=${dir}`,
-        ...(process.getuid?.() === 0 ? ["--no-sandbox"] : []),
-        "data:text/html,<p>ok</p>",
-      ],
-      { stdout: "pipe", stderr: "ignore", timeout: 20_000 },
-    );
-    return (await new Response(proc.stdout).text()).includes("<p>ok</p>");
-  } catch {
-    return false;
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-}
-
-const chromium = await findChromium();
-if (!chromium)
-  console.log("No Chromium that runs here: the render tests that need one are skipped.");
+// The first Chromium that runs here; render.ts starts its own.
+const started = await startChromium();
+await started?.stop();
+const chromium = started?.path;
+const live = test.skipIf(!chromium);
 
 const server = Bun.serve({
   port: 0,
@@ -78,17 +37,17 @@ const call = (path: string, body: unknown, o: object = opts) =>
     o,
   ).then(async (r) => ({ status: r.status, body: (await r.json()) as Record<string, unknown> }));
 
-test.skipIf(!chromium)("a page's scripts run before it's read", async () => {
+live("a page's scripts run before it's read", async () => {
   const r = await call("/render", { url: `${base}/shop` });
   expect(r.status).toBe(200);
   expect(r.body.html).toContain('<p id="price">€1,299</p>');
 });
 
-test.skipIf(!chromium)("the check renders a page of its own", async () => {
+live("the check renders a page of its own", async () => {
   expect(await call("/check", {})).toEqual({ status: 200, body: { ok: true } });
 });
 
-test.skipIf(!chromium)("a page that can't be loaded says why", async () => {
+live("a page that can't be loaded says why", async () => {
   const closed = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() });
   const port = closed.port;
   closed.stop(true);
@@ -99,11 +58,11 @@ test.skipIf(!chromium)("a page that can't be loaded says why", async () => {
   });
 });
 
-test.skipIf(!chromium)("a page that never finishes is killed", async () => {
+live("a page that never finishes is killed", async () => {
   const started = Date.now();
-  const r = await call("/render", { url: `${base}/loop` }, { ...opts, timeoutMs: 3000 });
-  expect(r).toEqual({ status: 504, body: { error: "It didn't finish in 3 seconds." } });
-  expect(Date.now() - started).toBeLessThan(8000);
+  const r = await call("/render", { url: `${base}/loop` }, { ...opts, timeoutMs: 1500 });
+  expect(r).toEqual({ status: 504, body: { error: "It didn't finish in 1.5 seconds." } });
+  expect(Date.now() - started).toBeLessThan(6000);
 });
 
 test("only the internet, over http and https", async () => {

@@ -1,4 +1,4 @@
-// A headless Chromium with DevTools on, for tests that drive browser.ts. CI may have none.
+// A headless Chromium with DevTools on, for tests that drive browser.ts or render.ts. CI may have none.
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,9 +19,12 @@ function candidates(): string[] {
   ].filter((p): p is string => Boolean(p && existsSync(p)));
 }
 
-export type Chromium = { endpoint: string; stop: () => Promise<void> };
+export type Chromium = { path: string; endpoint: string; stop: () => Promise<void> };
 
-/** Starts one, and resolves with its DevTools address; null when none starts here. */
+/**
+ * Starts the first one that runs here (a sandbox it can't have fails one), and resolves with its
+ * DevTools address; null, said once, when none does.
+ */
 export async function startChromium(): Promise<Chromium | null> {
   for (const path of candidates()) {
     const dir = mkdtempSync(join(tmpdir(), "hatbot-cdp-"));
@@ -44,11 +47,24 @@ export async function startChromium(): Promise<Chromium | null> {
       rmSync(dir, { recursive: true, force: true });
     };
     const port = await listening(proc.stderr);
-    if (port) return { endpoint: `http://127.0.0.1:${port}`, stop };
+    if (port) return { path, endpoint: `http://127.0.0.1:${port}`, stop };
     await stop();
   }
+  console.log("No Chromium that runs here: the tests that need one are skipped.");
   return null;
 }
+
+/** Serves `pages` as HTML by path, on loopback; pages added later are served too. */
+export const serve = (pages: Record<string, string>) =>
+  Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      const body = pages[new URL(req.url).pathname];
+      if (!body) return new Response("no", { status: 404 });
+      return new Response(body, { headers: { "content-type": "text/html; charset=utf-8" } });
+    },
+  });
 
 /** The port from "DevTools listening on ws://127.0.0.1:PORT/…", or null if it doesn't say within 15 s. */
 async function listening(stderr: ReadableStream<Uint8Array>): Promise<string | null> {

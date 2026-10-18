@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { Browser, ChromiumDown } from "../src/browser";
 import { CONTEXT_JS, context, ELEMENT_JS, inspect, SECRET } from "../src/cdp";
-import { startChromium } from "./chromium";
+import { serve, startChromium } from "./chromium";
 
 type Field = {
   type?: string;
@@ -214,23 +214,16 @@ test("a page that can't be read when asked about secrets counts as showing one",
 });
 
 const chromium = await startChromium();
-const real = chromium && new Browser(null, chromium.endpoint);
-const server = Bun.serve({
-  port: 0,
-  hostname: "127.0.0.1",
-  fetch(req) {
-    const page = pages[new URL(req.url).pathname];
-    return page
-      ? new Response(page, { headers: { "content-type": "text/html; charset=utf-8" } })
-      : new Response("no", { status: 404 });
-  },
-});
+const live = test.skipIf(!chromium);
+const real = new Browser(null, chromium?.endpoint);
+const pages: Record<string, string> = {};
+const server = serve(pages);
 const base = `http://127.0.0.1:${server.port}`;
 afterAll(async () => {
   server.stop(true);
   await chromium?.stop();
 });
-const pages: Record<string, string> = {
+Object.assign(pages, {
   "/shadow": `<!doctype html><body><div id="h"></div><script>
     document.getElementById("h").attachShadow({ mode: "open" }).innerHTML =
       "<input type=password value=hunter2>";</script></body>`,
@@ -260,19 +253,17 @@ const pages: Record<string, string> = {
         root.querySelector("input").focus();
       }
     });</script></body>`,
-};
+  "/opener": `<!doctype html><body style="margin:0">
+    <button style="width:100px;height:40px" onclick="window.open('/area', 'pay', 'width=400,height=300')">Pay</button></body>`,
+});
 
-/** Asks until the page has loaded what the test looks for. */
+/** Whether a secret shows on the page, once loaded: navigate waits for its frames to load too. */
 async function shown(path: string): Promise<boolean | undefined> {
-  await real?.call("navigate", { url: `${base}${path}` });
-  for (let i = 0; ; i++) {
-    const page = await context(real as Browser, false, true);
-    if (page.secretShown || i === 20) return page.secretShown;
-    await Bun.sleep(100);
-  }
+  await real.call("navigate", { url: `${base}${path}` });
+  return (await context(real, false, true)).secretShown;
 }
 
-test.skipIf(!real)(
+live(
   "a secret shows in an open shadow root, a same-origin frame, a text area or a payment frame",
   async () => {
     expect(await shown("/shadow")).toBe(true);
@@ -286,39 +277,30 @@ test.skipIf(!real)(
   20_000,
 );
 
-test.skipIf(!real)(
-  "typing into a closed shadow root counts as secret: its input can't be seen",
-  async () => {
-    await real?.call("navigate", { url: `${base}/closed` });
-    expect(await inspect(real as Browser)).toMatchObject({ tag: "pw-box", secret: true });
-    // A custom element that is itself the box isn't hiding one.
-    await real?.call("navigate", { url: `${base}/editor` });
-    await real?.call("left_click", { target: { type: "coordinate", x: 20, y: 20 } });
-    expect(await inspect(real as Browser)).toMatchObject({
-      tag: "trix-editor",
-      editable: true,
-      secret: false,
-    });
-  },
-);
+live("typing into a closed shadow root counts as secret: its input can't be seen", async () => {
+  await real.call("navigate", { url: `${base}/closed` });
+  expect(await inspect(real)).toMatchObject({ tag: "pw-box", secret: true });
+  // A custom element that is itself the box isn't hiding one.
+  await real.call("navigate", { url: `${base}/editor` });
+  await real.call("left_click", { target: { type: "coordinate", x: 20, y: 20 } });
+  expect(await inspect(real)).toMatchObject({
+    tag: "trix-editor",
+    editable: true,
+    secret: false,
+  });
+});
 
-pages["/opener"] = `<!doctype html><body style="margin:0">
-  <button style="width:100px;height:40px" onclick="window.open('/area', 'pay', 'width=400,height=300')">Pay</button></body>`;
-
-test.skipIf(!real)(
-  "a secret in a popup's window shows, though the tab under it is the active one",
-  async () => {
-    const browser = real as Browser;
-    expect(await shown("/opener")).toBe(false);
-    await browser.call("left_click", { target: { type: "coordinate", x: 20, y: 20 } });
-    let page = await context(browser, false, true);
-    for (let i = 0; !page.secretShown && i < 50; i++) {
-      await Bun.sleep(100);
-      page = await context(browser, false, true);
-    }
-    expect(page).toMatchObject({ url: `${base}/opener`, secretShown: true });
-    const popup = (await browser.state()).tabs.find((t) => t.url.endsWith("/area"));
-    await browser.call("close_tab", { tab_id: popup?.tab_id });
-    expect((await context(browser, false, true)).secretShown).toBe(false);
-  },
-);
+live("a secret in a popup's window shows, though the tab under it is the active one", async () => {
+  expect(await shown("/opener")).toBe(false);
+  await real.call("left_click", { target: { type: "coordinate", x: 20, y: 20 } });
+  // The popup loads in its own time.
+  let page = await context(real, false, true);
+  for (let i = 0; !page.secretShown && i < 50; i++) {
+    await Bun.sleep(100);
+    page = await context(real, false, true);
+  }
+  expect(page).toMatchObject({ url: `${base}/opener`, secretShown: true });
+  const popup = (await real.state()).tabs.find((t) => t.url.endsWith("/area"));
+  await real.call("close_tab", { tab_id: popup?.tab_id });
+  expect((await context(real, false, true)).secretShown).toBe(false);
+});

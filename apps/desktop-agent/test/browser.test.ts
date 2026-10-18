@@ -1,5 +1,6 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, beforeEach, expect, test } from "bun:test";
 import type { ServerWebSocket } from "bun";
+import { Browser } from "../src/browser";
 
 // A Chromium DevTools endpoint with two tabs, A on screen and B behind it, that counts visibility checks.
 const pages = [
@@ -48,14 +49,19 @@ const cdp = Bun.serve({
   },
 });
 afterAll(() => cdp.stop(true));
-process.env.HATBOT_CDP = `http://127.0.0.1:${cdp.port}`;
-// Its own copy of the module: another test file may have loaded it with another DevTools address.
-const { Browser } = (await import(
-  `../src/browser.ts?cdp=${cdp.port}`
-)) as typeof import("../src/browser");
+const endpoint = `http://127.0.0.1:${cdp.port}`;
+beforeEach(() => {
+  pages.length = 2;
+  visibilityChecks = 0;
+  onScreen = "A";
+  answerMs = 0;
+});
+/** Sends Chromium's event: it reaches the browser before the answer to its next question. */
+const event = (method: string, targetInfo: unknown) =>
+  browserSocket?.send(JSON.stringify({ method, params: { targetInfo } }));
 
 test("the tabs are asked which is on screen only when that may have changed", async () => {
-  const browser = new Browser(null);
+  const browser = new Browser(null, endpoint);
   const wait = () => browser.call("wait", { duration: 0 });
   await wait();
   expect(visibilityChecks).toBe(2);
@@ -76,18 +82,16 @@ test("the tabs are asked which is on screen only when that may have changed", as
 
   // A tab opened by a page.
   const opened = { targetId: "C", type: "page", url: "https://c.example/", title: "C" };
-  browserSocket?.send(
-    JSON.stringify({ method: "Target.targetCreated", params: { targetInfo: opened } }),
-  );
-  await Bun.sleep(20);
-  await wait();
-  expect(visibilityChecks).toBe(7);
+  pages.push(opened);
+  event("Target.targetCreated", opened);
   await browser.state();
+  expect(visibilityChecks).toBe(7);
+  await wait();
   expect(visibilityChecks).toBe(7);
 });
 
 test("a call while the tabs are being asked waits for an answer from after the switch", async () => {
-  const browser = new Browser(null);
+  const browser = new Browser(null, endpoint);
   expect((await browser.onScreen(null))?.url).toBe("https://a.example/");
   // The owner switches to B; the tabs are slow to answer, and a second caller comes meanwhile.
   answerMs = 300;
@@ -101,9 +105,6 @@ test("a call while the tabs are being asked waits for an answer from after the s
   // A page brings a tab to the front without opening or closing one: only its info changes.
   answerMs = 0;
   onScreen = "A";
-  browserSocket?.send(
-    JSON.stringify({ method: "Target.targetInfoChanged", params: { targetInfo: pages[0] } }),
-  );
-  await Bun.sleep(20);
+  event("Target.targetInfoChanged", pages[0]);
   expect((await browser.onScreen(null))?.url).toBe("https://a.example/");
 });

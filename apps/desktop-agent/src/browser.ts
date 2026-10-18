@@ -24,15 +24,6 @@ const CDP = process.env.HATBOT_CDP ?? "http://127.0.0.1:9222";
 const COMMAND_TIMEOUT_MS = 30_000;
 const MAX_READ_CHARS = 50_000;
 
-/** Whether Chromium's DevTools answers, for GET /health?deep=1. */
-export async function devToolsUp(): Promise<boolean> {
-  try {
-    return (await fetch(`${CDP}/json/version`, { signal: AbortSignal.timeout(2000) })).ok;
-  } catch {
-    return false;
-  }
-}
-
 /** A failure the model should read: becomes an error result. */
 export class BrowserError extends Error {}
 /** Chromium isn't there to ask: nothing on screen is a page. */
@@ -357,10 +348,22 @@ export class Browser {
    */
   constructor(
     private downloadDir: string | null = null,
-    endpoint = CDP,
+    private endpoint = CDP,
   ) {
     this.cdp = new Connection(endpoint);
     this.cdp.on((method, p, sessionId) => this.event(method, p, sessionId));
+  }
+
+  /** Whether Chromium's DevTools answers. */
+  async devToolsUp(timeoutMs = 2000): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.endpoint}/json/version`, {
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
   }
 
   /** Closes Chromium, every window and tab. hatbot-chromium.service opens it again. */
