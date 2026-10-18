@@ -1,7 +1,7 @@
 // Boxes (PLAN.md §21): small web apps a bot makes for you, every version kept, and what their pages
 // save. The brain never runs a box's code: it serves the page sandboxed, on an opaque origin with no
 // network, and keeps what the page saves through the app, which answers only that box's frame.
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import {
   API_PREFIX,
   type Box,
@@ -9,6 +9,7 @@ import {
   type BoxCall,
   type BoxDetail,
   type BoxPage,
+  type BoxSecret,
   type BoxVersion,
   HATBOT_ID,
   MAX_BOX_STORE,
@@ -19,7 +20,9 @@ import {
   BOX_SERVER,
   type BoxConfig,
   type BoxFile,
+  type BoxSecrets,
   boxConfig,
+  MAX_BOX_NOTIFY,
 } from "@hatbot/shared/hatbox";
 import type { Chats } from "./agent/chats";
 import { type CreateParams, type ModelClient, modelErrorText, oneShot } from "./agent/model";
@@ -29,6 +32,8 @@ import type { Db } from "./db";
 import { UserError } from "./errors";
 import type { EventBus } from "./events";
 import type { Backends } from "./hatbox/backends";
+import type { Notifier } from "./notify";
+import type { Secrets } from "./secrets";
 import type { SettingsStore } from "./settings";
 import { BudgetError, estimateTokens, fixedTokens, requestCeiling, type Spend } from "./spend";
 
@@ -72,8 +77,13 @@ export const BOX_ASK_MODEL = "claude-haiku-5-5";
 const ASK_TOKENS = 4000;
 /** Notes a box's page may put in the chat in an hour (hatbox.send). */
 const NOTES_PER_HOUR = 5;
+/**
+ * Notifications a box's backend may send in a day (scheduled() returning {notify}). Fewer than notes:
+ * each one buzzes your phone, and a schedule runs up to 288 times a day.
+ */
+export const NOTIFY_PER_DAY = 10;
 
-/** What hatbox.ask, .send and .feed need: the boxes get it once the chats exist (connect). */
+/** What hatbox.ask, .send and .feed, and backends' notifications, need: given once the chats exist. */
 export type BoxDeps = {
   settings: SettingsStore;
   spend: Spend;
@@ -81,6 +91,8 @@ export type BoxDeps = {
   model: ModelClient;
   chats: Chats;
   feeds: BoxFeeds;
+  notifier: Notifier;
+  publicUrl: string;
 };
 
 export class Boxes {
@@ -95,6 +107,8 @@ export class Boxes {
     private db: Db,
     private events: EventBus,
     private clock: () => number = Date.now,
+    /** Where boxes' secrets are kept: with the brain's other secrets, out of the database. */
+    private vault?: Secrets,
   ) {
     this.key = secretKey(db, "box_key");
   }
@@ -134,7 +148,7 @@ export class Boxes {
         `SELECT ${VERSION_COLUMNS} FROM box_versions WHERE box_id = ? ORDER BY n`,
       )
       .all(id);
-    return { ...box, versions };
+    return { ...box, versions, secrets: this.secrets(id) };
   }
 
   /** A version's page, the current one unless `n` is given. */
@@ -168,13 +182,72 @@ export class Boxes {
     try {
       return boxConfig(this.files(id).find((f) => f.path === BOX_CONFIG)?.content);
     } catch {
-      return { hosts: [], packages: {} };
+      return { hosts: [], packages: {}, secrets: [] };
     }
   }
 
   /** The hosts the box's backend may reach, from its box.json. */
   hosts(id: number): string[] {
     return this.config(id).hosts;
+  }
+
+  /** The secrets the current version's box.json declares, and whether you've set each; no values. */
+  secrets(id: number): BoxSecret[] {
+    const set = this.vault?.box(id) ?? {};
+    return this.config(id).secrets.map((name) => ({ name, set: name in set }));
+  }
+
+  /**
+   * The secrets of the box you've set, whether its box.json declares them now or not: a later version
+   * could declare one again.
+   */
+  setSecretNames(id: number): string[] {
+    return Object.keys(this.vault?.box(id) ?? {});
+  }
+
+  hasSecrets(id: number): boolean {
+    return this.setSecretNames(id).length > 0;
+  }
+
+  /**
+   * What the backend starts with: the secrets its box.json declares that you've set, and a name for
+   * that set of them, which tells the guest whether it has them.
+   */
+  secretValues(id: number): BoxSecrets {
+    const set = this.vault?.box(id) ?? {};
+    const values = Object.fromEntries(
+      this.config(id).secrets.flatMap((n) => (set[n] === undefined ? [] : [[n, set[n]]])),
+    );
+    const digest = Object.keys(values).length
+      ? createHash("sha256").update(JSON.stringify(values)).digest("hex").slice(0, 32)
+      : "";
+    return { values, digest };
+  }
+
+  /** You set or (null) remove some of the box's secrets. Only names its box.json declares are set. */
+  async setSecrets(id: number, changes: Record<string, string | null>): Promise<BoxSecret[]> {
+    if (!this.vault) throw new BoxError("Boxes can't have secrets here.", 503);
+    const declared = this.config(id).secrets;
+    const unknown = Object.keys(changes).find((n) => changes[n] !== null && !declared.includes(n));
+    if (unknown) throw new BoxError(`${unknown} isn't one of this box's secrets.`);
+    this.vault.setBox(id, changes);
+    await this.backends?.sendSecrets(id);
+    return this.secrets(id);
+  }
+
+  /**
+   * `text` from the box's guest with every value of its secrets taken out, also as a URL or JSON
+   * would spell it: for what the model, the page or a log sees.
+   */
+  redact(id: number, text: string): string {
+    for (const [name, value] of Object.entries(this.vault?.box(id) ?? {}))
+      for (const form of new Set([
+        value,
+        encodeURIComponent(value),
+        JSON.stringify(value).slice(1, -1),
+      ]))
+        text = text.replaceAll(form, `[secret ${name}]`);
+    return text;
   }
 
   /** Whether the current version has a backend. */
@@ -317,8 +390,12 @@ export class Boxes {
       this.db.query("UPDATE messages SET box_id = NULL WHERE box_id = ?").run(id);
       return this.db.query("DELETE FROM boxes WHERE id = ?").run(id).changes > 0;
     })();
-    if (gone) this.events.emit({ type: "box.deleted", id });
-    if (gone) void this.backends?.remove(id);
+    if (gone) {
+      this.events.emit({ type: "box.deleted", id });
+      void this.backends?.remove(id);
+      const names = this.setSecretNames(id);
+      if (names.length) this.vault?.setBox(id, Object.fromEntries(names.map((n) => [n, null])));
+    }
     return gone;
   }
 
@@ -457,12 +534,44 @@ export class Boxes {
     const sent =
       this.db
         .query<{ n: number }, [number, string]>(
-          "SELECT count(*) AS n FROM messages WHERE box_id = ? AND kind = 'box' AND created_at > ?",
+          `SELECT count(*) AS n FROM messages WHERE box_id = ?1 AND kind = 'box' AND created_at > ?2
+           AND id NOT IN (SELECT message_id FROM box_notices
+             WHERE box_id = ?1 AND message_id IS NOT NULL)`,
         )
         .get(box.id, since)?.n ?? 0;
     if (sent >= NOTES_PER_HOUR)
       throw new BoxError(`A box sends at most ${NOTES_PER_HOUR} notes an hour.`, 429);
     this.connected().chats.boxNote(box, text);
+  }
+
+  /**
+   * What the box's backend asked to tell you (scheduled() returning {notify}): a notification that
+   * opens the box, and a note in its chat, so it's kept and the bot reads it, as untrusted, with your
+   * next message. Why it wasn't sent, or null.
+   */
+  notify(id: number, text: string): string | null {
+    const box = this.get(id);
+    if (!box || !this.d) return "Boxes can't notify here.";
+    const since = new Date(this.clock() - 86400_000).toISOString();
+    const sent =
+      this.db
+        .query<{ n: number }, [number, string]>(
+          "SELECT count(*) AS n FROM box_notices WHERE box_id = ? AND created_at > ?",
+        )
+        .get(id, since)?.n ?? 0;
+    if (sent >= NOTIFY_PER_DAY) return `a box notifies at most ${NOTIFY_PER_DAY} times a day.`;
+    const message = text.length > MAX_BOX_NOTIFY ? `${text.slice(0, MAX_BOX_NOTIFY - 1)}…` : text;
+    const note = this.d.chats.boxNote(box, message);
+    this.db
+      .query("INSERT INTO box_notices (box_id, message_id, created_at) VALUES (?, ?, ?)")
+      .run(id, note.id, this.now());
+    void this.d.notifier.send({
+      title: box.title,
+      message,
+      priority: 3,
+      click: `${this.d.publicUrl}/boxes/${id}`,
+    });
+    return null;
   }
 
   /** Everything the box's page saved, by key. */

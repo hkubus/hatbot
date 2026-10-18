@@ -110,7 +110,8 @@ export type ThreadMessage = {
   /**
    * "task" and "schedule" messages are cards; their text is a plain-text fallback. "command": a command
    * you typed, or what came of it (one with a task shows the task like a reply does). "box": a note the
-   * box `boxId` sent (hatbox.send), shown as from the box: neither yours nor the bot's words.
+   * box `boxId` sent (hatbox.send, or its backend's scheduled() as a notification), shown as from the
+   * box: neither yours nor the bot's words.
    */
   kind: "text" | "task" | "schedule" | "command" | "box";
   text: string;

@@ -1,6 +1,6 @@
 // Boxes (PLAN.md §21): small web apps a bot makes for you, opened from the chat and kept.
 import { z } from "zod";
-import type { BoxFile } from "./hatbox";
+import { type BoxFile, MAX_BOX_SECRET, SECRET_NAME } from "./hatbox";
 
 export type Box = {
   id: number;
@@ -23,7 +23,10 @@ export type BoxVersion = {
   messageId: number | null;
 };
 
-export type BoxDetail = Box & { versions: BoxVersion[] };
+/** A secret the box's box.json declares, and whether you've set it: never its value. */
+export type BoxSecret = { name: string; set: boolean };
+
+export type BoxDetail = Box & { versions: BoxVersion[]; secrets: BoxSecret[] };
 
 /**
  * A version's page, for its Code view. A box with files (PLAN.md §21.6) has them too, and its `html` is
@@ -51,6 +54,11 @@ export const OpenBox = z.object({
 });
 
 export const RevertBox = z.object({ version: z.number().int().positive() });
+
+/** Secrets you set or (null) remove on a box's page, by name. */
+export const SetBoxSecrets = z.object({
+  values: z.record(z.string().regex(SECRET_NAME), z.string().min(1).max(MAX_BOX_SECRET).nullable()),
+});
 
 /** A call from a box's page, as the app passes it on (PLAN.md §21.2). */
 export const BoxCall = z.discriminatedUnion("op", [

@@ -539,15 +539,108 @@ function changedFiles(
   return list;
 }
 
+/** box.json, or none for files without a valid one. */
+const configOf = (files: BoxFile[]) => {
+  try {
+    return boxConfig(files.find((f) => f.path === BOX_CONFIG)?.content);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Whether `next` changes what a box's backend runs, from `before`: its code or anything it may import
+ * (every file but the page's .html, .css and .svg, which a build for Bun keeps out of server.js), its
+ * packages, or which secrets it reads.
+ */
+function backendChanged(before: BoxFile[], next: BoxFile[]): boolean {
+  const code = (files: BoxFile[]) =>
+    fileKey(files.filter((f) => f.path !== BOX_CONFIG && !/\.(html|css|svg)$/.test(f.path)));
+  const deps = (files: BoxFile[]) => {
+    const c = configOf(files);
+    return JSON.stringify(c && [c.packages, c.secrets]);
+  };
+  return code(before) !== code(next) || deps(before) !== deps(next);
+}
+
+/**
+ * A change to a box you've set secrets for, which asks you every time, past Haiku's review, when it
+ * lets the backend reach a host it couldn't before (which could then receive them), or changes the
+ * backend's code in a chat that read untrusted content: even a host it already reaches, an API that
+ * stores text say, could carry them away, and a review of the code's text needn't see that. Any secret
+ * set counts, declared by this version or not, so dropping one from box.json, adding a host, then
+ * declaring it again doesn't get past. Your note on the approval, or null when it doesn't ask; throws
+ * NotChanged when it mustn't go ahead.
+ */
+async function secretsAsked(
+  ctx: ToolContext,
+  signal: AbortSignal,
+  c: {
+    tool: string;
+    input: unknown;
+    id?: number;
+    title: string;
+    before: BoxFile[];
+    files: BoxFile[];
+    added: string[];
+  },
+): Promise<string | null> {
+  const set = c.id ? (ctx.boxes?.setSecretNames(c.id) ?? []) : [];
+  const recoded = Boolean(ctx.tainted?.()) && backendChanged(c.before, c.files);
+  if (!set.length || (!c.added.length && !recoded)) return null;
+  if (!ctx.approve)
+    throw new NotChanged("Not saved: this needs the owner's approval, which can't be asked here.");
+  const hosts = configOf(c.files)?.hosts ?? [];
+  const r = await ctx.approve(
+    {
+      tool: c.tool,
+      input: c.input,
+      what: `${c.added.length ? `Let box #${c.id} "${c.title}" reach ${c.added.join(", ")}` : `Change the backend code of box #${c.id} "${c.title}"`}. Its backend has the secrets ${set.join(", ")}${hosts.length ? `, and could send them to ${hosts.join(", ")}` : ""}.`,
+      why: c.added.length
+        ? "This box has secrets you set, so a new host for its backend needs your approval."
+        : "This conversation has read untrusted content, and changed code could send this box's secrets to a host it already reaches, so it needs your approval.",
+      always: true,
+    },
+    signal,
+  );
+  if (r.isError) throw new NotChanged(r.content);
+  return r.content;
+}
+
+/** The box's secrets, for the model: their names and whether each is set, never a value. */
+function secretsLine(ctx: ToolContext, id: number): string {
+  const list = ctx.boxes?.secrets(id) ?? [];
+  return list.length
+    ? `Secrets its backend reads from process.env, which the owner sets on the box's page and you never see: ${list.map((x) => `${x.name} (${x.set ? "set" : "not set"})`).join(", ")}.`
+    : "";
+}
+
+/** For a box just made or changed: the secrets the owner still has to set. */
+function unsetSecrets(ctx: ToolContext, id: number): string {
+  const unset = (ctx.boxes?.secrets(id) ?? []).filter((x) => !x.set).map((x) => x.name);
+  return unset.length
+    ? ` Its backend reads ${unset.join(", ")}, which the owner hasn't set: they set it on the box's page, under Secrets.`
+    : "";
+}
+
 /**
  * A box's files built on the boxes guest, once hosts its backend couldn't reach before are approved
- * (in a tainted chat). The page built and the approval's note, or what the model is told instead: a
+ * (in a tainted chat, or always for a box with secrets), and a change to the code of one with secrets
+ * in a tainted chat. The page built and the approval's note, or what the model is told instead: a
  * failed build's output is untrusted, since npm packages' code and text are in it.
  */
 async function builtBox(
   ctx: ToolContext,
   signal: AbortSignal,
-  b: { tool: string; id?: number; title: string; files: BoxFile[]; hosts: string[] },
+  b: {
+    tool: string;
+    id?: number;
+    title: string;
+    files: BoxFile[];
+    hosts: string[];
+    /** The box's files before this change. */
+    before?: BoxFile[];
+  },
 ): Promise<{ id: number; page: string; note: string } | string> {
   const guest = backends(ctx);
   const bad = badFiles(b.files);
@@ -556,13 +649,24 @@ async function builtBox(
   const late = config.cron && cronProblem(config.cron, Date.now());
   if (late) return `Not saved: ${late}`;
   const added = config.hosts.filter((h) => !b.hosts.includes(h));
-  const note = added.length
-    ? await asked(ctx, signal, {
-        name: b.tool,
-        input: { box: b.id, hosts: added },
-        what: `Let ${b.id ? `box #${b.id}` : "a new box"} "${b.title}" reach ${added.join(", ")}`,
-      })
-    : "";
+  const input = { box: b.id, hosts: added };
+  const note =
+    (await secretsAsked(ctx, signal, {
+      tool: b.tool,
+      input,
+      id: b.id,
+      title: b.title,
+      before: b.before ?? [],
+      files: b.files,
+      added,
+    })) ??
+    (added.length
+      ? await asked(ctx, signal, {
+          name: b.tool,
+          input,
+          what: `Let ${b.id ? `box #${b.id}` : "a new box"} "${b.title}" reach ${added.join(", ")}`,
+        })
+      : "");
   const id = b.id ?? (ctx.boxes as Boxes).reserve();
   const version = b.id ? (ctx.boxes as Boxes).nextVersion(b.id) : 1;
   const result = await guest.build(id, version, b.files);
@@ -838,7 +942,7 @@ export const TOOLS = [
   def({
     name: "box_create",
     description:
-      'Make a box: a small web app the owner keeps and opens from the chat, such as a tracker, a calculator, a planner or a dashboard. Not for a one-off answer: reply instead, with a chart block if it helps. A box is one self-contained HTML page, its CSS and JavaScript inline. It can\'t load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don\'t work; show messages and confirmations in the page. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app\'s colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku\'s answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes, and hatbox.feed(name) for what a feed you give it with box_feed last read. For more than a page, give files instead, built on the boxes guest into one page: index.html, which loads its scripts and styles by path (<script type="module" src="./app.ts">), the modules they import, npm packages in box.json, and server.ts for a backend (`export default { fetch(req), scheduled?() }` on Bun, keeping data with bun:sqlite in its working folder), which the page calls with await hatbox.fetch(path, init), answered like fetch. The backend reaches only the hosts box.json lists, and cron runs scheduled(), at most every 5 minutes: {"hosts": ["shop.example.com"], "cron": "0 * * * *", "packages": {"chart.js": "^4"}}. Then look at it with box_look and fix what\'s wrong before you say it\'s done.',
+      'Make a box: a small web app the owner keeps and opens from the chat, such as a tracker, a calculator, a planner or a dashboard. Not for a one-off answer: reply instead, with a chart block if it helps. A box is one self-contained HTML page, its CSS and JavaScript inline. It can\'t load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don\'t work; show messages and confirmations in the page. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app\'s colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku\'s answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes, and hatbox.feed(name) for what a feed you give it with box_feed last read. For more than a page, give files instead, built on the boxes guest into one page: index.html, which loads its scripts and styles by path (<script type="module" src="./app.ts">), the modules they import, npm packages in box.json, and server.ts for a backend (`export default { fetch(req), scheduled?() }` on Bun, keeping data with bun:sqlite in its working folder), which the page calls with await hatbox.fetch(path, init), answered like fetch. The backend reaches only the hosts box.json lists, and cron runs scheduled(), at most every 5 minutes, which may return {notify: "text"} to notify the owner, up to 10 times a day. An API key goes in box.json\'s secrets by name, read as process.env.NAME; the owner sets it on the box\'s page and you never see it: {"hosts": ["shop.example.com"], "cron": "0 * * * *", "packages": {"chart.js": "^4"}, "secrets": ["SHOP_KEY"]}. Then look at it with box_look and fix what\'s wrong before you say it\'s done.',
     schema: z.object({
       title: BOX_TITLE,
       html: z.string().min(1).max(MAX_BOX_HTML).optional().describe("The whole page"),
@@ -863,7 +967,7 @@ export const TOOLS = [
           },
           made,
         );
-        return `Made it. ${shown(ctx, box)}${b.note}`;
+        return `Made it. ${shown(ctx, box)}${unsetSecrets(ctx, box.id)}${b.note}`;
       }
       if (!html) return "Not made: give the page as html.";
       const box = ctx.boxes.create(
@@ -923,10 +1027,13 @@ export const TOOLS = [
               title: name,
               files: list,
               hosts: ctx.boxes.hosts(id),
+              before: current.files ?? [],
             });
         if (typeof b === "string") return b;
         const saved = ctx.boxes.save(id, name, b.page, made, list);
-        return saved ? `Saved. ${shown(ctx, saved)}${b.note}` : "No change.";
+        return saved
+          ? `Saved. ${shown(ctx, saved)}${unsetSecrets(ctx, id)}${b.note}`
+          : "No change.";
       }
       const page = edited(html ?? current.html, edits ?? []);
       if (page.length > MAX_BOX_HTML) return "Not changed: the page would be too long.";
@@ -974,12 +1081,13 @@ export const TOOLS = [
         ? shownFiles.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n")
         : page.html;
       const text = `Box #${id} "${page.title}", version ${page.n} (${version ? `version ${box.version} opens` : "the one that opens"}):\n\n${source}`;
-      return boxOutput(
+      const secrets = secretsLine(ctx, id);
+      return `${boxOutput(
         ctx,
         "box_read",
         text,
         by ? `Box #${id} "${box.title}", written after reading: ${by}` : null,
-      );
+      )}${secrets && `\n\n${secrets}`}`;
     },
   }),
   def({
@@ -989,47 +1097,58 @@ export const TOOLS = [
     run: async ({ box: id, version }, ctx, signal) => {
       const box = ownBox(ctx, id);
       const before = ctx.boxes?.hosts(id) ?? [];
-      const old = ctx.boxes?.files(id, version).find((f) => f.path === BOX_CONFIG);
-      let added: string[] = [];
-      try {
-        added = boxConfig(old?.content).hosts.filter((h) => !before.includes(h));
-      } catch {}
-      if (added.length)
-        await asked(ctx, signal, {
-          name: "box_revert",
-          input: { box: id, version, hosts: added },
-          what: `Let box #${id} "${box.title}" reach ${added.join(", ")} again`,
-        });
+      const oldFiles = ctx.boxes?.files(id, version) ?? [];
+      const added = (configOf(oldFiles)?.hosts ?? []).filter((h) => !before.includes(h));
+      const input = { box: id, version, hosts: added };
+      const note =
+        (await secretsAsked(ctx, signal, {
+          tool: "box_revert",
+          input,
+          id,
+          title: box.title,
+          before: ctx.boxes?.files(id) ?? [],
+          files: oldFiles,
+          added,
+        })) ??
+        (added.length
+          ? await asked(ctx, signal, {
+              name: "box_revert",
+              input,
+              what: `Let box #${id} "${box.title}" reach ${added.join(", ")} again`,
+            })
+          : "");
       const saved = ctx.boxes?.revert(id, version, {
         messageId: ctx.messageId,
         taintedBy: chatTaint(ctx.tainted?.()),
       });
       return saved
-        ? `Brought back version ${version}. ${shown(ctx, saved)}`
+        ? `Brought back version ${version}. ${shown(ctx, saved)}${note}`
         : `No change: version ${version} is what opens now.`;
     },
   }),
   def({
     name: "box_data",
     description:
-      "What one of your boxes' page has saved with hatbox.store, by key, and its feeds with what they last read.",
+      "What one of your boxes' page has saved with hatbox.store, by key, its feeds with what they last read, and which of its secrets the owner has set.",
     schema: z.object({ box: z.number().int() }),
     run: async ({ box: id }, ctx) => {
       const box = ownBox(ctx, id);
       const data = ctx.boxes?.data(id) ?? {};
       const feeds = ctx.boxes?.feeds?.list(id) ?? [];
-      if (!Object.keys(data).length && !feeds.length) return "Nothing saved yet.";
+      const secrets = secretsLine(ctx, id);
+      if (!Object.keys(data).length && !feeds.length)
+        return `Nothing saved yet.${secrets && `\n\n${secrets}`}`;
       // What the page saved is whatever its code and the owner's typing made of it; what its feeds
       // read is whatever their tools found.
       const saved = Object.keys(data).length
         ? cut(JSON.stringify(data, null, 1), 30_000)
         : "Nothing saved yet.";
-      return boxOutput(
+      return `${boxOutput(
         ctx,
         "box_data",
         feeds.length ? `${saved}\n\nFeeds:\n${feeds.map(feedLine).join("\n")}` : saved,
         `What box #${id} "${box.title}" saved`,
-      );
+      )}${secrets && `\n\n${secrets}`}`;
     },
   }),
   def({

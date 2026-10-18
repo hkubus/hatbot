@@ -1,4 +1,11 @@
-import type { BoxBuild, BoxFile, GuestBox, HatboxStatus } from "@hatbot/shared/hatbox";
+import type {
+  BoxBuild,
+  BoxFile,
+  BoxRun,
+  BoxSecrets,
+  GuestBox,
+  HatboxStatus,
+} from "@hatbot/shared/hatbox";
 import { type BoxRequest, type HatboxAgent, HatboxError } from "../src/hatbox/client";
 
 /** The boxes guest, in memory: a build's page is index.html as it is, and a backend answers as the test says. */
@@ -11,6 +18,12 @@ export class FakeHatbox implements HatboxAgent {
   failBuild: string | null = null;
   backend: (req: BoxRequest) => Response | Promise<Response> = () => new Response("ok");
   runs: number[] = [];
+  /** What the next scheduled() run gives back. */
+  run: BoxRun = { ok: true };
+  /** Each box's secrets as the guest holds them. */
+  secretsOf = new Map<number, BoxSecrets>();
+  /** The lines the brain wrote in the boxes' logs. */
+  notes: string[] = [];
   stopped: number[] = [];
   log = "";
 
@@ -33,17 +46,26 @@ export class FakeHatbox implements HatboxAgent {
       output: "Built.",
     };
   }
-  private has(id: number, version: number) {
+  private has(id: number, version: number, secrets: string) {
     if (this.built.get(id) !== version) throw new HatboxError("Not here.", 409, true);
+    if ((this.secretsOf.get(id)?.digest ?? "") !== secrets)
+      throw new HatboxError("Other secrets.", 409, false, true);
   }
-  async http(id: number, version: number, req: BoxRequest) {
-    this.has(id, version);
+  async http(id: number, version: number, secrets: string, req: BoxRequest) {
+    this.has(id, version, secrets);
     return this.backend(req);
   }
-  async scheduled(id: number, version: number) {
-    this.has(id, version);
+  async scheduled(id: number, version: number, secrets: string) {
+    this.has(id, version, secrets);
     this.runs.push(id);
-    return null;
+    return this.run;
+  }
+  async secrets(id: number, s: BoxSecrets) {
+    if (s.digest) this.secretsOf.set(id, s);
+    else this.secretsOf.delete(id);
+  }
+  async note(id: number, line: string) {
+    this.notes.push(`${id}: ${line}`);
   }
   async logs() {
     return this.log;
@@ -53,5 +75,6 @@ export class FakeHatbox implements HatboxAgent {
   }
   async remove(id: number) {
     this.built.delete(id);
+    this.secretsOf.delete(id);
   }
 }

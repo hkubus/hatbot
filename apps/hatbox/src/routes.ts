@@ -1,23 +1,35 @@
 // The agent's HTTP side, for the brain only (PLAN.md §21.6). A request about a box says which version
 // of it the brain means (x-hatbox-version); one the guest hasn't built is answered 409 with `missing`,
-// and the brain sends it again.
+// and the brain sends it again. One that may start its backend also names its secrets
+// (x-hatbox-secrets); others than the agent holds are answered 409 with `secrets`, and the brain sends
+// them.
 import { timingSafeEqual } from "node:crypto";
 import { renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { BoxFile, HatboxStatus } from "@hatbot/shared/hatbox";
+import type { BoxFile, BoxSecrets, HatboxStatus } from "@hatbot/shared/hatbox";
 import { readUpTo } from "./files";
 import { type Guest, GuestError } from "./guest";
 
 export const MAX_UPDATE_BYTES = 10 * 1024 * 1024;
 /** A box's files, as JSON: 2 MB of source, escaped. */
 const MAX_PUT_BYTES = 6 * 1024 * 1024;
-const FEATURES: string[] = [];
+const FEATURES: string[] = ["secrets", "notify"];
 
 // The agent's own refusals are marked, to tell them from a backend's answer with the same status; a
 // backend can't send the header (passedHeaders drops x-hatbox-…).
 const json = (body: unknown, status = 200) =>
   Response.json(body, { status, headers: status >= 400 ? { "x-hatbox-error": "1" } : {} });
 const versionOf = (req: Request) => Number(req.headers.get("x-hatbox-version")) || 0;
+const secretsOf = (req: Request) => req.headers.get("x-hatbox-secrets") ?? "";
+/** A small JSON body, or undefined. */
+const small = async (req: Request, max: number): Promise<unknown> => {
+  const bytes = await readUpTo(req, max);
+  try {
+    return bytes ? JSON.parse(new TextDecoder().decode(bytes)) : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 export function routes(
   guest: Guest,
@@ -54,7 +66,13 @@ export function routes(
     const id = Number(m[1]);
     const rest = m[2] ?? "";
     if (rest === "/http" || rest.startsWith("/http/"))
-      return guest.http(id, versionOf(req), req, `${rest.slice(5) || "/"}${url.search}`);
+      return guest.http(
+        id,
+        versionOf(req),
+        secretsOf(req),
+        req,
+        `${rest.slice(5) || "/"}${url.search}`,
+      );
     switch (`${req.method} ${rest}`) {
       case "PUT ": {
         const bytes = await readUpTo(req, MAX_PUT_BYTES);
@@ -67,11 +85,20 @@ export function routes(
         guest.put(id, versionOf(req), files as BoxFile[]);
         return new Response(null, { status: 204 });
       }
+      case "PUT /secrets":
+        await guest.setSecrets(id, (await small(req, 64 * 1024)) as BoxSecrets);
+        return new Response(null, { status: 204 });
       case "POST /build":
         return json(await guest.build(id, versionOf(req)));
-      case "POST /scheduled": {
-        const error = await guest.scheduled(id, versionOf(req));
-        return json(error === null ? { ok: true } : { ok: false, error });
+      case "POST /scheduled":
+        return json(await guest.scheduled(id, versionOf(req), secretsOf(req)));
+      case "POST /log": {
+        // The brain's note on the box, e.g. a notification it didn't send.
+        const { line } = ((await small(req, 4096)) ?? {}) as { line?: unknown };
+        if (typeof line !== "string" || !line.trim())
+          return json({ error: "expected { line }" }, 400);
+        guest.note(id, line.replace(/\s+/g, " ").trim().slice(0, 1000));
+        return new Response(null, { status: 204 });
       }
       case "GET /logs":
         return new Response(guest.logs(id), {
@@ -93,7 +120,14 @@ export function routes(
       return await handle(req, new URL(req.url));
     } catch (err) {
       if (err instanceof GuestError)
-        return json({ error: err.message, missing: err.missing || undefined }, err.status);
+        return json(
+          {
+            error: err.message,
+            missing: err.missing || undefined,
+            secrets: err.secrets || undefined,
+          },
+          err.status,
+        );
       console.error(err);
       return json({ error: (err as Error).message }, 500);
     }

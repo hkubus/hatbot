@@ -12,6 +12,8 @@ export type BoxConfig = {
   cron?: string;
   /** npm packages, by name, with a version such as "^4.2" or "latest". */
   packages: Record<string, string>;
+  /** Names of the secrets its backend reads from its environment, which you set; never their values. */
+  secrets: string[];
 };
 
 /** The page, which every box with files has. */
@@ -25,6 +27,15 @@ export const MAX_BOX_SOURCE = 2_000_000;
 /** A built page or backend, and a body going to or coming from a backend, in bytes. */
 export const MAX_BOX_BUILT = 5 * 1024 * 1024;
 export const MAX_BOX_BODY = 5 * 1024 * 1024;
+/** Secrets a box may declare, and a secret's value, in characters. */
+export const MAX_BOX_SECRETS = 5;
+export const MAX_BOX_SECRET = 4096;
+/** What a backend's scheduled() may tell you, in characters. */
+export const MAX_BOX_NOTIFY = 1000;
+/** A secret's name, shaped like an environment variable's. */
+export const SECRET_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
+/** Names the runner and Bun read themselves, which a secret mustn't replace. */
+const RESERVED_SECRET = /^(HATBOX_|BUN_|NODE_)|^(PATH|HOME|TMPDIR|TZ|LANG)$/;
 
 const SEGMENT = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 const KINDS = /\.(ts|tsx|js|jsx|mjs|css|html|json|svg|txt|md)$/;
@@ -56,9 +67,17 @@ export function badPath(path: string): string | null {
   return null;
 }
 
+/** Why `name` can't be a box's secret, or null if it can. */
+export function badSecretName(name: string): string | null {
+  if (!SECRET_NAME.test(name))
+    return `"${name}" can't be a secret's name: use capitals, digits and "_", like WEATHER_KEY.`;
+  if (RESERVED_SECRET.test(name)) return `${name} is the runner's own; name the secret otherwise.`;
+  return null;
+}
+
 /** box.json, or what's wrong with it. No box.json reaches nothing and runs no schedule. */
 export function boxConfig(text: string | undefined): BoxConfig {
-  if (text === undefined) return { hosts: [], packages: {} };
+  if (text === undefined) return { hosts: [], packages: {}, secrets: [] };
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -67,9 +86,10 @@ export function boxConfig(text: string | undefined): BoxConfig {
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw))
     throw new Error('box.json must be an object, like {"hosts": ["shop.example.com"]}.');
-  const { hosts = [], cron, packages = {}, ...rest } = raw as Record<string, unknown>;
+  const { hosts = [], cron, packages = {}, secrets = [], ...rest } = raw as Record<string, unknown>;
   const extra = Object.keys(rest)[0];
-  if (extra) throw new Error(`box.json has "${extra}"; it takes only hosts, cron and packages.`);
+  if (extra)
+    throw new Error(`box.json has "${extra}"; it takes only hosts, cron, packages and secrets.`);
   const names = Array.isArray(hosts)
     ? hosts.map((h) => (typeof h === "string" ? h.toLowerCase() : ""))
     : [];
@@ -86,10 +106,17 @@ export function boxConfig(text: string | undefined): BoxConfig {
       throw new Error(
         `box.json's packages: "${name}" needs an npm name and a version such as "^4.2" or "latest".`,
       );
+  if (!Array.isArray(secrets) || secrets.length > MAX_BOX_SECRETS)
+    throw new Error(`box.json's secrets are up to ${MAX_BOX_SECRETS} names, like ["WEATHER_KEY"].`);
+  for (const name of secrets) {
+    const bad = typeof name === "string" ? badSecretName(name) : "box.json's secrets are names.";
+    if (bad) throw new Error(bad);
+  }
   return {
     hosts: [...new Set(names)],
     ...(cron === undefined ? {} : { cron: (cron as string).trim() }),
     packages: Object.fromEntries(entries) as Record<string, string>,
+    secrets: [...new Set(secrets as string[])],
   };
 }
 
@@ -124,6 +151,19 @@ export type GuestBox = { id: number; version: number };
 
 /** POST /boxes/:id/build: the page inlined into one file, and what the build printed. */
 export type BoxBuild = { ok: boolean; page?: string; output: string };
+
+/**
+ * POST /boxes/:id/scheduled: how the backend's scheduled() ended. `notify`: what it returned as
+ * `{notify: "…"}`, for the brain to tell you.
+ */
+export type BoxRun = { ok: boolean; error?: string; notify?: string };
+
+/**
+ * PUT /boxes/:id/secrets: the values of the secrets the box's backend reads, and the brain's name for
+ * this set of them. Every request that may start the backend carries the name (x-hatbox-secrets); one
+ * the agent doesn't hold is answered 409 with `secrets`, and the brain sends them again.
+ */
+export type BoxSecrets = { values: Record<string, string>; digest: string };
 
 /** What hatbox.fetch answers the page, as JSON: a binary body is base64. */
 export type BoxResponse = {

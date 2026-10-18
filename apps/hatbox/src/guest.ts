@@ -1,6 +1,7 @@
 // What the agent does with boxes (PLAN.md §21.6): keeps the files the brain sends until they're built,
 // builds them, runs each backend as its own unit on its first request and stops it after 15 idle
-// minutes, relays requests to it, sends its fetches on (egress.ts), and keeps its log.
+// minutes, relays requests to it, sends its fetches on (egress.ts), hands it its secrets, and keeps its
+// log. Secrets are only ever in memory, here and in the backend's environment.
 //   <state>/build/<id>/src     the files, until they're built; the build writes page.html and server.js
 //   <state>/boxes/<id>/app     the backend that runs (server.js, box.json); <id>/version says which
 //   <state>/logs/<id>.log      what the backend printed, and the agent's notes on it
@@ -26,11 +27,17 @@ import {
   type BoxBuild,
   type BoxConfig,
   type BoxFile,
+  type BoxRun,
+  type BoxSecrets,
   badFiles,
+  badSecretName,
   boxConfig,
   type GuestBox,
   MAX_BOX_BODY,
   MAX_BOX_BUILT,
+  MAX_BOX_NOTIFY,
+  MAX_BOX_SECRET,
+  MAX_BOX_SECRETS,
   passedHeaders,
 } from "@hatbot/shared/hatbox";
 import type { Server } from "bun";
@@ -46,12 +53,16 @@ const INSTALL_MS = 120_000;
 /** A log is cut back to its last part past this. */
 const MAX_LOG = 1024 * 1024;
 
-/** A refusal, with the status to answer it with. `missing`: the brain should send the box again. */
+/**
+ * A refusal, with the status to answer it with. `missing`: the brain should send the box again;
+ * `secrets`: its secrets.
+ */
 export class GuestError extends Error {
   constructor(
     message: string,
     readonly status: number,
     readonly missing = false,
+    readonly secrets = false,
   ) {
     super(message);
   }
@@ -67,8 +78,11 @@ export type GuestOptions = {
 };
 
 export class Guest {
-  private running = new Map<number, { egress: Server<undefined>; used: number }>();
+  /** Running backends: their egress, when they were last used, and the secrets they started with. */
+  private running = new Map<number, { egress: Server<undefined>; used: number; digest: string }>();
   private starting = new Map<number, Promise<void>>();
+  /** Each box's secrets as the brain last sent them. Not on disk: the brain sends them again. */
+  private secrets = new Map<number, BoxSecrets>();
   private builds: Promise<unknown> = Promise.resolve();
   private clock: () => number;
 
@@ -102,7 +116,7 @@ export class Guest {
     try {
       return boxConfig(readFileSync(this.dir("boxes", id, "app", BOX_CONFIG), "utf8"));
     } catch {
-      return { hosts: [], packages: {} };
+      return { hosts: [], packages: {}, secrets: [] };
     }
   }
 
@@ -213,8 +227,14 @@ export class Guest {
   }
 
   /** A request from the box's page or the model, relayed to its backend, started if it isn't. */
-  async http(id: number, version: number, req: Request, path: string): Promise<Response> {
-    this.current(id, version);
+  async http(
+    id: number,
+    version: number,
+    secrets: string,
+    req: Request,
+    path: string,
+  ): Promise<Response> {
+    this.current(id, version, secrets);
     const body =
       req.method === "GET" || req.method === "HEAD"
         ? undefined
@@ -225,20 +245,54 @@ export class Guest {
     return this.relay(id, path, { method: req.method, headers, body: body?.bytes });
   }
 
-  /** Runs the backend's scheduled(); why it failed, if it did. */
-  async scheduled(id: number, version: number): Promise<string | null> {
-    this.current(id, version);
+  /** Runs the backend's scheduled(): why it failed, or what it asked to tell you. */
+  async scheduled(id: number, version: number, secrets: string): Promise<BoxRun> {
+    this.current(id, version, secrets);
     const res = await this.relay(id, "/", {
       method: "POST",
       headers: [["x-hatbox-op", "scheduled"]],
     });
-    return res.ok ? null : (await res.text()) || `It answered ${res.status}.`;
+    if (!res.ok) return { ok: false, error: (await res.text()) || `It answered ${res.status}.` };
+    const said = res.status === 200 ? await res.json().catch(() => null) : null;
+    const notify = (said as { notify?: unknown } | null)?.notify;
+    return typeof notify === "string" && notify.trim()
+      ? { ok: true, notify: notify.slice(0, MAX_BOX_NOTIFY) }
+      : { ok: true };
   }
 
-  private current(id: number, version: number) {
+  /**
+   * The version the brain means is built, and the secrets it means are the ones held: a backend never
+   * starts with a removed secret, or without one just set.
+   */
+  private current(id: number, version: number, secrets: string) {
     if (this.version(id) !== version)
       throw new GuestError(`The guest doesn't have version ${version} of box #${id}.`, 409, true);
+    if (this.digest(id) !== secrets)
+      throw new GuestError(`The guest doesn't have box #${id}'s secrets.`, 409, false, true);
   }
+
+  /** The box's secrets from now on; a backend running with others is stopped, to start with these. */
+  async setSecrets(id: number, s: BoxSecrets) {
+    const values = Object.entries(s?.values ?? {});
+    if (
+      typeof s?.digest !== "string" ||
+      values.length > MAX_BOX_SECRETS ||
+      values.some(
+        ([k, v]) => badSecretName(k) || typeof v !== "string" || v.length > MAX_BOX_SECRET,
+      )
+    )
+      throw new GuestError(
+        "expected { values, digest }: up to 5 secrets, named like WEATHER_KEY",
+        400,
+      );
+    if (this.digest(id) === s.digest) return;
+    if (s.digest) this.secrets.set(id, { values: Object.fromEntries(values), digest: s.digest });
+    else this.secrets.delete(id);
+    // It could go on using a removed one: a backend's own timers keep it running.
+    if (this.running.has(id)) await this.stop(id);
+  }
+
+  private digest = (id: number) => this.secrets.get(id)?.digest ?? "";
 
   private async relay(
     id: number,
@@ -281,6 +335,9 @@ export class Guest {
 
   /** Starts the backend, once, however many requests come for it meanwhile. */
   private async up(id: number) {
+    const r = this.running.get(id);
+    // Its secrets changed while it started.
+    if (r && r.digest !== this.digest(id)) await this.stop(id);
     if (this.running.has(id)) return this.touch(id);
     let starting = this.starting.get(id);
     if (!starting) {
@@ -291,6 +348,7 @@ export class Guest {
   }
 
   private async launch(id: number) {
+    const digest = this.digest(id);
     const dir = join(this.o.run, String(id));
     // Made afresh, without what the backend left in it last time.
     this.clear(dir);
@@ -318,7 +376,7 @@ export class Guest {
         502,
       );
     }
-    this.running.set(id, { egress, used: this.clock() });
+    this.running.set(id, { egress, used: this.clock(), digest });
   }
 
   /** Resolves once something accepts connections on `socket`. */
@@ -342,6 +400,10 @@ export class Guest {
 
   private async egress(id: number, req: Request): Promise<Response> {
     this.touch(id);
+    // The runner asks for the box's secrets as it starts, before the box's code loads. Only this box's
+    // unit sees this socket: the others' and the builds' have /run/hatbox empty.
+    if (req.headers.get("x-hatbox-op") === "env")
+      return Response.json(this.secrets.get(id)?.values ?? {});
     try {
       return await sendOn(req, { hosts: this.config(id).hosts, resolve: this.o.resolve });
     } catch (err) {
@@ -354,8 +416,8 @@ export class Guest {
     }
   }
 
-  /** A line from the agent in the box's log. */
-  private note(id: number, line: string) {
+  /** A line from the agent in the box's log, or from the brain through it. */
+  note(id: number, line: string) {
     appendFileSync(
       this.dir("logs", `${id}.log`),
       `${new Date(this.clock()).toISOString().slice(0, 19)} [hatbox] ${line}\n`,
@@ -400,8 +462,9 @@ export class Guest {
     for (const { id } of this.list()) await this.stop(id).catch(() => {});
   }
 
-  /** The box and everything of it here: its backend's data, its code and its log. */
+  /** The box and everything of it here: its backend's data, its code, its secrets and its log. */
   async remove(id: number) {
+    this.secrets.delete(id);
     await this.stop(id);
     await this.o.units.clean(id);
     for (const path of [this.dir("boxes", id), this.dir("build", id), join(this.o.run, String(id))])

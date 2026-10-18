@@ -1,7 +1,7 @@
 // A box's backend (PLAN.md §21.6), run by hatbox@<id> as a user of its own, with no network and its own
 // folder for data (the working directory, for bun:sqlite). It serves the box's built server.ts on a Unix
 // socket the agent relays to, and its fetch goes to the agent, which lets through only box.json's hosts.
-// What it prints is the box's log.
+// Its secrets come from the agent too, into its environment. What it prints is the box's log.
 import { chmodSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
@@ -35,8 +35,18 @@ async function viaAgent(input: string | URL | Request, init?: RequestInit): Prom
 }
 globalThis.fetch = Object.assign(viaAgent, { preconnect: () => {} }) as typeof fetch;
 
+// The box's secrets, which you set, as process.env.NAME: asked of the agent on the socket only this
+// box's unit sees, before the box's code loads. Never on disk here.
+const env = await direct("http://egress/", {
+  headers: { "x-hatbox-op": "env" },
+  unix: egress,
+} as RequestInit);
+if (!env.ok) throw new Error(`The agent didn't give the box's secrets: ${env.status}`);
+Object.assign(process.env, (await env.json()) as Record<string, string>);
+
 type Backend = {
   fetch?: (req: Request) => Response | Promise<Response>;
+  /** May return `{notify: "…"}`, which the brain tells you, a few a day. */
   scheduled?: () => unknown;
 };
 const backend: Backend = (await import(app)).default ?? {};
@@ -52,8 +62,11 @@ Bun.serve({
       if (typeof backend.scheduled !== "function")
         return new Response("server.ts has no scheduled().", { status: 404 });
       try {
-        await backend.scheduled();
-        return new Response(null, { status: 204 });
+        const out = await backend.scheduled();
+        const notify = (out as { notify?: unknown } | null | undefined)?.notify;
+        return typeof notify === "string"
+          ? Response.json({ notify })
+          : new Response(null, { status: 204 });
       } catch (err) {
         console.error("scheduled() failed:", err);
         return new Response(err instanceof Error ? err.message : String(err), { status: 500 });

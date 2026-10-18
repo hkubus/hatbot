@@ -108,7 +108,7 @@ export async function createServices(o: Outside) {
     reserved: CORE_TOOL_NAMES,
   });
   const bots = new Bots(db, events, clock);
-  const boxes = new Boxes(db, events, clock);
+  const boxes = new Boxes(db, events, clock, secrets);
   boxes.backends = new Backends(boxes, o.hatbox ?? new HttpHatboxAgent("", ""), settings, clock);
   // Not given the rest at first: attach() hands it what needs the chats in turn.
   const chats = new Chats({
@@ -179,7 +179,7 @@ export async function createServices(o: Outside) {
   });
   tasks.attach({ proposals });
   const feeds = new BoxFeeds({ db, settings, plugins, bots, clock });
-  boxes.connect({ settings, spend, model: o.taskModel, chats, feeds });
+  boxes.connect({ settings, spend, model: o.taskModel, chats, feeds, notifier, publicUrl });
 
   const updates = new Updates(config, clock);
   const ping = new DeadManPing({ db, url: o.pingUrl, clock });

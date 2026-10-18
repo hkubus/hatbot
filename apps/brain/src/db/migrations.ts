@@ -800,4 +800,15 @@ export const migrations: string[] = [
   );
   CREATE INDEX box_feeds_due ON box_feeds (next_run_at);
   `,
+  // 44: what boxes' backends notified you of, a few a day each, with the note each left in the chat
+  // (PLAN.md §21.6, X6).
+  `
+  CREATE TABLE box_notices (
+    id INTEGER PRIMARY KEY,
+    box_id INTEGER NOT NULL REFERENCES boxes(id) ON DELETE CASCADE,
+    message_id INTEGER,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX box_notices_box ON box_notices (box_id, created_at);
+  `,
 ];
