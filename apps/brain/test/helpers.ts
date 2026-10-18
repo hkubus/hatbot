@@ -70,7 +70,8 @@ export async function testApp(
   const clock = () => nowMs;
   const config = loadConfig({ HATBOT_PUBLIC_URL: ORIGIN, HATBOT_DATA_DIR: "/nonexistent" });
   const db = openDb(":memory:");
-  const auth = new AuthService(db, clock);
+  // Argon2id at its lowest cost: the brain's own takes ~75 ms a hash, on every sign-in.
+  const auth = new AuthService(db, clock, { memoryCost: 8, timeCost: 1 });
   const loginLimits = {
     perIp: new FailureLimiter(10, 15 * 60_000, clock),
     global: new FailureLimiter(50, 15 * 60_000, clock),

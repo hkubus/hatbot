@@ -22,6 +22,9 @@ const TOTP_CHANGE_MS = 10 * 60_000;
 
 type OwnerRow = { password_hash: string; totp_secret: string; totp_last_step: number };
 
+/** Argon2id's cost, in KiB and passes. Left out, Bun's defaults: only tests pass a cheaper one. */
+export type PasswordCost = { memoryCost: number; timeCost: number };
+
 export class AuthService {
   /** One-time code that unlocks first-run setup; printed to the log while no owner exists. */
   readonly setupCode = randomBytes(6).toString("hex");
@@ -40,7 +43,12 @@ export class AuthService {
   constructor(
     private db: Db,
     private clock: () => number = Date.now,
+    private passwordCost?: PasswordCost,
   ) {}
+
+  private hash(password: string) {
+    return Bun.password.hash(password, { algorithm: "argon2id", ...this.passwordCost });
+  }
 
   isSetUp(): boolean {
     return this.db.query("SELECT 1 FROM owner WHERE id = 1").get() !== null;
@@ -56,7 +64,7 @@ export class AuthService {
     if (this.isSetUp() || !sameText(code, this.setupCode) || !this.pendingSecret) return false;
     const step = verifyTotp(this.pendingSecret, totp, this.clock());
     if (step === null) return false;
-    const hash = await Bun.password.hash(password, { algorithm: "argon2id" });
+    const hash = await this.hash(password);
     this.db
       .query(
         "INSERT INTO owner (id, password_hash, totp_secret, totp_last_step) VALUES (1, ?, ?, ?)",
@@ -90,7 +98,7 @@ export class AuthService {
 
   /** A new password. Check the old one and a code first (checkCredentials). */
   async changePassword(password: string) {
-    const hash = await Bun.password.hash(password, { algorithm: "argon2id" });
+    const hash = await this.hash(password);
     this.db.query("UPDATE owner SET password_hash = ? WHERE id = 1").run(hash);
   }
 
