@@ -2,6 +2,7 @@
 // link, or a move to another app or to contact details the mandate doesn't allow. The negotiation is
 // held for the owner; the template's rule alone isn't enough.
 import type { MandateContact } from "@hatbot/shared";
+import { escapeRe } from "./gate";
 import { MARKETPLACE_HOSTS } from "./marketplace";
 import { contactsIn, linksIn, plain } from "./policy";
 
@@ -64,7 +65,6 @@ const fold = (s: string) =>
  * ("kod z aplikacji" is a bank's, not InPost's).
  */
 type Term = string | { t: string; not: string[] };
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const stem = (t: string) =>
   t
     .split("*")

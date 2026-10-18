@@ -104,6 +104,11 @@ export function negotiateTools(
   const now = () => new Date(neg.clock());
   /** Appraisals made in this turn or task, so negotiate_start doesn't ask Scout again. */
   const appraised = new Map<string, Awaited<ReturnType<typeof appraise>>>();
+  /** A send's verdict: blocked while the negotiation is held, else as its mandate and pace say. */
+  const sendVerdict = (n: Negotiation, input: SendInput) => {
+    const held = neg.held(n);
+    return held ? block(held) : sendPolicy(n, input, neg.facts(n));
+  };
 
   return [
     tool({
@@ -237,17 +242,13 @@ export function negotiateTools(
       policy: (i) => {
         const n = neg.get(i.negotiation);
         if (!n || n.botId !== bot.id) return block(`There's no negotiation #${i.negotiation}.`);
-        const held = neg.held(n);
-        if (held) return block(held);
-        return sendPolicy(n, toSend(i), neg.facts(n));
+        return sendVerdict(n, toSend(i));
       },
       run: async (i, call) => {
         const n = neg.mine(bot, i.negotiation);
         const input = toSend(i);
-        const held = neg.held(n);
-        if (held) throw new PluginError(held);
-        // Again, since an approval may have taken hours: quiet hours and the pace still hold.
-        const v = sendPolicy(n, input, neg.facts(n));
+        // Again, since an approval may have taken hours: a hold, quiet hours and the pace still hold.
+        const v = sendVerdict(n, input);
         if (v.action === "block") throw new PluginError(v.why);
         // In flight from here, before anything waits, so a second send at once is blocked.
         const msg = neg.claimSend(n, input);

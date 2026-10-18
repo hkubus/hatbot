@@ -156,7 +156,6 @@ const negotiations = new Negotiations({
   events,
   tasks,
   approvals,
-  chats,
   bots,
   memory,
   desktop,

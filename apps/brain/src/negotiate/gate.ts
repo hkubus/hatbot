@@ -12,6 +12,8 @@ import {
   pressOf,
 } from "../tasks/policy";
 
+export const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 /** What a negotiation's desktop task may do, from its record. */
 export type SendGate = {
   /** send: may send `text` once. read: reads the conversation and sends nothing. */
@@ -96,10 +98,14 @@ export function sameAddress(tab: string, want: string): boolean {
 export function onConversation(tab: string, gate: SendGate): boolean {
   if (sameAddress(tab, gate.listingUrl)) return true;
   if (gate.conversationUrl && sameAddress(tab, gate.conversationUrl)) return true;
-  if (!sameHost(tab, gate.listingUrl) || gate.listingId.length < 5) return false;
-  const id = gate.listingId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return namesListing(tab, gate.listingUrl, gate.listingId);
+}
+
+/** A page on the listing's site whose path names the listing's id. */
+export function namesListing(tab: string, listingUrl: string, listingId: string): boolean {
+  if (!sameHost(tab, listingUrl) || listingId.length < 5) return false;
   // In the path only: a query value is anything the model puts there.
-  return new RegExp(`[/=-]${id}(?:[/.-]|$)`, "i").test(new URL(tab).pathname);
+  return new RegExp(`[/=-]${escapeRe(listingId)}(?:[/.-]|$)`, "i").test(new URL(tab).pathname);
 }
 
 /** Labels a send button has: these pass as the send. Anything else consequential is held. */

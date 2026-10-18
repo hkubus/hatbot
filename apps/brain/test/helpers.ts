@@ -194,7 +194,6 @@ export async function testApp(
     events,
     tasks,
     approvals,
-    chats,
     bots,
     memory,
     desktop,
