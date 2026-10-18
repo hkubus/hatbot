@@ -365,9 +365,11 @@ export class Guest {
   /** Made by the agent before the unit appends to it, and cut back to its end when it's grown. */
   private trimLog(id: number) {
     const path = this.dir("logs", `${id}.log`);
-    if (!existsSync(path)) writeFileSync(path, "", { mode: 0o644 });
+    if (!existsSync(path)) writeFileSync(path, "");
     else if (statSync(path).size > MAX_LOG)
       writeFileSync(path, readFileSync(path).subarray(-MAX_LOG / 4));
+    // The backend's own user appends to it (hatbox@), and no other box's unit sees it.
+    chmodSync(path, 0o666);
   }
 
   /** The end of what the backend printed. */

@@ -1,20 +1,21 @@
 # infra
 
-Scripts that set up Hatbot on a Proxmox host, or on any two Debian 13 machines over SSH (PLAN.md §9).
+Scripts that set up Hatbot on a Proxmox host, or on any two or three Debian 13 machines over SSH (PLAN.md §9).
 
 | Script | Runs | Does |
 |---|---|---|
-| `host-setup.sh` | on the Proxmox host, as root | both containers on the LAN, the desktop's firewall, Proxmox user/roles/token, snapshots, backups; then runs the two provision scripts |
-| `ssh-setup.sh` | anywhere with ssh | without Proxmox: checks two Debian 13 machines (or just a brain), writes the desktop's secrets, runs the two provision scripts over SSH |
+| `host-setup.sh` | on the Proxmox host, as root | the containers on the LAN, the guests' firewall, Proxmox user/roles/token, snapshots, backups; then runs the provision scripts |
+| `ssh-setup.sh` | anywhere with ssh | without Proxmox: checks two or three Debian 13 machines (or just a brain), writes the guests' secrets, runs the provision scripts over SSH |
 | `brain-provision.sh` | inside `hatbot-brain` | Bun, memory repo, SSH key, firewall |
-| `deploy.sh` | where the setup ran | installs the app: `desktop-deploy.sh` puts desktop-agent on the desktop, `brain-deploy.sh` a new release on the brain |
-| `hatbot-update.sh` | inside `hatbot-brain`, as root | the Update button in Settings: pulls from git, updates desktop-agent, then runs `brain-deploy.sh` |
+| `deploy.sh` | where the setup ran | installs the app: `desktop-deploy.sh` puts desktop-agent on the desktop, `boxes-deploy.sh` the boxes agent and the boxes' units on the boxes guest, `brain-deploy.sh` a new release on the brain |
+| `hatbot-update.sh` | inside `hatbot-brain`, as root | the Update button in Settings: pulls from git, runs `brain-deploy.sh`, then updates desktop-agent and the boxes agent |
 | `desktop-provision.sh` | inside `hatbot-desktop` | `desk` user, Xvnc + XFCE, Chromium, Bun, firewall (in, and out for its programs) |
-| `verify.sh` | where the setup ran | checks isolation, and on Proxmox token permissions, snapshots and backups; changes nothing |
+| `boxes-provision.sh` | inside `hatbot-boxes` | `hatbox` user, Bun, polkit, firewall (in, and out for the agent only) |
+| `verify.sh` | where the setup ran | checks isolation, including that box units have no network, and on Proxmox token permissions, snapshots and backups; changes nothing |
 | `smoke.sh` | anywhere, with an API token | Settings → Check everything from a shell: the API, desktop, plugins, notifications; changes nothing |
 | `pct-exec-setup.sh` | on the Proxmox host, as root | optional: lets Hatbot run commands in your containers (`ssh_pct_exec`) |
 | `reset-login.sh` | where the setup ran | forgets the password and authenticator, prints a new setup code |
-| `test-firewall.sh` | anywhere, as root | tests the desktop's firewalls in throwaway network namespaces |
+| `test-firewall.sh` | anywhere, as root | tests the guests' firewalls in throwaway network namespaces |
 
 ## Run it
 
@@ -47,26 +48,29 @@ On Proxmox (without it, see "Without Proxmox" below):
 
 Re-running `host-setup.sh` is safe. It finds the containers by name and skips what already exists.
 
-If your router forwards ports to the LAN (the web app's reverse proxy, say), the desktop could come back in through your public address. Block it with `HATBOT_PUBLIC_IPS="203.0.113.7"` (space-separated, IPv4) in `/etc/hatbot/host.env` and re-run `host-setup.sh`. `verify.sh` fails if the desktop can reach the web app's public URL.
+The third container, `hatbot-boxes`, is optional. It runs the server side of boxes, the small web apps the chat makes (PLAN.md §21): each box's backend in a unit of its own, with no network. Without it, boxes are only pages. `host-setup.sh` asks for its VMID; answer `none` (or run with `BOXES_ID=none`) to leave it out. To add it later, remove `BOXES_ID=none` from `/etc/hatbot/host.env`, then run `host-setup.sh` and `deploy.sh` again.
+
+If your router forwards ports to the LAN (the web app's reverse proxy, say), the desktop or the boxes guest could come back in through your public address. Block it with `HATBOT_PUBLIC_IPS="203.0.113.7"` (space-separated, IPv4) in `/etc/hatbot/host.env` and re-run `host-setup.sh`. `verify.sh` fails if either can reach the web app's public URL.
 
 ## Without Proxmox
 
-`ssh-setup.sh` sets up two Debian 13 machines you reach over SSH: VMs (libvirt, VirtualBox, Hyper-V), Incus or LXD containers, cloud servers or spare boxes. Run it from any machine with ssh, such as your laptop, with a key both accept, as `root@host` or as a user with passwordless sudo. Use fresh machines: provisioning writes `/etc/nftables.conf`, whose `flush ruleset` drops other rules, so it refuses machines with Docker, ufw, firewalld or rules of their own (`FORCE=1` goes ahead anyway).
+`ssh-setup.sh` sets up two or three Debian 13 machines you reach over SSH: VMs (libvirt, VirtualBox, Hyper-V), Incus or LXD containers, cloud servers or spare boxes. Run it from any machine with ssh, such as your laptop, with a key both accept, as `root@host` or as a user with passwordless sudo. Use fresh machines: provisioning writes `/etc/nftables.conf`, whose `flush ruleset` drops other rules, so it refuses machines with Docker, ufw, firewalld or rules of their own (`FORCE=1` goes ahead anyway).
 
 ```sh
-./ssh-setup.sh --dry-run   # checks both machines, shows the plan, changes nothing
+./ssh-setup.sh --dry-run   # checks the machines, shows the plan, changes nothing
 ./ssh-setup.sh
 ./verify.sh
 ```
 
-It asks for each machine's SSH address, and finds the addresses they reach each other on (`BRAIN_IP`, `DESKTOP_IP`). Answer `none` for the desktop to run the brain alone: no desktop tasks, page watchers, live view or sandbox. Its answers go to `host.env` (`/etc/hatbot/` as root, otherwise `~/.config/hatbot/`; `HATBOT_STATE` picks another), where `deploy.sh`, `verify.sh` and `reset-login.sh` find them.
+It asks for each machine's SSH address, and finds the addresses they reach each other on (`BRAIN_IP`, `DESKTOP_IP`, `BOXES_IP`). Answer `none` for the desktop to run the brain alone: no desktop tasks, page watchers, live view or sandbox. Answer `none` for the boxes guest (`BOXES_SSH`) and boxes are only pages. It asks again on each run, so a boxes guest can be added later. Its answers go to `host.env` (`/etc/hatbot/` as root, otherwise `~/.config/hatbot/`; `HATBOT_STATE` picks another), where `deploy.sh`, `verify.sh` and `reset-login.sh` find them.
 
 What's different from Proxmox:
 
 - **The desktop's fence is on the desktop.** Its nftables output chain lets `desk` (Chromium) and the shell's and renderer's throwaway users reach the internet only: no private ranges, its LAN, the brain, cloud metadata (169.254.169.254) or `HATBOT_PUBLIC_IPS`, and no IPv6. Something that gets root on the desktop could lift it. On Proxmox the host's bridge filter holds even then, so if your hypervisor can filter the desktop's traffic (a VLAN of its own, network ACLs), do that too.
-- **Keep the two on a private network**, or a VPN (WireGuard, Tailscale): VNC and desktop-agent speak plain TCP, so `ssh-setup.sh` refuses a public `DESKTOP_IP`.
-- **A LAN DNS resolver** stays reachable from the desktop, on port 53 only. To keep it off the LAN entirely, point the desktop at public resolvers and run `ssh-setup.sh` again.
-- **No Proxmox token, snapshots or backups.** Settings → Desktop has no rollback; back up the brain's `/var/lib/hatbot` and `/archive` yourself. The Proxmox plugin still works with a token you write to `/etc/hatbot/proxmox.env` by hand (see `host-setup.sh`, step 4).
+- **The same goes for the boxes guest.** Its output chain lets only the agent's user out, to the internet only; the boxes and their builds get nothing at all.
+- **Keep them on a private network**, or a VPN (WireGuard, Tailscale): VNC and the agents speak plain TCP, so `ssh-setup.sh` refuses a public `DESKTOP_IP` or `BOXES_IP`.
+- **A LAN DNS resolver** stays reachable from the desktop and the boxes guest, on port 53 only. To keep them off the LAN entirely, point them at public resolvers and run `ssh-setup.sh` again.
+- **No Proxmox token, snapshots or backups.** Settings → Desktop has no rollback; back up the brain's `/var/lib/hatbot` and `/archive`, and the boxes guest's `/var/lib/private/hatbox-data` (what the boxes save), yourself. The Proxmox plugin still works with a token you write to `/etc/hatbot/proxmox.env` by hand (see `host-setup.sh`, step 4).
 
 Commands below written `pct exec <brain> -- …` are `ssh <brain> …` here.
 
@@ -93,13 +97,13 @@ Each deploy is a new release in `/var/lib/hatbot/releases` inside the brain, and
 
 ## Update from Settings
 
-After that, **Settings → Updates → Update** pulls the branch and deploys it: the brain first, then desktop-agent, each with the same health check and rollback as `deploy.sh`. If the brain goes back to its old version, the desktop isn't touched. The page reloads on the new version.
+After that, **Settings → Updates → Update** pulls the branch and deploys it: the brain first, then desktop-agent and the boxes agent, each with the same health check and rollback as `deploy.sh`. If the brain goes back to its old version, the guests aren't touched. The page reloads on the new version.
 
 - The brain only writes `/var/lib/hatbot/update-request`. `hatbot-update.path` runs `hatbot-update` as root, which reads the git token from `/etc/hatbot/update.env` (root only), so the brain service never holds it.
-- desktop-agent receives its new code over its own API; a root service on the desktop (`hatbot-desktop-agent-update.path`) installs it. The first `deploy.sh` run after this feature sets that up.
+- desktop-agent receives its new code over its own API; a root service on the desktop (`hatbot-desktop-agent-update.path`) installs it. The first `deploy.sh` run after this feature sets that up. The boxes agent does the same (`hatbox-agent-update.path`); the boxes' units and firewall come only with `deploy.sh`.
 - It refuses while a task is running, because the brain restarts.
 - It doesn't touch the host. If a commit changes host-side scripts (`host-setup.sh`, `deploy.sh`, `desktop-deploy.sh` and so on), Settings says so; run `deploy.sh` for those.
-- Logs: `/var/lib/hatbot-update/last.log` on the brain, and `journalctl -u hatbot-desktop-agent-update` on the desktop.
+- Logs: `/var/lib/hatbot-update/last.log` on the brain, `journalctl -u hatbot-desktop-agent-update` on the desktop, and `journalctl -u hatbox-agent-update` on the boxes guest.
 
 ### Signed commits only
 
@@ -120,7 +124,7 @@ Proxmox's API can't run commands inside containers, so Hatbot does it over SSH t
 cd /root/infra && ./pct-exec-setup.sh
 ```
 
-It adds a `hatbot` Unix user that logs in with the brain's key, installs `/usr/local/sbin/hatbot-pct-exec` (one command in one running container, as root there; Hatbot's own brain and desktop are refused) and a sudo rule for that program alone. Then add the host in **Settings → Plugins → SSH** (user `hatbot`) and switch on **Proxmox host**. Background tasks get `ssh_pct_exec(host, guest, command)`; destructive commands ask first, and a "careful" host asks for everything.
+It adds a `hatbot` Unix user that logs in with the brain's key, installs `/usr/local/sbin/hatbot-pct-exec` (one command in one running container, as root there; Hatbot's own containers are refused) and a sudo rule for that program alone. Then add the host in **Settings → Plugins → SSH** (user `hatbot`) and switch on **Proxmox host**. Background tasks get `ssh_pct_exec(host, guest, command)`; destructive commands ask first, and a "careful" host asks for everything.
 
 This makes Hatbot root inside your other containers. Leave it out if you'd rather keep Hatbot to starting and stopping them.
 
@@ -162,18 +166,19 @@ Set any of these as environment variables, or answer the prompts. Defaults are i
 
 | Variable | Default | |
 |---|---|---|
-| `BRAIN_ID`, `DESKTOP_ID` | next free | VMIDs |
-| `BRAIN_IP`, `DESKTOP_IP` | `192.168.55.<VMID+100>` | static LAN addresses; the script checks they're free |
-| `LAN_BRIDGE` | the uplink bridge | bridge both guests join |
+| `BRAIN_ID`, `DESKTOP_ID`, `BOXES_ID` | next free | VMIDs; `BOXES_ID=none` leaves out the boxes guest |
+| `BRAIN_IP`, `DESKTOP_IP`, `BOXES_IP` | `192.168.55.<VMID+100>` | static LAN addresses; the script checks they're free |
+| `LAN_BRIDGE` | the uplink bridge | bridge the guests join |
 | `SSD_STORE`, `HDD_STORE` | asked | root disks; `/archive` |
 | `ARCHIVE_SIZE` | `200` | GiB |
-| `DNS` | `9.9.9.9 1.1.1.1` | the desktop's resolvers |
+| `DNS` | `9.9.9.9 1.1.1.1` | the desktop's and the boxes guest's resolvers |
 | `FORCE` | `0` | `1` continues despite the RAM check |
 
 ## Good to know
 
-- On Proxmox, the desktop's firewall is an nftables table on the host, `bridge hatbot`, loaded by `hatbot-firewall.service`. It filters the desktop's port on the LAN bridge and pins its MAC, so don't change the desktop's MAC or NIC in the GUI (verify.sh checks they match). It doesn't touch the Proxmox firewall. Don't start or restart `nftables.service` on the host: its `flush ruleset` wipes every table, including Proxmox's.
-- The brain listens on port 8080 on the LAN, for your reverse proxy. The desktop can't reach it.
-- The brain's secrets live in `/etc/hatbot/*.env` inside the brain (mode 640, group `hatbot`). The desktop only holds its VNC password and its agent token.
+- On Proxmox, the desktop's and the boxes guest's firewall is an nftables table on the host, `bridge hatbot`, loaded by `hatbot-firewall.service`. It filters their ports on the LAN bridge and pins their MACs, so don't change their MACs or NICs in the GUI (verify.sh checks they match). It doesn't touch the Proxmox firewall. Don't start or restart `nftables.service` on the host: its `flush ruleset` wipes every table, including Proxmox's.
+- The brain listens on port 8080 on the LAN, for your reverse proxy. Neither guest can reach it, nor open any connection to the brain.
+- The brain's secrets live in `/etc/hatbot/*.env` inside the brain (mode 640, group `hatbot`). The desktop only holds its VNC password and its agent token, and the boxes guest its agent's token (`/etc/hatbox/secrets.env`; the brain has it in `/etc/hatbot/boxes.env`).
 - ntfy runs on its own server, not on Hatbot's guests. The brain only publishes to it, with the URL, topic and token `deploy.sh` saved in `/etc/hatbot/ntfy.env`. For instant iPhone notifications, set `upstream-base-url: https://ntfy.sh` on your ntfy server.
-- To undo: `pct destroy` both containers, `pveum user delete hatbot@pve`, `pveum role delete HatbotOps` and `HatbotSnapshots`, `pveum pool delete hatbot`, disable `hatbot-firewall.service` and `hatbot-desktop-snapshot.timer`, run `nft delete table bridge hatbot`, and remove `/etc/hatbot`.
+- On the boxes guest, the agent is `hatbox-agent.service`, on port 7071, which only the brain reaches. Each box's backend is `hatbox@<id>.service` and its builds `hatbox-build@<id>.service`, all in `hatbox.slice` (384 MB together); a polkit rule lets the agent start and stop only those. What a box saves is in `/var/lib/private/hatbox-data/<id>`, its log in `/var/lib/hatbox/logs/<id>.log`.
+- To undo: `pct destroy` the containers, `pveum user delete hatbot@pve`, `pveum role delete HatbotOps` and `HatbotSnapshots`, `pveum pool delete hatbot`, disable `hatbot-firewall.service`, `hatbot-desktop-snapshot.timer` and `hatbot-boxes-snapshot.timer`, run `nft delete table bridge hatbot`, and remove `/etc/hatbot`.

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Hatbot: set up the brain and the desktop on two Debian 13 machines reached over SSH (PLAN.md §9.2), for
-# when there's no Proxmox host. Any machines will do: VMs, Incus/LXD containers, cloud servers, spare
-# boxes. Use fresh ones, since provisioning replaces their firewall rules. On Proxmox, host-setup.sh does
-# more: the containers themselves, a firewall the desktop can't touch, snapshots and backups.
+# Hatbot: set up the brain, the desktop and the boxes guest on Debian 13 machines reached over SSH (PLAN.md
+# §9.2, §21.6), for when there's no Proxmox host. Any machines will do: VMs, Incus/LXD containers, cloud
+# servers, spare boxes. Use fresh ones, since provisioning replaces their firewall rules. On Proxmox,
+# host-setup.sh does more: the containers themselves, a firewall the guests can't touch, snapshots and
+# backups.
 #
-# Run from any machine whose SSH key both accept, as root@host or as a user with passwordless sudo:
+# Run from any machine whose SSH key they all accept, as root@host or as a user with passwordless sudo:
 #   ./ssh-setup.sh --dry-run   check the machines and show the plan, change nothing
 #   ./ssh-setup.sh             ask before each change
 #   ./ssh-setup.sh --yes       accept all defaults without asking
@@ -12,8 +13,10 @@
 # Safe to re-run. Answers are saved to host.env (/etc/hatbot/ as root, otherwise ~/.config/hatbot/), which
 # deploy.sh, verify.sh and reset-login.sh read. Any setting can be preset as an environment variable:
 #   BRAIN_SSH, DESKTOP_SSH   user@host of each machine; DESKTOP_SSH=none for a brain without a desktop
+#   BOXES_SSH                user@host of the boxes guest, which runs boxes' backends; none for no backends
 #   BRAIN_IP, DESKTOP_IP     the addresses they reach each other on (default: asked of the machines)
-#   HATBOT_PUBLIC_IPS        your public IPv4s, space-separated, which the desktop may not reach either
+#   BOXES_IP                 the same, for the boxes guest
+#   HATBOT_PUBLIC_IPS        your public IPv4s, space-separated, which the desktop and boxes may not reach
 #   FORCE=1                  carry on past the checks for Debian 13 and for existing firewall rules
 
 set -euo pipefail
@@ -31,8 +34,10 @@ HATBOT_TRANSPORT=ssh
 
 BRAIN_SSH=${BRAIN_SSH:-}
 DESKTOP_SSH=${DESKTOP_SSH:-}
+BOXES_SSH=${BOXES_SSH:-}
 BRAIN_IP=${BRAIN_IP:-}
 DESKTOP_IP=${DESKTOP_IP:-}
+BOXES_IP=${BOXES_IP:-}
 HATBOT_PUBLIC_IPS=${HATBOT_PUBLIC_IPS:-}
 FORCE=${FORCE:-0}
 
@@ -43,7 +48,7 @@ for arg in "$@"; do
     -n | --dry-run) DRY_RUN=1 ;;
     -y | --yes) ASSUME_YES=1 ;;
     -h | --help)
-      sed -n '2,19p' "$0"
+      sed -n '2,20p' "$0"
       exit 0
       ;;
     *) die "unknown option: $arg (try --help)" ;;
@@ -77,7 +82,7 @@ save_state() {
   {
     echo "# Written by hatbot infra/ssh-setup.sh; edit and re-run to change."
     local v
-    for v in HATBOT_TRANSPORT BRAIN_SSH DESKTOP_SSH BRAIN_IP DESKTOP_IP HATBOT_PUBLIC_IPS; do
+    for v in HATBOT_TRANSPORT BRAIN_SSH DESKTOP_SSH BOXES_SSH BRAIN_IP DESKTOP_IP BOXES_IP HATBOT_PUBLIC_IPS; do
       printf '%s=%q\n' "$v" "${!v}"
     done
   } >"$STATE"
@@ -93,7 +98,10 @@ command -v ssh >/dev/null || die "ssh not found"
 [[ -n $BRAIN_SSH ]] || die "the brain's SSH address is needed"
 [[ -n $DESKTOP_SSH ]] || ask DESKTOP_SSH "Desktop: SSH address (user@host; none: no desktop, so no desktop tasks or page watchers)" ""
 [[ -n $DESKTOP_SSH && $DESKTOP_SSH != none ]] || DESKTOP_SSH=''
-[[ $BRAIN_SSH == *@* && ( -z $DESKTOP_SSH || $DESKTOP_SSH == *@* ) ]] || die "give each machine as user@host"
+[[ -n $BOXES_SSH ]] || ask BOXES_SSH "Boxes guest: SSH address (user@host; none: no boxes guest, so boxes are only pages)" ""
+[[ -n $BOXES_SSH && $BOXES_SSH != none ]] || BOXES_SSH=''
+[[ $BRAIN_SSH == *@* && ( -z $DESKTOP_SSH || $DESKTOP_SSH == *@* ) && ( -z $BOXES_SSH || $BOXES_SSH == *@* ) ]] ||
+  die "give each machine as user@host"
 
 # check_machine LABEL GUEST: reachable, root, Debian 13 with systemd, and no firewall of someone else's.
 check_machine() {
@@ -121,6 +129,14 @@ if [[ -n $DESKTOP_SSH ]]; then
   [[ $(guest_exec "$BRAIN_SSH" cat /etc/machine-id </dev/null) != "$(guest_exec "$DESKTOP_SSH" cat /etc/machine-id </dev/null)" ]] ||
     die "$BRAIN_SSH and $DESKTOP_SSH are the same machine; the desktop browses untrusted sites, so it needs its own"
 fi
+if [[ -n $BOXES_SSH ]]; then
+  check_machine "boxes guest" "$BOXES_SSH"
+  boxes_id=$(guest_exec "$BOXES_SSH" cat /etc/machine-id </dev/null)
+  [[ $boxes_id != "$(guest_exec "$BRAIN_SSH" cat /etc/machine-id </dev/null)" ]] ||
+    die "$BRAIN_SSH and $BOXES_SSH are the same machine; the boxes run code a bot wrote, so they need their own"
+  [[ -z $DESKTOP_SSH || $boxes_id != "$(guest_exec "$DESKTOP_SSH" cat /etc/machine-id </dev/null)" ]] ||
+    die "$DESKTOP_SSH and $BOXES_SSH are the same machine; the boxes guest needs its own"
+fi
 
 # Addresses: the desktop's own, and the brain's as the desktop will see it.
 if [[ -n $DESKTOP_SSH ]]; then
@@ -143,21 +159,50 @@ if [[ -n $DESKTOP_SSH ]]; then
     refuse "$DESKTOP_IP is a public address, and the brain talks to the desktop unencrypted; put both on a private network or a VPN (WireGuard, Tailscale)"
   ok "brain $BRAIN_IP, desktop $DESKTOP_IP"
 fi
+# The boxes guest's, and the brain's as it sees it if there's no desktop to ask.
+if [[ -n $BOXES_SSH ]]; then
+  if [[ -z $BOXES_IP ]]; then
+    def=$(guest_exec "$BOXES_SSH" ip -4 route get 1.1.1.1 </dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')
+    ask BOXES_IP "The boxes guest's address, which the brain connects to" "$def"
+  fi
+  if [[ -z $BRAIN_IP ]]; then
+    def=$(guest_exec "$BRAIN_SSH" ip -4 route get "$BOXES_IP" </dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')
+    ask BRAIN_IP "The brain's address, as the boxes guest sees it" "$def"
+  fi
+  for ip in "$BRAIN_IP" "$BOXES_IP"; do
+    [[ $ip =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || die "$ip isn't an IPv4 address; set BRAIN_IP / BOXES_IP"
+  done
+  [[ $BOXES_IP != "$BRAIN_IP" && ( -z $DESKTOP_SSH || $BOXES_IP != "$DESKTOP_IP" ) ]] ||
+    die "the boxes guest needs an address of its own"
+  guest_exec "$BOXES_SSH" ip -4 -o addr show </dev/null | grep -qF " $BOXES_IP/" ||
+    die "$BOXES_IP isn't an address of $BOXES_SSH"
+  # The boxes agent speaks plain HTTP, with a token and no TLS.
+  is_private "$BOXES_IP" ||
+    refuse "$BOXES_IP is a public address, and the brain talks to the boxes agent unencrypted; put both on a private network or a VPN (WireGuard, Tailscale)"
+  ok "brain $BRAIN_IP, boxes guest $BOXES_IP"
+else
+  BOXES_IP=''
+fi
 for ip in $HATBOT_PUBLIC_IPS; do
   [[ $ip =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?$ ]] || die "HATBOT_PUBLIC_IPS: $ip isn't an IPv4 address"
 done
 
 desktop_plan="none: no desktop tasks, page watchers or live view"
 [[ -z $DESKTOP_SSH ]] || desktop_plan="$DESKTOP_SSH ($DESKTOP_IP): Xvnc, XFCE, Chromium; only the brain and SSH may connect in, and its programs reach only the internet"
+boxes_plan="none: boxes are only pages"
+[[ -z $BOXES_SSH ]] || boxes_plan="$BOXES_SSH ($BOXES_IP): Bun, the boxes agent; only the brain and SSH may connect in, only the agent reaches out (to the internet), and the boxes have no network"
+drops=$DESKTOP_IP
+[[ -z $BOXES_IP ]] || drops+="${drops:+ and }$BOXES_IP"
 cat <<EOF
 
    Plan:
-     brain    $BRAIN_SSH: Bun, the memory repo, an SSH key for your hosts${DESKTOP_IP:+; drops new connections from $DESKTOP_IP}
+     brain    $BRAIN_SSH: Bun, the memory repo, an SSH key for your hosts${drops:+; drops new connections from $drops}
      desktop  $desktop_plan
+     boxes    $boxes_plan
      settings $STATE
 
    Without Proxmox, the desktop's firewall runs on the desktop itself: something that gets root there
-   could lift it. On Proxmox it lives on the host instead.
+   could lift it. On Proxmox it lives on the host instead.${BOXES_SSH:+ The same goes for the boxes guest.}
 EOF
 if ((DRY_RUN)); then
   printf '\n%sDry run: nothing changed.%s\n' "$yel" "$rst"
@@ -166,8 +211,8 @@ fi
 confirm "Continue?" || die "stopped"
 save_state
 
-# ---------- 2. Brain <-> desktop secrets ----------
-step "2/4 Brain ↔ desktop secrets"
+# ---------- 2. Brain <-> guest secrets ----------
+step "2/4 Brain ↔ guest secrets"
 if [[ -z $DESKTOP_SSH ]]; then
   info "no desktop"
 elif guest_has_file "$BRAIN_SSH" /etc/hatbot/desktop.env && guest_has_file "$DESKTOP_SSH" /etc/hatbot-desktop/secrets.env &&
@@ -189,6 +234,22 @@ BRAIN_IP=$BRAIN_IP
 EOF
   unset agent_token vnc_password
 fi
+if [[ -z $BOXES_SSH ]]; then
+  info "no boxes guest"
+elif guest_has_file "$BRAIN_SSH" /etc/hatbot/boxes.env && guest_has_file "$BOXES_SSH" /etc/hatbox/secrets.env &&
+  guest_exec "$BRAIN_SSH" grep -qx "HATBOX_AGENT_URL=http://$BOXES_IP:7071" /etc/hatbot/boxes.env </dev/null; then
+  ok "the brain and the boxes guest have theirs"
+else
+  hatbox_token=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+  push_secret "$BRAIN_SSH" /etc/hatbot/boxes.env <<EOF
+HATBOX_AGENT_URL=http://$BOXES_IP:7071
+HATBOX_AGENT_TOKEN=$hatbox_token
+EOF
+  push_secret "$BOXES_SSH" /etc/hatbox/secrets.env <<EOF
+HATBOX_AGENT_TOKEN=$hatbox_token
+EOF
+  unset hatbox_token
+fi
 
 # ---------- 3. Provision ----------
 step "3/4 Provision the machines"
@@ -202,19 +263,24 @@ provision() { # provision GUEST SCRIPT ENV...
     info "skipped; run ssh-setup.sh again to do it"
   fi
 }
-provision "$BRAIN_SSH" brain-provision.sh "DESKTOP_IP=$DESKTOP_IP"
+provision "$BRAIN_SSH" brain-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BOXES_IP=$BOXES_IP"
 [[ -z $DESKTOP_SSH ]] ||
   provision "$DESKTOP_SSH" desktop-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS" SSH_IN=1
+[[ -z $BOXES_SSH ]] ||
+  provision "$BOXES_SSH" boxes-provision.sh "BOXES_IP=$BOXES_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS" SSH_IN=1
 
 # ---------- 4. Done ----------
 step "4/4 Done"
+backup="the brain's /var/lib/hatbot and /archive"
+[[ -z $BOXES_SSH ]] || backup+=", and the boxes guest's /var/lib/private/hatbox-data (what the boxes save)"
 cat <<EOF
    Brain     $BRAIN_SSH${BRAIN_IP:+   $BRAIN_IP}
    Desktop   ${DESKTOP_SSH:-none}${DESKTOP_IP:+   $DESKTOP_IP (internet only)}
+   Boxes     ${BOXES_SSH:-none}${BOXES_IP:+   $BOXES_IP (internet only, for its agent)}
 
    Next:
    1. Check the setup:   $HERE/verify.sh
    2. Install the app:   $HERE/deploy.sh <path to the hatbot checkout>   (see README.md)
    3. Reverse proxy:  your domain (e.g. hatbot.example.com) → http://<the brain's address>:8080 (with WebSockets)
-   4. Back up the brain's /var/lib/hatbot and /archive; nothing here does that for you.
+   4. Back up $backup; nothing here does that for you.
 EOF

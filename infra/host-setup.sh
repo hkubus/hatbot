@@ -26,16 +26,19 @@ HATBOT_TRANSPORT=pct
 # ---------- Settings ----------
 BRAIN_ID=${BRAIN_ID:-}
 DESKTOP_ID=${DESKTOP_ID:-}
+BOXES_ID=${BOXES_ID:-}                      # none: no boxes guest, so boxes are only pages (PLAN.md §21)
 BRAIN_IP=${BRAIN_IP:-}                      # default: <LAN prefix>.<VMID + 100>
 DESKTOP_IP=${DESKTOP_IP:-}                  # same rule
+BOXES_IP=${BOXES_IP:-}                      # same rule
 SSD_STORE=${SSD_STORE:-}                    # root disks
 HDD_STORE=${HDD_STORE:-}                    # /archive on the brain
 ARCHIVE_SIZE=${ARCHIVE_SIZE:-200}           # GiB, can be grown later
-LAN_BRIDGE=${LAN_BRIDGE:-}                  # bridge both guests join (default: the uplink)
-DNS=${DNS:-9.9.9.9 1.1.1.1}                 # the desktop's resolvers (it can't reach LAN DNS)
+LAN_BRIDGE=${LAN_BRIDGE:-}                  # bridge the guests join (default: the uplink)
+DNS=${DNS:-9.9.9.9 1.1.1.1}                 # the desktop's and boxes guest's resolvers (they can't reach LAN DNS)
 FORCE=${FORCE:-0}                           # 1 = continue despite the RAM check
 HATBOT_PUBLIC_IPS=${HATBOT_PUBLIC_IPS:-}    # optional: your public IPv4s (space-separated), so the desktop
-                                            # can't come back in through them (port forwards, hairpin NAT)
+                                            # and the boxes can't come back in through them (port forwards,
+                                            # hairpin NAT)
 
 POOL=hatbot
 PVE_USER=hatbot@pve
@@ -43,10 +46,13 @@ TOKEN_NAME=brain
 TOKEN_ID="$PVE_USER!$TOKEN_NAME"
 BRAIN_NAME=hatbot-brain
 DESKTOP_NAME=hatbot-desktop
+BOXES_NAME=hatbot-boxes
 BRAIN_MEM=2048
 BRAIN_SWAP=512
 DESKTOP_MEM=1536
 DESKTOP_SWAP=1024
+BOXES_MEM=768
+BOXES_SWAP=512
 
 DRY_RUN=0
 ASSUME_YES=0
@@ -125,7 +131,7 @@ save_state() {
   {
     echo "# Written by hatbot infra/host-setup.sh; edit and re-run to change."
     local v
-    for v in HATBOT_TRANSPORT BRAIN_ID DESKTOP_ID BRAIN_IP DESKTOP_IP SSD_STORE HDD_STORE ARCHIVE_SIZE LAN_BRIDGE DNS HATBOT_PUBLIC_IPS; do
+    for v in HATBOT_TRANSPORT BRAIN_ID DESKTOP_ID BOXES_ID BRAIN_IP DESKTOP_IP BOXES_IP SSD_STORE HDD_STORE ARCHIVE_SIZE LAN_BRIDGE DNS HATBOT_PUBLIC_IPS; do
       printf '%s=%q\n' "$v" "${!v}"
     done
   } >"$STATE"
@@ -164,7 +170,9 @@ fi
 # Reuse guests from an earlier run, matched by name.
 read -r ex_brain_id ex_brain_type ex_brain_node < <(find_guest "$BRAIN_NAME") || true
 read -r ex_desk_id ex_desk_type ex_desk_node < <(find_guest "$DESKTOP_NAME") || true
-for g in "brain:${ex_brain_id:-}:${ex_brain_type:-}:${ex_brain_node:-}" "desktop:${ex_desk_id:-}:${ex_desk_type:-}:${ex_desk_node:-}"; do
+read -r ex_boxes_id ex_boxes_type ex_boxes_node < <(find_guest "$BOXES_NAME") || true
+for g in "brain:${ex_brain_id:-}:${ex_brain_type:-}:${ex_brain_node:-}" "desktop:${ex_desk_id:-}:${ex_desk_type:-}:${ex_desk_node:-}" \
+  "boxes:${ex_boxes_id:-}:${ex_boxes_type:-}:${ex_boxes_node:-}"; do
   IFS=: read -r label id type node <<<"$g"
   [[ -z $id ]] && continue
   [[ $type == lxc && $node == "$NODE" ]] || die "a guest named hatbot-$label already exists ($type $id on $node); rename or remove it"
@@ -172,6 +180,7 @@ for g in "brain:${ex_brain_id:-}:${ex_brain_type:-}:${ex_brain_node:-}" "desktop
 done
 BRAIN_ID=${ex_brain_id:-$BRAIN_ID}
 DESKTOP_ID=${ex_desk_id:-$DESKTOP_ID}
+BOXES_ID=${ex_boxes_id:-$BOXES_ID}
 if [[ -z $BRAIN_ID ]]; then
   ask BRAIN_ID "VMID for $BRAIN_NAME" "$(pvesh get /cluster/nextid | tr -d '"')"
 fi
@@ -183,6 +192,19 @@ fi
 [[ -z ${ex_brain_id:-} ]] && vmid_used "$BRAIN_ID" && die "VMID $BRAIN_ID is already used by another guest"
 [[ -z ${ex_desk_id:-} ]] && vmid_used "$DESKTOP_ID" && die "VMID $DESKTOP_ID is already used by another guest"
 [[ $BRAIN_ID != "$DESKTOP_ID" ]] || die "brain and desktop need different VMIDs"
+# The boxes guest is optional: without it boxes are only pages. BOXES is its VMID, empty without one.
+if [[ -z $BOXES_ID ]]; then
+  n=$((DESKTOP_ID + 1))
+  while vmid_used "$n" || [[ $n == "$BRAIN_ID" ]]; do n=$((n + 1)); done
+  ask BOXES_ID "VMID for $BOXES_NAME, which runs boxes' backends (none: boxes are only pages)" "$n"
+fi
+[[ $BOXES_ID == none || $BOXES_ID =~ ^[1-9][0-9]*$ ]] || die "BOXES_ID is $BOXES_ID; give a VMID, or none for no boxes guest"
+BOXES=''
+[[ $BOXES_ID == none ]] || BOXES=$BOXES_ID
+if [[ -n $BOXES ]]; then
+  [[ -z ${ex_boxes_id:-} ]] && vmid_used "$BOXES" && die "VMID $BOXES is already used by another guest"
+  [[ $BOXES != "$BRAIN_ID" && $BOXES != "$DESKTOP_ID" ]] || die "the boxes guest needs a VMID of its own"
+fi
 
 # LAN addresses: kept from existing guests, otherwise <LAN prefix>.<VMID + 100>.
 ct_ip() { pct config "$1" 2>/dev/null | sed -n 's#^net0:.*[,:]ip=\([0-9.]*\)/.*#\1#p'; }
@@ -195,9 +217,9 @@ pick_ip() { # pick_ip VAR VMID EXISTING
   else
     ip=${!__var:-${HOST_LAN_IP%.*}.$((id + 100))}
     [[ $(cidr_net "$ip/$LAN_LEN") == "$LAN_NET" && ${ip##*.} -ge 1 && ${ip##*.} -le 254 ]] ||
-      die "$ip is not a usable address in $LAN_NET; set BRAIN_IP / DESKTOP_IP"
+      die "$ip is not a usable address in $LAN_NET; set $__var"
     if ping -c 1 -W 1 "$ip" >/dev/null 2>&1 || ip neigh show "$ip" | grep -qE 'REACHABLE|STALE|DELAY|PERMANENT'; then
-      die "$ip is already in use on the LAN; set BRAIN_IP / DESKTOP_IP"
+      die "$ip is already in use on the LAN; set $__var"
     fi
   fi
   printf -v "$__var" '%s' "$ip"
@@ -207,9 +229,18 @@ pick_ip DESKTOP_IP "$DESKTOP_ID" "${ex_desk_id:-}"
 [[ $BRAIN_IP != "$DESKTOP_IP" ]] || die "brain and desktop need different IPs"
 [[ $BRAIN_IP != "$HOST_LAN_IP" && $DESKTOP_IP != "$HOST_LAN_IP" && $DESKTOP_IP != "$LAN_GW" && $BRAIN_IP != "$LAN_GW" ]] ||
   die "a guest IP clashes with the host or the gateway; set BRAIN_IP / DESKTOP_IP"
-ok "brain $BRAIN_IP, desktop $DESKTOP_IP (/$LAN_LEN, gateway $LAN_GW)"
+if [[ -n $BOXES ]]; then
+  pick_ip BOXES_IP "$BOXES" "${ex_boxes_id:-}"
+  [[ $BOXES_IP != "$BRAIN_IP" && $BOXES_IP != "$DESKTOP_IP" ]] || die "the boxes guest needs an IP of its own; set BOXES_IP"
+  [[ $BOXES_IP != "$HOST_LAN_IP" && $BOXES_IP != "$LAN_GW" ]] ||
+    die "the boxes guest's IP clashes with the host or the gateway; set BOXES_IP"
+else
+  BOXES_IP=''
+fi
+ok "brain $BRAIN_IP, desktop $DESKTOP_IP${BOXES:+, boxes $BOXES_IP} (/$LAN_LEN, gateway $LAN_GW)"
 
-# The host firewall matches the desktop by its bridge port and MAC, so the MAC is fixed up front.
+# The host firewall matches the desktop and the boxes guest by bridge port and MAC, so the MACs are fixed
+# up front.
 DESKTOP_VETH=veth${DESKTOP_ID}i0
 if [[ -n ${ex_desk_id:-} ]]; then
   DESKTOP_MAC=$(ct_mac "$DESKTOP_ID")
@@ -217,13 +248,20 @@ if [[ -n ${ex_desk_id:-} ]]; then
 else
   DESKTOP_MAC=bc:24:11:$(openssl rand -hex 3 | sed 's/../&:/g; s/:$//')
 fi
+BOXES_VETH=veth${BOXES}i0 BOXES_MAC=''
+if [[ -n ${ex_boxes_id:-} ]]; then
+  BOXES_MAC=$(ct_mac "$BOXES")
+  [[ -n $BOXES_MAC ]] || die "can't read the MAC of CT $BOXES"
+elif [[ -n $BOXES ]]; then
+  BOXES_MAC=bc:24:11:$(openssl rand -hex 3 | sed 's/../&:/g; s/:$//')
+fi
 
 info "Storages that can hold container disks:"
 pvesm status --content rootdir 2>/dev/null |
   awk 'NR > 1 && $3 == "active" { printf "       %-16s %-10s %6d GiB free\n", $1, $2, $6 / 1048576 }'
 if [[ -z $SSD_STORE ]]; then
   def=$(pvesm status --content rootdir 2>/dev/null | awk 'NR > 1 && $3 == "active" && $2 ~ /zfspool|lvmthin/ { print $1; exit }')
-  ask SSD_STORE "SSD storage for both root disks" "${def:-local-lvm}"
+  ask SSD_STORE "SSD storage for the root disks" "${def:-local-lvm}"
 fi
 [[ -z $HDD_STORE ]] && ask HDD_STORE "HDD storage for the brain's /archive" ""
 [[ -n $HDD_STORE ]] || die "set HDD_STORE to the HDD pool for /archive"
@@ -236,7 +274,7 @@ case $SSD_TYPE in
   zfspool | lvmthin | rbd | btrfs) SNAP_OK=1 ;;
   *)
     SNAP_OK=0
-    warn "$SSD_STORE is $SSD_TYPE, which can't snapshot containers; nightly desktop snapshots will be skipped"
+    warn "$SSD_STORE is $SSD_TYPE, which can't snapshot containers; nightly desktop${BOXES:+ and boxes} snapshots will be skipped"
     ;;
 esac
 TMPL_STORE=$(pvesm status --content vztmpl 2>/dev/null | awk 'NR > 1 && $3 == "active" { print $1; exit }')
@@ -246,6 +284,7 @@ ok "root disks on $SSD_STORE ($SSD_TYPE), /archive on $HDD_STORE (${ARCHIVE_SIZE
 need=0
 [[ -z ${ex_brain_id:-} ]] && need=$((need + BRAIN_MEM))
 [[ -z ${ex_desk_id:-} ]] && need=$((need + DESKTOP_MEM))
+[[ -n $BOXES && -z ${ex_boxes_id:-} ]] && need=$((need + BOXES_MEM))
 if ((need > 0)); then
   avail=$(awk '/^MemAvailable:/ { print int($2 / 1024) }' /proc/meminfo)
   arc=0
@@ -259,7 +298,13 @@ if ((need > 0)); then
   fi
 fi
 
-
+boxes_plan="     boxes    none (BOXES_ID=none): boxes are only pages"
+if [[ -n $BOXES ]]; then
+  boxes_plan="     boxes    CT $BOXES  $BOXES_NAME    2 vCPU, $BOXES_MEM MiB + $BOXES_SWAP MiB swap, 8 GiB on $SSD_STORE
+              $BOXES_IP/$LAN_LEN on $LAN_BRIDGE (MAC $BOXES_MAC), DNS $DNS"
+fi
+fenced="the desktop's bridge port"
+[[ -z $BOXES ]] || fenced="the desktop's and the boxes guest's bridge ports"
 cat <<EOF
 
    Plan:
@@ -267,7 +312,8 @@ cat <<EOF
               $BRAIN_IP/$LAN_LEN on $LAN_BRIDGE
      desktop  CT $DESKTOP_ID  $DESKTOP_NAME  2 vCPU, $DESKTOP_MEM MiB + $DESKTOP_SWAP MiB swap, 16 GiB on $SSD_STORE
               $DESKTOP_IP/$LAN_LEN on $LAN_BRIDGE (MAC $DESKTOP_MAC), DNS $DNS
-     firewall the host filters the desktop's bridge port: internet only, no LAN, no host, no IPv6
+$boxes_plan
+     firewall the host filters $fenced: internet only, no LAN, no host, no IPv6
      access   user $PVE_USER, roles HatbotOps + HatbotSnapshots, token $TOKEN_ID
 EOF
 confirm "Continue?" || die "stopped"
@@ -281,7 +327,7 @@ else
   run pveum pool add "$POOL" --comment "Hatbot's own guests (it may snapshot these)"
 fi
 
-if [[ -z ${ex_brain_id:-} || -z ${ex_desk_id:-} ]]; then
+if [[ -z ${ex_brain_id:-} || -z ${ex_desk_id:-} || ( -n $BOXES && -z ${ex_boxes_id:-} ) ]]; then
   TMPL=$(pveam list "$TMPL_STORE" 2>/dev/null | grep -o 'debian-13-standard_[^ ]*' | sort -V | tail -1 || true)
   if [[ -z $TMPL ]]; then
     ((DRY_RUN)) || pveam update >/dev/null
@@ -315,8 +361,24 @@ else
     --onboot 1 --startup order=20 --timezone host --pool "$POOL" --tags hatbot
 fi
 
-# ---------- 3. Desktop firewall ----------
-step "3/8 Desktop firewall"
+if [[ -z $BOXES ]]; then
+  info "no $BOXES_NAME (BOXES_ID=none)"
+elif [[ -n ${ex_boxes_id:-} ]]; then
+  ok "$BOXES_NAME exists (CT $BOXES)"
+else
+  # nesting=1, as the desktop has: the box units' sandboxing (a mount namespace each, PrivateDevices,
+  # ProtectKernelTunables) needs mounts that an unprivileged container's AppArmor profile only allows with
+  # it, and Proxmox warns that Debian 13's systemd needs it anyway.
+  run pct create "$BOXES" "$TMPL_VOL" --hostname "$BOXES_NAME" \
+    --description "Hatbot boxes guest. Runs the backends of boxes, code a bot wrote: internet only for its agent, no LAN, no secrets but the agent's token. Its MAC is pinned in the host firewall (/etc/hatbot/host.nft); don't change it. Created by infra/host-setup.sh." \
+    --unprivileged 1 --features nesting=1 --cores 2 --memory "$BOXES_MEM" --swap "$BOXES_SWAP" \
+    --rootfs "$SSD_STORE:8" \
+    --net0 "name=eth0,bridge=$LAN_BRIDGE,hwaddr=$BOXES_MAC,ip=$BOXES_IP/$LAN_LEN,gw=$LAN_GW" --nameserver "$DNS" \
+    --onboot 1 --startup order=20 --timezone host --pool "$POOL" --tags hatbot
+fi
+
+# ---------- 3. Guest firewall ----------
+step "3/8 Guest firewall"
 if ! command -v nft >/dev/null; then
   confirm "Install the nftables package (only the nft command; nftables.service stays disabled)?" || die "nft is required"
   run apt-get install -y --no-install-recommends nftables
@@ -330,6 +392,53 @@ for ip in $HATBOT_PUBLIC_IPS; do
   [[ $ip =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?$ ]] || die "HATBOT_PUBLIC_IPS: $ip isn't an IPv4 address"
   PUBLIC_BLOCK+=", $ip"
 done
+
+# The boxes guest runs code a bot wrote, so its port gets the same fence, in a second block of the same
+# table. Only the brain reaches its agent (7071). It goes right after the table's closing brace, blank
+# lines included, so without a boxes guest host.nft stays as it was.
+BOXES_TABLE=''
+if [[ -n $BOXES ]]; then
+  BOXES_TABLE=$(cat <<EOF
+
+
+# $BOXES_NAME (CT $BOXES_ID): the same fence, with only the brain reaching its agent.
+table bridge hatbot {
+  # The bridge learns a frame's source MAC before forward or input see it, so a frame claiming another
+  # machine's MAC is dropped here, or it would draw that machine's traffic to the boxes guest.
+  chain boxes_prerouting {
+    type filter hook prerouting priority filter - 5; policy accept;
+    iifname "$BOXES_VETH" ether saddr != $BOXES_MAC counter drop
+  }
+
+  chain forward {
+    iifname "$BOXES_VETH" jump from_boxes
+  }
+
+  chain input {
+    iifname "$BOXES_VETH" ether type arp jump boxes_arp
+    iifname "$BOXES_VETH" counter drop
+  }
+
+  chain from_boxes {
+    ether saddr != $BOXES_MAC counter drop
+    ether type arp jump boxes_arp
+    ether type != ip counter drop
+    ip saddr != $BOXES_IP counter drop
+    # Replies to the brain (the boxes agent). A bare SYN would be the guest opening a connection.
+    ip daddr $BRAIN_IP tcp sport 7071 tcp flags & (syn | ack) != syn accept
+    ip daddr @blocked counter drop
+    accept
+  }
+
+  chain boxes_arp {
+    arp saddr ether != $BOXES_MAC counter drop
+    arp saddr ip != $BOXES_IP counter drop
+    accept
+  }
+}
+EOF
+  )
+fi
 
 # Filters frames at the desktop's port on the bridge, before they reach the LAN or the host.
 # Stateless on purpose: bridge conntrack (nf_conntrack_bridge) could interfere with the Proxmox firewall.
@@ -382,13 +491,13 @@ table bridge hatbot {
     arp saddr ip != $DESKTOP_IP counter drop
     accept
   }
-}
+}$BOXES_TABLE
 EOF
 
 # No ExecStop: stopping the unit must not open the desktop up. Remove with 'nft delete table bridge hatbot'.
 write_file /etc/systemd/system/hatbot-firewall.service 644 <<'EOF'
 [Unit]
-Description=Hatbot firewall (keeps hatbot-desktop off the LAN)
+Description=Hatbot firewall (keeps hatbot-desktop and hatbot-boxes off the LAN)
 Documentation=file:///etc/hatbot/host.nft
 DefaultDependencies=no
 Before=network-pre.target pve-guests.service
@@ -409,15 +518,15 @@ run systemctl restart hatbot-firewall.service
 if ((!DRY_RUN)); then
   nft list table bridge hatbot >/dev/null 2>&1 || die "the firewall didn't load; the desktop stays off"
   [[ $(ct_mac "$DESKTOP_ID") == "$DESKTOP_MAC" ]] || die "CT $DESKTOP_ID's MAC isn't $DESKTOP_MAC; the firewall wouldn't match it"
+  [[ -z $BOXES || $(ct_mac "$BOXES") == "$BOXES_MAC" ]] || die "CT $BOXES's MAC isn't $BOXES_MAC; the firewall wouldn't match it"
 fi
 
-for id in "$BRAIN_ID" "$DESKTOP_ID"; do
+for id in "$BRAIN_ID" "$DESKTOP_ID" ${BOXES:+"$BOXES"}; do
   if ((!DRY_RUN)) && guest_up "$id"; then ok "CT $id running"; else run pct start "$id"; fi
 done
 if ((!DRY_RUN)); then
-  wait_ct "$BRAIN_ID"
-  wait_ct "$DESKTOP_ID"
-  ok "both containers have network and DNS"
+  for id in "$BRAIN_ID" "$DESKTOP_ID" ${BOXES:+"$BOXES"}; do wait_ct "$id"; done
+  ok "the containers have network and DNS"
 fi
 
 # ---------- 4. Proxmox API access ----------
@@ -478,8 +587,8 @@ fi
 run pveum acl modify / --tokens "$TOKEN_ID" --roles HatbotOps
 run pveum acl modify "/pool/$POOL" --tokens "$TOKEN_ID" --roles HatbotSnapshots
 
-# ---------- 5. Brain <-> desktop secrets ----------
-step "5/8 Brain ↔ desktop secrets"
+# ---------- 5. Brain <-> guest secrets ----------
+step "5/8 Brain ↔ guest secrets"
 if guest_has_file "$BRAIN_ID" /etc/hatbot/desktop.env && guest_has_file "$DESKTOP_ID" /etc/hatbot-desktop/secrets.env; then
   ok "both sides have them"
 else
@@ -498,6 +607,23 @@ BRAIN_IP=$BRAIN_IP
 EOF
   unset agent_token vnc_password
 fi
+# The boxes agent's token. Its URL changes with the guest's address, so a new address means a new pair.
+if [[ -z $BOXES ]]; then
+  info "no boxes guest"
+elif guest_has_file "$BRAIN_ID" /etc/hatbot/boxes.env && guest_has_file "$BOXES" /etc/hatbox/secrets.env &&
+  guest_exec "$BRAIN_ID" grep -qx "HATBOX_AGENT_URL=http://$BOXES_IP:7071" /etc/hatbot/boxes.env </dev/null; then
+  ok "the brain and the boxes guest have theirs"
+else
+  hatbox_token=$(openssl rand -hex 32)
+  push_secret "$BRAIN_ID" /etc/hatbot/boxes.env <<EOF
+HATBOX_AGENT_URL=http://$BOXES_IP:7071
+HATBOX_AGENT_TOKEN=$hatbox_token
+EOF
+  push_secret "$BOXES" /etc/hatbox/secrets.env <<EOF
+HATBOX_AGENT_TOKEN=$hatbox_token
+EOF
+  unset hatbox_token
+fi
 
 # ---------- 6. Provision inside the containers ----------
 step "6/8 Provision the containers"
@@ -511,17 +637,20 @@ provision() { # provision CTID SCRIPT ENV...
     info "skipped; later: pct push $id $HERE/$script /root/$script && pct exec $id -- env $* bash /root/$script"
   fi
 }
-provision "$BRAIN_ID" brain-provision.sh "DESKTOP_IP=$DESKTOP_IP"
+provision "$BRAIN_ID" brain-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BOXES_IP=$BOXES_IP"
 provision "$DESKTOP_ID" desktop-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS"
+[[ -z $BOXES ]] ||
+  provision "$BOXES" boxes-provision.sh "BOXES_IP=$BOXES_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS"
 
-# ---------- 7. Nightly desktop snapshots ----------
-step "7/8 Nightly desktop snapshots"
+# ---------- 7. Nightly snapshots ----------
+step "7/8 Nightly snapshots"
 if ((!SNAP_OK)); then
   warn "skipped: $SSD_STORE ($SSD_TYPE) can't snapshot containers"
 else
   write_file /usr/local/sbin/hatbot-desktop-snapshot 755 <<'EOF'
 #!/usr/bin/env bash
-# Managed by hatbot infra/host-setup.sh. Snapshots the desktop CT and keeps the newest $KEEP nightlies.
+# Managed by hatbot infra/host-setup.sh. Snapshots a CT (the desktop, the boxes guest) and keeps the
+# newest $KEEP nightlies.
 set -euo pipefail
 id=${1:?usage: hatbot-desktop-snapshot CTID}
 keep=${KEEP:-7}
@@ -552,41 +681,73 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
+  # The boxes guest holds the boxes' data, so it gets the same, half an hour later.
+  if [[ -n $BOXES ]]; then
+    write_file /etc/systemd/system/hatbot-boxes-snapshot.service 644 <<EOF
+[Unit]
+Description=Hatbot: nightly snapshot of $BOXES_NAME (CT $BOXES)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hatbot-desktop-snapshot $BOXES
+EOF
+    write_file /etc/systemd/system/hatbot-boxes-snapshot.timer 644 <<'EOF'
+[Unit]
+Description=Hatbot: nightly boxes guest snapshot
+
+[Timer]
+OnCalendar=*-*-* 04:30
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+  fi
   run systemctl daemon-reload
   run systemctl enable --now hatbot-desktop-snapshot.timer
+  [[ -z $BOXES ]] || run systemctl enable --now hatbot-boxes-snapshot.timer
 fi
 
 # ---------- 8. Backups ----------
 step "8/8 Backups (PBS)"
-mapfile -t jobs < <(backup_jobs "$BRAIN_ID" "$DESKTOP_ID")
+guests=("$BRAIN_ID" "$DESKTOP_ID" ${BOXES:+"$BOXES"})
+what="both containers"
+((${#guests[@]} == 2)) || what="all three containers"
+mapfile -t jobs < <(backup_jobs "${guests[@]}")
 covered=0
 for j in "${jobs[@]}"; do
-  IFS=$'\t' read -r jid enabled storage schedule sel cb cd <<<"$j"
+  # covers: a 1 or 0 per guest, tab-separated.
+  IFS=$'\t' read -r jid enabled storage schedule sel covers <<<"$j"
   info "job $jid: storage $storage ($(store_type "$storage")), $schedule, $sel$([[ $enabled == 0 ]] && echo ', disabled')"
-  [[ $enabled != 0 && $cb == 1 && $cd == 1 ]] && covered=1
+  [[ $enabled != 0 && -n $covers && $covers != *0* ]] && covered=1
 done
 if ((covered)); then
-  ok "an enabled backup job already covers both containers"
+  ok "an enabled backup job already covers $what"
 else
   mapfile -t candidates < <(printf '%s\n' "${jobs[@]}" | awk -F'\t' '$2 != 0 && $5 ~ /^vmid:/ { print $1 }')
   if ((${#candidates[@]})); then
-    ask JOB "Add both containers to which backup job? (empty = skip)" "${candidates[0]}"
+    ask JOB "Add $what to which backup job? (empty = skip)" "${candidates[0]}"
     if [[ -n $JOB ]]; then
       cur=$(printf '%s\n' "${jobs[@]}" | awk -F'\t' -v j="$JOB" '$1 == j { sub(/^vmid:/, "", $5); print $5 }')
       [[ -n $cur ]] || die "job $JOB not found or doesn't select guests by VMID"
-      new=$(printf '%s\n' "${cur//,/$'\n'}" "$BRAIN_ID" "$DESKTOP_ID" | sort -un | paste -sd,)
+      new=$(printf '%s\n' "${cur//,/$'\n'}" "${guests[@]}" | sort -un | paste -sd,)
       confirm "Set job $JOB to back up: $new?" && run pvesh set "/cluster/backup/$JOB" --vmid "$new"
     fi
   else
-    warn "no backup job selects guests by VMID; add CT $BRAIN_ID and CT $DESKTOP_ID to your PBS job in Datacenter → Backup"
+    cts=$(printf 'CT %s, ' "${guests[@]}")
+    warn "no backup job selects guests by VMID; add ${cts%, } to your PBS job in Datacenter → Backup"
   fi
 fi
 
 # ---------- Done ----------
 step "Done"
+boxes_done=none
+[[ -z $BOXES ]] || boxes_done="CT $BOXES   $BOXES_IP (internet only, for its agent)"
 cat <<EOF
    Brain     CT $BRAIN_ID   $BRAIN_IP
    Desktop   CT $DESKTOP_ID   $DESKTOP_IP (internet only)
+   Boxes     $boxes_done
 
    Next:
    1. Check isolation and permissions:   $HERE/verify.sh
