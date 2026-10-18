@@ -2,6 +2,7 @@ import { zValidator } from "@hono/zod-validator";
 import type { Context } from "hono";
 import type { z } from "zod";
 import type { AppEnv } from "../context";
+import { UserError } from "../errors";
 
 /** 400 with zod's first issue: what's wrong, and in which field. */
 export const badRequest = (c: Context, error?: { issues: readonly z.core.$ZodIssue[] }) => {
@@ -31,3 +32,19 @@ export const json = <S extends z.ZodType>(schema: S) =>
 
 export const query = <S extends z.ZodType>(schema: S) =>
   zValidator("query", schema, (r, c) => (r.success ? undefined : badRequest(c, r.error)));
+
+/** The number in the path's :id. */
+export const id = (c: { req: { param: (k: string) => string | undefined } }) =>
+  Number(c.req.param("id"));
+
+/** Throws unless it's unset or a bot that isn't deleted. */
+export const knownBot = (c: { var: AppEnv["Variables"] }, botId: string | undefined) => {
+  if (botId !== undefined && !c.var.bots.active(botId)) throw new UserError("No such bot.");
+};
+
+/** `x` as the answer, or a 404 when there's none. */
+export const found = <T extends object>(
+  c: Context,
+  x: T | null | undefined,
+  gone = "That's gone.",
+) => (x ? c.json(x) : c.json({ error: gone }, 404));

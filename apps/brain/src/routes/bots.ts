@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
 import { spendDays } from "./admin";
-import { json } from "./util";
+import { found, json } from "./util";
 
 export const botRoutes = new Hono<AppEnv>()
   .use("/bots", requireAuth)
@@ -19,14 +19,10 @@ export const botRoutes = new Hono<AppEnv>()
     c.var.chats.changed(c.var.chats.direct(bot.id).conversationId);
     return c.json(bot, 201);
   })
-  .get("/bots/:id", (c) => {
-    const bot = c.var.bots.active(c.req.param("id"));
-    return bot ? c.json(bot) : c.json({ error: "That's gone." }, 404);
-  })
-  .patch("/bots/:id", json(UpdateBot), (c) => {
-    const bot = c.var.bots.update(c.req.param("id"), c.req.valid("json"));
-    return bot ? c.json(bot) : c.json({ error: "That's gone." }, 404);
-  })
+  .get("/bots/:id", (c) => found(c, c.var.bots.active(c.req.param("id"))))
+  .patch("/bots/:id", json(UpdateBot), (c) =>
+    found(c, c.var.bots.update(c.req.param("id"), c.req.valid("json"))),
+  )
   .delete("/bots/:id", (c) => {
     const id = c.req.param("id");
     const moved = c.var.bots.delete(id);

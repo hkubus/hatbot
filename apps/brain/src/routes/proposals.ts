@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
+import { id } from "./util";
 
-const id = (c: { req: { param: (k: string) => string | undefined } }) => Number(c.req.param("id"));
 const STATUSES = ["pending", "applied", "dismissed", "stale"] as const;
 
 export const proposalRoutes = new Hono<AppEnv>()

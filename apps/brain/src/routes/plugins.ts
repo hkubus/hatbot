@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
 import { PluginError } from "../plugins/plugin";
-import { json, signedOut } from "./util";
+import { found, json, signedOut } from "./util";
 
 // Plugins in Settings (PLAN.md §4.5): switch on or off, change settings, test.
 export const pluginRoutes = new Hono<AppEnv>()
@@ -11,8 +11,7 @@ export const pluginRoutes = new Hono<AppEnv>()
   .use("/plugins/*", requireAuth)
   .get("/plugins", (c) => c.json(c.var.plugins.list()))
   .get("/plugins/:id", (c) => {
-    const p = c.var.plugins.get(c.req.param("id"));
-    return p ? c.json(p) : c.json({ error: "That's gone." }, 404);
+    return found(c, c.var.plugins.get(c.req.param("id")));
   })
   .patch("/plugins/:id", json(UpdatePlugin), async (c) => {
     const { plugins } = c.var;

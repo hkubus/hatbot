@@ -12,7 +12,7 @@ import { MAX_ATTACHMENT_BYTES } from "../attachments";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
 import { BudgetError } from "../spend";
-import { json, query, signedOut } from "./util";
+import { found, id, json, query, signedOut } from "./util";
 
 /** RFC 5987's encoding for filename*: encodeURIComponent leaves ' ( ) * as they are, which it doesn't allow. */
 const rfc5987 = (s: string) =>
@@ -91,14 +91,11 @@ export const threadRoutes = new Hono<AppEnv>()
     const { title, botIds } = c.req.valid("json");
     return c.json(c.var.chats.createGroup(title, botIds), 201);
   })
-  .patch("/conversations/:id", json(UpdateGroup), (c) => {
-    const group = c.var.chats.updateGroup(Number(c.req.param("id")), c.req.valid("json"));
-    return group ? c.json(group) : c.json({ error: "That's gone." }, 404);
-  })
+  .patch("/conversations/:id", json(UpdateGroup), (c) =>
+    found(c, c.var.chats.updateGroup(id(c), c.req.valid("json"))),
+  )
   .delete("/conversations/:id", (c) =>
-    c.var.chats.deleteGroup(Number(c.req.param("id")))
-      ? c.json({ ok: true })
-      : c.json({ error: "That's gone." }, 404),
+    c.var.chats.deleteGroup(id(c)) ? c.json({ ok: true }) : c.json({ error: "That's gone." }, 404),
   )
   // Unread: your bots' messages, in every chat, sent or edited since you last saw them.
   .get("/thread/unread", (c) => c.json(c.var.chats.unread()))
@@ -113,13 +110,7 @@ type Ctx = Context<AppEnv, string, any>;
 // Each chat's own routes: Hatbot's at /thread/…, and any chat's at /conversations/:id/….
 for (const [at, threadOf] of [
   ["/thread", (c: Ctx) => c.var.chats.hatbot()],
-  [
-    "/conversations/:id",
-    (c: Ctx) => {
-      const id = Number(c.req.param("id"));
-      return Number.isInteger(id) ? c.var.chats.thread(id) : null;
-    },
-  ],
+  ["/conversations/:id", (c: Ctx) => (Number.isInteger(id(c)) ? c.var.chats.thread(id(c)) : null)],
 ] as const) {
   const on = (f: (c: Ctx, t: Thread) => Response | Promise<Response>) => (c: Ctx) => {
     const thread = threadOf(c);
