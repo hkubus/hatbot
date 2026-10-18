@@ -109,7 +109,8 @@ export class Attachments {
 
   /**
    * Stores a file. Yours wait unbound until the message they go with is posted; Hatbot's go straight
-   * onto a message or a task. One `forChat` is a task's, for the bot in the chat: not shown there.
+   * onto a message or a task. One `forChat` isn't shown in the chat: a task's is for the bot there, and
+   * a message's is the data for a chart in it (chart-data.ts).
    */
   async save(input: {
     bytes: Uint8Array;
@@ -143,7 +144,7 @@ export class Attachments {
     const path = await this.d.archive.saveFile(row.id, name, input.bytes);
     this.d.db.query("UPDATE attachments SET path = ? WHERE id = ?").run(path, row.id);
     const a = this.get(row.id) as Attachment;
-    if (input.messageId)
+    if (input.messageId && !input.forChat)
       this.d.events.emit({ type: "message.attachment", id: input.messageId, attachment: a });
     // A task's file shows on the messages that show the task.
     if (input.taskId && !input.forChat) {
@@ -240,8 +241,8 @@ export class Attachments {
     const taskIds = messages.flatMap((m) => (m.taskId ? [m.taskId] : []));
     const rows = this.d.db
       .query<Row, number[]>(
-        `SELECT ${COLUMNS} FROM attachments WHERE message_id IN (${ids.map(() => "?").join(", ")})
-         ${taskIds.length ? `OR (task_id IN (${taskIds.map(() => "?").join(", ")}) AND for_chat = 0)` : ""} ORDER BY id`,
+        `SELECT ${COLUMNS} FROM attachments WHERE for_chat = 0 AND (message_id IN (${ids.map(() => "?").join(", ")})
+         ${taskIds.length ? `OR task_id IN (${taskIds.map(() => "?").join(", ")})` : ""}) ORDER BY id`,
       )
       .all(...ids, ...taskIds);
     if (!rows.length) return messages;

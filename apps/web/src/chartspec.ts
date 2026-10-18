@@ -8,6 +8,8 @@ import {
   CHART_MAX_POINTS,
   CHART_MAX_ROWS,
   CHART_MAX_SERIES,
+  type ChartData,
+  type ChartFile,
   type ChartSpec,
   dateRange,
   type MatrixChart,
@@ -48,7 +50,7 @@ export function parseChart(source: string): ChartSpec | null {
     return null;
   }
   if (!isObject(o)) return null;
-  if (!optString(o.title, 120)) return null;
+  if (!optString(o.title, 120) || o.data !== undefined) return null;
   switch (o.type) {
     case "line":
     case "bar":
@@ -64,6 +66,35 @@ export function parseChart(source: string): ChartSpec | null {
     default:
       return null;
   }
+}
+
+/** The file chart in a chart block, or null if it isn't one. */
+export function parseChartFile(source: string): ChartFile | null {
+  let o: unknown;
+  try {
+    o = JSON.parse(source);
+  } catch {
+    return null;
+  }
+  if (!isObject(o) || !optString(o.title, 120)) return null;
+  const { type, data } = o;
+  if (typeof data !== "number" || !Number.isInteger(data) || data < 1) return null;
+  if (o.x !== undefined || o.series !== undefined) return null;
+  if (type === "line" || type === "bar") {
+    if (!optString(o.unit, 12) || !optBoolean(o.stacked) || !optBoolean(o.horizontal)) return null;
+    return pick(o, ["type", "title", "unit", "stacked", "horizontal", "data"], {});
+  }
+  if (type !== "scatter") return null;
+  if (!optString(o.xName, 60) || !optString(o.yName, 60)) return null;
+  if (!optString(o.xUnit, 12) || !optString(o.yUnit, 12)) return null;
+  return pick(o, ["type", "title", "xName", "xUnit", "yName", "yUnit", "data"], {});
+}
+
+/** A file chart with its values, as the brain gave them, checked like any chart. */
+export function withData(file: ChartFile, values: ChartData): ChartSpec | null {
+  const { data: _, ...block } = file;
+  const { x } = values as { x?: unknown };
+  return parseChart(JSON.stringify({ ...block, x, series: values.series }));
 }
 
 function series(o: Obj): SeriesChart | null {

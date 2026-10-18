@@ -646,7 +646,7 @@ export const TOOLS = [
   def({
     name: "send_file",
     description:
-      "Send the owner a file from the desktop's sandbox (a path relative to its home, as code_run sees it): a chart, a CSV, a converted document. It shows under your reply, for them to open or save. Up to 25 MB.",
+      "Send the owner a file from the desktop's sandbox (a path relative to its home, as code_run sees it): an image, a CSV, a converted document. It shows under your reply, for them to open or save. Up to 25 MB. With chart, it's kept for a chart block to draw from instead.",
     schema: z.object({
       path: z.string().min(1).max(500).describe('The file in the sandbox, e.g. "out/chart.png"'),
       name: z
@@ -654,12 +654,24 @@ export const TOOLS = [
         .max(200)
         .optional()
         .describe("The name the owner sees, if not the file's own"),
+      chart: z
+        .boolean()
+        .optional()
+        .describe(
+          'true to keep a CSV or JSON for a chart block instead of sending it: you get its attachment id, for "data"',
+        ),
     }),
-    run: async ({ path, name }, { attachments, desktop, messageId, taskId }) => {
+    run: async ({ path, name, chart }, { attachments, desktop, messageId, taskId }) => {
       if (!attachments || !desktop?.configured)
         throw new DesktopError("The desktop isn't set up.", 0);
       const target = taskId ? { taskId } : { messageId };
-      const a = await attachments.fromDesktop(desktop, { path, name }, target);
+      const a = await attachments.fromDesktop(
+        desktop,
+        { path, name },
+        { ...target, forChat: chart },
+      );
+      if (chart)
+        return `Kept "${a.name}" (${a.mediaType}) as attachment #${a.id}: draw it with "data": ${a.id}. The owner doesn't get it as a file.`;
       return `Sent "${a.name}" (${a.mediaType}).`;
     },
   }),

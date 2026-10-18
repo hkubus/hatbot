@@ -3,7 +3,7 @@
 // model Settings choose (Haiku by default) with Hatbot's own tools and the plugins' tools, in the
 // background lane, reporting back through finish_task.
 import type Anthropic from "@anthropic-ai/sdk";
-import { type ApprovalKind, brokenCharts, type Task } from "@hatbot/shared";
+import type { ApprovalKind, Task } from "@hatbot/shared";
 import { z } from "zod";
 import { ownerAnswer, TASK_ASK_DESCRIPTION, TaskAskOwner } from "../agent/ask";
 import { cutOff, type StreamParams } from "../agent/model";
@@ -31,7 +31,9 @@ import {
 } from "../agent/tools";
 import { tagJson, tagText, untrustedBlock } from "../agent/untrusted";
 import { ownerNote } from "../approvals";
+import type { Attachments } from "../attachments";
 import { promptFor } from "../bots";
+import { brokenChartsOf } from "../chart-data";
 import type { CallContext, PluginTool, Verdict } from "../plugins/plugin";
 import {
   describeCall,
@@ -106,8 +108,8 @@ const FinishTask = z.object({
 });
 
 /** What's wrong with the summary's charts, or "" if they all draw. */
-const chartsWrong = (summary: string) =>
-  brokenCharts(summary)
+const chartsWrong = async (summary: string, attachments?: Attachments) =>
+  (await brokenChartsOf(summary, attachments))
     .map((b) => `chart ${b.n} doesn't draw (${b.problem}).`)
     .join(" ");
 
@@ -820,7 +822,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         if (call.name === "finish_task") {
           const p = FinishTask.safeParse(call.input);
           // A chart that doesn't draw shows the owner a wall of numbers: send it back once.
-          const broken = p.success && !chartsChecked ? chartsWrong(p.data.summary) : "";
+          const broken =
+            p.success && !chartsChecked ? await chartsWrong(p.data.summary, attachments) : "";
           if (p.success) chartsChecked = true;
           if (broken)
             return result(
@@ -836,7 +839,9 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
             return result(call, "Not run: call finish_research once a turn.", true);
           const p = FinishResearch.safeParse(call.input);
           if (!p.success) return result(call, invalidInput(p.error), true);
-          const broken = chartsChecked ? "" : chartsWrong(`${p.data.answer}\n\n${p.data.report}`);
+          const broken = chartsChecked
+            ? ""
+            : await chartsWrong(`${p.data.answer}\n\n${p.data.report}`, attachments);
           chartsChecked = true;
           if (broken)
             return result(

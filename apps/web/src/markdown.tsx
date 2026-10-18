@@ -4,8 +4,8 @@ import { API_PREFIX } from "@hatbot/shared";
 import { createContext, memo, useContext, useState } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Chart, ChartPending } from "./chart";
-import { parseChart } from "./chartspec";
+import { Chart, ChartPending, FileChart } from "./chart";
+import { parseChart, parseChartFile } from "./chartspec";
 import { Icon } from "./icons";
 import { Link } from "./link";
 import { splitBlocks } from "./md-blocks";
@@ -101,6 +101,8 @@ export const MD_COMPONENTS: Components = {
     if (lang === "chart") {
       const spec = parseChart(text);
       if (spec) return <Chart spec={spec} />;
+      const file = parseChartFile(text);
+      if (file) return <FileChart file={file} />;
       if (streaming) return <ChartPending />;
     }
     return <CodeBlock code={text}>{children}</CodeBlock>;

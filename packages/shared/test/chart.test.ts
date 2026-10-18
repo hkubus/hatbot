@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chartProblem, parseChart } from "../src/chart";
+import { chartProblem, parseChart, parseChartFile } from "../src/chart";
 
 test("a chart block parses, or says why not in words the model can fix it from", () => {
   const spec = parseChart(
@@ -14,4 +14,20 @@ test("a chart block parses, or says why not in words the model can fix it from",
   // Still streaming.
   expect(parseChart('{"type":"line","x":["a"')).toBeNull();
   expect(chartProblem('{"type":"line","x":["a"')).toStartWith("it isn't valid JSON");
+});
+
+test("line, bar and scatter can name a file for their values instead, but not both", () => {
+  expect(parseChartFile('{"type":"line","unit":"%","data":12}')).toEqual({
+    type: "line",
+    unit: "%",
+    data: 12,
+  });
+  expect(chartProblem('{"type":"scatter","data":12}')).toBeNull();
+  const both = '{"type":"line","data":12,"x":["a"],"series":[{"data":[1]}]}';
+  expect(parseChart(both)).toBeNull();
+  expect(parseChartFile(both)).toBeNull();
+  expect(chartProblem(both)).toContain("give the values or data, not both");
+  expect(
+    chartProblem('{"type":"range","data":12,"rows":[{"label":"A","low":1,"high":2}]}'),
+  ).toContain("only line, bar and scatter can draw from a file");
 });

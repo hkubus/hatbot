@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { parseChart as zodParseChart } from "@hatbot/shared";
-import { parseChart } from "../src/chartspec";
+import { parseChart as zodParseChart, parseChartFile as zodParseChartFile } from "@hatbot/shared";
+import { parseChart, parseChartFile } from "../src/chartspec";
 
 const base = { type: "line", x: ["a", "b"], series: [{ data: [1, 2] }] };
 const bars = (n: number, horizontal?: boolean) => ({
@@ -78,6 +78,13 @@ const sources = [
       events: Array.from({ length: 9 }, (_, i) => ({ date: "2024", label: "A", lane: `${i}` })),
     },
     { ...timeline, events: Array(61).fill(timeline.events[0]) },
+    { type: "line", title: "T", unit: "%", stacked: false, horizontal: true, data: 3, z: 1 },
+    { type: "scatter", xName: "Price", yUnit: "dB", data: 3 },
+    { ...base, data: 3 },
+    { ...range, data: 3 },
+    { type: "bar", data: 0 },
+    { type: "line", data: "3" },
+    { type: "line", unit: "x".repeat(13), data: 3 },
   ].map((spec) => JSON.stringify(spec)),
   // Still streaming.
   '{"type": "line", "x": [1',
@@ -85,5 +92,9 @@ const sources = [
 
 test("the web's hand-written chart check agrees with ChartSpec", () => {
   for (const source of sources)
-    expect([source, parseChart(source)]).toEqual([source, zodParseChart(source)]);
+    expect([source, parseChart(source), parseChartFile(source)]).toEqual([
+      source,
+      zodParseChart(source),
+      zodParseChartFile(source),
+    ]);
 });
