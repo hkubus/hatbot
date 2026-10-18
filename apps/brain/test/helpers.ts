@@ -1,10 +1,12 @@
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { cpSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stepOf, totpAt } from "../src/auth/totp";
 import { loadConfig } from "../src/config";
 import { openDb } from "../src/db";
-import type { HatbotEvent } from "../src/events";
+import { EventBus, type HatbotEvent } from "../src/events";
+import { MemoryStore } from "../src/memory/store";
 import type { Notification, Notifier } from "../src/notify";
 import type { Plugin } from "../src/plugins/plugin";
 import { Proxmox } from "../src/proxmox";
@@ -32,6 +34,28 @@ const tempDir = (prefix: string) => {
   return d;
 };
 
+/**
+ * A migrated database and a memory repo set up on it, made once and copied for each test app:
+ * migrating and `git init` are most of what a test app takes to make.
+ */
+let template: Promise<{ db: Uint8Array; memoryDir: string }> | undefined;
+async function makeTemplate() {
+  const db = openDb(":memory:");
+  const memoryDir = join(tempDir("hatbot-test-template-"), "memory");
+  await new MemoryStore(memoryDir, db, new EventBus()).init();
+  return { db: db.serialize(), memoryDir };
+}
+async function fromTemplate(memoryDir: string) {
+  template ??= makeTemplate();
+  const t = await template;
+  cpSync(t.memoryDir, memoryDir, { recursive: true });
+  const db = Database.deserialize(t.db, { strict: true });
+  // What openDb sets on its connection that matters in memory.
+  db.exec("PRAGMA foreign_keys = ON");
+  db.exec("PRAGMA secure_delete = ON");
+  return db;
+}
+
 /** `model` answers the chat thread; `taskModel` answers desktop tasks and screening. */
 export async function testApp(
   model = new FakeModel(),
@@ -54,7 +78,7 @@ export async function testApp(
   };
   mkdirSync(config.archiveDir);
   mkdirSync(updateDir);
-  const db = openDb(":memory:");
+  const db = await fromTemplate(config.memoryDir);
   taskModel.onCreate ??= () => '{"suspected": false, "excerpt": ""}';
   const agent = new FakeDesktop();
   const sent = new FakeNotifier();
