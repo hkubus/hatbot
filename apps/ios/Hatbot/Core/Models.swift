@@ -37,9 +37,10 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   }
 
   /// "task" and "schedule" messages show the thing they point at; `text` is a fallback. "command": a
-  /// command you typed, or what came of it.
+  /// command you typed, or what came of it. "box": a note the box `boxId` sent (hatbox.send), shown as
+  /// from the box: neither yours nor the bot's words.
   enum Kind: String, LenientEnum {
-    case text, task, schedule, command
+    case text, task, schedule, command, box
     static let fallback = Kind.text
   }
 
@@ -77,7 +78,8 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   var conversationId: Int?
   /// The bot that wrote it; nil for yours.
   var botId: String?
-  /// The box this reply made or changed last, shown under it; missing otherwise.
+  /// The box this reply made or changed last, shown under it, or the box that sent this note; missing
+  /// otherwise.
   var boxId: Int?
 
   var isIncognito: Bool { incognito == true }
@@ -580,6 +582,9 @@ struct Limits: Codable, Equatable, Sendable {
   /// The last of the daily and monthly limits, which only alerts and the heartbeat spend; nil from
   /// brains before it.
   var alertReserveUsd: Double?
+  /// What boxes may spend asking Haiku in a day (hatbox.ask); 0 stops them asking. nil from brains
+  /// before it.
+  var boxesUsd: Double?
 }
 
 struct SpendWindow: Codable, Equatable, Sendable {
