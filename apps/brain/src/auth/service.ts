@@ -1,6 +1,7 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { ApiToken, Session } from "@hatbot/shared";
 import type { Db } from "../db";
+import { sameText, secretKey } from "./keys";
 import { newTotpSecret, totpUri, verifyTotp } from "./totp";
 
 export const SESSION_DAYS = 30;
@@ -8,11 +9,6 @@ export const SESSION_DAYS = 30;
 const LAST_USED_MS = 5 * 60_000;
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 const randomToken = (prefix: string) => prefix + randomBytes(32).toString("base64url");
-const sameText = (a: string, b: string) => {
-  const x = Buffer.from(a);
-  const y = Buffer.from(b);
-  return x.length === y.length && timingSafeEqual(x, y);
-};
 
 export type Principal = { kind: "session"; id: number } | { kind: "token"; id: number };
 
@@ -28,10 +24,12 @@ export class AuthService {
   private pendingSecret: string | null = null;
   private deviceKey: Buffer | null = null;
   /**
-   * A private address that passed on X-Forwarded-For without being in HATBOT_TRUSTED_PROXIES: your
-   * reverse proxy, most likely, which makes every sign-in count as coming from one address.
+   * The last private address that passed on X-Forwarded-For without being in HATBOT_TRUSTED_PROXIES,
+   * and when: your reverse proxy, most likely, which makes every sign-in count as coming from one
+   * address. Anyone on your network can send the header too, so Check everything only goes by its own
+   * request through the public address.
    */
-  untrustedProxy: string | null = null;
+  untrustedProxy: { ip: string; at: number } | null = null;
   /** Live sockets, by the session or token that opened them, to close when it ends. */
   private sockets = new Map<string, Set<() => void>>();
   /** A new authenticator secret waiting for its first code, and who asked for it. */
@@ -41,6 +39,15 @@ export class AuthService {
     private db: Db,
     private clock: () => number = Date.now,
   ) {}
+
+  /** A request `ip` passed on, though it isn't a trusted proxy. */
+  forwardedBy(ip: string) {
+    if (this.untrustedProxy?.ip !== ip)
+      console.warn(
+        `${ip} forwards requests but isn't in HATBOT_TRUSTED_PROXIES, so sign-in limits count every client as ${ip}`,
+      );
+    this.untrustedProxy = { ip, at: this.clock() };
+  }
 
   isSetUp(): boolean {
     return this.db.query("SELECT 1 FROM owner WHERE id = 1").get() !== null;
@@ -137,8 +144,14 @@ export class AuthService {
     return true;
   }
 
-  /** Signs out every browser and app but the one asking. Returns how many. */
+  /**
+   * Signs out every browser and app but the one asking, and forgets which ones signed in here before:
+   * one that isn't yours would keep a sign-in limit of its own. A change of password or authenticator
+   * comes here too. Returns how many.
+   */
   endOthers(keep: Principal): number {
+    this.db.query("DELETE FROM settings WHERE key = 'device_key'").run();
+    this.deviceKey = null;
     const sessions = this.db
       .query<{ id: number }, [number]>("DELETE FROM sessions WHERE id != ? RETURNING id")
       .all(keep.kind === "session" ? keep.id : -1)
@@ -174,15 +187,7 @@ export class AuthService {
   }
 
   private signDevice(id: string): string {
-    if (!this.deviceKey) {
-      this.db
-        .query("INSERT INTO settings (key, value) VALUES ('device_key', ?) ON CONFLICT DO NOTHING")
-        .run(randomBytes(32).toString("hex"));
-      const row = this.db
-        .query<{ value: string }, []>("SELECT value FROM settings WHERE key = 'device_key'")
-        .get();
-      this.deviceKey = Buffer.from(row?.value ?? "", "hex");
-    }
+    this.deviceKey ??= secretKey(this.db, "device_key");
     return createHmac("sha256", this.deviceKey).update(id).digest("base64url");
   }
 

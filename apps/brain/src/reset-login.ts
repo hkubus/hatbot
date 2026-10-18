@@ -1,6 +1,6 @@
 // Forgets the owner's password and authenticator, for when you've lost them; infra/reset-login.sh runs
-// it as the brain's user. Every browser and app is signed out, and the brain prints a new setup code
-// when it next starts.
+// it as the brain's user. Every browser and app is signed out and forgotten, and the brain prints a new
+// setup code when it next starts.
 import { loadConfig } from "./config";
 import { type Db, openDb } from "./db";
 
@@ -9,6 +9,8 @@ export function resetLogin(db: Db) {
     db.query("DELETE FROM owner").run();
     db.query("DELETE FROM sessions").run();
     db.query("DELETE FROM api_tokens").run();
+    // The key that marks browsers that signed in before: someone else's would keep its own limit.
+    db.query("DELETE FROM settings WHERE key = 'device_key'").run();
   })();
 }
 

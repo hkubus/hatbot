@@ -1,16 +1,9 @@
 import { expect, test } from "bun:test";
 import { reloadOnce } from "../src/reload";
-
-const memory = () => {
-  const m = new Map<string, string>();
-  return {
-    getItem: (k: string) => m.get(k) ?? null,
-    setItem: (k: string, v: string) => m.set(k, v),
-  };
-};
+import { MemoryStorage } from "./dom";
 
 test("a missing chunk reloads the page once, not again within 30 s", () => {
-  const storage = memory();
+  const storage = new MemoryStorage();
   let reloads = 0;
   const reload = () => {
     reloads++;

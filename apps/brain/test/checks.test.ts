@@ -39,6 +39,23 @@ test("Check everything tries each part and keeps the report", async () => {
   expect(info.report?.results.length).toBe(Object.keys(checks).length);
 });
 
+test("the model check holds what it may cost while it runs", async () => {
+  const t = await testApp();
+  t.settings.update({ limits: { ...t.settings.get().limits, dailyUsd: 1, alertReserveUsd: 0 } });
+  let meanwhile = "";
+  t.taskModel.onCreate = () => {
+    try {
+      t.spend.check(0.9995);
+    } catch (err) {
+      meanwhile = (err as Error).message;
+    }
+    return "OK";
+  };
+  expect(byId(await t.checks.run()).model?.state).toBe("ok");
+  expect(meanwhile).toContain("Today's $1 limit");
+  expect(() => t.spend.check(0.9995)).not.toThrow();
+});
+
 test("an old desktop, a shared profile and a broken schedule are flagged", async () => {
   const t = await testApp();
   const { cookie } = await setUpOwner(t);

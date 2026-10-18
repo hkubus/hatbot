@@ -43,22 +43,27 @@ export function Chart({ spec }: { spec: ChartSpec }) {
   return spec.type === "bar" && spec.horizontal ? <Rows spec={spec} /> : <Columns spec={spec} />;
 }
 
+/** Every value drawn: a stack's ends, or each series' points. */
+const plotted = (spec: ChartSpec, spans: ([number, number] | null)[][]) =>
+  isStacked(spec)
+    ? spans.flat().flatMap((sp) => sp ?? [])
+    : spec.series.flatMap((s) => s.data).filter((v): v is number => v !== null);
+
+const cutTo = (l: string, cut: number) => (l.length > cut ? `${l.slice(0, cut - 1)}…` : l);
+
 /** Lines, or columns side by side or stacked. */
 function Columns({ spec }: { spec: ChartSpec }) {
-  const plot = useRef<HTMLDivElement>(null);
-  const width = useWidth(plot);
-  const [at, setAt] = useState<number | null>(null);
   const labels = spec.x.map(String);
   const n = labels.length;
+  const p = usePlot(n, "ArrowLeft", "ArrowRight");
+  const { width, at, dim } = p;
   const bar = spec.type === "bar";
   const stacked = isStacked(spec);
   const spans = stacked ? stackSpans(spec) : [];
   const single = spec.series.length === 1;
   const fmt = (v: number, compact = false) => chartValue(v, spec.unit, compact);
 
-  const values = stacked
-    ? spans.flat().flatMap((sp) => sp ?? [])
-    : spec.series.flatMap((s) => s.data).filter((v): v is number => v !== null);
+  const values = plotted(spec, spans);
   let lo = Math.min(...values);
   let hi = Math.max(...values);
   if (bar) {
@@ -76,8 +81,10 @@ function Columns({ spec }: { spec: ChartSpec }) {
     for (let i = data.length - 1; i >= 0; i--) if (data[i] !== null) return i;
     return -1;
   };
-  const endLabel =
-    !bar && single ? fmt(spec.series[0]?.data[lastOf(spec.series[0]?.data ?? [])] ?? 0) : null;
+  const first = spec.series[0]?.data ?? [];
+  const end = lastOf(first);
+  const endValue = first[end] ?? 0;
+  const endLabel = !bar && single ? fmt(endValue) : null;
   const right = endLabel ? endLabel.length * CHAR_W + 12 : 6;
   const plotW = Math.max(40, width - left - right);
 
@@ -94,21 +101,10 @@ function Columns({ spec }: { spec: ChartSpec }) {
   const labelW = Math.min(Math.max(...labels.map((l) => l.length)), cut) * CHAR_W + 10;
   const step = every ? 1 : Math.ceil(n / Math.max(1, Math.floor(plotW / labelW)));
   const shown = labels.map((_, i) => i).filter((i) => i % step === 0);
-  const short = (l: string) => (l.length > cut ? `${l.slice(0, cut - 1)}…` : l);
 
   const indexAt = (px: number) => {
     const i = bar ? Math.floor((px - left) / band) : Math.round(((px - left) / plotW) * (n - 1));
     return Math.min(n - 1, Math.max(0, n === 1 ? 0 : i));
-  };
-  const onPointer = (e: React.PointerEvent<SVGSVGElement>) => {
-    const box = e.currentTarget.getBoundingClientRect();
-    setAt(indexAt(e.clientX - box.left));
-  };
-  const onKey = (e: React.KeyboardEvent) => {
-    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-    e.preventDefault();
-    const step = e.key === "ArrowLeft" ? -1 : 1;
-    setAt((i) => Math.min(n - 1, Math.max(0, i === null ? (step > 0 ? 0 : n - 1) : i + step)));
   };
 
   const k = stacked ? 1 : spec.series.length;
@@ -116,143 +112,109 @@ function Columns({ spec }: { spec: ChartSpec }) {
   const barW = Math.max(1, Math.min(24, (groupW - 2 * (k - 1)) / k));
 
   return (
-    <Frame spec={spec}>
-      <div className="chart-plot" ref={plot}>
-        {width > 0 && (
-          <svg
-            width={width}
-            height={HEIGHT}
-            role="img"
-            aria-label={spec.title ?? "Chart"}
-            // biome-ignore lint/a11y/noNoninteractiveTabindex: arrow keys move the readout; the hidden table carries the values for screen readers
-            tabIndex={0}
-            onPointerMove={onPointer}
-            onPointerDown={onPointer}
-            onPointerLeave={(e) => e.pointerType === "mouse" && setAt(null)}
-            onKeyDown={onKey}
-            onBlur={() => setAt(null)}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {ticks.map((t, i) => (
-              <g key={t}>
-                <line
-                  x1={left}
-                  x2={left + plotW}
-                  y1={y(t)}
-                  y2={y(t)}
-                  className={bar && t === 0 ? "baseline" : "grid"}
-                />
-                <text x={left - 8} y={y(t)} className="tick y">
-                  {tickText[i]}
-                </text>
-              </g>
-            ))}
-            {shown.map((i) => (
-              <text
-                key={i}
-                x={x(i)}
-                y={HEIGHT - 6}
-                className="tick x"
-                textAnchor={
-                  bar || n === 1 ? "middle" : i === 0 ? "start" : i === n - 1 ? "end" : "middle"
-                }
-              >
-                {short(labels[i] as string)}
-              </text>
-            ))}
-            {stacked &&
-              spans.map((stack, i) =>
-                stack.map((sp, si) => {
-                  if (!sp) return null;
-                  const [from, to] = sp;
-                  const bx = x(i) - barW / 2;
-                  // A 2px gap from the segment below; only the stack's outer ends are rounded.
-                  const base = from === 0 ? y(0) : y(from) + (to > 0 ? -2 : 2);
-                  const outer = !stack.slice(si + 1).some((o) => o && o[1] > 0 === to > 0);
-                  if (Math.abs(base - y(to)) < 1) return null;
-                  return (
-                    <path
-                      // biome-ignore lint/suspicious/noArrayIndexKey: bars are positional
-                      key={`${si}-${i}`}
-                      d={barPath(bx, barW, base, y(to), outer ? 4 : 0)}
-                      fill={color(si)}
-                      opacity={at === null || at === i ? 1 : 0.45}
-                    />
-                  );
-                }),
-              )}
-            {bar &&
-              !stacked &&
-              spec.series.map((s, si) =>
-                s.data.map((v, i) => {
-                  if (v === null || v === 0) return null;
-                  const bx =
-                    x(i) - groupW / 2 + si * (barW + 2) + (groupW - k * barW - 2 * (k - 1)) / 2;
-                  return (
-                    <path
-                      // biome-ignore lint/suspicious/noArrayIndexKey: bars are positional
-                      key={`${si}-${i}`}
-                      d={barPath(bx, barW, y(0), y(v))}
-                      fill={color(si)}
-                      opacity={at === null || at === i ? 1 : 0.45}
-                    />
-                  );
-                }),
-              )}
-            {!bar &&
-              spec.series.map((s, si) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: series are positional, and two can share a name
-                <g key={si}>
-                  <path d={linePath(s.data, x, y)} stroke={color(si)} className="line" />
-                  {s.data.map((v, i) =>
-                    v !== null && s.data[i - 1] == null && s.data[i + 1] == null ? (
-                      // A point with gaps both sides has no line to show it.
-                      // biome-ignore lint/suspicious/noArrayIndexKey: points are positional
-                      <circle key={i} cx={x(i)} cy={y(v)} r={2.5} fill={color(si)} />
-                    ) : null,
-                  )}
-                </g>
-              ))}
-            {!bar && at !== null && (
-              <line x1={x(at)} x2={x(at)} y1={TOP} y2={TOP + PLOT_H} className="crosshair" />
-            )}
-            {!bar &&
-              spec.series.map((s, si) => {
-                const i = at ?? lastOf(s.data);
-                const v = s.data[i];
-                if (v == null) return null;
-                return (
-                  <circle
-                    // biome-ignore lint/suspicious/noArrayIndexKey: series are positional, and two can share a name
-                    key={si}
-                    cx={x(i)}
-                    cy={y(v)}
-                    r={4}
-                    fill={color(si)}
-                    className="dot"
-                  />
-                );
-              })}
-            {endLabel && (
-              <text
-                x={x(lastOf(spec.series[0]?.data ?? [])) + 9}
-                y={y(spec.series[0]?.data[lastOf(spec.series[0]?.data ?? [])] ?? 0)}
-                className="end"
-              >
-                {endLabel}
-              </text>
-            )}
-          </svg>
-        )}
-        {at !== null && (
-          <Readout
-            spec={spec}
-            i={at}
-            style={x(at) < width / 2 ? { left: x(at) + 12 } : { right: width - x(at) + 12 }}
+    <Plot
+      spec={spec}
+      p={p}
+      height={HEIGHT}
+      pick={indexAt}
+      tip={(i) => (x(i) < width / 2 ? { left: x(i) + 12 } : { right: width - x(i) + 12 })}
+    >
+      {ticks.map((t, i) => (
+        <g key={t}>
+          <line
+            x1={left}
+            x2={left + plotW}
+            y1={y(t)}
+            y2={y(t)}
+            className={bar && t === 0 ? "baseline" : "grid"}
           />
+          <text x={left - 8} y={y(t)} className="tick y">
+            {tickText[i]}
+          </text>
+        </g>
+      ))}
+      {shown.map((i) => (
+        <text
+          key={i}
+          x={x(i)}
+          y={HEIGHT - 6}
+          className="tick x"
+          textAnchor={
+            bar || n === 1 ? "middle" : i === 0 ? "start" : i === n - 1 ? "end" : "middle"
+          }
+        >
+          {cutTo(labels[i] as string, cut)}
+        </text>
+      ))}
+      {stacked &&
+        spans.map((stack, i) =>
+          segments(stack, y).map((sg) => (
+            <path
+              // biome-ignore lint/suspicious/noArrayIndexKey: bars are positional
+              key={`${sg.si}-${i}`}
+              d={barPath(x(i) - barW / 2, barW, sg.base, sg.end, sg.outer ? 4 : 0)}
+              fill={color(sg.si)}
+              opacity={dim(i)}
+            />
+          )),
         )}
-      </div>
-    </Frame>
+      {bar &&
+        !stacked &&
+        spec.series.map((s, si) =>
+          s.data.map((v, i) => {
+            if (v === null || v === 0) return null;
+            const bx = x(i) - groupW / 2 + si * (barW + 2) + (groupW - k * barW - 2 * (k - 1)) / 2;
+            return (
+              <path
+                // biome-ignore lint/suspicious/noArrayIndexKey: bars are positional
+                key={`${si}-${i}`}
+                d={barPath(bx, barW, y(0), y(v))}
+                fill={color(si)}
+                opacity={dim(i)}
+              />
+            );
+          }),
+        )}
+      {!bar &&
+        spec.series.map((s, si) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: series are positional, and two can share a name
+          <g key={si}>
+            <path d={linePath(s.data, x, y)} stroke={color(si)} className="line" />
+            {s.data.map((v, i) =>
+              v !== null && s.data[i - 1] == null && s.data[i + 1] == null ? (
+                // A point with gaps both sides has no line to show it.
+                // biome-ignore lint/suspicious/noArrayIndexKey: points are positional
+                <circle key={i} cx={x(i)} cy={y(v)} r={2.5} fill={color(si)} />
+              ) : null,
+            )}
+          </g>
+        ))}
+      {!bar && at !== null && (
+        <line x1={x(at)} x2={x(at)} y1={TOP} y2={TOP + PLOT_H} className="crosshair" />
+      )}
+      {!bar &&
+        spec.series.map((s, si) => {
+          const i = at ?? lastOf(s.data);
+          const v = s.data[i];
+          if (v == null) return null;
+          return (
+            <circle
+              // biome-ignore lint/suspicious/noArrayIndexKey: series are positional, and two can share a name
+              key={si}
+              cx={x(i)}
+              cy={y(v)}
+              r={4}
+              fill={color(si)}
+              className="dot"
+            />
+          );
+        })}
+      {endLabel && (
+        <text x={x(end) + 9} y={y(endValue)} className="end">
+          {endLabel}
+        </text>
+      )}
+    </Plot>
   );
 }
 
@@ -260,11 +222,10 @@ const ROW_GAP = 10;
 
 /** Horizontal bars, a row per x: names on the left, each bar's value (a stack's total) at its tip. */
 function Rows({ spec }: { spec: ChartSpec }) {
-  const plot = useRef<HTMLDivElement>(null);
-  const width = useWidth(plot);
-  const [at, setAt] = useState<number | null>(null);
   const labels = spec.x.map(String);
   const n = labels.length;
+  const p = usePlot(n, "ArrowUp", "ArrowDown");
+  const { width, dim } = p;
   const stacked = isStacked(spec);
   const spans = stacked ? stackSpans(spec) : [];
   const totals = stacked ? stackTotals(spec) : [];
@@ -275,9 +236,7 @@ function Rows({ spec }: { spec: ChartSpec }) {
   const rowH = k * thick + 2 * (k - 1) + ROW_GAP;
   const height = n * rowH;
 
-  const values = stacked
-    ? spans.flat().flatMap((sp) => sp ?? [])
-    : spec.series.flatMap((s) => s.data).filter((v): v is number => v !== null);
+  const values = plotted(spec, spans);
   const lo = Math.min(0, ...values);
   const hi = Math.max(0, ...values);
   // The labels at the tips, and room for the widest beyond each end.
@@ -291,24 +250,12 @@ function Rows({ spec }: { spec: ChartSpec }) {
     );
 
   const cut = Math.max(4, Math.min(18, Math.floor((width * 0.4 - 10) / CHAR_W)));
-  const short = (l: string) => (l.length > cut ? `${l.slice(0, cut - 1)}…` : l);
   const left = Math.min(Math.max(...labels.map((l) => l.length)), cut) * CHAR_W + 10;
   const negRoom = lo < 0 ? tipW(true) : 0;
   const plotW = Math.max(40, width - left - negRoom - tipW(false));
   const v = (val: number) => left + negRoom + ((val - lo) / (hi - lo || 1)) * plotW;
   const rowTop = (i: number) => i * rowH + ROW_GAP / 2;
 
-  const onPointer = (e: React.PointerEvent<SVGSVGElement>) => {
-    const box = e.currentTarget.getBoundingClientRect();
-    setAt(Math.min(n - 1, Math.max(0, Math.floor((e.clientY - box.top) / rowH))));
-  };
-  const onKey = (e: React.KeyboardEvent) => {
-    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
-    e.preventDefault();
-    const step = e.key === "ArrowUp" ? -1 : 1;
-    setAt((i) => Math.min(n - 1, Math.max(0, i === null ? (step > 0 ? 0 : n - 1) : i + step)));
-  };
-  const dim = (i: number) => (at === null || at === i ? 1 : 0.45);
   const tip = (val: number, cy: number, end: number, key: string) => (
     <text
       key={key}
@@ -322,106 +269,115 @@ function Rows({ spec }: { spec: ChartSpec }) {
   );
 
   return (
-    <Frame spec={spec}>
-      <div className="chart-plot" ref={plot}>
-        {width > 0 && (
-          <svg
-            width={width}
-            height={height}
-            role="img"
-            aria-label={spec.title ?? "Chart"}
-            // biome-ignore lint/a11y/noNoninteractiveTabindex: arrow keys move the readout; the hidden table carries the values for screen readers
-            tabIndex={0}
-            onPointerMove={onPointer}
-            onPointerDown={onPointer}
-            onPointerLeave={(e) => e.pointerType === "mouse" && setAt(null)}
-            onKeyDown={onKey}
-            onBlur={() => setAt(null)}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {labels.map((l, i) => (
-              <text
-                // biome-ignore lint/suspicious/noArrayIndexKey: rows are positional
-                key={i}
-                x={0}
-                y={rowTop(i) + (rowH - ROW_GAP) / 2}
-                className="tick row"
-              >
-                {short(l)}
-              </text>
-            ))}
-            <line x1={v(0)} x2={v(0)} y1={0} y2={height} className="baseline" />
-            {stacked &&
-              spans.map((stack, i) => {
-                const cy = rowTop(i) + thick / 2;
-                const total = totals[i];
-                const ends = stack.filter((sp) => sp !== null).map((sp) => sp[1]);
-                return (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: rows are positional
-                  <g key={i} opacity={dim(i)}>
-                    {stack.map((sp, si) => {
-                      if (!sp) return null;
-                      const [from, to] = sp;
-                      const base = from === 0 ? v(0) : v(from) + (to > 0 ? 2 : -2);
-                      const outer = !stack.slice(si + 1).some((o) => o && o[1] > 0 === to > 0);
-                      if (Math.abs(base - v(to)) < 1) return null;
-                      return (
-                        <path
-                          // biome-ignore lint/suspicious/noArrayIndexKey: series are positional, and two can share a name
-                          key={si}
-                          d={hbarPath(rowTop(i), thick, base, v(to), outer ? 4 : 0)}
-                          fill={color(si)}
-                        />
-                      );
-                    })}
-                    {total != null &&
-                      tip(total, cy, v(total < 0 ? Math.min(...ends) : Math.max(...ends)), "t")}
-                  </g>
-                );
-              })}
-            {!stacked &&
-              labels.map((_, i) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: rows are positional
-                <g key={i} opacity={dim(i)}>
-                  {spec.series.map((s, si) => {
-                    const val = s.data[i];
-                    if (val == null) return null;
-                    const top = rowTop(i) + si * (thick + 2);
-                    return (
-                      // biome-ignore lint/suspicious/noArrayIndexKey: series are positional, and two can share a name
-                      <g key={si}>
-                        {val !== 0 && (
-                          <path d={hbarPath(top, thick, v(0), v(val), 4)} fill={color(si)} />
-                        )}
-                        {tip(val, top + thick / 2, v(val), "t")}
-                      </g>
-                    );
-                  })}
-                </g>
+    <Plot
+      spec={spec}
+      p={p}
+      height={height}
+      pick={(_, py) => Math.min(n - 1, Math.max(0, Math.floor(py / rowH)))}
+      tip={(i) =>
+        rowTop(i) + rowH < height / 2 || n < 4
+          ? { left, top: rowTop(i) + rowH }
+          : { left, top: "auto", bottom: height - rowTop(i) + 4 }
+      }
+    >
+      {labels.map((l, i) => (
+        <text
+          // biome-ignore lint/suspicious/noArrayIndexKey: rows are positional
+          key={i}
+          x={0}
+          y={rowTop(i) + (rowH - ROW_GAP) / 2}
+          className="tick row"
+        >
+          {cutTo(l, cut)}
+        </text>
+      ))}
+      <line x1={v(0)} x2={v(0)} y1={0} y2={height} className="baseline" />
+      {stacked &&
+        spans.map((stack, i) => {
+          const cy = rowTop(i) + thick / 2;
+          const total = totals[i];
+          const ends = stack.filter((sp) => sp !== null).map((sp) => sp[1]);
+          return (
+            // biome-ignore lint/suspicious/noArrayIndexKey: rows are positional
+            <g key={i} opacity={dim(i)}>
+              {segments(stack, v).map((sg) => (
+                <path
+                  key={sg.si}
+                  d={hbarPath(rowTop(i), thick, sg.base, sg.end, sg.outer ? 4 : 0)}
+                  fill={color(sg.si)}
+                />
               ))}
-          </svg>
-        )}
-        {at !== null && (
-          <Readout
-            spec={spec}
-            i={at}
-            style={
-              rowTop(at) + rowH < height / 2 || n < 4
-                ? { left, top: rowTop(at) + rowH }
-                : { left, top: "auto", bottom: height - rowTop(at) + 4 }
-            }
-          />
-        )}
-      </div>
-    </Frame>
+              {total != null &&
+                tip(total, cy, v(total < 0 ? Math.min(...ends) : Math.max(...ends)), "t")}
+            </g>
+          );
+        })}
+      {!stacked &&
+        labels.map((_, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: rows are positional
+          <g key={i} opacity={dim(i)}>
+            {spec.series.map((s, si) => {
+              const val = s.data[i];
+              if (val == null) return null;
+              const top = rowTop(i) + si * (thick + 2);
+              return (
+                // biome-ignore lint/suspicious/noArrayIndexKey: series are positional, and two can share a name
+                <g key={si}>
+                  {val !== 0 && <path d={hbarPath(top, thick, v(0), v(val), 4)} fill={color(si)} />}
+                  {tip(val, top + thick / 2, v(val), "t")}
+                </g>
+              );
+            })}
+          </g>
+        ))}
+    </Plot>
   );
 }
 
-/** Title, legend, and the values as a table for screen readers, around the plot. */
-function Frame({ spec, children }: { spec: ChartSpec; children: ReactNode }) {
+/** The plot's width, and the x or row the readout shows, moved by the arrow keys `back` and `fwd`. */
+function usePlot(n: number, back: string, fwd: string) {
+  const ref = useRef<HTMLDivElement>(null);
+  const width = useWidth(ref);
+  const [at, setAt] = useState<number | null>(null);
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key !== back && e.key !== fwd) return;
+    e.preventDefault();
+    const step = e.key === back ? -1 : 1;
+    setAt((i) => Math.min(n - 1, Math.max(0, i === null ? (step > 0 ? 0 : n - 1) : i + step)));
+  };
+  // The others fade while one shows.
+  const dim = (i: number) => (at === null || at === i ? 1 : 0.45);
+  return { ref, width, at, setAt, onKey, dim };
+}
+
+/**
+ * Title and legend; the svg, which takes the pointer and the arrow keys, and its readout; and the
+ * values as a table for screen readers.
+ */
+function Plot({
+  spec,
+  p: { ref, width, at, setAt, onKey },
+  height,
+  pick,
+  tip,
+  children,
+}: {
+  spec: ChartSpec;
+  p: ReturnType<typeof usePlot>;
+  height: number;
+  /** The index at a point in the svg. */
+  pick: (x: number, y: number) => number;
+  /** Where the readout goes for an index. */
+  tip: (i: number) => React.CSSProperties;
+  children: ReactNode;
+}) {
   const names = seriesNames(spec);
   const labels = spec.x.map(String);
   const fmt = (v: number) => chartValue(v, spec.unit);
+  const onPointer = (e: React.PointerEvent<SVGSVGElement>) => {
+    const box = e.currentTarget.getBoundingClientRect();
+    setAt(pick(e.clientX - box.left, e.clientY - box.top));
+  };
   return (
     <figure className="reply-chart">
       {spec.title && <figcaption className="chart-title">{spec.title}</figcaption>}
@@ -439,7 +395,27 @@ function Frame({ spec, children }: { spec: ChartSpec; children: ReactNode }) {
           ))}
         </div>
       )}
-      {children}
+      <div className="chart-plot" ref={ref}>
+        {width > 0 && (
+          <svg
+            width={width}
+            height={height}
+            role="img"
+            aria-label={spec.title ?? "Chart"}
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: arrow keys move the readout; the hidden table carries the values for screen readers
+            tabIndex={0}
+            onPointerMove={onPointer}
+            onPointerDown={onPointer}
+            onPointerLeave={(e) => e.pointerType === "mouse" && setAt(null)}
+            onKeyDown={onKey}
+            onBlur={() => setAt(null)}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {children}
+          </svg>
+        )}
+        {at !== null && <Readout spec={spec} i={at} style={tip(at)} />}
+      </div>
       <table className="sr-only">
         <thead>
           <tr>
@@ -465,6 +441,22 @@ function Frame({ spec, children }: { spec: ChartSpec; children: ReactNode }) {
       </table>
     </figure>
   );
+}
+
+/**
+ * A stack's segments, in pixels along `at`: a 2px gap from the segment below, and only the stack's
+ * outer ends rounded. One too thin to see is left out.
+ */
+function segments(stack: ([number, number] | null)[], at: (v: number) => number) {
+  // Which way bigger values go on screen.
+  const up = Math.sign(at(1) - at(0));
+  return stack.flatMap((sp, si) => {
+    if (!sp) return [];
+    const [from, to] = sp;
+    const base = from === 0 ? at(0) : at(from) + (to > 0 ? 2 : -2) * up;
+    const outer = !stack.slice(si + 1).some((o) => o && o[1] > 0 === to > 0);
+    return Math.abs(base - at(to)) < 1 ? [] : [{ si, base, end: at(to), outer }];
+  });
 }
 
 /** The values at one x: value first, then the series; a stack adds its total. */

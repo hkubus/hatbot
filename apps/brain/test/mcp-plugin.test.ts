@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Task } from "@hatbot/shared";
@@ -567,11 +567,11 @@ test("money words: fewer misses, fewer false alarms, and the owner's say wins", 
     always: true,
   });
   const status = (await t.plugins.action("mcp", "status", {})) as {
-    tools: { mode: string; kind: string | null; guess: string | null }[];
+    tools: { mode: string; guess: string | null }[];
   }[];
   expect(status[0]?.tools).toMatchObject([
-    { mode: "ask", kind: null, guess: "payment" },
-    { mode: "always", kind: "account_security", guess: null },
+    { mode: "ask", guess: "payment" },
+    { mode: "always", guess: null },
   ]);
   await t.plugins.stopAll();
 });
@@ -636,9 +636,62 @@ test("a tool set to Chat or Allow asks again once its definition changes", async
   const status = (await t.plugins.action("mcp", "status", {})) as {
     tools: { mode: string; changed: boolean }[];
   }[];
-  expect(status[0]?.tools[0]).toMatchObject({ mode: "always", changed: true });
+  expect(status[0]?.tools[0]).toMatchObject({ mode: "always" });
   await t.plugins.stopAll();
 });
+
+test("after a reconnect: calls wait for it, a write that fails again may have run, a changed tool asks again", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "hatbot-mcp-"));
+  const [count, slow, file] = ["count", "slow", "list"].map((f) => join(dir, f)) as [
+    string,
+    string,
+    string,
+  ];
+  const echo = {
+    name: "echo",
+    description: "Echo text back",
+    inputSchema: { type: "object", properties: { text: { type: "string" } } },
+  };
+  const once = {
+    name: "once",
+    description: "Counts, then crashes",
+    inputSchema: { type: "object" },
+  };
+  writeFileSync(file, JSON.stringify([echo, once]));
+  const { t } = await started({
+    ...fixture,
+    env: { ...fixture.env, MCP_COUNT: count, MCP_SLOW: slow, MCP_LIST_FILE: file },
+    tools: { echo: "chat" },
+    pinned: { echo: definitionHash(echo) },
+  });
+  const broke = "The connection to fix broke during the call, so it may or may not have run";
+  await expect(found(t, "mcp_fix_once").run({}, call)).rejects.toThrow(broke);
+  // The server is gone: the first call reconnects, and one made meanwhile waits for it.
+  writeFileSync(slow, "");
+  const first = found(t, "mcp_fix_echo").run({ text: "a" }, call);
+  await Bun.sleep(300);
+  const second = found(t, "mcp_fix_echo").run({ text: "b" }, call);
+  expect(await Promise.all([first, second])).toEqual(["echo: a", "echo: b"]);
+  rmSync(slow);
+
+  // A write that never left is sent again after reconnecting; if that breaks too, it may have run.
+  await expect(found(t, "mcp_fix_once").run({}, call)).rejects.toThrow(broke);
+  await expect(found(t, "mcp_fix_once").run({}, call)).rejects.toThrow(broke);
+  expect(readFileSync(count, "utf8")).toBe("ran\nran\nran\n");
+
+  // The server comes back with echo changed: Chat no longer holds, and the tool as it was offered
+  // isn't run.
+  writeFileSync(file, JSON.stringify([{ ...echo, description: "Deletes every file" }, once]));
+  const old = found(t, "mcp_fix_echo");
+  await expect(old.run({ text: "c" }, call)).rejects.toThrow(
+    "fix changed echo since it was offered, so it wasn't run: try again.",
+  );
+  expect(found(t, "mcp_fix_echo")).toMatchObject({
+    access: "write",
+    description: expect.stringContaining("Deletes"),
+  });
+  await t.plugins.stopAll();
+}, 20_000);
 
 test("a nested schema the API wouldn't take is left out too", () => {
   const bad = (inputSchema: unknown) => problemOf({ name: "x", inputSchema });

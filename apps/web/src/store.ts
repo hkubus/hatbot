@@ -130,6 +130,26 @@ const subscribe = (l: () => void) => {
   return () => listeners.delete(l);
 };
 
+/** The parts of the state that are maps by id. */
+type MapKey = {
+  [K in keyof State]: State[K] extends unknown[]
+    ? never
+    : State[K] extends Record<number, unknown>
+      ? K
+      : never;
+}[keyof State];
+type Id<K extends MapKey> = keyof State[K];
+type Entry<K extends MapKey> = State[K][Id<K>];
+
+/** Sets one entry of a map. */
+function put<K extends MapKey>(key: K, id: Id<K>, v: Entry<K>) {
+  set({ [key]: { ...state[key], [id]: v } });
+}
+/** Adds or replaces each of `list` in a map, by its id. */
+function merge<K extends MapKey>(key: K, list: (NonNullable<Entry<K>> & { id: Id<K> })[]) {
+  set({ [key]: { ...state[key], ...Object.fromEntries(list.map((x) => [x.id, x])) } });
+}
+
 export function useStore<T>(select: (s: State) => T): T {
   const snapshot = () => select(state);
   // The second snapshot is for rendering to a string, which the tests do.
@@ -154,7 +174,7 @@ async function loadEpisodes(messages: ThreadMessage[]) {
   const list = await api<Episode[]>(
     `/conversations/${state.conversationId}/episodes?ids=${ids.join(",")}`,
   );
-  set({ episodes: { ...state.episodes, ...Object.fromEntries(list.map((e) => [e.id, e])) } });
+  merge("episodes", list);
 }
 
 const page = (before?: number) =>
@@ -274,11 +294,8 @@ export async function loadBots() {
     api<Bot[]>("/bots"),
     api<Conversation[]>("/conversations"),
   ]);
-  set({
-    bots: { ...state.bots, ...Object.fromEntries(bots.map((b) => [b.id, b])) },
-    botIds: bots.map((b) => b.id),
-    conversations,
-  });
+  merge("bots", bots);
+  set({ botIds: bots.map((b) => b.id), conversations });
 }
 
 let refreshing: ReturnType<typeof setTimeout> | null = null;
@@ -331,11 +348,10 @@ const putConversation = (c: Conversation) =>
       ? state.conversations.map((x) => (x.id === c.id ? c : x))
       : [...state.conversations, c],
   });
-const putBot = (b: Bot) =>
-  set({
-    bots: { ...state.bots, [b.id]: b },
-    botIds: state.botIds.includes(b.id) ? state.botIds : [...state.botIds, b.id],
-  });
+const putBot = (b: Bot) => {
+  put("bots", b.id, b);
+  if (!state.botIds.includes(b.id)) set({ botIds: [...state.botIds, b.id] });
+};
 
 /** A bot's name; the id for one we don't know. */
 export const botName = (s: State, id: string | null | undefined) =>
@@ -375,12 +391,19 @@ export function bumpMemory() {
 
 export async function loadTask(id: number) {
   const { task, steps } = await api<{ task: Task; steps: TaskStep[] }>(`/tasks/${id}`);
-  set({ tasks: { ...state.tasks, [id]: task }, steps: { ...state.steps, [id]: steps } });
+  put("tasks", id, task);
+  put("steps", id, steps);
 }
 
 const requested = new Set<string>();
+/** Runs `load` once for `key`, unless `have`; after a failure, the next ask runs it again. */
+function once(key: string, have: boolean, load: () => Promise<unknown>) {
+  if (have || requested.has(key)) return;
+  requested.add(key);
+  load().catch(() => requested.delete(key));
+}
 let wanted: number[] = [];
-/** Loads a task or approval the first time something shows it. A chat's task cards come in one request. */
+/** Loads a task the first time something shows it. A chat's task cards come in one request. */
 export function ensureTask(id: number) {
   if (state.tasks[id] || requested.has(`t${id}`)) return;
   requested.add(`t${id}`);
@@ -398,18 +421,13 @@ function loadWanted() {
   }
 }
 /** A task with its steps, for the live view. */
-export function ensureSteps(id: number) {
-  if (state.steps[id] || requested.has(`st${id}`)) return;
-  requested.add(`st${id}`);
-  loadTask(id).catch(() => requested.delete(`st${id}`));
-}
-export function ensureApproval(id: number) {
-  if (state.approvals[id] || requested.has(`a${id}`)) return;
-  requested.add(`a${id}`);
-  api<Approval>(`/approvals/${id}`).then(
-    (a) => set({ approvals: { ...state.approvals, [a.id]: a } }),
-    () => requested.delete(`a${id}`),
-  );
+export const ensureSteps = (id: number) => once(`st${id}`, !!state.steps[id], () => loadTask(id));
+export const ensureApproval = (id: number) =>
+  once(`a${id}`, !!state.approvals[id], () => loadApproval(id));
+export async function loadApproval(id: number) {
+  const a = await api<Approval>(`/approvals/${id}`);
+  put("approvals", a.id, a);
+  return a;
 }
 
 export async function loadTasks(
@@ -429,9 +447,7 @@ export async function loadTasks(
     Object.entries(filter).flatMap(([k, v]) => (v === undefined ? [] : [[k, String(v)]])),
   ).toString();
   const list = await api<Task[]>(`/tasks${q ? `?${q}` : ""}`);
-  const tasks = { ...state.tasks };
-  for (const t of list) tasks[t.id] = t;
-  set({ tasks });
+  merge("tasks", list);
   return list.map((t) => t.id);
 }
 
@@ -441,11 +457,9 @@ export async function loadSchedules() {
     api<Trigger[]>("/triggers"),
     api<Watcher[]>("/watchers"),
   ]);
-  set({
-    schedules: { ...state.schedules, ...Object.fromEntries(schedules.map((s) => [s.id, s])) },
-    triggers: { ...state.triggers, ...Object.fromEntries(triggers.map((t) => [t.id, t])) },
-    watchers: { ...state.watchers, ...Object.fromEntries(watchers.map((w) => [w.id, w])) },
-  });
+  merge("schedules", schedules);
+  merge("triggers", triggers);
+  merge("watchers", watchers);
   return {
     schedules: schedules.map((s) => s.id),
     triggers: triggers.map((t) => t.id),
@@ -453,18 +467,13 @@ export async function loadSchedules() {
   };
 }
 
-export function ensureSchedule(id: number) {
-  if (id in state.schedules || requested.has(`s${id}`)) return;
-  requested.add(`s${id}`);
-  api<Schedule>(`/schedules/${id}`).then(
-    (s) => putSchedule(s),
-    (err) => {
-      if (err instanceof ApiError && err.status === 404)
-        set({ schedules: { ...state.schedules, [id]: null } });
-      else requested.delete(`s${id}`);
-    },
+export const ensureSchedule = (id: number) =>
+  once(`s${id}`, id in state.schedules, () =>
+    api<Schedule>(`/schedules/${id}`).then(putSchedule, (err) => {
+      if (!(err instanceof ApiError && err.status === 404)) throw err;
+      put("schedules", id, null);
+    }),
   );
-}
 
 export async function loadPlugins() {
   const list = await api<PluginInfo[]>("/plugins");
@@ -474,17 +483,17 @@ export async function loadPlugins() {
 
 export async function savePlugin(id: string, patch: { enabled?: boolean; config?: unknown }) {
   const p = await api<PluginInfo>(`/plugins/${id}`, { method: "PATCH", body: patch });
-  set({ plugins: { ...state.plugins, [p.id]: p } });
+  put("plugins", p.id, p);
   return p;
 }
 
-export const putProposal = (p: Proposal) => set({ proposals: { ...state.proposals, [p.id]: p } });
+export const putProposal = (p: Proposal) => put("proposals", p.id, p);
 // A page has asked for them, even if none came: a reconnect looks again.
 let proposalsLoaded = false;
 export async function loadProposals() {
   proposalsLoaded = true;
   const list = await api<Proposal[]>("/proposals?status=pending");
-  set({ proposals: { ...state.proposals, ...Object.fromEntries(list.map((p) => [p.id, p])) } });
+  merge("proposals", list);
 }
 /** After a reconnect: the latest ones as they are now, and ones answered elsewhere aren't pending. */
 async function refreshProposals() {
@@ -499,32 +508,22 @@ async function refreshProposals() {
   set({ proposals });
 }
 
-export const putSchedule = (s: Schedule) => set({ schedules: { ...state.schedules, [s.id]: s } });
-export const putTrigger = (t: Trigger) => set({ triggers: { ...state.triggers, [t.id]: t } });
-export const putWatcher = (w: Watcher) => set({ watchers: { ...state.watchers, [w.id]: w } });
-
-const putNegotiation = (n: Negotiation) =>
-  set({ negotiations: { ...state.negotiations, [n.id]: n } });
+export const putSchedule = (s: Schedule) => put("schedules", s.id, s);
+export const putTrigger = (t: Trigger) => put("triggers", t.id, t);
+export const putWatcher = (w: Watcher) => put("watchers", w.id, w);
 /** A negotiation with its messages, for its page. */
 export async function loadNegotiation(id: number) {
   const d = await api<NegotiationDetail>(`/negotiations/${id}`);
-  set({
-    negotiations: { ...state.negotiations, [id]: d.negotiation },
-    negotiationMessages: { ...state.negotiationMessages, [id]: d.messages },
-  });
+  put("negotiations", id, d.negotiation);
+  put("negotiationMessages", id, d.messages);
 }
 /** Loads a negotiation the first time a chat shows it. */
-export function ensureNegotiation(id: number) {
-  if (state.negotiations[id] || requested.has(`n${id}`)) return;
-  requested.add(`n${id}`);
-  loadNegotiation(id).catch(() => requested.delete(`n${id}`));
-}
+export const ensureNegotiation = (id: number) =>
+  once(`n${id}`, !!state.negotiations[id], () => loadNegotiation(id));
 /** The open negotiations: the Tasks page lists them. */
 export async function loadNegotiations() {
   const list = await api<Negotiation[]>("/negotiations?status=open");
-  set({
-    negotiations: { ...state.negotiations, ...Object.fromEntries(list.map((n) => [n.id, n])) },
-  });
+  merge("negotiations", list);
   return list.map((n) => n.id);
 }
 /** The negotiation a mandate approval is for. */
@@ -573,7 +572,7 @@ export async function decideApproval(id: number, decision: "approve" | "deny", n
   const a = await api<Approval>(`/approvals/${id}`, {
     body: { decision, ...(note.trim() ? { note: note.trim() } : {}) },
   });
-  set({ approvals: { ...state.approvals, [a.id]: a } });
+  put("approvals", a.id, a);
 }
 
 export async function cancelTask(id: number) {
@@ -587,7 +586,7 @@ export async function handback() {
   set({ desktop: await api<DesktopState>("/desktop/handback", { body: {} }) });
 }
 
-const putTeach = (s: TeachSession) => set({ teach: { ...state.teach, [s.id]: s } });
+const putTeach = (s: TeachSession) => put("teach", s.id, s);
 
 /** Takes the desktop for you and starts recording. */
 /** `replaces`: a skill to record again; the draft keeps its name. */
@@ -751,7 +750,7 @@ function apply(e: HatbotEvent) {
       });
     case "message.progress": {
       const text = ((state.progress[e.id] ?? "") + e.text).slice(-400);
-      return set({ progress: { ...state.progress, [e.id]: text } });
+      return put("progress", e.id, text);
     }
     case "message.rewrite":
     case "message.attachment":
@@ -759,7 +758,7 @@ function apply(e: HatbotEvent) {
     case "message.negotiation":
       return set({ messages: onMessages(state.messages, e) });
     case "message.usage":
-      return set({ usage: { ...state.usage, [e.id]: { tokens: e.tokens, costUsd: e.costUsd } } });
+      return put("usage", e.id, { tokens: e.tokens, costUsd: e.costUsd });
     case "message.done": {
       const { [e.id]: _, ...progress } = state.progress;
       const { [e.id]: __, ...usage } = state.usage;
@@ -794,40 +793,40 @@ function apply(e: HatbotEvent) {
       const steps = list.some((x) => x.id === e.step.id)
         ? list.map((x) => (x.id === e.step.id ? e.step : x))
         : [...list, e.step];
-      return set({ steps: { ...state.steps, [e.step.taskId]: steps } });
+      return put("steps", e.step.taskId, steps);
     }
     case "task.progress": {
       const text = ((state.taskProgress[e.taskId] ?? "") + e.text).slice(-400);
-      return set({ taskProgress: { ...state.taskProgress, [e.taskId]: text } });
+      return put("taskProgress", e.taskId, text);
     }
     case "approval.created":
     case "approval.resolved":
-      return set({ approvals: { ...state.approvals, [e.approval.id]: e.approval } });
+      return put("approvals", e.approval.id, e.approval);
     case "desktop.state":
       return set({ desktop: e.state });
     case "schedule.updated":
       return putSchedule(e.schedule);
     case "schedule.deleted":
-      return set({ schedules: { ...state.schedules, [e.id]: null } });
+      return put("schedules", e.id, null);
     case "trigger.updated":
       return putTrigger(e.trigger);
     case "trigger.deleted":
-      return set({ triggers: { ...state.triggers, [e.id]: null } });
+      return put("triggers", e.id, null);
     case "watcher.updated":
       return putWatcher(e.watcher);
     case "watcher.deleted":
-      return set({ watchers: { ...state.watchers, [e.id]: null } });
+      return put("watchers", e.id, null);
     case "negotiation.updated":
       // An open page shows every message, which the event doesn't carry.
       if (state.negotiationMessages[e.negotiation.id])
         void loadNegotiation(e.negotiation.id).catch(() => {});
-      return putNegotiation(e.negotiation);
+      return put("negotiations", e.negotiation.id, e.negotiation);
     case "plugin.updated":
-      return set({ plugins: { ...state.plugins, [e.plugin.id]: e.plugin } });
+      return put("plugins", e.plugin.id, e.plugin);
     case "teach.updated":
       return putTeach(e.session);
     case "episode.updated":
-      return set({ episodes: { ...state.episodes, [e.episode.id]: e.episode } });
+      return put("episodes", e.episode.id, e.episode);
     case "bot.updated":
       return putBot(e.bot);
     case "bot.deleted":
@@ -900,6 +899,10 @@ async function catchUp(reconnected: boolean) {
   if (active && ended.length) void loadTasks({ ids: ended }).catch(() => {});
 }
 
+/** One of the brain's WebSockets, by its path: wss: on an https: page. */
+export const openSocket = (path: string) =>
+  new WebSocket(`${location.origin.replace(/^http/, "ws")}${API_PREFIX}${path}`);
+
 let socket: WebSocket | null = null;
 let retry = 0;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -922,8 +925,7 @@ export function connect() {
     window.addEventListener("focus", wake);
     document.addEventListener("visibilitychange", wake);
   }
-  const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${API_PREFIX}/stream`;
-  const ws = new WebSocket(url);
+  const ws = openSocket("/stream");
   socket = ws;
   let wasOpen = false;
   // A socket that's been replaced (StrictMode opens two) says nothing more.

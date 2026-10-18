@@ -31,6 +31,13 @@ function rememberDevice(c: Context<AppEnv>) {
   });
 }
 
+/** Signs out everything but the one asking, which is marked again: the others' marks are forgotten. */
+function signedOutOthers(c: Context<AppEnv>) {
+  const ended = c.var.auth.endOthers(c.var.principal);
+  rememberDevice(c);
+  return c.json<SignedOutOthers>({ ok: true, ended });
+}
+
 const TOO_MANY = "Too many tries. Try again in 15 minutes.";
 
 /**
@@ -119,7 +126,7 @@ export const authRoutes = new Hono<AppEnv>()
   // Your account (Settings → Password and sign-ins). A change to the password or the authenticator
   // signs out every other browser and app: whoever learnt the old one may have signed in with it.
   .post("/auth/password", requireAuth, json(ChangePassword), async (c) => {
-    const { auth, principal } = c.var;
+    const { auth } = c.var;
     const tried = attempt(c);
     if (!tried) return c.json({ error: TOO_MANY }, 429);
     const { password, totp, newPassword } = c.req.valid("json");
@@ -129,7 +136,7 @@ export const authRoutes = new Hono<AppEnv>()
     }
     tried.ok();
     await auth.changePassword(newPassword);
-    return c.json<SignedOutOthers>({ ok: true, ended: auth.endOthers(principal) });
+    return signedOutOthers(c);
   })
   .post("/auth/totp/start", requireAuth, json(ConfirmOwner), async (c) => {
     const { auth, principal } = c.var;
@@ -147,7 +154,7 @@ export const authRoutes = new Hono<AppEnv>()
     const { auth, principal } = c.var;
     if (!auth.finishTotpChange(principal, c.req.valid("json").totp))
       return c.json({ error: "That code didn't match. Try the next one." }, 403);
-    return c.json<SignedOutOthers>({ ok: true, ended: auth.endOthers(principal) });
+    return signedOutOthers(c);
   })
   .get("/auth/sessions", requireAuth, (c) => c.json(c.var.auth.listSessions(c.var.principal)))
   .delete("/auth/sessions/:id{[0-9]+}", requireAuth, (c) =>
@@ -155,9 +162,7 @@ export const authRoutes = new Hono<AppEnv>()
       ? c.json({ ok: true })
       : c.json({ error: "That browser is already signed out." }, 404),
   )
-  .post("/auth/sign-out-others", requireAuth, (c) =>
-    c.json<SignedOutOthers>({ ok: true, ended: c.var.auth.endOthers(c.var.principal) }),
-  )
+  .post("/auth/sign-out-others", requireAuth, signedOutOthers)
 
   .get("/tokens", requireAuth, (c) => c.json(c.var.auth.listTokens()))
   .post("/tokens", requireAuth, json(CreateToken), (c) =>

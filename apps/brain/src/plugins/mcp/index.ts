@@ -136,6 +136,8 @@ type Listed = {
   name: string;
   description?: string;
   inputSchema: Record<string, unknown>;
+  /** definitionHash of the three above. */
+  hash: string;
   /** Why it can't be offered, for Settings. */
   problem: string | null;
 };
@@ -209,16 +211,10 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
 const PROPERTY_NAME = /^[a-zA-Z0-9_.-]{1,64}$/;
 /** The first property name anywhere in a schema that the API wouldn't take. */
 function badName(schema: unknown): string | null {
-  if (Array.isArray(schema)) {
-    for (const s of schema) {
-      const bad = badName(s);
-      if (bad !== null) return bad;
-    }
-    return null;
-  }
-  if (!isObject(schema)) return null;
-  if (isObject(schema.properties))
+  if (typeof schema !== "object" || schema === null) return null;
+  if (isObject(schema) && isObject(schema.properties))
     for (const name of Object.keys(schema.properties)) if (!PROPERTY_NAME.test(name)) return name;
+  // An array's values are its items.
   for (const v of Object.values(schema)) {
     const bad = badName(v);
     if (bad !== null) return bad;
@@ -260,12 +256,14 @@ export function problemOf(t: Record<string, unknown>): string | null {
   return null;
 }
 
-/** A short hash of a tool's name, description and input schema: what accepting it pins. */
+/**
+ * A hash of a tool's name, description and input schema: what accepting it pins. Whole, so a server
+ * can't search for another definition with the same one.
+ */
 export function definitionHash(t: Pick<Listed, "name" | "description" | "inputSchema">): string {
   return createHash("sha256")
     .update(JSON.stringify([t.name, t.description ?? "", t.inputSchema]))
-    .digest("hex")
-    .slice(0, 16);
+    .digest("hex");
 }
 
 /** The schema as the API wants it: no $schema or $id. */
@@ -351,7 +349,11 @@ export const mcpPlugin = definePlugin({
     const reconnect = (c: Conn) => {
       const pending = reconnecting.get(c);
       if (pending) return pending;
-      const p = connect(c).finally(() => reconnecting.delete(c));
+      const p = connect(c)
+        .then(() => {
+          if (c.client) refresh();
+        })
+        .finally(() => reconnecting.delete(c));
       reconnecting.set(c, p);
       return p;
     };
@@ -393,12 +395,12 @@ export const mcpPlugin = definePlugin({
               description: typeof t.description === "string" ? visible(t.description) : undefined,
               inputSchema: isObject(t.inputSchema) ? visibleAll(t.inputSchema) : {},
             };
-            listed.push({
+            const def = {
               name: t.name,
               description: shown.description,
               inputSchema: shown.inputSchema as Record<string, unknown>,
-              problem: problemOf(shown),
-            });
+            };
+            listed.push({ ...def, hash: definitionHash(def), problem: problemOf(shown) });
           }
           cursor = r.nextCursor;
           if (!cursor) break;
@@ -428,7 +430,7 @@ export const mcpPlugin = definePlugin({
     const lapsed = (c: Conn, t: Listed) => {
       const set = c.server.tools[t.name];
       if (set !== "chat" && set !== "allow") return false;
-      return (c.server.pinned[t.name] ?? c.server.accepted[t.name]) !== definitionHash(t);
+      return (c.server.pinned[t.name] ?? c.server.accepted[t.name]) !== t.hash;
     };
     /** Money and accounts never skip asking: Ask first is Always ask, and Chat is Allow. */
     const modeOf = (c: Conn, t: Listed): Mode => {
@@ -457,7 +459,7 @@ export const mcpPlugin = definePlugin({
         return { t, name, mode, problem };
       });
     };
-    const accepted = (c: Conn, t: Listed) => c.server.accepted[t.name] === definitionHash(t);
+    const accepted = (c: Conn, t: Listed) => c.server.accepted[t.name] === t.hash;
     const toolsOf = (c: Conn): PluginTool[] =>
       checked(c)
         .filter(({ mode, problem }) => mode !== "off" && !problem)
@@ -492,18 +494,21 @@ export const mcpPlugin = definePlugin({
               // Through request, not callTool: callTool also checks the result against the tool's
               // output schema, and fails after the server has done the work.
               const call = async () => {
+                await reconnecting.get(c);
                 if (!c.client)
                   throw new PluginError(`${c.server.name} isn't connected: ${c.error}`);
+                // Offered, and approved, as it was listed then: once its server lists it changed
+                // (it reconnected), it's offered again as it is now.
+                if (!c.tools.some((x) => x.hash === t.hash))
+                  throw new PluginError(
+                    `${c.server.name} changed ${t.name} since it was offered, so it wasn't run: try again.`,
+                  );
                 return c.client.request(
                   { method: "tools/call", params: { name: t.name, arguments: input } },
                   CallToolResultSchema,
                   { signal, timeout: CALL_TIMEOUT_MS },
                 );
               };
-              const failed = (err: unknown) =>
-                new PluginError(
-                  `${c.server.name} failed: ${err instanceof Error ? err.message.slice(0, 300) : "error"}`,
-                );
               let r: Awaited<ReturnType<typeof call>>;
               try {
                 r = await call();
@@ -518,8 +523,8 @@ export const mcpPlugin = definePlugin({
                 try {
                   r = await call();
                 } catch (again) {
-                  if (signal.aborted) throw again;
-                  throw again instanceof PluginError ? again : failed(again);
+                  if (signal.aborted || again instanceof PluginError) throw again;
+                  throw callFailure(c.server.name, again);
                 }
               }
               const text = resultText(r as { content?: unknown; structuredContent?: unknown });
@@ -529,7 +534,8 @@ export const mcpPlugin = definePlugin({
           }),
         );
 
-    let tools = conns.flatMap(toolsOf);
+    let tools: PluginTool[] = [];
+    let guide: string | undefined;
     const guidance = () =>
       tools.length
         ? `MCP servers: ${conns
@@ -540,7 +546,12 @@ export const mcpPlugin = definePlugin({
             )
             .join(", ")}. Their tools are named mcp_<server>_<tool>.`
         : undefined;
-    let guide = guidance();
+    /** What's offered, from what each server listed when it last connected. */
+    const refresh = () => {
+      tools = conns.flatMap(toolsOf);
+      guide = guidance();
+    };
+    refresh();
     const failed = () => conns.filter((c) => !c.client);
     const status = () =>
       config.servers.map((s) => {
@@ -557,12 +568,9 @@ export const mcpPlugin = definePlugin({
                 schema: JSON.stringify(withoutMeta(t.inputSchema), null, 2),
                 mode,
                 problem,
-                hash: definitionHash(t),
-                /** What its calls are now, and what its words suggest. */
-                kind: kindOf(c, t),
+                hash: t.hash,
+                /** What its words suggest it does, if it moves money. */
                 guess: moneyKind(t.name, t.description),
-                /** Its Chat or Allow mode no longer holds: the definition changed since. */
-                changed: lapsed(c, t),
               }))
             : [],
         };
@@ -603,16 +611,8 @@ export const mcpPlugin = definePlugin({
         const down = failed();
         if (!down.length) return;
         await Promise.all(down.map(reconnect));
-        if (down.some((c) => c.client)) {
-          tools = conns.flatMap(toolsOf);
-          guide = guidance();
-          console.log(
-            `mcp: ${down
-              .filter((c) => c.client)
-              .map((c) => c.server.name)
-              .join(", ")} back`,
-          );
-        }
+        const back = down.filter((c) => c.client);
+        if (back.length) console.log(`mcp: ${back.map((c) => c.server.name).join(", ")} back`);
       },
       stop: async () => {
         stopped = true;
