@@ -210,65 +210,53 @@ export function quoteFound(quote: string, read: string): boolean {
   );
 }
 
+/** What a helper read, gathered from each reply. */
+type Read = {
+  texts: string[];
+  visited: Set<string>;
+  unreadable: { pages: Set<string>; code: boolean };
+};
+
 /**
- * What a helper read, as text to find its quotes in: the pages it fetched, what its code printed, and
- * search results' titles. Search snippets come encrypted, so a quote from one can't be confirmed.
+ * Adds what a helper read in a reply: as text to find its quotes in, the pages it fetched, what its
+ * code printed, and search results' titles (search snippets come encrypted, so a quote from one can't
+ * be confirmed); the pages its searches and fetches came back with, as sources' URLs; and what can't
+ * be read here: pages fetched as PDFs, and code whose output came encrypted (code that searches),
+ * which may hold any page.
  */
-function readIn(content: Anthropic.Beta.BetaContentBlock[]): string[] {
-  return content.flatMap((b) => {
-    if (b.type === "web_fetch_tool_result" && b.content.type === "web_fetch_result") {
-      const doc = b.content.content;
-      return [doc.title ?? "", doc.source.type === "text" ? doc.source.data : ""];
+function addRead(content: Anthropic.Beta.BetaContentBlock[], into: Read) {
+  const page = (url: string) => {
+    try {
+      return pageUrl(url);
+    } catch {
+      return null;
     }
-    if (b.type === "web_search_tool_result" && Array.isArray(b.content))
-      return b.content.map((r) => r.title);
-    if (
+  };
+  for (const b of content) {
+    if (b.type === "web_fetch_tool_result" && b.content.type === "web_fetch_result") {
+      const { title, source } = b.content.content;
+      into.texts.push(title ?? "", source.type === "text" ? source.data : "");
+      const url = page(b.content.url);
+      if (url) into.visited.add(url);
+      if (url && source.type !== "text") into.unreadable.pages.add(url);
+    } else if (b.type === "web_search_tool_result" && Array.isArray(b.content)) {
+      for (const r of b.content) {
+        into.texts.push(r.title);
+        const url = page(r.url);
+        if (url) into.visited.add(url);
+      }
+    } else if (
       (b.type === "code_execution_tool_result" && b.content.type === "code_execution_result") ||
       (b.type === "bash_code_execution_tool_result" &&
         b.content.type === "bash_code_execution_result")
     )
-      return [b.content.stdout];
-    return [];
-  });
-}
-
-/** The pages a helper's searches and fetches came back with, as sources' URLs. */
-function pagesIn(content: Anthropic.Beta.BetaContentBlock[]): string[] {
-  const urls = content.flatMap((b) => {
-    if (b.type === "web_search_tool_result" && Array.isArray(b.content))
-      return b.content.map((r) => r.url);
-    if (b.type === "web_fetch_tool_result" && b.content.type === "web_fetch_result")
-      return [b.content.url];
-    return [];
-  });
-  return urls.flatMap((url) => {
-    try {
-      return [pageUrl(url)];
-    } catch {
-      return [];
-    }
-  });
-}
-
-/**
- * What a helper read that can't be read here: pages fetched as PDFs, and whether its code's output
- * came encrypted (code that searches), which may hold any page.
- */
-function unreadableIn(content: Anthropic.Beta.BetaContentBlock[]) {
-  return {
-    pages: content.flatMap((b) =>
-      b.type === "web_fetch_tool_result" &&
-      b.content.type === "web_fetch_result" &&
-      b.content.content.source.type !== "text"
-        ? [pageUrl(b.content.url)]
-        : [],
-    ),
-    code: content.some(
-      (b) =>
-        b.type === "code_execution_tool_result" &&
-        b.content.type === "encrypted_code_execution_result",
-    ),
-  };
+      into.texts.push(b.content.stdout);
+    else if (
+      b.type === "code_execution_tool_result" &&
+      b.content.type === "encrypted_code_execution_result"
+    )
+      into.unreadable.code = true;
+  }
 }
 
 type Quoted = {
@@ -445,9 +433,12 @@ const REPORT_NOW: Anthropic.Beta.BetaToolChoiceTool = { type: "tool", name: "rep
 async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<HelperReport> {
   const { tasks, task, signal } = run;
   const { d } = tasks;
-  const texts: string[] = [];
-  const unreadable = { pages: new Set<string>(), code: false };
-  const visited = new Set<string>();
+  const read: Read = {
+    texts: [],
+    visited: new Set(),
+    unreadable: { pages: new Set(), code: false },
+  };
+  const { texts, unreadable, visited } = read;
   const done = (r: Findings & { note?: string }): HelperReport => ({
     ...r,
     read: plain(texts.join("\n")),
@@ -537,11 +528,7 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
     });
     messages.push({ role: "assistant", content: res.content as BlockParam[] });
     container = containerOf(res, container);
-    texts.push(...readIn(res.content));
-    for (const url of pagesIn(res.content)) visited.add(url);
-    const unread = unreadableIn(res.content);
-    for (const page of unread.pages) unreadable.pages.add(page);
-    unreadable.code ||= unread.code;
+    addRead(res.content, read);
     for (const read of webReads(res.content)) {
       tasks.addStep(task.id, {
         kind: "action",
