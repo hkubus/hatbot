@@ -9,6 +9,7 @@ import {
   fold,
   heldBack,
   pressOf,
+  samePage,
 } from "../src/tasks/policy";
 
 const button = (label: string, over: Partial<AgentElement> = {}): AgentElement => ({
@@ -216,6 +217,23 @@ test("labels are compared folded and with Unicode word edges", () => {
   expect(consequentialLabel("Usuńmy")).toBe(false);
   expect(consequentialLabel("zapłata")).toBe(true);
   expect(consequentialLabel("Bezpłatnie")).toBe(false);
+  // Fullwidth letters only look different.
+  expect(fold("Ｐａｙ ｎｏｗ")).toBe("pay now");
+  expect(consequentialLabel("Ｐａｙ ｎｏｗ")).toBe(true);
+});
+
+test("the same page is the same address and query, in any order and tracking aside", () => {
+  const p = "https://shop.example/item";
+  expect(samePage(`${p}?id=1&size=m`, `${p}/?size=m&id=1&utm_source=x&fbclid=y`)).toBe(true);
+  expect(samePage(`${p}?id=1#reviews`, `${p}?id=1`)).toBe(true);
+  expect(samePage(`${p}?id=1`, `${p}?id=2`)).toBe(false);
+  expect(samePage(`${p}?id=1`, p)).toBe(false);
+  expect(samePage(p, "https://other.example/item")).toBe(false);
+});
+
+test("Space with the keyboard off the page is told what Space does there, not Enter", () => {
+  expect(heldBack("space", { outside: true })).toContain("where Space may press something");
+  expect(heldBack("enter", { outside: true })).toContain("where Enter opens what was typed");
 });
 
 test("on a checkout or payment page every button asks; typing and choosing don't", () => {
@@ -291,6 +309,17 @@ test("Enter, Space and Tab can't slip past: sequences are refused, single presse
   expect(type("Jan\tKowalski")).toBeNull();
   expect(type("Jan\tul. Polna 5")).toHaveProperty("refuse");
   expect(type("Jan\t\n")).toHaveProperty("refuse");
+});
+
+test("only an address that runs script is refused as typed text, not a sentence that starts alike", () => {
+  const type = (text: string, toolset: "computer" | "browser" = "computer") =>
+    checkFor(toolset, "type", { text });
+  for (const text of ["javascript:alert(1)", " JavaScript:void(0)", "data:text/html,<b>Hi</b>"])
+    expect([text, type(text)]).toEqual([text, { refuse: expect.stringContaining("javascript:") }]);
+  for (const text of ["Data: 15 października", "Javascript: tutorial", "data"])
+    expect([text, type(text)]).not.toEqual([text, { refuse: expect.anything() }]);
+  // The browser toolset types into the page, never the address bar.
+  expect(type("javascript:void(0)", "browser")).toBeNull();
 });
 
 test("a key Hatbot can't read is refused, so Enter can't go under another name", () => {

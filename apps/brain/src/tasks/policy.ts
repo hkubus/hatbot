@@ -3,13 +3,14 @@ import type { AgentElement } from "@hatbot/shared/desktop";
 import { type Combo, combosIn, readCombo } from "@hatbot/shared/keys";
 
 /**
- * Lower case, accents dropped and ł read as l, so "ZAPŁAĆ", "Zapłać" and "Zaplac" match alike; invisible
- * format characters (a zero-width space inside "Kup") dropped.
+ * Lower case, accents dropped and ł read as l, so "ZAPŁAĆ", "Zapłać" and "Zaplac" match alike; letters
+ * that only look different read plainly ("Ｐａｙ" is "pay"), and invisible format characters (a
+ * zero-width space inside "Kup") dropped.
  */
 export const fold = (s: string) =>
   s
     .toLowerCase()
-    .normalize("NFD")
+    .normalize("NFKD")
     .replace(/[\p{M}\p{Cf}]/gu, "")
     .replace(/ł/g, "l")
     .replace(/\s+/g, " ")
@@ -252,8 +253,9 @@ export function checkFor(
     return { press, at: [{ focused: true }] };
   }
   if (name === "type") {
-    // Typed into the address bar, these run in the page that's open, logged in.
-    if (/^\s*(?:javascript|data|vbscript):/i.test(text))
+    // Typed into the address bar, these run in the page that's open, logged in. The browser toolset types
+    // only into pages, and an address has no space after its colon, as "Data: 15 października" does.
+    if (!browser && /^\s*(?:javascript|data|vbscript):\S/i.test(text))
       return {
         refuse:
           "Hatbot doesn't type javascript:, data: or vbscript: addresses: in the address bar they run in the page. Use the browser's navigate to open a web address.",
@@ -269,14 +271,23 @@ export function checkFor(
   return null;
 }
 
-/** Two addresses are the same page: the same origin and path, a trailing slash aside. */
+/** Query parameters that only say where a visit came from. */
+const TRACKING =
+  /^(?:utm_\w*|fbclid|gclid|gbraid|wbraid|dclid|msclkid|yclid|mc_[ce]id|_ga|igshid)$/i;
+
+/**
+ * Two addresses are the same page: the same origin, path (a trailing slash aside) and query (in any
+ * order, tracking aside): ?id=1 and ?id=2 are two products.
+ */
 export function samePage(a: string | null | undefined, b: string | null | undefined): boolean {
   if (!a || !b) return false;
+  const page = (s: string) => {
+    const u = new URL(s);
+    const query = [...u.searchParams].filter(([k]) => !TRACKING.test(k)).map((p) => p.join("="));
+    return `${u.origin}${u.pathname.replace(/\/+$/, "") || "/"}?${query.sort().join("&")}`;
+  };
   try {
-    const x = new URL(a);
-    const y = new URL(b);
-    const path = (p: string) => p.replace(/\/+$/, "") || "/";
-    return x.origin === y.origin && path(x.pathname) === path(y.pathname);
+    return page(a) === page(b);
   } catch {
     return a === b;
   }
@@ -455,7 +466,7 @@ export function heldBack(press: Press, hold: Hold, el: AgentElement | null = nul
   if ("unseen" in hold)
     return `Hatbot couldn't see what this ${act} would act on, so it can't tell whether it's safe. Take a screenshot or read the page again and retry. If it still can't, and this pays, sends, books or deletes anything, call confirm_intent first; if it doesn't, reach the same place another way.`;
   if ("outside" in hold)
-    return `the keyboard isn't on the page: it's in the browser's address bar or another window, where ${act} opens what was typed or presses something Hatbot can't see. To open a page, use the browser's navigate; to type in the page, click into its box first. If this answers a dialog you mean to answer, call confirm_intent first.`;
+    return `the keyboard isn't on the page: it's in the browser's address bar or another window, where ${press === "space" ? "Space may press" : "Enter opens what was typed, or presses"} something Hatbot can't see. To open a page, use the browser's navigate; to type in the page, click into its box first. If this answers a dialog you mean to answer, call confirm_intent first.`;
   if (hold.unlabelled === "beside")
     return `Enter here could send what's in this box, through a button beside it that has no label or none Hatbot can see, so Hatbot can't tell what it does. If it sends, buys, pays, books or deletes anything, call confirm_intent first. If it doesn't, reach the same place another way, such as a labelled button.${newLine}`;
   return `this ${act} is on a button with no label, so Hatbot can't tell what it does: it could send or pay as easily as open a menu. If it sends, buys, pays, books or deletes anything, call confirm_intent first. If it doesn't, reach the same place another way: Escape to close something, scrolling, or a labelled control.`;
