@@ -195,8 +195,18 @@ struct ChatView: View {
       .scrollDismissesKeyboard(.interactively)
       .edgeBar(.top) {
         VStack(spacing: 0) {
-          if store.unreachable { UnreachableBanner() }
-          if store.paused { PausedBanner() }
+          // The event stream has been down for a few seconds.
+          if store.unreachable {
+            Banner(text: "Can't reach Hatbot.", systemImage: "wifi.slash") {}
+              .transition(.move(edge: .top).combined(with: .opacity))
+          }
+          if store.paused {
+            Banner(text: "All activity is paused.", systemImage: "pause.circle.fill") {
+              Button("Resume") { Task { try? await store.setPaused(false) } }
+                .buttonStyle(.borderless)
+                .fontWeight(.semibold)
+            }
+          }
         }
         .animation(.snappy, value: store.unreachable)
       }
@@ -482,40 +492,38 @@ private struct Composer: View {
   }
 
   private var mentionList: some View {
-    VStack(spacing: 0) {
-      ForEach(mentionable) { b in
-        Button {
-          draft = Mention.complete(draft, with: b.name)
-        } label: {
-          HStack(alignment: .firstTextBaseline) {
-            Text("@\(b.name)").fontWeight(.medium)
-            Spacer(minLength: 12)
-            Text(b.instructions.split(separator: "\n").first.map(String.init) ?? "")
-              .font(.footnote).foregroundStyle(.secondary).lineLimit(1)
-          }
-          .padding(.horizontal, 16)
-          .padding(.vertical, 10)
-          .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-      }
-    }
-    .padding(.vertical, 4)
-    .glassSurface(in: .rect(cornerRadius: 22))
+    suggestions(
+      mentionable, name: { Text("@\($0.name)").fontWeight(.medium) },
+      about: { $0.instructions.split(separator: "\n").first.map(String.init) ?? "" }
+    ) { b in draft = Mention.complete(draft, with: b.name) }
   }
 
   /// What "/…" could mean. One that needs more goes in the composer to finish; the rest run at once.
   private var commandList: some View {
+    suggestions(
+      commands,
+      name: { c in
+        let args = Text(c.args.isEmpty ? "" : " \(c.args)").foregroundStyle(.secondary)
+        return Text("\(Text("/\(c.name)").fontWeight(.medium))\(args)")
+      },
+      about: { $0.description }
+    ) { c in if c.needsMore { draft = "/\(c.name) " } else { send("/\(c.name)") } }
+  }
+
+  /// A list over the field of what you could mean, each with a line about it; a tap picks one.
+  private func suggestions<Item: Identifiable>(
+    _ items: [Item], name: @escaping (Item) -> Text, about: @escaping (Item) -> String,
+    pick: @escaping (Item) -> Void
+  ) -> some View {
     VStack(spacing: 0) {
-      ForEach(commands) { c in
+      ForEach(items) { item in
         Button {
-          if c.needsMore { draft = "/\(c.name) " } else { send("/\(c.name)") }
+          pick(item)
         } label: {
           HStack(alignment: .firstTextBaseline) {
-            let args = Text(c.args.isEmpty ? "" : " \(c.args)").foregroundStyle(.secondary)
-            Text("\(Text("/\(c.name)").fontWeight(.medium))\(args)")
+            name(item)
             Spacer(minLength: 12)
-            Text(c.description).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+            Text(about(item)).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
           }
           .padding(.horizontal, 16)
           .padding(.vertical, 10)
@@ -571,16 +579,17 @@ private struct RoundGlyph: View {
   }
 }
 
-struct PausedBanner: View {
-  @Environment(AppStore.self) private var store
+/// A line across the top of the chat, with what you can do about it after.
+private struct Banner<Trailing: View>: View {
+  let text: String
+  let systemImage: String
+  @ViewBuilder var trailing: Trailing
 
   var body: some View {
     HStack {
-      Label("All activity is paused.", systemImage: "pause.circle.fill")
+      Label(text, systemImage: systemImage)
       Spacer()
-      Button("Resume") { Task { try? await store.setPaused(false) } }
-        .buttonStyle(.borderless)
-        .fontWeight(.semibold)
+      trailing
     }
     .font(.subheadline)
     .padding(.horizontal, 16)
@@ -588,23 +597,6 @@ struct PausedBanner: View {
     .glassSurface(in: .capsule)
     .padding(.horizontal, 12)
     .padding(.vertical, 6)
-  }
-}
-
-/// The event stream has been down for a few seconds.
-struct UnreachableBanner: View {
-  var body: some View {
-    HStack {
-      Label("Can't reach Hatbot.", systemImage: "wifi.slash")
-      Spacer()
-    }
-    .font(.subheadline)
-    .padding(.horizontal, 16)
-    .padding(.vertical, 10)
-    .glassSurface(in: .capsule)
-    .padding(.horizontal, 12)
-    .padding(.vertical, 6)
-    .transition(.move(edge: .top).combined(with: .opacity))
   }
 }
 
