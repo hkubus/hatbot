@@ -223,7 +223,11 @@ export class BoxFeeds {
     if (!ok.success) throw new Stopped(`${t.name} doesn't take that input.`);
     let out: string;
     try {
-      out = await t.run(ok.data, { task: null, signal: AbortSignal.timeout(60_000) });
+      out = await t.run(ok.data, {
+        task: null,
+        signal: AbortSignal.timeout(60_000),
+        feed: true,
+      });
     } catch (err) {
       if (err instanceof PluginError) throw new BoxError(err.message);
       throw err;

@@ -225,7 +225,7 @@ function lab(answer: { load: number }) {
           description: "",
           access: "read",
           schema: z.object({ node: z.string() }),
-          run: async ({ node }) => JSON.stringify({ node, load: answer.load }),
+          run: async ({ node }, { feed }) => JSON.stringify({ node, load: answer.load, feed }),
         }),
       ]),
   });
@@ -253,7 +253,7 @@ test("hatbox.feed: a plugin's read tool, run for the page on a timer without the
   await t.thread.post("show the load in the box").done;
   const feed = async () =>
     ((await (await page(t, { op: "feed", name: "load" })).json()) as { value: BoxFeedValue }).value;
-  expect((await feed()).value).toEqual({ node: "pve", load: 1 });
+  expect((await feed()).value).toEqual({ node: "pve", load: 1, feed: true });
 
   answer.load = 2;
   t.advance(5 * 60_000);

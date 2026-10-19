@@ -44,6 +44,8 @@ export type CallContext = {
   messageId?: number;
   /** From a task: waits for a task the call started, without holding the task's slot meanwhile. */
   waitForTask?: (taskId: number) => Promise<Task>;
+  /** From a box's feed: the result goes to the box's page, not to the model. */
+  feed?: boolean;
 };
 
 export type PluginTool<I = unknown> = {

@@ -518,7 +518,7 @@ test("output is kept to its start and end, endless output is stopped, and a comm
   ).toBe("Exit code 255\nstderr:\nHost key verification failed.");
 });
 
-test("write_file writes exactly its content, on stdin when big; read_file reads it back a stretch at a time, on a host or in a container", async () => {
+test("write_file writes exactly its content, on stdin when big; read_file reads it back a stretch at a time or from the end, on a host or in a container, and a feed up to 1 MB", async () => {
   const t = await ssh({ hosts: [...HOSTS, PVE] });
   const write = (path: string, content: string) =>
     t.tool("ssh_write_file").run({ host: "nas", path, content }, call);
@@ -547,6 +547,25 @@ test("write_file writes exactly its content, on stdin when big; read_file reads 
   // Long lines stop it sooner, at a line's end.
   writeFileSync(long, `${"y".repeat(99)}\n`.repeat(300));
   expect(await read({ path: long })).toEndWith("… (lines 1 to 150; read on with offset 151)");
+  expect(await read({ path: long, tail: true })).toEndWith(
+    "… (lines 151 to 300 of 300; read earlier ones with offset)",
+  );
+
+  // A feed reads what the chat reads a stretch at a time, whole, up to the 1 MB it keeps.
+  const feed = (input: object) =>
+    t.tool("ssh_read_file").run({ host: "nas", ...input }, { ...call, feed: true });
+  const log = Array.from({ length: 30_000 }, (_, i) => `line ${i + 1}`).join("\n");
+  writeFileSync(long, log);
+  expect(await feed({ path: long })).toBe(log);
+  expect(await feed({ path: long, tail: true, lines: 2 })).toBe("line 29999\nline 30000");
+  writeFileSync(long, `${log}\n${"z".repeat(1024 * 1024)}\nlast\n`);
+  await expect(feed({ path: long })).rejects.toThrow("over the 1 MB a feed keeps");
+  expect(await feed({ path: long, tail: true, lines: 1 })).toBe("last");
+  // From the end by bytes, without the line it starts partway through.
+  expect(await feed({ path: long, tail: true })).toBe("last");
+  await expect(feed({ path: join(dir, "missing.log"), tail: true })).rejects.toThrow(
+    "No such file",
+  );
 });
 
 test("copy_file moves bytes between hosts, containers, the sandbox and the chat", async () => {
