@@ -423,6 +423,8 @@ test("the brain's and the desktop's containers are refused, and none is reached 
     const pct = { host: "pve", guest, command: "uptime" };
     expect(verdictFor(t.tool("ssh_pct_exec"), pct, call).action).toBe("block");
     await expect(t.tool("ssh_pct_exec").run(pct, call)).rejects.toThrow("is the brain");
+    const read = { host: "pve", guest, path: "/etc/hatbot/brain.env" };
+    await expect(t.tool("ssh_read_file").run(read, call)).rejects.toThrow("is the brain");
   }
 
   const unset = await ssh({ hosts, unset: "HATBOT_BRAIN_ID" });
@@ -516,8 +518,8 @@ test("output is kept to its start and end, endless output is stopped, and a comm
   ).toBe("Exit code 255\nstderr:\nHost key verification failed.");
 });
 
-test("write_file writes exactly its content, on stdin when big; read_file reads it back a stretch at a time", async () => {
-  const t = await ssh();
+test("write_file writes exactly its content, on stdin when big; read_file reads it back a stretch at a time, on a host or in a container", async () => {
+  const t = await ssh({ hosts: [...HOSTS, PVE] });
   const write = (path: string, content: string) =>
     t.tool("ssh_write_file").run({ host: "nas", path, content }, call);
   const read = (input: object) => t.tool("ssh_read_file").run({ host: "nas", ...input }, call);
@@ -526,6 +528,8 @@ test("write_file writes exactly its content, on stdin when big; read_file reads 
   await write(path, content);
   expect(readFileSync(path, "utf8")).toBe(content);
   expect(await read({ path })).toBe(content.trimEnd());
+  expect(await read({ host: "pve", guest: 900, path })).toBe(content.trimEnd());
+  expect(lastArgs()).toContain("sudo -n /usr/local/sbin/hatbot-pct-exec 900 ");
   // Past the system's limit on a command's arguments.
   const big = `${"x".repeat(99)}\n`.repeat(4000);
   await write(path, big);
