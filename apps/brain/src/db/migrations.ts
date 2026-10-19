@@ -811,4 +811,11 @@ export const migrations: string[] = [
   );
   CREATE INDEX box_notices_box ON box_notices (box_id, created_at);
   `,
+  // 45: hand-offs answered in the other bot's chat (PLAN.md §14.7): each end of one links to the other,
+  // and a task keeps the hand-off whose answer asked for it, so hand-offs through chats nest 3 deep too.
+  `
+  ALTER TABLE messages ADD COLUMN link_conversation_id INTEGER;
+  ALTER TABLE messages ADD COLUMN link_message_id INTEGER;
+  ALTER TABLE tasks ADD COLUMN asked_in INTEGER;
+  `,
 ];

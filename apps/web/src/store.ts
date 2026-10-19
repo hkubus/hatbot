@@ -738,6 +738,8 @@ function onMessages(list: ThreadMessage[], e: HatbotEvent): ThreadMessage[] {
       );
     case "message.task":
       return patch(e.id, (m) => ({ ...m, taskId: e.taskId }));
+    case "message.link":
+      return patch(e.id, (m) => ({ ...m, link: e.link }));
     case "message.negotiation":
       return patch(e.id, (m) => ({ ...m, negotiationId: e.negotiationId }));
     case "message.box":
@@ -815,6 +817,7 @@ function apply(e: HatbotEvent) {
     case "message.rewrite":
     case "message.attachment":
     case "message.task":
+    case "message.link":
     case "message.negotiation":
     case "message.box":
       return set({ messages: onMessages(state.messages, e) });

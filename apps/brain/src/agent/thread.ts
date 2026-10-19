@@ -8,6 +8,7 @@ import {
   describeCron,
   type Episode,
   HATBOT_ID,
+  type MessageLink,
   parseCommand,
   parseTodos,
   type Schedule,
@@ -76,6 +77,7 @@ import { mayReview, safeToRun } from "./review";
 import { type Readable, Screener } from "./screening";
 import {
   addSources,
+  BOX_CHANGE_TOOLS,
   CHAT_WEB_TOOLS,
   containerOf,
   DESKTOP_TOOLS,
@@ -114,18 +116,33 @@ const MAX_CHAT_COMMANDS = 2;
 const STOPPED = "stopped";
 const DELETED = "deleted";
 export const MESSAGE_COLUMNS =
-  "id, role, conversation_id AS conversationId, bot_id AS botId, kind, text, status, created_at AS createdAt, task_id AS taskId, schedule_id AS scheduleId, negotiation_id AS negotiationId, box_id AS boxId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt, incognito, sources, choices";
-export type MessageRow = Omit<ThreadMessage, "incognito" | "sources" | "choices"> & {
+  "id, role, conversation_id AS conversationId, bot_id AS botId, kind, text, status, created_at AS createdAt, task_id AS taskId, schedule_id AS scheduleId, negotiation_id AS negotiationId, box_id AS boxId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt, incognito, sources, choices, link_conversation_id AS linkConversation, link_message_id AS linkMessage";
+export type MessageRow = Omit<ThreadMessage, "incognito" | "sources" | "choices" | "link"> & {
   incognito: number;
   sources: string | null;
   choices: string | null;
+  linkConversation: number | null;
+  linkMessage: number | null;
 };
-/** A message as the app gets it: `incognito`, `sources` and `choices` only on the ones that have them. */
-export const messageOf = ({ incognito, sources, choices, ...m }: MessageRow): ThreadMessage => ({
+/**
+ * A message as the app gets it: `incognito`, `sources`, `choices` and `link` only on the ones that
+ * have them.
+ */
+export const messageOf = ({
+  incognito,
+  sources,
+  choices,
+  linkConversation,
+  linkMessage,
+  ...m
+}: MessageRow): ThreadMessage => ({
   ...m,
   ...(incognito ? { incognito: true as const } : {}),
   ...(sources ? { sources: JSON.parse(sources) as Source[] } : {}),
   ...(choices ? { choices: JSON.parse(choices) as string[][] } : {}),
+  ...(linkConversation !== null && linkMessage !== null
+    ? { link: { conversationId: linkConversation, messageId: linkMessage } }
+    : {}),
 });
 /** How a task ended, in the place of the reply that started it when its bot doesn't write that again. */
 export const resultText = (t: Pick<Task, "status" | "summary">) =>
@@ -190,7 +207,9 @@ type EffortMark = { effort: Effort };
 /** Stored among a bot's turns: a note from the app, sent as a system message, not as the owner. */
 type NoteMark = { note: string };
 /** How a reply ended: its text, for the @names that bring other bots in. */
-type Said = { text: string; status: "done" | "error"; stopped?: boolean };
+/** A hand-off being answered: its request's message, its task, and the episodes its answer was written again in. */
+type Handoff = { messageId: number; task: Task; episodes: number[] };
+export type Said = { id: number; text: string; status: "done" | "error"; stopped?: boolean };
 
 export type ThreadDeps = {
   /** Set once these exist; they need the thread too. */
@@ -240,6 +259,10 @@ export class Thread {
   private currentBot: string | null = null;
   /** The reply in progress is in the incognito conversation. */
   private currentIncognito = false;
+  /** The hand-off the reply in progress answers: its request's message, and its task. */
+  private currentHandoff: Handoff | null = null;
+  /** Hand-offs still open, by their answer: a rewrite of the answer goes on answering them. */
+  private handoffAnswers = new Map<number, Handoff>();
   /** The approval the reply in progress waits for; your next message cancels it. */
   private waiting: number | null = null;
   /** The text of the reply being written, by message id, as it is now: for a chat opened mid-reply. */
@@ -329,7 +352,7 @@ export class Thread {
    */
   add(m: {
     role?: "user" | "assistant";
-    kind?: "text" | "command" | "task" | "schedule" | "box";
+    kind?: "text" | "command" | "task" | "schedule" | "box" | "handoff";
     text: string;
     status?: "done" | "streaming";
     botId?: string;
@@ -342,14 +365,16 @@ export class Thread {
     taintedBy?: string | null;
     seen?: boolean;
     attachmentIds?: number[];
+    /** A hand-off's other end. */
+    link?: MessageLink;
   }): ThreadMessage {
     const role = m.role ?? "assistant";
     const now = this.now();
     const row = this.d.db
       .query<MessageRow, (string | number | null)[]>(
         `INSERT INTO messages (conversation_id, bot_id, episode_id, role, kind, text, status, created_at,
-           seen_at, incognito, task_id, schedule_id, tainted_by, box_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
+           seen_at, incognito, task_id, schedule_id, tainted_by, box_id, link_conversation_id, link_message_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING ${MESSAGE_COLUMNS}`,
       )
       .get(
         this.conversationId,
@@ -366,6 +391,8 @@ export class Thread {
         m.scheduleId ?? null,
         m.taintedBy ?? null,
         m.boxId ?? null,
+        m.link?.conversationId ?? null,
+        m.link?.messageId ?? null,
       );
     if (!row) throw new Error("message insert failed");
     const added = messageOf(row);
@@ -492,15 +519,25 @@ export class Thread {
     );
   }
 
-  /** Your last few messages in this conversation, as you wrote them. */
+  /**
+   * Your last few messages in this conversation, as you wrote them. Answering a hand-off, also what you
+   * had said to the bot that asked: its request is its own words, not yours.
+   */
   private ownerSaid(episodeId: number): string {
-    return this.d.db
+    const here = this.d.db
       .query<{ text: string; created_at: string }, [number]>(
         "SELECT text, created_at FROM messages WHERE episode_id = ? AND role = 'user' ORDER BY id DESC LIMIT 3",
       )
       .all(episodeId)
       .reverse()
       .map((m) => `[${localStamp(new Date(m.created_at))}] ${m.text}`)
+      .join("\n\n");
+    const asked = this.currentHandoff?.task;
+    const there = asked && this.d.tasks?.requestOf(asked.id);
+    if (!asked || !there) return here;
+    const asker = this.d.bots.nameOf(asked.requestedBy ?? HATBOT_ID);
+    return [here, `What the owner had said to ${asker}, which then asked for this:\n${there}`]
+      .filter(Boolean)
       .join("\n\n");
   }
 
@@ -524,7 +561,8 @@ export class Thread {
     const { plugins, bots } = this.d;
     // Negotiation's tools aren't a plugin's.
     if (!plugins.pluginOf(offered.name)) return offered;
-    return liveTool(offered, plugins.tools((bots.get(bot.id) ?? bot).plugins), {
+    const now = bots.get(bot.id) ?? bot;
+    return liveTool(offered, plugins.tools(now.plugins, bots.leftToCoder(now)), {
       bot: bot.name,
       since: "during this reply",
       // Incognito changes nothing.
@@ -585,7 +623,9 @@ export class Thread {
         { episodeId },
         {
           ownerSaid: this.ownerSaid(episodeId),
-          goal: "(none: the owner is asking in the chat)",
+          goal: this.currentHandoff
+            ? `${this.currentHandoff.task.goal}\n\n(${this.d.bots.nameOf(this.currentHandoff.task.requestedBy ?? HATBOT_ID)}, another of the owner's bots, asked for this: these aren't the owner's words.)`
+            : "(none: the owner is asking in the chat)",
           sources: taintedBy ? [taintedBy] : [],
         },
         { ...call, why: verdict.why },
@@ -663,7 +703,8 @@ export class Thread {
       note = asked.note;
       // What was reviewed or approved was the plugin as it was: one switched off or restarted
       // meanwhile mustn't run.
-      const live = this.d.plugins.tools((this.d.bots.get(bot.id) ?? bot).plugins);
+      const now = this.d.bots.get(bot.id) ?? bot;
+      const live = this.d.plugins.tools(now.plugins, this.d.bots.leftToCoder(now));
       if (this.d.plugins.pluginOf(t.name) && !live.includes(t))
         return {
           content: `Not run: ${t.name}'s plugin was switched off or restarted while this was checked or waited for approval.`,
@@ -804,7 +845,8 @@ export class Thread {
   private turnSetup(bot: Bot, incognito = false) {
     const { settings, plugins, bots, negotiations } = this.d;
     // Fixed for the turn; a plugin switched on or off shows from the next one. A bot only gets its own.
-    const guidance = plugins.guidance(bot.plugins);
+    const leftToCoder = bots.leftToCoder(bot);
+    const guidance = plugins.guidance(bot.plugins, leftToCoder);
     const others = bots.list().filter((b) => b.id !== bot.id);
     const group = this.group();
     const prompt = group
@@ -816,7 +858,7 @@ export class Thread {
       : promptFor(SYSTEM_PROMPT, bot, others);
     const base = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
     const system = incognito ? `${base}\n\n${INCOGNITO_PROMPT}` : base;
-    const own = plugins.tools(bot.plugins);
+    const own = plugins.tools(bot.plugins, leftToCoder);
     // Negotiation's tools come with Scout's (PLAN.md §16.3).
     const pluginTools = [
       ...own,
@@ -829,7 +871,9 @@ export class Thread {
       ...(incognito ? TOOL_PARAMS.filter((t) => INCOGNITO_TOOLS.includes(t.name)) : TOOL_PARAMS)
         // Alone, Hatbot's tools stay as they were, and its cache with them.
         .filter((t) => others.length || t.name !== "ask_bot")
-        .filter((t) => this.d.desktop?.configured || !DESKTOP_TOOLS.includes(t.name)),
+        .filter((t) => this.d.desktop?.configured || !DESKTOP_TOOLS.includes(t.name))
+        // Boxes are code: with a code bot, it makes and changes them all.
+        .filter((t) => !leftToCoder.length || !BOX_CHANGE_TOOLS.includes(t.name)),
       ASK_OWNER,
       ...(onHaiku ? [ASK_OPUS] : []),
       ...pluginTools.map(toolParam),
@@ -1508,6 +1552,75 @@ export class Thread {
   }
 
   /**
+   * Another bot hands this chat's bot work (ask_bot, PLAN.md §14.7): its request shows here as its
+   * message, linked to where it asked (`link`), and this chat's bot answers it in turn with replies, as
+   * it would you, though the words aren't yours. `answer` resolves with the answer, or with nothing:
+   * the hand-off was stopped (`signal`) before its turn came, or the bot was deleted.
+   */
+  handoff(
+    task: Task,
+    link: MessageLink | null,
+    signal: AbortSignal,
+  ): { message: ThreadMessage; answer: Promise<Said | undefined> } {
+    const message = this.add({
+      kind: "handoff",
+      text: task.goal,
+      botId: task.requestedBy ?? HATBOT_ID,
+      taskId: task.id,
+      ...(link ? { link } : {}),
+    });
+    const answer = this.enqueue(async () => {
+      const bot = this.d.bots.active(task.botId);
+      if (!bot || signal.aborted) return undefined;
+      // As it is now: a suspicion is marked on it once it has started.
+      const h = { messageId: message.id, task: this.d.tasks?.get(task.id) ?? task, episodes: [] };
+      this.currentHandoff = h;
+      const said = await this.reply(message, bot);
+      if (said && !signal.aborted) this.handoffAnswers.set(said.id, h);
+      return said;
+    });
+    return { message, answer };
+  }
+
+  /** A hand-off was cancelled: its answer stops, if it's being written. */
+  stopHandoff(messageId: number) {
+    if (this.currentHandoff?.messageId === messageId) this.current?.abort(STOPPED);
+  }
+
+  /** One of this chat's messages as it is now, a reply being written included. */
+  message(id: number): ThreadMessage | null {
+    const row = this.d.db
+      .query<MessageRow, [number, number]>(
+        `SELECT ${MESSAGE_COLUMNS} FROM messages WHERE id = ? AND conversation_id = ?`,
+      )
+      .get(id, this.conversationId);
+    if (!row) return null;
+    const m = messageOf(row);
+    const text = m.status === "streaming" ? this.live.get(id) : undefined;
+    return text === undefined ? m : { ...m, text };
+  }
+
+  /** What the conversation a message is in had read: see `trust`. */
+  /**
+   * A hand-off has ended: what the episodes its answer was written in read, once their screening is
+   * done. The answer is written again in a new episode when the chat moved on before its task ended.
+   */
+  async endHandoff(
+    answerId: number | null,
+  ): Promise<{ tainted: string | null; suspected: string | null }> {
+    const h = answerId === null ? undefined : this.handoffAnswers.get(answerId);
+    if (answerId !== null) this.handoffAnswers.delete(answerId);
+    const first = answerId === null ? undefined : this.message(answerId)?.episodeId;
+    const episodes = [...new Set([...(first ? [first] : []), ...(h?.episodes ?? [])])];
+    await Promise.all(episodes.map((id) => this.screeners.get(id)?.settled()));
+    const trust = episodes.map((id) => this.trust(id));
+    return {
+      tainted: trust.find((t) => t.tainted)?.tainted ?? null,
+      suspected: trust.find((t) => t.suspected)?.suspected ?? null,
+    };
+  }
+
+  /**
    * Writes a reply that failed again, in place, from the turns it had: no new message of yours. Null
    * when it can't be: see `retryable`.
    */
@@ -1612,6 +1725,7 @@ export class Thread {
     } finally {
       this.current = null;
       this.currentBot = null;
+      this.currentHandoff = null;
     }
   }
 
@@ -1626,6 +1740,7 @@ export class Thread {
     const { db, events, spend, model, plugins } = this.d;
     const incognito = !!(user ?? again)?.incognito;
     const userId = user?.id ?? Number.MAX_SAFE_INTEGER;
+    const asked = user?.kind === "handoff" ? (this.currentHandoff?.task ?? null) : null;
     const { system, pluginTools, chatModel, chatEffort, onHaiku, tools, prefix } = this.turnSetup(
       bot,
       incognito,
@@ -1750,6 +1865,23 @@ export class Thread {
           note = group.nudged
             ? `(Your turn, ${bot.name}: you were mentioned above. Answer your part.)`
             : taskNews;
+      } else if (asked && user) {
+        const asker = this.d.bots.nameOf(asked.requestedBy ?? HATBOT_ID);
+        const by = asked.tainted ? (asked.taintedBy ?? "Untrusted content") : null;
+        // What the asker had read comes with its request.
+        if (by) {
+          this.taint(episode.id, by);
+          this.screenerFor(episode.id).add(`${asker}'s request`, user.text);
+        }
+        if (asked.injectionSuspected) this.suspect(episode.id, `What ${asker} had read`);
+        userBlocks.push({
+          type: "text",
+          text: messageTag(asker, localStamp(new Date(user.createdAt)), user.text, {
+            taintedBy: by,
+            attrs: ` task="${asked.id}"`,
+          }),
+        });
+        note = `(No message from the owner: ${asker}, another of the owner's bots, asked you this ${asked.parentId ? "from one of its tasks" : "from its chat with the owner"}. Its words, not the owner's. Do it with your own tools as you would for the owner. Your reply is your answer: ${asker} gets it once any task you start for it has ended, and the owner sees it here. Don't ask anything back: if something's missing, do what you can and say what you needed.)`;
       } else if (user)
         userBlocks.push({
           type: "text",
@@ -1778,6 +1910,12 @@ export class Thread {
       this.setEffort(episode.id, bot.id, chatEffort);
       this.appendTurn(episode.id, bot.id, "user", userBlocks);
       if (note) this.appendNote(episode.id, bot.id, note);
+    }
+    // Writing a hand-off's answer again, once a task it started has ended: it still answers that.
+    const resumed = (rewrite ?? again) && this.handoffAnswers.get((rewrite ?? again)?.id as number);
+    if (resumed) {
+      this.currentHandoff = resumed;
+      resumed.episodes.push(episode.id);
     }
 
     const out =
@@ -1865,7 +2003,7 @@ export class Thread {
         db.query("UPDATE messages SET edited_at = ? WHERE id = ?").run(editedAt, out.id);
         events.emit({ type: "message.edited", id: out.id, editedAt });
       }
-      return { text, status };
+      return { id: out.id, text, status };
     };
 
     /**
@@ -2201,6 +2339,7 @@ export class Thread {
                 return this.trust(episode.id).suspected !== null;
               },
               ownerSaid: () => this.ownerSaid(episode.id),
+              answering: this.currentHandoff?.task,
               livePlugin: (t) => this.livePlugin(bot, t, incognito),
               gated: async (t, input, signal) => {
                 // The sandbox is scratch space; only commands on the homelab and accounts count.

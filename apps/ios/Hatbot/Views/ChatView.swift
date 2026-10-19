@@ -257,7 +257,18 @@ struct ChatView: View {
       }
       .routes()
       .environment(\.openRoute, router)
-      .onAppear { router.open = { route in path.append(route) } }
+      .onAppear {
+        router.open = { route in path.append(route) }
+        // As Search does: that chat, then the message in it.
+        router.message = { link in
+          Task {
+            if store.conversations.contains(where: { $0.id == link.conversationId }) {
+              await store.openConversation(link.conversationId)
+            }
+            focus = link.messageId
+          }
+        }
+      }
       .onChange(of: store.conversationId) {
         path = []
         unfolded = []
@@ -318,11 +329,12 @@ final class Drafts {
   }
 }
 
-/// Pushes a page on the chat's navigation stack, from a message's menu. A class, so the messages see the
-/// same one on every redraw.
+/// Pushes a page on the chat's navigation stack, from a message's menu, or shows a message in another
+/// chat. A class, so the messages see the same one on every redraw.
 @MainActor
 final class OpenRoute {
   var open: (Route) -> Void = { _ in }
+  var message: (MessageLink) -> Void = { _ in }
 }
 
 extension EnvironmentValues {
@@ -729,6 +741,7 @@ private struct MessageRow: View, Equatable {
     case .task where m.taskId != nil: TaskMessage(taskId: m.taskId!)
     case .schedule where m.scheduleId != nil: ScheduleMessage(scheduleId: m.scheduleId!)
     case .box: BoxNote(m: m)
+    case .handoff: HandoffMessage(m: m)
     default: ReplyMessage(m: m)
     }
     if m.kind != .box, let id = m.boxId, !store.deletedBoxes.contains(id) { BoxResult(boxId: id) }
@@ -737,9 +750,13 @@ private struct MessageRow: View, Equatable {
     if let list = m.attachments, !list.isEmpty { MessageFiles(list: list, alignment: .leading) }
   }
 
-  /// Who it's from: a box's note is the box's.
+  /// Who it's from: a box's note is the box's, and a hand-off the bot's that asked.
   private var speaker: String {
-    m.kind == .box ? "From \(m.boxId.flatMap { store.boxes[$0]?.title } ?? "a box")" : store.botName(m.botId)
+    switch m.kind {
+    case .box: "From \(m.boxId.flatMap { store.boxes[$0]?.title } ?? "a box")"
+    case .handoff: "From \(store.botName(m.botId))"
+    default: store.botName(m.botId)
+    }
   }
 
   /// A plain reply, read as one: Markdown left out, and not word by word as it streams. Others, with
@@ -758,7 +775,7 @@ private struct MessageRow: View, Equatable {
     switch m.kind {
     case .text, .command: return done
     case .task: return done > m.createdAt ? done : nil
-    case .schedule, .box: return nil
+    case .schedule, .box, .handoff: return nil
     }
   }
 
@@ -777,6 +794,13 @@ private struct MessageRow: View, Equatable {
       if let id = m.boxId, store.boxes[id] != nil {
         Button("Open box", systemImage: "chevron.right") { open(.box(id)) }
       }
+    case .handoff:
+      copyButton(m.text)
+      if let link = m.link {
+        linkButton(link)
+      } else if let taskId = m.taskId {
+        openButton(taskId)
+      }
     default:
       let task = m.taskId.flatMap { store.tasks[$0] }
       let result = task.flatMap { $0.isActive ? nil : $0.summary }
@@ -788,6 +812,7 @@ private struct MessageRow: View, Equatable {
       }
       if let boxId = m.boxId { Button("Open box", systemImage: "chevron.right") { open(.box(boxId)) } }
       if let taskId = m.taskId { openButton(taskId) }
+      if let link = m.link { linkButton(link) }
       if m.status == .error && m.role == .assistant {
         Button("Try again", systemImage: "arrow.clockwise") { retry() }
       }
@@ -812,6 +837,10 @@ private struct MessageRow: View, Equatable {
 
   private func openButton(_ taskId: Int) -> some View {
     Button("Open task", systemImage: "chevron.right") { open(.task(taskId)) }
+  }
+
+  private func linkButton(_ link: MessageLink) -> some View {
+    Button(store.openLabel(link), systemImage: "chevron.right") { router?.message(link) }
   }
 
   private func open(_ route: Route) { router?.open(route) }
@@ -946,6 +975,36 @@ private struct BoxNote: View {
     Text("\(Text(verbatim: "From \(title):").bold()) \(Text(verbatim: m.text))")
       .textSelection(.enabled)
       .onAppear { if let id = m.boxId { store.ensureBox(id) } }
+  }
+}
+
+extension AppStore {
+  /// "Open in Coder's chat", for a hand-off's other end.
+  fileprivate func openLabel(_ link: MessageLink) -> String {
+    guard let c = conversations.first(where: { $0.id == link.conversationId }) else { return "Open the other chat" }
+    return c.kind == .group ? "Open in \(chatName(c))" : "Open in \(chatName(c))'s chat"
+  }
+}
+
+/// Another bot handing this chat's bot work: its request, and a way to where it asked, or to the task when
+/// a task asked.
+private struct HandoffMessage: View {
+  let m: ThreadMessage
+  @Environment(AppStore.self) private var store
+  @Environment(\.openRoute) private var router
+
+  var body: some View {
+    Text("From \(store.botName(m.botId)):").bold()
+    MarkdownText(text: m.text)
+    if let link = m.link {
+      Button(store.openLabel(link)) { router?.message(link) }
+        .glassButton()
+        .controlSize(.small)
+    } else if let taskId = m.taskId {
+      Button("Open task") { router?.open(.task(taskId)) }
+        .glassButton()
+        .controlSize(.small)
+    }
   }
 }
 

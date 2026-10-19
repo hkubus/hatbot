@@ -68,6 +68,21 @@ export function slugOf(name: string): string {
   return /^[a-z]/.test(slug) ? slug : `bot-${slug}`.replace(/-+$/, "");
 }
 
+/** Plugins that write code. The code bot's are its alone: the others hand that work to it. */
+const CODE_PLUGINS = ["code", "self"];
+
+/**
+ * The bot all code and boxes go to (PLAN.md §14.7): the first made, other than Hatbot, whose plugins
+ * name the Code plugin, as the Coder template's do. Null without one: then every bot writes its own.
+ */
+export function codeBotOf(bots: Bot[]): Bot | null {
+  return (
+    bots
+      .filter((b) => b.id !== HATBOT_ID && b.plugins?.includes("code"))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))[0] ?? null
+  );
+}
+
 export class Bots {
   constructor(
     private db: Db,
@@ -101,6 +116,18 @@ export class Bots {
 
   hatbot(): Bot {
     return this.get(HATBOT_ID) as Bot;
+  }
+
+  /** The bot code and boxes go to, or null: see codeBotOf. */
+  codeBot(): Bot | null {
+    return codeBotOf(this.list());
+  }
+
+  /** The plugins `bot` leaves to the code bot, which has them: none for the code bot itself. */
+  leftToCoder(bot: Bot): string[] {
+    const coder = this.codeBot();
+    if (!coder || coder.id === bot.id) return [];
+    return CODE_PLUGINS.filter((id) => coder.plugins?.includes(id));
   }
 
   /** Its name, for notifications and transcripts; the id for one that's gone. */
@@ -246,7 +273,7 @@ export function promptFor(
   base: string,
   bot: Bot,
   others: Bot[],
-  handOver = "When the owner asks for work that needs another bot's plugins, logins or notes, hand it over with ask_bot. What you can do with your own tools, quick questions included, do yourself: a hand-off is a background task the owner waits for.",
+  handOver = "When the owner asks for work that needs another bot's plugins, logins or notes, hand it over with ask_bot. What you can do with your own tools, quick questions included, do yourself: the other bot answers in its own chat, and the owner waits for it.",
 ): string {
   const named = bot.id === HATBOT_ID ? base : base.replace(/\bHatbot\b/g, bot.name);
   const parts: string[] = [];
@@ -266,6 +293,7 @@ export function promptFor(
         ),
         "- Each bot has its own chat with the owner, and its own plugins and browser profile.",
         `- ${handOver}`,
+        ...codeLine(bot, others),
         folder
           ? `- Memory outside bots/ is shared by every bot: keep what any of them would need there (the owner, their homelab, their projects). Your own notes go in ${folder}/, with ${folder}/INDEX.md mapping them. Leave other bots' folders alone.`
           : "- Memory outside bots/ is shared by every bot, you included. Each other bot keeps its own notes in bots/<its id>/; leave those alone.",
@@ -273,6 +301,19 @@ export function promptFor(
     );
   }
   return parts.length ? `${named}\n\n${parts.join("\n\n")}` : named;
+}
+
+/** Who writes code and makes boxes, when one bot does it for all of them. */
+function codeLine(bot: Bot, others: Bot[]): string[] {
+  const coder = codeBotOf([bot, ...others]);
+  if (!coder) return [];
+  return coder.id === bot.id
+    ? [
+        "- The other bots hand you their code and boxes. You can change any of the owner's boxes, whoever made it.",
+      ]
+    : [
+        `- Code is ${coder.name}'s: writing or changing code, scripts and boxes. Hand it to ${coder.name} with ask_bot, with everything it needs, rather than writing it yourself.`,
+      ];
 }
 
 /** A bot's role in a line, for the others' prompts. */

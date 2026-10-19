@@ -1,6 +1,12 @@
 // Your chats (PLAN.md §14): each bot's own, and groups of bots. One Thread runs each; what isn't tied
 // to one chat (tasks' messages, what you've seen) is here.
-import { type Box, type Conversation, HATBOT_ID, type Task } from "@hatbot/shared";
+import {
+  type Box,
+  type Conversation,
+  HATBOT_ID,
+  type MessageLink,
+  type Task,
+} from "@hatbot/shared";
 import { BotError } from "../bots";
 import { resultText, Thread, type ThreadDeps } from "./thread";
 
@@ -251,6 +257,14 @@ export class Chats {
       .run(taskId, messageId).changes;
     if (done) this.d.events.emit({ type: "message.task", id: messageId, taskId });
     return done > 0;
+  }
+
+  /** A hand-off's asking message now links to its request in the other bot's chat (PLAN.md §14.7). */
+  link(messageId: number, link: MessageLink) {
+    this.d.db
+      .query("UPDATE messages SET link_conversation_id = ?, link_message_id = ? WHERE id = ?")
+      .run(link.conversationId, link.messageId, messageId);
+    this.d.events.emit({ type: "message.link", id: messageId, link });
   }
 
   /** A card from `botId` in a chat; a deleted one's go to the bot's own. */

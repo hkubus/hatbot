@@ -210,22 +210,27 @@ export class Plugins {
 
   /**
    * The ready plugins in a stable order: it's part of the prompt cache. With `only`, just those a
-   * bot may use.
+   * bot may use; without those in `except` (what it leaves to the code bot).
    */
-  private readyOnes(only: string[] | null) {
+  private readyOnes(only: string[] | null, except: string[]) {
     return [...this.slots.values()]
-      .filter((s) => s.state === "ready" && (!only || only.includes(s.plugin.id)))
+      .filter(
+        (s) =>
+          s.state === "ready" &&
+          (!only || only.includes(s.plugin.id)) &&
+          !except.includes(s.plugin.id),
+      )
       .sort((a, b) => a.plugin.id.localeCompare(b.plugin.id));
   }
 
   /** Tools of the ready plugins, for the chat and tasks. */
-  tools(only: string[] | null = null): PluginTool[] {
-    return this.readyOnes(only).flatMap((s) => s.instance?.tools ?? []);
+  tools(only: string[] | null = null, except: string[] = []): PluginTool[] {
+    return this.readyOnes(only, except).flatMap((s) => s.instance?.tools ?? []);
   }
 
   /** The ready plugins' paragraphs for the system prompt. */
-  guidance(only: string[] | null = null): string {
-    return this.readyOnes(only)
+  guidance(only: string[] | null = null, except: string[] = []): string {
+    return this.readyOnes(only, except)
       .flatMap((s) =>
         s.instance?.guidance ? `${s.plugin.name}\n${s.instance.guidance.trim()}` : [],
       )

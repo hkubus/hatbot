@@ -359,13 +359,14 @@ test("a task waits for the tasks it starts and reports for them; cancelling it c
       content: [toolUse("run_desktop_task", { title: "Slow", goal: "Wait", success_criteria: "" })],
     },
     { content: [toolUse("ask_bot", { bot: "Chef", request: "Plan Sunday dinner" })] },
-    {
-      wait: new Promise((r) => {
-        release = () => r(null);
-      }),
-      ...finish("Soup.", false),
-    },
   );
+  // Chef answers in its own chat.
+  t.model.script.push({
+    wait: new Promise((r) => {
+      release = () => r(null);
+    }),
+    content: [text("Soup.")],
+  });
   const cancelled = async (title: string, unblock: () => void) => {
     const parent = background(title);
     const waited = await waitFor(() => t.tasks.list().find((x) => x.parentId === parent.id));
