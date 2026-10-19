@@ -94,3 +94,80 @@ test.skipIf(!withChromium)(
     }
   },
 );
+
+test.skipIf(!withChromium)(
+  "a look tries the page: typing is saved, a throwing handler names its step, a failed step ends the run, and fetches go through the relay",
+  async () => {
+    // Hatbox's preview script, cut down: its store in the page, its fetch through the binding.
+    const html = `<!doctype html><input id="name"><button id="add">Add</button><button id="boom">Boom</button>
+      <script>
+        const kept = new Map();
+        const sent = new Map();
+        Object.defineProperty(window, "__hatboxAnswer", { value: (id, a) => sent.get(id)(a) });
+        window.hatbox = {
+          store: { keys: async () => [...kept.keys()], get: async (k) => kept.get(k), set: async (k, v) => void kept.set(k, v) },
+          fetch: (path) => new Promise((resolve) => {
+            sent.set(sent.size + 1, resolve);
+            __hatboxFetch(JSON.stringify({ id: sent.size, path, method: "POST" }));
+          }),
+        };
+        document.getElementById("add").onclick = async () => {
+          const name = document.getElementById("name").value;
+          const a = await hatbox.fetch("/items?name=" + name);
+          await hatbox.store.set("items", [name, a.value.status]);
+        };
+        document.getElementById("boom").onclick = () => { throw new Error("boom"); };
+      </script>`;
+    const look = {
+      html,
+      csp: "sandbox allow-scripts",
+      width: 390,
+      height: 844,
+      dark: false,
+      relay: "look-0123456789abcdef",
+      steps: [
+        { type: "#name", text: "Walk" },
+        { click: "#add" },
+        { click: "#boom" },
+        { eval: "document.querySelector('#name').value" },
+        { click: "#missing" },
+        { press: "Enter" },
+      ],
+    };
+    const post = (path: string, body: unknown) =>
+      handle(new Request(`http://render${path}`, { method: "POST", body: JSON.stringify(body) }), {
+        chromium,
+      });
+    const res = await post("/box", look);
+    expect(res.headers.get("content-type")).toBe("application/x-ndjson");
+    const fetched: unknown[] = [];
+    let last: { result?: Record<string, unknown> } = {};
+    const text = new TextDecoder();
+    let rest = "";
+    for await (const chunk of res.body as ReadableStream<Uint8Array>) {
+      const lines = (rest + text.decode(chunk, { stream: true })).split("\n");
+      rest = lines.pop() ?? "";
+      for (const l of lines) {
+        const line = JSON.parse(l);
+        if (!line.fetch) last = line;
+        else {
+          fetched.push(line.fetch);
+          const answer = { value: { status: 201, headers: {}, body: "" } };
+          await post("/box/answer", { look: look.relay, id: line.fetch.id, answer });
+        }
+      }
+    }
+    expect(fetched).toEqual([{ id: 1, path: "/items?name=Walk", method: "POST" }]);
+    expect(last.result?.steps).toEqual([
+      { ok: true },
+      { ok: true },
+      { ok: true },
+      { ok: true, value: '"Walk"' },
+      { ok: false, error: "Nothing matches #missing." },
+    ]);
+    expect(last.result?.store).toBe('{"items":["Walk",201]}');
+    expect(last.result?.errors).toContainEqual(
+      expect.objectContaining({ message: expect.stringContaining("boom"), step: 3 }),
+    );
+  },
+);

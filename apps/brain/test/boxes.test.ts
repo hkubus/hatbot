@@ -4,7 +4,7 @@ import type { BoxDetail, BoxFeedValue } from "@hatbot/shared";
 import { z } from "zod";
 import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { FRAME_CSP, previewed } from "../src/boxes";
-import { definePlugin, ready, tool } from "../src/plugins/plugin";
+import { allow, ask, definePlugin, ready, tool } from "../src/plugins/plugin";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { bot, lastUserText, signIn, type TestApp, testApp, waitFor } from "./helpers";
 
@@ -98,12 +98,27 @@ test("a bot changes only its own boxes", async () => {
   expect(t.boxes.get(1)?.title).toBe("Builds");
 });
 
-test("box_look: the bot sees its box drawn on the desktop with its errors, and with what the page saved as untrusted", async () => {
+test("box_look: the bot sees its box drawn on the desktop with its errors, tries it with steps, and sees what the page saved as untrusted; a saved change is checked and opened", async () => {
+  const steps = [
+    { type: "#name", text: "Walk" },
+    { click: "#add" },
+    { click: "#gone" },
+    { press: "Enter" },
+  ];
   const model = new FakeModel([
-    { content: [toolUse("box_look", { box: 1 })] },
+    { content: [toolUse("box_look", { box: 1, steps })] },
     { content: [text("No walks yet.")] },
     { content: [toolUse("box_look", { box: 1, with_data: true, width: "desktop", dark: true })] },
     { content: [text("Your walks show.")] },
+    {
+      content: [
+        toolUse("box_edit", {
+          box: 1,
+          html: "<!doctype html><script>localStorage.walks = 1; draw()</script>",
+        }),
+      ],
+    },
+    { content: [text("Saved.")] },
     { content: [toolUse("box_look", { box: 1 })] },
     { content: [text("Can't look.")] },
   ]);
@@ -119,11 +134,16 @@ test("box_look: the bot sees its box drawn on the desktop with its errors, and w
     png,
     width: 390,
     height: 844,
-    errors: [{ message: "Uncaught ReferenceError: draw is not defined", line }],
+    errors: [
+      { message: "Uncaught ReferenceError: draw is not defined", line },
+      { message: "Uncaught Error: no name", line, step: 2 },
+    ],
+    steps: [{ ok: true }, { ok: true }, { ok: false, error: "Nothing matches #gone." }],
+    store: '{"walks":4}',
   };
 
-  await t.thread.post("does the tracker look right?").done;
-  expect(t.agent.looks[0]).toMatchObject({ csp: FRAME_CSP, width: 390, dark: false });
+  await t.thread.post("does the tracker work?").done;
+  expect(t.agent.looks[0]).toMatchObject({ csp: FRAME_CSP, width: 390, dark: false, steps });
   // An empty store: only the bot's own code is at work, so it's trusted.
   expect(t.agent.looks[0]?.html).not.toContain('"walks"');
   const seen = lastUserText(model.requests[1]);
@@ -131,6 +151,11 @@ test("box_look: the bot sees its box drawn on the desktop with its errors, and w
     `{"type":"image","source":{"type":"base64","media_type":"image/png","data":"${png}"}}`,
   );
   expect(seen).toContain("draw is not defined (line 2)");
+  // Each step's outcome, the one after a failure not run, an error at its step, and what was saved.
+  expect(seen).toContain("Nothing matches #gone.");
+  expect(seen).toContain("4. press Enter: not run");
+  expect(seen).toContain("no name (line 2, step 2)");
+  expect(seen).toContain('{\\"walks\\":4}');
   expect(seen).not.toContain('trusted=\\"false\\"');
 
   await t.thread.post("and with my walks, on a computer, in dark?").done;
@@ -139,11 +164,19 @@ test("box_look: the bot sees its box drawn on the desktop with its errors, and w
   expect(lastUserText(model.requests[3])).toContain('trusted=\\"false\\"');
   expect(lastUserText(model.requests[3])).toContain('"type":"image"');
 
+  // A change is read for what the sandbox blocks, and opened once for its errors, with no picture.
+  await t.thread.post("keep the walks").done;
+  expect(t.agent.looks).toHaveLength(3);
+  const saved = lastUserText(model.requests[5]);
+  expect(saved).toContain("uses localStorage");
+  expect(saved).toContain("draw is not defined");
+  expect(saved).not.toContain('"type":"image"');
+
   // Without the desktop, a sentence.
   t.agent.configured = false;
   await t.thread.post("look again").done;
-  expect(t.agent.looks).toHaveLength(2);
-  expect(lastUserText(model.requests[5])).not.toContain('"type":"image"');
+  expect(t.agent.looks).toHaveLength(3);
+  expect(lastUserText(model.requests[7])).not.toContain('"type":"image"');
 });
 
 test("hatbox.ask: Haiku answers the page with no tools, as Boxes in Spend, within the boxes' own daily limit, and not while paused", async () => {
@@ -231,20 +264,31 @@ test("hatbox.feed: a plugin's read tool, run for the page on a timer without the
   await t.plugins.update("lab", { enabled: true });
   t.boxes.create({ botId: "hatbot", conversationId: 1, title: "Load", html: PAGE }, {});
   await t.thread.post("show the load in the box").done;
-  const feed = async () =>
-    ((await (await page(t, { op: "feed", name: "load" })).json()) as { value: BoxFeedValue }).value;
+  const feed = async (fresh?: true) =>
+    (
+      (await (await page(t, { op: "feed", name: "load", fresh })).json()) as {
+        value: BoxFeedValue;
+      }
+    ).value;
   expect((await feed()).value).toEqual({ node: "pve", load: 1 });
 
+  // A fresh read runs the tool again once what it has is over a minute old, not sooner.
   answer.load = 2;
-  t.advance(5 * 60_000);
-  await t.boxes.feeds?.tick();
-  expect(await feed()).toMatchObject({ value: { load: 2 }, at: new Date(t.clock()).toISOString() });
+  t.advance(60_000);
+  expect((await feed(true)).value).toMatchObject({ load: 1 });
+  t.advance(1_000);
+  expect((await feed(true)).value).toMatchObject({ load: 2 });
 
-  t.settings.update({ paused: true });
   answer.load = 3;
   t.advance(5 * 60_000);
   await t.boxes.feeds?.tick();
-  expect((await feed()).value).toMatchObject({ load: 2 });
+  expect(await feed()).toMatchObject({ value: { load: 3 }, at: new Date(t.clock()).toISOString() });
+
+  t.settings.update({ paused: true });
+  answer.load = 4;
+  t.advance(5 * 60_000);
+  await t.boxes.feeds?.tick();
+  expect((await feed(true)).value).toMatchObject({ load: 3 });
 
   t.settings.update({ paused: false });
   await t.plugins.update("lab", { enabled: false });
@@ -253,8 +297,8 @@ test("hatbox.feed: a plugin's read tool, run for the page on a timer without the
   t.advance(5 * 60_000);
   await t.boxes.feeds?.tick();
   // It keeps what it last read, saying why that's old.
-  const stopped = await feed();
-  expect(stopped.value).toMatchObject({ load: 2 });
+  const stopped = await feed(true);
+  expect(stopped.value).toMatchObject({ load: 3 });
   expect(stopped.error).toStartWith("Stopped");
   expect(model.requests).toHaveLength(2);
 });
@@ -286,4 +330,105 @@ test("after reading untrusted content, giving a box a feed waits for the owner, 
   t.approvals.decide(asked.id, "deny", "web");
   await reply.done;
   expect(t.boxes.feeds?.list(1)).toEqual([]);
+});
+
+/** A plugin with one write tool: a restart it allows, anything else it asks about. */
+function rack(ran: string[]) {
+  return definePlugin({
+    id: "rack",
+    name: "Rack",
+    description: "",
+    config: z.object({}),
+    start: () =>
+      ready([
+        tool({
+          name: "rack_exec",
+          description: "",
+          access: "write",
+          schema: z.object({ command: z.string() }),
+          describe: ({ command }) => `On rack: ${command}`,
+          policy: ({ command }) =>
+            command.startsWith("systemctl restart ") ? allow() : ask("Commands need approval."),
+          run: async ({ command }) => {
+            ran.push(command);
+            return `ran ${command}`;
+          },
+        }),
+      ]),
+  });
+}
+
+test("hatbox.action: the bot declares it and the owner approves it once; each press then follows the tool's policy, and none run while paused", async () => {
+  const restart = {
+    box: 1,
+    name: "restart",
+    tool: "rack_exec",
+    tool_input: { command: "systemctl restart x" },
+  };
+  const reboot = { box: 1, name: "reboot", tool: "rack_exec", tool_input: { command: "reboot" } };
+  const model = new FakeModel([
+    { content: [toolUse("box_action", restart)] },
+    { content: [text("Not added.")] },
+    { content: [toolUse("box_action", restart)] },
+    { content: [text("Added.")] },
+    { content: [toolUse("box_action", reboot)] },
+    { content: [text("Added.")] },
+  ]);
+  const ran: string[] = [];
+  const t = await testApp(model, new FakeModel(), {}, [rack(ran)]);
+  await t.plugins.update("rack", { enabled: true });
+  t.boxes.create({ botId: "hatbot", conversationId: 1, title: "Rack", html: PAGE }, {});
+  const declare = async (decision: "approve" | "deny") => {
+    const reply = t.thread.post("add a button");
+    const asked = await waitFor(() => t.approvals.list(true)[0]);
+    t.approvals.decide(asked.id, decision, "web");
+    await reply.done;
+  };
+  const press = async (name: string, check?: boolean) => {
+    const res = await page(t, { op: "action", name, ...(check ? { check } : {}) });
+    return { status: res.status, ...((await res.json()) as { value?: unknown }) };
+  };
+
+  // Declaring asks the owner, and a refusal adds nothing. It never runs then.
+  await declare("deny");
+  expect((await press("restart")).status).toBe(404);
+  await declare("approve");
+  await declare("approve");
+  expect(ran).toEqual([]);
+  const detail = (await (
+    await t.call("GET", "/boxes/1", undefined, signIn(t))
+  ).json()) as BoxDetail;
+  expect(detail.actions.map((a) => a.what)).toEqual([
+    "On rack: reboot",
+    "On rack: systemctl restart x",
+  ]);
+
+  // Allowed by the tool's policy: it runs at once, and the page gets what it answered.
+  expect((await press("restart")).value).toEqual({
+    status: "done",
+    output: "ran systemctl restart x",
+    ok: true,
+  });
+  expect(t.thread.list().at(-1)).toMatchObject({ kind: "box", boxId: 1 });
+
+  // Asked by it: the owner approves this run, and only then does it run.
+  expect((await press("reboot")).value).toEqual({ status: "asked" });
+  expect((await press("reboot")).status).toBe(429);
+  expect((await press("reboot", true)).value).toMatchObject({ waiting: true });
+  expect(ran).toEqual(["systemctl restart x"]);
+  const asked = t.approvals.list(true)[0];
+  t.approvals.decide(asked?.id ?? 0, "approve", "web");
+  await waitFor(() => t.thread.list().at(-1)?.text.startsWith("Ran reboot"));
+  expect((await press("reboot", true)).value).toMatchObject({ output: "ran reboot" });
+
+  // Pause all cancels a press waiting for approval, and refuses new ones.
+  expect((await press("reboot")).value).toEqual({ status: "asked" });
+  await t.call("POST", "/pause-all", {}, signIn(t));
+  expect(t.approvals.list(true)).toEqual([]);
+  expect((await press("restart")).status).toBe(409);
+  await waitFor(() => t.thread.list().at(-1)?.text.startsWith("Didn't run reboot"));
+  expect(ran).toEqual(["systemctl restart x", "reboot"]);
+  // Those notes don't use up the page's own five an hour.
+  for (let i = 0; i < 5; i++)
+    expect((await page(t, { op: "send", text: `${i}` })).status).toBe(200);
 });

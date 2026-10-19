@@ -20,7 +20,7 @@ const boxFetch = async (t: TestApp, body: object) => {
   return { status: res.status, ...((await res.json()) as { value?: BoxResponse; error?: string }) };
 };
 
-test("a server box: made in the chat from files, built on the guest, its page reaching its backend, its logs and answers untrusted", async () => {
+test("a server box: made in the chat from files, built on the guest, its page reaching its backend (in a look too), its logs and answers untrusted", async () => {
   const model = new FakeModel([
     { content: [toolUse("box_create", { title: "Prices", files: files() })] },
     { content: [text("Made it.")] },
@@ -28,6 +28,7 @@ test("a server box: made in the chat from files, built on the guest, its page re
       content: [
         toolUse("box_call", { box: 1, path: "/price" }),
         toolUse("box_logs", { box: 1 }),
+        toolUse("box_look", { box: 1, backend: true }),
         toolUse("box_edit", { box: 1, edits: [{ file: "server.ts", old: "42", new: "43" }] }),
       ],
     },
@@ -77,11 +78,21 @@ test("a server box: made in the chat from files, built on the guest, its page re
 
   t.hatbox.log = "12:00 fetched shop.example.com";
   t.hatbox.failBuild = 'error: Could not resolve "chart.js"';
+  // In a look with its backend, the page's fetches reach it through the brain, live.
+  t.agent.lookFetches = [{ path: "/price" }, { path: "/buy", method: "POST", body: "1" }];
   await t.thread.post("is it working?").done;
-  // Its answer, its logs and a failed build's output; the build that failed made no version.
+  expect(t.agent.looks.at(-1)?.html).toContain("const bind = true &&");
+  const bought = t.agent.lookAnswers[1]?.value as BoxResponse | undefined;
+  expect(JSON.parse(bought?.body ?? "")).toMatchObject({
+    method: "POST",
+    path: "/buy",
+    body: "1",
+  });
+  // Its answer, its logs, the look and a failed build's output; the build that failed made no version.
   const read = lastUserText(model.requests[3]);
-  expect(read.match(/trusted=\\"false\\"/g)).toHaveLength(3);
+  expect(read.match(/trusted=\\"false\\"/g)).toHaveLength(4);
   expect(read).toContain("fetched shop.example.com");
+  expect(read).toContain("POST /buy: 200");
   expect(t.boxes.get(1)?.version).toBe(1);
 });
 
@@ -175,15 +186,23 @@ test("a server box's schedule runs when due, at most every 5 minutes; Pause all 
   expect((await boxFetch(t, { path: "/" })).status).toBe(503);
 });
 
-test("a backend's scheduled() notifies you, opening the box, with a note the bot reads as untrusted; 10 a day, and none once paused", async () => {
-  const model = new FakeModel([{ content: [text("Hello.")] }, { content: [text("Cheaper.")] }]);
+test("a backend's scheduled() notifies you, opening the box, with a note the bot reads as untrusted; 10 a day, and none once paused; run by the bot, it tells only the bot", async () => {
+  const model = new FakeModel([
+    { content: [toolUse("box_call", { box: 1, scheduled: true })] },
+    { content: [text("Hello.")] },
+    { content: [text("Cheaper.")] },
+  ]);
   const t = await testApp(model);
   const config = { hosts: [], cron: "*/5 * * * *" };
   t.boxes.create(
     { botId: "hatbot", conversationId: 1, title: "Prices", html: PAGE, files: files(config) },
     {},
   );
-  await t.thread.post("hi").done;
+  t.hatbox.run = { ok: true, notify: "Price dropped to €39" };
+  await t.thread.post("try its schedule").done;
+  expect(t.hatbox.runs).toEqual([1]);
+  expect(lastUserText(model.requests[1])).toContain("Price dropped to €39");
+  expect(lastUserText(model.requests[1])).toContain('trusted=\\"false\\"');
   t.hatbox.run = { ok: true, notify: "Price dropped to €40" };
   const tick = async () => {
     t.advance(5 * 60_000);
@@ -195,8 +214,8 @@ test("a backend's scheduled() notifies you, opening the box, with a note the bot
   ]);
   expect(t.thread.list().at(-1)).toMatchObject({ kind: "box", boxId: 1 });
   await t.thread.post("anything new?").done;
-  expect(lastUserText(model.requests[1])).toContain("Price dropped to €40");
-  expect(lastUserText(model.requests[1])).toContain('trusted=\\"false\\"');
+  expect(lastUserText(model.requests[2])).toContain("Price dropped to €40");
+  expect(lastUserText(model.requests[2])).toContain('trusted=\\"false\\"');
 
   // The eleventh in a day isn't sent: the box's log says so. The page's own notes count apart.
   for (let i = 0; i < 10; i++) await tick();

@@ -15,6 +15,7 @@ import {
   MAX_BOX_STORE,
   MAX_BOX_VALUE,
 } from "@hatbot/shared";
+import { LOOK_BINDING } from "@hatbot/shared/desktop";
 import {
   BOX_CONFIG,
   BOX_SERVER,
@@ -27,6 +28,7 @@ import {
 import type { Chats } from "./agent/chats";
 import { type CreateParams, type ModelClient, modelErrorText, oneShot } from "./agent/model";
 import { sameText, secretKey } from "./auth/keys";
+import type { BoxActions } from "./box-actions";
 import type { BoxFeeds } from "./box-feeds";
 import type { Db } from "./db";
 import { UserError } from "./errors";
@@ -83,7 +85,10 @@ const NOTES_PER_HOUR = 5;
  */
 export const NOTIFY_PER_DAY = 10;
 
-/** What hatbox.ask, .send and .feed, and backends' notifications, need: given once the chats exist. */
+/**
+ * What hatbox.ask, .send, .feed and .action, and backends' notifications, need: given once the chats
+ * exist.
+ */
 export type BoxDeps = {
   settings: SettingsStore;
   spend: Spend;
@@ -91,6 +96,7 @@ export type BoxDeps = {
   model: ModelClient;
   chats: Chats;
   feeds: BoxFeeds;
+  actions: BoxActions;
   notifier: Notifier;
   publicUrl: string;
 };
@@ -126,6 +132,10 @@ export class Boxes {
     return this.d?.feeds ?? null;
   }
 
+  get actions(): BoxActions | null {
+    return this.d?.actions ?? null;
+  }
+
   /** The latest changed first; only `botId`'s, when it's given. */
   list(botId?: string): Box[] {
     const where = botId === undefined ? "" : "WHERE bot_id = ?";
@@ -148,7 +158,7 @@ export class Boxes {
         `SELECT ${VERSION_COLUMNS} FROM box_versions WHERE box_id = ? ORDER BY n`,
       )
       .all(id);
-    return { ...box, versions, secrets: this.secrets(id) };
+    return { ...box, versions, secrets: this.secrets(id), actions: this.d?.actions.info(id) ?? [] };
   }
 
   /** A version's page, the current one unless `n` is given. */
@@ -393,6 +403,7 @@ export class Boxes {
     if (gone) {
       this.events.emit({ type: "box.deleted", id });
       void this.backends?.remove(id);
+      this.d?.actions.forget(id);
       const names = this.setSecretNames(id);
       if (names.length) this.vault?.setBox(id, Object.fromEntries(names.map((n) => [n, null])));
     }
@@ -473,8 +484,15 @@ export class Boxes {
         this.send(this.existing(id), c.text);
         return {};
       case "feed": {
-        const latest = this.connected().feeds.latest(id, c.name);
+        const { feeds } = this.connected();
+        const latest = c.fresh ? await feeds.fresh(id, c.name) : feeds.latest(id, c.name);
         return latest ? { value: latest } : {};
+      }
+      case "action": {
+        const { actions } = this.connected();
+        if (!c.check) return { value: await actions.press(this.existing(id).id, c.name) };
+        const last = actions.last(id, c.name);
+        return last ? { value: last } : {};
       }
     }
   }
@@ -536,6 +554,8 @@ export class Boxes {
         .query<{ n: number }, [number, string]>(
           `SELECT count(*) AS n FROM messages WHERE box_id = ?1 AND kind = 'box' AND created_at > ?2
            AND id NOT IN (SELECT message_id FROM box_notices
+             WHERE box_id = ?1 AND message_id IS NOT NULL)
+           AND id NOT IN (SELECT message_id FROM box_action_runs
              WHERE box_id = ?1 AND message_id IS NOT NULL)`,
         )
         .get(box.id, since)?.n ?? 0;
@@ -623,7 +643,8 @@ const BASE_CSS = `:root{--hb-bg:light-dark(#f5f5f7,#161617);--hb-surface:light-d
  * the page is a frame and calls are messages to its parent, which also sends the theme; in the iOS app
  * it's the web view's own page, and calls go to WebKit's `hatbox` handler, which replies. Links to
  * other pages open in a new tab, since the frame can't leave the box. In box_look's render there's no
- * app: the store is kept in memory for that render, and calls that would reach outside the page fail.
+ * app: the store is kept in memory for that render, and calls that would reach outside the page fail,
+ * but for fetch in a look with the backend, which goes to the renderer's binding and so to the brain.
  */
 const HATBOX = `(() => {
   const root = document.documentElement;
@@ -640,10 +661,28 @@ const HATBOX = `(() => {
   let next = 1;
   const waiting = new Map();
   const kept = new Map(Object.entries(preview || {}).map(([k, v]) => [k, JSON.stringify(v)]));
+  const bind = __RELAY__ && window.__LOOK_BINDING__;
+  const sent = new Map();
+  if (bind)
+    Object.defineProperty(window, "__hatboxAnswer", {
+      value: (id, a) => {
+        const w = sent.get(id);
+        if (!w) return;
+        sent.delete(id);
+        if (typeof a?.error === "string") w.reject(new Error(a.error));
+        else w.resolve(a?.value);
+      },
+    });
   const previewCall = async (op, args) => {
     if (op === "get") return kept.has(args.key) ? JSON.parse(kept.get(args.key)) : undefined;
     if (op === "keys") return [...kept.keys()].sort();
     if (op === "delete") return void kept.delete(args.key);
+    if (op === "fetch" && bind)
+      return new Promise((resolve, reject) => {
+        const id = next++;
+        sent.set(id, { resolve, reject });
+        bind(JSON.stringify({ ...args, id }));
+      });
     if (op !== "set") throw new Error("Not in a preview.");
     const json = JSON.stringify(args.value);
     if (json === undefined) throw new Error("That isn't a value a box can keep.");
@@ -717,7 +756,8 @@ const HATBOX = `(() => {
       return call("ask", args);
     },
     send: (text) => call("send", { text: String(text) }),
-    feed: (name) => call("feed", { name: String(name) }),
+    feed: (name, o) => call("feed", o?.fresh ? { name: String(name), fresh: true } : { name: String(name) }),
+    action: (name, o) => call("action", { name: String(name), ...(o && o.check ? { check: true } : {}) }),
     fetch: boxFetch,
     theme,
   });
@@ -730,21 +770,32 @@ export function framed(html: string, dark: boolean): string {
 
 /**
  * A box's page as box_look draws it (PLAN.md §21.12): hatbox.store starts with `store` and keeps what
- * the page saves in memory, for that render only. `lines`: how many lines Hatbox puts above the page's
- * own, which the line numbers of its errors count.
+ * the page saves in memory, for that render only. With `backend`, hatbox.fetch goes out through the
+ * renderer's binding (§21.15). `lines`: how many lines Hatbox puts above the page's own, which the
+ * line numbers of its errors count.
  */
 export function previewed(
   html: string,
   dark: boolean,
   store: Record<string, unknown>,
+  backend = false,
 ): { html: string; lines: number } {
-  return withHatbox(html, dark, store);
+  return withHatbox(html, dark, store, backend);
 }
 
-function withHatbox(html: string, dark: boolean, preview: Record<string, unknown> | null) {
+function withHatbox(
+  html: string,
+  dark: boolean,
+  preview: Record<string, unknown> | null,
+  backend = false,
+) {
   // As JSON in the script, with no "<" that could end it. A function, so "$&" in it stays as it is.
+  // Last, so nothing in it is taken for a placeholder.
   const json = preview ? JSON.stringify(preview).replace(/</g, "\\u003c") : "null";
-  const script = HATBOX.replace("__DARK__", String(dark)).replace("__PREVIEW__", () => json);
+  const script = HATBOX.replace("__DARK__", String(dark))
+    .replace("__RELAY__", String(backend))
+    .replace("__LOOK_BINDING__", LOOK_BINDING)
+    .replace("__PREVIEW__", () => json);
   const head = `<style>${BASE_CSS}</style><script>${script}</script>`;
   const at = /^\s*<!doctype[^>]*>/i.exec(html)?.[0].length ?? 0;
   return { html: html.slice(0, at) + head + html.slice(at), lines: head.split("\n").length - 1 };

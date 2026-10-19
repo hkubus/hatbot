@@ -1,8 +1,10 @@
 // Built-in tools for the chat thread (PLAN.md §5.5): memory, history search, desktop tasks, schedules.
 import type Anthropic from "@anthropic-ai/sdk";
 import {
+  type ApprovalKind,
   type Bot,
   type Box,
+  BoxCall,
   describeCondition,
   describeCron,
   dueTag,
@@ -26,10 +28,19 @@ import {
   withDone,
   withTodo,
 } from "@hatbot/shared";
-import { type BoxLookError, MAX_LOOK_HEIGHT } from "@hatbot/shared/desktop";
+import {
+  BOX_KEYS,
+  type BoxLookAnswer,
+  type BoxLookError,
+  type BoxLookFetch,
+  type BoxStep,
+  MAX_LOOK_HEIGHT,
+  MAX_LOOK_STEPS,
+} from "@hatbot/shared/desktop";
 import {
   BOX_CONFIG,
   BOX_PAGE,
+  BOX_SERVER,
   type BoxFile,
   badFiles,
   boxConfig,
@@ -39,6 +50,7 @@ import {
 import { z } from "zod";
 import type { Attachments } from "../attachments";
 import { type Bots, botFolder } from "../bots";
+import { type BoxAction, MAX_BOX_ACTIONS } from "../box-actions";
 import type { BoxFeed } from "../box-feeds";
 import { BoxError, type Boxes, FRAME_CSP, previewed } from "../boxes";
 import type { Db } from "../db";
@@ -125,7 +137,15 @@ export type ToolContext = {
    * Your note on the approval, for the tool's result, or why it mustn't go ahead. `always`: only you.
    */
   approve?: (
-    call: { tool: string; input: unknown; what: string; why: string; always?: boolean },
+    call: {
+      tool: string;
+      input: unknown;
+      what: string;
+      why: string;
+      always?: boolean;
+      /** What approving it is, when it isn't "other": an approval only the app may give, say. */
+      kind?: ApprovalKind;
+    },
     signal: AbortSignal,
   ) => Promise<{ content: string; isError: boolean }>;
 };
@@ -473,9 +493,42 @@ function boxOutput(
 
 /** An error box_look's page hit, at its line in the page: Hatbox's script comes `lines` above it. */
 function lookError(e: BoxLookError, lines: number | null): string {
-  const at = lines !== null && e.line && e.line > lines ? ` (line ${e.line - lines})` : "";
-  return `- ${e.message}${at}${e.count ? ` (${e.count} times)` : ""}`;
+  const at = [
+    lines !== null && e.line && e.line > lines && `line ${e.line - lines}`,
+    e.step && `step ${e.step}`,
+    e.count && `${e.count} times`,
+  ].filter(Boolean);
+  return `- ${e.message}${at.length ? ` (${at.join(", ")})` : ""}`;
 }
+
+/** A box_look step, in a few words. */
+function stepLabel(s: BoxStep): string {
+  if ("click" in s) return `click ${s.click}`;
+  if ("type" in s) return `type ${JSON.stringify(cut(s.text, 40))} into ${s.type}`;
+  if ("press" in s) return `press ${s.press}`;
+  if ("wait" in s) return `wait for ${s.wait}`;
+  if ("wait_ms" in s) return `wait ${s.wait_ms} ms`;
+  return `eval ${cut(s.eval.replace(/\s+/g, " "), 60)}`;
+}
+
+const SELECTOR = z.string().min(1).max(1000).describe("A CSS selector");
+const BOX_STEP = z.union([
+  z.object({ click: SELECTOR }),
+  z.object({ type: SELECTOR, text: z.string().max(10_000).describe("Replaces what's in it") }),
+  z.object({ press: z.enum(BOX_KEYS).describe("To the focused element") }),
+  z.object({
+    wait: SELECTOR.describe("Until this CSS selector matches"),
+    ms: z.number().int().min(0).max(5000).optional().describe("2000 if left out"),
+  }),
+  z.object({ wait_ms: z.number().int().min(0).max(3000) }),
+  z.object({
+    eval: z
+      .string()
+      .min(1)
+      .max(10_000)
+      .describe("JavaScript run in the page, awaited; its value comes back as JSON"),
+  }),
+]);
 
 /** Shows the box under the reply, and says so. */
 function shown(ctx: ToolContext, box: Box): string {
@@ -488,6 +541,10 @@ const BOX_TITLE = z.string().min(1).max(80).describe('Short, e.g. "Habit tracker
 /** A box's feed, for box_data. */
 const feedLine = (f: BoxFeed) =>
   `"${f.name}": ${f.tool} ${JSON.stringify(f.input)}, every ${f.everyMinutes} min${f.error ? `; ${f.error}` : ""}\n  ${f.at ? `Latest, ${f.at.slice(0, 16).replace("T", " ")} UTC: ${cut(JSON.stringify(f.value), 2000)}` : "Nothing yet"}`;
+
+/** A box's action, for box_data. */
+const actionLine = (a: BoxAction) =>
+  `"${a.name}": ${a.tool} ${JSON.stringify(a.input)}\n  ${a.at ? `Last run, ${a.at.slice(0, 16).replace("T", " ")} UTC: ${a.error ? cut(a.error, 2000) : cut(a.output ?? "", 2000)}` : "Not run yet"}`;
 
 /** What a feed gave, in a word or two. */
 const kindOf = (v: unknown) =>
@@ -623,6 +680,131 @@ function unsetSecrets(ctx: ToolContext, id: number): string {
     : "";
 }
 
+const INLINE_SCRIPT = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+const IMPORTS = /(^|[;}\n])\s*import\s*[\w{*'"]|\bimport\s*\(/;
+const TYPESCRIPT = [
+  /\binterface\s+[A-Z]\w*\s*(<[^>]*>)?\s*\{/,
+  /\btype\s+[A-Z]\w*\s*(<[^>]*>)?\s*=[^=]/,
+  /\b(let|const|var)\s+[\w$]+\s*:\s*[\w$[{(<]/,
+  /\bfunction\b[^(]*\([^)]*\)\s*:\s*[\w$<[{]/,
+  /\(\s*[\w$]+\??\s*:\s*(string|number|boolean|any|unknown|\w*Event|HTML\w*Element)\b[^()]*\)\s*(=>|\{)/,
+  /\bas\s+(const|HTML\w*Element)\b/,
+];
+const FROM_WEB =
+  /<(script|link|img|source|video|audio|iframe|embed|object|track|image|use)\b[^>]*?\s(src|href|srcset|data|poster|xlink:href)\s*=\s*["']?\s*(https?:)?\/\/|url\(\s*["']?\s*(https?:)?\/\/|@import\s+(url\()?\s*["']?(https?:)?\/\//i;
+const FETCHES_WEB = /\b(fetch|EventSource|WebSocket)\s*\(\s*["'`](https?|wss?):/;
+const STORAGE = /\b(localStorage|sessionStorage|indexedDB)\b|\bdocument\.cookie\b/;
+const DIALOG =
+  /(?<![\w$.]|function\s+)(alert|confirm|prompt)\s*\((?![^)]*\)\s*\{)|\bwindow\.(alert|confirm|prompt)\s*\(/;
+
+/** Code without its comments, roughly: enough that one naming localStorage isn't taken for a use. */
+const uncommented = (code: string) =>
+  code.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+
+/**
+ * Simple mistakes in a box's page that fail without saying much, found by reading it: the brain never
+ * runs or builds a box's code. A box with files is built by Bun, which leaves inline scripts as they
+ * are. Its backend (server.ts) isn't checked.
+ */
+export function pitfalls(files: BoxFile[], built: boolean): string[] {
+  const found = new Set<string>();
+  for (const f of files) {
+    if (f.path === BOX_SERVER || f.path === BOX_CONFIG) continue;
+    const name = built ? f.path : "The page";
+    const html = f.path.endsWith(".html");
+    const scripts = html
+      ? [...f.content.matchAll(INLINE_SCRIPT)]
+          .filter(([, attrs = ""]) => {
+            const type = /\btype\s*=\s*["']?([^"'\s>]+)/i.exec(attrs)?.[1];
+            const js = !type || /^(module|(text|application)\/javascript)$/i.test(type);
+            return js && !/\bsrc\s*=/i.test(attrs);
+          })
+          .map(([, , code = ""]) => uncommented(code))
+      : /\.(m?[jt]sx?)$/.test(f.path)
+        ? [uncommented(f.content)]
+        : [];
+    const inline = built ? `${f.path}: an inline <script>` : "The page's <script>";
+    for (const code of html ? scripts : []) {
+      if (IMPORTS.test(code))
+        found.add(
+          built
+            ? `${inline} uses import, which the build leaves as it is, so it fails; load the code by path instead (<script type="module" src="./app.ts">).`
+            : `${inline} uses import, which fails: a box of one page has nothing to import.`,
+        );
+      if (TYPESCRIPT.some((t) => t.test(code)))
+        found.add(`${inline} has TypeScript in it, which runs as it is and fails.`);
+      if (FETCHES_WEB.test(code))
+        found.add(
+          `${name} fetches from the web, which the page can't; a backend can, reached with hatbox.fetch.`,
+        );
+    }
+    if ((html || f.path.endsWith(".css")) && FROM_WEB.test(f.content))
+      found.add(
+        `${name} loads something from the web (a script, style, picture or font), which the box's CSP refuses; inline it.`,
+      );
+    for (const code of scripts) {
+      const storage = STORAGE.exec(code)?.[0];
+      if (storage)
+        found.add(
+          `${name} uses ${storage}, which the box's sandbox blocks; keep data with hatbox.store.`,
+        );
+      const dialog = DIALOG.exec(code);
+      if (dialog)
+        found.add(
+          `${name} calls ${dialog[1] ?? dialog[2]}(), which does nothing in the box's sandbox; show it in the page.`,
+        );
+    }
+  }
+  return [...found];
+}
+
+/**
+ * For a box just made or changed: what reading its page found, the build's warnings, and its errors once
+ * opened on the desktop, as box_look does without steps (no picture), so simple breakage shows even if
+ * the model doesn't look. Nothing of the desktop's when there's none or it fails.
+ */
+async function checked(
+  ctx: ToolContext,
+  signal: AbortSignal,
+  tool: string,
+  id: number,
+  warned = "",
+): Promise<string> {
+  const page = ctx.boxes?.page(id);
+  if (!page) return "";
+  const found = pitfalls(
+    page.files ?? [{ path: BOX_PAGE, content: page.html }],
+    Boolean(page.files),
+  );
+  const parts = [
+    found.length && `Check these before you finish:\n${found.map((x) => `- ${x}`).join("\n")}`,
+    warned &&
+      `The build warned:\n${boxOutput(ctx, tool, warned, `What building box "${page.title}" printed`)}`,
+  ];
+  const desktop = ctx.desktop?.configured
+    ? (ctx.desktop.withSignal?.(signal) ?? ctx.desktop)
+    : null;
+  try {
+    const { html, lines } = previewed(page.html, false, {});
+    const look =
+      desktop &&
+      (await desktop.lookAtBox({ html, csp: FRAME_CSP, width: 390, height: 844, dark: false }));
+    if (look) {
+      const errors = look.errors.map((e) => lookError(e, page.files ? null : lines)).join("\n");
+      const by = ctx.boxes?.taintedBy(id);
+      parts.push(
+        errors
+          ? `Opened it, with errors:\n${boxOutput(ctx, "box_look", errors, by ? `Box #${id} "${page.title}", written after reading: ${by}` : null)}`
+          : "Opened it: no errors.",
+      );
+    }
+  } catch {
+    // Without the desktop it's only not checked.
+  }
+  const text = parts.filter(Boolean).join("\n\n");
+  return text && `\n\n${text}`;
+}
+
 /**
  * A box's files built on the boxes guest, once hosts its backend couldn't reach before are approved
  * (in a tainted chat, or always for a box with secrets), and a change to the code of one with secrets
@@ -641,7 +823,7 @@ async function builtBox(
     /** The box's files before this change. */
     before?: BoxFile[];
   },
-): Promise<{ id: number; page: string; note: string } | string> {
+): Promise<{ id: number; page: string; note: string; warned: string } | string> {
   const guest = backends(ctx);
   const bad = badFiles(b.files);
   if (bad) return `Not saved: ${bad}`;
@@ -672,7 +854,7 @@ async function builtBox(
   const result = await guest.build(id, version, b.files);
   if (!result.ok || result.page === undefined)
     return `Not saved: the build failed. What it printed:\n\n${boxOutput(ctx, b.tool, result.output || "(nothing)", `What building box "${b.title}" printed`)}`;
-  return { id, page: result.page, note };
+  return { id, page: result.page, note, warned: result.output.replace(/^Built\.$/m, "").trim() };
 }
 
 /** A tool's result with a picture the model sees too (box_look). */
@@ -942,7 +1124,7 @@ export const TOOLS = [
   def({
     name: "box_create",
     description:
-      'Make a box: a small web app the owner keeps and opens from the chat, such as a tracker, a calculator, a planner or a dashboard. Not for a one-off answer: reply instead, with a chart block if it helps. A box is one self-contained HTML page, its CSS and JavaScript inline. It can\'t load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don\'t work; show messages and confirmations in the page. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app\'s colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku\'s answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes, and hatbox.feed(name) for what a feed you give it with box_feed last read. For more than a page, give files instead, built on the boxes guest into one page: index.html, which loads its scripts and styles by path (<script type="module" src="./app.ts">), the modules they import, npm packages in box.json, and server.ts for a backend (`export default { fetch(req), scheduled?() }` on Bun, keeping data with bun:sqlite in its working folder), which the page calls with await hatbox.fetch(path, init), answered like fetch. The backend reaches only the hosts box.json lists, and cron runs scheduled(), at most every 5 minutes, which may return {notify: "text"} to notify the owner, up to 10 times a day. An API key goes in box.json\'s secrets by name, read as process.env.NAME; the owner sets it on the box\'s page and you never see it: {"hosts": ["shop.example.com"], "cron": "0 * * * *", "packages": {"chart.js": "^4"}, "secrets": ["SHOP_KEY"]}. Then look at it with box_look and fix what\'s wrong before you say it\'s done.',
+      'Make a box: a small web app the owner keeps and opens from the chat, such as a tracker, a calculator, a planner or a dashboard. Not for a one-off answer: reply instead, with a chart block if it helps. A box is one self-contained HTML page, its CSS and JavaScript inline. It can\'t load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don\'t work; show messages and confirmations in the page. localStorage, sessionStorage, indexedDB and cookies are blocked. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app\'s colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku\'s answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes, hatbox.feed(name) for what a feed you give it with box_feed last read (with {fresh: true}, read again when over a minute old), and hatbox.action(name) to run an action you give it with box_action. For more than a page, give files instead, built on the boxes guest into one page: index.html, which loads its scripts and styles by path (<script type="module" src="./app.ts">; inline scripts aren\'t built, so import and TypeScript fail there), the modules they import, npm packages in box.json, and server.ts for a backend (`export default { fetch(req), scheduled?() }` on Bun, keeping data with bun:sqlite in its working folder), which the page calls with await hatbox.fetch(path, init), answered like fetch. The backend reaches only the hosts box.json lists, and cron runs scheduled(), at most every 5 minutes, which may return {notify: "text"} to notify the owner, up to 10 times a day. An API key goes in box.json\'s secrets by name, read as process.env.NAME; the owner sets it on the box\'s page and you never see it: {"hosts": ["shop.example.com"], "cron": "0 * * * *", "packages": {"chart.js": "^4"}, "secrets": ["SHOP_KEY"]}. Then try it with box_look, with steps that use it as the owner would, check what it saved, and fix what\'s wrong before you say it\'s done.',
     schema: z.object({
       title: BOX_TITLE,
       html: z.string().min(1).max(MAX_BOX_HTML).optional().describe("The whole page"),
@@ -967,7 +1149,7 @@ export const TOOLS = [
           },
           made,
         );
-        return `Made it. ${shown(ctx, box)}${unsetSecrets(ctx, box.id)}${b.note}`;
+        return `Made it. ${shown(ctx, box)}${unsetSecrets(ctx, box.id)}${b.note}${await checked(ctx, signal, "box_create", box.id, b.warned)}`;
       }
       if (!html) return "Not made: give the page as html.";
       const box = ctx.boxes.create(
@@ -979,13 +1161,13 @@ export const TOOLS = [
         },
         { messageId: ctx.messageId, taintedBy: chatTaint(ctx.tainted?.()) },
       );
-      return `Made it. ${shown(ctx, box)}`;
+      return `Made it. ${shown(ctx, box)}${await checked(ctx, signal, "box_create", box.id)}`;
     },
   }),
   def({
     name: "box_edit",
     description:
-      "Change one of your boxes, as a new version; the earlier ones are kept. Give edits for a few changes, or the whole new page as html. A box with files takes edits to any of them, whole files to add or replace, and files to remove. Then look at it again with box_look.",
+      "Change one of your boxes, as a new version; the earlier ones are kept. Give edits for a few changes, or the whole new page as html. A box with files takes edits to any of them, whole files to add or replace, and files to remove. Then try it again with box_look and its steps.",
     schema: z.object({
       box: z.number().int().describe("The box's number"),
       edits: z
@@ -1020,7 +1202,7 @@ export const TOOLS = [
         if (same && name === box.title) return "No change: the files and title are as they were.";
         const made = { messageId: ctx.messageId, taintedBy: chatTaint(ctx.tainted?.()) };
         const b = same
-          ? { page: current.html, note: "" }
+          ? { page: current.html, note: "", warned: "" }
           : await builtBox(ctx, signal, {
               tool: "box_edit",
               id,
@@ -1031,9 +1213,9 @@ export const TOOLS = [
             });
         if (typeof b === "string") return b;
         const saved = ctx.boxes.save(id, name, b.page, made, list);
-        return saved
-          ? `Saved. ${shown(ctx, saved)}${unsetSecrets(ctx, id)}${b.note}`
-          : "No change.";
+        if (!saved) return "No change.";
+        const again = same ? "" : await checked(ctx, signal, "box_edit", id, b.warned);
+        return `Saved. ${shown(ctx, saved)}${unsetSecrets(ctx, id)}${b.note}${again}`;
       }
       const page = edited(html ?? current.html, edits ?? []);
       if (page.length > MAX_BOX_HTML) return "Not changed: the page would be too long.";
@@ -1041,9 +1223,8 @@ export const TOOLS = [
         messageId: ctx.messageId,
         taintedBy: chatTaint(ctx.tainted?.()),
       });
-      return saved
-        ? `Saved. ${shown(ctx, saved)}`
-        : "No change: the page and title are as they were.";
+      if (!saved) return "No change: the page and title are as they were.";
+      return `Saved. ${shown(ctx, saved)}${page === current.html ? "" : await checked(ctx, signal, "box_edit", id)}`;
     },
   }),
   def({
@@ -1129,32 +1310,33 @@ export const TOOLS = [
   def({
     name: "box_data",
     description:
-      "What one of your boxes' page has saved with hatbox.store, by key, its feeds with what they last read, and which of its secrets the owner has set.",
+      "What one of your boxes' page has saved with hatbox.store, by key, its feeds with what they last read, its actions with how they last ran, and which of its secrets the owner has set.",
     schema: z.object({ box: z.number().int() }),
     run: async ({ box: id }, ctx) => {
       const box = ownBox(ctx, id);
       const data = ctx.boxes?.data(id) ?? {};
       const feeds = ctx.boxes?.feeds?.list(id) ?? [];
+      const actions = ctx.boxes?.actions?.list(id) ?? [];
       const secrets = secretsLine(ctx, id);
-      if (!Object.keys(data).length && !feeds.length)
+      if (!Object.keys(data).length && !feeds.length && !actions.length)
         return `Nothing saved yet.${secrets && `\n\n${secrets}`}`;
       // What the page saved is whatever its code and the owner's typing made of it; what its feeds
-      // read is whatever their tools found.
+      // read and its actions answered is whatever their tools found, when the page chose to run them.
       const saved = Object.keys(data).length
         ? cut(JSON.stringify(data, null, 1), 30_000)
         : "Nothing saved yet.";
-      return `${boxOutput(
-        ctx,
-        "box_data",
-        feeds.length ? `${saved}\n\nFeeds:\n${feeds.map(feedLine).join("\n")}` : saved,
-        `What box #${id} "${box.title}" saved`,
-      )}${secrets && `\n\n${secrets}`}`;
+      const text = [
+        saved,
+        ...(feeds.length ? [`Feeds:\n${feeds.map(feedLine).join("\n")}`] : []),
+        ...(actions.length ? [`Actions:\n${actions.map(actionLine).join("\n")}`] : []),
+      ].join("\n\n");
+      return `${boxOutput(ctx, "box_data", text, `What box #${id} "${box.title}" saved`)}${secrets && `\n\n${secrets}`}`;
     },
   }),
   def({
     name: "box_look",
     description:
-      "See one of your boxes as the owner would: a picture of the top of its page on a phone, or a desktop, with the errors it hit (uncaught exceptions, unhandled rejections, console.error, and what the browser refused it). It's drawn on the desktop with no network. hatbox.store starts empty and keeps what the page saves for that one look; hatbox.ask, .send, .feed and .fetch fail there. with_data starts it with what the page saved, and what comes back is then untrusted.",
+      "See one of your boxes as the owner would: a picture of the top of its page on a phone, or a desktop, with the errors it hit (uncaught exceptions, unhandled rejections, console.error, and what the browser refused it). It's drawn on the desktop with no network. hatbox.store starts empty and keeps what the page saves for that one look; hatbox.ask, .send and .feed fail there, and .fetch unless backend. with_data starts it with what the page saved, and what comes back is then untrusted. Use steps to try what the box does as the owner would (add an item, press its buttons), then check what it saved, which is shown after the steps. backend lets the page's hatbox.fetch reach the box's real backend, live: what it sends really changes the backend's data, and what comes back is untrusted.",
     schema: z.object({
       box: z.number().int(),
       width: z
@@ -1163,18 +1345,54 @@ export const TOOLS = [
         .describe("phone (390 px wide) if left out; desktop is 1280"),
       dark: z.boolean().optional().describe("In the dark theme"),
       with_data: z.boolean().optional().describe("With what the page saved, as the owner sees it"),
+      steps: z
+        .array(BOX_STEP)
+        .max(MAX_LOOK_STEPS)
+        .optional()
+        .describe(
+          "Tried in order once the page has loaded, 25 seconds in all; the first that fails ends the run. The picture is taken after them",
+        ),
+      backend: z
+        .boolean()
+        .optional()
+        .describe("For a box with a backend: the page's hatbox.fetch reaches it"),
     }),
-    run: async ({ box: id, width, dark = false, with_data }, ctx) => {
+    run: async ({ box: id, width, dark = false, with_data, steps, backend }, ctx) => {
       const box = ownBox(ctx, id);
       const page = ctx.boxes?.page(id);
       if (!ctx.boxes || !page) return `There's no box #${id}.`;
+      if (backend && !ctx.boxes.server(id))
+        return `Box #${id} has no backend; look without backend.`;
+      const guest = backend ? backends(ctx) : null;
       if (!ctx.desktop?.configured)
         return "Not looked at: that needs the desktop, and it isn't set up.";
       const store = with_data ? ctx.boxes.data(id) : {};
       const phone = width !== "desktop";
       const screen = phone ? { width: 390, height: 844 } : { width: 1280, height: 800 };
-      const { html, lines } = previewed(page.html, dark, store);
-      const look = await ctx.desktop.lookAtBox({ html, csp: FRAME_CSP, ...screen, dark });
+      const { html, lines } = previewed(page.html, dark, store, Boolean(guest));
+      // What the page asked its backend, and how each went, for the model.
+      const fetched: string[] = [];
+      const answer = async (f: BoxLookFetch): Promise<BoxLookAnswer["answer"]> => {
+        const call = BoxCall.safeParse({ ...f, op: "fetch" });
+        const what = `${String(f.method ?? "GET").toUpperCase()} ${cut(String(f.path), 200)}`;
+        if (!call.success || call.data.op !== "fetch") {
+          fetched.push(`- ${what}: refused`);
+          return { error: "That isn't a request a box's page can make." };
+        }
+        try {
+          const a = await (guest as Backends).fetch(id, call.data);
+          fetched.push(`- ${what}: ${(a.value as { status: number }).status}`);
+          return a;
+        } catch (err) {
+          const why = err instanceof BoxError ? err.message : "Couldn't reach its backend.";
+          fetched.push(`- ${what}: ${why}`);
+          return { error: why };
+        }
+      };
+      const look = await ctx.desktop.lookAtBox(
+        { html, csp: FRAME_CSP, ...screen, dark, ...(steps?.length ? { steps } : {}) },
+        guest ? answer : undefined,
+      );
       const tall =
         look.height > MAX_LOOK_HEIGHT
           ? ` The page is ${look.height} px tall; the picture shows the top ${MAX_LOOK_HEIGHT}.`
@@ -1185,12 +1403,36 @@ export const TOOLS = [
           : "";
       // A built page's lines aren't its files'.
       const errors = look.errors.map((e) => lookError(e, page.files ? null : lines));
-      const text = `Box #${id} "${page.title}", version ${page.n}, on a ${phone ? "phone" : "desktop"} ${screen.width} px wide, ${dark ? "dark" : "light"}, ${with_data ? "with what the page saved" : "with an empty store"}.${tall}${wide}\n\n${errors.length ? `Errors:\n${errors.join("\n")}` : "No errors."}`;
-      // With the owner's data in it, both the errors and the picture show what the page made of it.
+      const tried = (steps ?? []).map((s, i) => {
+        const r = look.steps?.[i];
+        const how = !r
+          ? "not run"
+          : r.ok
+            ? (r.value ?? "done")
+            : `failed: ${r.error ?? "it didn't work"}`;
+        return `${i + 1}. ${stepLabel(s)}: ${how}`;
+      });
+      const parts = [
+        `Box #${id} "${page.title}", version ${page.n}, on a ${phone ? "phone" : "desktop"} ${screen.width} px wide, ${dark ? "dark" : "light"}, ${with_data ? "with what the page saved" : "with an empty store"}${guest ? ", reaching its backend" : ""}.${tall}${wide}`,
+        tried.length && `Steps:\n${tried.join("\n")}`,
+        guest &&
+          (fetched.length
+            ? `Requests to its backend:\n${fetched.join("\n")}`
+            : "It made no requests to its backend."),
+        errors.length ? `Errors:\n${errors.join("\n")}` : "No errors.",
+        (tried.length || guest) &&
+          look.store !== undefined &&
+          (look.store === "{}" ? "Nothing saved by the end." : `Saved by the end: ${look.store}`),
+      ];
+      const text = parts.filter(Boolean).join("\n\n");
+      // With the owner's data in it, both the errors and the picture show what the page made of it; with
+      // its backend, what the backend answered.
       const tainted = ctx.boxes.taintedBy(id);
       const by = with_data
         ? `What box #${id} "${box.title}" showed with what it saved`
-        : tainted && `Box #${id} "${box.title}", written after reading: ${tainted}`;
+        : guest
+          ? `What box #${id} "${box.title}" showed with its backend's answers`
+          : tainted && `Box #${id} "${box.title}", written after reading: ${tainted}`;
       const screened = with_data ? `${text}\n\n${cut(JSON.stringify(store), 30_000)}` : text;
       const out = boxOutput(ctx, "box_look", text, by || null, screened);
       return {
@@ -1202,7 +1444,7 @@ export const TOOLS = [
   def({
     name: "box_feed",
     description:
-      "Give one of your boxes a feed: one of your plugins' read tools, which the brain runs on a timer without a model, so the box's page shows the latest. The page reads it with await hatbox.feed(name), which gives {value, at, error} (value: the tool's output, parsed when it's JSON; at: when it came; error: why the last run failed, if it did) or undefined before there's one. It runs once now; one that fails isn't added. The same name changes it; leave out tool to remove it. At most 10 a box.",
+      "Give one of your boxes a feed: one of your plugins' read tools, which the brain runs on a timer without a model, so the box's page shows the latest. The page reads it with await hatbox.feed(name), which gives {value, at, error} (value: the tool's output, parsed when it's JSON; at: when it came; error: why the last run failed, if it did) or undefined before there's one; hatbox.feed(name, {fresh: true}) runs the tool first if its last run is over a minute old. It runs once now; one that fails isn't added. The same name changes it; leave out tool to remove it. At most 10 a box. To change things from the page, use box_action.",
     schema: z.object({
       box: z.number().int(),
       name: z
@@ -1266,6 +1508,69 @@ export const TOOLS = [
     },
   }),
   def({
+    name: "box_action",
+    description:
+      "Give one of your boxes an action: one of your plugins' tools with a fixed input, which the box's page runs with await hatbox.action(name), e.g. a button that restarts a service. Adding it waits for the owner's approval; it doesn't run then. Each run follows the tool's own rules: one that needs approval asks the owner every time. The page gets {status: \"done\", output, ok} once it ran, or {status: \"asked\"} while it waits for the owner; await hatbox.action(name, {check: true}) gives {at, output, error, waiting} for the last run, or undefined before one. Up to 20 runs a day a box, none while paused. The same name changes it; leave out tool to remove it. At most 10 a box.",
+    schema: z.object({
+      box: z.number().int(),
+      name: z
+        .string()
+        .min(1)
+        .max(MAX_BOX_FEED_NAME)
+        .describe('What the page asks hatbox.action for, e.g. "restart"'),
+      tool: z
+        .string()
+        .optional()
+        .describe("Your plugin's tool, e.g. ssh_pct_exec. Leave out to remove the action"),
+      tool_input: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe("The tool's input, the same on every run"),
+    }),
+    run: async ({ box: id, name, tool, tool_input }, ctx, signal) => {
+      const box = ownBox(ctx, id);
+      const actions = ctx.boxes?.actions;
+      if (!ctx.boxes || !actions) return "Boxes aren't available here.";
+      if (!tool)
+        return actions.remove(id, name)
+          ? `Removed the action "${name}".`
+          : `Box #${id} has no action "${name}".`;
+      const input = tool_input ?? {};
+      const others = actions.list(id).filter((a) => a.name !== name);
+      if (others.length >= MAX_BOX_ACTIONS)
+        return `Not added: a box has at most ${MAX_BOX_ACTIONS} actions; remove one first.`;
+      const { t, what, verdict } = actions.check(box.botId, tool, input);
+      // The page's code runs it whenever it likes, so the owner says yes to it, never Haiku.
+      if (!ctx.approve)
+        return "Not added: this needs the owner's approval, which can't be asked here.";
+      const hosts = ctx.boxes.hosts(id);
+      const r = await ctx.approve(
+        {
+          tool: "box_action",
+          input: { box: id, name, tool, tool_input: input },
+          what: `Let box #${id} "${box.title}" run "${name}": ${what} (${tool} ${JSON.stringify(input)}).${
+            hosts.length
+              ? ` The page gets what it answers, and the box can reach ${hosts.join(", ")}.`
+              : ""
+          }`,
+          why: `The box's page may run it whenever its code calls hatbox.action("${name}"), which isn't proof you pressed anything. Each run then follows ${t.name}'s own rules: as it is now, it ${
+            verdict.action === "allow" ? "runs without asking" : "asks you each time"
+          }.${ctx.boxes.taintedBy(id) ? " This box's page was written after reading untrusted content." : ""}`,
+          always: true,
+          kind: (verdict.action === "ask" ? verdict.kind : undefined) ?? t.kind,
+        },
+        signal,
+      );
+      if (r.isError) return r.content;
+      actions.set(id, box.botId, { name, tool, input });
+      return `Added the action "${name}": the page runs it with await hatbox.action(${JSON.stringify(name)}). ${
+        verdict.action === "allow"
+          ? "It runs without asking."
+          : 'Each run asks the owner first, so the page gets {status: "asked"} and checks later.'
+      }${r.content}`;
+    },
+  }),
+  def({
     name: "box_logs",
     description:
       "The end of what one of your boxes' backend printed (console.log, errors, scheduled() runs), with notes on fetches it wasn't let make.",
@@ -1281,15 +1586,32 @@ export const TOOLS = [
   def({
     name: "box_call",
     description:
-      "Send one of your boxes' backend a request, as its page's hatbox.fetch does, to try it.",
+      "Send one of your boxes' backend a request, as its page's hatbox.fetch does, to try it. Or, with scheduled, run its scheduled() once now: what it returns as notify is shown to you, not sent to the owner.",
     schema: z.object({
       box: z.number().int(),
-      path: z.string().startsWith("/").max(2000).describe('e.g. "/api/prices?days=7"'),
+      path: z
+        .string()
+        .startsWith("/")
+        .max(2000)
+        .optional()
+        .describe('e.g. "/api/prices?days=7"; not with scheduled'),
       method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).optional(),
       body: z.string().max(100_000).optional().describe("JSON or text"),
+      scheduled: z.boolean().optional().describe("Run scheduled() instead of a request"),
     }),
-    run: async ({ box: id, path, method, body }, ctx) => {
+    run: async ({ box: id, path, method, body, scheduled }, ctx) => {
       const box = ownBox(ctx, id);
+      const by = `What box #${id} "${box.title}"'s backend answered`;
+      if (scheduled) {
+        const r = await backends(ctx).runNow(id);
+        const said = r.ok
+          ? r.notify
+            ? `scheduled() ran and returned this to notify (not sent): ${r.notify}`
+            : "scheduled() ran, with nothing to notify."
+          : `scheduled() failed: ${r.error || "no reason given"}`;
+        return boxOutput(ctx, "box_call", said, by);
+      }
+      if (!path) return "Give a path, or scheduled.";
       let type = "application/json";
       try {
         JSON.parse(body ?? "");
@@ -1308,12 +1630,7 @@ export const TOOLS = [
       const answer = textual
         ? cut(new TextDecoder().decode(bytes), 30_000)
         : `(${bytes.byteLength} bytes of ${kind})`;
-      return boxOutput(
-        ctx,
-        "box_call",
-        `${res.status}${kind ? `, ${kind}` : ""}\n\n${answer}`,
-        `What box #${id} "${box.title}"'s backend answered`,
-      );
+      return boxOutput(ctx, "box_call", `${res.status}${kind ? `, ${kind}` : ""}\n\n${answer}`, by);
     },
   }),
   def({

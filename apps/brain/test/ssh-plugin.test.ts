@@ -348,6 +348,17 @@ test("containers: ssh_pct_exec quotes the command for the wrapper, a host's own 
   await expect(pct.run({ host: "nas", guest: 105, command: "ls" }, call)).rejects.toThrow(
     "isn't set up as a Proxmox host",
   );
+  // Looks inside a container go through the same wrapper, as root there.
+  const file = join(dir, "in-ct.conf");
+  writeFileSync(file, "listen 80\n");
+  expect(
+    await t.tool("ssh_read_file").run({ host: "pve", guest: 900, path: file, sudo: true }, call),
+  ).toBe("listen 80");
+  expect(lastArgs()).toContain(
+    String.raw`sudo -n /usr/local/sbin/hatbot-pct-exec 900 'sed -n -e '\''1,501p'\'' -e '\''501q'\'' -- '\''${file}'\'''`,
+  );
+  const check = { host: "pve", guest: 900, what: "service", unit: "nginx" };
+  expect(await t.tool("ssh_check").run(check, call)).toBe("Exit code 0\nsystemctl here");
   // The approval and the timeline show the whole command.
   const long = `${"echo checking; ".repeat(20)}systemctl restart ntfy`;
   expect(pct.describe?.({ host: "pve", guest: 105, command: long })).toBe(
@@ -423,6 +434,8 @@ test("the brain's and the desktop's containers are refused, and none is reached 
     const pct = { host: "pve", guest, command: "uptime" };
     expect(verdictFor(t.tool("ssh_pct_exec"), pct, call).action).toBe("block");
     await expect(t.tool("ssh_pct_exec").run(pct, call)).rejects.toThrow("is the brain");
+    const look = { host: "pve", guest, path: "/etc/hostname" };
+    await expect(t.tool("ssh_read_file").run(look, call)).rejects.toThrow("is the brain");
   }
 
   const unset = await ssh({ hosts, unset: "HATBOT_BRAIN_ID" });
