@@ -8,3 +8,4 @@ dist/
 *.tsbuildinfo
 /data/
 dist-types/
+target/

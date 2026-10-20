@@ -1,0 +1,60 @@
+/* Hatbot's amber as the accent, with dark text on it (PLAN.md §10.2), as on the web and iOS. A
+   theme in ~/.config/gtk-4.0/gtk.css still wins over the accent; the mark and amber bots stay amber. */
+:root {
+  --amber: #e8820c;
+  --accent-bg-color: var(--amber);
+  --accent-fg-color: #1d1d1f;
+  --accent-color: #9c5200;
+  --attention: #007aff;
+  --danger: #ff3b30;
+  --success: #34c759;
+  --bot-bubble: #efeff2;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --amber: #ff9f2e;
+    --accent-color: #ffb866;
+    --attention: #0a84ff;
+    --danger: #ff453a;
+    --success: #30d158;
+    --bot-bubble: #2c2c2f;
+  }
+}
+
+.bot-amber { color: var(--amber); }
+.bot-red { color: var(--danger); }
+.bot-pink { color: #ff2d55; }
+.bot-purple { color: #af52de; }
+.bot-indigo { color: #5856d6; }
+.bot-blue { color: var(--attention); }
+.bot-teal { color: #30b0c7; }
+.bot-green { color: var(--success); }
+.bot-gray { color: #8e8e93; }
+
+@media (prefers-color-scheme: dark) {
+  .bot-pink { color: #ff375f; }
+  .bot-purple { color: #bf5af2; }
+  .bot-indigo { color: #5e5ce6; }
+  .bot-teal { color: #40c8e0; }
+}
+
+/* Needs you: approve buttons and counts. */
+button.attention {
+  background-color: var(--attention);
+  color: white;
+}
+
+.count {
+  font-feature-settings: "tnum";
+  color: alpha(currentColor, 0.55);
+}
+
+.count.needs-you {
+  color: var(--attention);
+  font-weight: bold;
+}
+
+.signin-mark {
+  color: var(--amber);
+}
