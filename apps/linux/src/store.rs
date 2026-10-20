@@ -11,6 +11,7 @@ use serde::Serialize;
 
 use crate::core::delta;
 use crate::core::models::*;
+use crate::core::schedule::ScheduleChange;
 use crate::core::thread;
 use crate::net::api::{Api, ApiError, Empty, Result};
 use crate::net::socket::{Frame, Socket};
@@ -37,6 +38,9 @@ pub enum Change {
     Connection,
     Spend,
     Schedule(i64),
+    /// The lists of schedules and triggers came.
+    Schedules,
+    Trigger(i64),
     Box(i64),
     Memory,
     Settings,
@@ -85,6 +89,7 @@ pub struct State {
     pub schedules: HashMap<i64, Schedule>,
     /// Schedules a message points at that no longer exist.
     pub deleted_schedules: HashSet<i64>,
+    pub triggers: HashMap<i64, Trigger>,
     pub boxes: HashMap<i64, AppBox>,
     /// Boxes a message points at that no longer exist.
     pub deleted_boxes: HashSet<i64>,
@@ -681,6 +686,15 @@ impl Store {
                     st.schedules.remove(&id);
                     st.deleted_schedules.insert(id);
                     changes.push(Change::Schedule(id));
+                }
+                Event::TriggerUpdated { trigger } => {
+                    let id = trigger.id;
+                    st.triggers.insert(id, trigger);
+                    changes.push(Change::Trigger(id));
+                }
+                Event::TriggerDeleted { id } => {
+                    st.triggers.remove(&id);
+                    changes.push(Change::Trigger(id));
                 }
                 Event::BoxUpdated { app } => {
                     let id = app.id;
@@ -1366,6 +1380,133 @@ impl Store {
             .await?;
         self.state_mut().paused = value;
         self.emit(Change::Paused);
+        Ok(())
+    }
+
+    /// Schedules and triggers, both at once. A brain from before triggers has none.
+    pub async fn load_schedules(&self) -> Result<()> {
+        let api = &self.0.api;
+        let (schedules, triggers) = futures_util::join!(
+            api.get::<Vec<Schedule>>("/schedules"),
+            api.get::<Vec<Trigger>>("/triggers"),
+        );
+        let schedules = schedules?;
+        {
+            let mut st = self.state_mut();
+            st.schedules = schedules.into_iter().map(|s| (s.id, s)).collect();
+            st.triggers = triggers
+                .unwrap_or_default()
+                .into_iter()
+                .map(|t| (t.id, t))
+                .collect();
+        }
+        self.emit(Change::Schedules);
+        Ok(())
+    }
+
+    pub async fn load_schedule(&self, id: i64) -> Result<()> {
+        let result = self
+            .0
+            .api
+            .get::<Schedule>(&format!("/schedules/{id}"))
+            .await;
+        match &result {
+            Ok(sc) => {
+                self.state_mut().schedules.insert(id, sc.clone());
+            }
+            Err(e) if e.status == 404 => {
+                let mut st = self.state_mut();
+                st.schedules.remove(&id);
+                st.deleted_schedules.insert(id);
+            }
+            Err(_) => return result.map(|_| ()),
+        }
+        self.emit(Change::Schedule(id));
+        result.map(|_| ())
+    }
+
+    /// Adds a schedule (`id` None) or changes one.
+    pub async fn save_schedule(
+        &self,
+        id: Option<i64>,
+        change: &ScheduleChange,
+    ) -> Result<Schedule> {
+        let sc: Schedule = match id {
+            Some(id) => {
+                self.0
+                    .api
+                    .patch(&format!("/schedules/{id}"), change)
+                    .await?
+            }
+            None => self.0.api.post("/schedules", change).await?,
+        };
+        self.state_mut().schedules.insert(sc.id, sc.clone());
+        self.emit(Change::Schedule(sc.id));
+        Ok(sc)
+    }
+
+    pub async fn delete_schedule(&self, id: i64) -> Result<()> {
+        self.0.api.delete(&format!("/schedules/{id}")).await?;
+        {
+            let mut st = self.state_mut();
+            st.schedules.remove(&id);
+            st.deleted_schedules.insert(id);
+        }
+        self.emit(Change::Schedule(id));
+        Ok(())
+    }
+
+    /// Runs a schedule now; the task it started.
+    pub async fn run_schedule(&self, id: i64) -> Result<Task> {
+        let task: Task = self
+            .0
+            .api
+            .post(&format!("/schedules/{id}/run"), &Empty {})
+            .await?;
+        self.state_mut().tasks.insert(task.id, task.clone());
+        self.emit(Change::Task(task.id));
+        Ok(task)
+    }
+
+    pub async fn load_trigger(&self, id: i64) -> Result<()> {
+        let result = self.0.api.get::<Trigger>(&format!("/triggers/{id}")).await;
+        match &result {
+            Ok(t) => {
+                self.state_mut().triggers.insert(id, t.clone());
+            }
+            Err(e) if e.status == 404 => {
+                self.state_mut().triggers.remove(&id);
+            }
+            Err(_) => return result.map(|_| ()),
+        }
+        self.emit(Change::Trigger(id));
+        result.map(|_| ())
+    }
+
+    /// Changes some of a trigger's fields: `change` has only those.
+    pub async fn update_trigger(&self, id: i64, change: &serde_json::Value) -> Result<Trigger> {
+        let t: Trigger = self.0.api.patch(&format!("/triggers/{id}"), change).await?;
+        self.state_mut().triggers.insert(id, t.clone());
+        self.emit(Change::Trigger(id));
+        Ok(t)
+    }
+
+    /// A new secret for a trigger; the old one stops working at once.
+    pub async fn new_secret(&self, id: i64) -> Result<TriggerWithSecret> {
+        let t: TriggerWithSecret = self
+            .0
+            .api
+            .post(&format!("/triggers/{id}/secret"), &Empty {})
+            .await?;
+        self.state_mut().triggers.insert(id, t.trigger.clone());
+        self.emit(Change::Trigger(id));
+        Ok(t)
+    }
+
+    pub async fn delete_trigger(&self, id: i64) -> Result<()> {
+        self.0.api.delete(&format!("/triggers/{id}")).await?;
+        self.state_mut().triggers.remove(&id);
+        self.emit(Change::Trigger(id));
         Ok(())
     }
 

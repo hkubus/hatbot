@@ -173,3 +173,16 @@ button.takeover {
 button.live-task {
   margin: -4px -10px;
 }
+
+/* Forms */
+textview.text-area > text {
+  background: none;
+}
+
+.secret {
+  padding: 8px 6px 8px 12px;
+}
+
+row.monospace-subtitle .subtitle {
+  font-family: monospace;
+}

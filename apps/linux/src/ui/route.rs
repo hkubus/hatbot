@@ -1,14 +1,18 @@
 // Where links go: hatbot:// links in messages and from ntfy, and "Open Task". The shell answers while
 // you're signed in; a link that comes before it (opening the app from a notification) waits for it.
+// Pages that open pages with no link of their own (a new schedule) push them through here too.
+use std::any::Any;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use hatbot::core::links::Link;
 
 type Go = Rc<dyn Fn(Link)>;
+type Push = Rc<dyn Fn(adw::NavigationPage, Box<dyn Any>)>;
 
 thread_local! {
     static GO: RefCell<Option<Go>> = RefCell::default();
+    static PUSH: RefCell<Option<Push>> = RefCell::default();
     static WAITING: RefCell<Option<Link>> = RefCell::default();
 }
 
@@ -36,4 +40,15 @@ pub fn open(url: &str) -> bool {
     };
     go(link);
     true
+}
+
+pub fn set_push(push: impl Fn(adw::NavigationPage, Box<dyn Any>) + 'static) {
+    PUSH.with(|p| p.replace(Some(Rc::new(push))));
+}
+
+/// Opens `page` over what's showing, keeping `keep` (what drives it) while it's there.
+pub fn push(page: adw::NavigationPage, keep: Box<dyn Any>) {
+    if let Some(push) = PUSH.with(|p| p.borrow().clone()) {
+        push(page, keep);
+    }
 }

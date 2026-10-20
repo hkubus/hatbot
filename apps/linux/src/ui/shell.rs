@@ -1,5 +1,6 @@
 // Signed in: the sidebar with your chats and the sections, beside what's open (PLAN.md §23.1).
 // Narrow, it's one pane at a time. A task opens over whatever you're on.
+use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -13,8 +14,10 @@ use super::chat::Chat;
 use super::icon::Icon;
 use super::live::LiveView;
 use super::route;
+use super::schedules::{SchedulePage, Schedules};
 use super::task::TaskPage;
 use super::tasks::Tasks;
+use super::trigger::TriggerPage;
 
 pub struct Shell {
     pub root: gtk::Widget,
@@ -29,6 +32,7 @@ enum Place {
     Chat(i64),
     Tasks,
     Live,
+    Schedules,
 }
 
 /// "Hatbot is paused." and "Can't reach Hatbot." over each section.
@@ -75,8 +79,9 @@ struct Inner {
     chat_page: adw::NavigationPage,
     tasks: RefCell<Option<Tasks>>,
     live: RefCell<Option<(adw::NavigationPage, LiveView)>>,
-    /// The task pages in `nav`, kept while they're there.
-    task_pages: RefCell<Vec<TaskPage>>,
+    schedules: RefCell<Option<Schedules>>,
+    /// The pages opened over a section, with what drives each, kept while they're in `nav`.
+    pushed: RefCell<Vec<(adw::NavigationPage, Box<dyn Any>)>>,
     place: RefCell<Place>,
     banners: Banners,
     /// Rebuilding the rows mustn't open what they select.
@@ -166,7 +171,8 @@ impl Shell {
             chat_page,
             tasks: RefCell::default(),
             live: RefCell::default(),
-            task_pages: RefCell::default(),
+            schedules: RefCell::default(),
+            pushed: RefCell::default(),
             place: RefCell::new(Place::Chat(store.state().conversation_id)),
             banners,
             syncing: Cell::default(),
@@ -201,6 +207,12 @@ impl Shell {
         inner.nav.connect_popped(move |_, _| {
             if let Some(s) = weak.upgrade() {
                 s.prune();
+            }
+        });
+        let weak = Rc::downgrade(&inner);
+        route::set_push(move |page, keep| {
+            if let Some(s) = weak.upgrade() {
+                s.push(page, keep);
             }
         });
         let weak = Rc::downgrade(&inner);
@@ -262,6 +274,12 @@ impl Inner {
                 .get_or_insert_with(|| live_page(&self.store, &self.banners))
                 .0
                 .clone(),
+            Place::Schedules => self
+                .schedules
+                .borrow_mut()
+                .get_or_insert_with(|| Schedules::new(&self.store, &self.banners))
+                .page
+                .clone(),
         };
         self.place.replace(place);
         self.nav.replace(&[page]);
@@ -287,9 +305,17 @@ impl Inner {
                 });
             }
             Link::New => self.open(Place::Chat(self.store.hatbot_chat())),
+            Link::Schedule(id) => {
+                self.open(Place::Schedules);
+                let p = SchedulePage::new(&self.store, Some(id));
+                self.push(p.page.clone(), Box::new(p));
+            }
+            Link::Trigger(id) => {
+                self.open(Place::Schedules);
+                let p = TriggerPage::new(&self.store, id);
+                self.push(p.page.clone(), Box::new(p));
+            }
             // In the web app until this app has them (PLAN.md §23.2).
-            Link::Schedule(id) => self.web(&format!("/schedules/{id}")),
-            Link::Trigger(id) => self.web(&format!("/triggers/{id}")),
             Link::Box(id) => self.web(&format!("/boxes/{id}")),
             Link::Live => self.open(Place::Live),
             Link::Memory(_) => {}
@@ -303,20 +329,22 @@ impl Inner {
 
     fn push_task(&self, id: i64) {
         let page = TaskPage::new(&self.store, id);
-        self.nav.push(&page.page);
-        self.task_pages.borrow_mut().push(page);
+        self.push(page.page.clone(), Box::new(page));
+    }
+
+    fn push(&self, page: adw::NavigationPage, keep: Box<dyn Any>) {
+        self.nav.push(&page);
+        self.pushed.borrow_mut().push((page, keep));
         self.split.set_show_content(true);
     }
 
-    /// Lets go of the task pages that left `nav`.
+    /// Lets go of the pages that left `nav`.
     fn prune(&self) {
         let stack = self.nav.navigation_stack();
         let open: Vec<adw::NavigationPage> = (0..stack.n_items())
             .filter_map(|i| stack.item(i).and_downcast())
             .collect();
-        self.task_pages
-            .borrow_mut()
-            .retain(|p| open.contains(&p.page));
+        self.pushed.borrow_mut().retain(|(p, _)| open.contains(p));
     }
 
     fn sync_title(&self) {
@@ -393,6 +421,9 @@ impl Inner {
         let live = sidebar_row(Icon::new("monitor", 18), "Live", None);
         self.sidebar.append(&live);
         rows.push((Place::Live, live));
+        let schedules = sidebar_row(Icon::new("clock", 18), "Schedules & Triggers", None);
+        self.sidebar.append(&schedules);
+        rows.push((Place::Schedules, schedules));
         drop(st);
         drop(rows);
         self.sync_selection();

@@ -383,6 +383,46 @@ pub struct Schedule {
     pub last_task_id: Option<i64>,
     #[serde(default)]
     pub tainted: bool,
+    /// What untrusted content the chat had read when it made or changed it.
+    #[serde(default)]
+    pub tainted_by: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerKind {
+    Webhook,
+    Kuma,
+    #[serde(other)]
+    Unknown,
+}
+
+/// Something outside Hatbot that starts a task: a webhook, or Uptime Kuma's alerts.
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Trigger {
+    pub id: i64,
+    #[serde(default = "hatbot")]
+    pub bot_id: String,
+    pub name: String,
+    pub kind: TriggerKind,
+    pub trusted: bool,
+    pub prompt: String,
+    pub enabled: bool,
+    /// Kuma's failures in a row before a task starts, less one. Older brains don't say.
+    #[serde(default)]
+    pub confirm_checks: Option<i64>,
+    pub url: String,
+    pub last_fired_at: Option<String>,
+    pub last_task_id: Option<i64>,
+}
+
+/// A trigger with its secret, which the brain shows only when it makes one.
+#[derive(Deserialize, Debug, Clone)]
+pub struct TriggerWithSecret {
+    #[serde(flatten)]
+    pub trigger: Trigger,
+    pub secret: String,
 }
 
 /// A small web app a bot made for you (PLAN.md §21; packages/shared/src/box.ts).
@@ -533,6 +573,10 @@ pub enum Event {
     ScheduleUpdated { schedule: Schedule },
     #[serde(rename = "schedule.deleted")]
     ScheduleDeleted { id: i64 },
+    #[serde(rename = "trigger.updated")]
+    TriggerUpdated { trigger: Trigger },
+    #[serde(rename = "trigger.deleted")]
+    TriggerDeleted { id: i64 },
     #[serde(rename = "episode.updated")]
     EpisodeUpdated { episode: Episode },
     #[serde(rename = "box.updated")]

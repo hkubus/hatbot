@@ -2,15 +2,18 @@
 pub mod chat;
 pub mod composer;
 pub mod files;
+pub mod form;
 pub mod icon;
 mod icon_paths;
 pub mod live;
 pub mod markdown;
 pub mod message;
 pub mod route;
+pub mod schedules;
 pub mod shell;
 pub mod signin;
 pub mod task;
 pub mod tasks;
 pub mod tray;
+pub mod trigger;
 pub mod window;

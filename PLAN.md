@@ -1180,7 +1180,7 @@ A native app for the owner's Linux desktop (GNOME-style, run on niri), alongside
 - **L4 Live**: the desktop's frames; takeover with the mouse, the wheel and the keyboard; hand back.
 - **L5 Memory, Schedules & Triggers**: the tree, a file with edit and conflicts, history, diffs and revert; proposals; schedules and triggers as on iOS.
 - **L6 The rest of iOS's**: Search, Settings (spend, limits, models and effort, signed-in devices), the to-do list, watchers, Check everything, the heartbeat, boxes.
-- **Built**: L1 to L4 (2026-10-20). Until the milestone that brings each page, a box's Open and schedule, trigger and box links show the web app's page in the browser, and memory links do nothing. Live is a section in the sidebar and shows on a screen task's page when it asks for you or you press Watch, as on iOS and the web.
+- **Built**: L1 to L4, and L5's schedules and triggers (2026-10-20). Until the milestone that brings each page, a box's Open and box links show the web app's page in the browser, and memory links do nothing. Schedules & Triggers is a section in the sidebar, as on the web (iOS has it in Settings); triggers are made on the web, as on iOS. Live is a section in the sidebar and shows on a screen task's page when it asks for you or you press Watch, as on iOS and the web.
 - **Done when**: you can chat, approve and take over from the Linux app.
 - **Not planned**: charts drawn in the app before L6 (a chart block shows as code until then), a disk cache of chats, a tray icon or running in the background, and Flatpak.
 
