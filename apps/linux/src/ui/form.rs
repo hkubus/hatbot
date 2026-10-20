@@ -145,6 +145,15 @@ impl Choice {
         c
     }
 
+    /// The value picked.
+    pub fn value(&self) -> String {
+        self.values
+            .borrow()
+            .get(self.row.selected() as usize)
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// `choices` are (value, name).
     pub fn set(&self, choices: &[(String, String)], value: &str) {
         self.syncing.set(true);

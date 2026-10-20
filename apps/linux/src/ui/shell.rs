@@ -7,9 +7,10 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::{gio, glib};
 use hatbot::core::links::Link;
-use hatbot::core::models::{Conversation, ConversationKind};
+use hatbot::core::models::{Conversation, ConversationKind, HATBOT_ID};
 use hatbot::store::{Change, Listener, Store};
 
+use super::bot::{BotPage, GroupPage};
 use super::boxes::{BoxPage, Boxes};
 use super::chat::Chat;
 use super::icon::Icon;
@@ -86,6 +87,9 @@ struct Inner {
     split: adw::NavigationSplitView,
     sidebar: gtk::ListBox,
     rows: RefCell<Vec<(Place, gtk::ListBoxRow)>>,
+    /// New bot and New group, which open a page over what's showing.
+    new_rows: RefCell<Vec<(gtk::ListBoxRow, bool)>>,
+    about: gtk::Button,
     nav: adw::NavigationView,
     chat_page: adw::NavigationPage,
     tasks: RefCell<Option<Tasks>>,
@@ -145,6 +149,11 @@ impl Shell {
         let chat = Chat::new(store);
         let chat_header = adw::HeaderBar::new();
         chat_header.pack_end(&chat.incognito);
+        let about = gtk::Button::builder()
+            .child(&Icon::new("sliders", 16))
+            .css_classes(["flat"])
+            .build();
+        chat_header.pack_end(&about);
         let chat_view = adw::ToolbarView::new();
         chat_view.add_top_bar(&chat_header);
         banners.add(&chat_view);
@@ -183,6 +192,8 @@ impl Shell {
             split,
             sidebar,
             rows: RefCell::default(),
+            new_rows: RefCell::default(),
+            about: about.clone(),
             nav,
             chat_page,
             tasks: RefCell::default(),
@@ -219,9 +230,48 @@ impl Shell {
         });
         // Narrow, picking the row you're on shows it again.
         let weak = Rc::downgrade(&inner);
-        inner.sidebar.connect_row_activated(move |_, _| {
+        inner.sidebar.connect_row_activated(move |_, row| {
+            let Some(s) = weak.upgrade() else { return };
+            let group = s
+                .new_rows
+                .borrow()
+                .iter()
+                .find(|(r, _)| r == row)
+                .map(|(_, g)| *g);
+            match group {
+                Some(true) => {
+                    let p = GroupPage::new(&s.store, None);
+                    s.push(p.page.clone(), Box::new(p));
+                }
+                Some(false) => {
+                    let p = BotPage::new(&s.store, None);
+                    s.push(p.page.clone(), Box::new(p));
+                }
+                None => s.split.set_show_content(true),
+            }
+        });
+        let weak = Rc::downgrade(&inner);
+        about.connect_clicked(move |_| {
+            let Some(s) = weak.upgrade() else { return };
+            let chat = s.store.state().current_chat().cloned();
+            match chat {
+                Some(c) if c.kind == ConversationKind::Group => {
+                    let p = GroupPage::new(&s.store, Some(c.id));
+                    s.push(p.page.clone(), Box::new(p));
+                }
+                c => {
+                    let bot = c
+                        .and_then(|c| c.bot_ids.first().cloned())
+                        .unwrap_or(HATBOT_ID.into());
+                    let p = BotPage::new(&s.store, Some(&bot));
+                    s.push(p.page.clone(), Box::new(p));
+                }
+            }
+        });
+        let weak = Rc::downgrade(&inner);
+        route::set_chat(move |id| {
             if let Some(s) = weak.upgrade() {
-                s.split.set_show_content(true);
+                s.open(Place::Chat(id));
             }
         });
         let weak = Rc::downgrade(&inner);
@@ -433,6 +483,10 @@ impl Inner {
             st.chat_name(st.current_chat())
         };
         self.chat_page.set_title(&title);
+        self.about.set_tooltip_text(Some(&format!("About {title}")));
+        // A brain from before bots has nothing to show.
+        self.about
+            .set_visible(!st.incognito && !st.conversations.is_empty());
     }
 
     /// The row of what's open selected, also when a message opened another chat.
@@ -462,6 +516,9 @@ impl Inner {
         for (_, row) in rows.drain(..) {
             self.sidebar.remove(&row);
         }
+        for (row, _) in self.new_rows.borrow_mut().drain(..) {
+            self.sidebar.remove(&row);
+        }
         let st = self.store.state();
         // A brain from before bots has the one chat.
         let list: Vec<Conversation> = if st.conversations.is_empty() {
@@ -486,6 +543,19 @@ impl Inner {
             let row = sidebar_row(icon, &st.chat_name(Some(c)), count);
             self.sidebar.append(&row);
             rows.push((Place::Chat(c.id), row));
+        }
+        if !st.conversations.is_empty() {
+            let mut new_rows = self.new_rows.borrow_mut();
+            let bot = sidebar_row(Icon::new("plus", 18), "New bot", None);
+            bot.set_selectable(false);
+            self.sidebar.append(&bot);
+            new_rows.push((bot, false));
+            if st.bot_ids.len() > 1 {
+                let group = sidebar_row(Icon::new("users", 18), "New group", None);
+                group.set_selectable(false);
+                self.sidebar.append(&group);
+                new_rows.push((group, true));
+            }
         }
         let search = sidebar_row(Icon::new("search", 18), "Search", None);
         search.set_widget_name("sections");

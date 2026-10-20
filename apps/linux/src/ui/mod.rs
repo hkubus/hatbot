@@ -1,4 +1,5 @@
 // The widgets. Everything they show comes from the store (src/store.rs).
+pub mod bot;
 pub mod boxes;
 pub mod chart;
 pub mod chat;

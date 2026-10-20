@@ -11,11 +11,13 @@ use hatbot::core::models::MessageLink;
 type Go = Rc<dyn Fn(Link)>;
 type Push = Rc<dyn Fn(adw::NavigationPage, Box<dyn Any>)>;
 type Reveal = Rc<dyn Fn(MessageLink)>;
+type Chat = Rc<dyn Fn(i64)>;
 
 thread_local! {
     static GO: RefCell<Option<Go>> = RefCell::default();
     static PUSH: RefCell<Option<Push>> = RefCell::default();
     static REVEAL: RefCell<Option<Reveal>> = RefCell::default();
+    static CHAT: RefCell<Option<Chat>> = RefCell::default();
     static WAITING: RefCell<Option<Link>> = RefCell::default();
 }
 
@@ -64,5 +66,16 @@ pub fn set_reveal(reveal: impl Fn(MessageLink) + 'static) {
 pub fn reveal(link: MessageLink) {
     if let Some(reveal) = REVEAL.with(|r| r.borrow().clone()) {
         reveal(link);
+    }
+}
+
+pub fn set_chat(chat: impl Fn(i64) + 'static) {
+    CHAT.with(|c| c.replace(Some(Rc::new(chat))));
+}
+
+/// A chat, as picking it in the sidebar opens it.
+pub fn chat(id: i64) {
+    if let Some(chat) = CHAT.with(|c| c.borrow().clone()) {
+        chat(id);
     }
 }

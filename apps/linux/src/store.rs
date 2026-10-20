@@ -762,21 +762,9 @@ impl Store {
                     changes.extend([Change::Chats, Change::Messages]);
                 }
                 Event::BotDeleted { id } => {
-                    st.bot_ids.retain(|b| *b != id);
-                    let gone: Vec<i64> = st
-                        .conversations
-                        .iter()
-                        .filter(|c| {
-                            c.kind == ConversationKind::Direct && c.bot_ids.first() == Some(&id)
-                        })
-                        .map(|c| c.id)
-                        .collect();
                     drop(st);
-                    for c in gone {
-                        self.chat_gone(c);
-                    }
+                    self.bot_gone(&id);
                     self.refresh_conversations();
-                    self.emit(Change::Chats);
                     return;
                 }
                 Event::ConversationUpdated { conversation } => {
@@ -832,6 +820,120 @@ impl Store {
             let first = self.hatbot_chat();
             self.spawn(move |s| async move { s.open_conversation(first).await });
         }
+    }
+
+    /// A bot deleted, here or elsewhere, and its own chat with it.
+    fn bot_gone(&self, id: &str) {
+        let gone: Vec<i64> = {
+            let mut st = self.state_mut();
+            st.bot_ids.retain(|b| b != id);
+            st.conversations
+                .iter()
+                .filter(|c| {
+                    c.kind == ConversationKind::Direct
+                        && c.bot_ids.first().map(String::as_str) == Some(id)
+                })
+                .map(|c| c.id)
+                .collect()
+        };
+        for c in gone {
+            self.chat_gone(c);
+        }
+        self.emit(Change::Chats);
+    }
+
+    fn put_chat(&self, chat: Conversation) {
+        {
+            let mut st = self.state_mut();
+            match st.conversations.iter().position(|c| c.id == chat.id) {
+                Some(i) => st.conversations[i] = chat,
+                None => st.conversations.push(chat),
+            }
+        }
+        self.emit(Change::Chats);
+    }
+
+    /// The direct chat with a bot.
+    pub fn bot_chat(&self, bot: &str) -> Option<i64> {
+        self.state()
+            .conversations
+            .iter()
+            .find(|c| {
+                c.kind == ConversationKind::Direct
+                    && c.bot_ids.first().map(String::as_str) == Some(bot)
+            })
+            .map(|c| c.id)
+    }
+
+    /// The bots a new one can start from; none on a brain from before templates.
+    pub async fn bot_templates(&self) -> Vec<Bot> {
+        self.0.api.get("/bot-templates").await.unwrap_or_default()
+    }
+
+    /// The plugins a bot can be given, by name.
+    pub async fn plugin_names(&self) -> Vec<PluginName> {
+        let mut list: Vec<PluginName> = self.0.api.get("/plugins").await.unwrap_or_default();
+        list.sort_by_key(|p| p.name.to_lowercase());
+        list
+    }
+
+    /// A new bot, with its own chat in the list.
+    pub async fn create_bot(&self, change: &BotChange) -> Result<Bot> {
+        let bot: Bot = self.0.api.post("/bots", change).await?;
+        self.got_bot(bot.clone());
+        self.load_bots().await;
+        Ok(bot)
+    }
+
+    pub async fn update_bot(&self, id: &str, change: &BotChange) -> Result<Bot> {
+        let bot: Bot = self
+            .0
+            .api
+            .patch(&format!("/bots/{}", query(id)), change)
+            .await?;
+        self.got_bot(bot.clone());
+        Ok(bot)
+    }
+
+    pub async fn delete_bot(&self, id: &str) -> Result<()> {
+        self.0.api.delete(&format!("/bots/{}", query(id))).await?;
+        self.bot_gone(id);
+        self.load_bots().await;
+        Ok(())
+    }
+
+    fn got_bot(&self, bot: Bot) {
+        {
+            let mut st = self.state_mut();
+            if !st.bot_ids.contains(&bot.id) {
+                st.bot_ids.push(bot.id.clone());
+            }
+            st.bots.insert(bot.id.clone(), bot);
+        }
+        self.emit(Change::Chats);
+        self.emit(Change::Messages);
+    }
+
+    pub async fn create_group(&self, change: &GroupChange) -> Result<Conversation> {
+        let chat: Conversation = self.0.api.post("/conversations", change).await?;
+        self.put_chat(chat.clone());
+        Ok(chat)
+    }
+
+    pub async fn update_group(&self, id: i64, change: &GroupChange) -> Result<Conversation> {
+        let chat: Conversation = self
+            .0
+            .api
+            .patch(&format!("/conversations/{id}"), change)
+            .await?;
+        self.put_chat(chat.clone());
+        Ok(chat)
+    }
+
+    pub async fn delete_group(&self, id: i64) -> Result<()> {
+        self.0.api.delete(&format!("/conversations/{id}")).await?;
+        self.chat_gone(id);
+        Ok(())
     }
 
     /// Hatbot's own chat: the direct one with Hatbot.

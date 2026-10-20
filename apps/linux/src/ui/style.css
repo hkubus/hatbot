@@ -214,3 +214,26 @@ row.counted .subtitle {
 row.monospace-title .title {
   font-family: monospace;
 }
+
+/* A bot's icon and colour, to pick from */
+button.pick {
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+}
+
+button.pick.picked {
+  background-color: alpha(currentColor, 0.12);
+}
+
+.swatch {
+  min-width: 26px;
+  min-height: 26px;
+  border-radius: 99px;
+  background-color: currentColor;
+}
+
+button.pick.picked .swatch {
+  outline: 1.5px solid alpha(@window_fg_color, 0.55);
+  outline-offset: 2px;
+}

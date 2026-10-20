@@ -838,6 +838,57 @@ pub struct Bot {
     pub color: String,
     #[serde(default)]
     pub instructions: String,
+    /// None: as in Settings.
+    #[serde(default)]
+    pub chat_model: Option<String>,
+    #[serde(default)]
+    pub chat_effort: Option<String>,
+    /// None: every plugin that's on.
+    #[serde(default)]
+    pub plugins: Option<Vec<String>>,
+}
+
+pub const BOT_ICONS: [&str; 17] = [
+    "hat", "sparkles", "brain", "code", "terminal", "server", "wrench", "shield", "globe", "house",
+    "book", "pen", "chart", "mail", "cart", "cat", "heart",
+];
+
+pub const BOT_COLORS: [&str; 9] = [
+    "amber", "red", "pink", "purple", "indigo", "blue", "teal", "green", "gray",
+];
+
+pub const CHAT_MODELS: [&str; 2] = ["claude-haiku-5-5", "claude-opus-5-5"];
+
+pub const CHAT_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+
+pub const MAX_GROUP_BOTS: usize = 6;
+
+/// A new bot, or every field of one. The model, effort and plugins go as null for "as in Settings"
+/// and "every plugin that's on"; Hatbot's name doesn't go at all, since it can't be renamed.
+#[derive(Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BotChange {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub icon: String,
+    pub color: String,
+    pub instructions: String,
+    pub chat_model: Option<String>,
+    pub chat_effort: Option<String>,
+    pub plugins: Option<Vec<String>>,
+}
+
+#[derive(Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupChange {
+    pub title: String,
+    pub bot_ids: Vec<String>,
+}
+
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+pub struct PluginName {
+    pub id: String,
+    pub name: String,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
