@@ -34,6 +34,12 @@ const ListMessages = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional(),
   incognito: z.enum(["0", "1"]).optional(),
 });
+const MessageRange = z.object({
+  from: z.coerce.number().int().positive(),
+  before: z.coerce.number().int().positive(),
+  since: z.iso.datetime(),
+  incognito: z.enum(["0", "1"]).optional(),
+});
 const EpisodeIds = z.object({ ids: z.string().regex(/^\d+(,\d+){0,199}$/) });
 const ChartQuery = z.object({ type: z.enum(["line", "bar", "scatter"]) });
 
@@ -140,6 +146,8 @@ for (const [at, threadOf] of [
   };
   threadRoutes
     .get(`${at}/messages`, query(ListMessages), on(listMessages))
+    // Earlier pages an app has loaded: which messages are still there, and which were edited.
+    .get(`${at}/messages/changes`, query(MessageRange), on(messageChanges))
     // The conversations messages belong to, for their recaps where they fold up.
     .get(`${at}/episodes`, query(EpisodeIds), on(episodes))
     // Deleting a conversation from the chat for good.
@@ -187,6 +195,14 @@ function listMessages(c: Ctx, t: Thread) {
     typeof ListMessages
   >;
   return c.json(t.list(before, limit, incognito === "1"));
+}
+
+function messageChanges(c: Ctx, t: Thread) {
+  const { from, before, since, incognito } = c.req.valid("query" as never) as z.infer<
+    typeof MessageRange
+  >;
+  // Compared as the brain writes times, which sort as text.
+  return c.json(t.changes(from, before, new Date(since).toISOString(), incognito === "1"));
 }
 
 function episodes(c: Ctx, t: Thread) {

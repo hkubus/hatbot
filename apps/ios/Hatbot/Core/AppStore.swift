@@ -499,6 +499,7 @@ final class AppStore {
   func loadThread() async throws {
     let wasIncognito = incognito
     let shown = conversationId
+    let since = Self.current(messages)
     let load = UUID()
     missed[load] = []
     defer { missed[load] = nil }
@@ -512,6 +513,46 @@ final class AppStore {
     // The messages show first; a fold says its first message until its recap comes.
     try? await loadEpisodes(list)
     persist()
+    guard let since, let floor = list.first?.id, let from = messages.first?.id, from < floor else { return }
+    do {
+      try await refreshEarlier(from: from, before: floor, since: since)
+    } catch let e as APIError where e.status == 404 {
+      // A brain from before: they stay as they were.
+    } catch {
+      // Not known to be current, and the next load couldn't tell since when: they load again from the brain.
+      guard wasIncognito == incognito, shown == conversationId else { return }
+      messages.removeAll { $0.id < floor }
+      hasEarlier = true
+    }
+  }
+
+  /// A time the loaded messages were all current at, in the brain's clock: your bots' messages come only
+  /// while the stream is up, and their times and edits are no later than when it went down. Yours may
+  /// have been posted after.
+  private static func current(_ list: [ThreadMessage]) -> String? {
+    list.filter { $0.role == .assistant }.map { max($0.createdAt, $0.editedAt ?? "") }.max() ?? list.first?.createdAt
+  }
+
+  /// Earlier pages you'd loaded, brought up to date without loading them again: what was deleted meanwhile
+  /// goes, and what a task's result edited is replaced.
+  private func refreshEarlier(from: Int, before: Int, since: String) async throws {
+    let wasIncognito = incognito
+    let shown = conversationId
+    let load = UUID()
+    missed[load] = []
+    defer { missed[load] = nil }
+    let changes: MessageChanges = try await api.get(
+      "\(chatPath)/messages/changes?from=\(from)&before=\(before)&since=\(API.query(since))"
+        + (incognito ? "&incognito=1" : ""))
+    guard wasIncognito == incognito, shown == conversationId else { return }
+    let kept = Set(changes.ids)
+    let changed = Dictionary(changes.changed.map { ($0.id, $0) }) { a, _ in a }
+    messages = messages.compactMap { m in
+      guard m.id >= from && m.id < before else { return m }
+      return kept.contains(m.id) ? changed[m.id] ?? m : nil
+    }
+    syncReplies(changes.changed)
+    for event in missed.removeValue(forKey: load) ?? [] { follow(event) }
   }
 
   /// Into incognito, or out of it, which deletes its conversation.

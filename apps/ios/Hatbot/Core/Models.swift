@@ -149,6 +149,13 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   }
 }
 
+/// Of the messages loaded from one id up to another, the ids still there and the ones edited since a
+/// time (GET …/messages/changes).
+struct MessageChanges: Decodable, Sendable {
+  let ids: [Int]
+  let changed: [ThreadMessage]
+}
+
 /// A message in another chat.
 struct MessageLink: Codable, Equatable, Hashable, Sendable {
   let conversationId: Int

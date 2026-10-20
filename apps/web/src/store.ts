@@ -10,6 +10,7 @@ import {
   type Episode,
   type HatbotEvent,
   type Me,
+  type MessageChanges,
   type Negotiation,
   type NegotiationDetail,
   type NegotiationMessage,
@@ -910,9 +911,23 @@ function apply(e: HatbotEvent) {
   }
 }
 
+/**
+ * A time the loaded messages were all current at, in the brain's clock: your bots' messages come only
+ * while the stream is up, and their times and edits are no later than when it went down. Yours may have
+ * been posted after.
+ */
+function currentAt(list: ThreadMessage[]): string | undefined {
+  const times = list
+    .filter((m) => m.role === "assistant")
+    .map((m) => (m.editedAt && m.editedAt > m.createdAt ? m.editedAt : m.createdAt))
+    .sort();
+  return times.at(-1) ?? list[0]?.createdAt;
+}
+
 /** The latest page again, merged into what's loaded: earlier pages stay, so the view doesn't jump. */
 async function refreshThread() {
   const { incognito, conversationId } = state;
+  const since = currentAt(state.messages);
   const { list: latest, events } = await messagesPage();
   if (incognito !== state.incognito || conversationId !== state.conversationId) return;
   flushDeltas();
@@ -923,6 +938,47 @@ async function refreshThread() {
     return set({ messages: caughtUp(latest, events), hasEarlier: latest.length === PAGE });
   const older = state.messages.filter((m) => m.id < first.id);
   set({ messages: [...older, ...caughtUp(latest, events)] });
+  const from = older[0]?.id;
+  if (from === undefined || !since) return;
+  await refreshEarlier(from, first.id, since).catch((err) => {
+    // Not known to be current, and the next load couldn't tell since when: they load again.
+    if (err instanceof ApiError && err.status === 404) return;
+    if (incognito !== state.incognito || conversationId !== state.conversationId) return;
+    set({ messages: state.messages.filter((m) => m.id >= first.id), hasEarlier: true });
+  });
+}
+
+/**
+ * Earlier pages brought up to date without loading them again: what was deleted meanwhile goes, and
+ * what a task's result edited is replaced.
+ */
+async function refreshEarlier(from: number, before: number, since: string) {
+  const { incognito, conversationId } = state;
+  const events: HatbotEvent[] = [];
+  missed.add(events);
+  try {
+    const { ids, changed } = await api<MessageChanges>(
+      `/conversations/${conversationId}/messages/changes?from=${from}&before=${before}&since=${encodeURIComponent(since)}${incognito ? "&incognito=1" : ""}`,
+    );
+    if (incognito !== state.incognito || conversationId !== state.conversationId) return;
+    const kept = new Set(ids);
+    const fresh = new Map(changed.map((m) => [m.id, m]));
+    const inRange = (m: ThreadMessage) => m.id >= from && m.id < before;
+    const range = state.messages
+      .filter((m) => inRange(m) && kept.has(m.id))
+      .map((m) => fresh.get(m.id) ?? m);
+    // What came meanwhile goes on again, onto these only: the rest has it already.
+    const caught = caughtUp(range, events).filter(inRange);
+    set({
+      messages: [
+        ...state.messages.filter((m) => m.id < from),
+        ...caught,
+        ...state.messages.filter((m) => m.id >= before),
+      ],
+    });
+  } finally {
+    missed.delete(events);
+  }
 }
 
 /**

@@ -830,7 +830,7 @@ test("deleting a conversation takes it out of the chat, search, files and the su
   t.advance(31 * 60_000);
   await t.thread.sweep();
   await t.thread.post("hello").done;
-  const [first, , , , kept] = t.thread.list();
+  const [first, , , hello, kept] = t.thread.list();
   const gone = t.thread.list().filter((m) => m.episodeId === first?.episodeId || m.id === card.id);
   expect(gone.length).toBe(3);
   const del = (episode: number) =>
@@ -859,6 +859,22 @@ test("deleting a conversation takes it out of the chat, search, files and the su
   expect(summary()).toBe("They like tea.");
   expect(t.thread.list().map((m) => m.text)).toEqual(["hello", "Hi."]);
   expect(t.events.at(-1)).toEqual({ type: "message.deleted", ids: gone.map((m) => m.id) });
+  // An app that had loaded them learns they're gone, and what a task's result edited since, without
+  // loading them again.
+  const task = t.tasks.createBackgroundTask({ title: "Check", goal: "Check", origin: "schedule" });
+  await t.tasks.idle();
+  t.chats.attachTask(hello?.id as number, task?.id as number);
+  t.chats.markEdited(task?.id as number);
+  const changes = await t.call(
+    "GET",
+    `/thread/messages/changes?from=${first?.id}&before=${kept?.id}&since=${hello?.createdAt}`,
+    undefined,
+    { cookie },
+  );
+  expect(await changes.json()).toEqual({
+    ids: [hello?.id],
+    changed: [t.thread.list().find((m) => m.id === hello?.id)],
+  });
   expect(
     t.db.query("SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'wireguard'").all(),
   ).toEqual([]);

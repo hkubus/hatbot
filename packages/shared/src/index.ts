@@ -154,6 +154,12 @@ export type MessageLink = { conversationId: number; messageId: number };
 /** A web page a reply cites. */
 export type Source = { url: string; title: string };
 
+/**
+ * GET …/messages/changes: of the messages an app loaded from `from` up to `before`, the ids still
+ * there, and the ones edited since `since`, whole. Earlier pages kept up to date after time away.
+ */
+export type MessageChanges = { ids: number[]; changed: ThreadMessage[] };
+
 /** POST /thread/ask: your message, and the replies to it once they're done or the wait ran out. */
 export type AskResult = { message: ThreadMessage; replies: ThreadMessage[]; finished: boolean };
 
