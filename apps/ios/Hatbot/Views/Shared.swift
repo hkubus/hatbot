@@ -127,7 +127,7 @@ func attempt(_ error: Binding<String?>, missing: Binding<Bool>? = nil, _ work: (
   }
 }
 
-extension Binding where Value: Equatable {
+extension Binding where Value: Equatable & Sendable {
   /// A switch or picker that saves as soon as it's changed. `shown` holds the change while it saves;
   /// then `value` shows again, saved or put back, unless it's been changed again meanwhile.
   @MainActor

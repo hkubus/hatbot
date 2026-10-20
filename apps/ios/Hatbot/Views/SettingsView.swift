@@ -162,7 +162,7 @@ struct SettingsView: View {
 
   /// A setting's control. A change shows at once, as the switch or picker moved, and is saved behind it;
   /// if saving fails, it goes back and says why.
-  private func setting<V: Equatable>(_ current: V, _ key: WritableKeyPath<AppStore.SettingsChange, V?>) -> Binding<V> {
+  private func setting<V: Equatable & Sendable>(_ current: V, _ key: WritableKeyPath<AppStore.SettingsChange, V?>) -> Binding<V> {
     .saving(current, shown: $pending[dynamicMember: key]) { value in
       var change = AppStore.SettingsChange()
       change[keyPath: key] = value

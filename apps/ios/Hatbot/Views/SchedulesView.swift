@@ -334,7 +334,7 @@ struct TriggerDetailView: View {
   }
 
   /// A switch or picker that saves as soon as it's changed; then the trigger shows what was saved.
-  private func saving<V: Equatable>(_ value: V, _ key: WritableKeyPath<AppStore.TriggerChange, V?>) -> Binding<V> {
+  private func saving<V: Equatable & Sendable>(_ value: V, _ key: WritableKeyPath<AppStore.TriggerChange, V?>) -> Binding<V> {
     .saving(value, shown: $setting[dynamicMember: key]) { new in
       var change = AppStore.TriggerChange()
       change[keyPath: key] = new
