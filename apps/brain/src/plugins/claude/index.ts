@@ -131,7 +131,7 @@ export const claudePlugin = (d: { claude: ClaudeCode; desktop: DesktopAgent }) =
       ];
       return ready(tools, {
         guidance:
-          "claude_code hands code work to Claude Code, which works on its own in a sandbox folder on the owner's Claude subscription and leaves its changes there. For bigger changes to a repo: check it out with forgejo_checkout or github_checkout, have claude_code make the change, check its summary and the diff, then push it to a new branch with the forge's _push tool and open a pull request with its _open_pr tool. A new box, or a big change to one, goes to box_claude. Quick edits and one-off scripts stay with code_run and box_edit.",
+          "claude_code hands code work to Claude Code, which works on its own in a sandbox folder on the owner's Claude subscription and leaves its changes there. For bigger changes to a repo: check it out with github_checkout or forgejo_checkout, have claude_code make the change in that folder, check its summary and the diff, then push it to a new branch with github_push or forgejo_push and open a pull request with github_open_pr or forgejo_open_pr. A new box, or a big change to one, goes to box_claude. Quick edits and one-off scripts stay with code_run and box_edit.",
         test: async () => {
           const version = await d.claude.version();
           const key = "test";

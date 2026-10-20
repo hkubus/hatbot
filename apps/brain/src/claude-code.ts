@@ -191,7 +191,9 @@ export class ClaudeCode {
       "none",
       "--tools",
       r.tools.join(","),
-      ...(r.bash ? ["--allowedTools", "Bash"] : []),
+      // Without Bash, --restricted keeps its file tools in its own folder: a box's run can't read the
+      // sandbox's other checkouts.
+      ...(r.bash ? ["--allowedTools", "Bash"] : ["--restricted"]),
       // No CLAUDE.md, hooks or settings from the folders it works in: those are strangers' too.
       "--setting-sources",
       "",
