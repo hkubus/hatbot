@@ -328,6 +328,17 @@ final class ChatTests: XCTestCase {
     XCTAssertFalse(r.hasEarlier)
   }
 
+  /// A time over a message worked out before midnight isn't kept after it: "Today" was yesterday.
+  func testTimesBetweenMessagesChangeAtMidnight() {
+    let midnight = Calendar.current.startOfDay(for: .now)
+    let late = ISO8601DateFormatter().string(from: midnight.addingTimeInterval(-7200))
+    let m = ThreadMessage(id: 1, role: .assistant, kind: .text, text: "", status: .done, createdAt: late)
+    let times = TimeLabels()
+    let before = times.label(m, after: nil, now: midnight.addingTimeInterval(-60))
+    XCTAssertNotNil(before)
+    XCTAssertNotEqual(before, times.label(m, after: nil, now: midnight.addingTimeInterval(60)))
+  }
+
   /// A reply is split into blocks while it streams: a fence still open runs to the end.
   func testSplitsBlocks() {
     let md = """

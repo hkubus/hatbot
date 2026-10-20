@@ -18,6 +18,8 @@ struct ChatView: View {
   /// The folded conversation you asked to delete, waiting for you to confirm.
   @State private var deleting: Int?
   @State private var rowCache = RowCache()
+  /// Today, so the rows' times are made again when it changes: "Today" becomes "Yesterday".
+  @State private var today = Calendar.current.startOfDay(for: .now)
   @State private var router = OpenRoute()
   private var name: String { store.chatName(store.currentChat) }
   @State private var farFromBottom = false
@@ -56,19 +58,22 @@ struct ChatView: View {
       var episodes: [Int: Episode]
       var unfolded: Set<Int>
       var unread: [Int]
+      var day: Date
     }
 
     var key: Key?
     var rows: [Row] = []
+    let times = TimeLabels()
   }
 
   private var rows: [Row] {
-    let key = RowCache.Key(messages: store.messages, episodes: store.episodes, unfolded: unfolded, unread: store.unread)
+    let key = RowCache.Key(
+      messages: store.messages, episodes: store.episodes, unfolded: unfolded, unread: store.unread, day: today)
     if rowCache.key == key { return rowCache.rows }
     var rows: [Row] = []
     var previous: ThreadMessage?
     func add(_ m: ThreadMessage, as row: Row) {
-      if let time = Self.pause(m, after: previous) { rows.append(.time(time, before: m.id)) }
+      if let time = rowCache.times.label(m, after: previous) { rows.append(.time(time, before: m.id)) }
       previous = m
       rows.append(row)
     }
@@ -110,6 +115,12 @@ struct ChatView: View {
   private var members: [Bot]? {
     guard let c = store.currentChat, c.kind == .group else { return nil }
     return c.botIds.compactMap { store.bots[$0] }
+  }
+
+  /// Midnight, or the clock or time zone changed, or back in the app after either.
+  private func newDay() {
+    let day = Calendar.current.startOfDay(for: .now)
+    if day != today { today = day }
   }
 
   var body: some View {
@@ -311,6 +322,12 @@ struct ChatView: View {
         try? await Task.sleep(for: .milliseconds(150))
         withAnimation { position.scrollTo(id: "m\(id)", anchor: .center) }
       }
+      .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
+        newDay()
+      }
+      .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+        newDay()
+      }
       .task {
         // Coming back to a chat that's loaded and live: the events kept it current. Otherwise the latest
         // page is merged in.
@@ -319,24 +336,6 @@ struct ChatView: View {
         }
       }
     }
-  }
-
-  /// "Today 14:05", like Messages, when a message comes an hour or more after the one before.
-  private static func pause(_ m: ThreadMessage, after previous: ThreadMessage?) -> String? {
-    guard let date = m.date else { return nil }
-    if let prev = previous?.date, date.timeIntervalSince(prev) < 3600 { return nil }
-    let time = date.formatted(date: .omitted, time: .shortened)
-    let calendar = Calendar.current
-    if calendar.isDateInToday(date) { return "Today \(time)" }
-    if calendar.isDateInYesterday(date) { return "Yesterday \(time)" }
-    if let weekAgo = calendar.date(byAdding: .day, value: -6, to: calendar.startOfDay(for: .now)), date >= weekAgo {
-      return "\(date.formatted(.dateTime.weekday(.wide))) \(time)"
-    }
-    let thisYear = calendar.isDate(date, equalTo: .now, toGranularity: .year)
-    let day = thisYear
-      ? date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
-      : date.formatted(.dateTime.day().month(.abbreviated).year())
-    return "\(day) at \(time)"
   }
 }
 
