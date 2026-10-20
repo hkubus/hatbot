@@ -186,3 +186,8 @@ textview.text-area > text {
 row.monospace-subtitle .subtitle {
   font-family: monospace;
 }
+
+textview.diff {
+  font-family: monospace;
+  font-size: 0.85em;
+}

@@ -7,6 +7,7 @@ pub mod icon;
 mod icon_paths;
 pub mod live;
 pub mod markdown;
+pub mod memory;
 pub mod message;
 pub mod route;
 pub mod schedules;

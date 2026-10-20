@@ -13,7 +13,7 @@ use crate::core::delta;
 use crate::core::models::*;
 use crate::core::schedule::ScheduleChange;
 use crate::core::thread;
-use crate::net::api::{Api, ApiError, Empty, Result};
+use crate::net::api::{Api, ApiError, Empty, Result, query};
 use crate::net::socket::{Frame, Socket};
 
 pub const PAGE: usize = 50;
@@ -43,8 +43,25 @@ pub enum Change {
     Trigger(i64),
     Box(i64),
     Memory,
+    /// Proposals came or changed.
+    Proposals,
     Settings,
     Toast(String),
+}
+
+/// What asking for a proposal got.
+pub enum Asked {
+    /// It's being written; it comes as `proposal.updated`.
+    Started,
+    Proposal(Proposal),
+    Nothing,
+}
+
+/// A save's 409: the file as it is now.
+pub fn conflict(e: &ApiError) -> Option<MemoryConflict> {
+    (e.status == 409)
+        .then(|| serde_json::from_slice(&e.body).ok())
+        .flatten()
 }
 
 /// A reply as it's written: its text, latest progress and what it has used so far.
@@ -90,6 +107,7 @@ pub struct State {
     /// Schedules a message points at that no longer exist.
     pub deleted_schedules: HashSet<i64>,
     pub triggers: HashMap<i64, Trigger>,
+    pub proposals: HashMap<i64, Proposal>,
     pub boxes: HashMap<i64, AppBox>,
     /// Boxes a message points at that no longer exist.
     pub deleted_boxes: HashSet<i64>,
@@ -686,6 +704,10 @@ impl Store {
                     st.schedules.remove(&id);
                     st.deleted_schedules.insert(id);
                     changes.push(Change::Schedule(id));
+                }
+                Event::ProposalUpdated { proposal } => {
+                    st.proposals.insert(proposal.id, proposal);
+                    changes.push(Change::Proposals);
                 }
                 Event::TriggerUpdated { trigger } => {
                     let id = trigger.id;
@@ -1507,6 +1529,151 @@ impl Store {
         self.0.api.delete(&format!("/triggers/{id}")).await?;
         self.state_mut().triggers.remove(&id);
         self.emit(Change::Trigger(id));
+        Ok(())
+    }
+
+    pub async fn memory_tree(&self) -> Result<Vec<MemoryFile>> {
+        self.0.api.get("/memory/tree").await
+    }
+
+    pub async fn memory_file(&self, path: &str) -> Result<MemoryContent> {
+        self.0
+            .api
+            .get(&format!("/memory/file?path={}", query(path)))
+            .await
+    }
+
+    /// Saves a memory file over the version at `base` ("" for a new file). The new commit's sha,
+    /// None when nothing changed. Someone else's save in between is a 409: see `conflict`.
+    pub async fn save_memory(
+        &self,
+        path: &str,
+        content: &str,
+        base: &str,
+    ) -> Result<Option<String>> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Save<'a> {
+            content: &'a str,
+            message: String,
+            base_sha: &'a str,
+        }
+        #[derive(serde::Deserialize)]
+        struct Saved {
+            sha: Option<String>,
+        }
+        let saved: Saved = self
+            .0
+            .api
+            .put(
+                &format!("/memory/file?path={}", query(path)),
+                &Save {
+                    content,
+                    message: format!("Edit {path}"),
+                    base_sha: base,
+                },
+            )
+            .await?;
+        self.emit(Change::Memory);
+        Ok(saved.sha)
+    }
+
+    pub async fn delete_memory(&self, path: &str) -> Result<()> {
+        self.0
+            .api
+            .delete(&format!("/memory/file?path={}", query(path)))
+            .await?;
+        self.emit(Change::Memory);
+        Ok(())
+    }
+
+    /// The latest changes, to one file or to all of memory.
+    pub async fn memory_log(&self, path: Option<&str>) -> Result<Vec<MemoryCommit>> {
+        let mut url = "/memory/log?limit=100".to_string();
+        if let Some(p) = path {
+            url += &format!("&path={}", query(p));
+        }
+        self.0.api.get(&url).await
+    }
+
+    pub async fn memory_diff(&self, sha: &str) -> Result<String> {
+        #[derive(serde::Deserialize)]
+        struct Diff {
+            diff: String,
+        }
+        let d: Diff = self.0.api.get(&format!("/memory/diff/{sha}")).await?;
+        Ok(d.diff)
+    }
+
+    /// Undoes a commit with a new one; its sha, None when there was nothing to undo.
+    pub async fn revert_memory(&self, sha: &str) -> Result<Option<String>> {
+        #[derive(serde::Deserialize)]
+        struct Reverted {
+            sha: Option<String>,
+        }
+        let r: Reverted = self
+            .0
+            .api
+            .post(&format!("/memory/revert/{sha}"), &Empty {})
+            .await?;
+        self.emit(Change::Memory);
+        Ok(r.sha)
+    }
+
+    pub async fn load_proposals(&self) -> Result<()> {
+        let list: Vec<Proposal> = self.0.api.get("/proposals?status=pending").await?;
+        {
+            let mut st = self.state_mut();
+            st.proposals
+                .retain(|_, p| p.status != ProposalStatus::Pending);
+            st.proposals.extend(list.into_iter().map(|p| (p.id, p)));
+        }
+        self.emit(Change::Proposals);
+        Ok(())
+    }
+
+    /// Skills whose runs went wrong lately. A brain from before proposals has none.
+    pub async fn skills(&self) -> Vec<SkillStatus> {
+        self.0.api.get("/skills").await.unwrap_or_default()
+    }
+
+    /// Asks for a tidy-up of memory, or a fix to a skill.
+    pub async fn ask_proposal(&self, skill: Option<&str>) -> Result<Asked> {
+        let path = match skill {
+            Some(name) => format!("/skills/{}/fix", query(name)),
+            None => "/proposals/tidy".into(),
+        };
+        let out: serde_json::Value = self.0.api.post(&path, &Empty {}).await?;
+        // An older brain answers with the proposal itself, or nothing.
+        if out.get("started").and_then(|s| s.as_bool()) == Some(true) {
+            return Ok(Asked::Started);
+        }
+        match serde_json::from_value::<Proposal>(out) {
+            Ok(p) => {
+                self.state_mut().proposals.insert(p.id, p.clone());
+                self.emit(Change::Proposals);
+                Ok(Asked::Proposal(p))
+            }
+            Err(_) => Ok(Asked::Nothing),
+        }
+    }
+
+    /// Applies or dismisses a proposal.
+    pub async fn resolve_proposal(&self, id: i64, apply: bool) -> Result<()> {
+        let path = format!(
+            "/proposals/{id}/{}",
+            if apply { "apply" } else { "dismiss" }
+        );
+        let out: serde_json::Value = self.0.api.post(&path, &Empty {}).await?;
+        // Apply answers `{proposal, sha}`, dismiss the proposal alone.
+        let p = out.get("proposal").cloned().unwrap_or(out);
+        if let Ok(p) = serde_json::from_value::<Proposal>(p) {
+            self.state_mut().proposals.insert(p.id, p);
+        }
+        self.emit(Change::Proposals);
+        if apply {
+            self.emit(Change::Memory);
+        }
         Ok(())
     }
 

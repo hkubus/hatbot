@@ -13,6 +13,7 @@ use hatbot::store::{Change, Listener, Store};
 use super::chat::Chat;
 use super::icon::Icon;
 use super::live::LiveView;
+use super::memory::{FilePage, Memory};
 use super::route;
 use super::schedules::{SchedulePage, Schedules};
 use super::task::TaskPage;
@@ -33,6 +34,7 @@ enum Place {
     Tasks,
     Live,
     Schedules,
+    Memory,
 }
 
 /// "Hatbot is paused." and "Can't reach Hatbot." over each section.
@@ -80,6 +82,7 @@ struct Inner {
     tasks: RefCell<Option<Tasks>>,
     live: RefCell<Option<(adw::NavigationPage, LiveView)>>,
     schedules: RefCell<Option<Schedules>>,
+    memory: RefCell<Option<Memory>>,
     /// The pages opened over a section, with what drives each, kept while they're in `nav`.
     pushed: RefCell<Vec<(adw::NavigationPage, Box<dyn Any>)>>,
     place: RefCell<Place>,
@@ -172,6 +175,7 @@ impl Shell {
             tasks: RefCell::default(),
             live: RefCell::default(),
             schedules: RefCell::default(),
+            memory: RefCell::default(),
             pushed: RefCell::default(),
             place: RefCell::new(Place::Chat(store.state().conversation_id)),
             banners,
@@ -280,6 +284,12 @@ impl Inner {
                 .get_or_insert_with(|| Schedules::new(&self.store, &self.banners))
                 .page
                 .clone(),
+            Place::Memory => self
+                .memory
+                .borrow_mut()
+                .get_or_insert_with(|| Memory::new(&self.store, &self.banners))
+                .page
+                .clone(),
         };
         self.place.replace(place);
         self.nav.replace(&[page]);
@@ -318,7 +328,13 @@ impl Inner {
             // In the web app until this app has them (PLAN.md §23.2).
             Link::Box(id) => self.web(&format!("/boxes/{id}")),
             Link::Live => self.open(Place::Live),
-            Link::Memory(_) => {}
+            Link::Memory(path) => {
+                self.open(Place::Memory);
+                if !path.is_empty() {
+                    let p = FilePage::new(&self.store, &path, false);
+                    self.push(p.page.clone(), Box::new(p));
+                }
+            }
         }
     }
 
@@ -424,6 +440,9 @@ impl Inner {
         let schedules = sidebar_row(Icon::new("clock", 18), "Schedules & Triggers", None);
         self.sidebar.append(&schedules);
         rows.push((Place::Schedules, schedules));
+        let memory = sidebar_row(Icon::new("book", 18), "Memory", None);
+        self.sidebar.append(&memory);
+        rows.push((Place::Memory, memory));
         drop(st);
         drop(rows);
         self.sync_selection();

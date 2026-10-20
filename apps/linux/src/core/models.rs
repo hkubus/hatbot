@@ -425,6 +425,90 @@ pub struct TriggerWithSecret {
     pub secret: String,
 }
 
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+pub struct MemoryFile {
+    pub path: String,
+    #[serde(default)]
+    pub size: i64,
+}
+
+/// A memory file as read, with the sha a save says it's based on.
+#[derive(Deserialize, Debug, Clone)]
+pub struct MemoryContent {
+    pub content: String,
+    pub sha: String,
+}
+
+/// What a save that came after someone else's finds: the file as it is now. Empty if it's gone.
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+pub struct MemoryConflict {
+    pub sha: String,
+    pub content: String,
+}
+
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+pub struct MemoryCommit {
+    pub sha: String,
+    pub author: String,
+    pub date: String,
+    pub message: String,
+    #[serde(default)]
+    pub files: Vec<String>,
+}
+
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProposalKind {
+    Skill,
+    Write,
+    #[serde(other)]
+    Tidy,
+}
+
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProposalStatus {
+    Pending,
+    Applied,
+    Dismissed,
+    #[serde(other)]
+    Stale,
+}
+
+/// One file a proposal changes: `before` is None for a new file, `after` for a deleted one.
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+pub struct ProposalChange {
+    pub path: String,
+    pub before: Option<String>,
+    pub after: Option<String>,
+}
+
+/// A change to memory waiting for you to look over (PLAN.md §15).
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Proposal {
+    pub id: i64,
+    pub kind: ProposalKind,
+    pub title: String,
+    pub reason: String,
+    pub changes: Vec<ProposalChange>,
+    #[serde(default)]
+    pub skill: Option<String>,
+    pub status: ProposalStatus,
+    pub created_at: String,
+}
+
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+pub struct SkillStatus {
+    pub name: String,
+    #[serde(default)]
+    pub runs: i64,
+    #[serde(default)]
+    pub failed: Vec<i64>,
+    #[serde(default)]
+    pub takeovers: Vec<i64>,
+}
+
 /// A small web app a bot made for you (PLAN.md §21; packages/shared/src/box.ts).
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -573,6 +657,8 @@ pub enum Event {
     ScheduleUpdated { schedule: Schedule },
     #[serde(rename = "schedule.deleted")]
     ScheduleDeleted { id: i64 },
+    #[serde(rename = "proposal.updated")]
+    ProposalUpdated { proposal: Proposal },
     #[serde(rename = "trigger.updated")]
     TriggerUpdated { trigger: Trigger },
     #[serde(rename = "trigger.deleted")]

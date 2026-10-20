@@ -4,6 +4,7 @@ pub mod delta;
 pub mod format;
 pub mod links;
 pub mod markdown;
+pub mod memory;
 pub mod models;
 pub mod schedule;
 pub mod thread;
