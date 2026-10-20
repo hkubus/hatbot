@@ -15,6 +15,8 @@ type Host = {
   careful: boolean;
   /** infra/pct-exec-setup.sh ran on it: Hatbot can run commands in its containers. */
   proxmox: boolean;
+  /** Nobody else writes what it prints: its output doesn't count as untrusted. */
+  trustOutput: boolean;
 };
 type Config = { hosts: Host[] };
 
@@ -25,6 +27,7 @@ const blank = (): Host => ({
   port: 22,
   careful: false,
   proxmox: false,
+  trustOutput: false,
 });
 
 export function SshSettings({ config, save, action, running }: PluginSettingsProps<Config>) {
@@ -130,6 +133,10 @@ export function SshSettings({ config, save, action, running }: PluginSettingsPro
             <div className="form-row">
               <span className="label">Proxmox host: run commands in its containers</span>
               <Switch on={h.proxmox} onChange={(proxmox) => set(i, { proxmox })} />
+            </div>
+            <div className="form-row">
+              <span className="label">Trust what it prints: only you write its logs and files</span>
+              <Switch on={h.trustOutput} onChange={(trustOutput) => set(i, { trustOutput })} />
             </div>
             <div className="form-row">
               <span className="label mono">{keys[h.name] ?? "No key pinned yet"}</span>

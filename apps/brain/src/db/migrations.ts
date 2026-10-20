@@ -823,4 +823,23 @@ export const migrations: string[] = [
   `
   ALTER TABLE tasks ADD COLUMN box_job TEXT;
   `,
+  // 47: approvals that go further than once (PLAN.md §6.2): for the rest of a task or conversation,
+  // or always for one exact call.
+  `
+  ALTER TABLE approvals ADD COLUMN tool TEXT;
+  ALTER TABLE approvals ADD COLUMN input TEXT;
+  ALTER TABLE approvals ADD COLUMN target TEXT;
+  ALTER TABLE approvals ADD COLUMN episode_id INTEGER;
+  ALTER TABLE approvals ADD COLUMN scopes TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE approvals ADD COLUMN scope TEXT;
+  CREATE TABLE approval_rules (
+    id INTEGER PRIMARY KEY,
+    bot_id TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    input TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (bot_id, tool, input)
+  );
+  `,
 ];

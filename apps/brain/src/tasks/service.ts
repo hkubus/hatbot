@@ -1000,11 +1000,12 @@ export class Tasks {
   }
 
   /**
-   * A task on a to-do item ended done: the item is ticked off as todo_done would, so after untrusted
-   * content it's a proposal. Not if it's no longer open, or the task ticked it off itself.
+   * A task on a to-do item ended done: the item is ticked off, even after untrusted content
+   * (2026-10-20, the owner's choice: it's the item the task was started on, and it said it's done).
+   * Not if it's no longer open, or the task ticked it off itself.
    */
   private tickTodo(task: Task, text: string) {
-    const ctx = this.toolContext(task, new AbortController().signal);
+    const ctx = { ...this.toolContext(task, new AbortController().signal), tainted: () => null };
     const run = tickTodo(ctx, text, (md) => todoAt(md, text) ?? "It isn't open any more.").then(
       () => {},
       (err) => {

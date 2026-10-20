@@ -1080,6 +1080,7 @@ struct ApprovalBody: View {
   @State private var error: String?
   @State private var note = ""
   @State private var decided: Decision?
+  @State private var trusted = false
 
   var body: some View {
     let a = approval
@@ -1123,14 +1124,44 @@ struct ApprovalBody: View {
       case nil: nil
       }
     }
+    let scopes = a.scopes ?? []
+    if scopes.contains("session") || scopes.contains("always") {
+      HStack(spacing: 16) {
+        if scopes.contains("session") {
+          Button(a.taskId == nil ? "For this chat" : "For this task") {
+            decide(.approve, scope: "session")
+          }
+        }
+        if scopes.contains("always") {
+          Button("Always") { decide(.approve, scope: "always") }
+        }
+      }
+      .font(.subheadline)
+      .buttonStyle(.borderless)
+      .disabled(busy)
+    }
+    if a.taskId == nil, !a.sources.isEmpty, !trusted, let chat = a.conversationId, let episode = a.episodeId {
+      Button("Trust this chat") {
+        Task {
+          do {
+            try await store.trustConversation(chat, episode: episode)
+            trusted = true
+          } catch {
+            self.error = message(for: error)
+          }
+        }
+      }
+      .font(.subheadline)
+      .buttonStyle(.borderless)
+    }
   }
 
-  private func decide(_ decision: Decision) {
+  private func decide(_ decision: Decision, scope: String? = nil) {
     busy = true
     error = nil
     Task {
       do {
-        try await store.decide(approval.id, decision, note: note)
+        try await store.decide(approval.id, decision, note: note, scope: scope)
         decided = decision
       } catch {
         self.error = message(for: error)

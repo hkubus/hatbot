@@ -2,6 +2,7 @@
 import {
   API_PREFIX,
   type Approval,
+  type ApprovalScope,
   describeCron,
   type Question,
   type Schedule,
@@ -13,7 +14,18 @@ import { errorText } from "./api";
 import { plainText, stamp } from "./format";
 import { Icon } from "./icons";
 import { navigate } from "./router";
-import { answerQuestion, decideApproval, ensureApproval, useStore } from "./store";
+import {
+  answerQuestion,
+  decideApproval,
+  ensureApproval,
+  ensureSchedule,
+  ensureTask,
+  ensureWatcher,
+  trustConversation,
+  trustSchedule,
+  trustWatcher,
+  useStore,
+} from "./store";
 
 const STATUS: Record<TaskStatus, [string, string]> = {
   queued: ["", "Queued"],
@@ -142,6 +154,49 @@ export function ApprovalCard({
 }
 
 /**
+ * Trusting where what the work read came from, so what comes after doesn't ask for it: the schedule
+ * or watcher the chat wrote that started its task, or the conversation it asks in.
+ */
+function TrustButton({ a, onError }: { a: Approval; onError: (error: string) => void }) {
+  const task = useStore((s) => (a.taskId ? s.tasks[a.taskId] : undefined));
+  const schedule = useStore((s) => (task?.scheduleId ? s.schedules[task.scheduleId] : undefined));
+  const watcher = useStore((s) => (task?.watcherId ? s.watchers[task.watcherId] : undefined));
+  const [trusted, setTrusted] = useState(false);
+  useEffect(() => {
+    if (a.taskId) ensureTask(a.taskId);
+  }, [a.taskId]);
+  useEffect(() => {
+    if (task?.scheduleId) ensureSchedule(task.scheduleId);
+    if (task?.watcherId) ensureWatcher(task.watcherId);
+  }, [task?.scheduleId, task?.watcherId]);
+  const { conversationId, episodeId } = a;
+  const chat = !a.taskId && !trusted && a.sources.length > 0 && conversationId && episodeId;
+  const [label, trust] = schedule?.tainted
+    ? ["Trust schedule", () => trustSchedule(schedule.id)]
+    : watcher?.tainted
+      ? ["Trust watcher", () => trustWatcher(watcher.id)]
+      : chat
+        ? ["Trust this chat", () => trustConversation(conversationId, episodeId)]
+        : [null, null];
+  if (!label || !trust) return null;
+  return (
+    <button
+      type="button"
+      className="btn sm ghost"
+      title="What it read doesn't make what comes after ask"
+      onClick={() =>
+        trust().then(
+          () => setTrusted(true),
+          (err) => onError(errorText(err)),
+        )
+      }
+    >
+      {label}
+    </button>
+  );
+}
+
+/**
  * An approval waiting for you, with Deny and Approve: a card on its task's page, and in the chat's
  * tray. Every field is plain text, never Markdown, which could hide part of a command.
  */
@@ -169,11 +224,11 @@ export function PendingApproval({
   const why = more || warns;
   const folds = compact && ((a.reason && !warns) || shot || takesNote(a));
 
-  const decide = async (decision: "approve" | "deny") => {
+  const decide = async (decision: "approve" | "deny", scope?: ApprovalScope) => {
     setBusy(true);
     setError("");
     try {
-      await decideApproval(a.id, decision, note);
+      await decideApproval(a.id, decision, note, scope);
     } catch (err) {
       setError(errorText(err));
       setBusy(false);
@@ -206,6 +261,7 @@ export function PendingApproval({
       {error && <div className="form-error">{error}</div>}
       <div className="approval-actions">
         {links}
+        <TrustButton a={a} onError={setError} />
         {folds && (
           <button
             type="button"
@@ -225,6 +281,28 @@ export function PendingApproval({
         >
           Deny
         </button>
+        {a.scopes.includes("always") && (
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            title="Approve this exact action from now on"
+            onClick={() => decide("approve", "always")}
+          >
+            Always
+          </button>
+        )}
+        {a.scopes.includes("session") && (
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            title={`Approve ${a.taskId ? "this task's" : "this conversation's"} calls like this on the same thing`}
+            onClick={() => decide("approve", "session")}
+          >
+            {a.taskId ? "For this task" : "For this chat"}
+          </button>
+        )}
         <button
           type="button"
           className="btn primary"

@@ -144,6 +144,15 @@ for (const [at, threadOf] of [
     .get(`${at}/episodes`, query(EpisodeIds), on(episodes))
     // Deleting a conversation from the chat for good.
     .delete(`${at}/episodes/:episodeId`, on(deleteEpisode))
+    // You trust what a conversation read: its changes no longer ask for that.
+    .post(
+      `${at}/episodes/:episodeId/trust`,
+      on((c, t) =>
+        t.trustEpisode(Number(c.req.param("episodeId")))
+          ? c.json({ ok: true })
+          : c.json({ error: "That's gone." }, 404),
+      ),
+    )
     .post(`${at}/messages`, json(PostMessage), on(post))
     // A reply that failed, written again in place from where it was.
     .post(`${at}/messages/:messageId/retry`, on(retry))

@@ -41,4 +41,5 @@ export const watcherRoutes = new Hono<AppEnv>()
     if (c.var.settings.get().paused) return c.json({ error: "Hatbot is paused." }, 409);
     return c.json(await c.var.watchers.checkNow(id(c)));
   })
+  .post("/watchers/:id/trust", (c) => found(c, c.var.watchers.trust(id(c))))
   .delete("/watchers/:id", (c) => (c.var.watchers.delete(id(c)) ? c.json({ ok: true }) : gone()));

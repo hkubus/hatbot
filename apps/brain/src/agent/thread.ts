@@ -73,7 +73,7 @@ import {
   SUMMARY_PROMPT,
   SYSTEM_PROMPT,
 } from "./prompt";
-import { mayReview, safeToRun } from "./review";
+import { mayReview, safeToRun, scopesFor } from "./review";
 import { type Readable, Screener } from "./screening";
 import {
   addSources,
@@ -104,6 +104,8 @@ const MAX_SUMMARY_TRIES = 3;
 /** A conversation whose last request was this long carries on in a new one. */
 const LONG_EPISODE_TOKENS = 90_000;
 const RECENT_MESSAGES = 10;
+/** The most of your words in a conversation the review reads, the newest kept. */
+const OWNER_SAID_CHARS = 12_000;
 const MAX_STEPS = 25;
 /** A chat request's output limit, and ask_opus's: the check before each counts on all of it. */
 const MAX_TOKENS = 32000;
@@ -520,17 +522,38 @@ export class Thread {
   }
 
   /**
-   * Your last few messages in this conversation, as you wrote them. Answering a hand-off, also what you
-   * had said to the bot that asked: its request is its own words, not yours.
+   * Your messages in this conversation as you wrote them, the newest OWNER_SAID_CHARS, and the notes
+   * you gave on its approvals. Answering a hand-off, also what you had said to the bot that asked: its
+   * request is its own words, not yours.
    */
   private ownerSaid(episodeId: number): string {
-    const here = this.d.db
+    const said: string[] = [];
+    let left = OWNER_SAID_CHARS;
+    for (const m of this.d.db
       .query<{ text: string; created_at: string }, [number]>(
-        "SELECT text, created_at FROM messages WHERE episode_id = ? AND role = 'user' ORDER BY id DESC LIMIT 3",
+        "SELECT text, created_at FROM messages WHERE episode_id = ? AND role = 'user' ORDER BY id DESC",
       )
-      .all(episodeId)
-      .reverse()
-      .map((m) => `[${localStamp(new Date(m.created_at))}] ${m.text}`)
+      .all(episodeId)) {
+      const line = `[${localStamp(new Date(m.created_at))}] ${m.text}`;
+      said.unshift(line.slice(0, left));
+      left -= line.length;
+      if (left <= 0) break;
+    }
+    const notes = this.d.db
+      .query<{ note: string; at: string }, [number, number]>(
+        `SELECT a.note, a.decided_at AS at FROM approvals a JOIN episodes e ON e.id = ?2
+         WHERE a.conversation_id = ?1 AND a.task_id IS NULL AND a.note IS NOT NULL
+           AND a.created_at >= e.started_at ORDER BY a.id`,
+      )
+      .all(this.conversationId, episodeId)
+      .map((a) => `[${localStamp(new Date(a.at))}] ${a.note}`);
+    const here = [
+      said.join("\n\n"),
+      notes.length
+        ? `What the owner told this conversation on its approvals:\n${notes.join("\n")}`
+        : "",
+    ]
+      .filter(Boolean)
       .join("\n\n");
     const asked = this.currentHandoff?.task;
     const there = asked && this.d.tasks?.requestOf(asked.id);
@@ -543,8 +566,8 @@ export class Thread {
 
   /**
    * Something the episode read may be a prompt injection, `what`: the first kept. `own`: Haiku found
-   * it in what the episode read itself, so the running summary carries it on. A check that failed
-   * doesn't: the episode had the text itself, but the summary was told to keep no requests from it.
+   * it in what the episode read itself, so the running summary carries it on; a suspicion carried in
+   * from elsewhere doesn't.
    */
   private suspect(episodeId: number, what: string, own = false) {
     this.d.db
@@ -575,11 +598,10 @@ export class Thread {
     let screener = this.screeners.get(episodeId);
     if (!screener) {
       for (const [id, other] of this.screeners) if (other.idle) this.screeners.delete(id);
-      screener = new Screener(this.d, { episodeId }, (source, verdict) =>
-        verdict.failed
-          ? this.suspect(episodeId, `${source}, which couldn't be checked`)
-          : this.suspect(episodeId, `${source}: "${verdict.excerpt}"`, true),
-      );
+      // One that couldn't be checked isn't suspected: the review still looks at what it leads to.
+      screener = new Screener(this.d, { episodeId }, (source, verdict) => {
+        if (!verdict.failed) this.suspect(episodeId, `${source}: "${verdict.excerpt}"`, true);
+      });
       this.screeners.set(episodeId, screener);
     }
     return screener;
@@ -602,21 +624,35 @@ export class Thread {
   }
 
   /**
-   * A change that asks (`verdict`): Haiku's review (it isn't destructive or dangerous), then your
-   * approval, which the reply waits for (PLAN.md §6.1). Your note if it may go ahead; why not if not.
+   * A change that asks (`verdict`): the review (it isn't destructive or dangerous), then your approval,
+   * which the reply waits for (PLAN.md §6.1). Your note if it may go ahead; why not if not.
    */
   private async approve(
     episodeId: number,
     bot: Bot,
-    call: { tool: string; input: unknown; what: string },
+    call: { tool: string; input: unknown; what: string; target?: string | null },
     verdict: Extract<Verdict, { action: "ask" }>,
     signal: AbortSignal,
     progress: (line: string) => void,
   ): Promise<{ note: string | null } | { content: string; isError: true }> {
     const { approvals, settings } = this.d;
     const { tainted: taintedBy, suspected } = this.trust(episodeId);
+    const reviewable = mayReview(verdict, suspected !== null);
+    // What you allowed beyond once (PLAN.md §6.2).
+    if (
+      reviewable &&
+      approvals?.granted({
+        botId: bot.id,
+        tool: call.tool,
+        input: call.input,
+        target: call.target ?? null,
+        episodeId,
+        taintOnly: verdict.tainted === true,
+      })
+    )
+      return { note: null };
     let review = "";
-    if (settings.get().reviewChanges && mayReview(verdict, suspected !== null)) {
+    if (settings.get().reviewChanges && reviewable) {
       progress("Checking it's safe");
       const check = await safeToRun(
         this.d,
@@ -631,7 +667,7 @@ export class Thread {
         { ...call, why: verdict.why },
       );
       if (check.safe) return { note: null };
-      review = check.why;
+      review = check.why && `${check.by}: ${check.why}`;
     }
     if (!approvals) return { content: "Approvals aren't available; use run_task.", isError: true };
     const approval = approvals.create({
@@ -641,11 +677,14 @@ export class Thread {
       kind: verdict.kind ?? "other",
       summary: call.what,
       reason: suspected
-        ? `${verdict.why} Something this conversation read may be instructions aimed at ${bot.name}, so Haiku's review is skipped: ${suspected}`
+        ? `${verdict.why} Something this conversation read may be instructions aimed at ${bot.name}, so the review is skipped: ${suspected}`
         : review
-          ? `${verdict.why} Haiku: ${review}`
+          ? `${verdict.why} ${review}`
           : verdict.why,
       sources: taintedBy ? [taintedBy] : [],
+      call: { tool: call.tool, input: call.input, target: call.target ?? null },
+      episodeId,
+      scopes: reviewable ? scopesFor(verdict) : [],
     });
     progress("Waiting for your approval");
     this.waiting = approval.id;
@@ -697,7 +736,7 @@ export class Thread {
     if (verdict.action === "block") return { content: `Refused: ${verdict.why}`, isError: true };
     let note: string | null = null;
     if (verdict.action === "ask") {
-      const call = { tool: t.name, input, what };
+      const call = { tool: t.name, input, what, target: t.target?.(input as never) ?? null };
       const asked = await this.approve(episodeId, bot, call, verdict, signal, progress);
       if ("content" in asked) return asked;
       note = asked.note;
@@ -1312,6 +1351,20 @@ export class Thread {
     // The reply in progress may be in it: stopped, and deleted once it has ended.
     if (this.current && !this.currentIncognito) this.current.abort(STOPPED);
     return this.enqueue(() => this.inSummaryTurn(() => this.forget(episodeId)));
+  }
+
+  /**
+   * You trust what a conversation read (2026-10-20, the owner's choice): it's no longer tainted or
+   * suspected, and the summary doesn't carry a suspicion from it. False if there's no such one.
+   */
+  trustEpisode(episodeId: number): boolean {
+    if (!this.ownEpisode(episodeId)) return false;
+    this.d.db
+      .query(
+        "UPDATE episodes SET tainted = 0, tainted_by = NULL, injection_suspected = NULL, read_suspected = NULL WHERE id = ?",
+      )
+      .run(episodeId);
+    return true;
   }
 
   private ownEpisode(episodeId: number): boolean {

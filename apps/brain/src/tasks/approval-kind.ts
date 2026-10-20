@@ -36,7 +36,7 @@ export function buysOrPays(hold: Hold): boolean {
  */
 export function approvalKind(
   kind: ApprovalKind,
-  step: { summary: string; reason?: string },
+  step: { summary: string; reason?: string; control?: string },
   page: { url: string | null; text: string | null },
   held: Hold | null = null,
 ): ApprovalKind {
@@ -47,7 +47,7 @@ export function approvalKind(
   if (held && "checkout" in held && paymentHost(held.checkout)) return "payment";
   if (
     kind === "purchase" ||
-    buyingLabel(`${step.summary} ${step.reason ?? ""}`) ||
+    buyingLabel(`${step.summary} ${step.reason ?? ""} ${step.control ?? ""}`) ||
     checkoutHost(page.url ?? undefined) ||
     (held && buysOrPays(held))
   )
@@ -56,18 +56,25 @@ export function approvalKind(
 }
 
 /**
- * An approved confirm_intent: the page it was asked on, its kind, what it said it would do, and the held
- * step it was for.
+ * An approved confirm_intent: the page it was asked on, its kind, what it said it would do and the
+ * control it said it would press, and the held step it was for.
  */
-export type Armed = { page: string | null; kind: ApprovalKind; summary: string; hold: Hold | null };
+export type Armed = {
+  page: string | null;
+  kind: ApprovalKind;
+  summary: string;
+  control?: string;
+  hold: Hold | null;
+};
 
 const holdKey = (h: Hold) => ("label" in h ? `label:${fold(h.label)}` : JSON.stringify(h));
 
 /**
  * Why an approval doesn't cover this held step, or null when it does, on its page only. One asked for a
- * held step covers that step. One asked before trying covers a step whose label it names, and not one
- * that may buy or pay if a notification could give it; the run spends it on the first held step after
- * it, covered or not, and drops it when the page changes.
+ * held step covers that step. One asked before trying covers a step whose label its summary or control
+ * names, or a button with no label when it said which control it would press, and not one that may buy
+ * or pay if a notification could give it; the run spends it on the first held step after it, covered
+ * or not, and drops it when the page changes.
  */
 export function notCovered(armed: Armed, hold: Hold, page: string | null): string | null {
   if (armed.page !== null && !samePage(page, armed.page))
@@ -78,9 +85,11 @@ export function notCovered(armed: Armed, hold: Hold, page: string | null): strin
       : `The owner's approval was for the step ${heldWhat(armed.hold)}, not this one. Call confirm_intent for this step.`;
   if (approvableFromNotification(armed.kind) && buysOrPays(hold))
     return "The owner's approval wasn't for buying or paying, and this step may do either. Call confirm_intent for this step, with kind purchase or payment.";
-  // A step with no label to go by could be anything on the page.
+  // The owner saw which control it would press; an icon has no label to check that against.
+  if ("unlabelled" in hold && armed.control) return null;
+  // Anything else with no label to go by could be anything on the page.
   const label = "label" in hold ? fold(hold.label) : "";
-  if (!label || !fold(armed.summary).includes(label))
+  if (!label || ![armed.summary, armed.control ?? ""].some((s) => fold(s).includes(label)))
     return `The owner approved "${armed.summary}", not this step ${heldWhat(hold)}. Call confirm_intent for this step.`;
   return null;
 }

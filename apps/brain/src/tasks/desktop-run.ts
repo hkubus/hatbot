@@ -13,6 +13,7 @@ import type { AgentElement, BrowserState, ComputerMember } from "@hatbot/shared/
 import { z } from "zod";
 import { cutOff, type StreamParams } from "../agent/model";
 import { DESKTOP_PROMPT } from "../agent/prompt";
+import { mayReview, safeToRun } from "../agent/review";
 import { type Screening, screenPage } from "../agent/screening";
 import { localStamp } from "../agent/thread";
 import { untrustedBlock } from "../agent/untrusted";
@@ -30,6 +31,7 @@ import {
 } from "../negotiate/gate";
 import { marketplaceSend } from "../negotiate/marketplace";
 import { destructive } from "../plugins/ssh/policy";
+import { usesReserve } from "../spend";
 import { skillPath } from "../teach/skills";
 import { type Armed, approvalKind, notCovered } from "./approval-kind";
 import { addNotes, askOwner, callsOf, endOf, requestsFor, Stop, textOf, thinkingFor } from "./loop";
@@ -85,6 +87,13 @@ const ConfirmIntent = z.object({
       'The one action you are about to take, e.g. "Click Book to reserve a table for 2 at Luigi\'s, Fri 24 Oct 19:30"',
     ),
   reason: z.string().max(500).optional().describe("Why, if it isn't obvious from the task"),
+  control: z
+    .string()
+    .max(200)
+    .optional()
+    .describe(
+      'The button or link you\'ll press, as the page labels it, e.g. "Book now"; what it looks like if it has no label',
+    ),
 });
 const RequestTakeover = z.object({
   reason: z
@@ -435,13 +444,15 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     tasks.appendTurn(id, role, stored);
   };
 
-  const askApproval = (input: {
+  /** What you told the task on its approvals, newest last: your words, for the review. */
+  const notes: string[] = [];
+  const askApproval = async (input: {
     kind: ApprovalKind;
     summary: string;
     reason?: string;
     screenshotStepId?: number | null;
-  }) =>
-    askOwner(
+  }) => {
+    const answer = await askOwner(
       tasks,
       id,
       { botId: task.botId, sources: [...sources], ...input },
@@ -449,6 +460,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       away,
       signal,
     );
+    if (answer.note) notes.push(`[${localStamp(new Date(tasks.clock()))}] ${answer.note}`);
+    return answer;
+  };
 
   /** Waits for you, ending the task when it's cancelled or `nobody` once 24 hours pass. */
   const forOwner = async (nobody: string, wait: (until: AbortSignal) => Promise<void>) => {
@@ -501,36 +515,42 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     // Never rejects: it may be left unread when the task stops first.
     const verdict = known
       ? Promise.resolve(known)
-      : screenPage(d.model, d.spend, { taskId: id }, { url, title: page.title, text }).then((v) => {
+      : screenPage(
+          d.model,
+          d.spend,
+          { taskId: id },
+          { url, title: page.title, text },
+          { reserve: usesReserve(task.origin) },
+        ).then((v) => {
           if (!v.failed) verdicts.set(key, v);
           return v;
         });
     screening.push(verdict.then((v) => ({ verdict: v, host, url })));
   };
 
-  /** Applies the verdicts on the pages the model just read: a suspected one asks you to go on. */
+  /**
+   * Applies the verdicts on the pages the model just read: a suspected one asks you to go on, and one
+   * that couldn't be checked only says so.
+   */
   const screened = async () => {
     const pending = screening;
     screening = [];
     for (const { verdict, host, url } of await Promise.all(pending)) {
-      if (!verdict.suspected || trustedHosts.has(host)) continue;
+      if (trustedHosts.has(host)) continue;
       if (verdict.failed)
         tasks.addStep(id, { kind: "note", name: "Couldn't check the page", detail: "", url });
-      else {
-        tasks.mark(id, "injection_suspected");
-        tasks.addStep(id, {
-          kind: "note",
-          name: "Possible prompt injection",
-          detail: verdict.excerpt,
-          url,
-        });
-      }
+      if (!verdict.suspected) continue;
+      tasks.mark(id, "injection_suspected");
+      tasks.addStep(id, {
+        kind: "note",
+        name: "Possible prompt injection",
+        detail: verdict.excerpt,
+        url,
+      });
       const { outcome } = await askApproval({
         kind: "injection_warning",
         summary: `Keep going on ${host}?`,
-        reason: verdict.failed
-          ? "Hatbot couldn't check this page for instructions aimed at it."
-          : `This page may contain instructions aimed at Hatbot: "${verdict.excerpt}"`,
+        reason: `This page may contain instructions aimed at Hatbot: "${verdict.excerpt}"`,
       });
       if (outcome !== "approved")
         throw new Stop("cancelled", `Stopped on ${host}: the page may contain a prompt injection.`);
@@ -807,9 +827,54 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       { url: page, text: tab?.text ?? null },
       held?.hold,
     );
-    const reason = held
+    const pressed = input.control ? `(It will press "${input.control}".)` : "";
+    let reason = held
       ? `${input.reason ? `${input.reason} ` : ""}(Hatbot held: ${held.what}.)`
-      : input.reason;
+      : [input.reason, pressed].filter(Boolean).join(" ") || undefined;
+    const arm = (hold: Hold | null) => {
+      armed = { page, kind, summary: input.summary, control: input.control, hold };
+    };
+    // The pages it read are screened first: suspected injection skips the review (PLAN.md §6.1).
+    await screened();
+    const why = "A desktop step that sends, submits, deletes or changes something needs approval.";
+    if (
+      d.settings.get().reviewChanges &&
+      mayReview(
+        { action: "ask", why, kind, tainted: true },
+        tasks.get(id)?.injectionSuspected ?? false,
+      )
+    ) {
+      const request = tasks.requestOf(id);
+      const check = await safeToRun(
+        d,
+        { taskId: id },
+        {
+          ownerSaid: notes.length
+            ? `${request ?? ""}\n\nWhat the owner told this task on its approvals:\n${notes.join("\n")}`.trim()
+            : request,
+          goal: `${task.goal}\n\nDone when: ${task.successCriteria}`,
+          sources: [...sources],
+        },
+        {
+          tool: "confirm_intent",
+          input: { ...input, kind, page, held: held?.what ?? null },
+          what: input.summary,
+          why,
+        },
+        { reserve: usesReserve(task.origin) },
+      );
+      if (check.safe) {
+        tasks.addStep(id, {
+          kind: "approval",
+          name: `Not asking: ${check.by} found it safe`,
+          detail: check.why ? `${input.summary}. ${check.why}` : input.summary,
+          url: page,
+        });
+        arm(held?.hold ?? null);
+        return textResult(call, "Approved. Go ahead with exactly this action.");
+      }
+      if (check.why) reason = [reason, `${check.by}: ${check.why}`].filter(Boolean).join(" ");
+    }
     const { outcome, note } = await askApproval({
       ...input,
       ...(reason ? { reason } : {}),
@@ -828,7 +893,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     // trying holds only while its page stays.
     const now = (await agent.context(false).catch(() => null))?.url ?? null;
     const away = page !== null && !samePage(now, page);
-    armed = away && !held ? null : { page, kind, summary: input.summary, hold: held?.hold ?? null };
+    if (away && !held) armed = null;
+    else arm(held?.hold ?? null);
     const moved = away
       ? ` While you waited, another task used the browser: the page you asked about (${page}) isn't on screen now${now ? ` (${now})` : ""}. ${held ? "Go back to it first; the approval holds only there." : "Go back to it, then call confirm_intent again."}`
       : "";

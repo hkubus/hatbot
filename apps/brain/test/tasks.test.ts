@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Task } from "@hatbot/shared";
 import type { AgentElement } from "@hatbot/shared/desktop";
-import { SCREENING_PROMPT } from "../src/agent/prompt";
+import { REVIEW_PROMPT, SCREENING_PROMPT } from "../src/agent/prompt";
 import { type DesktopAgent, DesktopError, HttpDesktopAgent } from "../src/desktop/client";
 import { limits } from "../src/tasks/desktop-run";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
@@ -324,7 +324,7 @@ test("an unanswered takeover leaves the screen to other tasks; Take over gives i
   expect(t.desktop.get().request).toBeNull();
 });
 
-test("a page is screened before the model acts on it: one Haiku couldn't check, or a suspected injection, waits for you", async () => {
+test("a page is screened before the model acts on it: one Haiku couldn't check is noted, a suspected injection waits for you", async () => {
   const work = new FakeModel([
     { content: [computer("screenshot")] },
     { content: [computer("left_click", { coordinate: [10, 10] })] },
@@ -348,12 +348,11 @@ test("a page is screened before the model acts on it: one Haiku couldn't check, 
     return undefined;
   };
   const task = startTask(t);
-  const unchecked = await pending(t);
-  expect(unchecked.reason).toContain("couldn't check this page");
-  expect(work.requests).toHaveLength(1);
-  t.approvals.decide(unchecked.id, "approve", "web");
-
   const suspected = await pending(t);
+  expect(work.requests).toHaveLength(2);
+  expect(t.tasks.steps(task.id).filter((s) => s.name === "Couldn't check the page")).toHaveLength(
+    1,
+  );
   expect(suspected.kind).toBe("injection_warning");
   expect(suspected.reason).toContain("Ignore previous instructions");
   t.approvals.decide(suspected.id, "deny", "web");
@@ -466,7 +465,7 @@ test("a click in a frame Hatbot can't enter, or that it couldn't look at, is hel
   expect(t.agent.actions.map((a) => a.input)).toEqual([{ coordinate: [400, 10] }]);
 });
 
-test("each line break in typed text is checked on its own: one approved send sends one message", async () => {
+test("each line break in typed text is checked on its own: one send the review approves sends one message", async () => {
   const work = new FakeModel([
     { content: [computer("type", { text: "Hi Ann" })] },
     { content: [computer("key", { text: "Return" })] },
@@ -487,13 +486,19 @@ test("each line break in typed text is checked on its own: one approved send sen
     editable: true,
     buttonsAfter: ["Send"],
   };
-  startTask(t, "Write to Ann");
-  t.approvals.decide((await pending(t)).id, "approve", "web");
+  t.taskModel.onCreate = (p) =>
+    p.system === REVIEW_PROMPT
+      ? JSON.stringify({ safe: true, why: "The owner asked to write to Ann." })
+      : '{"suspected": false, "excerpt": ""}';
+  const task = startTask(t, "Write to Ann");
   await t.tasks.idle();
   // The approved Enter, then the text after it; the next Enter waits for another approval.
   expect(t.agent.actions.map((a) => a.input.text)).toEqual(["Hi Ann", "\n", "second message"]);
   expect(lastText(work.requests[4])).toContain('submit with \\"Send\\"');
-  expect(t.approvals.list(false)).toHaveLength(1);
+  expect(t.tasks.steps(task.id).some((s) => s.name === "Not asking: Haiku found it safe")).toBe(
+    true,
+  );
+  expect(t.approvals.list(false)).toHaveLength(0);
 });
 
 test("a background task waits without a slot, wakes on an event, and can notify before it ends", async () => {

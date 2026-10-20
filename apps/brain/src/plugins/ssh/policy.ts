@@ -5,8 +5,17 @@ import type { ApprovalKind } from "@hatbot/shared";
 
 const REBOOT = /\breboot\b|\binit\s+6\b/;
 
-/** `host`: only on a host; inside a container, rebooting it is no worse than restarting a service. */
-type Rule = { re: RegExp; why: string; kind?: ApprovalKind; host?: boolean };
+/**
+ * `host`: only on a host; inside a container, rebooting it is no worse than restarting a service.
+ * `unless`: a command it matches that is fine all the same.
+ */
+type Rule = {
+  re: RegExp;
+  why: string;
+  kind?: ApprovalKind;
+  host?: boolean;
+  unless?: (command: string) => boolean;
+};
 
 const RULES: Rule[] = [
   // Flags can come after the paths too: rm /srv/old -rf.
@@ -88,6 +97,7 @@ const RULES: Rule[] = [
     re: /\b(passwd|chpasswd|usermod|chage|visudo|useradd|adduser|groupadd|addgroup|gpasswd)\b|authorized_keys|\.ssh\/|\/etc\/(sudoers|shadow|passwd)\b|\bssh-keygen\b|\bpveum\b[^|;&\n]*\s(add|modify|delete|remove|passwd)\b/,
     why: "changes accounts, passwords or keys",
     kind: "account_security",
+    unless: (command) => readsAccounts(command),
   },
   { re: /\b(chmod|chown|chgrp)\s+(-\S*\s+)*-\S*R/, why: "changes permissions recursively" },
   {
@@ -141,9 +151,126 @@ export function destructive(
   where: "host" | "container" = "host",
 ): { why: string; kind: ApprovalKind } | null {
   for (const r of RULES)
-    if (!(r.host && where === "container") && r.re.test(command))
+    if (!(r.host && where === "container") && r.re.test(command) && !r.unless?.(command))
       return { why: r.why.replace("{where}", `the ${where}`), kind: r.kind ?? "other" };
   return null;
+}
+
+/** Commands that only read accounts and public keys: getent passwd, cat ~/.ssh/authorized_keys. */
+const ACCOUNT_READERS = new Set([
+  "cat",
+  "head",
+  "tail",
+  "grep",
+  "wc",
+  "ls",
+  "stat",
+  "getent",
+  "id",
+  "groups",
+  "cut",
+  "sort",
+  "uniq",
+]);
+/** What isn't read without the owner: shadow files and private keys. */
+const SECRET = /shadow|(^|\/)id_[\w-]+$|_key$|\.(pem|key|p12|pfx|ppk)$/;
+
+/**
+ * Whether a command only reads accounts or public keys: each part one of the readers above, or
+ * ssh-keygen showing a fingerprint (-l) or finding a host (-F), writing no file and naming no
+ * private key or shadow file.
+ */
+function readsAccounts(command: string): boolean {
+  const parsed = pipelines(command);
+  if (!parsed?.lines.length || parsed.files.some((f) => f !== "/dev/null")) return false;
+  return parsed.lines.every((p) =>
+    p.every((words) => {
+      const [prog = "", ...args] = plain(words);
+      const name = prog.split("/").pop() ?? "";
+      if (args.some((a) => SECRET.test(a))) return false;
+      if (name === "ssh-keygen")
+        return args.every((a) => !a.startsWith("-") || /^-[lfvEF]+$/.test(a));
+      // A recursive grep reads the private keys beside the public ones.
+      if (name === "grep" && args.some((a) => /^-[^-]*[rR]|^--(rec|deref)/.test(a))) return false;
+      return ACCOUNT_READERS.has(name) && !changes([name, ...args]);
+    }),
+  );
+}
+
+/** Commands that read and change nothing, and the subcommands allowed (null: any). */
+const READERS: Record<string, string[] | null> = {
+  cat: null,
+  head: null,
+  tail: null,
+  grep: null,
+  wc: null,
+  ls: null,
+  stat: null,
+  du: null,
+  cut: null,
+  sort: null,
+  getent: null,
+  ps: null,
+  ss: null,
+  pveversion: null,
+  journalctl: null,
+  dmesg: null,
+  date: null,
+  pct: ["list", "status", "config", "listsnapshot", "df", "pending"],
+  qm: ["list", "status", "config", "listsnapshot", "pending"],
+  pvesh: ["get", "ls"],
+  pvesm: ["status", "list"],
+  pvecm: ["status", "nodes"],
+  zpool: ["list", "status", "iostat"],
+  zfs: ["list", "get"],
+  docker: ["ps", "logs", "inspect", "images", "stats"],
+  systemctl: [
+    "",
+    "status",
+    "show",
+    "cat",
+    "list-units",
+    "list-timers",
+    "is-active",
+    "is-enabled",
+    "is-failed",
+    "is-system-running",
+  ],
+};
+/**
+ * A reader's options that change something: journalctl's maintenance, dmesg clearing the buffer or
+ * switching console logging, date setting the clock, ss killing sockets.
+ */
+const WRITES: Record<string, RegExp> = {
+  journalctl: /^--(rotate|vacuum|flush|sync|relinquish|setup-keys|update-catalog)/,
+  dmesg: /^-[^-]*[cCDEn]|^--(clear|read-clear|console)/,
+  date: /^-[^-]*s|^--set/,
+  ss: /^-[^-]*K|^--kill/,
+};
+
+/**
+ * Whether a command only reads: a status command, or each part a reader above with its subcommand,
+ * writing no file and with no option that writes or runs a command. On a Proxmox
+ * host it may run while a container is careful: it can't reach one to change it.
+ */
+export function readOnly(command: string): boolean {
+  if (statusOnly(command, { writes: false })) return true;
+  const parsed = pipelines(command);
+  if (!parsed?.lines.length || parsed.files.some((f) => f !== "/dev/null")) return false;
+  return parsed.lines.every((p) =>
+    p.every((words, i) => {
+      const w = plain(words);
+      if (i > 0 && isFilter(w)) return true;
+      const [prog = "", ...args] = w;
+      const name = prog.split("/").pop() ?? "";
+      const subs = READERS[name];
+      if (subs === undefined || changes(w)) return false;
+      const writes = WRITES[name];
+      if (writes && args.some((a) => writes.test(a))) return false;
+      if (subs === null) return true;
+      return subs.includes(args.find((a) => !a.startsWith("-")) ?? "");
+    }),
+  );
 }
 
 /**

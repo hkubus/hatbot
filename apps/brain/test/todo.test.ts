@@ -64,11 +64,18 @@ test("the to-do list: added and ticked off in the chat, shown to the next conver
   expect((await t.report.make()).text).toContain("- To-do: 1 done, 1 overdue.");
 });
 
-test("in the apps: an item is added, ticked off, and ticked off by a task on it only when that ends done", async () => {
+test("in the apps: an item is added, ticked off, and ticked off by a task on it only when that ends done, tainted or not", async () => {
+  let go = () => {};
+  const read = new Promise<void>((resolve) => {
+    go = resolve;
+  });
   const end = (outcome: string) => ({
     content: [toolUse("finish_task", { outcome, summary: outcome, notify: false })],
   });
-  const t = await testApp(new FakeModel(), new FakeModel([end("failed"), end("done")]));
+  const t = await testApp(
+    new FakeModel(),
+    new FakeModel([end("failed"), { ...end("done"), wait: read }]),
+  );
   const auth = signIn(t);
   const call = (path: string, body?: unknown) => t.call("POST", path, body, auth);
   expect((await call("/todo", { item: "Fix the gate" })).status).toBe(201);
@@ -86,7 +93,10 @@ test("in the apps: an item is added, ticked off, and ticked off by a task on it 
   await t.tasks.idle();
   expect(t.tasks.get(failed.id)?.status).toBe("failed");
   expect(await t.memory.read("todo.md")).toContain("- [ ] Fix the gate\n");
-  await call("/todo/work", work);
+  // It read a web page on the way; the item it was started on is still ticked off.
+  const done = (await (await call("/todo/work", work)).json()) as Task;
+  t.tasks.taint(done.id, "A web page");
+  go();
   await t.tasks.idle();
 
   await call("/todo/done", { text: "Buy filters", line: items[1]?.line });

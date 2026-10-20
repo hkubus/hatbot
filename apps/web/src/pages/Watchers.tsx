@@ -18,7 +18,7 @@ import { ask, useLeaveGuard } from "../confirm";
 import { NoForm, useStoredForm } from "../form";
 import { stamp } from "../format";
 import { navigate } from "../router";
-import { loadPlugins, putWatcher, useStore } from "../store";
+import { loadPlugins, putWatcher, trustWatcher, useStore } from "../store";
 import { Switch } from "../switch";
 import { BackHead, SaveBar, Seg, Select } from "../ui";
 
@@ -503,7 +503,16 @@ export function WatcherEdit({ id }: { id: number | null }) {
             <div className="hint">
               Hatbot wrote this after reading untrusted content
               {stored.taintedBy ? ` (${stored.taintedBy})` : ""}, so its tasks ask before changing
-              anything. Check what it does and save to trust it.
+              anything. Check what it does, then trust it.{" "}
+              <button
+                type="button"
+                className="btn sm"
+                onClick={() =>
+                  void trustWatcher(stored.id).catch((err) => setError(errorText(err)))
+                }
+              >
+                Trust
+              </button>
             </div>
           )}
           {stored && (

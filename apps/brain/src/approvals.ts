@@ -1,6 +1,12 @@
 // Approvals (PLAN.md §6.2): a task asks, you decide in the web app or from an ntfy notification.
 import { createHmac } from "node:crypto";
-import { type Approval, type ApprovalKind, HATBOT_ID } from "@hatbot/shared";
+import {
+  type Approval,
+  type ApprovalKind,
+  type ApprovalRule,
+  type ApprovalScope,
+  HATBOT_ID,
+} from "@hatbot/shared";
 import { sameText, secretKey } from "./auth/keys";
 import type { Bots } from "./bots";
 import type { Db } from "./db";
@@ -39,6 +45,9 @@ type Row = {
   decided_at: string | null;
   cost_usd: number | null;
   note: string | null;
+  scopes: string;
+  scope: ApprovalScope | null;
+  episode_id: number | null;
 };
 
 const SELECT = `SELECT a.*, (SELECT sum(cost_usd) FROM spend_ledger s WHERE s.task_id = a.task_id) AS cost_usd
@@ -49,6 +58,7 @@ const toApproval = (r: Row): Approval => ({
   botId: r.bot_id,
   taskId: r.task_id,
   conversationId: r.conversation_id,
+  episodeId: r.episode_id,
   kind: r.kind,
   summary: r.summary,
   reason: r.reason,
@@ -61,7 +71,18 @@ const toApproval = (r: Row): Approval => ({
   expiresAt: r.expires_at,
   decidedAt: r.decided_at,
   note: r.note,
+  scopes: JSON.parse(r.scopes),
+  scope: r.scope,
 });
+
+/** A call's input as one string, keys sorted, so the same call always reads the same. */
+export function canonical(value: unknown): string {
+  return JSON.stringify(value, (_k, v) =>
+    v && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)))
+      : v,
+  );
+}
 
 export type NewApproval = {
   taskId: number | null;
@@ -74,6 +95,23 @@ export type NewApproval = {
   reason?: string;
   sources?: string[];
   screenshotStepId?: number | null;
+  /** The plugin call it's for, which a scope beyond once applies to. */
+  call?: { tool: string; input: unknown; target: string | null };
+  /** The chat conversation asking, for a scope over the rest of it. */
+  episodeId?: number | null;
+  scopes?: ApprovalScope[];
+};
+
+/** A plugin call that would ask, to look up against what you allowed beyond once. */
+export type Granted = {
+  botId: string;
+  tool: string;
+  input: unknown;
+  target: string | null;
+  taskId?: number;
+  episodeId?: number;
+  /** Only the untrusted-content rule asks: what a scope over the rest of the work covers. */
+  taintOnly: boolean;
 };
 
 export class Approvals {
@@ -153,6 +191,19 @@ export class Approvals {
         this.now(),
         new Date(this.clock() + TTL_MS).toISOString(),
       );
+    if (row && input.call)
+      this.db
+        .query(
+          "UPDATE approvals SET tool = ?, input = ?, target = ?, episode_id = ?, scopes = ? WHERE id = ?",
+        )
+        .run(
+          input.call.tool,
+          canonical(input.call.input),
+          input.call.target ?? "",
+          input.episodeId ?? null,
+          JSON.stringify(input.scopes ?? []),
+          row.id,
+        );
     const approval = this.get(row?.id ?? -1);
     if (!approval) throw new Error("approval insert failed");
     this.events.emit({ type: "approval.created", approval });
@@ -198,20 +249,76 @@ export class Approvals {
   }
 
   /**
-   * Your decision, with what you told the task. Null if the approval isn't pending any more, or it's
-   * one a notification can't approve.
+   * Your decision, with what you told the task, and how far an approval goes (`scope`, one it
+   * offers). Null if the approval isn't pending any more, or it's one a notification can't approve.
    */
   decide(
     id: number,
     decision: "approve" | "deny",
     via: "web" | "ntfy",
     note?: string,
+    scope?: ApprovalScope,
   ): Approval | null {
-    if (via === "ntfy" && decision === "approve") {
-      const a = this.get(id);
-      if (!a || !approvableFromNotification(a.kind)) return null;
+    const a = this.get(id);
+    if (via === "ntfy" && decision === "approve" && (!a || !approvableFromNotification(a.kind)))
+      return null;
+    if (scope && decision === "approve" && a?.status === "pending" && a.scopes.includes(scope)) {
+      this.db.query("UPDATE approvals SET scope = ? WHERE id = ?").run(scope, id);
+      if (scope === "always")
+        this.db
+          .query(
+            `INSERT INTO approval_rules (bot_id, tool, input, summary, created_at)
+             SELECT bot_id, tool, input, summary, ? FROM approvals WHERE id = ?
+             ON CONFLICT (bot_id, tool, input) DO NOTHING`,
+          )
+          .run(this.now(), id);
     }
     return this.resolve(id, decision === "approve" ? "approved" : "denied", via, note || null);
+  }
+
+  /**
+   * Why a call that would ask goes ahead on what you approved before, or null: this exact call is
+   * one you always allow, or, where only untrusted content asks, you allowed the tool on the same
+   * thing for the rest of this task or conversation.
+   */
+  granted(q: Granted): string | null {
+    const input = canonical(q.input);
+    const rule = this.db
+      .query<{ id: number }, [string, string, string]>(
+        "SELECT id FROM approval_rules WHERE bot_id = ? AND tool = ? AND input = ?",
+      )
+      .get(q.botId, q.tool, input);
+    if (rule) return "You always allow this.";
+    if (!q.taintOnly || (q.taskId === undefined && q.episodeId === undefined)) return null;
+    const session = this.db
+      .query<{ id: number }, [string, string, string, number, number]>(
+        `SELECT id FROM approvals WHERE status = 'approved' AND scope = 'session' AND bot_id = ?
+         AND tool = ? AND target = ? AND (task_id = ? OR (task_id IS NULL AND episode_id = ?)) LIMIT 1`,
+      )
+      .get(q.botId, q.tool, q.target ?? "", q.taskId ?? -1, q.episodeId ?? -1);
+    if (!session) return null;
+    return `You allowed ${q.tool}${q.target ? ` on ${q.target}` : ""} for the rest of this ${q.taskId !== undefined ? "task" : "conversation"}.`;
+  }
+
+  /** The calls you always allow, newest first. */
+  rules(): ApprovalRule[] {
+    return this.db
+      .query<{ id: number; bot_id: string; tool: string; summary: string; created_at: string }, []>(
+        "SELECT id, bot_id, tool, summary, created_at FROM approval_rules ORDER BY id DESC",
+      )
+      .all()
+      .map((r) => ({
+        id: r.id,
+        botId: r.bot_id,
+        tool: r.tool,
+        summary: r.summary,
+        createdAt: r.created_at,
+      }));
+  }
+
+  /** Stops always allowing a call; false if there was no such rule. */
+  removeRule(id: number): boolean {
+    return this.db.query("DELETE FROM approval_rules WHERE id = ?").run(id).changes > 0;
   }
 
   cancel(id: number) {

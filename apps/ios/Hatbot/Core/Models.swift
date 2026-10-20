@@ -328,6 +328,12 @@ struct Approval: Codable, Identifiable, Equatable, Sendable {
   var note: String?
   /// The bot asking.
   var botId: String?
+  /// How far approving it may go besides this once: "session" (the rest of the task or chat) and
+  /// "always" (this exact action). A String, so a scope this app doesn't know is left out.
+  var scopes: [String]?
+  /// The chat waiting for it, and the conversation in it, when no task is.
+  var conversationId: Int?
+  var episodeId: Int?
 
   /// Whether the answer can carry a note: the task carries on afterwards.
   var takesNote: Bool { kind != "budget" && kind != "injection_warning" }

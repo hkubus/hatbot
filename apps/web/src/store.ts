@@ -2,6 +2,7 @@
 import {
   API_PREFIX,
   type Approval,
+  type ApprovalScope,
   type Attachment,
   type Bot,
   type Box,
@@ -579,6 +580,26 @@ export const ensureBox = (id: number) =>
 export const negotiationOf = (s: Pick<State, "negotiations">, approvalId: number) =>
   Object.values(s.negotiations).find((n) => n.approvalId === approvalId);
 
+export const ensureWatcher = (id: number) =>
+  once(`w${id}`, id in state.watchers, () =>
+    api<Watcher>(`/watchers/${id}`).then(putWatcher, (err) => {
+      if (!(err instanceof ApiError && err.status === 404)) throw err;
+      put("watchers", id, null);
+    }),
+  );
+
+/** You trust what the chat wrote for a schedule or watcher: its runs no longer start tainted. */
+export async function trustSchedule(id: number) {
+  putSchedule(await api<Schedule>(`/schedules/${id}/trust`, { body: {} }));
+}
+export async function trustWatcher(id: number) {
+  putWatcher(await api<Watcher>(`/watchers/${id}/trust`, { body: {} }));
+}
+/** You trust what a conversation read: its changes no longer ask because of it. */
+export async function trustConversation(conversationId: number, episodeId: number) {
+  await api(`/conversations/${conversationId}/episodes/${episodeId}/trust`, { body: {} });
+}
+
 export async function saveSchedule(id: number, patch: Partial<Schedule> & { at?: string }) {
   const s = await api<Schedule>(`/schedules/${id}`, { method: "PATCH", body: patch });
   putSchedule(s);
@@ -620,9 +641,14 @@ async function loadLive() {
     if (state.steps[t.id] && t.finishedAt === null) void loadTask(t.id).catch(() => {});
 }
 
-export async function decideApproval(id: number, decision: "approve" | "deny", note = "") {
+export async function decideApproval(
+  id: number,
+  decision: "approve" | "deny",
+  note = "",
+  scope?: ApprovalScope,
+) {
   const a = await api<Approval>(`/approvals/${id}`, {
-    body: { decision, ...(note.trim() ? { note: note.trim() } : {}) },
+    body: { decision, ...(note.trim() ? { note: note.trim() } : {}), ...(scope ? { scope } : {}) },
   });
   put("approvals", a.id, a);
 }

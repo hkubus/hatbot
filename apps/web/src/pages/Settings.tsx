@@ -1,5 +1,6 @@
 import {
   type ApiToken,
+  type ApprovalRule,
   type AppSettings,
   type CreateTokenResponse,
   describeEvery,
@@ -393,9 +394,10 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
               {paused ? "Resume" : "Pause all"}
             </button>
           </Row>
-          <Row label="Let Haiku allow safe changes">
+          <Row label="Let Haiku and Opus allow safe changes">
             <Switch on={settings.reviewChanges} onChange={(on) => update({ reviewChanges: on })} />
           </Row>
+          <AllowedRows />
           <RollbackRow toast={toast} />
         </Group>
 
@@ -406,6 +408,42 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
         <UpdateGroup toast={toast} />
       </div>
     </section>
+  );
+}
+
+/** The exact calls you chose to always allow, each with Remove (PLAN.md §6.2). */
+function AllowedRows() {
+  const [rules, setRules] = useState<ApprovalRule[]>([]);
+  const [error, setError] = useState("");
+  const bots = useStore((s) => s.bots);
+  useEffect(() => {
+    api<ApprovalRule[]>("/approval-rules").then(setRules, (err) => setError(errorText(err)));
+  }, []);
+  const remove = async (r: ApprovalRule) => {
+    setError("");
+    try {
+      await api(`/approval-rules/${r.id}`, { method: "DELETE" });
+      setRules(rules.filter((x) => x.id !== r.id));
+    } catch (err) {
+      setError(errorText(err));
+    }
+  };
+  if (!rules.length && !error) return null;
+  return (
+    <>
+      <Row label="Always allowed" sub={error && <span className="form-error">{error}</span>} />
+      {rules.map((r) => (
+        <Row
+          key={r.id}
+          label={<span className="mono">{r.summary}</span>}
+          sub={r.botId !== "hatbot" && bots[r.botId]?.name}
+        >
+          <button type="button" className="btn sm danger-text" onClick={() => remove(r)}>
+            Remove
+          </button>
+        </Row>
+      ))}
+    </>
   );
 }
 
