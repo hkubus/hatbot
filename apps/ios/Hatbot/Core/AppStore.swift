@@ -102,6 +102,12 @@ final class AppStore {
   @ObservationIgnored private var refreshAgain = false
   /// How long the chats wait for the rest of a burst of news before they load.
   @ObservationIgnored var refreshDelay: Duration = .milliseconds(300)
+  /// What the chat list said of each chat when its page was last fetched ahead or found current on disk.
+  @ObservationIgnored private var prefetched: [Int: (last: String?, unread: Int)] = [:]
+  /// Chats opened since their page was fetched ahead: what they showed is newer, and stays.
+  @ObservationIgnored private var visited = Set<Int>()
+  @ObservationIgnored private var prefetching = false
+  @ObservationIgnored private var prefetchAgain = false
   /// Seen messages not yet told to the brain, sent together.
   @ObservationIgnored private var seenQueue: [Int] = []
   @ObservationIgnored private var seenFlush: Task<Void, Never>?
@@ -597,6 +603,9 @@ final class AppStore {
     // Read before the chat you leave is written: the cache's reads wait for its writes.
     let cached = cache?.page(id)
     persist()
+    // Kept just now: the next look at the chat list checks it against that.
+    prefetched[conversationId] = nil
+    visited.insert(id)
     conversationId = id
     incognito = false
     messages = cached?.messages ?? []
@@ -619,6 +628,62 @@ final class AppStore {
     botIds = list.map(\.id)
     conversations = chats
     persist()
+    prefetch()
+  }
+
+  /// Keeps on disk the latest page of the chats where something came since they were kept, other than
+  /// the one that's showing, so switching to one shows its messages at once. Called whenever the chat
+  /// list loads, so it fetches a chat only when the list says it has news: a newer last message, or
+  /// more unread. One chat at a time, and one pass at a time.
+  func prefetch() {
+    guard cache != nil, !closed else { return }
+    guard !prefetching else {
+      prefetchAgain = true
+      return
+    }
+    prefetching = true
+    Task {
+      repeat {
+        prefetchAgain = false
+        for c in conversations where c.id != conversationId && !closed {
+          // One that didn't come is tried again at the next look.
+          let fetched = stale(c) ? await prefetch(c.id) : true
+          if fetched { prefetched[c.id] = (c.lastMessageAt, c.unread) }
+        }
+      } while prefetchAgain && !closed
+      prefetching = false
+    }
+  }
+
+  /// Whether what's kept of a chat may be behind what the list says of it.
+  private func stale(_ c: Conversation) -> Bool {
+    guard let last = c.lastMessageAt else { return false }
+    if let seen = prefetched[c.id] { return last != seen.last || c.unread > seen.unread }
+    // Unread ones may have been edited since; the rest are current if the kept page has the last message.
+    guard c.unread == 0, let kept = cache?.page(c.id)?.messages.last?.createdAt else { return true }
+    return kept < last
+  }
+
+  /// A chat's latest page, onto disk only, never incognito; whether it's there.
+  private func prefetch(_ id: Int) async -> Bool {
+    visited.remove(id)
+    let path = "/conversations/\(id)"
+    guard let list: [ThreadMessage] = try? await api.get("\(path)/messages?limit=\(Self.page)") else { return false }
+    // Finished messages only, as `persist` keeps: one still streaming would come back half written.
+    let page = list.filter { $0.status != .streaming }
+    let ids = Set(page.compactMap(\.episodeId))
+    var recaps = ids.compactMap { episodes[$0] }
+    let missing = ids.filter { episodes[$0] == nil }.sorted()
+    if !missing.isEmpty,
+      let found: [Episode] = try? await api.get("\(path)/episodes?ids=" + missing.map(String.init).joined(separator: ","))
+    {
+      recaps += found
+    }
+    // Opened meanwhile, it kept a newer page of its own; deleted, or signed out, it keeps none.
+    guard !closed, id != conversationId, !visited.contains(id), conversations.contains(where: { $0.id == id })
+    else { return false }
+    cache?.save(DiskCache.Page(messages: page, episodes: recaps, hasEarlier: list.count == Self.page), for: id)
+    return true
   }
 
   /// The chats' unread counts, soon: news comes in bursts. One load at a time, so an older answer
@@ -637,6 +702,7 @@ final class AppStore {
         if let chats: [Conversation] = try? await api.get("/conversations") { conversations = chats }
       } while refreshAgain
       refreshing = false
+      prefetch()
     }
   }
 
