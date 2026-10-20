@@ -155,6 +155,8 @@ const errorText = (err: unknown) =>
   err instanceof Error ? err.message.slice(0, 200) : "unknown error";
 /** ntfy takes up to 4,096 bytes of message; a summary with long links is cut, whole on the task. */
 const NOTIFY_BYTES = 3500;
+/** A tool's progress lines on a task's card, at most one this often. */
+const PROGRESS_MS = 3000;
 
 /** `text` in at most `max` bytes of UTF-8, cut with "…" if it's longer. */
 function clipBytes(text: string, max: number): string {
@@ -740,6 +742,32 @@ export class Tasks {
       )
       .run(status, status, this.now(), id);
     this.emit(id);
+  }
+
+  /**
+   * Shows what a running task's tool is doing on its card, a line at a time and at most every few
+   * seconds: a line that comes sooner waits its turn, and a newer one takes its place.
+   */
+  progress(id: number): (line: string) => void {
+    let last = 0;
+    let next: string | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const show = (line: string) => {
+      last = Date.now();
+      if (this.get(id)?.status === "running")
+        this.d.events.emit({ type: "task.progress", taskId: id, text: `\n${line}\n` });
+    };
+    return (line) => {
+      const wait = last + PROGRESS_MS - Date.now();
+      if (wait <= 0) return show(line);
+      next = line;
+      timer ??= setTimeout(() => {
+        timer = undefined;
+        if (next !== null) show(next);
+        next = null;
+      }, wait);
+      timer.unref?.();
+    };
   }
 
   mark(id: number, flag: "injection_suspected") {

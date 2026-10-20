@@ -1,6 +1,7 @@
 // Each plugin's settings form in Settings (PLAN.md §4.5), by plugin id. A plugin without one only has
 // its switch, environment and Test button.
 import type { ComponentType } from "react";
+import { ClaudeSettings } from "./claude";
 import { HomeAssistantSettings } from "./homeassistant";
 import { McpSettings } from "./mcp";
 import { ProxmoxSettings } from "./proxmox";
@@ -23,4 +24,5 @@ export const PLUGIN_SETTINGS: Record<string, ComponentType<PluginSettingsProps>>
   mcp: McpSettings as ComponentType<PluginSettingsProps>,
   homeassistant: HomeAssistantSettings as ComponentType<PluginSettingsProps>,
   self: SelfSettings,
+  claude: ClaudeSettings as ComponentType<PluginSettingsProps>,
 };

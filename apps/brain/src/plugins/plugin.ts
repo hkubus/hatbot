@@ -46,6 +46,10 @@ export type CallContext = {
   waitForTask?: (taskId: number) => Promise<Task>;
   /** From a box's feed: the result goes to the box's page, not to the model. */
   feed?: boolean;
+  /** From a task: a short line on its card about what the call is doing now. */
+  progress?: (line: string) => void;
+  /** From a task: runs `fn` without holding the task's slot, for work that takes long elsewhere. */
+  away?: <T>(fn: () => Promise<T>) => Promise<T>;
 };
 
 export type PluginTool<I = unknown> = {

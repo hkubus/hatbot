@@ -244,6 +244,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       if (!own) awayMs += tasks.clock() - from;
     }
   };
+  /** What a plugin call is doing now, on the task's card. */
+  const shown = tasks.progress(id);
   // Fixed for the whole run: the tool list is part of the prompt cache.
   // A bot gets only the plugins it may use, less those it leaves to the code bot.
   const own = d.plugins.tools(bot.plugins, d.bots.leftToCoder(bot));
@@ -543,6 +545,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
             attachments.save({ bytes, name, mediaType: "", from: "hatbot", taskId: id })
         : undefined,
       waitForTask: (childId) => waitForChild(childId),
+      progress: shown,
+      away: (fn) => withoutSlot(fn),
     };
     const what = describeCall(t, call.input);
     const verdict = verdictFor(t, call.input, cc);

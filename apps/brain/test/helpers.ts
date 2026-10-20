@@ -115,6 +115,8 @@ export async function testApp(
         ? Response.json({ ok: true })
         : new Response(null, { status: 404 }),
   });
+  // Claude Code's runs are read as soon as they've printed.
+  s.claude.pollMs = 0;
   const seen: HatbotEvent[] = [];
   s.events.on((e) => seen.push(e));
   await s.plugins.startAll();
