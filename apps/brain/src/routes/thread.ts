@@ -62,21 +62,29 @@ export const threadRoutes = new Hono<AppEnv>()
     });
     return c.json(attachment, 201);
   })
+  // `?w=` asks for a picture at most that many pixels on its long side, for the chat's bubbles.
   .get("/attachments/:id", async (c) => {
     const id = Number(c.req.param("id"));
     const a = Number.isInteger(id) ? c.var.attachments.get(id) : null;
-    const file = a && c.var.attachments.file(id);
-    if (!a || !file || !(await file.exists())) return c.json({ error: "That's gone." }, 404);
-    const inline = INLINE.includes(a.mediaType) && c.req.query("download") === undefined;
+    const original = a && c.var.attachments.file(id);
+    if (!a || !original || !(await original.exists()))
+      return c.json({ error: "That's gone." }, 404);
+    const download = c.req.query("download") !== undefined;
+    const w = Number(c.req.query("w"));
+    const thumb =
+      !download && Number.isInteger(w) && w > 0 ? await c.var.attachments.thumbnail(id, w) : null;
+    const inline = INLINE.includes(a.mediaType) && !download;
     const ascii = a.name.replace(/[^\x20-\x7e]|["\\]/g, "_");
-    // Checked each time rather than kept for a year: an incognito one isn't kept at all.
-    const etag = `"${a.id}-${Date.parse(a.createdAt).toString(36)}-${a.size.toString(36)}"`;
-    const cache = c.var.attachments.cacheable(id) ? "private, no-cache" : "no-store";
+    const etag = `"${a.id}-${Date.parse(a.createdAt).toString(36)}-${a.size.toString(36)}${thumb ? `-${thumb.size}` : ""}"`;
+    // A sent file's bytes never change, so it's kept for good; an incognito one isn't kept at all.
+    const cache = c.var.attachments.cacheable(id)
+      ? "private, max-age=31536000, immutable"
+      : "no-store";
     if (cache !== "no-store" && c.req.header("if-none-match") === etag)
       return new Response(null, { status: 304, headers: { etag, "cache-control": cache } });
-    return new Response(file, {
+    return new Response(thumb?.file ?? original, {
       headers: {
-        "content-type": inline ? a.mediaType : "application/octet-stream",
+        "content-type": thumb ? "image/webp" : inline ? a.mediaType : "application/octet-stream",
         "content-disposition": `${inline ? "inline" : "attachment"}; filename="${ascii}"; filename*=UTF-8''${rfc5987(a.name)}`,
         "x-content-type-options": "nosniff",
         "cross-origin-resource-policy": "same-origin",

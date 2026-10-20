@@ -1,6 +1,7 @@
 // Files in the chat: ones you attach to a message, and ones Hatbot or a task sends you. The bytes live in
 // the archive; the model reads images, PDFs and text directly, and code_run can copy any of them into
 // the desktop's sandbox.
+import { rename, rm } from "node:fs/promises";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Attachment, ThreadMessage } from "@hatbot/shared";
 import type { Archive } from "./archive";
@@ -90,6 +91,31 @@ export const sizeText = (n: number) =>
     ? `${(n / 1024 / 1024).toFixed(1)} MB`
     : `${Math.max(1, Math.round(n / 1024))} KB`;
 
+/**
+ * The long sides a picture's smaller copy comes in: a request's `w` rounds up to one, so few are kept.
+ * Bubbles are 240 points on 2x and 3x screens.
+ */
+export const THUMB_SIZES = [480, 720, 1080];
+/** Pictures that get smaller copies. A GIF's would lose its animation. */
+const THUMBNAILED = ["image/jpeg", "image/png", "image/webp"];
+/** Bigger ones are sent whole rather than decoded on the brain. */
+const THUMB_MAX_PIXELS = 64_000_000;
+const thumbPath = (path: string, size: number) => `${path}.${size}.webp`;
+
+/** At most two pictures shrink at once, each on Bun's worker threads: the brain has two cores. */
+let shrinking = 0;
+const queued: (() => void)[] = [];
+async function oneOfTwo<T>(f: () => Promise<T>): Promise<T> {
+  if (shrinking >= 2) await new Promise<void>((go) => queued.push(go));
+  shrinking++;
+  try {
+    return await f();
+  } finally {
+    shrinking--;
+    queued.shift()?.();
+  }
+}
+
 type Row = Omit<Attachment, "forChat"> & {
   path: string;
   messageId: number | null;
@@ -102,6 +128,9 @@ const plain = ({ path: _p, messageId: _m, taskId: _t, forChat, ...a }: Row): Att
   forChat ? { ...a, forChat: true } : a;
 
 export class Attachments {
+  /** Smaller copies being made, so two asks for one make it once. */
+  private making = new Map<string, Promise<{ file: Bun.BunFile; size: number } | null>>();
+
   constructor(
     private d: { db: Db; archive: Archive; events: EventBus },
     private clock: () => number = Date.now,
@@ -183,8 +212,9 @@ export class Attachments {
   }
 
   /**
-   * Whether the file may be kept in the browser's cache: not one from an incognito conversation, nor
-   * one uploaded and not yet sent, which may be going to one.
+   * Whether the file may be kept in the browser's cache, for good: not one from an incognito
+   * conversation, nor one uploaded and not yet sent, which may be going to one. Once sent, its bytes
+   * never change and its id is never given out again (migration 34).
    */
   cacheable(id: number): boolean {
     const row = this.d.db
@@ -206,6 +236,49 @@ export class Attachments {
     return row?.path ? this.d.archive.file(row.path) : null;
   }
 
+  /**
+   * A picture's copy at most `w` pixels on its long side (rounded up to THUMB_SIZES), as WebP, made once
+   * and kept next to the original. Null when the original should go instead: it isn't a picture that
+   * gets one, it's no bigger than that, or it doesn't decode.
+   */
+  async thumbnail(id: number, w: number): Promise<{ file: Bun.BunFile; size: number } | null> {
+    const size = THUMB_SIZES.find((s) => s >= w);
+    const row = this.row(id);
+    if (!size || !row?.path || !THUMBNAILED.includes(row.mediaType)) return null;
+    const kept = this.d.archive.file(thumbPath(row.path, size));
+    const original = this.d.archive.file(row.path);
+    if (!kept || !original) return null;
+    if (await kept.exists()) return { file: kept, size };
+    const key = kept.name as string;
+    let made = this.making.get(key);
+    if (!made) {
+      made = oneOfTwo(async () => {
+        // Turned upright by its EXIF orientation; WebP keeps transparency.
+        const image = new Bun.Image(original, { maxPixels: THUMB_MAX_PIXELS });
+        const { width, height } = await image.metadata();
+        if (Math.max(width, height) <= size) return null;
+        const bytes = await image
+          .resize(size, size, { fit: "inside" })
+          .webp({ quality: 80 })
+          .bytes();
+        // Written aside and moved in, so a request meanwhile never reads half of it.
+        const aside = `${key}.${crypto.randomUUID()}`;
+        try {
+          await Bun.write(aside, bytes);
+          await rename(aside, key);
+        } catch (e) {
+          await rm(aside, { force: true });
+          throw e;
+        }
+        return { file: this.d.archive.file(thumbPath(row.path, size)) as Bun.BunFile, size };
+      })
+        .catch(() => null)
+        .finally(() => this.making.delete(key));
+      this.making.set(key, made);
+    }
+    return made;
+  }
+
   async bytes(id: number): Promise<Uint8Array | null> {
     const f = this.file(id);
     return f && (await f.exists()) ? new Uint8Array(await f.arrayBuffer()) : null;
@@ -223,7 +296,7 @@ export class Attachments {
       .map(plain);
   }
 
-  /** Deletes the files on these messages, rows and bytes, so the messages can go too. */
+  /** Deletes the files on these messages, rows and bytes and smaller copies, so the messages can go too. */
   async removeFor(messageIds: number[]) {
     if (!messageIds.length) return;
     const rows = this.d.db
@@ -231,7 +304,10 @@ export class Attachments {
         `DELETE FROM attachments WHERE message_id IN (${messageIds.map(() => "?").join(", ")}) RETURNING path`,
       )
       .all(...messageIds);
-    await Promise.all(rows.map((r) => r.path && this.d.archive.remove(r.path)));
+    const paths = rows.flatMap((r) =>
+      r.path ? [r.path, ...THUMB_SIZES.map((s) => thumbPath(r.path, s))] : [],
+    );
+    await Promise.all(paths.map((p) => this.d.archive.remove(p)));
   }
 
   /** Each message with its files: its own, and those the task it shows sent you. */
