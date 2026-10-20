@@ -4,6 +4,7 @@ pub mod composer;
 pub mod files;
 pub mod icon;
 mod icon_paths;
+pub mod live;
 pub mod markdown;
 pub mod message;
 pub mod route;

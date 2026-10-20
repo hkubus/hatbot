@@ -7,7 +7,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 - **No vendor cloud.** It runs on your hardware.
 - **Predictable cost.** Spending limits are enforced.
 
-> Status: design agreed 2026-10-09. M0–M5, the iOS app, more than one bot (§14), looking after things (§15), negotiation's N1 and N2 (§16), research (§17) and own code (§18) are built, and so are the fixes from the 2026-10-17 code review. The owner deployed and tried them live by 2026-10-18. Boxes (§21) were built 2026-10-18 and haven't been deployed yet, nor have hand-offs in the other bot's chat and the code bot (§14.7, 2026-10-19). Only negotiation (§16, "Not done") and the Linux app (§23, planned 2026-10-20; L1 to L3 built) have work still planned; everything else not built was left on purpose and is listed in §12.1 (owner's call, 2026-10-18).
+> Status: design agreed 2026-10-09. M0–M5, the iOS app, more than one bot (§14), looking after things (§15), negotiation's N1 and N2 (§16), research (§17) and own code (§18) are built, and so are the fixes from the 2026-10-17 code review. The owner deployed and tried them live by 2026-10-18. Boxes (§21) were built 2026-10-18 and haven't been deployed yet, nor have hand-offs in the other bot's chat and the code bot (§14.7, 2026-10-19). Only negotiation (§16, "Not done") and the Linux app (§23, planned 2026-10-20; L1 to L4 built) have work still planned; everything else not built was left on purpose and is listed in §12.1 (owner's call, 2026-10-18).
 
 ---
 
@@ -1163,7 +1163,7 @@ A native app for the owner's Linux desktop (GNOME-style, run on niri), alongside
 |---|---|
 | Where | `apps/linux`, a Cargo crate of its own (`hatbot`), not a Bun workspace. Needs GTK 4.18 and libadwaita 1.7 or newer; app id `ovh.gaycats.Hatbot` |
 | Licence | GTK, libadwaita, GLib, libsoup and libsecret are LGPL: the app links the system's copies and ships none of them, which §2 allows by name. Every crate must be permissive: `cargo deny check licenses` (`deny.toml`) in CI |
-| Stack | gtk4-rs and libadwaita-rs, widgets built in code (no Blueprint or `.ui` files). HTTP and both WebSockets on libsoup, on the GLib main loop: no async runtime, no threads. serde for JSON, pulldown-cmark for Markdown |
+| Stack | gtk4-rs and libadwaita-rs, widgets built in code (no Blueprint or `.ui` files). HTTP and both WebSockets on libsoup, on the GLib main loop: no async runtime, and no threads but GIO's pool decoding the live view's frames. serde for JSON, pulldown-cmark for Markdown |
 | Talking to the brain | As the iOS app does (§4.7): `POST /auth/login` with client `app`, the token named after the computer; https only, on the LAN too (a laptop joins networks you don't control); the `/stream` WebSocket while the app runs, reconnecting and reloading after a gap; a 401 signs out |
 | Secrets | The token in the Secret Service (libsecret: GNOME Keyring, KWallet, KeePassXC); the address in `~/.config/hatbot/hatbot.conf`. Signing out deletes the token on the brain |
 | Types | `src/core/models.rs` mirrors what the app uses from `packages/shared`, like iOS's `Models.swift`. Unknown events and enum values decode as `Unknown` |
@@ -1180,7 +1180,7 @@ A native app for the owner's Linux desktop (GNOME-style, run on niri), alongside
 - **L4 Live**: the desktop's frames; takeover with the mouse, the wheel and the keyboard; hand back.
 - **L5 Memory, Schedules & Triggers**: the tree, a file with edit and conflicts, history, diffs and revert; proposals; schedules and triggers as on iOS.
 - **L6 The rest of iOS's**: Search, Settings (spend, limits, models and effort, signed-in devices), the to-do list, watchers, Check everything, the heartbeat, boxes.
-- **Built**: L1 to L3 (2026-10-20). Until the milestone that brings each page, a box's Open and schedule, trigger and box links show the web app's page in the browser, and live and memory links do nothing.
+- **Built**: L1 to L4 (2026-10-20). Until the milestone that brings each page, a box's Open and schedule, trigger and box links show the web app's page in the browser, and memory links do nothing. Live is a section in the sidebar and shows on a screen task's page when it asks for you or you press Watch, as on iOS and the web.
 - **Done when**: you can chat, approve and take over from the Linux app.
 - **Not planned**: charts drawn in the app before L6 (a chart block shows as code until then), a disk cache of chats, a tray icon or running in the background, and Flatpak.
 

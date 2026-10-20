@@ -11,6 +11,7 @@ use hatbot::store::{Change, Listener, Store};
 
 use super::chat::Chat;
 use super::icon::Icon;
+use super::live::LiveView;
 use super::route;
 use super::task::TaskPage;
 use super::tasks::Tasks;
@@ -27,6 +28,7 @@ pub struct Shell {
 enum Place {
     Chat(i64),
     Tasks,
+    Live,
 }
 
 /// "Hatbot is paused." and "Can't reach Hatbot." over each section.
@@ -72,6 +74,7 @@ struct Inner {
     nav: adw::NavigationView,
     chat_page: adw::NavigationPage,
     tasks: RefCell<Option<Tasks>>,
+    live: RefCell<Option<(adw::NavigationPage, LiveView)>>,
     /// The task pages in `nav`, kept while they're there.
     task_pages: RefCell<Vec<TaskPage>>,
     place: RefCell<Place>,
@@ -162,6 +165,7 @@ impl Shell {
             nav,
             chat_page,
             tasks: RefCell::default(),
+            live: RefCell::default(),
             task_pages: RefCell::default(),
             place: RefCell::new(Place::Chat(store.state().conversation_id)),
             banners,
@@ -252,6 +256,12 @@ impl Inner {
                 .get_or_insert_with(|| Tasks::new(&self.store, &self.banners))
                 .page
                 .clone(),
+            Place::Live => self
+                .live
+                .borrow_mut()
+                .get_or_insert_with(|| live_page(&self.store, &self.banners))
+                .0
+                .clone(),
         };
         self.place.replace(place);
         self.nav.replace(&[page]);
@@ -281,7 +291,8 @@ impl Inner {
             Link::Schedule(id) => self.web(&format!("/schedules/{id}")),
             Link::Trigger(id) => self.web(&format!("/triggers/{id}")),
             Link::Box(id) => self.web(&format!("/boxes/{id}")),
-            Link::Live | Link::Memory(_) => {}
+            Link::Live => self.open(Place::Live),
+            Link::Memory(_) => {}
         }
     }
 
@@ -379,12 +390,33 @@ impl Inner {
         tasks.set_widget_name("sections");
         self.sidebar.append(&tasks);
         rows.push((Place::Tasks, tasks));
+        let live = sidebar_row(Icon::new("monitor", 18), "Live", None);
+        self.sidebar.append(&live);
+        rows.push((Place::Live, live));
         drop(st);
         drop(rows);
         self.sync_selection();
         self.sync_title();
         self.syncing.set(false);
     }
+}
+
+fn live_page(store: &Store, banners: &Banners) -> (adw::NavigationPage, LiveView) {
+    let live = LiveView::new(store, None, true);
+    live.root.set_margin_top(12);
+    live.root.set_margin_bottom(12);
+    live.root.set_margin_start(12);
+    live.root.set_margin_end(12);
+    let view = adw::ToolbarView::new();
+    view.add_top_bar(&adw::HeaderBar::new());
+    banners.add(&view);
+    view.set_content(Some(&live.root));
+    let page = adw::NavigationPage::builder()
+        .title("Live")
+        .tag("live")
+        .child(&view)
+        .build();
+    (page, live)
 }
 
 /// An icon, a name and a count; a count of what needs you is blue.

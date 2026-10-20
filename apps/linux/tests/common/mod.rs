@@ -9,6 +9,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gtk::glib;
+use gtk::glib::translate::ToGlibPtr;
 use serde_json::{Value, json};
 use soup::prelude::*;
 
@@ -37,7 +38,13 @@ pub struct Inner {
     streams: RefCell<Vec<soup::WebsocketConnection>>,
     /// The first event a new stream gets, as the brain's is `paused`.
     hello: RefCell<Value>,
+    /// What came in on the live view's socket.
+    live_inputs: RefCell<Vec<Value>>,
+    lives: RefCell<Vec<soup::WebsocketConnection>>,
 }
+
+/// What the live view's socket sends first: a frame, standing for a JPEG.
+pub const FRAME: &[u8] = b"\xff\xd8 a frame";
 
 impl Brain {
     /// A brain that answers what a freshly signed-in app loads, with nothing in it.
@@ -54,7 +61,33 @@ impl Brain {
             requests: RefCell::default(),
             streams: RefCell::default(),
             hello: RefCell::new(json!({"type": "paused", "paused": false})),
+            live_inputs: RefCell::default(),
+            lives: RefCell::default(),
         }));
+        let weak = Rc::downgrade(&brain.0);
+        brain.0.server.add_websocket_handler(
+            Some("/api/v1/desktop/live"),
+            None,
+            &[],
+            move |_, _, _, conn| {
+                let Some(b) = weak.upgrade() else { return };
+                // The bindings leave out sending binary.
+                unsafe {
+                    soup::ffi::soup_websocket_connection_send_binary(
+                        conn.to_glib_none().0,
+                        FRAME.as_ptr().cast(),
+                        FRAME.len(),
+                    );
+                }
+                let weak = weak.clone();
+                conn.connect_message(move |_, _, bytes| {
+                    if let (Some(b), Ok(input)) = (weak.upgrade(), serde_json::from_slice(bytes)) {
+                        b.live_inputs.borrow_mut().push(input);
+                    }
+                });
+                b.lives.borrow_mut().push(conn.clone());
+            },
+        );
         let weak = Rc::downgrade(&brain.0);
         brain.0.server.add_websocket_handler(
             Some("/api/v1/stream"),
@@ -172,6 +205,11 @@ impl Brain {
             .iter()
             .filter(|c| c.state() == soup::WebsocketState::Open)
             .count()
+    }
+
+    /// What came in on the live view's socket so far.
+    pub fn live_inputs(&self) -> Vec<Value> {
+        self.0.live_inputs.borrow().clone()
     }
 
     /// Closes every stream, as a restart or a dropped connection does.

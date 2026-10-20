@@ -1368,6 +1368,24 @@ impl Store {
         self.emit(Change::Paused);
         Ok(())
     }
+
+    /// Takes the desktop from Hatbot. If a task asked for you, this answers it.
+    pub async fn take_over(&self) -> Result<()> {
+        self.set_control("/desktop/takeover").await
+    }
+
+    pub async fn hand_back(&self) -> Result<()> {
+        self.set_control("/desktop/handback").await
+    }
+
+    /// The reply is the new state, so the view changes without waiting for the event.
+    async fn set_control(&self, path: &str) -> Result<()> {
+        let state: DesktopState = self.0.api.post(path, &Empty {}).await?;
+        self.state_mut().desktop = Some(state);
+        self.emit(Change::Desktop);
+        self.emit(Change::NeedsYou);
+        Ok(())
+    }
 }
 
 /// The last `n` characters of `s`.

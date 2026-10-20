@@ -5,8 +5,8 @@ API with a bearer token. Notifications still come from the ntfy app.
 
 - `src/core`: the API types, the address rule, streamed text, the chat's pages and folds,
   Markdown and `hatbot://` links.
-- `src/net`: the API client and the reconnecting WebSocket, both on libsoup and GLib's main loop,
-  and the token in the keyring.
+- `src/net`: the API client, the reconnecting WebSocket and the live desktop's socket, all on
+  libsoup and GLib's main loop, and the token in the keyring.
 - `src/store.rs`: the live store. It applies the brain's events and tells the views what changed.
 - `src/ui`: the windows and widgets, built in code.
 - `data`: the desktop file and the icon.

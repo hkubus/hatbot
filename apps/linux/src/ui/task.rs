@@ -1,5 +1,6 @@
-// A task's page: what waits on you for it, how it's doing or how it ended, its details, and the
-// timeline of what it did, with Cancel while it runs and Run Again once it's ended.
+// A task's page: what waits on you for it, the desktop while it uses it, how it's doing or how it
+// ended, its details, and the timeline of what it did, with Cancel while it runs and Run Again once
+// it's ended.
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -13,6 +14,7 @@ use hatbot::store::{Change, Listener, Store};
 
 use super::files::{Thumb, is_markdown, read, zoom_on_click};
 use super::icon::Icon;
+use super::live::LiveView;
 use super::markdown::{Markdown, label};
 use super::route;
 use super::tray::{approval_body, question_body};
@@ -49,6 +51,9 @@ struct Inner {
     error: gtk::Label,
     asks: gtk::Box,
     asks_shown: RefCell<String>,
+    watch: gtk::ToggleButton,
+    live_slot: adw::Bin,
+    live: RefCell<Option<LiveView>>,
     title: gtk::Label,
     status: gtk::Box,
     line: gtk::Label,
@@ -74,9 +79,15 @@ impl TaskPage {
             .tooltip_text("Run Again")
             .visible(false)
             .build();
+        let watch = gtk::ToggleButton::builder()
+            .child(&Icon::new("monitor", 16))
+            .tooltip_text("Watch")
+            .visible(false)
+            .build();
         let header = adw::HeaderBar::new();
         header.pack_end(&cancel);
         header.pack_end(&rerun);
+        header.pack_end(&watch);
 
         let error = gtk::Label::builder()
             .visible(false)
@@ -133,7 +144,9 @@ impl TaskPage {
             .margin_end(12)
             .build();
         column.append(&error);
+        let live_slot = adw::Bin::builder().visible(false).build();
         column.append(&asks);
+        column.append(&live_slot);
         column.append(&head);
         column.append(
             &gtk::Label::builder()
@@ -145,15 +158,20 @@ impl TaskPage {
         );
         column.append(&no_steps);
         column.append(&timeline);
-        let scroll = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .vexpand(true)
+        // Natural heights: the live view's least is next to nothing, so it would get that.
+        let viewport = gtk::Viewport::builder()
+            .vscroll_policy(gtk::ScrollablePolicy::Natural)
             .child(
                 &adw::Clamp::builder()
                     .maximum_size(720)
                     .child(&column)
                     .build(),
             )
+            .build();
+        let scroll = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vexpand(true)
+            .child(&viewport)
             .build();
         let gone = adw::StatusPage::builder()
             .icon_name("dialog-question-symbolic")
@@ -179,6 +197,9 @@ impl TaskPage {
             error,
             asks,
             asks_shown: RefCell::default(),
+            watch,
+            live_slot,
+            live: RefCell::default(),
             title,
             status,
             line,
@@ -198,6 +219,12 @@ impl TaskPage {
             }
         });
         let weak = Rc::downgrade(&inner);
+        inner.watch.connect_toggled(move |_| {
+            if let Some(i) = weak.upgrade() {
+                i.render();
+            }
+        });
+        let weak = Rc::downgrade(&inner);
         inner.rerun.connect_clicked(move |b| {
             if let Some(i) = weak.upgrade() {
                 i.ask_rerun(b);
@@ -208,7 +235,7 @@ impl TaskPage {
             let Some(i) = weak.upgrade() else { return };
             match change {
                 Change::Task(t) if *t == i.id => i.render(),
-                Change::NeedsYou => i.render(),
+                Change::NeedsYou | Change::Desktop => i.render(),
                 _ => {}
             }
         });
@@ -307,6 +334,21 @@ impl Inner {
             self.details
                 .set_child(Some(&details(&self.store, t, &files)));
         }
+        // The desktop while this task works on it: when you ask, or straight away when it asks for you.
+        let on_screen = active && t.lane == "screen";
+        let asked = st
+            .desktop
+            .as_ref()
+            .and_then(|d| d.request.as_ref())
+            .is_some_and(|r| r.task_id == self.id);
+        self.watch.set_visible(on_screen && !asked);
+        let show_live = on_screen && (asked || self.watch.is_active());
+        if show_live && self.live.borrow().is_none() {
+            let live = LiveView::new(&self.store, Some(self.id), false);
+            self.live_slot.set_child(Some(&live.root));
+            self.live.replace(Some(live));
+        }
+        self.live_slot.set_visible(show_live);
         self.cancel.set_visible(active);
         // As the brain allows: an ended background task that no other task started.
         self.rerun

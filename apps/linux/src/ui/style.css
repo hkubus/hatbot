@@ -149,3 +149,27 @@ button.composer-button {
 button.takeover {
   padding: 12px 16px;
 }
+
+/* Live */
+.live-banner {
+  padding: 10px 12px;
+}
+
+.live-screen {
+  background-color: black;
+  border-radius: 10px;
+  border: 1px solid alpha(currentColor, 0.15);
+}
+
+.live-screen.in-control {
+  border: 2px solid var(--attention);
+}
+
+.live-status {
+  color: alpha(white, 0.8);
+}
+
+/* The task's title lines up with what's under it. */
+button.live-task {
+  margin: -4px -10px;
+}

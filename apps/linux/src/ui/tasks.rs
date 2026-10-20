@@ -131,20 +131,7 @@ impl Tasks {
                 route::go(Link::Task(id));
             }
         });
-        let weak = Rc::downgrade(&inner);
-        inner.takeover.connect_clicked(move |_| {
-            let Some(i) = weak.upgrade() else { return };
-            let id = i
-                .store
-                .state()
-                .desktop
-                .as_ref()
-                .and_then(|d| d.request.as_ref())
-                .map(|r| r.task_id);
-            if let Some(id) = id {
-                route::go(Link::Task(id));
-            }
-        });
+        inner.takeover.connect_clicked(|_| route::go(Link::Live));
         let weak = Rc::downgrade(&inner);
         filter.connect_active_name_notify(move |f| {
             let Some(i) = weak.upgrade() else { return };
