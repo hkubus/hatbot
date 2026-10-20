@@ -2,6 +2,7 @@
 import {
   API_PREFIX,
   type Approval,
+  type ApprovalScope,
   describeCron,
   type Question,
   type Schedule,
@@ -169,11 +170,11 @@ export function PendingApproval({
   const why = more || warns;
   const folds = compact && ((a.reason && !warns) || shot || takesNote(a));
 
-  const decide = async (decision: "approve" | "deny") => {
+  const decide = async (decision: "approve" | "deny", scope?: ApprovalScope) => {
     setBusy(true);
     setError("");
     try {
-      await decideApproval(a.id, decision, note);
+      await decideApproval(a.id, decision, note, scope);
     } catch (err) {
       setError(errorText(err));
       setBusy(false);
@@ -225,6 +226,28 @@ export function PendingApproval({
         >
           Deny
         </button>
+        {a.scopes.includes("always") && (
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            title="Approve this exact action from now on"
+            onClick={() => decide("approve", "always")}
+          >
+            Always
+          </button>
+        )}
+        {a.scopes.includes("session") && (
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            title={`Approve ${a.taskId ? "this task's" : "this conversation's"} calls like this on the same thing`}
+            onClick={() => decide("approve", "session")}
+          >
+            {a.taskId ? "For this task" : "For this chat"}
+          </button>
+        )}
         <button
           type="button"
           className="btn primary"

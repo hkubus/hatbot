@@ -10,7 +10,7 @@ import { EventBus } from "../src/events";
 import { definePlugin, PluginError, ready, tool } from "../src/plugins/plugin";
 import { runPluginTool } from "../src/plugins/registry";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { type TestApp, testApp, waitFor } from "./helpers";
+import { signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 /** Text that tries to end the block it's in and speak as the system. */
 const ESCAPE = (tag: string) =>
@@ -604,4 +604,58 @@ test("an attached or shared file is untrusted and screened, and the review reads
   expect(review).toContain("What does this mean?");
   expect(review).not.toContain("backup keys");
   expect(restarted).toEqual(["nas"]);
+});
+
+test("an approval for the rest of a task covers what only untrusted content asks about; one for always, that exact call", async () => {
+  const restarted: string[] = [];
+  const restart = (service: string) => ({ content: [toolUse("lab_restart", { service })] });
+  const read = { content: [toolUse("lab_issue", {})] };
+  const work = new FakeModel([
+    read,
+    restart("jellyfin"),
+    restart("immich"),
+    finish("1"),
+    read,
+    restart("jellyfin"),
+    finish("2"),
+    read,
+    restart("jellyfin"),
+    restart("immich"),
+    finish("3"),
+  ]);
+  const t = await testApp(new FakeModel(), work, {}, [labPlugin(() => "Issue", restarted)]);
+  await t.plugins.update("lab", { enabled: true });
+  t.settings.update({ reviewChanges: false });
+  const run = async (scope?: "session" | "always", deny = false) => {
+    const task = t.tasks.createBackgroundTask({ title: "Fix", goal: "Fix it", origin: "chat" });
+    const asked = await waitFor(() => t.approvals.list(true)[0]);
+    expect(asked.scopes).toEqual(["session", "always"]);
+    t.approvals.decide(asked.id, deny ? "deny" : "approve", "web", undefined, scope);
+    await waitFor(() => t.tasks.get(task?.id ?? 0)?.finishedAt);
+    return t.tasks.steps(task?.id ?? 0).filter((s) => s.name === "Not asking: you allowed it");
+  };
+  // For the rest of the task: the same tool, here on anything, while only untrusted content asks.
+  expect(await run("session")).toHaveLength(1);
+  expect(restarted).toEqual(["jellyfin", "immich"]);
+  // Not in the next task; always allowing covers that exact call, in every task after.
+  expect(await run("always")).toHaveLength(0);
+  expect(await run(undefined, true)).toHaveLength(1);
+  expect(restarted).toEqual(["jellyfin", "immich", "jellyfin", "jellyfin"]);
+  expect(t.approvals.rules().map((r) => r.summary)).toEqual(['lab_restart {"service":"jellyfin"}']);
+
+  // A scope it doesn't offer is refused, as is one on what always asks.
+  const warning = t.approvals.create({
+    taskId: null,
+    kind: "injection_warning",
+    summary: "Go on?",
+  });
+  expect(warning.scopes).toEqual([]);
+  const { cookie } = signIn(t);
+  const body = { decision: "approve", scope: "always" };
+  const res = await t.call("POST", `/approvals/${warning.id}`, body, { cookie });
+  expect(res.status).toBe(400);
+  const [rule] = t.approvals.rules();
+  const removed = await t.call("DELETE", `/approval-rules/${rule?.id}`, undefined, { cookie });
+  expect(removed.status).toBe(200);
+  expect(t.approvals.rules()).toEqual([]);
 });

@@ -73,7 +73,7 @@ import {
   SUMMARY_PROMPT,
   SYSTEM_PROMPT,
 } from "./prompt";
-import { mayReview, safeToRun } from "./review";
+import { mayReview, safeToRun, scopesFor } from "./review";
 import { type Readable, Screener } from "./screening";
 import {
   addSources,
@@ -630,15 +630,29 @@ export class Thread {
   private async approve(
     episodeId: number,
     bot: Bot,
-    call: { tool: string; input: unknown; what: string },
+    call: { tool: string; input: unknown; what: string; target?: string | null },
     verdict: Extract<Verdict, { action: "ask" }>,
     signal: AbortSignal,
     progress: (line: string) => void,
   ): Promise<{ note: string | null } | { content: string; isError: true }> {
     const { approvals, settings } = this.d;
     const { tainted: taintedBy, suspected } = this.trust(episodeId);
+    const reviewable = mayReview(verdict, suspected !== null);
+    // What you allowed beyond once (PLAN.md §6.2).
+    if (
+      reviewable &&
+      approvals?.granted({
+        botId: bot.id,
+        tool: call.tool,
+        input: call.input,
+        target: call.target ?? null,
+        episodeId,
+        taintOnly: verdict.tainted === true,
+      })
+    )
+      return { note: null };
     let review = "";
-    if (settings.get().reviewChanges && mayReview(verdict, suspected !== null)) {
+    if (settings.get().reviewChanges && reviewable) {
       progress("Checking it's safe");
       const check = await safeToRun(
         this.d,
@@ -668,6 +682,9 @@ export class Thread {
           ? `${verdict.why} ${review}`
           : verdict.why,
       sources: taintedBy ? [taintedBy] : [],
+      call: { tool: call.tool, input: call.input, target: call.target ?? null },
+      episodeId,
+      scopes: reviewable ? scopesFor(verdict) : [],
     });
     progress("Waiting for your approval");
     this.waiting = approval.id;
@@ -719,7 +736,7 @@ export class Thread {
     if (verdict.action === "block") return { content: `Refused: ${verdict.why}`, isError: true };
     let note: string | null = null;
     if (verdict.action === "ask") {
-      const call = { tool: t.name, input, what };
+      const call = { tool: t.name, input, what, target: t.target?.(input as never) ?? null };
       const asked = await this.approve(episodeId, bot, call, verdict, signal, progress);
       if ("content" in asked) return asked;
       note = asked.note;

@@ -1,7 +1,7 @@
 // The review of a change that would otherwise ask you to approve it (PLAN.md §6.1): if it isn't
 // destructive or dangerous, and nothing untrusted could have put it there, it goes ahead. Haiku looks
 // first, and Opus looks again before a no reaches you.
-import type { ApprovalKind } from "@hatbot/shared";
+import type { ApprovalKind, ApprovalScope } from "@hatbot/shared";
 import type { Verdict } from "../plugins/plugin";
 import type { Spend } from "../spend";
 import { type ModelClient, oneShot } from "./model";
@@ -39,6 +39,13 @@ const ALWAYS_ASK: ApprovalKind[] = [
  */
 export const mayReview = (verdict: Extract<Verdict, { action: "ask" }>, suspected = false) =>
   !suspected && !verdict.always && !ALWAYS_ASK.includes(verdict.kind ?? "other");
+
+/**
+ * How far you may approve a change the review may answer for: this exact call always, and where
+ * only untrusted content asks, the tool on the same thing for the rest of the work (PLAN.md §6.2).
+ */
+export const scopesFor = (verdict: Extract<Verdict, { action: "ask" }>): ApprovalScope[] =>
+  verdict.tainted ? ["session", "always"] : ["always"];
 
 /** The review's answer, and which model gave it. */
 export type Review = { safe: boolean; why: string; by: (typeof REVIEWERS)[number]["by"] };

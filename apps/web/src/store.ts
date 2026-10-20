@@ -2,6 +2,7 @@
 import {
   API_PREFIX,
   type Approval,
+  type ApprovalScope,
   type Attachment,
   type Bot,
   type Box,
@@ -620,9 +621,14 @@ async function loadLive() {
     if (state.steps[t.id] && t.finishedAt === null) void loadTask(t.id).catch(() => {});
 }
 
-export async function decideApproval(id: number, decision: "approve" | "deny", note = "") {
+export async function decideApproval(
+  id: number,
+  decision: "approve" | "deny",
+  note = "",
+  scope?: ApprovalScope,
+) {
   const a = await api<Approval>(`/approvals/${id}`, {
-    body: { decision, ...(note.trim() ? { note: note.trim() } : {}) },
+    body: { decision, ...(note.trim() ? { note: note.trim() } : {}), ...(scope ? { scope } : {}) },
   });
   put("approvals", a.id, a);
 }

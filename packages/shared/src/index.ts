@@ -280,6 +280,13 @@ export type ApprovalKind =
   | "mandate"
   | "other";
 
+/**
+ * How far an approval goes besides this once (PLAN.md §6.2): `session`, the same tool on the same
+ * thing for the rest of the task or conversation, where only untrusted content asks; `always`, this
+ * exact call for this bot from now on.
+ */
+export type ApprovalScope = "session" | "always";
+
 export type Approval = {
   id: number;
   /** The bot asking. */
@@ -302,11 +309,25 @@ export type Approval = {
   decidedAt: string | null;
   /** What you told the task along with your decision: what to do instead, or how to go ahead. */
   note: string | null;
+  /** How far approving it may go besides this once; none for money, accounts, doors or suspicions. */
+  scopes: ApprovalScope[];
+  /** How far you approved it, if further than this once. */
+  scope: ApprovalScope | null;
 };
 export const DecideApproval = z.object({
   decision: z.enum(["approve", "deny"]),
   note: z.string().trim().max(4000).optional(),
+  scope: z.enum(["session", "always"]).optional(),
 });
+
+/** An exact call you always allow (Settings → Safety). */
+export type ApprovalRule = {
+  id: number;
+  botId: string;
+  tool: string;
+  summary: string;
+  createdAt: string;
+};
 export const TokenDecision = z.object({
   decision: z.enum(["approve", "deny"]),
   exp: z.number().int(),

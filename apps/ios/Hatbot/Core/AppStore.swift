@@ -846,13 +846,15 @@ final class AppStore {
     _ = await (chats, taskLoads)
   }
 
-  func decide(_ id: Int, _ decision: Decision, note: String = "") async throws {
+  /// `scope`: one the approval offers, to approve it beyond this once.
+  func decide(_ id: Int, _ decision: Decision, note: String = "", scope: String? = nil) async throws {
     struct Body: Encodable {
       let decision: Decision
       let note: String?
+      let scope: String?
     }
     let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
-    let body = Body(decision: decision, note: trimmed.isEmpty ? nil : trimmed)
+    let body = Body(decision: decision, note: trimmed.isEmpty ? nil : trimmed, scope: scope)
     let a: Approval = try await api.post("/approvals/\(id)", body: body)
     approvals[a.id] = a
   }

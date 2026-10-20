@@ -121,8 +121,17 @@ export const approvalRoutes = new Hono<AppEnv>()
   )
   .get("/approvals/:id", (c) => found(c, c.var.approvals.get(id(c))))
   .post("/approvals/:id", json(DecideApproval), (c) => {
-    const { decision, note } = c.req.valid("json");
-    const approval = c.var.approvals.decide(id(c), decision, "web", note);
+    const { decision, note, scope } = c.req.valid("json");
+    const asked = c.var.approvals.get(id(c));
+    if (scope && asked && !asked.scopes.includes(scope))
+      return c.json({ error: "This approval can only be given once." }, 400);
+    const approval = c.var.approvals.decide(id(c), decision, "web", note, scope);
     if (!approval) return c.json({ error: "That was already answered." }, 409);
     return c.json(approval);
-  });
+  })
+  .get("/approval-rules", (c) => c.json(c.var.approvals.rules()))
+  .delete("/approval-rules/:id", (c) =>
+    c.var.approvals.removeRule(id(c))
+      ? c.json({ ok: true })
+      : c.json({ error: "That's gone." }, 404),
+  );

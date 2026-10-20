@@ -212,6 +212,8 @@ export class Bots {
         .map((r) => r.id);
     const moved = this.db.transaction(() => {
       this.db.query("UPDATE bots SET deleted_at = ? WHERE id = ?").run(now, id);
+      // What you always allowed it was for it, with its plugins.
+      this.db.query("DELETE FROM approval_rules WHERE bot_id = ?").run(id);
       return {
         schedules: move("schedules"),
         triggers: move("triggers"),

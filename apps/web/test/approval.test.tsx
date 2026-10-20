@@ -23,6 +23,8 @@ const approval = (patch: Partial<Approval> = {}): Approval => ({
   expiresAt: "2026-10-18T10:00:00.000Z",
   decidedAt: null,
   note: null,
+  scopes: [],
+  scope: null,
   ...patch,
 });
 

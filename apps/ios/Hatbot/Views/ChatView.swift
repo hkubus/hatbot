@@ -1123,14 +1123,30 @@ struct ApprovalBody: View {
       case nil: nil
       }
     }
+    let scopes = a.scopes ?? []
+    if scopes.contains("session") || scopes.contains("always") {
+      HStack(spacing: 16) {
+        if scopes.contains("session") {
+          Button(a.taskId == nil ? "For this chat" : "For this task") {
+            decide(.approve, scope: "session")
+          }
+        }
+        if scopes.contains("always") {
+          Button("Always") { decide(.approve, scope: "always") }
+        }
+      }
+      .font(.subheadline)
+      .buttonStyle(.borderless)
+      .disabled(busy)
+    }
   }
 
-  private func decide(_ decision: Decision) {
+  private func decide(_ decision: Decision, scope: String? = nil) {
     busy = true
     error = nil
     Task {
       do {
-        try await store.decide(approval.id, decision, note: note)
+        try await store.decide(approval.id, decision, note: note, scope: scope)
         decided = decision
       } catch {
         self.error = message(for: error)
