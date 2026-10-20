@@ -105,6 +105,7 @@ export async function createServices(o: Outside) {
     env: o.pluginEnv,
     secrets,
     files,
+    dataDir: config.dataDir,
     reserved: CORE_TOOL_NAMES,
   });
   const bots = new Bots(db, events, clock);

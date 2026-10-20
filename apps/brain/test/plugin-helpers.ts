@@ -1,9 +1,9 @@
 // Shared by the plugin tests: an app with one plugin switched on, its tools, call contexts, and a
 // stand-in for the HTTP API a plugin talks to.
 import { afterAll, afterEach, beforeEach } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Task } from "@hatbot/shared";
 import type { CallContext, Plugin, PluginTool } from "../src/plugins/plugin";
 import { FakeModel, toolUse } from "./fake-model";
@@ -26,6 +26,27 @@ export function tempDir(prefix = "hatbot-test-") {
   const d = mkdtempSync(join(tmpdir(), prefix));
   tempDirs.push(d);
   return d;
+}
+
+/** bash in `cwd`, away from the user's own git config. */
+export function sh(cwd: string, script: string) {
+  const p = Bun.spawnSync(["bash", "-c", script], {
+    cwd,
+    env: { PATH: process.env.PATH, HOME: cwd, GIT_CONFIG_NOSYSTEM: "1" },
+  });
+  return { exitCode: p.exitCode, output: `${p.stdout}${p.stderr}`, timedOut: false };
+}
+
+/** Makes `t`'s sandbox a real folder, which commands run in and files go in and out of. */
+export function realSandbox(t: TestApp) {
+  const box = tempDir("hatbot-sandbox-");
+  t.agent.shell = (command) => sh(box, command);
+  t.agent.putFile = async (path, bytes) => {
+    mkdirSync(dirname(join(box, path)), { recursive: true });
+    writeFileSync(join(box, path), bytes);
+  };
+  t.agent.getFile = async (path) => readFileSync(join(box, path));
+  return box;
 }
 
 /** The plugin tool named `name` that `t` offers now. */
@@ -100,11 +121,12 @@ export type Seen = { method: string; path: string; auth: string | null; body: st
 
 /**
  * A stand-in for a plugin's HTTP API, for the whole test file: it records each request (cleared
- * before each test) and answers with what `handle` returns, as JSON unless it's a Response.
- * `tls` names a certificate in fixtures/, e.g. "pve" for pve-cert.pem and pve-key.pem.
+ * before each test) and answers with what `handle` returns, as JSON unless it's a Response. `raw` is
+ * the body as it came. `tls` names a certificate in fixtures/, e.g. "pve" for pve-cert.pem and
+ * pve-key.pem.
  */
 export function fakeApi(
-  handle: (req: Request, url: URL, body: string) => unknown,
+  handle: (req: Request, url: URL, body: string, raw: Uint8Array) => unknown,
   opts: { tls?: string } = {},
 ) {
   const seen: Seen[] = [];
@@ -120,14 +142,15 @@ export function fakeApi(
       : {}),
     async fetch(req) {
       const url = new URL(req.url);
-      const body = await req.text();
+      const raw = new Uint8Array(await req.arrayBuffer());
+      const body = new TextDecoder().decode(raw);
       seen.push({
         method: req.method,
         path: url.pathname + url.search,
         auth: req.headers.get("authorization"),
         body,
       });
-      const out = await handle(req, url, body);
+      const out = await handle(req, url, body, raw);
       return out instanceof Response ? out : Response.json(out ?? null);
     },
   });

@@ -1,5 +1,6 @@
 // Starts the plugins you've switched on, keeps their settings, and hands their tools to the chat and
 // to tasks (PLAN.md §4.5).
+import { join } from "node:path";
 import type { PluginEnvInfo, PluginInfo, PluginState } from "@hatbot/shared";
 import { z } from "zod";
 import { untrustedBlock } from "../agent/untrusted";
@@ -47,6 +48,8 @@ export type PluginsDeps = {
   /** What's set in Settings in place of the host's. */
   secrets: Secrets;
   files?: PluginFiles;
+  /** The brain's data folder: each plugin gets one of its own in it. */
+  dataDir: string;
   /** The core's own tool names; plugin tools can't take them. */
   reserved: string[];
 };
@@ -270,6 +273,7 @@ export class Plugins {
         named: s.plugin.named ? this.d.secrets.named(s.plugin.id) : {},
         db: this.d.db,
         files: this.d.files,
+        dataDir: join(this.d.dataDir, "plugins", s.plugin.id),
       });
       this.checkTools(s.plugin, instance.tools);
       state = instance.status.state;
