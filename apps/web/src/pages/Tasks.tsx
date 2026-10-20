@@ -1,4 +1,10 @@
-import { latestNoteOnly, OPEN_NEGOTIATION_STATUSES, type Task } from "@hatbot/shared";
+import {
+  isFullTask,
+  latestNoteOnly,
+  OPEN_NEGOTIATION_STATUSES,
+  type Task,
+  type TaskCard,
+} from "@hatbot/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
@@ -171,7 +177,7 @@ export function Tasks() {
                       <StatusChip status={t.status} />
                     </td>
                     <td className="muted">{timeOrDay(t.startedAt ?? t.createdAt)}</td>
-                    <td className="num">{usd(t.costUsd)}</td>
+                    <td className="num">{"costUsd" in t ? usd(t.costUsd) : ""}</td>
                   </tr>
                 ))}
               </tbody>
@@ -194,7 +200,7 @@ export function Tasks() {
 }
 
 /** Where a task came from, linked. */
-export function From({ task }: { task: Task }) {
+export function From({ task }: { task: TaskCard }) {
   // The chat it was started in, while it's still one of yours.
   const chat = useStore((s) => {
     const c = s.conversations.find((c) => c.id === task.conversationId);
@@ -333,6 +339,8 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
     );
 
   const active = isActive(task);
+  // A chat's card until the whole task comes: its details and goal only then.
+  const full = isFullTask(task) ? task : null;
   const pending = Object.values(approvals).filter((a) => a.taskId === id && a.status === "pending");
   const asked = Object.values(questions).filter((q) => q.taskId === id && q.status === "pending");
   // Open the live view when Hatbot asks you to take over.
@@ -348,7 +356,7 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   const rerun = () =>
     run(async () => {
       const t = await api<Task>(`/tasks/${id}/rerun`, {
-        body: { goal: again === task.goal ? undefined : again },
+        body: { goal: again === full?.goal ? undefined : again },
       });
       setAgain(null);
       navigate(`/tasks/${t.id}`);
@@ -369,8 +377,8 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
               Cancel task
             </button>
           )}
-          {!active && !task.parentId && !screen && again === null && (
-            <button type="button" className="btn sm" onClick={() => setAgain(task.goal)}>
+          {full && !active && !task.parentId && !screen && again === null && (
+            <button type="button" className="btn sm" onClick={() => setAgain(full.goal)}>
               <Icon name="undo" />
               Run again
             </button>
@@ -427,7 +435,7 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
           ) : (
             <p className="task-summary">{taskLine(task, progress)}</p>
           )}
-          <Details task={task} />
+          {full && <Details task={full} />}
         </div>
 
         <div className="panel">

@@ -1,6 +1,6 @@
 // What the Schedules, Watchers and Heartbeat pages share: who runs it, its runs, when, and loading
 // one for its edit page.
-import { HATBOT_ID, type Task } from "@hatbot/shared";
+import { HATBOT_ID } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
 import { errorText } from "./api";
 import { plainText, stamp } from "./format";
@@ -45,12 +45,12 @@ export function Runs({
   const key = JSON.stringify(filter);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `filter`
   useEffect(() => {
-    loadTasks(filter).then(setIds, () => setIds([]));
+    loadTasks({ ...filter, view: "card" }).then(setIds, () => setIds([]));
   }, [key]);
   // Runs that start while the page is open show up too.
   const shown = Object.values(tasks)
     .filter(
-      (t: Task) =>
+      (t) =>
         !t.parentId &&
         ("scheduleId" in filter
           ? t.scheduleId === filter.scheduleId

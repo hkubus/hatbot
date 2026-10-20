@@ -244,6 +244,14 @@ export type Task = {
   finishedAt: string | null;
 };
 
+/**
+ * A task as a chat's card or a list row shows it (`GET /tasks?view=card`): without its goal, criteria,
+ * event and cost, which only its own page shows, from `GET /tasks/:id`.
+ */
+export type TaskCard = Omit<Task, "goal" | "successCriteria" | "payload" | "costUsd" | "steps">;
+/** Whether a task has what its page shows, or is only a card. */
+export const isFullTask = (t: Task | TaskCard): t is Task => "goal" in t;
+
 export type TaskStep = {
   id: number;
   taskId: number;

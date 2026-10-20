@@ -20,6 +20,7 @@ import {
   type Snapshot,
   type SpendSummary,
   type Task,
+  type TaskCard,
   type TaskStep,
   type TeachSession,
   type ThreadMessage,
@@ -54,7 +55,8 @@ type State = {
   settingsVersion: number;
   heartbeatVersion: number;
   connected: boolean;
-  tasks: Record<number, Task>;
+  /** Cards (TaskCard) until a task's page or an event brings the whole task. */
+  tasks: Record<number, Task | TaskCard>;
   /** Steps of the tasks that have been opened or shown as a card. */
   steps: Record<number, TaskStep[]>;
   /** Files the tasks that have been opened attached, like a research report. */
@@ -411,14 +413,23 @@ export function bumpMemory() {
   set({ memoryVersion: state.memoryVersion + 1 });
 }
 
-export async function loadTask(id: number) {
+/** A task with its steps. `since`: only the steps after the ones we have; a brain from before sends all. */
+export async function loadTask(id: number, { since = false } = {}) {
+  const had = since ? state.steps[id] : undefined;
+  const after = had?.at(-1)?.id;
   const { task, steps, attachments } = await api<{
     task: Task;
     steps: TaskStep[];
     attachments?: Attachment[];
-  }>(`/tasks/${id}`);
+  }>(`/tasks/${id}${after === undefined ? "" : `?afterStep=${after}`}`);
   put("tasks", id, task);
-  put("steps", id, steps);
+  const fresh = new Set(steps.map((x) => x.id));
+  const kept = (had ?? []).filter((x) => !fresh.has(x.id));
+  put(
+    "steps",
+    id,
+    [...kept, ...steps].sort((a, b) => a.id - b.id),
+  );
   put("taskFiles", id, attachments ?? []);
 }
 
@@ -442,7 +453,7 @@ function loadWanted() {
   wanted = [];
   for (let i = 0; i < ids.length; i += 200) {
     const some = ids.slice(i, i + 200);
-    loadTasks({ ids: some }).catch(() => {
+    loadTasks({ ids: some, view: "card" }).catch(() => {
       for (const id of some) requested.delete(`t${id}`);
     });
   }
@@ -468,13 +479,19 @@ export async function loadTasks(
     watcherId?: number;
     /** Just these, whatever their age. */
     ids?: number[];
+    /** As cards: what a chat's card shows. */
+    view?: "card";
   } = {},
 ) {
   const q = new URLSearchParams(
     Object.entries(filter).flatMap(([k, v]) => (v === undefined ? [] : [[k, String(v)]])),
   ).toString();
-  const list = await api<Task[]>(`/tasks${q ? `?${q}` : ""}`);
-  merge("tasks", list);
+  const list = await api<(Task | TaskCard)[]>(`/tasks${q ? `?${q}` : ""}`);
+  // A card doesn't take away what a whole task we have says that it leaves out.
+  merge(
+    "tasks",
+    list.map((t) => ({ ...state.tasks[t.id], ...t })),
+  );
   return list.map((t) => t.id);
 }
 
@@ -638,7 +655,8 @@ async function loadLive(snapshot: Snapshot | null) {
     set({ teach: sessions });
   }
   for (const t of Object.values(state.tasks))
-    if (state.steps[t.id] && t.finishedAt === null) void loadTask(t.id).catch(() => {});
+    if (state.steps[t.id] && t.finishedAt === null)
+      void loadTask(t.id, { since: true }).catch(() => {});
 }
 
 export async function decideApproval(id: number, decision: "approve" | "deny", note = "") {
@@ -995,7 +1013,7 @@ async function catchUp(reconnected: boolean) {
   const ended = Object.values(state.tasks)
     .filter((t) => t.finishedAt === null && !active?.includes(t.id) && !state.steps[t.id])
     .map((t) => t.id);
-  if (active && ended.length) void loadTasks({ ids: ended }).catch(() => {});
+  if (active && ended.length) void loadTasks({ ids: ended, view: "card" }).catch(() => {});
 }
 
 /** One of the brain's WebSockets, by its path: wss: on an https: page. */
