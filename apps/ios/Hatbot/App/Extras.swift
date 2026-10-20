@@ -96,11 +96,12 @@ enum Spotlight {
   static func index(_ store: AppStore) async {
     guard CSSearchableIndex.isIndexingAvailable() else { return }
     var entries: [Entry] = []
-    if let files = try? await store.memoryTree() {
-      for f in files {
-        let name = ((f.path as NSString).lastPathComponent as NSString).deletingPathExtension
-        entries.append(Entry(link: .memory(f.path), domain: "memory", title: name, detail: f.path))
-      }
+    // Memory's, if it has loaded them already.
+    var files = store.memoryFilesLoaded ? store.memoryFiles : nil
+    if files == nil { files = try? await store.memoryTree() }
+    for f in files ?? [] {
+      let name = ((f.path as NSString).lastPathComponent as NSString).deletingPathExtension
+      entries.append(Entry(link: .memory(f.path), domain: "memory", title: name, detail: f.path))
     }
     for filter in [AppStore.TaskFilter.active, .done] {
       for id in (try? await store.loadTasks(filter)) ?? [] {

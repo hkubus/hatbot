@@ -68,6 +68,12 @@ final class AppStore {
   var deletedTriggers: Set<Int> = []
   /// Bumped when memory changes, so open memory views reload.
   var memoryVersion = 0
+  /// Memory's files as loaded, or as kept from last time until they are; Memory and Spotlight share them.
+  var memoryFiles: [MemoryFile]?
+  /// `memoryFiles` came from the brain since launch.
+  @ObservationIgnored private(set) var memoryFilesLoaded = false
+  /// The to-do list as loaded or changed, or as kept from last time until it is.
+  var todos: TodoList?
   /// Proposed memory changes, as loaded and as proposal.updated tells.
   var proposals: [Int: Proposal] = [:]
   /// Bumped by settings.updated and heartbeat.updated, so open views refetch.
@@ -1129,8 +1135,30 @@ final class AppStore {
 
   // MARK: Memory
 
+  /// Shows what was kept of Memory's files until they load.
+  func showKeptMemory() {
+    if memoryFiles == nil { memoryFiles = cache?.memoryTree() }
+  }
+
+  /// Loads Memory's files into `memoryFiles`, and keeps them.
+  @discardableResult
   func memoryTree() async throws -> [MemoryFile] {
-    try await api.get("/memory/tree")
+    let files: [MemoryFile] = try await api.get("/memory/tree")
+    memoryFiles = files
+    memoryFilesLoaded = true
+    if !closed { cache?.save(memoryTree: files) }
+    return files
+  }
+
+  /// Shows what was kept of the to-do list until it loads.
+  func showKeptTodos() {
+    if todos == nil { todos = cache?.todos() }
+  }
+
+  /// The list as the brain sent it, shown and kept.
+  func keep(_ list: TodoList) {
+    todos = list
+    if !closed { cache?.save(list) }
   }
 
   /// A memory file, and which version of it this is.

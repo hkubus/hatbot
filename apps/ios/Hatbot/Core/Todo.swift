@@ -22,19 +22,20 @@ struct TodoList: Codable, Equatable, Sendable {
   var items: [TodoItem]
 }
 
+/// Each loads into `todos`, and keeps it.
 extension AppStore {
-  func loadTodos() async throws -> TodoList {
-    try await api.get("/todo")
+  func loadTodos() async throws {
+    keep(try await api.get("/todo"))
   }
 
   /// `due` is YYYY-MM-DD.
-  func addTodo(_ item: String, due: String?) async throws -> TodoList {
+  func addTodo(_ item: String, due: String?) async throws {
     struct Body: Encodable { let item: String; let due: String? }
-    return try await api.post("/todo", body: Body(item: item, due: due))
+    keep(try await api.post("/todo", body: Body(item: item, due: due)))
   }
 
-  func tickTodo(_ t: TodoItem) async throws -> TodoList {
-    try await api.post("/todo/done", body: PickTodo(text: t.text, line: t.line))
+  func tickTodo(_ t: TodoItem) async throws {
+    keep(try await api.post("/todo/done", body: PickTodo(text: t.text, line: t.line)))
   }
 
   /// A task on the item, in Hatbot's chat; the item is ticked off when it ends done.

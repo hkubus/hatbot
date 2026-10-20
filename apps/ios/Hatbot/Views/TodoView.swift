@@ -5,7 +5,6 @@ import SwiftUI
 struct TodoView: View {
   @Environment(AppStore.self) private var store
   @Binding var path: [Route]
-  @State private var list: TodoList?
   @State private var error: String?
   @State private var adding = false
   @State private var newItem = ""
@@ -13,6 +12,7 @@ struct TodoView: View {
   @State private var newDue = Date()
 
   var body: some View {
+    let list = store.todos
     NavigationStack(path: $path) {
       List {
         if let error {
@@ -63,7 +63,7 @@ struct TodoView: View {
   private func row(_ t: TodoItem) -> some View {
     HStack(spacing: 12) {
       Button {
-        Task { await attempt($error) { list = try await store.tickTodo(t) } }
+        Task { await attempt($error) { try await store.tickTodo(t) } }
       } label: {
         Image(systemName: "square").font(.title3)
       }
@@ -124,7 +124,7 @@ struct TodoView: View {
             let item = newItem.trimmingCharacters(in: .whitespacesAndNewlines)
             let due = hasDue ? Self.ymd.string(from: newDue) : nil
             adding = false
-            Task { await attempt($error) { list = try await store.addTodo(item, due: due) } }
+            Task { await attempt($error) { try await store.addTodo(item, due: due) } }
           }
           .disabled(newItem.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
@@ -134,7 +134,8 @@ struct TodoView: View {
   }
 
   private func load() async {
-    await attempt($error) { list = try await store.loadTodos() }
+    store.showKeptTodos()
+    await attempt($error) { try await store.loadTodos() }
   }
 
   /// YYYY-MM-DD in local time, the time zone due dates are in.
