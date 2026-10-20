@@ -42,6 +42,8 @@ pub enum Change {
     Schedules,
     Trigger(i64),
     Box(i64),
+    /// The list of boxes came.
+    Boxes,
     Memory,
     /// Proposals came or changed.
     Proposals,
@@ -121,6 +123,7 @@ pub struct State {
     pub deleted_watchers: HashSet<i64>,
     pub proposals: HashMap<i64, Proposal>,
     pub boxes: HashMap<i64, AppBox>,
+    pub boxes_loaded: bool,
     /// Boxes a message points at that no longer exist.
     pub deleted_boxes: HashSet<i64>,
     /// Your bots, deleted ones too once seen: old messages still name them.
@@ -501,7 +504,12 @@ impl Store {
                         let _ = s.load_thread().await;
                     }
                 };
-                let _ = futures_util::join!(thread, s.load_live());
+                let boxes = async {
+                    if reconnected && s.state().boxes_loaded {
+                        let _ = s.load_boxes().await;
+                    }
+                };
+                let _ = futures_util::join!(thread, boxes, s.load_live());
             });
         });
         let weak = self.weak();
@@ -1832,6 +1840,85 @@ impl Store {
         }
         self.emit(Change::Watcher(id));
         Ok(())
+    }
+
+    /// Your boxes; any we knew of that aren't among them were deleted.
+    pub async fn load_boxes(&self) -> Result<()> {
+        let list: Vec<AppBox> = self.0.api.get("/boxes").await?;
+        {
+            let mut st = self.state_mut();
+            let gone: Vec<i64> = st
+                .boxes
+                .keys()
+                .filter(|id| !list.iter().any(|b| b.id == **id))
+                .copied()
+                .collect();
+            st.deleted_boxes.extend(gone);
+            st.boxes = list.into_iter().map(|b| (b.id, b)).collect();
+            st.boxes_loaded = true;
+        }
+        self.emit(Change::Boxes);
+        Ok(())
+    }
+
+    /// A box with its versions; None once it's deleted.
+    pub async fn load_box(&self, id: i64) -> Result<Option<BoxDetail>> {
+        match self.0.api.get::<BoxDetail>(&format!("/boxes/{id}")).await {
+            Ok(d) => {
+                self.got_box(&d);
+                Ok(Some(d))
+            }
+            Err(e) if e.status == 404 => {
+                self.box_gone(id);
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn box_page(&self, id: i64, version: i64) -> Result<BoxPage> {
+        self.0
+            .api
+            .get(&format!("/boxes/{id}/versions/{version}"))
+            .await
+    }
+
+    /// Makes an old version the newest again.
+    pub async fn restore_box(&self, id: i64, version: i64) -> Result<BoxDetail> {
+        let d: BoxDetail = self
+            .0
+            .api
+            .post(
+                &format!("/boxes/{id}/revert"),
+                &serde_json::json!({ "version": version }),
+            )
+            .await?;
+        self.got_box(&d);
+        Ok(d)
+    }
+
+    pub async fn delete_box(&self, id: i64) -> Result<()> {
+        self.0.api.delete(&format!("/boxes/{id}")).await?;
+        self.box_gone(id);
+        Ok(())
+    }
+
+    fn got_box(&self, d: &BoxDetail) {
+        {
+            let mut st = self.state_mut();
+            st.deleted_boxes.remove(&d.app.id);
+            st.boxes.insert(d.app.id, d.app.clone());
+        }
+        self.emit(Change::Box(d.app.id));
+    }
+
+    fn box_gone(&self, id: i64) {
+        {
+            let mut st = self.state_mut();
+            st.boxes.remove(&id);
+            st.deleted_boxes.insert(id);
+        }
+        self.emit(Change::Box(id));
     }
 
     pub async fn checks(&self) -> Result<ChecksInfo> {

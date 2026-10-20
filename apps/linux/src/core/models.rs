@@ -787,6 +787,48 @@ pub struct AppBox {
     pub updated_at: String,
 }
 
+/// A box with its versions, oldest first.
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BoxDetail {
+    #[serde(flatten)]
+    pub app: AppBox,
+    pub versions: Vec<BoxVersion>,
+}
+
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BoxVersion {
+    pub n: i64,
+    pub created_at: String,
+}
+
+/// One version's page: its HTML, or its files when it has several.
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+pub struct BoxPage {
+    pub html: String,
+    pub files: Option<Vec<BoxFile>>,
+}
+
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+pub struct BoxFile {
+    pub path: String,
+    pub content: String,
+}
+
+impl BoxPage {
+    pub fn code(&self) -> String {
+        match &self.files {
+            Some(files) => files
+                .iter()
+                .map(|f| format!("--- {} ---\n{}", f.path, f.content))
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+            None => self.html.clone(),
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Bot {

@@ -13,6 +13,7 @@ use hatbot::store::{State, Store};
 
 use super::files::message_files;
 use super::markdown::{Markdown, copy, label};
+use super::route;
 
 /// What opening something from a message does; the chat decides.
 #[derive(Clone)]
@@ -264,7 +265,7 @@ fn bot(look: &Look, act: &Actions) -> Row {
     {
         act.store.ensure_box(id);
         if let Some(b) = &look.app_box {
-            bubble.append(&box_result(act, b));
+            bubble.append(&box_result(b));
         }
     }
     if m.status != MessageStatus::Streaming && !m.sources.is_empty() {
@@ -480,7 +481,7 @@ fn task_result(look: &Look, t: &Task, bubble: &gtk::Box) {
     }
 }
 
-fn box_result(act: &Actions, b: &AppBox) -> gtk::Widget {
+fn box_result(b: &AppBox) -> gtk::Widget {
     let line = gtk::Box::builder().spacing(10).build();
     line.append(&gtk::Image::from_icon_name("package-x-generic-symbolic"));
     line.append(
@@ -499,16 +500,10 @@ fn box_result(act: &Actions, b: &AppBox) -> gtk::Widget {
         .valign(gtk::Align::Center)
         .css_classes(["pill", "small"])
         .build();
-    let (store, id) = (act.store.clone(), b.id);
-    open.connect_clicked(move |_| open_box(&store, id));
+    let id = b.id;
+    open.connect_clicked(move |_| route::go(Link::Box(id)));
     line.append(&open);
     line.upcast()
-}
-
-/// The box on the web app's page, until the app shows boxes itself (PLAN.md §23.2, L6).
-fn open_box(store: &Store, id: i64) {
-    let url = format!("{}/boxes/{id}", store.api().server());
-    gtk::UriLauncher::new(&url).launch(None::<&gtk::Window>, gtk::gio::Cancellable::NONE, |_| {});
 }
 
 /// The pages a reply cites, in a line of links.
@@ -705,7 +700,7 @@ fn menu_items(look: &Look, act: &Actions) -> Vec<Item> {
         MessageKind::Box => {
             items.push(copy_item(m.text.clone()));
             if let Some(b) = &look.app_box {
-                items.push(open_box_item(act, b.id));
+                items.push(open_box_item(b.id));
             }
         }
         MessageKind::Handoff => {
@@ -728,7 +723,7 @@ fn menu_items(look: &Look, act: &Actions) -> Vec<Item> {
                 items.push(copy_item(m.text.clone()));
             }
             if let Some(id) = m.box_id {
-                items.push(open_box_item(act, id));
+                items.push(open_box_item(id));
             }
             if let Some(link) = m.link {
                 items.push(link_item(look, act, link));
@@ -762,11 +757,10 @@ fn menu_items(look: &Look, act: &Actions) -> Vec<Item> {
     items
 }
 
-fn open_box_item(act: &Actions, id: i64) -> Item {
-    let store = act.store.clone();
+fn open_box_item(id: i64) -> Item {
     Item {
         label: "Open Box".into(),
-        run: Box::new(move || open_box(&store, id)),
+        run: Box::new(move || route::go(Link::Box(id))),
     }
 }
 

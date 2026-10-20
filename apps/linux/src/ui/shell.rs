@@ -10,6 +10,7 @@ use hatbot::core::links::Link;
 use hatbot::core::models::{Conversation, ConversationKind};
 use hatbot::store::{Change, Listener, Store};
 
+use super::boxes::{BoxPage, Boxes};
 use super::chat::Chat;
 use super::icon::Icon;
 use super::live::LiveView;
@@ -38,6 +39,7 @@ enum Place {
     Search,
     Tasks,
     Todo,
+    Boxes,
     Live,
     Schedules,
     Memory,
@@ -92,6 +94,7 @@ struct Inner {
     memory: RefCell<Option<Memory>>,
     search: RefCell<Option<Search>>,
     todo: RefCell<Option<Todos>>,
+    boxes: RefCell<Option<Boxes>>,
     settings: RefCell<Option<Settings>>,
     /// The pages opened over a section, with what drives each, kept while they're in `nav`.
     pushed: RefCell<Vec<(adw::NavigationPage, Box<dyn Any>)>>,
@@ -188,6 +191,7 @@ impl Shell {
             memory: RefCell::default(),
             search: RefCell::default(),
             todo: RefCell::default(),
+            boxes: RefCell::default(),
             settings: RefCell::default(),
             pushed: RefCell::default(),
             place: RefCell::new(Place::Chat(store.state().conversation_id)),
@@ -306,6 +310,12 @@ impl Inner {
                 .get_or_insert_with(|| Todos::new(&self.store, &self.banners))
                 .page
                 .clone(),
+            Place::Boxes => self
+                .boxes
+                .borrow_mut()
+                .get_or_insert_with(|| Boxes::new(&self.store, &self.banners))
+                .page
+                .clone(),
             Place::Tasks => self
                 .tasks
                 .borrow_mut()
@@ -375,8 +385,11 @@ impl Inner {
                 let p = TriggerPage::new(&self.store, id);
                 self.push(p.page.clone(), Box::new(p));
             }
-            // In the web app until this app has them (PLAN.md §23.2).
-            Link::Box(id) => self.web(&format!("/boxes/{id}")),
+            Link::Box(id) => {
+                self.open(Place::Boxes);
+                let p = BoxPage::new(&self.store, id);
+                self.push(p.page.clone(), Box::new(p));
+            }
             Link::Live => self.open(Place::Live),
             Link::Watcher(id) => {
                 let p = WatcherPage::new(&self.store, id);
@@ -390,11 +403,6 @@ impl Inner {
                 }
             }
         }
-    }
-
-    fn web(&self, path: &str) {
-        let url = format!("{}{path}", self.store.api().server());
-        gtk::UriLauncher::new(&url).launch(None::<&gtk::Window>, gio::Cancellable::NONE, |_| {});
     }
 
     fn push_task(&self, id: i64) {
@@ -494,6 +502,9 @@ impl Inner {
         let todo = sidebar_row(Icon::new("todo", 18), "To-do", None);
         self.sidebar.append(&todo);
         rows.push((Place::Todo, todo));
+        let boxes = sidebar_row(Icon::new("box", 18), "Boxes", None);
+        self.sidebar.append(&boxes);
+        rows.push((Place::Boxes, boxes));
         let live = sidebar_row(Icon::new("monitor", 18), "Live", None);
         self.sidebar.append(&live);
         rows.push((Place::Live, live));
