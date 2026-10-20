@@ -930,8 +930,33 @@ private struct StreamingReply: View {
   let reply: LiveReply
   /// Working dots until the first words, unless its task's dots show instead.
   let dots: Bool
+  /// The chat is kept, hidden, while another section shows.
+  @Environment(\.sectionShown) private var sectionShown
+  @State private var last = Last()
+
+  private struct Shown {
+    var text: String
+    var progress: String
+    var usage: ReplyUsage?
+  }
+
+  /// What it showed last. A class, so keeping it doesn't redraw.
+  @MainActor
+  private final class Last {
+    var shown: Shown?
+  }
+
+  /// The reply as it is; while the chat is hidden, as it was, without reading `reply`, so its deltas
+  /// don't redraw and lay out a chat nobody sees. It catches up when the chat shows again.
+  private var shown: Shown {
+    if sectionShown || last.shown == nil {
+      last.shown = Shown(text: reply.text, progress: reply.progress, usage: reply.usage)
+    }
+    return last.shown!
+  }
 
   var body: some View {
+    let reply = shown
     if !reply.text.isEmpty { MarkdownText(text: reply.text, streaming: true) }
     if reply.text.isEmpty && dots { TypingDots() }
     if let note = Format.lastLine(reply.progress) {
