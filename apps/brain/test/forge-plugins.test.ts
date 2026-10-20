@@ -1,5 +1,6 @@
 // The GitHub and Forgejo plugins: what they share, as one table, and each one's own way of working.
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { forgejoPlugin } from "../src/plugins/forgejo";
 import { githubPlugin } from "../src/plugins/github";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
@@ -10,10 +11,13 @@ import {
   fakeApi,
   finish,
   pluginApp,
+  realSandbox,
   type Seen,
   scheduled,
+  sh,
   stopPluginsAfterEach,
   tainted,
+  tempDir,
 } from "./plugin-helpers";
 
 stopPluginsAfterEach();
@@ -58,8 +62,61 @@ const failedLog = [
   ...Array.from({ length: 300 }, (_, i) => `${stamp(i)}Post job cleanup, line ${i}`),
 ].join("\n");
 
+/** Where the stand-in forges keep their repositories, for git: one folder per test. */
+let gitRoot = "";
+const ID = "-c user.name=Owner -c user.email=owner@test";
+
+/** git's smart HTTP, as a forge serves it, for the bare repositories in gitRoot. */
+async function gitHttp(req: Request, url: URL, body: Uint8Array) {
+  const p = Bun.spawn(["git", "http-backend"], {
+    env: {
+      PATH: process.env.PATH,
+      HOME: gitRoot,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_PROJECT_ROOT: gitRoot,
+      GIT_HTTP_EXPORT_ALL: "1",
+      // It takes pushes from a signed-in user.
+      REMOTE_USER: "bot",
+      REQUEST_METHOD: req.method,
+      PATH_INFO: url.pathname,
+      QUERY_STRING: url.search.slice(1),
+      CONTENT_TYPE: req.headers.get("content-type") ?? "",
+      CONTENT_LENGTH: String(body.length),
+      HTTP_CONTENT_ENCODING: req.headers.get("content-encoding") ?? "",
+    },
+    stdin: new Blob([body]),
+    stdout: "pipe",
+  });
+  const out = Buffer.from(await new Response(p.stdout).arrayBuffer());
+  const end = out.indexOf("\r\n\r\n");
+  const headers = new Headers();
+  let status = 200;
+  for (const line of out.subarray(0, end).toString().split("\r\n")) {
+    const at = line.indexOf(":");
+    const value = line.slice(at + 1).trim();
+    if (line.slice(0, at).toLowerCase() === "status") status = Number.parseInt(value, 10);
+    else headers.set(line.slice(0, at), value);
+  }
+  return new Response(out.subarray(end + 4), { status, headers });
+}
+
+/** A repository on the stand-in forges' git, main with a README, and a clone to change it from. */
+function remote(repo: string) {
+  const origin = join(gitRoot, `${repo}.git`);
+  const seed = tempDir("hatbot-seed-");
+  sh(
+    seed,
+    `set -e; git init -q -b main; echo "# Hi" > README.md; git add -A; git ${ID} commit -qm init; git clone -q --bare . ${origin}`,
+  );
+  return {
+    origin,
+    seed,
+    head: (branch: string) => sh(origin, `git rev-parse ${branch}`).output.trim(),
+  };
+}
+
 // A stand-in for GitHub's API.
-const gh = fakeApi((req, url) => {
+const gh = fakeApi((req, url, _body, raw) => {
   const path = url.pathname;
   const r = "/repos/hkubus/hatbot";
   const tree = (path: string, mode: string, type = "blob") => ({
@@ -70,6 +127,8 @@ const gh = fakeApi((req, url) => {
   });
   if (path === "/user") return { login: "hatbot-bot" };
   if (path === "/user/repos") return repoList("hkubus", { mirror_url: "https://example.com/m" });
+  if (path === r) return { default_branch: "main" };
+  if (path.includes(".git/")) return gitHttp(req, url, raw);
   // The most recently updated hundred are all pull requests; the issue is on the next page.
   if (path === `${r}/issues`)
     return url.searchParams.get("page") === "1"
@@ -105,11 +164,13 @@ const gh = fakeApi((req, url) => {
 });
 
 // A stand-in for Forgejo's API.
-const fj = fakeApi((req, url) => {
+const fj = fakeApi((req, url, _body, raw) => {
   const path = url.pathname.replace("/api/v1", "");
   const r = "/repos/kubus/hatbot";
   if (path === "/user") return { login: "hatbot" };
   if (path === "/user/repos") return repoList("kubus", { mirror: true });
+  if (path === r) return { default_branch: "main" };
+  if (path.includes(".git/")) return gitHttp(req, url, raw);
   if (path === `${r}/contents/README.md`) return file("README.md", "# Hi\n", "sha-readme");
   // Past its size limit Forgejo leaves the content out.
   if (path === `${r}/contents/disk.img`)
@@ -143,13 +204,15 @@ async function approveUntilEnded(t: TestApp, id: number) {
   return asked;
 }
 
-describe.each([
+const forges = [
   {
     id: "github",
     plugin: githubPlugin,
     api: gh,
     env: () => ({ GITHUB_API_URL: `${gh.url}/`, GITHUB_TOKEN: "tok" }),
     owner: "hkubus",
+    /** Who git signs in as. */
+    gitUser: "x-access-token",
     workflows: [
       ".github/workflows/ci.yml",
       ".GitHub//workflows/x.yml",
@@ -165,6 +228,7 @@ describe.each([
     api: fj,
     env: () => ({ FORGEJO_URL: `${fj.url}/`, FORGEJO_TOKEN: "tok" }),
     owner: "kubus",
+    gitUser: "hatbot",
     workflows: [
       ".forgejo//workflows/x.yml",
       "/.github/workflows/x.yml",
@@ -173,7 +237,9 @@ describe.each([
       "ci/action.yaml",
     ],
   },
-])("$id", (forge) => {
+];
+
+describe.each(forges)("$id", (forge) => {
   const repo = `${forge.owner}/hatbot`;
   /** The plugin, once it knows the repositories' default branches. */
   async function started() {
@@ -383,4 +449,65 @@ test("Forgejo: a task updates a file by its sha and adds one on a new branch, th
     ),
   ).rejects.toThrow("symlink");
   expect(await t.tool("forgejo_file").run({ repo, path: "disk.img" }, call)).toContain("too big");
+});
+
+test("a repository checked out in the sandbox goes back as a new branch, and the next change goes on top of it", async () => {
+  for (const forge of forges) {
+    gitRoot = tempDir("hatbot-git-");
+    const repo = `${forge.owner}/hatbot`;
+    const { origin, head } = remote(repo);
+    const t = await pluginApp(forge.plugin, forge.env());
+    const box = realSandbox(t);
+    const run = (name: string, input: unknown) => t.tool(`${forge.id}_${name}`).run(input, call);
+    const work = join(box, "repos", forge.id, repo);
+
+    expect(await run("checkout", { repo })).toContain(
+      `(${head("main").slice(0, 10)}) is in ~/repos/${forge.id}/${repo}`,
+    );
+    const push = { repo, branch: "hatbot/readme", message: "Readme" };
+    expect(verdictFor(t.tool(`${forge.id}_push`), push, call).action).toBe("allow");
+    expect(verdictFor(t.tool(`${forge.id}_push`), { ...push, branch: "main" }, call).action).toBe(
+      "ask",
+    );
+
+    sh(work, "echo Faster. >> README.md");
+    expect(await run("push", push)).toContain("a new branch");
+    const first = head("hatbot/readme");
+    expect(head("hatbot/readme^")).toBe(head("main"));
+    sh(work, "echo Twice. >> README.md");
+    await run("push", { ...push, message: "Twice" });
+    expect(head("hatbot/readme^")).toBe(first);
+    expect(sh(origin, "git show hatbot/readme:README.md").output).toBe("# Hi\nFaster.\nTwice.\n");
+    // git had the token only in its header, as the forge takes it.
+    const viaGit = forge.api.seen.filter((s) => s.path.includes(".git/"));
+    expect(new Set(viaGit.map((s) => s.auth))).toEqual(
+      new Set([`Basic ${btoa(`${forge.gitUser}:tok`)}`]),
+    );
+  }
+});
+
+test("a push is refused when nothing changed, when it changes CI, and when the branch moved since the checkout", async () => {
+  gitRoot = tempDir("hatbot-git-");
+  const repo = "kubus/hatbot";
+  const { origin, seed, head } = remote(repo);
+  sh(seed, `git checkout -qb feature && git push -q ${origin} feature`);
+  const t = await pluginApp(forgejoPlugin, { FORGEJO_URL: `${fj.url}/`, FORGEJO_TOKEN: "tok" });
+  const box = realSandbox(t);
+  const run = (name: string, input: unknown) => t.tool(`forgejo_${name}`).run(input, call);
+  const work = join(box, "repos/forgejo", repo);
+  await run("checkout", { repo, branch: "feature" });
+
+  const push = () => run("push", { repo, branch: "feature", message: "Mine" });
+  await expect(push()).rejects.toThrow("Nothing changed");
+  sh(work, "mkdir -p .forgejo/workflows && echo 'on: push' > .forgejo/workflows/ci.yml");
+  await expect(push()).rejects.toThrow("forgejo_commit_files");
+  sh(work, "rm -r .forgejo && echo Mine. >> README.md");
+  sh(
+    seed,
+    `echo Theirs. >> README.md && git ${ID} commit -qam theirs && git push -q ${origin} feature`,
+  );
+  const moved = head("feature");
+  await expect(push()).rejects.toThrow("Check it out again");
+  expect(head("feature")).toBe(moved);
+  expect(sh(origin, "git branch --format='%(refname:short)'").output).toBe("feature\nmain\n");
 });

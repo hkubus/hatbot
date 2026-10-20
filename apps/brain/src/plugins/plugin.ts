@@ -202,6 +202,8 @@ export type PluginContext<C> = {
   named: Record<string, string>;
   db: Db;
   files?: PluginFiles;
+  /** Its own folder on the brain, data/plugins/<id>, for files it keeps. Made when it's first needed. */
+  dataDir: string;
 };
 
 export type PluginEnvVar = {
