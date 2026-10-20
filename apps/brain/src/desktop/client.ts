@@ -13,6 +13,8 @@ import type {
   BrowserState,
   FetchResult,
   RenderResult,
+  ShellJob,
+  ShellJobStatus,
   ShellResult,
 } from "@hatbot/shared/desktop";
 
@@ -43,6 +45,12 @@ export interface DesktopAgent {
   putFile(path: string, bytes: Uint8Array): Promise<void>;
   /** A file in the shell's home, by a path relative to it, up to 25 MB. */
   getFile(path: string): Promise<Uint8Array>;
+  /** Starts a long command in the shell, which goes on after this returns its id. */
+  startJob(job: ShellJob): Promise<string>;
+  /** What a job printed from byte `from` on. Throws a 410 once the shell has forgotten it. */
+  readJob(id: string, from: number): Promise<ShellJobStatus>;
+  /** Kills a job and forgets it, also after a `withSignal` signal aborted. One already gone is fine. */
+  stopJob(id: string): Promise<void>;
   /** A browser download that finished, by the id the model saw (dl-3). */
   getDownload(id: string): Promise<{ name: string; bytes: Uint8Array }>;
   /** A GET from the desktop, which reaches only the internet. */
@@ -189,6 +197,24 @@ export class HttpDesktopAgent implements DesktopAgent {
     return (
       await this.req("GET", `/files?path=${encodeURIComponent(path)}`, undefined, 120_000)
     ).bytes();
+  }
+  async startJob(job: ShellJob) {
+    return this.unlessOld(
+      async () => (await this.json<{ id: string }>("POST", "/jobs", job, 30_000)).id,
+      tooOld("run long commands such as Claude Code"),
+    );
+  }
+  readJob(id: string, from: number) {
+    return this.json<ShellJobStatus>("GET", `/jobs/${encodeURIComponent(id)}?from=${from}`);
+  }
+  async stopJob(id: string) {
+    // Not on this copy's signal: stopping is what's left to do once a task's has aborted.
+    const plain = new HttpDesktopAgent(this.baseUrl, this.token);
+    try {
+      await plain.req("DELETE", `/jobs/${encodeURIComponent(id)}`);
+    } catch (err) {
+      if (!(err instanceof DesktopError && err.status === 410)) throw err;
+    }
   }
   async getDownload(id: string) {
     const res = await this.req("GET", `/download?id=${encodeURIComponent(id)}`, undefined, 120_000);
