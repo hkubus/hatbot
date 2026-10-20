@@ -14,6 +14,8 @@ pub enum Link {
     Live,
     Tasks,
     Memory(String),
+    /// No URL has it: search's watchers open it.
+    Watcher(i64),
 }
 
 impl Link {

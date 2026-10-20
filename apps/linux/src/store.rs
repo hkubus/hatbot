@@ -64,6 +64,11 @@ pub fn conflict(e: &ApiError) -> Option<MemoryConflict> {
         .flatten()
 }
 
+/// Which to-do: its text, and its line in case two read the same.
+fn pick(t: &Todo) -> serde_json::Value {
+    serde_json::json!({"text": t.text, "line": t.line})
+}
+
 /// A reply as it's written: its text, latest progress and what it has used so far.
 #[derive(Debug, Clone, Default)]
 pub struct LiveReply {
@@ -1675,6 +1680,38 @@ impl Store {
             self.emit(Change::Memory);
         }
         Ok(())
+    }
+
+    pub async fn search(&self, q: &str) -> Result<SearchResults> {
+        self.0.api.get(&format!("/search?q={}", query(q))).await
+    }
+
+    /// Open to-dos and what was done this week. It changes with memory (`Change::Memory`).
+    pub async fn todos(&self) -> Result<TodoList> {
+        self.0.api.get("/todo").await
+    }
+
+    /// `due` is "2026-10-25".
+    pub async fn add_todo(&self, item: &str, due: Option<&str>) -> Result<TodoList> {
+        #[derive(Serialize)]
+        struct Add<'a> {
+            item: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            due: Option<&'a str>,
+        }
+        self.0.api.post("/todo", &Add { item, due }).await
+    }
+
+    pub async fn tick_todo(&self, t: &Todo) -> Result<TodoList> {
+        self.0.api.post("/todo/done", &pick(t)).await
+    }
+
+    /// Starts a task on it, which ticks it off when it's done.
+    pub async fn work_on_todo(&self, t: &Todo) -> Result<Task> {
+        let task: Task = self.0.api.post("/todo/work", &pick(t)).await?;
+        self.state_mut().tasks.insert(task.id, task.clone());
+        self.emit(Change::Task(task.id));
+        Ok(task)
     }
 
     /// Takes the desktop from Hatbot. If a task asked for you, this answers it.

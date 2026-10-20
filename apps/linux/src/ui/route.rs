@@ -6,13 +6,16 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use hatbot::core::links::Link;
+use hatbot::core::models::MessageLink;
 
 type Go = Rc<dyn Fn(Link)>;
 type Push = Rc<dyn Fn(adw::NavigationPage, Box<dyn Any>)>;
+type Reveal = Rc<dyn Fn(MessageLink)>;
 
 thread_local! {
     static GO: RefCell<Option<Go>> = RefCell::default();
     static PUSH: RefCell<Option<Push>> = RefCell::default();
+    static REVEAL: RefCell<Option<Reveal>> = RefCell::default();
     static WAITING: RefCell<Option<Link>> = RefCell::default();
 }
 
@@ -50,5 +53,16 @@ pub fn set_push(push: impl Fn(adw::NavigationPage, Box<dyn Any>) + 'static) {
 pub fn push(page: adw::NavigationPage, keep: Box<dyn Any>) {
     if let Some(push) = PUSH.with(|p| p.borrow().clone()) {
         push(page, keep);
+    }
+}
+
+pub fn set_reveal(reveal: impl Fn(MessageLink) + 'static) {
+    REVEAL.with(|r| r.replace(Some(Rc::new(reveal))));
+}
+
+/// A message in its chat, as a search result opens it.
+pub fn reveal(link: MessageLink) {
+    if let Some(reveal) = REVEAL.with(|r| r.borrow().clone()) {
+        reveal(link);
     }
 }

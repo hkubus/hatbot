@@ -7,4 +7,6 @@ pub mod markdown;
 pub mod memory;
 pub mod models;
 pub mod schedule;
+pub mod search;
 pub mod thread;
+pub mod todo;

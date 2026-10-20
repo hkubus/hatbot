@@ -182,6 +182,9 @@ pub struct Task {
     pub model: String,
     #[serde(default)]
     pub research: bool,
+    /// The to-do it's working on, by its text.
+    #[serde(default)]
+    pub todo: Option<String>,
     #[serde(default)]
     pub report_path: Option<String>,
     pub status: TaskStatus,
@@ -496,6 +499,90 @@ pub struct Proposal {
     pub skill: Option<String>,
     pub status: ProposalStatus,
     pub created_at: String,
+}
+
+/// What `GET /search` finds (packages/shared/src/search.ts).
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct SearchResults {
+    pub query: String,
+    #[serde(default)]
+    pub messages: Vec<MessageHit>,
+    #[serde(default)]
+    pub tasks: Vec<Task>,
+    #[serde(default)]
+    pub memory: Vec<MemoryHit>,
+    #[serde(default)]
+    pub routines: Vec<RoutineHit>,
+}
+
+impl SearchResults {
+    pub fn is_empty(&self) -> bool {
+        self.messages.is_empty()
+            && self.tasks.is_empty()
+            && self.memory.is_empty()
+            && self.routines.is_empty()
+    }
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageHit {
+    pub id: i64,
+    pub conversation_id: i64,
+    /// None for what you wrote.
+    pub bot_id: Option<String>,
+    /// With the matches between \u{2} and \u{3}.
+    pub snippet: String,
+    pub created_at: String,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct MemoryHit {
+    pub path: String,
+    #[serde(default)]
+    pub line: i64,
+    pub text: String,
+}
+
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutineKind {
+    Trigger,
+    Watcher,
+    #[serde(other)]
+    Schedule,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct RoutineHit {
+    pub kind: RoutineKind,
+    pub id: i64,
+    pub name: String,
+}
+
+/// A line of todo.md (packages/shared/src/todo.ts).
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Todo {
+    /// Its line in the file, from 0.
+    pub line: i64,
+    pub done: bool,
+    pub text: String,
+    /// "2026-10-25".
+    pub due: Option<String>,
+    /// "14:00".
+    #[serde(default)]
+    pub at: Option<String>,
+    #[serde(default)]
+    pub done_on: Option<String>,
+    /// The task working on it.
+    #[serde(default)]
+    pub task_id: Option<i64>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct TodoList {
+    pub items: Vec<Todo>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]

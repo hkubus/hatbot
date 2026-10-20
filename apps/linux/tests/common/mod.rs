@@ -256,3 +256,13 @@ pub fn approval(id: i64, status: &str) -> Value {
         "expiresAt": "2026-10-21T10:00:00.000Z", "decidedAt": null, "note": null
     })
 }
+
+/// A task as the brain sends it.
+pub fn task(id: i64, status: &str) -> Value {
+    json!({
+        "id": id, "botId": "hatbot", "conversationId": null, "title": format!("Task {id}"), "goal": "Water the plants",
+        "successCriteria": "", "origin": "schedule", "lane": "background", "source": null, "parentId": null,
+        "model": "claude-haiku-5-5", "status": status, "tainted": false, "summary": null, "costUsd": 0.01,
+        "steps": 0, "createdAt": "2026-10-20T10:00:00.000Z", "startedAt": null, "finishedAt": null
+    })
+}

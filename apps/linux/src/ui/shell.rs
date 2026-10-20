@@ -16,8 +16,10 @@ use super::live::LiveView;
 use super::memory::{FilePage, Memory};
 use super::route;
 use super::schedules::{SchedulePage, Schedules};
+use super::search::Search;
 use super::task::TaskPage;
 use super::tasks::Tasks;
+use super::todo::Todos;
 use super::trigger::TriggerPage;
 
 pub struct Shell {
@@ -31,7 +33,9 @@ pub struct Shell {
 #[derive(Clone, PartialEq)]
 enum Place {
     Chat(i64),
+    Search,
     Tasks,
+    Todo,
     Live,
     Schedules,
     Memory,
@@ -83,6 +87,8 @@ struct Inner {
     live: RefCell<Option<(adw::NavigationPage, LiveView)>>,
     schedules: RefCell<Option<Schedules>>,
     memory: RefCell<Option<Memory>>,
+    search: RefCell<Option<Search>>,
+    todo: RefCell<Option<Todos>>,
     /// The pages opened over a section, with what drives each, kept while they're in `nav`.
     pushed: RefCell<Vec<(adw::NavigationPage, Box<dyn Any>)>>,
     place: RefCell<Place>,
@@ -176,6 +182,8 @@ impl Shell {
             live: RefCell::default(),
             schedules: RefCell::default(),
             memory: RefCell::default(),
+            search: RefCell::default(),
+            todo: RefCell::default(),
             pushed: RefCell::default(),
             place: RefCell::new(Place::Chat(store.state().conversation_id)),
             banners,
@@ -218,6 +226,21 @@ impl Shell {
             if let Some(s) = weak.upgrade() {
                 s.push(page, keep);
             }
+        });
+        let (weak, reveal) = (Rc::downgrade(&inner), chat.reveal.clone());
+        route::set_reveal(move |link| {
+            let (weak, reveal) = (weak.clone(), reveal.clone());
+            glib::spawn_future_local(async move {
+                let Some(store) = weak.upgrade().map(|s| s.store.clone()) else {
+                    return;
+                };
+                if store.state().incognito {
+                    store.set_incognito(false).await;
+                }
+                let Some(s) = weak.upgrade() else { return };
+                s.show(Place::Chat(link.conversation_id), &s.chat_page.clone());
+                reveal(link);
+            });
         });
         let weak = Rc::downgrade(&inner);
         route::set(move |link| {
@@ -266,6 +289,18 @@ impl Inner {
                 glib::spawn_future_local(async move { store.open_conversation(id).await });
                 self.chat_page.clone()
             }
+            Place::Search => self
+                .search
+                .borrow_mut()
+                .get_or_insert_with(|| Search::new(&self.store, &self.banners))
+                .page
+                .clone(),
+            Place::Todo => self
+                .todo
+                .borrow_mut()
+                .get_or_insert_with(|| Todos::new(&self.store, &self.banners))
+                .page
+                .clone(),
             Place::Tasks => self
                 .tasks
                 .borrow_mut()
@@ -291,8 +326,12 @@ impl Inner {
                 .page
                 .clone(),
         };
+        self.show(place, &page);
+    }
+
+    fn show(&self, place: Place, page: &adw::NavigationPage) {
         self.place.replace(place);
-        self.nav.replace(&[page]);
+        self.nav.replace(std::slice::from_ref(page));
         self.prune();
         self.sync_title();
         self.sync_selection();
@@ -328,6 +367,7 @@ impl Inner {
             // In the web app until this app has them (PLAN.md §23.2).
             Link::Box(id) => self.web(&format!("/boxes/{id}")),
             Link::Live => self.open(Place::Live),
+            Link::Watcher(id) => self.web(&format!("/watchers/{id}")),
             Link::Memory(path) => {
                 self.open(Place::Memory);
                 if !path.is_empty() {
@@ -425,15 +465,21 @@ impl Inner {
             self.sidebar.append(&row);
             rows.push((Place::Chat(c.id), row));
         }
+        let search = sidebar_row(Icon::new("search", 18), "Search", None);
+        search.set_widget_name("sections");
+        self.sidebar.append(&search);
+        rows.push((Place::Search, search));
         let needs_you = st.needs_you();
         let tasks = sidebar_row(
             Icon::new("tasks", 18),
             "Tasks",
             (needs_you > 0).then_some((needs_you, true)),
         );
-        tasks.set_widget_name("sections");
         self.sidebar.append(&tasks);
         rows.push((Place::Tasks, tasks));
+        let todo = sidebar_row(Icon::new("todo", 18), "To-do", None);
+        self.sidebar.append(&todo);
+        rows.push((Place::Todo, todo));
         let live = sidebar_row(Icon::new("monitor", 18), "Live", None);
         self.sidebar.append(&live);
         rows.push((Place::Live, live));

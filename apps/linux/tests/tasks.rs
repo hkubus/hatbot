@@ -7,15 +7,6 @@ use hatbot::net::api::Api;
 use hatbot::store::Store;
 use serde_json::{Value, json};
 
-fn task(id: i64, status: &str) -> Value {
-    json!({
-        "id": id, "botId": "hatbot", "conversationId": null, "title": format!("Task {id}"), "goal": "Water the plants",
-        "successCriteria": "", "origin": "schedule", "lane": "background", "source": null, "parentId": null,
-        "model": "claude-haiku-5-5", "status": status, "tainted": false, "summary": null, "costUsd": 0.01,
-        "steps": 0, "createdAt": "2026-10-20T10:00:00.000Z", "startedAt": null, "finishedAt": null
-    })
-}
-
 #[test]
 fn finished_tasks_page_back_and_one_runs_again_with_a_new_goal() {
     run(async {

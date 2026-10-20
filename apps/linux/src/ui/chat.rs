@@ -22,6 +22,8 @@ pub struct Chat {
     pub root: gtk::Widget,
     /// For the header: in or out of incognito.
     pub incognito: gtk::ToggleButton,
+    /// Shows a message in its chat.
+    pub reveal: Rc<dyn Fn(MessageLink)>,
     _inner: Rc<Inner>,
     _listener: Listener,
 }
@@ -262,9 +264,15 @@ impl Chat {
             }
         });
         inner.render();
+        let weak = Rc::downgrade(&inner);
         Chat {
             root: root.upcast(),
             incognito,
+            reveal: Rc::new(move |link| {
+                if let Some(i) = weak.upgrade() {
+                    i.reveal(link);
+                }
+            }),
             _inner: inner,
             _listener: listener,
         }
