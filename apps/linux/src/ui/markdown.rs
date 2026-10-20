@@ -54,8 +54,14 @@ pub fn label(markup: &str) -> gtk::Label {
         .build();
     l.set_markup(markup);
     l.connect_activate_link(|l, uri| {
-        // hatbot:// links open pages this app doesn't have yet (PLAN.md §23.2, L3).
-        if !opens(uri) || uri.starts_with("hatbot:") {
+        if uri
+            .get(..7)
+            .is_some_and(|s| s.eq_ignore_ascii_case("hatbot:"))
+        {
+            super::route::open(uri);
+            return glib::Propagation::Stop;
+        }
+        if !opens(uri) {
             return glib::Propagation::Stop;
         }
         let window = l.root().and_downcast::<gtk::Window>();

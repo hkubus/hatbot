@@ -165,6 +165,8 @@ pub struct Task {
     pub conversation_id: Option<i64>,
     pub title: String,
     pub goal: String,
+    #[serde(default)]
+    pub success_criteria: String,
     pub origin: String,
     pub lane: String,
     #[serde(default)]
@@ -175,6 +177,8 @@ pub struct Task {
     pub trigger_id: Option<i64>,
     #[serde(default)]
     pub parent_id: Option<i64>,
+    #[serde(default)]
+    pub payload: Option<String>,
     pub model: String,
     #[serde(default)]
     pub research: bool,
@@ -220,6 +224,23 @@ pub struct TaskStep {
     pub screenshot: Option<String>,
     pub url: Option<String>,
     pub created_at: String,
+}
+
+impl TaskStep {
+    fn is_model_note(&self) -> bool {
+        self.kind == StepKind::Note && self.name == "Note"
+    }
+}
+
+/// The timeline with only the latest of the model's own notes: each says where it's got to.
+pub fn latest_note_only(steps: &[TaskStep]) -> Vec<&TaskStep> {
+    let last = steps.iter().rposition(TaskStep::is_model_note);
+    steps
+        .iter()
+        .enumerate()
+        .filter(|(i, s)| !s.is_model_note() || Some(*i) == last)
+        .map(|(_, s)| s)
+        .collect()
 }
 
 #[derive(Deserialize, Debug, Clone)]

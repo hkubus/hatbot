@@ -28,6 +28,8 @@ pub enum Change {
     Chats,
     Unread,
     Task(i64),
+    /// A page of the task lists came.
+    Tasks,
     /// Approvals or questions waiting for you.
     NeedsYou,
     Desktop,
@@ -1306,6 +1308,49 @@ impl Store {
         self.state_mut().questions.insert(q.id, q);
         self.emit(Change::NeedsYou);
         Ok(())
+    }
+
+    /// A page of active or finished tasks, newest first: their ids.
+    pub async fn load_tasks(&self, done: bool, before: Option<i64>) -> Result<Vec<i64>> {
+        let mut path = format!("/tasks?status={}", if done { "done" } else { "active" });
+        if let Some(b) = before {
+            path += &format!("&before={b}");
+        }
+        let list: Vec<Task> = self.0.api.get(&path).await?;
+        let ids = list.iter().map(|t| t.id).collect();
+        {
+            let mut st = self.state_mut();
+            for t in list {
+                st.tasks.insert(t.id, t);
+            }
+        }
+        self.emit(Change::Tasks);
+        Ok(ids)
+    }
+
+    /// Runs an ended task again, with a new goal if you changed it: the new task.
+    pub async fn rerun_task(&self, id: i64, goal: Option<&str>) -> Result<Task> {
+        #[derive(Serialize)]
+        struct Body<'a> {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            goal: Option<&'a str>,
+        }
+        let t: Task = self
+            .0
+            .api
+            .post(&format!("/tasks/{id}/rerun"), &Body { goal })
+            .await?;
+        self.state_mut().tasks.insert(t.id, t.clone());
+        self.emit(Change::Task(t.id));
+        Ok(t)
+    }
+
+    /// An approval a link points to, which may have come while the stream was down.
+    pub async fn load_approval(&self, id: i64) -> Result<Approval> {
+        let a: Approval = self.0.api.get(&format!("/approvals/{id}")).await?;
+        self.state_mut().approvals.insert(a.id, a.clone());
+        self.emit(Change::NeedsYou);
+        Ok(a)
     }
 
     pub async fn cancel_task(&self, id: i64) -> Result<()> {

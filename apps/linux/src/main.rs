@@ -6,7 +6,10 @@ use gtk::{gdk, glib};
 const APP_ID: &str = "ovh.gaycats.Hatbot";
 
 fn main() -> glib::ExitCode {
-    let app = adw::Application::builder().application_id(APP_ID).build();
+    let app = adw::Application::builder()
+        .application_id(APP_ID)
+        .flags(gtk::gio::ApplicationFlags::HANDLES_OPEN)
+        .build();
     app.connect_startup(|app| {
         let css = gtk::CssProvider::new();
         css.load_from_string(include_str!("ui/style.css"));
@@ -44,18 +47,27 @@ fn main() -> glib::ExitCode {
         });
         app.add_action(&quit);
     });
-    app.connect_activate(|app| {
-        if let Some(window) = app.active_window() {
-            window.present();
-            return;
+    app.connect_activate(activate);
+    // hatbot:// links, from ntfy's notifications and links in other apps.
+    app.connect_open(|app, links, _| {
+        activate(app);
+        for link in links {
+            ui::route::open(&link.uri());
         }
-        let window = ui::window::Window::new(app);
-        window.window.present();
-        // The window owns the app's state; it lives as long as the window does.
-        let keep = std::cell::RefCell::new(Some(window.clone()));
-        window.window.connect_destroy(move |_| {
-            keep.take();
-        });
     });
     app.run()
+}
+
+fn activate(app: &adw::Application) {
+    if let Some(window) = app.active_window() {
+        window.present();
+        return;
+    }
+    let window = ui::window::Window::new(app);
+    window.window.present();
+    // The window owns the app's state; it lives as long as the window does.
+    let keep = std::cell::RefCell::new(Some(window.clone()));
+    window.window.connect_destroy(move |_| {
+        keep.take();
+    });
 }

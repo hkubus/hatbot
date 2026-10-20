@@ -6,6 +6,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::glib;
 use hatbot::core::format;
+use hatbot::core::links::Link;
 use hatbot::core::markdown::escape;
 use hatbot::core::models::*;
 use hatbot::store::{State, Store};
@@ -354,6 +355,14 @@ fn content(look: &Look, act: &Actions, bubble: &gtk::Box) -> Option<Live> {
                     .build();
                 let reveal = act.reveal.clone();
                 b.connect_clicked(move |_| reveal(link));
+                bubble.append(&b);
+            } else if let Some(id) = m.task_id {
+                let b = gtk::Button::builder()
+                    .label("Open Task")
+                    .halign(gtk::Align::Start)
+                    .css_classes(["pill", "small"])
+                    .build();
+                b.connect_clicked(move |_| super::route::go(Link::Task(id)));
                 bubble.append(&b);
             }
             None
@@ -723,6 +732,12 @@ fn menu_items(look: &Look, act: &Actions) -> Vec<Item> {
             }
             if let Some(link) = m.link {
                 items.push(link_item(look, act, link));
+            }
+            if let Some(id) = m.task_id {
+                items.push(Item {
+                    label: "Open Task".into(),
+                    run: Box::new(move || super::route::go(Link::Task(id))),
+                });
             }
             if m.status == MessageStatus::Error && m.role == Role::Assistant {
                 let (store, id) = (act.store.clone(), m.id);

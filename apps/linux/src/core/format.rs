@@ -44,6 +44,66 @@ pub fn pause(at: &DateTime, previous: Option<&DateTime>, now: &DateTime) -> Opti
     Some(format!("{day} at {time}"))
 }
 
+/// The time today, otherwise the day and time: "14:05", "14 Oct, 09:05".
+pub fn stamp(iso: &str) -> String {
+    let (Some(d), Ok(now)) = (date(iso), DateTime::now_local()) else {
+        return String::new();
+    };
+    if d.ymd() == now.ymd() {
+        fmt(&d, "%H:%M")
+    } else {
+        fmt(&d, "%-d %b, %H:%M")
+    }
+}
+
+pub fn money(usd: f64) -> String {
+    format!("${usd:.2}")
+}
+
+/// "Opus 5.5" for claude-opus-5-5, worked out from the id so a new model has a name too; an id of
+/// another shape stays as it is.
+pub fn model_name(id: &str) -> String {
+    let digits = |s: &str, n: std::ops::RangeInclusive<usize>| {
+        n.contains(&s.len()) && s.bytes().all(|b| b.is_ascii_digit())
+    };
+    let parts: Vec<&str> = id.split('-').collect();
+    let (family, major, rest) = match parts.as_slice() {
+        ["claude", family, major, rest @ ..]
+            if !family.is_empty()
+                && family.bytes().all(|b| b.is_ascii_lowercase())
+                && digits(major, 1..=9) =>
+        {
+            (*family, *major, rest)
+        }
+        _ => return id.into(),
+    };
+    let minor = match rest {
+        [] => None,
+        [d] if digits(d, 8..=8) => None,
+        [m] if digits(m, 1..=2) => Some(*m),
+        [m, d] if digits(m, 1..=2) && digits(d, 8..=8) => Some(*m),
+        _ => return id.into(),
+    };
+    let mut name = family[..1].to_uppercase() + &family[1..] + " " + major;
+    if let Some(m) = minor {
+        name += &format!(".{m}");
+    }
+    name
+}
+
+pub fn status_label(s: TaskStatus) -> &'static str {
+    match s {
+        TaskStatus::Queued => "Queued",
+        TaskStatus::Running | TaskStatus::Unknown => "Running",
+        TaskStatus::WaitingApproval => "Needs approval",
+        TaskStatus::WaitingTakeover => "Needs you",
+        TaskStatus::WaitingAnswer => "Asks you",
+        TaskStatus::Done => "Done",
+        TaskStatus::Failed => "Failed",
+        TaskStatus::Cancelled => "Cancelled",
+    }
+}
+
 /// 950, 12.4k, 3.1M.
 pub fn tokens(n: i64) -> String {
     if n < 1000 {

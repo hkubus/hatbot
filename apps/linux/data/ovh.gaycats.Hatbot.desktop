@@ -1,10 +1,11 @@
 [Desktop Entry]
 Name=Hatbot
 Comment=Your self-hosted agent
-Exec=hatbot
+Exec=hatbot %u
 Icon=ovh.gaycats.Hatbot
 Terminal=false
 Type=Application
 Categories=Utility;
 StartupNotify=true
+MimeType=x-scheme-handler/hatbot;
 DBusActivatable=false

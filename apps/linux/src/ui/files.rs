@@ -118,7 +118,7 @@ pub fn is_picture(a: &Attachment) -> bool {
     .contains(&a.media_type.as_str())
 }
 
-fn is_markdown(a: &Attachment) -> bool {
+pub fn is_markdown(a: &Attachment) -> bool {
     a.media_type == "text/markdown" || a.name.to_lowercase().ends_with(".md")
 }
 
@@ -143,10 +143,16 @@ fn picture(store: &Store, a: &Attachment) -> gtk::Widget {
     let thumb = Thumb::new(240);
     thumb.set_halign(gtk::Align::Start);
     thumb.update_property(&[gtk::accessible::Property::Label(&a.name)]);
-    thumb.set_cursor_from_name(Some("pointer"));
     thumb.load(store, format!("/attachments/{}", a.id));
+    zoom_on_click(&thumb, &a.name);
+    thumb.upcast()
+}
+
+/// A click shows the picture whole, in a dialog titled `name`.
+pub fn zoom_on_click(thumb: &Thumb, name: &str) {
+    thumb.set_cursor_from_name(Some("pointer"));
     let click = gtk::GestureClick::new();
-    let name = a.name.clone();
+    let name = name.to_string();
     click.connect_released(move |g, _, _, _| {
         let Some(t) = g.widget().and_downcast::<Thumb>() else {
             return;
@@ -169,7 +175,6 @@ fn picture(store: &Store, a: &Attachment) -> gtk::Widget {
         dialog.present(Some(&t));
     });
     thumb.add_controller(click);
-    thumb.upcast()
 }
 
 /// Any other file: its name; a click opens it.
@@ -240,7 +245,7 @@ fn open(store: &Store, a: &Attachment, b: &gtk::Button) {
 }
 
 /// A Markdown file in a reader.
-fn read(store: &Store, a: &Attachment, b: &gtk::Button) {
+pub fn read(store: &Store, a: &Attachment, b: &gtk::Button) {
     let api = store.api().clone();
     let (store, a) = (store.clone(), a.clone());
     let b = b.downgrade();

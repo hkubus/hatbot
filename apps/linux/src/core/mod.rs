@@ -2,6 +2,7 @@
 pub mod address;
 pub mod delta;
 pub mod format;
+pub mod links;
 pub mod markdown;
 pub mod models;
 pub mod thread;
