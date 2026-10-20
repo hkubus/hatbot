@@ -34,6 +34,9 @@ final class AppStore {
   var hasEarlier = false
   /// The open chat's messages are known, loaded or kept from last time: until then, none isn't an empty chat.
   private(set) var threadKnown = false
+  /// Why the open chat's latest messages couldn't be loaded, until a load works; the chat says so, with
+  /// a way to try again.
+  private(set) var threadError: Error?
   @ObservationIgnored private var loadingEarlier = false
   /// An earlier page is going in above.
   private(set) var prepending = false
@@ -508,6 +511,7 @@ final class AppStore {
     guard wasIncognito == incognito, shown == conversationId else { return }
     (messages, hasEarlier) = ThreadMerge.merge(messages, hasEarlier: hasEarlier, latest: list, page: Self.page)
     threadKnown = true
+    threadError = nil
     syncReplies(list)
     for event in missed.removeValue(forKey: load) ?? [] { follow(event) }
     // The messages show first; a fold says its first message until its recap comes.
@@ -555,6 +559,22 @@ final class AppStore {
     for event in missed.removeValue(forKey: load) ?? [] { follow(event) }
   }
 
+  /// Loads the open chat's latest page; if it can't, the chat says why, with a way to try again. Whether
+  /// it loaded.
+  @discardableResult
+  func reloadThread() async -> Bool {
+    let wasIncognito = incognito
+    let shown = conversationId
+    do {
+      try await loadThread()
+      return true
+    } catch {
+      // A load for the chat you've left fails on its own.
+      if wasIncognito == incognito && shown == conversationId { threadError = error }
+      return false
+    }
+  }
+
   /// Into incognito, or out of it, which deletes its conversation.
   func setIncognito(_ on: Bool) async {
     guard on != incognito else { return }
@@ -562,13 +582,16 @@ final class AppStore {
     messages = []
     hasEarlier = false
     threadKnown = false
+    threadError = nil
     if !on { let _: Empty? = try? await api.delete("\(chatPath)/incognito") }
-    try? await loadThread()
+    await reloadThread()
   }
 
-  /// Shows another chat. Leaving one in incognito deletes its conversation.
-  func openConversation(_ id: Int) async {
-    guard id != conversationId else { return }
+  /// Shows another chat. Leaving one in incognito deletes its conversation. Whether its latest messages
+  /// loaded; if not, the chat shows what was kept of it and says why.
+  @discardableResult
+  func openConversation(_ id: Int) async -> Bool {
+    guard id != conversationId else { return true }
     let left = chatPath
     let wasIncognito = incognito
     // Read before the chat you leave is written: the cache's reads wait for its writes.
@@ -580,8 +603,9 @@ final class AppStore {
     hasEarlier = cached?.hasEarlier ?? false
     threadKnown = cached != nil
     for e in cached?.episodes ?? [] { episodes[e.id] = e }
+    threadError = nil
     if wasIncognito { let _: Empty? = try? await api.delete("\(left)/incognito") }
-    try? await loadThread()
+    return await reloadThread()
   }
 
   // MARK: Bots

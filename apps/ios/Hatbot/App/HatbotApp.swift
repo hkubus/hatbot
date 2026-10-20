@@ -135,8 +135,11 @@ struct MainView: View {
         tab = .chat
         Task {
           if store.incognito { await store.setIncognito(false) }
-          if store.conversations.contains(where: { $0.id == conversationId }) {
-            await store.openConversation(conversationId)
+          // One that didn't load says so; the message isn't looked for in what was kept.
+          if store.conversations.contains(where: { $0.id == conversationId }),
+            !(await store.openConversation(conversationId))
+          {
+            return
           }
           focus = messageId
         }
