@@ -23,6 +23,15 @@ struct ChatView: View {
   @State private var farFromBottom = false
   static let readingWidth: CGFloat = 720
   @State private var nearBottom = true
+  /// The first message when the page before it was last asked for, so scrolling asks once a page.
+  @State private var earlierBefore: Int?
+
+  /// How far the list is from its top and its bottom, and the screen's height.
+  private struct Scrolled: Equatable {
+    var top: CGFloat
+    var bottom: CGFloat
+    var screen: CGFloat
+  }
 
   /// What the list shows: times, folds, and the messages that aren't folded away.
   fileprivate enum Row: Identifiable {
@@ -107,7 +116,8 @@ struct ChatView: View {
     NavigationStack(path: $path) {
       ScrollView {
         LazyVStack(spacing: 0) {
-          // Scrolling up to the top loads the page before it; the bottom anchor keeps your place.
+          // The page before loads well before the top (see onScrollGeometryChange); this is for a chat
+          // shorter than that, or one that failed. The bottom anchor keeps your place.
           if store.hasEarlier {
             ProgressView()
               .padding(.vertical, 8)
@@ -174,12 +184,23 @@ struct ChatView: View {
       // A reply streaming in is followed only from the bottom; scrolled up, your place stays. An
       // earlier page going in above keeps it from the bottom.
       .defaultScrollAnchor(nearBottom || store.prepending ? .bottom : .top, for: .sizeChanges)
-      .onScrollGeometryChange(for: CGFloat.self) { geo in
-        geo.contentSize.height - geo.visibleRect.maxY
-      } action: { _, distance in
+      .onScrollGeometryChange(for: Scrolled.self) { geo in
+        Scrolled(
+          top: geo.contentOffset.y + geo.contentInsets.top,
+          bottom: geo.contentSize.height - geo.visibleRect.maxY,
+          screen: geo.containerSize.height)
+      } action: { _, scrolled in
+        let distance = scrolled.bottom
         if nearBottom != (distance < 60) { nearBottom = distance < 60 }
         let far = distance > 400
         if far != farFromBottom { withAnimation(.snappy) { farFromBottom = far } }
+        // Within a screen and a half of the top: the page before loads while you're still reading.
+        if scrolled.top < scrolled.screen * 1.5, store.hasEarlier, let first = store.messages.first?.id,
+          first != earlierBefore
+        {
+          earlierBefore = first
+          Task { try? await store.loadEarlier() }
+        }
       }
       .overlay(alignment: .bottom) {
         if farFromBottom {

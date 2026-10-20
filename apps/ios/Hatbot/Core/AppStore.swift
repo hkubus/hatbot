@@ -676,14 +676,14 @@ final class AppStore {
     let shown = conversationId
     let wasIncognito = incognito
     loadingEarlier = true
-    prepending = true
-    defer {
-      loadingEarlier = false
-      settle()
-    }
+    defer { loadingEarlier = false }
     let older: [ThreadMessage] = try await api.get(page(before: first.id))
     // Another chat, or in or out of incognito, while it loaded: the page belongs to the one you left.
     guard shown == conversationId, wasIncognito == incognito, messages.first?.id == first.id else { return }
+    // Only now, with the rows: held at the bottom while the page loads, the chat would follow a reply
+    // streaming in below your place.
+    prepending = true
+    defer { settle() }
     messages = older + messages
     hasEarlier = older.count == Self.page
     try? await loadEpisodes(older)
@@ -701,7 +701,8 @@ final class AppStore {
     return messages.contains { $0.id == id }
   }
 
-  /// The earlier page stays "prepending" until it's laid out, so the chat keeps your place under it.
+  /// The earlier page and its recaps stay "prepending" until they're laid out, so the chat keeps your
+  /// place under them.
   private func settle() {
     settling?.cancel()
     settling = Task { [weak self] in
