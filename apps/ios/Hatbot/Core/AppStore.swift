@@ -32,6 +32,8 @@ final class AppStore {
   /// have been read before them, so they go on it again, as on the web.
   @ObservationIgnored private var missed: [UUID: [HatbotEvent]] = [:]
   var hasEarlier = false
+  /// The open chat's messages are known, loaded or kept from last time: until then, none isn't an empty chat.
+  private(set) var threadKnown = false
   @ObservationIgnored private var loadingEarlier = false
   /// An earlier page is going in above.
   private(set) var prepending = false
@@ -130,6 +132,7 @@ final class AppStore {
     if let page = cache.page(conversationId) {
       messages = page.messages
       hasEarlier = page.hasEarlier
+      threadKnown = true
       for e in page.episodes { episodes[e.id] = e }
     }
   }
@@ -481,6 +484,7 @@ final class AppStore {
     cache?.forget(id)
     if conversationId == id {
       messages = []
+      threadKnown = false
       Task { await openConversation(1) }
     }
   }
@@ -499,12 +503,14 @@ final class AppStore {
     missed[load] = []
     defer { missed[load] = nil }
     let list: [ThreadMessage] = try await api.get(page())
-    try? await loadEpisodes(list)
     // Switched while it loaded: the other conversation's load wins.
     guard wasIncognito == incognito, shown == conversationId else { return }
     (messages, hasEarlier) = ThreadMerge.merge(messages, hasEarlier: hasEarlier, latest: list, page: Self.page)
+    threadKnown = true
     syncReplies(list)
     for event in missed.removeValue(forKey: load) ?? [] { follow(event) }
+    // The messages show first; a fold says its first message until its recap comes.
+    try? await loadEpisodes(list)
     persist()
   }
 
@@ -514,6 +520,7 @@ final class AppStore {
     incognito = on
     messages = []
     hasEarlier = false
+    threadKnown = false
     if !on { let _: Empty? = try? await api.delete("\(chatPath)/incognito") }
     try? await loadThread()
   }
@@ -523,16 +530,15 @@ final class AppStore {
     guard id != conversationId else { return }
     let left = chatPath
     let wasIncognito = incognito
+    // Read before the chat you leave is written: the cache's reads wait for its writes.
+    let cached = cache?.page(id)
     persist()
     conversationId = id
     incognito = false
-    messages = []
-    hasEarlier = false
-    if let page = cache?.page(id) {
-      messages = page.messages
-      hasEarlier = page.hasEarlier
-      for e in page.episodes { episodes[e.id] = e }
-    }
+    messages = cached?.messages ?? []
+    hasEarlier = cached?.hasEarlier ?? false
+    threadKnown = cached != nil
+    for e in cached?.episodes ?? [] { episodes[e.id] = e }
     if wasIncognito { let _: Empty? = try? await api.delete("\(left)/incognito") }
     try? await loadThread()
   }
@@ -676,11 +682,11 @@ final class AppStore {
       settle()
     }
     let older: [ThreadMessage] = try await api.get(page(before: first.id))
-    try? await loadEpisodes(older)
     // Another chat, or in or out of incognito, while it loaded: the page belongs to the one you left.
     guard shown == conversationId, wasIncognito == incognito, messages.first?.id == first.id else { return }
     messages = older + messages
     hasEarlier = older.count == Self.page
+    try? await loadEpisodes(older)
   }
 
   /// Loads earlier pages until message `id` is in the chat, for a search hit; whether it is.

@@ -332,14 +332,22 @@ struct ChartSpec: Decodable, Equatable, Sendable {
     return unit == "%" ? "\(n)%" : "\(n) \(unit)"
   }
 
+  /// Made once for each number of decimals `format` uses: a chart formats every tick and point as it's drawn.
+  nonisolated(unsafe) private static let numbers = Dictionary(
+    uniqueKeysWithValues: [0...0, 0...1, 0...2, 2...2].map { ($0, numberFormatter($0)) })
+
   private static func number(_ v: Double, fraction: ClosedRange<Int>) -> String {
+    (numbers[fraction] ?? numberFormatter(fraction)).string(from: NSNumber(value: v)) ?? String(v)
+  }
+
+  private static func numberFormatter(_ fraction: ClosedRange<Int>) -> NumberFormatter {
     let f = NumberFormatter()
     f.locale = Locale(identifier: "en_US")
     f.numberStyle = .decimal
     f.roundingMode = .halfUp
     f.minimumFractionDigits = fraction.lowerBound
     f.maximumFractionDigits = fraction.upperBound
-    return f.string(from: NSNumber(value: v)) ?? String(v)
+    return f
   }
 }
 

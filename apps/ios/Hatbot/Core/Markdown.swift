@@ -50,9 +50,18 @@ enum Markdown {
     return blocks
   }
 
+  /// `plain`'s answers by text: every bubble in the chat works out what VoiceOver reads when it's drawn.
+  nonisolated(unsafe) private static let plainCache: NSCache<NSString, NSString> = {
+    let c = NSCache<NSString, NSString>()
+    c.countLimit = 400
+    return c
+  }()
+
   /// The text without its Markdown, for Siri to say and VoiceOver to read.
   static func plain(_ source: String) -> String {
-    cached(source).map { block -> String in
+    let key = NSString(string: source)
+    if let hit = plainCache.object(forKey: key) { return hit as String }
+    let text = cached(source).map { block -> String in
       switch block {
       case let .heading(_, text), let .paragraph(text), let .quote(text): inline(text)
       case let .list(items):
@@ -67,14 +76,25 @@ enum Markdown {
     }
     .filter { !$0.isEmpty }
     .joined(separator: "\n\n")
+    plainCache.setObject(NSString(string: text), forKey: key)
+    return text
   }
+
+  // Compiled once: `inline` runs for every block of every message.
+  nonisolated(unsafe) private static let link = try! NSRegularExpression(pattern: #"!?\[([^\]]*)\]\([^)]*\)"#)
+  nonisolated(unsafe) private static let marks = try! NSRegularExpression(pattern: #"\*\*|__|~~|`"#)
+  nonisolated(unsafe) private static let emphasis = try! NSRegularExpression(
+    pattern: #"(?<![\w*])[*_](?=\S)(.+?)(?<=\S)[*_](?![\w*])"#)
 
   /// A line without links' addresses or emphasis and code marks.
   static func inline(_ text: String) -> String {
-    var s = text.replacingOccurrences(of: #"!?\[([^\]]*)\]\([^)]*\)"#, with: "$1", options: .regularExpression)
-    s = s.replacingOccurrences(of: #"\*\*|__|~~|`"#, with: "", options: .regularExpression)
-    return s.replacingOccurrences(
-      of: #"(?<![\w*])[*_](?=\S)(.+?)(?<=\S)[*_](?![\w*])"#, with: "$1", options: .regularExpression)
+    var s = replace(link, in: text, with: "$1")
+    s = replace(marks, in: s, with: "")
+    return replace(emphasis, in: s, with: "$1")
+  }
+
+  private static func replace(_ regex: NSRegularExpression, in s: String, with template: String) -> String {
+    regex.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: template)
   }
 
   static func parse(_ source: String) -> [MDBlock] {

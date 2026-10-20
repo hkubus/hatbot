@@ -8,6 +8,8 @@ struct TasksView: View {
   @Environment(\.sectionShown) private var sectionShown
   @State private var filter = AppStore.TaskFilter.active
   @State private var finishedIds: [Int]?
+  /// Running tasks shown so far may be only the ones the chat brought, until the list loads.
+  @State private var activeLoaded = false
   /// Finished tasks go back further than the pages loaded so far.
   @State private var moreFinished = false
   @State private var error: String?
@@ -45,7 +47,7 @@ struct TasksView: View {
         Section {
           if let error {
             Text(error).foregroundStyle(.red)
-          } else if shown.isEmpty && (filter == .active || finishedIds != nil) {
+          } else if shown.isEmpty && (filter == .active ? activeLoaded : finishedIds != nil) {
             Text(filter == .active ? "Nothing running." : "No tasks yet.").foregroundStyle(.secondary)
           }
           ForEach(shown) { t in
@@ -93,6 +95,8 @@ struct TasksView: View {
       if filter == .done {
         finishedIds = ids
         moreFinished = ids.count == AppStore.page
+      } else {
+        activeLoaded = true
       }
     }
   }
@@ -189,7 +193,7 @@ struct TaskDetailView: View {
       }
       Section("Timeline") {
         let steps = (store.steps[taskId] ?? []).latestNoteOnly
-        if steps.isEmpty {
+        if steps.isEmpty && store.steps[taskId] != nil {
           Text(task.isActive ? "Hasn't started yet." : "No steps.").foregroundStyle(.secondary)
         }
         ForEach(steps) { step in StepRow(step: step) }

@@ -66,7 +66,8 @@ struct BoxView: View {
     Group {
       if missing {
         ContentUnavailableView("This box was deleted.", systemImage: "shippingbox")
-      } else if let detail {
+      } else if let version = picked ?? detail?.box.version ?? (loadError == nil ? store.boxes[id]?.version : nil) {
+        // From the boxes list, the page starts loading alongside the details.
         VStack(spacing: 0) {
           if let shown = error ?? loadError {
             Text(shown)
@@ -76,7 +77,7 @@ struct BoxView: View {
               .padding(.horizontal)
               .padding(.vertical, 6)
           }
-          BoxFrame(id: id, version: picked ?? detail.box.version)
+          BoxFrame(id: id, version: version)
         }
       } else if let loadError {
         ContentUnavailableView {

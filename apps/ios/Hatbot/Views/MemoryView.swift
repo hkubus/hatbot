@@ -97,10 +97,13 @@ struct MemoryView: View {
   }
 
   private func load() async {
-    await attempt($error) { files = try await store.memoryTree() }
+    let store = store
     // Brains from before proposals answer 404; the files still show.
-    try? await store.loadProposals()
-    skills = (try? await store.loadSkills()) ?? []
+    async let proposals: Void? = try? store.loadProposals()
+    async let skillList = try? store.loadSkills()
+    await attempt($error) { files = try await store.memoryTree() }
+    _ = await proposals
+    skills = await skillList ?? []
   }
 
   private func trouble(_ s: SkillStatus) -> String {

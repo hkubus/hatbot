@@ -14,7 +14,6 @@ struct ChatView: View {
   @Environment(AppStore.self) private var store
   @State private var error: String?
   @State private var position = ScrollPosition(edge: .bottom)
-  @State private var loaded = false
   @State private var unfolded = Set<Int>()
   /// The folded conversation you asked to delete, waiting for you to confirm.
   @State private var deleting: Int?
@@ -114,7 +113,7 @@ struct ChatView: View {
               .padding(.vertical, 8)
               .task(id: store.messages.first?.id) { try? await store.loadEarlier() }
           }
-          if loaded && store.messages.isEmpty {
+          if store.threadKnown && store.messages.isEmpty {
             Text(
               store.incognito
                 ? "\(name) can't see earlier conversations here, and this one is deleted when you leave."
@@ -297,7 +296,6 @@ struct ChatView: View {
         if store.messages.isEmpty || !store.connected {
           await attempt($error) { try await store.loadThread() }
         }
-        loaded = true
       }
     }
   }
