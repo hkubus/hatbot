@@ -18,11 +18,22 @@ struct ChatView: View {
   /// The folded conversation you asked to delete, waiting for you to confirm.
   @State private var deleting: Int?
   @State private var rowCache = RowCache()
+  /// Today, so the rows' times are made again when it changes: "Today" becomes "Yesterday".
+  @State private var today = Calendar.current.startOfDay(for: .now)
   @State private var router = OpenRoute()
   private var name: String { store.chatName(store.currentChat) }
   @State private var farFromBottom = false
   static let readingWidth: CGFloat = 720
   @State private var nearBottom = true
+  /// The first message when the page before it was last asked for, so scrolling asks once a page.
+  @State private var earlierBefore: Int?
+
+  /// How far the list is from its top and its bottom, and the screen's height.
+  private struct Scrolled: Equatable {
+    var top: CGFloat
+    var bottom: CGFloat
+    var screen: CGFloat
+  }
 
   /// What the list shows: times, folds, and the messages that aren't folded away.
   fileprivate enum Row: Identifiable {
@@ -47,19 +58,22 @@ struct ChatView: View {
       var episodes: [Int: Episode]
       var unfolded: Set<Int>
       var unread: [Int]
+      var day: Date
     }
 
     var key: Key?
     var rows: [Row] = []
+    let times = TimeLabels()
   }
 
   private var rows: [Row] {
-    let key = RowCache.Key(messages: store.messages, episodes: store.episodes, unfolded: unfolded, unread: store.unread)
+    let key = RowCache.Key(
+      messages: store.messages, episodes: store.episodes, unfolded: unfolded, unread: store.unread, day: today)
     if rowCache.key == key { return rowCache.rows }
     var rows: [Row] = []
     var previous: ThreadMessage?
     func add(_ m: ThreadMessage, as row: Row) {
-      if let time = Self.pause(m, after: previous) { rows.append(.time(time, before: m.id)) }
+      if let time = rowCache.times.label(m, after: previous) { rows.append(.time(time, before: m.id)) }
       previous = m
       rows.append(row)
     }
@@ -103,11 +117,18 @@ struct ChatView: View {
     return c.botIds.compactMap { store.bots[$0] }
   }
 
+  /// Midnight, or the clock or time zone changed, or back in the app after either.
+  private func newDay() {
+    let day = Calendar.current.startOfDay(for: .now)
+    if day != today { today = day }
+  }
+
   var body: some View {
     NavigationStack(path: $path) {
       ScrollView {
         LazyVStack(spacing: 0) {
-          // Scrolling up to the top loads the page before it; the bottom anchor keeps your place.
+          // The page before loads well before the top (see onScrollGeometryChange); this is for a chat
+          // shorter than that, or one that failed. The bottom anchor keeps your place.
           if store.hasEarlier {
             ProgressView()
               .padding(.vertical, 8)
@@ -174,12 +195,23 @@ struct ChatView: View {
       // A reply streaming in is followed only from the bottom; scrolled up, your place stays. An
       // earlier page going in above keeps it from the bottom.
       .defaultScrollAnchor(nearBottom || store.prepending ? .bottom : .top, for: .sizeChanges)
-      .onScrollGeometryChange(for: CGFloat.self) { geo in
-        geo.contentSize.height - geo.visibleRect.maxY
-      } action: { _, distance in
+      .onScrollGeometryChange(for: Scrolled.self) { geo in
+        Scrolled(
+          top: geo.contentOffset.y + geo.contentInsets.top,
+          bottom: geo.contentSize.height - geo.visibleRect.maxY,
+          screen: geo.containerSize.height)
+      } action: { _, scrolled in
+        let distance = scrolled.bottom
         if nearBottom != (distance < 60) { nearBottom = distance < 60 }
         let far = distance > 400
         if far != farFromBottom { withAnimation(.snappy) { farFromBottom = far } }
+        // Within a screen and a half of the top: the page before loads while you're still reading.
+        if scrolled.top < scrolled.screen * 1.5, store.hasEarlier, let first = store.messages.first?.id,
+          first != earlierBefore
+        {
+          earlierBefore = first
+          Task { try? await store.loadEarlier() }
+        }
       }
       .overlay(alignment: .bottom) {
         if farFromBottom {
@@ -290,6 +322,12 @@ struct ChatView: View {
         try? await Task.sleep(for: .milliseconds(150))
         withAnimation { position.scrollTo(id: "m\(id)", anchor: .center) }
       }
+      .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
+        newDay()
+      }
+      .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+        newDay()
+      }
       .task {
         // Coming back to a chat that's loaded and live: the events kept it current. Otherwise the latest
         // page is merged in.
@@ -298,24 +336,6 @@ struct ChatView: View {
         }
       }
     }
-  }
-
-  /// "Today 14:05", like Messages, when a message comes an hour or more after the one before.
-  private static func pause(_ m: ThreadMessage, after previous: ThreadMessage?) -> String? {
-    guard let date = m.date else { return nil }
-    if let prev = previous?.date, date.timeIntervalSince(prev) < 3600 { return nil }
-    let time = date.formatted(date: .omitted, time: .shortened)
-    let calendar = Calendar.current
-    if calendar.isDateInToday(date) { return "Today \(time)" }
-    if calendar.isDateInYesterday(date) { return "Yesterday \(time)" }
-    if let weekAgo = calendar.date(byAdding: .day, value: -6, to: calendar.startOfDay(for: .now)), date >= weekAgo {
-      return "\(date.formatted(.dateTime.weekday(.wide))) \(time)"
-    }
-    let thisYear = calendar.isDate(date, equalTo: .now, toGranularity: .year)
-    let day = thisYear
-      ? date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
-      : date.formatted(.dateTime.day().month(.abbreviated).year())
-    return "\(day) at \(time)"
   }
 }
 
@@ -665,10 +685,6 @@ private struct MessageRow: View, Equatable {
   var answerable = false
   @Environment(\.openRoute) private var router
   @Environment(AppStore.self) private var store
-  @Environment(\.scenePhase) private var scenePhase
-  /// The chat is kept, hidden, while another section shows: nothing in it is seen then.
-  @Environment(\.sectionShown) private var sectionShown
-  @State private var onScreen = false
 
   var body: some View {
     if m.isNote {
@@ -697,14 +713,13 @@ private struct MessageRow: View, Equatable {
       .frame(maxWidth: .infinity, alignment: .trailing)
     } else {
       let shape = Bubble(tail: tail, side: .leading)
-      let unread = store.unread.contains(m.id)
       VStack(alignment: .leading, spacing: 3) {
         VStack(alignment: .leading, spacing: 8) { content }
           .padding(Bubble.insets(.leading))
           .background(Color.botBubble, in: shape)
           .contentShape(.contextMenuPreview, shape)
           .contextMenu { menu }
-          .modifier(Spoken(label: speaker + (unread ? ", unread" : ""), text: spokenText))
+          .modifier(Spoken(label: speaker, text: spokenText, unread: m.id))
         // Like Messages' "Edited": the task's result changed this message after it was sent.
         if m.status != .streaming, let editedAt {
           Text("Edited \(editedAt.timeText)")
@@ -715,27 +730,7 @@ private struct MessageRow: View, Equatable {
       }
       .padding(.trailing, 40)
       .frame(maxWidth: .infinity, alignment: .leading)
-      // Unread: an accent line at the edge, fading once you've seen it.
-      .overlay(alignment: .leading) {
-        Capsule().fill(Color.brand).frame(width: 3).padding(.vertical, 4).offset(x: -9)
-          .opacity(unread ? 1 : 0)
-          .animation(.easeOut(duration: 1), value: unread)
-      }
-      // Half of it on screen; or, for one too long for that, filling most of the screen or its end in view.
-      .onGeometryChange(for: Bool.self) { geo in
-        guard let screen = geo.bounds(of: .scrollView) else { return false }
-        let me = CGRect(origin: .zero, size: geo.size)
-        let shown = me.intersection(screen)
-        guard !shown.isNull, shown.height > 0 else { return false }
-        return shown.height >= me.height * 0.5 || shown.height >= screen.height * 0.6
-          || (me.maxY > screen.minY && me.maxY <= screen.maxY)
-      } action: { onScreen = $0 }
-      // On screen for a moment, with the app and the chat in front: seen.
-      .task(id: unread && onScreen && scenePhase == .active && sectionShown) {
-        guard unread && onScreen && scenePhase == .active && sectionShown else { return }
-        try? await Task.sleep(for: .seconds(1.5))
-        if !Task.isCancelled { store.markSeen([m.id]) }
-      }
+      .overlay { UnreadMark(id: m.id).allowsHitTesting(false) }
     }
   }
 
@@ -854,6 +849,41 @@ private struct MessageRow: View, Equatable {
   }
 }
 
+/// Unread: an accent line at a message's edge, fading once you've seen it. Its own view, over the whole
+/// message, so the unread list changing, another section showing or the app coming to the front redraws
+/// only this, not every message's Markdown.
+private struct UnreadMark: View {
+  let id: Int
+  @Environment(AppStore.self) private var store
+  @Environment(\.scenePhase) private var scenePhase
+  /// The chat is kept, hidden, while another section shows: nothing in it is seen then.
+  @Environment(\.sectionShown) private var sectionShown
+  @State private var onScreen = false
+
+  var body: some View {
+    let unread = store.unread.contains(id)
+    Capsule().fill(Color.brand).frame(width: 3).padding(.vertical, 4).offset(x: -9)
+      .opacity(unread ? 1 : 0)
+      .animation(.easeOut(duration: 1), value: unread)
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+      // Half of it on screen; or, for one too long for that, filling most of the screen or its end in view.
+      .onGeometryChange(for: Bool.self) { geo in
+        guard let screen = geo.bounds(of: .scrollView) else { return false }
+        let me = CGRect(origin: .zero, size: geo.size)
+        let shown = me.intersection(screen)
+        guard !shown.isNull, shown.height > 0 else { return false }
+        return shown.height >= me.height * 0.5 || shown.height >= screen.height * 0.6
+          || (me.maxY > screen.minY && me.maxY <= screen.maxY)
+      } action: { onScreen = $0 }
+      // On screen for a moment, with the app and the chat in front: seen.
+      .task(id: unread && onScreen && scenePhase == .active && sectionShown) {
+        guard unread && onScreen && scenePhase == .active && sectionShown else { return }
+        try? await Task.sleep(for: .seconds(1.5))
+        if !Task.isCancelled { store.markSeen([id]) }
+      }
+  }
+}
+
 /// A reply, with the task it started (if any) working under it. Once the task finishes or fails, its bot
 /// writes the reply again to say what came of it; if it doesn't, the task's result shows in the reply's
 /// place. A cancelled task leaves the reply.
@@ -899,8 +929,33 @@ private struct StreamingReply: View {
   let reply: LiveReply
   /// Working dots until the first words, unless its task's dots show instead.
   let dots: Bool
+  /// The chat is kept, hidden, while another section shows.
+  @Environment(\.sectionShown) private var sectionShown
+  @State private var last = Last()
+
+  private struct Shown {
+    var text: String
+    var progress: String
+    var usage: ReplyUsage?
+  }
+
+  /// What it showed last. A class, so keeping it doesn't redraw.
+  @MainActor
+  private final class Last {
+    var shown: Shown?
+  }
+
+  /// The reply as it is; while the chat is hidden, as it was, without reading `reply`, so its deltas
+  /// don't redraw and lay out a chat nobody sees. It catches up when the chat shows again.
+  private var shown: Shown {
+    if sectionShown || last.shown == nil {
+      last.shown = Shown(text: reply.text, progress: reply.progress, usage: reply.usage)
+    }
+    return last.shown!
+  }
 
   var body: some View {
+    let reply = shown
     if !reply.text.isEmpty { MarkdownText(text: reply.text, streaming: true) }
     if reply.text.isEmpty && dots { TypingDots() }
     if let note = Format.lastLine(reply.progress) {
@@ -1057,17 +1112,21 @@ private struct TaskMessage: View {
 }
 
 /// For VoiceOver, a bubble is one element: who it's from, then what it says. With no `text`, its parts
-/// stay their own, under who it's from.
+/// stay their own, under who it's from. With `unread`, a message's id, "unread" after who it's from
+/// while it is: read here, so that changing redraws only this, not the message.
 private struct Spoken: ViewModifier {
   let label: String
   let text: String?
+  var unread: Int?
+  @Environment(AppStore.self) private var store
 
   @ViewBuilder
   func body(content: Content) -> some View {
+    let said = unread.map { store.unread.contains($0) } == true ? "\(label), unread" : label
     if let text {
-      content.accessibilityElement(children: .combine).accessibilityLabel(label).accessibilityValue(text)
+      content.accessibilityElement(children: .combine).accessibilityLabel(said).accessibilityValue(text)
     } else {
-      content.accessibilityElement(children: .contain).accessibilityLabel(label)
+      content.accessibilityElement(children: .contain).accessibilityLabel(said)
     }
   }
 }

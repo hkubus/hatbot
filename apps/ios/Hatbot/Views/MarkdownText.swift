@@ -6,7 +6,8 @@ import UIKit
 
 struct MarkdownText: View {
   let text: String
-  /// A reply still coming in: parsed again at most every 100 ms, not on every delta.
+  /// A reply still coming in: parsed again at most every 100 ms, not on every delta, and only from its
+  /// last finished block.
   var streaming = false
   @State private var throttle = Throttle()
   /// Bumped when a held-back parse is due.
@@ -91,6 +92,7 @@ struct MarkdownText: View {
   @MainActor
   private final class Throttle {
     private var parsed: String?
+    private var parser = StreamingMarkdown()
     private var blocks: [MDBlock] = []
     private var last = Date.distantPast
     private var waiting = false
@@ -100,7 +102,7 @@ struct MarkdownText: View {
       let wait = 0.1 - Date().timeIntervalSince(last)
       if wait <= 0 || parsed == nil {
         parsed = text
-        blocks = Markdown.parse(text)
+        blocks = parser.parse(text)
         last = Date()
       } else if !waiting {
         waiting = true
