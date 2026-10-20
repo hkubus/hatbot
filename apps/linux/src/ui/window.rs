@@ -69,26 +69,39 @@ impl Window {
         for (action, value) in [(&pause, true), (&resume, false)] {
             let weak = Rc::downgrade(self);
             action.connect_activate(move |_, _| {
-                let Some(store) = weak.upgrade().and_then(|w| w.store()) else {
-                    return;
-                };
+                let Some(w) = weak.upgrade() else { return };
                 let weak = weak.clone();
-                glib::spawn_future_local(async move {
-                    if let Err(e) = store.set_paused(value).await
-                        && let Some(w) = weak.upgrade()
-                    {
-                        w.toast(&e.message);
-                    }
-                });
+                let set = move || {
+                    let Some(store) = weak.upgrade().and_then(|w| w.store()) else {
+                        return;
+                    };
+                    let weak = weak.clone();
+                    glib::spawn_future_local(async move {
+                        if let Err(e) = store.set_paused(value).await
+                            && let Some(w) = weak.upgrade()
+                        {
+                            w.toast(&e.message);
+                        }
+                    });
+                };
+                if value {
+                    w.confirm("Pause all?", "Pause All", set);
+                } else {
+                    set();
+                }
             });
             self.window.add_action(action);
         }
         let sign_out = gio::SimpleAction::new("sign-out", None);
         let weak = Rc::downgrade(self);
         sign_out.connect_activate(move |_, _| {
-            if let Some(w) = weak.upgrade() {
-                w.sign_out();
-            }
+            let Some(w) = weak.upgrade() else { return };
+            let weak = weak.clone();
+            w.confirm("Sign out of Hatbot?", "Sign Out", move || {
+                if let Some(w) = weak.upgrade() {
+                    w.sign_out();
+                }
+            });
         });
         self.window.add_action(&sign_out);
         let about = gio::SimpleAction::new("about", None);
@@ -105,6 +118,15 @@ impl Window {
             dialog.present(Some(&w.window));
         });
         self.window.add_action(&about);
+    }
+
+    fn confirm(&self, title: &str, button: &str, then: impl Fn() + 'static) {
+        let dialog = adw::AlertDialog::new(Some(title), None);
+        dialog.add_responses(&[("cancel", "Cancel"), ("go", button)]);
+        dialog.set_response_appearance("go", adw::ResponseAppearance::Destructive);
+        dialog.set_close_response("cancel");
+        dialog.connect_response(Some("go"), move |_, _| then());
+        dialog.present(Some(&self.window));
     }
 
     pub fn toast(&self, text: &str) {

@@ -46,7 +46,7 @@ enum Place {
     Settings,
 }
 
-/// "Hatbot is paused." and "Can't reach Hatbot." over each section.
+/// "All activity is paused." and "Can't reach Hatbot." over each section.
 pub struct Banners {
     store: Store,
     shown: RefCell<Vec<(adw::Banner, adw::Banner)>>,
@@ -55,7 +55,7 @@ pub struct Banners {
 impl Banners {
     pub fn add(&self, view: &adw::ToolbarView) {
         let paused = adw::Banner::builder()
-            .title("Hatbot is paused.")
+            .title("All activity is paused.")
             .button_label("Resume")
             .build();
         let store = self.store.clone();
