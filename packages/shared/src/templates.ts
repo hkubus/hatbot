@@ -88,7 +88,7 @@ export const BOT_TEMPLATES: BotTemplate[] = [
     instructions: CODER,
     chatModel: null,
     chatEffort: null,
-    plugins: ["github", "forgejo", "code"],
+    plugins: ["github", "forgejo", "code", "claude"],
   },
   {
     id: "researcher",
