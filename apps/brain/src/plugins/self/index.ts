@@ -4,22 +4,29 @@
 // merges; self_update pushes it onto the pull request that was checked out. The brain never runs that
 // code: it keeps a bare clone, applies the sandbox's diff to an index with git, which runs nothing, and
 // pushes.
-import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { type DesktopAgent, DesktopError } from "../../desktop/client";
 import type { Schedules } from "../../schedules";
 import { getSetting, setSetting } from "../../settings";
+import {
+  archive,
+  basicAuth,
+  type Checkout,
+  checkoutDiff,
+  commitAndPush,
+  fetchBranch,
+  intoCheckout,
+  putCheckout,
+  remoteEnv,
+  serially,
+} from "../checkout";
 import { Branch, Num, Repo, repoPath, validRef } from "../forge";
 import { definePlugin, httpApi, needsSetup, PluginError, ready, tool } from "../plugin";
 
 const WORK = "hatbot-self/work";
-const PATCH = "hatbot-self/change.patch";
-const MAX_PATCH_BYTES = 5_000_000;
 /** How much of a pull request's conversation self_checkout shows. */
 const MAX_CONVERSATION = 30_000;
-const NO_CHECKOUT = `cd ${WORK} 2>/dev/null || { echo "There's no checkout: call self_checkout first."; exit 2; }`;
 /**
  * Paths that run as root on the brain once merged and updated, run in CI, or bring in other code. The
  * pull request names them, so the owner reads them closely.
@@ -64,48 +71,6 @@ type Review = {
   dismissed?: boolean;
 };
 
-/** git with no config but its own, never asking for a password. */
-async function git(
-  dir: string,
-  args: string[],
-  opts: { env?: Record<string, string>; stdin?: Uint8Array } = {},
-): Promise<Uint8Array> {
-  const p = Bun.spawn(["git", ...args], {
-    cwd: dir,
-    env: {
-      PATH: process.env.PATH ?? "/usr/bin:/bin",
-      HOME: process.env.HOME ?? dir,
-      LANG: "C",
-      GIT_CONFIG_NOSYSTEM: "1",
-      GIT_CONFIG_GLOBAL: "/dev/null",
-      GIT_TERMINAL_PROMPT: "0",
-      ...opts.env,
-    },
-    stdin: opts.stdin ? new Blob([opts.stdin]) : "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [out, err, code] = await Promise.all([
-    new Response(p.stdout).bytes(),
-    new Response(p.stderr).text(),
-    p.exited,
-  ]);
-  if (code !== 0) throw new PluginError(`git ${args[0]} failed: ${err.trim().slice(0, 500)}`);
-  return out;
-}
-const text = async (...a: Parameters<typeof git>) => new TextDecoder().decode(await git(...a));
-
-/** `git diff-tree -r -z` as [new mode, status, path] per file. */
-function rawChanges(raw: string) {
-  const parts = raw.split("\0").filter(Boolean);
-  const out: { mode: string; status: string; path: string }[] = [];
-  for (let i = 0; i + 1 < parts.length; i += 2) {
-    const [, mode = "", , , status = ""] = (parts[i] ?? "").slice(1).split(" ");
-    out.push({ mode, status, path: parts[i + 1] ?? "" });
-  }
-  return out;
-}
-
 export const selfPlugin = (d: {
   desktop: DesktopAgent;
   dir: string;
@@ -137,8 +102,6 @@ export const selfPlugin = (d: {
         return needsSetup(
           "Set HATBOT_SELF_REPO, Hatbot's repository as owner/name, and Forgejo's address and token (the Forgejo plugin's) below. The bot account needs write access to that repository, to push branches.",
         );
-      const gitUrl = env.HATBOT_SELF_GIT_URL ?? `${base}/${repo}.git`;
-      const cache = join(d.dir, "repo.git");
       const { api } = httpApi("Forgejo", `${base}/api/v1`, {
         authorization: `token ${token}`,
         accept: "application/json",
@@ -149,15 +112,13 @@ export const selfPlugin = (d: {
         me ??= await api<{ login: string; email: string }>("GET", "/user");
         return me;
       };
-      const remote = async () => {
-        const { login } = await user();
-        return {
-          GIT_CONFIG_COUNT: "2",
-          GIT_CONFIG_KEY_0: "http.extraHeader",
-          GIT_CONFIG_VALUE_0: `Authorization: Basic ${btoa(`${login}:${token}`)}`,
-          GIT_CONFIG_KEY_1: "http.followRedirects",
-          GIT_CONFIG_VALUE_1: "false",
-        };
+      const place: Checkout = {
+        cache: join(d.dir, "repo.git"),
+        url: env.HATBOT_SELF_GIT_URL ?? `${base}/${repo}.git`,
+        remote: async () => remoteEnv(basicAuth((await user()).login, token)),
+        work: WORK,
+        scratch: "hatbot-self",
+        tool: "self_checkout",
       };
       const defaultBranch = async () => {
         const { default_branch } = await api<{ default_branch: string }>("GET", repoPath(repo));
@@ -227,56 +188,12 @@ export const selfPlugin = (d: {
         ].join("\n");
         return out.length > MAX_CONVERSATION ? `${out.slice(0, MAX_CONVERSATION)}\n…` : out;
       };
-      const fetched = async (branch: string) => {
-        const env = await remote();
-        if (!existsSync(join(cache, "HEAD"))) {
-          await mkdir(d.dir, { recursive: true });
-          await git(d.dir, ["clone", "--bare", "--quiet", gitUrl, cache], { env });
-        }
-        const refspec = `+refs/heads/${branch}:refs/heads/${branch}`;
-        await git(cache, ["fetch", "--quiet", gitUrl, refspec], { env });
-        return (await text(cache, ["rev-parse", `refs/heads/${branch}^{commit}`])).trim();
-      };
       // One task at a time changes the bare clone.
-      let queue: Promise<unknown> = Promise.resolve();
-      const serial = <T>(f: () => Promise<T>): Promise<T> => {
-        const next = queue.then(f, f);
-        queue = next.catch(() => {});
-        return next;
-      };
+      const serial = serially();
       const sandbox = (signal: AbortSignal) => d.desktop.withSignal?.(signal) ?? d.desktop;
-      const shellError = (err: unknown) =>
-        err instanceof DesktopError ? new PluginError(err.message) : err;
 
-      /** Everything changed in the checkout, and the commit it was checked out from. */
-      const checkoutDiff = async (signal: AbortSignal) => {
-        let patch: Uint8Array;
-        let from: string;
-        try {
-          const shell = sandbox(signal);
-          const r = await shell.exec(
-            `${NO_CHECKOUT}\ngit add -A && git diff --cached --binary --full-index base > ../change.patch && git log -1 --format=%s base`,
-            120,
-          );
-          if (r.exitCode !== 0) throw new PluginError(r.output.trim() || "The diff failed.");
-          from = r.output.trim().split("\n").at(-1) ?? "";
-          patch = await shell.getFile(PATCH);
-        } catch (err) {
-          throw shellError(err);
-        }
-        if (!/^[0-9a-f]{40}$/.test(from))
-          throw new PluginError("The checkout doesn't say what it came from: check out again.");
-        if (!patch.length) throw new PluginError("Nothing changed in the checkout.");
-        if (patch.length > MAX_PATCH_BYTES)
-          throw new PluginError("The change is over 5 MB: make it smaller.");
-        return { patch, from };
-      };
-
-      /**
-       * Applies `patch` on `from` as a commit by the bot account and pushes it to `branch`, with no
-       * force. `prepare` fetches what the commit goes on, and refuses if it can't.
-       */
-      const commitAndPush = (o: {
+      /** commitAndPush as the bot account, one at a time, and which files to read closely. */
+      const push = (o: {
         from: string;
         patch: Uint8Array;
         message: string;
@@ -284,53 +201,13 @@ export const selfPlugin = (d: {
         prepare: () => Promise<void>;
       }) =>
         serial(async () => {
-          const { from, patch } = o;
-          await o.prepare();
-          await git(cache, ["cat-file", "-e", `${from}^{commit}`]).catch(() => {
-            throw new PluginError(
-              "The checkout's commit isn't in the repository: check out again.",
-            );
-          });
           const { login, email } = await user();
-          const tmp = await mkdtemp(join(d.dir, "index-"));
-          try {
-            const index = { GIT_INDEX_FILE: join(tmp, "index") };
-            await git(cache, ["read-tree", from], { env: index });
-            await git(cache, ["apply", "--cached", "--whitespace=nowarn", "-"], {
-              env: index,
-              stdin: patch,
-            });
-            const tree = (await text(cache, ["write-tree"], { env: index })).trim();
-            const who = { name: login, email: email || `${login}@localhost` };
-            const commit = (
-              await text(cache, ["commit-tree", tree, "-p", from, "-m", o.message], {
-                env: {
-                  GIT_AUTHOR_NAME: who.name,
-                  GIT_AUTHOR_EMAIL: who.email,
-                  GIT_COMMITTER_NAME: who.name,
-                  GIT_COMMITTER_EMAIL: who.email,
-                },
-              })
-            ).trim();
-            const files = rawChanges(
-              await text(cache, ["diff-tree", "-r", "-z", "--no-renames", from, commit]),
-            );
-            const odd = files.filter((f) => f.mode === "120000" || f.mode === "160000");
-            if (odd.length)
-              throw new PluginError(
-                `Symlinks and submodules can't be proposed: ${odd.map((f) => f.path).join(", ")}`,
-              );
-            const stat = (await text(cache, ["diff", "--shortstat", from, commit])).trim();
-            await git(cache, ["push", "--quiet", gitUrl, `${commit}:refs/heads/${o.branch}`], {
-              env: await remote(),
-            });
-            const careful = files
-              .map((f) => f.path)
-              .filter((p) => CAREFUL.some((re) => re.test(p)));
-            return { commit, stat, careful };
-          } finally {
-            await rm(tmp, { recursive: true, force: true });
-          }
+          const who = { name: login, email: email || `${login}@localhost` };
+          const pushed = await commitAndPush(place, { ...o, who, verb: "proposed" });
+          const careful = pushed.files
+            .map((f) => f.path)
+            .filter((p) => CAREFUL.some((re) => re.test(p)));
+          return { ...pushed, careful };
         });
 
       /** What ends a pull request or its comment: where it came from, its size, what to read closely. */
@@ -382,37 +259,20 @@ export const selfPlugin = (d: {
             const pr = pull ? await ownPull(pull) : null;
             const branch = pr?.head.ref ?? (await defaultBranch());
             const { sha, tar } = await serial(async () => {
-              const sha = await fetched(branch);
-              return { sha, tar: await git(cache, ["archive", "--format=tar.gz", sha]) };
+              const sha = await fetchBranch(place, branch);
+              return { sha, tar: await archive(place, sha) };
             });
-            let output: string;
-            try {
-              const shell = sandbox(call.signal);
-              await shell.putFile("hatbot-self/src.tar.gz", tar);
-              const r = await shell.exec(
-                [
-                  "set -e",
-                  `rm -rf ${WORK} ${PATCH}`,
-                  `mkdir -p ${WORK}`,
-                  `tar -xzf hatbot-self/src.tar.gz -C ${WORK}`,
-                  "rm hatbot-self/src.tar.gz",
-                  `cd ${WORK}`,
-                  "git init -q -b work",
-                  "git add -A",
-                  `git -c user.name=Hatbot -c user.email=hatbot@localhost commit -q -m ${sha}`,
-                  "git tag base",
-                  `echo "${repo}@${branch} ${sha.slice(0, 10)}: $(git ls-files | wc -l) files in ~/${WORK}"`,
-                  "ls -p",
-                  "if [ -f bun.lock ]; then bun install --frozen-lockfile 2>&1 | tail -n 3; fi",
-                ].join("\n"),
-                600,
-              );
-              if (r.timedOut || r.exitCode !== 0)
-                throw new PluginError(`The checkout failed.\n${r.output}`);
-              output = r.output.trim();
-            } catch (err) {
-              throw shellError(err);
-            }
+            const output = await putCheckout(sandbox(call.signal), place, {
+              tar,
+              sha,
+              branch,
+              after: [
+                `echo "${repo}@${branch} ${sha.slice(0, 10)}: $(git ls-files | wc -l) files in ~/${WORK}"`,
+                "ls -p",
+                "if [ -f bun.lock ]; then bun install --frozen-lockfile 2>&1 | tail -n 3; fi",
+              ],
+              timeoutS: 600,
+            });
             if (pr)
               return `${output}\n\n${await conversation(pr)}\n\nChange it with self_run, then push it to #${pr.number} with self_update.`;
             const open = await openPulls();
@@ -444,11 +304,14 @@ export const selfPlugin = (d: {
           },
           run: async ({ command, timeout_s }, call) => {
             try {
-              const r = await sandbox(call.signal).exec(`${NO_CHECKOUT}\n${command}`, timeout_s);
+              const r = await sandbox(call.signal).exec(
+                `${intoCheckout(place)}\n${command}`,
+                timeout_s,
+              );
               const head = r.timedOut ? `Killed after ${timeout_s} s.` : `Exit code ${r.exitCode}`;
               return `${head}\n${r.output}`;
             } catch (err) {
-              throw shellError(err);
+              throw err instanceof DesktopError ? new PluginError(err.message) : err;
             }
           },
         }),
@@ -478,15 +341,15 @@ export const selfPlugin = (d: {
                   `Your suggestion #${waiting.number} is still open: suggest another once the owner has merged or closed it.`,
                 );
             }
-            const { patch, from } = await checkoutDiff(call.signal);
+            const { patch, from } = await checkoutDiff(sandbox(call.signal), place);
             const into = await defaultBranch();
-            const pushed = await commitAndPush({
+            const pushed = await push({
               from,
               patch,
               message: title,
               branch,
               prepare: async () => {
-                await fetched(into);
+                await fetchBranch(place, into);
               },
             });
             const end = footer("Proposed", from, call.task?.id, pushed);
@@ -525,15 +388,15 @@ export const selfPlugin = (d: {
           run: async ({ pull, message }, call) => {
             const pr = await ownPull(pull);
             const branch = pr.head.ref;
-            const { patch, from } = await checkoutDiff(call.signal);
-            const pushed = await commitAndPush({
+            const { patch, from } = await checkoutDiff(sandbox(call.signal), place);
+            const pushed = await push({
               from,
               patch,
               message,
               branch,
               prepare: async () => {
                 // Fast-forward only: what someone else pushed since isn't undone.
-                const head = await fetched(branch);
+                const head = await fetchBranch(place, branch);
                 if (head !== from)
                   throw new PluginError(
                     `The checkout isn't ${branch}'s latest commit (${head.slice(0, 10)}): it moved since, or this is another checkout. Check out #${pull} again.`,
