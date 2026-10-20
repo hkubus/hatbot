@@ -14,7 +14,7 @@ const button = (label: string, over: Partial<AgentElement> = {}): AgentElement =
   ...over,
 });
 
-test("buy, pay, order, offer, send and delete labels are held; everyday ones and look-alikes aren't", () => {
+test("buy, pay, order, offer, send and delete labels are held; everyday ones, look-alikes and cards linking elsewhere aren't", () => {
   const held = [
     "Kup teraz",
     "Zamawiam i płacę",
@@ -32,6 +32,8 @@ test("buy, pay, order, offer, send and delete labels are held; everyday ones and
     "Zap­łać",
     "Ｐａｙ ｎｏｗ",
     "Wypłać",
+    "Przejdź do płatności",
+    "Odpowiedz",
   ];
   for (const label of held)
     expect([label, consequential("click", button(label))]).toEqual([label, { label }]);
@@ -45,9 +47,30 @@ test("buy, pay, order, offer, send and delete labels are held; everyday ones and
     "Bezpłatnie",
     "Usuńmy",
     "Dalej",
+    // Tabs, headings and an address that read like buying, and a cookie banner's choices.
+    "Kupujący",
+    "Zakupione",
+    "Wystawione",
+    "Odpowiedź",
+    "Historia płatności",
+    "Plac Wolności 1, Kraków",
+    "E-book: Rust in Action",
+    "Potwierdź moje wybory",
+    "Confirm my choices",
   ];
   for (const label of fine)
     expect([label, consequential("click", button(label))]).toEqual([label, null]);
+
+  // A card linking to another page opens it, whatever its words; a link that stays may run anything.
+  const tile =
+    "Sony WH-1000XM5 Słuchawki bezprzewodowe nauszne z redukcją szumów 1299 zł Kup teraz";
+  const link = { tag: "a", url: "https://allegro.pl/listing" };
+  expect(
+    consequential("click", button(tile, { ...link, href: "https://allegro.pl/oferta/1" })),
+  ).toBeNull();
+  expect(
+    consequential("click", button(tile, { ...link, href: "https://allegro.pl/listing#" })),
+  ).toEqual({ label: tile });
 });
 
 test("an icon-only button or clickable div is held unless it toggles; a search form's submit searches unless it pays", () => {
@@ -247,4 +270,12 @@ test("an approval covers the step it was asked for, on its page; one from the lo
   expect(notCovered(ahead, { checkout: "www.olx.pl" }, page)).toContain("kind purchase");
   const buy = { ...ahead, kind: "purchase" as const, summary: "Click Kup teraz" };
   expect(notCovered(buy, { label: "Kup teraz" }, page)).toBeNull();
+  // The control it named: the page's own label, or the icon it said it would press.
+  const named = { ...ahead, summary: "Ask the seller about the frame", control: "Wyślij" };
+  expect(notCovered(named, { label: "wyślij" }, page)).toBeNull();
+  expect(notCovered(named, { unlabelled: "button" }, page)).toBeNull();
+  expect(notCovered(named, { label: "Usuń ogłoszenie" }, page)).toContain("not this step");
+  expect(notCovered({ ...named, control: undefined }, { label: "Wyślij" }, page)).toContain(
+    "not this step",
+  );
 });

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Task } from "@hatbot/shared";
 import type { AgentElement } from "@hatbot/shared/desktop";
-import { SCREENING_PROMPT } from "../src/agent/prompt";
+import { REVIEW_PROMPT, SCREENING_PROMPT } from "../src/agent/prompt";
 import { type DesktopAgent, DesktopError, HttpDesktopAgent } from "../src/desktop/client";
 import { limits } from "../src/tasks/desktop-run";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
@@ -465,7 +465,7 @@ test("a click in a frame Hatbot can't enter, or that it couldn't look at, is hel
   expect(t.agent.actions.map((a) => a.input)).toEqual([{ coordinate: [400, 10] }]);
 });
 
-test("each line break in typed text is checked on its own: one approved send sends one message", async () => {
+test("each line break in typed text is checked on its own: one send the review approves sends one message", async () => {
   const work = new FakeModel([
     { content: [computer("type", { text: "Hi Ann" })] },
     { content: [computer("key", { text: "Return" })] },
@@ -486,13 +486,19 @@ test("each line break in typed text is checked on its own: one approved send sen
     editable: true,
     buttonsAfter: ["Send"],
   };
-  startTask(t, "Write to Ann");
-  t.approvals.decide((await pending(t)).id, "approve", "web");
+  t.taskModel.onCreate = (p) =>
+    p.system === REVIEW_PROMPT
+      ? JSON.stringify({ safe: true, why: "The owner asked to write to Ann." })
+      : '{"suspected": false, "excerpt": ""}';
+  const task = startTask(t, "Write to Ann");
   await t.tasks.idle();
   // The approved Enter, then the text after it; the next Enter waits for another approval.
   expect(t.agent.actions.map((a) => a.input.text)).toEqual(["Hi Ann", "\n", "second message"]);
   expect(lastText(work.requests[4])).toContain('submit with \\"Send\\"');
-  expect(t.approvals.list(false)).toHaveLength(1);
+  expect(t.tasks.steps(task.id).some((s) => s.name === "Not asking: Haiku found it safe")).toBe(
+    true,
+  );
+  expect(t.approvals.list(false)).toHaveLength(0);
 });
 
 test("a background task waits without a slot, wakes on an event, and can notify before it ends", async () => {

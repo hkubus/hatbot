@@ -27,12 +27,13 @@ const BUY = [
   `(?:pay|payment|buy|purchase|order|checkout|check out|bid|place bid|donate)${END}`,
   `(?:make|send|submit) (?:an |a )?offer${END}|accept (?:the |this )?offer${END}`,
   `(?:proceed|continue|go) to (?:payment|checkout)${END}`,
-  // Polish: kupić, Kup teraz, Kupuję i płacę (not kupon).
-  `kup(?!on)|zakup(?!y|ow|ach|ami)`,
-  // zapłać, zapłata, opłać, wypłać, wpłać, płatność; płać on its own.
-  `zaplac|zaplat|oplac|wyplac|wplac|platnos|plac${END}`,
-  // Płacę on its own or with how (folded, "place" is also English: "Place" alone, or before a way to pay).
-  `place(?:$| (?:blik|kart|teraz|przelew|online|gotowk|z gory|za))`,
+  // Polish: kupić, Kup teraz, Kupuję i płacę (not kupon, Kupujący or Zakupione, which are tabs).
+  `kup(?!on|ujac)|zakup(?!y|ow|ach|ami|ion)`,
+  // zapłać, zapłata, opłać, wypłać, wpłać, płatność and going to it, not "Historia płatności".
+  `zaplac|zaplat|oplac|wyplac|wplac|platnosc${END}|(?:do|dokonaj|zrealizuj|realizuj) platnosci`,
+  // Płać and Płacę on their own or with how: folded they're "plac" (a square, as in "Plac Wolności 1")
+  // and "place" (English: "Place" alone, or before a way to pay).
+  `place?(?:$| (?:blik|kart|teraz|przelew|online|gotowk|z gory|za))`,
   `do kas[ay]${END}|(?:wykonaj|zlec|zatwierdz)\\p{L}* przelew|przelej`,
   `zamow(?:ic)?${END}|zamawiam|zloz(?:yc)?${END}`,
   "(?:za)?akceptuj\\p{L}* (?:ofert|cen|propozycj)|przyjmij ofert|przyjmuj\\p{L}* ofert",
@@ -49,9 +50,11 @@ const BUY = [
  */
 const STRONG = words([
   ...BUY,
-  `(?:send|post|publish|reply|book|reserve|transfer|sign up|register|subscribe|unsubscribe|withdraw|change password)${END}`,
+  // Not an e-book.
+  `(?:send|post|publish|reply|(?<!e\\p{Pd})book|reserve|transfer|sign up|register|subscribe|unsubscribe|withdraw|change password)${END}`,
   `cancel (?:order|subscription|booking|reservation)${END}`,
-  `podbij|wyroznij|wystaw|wysl(?:ij|ac|e)${END}|wysylam${END}|odesl(?:ij|ac)${END}|odpowiedz${END}`,
+  // Wystaw lists an offer; Wystawione is the tab of what's listed.
+  `podbij|wyroznij|wystaw(?!ion|ian)|wysl(?:ij|ac|e)${END}|wysylam${END}|odesl(?:ij|ac)${END}|odpowiedz${END}`,
   "(?:o)?publikuj|(?:za)?rezerwuj|zarejestruj|zmien haslo|(?:za)?subskrybuj",
   "anuluj (?:zamowienie|subskrypcj|rezerwacj)",
   // Czech: poslat, odeslat, rezervovat.
@@ -61,8 +64,13 @@ const STRONG = words([
 ]);
 const BUYING = words(BUY);
 
+/** Nouns that fold into a verb: "Odpowiedź" (an answer) reads as "Odpowiedz" (reply) without its accent. */
+const NOUNS = /(?<![\p{L}\p{N}])odpowiedź(?![\p{L}\p{N}])/giu;
+/** A label as the checks read it: folded, without those nouns. */
+const read = (label: string) => fold(label.normalize("NFC").replace(NOUNS, " "));
+
 /** Whether a label buys, pays, orders or makes or accepts an offer. */
-export const buyingLabel = (label: string) => BUYING.test(fold(label));
+export const buyingLabel = (label: string) => BUYING.test(read(label));
 
 /** Submitting, confirming, saving and deleting: consequential, except on a filter, sort or search control. */
 const SOFT = words([
@@ -76,17 +84,37 @@ const NARROWING = words([
   "filt|sort|seradit|radit|wynik|vysledk|results|search|szuka|wyszuk|hleda|vyhled",
 ]);
 
+/** A cookie banner's choices: "Confirm my choices", "Potwierdź moje wybory", "Potvrdit výběr". */
+const CONSENT = words([
+  "choices|preferences|cookie|consent|wybor|preferencj|zgod|ciasteczk|prywatnos|vyber|predvolb|souhlas",
+]);
+
 /** A label that searches, filters or sorts ("Szukaj", "Pokaż wyniki"), and names nothing consequential. */
 export const narrowingLabel = (label: string) =>
-  NARROWING.test(fold(label)) && !STRONG.test(fold(label));
+  NARROWING.test(read(label)) && !STRONG.test(read(label));
 
 /** Whether a label names a consequential step. `search`: the control narrows a list (a search form, say). */
 export function consequentialLabel(label: string, search = false): boolean {
-  const l = fold(label);
+  const l = read(label);
   if (!l) return false;
   if (STRONG.test(l)) return true;
-  return SOFT.test(l) && !search && !NARROWING.test(l);
+  return SOFT.test(l) && !search && !NARROWING.test(l) && !CONSENT.test(l);
 }
+
+/** Past this many words, a link's text is a card or a headline: what it names is where it goes. */
+const CARD_WORDS = 8;
+
+/**
+ * A link to another page whose text is a card's or a headline's ("Sony WH-1000XM5 … Kup teraz"): it
+ * opens that page and does nothing there itself, so its words don't hold it. One that stays on the page
+ * (href="#") may run anything, and is read as a button.
+ */
+const card = (el: AgentElement) =>
+  !!el.href &&
+  !!el.url &&
+  /^https?:/i.test(el.href) &&
+  !samePage(el.href, el.url) &&
+  fold(el.label).split(" ").length > CARD_WORDS;
 
 /** Where an action lands: a point, a browser element reference, the mouse pointer, or the focused element. */
 export type Where =
@@ -363,7 +391,8 @@ function pressed(press: Press, el: AgentElement, checkout: string | null): Hold 
 /** A click, or Enter or Space on something that isn't a text box. */
 function clicked(el: AgentElement, search: boolean, checkout: string | null): Hold | null {
   // A select's text is all its options.
-  if (el.tag !== "select" && consequentialLabel(el.label, search)) return { label: el.label };
+  if (el.tag !== "select" && !card(el) && consequentialLabel(el.label, search))
+    return { label: el.label };
   // At checkout, a button labelled "Dalej" may be the one that orders: only typing and choosing pass.
   if (checkout && !el.toggle) return { checkout };
   if (search) return null;

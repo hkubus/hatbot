@@ -382,6 +382,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       skill: p.data.skill,
       origin: task.origin,
       parent: task,
+      // Its review reads the owner's words behind this task.
+      request: withNotes(ownerWords()) ?? undefined,
     });
     const ended = await waitForChild(child.id, child.title);
     // Its summary is made from web pages (PLAN.md §6.1).
