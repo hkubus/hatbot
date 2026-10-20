@@ -298,7 +298,7 @@ export class Triggers {
     // More news while a task looks into it: on its timeline, and told to the task.
     const update = (taskId: number, what: string) => {
       // On its timeline the message is what the task has read, before it gets to its inbox.
-      if (message) this.tasks.taint(taskId, alertMessageSource(name));
+      if (message && !kumaSaid(message)) this.tasks.taint(taskId, alertMessageSource(name));
       this.tasks.addStep(taskId, {
         kind: "note",
         name: `${name} ${what}`,
@@ -403,7 +403,7 @@ export class Triggers {
       .get(runKey, cutoff);
     if (!last) return null;
     // Whoever reads the task now reads the message too.
-    if (message) this.tasks.taint(last.id, alertMessageSource(monitor));
+    if (message && !kumaSaid(message)) this.tasks.taint(last.id, alertMessageSource(monitor));
     const told = down && this.tasks.steps(last.id).some((s) => s.name === what);
     this.tasks.addStep(last.id, { kind: "note", name: what, detail: message, url: null });
     if (!down) return { status: "skipped", reason: "recent" };
@@ -552,20 +552,38 @@ export class Triggers {
 
 const newSecret = () => randomBytes(24).toString("base64url");
 
+/** HTTP's own reason phrases, as Kuma writes a status: "502 - Bad Gateway". */
+const REASONS =
+  "OK|Created|Accepted|No Content|Moved Permanently|Found|See Other|Not Modified|Temporary Redirect|Permanent Redirect|Bad Request|Unauthorized|Forbidden|Not Found|Method Not Allowed|Request Timeout|Too Many Requests|Internal Server Error|Not Implemented|Bad Gateway|Service Unavailable|Gateway Timeout";
+/**
+ * Messages Kuma writes itself, whatever the service sent: timeouts, status codes, connection and
+ * certificate errors (2026-10-20, the owner's choice). Nothing a stranger chose fits in them; a
+ * keyword monitor's "not found in [...]" quotes the page, so it doesn't.
+ */
+const KUMA_OWN = [
+  /^timeout of \d+ms exceeded$/,
+  /^Request failed with status code \d{3}$/,
+  new RegExp(`^\\d{3} - (${REASONS})$`),
+  /^(connect|read|write) (ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|EPIPE) [\w.:[\]-]+$/,
+  /^getaddrinfo (ENOTFOUND|EAI_AGAIN) [\w.-]+$/,
+  /^(socket hang up|timeout|aborted|No heartbeat in the time window|certificate has expired|self[- ]signed certificate( in certificate chain)?|unable to verify the first certificate)$/i,
+];
+export const kumaSaid = (message: string) => KUMA_OWN.some((re) => re.test(message.trim()));
+
 /**
  * An Uptime Kuma alert in two parts: what Kuma itself says (the monitor, its type and address, the
- * status and the time), which is trusted, and its free-text message, which often quotes the monitored
- * service's own response, so anyone who can reach the service can write it (PLAN.md §6.1). Null for
- * anything that isn't an alert.
+ * status and the time, and a message in one of its own formats), which is trusted, and any other
+ * message, which often quotes the monitored service's own response, so anyone who can reach the
+ * service can write it (PLAN.md §6.1). Null for anything that isn't an alert.
  */
 export function alertParts(payload: string): { alert: string; message: string } | null {
   try {
     const { message, ...alert } = JSON.parse(payload) as Record<string, unknown>;
     if (typeof alert.monitor !== "string") return null;
-    return {
-      alert: JSON.stringify(alert, null, 2),
-      message: typeof message === "string" ? message.trim() : "",
-    };
+    const text = typeof message === "string" ? message.trim() : "";
+    if (kumaSaid(text))
+      return { alert: JSON.stringify({ ...alert, message: text }, null, 2), message: "" };
+    return { alert: JSON.stringify(alert, null, 2), message: text };
   } catch {
     return null;
   }

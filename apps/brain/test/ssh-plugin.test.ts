@@ -162,6 +162,11 @@ test("the destructive check: what loses data, stops things or lets someone in as
     "ufw status verbose",
     "iptables -L -n",
     "service nginx status",
+    // Reading accounts and public keys.
+    "getent passwd hatbot",
+    "cat /etc/passwd | cut -d: -f1",
+    "sudo -n cat /home/kubus/.ssh/authorized_keys",
+    "ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub",
   ])
     expect(destructive(cmd), cmd).toBeNull();
   // Accounts and keys, wherever they are; ~/.ssh/rc runs at every login.
@@ -170,6 +175,11 @@ test("the destructive check: what loses data, stops things or lets someone in as
     "passwd hatbot",
     "echo key >> ~/.ssh/authorized_keys",
     "echo sh ~/x >> ~/.ssh/rc",
+    "cat ~/.ssh/authorized_keys > /tmp/keys",
+    "sudo cat /etc/shadow",
+    "cat ~/.ssh/id_ed25519",
+    "ssh-keygen -y -f ~/.ssh/id_rsa",
+    "grep -r ssh ~/.ssh/",
   ])
     expect(destructive(cmd)?.kind, cmd).toBe("account_security");
   // Inside a container a reboot is like restarting a service; shutting it down still asks.
@@ -276,9 +286,18 @@ test("command output is untrusted unless the command only checks status: a log c
   expect(await untrusted("printf x")).toBe(true);
   expect(await untrusted("true")).toBe(false);
   expect(await untrusted("printf ''; exit 3")).toBe(false);
-  const check = t.tool("ssh_check").untrusted as (i: { what: string }) => boolean;
+  const check = t.tool("ssh_check").untrusted as (i: { host: string; what: string }) => boolean;
   const whats = ["overview", "failed", "service", "ports", "logs", "errors"];
-  expect(whats.filter((what) => check({ what }))).toEqual(["logs", "errors"]);
+  expect(whats.filter((what) => check({ host: "nas", what }))).toEqual(["logs", "errors"]);
+
+  // A host whose output you trust: its logs, files and commands are your words, not strangers'.
+  const own = await ssh({ hosts: [{ name: "nas", address: "10.0.0.5", trustOutput: true }] });
+  expect(
+    (await runPluginTool(own.tool("ssh_exec"), { host: "nas", command: `tail -n 1 ${log}` }, call))
+      .untrusted,
+  ).toBe(false);
+  const ownCheck = own.tool("ssh_check").untrusted as typeof check;
+  expect(ownCheck({ host: "nas", what: "logs" })).toBe(false);
 });
 
 test("a careful host always asks; writing outside home, as root or to keys asks, by write or by copy", async () => {
@@ -401,6 +420,21 @@ test("containers: ssh_pct_exec quotes the command for the wrapper, a host's own 
   ])
     expect(onHost(command, "pve", tainted), command).toMatchObject({ action: "ask", always: true });
   expect(onHost("uptime >/dev/null 2>&1").action).toBe("allow");
+  // A look that reads and writes nothing passes too.
+  for (const command of [
+    "pct config 105",
+    "journalctl -u pveproxy -n 50 --no-pager",
+    "cat /etc/pve/lxc/105.conf | grep -i mp",
+    "sudo -n pvesh get /cluster/resources --output-format json",
+  ])
+    expect(onHost(command).action, command).toBe("allow");
+  for (const command of [
+    "journalctl --vacuum-time=1d",
+    "pct set 105 -memory 4096",
+    "dmesg -c",
+    "cat /etc/hosts > ~/.bashrc",
+  ])
+    expect(onHost(command), command).toMatchObject({ action: "ask", always: true });
   expect(onHost("sh ~/upgrade.sh", "nas").action).toBe("allow");
   const write = t.tool("ssh_write_file");
   expect(verdictFor(write, { host: "pve", path: "~/.bashrc", content: "x" }, call)).toMatchObject({

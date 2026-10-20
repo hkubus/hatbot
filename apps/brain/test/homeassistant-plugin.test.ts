@@ -156,6 +156,9 @@ test("whatever can let someone in waits for the owner: marked entities, scenes, 
     state("group.doors", "closed", { entity_id: ["cover.garage"] }),
     state("group.outside", "on", { entity_id: ["group.doors", "light.hall"] }),
     state("light.downstairs", "on", { entity_id: ["light.hall", "light.kitchen"] }),
+    state("cover.bedroom_blind", "open", { device_class: "blind" }),
+    state("cover.garage_door", "closed", { device_class: "garage" }),
+    state("cover.loft", "closed", { device_class: "window" }),
   );
   const t = await pluginApp(homeassistantPlugin, env, { config: { access: ["switch.gate"] } });
   // Listing every state is when it learns what each scene sets and each group holds.
@@ -190,6 +193,11 @@ test("whatever can let someone in waits for the owner: marked entities, scenes, 
     ["cover.open_cover", { target: { device_id: "abc" } }, "always"],
     ["homeassistant.turn_off", { entity_id: "ALL" }, "always"],
     ["light.turn_off", { area_id: "garage" }, "allow"],
+    // Covers by their class: a blind shades a window, a garage door or a window lets someone in.
+    ["cover.open_cover", "cover.bedroom_blind", "allow"],
+    ["cover.open_cover", "cover.garage_door", "always"],
+    ["cover.open_cover", "cover.loft", "always"],
+    ["cover.open_cover", { entity_id: "cover.bedroom_blind, cover.garage_door" }, "always"],
   ];
   for (const [name, target, want] of cases) {
     const verdict = v(name, target);
