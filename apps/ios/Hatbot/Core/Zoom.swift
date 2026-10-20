@@ -1,5 +1,8 @@
 // The live view's zoom, apart from the view so it can be tested.
 import Foundation
+#if canImport(CoreGraphics)
+  import CoreGraphics
+#endif
 
 /// How far the screen is zoomed in, and where to: a point on the unzoomed screen shows at
 /// `point * scale + offset`.
