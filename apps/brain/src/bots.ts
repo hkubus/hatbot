@@ -123,11 +123,21 @@ export class Bots {
     return codeBotOf(this.list());
   }
 
-  /** The plugins `bot` leaves to the code bot, which has them: none for the code bot itself. */
-  leftToCoder(bot: Bot): string[] {
+  /** The bot `bot` hands its code and boxes to: the code bot, unless that's `bot` itself. */
+  coderFor(bot: Bot): Bot | null {
     const coder = this.codeBot();
-    if (!coder || coder.id === bot.id) return [];
-    return CODE_PLUGINS.filter((id) => coder.plugins?.includes(id));
+    return coder && coder.id !== bot.id ? coder : null;
+  }
+
+  /**
+   * The plugins `bot` leaves to the other bots, which have them. Hatbot hands the others their work
+   * (PLAN.md §14.8), so it gets no plugin another bot names; the rest leave the code bot its code.
+   */
+  leftToOthers(bot: Bot): string[] {
+    if (bot.id === HATBOT_ID)
+      return [...new Set(this.list().flatMap((b) => (b.id === bot.id ? [] : (b.plugins ?? []))))];
+    const coder = this.coderFor(bot);
+    return coder ? CODE_PLUGINS.filter((id) => coder.plugins?.includes(id)) : [];
   }
 
   /** Its name, for notifications and transcripts; the id for one that's gone. */
@@ -265,15 +275,38 @@ export const botIndex = (id: string) => {
   return folder ? `${folder}/INDEX.md` : null;
 };
 
+/** What a bot other than Hatbot is told about handing work to the others. */
+const HAND_OVER =
+  "When the owner asks for work that needs another bot's plugins, logins or notes, hand it over with ask_bot. What you can do with your own tools, quick questions included, do yourself: the other bot answers in its own chat, and the owner waits for it.";
+
+/** Hatbot with other bots, in the chat and in tasks: it hands them their work (PLAN.md §14.8). */
+const ROUTE =
+  "Hand each piece of the owner's work to the bot whose role or plugins it falls under, with ask_bot, and pass on what came of it. That goes for work you have tools for too, like research when a bot's role is research. The plugins another bot has are its alone. Do yourself only what no other bot's role covers, like memory, the to-do list and quick lookups.";
+
+/** And in its chat. */
+const ROUTE_CHAT = [
+  "You're the bot the owner talks to first, and the others can't see this chat: give a bot the owner's words and everything that bears on them. When it answers that it needs something only the owner can say, ask them with ask_owner, then hand it their answer; a follow-up on its work goes back to it too.",
+  "A schedule or watcher for another bot's work is that bot's to make: ask it, so the runs have its tools.",
+];
+
+/** "A, B and C". */
+const listed = new Intl.ListFormat("en-GB", { type: "conjunction" });
+
 /**
- * One of the stable prompts as `bot`: its name, its role, its memory and the other bots. Hatbot on its
- * own gets the prompt as it is, so the cache and its conversation carry on.
+ * One of the stable prompts as `bot`: its name, its role, its memory and the other bots, each with
+ * the plugins it has (`plugins`, their names). Hatbot on its own gets the prompt as it is, so the cache
+ * and its conversation carry on. `chat`: for its chat rather than a task. `handOver`: what it's told
+ * about asking the others, in place of the usual.
  */
 export function promptFor(
   base: string,
   bot: Bot,
   others: Bot[],
-  handOver = "When the owner asks for work that needs another bot's plugins, logins or notes, hand it over with ask_bot. What you can do with your own tools, quick questions included, do yourself: the other bot answers in its own chat, and the owner waits for it.",
+  {
+    plugins = () => [],
+    chat = false,
+    handOver,
+  }: { plugins?: (b: Bot) => string[]; chat?: boolean; handOver?: string } = {},
 ): string {
   const named = bot.id === HATBOT_ID ? base : base.replace(/\bHatbot\b/g, bot.name);
   const parts: string[] = [];
@@ -283,16 +316,13 @@ export function promptFor(
     );
   if (others.length) {
     const folder = botFolder(bot.id);
+    const route = bot.id === HATBOT_ID ? [ROUTE, ...(chat ? ROUTE_CHAT : [])] : [HAND_OVER];
     parts.push(
       [
         "The owner's other bots",
-        // Quoted: a role the owner wrote as "You …" is addressed to that bot, not to this one.
-        ...others.map(
-          (o) =>
-            `- ${o.name} (${o.id})${roleLine(o) ? `, whose role begins "${roleLine(o)}"` : ""}`,
-        ),
+        ...others.map((o) => rosterLine(o, plugins(o))),
         "- Each bot has its own chat with the owner, and its own plugins and browser profile.",
-        `- ${handOver}`,
+        ...(handOver ? [handOver] : route).map((line) => `- ${line}`),
         ...codeLine(bot, others),
         folder
           ? `- Memory outside bots/ is shared by every bot: keep what any of them would need there (the owner, their homelab, their projects). Your own notes go in ${folder}/, with ${folder}/INDEX.md mapping them. Leave other bots' folders alone.`
@@ -314,6 +344,17 @@ function codeLine(bot: Bot, others: Bot[]): string[] {
     : [
         `- Code is ${coder.name}'s: writing or changing code, scripts and boxes. Hand it to ${coder.name} with ask_bot, with everything it needs, rather than writing it yourself.`,
       ];
+}
+
+/**
+ * Another bot in a bot's prompt, with its plugins and its role in a line. Quoted: a role the owner
+ * wrote as "You …" is addressed to that bot, not to this one.
+ */
+function rosterLine(o: Bot, plugins: string[]): string {
+  const role = roleLine(o);
+  return `- ${o.name} (${o.id})${plugins.length ? `, with ${listed.format(plugins)}` : ""}${
+    role ? `, whose role begins "${role}"` : ""
+  }${o.id === HATBOT_ID ? ": the owner talks to it first, and it hands the rest of you their work" : ""}`;
 }
 
 /** A bot's role in a line, for the others' prompts. */

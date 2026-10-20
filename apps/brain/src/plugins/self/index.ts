@@ -39,7 +39,7 @@ const SUGGEST_KEY = "self:suggest";
 const SUGGEST_CRON = { weekly: "0 10 * * 1", monthly: "0 10 1 * *" } as const;
 const SUGGEST_PROMPT = `Look over your own code and suggest at most one small improvement, as a pull request for the owner to review. The owner set this schedule; only open a pull request if it's clearly worth their time.
 
-1. Call self_checkout. If you don't have it, say the Own code plugin is off and finish. It lists your open pull requests: if one on a ${SUGGESTION} branch is still open, finish and say it's waiting for the owner, without looking further.
+1. Call self_checkout. If you don't have it and another bot has the Own code plugin, hand it this whole job with ask_bot, these steps included, and finish with its answer; if none has it, say the Own code plugin is off and finish. self_checkout lists your open pull requests: if one on a ${SUGGESTION} branch is still open, finish and say it's waiting for the owner, without looking further.
 2. Read AGENTS.md and PLAN.md, then the code, with self_run. Look for one small change that's clearly better: a bug, a missing check, a confusing or dead piece of code, a slow path. Not a new feature, a rewrite, a new dependency, or anything PLAN.md says was left on purpose, and nothing under infra/, .forgejo/, .github/ or scripts/.
 3. Make the change and run the tests, lint and typecheck as AGENTS.md says. If they don't all pass, or you aren't sure it's an improvement, don't propose it.
 4. Propose it with self_propose on a branch under ${SUGGESTION}, saying what you found, why it's worth changing and how you tested it. One pull request at most.

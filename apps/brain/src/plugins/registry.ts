@@ -210,17 +210,26 @@ export class Plugins {
 
   /**
    * The ready plugins in a stable order: it's part of the prompt cache. With `only`, just those a
-   * bot may use; without those in `except` (what it leaves to the code bot).
+   * bot may use; without those in `except` (what it leaves to other bots). `ready` false: every one
+   * switched on, running or not.
    */
-  private readyOnes(only: string[] | null, except: string[]) {
+  private readyOnes(only: string[] | null, except: string[], ready = true) {
     return [...this.slots.values()]
       .filter(
         (s) =>
-          s.state === "ready" &&
+          (ready ? s.state === "ready" : s.enabled) &&
           (!only || only.includes(s.plugin.id)) &&
           !except.includes(s.plugin.id),
       )
       .sort((a, b) => a.plugin.id.localeCompare(b.plugin.id));
+  }
+
+  /**
+   * The names of the plugins switched on, as `tools` picks them: what a bot has, for the other bots'
+   * prompts. Running or not, so a restart doesn't change those prompts.
+   */
+  names(only: string[] | null = null, except: string[] = []): string[] {
+    return this.readyOnes(only, except, false).map((s) => s.plugin.name);
   }
 
   /** Tools of the ready plugins, for the chat and tasks. */
