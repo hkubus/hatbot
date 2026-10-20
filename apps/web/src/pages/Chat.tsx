@@ -56,6 +56,7 @@ import {
   openConversation,
   retryReply,
   sendMessage,
+  trustSchedule,
   useStore,
 } from "../store";
 import {
@@ -463,6 +464,16 @@ function ScheduleMessage({ m, scheduleId }: { m: ThreadMessage; scheduleId: numb
     <>
       <div className="body">
         <AssistantBody text={text} />
+        {s?.tainted && (
+          <button
+            type="button"
+            className="btn sm"
+            title="It was written after reading untrusted content; trusted, its runs don't ask for that"
+            onClick={() => void trustSchedule(s.id).catch(() => {})}
+          >
+            Trust
+          </button>
+        )}
       </div>
       <Meta
         m={m}

@@ -183,6 +183,12 @@ export class Schedules {
     return this.changed(id);
   }
 
+  /** You trust what the chat wrote: its runs no longer start tainted. */
+  trust(id: number): Schedule | null {
+    this.db.query("UPDATE schedules SET tainted = 0, tainted_by = NULL WHERE id = ?").run(id);
+    return this.changed(id);
+  }
+
   delete(id: number): boolean {
     const gone = this.db.query("DELETE FROM schedules WHERE id = ?").run(id).changes > 0;
     if (gone) this.events.emit({ type: "schedule.deleted", id });

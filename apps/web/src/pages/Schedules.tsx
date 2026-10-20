@@ -18,7 +18,14 @@ import { Icon } from "../icons";
 import { Link } from "../link";
 import { navigate } from "../router";
 import { atIso, cronOk, localInput } from "../schedule-form";
-import { loadSchedules, putSchedule, putTrigger, saveSchedule, useStore } from "../store";
+import {
+  loadSchedules,
+  putSchedule,
+  putTrigger,
+  saveSchedule,
+  trustSchedule,
+  useStore,
+} from "../store";
 import { Switch } from "../switch";
 import { whenText } from "../tasks";
 import { BackHead, Group, SaveBar, Seg } from "../ui";
@@ -201,7 +208,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
   const { form, dirty, set, saved } = useStoredForm(
     id === null ? NEW_SCHEDULE : stored ? scheduleForm(stored) : undefined,
   );
-  const { busy, error, run } = useAction();
+  const { busy, error, setError, run } = useAction();
   const listed = useListed("schedules", id, stored);
   // Deleted elsewhere: there's nothing left to save.
   const edited = dirty && stored !== null;
@@ -352,7 +359,16 @@ function ScheduleEdit({ id }: { id: number | null }) {
             <div className="hint">
               Hatbot wrote this after reading untrusted content
               {stored.taintedBy ? ` (${stored.taintedBy})` : ""}, so its runs ask before changing
-              anything. Check what it does and save to trust it.
+              anything. Check what it does, then trust it.{" "}
+              <button
+                type="button"
+                className="btn sm"
+                onClick={() =>
+                  void trustSchedule(stored.id).catch((err) => setError(errorText(err)))
+                }
+              >
+                Trust
+              </button>
             </div>
           )}
           {stored && (

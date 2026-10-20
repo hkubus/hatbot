@@ -271,6 +271,12 @@ export class Watchers {
     return this.changed(id);
   }
 
+  /** You trust what the chat wrote: its tasks no longer start tainted. */
+  trust(id: number): Watcher | null {
+    this.d.db.query("UPDATE watchers SET tainted = 0, tainted_by = NULL WHERE id = ?").run(id);
+    return this.changed(id);
+  }
+
   delete(id: number): boolean {
     const gone = this.d.db.query("DELETE FROM watchers WHERE id = ?").run(id).changes > 0;
     if (gone) this.d.events.emit({ type: "watcher.deleted", id });

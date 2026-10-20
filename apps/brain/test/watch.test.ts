@@ -178,6 +178,10 @@ test("a watcher the chat made after reading something untrusted is tainted until
   await t.thread.post("watch it").done;
   const [w] = t.watchers.list() as [Watcher];
   expect(w).toMatchObject({ tainted: true, taintedBy: "https://example.com" });
+  // Trust clears the mark, and so does saving what it does.
+  const trusted = (await (await api("POST", `/watchers/${w.id}/trust`)).json()) as Watcher;
+  expect(trusted.tainted).toBe(false);
+  t.db.query("UPDATE watchers SET tainted = 1").run();
   const saved = (await (
     await api("PATCH", `/watchers/${w.id}`, { prompt: "Restart it" })
   ).json()) as Watcher;

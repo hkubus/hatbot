@@ -1080,6 +1080,7 @@ struct ApprovalBody: View {
   @State private var error: String?
   @State private var note = ""
   @State private var decided: Decision?
+  @State private var trusted = false
 
   var body: some View {
     let a = approval
@@ -1138,6 +1139,20 @@ struct ApprovalBody: View {
       .font(.subheadline)
       .buttonStyle(.borderless)
       .disabled(busy)
+    }
+    if a.taskId == nil, !a.sources.isEmpty, !trusted, let chat = a.conversationId, let episode = a.episodeId {
+      Button("Trust this chat") {
+        Task {
+          do {
+            try await store.trustConversation(chat, episode: episode)
+            trusted = true
+          } catch {
+            self.error = message(for: error)
+          }
+        }
+      }
+      .font(.subheadline)
+      .buttonStyle(.borderless)
     }
   }
 

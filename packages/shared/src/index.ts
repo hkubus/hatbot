@@ -294,6 +294,8 @@ export type Approval = {
   taskId: number | null;
   /** The chat that waits for it, when no task does. */
   conversationId: number | null;
+  /** The conversation in that chat, for a plugin change it asks about. */
+  episodeId: number | null;
   kind: ApprovalKind;
   summary: string;
   reason: string;

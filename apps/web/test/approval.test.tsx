@@ -25,6 +25,7 @@ const approval = (patch: Partial<Approval> = {}): Approval => ({
   note: null,
   scopes: [],
   scope: null,
+  episodeId: null,
   ...patch,
 });
 

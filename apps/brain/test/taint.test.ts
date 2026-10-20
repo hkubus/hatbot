@@ -432,6 +432,15 @@ test("what the chat reads is screened: a suspected injection skips the review, a
   await done;
   expect(restarted).toEqual(["nas"]);
   expect(reviewed(chat)).toBe(false);
+  // Trusting the conversation clears the suspicion and the mark.
+  const { cookie } = signIn(t);
+  const at = `/conversations/${approval.conversationId}/episodes/${approval.episodeId}/trust`;
+  expect((await t.call("POST", at, {}, { cookie })).status).toBe(200);
+  expect(
+    t.db
+      .query("SELECT tainted, injection_suspected AS s FROM episodes WHERE id = ?")
+      .get(approval.episodeId ?? -1),
+  ).toEqual({ tainted: 0, s: null });
 
   // A plugin's clean output: Haiku reviews the change, and it runs.
   const clean = new FakeModel([

@@ -1349,6 +1349,20 @@ export class Thread {
     return this.enqueue(() => this.inSummaryTurn(() => this.forget(episodeId)));
   }
 
+  /**
+   * You trust what a conversation read (2026-10-20, the owner's choice): it's no longer tainted or
+   * suspected, and the summary doesn't carry a suspicion from it. False if there's no such one.
+   */
+  trustEpisode(episodeId: number): boolean {
+    if (!this.ownEpisode(episodeId)) return false;
+    this.d.db
+      .query(
+        "UPDATE episodes SET tainted = 0, tainted_by = NULL, injection_suspected = NULL, read_suspected = NULL WHERE id = ?",
+      )
+      .run(episodeId);
+    return true;
+  }
+
   private ownEpisode(episodeId: number): boolean {
     return !!this.d.db
       .query("SELECT 1 FROM episodes WHERE id = ? AND conversation_id = ? AND incognito = 0")

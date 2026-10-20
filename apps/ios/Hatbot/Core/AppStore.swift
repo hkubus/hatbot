@@ -869,6 +869,11 @@ final class AppStore {
     try await api.post("/tasks/\(id)/cancel")
   }
 
+  /// You trust what a conversation read: its changes no longer ask because of it.
+  func trustConversation(_ conversationId: Int, episode: Int) async throws {
+    try await api.post("/conversations/\(conversationId)/episodes/\(episode)/trust")
+  }
+
   // MARK: Desktop
 
   func takeover() async throws {

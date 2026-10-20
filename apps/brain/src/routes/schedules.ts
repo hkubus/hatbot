@@ -23,6 +23,7 @@ export const scheduleRoutes = new Hono<AppEnv>()
     knownBot(c, c.req.valid("json").botId);
     return found(c, c.var.schedules.update(id(c), c.req.valid("json")));
   })
+  .post("/schedules/:id/trust", (c) => found(c, c.var.schedules.trust(id(c))))
   .delete("/schedules/:id", (c) =>
     c.var.schedules.delete(id(c)) ? c.json({ ok: true }) : c.json({ error: "That's gone." }, 404),
   )

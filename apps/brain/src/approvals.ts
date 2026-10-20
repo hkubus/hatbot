@@ -47,6 +47,7 @@ type Row = {
   note: string | null;
   scopes: string;
   scope: ApprovalScope | null;
+  episode_id: number | null;
 };
 
 const SELECT = `SELECT a.*, (SELECT sum(cost_usd) FROM spend_ledger s WHERE s.task_id = a.task_id) AS cost_usd
@@ -57,6 +58,7 @@ const toApproval = (r: Row): Approval => ({
   botId: r.bot_id,
   taskId: r.task_id,
   conversationId: r.conversation_id,
+  episodeId: r.episode_id,
   kind: r.kind,
   summary: r.summary,
   reason: r.reason,

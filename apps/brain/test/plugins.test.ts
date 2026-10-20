@@ -368,4 +368,6 @@ test("a tainted chat's schedules run tainted until you save them; it can't rewri
   // Switching it off and on doesn't clear the mark; saving its instructions does.
   expect(t.schedules.update(id, { enabled: false })?.tainted).toBe(true);
   expect(t.schedules.update(id, { prompt: "Restart web" })?.tainted).toBe(false);
+  t.db.query("UPDATE schedules SET tainted = 1").run();
+  expect(t.schedules.trust(id)?.tainted).toBe(false);
 });
