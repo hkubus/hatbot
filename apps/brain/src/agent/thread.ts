@@ -52,6 +52,7 @@ import {
   tokensOf,
 } from "../spend";
 import type { Tasks } from "../tasks/service";
+import { clip, head } from "../text";
 import type { Triggers } from "../triggers";
 import type { Watchers } from "../watch/service";
 import { AskOwner, askedText, CHAT_ASK_DESCRIPTION } from "./ask";
@@ -241,7 +242,7 @@ export function parseSummary(out: string): { recap: string | null; summary: stri
     new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(out)?.[1]?.trim();
   const summary = tag("summary");
   if (summary === undefined) return { recap: null, summary: out.trim() };
-  return { recap: tag("recap")?.slice(0, 400) || null, summary };
+  return { recap: head(tag("recap") ?? "", 400) || null, summary };
 }
 
 export class Thread {
@@ -2562,7 +2563,7 @@ function toolLabel(name: string, plugins: Plugins): string {
 export function titleOf(text: string, max = 80): string {
   const line = text.split("\n")[0]?.trim() ?? "";
   if (line.length <= max) return line;
-  const cut = line.slice(0, max - 1);
+  const cut = head(line, max - 1);
   const space = cut.lastIndexOf(" ");
   return `${space > max / 2 ? cut.slice(0, space) : cut}…`;
 }
@@ -2603,7 +2604,7 @@ export function activity(label: string, input: unknown): string {
     .filter(Boolean);
   const detail = parts.join(", ");
   if (!detail) return label;
-  return `${label}: ${detail.length > 80 ? `${detail.slice(0, 79)}…` : detail}`;
+  return `${label}: ${clip(detail, 80)}`;
 }
 
 /** "Thu 2026-10-09 18:04", in the brain's local time. */

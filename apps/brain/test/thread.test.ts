@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { type AskResult, type ThreadMessage, threadGroups } from "@hatbot/shared";
 import type { StreamHandlers, StreamParams } from "../src/agent/model";
-import { markPrevious } from "../src/agent/thread";
+import { activity, markPrevious, parseSummary, titleOf } from "../src/agent/thread";
 import { runTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
 import { FakeModel, text, toolUse } from "./fake-model";
@@ -893,4 +893,17 @@ test("without a desktop, the chat isn't offered the tools that need one", async 
   expect(toolNames(chat.requests[0])).not.toContain("run_desktop_task");
   expect(toolNames(chat.requests[0])).not.toContain("send_file");
   expect(toolNames(chat.requests[0])).toContain("run_task");
+});
+
+test("a progress line, a task's title and a recap cut a long text between characters, not through one", () => {
+  // Half of an emoji is invalid UTF-8: the app's decoder refused the whole event, SQLite kept U+FFFD.
+  const whole = (s: string) => s === Buffer.from(s).toString();
+  const emojiAt = (n: number) => `${"a".repeat(n)}😀😀`;
+  expect(activity("Reading memory", { path: emojiAt(78) })).toBe(
+    `Reading memory: ${"a".repeat(78)}…`,
+  );
+  expect(whole(titleOf(emojiAt(78)))).toBe(true);
+  expect(parseSummary(`<recap>${emojiAt(399)}</recap><summary>s</summary>`).recap).toBe(
+    "a".repeat(399),
+  );
 });
