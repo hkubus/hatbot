@@ -119,6 +119,10 @@ final class AppStore {
   @ObservationIgnored private var seenFlush: Task<Void, Never>?
   /// Tasks the chat shows that we don't have yet, loaded together.
   @ObservationIgnored private var wantedTasks: [Int] = []
+  /// Tasks shown from disk, loaded again once the stream opens.
+  @ObservationIgnored private var staleTasks = Set<Int>()
+  /// The stream opened and its first event hasn't come: a snapshot, or from an older brain, not.
+  @ObservationIgnored private var awaitingSnapshot = false
 
   @ObservationIgnored let api: API
   @ObservationIgnored private var requested = Set<String>()
@@ -149,6 +153,15 @@ final class AppStore {
       hasEarlier = page.hasEarlier
       threadKnown = true
       for e in page.episodes { episodes[e.id] = e }
+      restore(page.tasks)
+    }
+  }
+
+  /// Tasks kept on disk, shown until they load again; ones already here are newer.
+  private func restore(_ list: [AgentTask]) {
+    for t in list where tasks[t.id] == nil {
+      tasks[t.id] = t
+      staleTasks.insert(t.id)
     }
   }
 
@@ -164,10 +177,11 @@ final class AppStore {
     // Finished messages only: one still streaming would come back half written.
     let page = Array(messages.filter { $0.status != .streaming }.suffix(Self.page))
     let ids = Set(page.compactMap(\.episodeId))
+    let taskIds = Set(page.compactMap(\.taskId))
     cache.save(
       DiskCache.Page(
         messages: page, episodes: ids.compactMap { episodes[$0] },
-        hasEarlier: hasEarlier || page.count < messages.count),
+        hasEarlier: hasEarlier || page.count < messages.count, tasks: taskIds.compactMap { tasks[$0]?.card }),
       for: conversationId)
   }
 
@@ -222,27 +236,10 @@ final class AppStore {
   private func makeStream() -> Socket {
     let api = self.api
     let socket = Socket { api.webSocket("/stream") }
-    socket.onOpen = { [weak self] reconnected in
-      guard let self else { return }
-      self.connected = true
-      self.unreachableCheck?.cancel()
-      self.unreachable = false
-      // Side by side: neither waits on the other.
-      Task {
-        async let live: Void? = try? self.loadLive()
-        // The first open too: what came between the chat's first load and the stream's start, or all of
-        // it when that load failed.
-        try? await self.loadThread()
-        // What changed while the app was away.
-        if reconnected && self.boxesLoaded { _ = try? await self.loadBoxes() }
-        _ = await live
-      }
-    }
+    socket.onOpen = { [weak self] reconnected in self?.streamOpened(reconnected: reconnected) }
     socket.onMessage = { [weak self] message in
-      guard case let .text(text) = message,
-        let event = try? JSONDecoder().decode(HatbotEvent.self, from: Data(text.utf8))
-      else { return }
-      self?.apply(event)
+      guard case let .text(text) = message else { return }
+      self?.streamed(try? JSONDecoder().decode(HatbotEvent.self, from: Data(text.utf8)))
     }
     socket.onClose = { [weak self] in
       self?.connected = false
@@ -250,6 +247,32 @@ final class AppStore {
     }
     socket.onUnauthorized = { api.unauthorized() }
     return socket
+  }
+
+  /// The stream is open: its first event has come.
+  func streamOpened(reconnected: Bool) {
+    connected = true
+    unreachableCheck?.cancel()
+    unreachable = false
+    // What's live comes as the stream's first event, which is on its way.
+    awaitingSnapshot = true
+    Task {
+      // The first open too: what came between the chat's first load and the stream's start, or all of
+      // it when that load failed.
+      try? await loadThread()
+      // What changed while the app was away.
+      if reconnected && boxesLoaded { _ = try? await loadBoxes() }
+    }
+  }
+
+  /// An event from the stream; nil, one this app couldn't read.
+  func streamed(_ event: HatbotEvent?) {
+    if awaitingSnapshot {
+      awaitingSnapshot = false
+      // An older brain opens with no snapshot: what's live is asked for instead.
+      if case .snapshot = event {} else { Task { try? await loadLive() } }
+    }
+    if let event { apply(event) }
   }
 
   func apply(_ event: HatbotEvent) {
@@ -263,6 +286,15 @@ final class AppStore {
     default: break
     }
     switch event {
+    case let .snapshot(s):
+      for b in s.bots { bots[b.id] = b }
+      botIds = s.bots.map(\.id)
+      conversations = s.conversations
+      paused = s.paused
+      take(approvals: s.approvals, questions: s.questions, desktop: s.desktop, unread: s.unread)
+      persist()
+      prefetch()
+      Task { await refreshTasks() }
     case let .messageCreated(m):
       if m.isIncognito { incognitoIds.insert(m.id) }
       if m.role == .assistant { refreshConversations() }
@@ -618,6 +650,10 @@ final class AppStore {
     hasEarlier = cached?.hasEarlier ?? false
     threadKnown = cached != nil
     for e in cached?.episodes ?? [] { episodes[e.id] = e }
+    // Its task cards show as they were kept, and load again as they are now.
+    let kept = (cached?.tasks ?? []).map(\.id).filter { tasks[$0] == nil }
+    restore(cached?.tasks ?? [])
+    if !kept.isEmpty { Task { _ = try? await loadCards(kept) } }
     threadError = nil
     if wasIncognito { let _: Empty? = try? await api.delete("\(left)/incognito") }
     return await reloadThread()
@@ -688,7 +724,12 @@ final class AppStore {
     // Opened meanwhile, it kept a newer page of its own; deleted, or signed out, it keeps none.
     guard !closed, id != conversationId, !visited.contains(id), conversations.contains(where: { $0.id == id })
     else { return false }
-    cache?.save(DiskCache.Page(messages: page, episodes: recaps, hasEarlier: list.count == Self.page), for: id)
+    let taskIds = Set(page.compactMap(\.taskId))
+    cache?.save(
+      DiskCache.Page(
+        messages: page, episodes: recaps, hasEarlier: list.count == Self.page,
+        tasks: taskIds.compactMap { tasks[$0]?.card }),
+      for: id)
     return true
   }
 
@@ -762,6 +803,13 @@ final class AppStore {
   @discardableResult
   func saveBot(_ id: String, _ change: BotChange) async throws -> Bot {
     let b: Bot = try await api.patch("/bots/\(id)", body: change)
+    bots[b.id] = b
+    return b
+  }
+
+  /// A bot whole: the list's may be brief.
+  func loadBot(_ id: String) async throws -> Bot {
+    let b: Bot = try await api.get("/bots/\(id)")
     bots[b.id] = b
     return b
   }
@@ -888,11 +936,50 @@ final class AppStore {
 
   // MARK: Tasks and approvals
 
-  func loadTask(_ id: Int) async throws {
-    let res: TaskWithSteps = try await api.get("/tasks/\(id)")
+  /// A task with its steps. `since`: only the steps after the ones we have; a brain from before sends all.
+  func loadTask(_ id: Int, since: Bool = false) async throws {
+    let after = since ? steps[id]?.last?.id : nil
+    let res: TaskWithSteps = try await api.get("/tasks/\(id)" + (after.map { "?afterStep=\($0)" } ?? ""))
     tasks[id] = res.task
-    steps[id] = res.steps
+    staleTasks.remove(id)
+    if after == nil {
+      steps[id] = res.steps
+    } else {
+      let fresh = Set(res.steps.map(\.id))
+      steps[id] = ((steps[id] ?? []).filter { !fresh.contains($0.id) } + res.steps).sorted { $0.id < $1.id }
+    }
     taskFiles[id] = res.attachments ?? []
+  }
+
+  /// These tasks as cards, onto what's here.
+  @discardableResult
+  private func loadCards(_ ids: [Int]) async throws -> [AgentTask] {
+    let list: [AgentTask] = try await api.get(
+      "/tasks?ids=\(ids.map(String.init).joined(separator: ","))&view=card")
+    take(list)
+    return list
+  }
+
+  private func take(_ list: [AgentTask]) {
+    for t in list {
+      tasks[t.id] = t.keeping(tasks[t.id])
+      staleTasks.remove(t.id)
+    }
+  }
+
+  /// After time away: the new steps of the running tasks the live view follows, and the rest that are
+  /// running, or shown from disk, as they are now.
+  func refreshTasks() async {
+    let followed = tasks.values.filter { steps[$0.id] != nil && $0.isActive }.map(\.id)
+    let running = tasks.values.filter { steps[$0.id] == nil && $0.isActive }.map(\.id)
+    let others = Set(running).union(staleTasks).sorted()
+    await withTaskGroup(of: Void.self) { group in
+      for id in followed { group.addTask { try? await self.loadTask(id, since: true) } }
+      for start in stride(from: 0, to: others.count, by: 200) {
+        let some = Array(others[start..<min(start + 200, others.count)])
+        group.addTask { _ = try? await self.loadCards(some) }
+      }
+    }
   }
 
   /// Loads a task the first time something shows it. The rows that appear together come in one request.
@@ -910,8 +997,7 @@ final class AppStore {
     for start in stride(from: 0, to: ids.count, by: 200) {
       let some = Array(ids[start..<min(start + 200, ids.count)])
       do {
-        let list: [AgentTask] = try await api.get("/tasks?ids=\(some.map(String.init).joined(separator: ","))")
-        for t in list { tasks[t.id] = t }
+        let list = try await loadCards(some)
         // A brain from before ids= sends its newest tasks instead: the rest one at a time.
         guard list.contains(where: { !some.contains($0.id) }) else { continue }
         for id in some where tasks[id] == nil {
@@ -976,16 +1062,22 @@ final class AppStore {
   /// A page is `AppStore.page` long; a shorter one is the last.
   func loadTasks(_ filter: TaskFilter, before: Int? = nil) async throws -> [Int] {
     let list: [AgentTask] = try await api.get(
-      "/tasks?status=\(filter.rawValue)" + (before.map { "&before=\($0)" } ?? ""))
-    for t in list { tasks[t.id] = t }
+      "/tasks?status=\(filter.rawValue)&view=card" + (before.map { "&before=\($0)" } ?? ""))
+    take(list)
+    if before == nil && !closed { cache?.save(tasks: list.map(\.card), filter.rawValue) }
     return list.map(\.id)
   }
 
-  /// Pending approvals and the desktop; anything we thought pending but the brain doesn't list was decided meanwhile.
-  /// All at once: none of these waits on another.
+  /// A list's first page as it was last time, until it loads; nil if none was kept.
+  func cachedTasks(_ filter: TaskFilter) -> [Int]? {
+    guard let list = cache?.tasks(filter.rawValue) else { return nil }
+    restore(list)
+    return list.map(\.id)
+  }
+
+  /// What's live, from a brain whose stream doesn't open with it. All at once: none of these waits on another.
   func loadLive() async throws {
     let api = self.api
-    let active = tasks.values.filter { steps[$0.id] != nil && $0.isActive }.map(\.id)
     async let chats: Void = loadBots()
     async let approvalsLoad: [Approval] = api.get("/approvals?pending=1")
     // A brain from before questions answers 404.
@@ -993,21 +1085,26 @@ final class AppStore {
     async let stateLoad: DesktopState? = try? api.get("/desktop/status")
     // A brain from before unread answers 404.
     async let unreadLoad: [Int]? = try? api.get("/thread/unread")
-    async let taskLoads: Void = withTaskGroup(of: Void.self) { group in
-      for id in active { group.addTask { try? await self.loadTask(id) } }
-    }
+    async let taskLoads: Void = refreshTasks()
     let pending = try await approvalsLoad
     let state = await stateLoad
+    take(approvals: pending, questions: await questionsLoad, desktop: state, unread: await unreadLoad)
+    _ = await (chats, taskLoads)
+  }
+
+  /// Pending approvals and the desktop; anything we thought pending but the brain doesn't list was decided meanwhile.
+  private func take(
+    approvals pending: [Approval], questions asked: [Question]?, desktop state: DesktopState?, unread list: [Int]?
+  ) {
     for a in approvals.values where a.status == .pending {
       requested.remove("a\(a.id)")
       if !pending.contains(where: { $0.id == a.id }) { approvals[a.id] = nil }
     }
     for a in pending { approvals[a.id] = a }
     // Those answered or dropped meanwhile aren't listed.
-    if let asked = await questionsLoad { questions = Dictionary(uniqueKeysWithValues: asked.map { ($0.id, $0) }) }
+    if let asked { questions = Dictionary(uniqueKeysWithValues: asked.map { ($0.id, $0) }) }
     desktop = state
-    if let list = await unreadLoad { unread = list }
-    _ = await (chats, taskLoads)
+    if let list { unread = list }
   }
 
   func decide(_ id: Int, _ decision: Decision, note: String = "") async throws {

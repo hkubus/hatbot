@@ -133,7 +133,7 @@ export const threadRoutes = new Hono<AppEnv>()
   .delete("/conversations/:id", (c) =>
     c.var.chats.deleteGroup(id(c)) ? c.json({ ok: true }) : c.json({ error: "That's gone." }, 404),
   )
-  // Unread: your bots' messages, in every chat, sent or edited since you last saw them.
+  // Unread: your bots' messages sent or edited since you last saw them, each chat's newest.
   .get("/thread/unread", (c) => c.json(c.var.chats.unread()))
   .post("/thread/seen", json(SeenMessages), (c) => {
     c.var.chats.markSeen(c.req.valid("json").ids);

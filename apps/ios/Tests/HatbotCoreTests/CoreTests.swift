@@ -734,8 +734,8 @@ final class NetworkTests: XCTestCase {
   /// the rows it left out load one at a time.
   func testTaskRowsLoadTogether() async throws {
     let store = await MainActor.run { Self.store() }
-    SlowBrain.routes["/tasks?ids=20,21,22"] = "[\(Self.task(20)),\(Self.task(22))]"
-    SlowBrain.routes["/tasks?ids=30,40"] = "[\(Self.task(99)),\(Self.task(30))]"
+    SlowBrain.routes["/tasks?ids=20,21,22&view=card"] = "[\(Self.task(20)),\(Self.task(22))]"
+    SlowBrain.routes["/tasks?ids=30,40&view=card"] = "[\(Self.task(99)),\(Self.task(30))]"
     SlowBrain.routes["/tasks/40"] = #"{"task":\#(Self.task(40)),"steps":[]}"#
     await MainActor.run {
       for id in [20, 21, 22, 20] { store.ensureTask(id) }
@@ -745,7 +745,61 @@ final class NetworkTests: XCTestCase {
       for id in [30, 40] { store.ensureTask(id) }
     }
     await waitUntil { store.tasks[40] != nil }
-    XCTAssertEqual(SlowBrain.requested, ["GET /tasks?ids=20,21,22", "GET /tasks?ids=30,40", "GET /tasks/40"])
+    XCTAssertEqual(
+      SlowBrain.requested, ["GET /tasks?ids=20,21,22&view=card", "GET /tasks?ids=30,40&view=card", "GET /tasks/40"])
+  }
+
+  /// The stream opens with what's live, so the store asks only for the task cards it showed from disk. An
+  /// older brain's stream opens without it, and what's live is asked for.
+  func testTheStreamsFirstEventSaysWhatsLive() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let cache = DiskCache(dir: dir)
+    let chat = Conversation(id: 1, kind: .direct, botIds: ["hatbot"], unread: 0)
+    let started = ThreadMessage(
+      id: 5, role: .assistant, kind: .command, text: "On it", status: .done, createdAt: "2026-10-15T08:00:00Z",
+      taskId: 7)
+    cache.save(DiskCache.Chats(bots: [], conversations: [chat], conversationId: 1))
+    let card = try decode(AgentTask.self, Self.task(7)).card
+    cache.save(DiskCache.Page(messages: [started], episodes: [], hasEarlier: false, tasks: [card]), for: 1)
+    // A page kept before pages had their tasks.
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    try Data(#"{"messages":[],"episodes":[],"hasEarlier":true}"#.utf8)
+      .write(to: dir.appendingPathComponent("page-2.json"))
+    XCTAssertEqual(cache.page(2)?.hasEarlier, true)
+
+    let store = await MainActor.run { Self.store(cache: cache) }
+    await MainActor.run { XCTAssertEqual(store.tasks[7]?.isActive, true) }
+    // It ended while the app was away.
+    SlowBrain.routes["/tasks?ids=7&view=card"] =
+      #"[{"id":7,"title":"t","origin":"chat","lane":"background","model":"m","status":"done","tainted":false,"injectionSuspected":false,"createdAt":"2026-10-15T08:00:00Z","finishedAt":"2026-10-15T09:00:00Z"}]"#
+    let approval = #"{"id":3,"kind":"send","summary":"s","reason":"r","sources":[],"status":"pending","costUsd":0,"createdAt":"2026-10-15T08:00:00Z","expiresAt":"2026-10-15T09:00:00Z"}"#
+    let snapshot = #"{"type":"snapshot","paused":true,"bots":[{"id":"hatbot","name":"Hatbot","instructions":"Looks after the homelab.","createdAt":"2026-10-15T08:00:00Z","brief":true}],"conversations":[{"id":1,"kind":"direct","botIds":["hatbot"],"unread":1}],"approvals":[\#(approval)],"questions":[],"desktop":{"online":true,"control":"hatbot"},"unread":[5]}"#
+    await MainActor.run {
+      store.streamOpened(reconnected: false)
+      store.streamed(try? decode(HatbotEvent.self, snapshot))
+    }
+    await waitUntil { store.tasks[7]?.isActive == false }
+    await MainActor.run {
+      XCTAssertEqual(store.paused, true)
+      XCTAssertEqual(store.unread, [5])
+      XCTAssertEqual(store.pendingApprovals.map(\.id), [3])
+      XCTAssertEqual(store.bots["hatbot"]?.brief, true)
+      XCTAssertEqual(store.conversations.first?.unread, 1)
+    }
+    XCTAssertEqual(SlowBrain.requested.filter { !$0.contains("/messages") }, ["GET /tasks?ids=7&view=card"])
+
+    SlowBrain.routes["/approvals?pending=1"] = "[]"
+    await MainActor.run {
+      store.streamOpened(reconnected: true)
+      store.streamed(.paused(false))
+    }
+    let live = [
+      "GET /bots", "GET /conversations", "GET /approvals?pending=1", "GET /questions", "GET /desktop/status",
+      "GET /thread/unread",
+    ]
+    await waitUntil { Set(live).isSubset(of: SlowBrain.requested) }
+    await MainActor.run { XCTAssertEqual(store.paused, false) }
   }
 
   private static func message(_ id: Int, in conversation: Int) -> String {

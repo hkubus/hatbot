@@ -15,6 +15,8 @@ struct BotView: View {
   @State private var filled = Form()
   /// A template picked over changes of yours, until you say whether it replaces them.
   @State private var replacing: Pick?
+  /// The bot whole, as the form was filled from it: the list's may have only the first line of its role.
+  @State private var base: Bot?
   @State private var busy = false
   @State private var confirmDelete = false
   @State private var error: String?
@@ -60,7 +62,7 @@ struct BotView: View {
   private var isHatbot: Bool { id == Bot.hatbot }
 
   var body: some View {
-    let changed = stored.map { Form($0) != form } ?? true
+    let changed = id == nil || (base.map { Form($0) != form } ?? false)
     SwiftUI.Form {
       if let error { Text(error).foregroundStyle(.red) }
       if id == nil, !templates.isEmpty {
@@ -120,6 +122,7 @@ struct BotView: View {
           text: $form.instructions, axis: .vertical
         )
         .lineLimit(4...16)
+        .disabled(id != nil && base == nil)
       }
       Section {
         Picker("Model", selection: $form.chatModel) {
@@ -193,6 +196,15 @@ struct BotView: View {
     .task(id: id) {
       if let stored {
         form = Form(stored)
+        if stored.brief != true {
+          base = stored
+        } else if let id {
+          await attempt($error) {
+            let whole = try await store.loadBot(id)
+            form.instructions = whole.instructions
+            base = whole
+          }
+        }
       } else {
         // Only if you haven't started on it yet.
         if form == filled { fill(nil) }
@@ -233,7 +245,9 @@ struct BotView: View {
     defer { busy = false }
     await attempt($error) {
       if let id {
-        form = Form(try await store.saveBot(id, form.change(rename: !isHatbot)))
+        let saved = try await store.saveBot(id, form.change(rename: !isHatbot))
+        base = saved
+        form = Form(saved)
         store.toast = "Saved"
       } else {
         let bot = try await store.createBot(form.change(rename: true))

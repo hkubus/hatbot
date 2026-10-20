@@ -316,6 +316,9 @@ function codeLine(bot: Bot, others: Bot[]): string[] {
       ];
 }
 
+/** A bot as lists show it, with only its role's first line: a role can be 8,000 characters. */
+export const briefBot = (b: Bot): Bot => ({ ...b, instructions: roleLine(b), brief: true });
+
 /** A bot's role in a line, for the others' prompts. */
 function roleLine(b: Bot): string {
   const line = b.instructions.trim().split("\n")[0]?.trim() ?? "";

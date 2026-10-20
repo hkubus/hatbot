@@ -6,6 +6,7 @@ import {
   HATBOT_ID,
   type MessageLink,
   type Task,
+  UNREAD_PER_CHAT,
 } from "@hatbot/shared";
 import { BotError } from "../bots";
 import { resultText, Thread, type ThreadDeps } from "./thread";
@@ -196,11 +197,19 @@ export class Chats {
     await Promise.all([...this.threads.values()].map((t) => t.idle()));
   }
 
-  /** Your bots' messages, in every chat, sent or edited since you last saw them. */
+  /**
+   * Your bots' messages sent or edited since you last saw them: each chat's newest UNREAD_PER_CHAT, for
+   * the marks on the messages loaded. A bot's chat never read had thousands; the chat list counts them all.
+   * Pinned to messages_unread: SQLite otherwise picks messages_conversation and walks a long chat's read messages.
+   */
   unread(): number[] {
     return this.d.db
-      .query<{ id: number }, []>(`SELECT id FROM messages WHERE ${UNREAD} ORDER BY id`)
-      .all()
+      .query<{ id: number }, [number]>(
+        `SELECT u.id FROM conversations c JOIN messages u ON u.id IN (SELECT id FROM messages INDEXED BY messages_unread
+           WHERE conversation_id = c.id AND ${UNREAD} ORDER BY id DESC LIMIT ?1)
+         ORDER BY u.id`,
+      )
+      .all(UNREAD_PER_CHAT)
       .map((r) => r.id);
   }
 

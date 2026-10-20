@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Proposal, Task, ThreadMessage } from "@hatbot/shared";
+import type { Approval, Proposal, Task, ThreadMessage } from "@hatbot/shared";
 import { FakeSocket, installDom, type Request, settle } from "./dom";
 import { msg } from "./fixtures";
 
@@ -79,7 +79,7 @@ test("text a page read mid-reply already has isn't put onto it again", async () 
   store.disconnect();
 });
 
-test("the stream's first open catches the thread up too", async () => {
+test("the stream's first open catches the thread up too, and takes what's live from its first event", async () => {
   const store = await freshStore("first-open");
   // The thread loaded before the stream opened, and the reply finished in between.
   serve(() => [msg(1), msg(2, { text: "", status: "streaming" })]);
@@ -90,6 +90,31 @@ test("the stream's first open catches the thread up too", async () => {
   FakeSocket.last.open();
   await settle();
   expect(shown(store).at(-1)).toEqual([2, "Done.", "done"]);
+
+  // Its first event says what's live, so none of it is asked for; a brain from before it is asked.
+  const live = /^\/(approvals|questions|desktop|thread\/unread|bots)/;
+  const from = dom.requests.length;
+  FakeSocket.last.emit({
+    type: "snapshot",
+    paused: true,
+    bots: [],
+    conversations: [],
+    approvals: [{ id: 3, status: "pending" } as Approval],
+    questions: [],
+    desktop: { online: true, control: "hatbot", request: null, activeTaskId: null, botId: null },
+    unread: [2],
+  });
+  await settle();
+  expect(store.getState()).toMatchObject({
+    paused: true,
+    unread: [2],
+    approvals: { 3: { id: 3 } },
+  });
+  expect(dom.requests.slice(from).filter((r) => live.test(r.path))).toEqual([]);
+  await reconnect(store);
+  FakeSocket.last.emit({ type: "paused", paused: false });
+  await settle();
+  expect(dom.requests.slice(from).filter((r) => live.test(r.path))).not.toEqual([]);
   store.disconnect();
 });
 

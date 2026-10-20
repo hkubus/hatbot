@@ -250,6 +250,14 @@ export type Task = {
   finishedAt: string | null;
 };
 
+/**
+ * A task as a chat's card or a list row shows it (`GET /tasks?view=card`): without its goal, criteria,
+ * event and cost, which only its own page shows, from `GET /tasks/:id`.
+ */
+export type TaskCard = Omit<Task, "goal" | "successCriteria" | "payload" | "costUsd" | "steps">;
+/** Whether a task has what its page shows, or is only a card. */
+export const isFullTask = (t: Task | TaskCard): t is Task => "goal" in t;
+
 export type TaskStep = {
   id: number;
   taskId: number;
@@ -364,8 +372,29 @@ export type DesktopState = {
   botId: string | null;
 };
 
+/**
+ * What's live when the stream opens, sent as its first event: an app needn't ask for each of these.
+ * Brains from before it send only `paused`.
+ */
+export type Snapshot = {
+  paused: boolean;
+  /** Brief (`Bot.brief`). */
+  bots: Bot[];
+  conversations: Conversation[];
+  /** The pending ones. */
+  approvals: Approval[];
+  /** The pending ones. */
+  questions: Question[];
+  desktop: DesktopState;
+  /** Each chat's newest UNREAD_PER_CHAT unread messages; `Conversation.unread` counts them all. */
+  unread: number[];
+};
+/** Unread message ids the stream's snapshot sends per chat: a page's worth and more. */
+export const UNREAD_PER_CHAT = 100;
+
 /** Live events on /api/v1/stream. */
 export type HatbotEvent =
+  | ({ type: "snapshot" } & Snapshot)
   | { type: "message.created"; message: ThreadMessage }
   /** `at`: where `text` starts in the reply, so text a client already has isn't added twice. */
   | { type: "message.delta"; id: number; text: string; at?: number }
@@ -484,6 +513,8 @@ export type Bot = {
   /** The plugins it may use, by id; null: every plugin that's on. */
   plugins: string[] | null;
   createdAt: string;
+  /** Only the first line of its role is in `instructions`, as lists send it; `GET /bots/:id` has all of it. */
+  brief?: true;
 };
 const botFields = {
   name: z.string().trim().min(1).max(40),

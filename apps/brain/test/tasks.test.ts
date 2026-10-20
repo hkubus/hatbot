@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Task } from "@hatbot/shared";
+import type { Task, TaskStep } from "@hatbot/shared";
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { SCREENING_PROMPT } from "../src/agent/prompt";
 import { type DesktopAgent, DesktopError, HttpDesktopAgent } from "../src/desktop/client";
@@ -55,6 +55,32 @@ test("chat starts a desktop task that runs, archives screenshots and reports bac
   const shots = t.tasks.steps(task?.id as number).filter((s) => s.screenshot);
   expect(shots.length).toBe(2);
   expect(await t.archive.file(shots[1]?.screenshot as string)?.exists()).toBe(true);
+
+  // A chat's card leaves out what only the task's page shows, and a live view asks for the steps it
+  // lacks, with the latest action again while its screenshot may still come.
+  const { cookie } = signIn(t);
+  const get = async (path: string) => (await t.call("GET", path, undefined, { cookie })).json();
+  const [card] = (await get(`/tasks?ids=${task?.id}&view=card`)) as Record<string, unknown>[];
+  expect(card).toMatchObject({ id: task?.id, status: "done", summary: "Example.com is up." });
+  expect(
+    ["goal", "successCriteria", "payload", "costUsd", "steps"].filter((k) => k in (card ?? {})),
+  ).toEqual([]);
+  const all = t.tasks.steps(task?.id as number);
+  const last = all.at(-1)?.id as number;
+  const clicked = t.tasks.addStep(task?.id as number, {
+    kind: "action",
+    name: "left_click",
+    detail: "",
+    url: null,
+  });
+  const since = (after: number) =>
+    get(`/tasks/${task?.id}?afterStep=${after}`).then((r) =>
+      (r as { steps: TaskStep[] }).steps.map((s) => s.id),
+    );
+  expect(await since(all.at(-2)?.id as number)).toEqual([last, clicked.id]);
+  expect(await since(clicked.id)).toEqual([clicked.id]);
+  t.tasks.setStepScreenshot(clicked.id, "x.webp");
+  expect(await since(clicked.id)).toEqual([]);
 
   // The chat hears how it ended and writes the reply that started it again, unread until seen.
   await t.thread.idle();
