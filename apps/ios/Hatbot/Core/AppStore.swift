@@ -169,9 +169,11 @@ final class AppStore {
 
   // MARK: Event stream
 
+  /// Starts the event stream. One already running tries again now rather than when its backoff says, or,
+  /// open, checks it still gets through.
   func connect() {
     if stream == nil { stream = makeStream() }
-    stream?.start()
+    if stream?.running == true { stream?.retryNow() } else { stream?.start() }
     noticeIfDown()
   }
 

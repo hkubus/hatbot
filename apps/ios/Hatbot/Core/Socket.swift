@@ -1,8 +1,12 @@
-// A WebSocket to the brain that reconnects with backoff until it's stopped.
+// A WebSocket to the brain that reconnects with backoff until it's stopped, and at once when the network
+// comes back.
 import Foundation
 
 #if canImport(FoundationNetworking)
   import FoundationNetworking
+#endif
+#if canImport(Network)
+  import Network
 #endif
 
 @MainActor
@@ -19,13 +23,26 @@ final class Socket {
   /// The brain turned the token away at the handshake; the socket stops.
   var onUnauthorized: () -> Void = {}
 
+  /// How long a ping may go unanswered before the socket is given up.
+  private static let pongWait: Duration = .seconds(10)
+
   private let make: () -> URLSessionWebSocketTask
   private let maxDelay: Double
   private var ws: URLSessionWebSocketTask?
   private var loop: Task<Void, Never>?
+  /// The wait before trying again, which `retryNow` cuts short.
+  private var wait: Task<Void, Never>?
+  private var retry = 0
+  /// Pongs so far, so a ping can tell whether its own came.
+  private var pongs = 0
   /// Kept across stop and start: opening again after the app was in the background is a reconnect,
   /// so what was missed meanwhile gets loaded.
   private var everOpened = false
+  #if canImport(Network)
+    private var monitor: NWPathMonitor?
+    /// The monitor's first update is the network as it is now, which the socket is already trying.
+    private var networkSeen = false
+  #endif
 
   init(maxDelay: Double = 30, make: @escaping () -> URLSessionWebSocketTask) {
     self.make = make
@@ -37,6 +54,7 @@ final class Socket {
   func start() {
     guard loop == nil else { return }
     loop = Task { [weak self] in await self?.run() }
+    watchNetwork()
   }
 
   func stop() {
@@ -44,10 +62,26 @@ final class Socket {
     loop = nil
     ws?.cancel(with: .normalClosure, reason: nil)
     ws = nil
+    #if canImport(Network)
+      monitor?.cancel()
+      monitor = nil
+    #endif
   }
 
   func send(_ text: String) {
     ws?.send(.string(text)) { _ in }
+  }
+
+  /// Tries again now rather than when the backoff says. A socket that's open or opening is checked
+  /// instead: one that went quiet doesn't say so.
+  func retryNow() {
+    guard loop != nil else { return }
+    retry = 0
+    if let wait {
+      wait.cancel()
+    } else if let ws {
+      check(ws)
+    }
   }
 
   /// Whether this open is a reconnect.
@@ -56,19 +90,55 @@ final class Socket {
     return everOpened
   }
 
+  /// Pings, and gives the socket up when the pong doesn't come in time: a connection that went quiet, on
+  /// a network that's gone or through a proxy that dropped it, doesn't fail, it just never answers.
+  private func check(_ ws: URLSessionWebSocketTask) {
+    let before = pongs
+    ws.sendPing { error in
+      if error != nil {
+        ws.cancel(with: .goingAway, reason: nil)
+      } else {
+        Task { @MainActor in self.pongs += 1 }
+      }
+    }
+    Task {
+      try? await Task.sleep(for: Self.pongWait)
+      if pongs == before && self.ws === ws { ws.cancel(with: .goingAway, reason: nil) }
+    }
+  }
+
+  /// Back online, or on another network: try at once, or check the socket still gets through.
+  private func watchNetwork() {
+    #if canImport(Network)
+      let monitor = NWPathMonitor()
+      networkSeen = false
+      monitor.pathUpdateHandler = { [weak self] path in
+        let up = path.status == .satisfied
+        MainActor.assumeIsolated { self?.networkChanged(up: up) }
+      }
+      monitor.start(queue: .main)
+      self.monitor = monitor
+    #endif
+  }
+
+  #if canImport(Network)
+    private func networkChanged(up: Bool) {
+      defer { networkSeen = true }
+      if networkSeen && up { retryNow() }
+    }
+  #endif
+
   private func run() async {
-    var retry = 0
+    retry = 0
     while !Task.isCancelled {
       let ws = make()
       self.ws = ws
       ws.resume()
-      // Proxies drop idle sockets, and a dead one only shows when a ping fails.
+      // Proxies drop idle sockets, and a dead one only shows when a ping goes unanswered.
       let pinger = Task {
         while !Task.isCancelled {
           try? await Task.sleep(for: .seconds(25))
-          ws.sendPing { error in
-            if error != nil { ws.cancel(with: .goingAway, reason: nil) }
-          }
+          if !Task.isCancelled { check(ws) }
         }
       }
       var open = false
@@ -99,7 +169,10 @@ final class Socket {
       }
       let delay = min(maxDelay, pow(2, Double(retry)))
       retry += 1
-      try? await Task.sleep(for: .seconds(delay))
+      let wait = Task<Void, Never> { try? await Task.sleep(for: .seconds(delay)) }
+      self.wait = wait
+      await withTaskCancellationHandler { await wait.value } onCancel: { wait.cancel() }
+      if self.wait == wait { self.wait = nil }
     }
   }
 }

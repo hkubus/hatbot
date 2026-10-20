@@ -201,8 +201,12 @@ struct ChatView: View {
         VStack(spacing: 0) {
           // The event stream has been down for a few seconds.
           if store.unreachable {
-            Banner(text: "Can't reach Hatbot.", systemImage: "wifi.slash") {}
-              .transition(.move(edge: .top).combined(with: .opacity))
+            Banner(text: "Can't reach Hatbot.", systemImage: "wifi.slash") {
+              Button("Retry") { store.connect() }
+                .buttonStyle(.borderless)
+                .fontWeight(.semibold)
+            }
+            .transition(.move(edge: .top).combined(with: .opacity))
           }
           if store.paused {
             Banner(text: "All activity is paused.", systemImage: "pause.circle.fill") {

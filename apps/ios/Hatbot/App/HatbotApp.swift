@@ -65,6 +65,7 @@ struct MainView: View {
   @State private var memoryPath: [Route] = []
   @State private var todoPath: [Route] = []
   @State private var boxesPath: [Route] = []
+  @State private var lingering = Lingering()
 
   var body: some View {
     Sidebar(tab: $tab, open: $sidebar, atRoot: roots[tab, default: 0] > 0) { sections }
@@ -73,12 +74,15 @@ struct MainView: View {
       // A field in the section you left mustn't keep the keyboard up over this one.
       UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
-    // The event stream runs while the app is in front; iOS would cut it in the background anyway.
+    // The event stream runs while the app is in front, and for the half minute or so iOS gives it to finish
+    // up in the background: back by then, there's nothing to reconnect.
     .onChange(of: phase, initial: true) { _, phase in
       if phase == .active {
+        lingering.end()
         store.connect()
       } else if phase == .background {
-        store.disconnect()
+        store.persist()
+        lingering.begin { store.disconnect() }
       }
     }
     .onOpenURL(perform: open)
@@ -220,5 +224,28 @@ private struct Toast: View {
           if store.toastId == id { withAnimation { store.toast = nil } }
         }
     }
+  }
+}
+
+/// The time iOS gives the app to finish up once it's in the background.
+@MainActor
+final class Lingering {
+  private var task = UIBackgroundTaskIdentifier.invalid
+
+  /// `then` runs when that time is up, or at once when there's none.
+  func begin(then: @escaping @MainActor @Sendable () -> Void) {
+    end()
+    // Held until then, so the time is handed back even if the view that began it has gone.
+    task = UIApplication.shared.beginBackgroundTask(withName: "Event stream") {
+      then()
+      self.end()
+    }
+    if task == .invalid { then() }
+  }
+
+  func end() {
+    guard task != .invalid else { return }
+    UIApplication.shared.endBackgroundTask(task)
+    task = .invalid
   }
 }
