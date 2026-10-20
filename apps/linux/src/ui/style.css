@@ -1,5 +1,6 @@
 /* Hatbot's amber as the accent, with dark text on it (PLAN.md §10.2), as on the web and iOS. A
-   theme in ~/.config/gtk-4.0/gtk.css still wins over the accent; the mark and amber bots stay amber. */
+   theme in ~/.config/gtk-4.0/gtk.css still wins over the accent; the mark and amber bots stay amber.
+   Dark's colours are in dark.css. */
 :root {
   --amber: #e8820c;
   --accent-bg-color: var(--amber);
@@ -8,18 +9,6 @@
   --attention: #007aff;
   --danger: #ff3b30;
   --success: #34c759;
-  --bot-bubble: #efeff2;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --amber: #ff9f2e;
-    --accent-color: #ffb866;
-    --attention: #0a84ff;
-    --danger: #ff453a;
-    --success: #30d158;
-    --bot-bubble: #2c2c2f;
-  }
 }
 
 .bot-amber { color: var(--amber); }
@@ -31,13 +20,6 @@
 .bot-teal { color: #30b0c7; }
 .bot-green { color: var(--success); }
 .bot-gray { color: #8e8e93; }
-
-@media (prefers-color-scheme: dark) {
-  .bot-pink { color: #ff375f; }
-  .bot-purple { color: #bf5af2; }
-  .bot-indigo { color: #5e5ce6; }
-  .bot-teal { color: #40c8e0; }
-}
 
 /* Needs you: approve buttons and counts. */
 button.attention {
@@ -57,4 +39,102 @@ button.attention {
 
 .signin-mark {
   color: var(--amber);
+}
+
+/* The chat (PLAN.md §10.2): your bubbles in deep amber with white text, a bot's in grey. */
+.bubble {
+  border-radius: 18px;
+  padding: 7px 12px;
+}
+
+.bubble.mine {
+  background-color: #b05a00;
+  color: white;
+}
+
+/* A tint of the text's colour, so it suits light, dark and your own theme. */
+.bubble.theirs {
+  background-color: alpha(currentColor, 0.08);
+}
+
+/* Unread: an amber line at the edge of a bot's message. */
+.bot-row {
+  padding-left: 9px;
+  border-radius: 2px;
+}
+
+.bot-row.unread {
+  box-shadow: inset 3px 0 var(--amber);
+}
+
+.bubble .code {
+  background-color: alpha(currentColor, 0.07);
+  border-radius: 10px;
+}
+
+.bubble .code label {
+  padding: 8px 40px 8px 10px;
+}
+
+.quote {
+  border-left: 3px solid alpha(currentColor, 0.25);
+  padding-left: 10px;
+}
+
+.marker {
+  color: alpha(currentColor, 0.6);
+}
+
+.typing {
+  min-height: 18px;
+}
+
+.typing .dot {
+  min-width: 7px;
+  min-height: 7px;
+  border-radius: 99px;
+  background-color: currentColor;
+  opacity: 0.3;
+  animation: typing 1.2s infinite ease-in-out;
+}
+
+.typing .dot:nth-child(2) { animation-delay: 0.2s; }
+.typing .dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typing {
+  0%, 80%, 100% { opacity: 0.3; }
+  40% { opacity: 0.9; }
+}
+
+button.fold {
+  padding: 6px 8px;
+}
+
+.tray {
+  padding: 14px;
+}
+
+.composer {
+  background-color: alpha(currentColor, 0.06);
+  border-radius: 20px;
+}
+
+.composer textview,
+.composer text {
+  background: none;
+}
+
+button.composer-button {
+  min-width: 38px;
+  min-height: 38px;
+}
+
+.pending-file {
+  padding: 4px 4px 4px 10px;
+  border-radius: 12px;
+  background-color: alpha(currentColor, 0.08);
+}
+
+.pending-file.failed {
+  box-shadow: inset 0 0 0 1px var(--danger);
 }

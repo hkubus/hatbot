@@ -10,12 +10,28 @@ fn main() -> glib::ExitCode {
     app.connect_startup(|app| {
         let css = gtk::CssProvider::new();
         css.load_from_string(include_str!("ui/style.css"));
+        let dark = gtk::CssProvider::new();
+        dark.load_from_string(include_str!("ui/dark.css"));
         if let Some(display) = gdk::Display::default() {
             gtk::style_context_add_provider_for_display(
                 &display,
                 &css,
                 gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
             );
+            let follow = move |styles: &adw::StyleManager| {
+                if styles.is_dark() {
+                    gtk::style_context_add_provider_for_display(
+                        &display,
+                        &dark,
+                        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1,
+                    );
+                } else {
+                    gtk::style_context_remove_provider_for_display(&display, &dark);
+                }
+            };
+            let styles = adw::StyleManager::default();
+            follow(&styles);
+            styles.connect_dark_notify(follow);
         }
         app.set_accels_for_action("window.close", &["<Control>w"]);
         app.set_accels_for_action("app.quit", &["<Control>q"]);

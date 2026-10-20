@@ -35,6 +35,7 @@ pub enum Change {
     Connection,
     Spend,
     Schedule(i64),
+    Box(i64),
     Memory,
     Settings,
     Toast(String),
@@ -60,6 +61,8 @@ pub struct State {
     pub replies: HashMap<i64, LiveReply>,
     pub has_earlier: bool,
     loading_earlier: bool,
+    /// The chat that's showing has loaded once: an empty one is empty, not loading.
+    pub loaded: bool,
     /// Hatbot's messages sent or edited since you last saw them, in every chat.
     pub unread: BTreeSet<i64>,
     pub paused: bool,
@@ -80,6 +83,9 @@ pub struct State {
     pub schedules: HashMap<i64, Schedule>,
     /// Schedules a message points at that no longer exist.
     pub deleted_schedules: HashSet<i64>,
+    pub boxes: HashMap<i64, AppBox>,
+    /// Boxes a message points at that no longer exist.
+    pub deleted_boxes: HashSet<i64>,
     /// Your bots, deleted ones too once seen: old messages still name them.
     pub bots: HashMap<String, Bot>,
     /// Bots that aren't deleted, Hatbot first.
@@ -360,6 +366,11 @@ impl Store {
         self.0.next_id.set(id);
         self.0.listeners.borrow_mut().push((id, Rc::new(f)));
         Listener(self.weak(), id)
+    }
+
+    /// A line at the bottom of the window.
+    pub fn toast(&self, text: &str) {
+        self.emit(Change::Toast(text.into()));
     }
 
     fn emit(&self, change: Change) {
@@ -669,6 +680,17 @@ impl Store {
                     st.deleted_schedules.insert(id);
                     changes.push(Change::Schedule(id));
                 }
+                Event::BoxUpdated { app } => {
+                    let id = app.id;
+                    st.deleted_boxes.remove(&id);
+                    st.boxes.insert(id, app);
+                    changes.push(Change::Box(id));
+                }
+                Event::BoxDeleted { id } => {
+                    st.boxes.remove(&id);
+                    st.deleted_boxes.insert(id);
+                    changes.push(Change::Box(id));
+                }
                 Event::EpisodeUpdated { episode } => {
                     st.episodes.insert(episode.id, episode);
                     changes.push(Change::Messages);
@@ -818,6 +840,7 @@ impl Store {
             st.messages.clear();
             st.replies.clear();
             st.has_earlier = false;
+            st.loaded = false;
             (left, was)
         };
         self.emit(Change::Messages);
@@ -838,6 +861,7 @@ impl Store {
             st.messages.clear();
             st.replies.clear();
             st.has_earlier = false;
+            st.loaded = false;
             st.chat_path()
         };
         self.emit(Change::Messages);
@@ -880,6 +904,7 @@ impl Store {
             let (messages, has_earlier) = thread::merge(loaded, st.has_earlier, list.clone(), PAGE);
             st.messages = messages;
             st.has_earlier = has_earlier;
+            st.loaded = true;
             st.sync_replies(&list);
             for e in &missed {
                 st.follow(e);
@@ -926,6 +951,38 @@ impl Store {
         }
         self.emit(Change::Messages);
         Ok(())
+    }
+
+    /// Loads earlier pages until message `id` is in the chat, for a link to it; whether it is.
+    pub async fn reveal(&self, id: i64) -> bool {
+        if self.state().messages.is_empty() {
+            let _ = self.load_thread().await;
+        }
+        for _ in 0..40 {
+            let more = {
+                let st = self.state();
+                if st.index(id).is_some() {
+                    return true;
+                }
+                st.has_earlier && st.messages.first().is_some_and(|m| id < m.id)
+            };
+            if !more {
+                return false;
+            }
+            while self.state().loading_earlier {
+                glib::timeout_future(Duration::from_millis(100)).await;
+            }
+            if self.load_earlier().await.is_err() {
+                return false;
+            }
+        }
+        self.state().index(id).is_some()
+    }
+
+    /// Deletes a conversation from the chat for good; message.deleted takes it off the screen.
+    pub async fn delete_episode(&self, id: i64) -> Result<()> {
+        let path = format!("{}/episodes/{id}", self.state().chat_path());
+        self.0.api.delete(&path).await
     }
 
     /// Fetches the conversations of `list` we don't have yet. A brain from before folds answers 404.
@@ -1133,6 +1190,34 @@ impl Store {
                 }
             }
             s.emit(Change::Schedule(id));
+        });
+    }
+
+    pub fn ensure_box(&self, id: i64) {
+        {
+            let mut st = self.state_mut();
+            if st.boxes.contains_key(&id)
+                || st.deleted_boxes.contains(&id)
+                || !st.requested.insert(format!("x{id}"))
+            {
+                return;
+            }
+        }
+        self.spawn(move |s| async move {
+            // The box's fields, with its versions and secrets beside them.
+            match s.0.api.get::<AppBox>(&format!("/boxes/{id}")).await {
+                Ok(b) => {
+                    s.state_mut().boxes.insert(id, b);
+                }
+                Err(ApiError { status: 404, .. }) => {
+                    s.state_mut().deleted_boxes.insert(id);
+                }
+                Err(_) => {
+                    s.state_mut().requested.remove(&format!("x{id}"));
+                    return;
+                }
+            }
+            s.emit(Change::Box(id));
         });
     }
 

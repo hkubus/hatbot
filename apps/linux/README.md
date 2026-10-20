@@ -3,7 +3,8 @@
 A native GTK 4 and libadwaita app for Hatbot, written in Rust (PLAN.md §23). It talks to the brain's
 API with a bearer token. Notifications still come from the ntfy app.
 
-- `src/core`: the API types, the address rule, streamed text and the chat's pages and folds.
+- `src/core`: the API types, the address rule, streamed text, the chat's pages and folds, and
+  Markdown.
 - `src/net`: the API client and the reconnecting WebSocket, both on libsoup and GLib's main loop,
   and the token in the keyring.
 - `src/store.rs`: the live store. It applies the brain's events and tells the views what changed.

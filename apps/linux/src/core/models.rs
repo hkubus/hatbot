@@ -364,6 +364,19 @@ pub struct Schedule {
     pub tainted: bool,
 }
 
+/// A small web app a bot made for you (PLAN.md §21; packages/shared/src/box.ts).
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AppBox {
+    pub id: i64,
+    pub bot_id: String,
+    pub conversation_id: Option<i64>,
+    pub title: String,
+    pub version: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Bot {
@@ -501,6 +514,13 @@ pub enum Event {
     ScheduleDeleted { id: i64 },
     #[serde(rename = "episode.updated")]
     EpisodeUpdated { episode: Episode },
+    #[serde(rename = "box.updated")]
+    BoxUpdated {
+        #[serde(rename = "box")]
+        app: AppBox,
+    },
+    #[serde(rename = "box.deleted")]
+    BoxDeleted { id: i64 },
     #[serde(rename = "bot.updated")]
     BotUpdated { bot: Bot },
     #[serde(rename = "bot.deleted")]

@@ -8,10 +8,12 @@ use gtk::{gio, glib};
 use hatbot::core::models::{Conversation, ConversationKind};
 use hatbot::store::{Change, Listener, Store};
 
+use super::chat::Chat;
 use super::icon::Icon;
 
 pub struct Shell {
     pub root: gtk::Widget,
+    _chat: Chat,
     _inner: Rc<Inner>,
     _listener: Listener,
 }
@@ -65,8 +67,12 @@ impl Shell {
             .button_label("Resume")
             .build();
         let unreachable = adw::Banner::new("Can't reach Hatbot.");
+        let chat = Chat::new(store);
+        let content_header = adw::HeaderBar::new();
+        content_header.pack_end(&chat.incognito);
         let content_view = adw::ToolbarView::new();
-        content_view.add_top_bar(&adw::HeaderBar::new());
+        content_view.add_top_bar(&content_header);
+        content_view.set_content(Some(&chat.root));
         content_view.add_top_bar(&paused);
         content_view.add_top_bar(&unreachable);
         let content = adw::NavigationPage::builder()
@@ -143,7 +149,10 @@ impl Shell {
                 Change::Chats | Change::Unread => s.sync_chats(),
                 Change::Paused => s.sync_banners(),
                 Change::Connection => s.sync_banners(),
-                Change::Messages => s.sync_title(),
+                Change::Messages => {
+                    s.sync_title();
+                    s.sync_selection();
+                }
                 _ => {}
             }
         });
@@ -158,6 +167,7 @@ impl Shell {
         });
         Shell {
             root: bin.upcast(),
+            _chat: chat,
             _inner: inner,
             _listener: listener,
         }
@@ -178,8 +188,26 @@ impl Inner {
 
     fn sync_title(&self) {
         let st = self.store.state();
-        let title = st.chat_name(st.current_chat());
+        let title = if st.incognito {
+            "Incognito".into()
+        } else {
+            st.chat_name(st.current_chat())
+        };
         self.content.set_title(&title);
+    }
+
+    /// Another chat opened from a message: its row selected.
+    fn sync_selection(&self) {
+        let id = self.store.state().conversation_id;
+        let rows = self.rows.borrow();
+        let Some((_, row)) = rows.iter().find(|(p, _)| *p == Place::Chat(id)) else {
+            return;
+        };
+        if self.chats.selected_row().as_ref() != Some(row) {
+            self.syncing.set(true);
+            self.chats.select_row(Some(row));
+            self.syncing.set(false);
+        }
     }
 
     fn sync_banners(&self) {
