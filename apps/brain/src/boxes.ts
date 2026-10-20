@@ -36,6 +36,7 @@ import type { Notifier } from "./notify";
 import type { Secrets } from "./secrets";
 import type { SettingsStore } from "./settings";
 import { BudgetError, estimateTokens, fixedTokens, requestCeiling, type Spend } from "./spend";
+import { clip } from "./text";
 
 /** Why a box can't be made, changed or kept: the message is for the model, or for you. */
 export class BoxError extends UserError {}
@@ -560,7 +561,7 @@ export class Boxes {
         )
         .get(id, since)?.n ?? 0;
     if (sent >= NOTIFY_PER_DAY) return `a box notifies at most ${NOTIFY_PER_DAY} times a day.`;
-    const message = text.length > MAX_BOX_NOTIFY ? `${text.slice(0, MAX_BOX_NOTIFY - 1)}…` : text;
+    const message = clip(text, MAX_BOX_NOTIFY);
     const note = this.d.chats.boxNote(box, message);
     this.db
       .query("INSERT INTO box_notices (box_id, message_id, created_at) VALUES (?, ?, ?)")

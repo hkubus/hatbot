@@ -28,6 +28,7 @@ import type { Questions } from "../questions";
 import type { SettingsStore } from "../settings";
 import type { Spend } from "../spend";
 import type { Skills } from "../teach/skills";
+import { clip, head } from "../text";
 import { runAgentTask } from "./agent-run";
 import { runDesktopTask } from "./desktop-run";
 import { runHandoff } from "./handoff-run";
@@ -540,7 +541,7 @@ export class Tasks {
       return `Hand-offs between bots go at most ${MAX_HANDOFFS} deep, and this would be deeper. Do it yourself, or report what you have.`;
     const firstLine = input.request.trim().split("\n")[0] ?? "";
     const task = this.createBackgroundTask({
-      title: firstLine.length > 80 ? `${firstLine.slice(0, 79)}…` : firstLine,
+      title: clip(firstLine, 80),
       goal: input.request,
       origin: input.parent?.origin ?? "chat",
       source: input.parent?.source ?? undefined,
@@ -978,7 +979,7 @@ export class Tasks {
   /** A notification's title: another bot's says which. */
   titled(task: Task, title: string): string {
     const named = task.botId === HATBOT_ID ? title : `${this.d.bots.nameOf(task.botId)} · ${title}`;
-    return named.slice(0, 120);
+    return head(named, 120);
   }
 
   cancel(id: number): boolean {

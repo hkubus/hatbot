@@ -4,7 +4,6 @@ import SwiftUI
 struct MemoryView: View {
   @Environment(AppStore.self) private var store
   @Binding var path: [Route]
-  @State private var files: [MemoryFile]?
   @State private var error: String?
   @State private var naming = false
   @State private var newName = ""
@@ -15,6 +14,7 @@ struct MemoryView: View {
   @State private var before = Set<Int>()
 
   var body: some View {
+    let files = store.memoryFiles
     NavigationStack(path: $path) {
       List {
         if let error {
@@ -98,10 +98,11 @@ struct MemoryView: View {
 
   private func load() async {
     let store = store
+    store.showKeptMemory()
     // Brains from before proposals answer 404; the files still show.
     async let proposals: Void? = try? store.loadProposals()
     async let skillList = try? store.loadSkills()
-    await attempt($error) { files = try await store.memoryTree() }
+    await attempt($error) { _ = try await store.memoryTree() }
     _ = await proposals
     skills = await skillList ?? []
   }

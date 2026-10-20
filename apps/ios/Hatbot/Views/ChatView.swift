@@ -239,6 +239,14 @@ struct ChatView: View {
             }
             .transition(.move(edge: .top).combined(with: .opacity))
           }
+          // The chat's latest messages didn't load: what's showing is what was kept, if anything.
+          if let failed = store.threadError, !store.unreachable {
+            Banner(text: message(for: failed), systemImage: "exclamationmark.triangle") {
+              Button("Try again") { Task { await store.reloadThread() } }
+                .buttonStyle(.borderless)
+                .fontWeight(.semibold)
+            }
+          }
           if store.paused {
             Banner(text: "All activity is paused.", systemImage: "pause.circle.fill") {
               Button("Resume") { Task { try? await store.setPaused(false) } }
@@ -331,9 +339,7 @@ struct ChatView: View {
       .task {
         // Coming back to a chat that's loaded and live: the events kept it current. Otherwise the latest
         // page is merged in.
-        if store.messages.isEmpty || !store.connected {
-          await attempt($error) { try await store.loadThread() }
-        }
+        if store.messages.isEmpty || !store.connected { await store.reloadThread() }
       }
     }
   }

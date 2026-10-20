@@ -62,3 +62,14 @@ struct DiskCache: Sendable {
     }
   }
 }
+
+/// Memory's files and the to-do list, so their pages show at once on launch and refresh when opened.
+extension DiskCache {
+  func memoryTree() -> [MemoryFile]? { load("memory-tree.json") }
+
+  func save(memoryTree: [MemoryFile]) { write(memoryTree, "memory-tree.json") }
+
+  func todos() -> TodoList? { load("todo.json") }
+
+  func save(_ todos: TodoList) { write(todos, "todo.json") }
+}

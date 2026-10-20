@@ -4,20 +4,19 @@ import Foundation
 /// The latest page, fetched again after a reconnect or on coming back to the chat, merged into what's loaded.
 enum ThreadMerge {
   /// The messages to show and whether there are earlier ones to load. The page is the truth from its first
-  /// message on, so one deleted meanwhile goes; earlier pages you'd loaded stay, unless more than a page
-  /// came while away. Messages newer than the page arrived by event while it loaded, and stay too.
+  /// message on, so one deleted meanwhile goes, the newest too; earlier pages you'd loaded stay, unless
+  /// more than a page came while away. What came while it loaded, the load puts on again.
   static func merge(
     _ loaded: [ThreadMessage], hasEarlier: Bool, latest: [ThreadMessage], page: Int
   ) -> (messages: [ThreadMessage], hasEarlier: Bool) {
-    guard let floor = latest.first?.id, let top = latest.last?.id, let last = loaded.last?.id else {
+    guard let floor = latest.first?.id, let last = loaded.last?.id else {
       return (latest, latest.count == page)
     }
     let full = latest.count == page
     if full && last < floor { return (latest, true) }
     // A short page is all there is: anything loaded before it was deleted.
     let before = full ? loaded.filter { $0.id < floor } : []
-    let after = loaded.filter { $0.id > top }
-    return (before + latest + after, before.isEmpty ? full : hasEarlier)
+    return (before + latest, before.isEmpty ? full : hasEarlier)
   }
 }
 
