@@ -8,6 +8,8 @@ struct TasksView: View {
   @Environment(\.sectionShown) private var sectionShown
   @State private var filter = AppStore.TaskFilter.active
   @State private var finishedIds: [Int]?
+  /// Running tasks shown so far may be only the ones the chat brought, until the list loads.
+  @State private var activeLoaded = false
   /// Finished tasks go back further than the pages loaded so far.
   @State private var moreFinished = false
   @State private var error: String?
@@ -45,7 +47,7 @@ struct TasksView: View {
         Section {
           if let error {
             Text(error).foregroundStyle(.red)
-          } else if shown.isEmpty && (filter == .active || finishedIds != nil) {
+          } else if shown.isEmpty && (filter == .active ? activeLoaded : finishedIds != nil) {
             Text(filter == .active ? "Nothing running." : "No tasks yet.").foregroundStyle(.secondary)
           }
           ForEach(shown) { t in
@@ -74,7 +76,13 @@ struct TasksView: View {
       .navigationBarTitleDisplayMode(.inline)
       .refreshable { await load() }
       // The section is kept while another shows: coming back to it loads the list again.
-      .task(id: sectionShown ? filter : nil) { if sectionShown { await load() } }
+      .task(id: sectionShown ? filter : nil) {
+        guard sectionShown else { return }
+        // What the list was last time, until it loads.
+        if filter == .done && finishedIds == nil { finishedIds = store.cachedTasks(.done) }
+        if filter == .active && !activeLoaded { _ = store.cachedTasks(.active) }
+        await load()
+      }
       .routes()
     }
   }
@@ -93,6 +101,8 @@ struct TasksView: View {
       if filter == .done {
         finishedIds = ids
         moreFinished = ids.count == AppStore.page
+      } else {
+        activeLoaded = true
       }
     }
   }
@@ -185,11 +195,12 @@ struct TaskDetailView: View {
         } else if let summary = task.summary {
           MarkdownText(text: summary)
         }
-        DisclosureGroup("Details") { TaskDetails(task: task) }
+        // A chat's card until the whole task comes.
+        if task.isFull { DisclosureGroup("Details") { TaskDetails(task: task) } }
       }
       Section("Timeline") {
         let steps = (store.steps[taskId] ?? []).latestNoteOnly
-        if steps.isEmpty {
+        if steps.isEmpty && store.steps[taskId] != nil {
           Text(task.isActive ? "Hasn't started yet." : "No steps.").foregroundStyle(.secondary)
         }
         ForEach(steps) { step in StepRow(step: step) }
@@ -204,8 +215,8 @@ struct TaskDetailView: View {
         ToolbarItem {
           Button("Cancel task", role: .destructive) { confirmCancel = true }
         }
-      } else if task.lane == .background && task.parentId == nil {
-        ToolbarItem { Button("Run again", systemImage: "arrow.clockwise") { rerunGoal = task.goal } }
+      } else if task.lane == .background && task.parentId == nil, let goal = task.goal {
+        ToolbarItem { Button("Run again", systemImage: "arrow.clockwise") { rerunGoal = goal } }
       }
     }
     .sheet(item: Binding(get: { rerunGoal.map(Goal.init) }, set: { rerunGoal = $0?.text })) { _ in
@@ -261,9 +272,9 @@ private struct TaskDetails: View {
         Text(task.origin == .chat ? "Chat" : task.source ?? "")
       }
     }
-    LabeledContent("Goal") { Text(task.goal).multilineTextAlignment(.trailing) }
-    if !task.successCriteria.isEmpty {
-      LabeledContent("Done when") { Text(task.successCriteria).multilineTextAlignment(.trailing) }
+    LabeledContent("Goal") { Text(task.goal ?? "").multilineTextAlignment(.trailing) }
+    if let criteria = task.successCriteria, !criteria.isEmpty {
+      LabeledContent("Done when") { Text(criteria).multilineTextAlignment(.trailing) }
     }
     LabeledContent("Started", value: task.startedAt?.stampText ?? "–")
     LabeledContent("Model", value: Format.modelName(task.model))
@@ -279,7 +290,7 @@ private struct TaskDetails: View {
     if let taintedBy = task.taintedBy {
       LabeledContent("Tainted by") { Text(taintedBy).multilineTextAlignment(.trailing) }
     }
-    LabeledContent("Cost", value: Format.money(task.costUsd))
+    LabeledContent("Cost", value: Format.money(task.costUsd ?? 0))
     if let report = ReadTarget.report(task, files: store.taskFiles[task.id] ?? []) {
       NavigationLink(value: Route.read(report)) { LabeledContent("Report", value: report.path ?? report.name) }
     }

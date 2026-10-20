@@ -6,7 +6,7 @@ import {
   describeCron,
   type Question,
   type Schedule,
-  type Task,
+  type TaskCard,
   type TaskStatus,
 } from "@hatbot/shared";
 import { useEffect, useState } from "react";
@@ -51,7 +51,7 @@ export function StatusChip({ status }: { status: TaskStatus }) {
   return <span className={`chip ${cls}`}>{label}</span>;
 }
 
-export const isActive = (t: Task) => t.finishedAt === null;
+export const isActive = (t: TaskCard) => t.finishedAt === null;
 
 export const screenUrl = (taskId: number, stepId: number) =>
   `${API_PREFIX}/tasks/${taskId}/screens/${stepId}`;
@@ -75,7 +75,7 @@ function lastLine(text?: string) {
   }
 }
 
-export function taskLine(t: Task, progress?: string): string {
+export function taskLine(t: TaskCard, progress?: string): string {
   if (t.summary && !isActive(t)) return t.summary;
   switch (t.status) {
     case "queued":

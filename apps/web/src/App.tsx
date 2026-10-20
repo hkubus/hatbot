@@ -27,6 +27,7 @@ import {
   reconnectNow,
   setIncognito,
   setPaused,
+  unreadCount,
   useStore,
 } from "./store";
 import { setTheme, type Theme, useTheme } from "./theme";
@@ -136,7 +137,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const { path, params } = useRoute();
   const theme = useTheme();
   const pending = useStore(needsYou);
-  const unread = useStore((s) => s.unread.length);
+  const unread = useStore(unreadCount);
   const incognito = useStore((s) => s.incognito);
   const chats = useStore((s) => s.conversations);
   const chat = useStore(currentChat);

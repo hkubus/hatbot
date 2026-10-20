@@ -2,12 +2,12 @@
 import { BOT_COLORS, BOT_ICONS, BOT_TEMPLATES, type Bot, HATBOT_ID } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
 import { useAction } from "../action";
-import { errorText } from "../api";
+import { ApiError, errorText } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm, toggled, useStoredForm } from "../form";
 import { BotMark } from "../icons";
 import { navigate } from "../router";
-import { chatPath, createBot, deleteBot, loadBots, loadPlugins, saveBot, useStore } from "../store";
+import { chatPath, createBot, deleteBot, loadBot, loadPlugins, saveBot, useStore } from "../store";
 import { Switch } from "../switch";
 import { BackHead, CHAT_MODELS, EFFORTS, SaveBar, Select } from "../ui";
 
@@ -45,7 +45,13 @@ const formOf = (b: Form): Form => ({
 export function BotPage({ id, toast }: { id: string; toast: (t: string) => void }) {
   const isNew = id === "new";
   const stored = useStore((s) => (isNew ? undefined : s.bots[id]));
-  const listed = useStore((s) => s.botIds.includes(id));
+  // Deleted, here or elsewhere, once the bots are known.
+  const gone = useStore((s) => s.botIds.length > 0 && !s.botIds.includes(id));
+  // The whole bot: a list's has only its role's first line, and saving that would cut the role.
+  const [full, setFull] = useState<Bot>();
+  useEffect(() => {
+    if (stored && !stored.brief) setFull(stored);
+  }, [stored]);
   const chat = useStore((s) =>
     s.conversations.find((c) => c.kind === "direct" && c.botIds[0] === id),
   );
@@ -58,21 +64,21 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
   });
   const [start] = useState<Form>(() => ({ ...EMPTY, color: freeColor }));
   const { form, base, dirty, set, fill, saved } = useStoredForm<Form>(
-    isNew ? start : stored && formOf(stored),
+    isNew ? start : full && formOf(full),
   );
   const [template, setTemplate] = useState("");
   const { busy, error, run } = useAction();
   const release = useLeaveGuard(dirty);
-  // The bots again, to tell one that's gone from one not loaded yet.
-  const [loaded, setLoaded] = useState(false);
+  const [missing, setMissing] = useState(false);
   const [loadError, setLoadError] = useState("");
   const load = useCallback(() => {
     setLoadError("");
-    loadBots().then(
-      () => setLoaded(true),
-      (err) => setLoadError(errorText(err)),
+    loadBot(id).then(setFull, (err) =>
+      err instanceof ApiError && err.status === 404
+        ? setMissing(true)
+        : setLoadError(errorText(err)),
     );
-  }, []);
+  }, [id]);
 
   useEffect(() => {
     void loadPlugins().catch(() => {});
@@ -82,11 +88,11 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
   }, [isNew, load]);
 
   const back = chat ? chatPath(chat.id) : "/";
-  if (!isNew && (!stored || !listed || !form))
+  if (!isNew && (missing || gone || !form))
     return (
       <NoForm
         error={loadError}
-        missing={loaded && !listed ? "This bot doesn't exist." : ""}
+        missing={missing || gone ? "This bot doesn't exist." : ""}
         retry={load}
         back={{ label: "Chat", to: back }}
       />

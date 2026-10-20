@@ -133,14 +133,35 @@ test("what the model gets: text inline, PDFs as documents, images while a reques
   );
 });
 
-test("a file is checked again each time it's shown, and an incognito one isn't kept", async () => {
+/** A `width`×`height` picture, as a 24-bit BMP for Bun.Image to turn into a PNG. */
+async function picture(width: number, height: number) {
+  const row = Math.ceil((width * 3) / 4) * 4;
+  const bmp = new Uint8Array(54 + row * height);
+  const v = new DataView(bmp.buffer);
+  bmp.set([66, 77]);
+  for (const [at, n] of [
+    [2, bmp.length],
+    [10, 54],
+    [14, 40],
+    [18, width],
+    [22, height],
+  ])
+    v.setUint32(at as number, n as number, true);
+  v.setUint16(26, 1, true);
+  v.setUint16(28, 24, true);
+  bmp.fill(200, 54);
+  return new Bun.Image(bmp).png().bytes();
+}
+
+test("a sent picture is kept for good, smaller copies too; an unsent or incognito one isn't kept", async () => {
   const chat = new FakeModel([{ content: [text("A cat.")] }, { content: [text("Shh.")] }]);
   const t = await testApp(chat);
   const { cookie } = signIn(t);
-  const get = (id: number, headers: Record<string, string> = {}) =>
-    t.app.request(`/api/v1/attachments/${id}`, { headers: { cookie, ...headers } });
+  const get = (path: string | number, headers: Record<string, string> = {}) =>
+    t.app.request(`/api/v1/attachments/${path}`, { headers: { cookie, ...headers } });
+  const photo = await picture(1000, 600);
   const send = async (incognito: boolean) => {
-    const a = (await (await upload(t, cookie, new File([PNG], "cat.png"))).json()) as Attachment;
+    const a = (await (await upload(t, cookie, new File([photo], "cat.png"))).json()) as Attachment;
     // Not sent yet: it may be going to an incognito conversation.
     expect((await get(a.id)).headers.get("cache-control")).toBe("no-store");
     await t.call(
@@ -152,24 +173,41 @@ test("a file is checked again each time it's shown, and an incognito one isn't k
     await t.thread.idle();
     return a;
   };
+  const forever = "private, max-age=31536000, immutable";
 
   const kept = await send(false);
   const first = await get(kept.id);
-  expect(first.headers.get("cache-control")).toBe("private, no-cache");
+  expect(first.headers.get("cache-control")).toBe(forever);
   const etag = first.headers.get("etag") ?? "";
   expect(etag).toStartWith(`"${kept.id}-`);
-  const again = await get(kept.id, { "if-none-match": etag });
-  expect(again.status).toBe(304);
+  expect((await get(kept.id, { "if-none-match": etag })).status).toBe(304);
+  // A bubble's copy: `w` rounds up to a kept size; the same copy for each ask, even two at once.
+  const [small, same] = await Promise.all([get(`${kept.id}?w=500`), get(`${kept.id}?w=700`)]);
+  expect(small.headers.get("content-type")).toBe("image/webp");
+  expect(small.headers.get("cache-control")).toBe(forever);
+  const bytes = await small.bytes();
+  expect(await same.bytes()).toEqual(bytes);
+  expect(bytes.length).toBeLessThan(photo.length);
+  const shrunk = new Bun.Image(bytes);
+  await shrunk.metadata();
+  expect([shrunk.width, shrunk.height]).toEqual([720, 432]);
+  // No bigger than asked, or not a picture: the original.
+  expect(await (await get(`${kept.id}?w=1080`)).bytes()).toEqual(photo);
 
   const secret = await send(true);
-  const shown = await get(secret.id);
+  const shown = await get(`${secret.id}?w=480`);
+  expect(shown.headers.get("content-type")).toBe("image/webp");
   expect(shown.headers.get("cache-control")).toBe("no-store");
   expect(shown.headers.get("etag")).toBeNull();
-  // Leaving incognito deletes it, and the id isn't given to the next file.
+  const files = () => Array.from(new Bun.Glob(`**/${secret.id}-*`).scanSync(t.archive.dir));
+  expect(files().length).toBe(2);
+  // Leaving incognito deletes it with its copy, and the id isn't given to the next file.
   await t.call("DELETE", "/thread/incognito", undefined, { cookie });
   expect((await get(secret.id)).status).toBe(404);
+  expect(files()).toEqual([]);
   const next = (await (await upload(t, cookie, new File([PNG], "dog.png"))).json()) as Attachment;
   expect(next.id).toBeGreaterThan(secret.id);
+  expect((await get(`${next.id}?w=480`)).headers.get("content-type")).toBe("image/png");
 });
 
 test("downloads: images inline, anything else as a file, never sniffed, with a name in any language", async () => {

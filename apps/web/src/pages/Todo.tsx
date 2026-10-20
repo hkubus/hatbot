@@ -38,7 +38,7 @@ export function TodoPage({ toast }: { toast: Toast }) {
   const version = useStore((s) => s.memoryVersion);
   const working = useStore((s) =>
     Object.values(s.tasks)
-      .filter((t: Task) => t.todo && isActive(t))
+      .filter((t) => t.todo && isActive(t))
       .map((t) => t.id)
       .join(","),
   );

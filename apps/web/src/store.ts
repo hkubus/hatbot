@@ -11,6 +11,7 @@ import {
   type Episode,
   type HatbotEvent,
   type Me,
+  type MessageChanges,
   type Negotiation,
   type NegotiationDetail,
   type NegotiationMessage,
@@ -18,8 +19,10 @@ import {
   type Proposal,
   type Question,
   type Schedule,
+  type Snapshot,
   type SpendSummary,
   type Task,
+  type TaskCard,
   type TaskStep,
   type TeachSession,
   type ThreadMessage,
@@ -54,7 +57,8 @@ type State = {
   settingsVersion: number;
   heartbeatVersion: number;
   connected: boolean;
-  tasks: Record<number, Task>;
+  /** Cards (TaskCard) until a task's page or an event brings the whole task. */
+  tasks: Record<number, Task | TaskCard>;
   /** Steps of the tasks that have been opened or shown as a card. */
   steps: Record<number, TaskStep[]>;
   /** Files the tasks that have been opened attached, like a research report. */
@@ -80,7 +84,7 @@ type State = {
   proposals: Record<number, Proposal>;
   /** Teach-by-showing: the recording in progress and drafts, by id. */
   teach: Record<number, TeachSession>;
-  /** Your bots, deleted ones too once seen: old messages still name them. */
+  /** Your bots, deleted ones too once seen: old messages still name them. Brief (`Bot.brief`) as listed. */
   bots: Record<string, Bot>;
   /** Bots that aren't deleted, Hatbot first. */
   botIds: string[];
@@ -304,11 +308,20 @@ export async function openConversation(id: number) {
 
 export async function loadBots() {
   const [bots, conversations] = await Promise.all([
-    api<Bot[]>("/bots"),
+    api<Bot[]>("/bots?brief=1"),
     api<Conversation[]>("/conversations"),
   ]);
+  takeBots(bots, conversations);
+}
+function takeBots(bots: Bot[], conversations: Conversation[]) {
   merge("bots", bots);
   set({ botIds: bots.map((b) => b.id), conversations });
+}
+/** A bot with all of its role, for its page. */
+export async function loadBot(id: string) {
+  const bot = await api<Bot>(`/bots/${id}`);
+  putBot(bot);
+  return bot;
 }
 
 let refreshing: ReturnType<typeof setTimeout> | null = null;
@@ -402,14 +415,23 @@ export function bumpMemory() {
   set({ memoryVersion: state.memoryVersion + 1 });
 }
 
-export async function loadTask(id: number) {
+/** A task with its steps. `since`: only the steps after the ones we have; a brain from before sends all. */
+export async function loadTask(id: number, { since = false } = {}) {
+  const had = since ? state.steps[id] : undefined;
+  const after = had?.at(-1)?.id;
   const { task, steps, attachments } = await api<{
     task: Task;
     steps: TaskStep[];
     attachments?: Attachment[];
-  }>(`/tasks/${id}`);
+  }>(`/tasks/${id}${after === undefined ? "" : `?afterStep=${after}`}`);
   put("tasks", id, task);
-  put("steps", id, steps);
+  const fresh = new Set(steps.map((x) => x.id));
+  const kept = (had ?? []).filter((x) => !fresh.has(x.id));
+  put(
+    "steps",
+    id,
+    [...kept, ...steps].sort((a, b) => a.id - b.id),
+  );
   put("taskFiles", id, attachments ?? []);
 }
 
@@ -433,7 +455,7 @@ function loadWanted() {
   wanted = [];
   for (let i = 0; i < ids.length; i += 200) {
     const some = ids.slice(i, i + 200);
-    loadTasks({ ids: some }).catch(() => {
+    loadTasks({ ids: some, view: "card" }).catch(() => {
       for (const id of some) requested.delete(`t${id}`);
     });
   }
@@ -459,13 +481,19 @@ export async function loadTasks(
     watcherId?: number;
     /** Just these, whatever their age. */
     ids?: number[];
+    /** As cards: what a chat's card shows. */
+    view?: "card";
   } = {},
 ) {
   const q = new URLSearchParams(
     Object.entries(filter).flatMap(([k, v]) => (v === undefined ? [] : [[k, String(v)]])),
   ).toString();
-  const list = await api<Task[]>(`/tasks${q ? `?${q}` : ""}`);
-  merge("tasks", list);
+  const list = await api<(Task | TaskCard)[]>(`/tasks${q ? `?${q}` : ""}`);
+  // A card doesn't take away what a whole task we have says that it leaves out.
+  merge(
+    "tasks",
+    list.map((t) => ({ ...state.tasks[t.id], ...t })),
+  );
   return list.map((t) => t.id);
 }
 
@@ -606,17 +634,28 @@ export async function saveSchedule(id: number, patch: Partial<Schedule> & { at?:
   return s;
 }
 
-async function loadLive() {
+/** What a brain from before the stream's snapshot is asked for instead. */
+async function askLive() {
   void loadBots().catch(() => {});
-  const [pending, asked, desktop, teach, unread] = await Promise.all([
+  const [approvals, questions, desktop, unread] = await Promise.all([
     api<Approval[]>("/approvals?pending=1"),
     api<Question[]>("/questions").catch(() => null),
     api<DesktopState>("/desktop/status").catch(() => null),
-    api<{ recording: TeachSession | null; drafts: TeachSession[] }>("/teach").catch(() => null),
     api<number[]>("/thread/unread").catch(() => null),
+  ]);
+  return { approvals, questions, desktop, unread };
+}
+
+/** What's live as the stream opens: its first event, the snapshot, says, or we ask. */
+async function loadLive(snapshot: Snapshot | null) {
+  if (snapshot) takeBots(snapshot.bots, snapshot.conversations);
+  const [live, teach] = await Promise.all([
+    snapshot ?? askLive(),
+    api<{ recording: TeachSession | null; drafts: TeachSession[] }>("/teach").catch(() => null),
     // Mandate approvals link to their negotiations.
     loadNegotiations().catch(() => null),
   ]);
+  const { approvals: pending, questions: asked, desktop, unread } = live;
   if (unread) set({ unread });
   const approvals = { ...state.approvals };
   // Anything we thought pending but the server doesn't list was decided while we were away.
@@ -638,7 +677,8 @@ async function loadLive() {
     set({ teach: sessions });
   }
   for (const t of Object.values(state.tasks))
-    if (state.steps[t.id] && t.finishedAt === null) void loadTask(t.id).catch(() => {});
+    if (state.steps[t.id] && t.finishedAt === null)
+      void loadTask(t.id, { since: true }).catch(() => {});
 }
 
 export async function decideApproval(
@@ -702,6 +742,10 @@ export async function saveSkill(
 }
 export const recording = (s: State) =>
   Object.values(s.teach).find((t) => t.status === "recording") ?? null;
+
+/** Messages you haven't seen: each chat counts them all, the ids are only each chat's newest. */
+export const unreadCount = (s: State) =>
+  s.conversations.length ? s.conversations.reduce((n, c) => n + c.unread, 0) : s.unread.length;
 
 /** Approvals and questions waiting for you, plus a takeover request. */
 export const needsYou = (s: State) =>
@@ -868,6 +912,7 @@ function apply(e: HatbotEvent) {
       if (state.botIds.some((id) => botName(state, id) === e.author))
         toast(`Memory: ${e.message}`, "info");
       return set({ memoryVersion: state.memoryVersion + 1 });
+    case "snapshot":
     case "paused":
       return set({ paused: e.paused });
     case "task.updated": {
@@ -936,9 +981,23 @@ function apply(e: HatbotEvent) {
   }
 }
 
+/**
+ * A time the loaded messages were all current at, in the brain's clock: your bots' messages come only
+ * while the stream is up, and their times and edits are no later than when it went down. Yours may have
+ * been posted after.
+ */
+function currentAt(list: ThreadMessage[]): string | undefined {
+  const times = list
+    .filter((m) => m.role === "assistant")
+    .map((m) => (m.editedAt && m.editedAt > m.createdAt ? m.editedAt : m.createdAt))
+    .sort();
+  return times.at(-1) ?? list[0]?.createdAt;
+}
+
 /** The latest page again, merged into what's loaded: earlier pages stay, so the view doesn't jump. */
 async function refreshThread() {
   const { incognito, conversationId } = state;
+  const since = currentAt(state.messages);
   const { list: latest, events } = await messagesPage();
   if (incognito !== state.incognito || conversationId !== state.conversationId) return;
   flushDeltas();
@@ -949,6 +1008,47 @@ async function refreshThread() {
     return set({ messages: caughtUp(latest, events), hasEarlier: latest.length === PAGE });
   const older = state.messages.filter((m) => m.id < first.id);
   set({ messages: [...older, ...caughtUp(latest, events)] });
+  const from = older[0]?.id;
+  if (from === undefined || !since) return;
+  await refreshEarlier(from, first.id, since).catch((err) => {
+    // Not known to be current, and the next load couldn't tell since when: they load again.
+    if (err instanceof ApiError && err.status === 404) return;
+    if (incognito !== state.incognito || conversationId !== state.conversationId) return;
+    set({ messages: state.messages.filter((m) => m.id >= first.id), hasEarlier: true });
+  });
+}
+
+/**
+ * Earlier pages brought up to date without loading them again: what was deleted meanwhile goes, and
+ * what a task's result edited is replaced.
+ */
+async function refreshEarlier(from: number, before: number, since: string) {
+  const { incognito, conversationId } = state;
+  const events: HatbotEvent[] = [];
+  missed.add(events);
+  try {
+    const { ids, changed } = await api<MessageChanges>(
+      `/conversations/${conversationId}/messages/changes?from=${from}&before=${before}&since=${encodeURIComponent(since)}${incognito ? "&incognito=1" : ""}`,
+    );
+    if (incognito !== state.incognito || conversationId !== state.conversationId) return;
+    const kept = new Set(ids);
+    const fresh = new Map(changed.map((m) => [m.id, m]));
+    const inRange = (m: ThreadMessage) => m.id >= from && m.id < before;
+    const range = state.messages
+      .filter((m) => inRange(m) && kept.has(m.id))
+      .map((m) => fresh.get(m.id) ?? m);
+    // What came meanwhile goes on again, onto these only: the rest has it already.
+    const caught = caughtUp(range, events).filter(inRange);
+    set({
+      messages: [
+        ...state.messages.filter((m) => m.id < from),
+        ...caught,
+        ...state.messages.filter((m) => m.id >= before),
+      ],
+    });
+  } finally {
+    missed.delete(events);
+  }
 }
 
 /**
@@ -995,7 +1095,7 @@ async function catchUp(reconnected: boolean) {
   const ended = Object.values(state.tasks)
     .filter((t) => t.finishedAt === null && !active?.includes(t.id) && !state.steps[t.id])
     .map((t) => t.id);
-  if (active && ended.length) void loadTasks({ ids: ended }).catch(() => {});
+  if (active && ended.length) void loadTasks({ ids: ended, view: "card" }).catch(() => {});
 }
 
 /** One of the brain's WebSockets, by its path: wss: on an https: page. */
@@ -1033,12 +1133,18 @@ export function connect() {
     wasOpen = true;
     void catchUp(opened);
     opened = true;
-    void loadLive().catch(() => {});
     retry = 0;
     set({ connected: true });
   };
+  let first = true;
   ws.onmessage = (ev) => {
-    if (ws === socket) apply(JSON.parse(ev.data) as HatbotEvent);
+    if (ws !== socket) return;
+    const e = JSON.parse(ev.data) as HatbotEvent;
+    if (first) {
+      first = false;
+      void loadLive(e.type === "snapshot" ? e : null).catch(() => {});
+    }
+    apply(e);
   };
   ws.onclose = () => {
     if (ws !== socket) return;

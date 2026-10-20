@@ -93,14 +93,14 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case id, role, kind, text, status, createdAt, taskId, scheduleId, episodeId, editedAt, seenAt, attachments
-    case incognito, conversationId, botId, sources, boxId, link
+    case incognito, conversationId, botId, sources, choices, boxId, link
   }
 
   init(
     id: Int, role: Role, kind: Kind, text: String, status: Status, createdAt: String, taskId: Int? = nil,
     scheduleId: Int? = nil, episodeId: Int? = nil, editedAt: String? = nil, seenAt: String? = nil,
     attachments: [Attachment]? = nil, incognito: Bool? = nil, conversationId: Int? = nil, botId: String? = nil,
-    sources: [Source]? = nil, boxId: Int? = nil, link: MessageLink? = nil
+    sources: [Source]? = nil, choices: [[String]]? = nil, boxId: Int? = nil, link: MessageLink? = nil
   ) {
     self.id = id
     self.role = role
@@ -119,6 +119,7 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
     self.conversationId = conversationId
     self.botId = botId
     self.sources = sources
+    self.choices = choices
     self.boxId = boxId
     self.link = link
   }
@@ -142,9 +143,17 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
       conversationId: c.decodeIfPresent(Int.self, forKey: .conversationId),
       botId: c.decodeIfPresent(String.self, forKey: .botId),
       sources: c.decodeIfPresent([Source].self, forKey: .sources),
+      choices: c.decodeIfPresent([[String]].self, forKey: .choices),
       boxId: c.decodeIfPresent(Int.self, forKey: .boxId),
       link: c.decodeIfPresent(MessageLink.self, forKey: .link))
   }
+}
+
+/// Of the messages loaded from one id up to another, the ids still there and the ones edited since a
+/// time (GET …/messages/changes).
+struct MessageChanges: Decodable, Sendable {
+  let ids: [Int]
+  let changed: [ThreadMessage]
 }
 
 /// A message in another chat.
@@ -211,8 +220,9 @@ struct AgentTask: Codable, Identifiable, Equatable, Sendable {
 
   let id: Int
   var title: String
-  var goal: String
-  var successCriteria: String
+  /// These four are missing on a card (`view=card`), which only a task's page needs.
+  var goal: String?
+  var successCriteria: String?
   var origin: Origin
   var lane: Lane
   var source: String?
@@ -229,8 +239,8 @@ struct AgentTask: Codable, Identifiable, Equatable, Sendable {
   var taintedBy: String?
   var injectionSuspected: Bool
   var summary: String?
-  var costUsd: Double
-  var steps: Int
+  var costUsd: Double?
+  var steps: Int?
   var createdAt: String
   var startedAt: String?
   var finishedAt: String?
@@ -246,6 +256,27 @@ struct AgentTask: Codable, Identifiable, Equatable, Sendable {
   var todo: String?
 
   var isActive: Bool { finishedAt == nil }
+  /// Whether it has what its page shows, or is only a card.
+  var isFull: Bool { goal != nil }
+
+  /// As a card: what's kept on disk for a chat's cards and the lists.
+  var card: AgentTask {
+    var t = self
+    (t.goal, t.successCriteria, t.payload, t.costUsd, t.steps) = (nil, nil, nil, nil, nil)
+    return t
+  }
+
+  /// A card that came for a task held whole keeps what the card leaves out.
+  func keeping(_ held: AgentTask?) -> AgentTask {
+    guard !isFull, let held, held.isFull else { return self }
+    var t = self
+    t.goal = held.goal
+    t.successCriteria = held.successCriteria
+    t.payload = held.payload
+    t.costUsd = held.costUsd
+    t.steps = held.steps
+    return t
+  }
 }
 
 struct TaskStep: Codable, Identifiable, Equatable, Sendable {
@@ -425,6 +456,8 @@ struct Bot: Codable, Identifiable, Equatable, Sendable {
   /// nil: every plugin that's on.
   var plugins: [String]?
   var createdAt: String
+  /// Only the first line of its role is in `instructions` (the stream's snapshot): its editor loads it whole.
+  var brief: Bool?
 
   /// BOT_ICONS in packages/shared, each with its SF Symbol.
   enum Icon: String, LenientEnum, CaseIterable {
@@ -730,9 +763,23 @@ extension Array where Element: Equatable {
   }
 }
 
+/// What's live, the stream's first event; an older brain sends none.
+struct Snapshot: Decodable, Sendable {
+  var paused: Bool
+  /// Brief (`Bot.brief`).
+  var bots: [Bot]
+  var conversations: [Conversation]
+  var approvals: [Approval]
+  var questions: [Question]
+  var desktop: DesktopState?
+  /// Each chat's newest unread.
+  var unread: [Int]
+}
+
 /// Live events on /api/v1/stream. Events this app doesn't know, or doesn't show yet (negotiations),
 /// decode to `.unknown`.
 enum HatbotEvent: Decodable, Sendable {
+  case snapshot(Snapshot)
   case messageCreated(ThreadMessage)
   /// `at`: where `text` starts in the reply, in UTF-16 units; an older brain doesn't say.
   case messageDelta(id: Int, text: String, at: Int? = nil)
@@ -795,6 +842,7 @@ enum HatbotEvent: Decodable, Sendable {
     func maybe<T: Decodable>(_ key: Key) throws -> T? { try c.decodeIfPresent(T.self, forKey: key) }
     let type: String = try v(.type)
     switch type {
+    case "snapshot": self = try .snapshot(Snapshot(from: decoder))
     case "message.created": self = try .messageCreated(v(.message))
     case "message.delta": self = try .messageDelta(id: v(.id), text: v(.text), at: maybe(.at))
     case "message.progress": self = try .messageProgress(id: v(.id), text: v(.text))

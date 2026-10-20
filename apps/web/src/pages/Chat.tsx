@@ -597,7 +597,13 @@ function Files({ list }: { list: Attachment[] }) {
             target="_blank"
             rel="noreferrer"
           >
-            <img src={attachmentUrl(a.id)} alt={a.name} loading="lazy" />
+            {/* Bubbles are at most 240 px: a copy that size, not the whole photo. */}
+            <img
+              src={`${attachmentUrl(a.id)}?w=480`}
+              srcSet={`${attachmentUrl(a.id)}?w=480 2x, ${attachmentUrl(a.id)}?w=720 3x`}
+              alt={a.name}
+              loading="lazy"
+            />
           </a>
         ) : isMarkdownFile(a) ? (
           <Link key={a.id} className="file" to={`/read?file=${a.id}`}>

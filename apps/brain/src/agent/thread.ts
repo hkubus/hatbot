@@ -8,6 +8,7 @@ import {
   describeCron,
   type Episode,
   HATBOT_ID,
+  type MessageChanges,
   type MessageLink,
   parseCommand,
   parseTodos,
@@ -52,6 +53,7 @@ import {
   tokensOf,
 } from "../spend";
 import type { Tasks } from "../tasks/service";
+import { clip, head } from "../text";
 import type { Triggers } from "../triggers";
 import type { Watchers } from "../watch/service";
 import { AskOwner, askedText, CHAT_ASK_DESCRIPTION } from "./ask";
@@ -243,7 +245,7 @@ export function parseSummary(out: string): { recap: string | null; summary: stri
     new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(out)?.[1]?.trim();
   const summary = tag("summary");
   if (summary === undefined) return { recap: null, summary: out.trim() };
-  return { recap: tag("recap")?.slice(0, 400) || null, summary };
+  return { recap: head(tag("recap") ?? "", 400) || null, summary };
 }
 
 export class Thread {
@@ -332,19 +334,45 @@ export class Thread {
 
   /** The chat's messages, or with `incognito`, its incognito conversation's. */
   list(before?: number, limit = 50, incognito = false): ThreadMessage[] {
-    const rows = this.d.db
-      .query<MessageRow, [number, number, number, number]>(
-        `SELECT ${MESSAGE_COLUMNS} FROM messages WHERE conversation_id = ? AND id < ? AND incognito = ?
-         ORDER BY id DESC LIMIT ?`,
+    return this.shown(
+      this.d.db
+        .query<MessageRow, [number, number, number, number]>(
+          `SELECT ${MESSAGE_COLUMNS} FROM messages WHERE conversation_id = ? AND id < ? AND incognito = ?
+           ORDER BY id DESC LIMIT ?`,
+        )
+        .all(this.conversationId, before ?? Number.MAX_SAFE_INTEGER, incognito ? 1 : 0, limit)
+        .reverse(),
+    );
+  }
+
+  /**
+   * Of the messages from `from` up to `before`, the ids still there, and the ones a task's result
+   * edited since `since`: an app's earlier pages brought up to date without loading them again.
+   */
+  changes(from: number, before: number, since: string, incognito = false): MessageChanges {
+    const range = "conversation_id = ? AND incognito = ? AND id >= ? AND id < ?";
+    const args = [this.conversationId, incognito ? 1 : 0, from, before] as const;
+    const ids = this.d.db
+      .query<{ id: number }, [number, number, number, number]>(
+        `SELECT id FROM messages WHERE ${range} ORDER BY id`,
       )
-      .all(this.conversationId, before ?? Number.MAX_SAFE_INTEGER, incognito ? 1 : 0, limit)
-      .reverse()
-      .map(messageOf)
-      .map((m) => {
-        const text = m.status === "streaming" ? this.live.get(m.id) : undefined;
-        return text === undefined ? m : { ...m, text };
-      });
-    return this.d.attachments?.fill(rows) ?? rows;
+      .all(...args)
+      .map((r) => r.id);
+    const changed = this.d.db
+      .query<MessageRow, [number, number, number, number, string]>(
+        `SELECT ${MESSAGE_COLUMNS} FROM messages WHERE ${range} AND edited_at >= ? ORDER BY id`,
+      )
+      .all(...args, since);
+    return { ids, changed: this.shown(changed) };
+  }
+
+  /** Rows as the apps get them: a reply being written with its text so far, and files. */
+  private shown(rows: MessageRow[]): ThreadMessage[] {
+    const list = rows.map(messageOf).map((m) => {
+      const text = m.status === "streaming" ? this.live.get(m.id) : undefined;
+      return text === undefined ? m : { ...m, text };
+    });
+    return this.d.attachments?.fill(list) ?? list;
   }
 
   /**
@@ -2626,7 +2654,7 @@ function toolLabel(name: string, plugins: Plugins): string {
 export function titleOf(text: string, max = 80): string {
   const line = text.split("\n")[0]?.trim() ?? "";
   if (line.length <= max) return line;
-  const cut = line.slice(0, max - 1);
+  const cut = head(line, max - 1);
   const space = cut.lastIndexOf(" ");
   return `${space > max / 2 ? cut.slice(0, space) : cut}…`;
 }
@@ -2667,7 +2695,7 @@ export function activity(label: string, input: unknown): string {
     .filter(Boolean);
   const detail = parts.join(", ");
   if (!detail) return label;
-  return `${label}: ${detail.length > 80 ? `${detail.slice(0, 79)}…` : detail}`;
+  return `${label}: ${clip(detail, 80)}`;
 }
 
 /** "Thu 2026-10-09 18:04", in the brain's local time. */

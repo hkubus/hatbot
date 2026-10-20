@@ -4,6 +4,7 @@ import {
   type Bot,
   HATBOT_ID,
   type Task,
+  type TaskCard,
   type TaskStatus,
   type TaskStep,
   todoAt,
@@ -30,6 +31,7 @@ import type { Questions } from "../questions";
 import type { SettingsStore } from "../settings";
 import type { Spend } from "../spend";
 import type { Skills } from "../teach/skills";
+import { clip, head } from "../text";
 import { runAgentTask } from "./agent-run";
 import { type BoxJob, runBoxTask } from "./box-run";
 import { runDesktopTask } from "./desktop-run";
@@ -113,6 +115,9 @@ const SELECT = `SELECT t.*,
   (SELECT count(*) FROM task_steps st WHERE st.task_id = t.id AND st.kind = 'action') AS steps
   FROM tasks t`;
 
+/** Cards leave out the cost, which sums a ledger per task, and the step count. */
+const CARD_SELECT = "SELECT t.* FROM tasks t";
+
 const toTask = (r: Row): Task => ({
   id: r.id,
   botId: r.bot_id,
@@ -146,6 +151,11 @@ const toTask = (r: Row): Task => ({
   startedAt: r.started_at,
   finishedAt: r.finished_at,
 });
+
+const toCard = (r: Row): TaskCard => {
+  const { goal, successCriteria, payload, costUsd, steps, ...card } = toTask(r);
+  return card;
+};
 
 /** Ended tasks shown in a chat that its bot hasn't heard about: a chat's id, then a bot's. */
 const UNREPORTED = `t.reported_at IS NULL AND t.status IN ('done', 'failed', 'cancelled')
@@ -259,6 +269,15 @@ export class Tasks {
       ids?: number[];
     } = {},
   ): Task[] {
+    return this.query(opts, SELECT).map(toTask);
+  }
+
+  /** As `list`, as cards: what a chat's card or a list's row shows. */
+  cards(opts: Parameters<Tasks["list"]>[0] = {}): TaskCard[] {
+    return this.query(opts, CARD_SELECT).map(toCard);
+  }
+
+  private query(opts: Parameters<Tasks["list"]>[0] = {}, select: string): Row[] {
     const where: string[] = [];
     const args: (number | string)[] = [];
     if (opts.status) where.push(`t.status ${among(opts.status === "active" ? ACTIVE : FINAL)}`);
@@ -288,14 +307,27 @@ export class Tasks {
     }
     return this.d.db
       .query<Row, (number | string)[]>(
-        `${SELECT} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY t.id DESC LIMIT ?`,
+        `${select} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY t.id DESC LIMIT ?`,
       )
-      .all(...args, opts.limit ?? 50)
-      .map(toTask);
+      .all(...args, opts.limit ?? 50);
   }
 
-  steps(taskId: number): TaskStep[] {
-    return this.d.db.query<TaskStep, [number]>(`${STEP} WHERE task_id = ? ORDER BY id`).all(taskId);
+  /**
+   * A task's steps; `after` a step's id, only the ones since, and the latest screenshot or action step
+   * still without its screenshot, which it gets once the action is done (setStepScreenshot).
+   */
+  steps(taskId: number, after?: number): TaskStep[] {
+    if (after === undefined)
+      return this.d.db
+        .query<TaskStep, [number]>(`${STEP} WHERE task_id = ? ORDER BY id`)
+        .all(taskId);
+    return this.d.db
+      .query<TaskStep, [number, number]>(
+        `${STEP} WHERE task_id = ?1 AND (id > ?2 OR (id = (SELECT max(id) FROM task_steps
+           WHERE task_id = ?1 AND kind IN ('action', 'screenshot')) AND screenshot IS NULL))
+         ORDER BY id`,
+      )
+      .all(taskId, after);
   }
 
   step(taskId: number, stepId: number): TaskStep | null {
@@ -552,7 +584,7 @@ export class Tasks {
       return `Hand-offs between bots go at most ${MAX_HANDOFFS} deep, and this would be deeper. Do it yourself, or report what you have.`;
     const firstLine = input.request.trim().split("\n")[0] ?? "";
     const task = this.createBackgroundTask({
-      title: firstLine.length > 80 ? `${firstLine.slice(0, 79)}…` : firstLine,
+      title: clip(firstLine, 80),
       goal: input.request,
       origin: input.parent?.origin ?? "chat",
       source: input.parent?.source ?? undefined,
@@ -1030,7 +1062,7 @@ export class Tasks {
   /** A notification's title: another bot's says which. */
   titled(task: Task, title: string): string {
     const named = task.botId === HATBOT_ID ? title : `${this.d.bots.nameOf(task.botId)} · ${title}`;
-    return named.slice(0, 120);
+    return head(named, 120);
   }
 
   cancel(id: number): boolean {

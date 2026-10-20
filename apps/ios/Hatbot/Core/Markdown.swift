@@ -50,9 +50,18 @@ enum Markdown {
     return blocks
   }
 
+  /// `plain`'s answers by text: every bubble in the chat works out what VoiceOver reads when it's drawn.
+  nonisolated(unsafe) private static let plainCache: NSCache<NSString, NSString> = {
+    let c = NSCache<NSString, NSString>()
+    c.countLimit = 400
+    return c
+  }()
+
   /// The text without its Markdown, for Siri to say and VoiceOver to read.
   static func plain(_ source: String) -> String {
-    cached(source).map { block -> String in
+    let key = NSString(string: source)
+    if let hit = plainCache.object(forKey: key) { return hit as String }
+    let text = cached(source).map { block -> String in
       switch block {
       case let .heading(_, text), let .paragraph(text), let .quote(text): inline(text)
       case let .list(items):
@@ -67,20 +76,37 @@ enum Markdown {
     }
     .filter { !$0.isEmpty }
     .joined(separator: "\n\n")
+    plainCache.setObject(NSString(string: text), forKey: key)
+    return text
   }
+
+  // Compiled once: `inline` runs for every block of every message.
+  nonisolated(unsafe) private static let link = try! NSRegularExpression(pattern: #"!?\[([^\]]*)\]\([^)]*\)"#)
+  nonisolated(unsafe) private static let marks = try! NSRegularExpression(pattern: #"\*\*|__|~~|`"#)
+  nonisolated(unsafe) private static let emphasis = try! NSRegularExpression(
+    pattern: #"(?<![\w*])[*_](?=\S)(.+?)(?<=\S)[*_](?![\w*])"#)
 
   /// A line without links' addresses or emphasis and code marks.
   static func inline(_ text: String) -> String {
-    var s = text.replacingOccurrences(of: #"!?\[([^\]]*)\]\([^)]*\)"#, with: "$1", options: .regularExpression)
-    s = s.replacingOccurrences(of: #"\*\*|__|~~|`"#, with: "", options: .regularExpression)
-    return s.replacingOccurrences(
-      of: #"(?<![\w*])[*_](?=\S)(.+?)(?<=\S)[*_](?![\w*])"#, with: "$1", options: .regularExpression)
+    var s = replace(link, in: text, with: "$1")
+    s = replace(marks, in: s, with: "")
+    return replace(emphasis, in: s, with: "$1")
+  }
+
+  private static func replace(_ regex: NSRegularExpression, in s: String, with template: String) -> String {
+    regex.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: template)
   }
 
   static func parse(_ source: String) -> [MDBlock] {
-    let lines = source.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+    parse(lines: source.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")).blocks
+  }
+
+  /// The blocks, and how many lines and blocks come up to the last blank line between blocks (not the
+  /// last line): those parse the same however the text goes on.
+  fileprivate static func parse(lines: [String]) -> (blocks: [MDBlock], settled: (lines: Int, blocks: Int)) {
     var blocks: [MDBlock] = []
     var paragraph: [String] = []
+    var settled = (lines: 0, blocks: 0)
     var i = 0
 
     func flush() {
@@ -94,6 +120,7 @@ enum Markdown {
 
       if trimmed.isEmpty {
         flush()
+        if i < lines.count - 1 { settled = (i + 1, blocks.count) }
         i += 1
         continue
       }
@@ -190,7 +217,7 @@ enum Markdown {
       i += 1
     }
     flush()
-    return blocks
+    return (blocks, settled)
   }
 
   private static func fenceMarker(_ t: String) -> String? {
@@ -240,5 +267,33 @@ enum Markdown {
     if t.hasPrefix("|") { t.removeFirst() }
     if t.hasSuffix("|") { t.removeLast() }
     return t.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+  }
+}
+
+/// A reply as it streams in, parsed again only from its last blank line between blocks: what's before
+/// it parses the same however the reply goes on, so a long reply isn't parsed whole on every update.
+struct StreamingMarkdown {
+  /// The text up to and including that blank line, and its blocks.
+  private var settledText = ""
+  private var settledBlocks: [MDBlock] = []
+
+  mutating func parse(_ source: String) -> [MDBlock] {
+    let text = source.replacingOccurrences(of: "\r\n", with: "\n")
+    var rest = text
+    if !settledText.isEmpty, text.utf8.starts(with: settledText.utf8) {
+      rest = String(decoding: text.utf8.dropFirst(settledText.utf8.count), as: UTF8.self)
+    } else {
+      // Not the same reply going on: from the start.
+      settledText = ""
+      settledBlocks = []
+    }
+    let lines = rest.components(separatedBy: "\n")
+    let (blocks, settled) = Markdown.parse(lines: lines)
+    let all = settledBlocks + blocks
+    if settled.lines > 0 {
+      settledText += lines[..<settled.lines].joined(separator: "\n") + "\n"
+      settledBlocks += blocks[..<settled.blocks]
+    }
+    return all
   }
 }

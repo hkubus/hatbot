@@ -236,32 +236,86 @@ enum Picture {
 /// Attachments and screenshots need the bearer token, so they don't go through AsyncImage.
 @MainActor
 final class ImageCache {
-  /// The chat's pictures, at the size the chat shows them (about 2 MB each).
-  static let attachments = ImageCache(megabytes: 48)
+  /// The chat's pictures, at the size the chat shows them (about 2 MB each), and on disk as sent.
+  static let attachments = ImageCache(megabytes: 48, disk: .chat)
   /// The desktop's screens, about 6 MB each.
   static let screens = ImageCache(megabytes: 40)
   private let cache = NSCache<NSString, UIImage>()
+  private let disk: DiskPictures?
+  /// Pictures on their way, so two asks for one share a download.
+  private var loading: [NSString: Task<(image: UIImage, data: Data?), Error>] = [:]
+  /// Moves on when signed out, so a picture still on its way isn't kept for whoever signs in next.
+  private var generation = 0
+  private var trimmed = false
 
-  init(megabytes: Int) {
+  init(megabytes: Int, disk: DiskPictures? = nil) {
     cache.totalCostLimit = megabytes << 20
+    self.disk = disk
+  }
+
+  private func key(_ api: API, _ path: String, _ longSide: CGFloat) -> NSString {
+    "\(api.server.absoluteString)\(path)/\(Int(longSide))" as NSString
+  }
+
+  /// The picture if it's in memory: a row scrolled back into view shows it at once, at its height.
+  func cached(_ api: API, _ path: String, longSide: CGFloat) -> UIImage? {
+    cache.object(forKey: key(api, path, longSide))
   }
 
   /// The picture at `path`, at most `longSide` pixels on its long side. One that isn't kept (opened full
-  /// screen, say) is decoded for that and let go when it closes.
-  func image(_ api: API, _ path: String, longSide: CGFloat, keep: Bool = true) async throws -> UIImage {
-    let key = "\(api.server.absoluteString)\(path)/\(Int(longSide))" as NSString
+  /// screen, say) is decoded for that and let go when it closes; one not `onDisk` (incognito) is kept in
+  /// memory only.
+  func image(
+    _ api: API, _ path: String, longSide: CGFloat, keep: Bool = true, onDisk: Bool = true
+  ) async throws -> UIImage {
+    let key = key(api, path, longSide)
+    let name = key as String
+    let disk = keep && onDisk ? self.disk : nil
     if let hit = cache.object(forKey: key) { return hit }
-    let data = try await api.data(path)
-    guard let image = await Task.detached(operation: { Picture.decode(data, longSide: longSide) }).value else {
-      throw APIError(status: 0, message: "Not an image")
+    let task: Task<(image: UIImage, data: Data?), Error>
+    if let running = loading[key] {
+      task = running
+    } else {
+      task = Task.detached {
+        if let data = disk?.read(name), let image = Picture.decode(data, longSide: longSide) {
+          return (image, nil)
+        }
+        let data = try await api.data(path)
+        guard let image = Picture.decode(data, longSide: longSide) else {
+          throw APIError(status: 0, message: "Not an image")
+        }
+        return (image, data)
+      }
+      loading[key] = task
     }
-    if keep { cache.setObject(image, forKey: key, cost: Picture.cost(image)) }
-    return image
+    let started = generation
+    let result: (image: UIImage, data: Data?)
+    do {
+      result = try await task.value
+    } catch {
+      if loading[key] == task { loading[key] = nil }
+      throw error
+    }
+    guard loading[key] == task, started == generation else { return result.image }
+    loading[key] = nil
+    if keep { cache.setObject(result.image, forKey: key, cost: Picture.cost(result.image)) }
+    if let disk, let data = result.data {
+      let first = !trimmed
+      trimmed = true
+      Task.detached(priority: .utility) {
+        disk.write(data, name)
+        if first { disk.trim() }
+      }
+    }
+    return result.image
   }
 
   /// Signed out.
   func clear() {
+    generation += 1
+    loading = [:]
     cache.removeAllObjects()
+    if let disk { Task.detached { disk.clear() } }
   }
 }
 

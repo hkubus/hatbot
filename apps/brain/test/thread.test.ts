@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { type AskResult, type ThreadMessage, threadGroups } from "@hatbot/shared";
 import type { StreamHandlers, StreamParams } from "../src/agent/model";
-import { markPrevious } from "../src/agent/thread";
+import { activity, markPrevious, parseSummary, titleOf } from "../src/agent/thread";
 import { runTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
 import { FakeModel, text, toolUse } from "./fake-model";
@@ -830,7 +830,7 @@ test("deleting a conversation takes it out of the chat, search, files and the su
   t.advance(31 * 60_000);
   await t.thread.sweep();
   await t.thread.post("hello").done;
-  const [first, , , , kept] = t.thread.list();
+  const [first, , , hello, kept] = t.thread.list();
   const gone = t.thread.list().filter((m) => m.episodeId === first?.episodeId || m.id === card.id);
   expect(gone.length).toBe(3);
   const del = (episode: number) =>
@@ -859,6 +859,22 @@ test("deleting a conversation takes it out of the chat, search, files and the su
   expect(summary()).toBe("They like tea.");
   expect(t.thread.list().map((m) => m.text)).toEqual(["hello", "Hi."]);
   expect(t.events.at(-1)).toEqual({ type: "message.deleted", ids: gone.map((m) => m.id) });
+  // An app that had loaded them learns they're gone, and what a task's result edited since, without
+  // loading them again.
+  const task = t.tasks.createBackgroundTask({ title: "Check", goal: "Check", origin: "schedule" });
+  await t.tasks.idle();
+  t.chats.attachTask(hello?.id as number, task?.id as number);
+  t.chats.markEdited(task?.id as number);
+  const changes = await t.call(
+    "GET",
+    `/thread/messages/changes?from=${first?.id}&before=${kept?.id}&since=${hello?.createdAt}`,
+    undefined,
+    { cookie },
+  );
+  expect(await changes.json()).toEqual({
+    ids: [hello?.id],
+    changed: [t.thread.list().find((m) => m.id === hello?.id)],
+  });
   expect(
     t.db.query("SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'wireguard'").all(),
   ).toEqual([]);
@@ -893,4 +909,17 @@ test("without a desktop, the chat isn't offered the tools that need one", async 
   expect(toolNames(chat.requests[0])).not.toContain("run_desktop_task");
   expect(toolNames(chat.requests[0])).not.toContain("send_file");
   expect(toolNames(chat.requests[0])).toContain("run_task");
+});
+
+test("a progress line, a task's title and a recap cut a long text between characters, not through one", () => {
+  // Half of an emoji is invalid UTF-8: the app's decoder refused the whole event, SQLite kept U+FFFD.
+  const whole = (s: string) => s === Buffer.from(s).toString();
+  const emojiAt = (n: number) => `${"a".repeat(n)}😀😀`;
+  expect(activity("Reading memory", { path: emojiAt(78) })).toBe(
+    `Reading memory: ${"a".repeat(78)}…`,
+  );
+  expect(whole(titleOf(emojiAt(78)))).toBe(true);
+  expect(parseSummary(`<recap>${emojiAt(399)}</recap><summary>s</summary>`).recap).toBe(
+    "a".repeat(399),
+  );
 });

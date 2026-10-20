@@ -26,15 +26,22 @@ struct MessageFiles: View {
   }
 }
 
-/// A picture on a message; a tap opens it full screen.
+/// A picture on a message, in a copy the brain made for the bubble; a tap opens it full screen.
 private struct PictureFile: View {
   static let side: CGFloat = 240
   let attachment: Attachment
   @Environment(AppStore.self) private var store
   @Environment(\.displayScale) private var scale
-  @State private var image: UIImage?
+  @State private var loaded: UIImage?
   @State private var failed = false
   @State private var full = false
+
+  /// The bubble's copy, as many pixels as it shows. A brain from before these sends the whole picture.
+  private var path: String { "/attachments/\(attachment.id)?w=\(Int(Self.side * scale))" }
+  /// What's shown: kept in memory, it's there from the first frame, so the row doesn't change height.
+  private var image: UIImage? {
+    loaded ?? ImageCache.attachments.cached(store.api, path, longSide: Self.side * scale)
+  }
 
   var body: some View {
     Group {
@@ -54,9 +61,10 @@ private struct PictureFile: View {
       if let image { FullPicture(api: store.api, attachment: attachment, small: image) }
     }
     .task(id: attachment.id) {
+      guard image == nil else { return }
       do {
-        image = try await ImageCache.attachments.image(
-          store.api, "/attachments/\(attachment.id)", longSide: Self.side * scale)
+        loaded = try await ImageCache.attachments.image(
+          store.api, path, longSide: Self.side * scale, onDisk: !store.incognito)
       } catch {
         failed = true
       }

@@ -34,6 +34,12 @@ const ListMessages = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional(),
   incognito: z.enum(["0", "1"]).optional(),
 });
+const MessageRange = z.object({
+  from: z.coerce.number().int().positive(),
+  before: z.coerce.number().int().positive(),
+  since: z.iso.datetime(),
+  incognito: z.enum(["0", "1"]).optional(),
+});
 const EpisodeIds = z.object({ ids: z.string().regex(/^\d+(,\d+){0,199}$/) });
 const ChartQuery = z.object({ type: z.enum(["line", "bar", "scatter"]) });
 
@@ -62,21 +68,29 @@ export const threadRoutes = new Hono<AppEnv>()
     });
     return c.json(attachment, 201);
   })
+  // `?w=` asks for a picture at most that many pixels on its long side, for the chat's bubbles.
   .get("/attachments/:id", async (c) => {
     const id = Number(c.req.param("id"));
     const a = Number.isInteger(id) ? c.var.attachments.get(id) : null;
-    const file = a && c.var.attachments.file(id);
-    if (!a || !file || !(await file.exists())) return c.json({ error: "That's gone." }, 404);
-    const inline = INLINE.includes(a.mediaType) && c.req.query("download") === undefined;
+    const original = a && c.var.attachments.file(id);
+    if (!a || !original || !(await original.exists()))
+      return c.json({ error: "That's gone." }, 404);
+    const download = c.req.query("download") !== undefined;
+    const w = Number(c.req.query("w"));
+    const thumb =
+      !download && Number.isInteger(w) && w > 0 ? await c.var.attachments.thumbnail(id, w) : null;
+    const inline = INLINE.includes(a.mediaType) && !download;
     const ascii = a.name.replace(/[^\x20-\x7e]|["\\]/g, "_");
-    // Checked each time rather than kept for a year: an incognito one isn't kept at all.
-    const etag = `"${a.id}-${Date.parse(a.createdAt).toString(36)}-${a.size.toString(36)}"`;
-    const cache = c.var.attachments.cacheable(id) ? "private, no-cache" : "no-store";
+    const etag = `"${a.id}-${Date.parse(a.createdAt).toString(36)}-${a.size.toString(36)}${thumb ? `-${thumb.size}` : ""}"`;
+    // A sent file's bytes never change, so it's kept for good; an incognito one isn't kept at all.
+    const cache = c.var.attachments.cacheable(id)
+      ? "private, max-age=31536000, immutable"
+      : "no-store";
     if (cache !== "no-store" && c.req.header("if-none-match") === etag)
       return new Response(null, { status: 304, headers: { etag, "cache-control": cache } });
-    return new Response(file, {
+    return new Response(thumb?.file ?? original, {
       headers: {
-        "content-type": inline ? a.mediaType : "application/octet-stream",
+        "content-type": thumb ? "image/webp" : inline ? a.mediaType : "application/octet-stream",
         "content-disposition": `${inline ? "inline" : "attachment"}; filename="${ascii}"; filename*=UTF-8''${rfc5987(a.name)}`,
         "x-content-type-options": "nosniff",
         "cross-origin-resource-policy": "same-origin",
@@ -119,7 +133,7 @@ export const threadRoutes = new Hono<AppEnv>()
   .delete("/conversations/:id", (c) =>
     c.var.chats.deleteGroup(id(c)) ? c.json({ ok: true }) : c.json({ error: "That's gone." }, 404),
   )
-  // Unread: your bots' messages, in every chat, sent or edited since you last saw them.
+  // Unread: your bots' messages sent or edited since you last saw them, each chat's newest.
   .get("/thread/unread", (c) => c.json(c.var.chats.unread()))
   .post("/thread/seen", json(SeenMessages), (c) => {
     c.var.chats.markSeen(c.req.valid("json").ids);
@@ -140,6 +154,8 @@ for (const [at, threadOf] of [
   };
   threadRoutes
     .get(`${at}/messages`, query(ListMessages), on(listMessages))
+    // Earlier pages an app has loaded: which messages are still there, and which were edited.
+    .get(`${at}/messages/changes`, query(MessageRange), on(messageChanges))
     // The conversations messages belong to, for their recaps where they fold up.
     .get(`${at}/episodes`, query(EpisodeIds), on(episodes))
     // Deleting a conversation from the chat for good.
@@ -196,6 +212,14 @@ function listMessages(c: Ctx, t: Thread) {
     typeof ListMessages
   >;
   return c.json(t.list(before, limit, incognito === "1"));
+}
+
+function messageChanges(c: Ctx, t: Thread) {
+  const { from, before, since, incognito } = c.req.valid("query" as never) as z.infer<
+    typeof MessageRange
+  >;
+  // Compared as the brain writes times, which sort as text.
+  return c.json(t.changes(from, before, new Date(since).toISOString(), incognito === "1"));
 }
 
 function episodes(c: Ctx, t: Thread) {

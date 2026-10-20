@@ -31,23 +31,32 @@ export const taskRoutes = new Hono<AppEnv>()
           .regex(/^\d+(,\d+){0,199}$/)
           .transform((s) => s.split(",").map(Number))
           .optional(),
+        // Cards (TaskCard): what a chat's card or a row shows, without a webhook's 20,000-character
+        // event or the cost. Older apps want whole tasks, so it's asked for.
+        view: z.enum(["card"]).optional(),
       }),
     ),
     (c) => {
-      const q = c.req.valid("query");
-      return c.json(c.var.tasks.list(q.ids ? { ...q, limit: q.ids.length } : q));
+      const { view, ...q } = c.req.valid("query");
+      const opts = q.ids ? { ...q, limit: q.ids.length } : q;
+      return c.json(view === "card" ? c.var.tasks.cards(opts) : c.var.tasks.list(opts));
     },
   )
-  .get("/tasks/:id", (c) => {
-    const taskId = id(c);
-    const task = c.var.tasks.get(taskId);
-    if (!task) return c.json({ error: "That's gone." }, 404);
-    return c.json({
-      task,
-      steps: c.var.tasks.steps(taskId),
-      attachments: c.var.attachments.forTask(taskId),
-    });
-  })
+  // afterStep: the steps since the last one the app has, for a task it shows live.
+  .get(
+    "/tasks/:id",
+    query(z.object({ afterStep: z.coerce.number().int().min(0).optional() })),
+    (c) => {
+      const taskId = id(c);
+      const task = c.var.tasks.get(taskId);
+      if (!task) return c.json({ error: "That's gone." }, 404);
+      return c.json({
+        task,
+        steps: c.var.tasks.steps(taskId, c.req.valid("query").afterStep),
+        attachments: c.var.attachments.forTask(taskId),
+      });
+    },
+  )
   // Runs an ended task again, with its goal as you edited it.
   .post("/tasks/:id/rerun", json(Rerun), (c) => {
     const old = c.var.tasks.get(id(c));

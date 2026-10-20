@@ -2,6 +2,7 @@ import type { HatbotEvent } from "@hatbot/shared";
 import { type Context, Hono } from "hono";
 import { upgradeWebSocket } from "hono/bun";
 import { principalOf } from "../auth/middleware";
+import { briefBot } from "../bots";
 import type { AppEnv } from "../context";
 
 /** Streamed text that comes faster than this goes out together. */
@@ -49,8 +50,9 @@ export function batchText(send: (e: HatbotEvent) => void) {
   };
 }
 
-// One socket per client for live events (PLAN.md §8). Browsers authenticate with the session cookie,
-// which needs an Origin check (cross-site WebSocket hijacking); apps send a bearer token.
+// One socket per client for live events (PLAN.md §8), opening with a snapshot of what's live. Browsers
+// authenticate with the session cookie, which needs an Origin check (cross-site WebSocket hijacking);
+// apps send a bearer token.
 export const streamRoutes = new Hono<AppEnv>().get(
   "/stream",
   async (c, next) => {
@@ -63,7 +65,8 @@ export const streamRoutes = new Hono<AppEnv>().get(
     await next();
   },
   upgradeWebSocket((c) => {
-    const { events, settings, auth, principal } = (c as Context<AppEnv>).var;
+    const v = (c as Context<AppEnv>).var;
+    const { events, settings, auth, principal } = v;
     let off: (() => void) | undefined;
     let batch: ReturnType<typeof batchText> | undefined;
     let forget: (() => void) | undefined;
@@ -73,7 +76,21 @@ export const streamRoutes = new Hono<AppEnv>().get(
         forget = auth.onEnd(principal, () => ws.close(1008, "Signed out"));
         // Compressed where the client takes it (main.ts): JSON shrinks to a fraction.
         const send = (e: unknown) => ws.send(JSON.stringify(e), { compress: true });
-        send({ type: "paused", paused: settings.get().paused });
+        // What an app would otherwise ask for one request each as it connects. Read and sent before
+        // listening, all in this turn, so no event falls between the two.
+        const paused = settings.get().paused;
+        send({
+          type: "snapshot",
+          paused,
+          bots: v.bots.list().map(briefBot),
+          conversations: v.chats.list(),
+          approvals: v.approvals.list(true),
+          questions: v.questions.pending(),
+          desktop: v.desktop.get(),
+          unread: v.chats.unread(),
+        } satisfies HatbotEvent);
+        // Apps from before the snapshot.
+        send({ type: "paused", paused });
         batch = batchText(send);
         off = events.on(batch.push);
       },

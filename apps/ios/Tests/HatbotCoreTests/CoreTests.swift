@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import XCTest
 
 #if canImport(FoundationNetworking)
@@ -232,6 +233,8 @@ final class ChatTests: XCTestCase {
   }
 
   /// Unread until seen here or elsewhere, and again once edited; when its task ends, its bot writes it again.
+  /// It's rewritten twice, and the second changes nothing in the message: its bubble must still take up
+  /// the new reply, or it shows dots while the text goes to the old one.
   func testEditedAndSeenEventsTrackUnread() async throws {
     try await MainActor.run {
       let store = Self.store()
@@ -248,7 +251,17 @@ final class ChatTests: XCTestCase {
       store.apply(try decode(HatbotEvent.self, #"{"type":"message.rewrite","id":3}"#))
       XCTAssertEqual(store.messages.first?.text, "")
       XCTAssertEqual(store.messages.first?.status, .streaming)
+      XCTAssertTrue(Self.redraws({ _ = store.reply(3) }, after: { store.apply(.messageRewrite(id: 3)) }))
     }
+  }
+
+  /// Whether a view that read `read` would be drawn again after `change`.
+  @MainActor private static func redraws(_ read: () -> Void, after change: () -> Void) -> Bool {
+    final class Told: @unchecked Sendable { var value = false }
+    let told = Told()
+    withObservationTracking(read) { told.value = true }
+    change()
+    return told.value
   }
 
   func testIncognitoMessagesStayOutOfTheThreadAndAreNeverUnread() async throws {
@@ -301,9 +314,10 @@ final class ChatTests: XCTestCase {
     let m = { (ids: [Int]) in
       ids.map { ThreadMessage(id: $0, role: .assistant, kind: .text, text: "", status: .done, createdAt: "") }
     }
-    // Earlier pages stay; 6 was deleted meanwhile and 9 is new; 10 came by event while it loaded.
+    // Earlier pages stay; 6 was deleted meanwhile and 9 is new; 10, newer than the page, was deleted
+    // too: what came while it loaded, the load puts on again.
     var r = ThreadMerge.merge(m([1, 2, 3, 4, 5, 6, 7, 10]), hasEarlier: true, latest: m([4, 5, 7, 8, 9]), page: 5)
-    XCTAssertEqual(r.messages.map(\.id), [1, 2, 3, 4, 5, 7, 8, 9, 10])
+    XCTAssertEqual(r.messages.map(\.id), [1, 2, 3, 4, 5, 7, 8, 9])
     XCTAssertTrue(r.hasEarlier)
     // More than a page came while away: start again from the page.
     r = ThreadMerge.merge(m([1, 2]), hasEarlier: false, latest: m([5, 6, 7]), page: 3)
@@ -313,6 +327,17 @@ final class ChatTests: XCTestCase {
     r = ThreadMerge.merge(m([1, 2, 3]), hasEarlier: false, latest: m([2, 3]), page: 5)
     XCTAssertEqual(r.messages.map(\.id), [2, 3])
     XCTAssertFalse(r.hasEarlier)
+  }
+
+  /// A time over a message worked out before midnight isn't kept after it: "Today" was yesterday.
+  func testTimesBetweenMessagesChangeAtMidnight() {
+    let midnight = Calendar.current.startOfDay(for: .now)
+    let late = ISO8601DateFormatter().string(from: midnight.addingTimeInterval(-7200))
+    let m = ThreadMessage(id: 1, role: .assistant, kind: .text, text: "", status: .done, createdAt: late)
+    let times = TimeLabels()
+    let before = times.label(m, after: nil, now: midnight.addingTimeInterval(-60))
+    XCTAssertNotNil(before)
+    XCTAssertNotEqual(before, times.label(m, after: nil, now: midnight.addingTimeInterval(60)))
   }
 
   /// A reply is split into blocks while it streams: a fence still open runs to the end.
@@ -505,7 +530,9 @@ final class SignOutAndCacheTests: XCTestCase {
     let cache = DiskCache(dir: dir)
     let bot = Bot(id: "hatbot", name: "Hatbot", instructions: "", createdAt: "2026-10-15T10:00:00.000Z")
     let chat = Conversation(id: 2, kind: .direct, botIds: ["hatbot"], unread: 0)
-    let done = ThreadMessage(id: 5, role: .assistant, kind: .text, text: "Hi", status: .done, createdAt: "2026-10-15T10:00:00.000Z")
+    let done = ThreadMessage(
+      id: 5, role: .assistant, kind: .text, text: "Hi?", status: .done, createdAt: "2026-10-15T10:00:00.000Z",
+      choices: [["Yes", "No"]])
     let writing = ThreadMessage(
       id: 6, role: .assistant, kind: .text, text: "Wri", status: .streaming, createdAt: "2026-10-15T10:00:01.000Z")
     let api = API(server: URL(string: "https://hatbot.test")!, token: "t")
@@ -526,6 +553,8 @@ final class SignOutAndCacheTests: XCTestCase {
       XCTAssertEqual(store.bots["hatbot"]?.name, "Hatbot")
       // Not the one still being written.
       XCTAssertEqual(store.messages.map(\.id), [5])
+      // Its answers to tap too.
+      XCTAssertEqual(store.messages.first?.choices, [["Yes", "No"]])
     }
   }
 
@@ -705,8 +734,8 @@ final class NetworkTests: XCTestCase {
   /// the rows it left out load one at a time.
   func testTaskRowsLoadTogether() async throws {
     let store = await MainActor.run { Self.store() }
-    SlowBrain.routes["/tasks?ids=20,21,22"] = "[\(Self.task(20)),\(Self.task(22))]"
-    SlowBrain.routes["/tasks?ids=30,40"] = "[\(Self.task(99)),\(Self.task(30))]"
+    SlowBrain.routes["/tasks?ids=20,21,22&view=card"] = "[\(Self.task(20)),\(Self.task(22))]"
+    SlowBrain.routes["/tasks?ids=30,40&view=card"] = "[\(Self.task(99)),\(Self.task(30))]"
     SlowBrain.routes["/tasks/40"] = #"{"task":\#(Self.task(40)),"steps":[]}"#
     await MainActor.run {
       for id in [20, 21, 22, 20] { store.ensureTask(id) }
@@ -716,7 +745,61 @@ final class NetworkTests: XCTestCase {
       for id in [30, 40] { store.ensureTask(id) }
     }
     await waitUntil { store.tasks[40] != nil }
-    XCTAssertEqual(SlowBrain.requested, ["GET /tasks?ids=20,21,22", "GET /tasks?ids=30,40", "GET /tasks/40"])
+    XCTAssertEqual(
+      SlowBrain.requested, ["GET /tasks?ids=20,21,22&view=card", "GET /tasks?ids=30,40&view=card", "GET /tasks/40"])
+  }
+
+  /// The stream opens with what's live, so the store asks only for the task cards it showed from disk. An
+  /// older brain's stream opens without it, and what's live is asked for.
+  func testTheStreamsFirstEventSaysWhatsLive() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let cache = DiskCache(dir: dir)
+    let chat = Conversation(id: 1, kind: .direct, botIds: ["hatbot"], unread: 0)
+    let started = ThreadMessage(
+      id: 5, role: .assistant, kind: .command, text: "On it", status: .done, createdAt: "2026-10-15T08:00:00Z",
+      taskId: 7)
+    cache.save(DiskCache.Chats(bots: [], conversations: [chat], conversationId: 1))
+    let card = try decode(AgentTask.self, Self.task(7)).card
+    cache.save(DiskCache.Page(messages: [started], episodes: [], hasEarlier: false, tasks: [card]), for: 1)
+    // A page kept before pages had their tasks.
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    try Data(#"{"messages":[],"episodes":[],"hasEarlier":true}"#.utf8)
+      .write(to: dir.appendingPathComponent("page-2.json"))
+    XCTAssertEqual(cache.page(2)?.hasEarlier, true)
+
+    let store = await MainActor.run { Self.store(cache: cache) }
+    await MainActor.run { XCTAssertEqual(store.tasks[7]?.isActive, true) }
+    // It ended while the app was away.
+    SlowBrain.routes["/tasks?ids=7&view=card"] =
+      #"[{"id":7,"title":"t","origin":"chat","lane":"background","model":"m","status":"done","tainted":false,"injectionSuspected":false,"createdAt":"2026-10-15T08:00:00Z","finishedAt":"2026-10-15T09:00:00Z"}]"#
+    let approval = #"{"id":3,"kind":"send","summary":"s","reason":"r","sources":[],"status":"pending","costUsd":0,"createdAt":"2026-10-15T08:00:00Z","expiresAt":"2026-10-15T09:00:00Z"}"#
+    let snapshot = #"{"type":"snapshot","paused":true,"bots":[{"id":"hatbot","name":"Hatbot","instructions":"Looks after the homelab.","createdAt":"2026-10-15T08:00:00Z","brief":true}],"conversations":[{"id":1,"kind":"direct","botIds":["hatbot"],"unread":1}],"approvals":[\#(approval)],"questions":[],"desktop":{"online":true,"control":"hatbot"},"unread":[5]}"#
+    await MainActor.run {
+      store.streamOpened(reconnected: false)
+      store.streamed(try? decode(HatbotEvent.self, snapshot))
+    }
+    await waitUntil { store.tasks[7]?.isActive == false }
+    await MainActor.run {
+      XCTAssertEqual(store.paused, true)
+      XCTAssertEqual(store.unread, [5])
+      XCTAssertEqual(store.pendingApprovals.map(\.id), [3])
+      XCTAssertEqual(store.bots["hatbot"]?.brief, true)
+      XCTAssertEqual(store.conversations.first?.unread, 1)
+    }
+    XCTAssertEqual(SlowBrain.requested.filter { !$0.contains("/messages") }, ["GET /tasks?ids=7&view=card"])
+
+    SlowBrain.routes["/approvals?pending=1"] = "[]"
+    await MainActor.run {
+      store.streamOpened(reconnected: true)
+      store.streamed(.paused(false))
+    }
+    let live = [
+      "GET /bots", "GET /conversations", "GET /approvals?pending=1", "GET /questions", "GET /desktop/status",
+      "GET /thread/unread",
+    ]
+    await waitUntil { Set(live).isSubset(of: SlowBrain.requested) }
+    await MainActor.run { XCTAssertEqual(store.paused, false) }
   }
 
   private static func message(_ id: Int, in conversation: Int) -> String {
@@ -774,6 +857,31 @@ final class NetworkTests: XCTestCase {
       // One sent before the page was read that comes after it.
       store.apply(.messageDelta(id: 9, text: "world!", at: 6))
       XCTAssertEqual(store.reply(9)?.text, "Hello world!")
+    }
+  }
+
+  /// What changes in the chat while it loads isn't undone by a page read before: the task under a reply,
+  /// its edit, a message deleted, one that came, and one you sent with no event for it, as with the
+  /// stream down.
+  func testWhatChangesWhileTheChatLoadsStays() async throws {
+    let store = await MainActor.run { Self.store() }
+    SlowBrain.routes["/thread/messages?limit=50"] = "[\(Self.message(8, in: 1)),\(Self.message(9, in: 1))]"
+    SlowBrain.routes["/thread/messages"] = Self.message(11, in: 1)
+    SlowBrain.slower = ["/thread/messages?limit=50": 0.2]
+    async let loaded: Void = store.loadThread()
+    await waitUntil { SlowBrain.requested.contains("GET /thread/messages?limit=50") }
+    try await MainActor.run {
+      store.apply(.messageTask(id: 9, taskId: 4))
+      store.apply(.messageEdited(id: 9, editedAt: "2026-10-15T08:05:00Z"))
+      store.apply(.messageDeleted(ids: [8]))
+      store.apply(.messageCreated(try JSONDecoder().decode(ThreadMessage.self, from: Data(Self.message(10, in: 1).utf8))))
+    }
+    try await store.send("hi")
+    try await loaded
+    await MainActor.run {
+      XCTAssertEqual(store.messages.map(\.id), [9, 10, 11])
+      XCTAssertEqual(store.messages.first?.taskId, 4)
+      XCTAssertEqual(store.messages.first?.editedAt, "2026-10-15T08:05:00Z")
     }
   }
 
