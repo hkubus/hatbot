@@ -191,3 +191,16 @@ textview.diff {
   font-family: monospace;
   font-size: 0.85em;
 }
+
+/* Looking after things */
+row.watcher-trouble .subtitle {
+  color: var(--danger);
+}
+
+row.counted .subtitle {
+  color: var(--amber);
+}
+
+row.monospace-title .title {
+  font-family: monospace;
+}

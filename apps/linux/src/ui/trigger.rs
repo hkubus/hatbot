@@ -139,10 +139,9 @@ impl TriggerPage {
         info.add(&address);
         info.add(&last_run);
         info.add(&new_secret);
-        let delete_row = adw::ButtonRow::builder()
-            .title("Delete Trigger")
-            .css_classes(["destructive-action"])
-            .build();
+        let delete_row = adw::ButtonRow::builder().title("Delete Trigger").build();
+        // Not the builder's css_classes: they would drop the row's own "button".
+        delete_row.add_css_class("destructive-action");
         let delete = adw::PreferencesGroup::new();
         delete.add(&delete_row);
 

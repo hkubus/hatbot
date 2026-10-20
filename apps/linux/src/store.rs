@@ -46,6 +46,10 @@ pub enum Change {
     /// Proposals came or changed.
     Proposals,
     Settings,
+    Watcher(i64),
+    /// The list of watchers came.
+    Watchers,
+    Heartbeat,
     Toast(String),
 }
 
@@ -112,6 +116,9 @@ pub struct State {
     /// Schedules a message points at that no longer exist.
     pub deleted_schedules: HashSet<i64>,
     pub triggers: HashMap<i64, Trigger>,
+    pub watchers: HashMap<i64, Watcher>,
+    /// Watchers deleted while open.
+    pub deleted_watchers: HashSet<i64>,
     pub proposals: HashMap<i64, Proposal>,
     pub boxes: HashMap<i64, AppBox>,
     /// Boxes a message points at that no longer exist.
@@ -780,6 +787,17 @@ impl Store {
                     return;
                 }
                 Event::SettingsUpdated => changes.push(Change::Settings),
+                Event::WatcherUpdated { watcher } => {
+                    let id = watcher.id;
+                    st.watchers.insert(id, watcher);
+                    changes.push(Change::Watcher(id));
+                }
+                Event::WatcherDeleted { id } => {
+                    st.watchers.remove(&id);
+                    st.deleted_watchers.insert(id);
+                    changes.push(Change::Watcher(id));
+                }
+                Event::HeartbeatUpdated => changes.push(Change::Heartbeat),
                 Event::Unknown => {}
             }
         }
@@ -1712,6 +1730,138 @@ impl Store {
         self.state_mut().tasks.insert(task.id, task.clone());
         self.emit(Change::Task(task.id));
         Ok(task)
+    }
+
+    pub async fn load_settings(&self) -> Result<AppSettings> {
+        self.0.api.get("/settings").await
+    }
+
+    /// Changes some settings: `change` has only those. The settings as they are now.
+    pub async fn save_settings(&self, change: &serde_json::Value) -> Result<AppSettings> {
+        self.0.api.put("/settings", change).await
+    }
+
+    pub async fn spend_summary(&self) -> Result<SpendSummary> {
+        let s: SpendSummary = self.0.api.get("/spend/summary").await?;
+        {
+            let mut st = self.state_mut();
+            st.today_usd = Some(s.today_usd);
+            st.month_usd = Some(s.month_usd);
+        }
+        self.emit(Change::Spend);
+        Ok(s)
+    }
+
+    /// The weekly report, to the chat now.
+    pub async fn send_report(&self) -> Result<()> {
+        let _: serde_json::Value = self.0.api.post_slow("/report/send", &Empty {}).await?;
+        Ok(())
+    }
+
+    pub async fn devices(&self) -> Result<Vec<Device>> {
+        self.0.api.get("/tokens").await
+    }
+
+    pub async fn revoke_device(&self, id: i64) -> Result<()> {
+        self.0.api.delete(&format!("/tokens/{id}")).await
+    }
+
+    pub async fn load_watchers(&self) -> Result<()> {
+        let list: Vec<Watcher> = self.0.api.get("/watchers").await?;
+        self.state_mut().watchers = list.into_iter().map(|w| (w.id, w)).collect();
+        self.emit(Change::Watchers);
+        Ok(())
+    }
+
+    pub async fn load_watcher(&self, id: i64) -> Result<()> {
+        let result = self.0.api.get::<Watcher>(&format!("/watchers/{id}")).await;
+        match result {
+            Ok(w) => {
+                self.state_mut().watchers.insert(id, w);
+            }
+            Err(e) if e.status == 404 => {
+                let mut st = self.state_mut();
+                st.watchers.remove(&id);
+                st.deleted_watchers.insert(id);
+            }
+            Err(e) => return Err(e),
+        }
+        self.emit(Change::Watcher(id));
+        Ok(())
+    }
+
+    /// What it read, newest first.
+    pub async fn watcher_values(&self, id: i64) -> Result<Vec<WatcherValue>> {
+        self.0
+            .api
+            .get(&format!("/watchers/{id}/values?limit=50"))
+            .await
+    }
+
+    /// Changes some of a watcher's fields: `change` has only those. Reading the page again with its
+    /// scripts can take a while.
+    pub async fn update_watcher(&self, id: i64, change: &serde_json::Value) -> Result<()> {
+        let w: Watcher = self
+            .0
+            .api
+            .patch_slow(&format!("/watchers/{id}"), change)
+            .await?;
+        self.state_mut().watchers.insert(id, w);
+        self.emit(Change::Watcher(id));
+        Ok(())
+    }
+
+    /// Looks now.
+    pub async fn check_watcher(&self, id: i64) -> Result<()> {
+        let w: Watcher = self
+            .0
+            .api
+            .post_slow(&format!("/watchers/{id}/check"), &Empty {})
+            .await?;
+        self.state_mut().watchers.insert(id, w);
+        self.emit(Change::Watcher(id));
+        Ok(())
+    }
+
+    pub async fn delete_watcher(&self, id: i64) -> Result<()> {
+        self.0.api.delete(&format!("/watchers/{id}")).await?;
+        {
+            let mut st = self.state_mut();
+            st.watchers.remove(&id);
+            st.deleted_watchers.insert(id);
+        }
+        self.emit(Change::Watcher(id));
+        Ok(())
+    }
+
+    pub async fn checks(&self) -> Result<ChecksInfo> {
+        let info: ChecksInfo = self.0.api.get("/checks").await?;
+        if let Some(a) = &info.approval {
+            self.state_mut().approvals.insert(a.id, a.clone());
+        }
+        Ok(info)
+    }
+
+    /// Tries everything Hatbot depends on, which takes up to two minutes.
+    pub async fn run_checks(&self) -> Result<CheckReport> {
+        self.0.api.post_slow("/checks", &Empty {}).await
+    }
+
+    /// An approval that does nothing, to try answering one from the notification.
+    pub async fn test_approval(&self) -> Result<Approval> {
+        let a: Approval = self.0.api.post("/checks/approval", &Empty {}).await?;
+        self.state_mut().approvals.insert(a.id, a.clone());
+        self.emit(Change::NeedsYou);
+        Ok(a)
+    }
+
+    pub async fn heartbeat(&self) -> Result<HeartbeatInfo> {
+        self.0.api.get("/heartbeat").await
+    }
+
+    /// Looks now, on or off.
+    pub async fn run_heartbeat(&self) -> Result<HeartbeatInfo> {
+        self.0.api.post_slow("/heartbeat/run", &Empty {}).await
     }
 
     /// Takes the desktop from Hatbot. If a task asked for you, this answers it.

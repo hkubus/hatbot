@@ -3,6 +3,7 @@ pub mod address;
 pub mod delta;
 pub mod format;
 pub mod links;
+pub mod looking;
 pub mod markdown;
 pub mod memory;
 pub mod models;

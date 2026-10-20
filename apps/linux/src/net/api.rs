@@ -152,6 +152,15 @@ impl Api {
         self.call(path, "PATCH", Some(body), false).await
     }
 
+    /// A PATCH that reads a page again, which can take as long as `post_slow`.
+    pub async fn patch_slow<T: DeserializeOwned, B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T> {
+        self.call(path, "PATCH", Some(body), true).await
+    }
+
     pub async fn delete(&self, path: &str) -> Result<()> {
         let _: serde_json::Value = self.call(path, "DELETE", None::<&Empty>, false).await?;
         Ok(())

@@ -13,10 +13,12 @@ use hatbot::store::{Change, Listener, Store};
 use super::chat::Chat;
 use super::icon::Icon;
 use super::live::LiveView;
+use super::looking::WatcherPage;
 use super::memory::{FilePage, Memory};
 use super::route;
 use super::schedules::{SchedulePage, Schedules};
 use super::search::Search;
+use super::settings::Settings;
 use super::task::TaskPage;
 use super::tasks::Tasks;
 use super::todo::Todos;
@@ -39,6 +41,7 @@ enum Place {
     Live,
     Schedules,
     Memory,
+    Settings,
 }
 
 /// "Hatbot is paused." and "Can't reach Hatbot." over each section.
@@ -89,6 +92,7 @@ struct Inner {
     memory: RefCell<Option<Memory>>,
     search: RefCell<Option<Search>>,
     todo: RefCell<Option<Todos>>,
+    settings: RefCell<Option<Settings>>,
     /// The pages opened over a section, with what drives each, kept while they're in `nav`.
     pushed: RefCell<Vec<(adw::NavigationPage, Box<dyn Any>)>>,
     place: RefCell<Place>,
@@ -184,6 +188,7 @@ impl Shell {
             memory: RefCell::default(),
             search: RefCell::default(),
             todo: RefCell::default(),
+            settings: RefCell::default(),
             pushed: RefCell::default(),
             place: RefCell::new(Place::Chat(store.state().conversation_id)),
             banners,
@@ -319,6 +324,12 @@ impl Inner {
                 .get_or_insert_with(|| Schedules::new(&self.store, &self.banners))
                 .page
                 .clone(),
+            Place::Settings => self
+                .settings
+                .borrow_mut()
+                .get_or_insert_with(|| Settings::new(&self.store, &self.banners))
+                .page
+                .clone(),
             Place::Memory => self
                 .memory
                 .borrow_mut()
@@ -367,7 +378,10 @@ impl Inner {
             // In the web app until this app has them (PLAN.md §23.2).
             Link::Box(id) => self.web(&format!("/boxes/{id}")),
             Link::Live => self.open(Place::Live),
-            Link::Watcher(id) => self.web(&format!("/watchers/{id}")),
+            Link::Watcher(id) => {
+                let p = WatcherPage::new(&self.store, id);
+                self.push(p.page.clone(), Box::new(p));
+            }
             Link::Memory(path) => {
                 self.open(Place::Memory);
                 if !path.is_empty() {
@@ -489,6 +503,9 @@ impl Inner {
         let memory = sidebar_row(Icon::new("book", 18), "Memory", None);
         self.sidebar.append(&memory);
         rows.push((Place::Memory, memory));
+        let settings = sidebar_row(Icon::new("sliders", 18), "Settings", None);
+        self.sidebar.append(&settings);
+        rows.push((Place::Settings, settings));
         drop(st);
         drop(rows);
         self.sync_selection();

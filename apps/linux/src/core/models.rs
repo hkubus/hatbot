@@ -304,6 +304,9 @@ pub struct Approval {
     pub created_at: String,
     pub expires_at: String,
     pub decided_at: Option<String>,
+    /// "ntfy" when answered from the notification.
+    #[serde(default)]
+    pub decided_via: Option<String>,
     #[serde(default)]
     pub note: Option<String>,
 }
@@ -585,6 +588,181 @@ pub struct TodoList {
     pub items: Vec<Todo>,
 }
 
+/// The brain's settings (apps/brain/src/settings.ts). Each is None from a brain without it, and its
+/// row isn't shown.
+#[derive(Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AppSettings {
+    pub limits: Option<Limits>,
+    pub chat_effort: Option<String>,
+    pub chat_model: Option<String>,
+    pub review_changes: Option<bool>,
+    /// "web" or "app": what a notification opens.
+    pub notifications_open: Option<String>,
+    pub desktop_model: Option<String>,
+    pub desktop_escalate: Option<bool>,
+    pub task_model: Option<String>,
+    pub heartbeat: Option<HeartbeatSettings>,
+    pub memory_tidy: Option<bool>,
+    pub weekly_report: Option<WeeklyReport>,
+    pub todo_hour: Option<i64>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Limits {
+    pub task_usd: f64,
+    pub research_usd: f64,
+    pub daily_usd: f64,
+    pub monthly_usd: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alert_reserve_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boxes_usd: Option<f64>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HeartbeatSettings {
+    pub enabled: bool,
+    pub every_minutes: i64,
+    pub bot_id: String,
+    pub instructions: String,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
+pub struct WeeklyReport {
+    pub enabled: bool,
+    /// 0 is Sunday.
+    pub weekday: i64,
+    pub hour: i64,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SpendSummary {
+    pub today_usd: f64,
+    pub month_usd: f64,
+    pub limits: Option<Limits>,
+    pub today_tokens: Option<i64>,
+    pub last_hour: Option<SpendWindow>,
+    pub last_minute: Option<SpendWindow>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct SpendWindow {
+    pub usd: f64,
+    pub tokens: i64,
+}
+
+/// A device signed in with a token.
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Device {
+    pub id: i64,
+    pub name: String,
+    pub created_at: String,
+    pub last_used_at: Option<String>,
+}
+
+/// Something Hatbot looks at every so often (packages/shared/src/watch.ts).
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Watcher {
+    pub id: i64,
+    pub bot_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub prompt: String,
+    pub source: serde_json::Map<String, serde_json::Value>,
+    pub condition: WatchCondition,
+    pub every_minutes: i64,
+    #[serde(default)]
+    pub once: bool,
+    pub enabled: bool,
+    #[serde(default)]
+    pub tainted: bool,
+    #[serde(default)]
+    pub last_checked_at: Option<String>,
+    #[serde(default)]
+    pub last_value: Option<String>,
+    #[serde(default)]
+    pub last_error: Option<String>,
+    #[serde(default)]
+    pub last_task_id: Option<i64>,
+}
+
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+pub struct WatchCondition {
+    pub when: String,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub value: Option<f64>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WatcherValue {
+    pub id: i64,
+    pub value: String,
+    pub fired: bool,
+    pub created_at: String,
+}
+
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckState {
+    Ok,
+    Fail,
+    Skip,
+    #[serde(other)]
+    Warn,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct CheckResult {
+    pub name: String,
+    pub state: CheckState,
+    #[serde(default)]
+    pub detail: String,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckReport {
+    pub finished_at: String,
+    pub results: Vec<CheckResult>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct ChecksInfo {
+    pub report: Option<CheckReport>,
+    pub approval: Option<Approval>,
+}
+
+/// The heartbeat's last look and the ones before that found something.
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct HeartbeatInfo {
+    pub at: Option<String>,
+    pub found: Vec<String>,
+    pub action: Option<String>,
+    pub note: String,
+    pub task_id: Option<i64>,
+    pub recent: Vec<HeartbeatRun>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct HeartbeatRun {
+    pub at: String,
+    pub found: Vec<String>,
+    pub action: Option<String>,
+}
+
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct SkillStatus {
     pub name: String,
@@ -769,6 +947,12 @@ pub enum Event {
     ConversationDeleted { id: i64 },
     #[serde(rename = "settings.updated")]
     SettingsUpdated,
+    #[serde(rename = "watcher.updated")]
+    WatcherUpdated { watcher: Watcher },
+    #[serde(rename = "watcher.deleted")]
+    WatcherDeleted { id: i64 },
+    #[serde(rename = "heartbeat.updated")]
+    HeartbeatUpdated,
     #[serde(other)]
     Unknown,
 }

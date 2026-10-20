@@ -340,10 +340,9 @@ impl SchedulePage {
         runs.add(&next_run);
         runs.add(&run_now);
         runs.add(&started);
-        let delete_row = adw::ButtonRow::builder()
-            .title("Delete Schedule")
-            .css_classes(["destructive-action"])
-            .build();
+        let delete_row = adw::ButtonRow::builder().title("Delete Schedule").build();
+        // Not the builder's css_classes: they would drop the row's own "button".
+        delete_row.add_css_class("destructive-action");
         let delete = adw::PreferencesGroup::builder()
             .visible(id.is_some())
             .build();
