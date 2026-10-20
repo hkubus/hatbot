@@ -9,6 +9,7 @@ use gtk::glib;
 use hatbot::core::format;
 use hatbot::core::links::Link;
 use hatbot::core::markdown::escape;
+use hatbot::core::memory;
 use hatbot::core::models::{StepKind, Task, TaskStatus, TaskStep, latest_note_only};
 use hatbot::store::{Change, Listener, Store};
 
@@ -578,19 +579,47 @@ fn details(store: &Store, t: &Task, files: &[hatbot::core::models::Attachment]) 
         add("Tainted by", text(by));
     }
     add("Cost", text(&format::money(t.cost_usd)));
-    // A memory note opens in Memory (L5); a research task's report file opens here.
-    let report = files.iter().find(|a| is_markdown(a)).filter(|_| t.research);
-    if let Some(a) = report {
+    // The report is a note, opening in Memory, and a research task's attached copy, read here when
+    // the note is gone.
+    let file = files
+        .iter()
+        .find(|a| is_markdown(a))
+        .filter(|_| t.research)
+        .cloned();
+    let name = t
+        .report_path
+        .as_deref()
+        .map(memory::name)
+        .or(file.as_ref().map(|a| a.name.as_str()));
+    if let Some(name) = name {
         let b = gtk::Button::builder()
-            .label(&a.name)
+            .label(name)
             .halign(gtk::Align::Start)
             .css_classes(["flat"])
             .build();
-        let (store, a) = (store.clone(), a.clone());
-        b.connect_clicked(move |b| read(&store, &a, b));
+        let (store, path) = (store.clone(), t.report_path.clone());
+        b.connect_clicked(move |b| {
+            let Some(path) = path.clone() else {
+                if let Some(a) = &file {
+                    read(&store, a, b);
+                }
+                return;
+            };
+            let (store, file, b) = (store.clone(), file.clone(), b.clone());
+            glib::spawn_future_local(async move {
+                match (store.memory_file(&path).await, &file) {
+                    // An older brain says 400 for a note that isn't there.
+                    (Err(e), Some(a))
+                        if e.status == 404
+                            || (e.status == 400 && e.message.starts_with("not found")) =>
+                    {
+                        read(&store, a, &b)
+                    }
+                    _ => route::go(Link::Memory(path)),
+                }
+            });
+        });
         add("Report", b.upcast());
-    } else if let Some(path) = &t.report_path {
-        add("Report", text(path));
     }
     if let Some(payload) = &t.payload {
         let l = gtk::Label::builder()
