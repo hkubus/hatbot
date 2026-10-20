@@ -24,6 +24,8 @@ struct DiskCache: Sendable {
     var messages: [ThreadMessage]
     var episodes: [Episode]
     var hasEarlier: Bool
+    /// Its messages' tasks, as cards; files from before them have none.
+    var tasks: [AgentTask] = []
   }
 
   func chats() -> Chats? { load("chats.json") }
@@ -60,5 +62,23 @@ struct DiskCache: Sendable {
       try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
       try? data.write(to: dir.appendingPathComponent(name), options: .atomic)
     }
+  }
+}
+
+/// The Tasks screen's first pages, as cards, and files kept from before a page had its tasks.
+extension DiskCache {
+  /// `list`: "active" or "done".
+  func tasks(_ list: String) -> [AgentTask]? { load("tasks-\(list).json") }
+
+  func save(tasks: [AgentTask], _ list: String) { write(tasks, "tasks-\(list).json") }
+}
+
+extension DiskCache.Page {
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    messages = try c.decode([ThreadMessage].self, forKey: .messages)
+    episodes = try c.decode([Episode].self, forKey: .episodes)
+    hasEarlier = try c.decode(Bool.self, forKey: .hasEarlier)
+    tasks = try c.decodeIfPresent([AgentTask].self, forKey: .tasks) ?? []
   }
 }
