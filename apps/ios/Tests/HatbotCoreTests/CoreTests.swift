@@ -314,9 +314,10 @@ final class ChatTests: XCTestCase {
     let m = { (ids: [Int]) in
       ids.map { ThreadMessage(id: $0, role: .assistant, kind: .text, text: "", status: .done, createdAt: "") }
     }
-    // Earlier pages stay; 6 was deleted meanwhile and 9 is new; 10 came by event while it loaded.
+    // Earlier pages stay; 6 was deleted meanwhile and 9 is new; 10, newer than the page, was deleted
+    // too: what came while it loaded, the load puts on again.
     var r = ThreadMerge.merge(m([1, 2, 3, 4, 5, 6, 7, 10]), hasEarlier: true, latest: m([4, 5, 7, 8, 9]), page: 5)
-    XCTAssertEqual(r.messages.map(\.id), [1, 2, 3, 4, 5, 7, 8, 9, 10])
+    XCTAssertEqual(r.messages.map(\.id), [1, 2, 3, 4, 5, 7, 8, 9])
     XCTAssertTrue(r.hasEarlier)
     // More than a page came while away: start again from the page.
     r = ThreadMerge.merge(m([1, 2]), hasEarlier: false, latest: m([5, 6, 7]), page: 3)
@@ -795,10 +796,12 @@ final class NetworkTests: XCTestCase {
   }
 
   /// What changes in the chat while it loads isn't undone by a page read before: the task under a reply,
-  /// its edit, a message deleted, and one that came.
+  /// its edit, a message deleted, one that came, and one you sent with no event for it, as with the
+  /// stream down.
   func testWhatChangesWhileTheChatLoadsStays() async throws {
     let store = await MainActor.run { Self.store() }
     SlowBrain.routes["/thread/messages?limit=50"] = "[\(Self.message(8, in: 1)),\(Self.message(9, in: 1))]"
+    SlowBrain.routes["/thread/messages"] = Self.message(11, in: 1)
     SlowBrain.slower = ["/thread/messages?limit=50": 0.2]
     async let loaded: Void = store.loadThread()
     await waitUntil { SlowBrain.requested.contains("GET /thread/messages?limit=50") }
@@ -808,9 +811,10 @@ final class NetworkTests: XCTestCase {
       store.apply(.messageDeleted(ids: [8]))
       store.apply(.messageCreated(try JSONDecoder().decode(ThreadMessage.self, from: Data(Self.message(10, in: 1).utf8))))
     }
+    try await store.send("hi")
     try await loaded
     await MainActor.run {
-      XCTAssertEqual(store.messages.map(\.id), [9, 10])
+      XCTAssertEqual(store.messages.map(\.id), [9, 10, 11])
       XCTAssertEqual(store.messages.first?.taskId, 4)
       XCTAssertEqual(store.messages.first?.editedAt, "2026-10-15T08:05:00Z")
     }

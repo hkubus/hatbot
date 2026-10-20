@@ -736,7 +736,11 @@ final class AppStore {
     }
     let m: ThreadMessage = try await api.post(
       "\(chatPath)/messages", body: Body(text: text, attachmentIds: attachmentIds, incognito: incognito))
-    if m.isIncognito == incognito && (m.conversationId ?? 1) == conversationId { upsert(m) }
+    guard m.isIncognito == incognito && (m.conversationId ?? 1) == conversationId else { return }
+    upsert(m)
+    // A load on its way may have read the page before this was posted, and with the stream down no
+    // event brings it.
+    for load in missed.keys { missed[load]?.append(.messageCreated(m)) }
   }
 
   /// Uploads a file for your next message.
