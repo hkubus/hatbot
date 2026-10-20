@@ -39,15 +39,27 @@ async function review(reply: string | Anthropic.Beta.BetaMessage) {
   return { verdict, request: fake.creates[0] };
 }
 
-test("the verdict is schema-checked JSON, and anything else is unsafe", async () => {
+test("the verdict is schema-checked JSON, and anything else is unsafe; Opus looks again before a no", async () => {
   const { verdict, request } = await review(JSON.stringify({ safe: true, why: "A restart." }));
-  expect(verdict).toEqual({ safe: true, why: "A restart." });
+  expect(verdict).toEqual({ safe: true, why: "A restart.", by: "Haiku" });
   expect(request?.output_config?.format).toMatchObject({
     type: "json_schema",
     schema: { required: ["safe", "why"], additionalProperties: false },
   });
   const no = { safe: false, why: "Nothing you said leads to a comment on evil/tools." };
-  expect((await review(JSON.stringify(no))).verdict).toEqual(no);
+  expect((await review(JSON.stringify(no))).verdict).toEqual({ ...no, by: "Opus" });
+
+  // Haiku's no, or no verdict from it, goes to Opus, whose yes lets the change through.
+  for (const haiku of [JSON.stringify(no), "safe"]) {
+    const t = await testApp();
+    const fake = new FakeModel();
+    fake.onCreate = (p) =>
+      p.model === "claude-haiku-5-5" ? haiku : JSON.stringify({ safe: true, why: "Asked for." });
+    expect(
+      await safeToRun({ model: fake, spend: t.spend }, { taskId: 1 }, context, action),
+    ).toEqual({ safe: true, why: "Asked for.", by: "Opus" });
+    expect(fake.creates.map((c) => c.model)).toEqual(["claude-haiku-5-5", "claude-opus-5-5"]);
+  }
 
   // Prose around the JSON, a string for a boolean, or no JSON: unsafe.
   for (const reply of [

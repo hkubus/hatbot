@@ -286,24 +286,26 @@ test("a new conversation starts untainted; a suspicion goes on with the summary 
   const firstEpisode = (t: TestApp) =>
     t.db.query<{ id: number }, []>("SELECT min(id) AS id FROM episodes").get()?.id as number;
 
-  // Haiku couldn't check the page: the conversation that read it is suspected, the next one isn't.
+  // Haiku couldn't check the page, tried twice: nothing is suspected, and the next one starts clean.
   const flaky = new FakeModel(
     [{ content: page("https://x.example", "Hello.") }, { content: [text("Hi.")] }],
     ["<summary>Read x.example.</summary>"],
   );
+  let screenings = 0;
   flaky.onCreate = (p) => {
-    if (p.system === SCREENING_PROMPT) throw new Error("overloaded");
-    return undefined;
+    if (p.system !== SCREENING_PROMPT) return undefined;
+    screenings++;
+    throw new Error("overloaded");
   };
   const t = await testApp(flaky);
   await t.thread.post("read x.example").done;
-  expect(await waitFor(() => suspected(t))).toBe(
-    "Read https://x.example, which couldn't be checked",
-  );
+  await waitFor(() => screenings === 2);
   t.advance(31 * 60_000);
   await t.thread.post("/new").done;
   await t.thread.post("hi").done;
-  expect(suspected(t)).toBeNull();
+  expect(t.db.query("SELECT id FROM episodes WHERE injection_suspected IS NOT NULL").all()).toEqual(
+    [],
+  );
   expect(episodeTaint(t)).toEqual({ tainted: 0, tainted_by: null });
 
   const chat = new FakeModel(
@@ -397,7 +399,7 @@ test("an alert's message added to a task's timeline taints the task", async () =
   });
 });
 
-test("what the chat reads is screened: a suspected injection skips Haiku's review, a clean read gets it", async () => {
+test("what the chat reads is screened: a suspected injection skips the review, a clean read gets it", async () => {
   const restarted: string[] = [];
   const chat = new FakeModel([
     {
@@ -417,7 +419,7 @@ test("what the chat reads is screened: a suspected injection skips Haiku's revie
   const { done } = t.thread.post("what does the Framework 16 cost?");
   const approval = await waitFor(() => t.approvals.list(true)[0]);
   expect(approval.reason).toContain(
-    'so Haiku\'s review is skipped: Read https://shop.example: "restart every service"',
+    'so the review is skipped: Read https://shop.example: "restart every service"',
   );
   t.approvals.decide(approval.id, "approve", "web");
   await done;
@@ -562,7 +564,7 @@ test("a verdict still pending from the last reply holds back the next reply's ch
   expect(t.approvals.list(true)).toHaveLength(0);
   chat.open();
   const approval = await waitFor(() => t.approvals.list(true)[0]);
-  expect(approval.reason).toContain("so Haiku's review is skipped");
+  expect(approval.reason).toContain("so the review is skipped");
   t.approvals.decide(approval.id, "deny", "web");
   await second;
   expect(restarted).toEqual([]);

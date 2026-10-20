@@ -1,14 +1,17 @@
 // Haiku screens untrusted text for prompt injection (PLAN.md §6.1, defence in depth): a desktop task's
 // pages, and what the chat and background tasks read from the web and from plugins.
 import { createHash } from "node:crypto";
-import type { Spend } from "../spend";
+import { BudgetError, type Spend } from "../spend";
 import { type ModelClient, oneShot } from "./model";
 import { SCREENING_PROMPT } from "./prompt";
 import { tagJson } from "./untrusted";
 
 export const SCREENING_MODEL = "claude-haiku-5-5";
 
-/** `failed`: Haiku gave no verdict, so the page counts as suspected and the owner is asked. */
+/**
+ * `failed`: Haiku gave no verdict, twice. The text isn't suspected for it: the timeline says it
+ * couldn't be checked, and the review still looks at what it leads to.
+ */
 export type Screening = { suspected: boolean; excerpt: string; failed?: true };
 
 const VERDICT = {
@@ -29,51 +32,56 @@ export async function screenPage(
   spend: Spend,
   where: { taskId?: number; episodeId?: number },
   page: { url: string | null; title: string | null; text: Readable },
+  { reserve = false }: { reserve?: boolean } = {},
 ): Promise<Screening> {
   const pdf = typeof page.text === "string" ? null : page.text.pdf;
   if (typeof page.text === "string" && !page.text.trim()) return { suspected: false, excerpt: "" };
   // JSON-encoded and labelled with its source, so the page can't pose as the prompt. A PDF goes as a
   // document before its label.
   const label = `<page_json>\n${tagJson({ url: page.url, title: page.title, text: pdf === null ? (page.text as string).slice(0, MAX_SCREENED_CHARS) : "(the PDF document above)" })}\n</page_json>`;
-  try {
-    // Past a limit it throws: the text counts as suspected, as with any check that failed.
-    const out = await oneShot(
-      { model, spend },
-      {
-        model: SCREENING_MODEL,
-        // Haiku 5.5 thinks by default; low effort, with room so thinking can't crowd out the verdict.
-        max_tokens: 2000,
-        thinking: { type: "adaptive" },
-        output_config: { effort: "low", format: { type: "json_schema", schema: VERDICT } },
-        system: SCREENING_PROMPT,
-        messages: [
-          {
-            role: "user",
-            content:
-              pdf === null
-                ? label
-                : [
-                    {
-                      type: "document",
-                      source: { type: "base64", media_type: "application/pdf", data: pdf },
-                    },
-                    { type: "text", text: label },
-                  ],
-          },
-        ],
-      },
-      { purpose: "screening", ...where },
-    );
-    const parsed = JSON.parse(out) as Partial<Screening>;
-    if (typeof parsed.suspected !== "boolean")
-      throw new Error(`no verdict in ${out.slice(0, 200)}`);
-    return { suspected: parsed.suspected, excerpt: String(parsed.excerpt ?? "").slice(0, 300) };
-  } catch (err) {
-    console.error(
-      `${where.taskId ? `task ${where.taskId}` : `episode ${where.episodeId}`}: screening failed`,
-      err,
-    );
-    return { suspected: true, excerpt: "", failed: true };
+  // Tried twice: a verdict cut short or garbled may come right the second time. Past a limit, once.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const out = await oneShot(
+        { model, spend },
+        {
+          model: SCREENING_MODEL,
+          // Haiku 5.5 thinks by default; low effort, with room so thinking can't crowd out the verdict.
+          max_tokens: 2000,
+          thinking: { type: "adaptive" },
+          output_config: { effort: "low", format: { type: "json_schema", schema: VERDICT } },
+          system: SCREENING_PROMPT,
+          messages: [
+            {
+              role: "user",
+              content:
+                pdf === null
+                  ? label
+                  : [
+                      {
+                        type: "document",
+                        source: { type: "base64", media_type: "application/pdf", data: pdf },
+                      },
+                      { type: "text", text: label },
+                    ],
+            },
+          ],
+        },
+        { purpose: "screening", ...where },
+        { reserve },
+      );
+      const parsed = JSON.parse(out) as Partial<Screening>;
+      if (typeof parsed.suspected !== "boolean")
+        throw new Error(`no verdict in ${out.slice(0, 200)}`);
+      return { suspected: parsed.suspected, excerpt: String(parsed.excerpt ?? "").slice(0, 300) };
+    } catch (err) {
+      if (attempt < 2 && !(err instanceof BudgetError)) continue;
+      console.error(
+        `${where.taskId ? `task ${where.taskId}` : `episode ${where.episodeId}`}: screening failed`,
+        err,
+      );
+      return { suspected: false, excerpt: "", failed: true };
+    }
   }
 }
 
@@ -87,7 +95,7 @@ const MAX_KNOWN = 1000;
 /**
  * Screens the untrusted text a chat reply or a background task reads, in the background while it goes
  * on (PLAN.md §6.1). `settled` waits for the verdicts: a change waits for them before it's reviewed.
- * `suspect` hears of each text Haiku suspects, or couldn't check.
+ * `suspect` hears of each text Haiku suspects, or couldn't check. `reserve`: alert and heartbeat work.
  */
 export class Screener {
   private pending = new Set<Promise<void>>();
@@ -96,6 +104,7 @@ export class Screener {
     private d: { model: ModelClient; spend: Spend },
     private ref: { taskId?: number; episodeId?: number },
     private suspect: (source: string, verdict: Screening) => void,
+    private opts: { reserve?: boolean } = {},
   ) {}
 
   /** `source` says where `text` came from, e.g. "Read https://…" or a tool call. */
@@ -109,17 +118,21 @@ export class Screener {
     const seen = cache.get(key);
     const verdict = seen
       ? Promise.resolve(seen)
-      : screenPage(this.d.model, this.d.spend, this.ref, { url: null, title: source, text }).then(
-          (v) => {
-            if (v.failed) return v;
-            if (cache.size >= MAX_KNOWN) cache.delete(cache.keys().next().value as string);
-            cache.set(key, v);
-            return v;
-          },
-        );
+      : screenPage(
+          this.d.model,
+          this.d.spend,
+          this.ref,
+          { url: null, title: source, text },
+          this.opts,
+        ).then((v) => {
+          if (v.failed) return v;
+          if (cache.size >= MAX_KNOWN) cache.delete(cache.keys().next().value as string);
+          cache.set(key, v);
+          return v;
+        });
     const done: Promise<void> = verdict
       .then((v) => {
-        if (v.suspected) this.suspect(source, v);
+        if (v.suspected || v.failed) this.suspect(source, v);
       })
       .finally(() => this.pending.delete(done));
     this.pending.add(done);

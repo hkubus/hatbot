@@ -324,7 +324,7 @@ test("an unanswered takeover leaves the screen to other tasks; Take over gives i
   expect(t.desktop.get().request).toBeNull();
 });
 
-test("a page is screened before the model acts on it: one Haiku couldn't check, or a suspected injection, waits for you", async () => {
+test("a page is screened before the model acts on it: one Haiku couldn't check is noted, a suspected injection waits for you", async () => {
   const work = new FakeModel([
     { content: [computer("screenshot")] },
     { content: [computer("left_click", { coordinate: [10, 10] })] },
@@ -348,12 +348,11 @@ test("a page is screened before the model acts on it: one Haiku couldn't check, 
     return undefined;
   };
   const task = startTask(t);
-  const unchecked = await pending(t);
-  expect(unchecked.reason).toContain("couldn't check this page");
-  expect(work.requests).toHaveLength(1);
-  t.approvals.decide(unchecked.id, "approve", "web");
-
   const suspected = await pending(t);
+  expect(work.requests).toHaveLength(2);
+  expect(t.tasks.steps(task.id).filter((s) => s.name === "Couldn't check the page")).toHaveLength(
+    1,
+  );
   expect(suspected.kind).toBe("injection_warning");
   expect(suspected.reason).toContain("Ignore previous instructions");
   t.approvals.decide(suspected.id, "deny", "web");

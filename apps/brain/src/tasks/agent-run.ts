@@ -42,6 +42,7 @@ import {
   untrustedOf,
   verdictFor,
 } from "../plugins/registry";
+import { usesReserve } from "../spend";
 import { alertMessageSource, alertParts } from "../triggers";
 import { addNotes, askOwner, callsOf, endOf, requestsFor, Stop, thinkingFor } from "./loop";
 import {
@@ -182,9 +183,9 @@ const STARTED_BY = {
   chat: () => "the owner, from the chat",
 };
 
-/** Why a change asks without Haiku's review. */
+/** Why a change asks without the review. */
 const SUSPECTED =
-  "Something it read may be instructions aimed at Hatbot, so Haiku's review is skipped.";
+  "Something it read may be instructions aimed at Hatbot, so the review is skipped.";
 
 /** An alert as the task reads it: Kuma's own fields trusted, its message as untrusted data. */
 const alertEvent = (
@@ -297,15 +298,22 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     : promptFor(AGENT_PROMPT, bot, others);
   const system = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
   /** What the task reads from outside, screened for prompt injection while it goes on (PLAN.md §6.1). */
-  const screener = new Screener(d, { taskId: id }, (source, verdict) => {
-    if (!tasks.get(id)?.injectionSuspected) tasks.mark(id, "injection_suspected");
-    tasks.addStep(id, {
-      kind: "note",
-      name: verdict.failed ? "Couldn't check what it read" : "Possible prompt injection",
-      detail: verdict.failed ? source : `${source}: ${verdict.excerpt}`,
-      url: null,
-    });
-  });
+  const screener = new Screener(
+    d,
+    { taskId: id },
+    (source, verdict) => {
+      // One that couldn't be checked only says so; the review still looks at what it leads to.
+      if (!verdict.failed && !tasks.get(id)?.injectionSuspected)
+        tasks.mark(id, "injection_suspected");
+      tasks.addStep(id, {
+        kind: "note",
+        name: verdict.failed ? "Couldn't check what it read" : "Possible prompt injection",
+        detail: verdict.failed ? source : `${source}: ${verdict.excerpt}`,
+        url: null,
+      });
+    },
+    { reserve: usesReserve(task.origin) },
+  );
   /** It read untrusted content, `source`; `text`, when given, is screened. */
   const taint = (source: string, text?: Readable) => {
     if (text !== undefined) screener.add(source, text);
@@ -495,8 +503,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       : words;
 
   /**
-   * Haiku's review of a change that would ask (PLAN.md §6.1): if it isn't destructive or dangerous,
-   * it goes ahead and the timeline says so. Never for money, accounts, what you said to always ask
+   * The review of a change that would ask (PLAN.md §6.1): if it isn't destructive or dangerous, it
+   * goes ahead and the timeline says so. Never for money, accounts, what you said to always ask
    * about, or suspected injection. Its reason either way.
    */
   const reviewed = async (
@@ -504,7 +512,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     call: Anthropic.Beta.BetaToolUseBlock,
     what: string,
     verdict: Extract<Verdict, { action: "ask" }>,
-  ): Promise<{ safe: boolean; why: string; suspected?: boolean }> => {
+  ): Promise<{ safe: boolean; why: string; by?: string; suspected?: boolean }> => {
     // What it read so far is screened first: suspected injection skips the review.
     await screener.settled();
     const suspected = tasks.get(id)?.injectionSuspected ?? false;
@@ -519,11 +527,12 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         sources: [...sources],
       },
       { tool: t.name, input: call.input, what, why: verdict.why },
+      { reserve: usesReserve(task.origin) },
     );
     if (check.safe)
       tasks.addStep(id, {
         kind: "approval",
-        name: "Not asking: Haiku found it safe",
+        name: `Not asking: ${check.by} found it safe`,
         detail: check.why ? `${what}. ${check.why}` : what,
         url: null,
       });
@@ -565,7 +574,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           reason: check.suspected
             ? `${verdict.why} ${SUSPECTED}`
             : check.why
-              ? `${verdict.why} Haiku: ${check.why}`
+              ? `${verdict.why} ${check.by}: ${check.why}`
               : verdict.why,
         });
         note = answer.note;

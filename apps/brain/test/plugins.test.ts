@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { PluginInfo, Task } from "@hatbot/shared";
 import { z } from "zod";
+import { REVIEW_PROMPT } from "../src/agent/prompt";
 import {
   ask,
   block,
@@ -268,6 +269,9 @@ test("in the chat, a risky change waits for you: a denial reaches the model, and
   t.approvals.decide(first.id, "deny", "web", "Wait until tonight");
   const second = await waitFor(() => t.approvals.list(true).find((a) => a.id !== first.id));
   expect(said(chat, 1)).toContain("Wait until tonight");
+  // The next change's review reads your note as your words.
+  const review = chat.creates.findLast((c) => c.system === REVIEW_PROMPT);
+  expect(String(review?.messages[0]?.content)).toContain("Wait until tonight");
   t.thread.post("actually, never mind");
   await t.thread.idle();
   expect(t.approvals.get(second.id)?.status).toBe("cancelled");

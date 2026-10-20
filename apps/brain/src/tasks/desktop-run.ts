@@ -30,6 +30,7 @@ import {
 } from "../negotiate/gate";
 import { marketplaceSend } from "../negotiate/marketplace";
 import { destructive } from "../plugins/ssh/policy";
+import { usesReserve } from "../spend";
 import { skillPath } from "../teach/skills";
 import { type Armed, approvalKind, notCovered } from "./approval-kind";
 import { addNotes, askOwner, callsOf, endOf, requestsFor, Stop, textOf, thinkingFor } from "./loop";
@@ -501,36 +502,42 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     // Never rejects: it may be left unread when the task stops first.
     const verdict = known
       ? Promise.resolve(known)
-      : screenPage(d.model, d.spend, { taskId: id }, { url, title: page.title, text }).then((v) => {
+      : screenPage(
+          d.model,
+          d.spend,
+          { taskId: id },
+          { url, title: page.title, text },
+          { reserve: usesReserve(task.origin) },
+        ).then((v) => {
           if (!v.failed) verdicts.set(key, v);
           return v;
         });
     screening.push(verdict.then((v) => ({ verdict: v, host, url })));
   };
 
-  /** Applies the verdicts on the pages the model just read: a suspected one asks you to go on. */
+  /**
+   * Applies the verdicts on the pages the model just read: a suspected one asks you to go on, and one
+   * that couldn't be checked only says so.
+   */
   const screened = async () => {
     const pending = screening;
     screening = [];
     for (const { verdict, host, url } of await Promise.all(pending)) {
-      if (!verdict.suspected || trustedHosts.has(host)) continue;
+      if (trustedHosts.has(host)) continue;
       if (verdict.failed)
         tasks.addStep(id, { kind: "note", name: "Couldn't check the page", detail: "", url });
-      else {
-        tasks.mark(id, "injection_suspected");
-        tasks.addStep(id, {
-          kind: "note",
-          name: "Possible prompt injection",
-          detail: verdict.excerpt,
-          url,
-        });
-      }
+      if (!verdict.suspected) continue;
+      tasks.mark(id, "injection_suspected");
+      tasks.addStep(id, {
+        kind: "note",
+        name: "Possible prompt injection",
+        detail: verdict.excerpt,
+        url,
+      });
       const { outcome } = await askApproval({
         kind: "injection_warning",
         summary: `Keep going on ${host}?`,
-        reason: verdict.failed
-          ? "Hatbot couldn't check this page for instructions aimed at it."
-          : `This page may contain instructions aimed at Hatbot: "${verdict.excerpt}"`,
+        reason: `This page may contain instructions aimed at Hatbot: "${verdict.excerpt}"`,
       });
       if (outcome !== "approved")
         throw new Stop("cancelled", `Stopped on ${host}: the page may contain a prompt injection.`);

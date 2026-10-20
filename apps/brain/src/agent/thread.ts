@@ -104,6 +104,8 @@ const MAX_SUMMARY_TRIES = 3;
 /** A conversation whose last request was this long carries on in a new one. */
 const LONG_EPISODE_TOKENS = 90_000;
 const RECENT_MESSAGES = 10;
+/** The most of your words in a conversation the review reads, the newest kept. */
+const OWNER_SAID_CHARS = 12_000;
 const MAX_STEPS = 25;
 /** A chat request's output limit, and ask_opus's: the check before each counts on all of it. */
 const MAX_TOKENS = 32000;
@@ -520,17 +522,38 @@ export class Thread {
   }
 
   /**
-   * Your last few messages in this conversation, as you wrote them. Answering a hand-off, also what you
-   * had said to the bot that asked: its request is its own words, not yours.
+   * Your messages in this conversation as you wrote them, the newest OWNER_SAID_CHARS, and the notes
+   * you gave on its approvals. Answering a hand-off, also what you had said to the bot that asked: its
+   * request is its own words, not yours.
    */
   private ownerSaid(episodeId: number): string {
-    const here = this.d.db
+    const said: string[] = [];
+    let left = OWNER_SAID_CHARS;
+    for (const m of this.d.db
       .query<{ text: string; created_at: string }, [number]>(
-        "SELECT text, created_at FROM messages WHERE episode_id = ? AND role = 'user' ORDER BY id DESC LIMIT 3",
+        "SELECT text, created_at FROM messages WHERE episode_id = ? AND role = 'user' ORDER BY id DESC",
       )
-      .all(episodeId)
-      .reverse()
-      .map((m) => `[${localStamp(new Date(m.created_at))}] ${m.text}`)
+      .all(episodeId)) {
+      const line = `[${localStamp(new Date(m.created_at))}] ${m.text}`;
+      said.unshift(line.slice(0, left));
+      left -= line.length;
+      if (left <= 0) break;
+    }
+    const notes = this.d.db
+      .query<{ note: string; at: string }, [number, number]>(
+        `SELECT a.note, a.decided_at AS at FROM approvals a JOIN episodes e ON e.id = ?2
+         WHERE a.conversation_id = ?1 AND a.task_id IS NULL AND a.note IS NOT NULL
+           AND a.created_at >= e.started_at ORDER BY a.id`,
+      )
+      .all(this.conversationId, episodeId)
+      .map((a) => `[${localStamp(new Date(a.at))}] ${a.note}`);
+    const here = [
+      said.join("\n\n"),
+      notes.length
+        ? `What the owner told this conversation on its approvals:\n${notes.join("\n")}`
+        : "",
+    ]
+      .filter(Boolean)
       .join("\n\n");
     const asked = this.currentHandoff?.task;
     const there = asked && this.d.tasks?.requestOf(asked.id);
@@ -543,8 +566,8 @@ export class Thread {
 
   /**
    * Something the episode read may be a prompt injection, `what`: the first kept. `own`: Haiku found
-   * it in what the episode read itself, so the running summary carries it on. A check that failed
-   * doesn't: the episode had the text itself, but the summary was told to keep no requests from it.
+   * it in what the episode read itself, so the running summary carries it on; a suspicion carried in
+   * from elsewhere doesn't.
    */
   private suspect(episodeId: number, what: string, own = false) {
     this.d.db
@@ -575,11 +598,10 @@ export class Thread {
     let screener = this.screeners.get(episodeId);
     if (!screener) {
       for (const [id, other] of this.screeners) if (other.idle) this.screeners.delete(id);
-      screener = new Screener(this.d, { episodeId }, (source, verdict) =>
-        verdict.failed
-          ? this.suspect(episodeId, `${source}, which couldn't be checked`)
-          : this.suspect(episodeId, `${source}: "${verdict.excerpt}"`, true),
-      );
+      // One that couldn't be checked isn't suspected: the review still looks at what it leads to.
+      screener = new Screener(this.d, { episodeId }, (source, verdict) => {
+        if (!verdict.failed) this.suspect(episodeId, `${source}: "${verdict.excerpt}"`, true);
+      });
       this.screeners.set(episodeId, screener);
     }
     return screener;
@@ -602,8 +624,8 @@ export class Thread {
   }
 
   /**
-   * A change that asks (`verdict`): Haiku's review (it isn't destructive or dangerous), then your
-   * approval, which the reply waits for (PLAN.md §6.1). Your note if it may go ahead; why not if not.
+   * A change that asks (`verdict`): the review (it isn't destructive or dangerous), then your approval,
+   * which the reply waits for (PLAN.md §6.1). Your note if it may go ahead; why not if not.
    */
   private async approve(
     episodeId: number,
@@ -631,7 +653,7 @@ export class Thread {
         { ...call, why: verdict.why },
       );
       if (check.safe) return { note: null };
-      review = check.why;
+      review = check.why && `${check.by}: ${check.why}`;
     }
     if (!approvals) return { content: "Approvals aren't available; use run_task.", isError: true };
     const approval = approvals.create({
@@ -641,9 +663,9 @@ export class Thread {
       kind: verdict.kind ?? "other",
       summary: call.what,
       reason: suspected
-        ? `${verdict.why} Something this conversation read may be instructions aimed at ${bot.name}, so Haiku's review is skipped: ${suspected}`
+        ? `${verdict.why} Something this conversation read may be instructions aimed at ${bot.name}, so the review is skipped: ${suspected}`
         : review
-          ? `${verdict.why} Haiku: ${review}`
+          ? `${verdict.why} ${review}`
           : verdict.why,
       sources: taintedBy ? [taintedBy] : [],
     });

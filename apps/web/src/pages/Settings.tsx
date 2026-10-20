@@ -393,7 +393,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
               {paused ? "Resume" : "Pause all"}
             </button>
           </Row>
-          <Row label="Let Haiku allow safe changes">
+          <Row label="Let Haiku and Opus allow safe changes">
             <Switch on={settings.reviewChanges} onChange={(on) => update({ reviewChanges: on })} />
           </Row>
           <RollbackRow toast={toast} />

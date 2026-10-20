@@ -125,7 +125,7 @@ struct SettingsView: View {
         }
         Section("Safety") {
           if let review = settings?.reviewChanges {
-            Toggle("Let Haiku allow safe changes", isOn: setting(review, \.reviewChanges))
+            Toggle("Let Haiku and Opus allow safe changes", isOn: setting(review, \.reviewChanges))
           }
           if store.paused {
             Button("Resume") { Task { await attempt($error) { try await store.setPaused(false) } } }
