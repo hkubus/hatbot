@@ -7,7 +7,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 - **No vendor cloud.** It runs on your hardware.
 - **Predictable cost.** Spending limits are enforced.
 
-> Status: design agreed 2026-10-09. M0–M5, the iOS app, more than one bot (§14), looking after things (§15), negotiation's N1 and N2 (§16), research (§17) and own code (§18) are built, and so are the fixes from the 2026-10-17 code review. The owner deployed and tried them live by 2026-10-18. Boxes (§21) were built 2026-10-18 and haven't been deployed yet, nor have hand-offs in the other bot's chat and the code bot (§14.7, 2026-10-19), Hatbot as the one that hands the others their work (§14.8, 2026-10-20), or Claude Code (§23, 2026-10-20). Only negotiation (§16, "Not done") has work still planned; everything else not built was left on purpose and is listed in §12.1 (owner's call, 2026-10-18).
+> Status: design agreed 2026-10-09. M0–M5, the iOS app, more than one bot (§14), looking after things (§15), negotiation's N1 and N2 (§16), research (§17) and own code (§18) are built, and so are the fixes from the 2026-10-17 code review. The owner deployed and tried them live by 2026-10-18. Boxes (§21) were built 2026-10-18 and haven't been deployed yet, nor have hand-offs in the other bot's chat and the code bot (§14.7, 2026-10-19), Hatbot as the one that hands the others their work (§14.8, 2026-10-20), or Claude Code (§23, 2026-10-20). Only negotiation (§16, "Not done") and the Linux app (§24, planned 2026-10-20; L1 to L5 built) have work still planned; everything else not built was left on purpose and is listed in §12.1 (owner's call, 2026-10-18).
 
 ---
 
@@ -38,7 +38,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 | Area | Decision |
 |---|---|
 | Product shape | Personal agent first; teams later |
-| Audience | You first. The repository is public, under the MIT licence. **No copyleft dependencies**: `bun run licenses` fails CI on one, with only build tools that ship nothing allowed by name (Vite's `lightningcss`, MPL-2.0) |
+| Audience | You first. The repository is public, under the MIT licence. **No copyleft dependencies**: `bun run licenses` fails CI on one, with only build tools that ship nothing allowed by name (Vite's `lightningcss`, MPL-2.0). The Linux app (§24) links the system's GTK, libadwaita, GLib, libsoup and libsecret (LGPL), which it never ships (owner's call, 2026-10-20); its crates are checked by `cargo deny` |
 | Hosting | Self-hosted only, on the Proxmox host `192.168.55.113` (i3-12100F, ~16 GiB RAM, no GPU) |
 | Isolation | **Brain** and **desktop** are separate guests |
 | Brain guest | New dedicated unprivileged LXC |
@@ -70,7 +70,7 @@ A self-hosted, always-on personal agent built on Claude, running on your Proxmox
 | Stack | Bun + Hono + SQLite · React + Vite PWA · MJPEG live view (ffmpeg → WS → canvas) · our own components + CSS variables · Biome · `bun test` |
 | Repo | Bun-workspaces monorepo `kubus/hatbot`, public, on Forgejo `git.gaycats.ovh`; Forgejo push-mirrors it to GitHub `hkubus/hatbot` (deploy key), where CI runs |
 | Exposure | `hatbot.gaycats.ovh`. You handle the tunnel, TLS and reverse proxy; Hatbot serves plain HTTP on the LAN |
-| Auth | Single user, password + TOTP, both changeable in Settings; API tokens for the iOS app |
+| Auth | Single user, password + TOTP, both changeable in Settings; API tokens for the iOS and Linux apps |
 | Notifications | Your self-hosted **ntfy**, on its own server, on a random topic only you can read; the brain publishes to it. No APNs or Web Push, because the iOS app is a free SideStore sideload |
 | Name/persona | Hatbot; concise, first person, no animated avatar |
 | Web design | Apple-native (macOS-style), desktop-first, three panes, amber brand accent (§10) |
@@ -150,7 +150,7 @@ Everything valuable lives in the brain, and the brain only ever sees *pixels and
 Desktop-first, three panes. Design spec in §10.
 
 ### 4.4 `packages/shared`
-Shared API types and zod schemas for the brain and web. The iOS app mirrors the types it uses in `apps/ios/Hatbot/Core/Models.swift`; change both together.
+Shared API types and zod schemas for the brain and web. The iOS app mirrors the types it uses in `apps/ios/Hatbot/Core/Models.swift`, and the Linux app in `apps/linux/src/core/models.rs`; change them together.
 
 ### 4.5 Plugins (`apps/brain/src/plugins/`)
 Integrations are plugins: Proxmox, Proxmox Backup Server, SSH, Home Assistant, Uptime Kuma, Forgejo, GitHub, Code, Own code (§18) and MCP. The core keeps memory, chat history, schedules, tasks and the desktop.
@@ -189,6 +189,9 @@ Integrations are plugins: Proxmox, Proxmox Backup Server, SSH, Home Assistant, U
 
 ### 4.8 `apps/hatbox` — the boxes guest's agent
 A small Bun daemon inside `hatbot-boxes` (§21.6), like desktop-agent: it builds boxes with files and runs each box's backend as a systemd unit of its own, with no network, relaying the brain's requests to it and its fetches out to the hosts its `box.json` lists. Bearer secret; only the brain reaches it, on 7071. As built: §21.9.
+
+### 4.9 `apps/linux` — GTK 4 + libadwaita
+A native desktop app for Linux in Rust (gtk4-rs, libadwaita-rs, libsoup), talking to the brain with a bearer token like the iOS app. Plan and milestones: §24.
 
 ---
 
@@ -1184,3 +1187,33 @@ Code work and boxes handed to Claude Code (`claude -p`), which runs in the deskt
 - **`box_claude(request, box?, title?)`** (chat, with the plugin ready; the code bot's when there is one): a background task under the reply (`tasks.box_job`, migration 46; one per box at a time) that doesn't use the model. The box's files go into `~/boxes/task-<id>` in the sandbox. Claude Code works there with file tools only, `--restricted`, told the box rules from `box_create`'s description (`BOX_PAGE_RULES`, `BOX_FILES_RULES`) and whether the boxes guest is up. The brain reads what it left (no dotfiles or links, within a box's limits), saves a lone `index.html` as a page box, and builds anything else on the boxes guest as `box_create` would: new hosts and secrets ask through the task (Haiku's review, then you). What's wrong (a limit, a failed build, whose output taints the task) goes back to the same session, twice at most. The version carries the task's taint. The box shows under the reply, and the summary tells the bot to look at it with `box_look` before telling you; Claude Code's own words go only on the timeline. A box task doesn't take one of the 3 background slots.
 - **Trust:** the token is in the sandbox only while a run goes, in that job's environment, and Hatbot never writes it to the desktop's disk. But code the run executes, such as a repository's tests, could read it, and with it use the owner's plan.
 - **Left out:** Git LFS; two tasks on one repository share its folder, as with Own code; sessions to carry on are kept in memory, which a brain restart forgets (it fails running tasks anyway).
+
+## 24. Linux app (planned 2026-10-20)
+A native app for the owner's Linux desktop (GNOME-style, run on niri), alongside the web and iOS apps. Agreed 2026-10-20: Rust, GTK 4 and libadwaita.
+
+### 24.1 Decisions
+| Area | Decision |
+|---|---|
+| Where | `apps/linux`, a Cargo crate of its own (`hatbot`), not a Bun workspace. Needs GTK 4.18 and libadwaita 1.7 or newer; app id `ovh.gaycats.Hatbot` |
+| Licence | GTK, libadwaita, GLib, libsoup and libsecret are LGPL: the app links the system's copies and ships none of them, which §2 allows by name. Every crate must be permissive: `cargo deny check licenses` (`deny.toml`) in CI |
+| Stack | gtk4-rs and libadwaita-rs, widgets built in code (no Blueprint or `.ui` files). HTTP and both WebSockets on libsoup, on the GLib main loop: no async runtime, and no threads but GIO's pool decoding the live view's frames. serde for JSON, pulldown-cmark for Markdown |
+| Talking to the brain | As the iOS app does (§4.7): `POST /auth/login` with client `app`, the token named after the computer; https only, on the LAN too (a laptop joins networks you don't control); the `/stream` WebSocket while the app runs, reconnecting and reloading after a gap; a 401 signs out |
+| Secrets | The token in the Secret Service (libsecret: GNOME Keyring, KWallet, KeePassXC); the address in `~/.config/hatbot/hatbot.conf`. Signing out deletes the token on the brain |
+| Types | `src/core/models.rs` mirrors what the app uses from `packages/shared`, like iOS's `Models.swift`. Unknown events and enum values decode as `Unknown` |
+| Layout | Like the web's (§10.3): a sidebar with the chats (bot icon, unread count) and the sections, beside the content (`AdwNavigationSplitView`), collapsing to one pane when narrow. Approvals and questions wait in a tray above the composer, oldest first, as on iOS |
+| Look | libadwaita's own widgets and the system font. Hatbot's amber is the accent, with dark text on it (§10.2), though your own GTK theme (`~/.config/gtk-4.0/gtk.css`) wins; approve buttons are blue, deny red. No decorative clutter |
+| Notifications | Stay with ntfy (§2). The desktop file registers `hatbot://`, so ntfy's click links (Settings → Notifications → app) open the task or approval in the app |
+| Install | `apps/linux/install.sh`: a release build, with the binary, desktop file and icon under `~/.local` (or `PREFIX`). No Flatpak for now |
+| Tests | `cargo test`: one test per rule and per real bug in the UI-free parts (`core`, `net`, the store), and one end-to-end test per feature against a fake brain on libsoup's server. No GTK in tests. CI (`.github/workflows/linux.yml`) runs fmt, clippy and the tests in an Arch container, for GTK and libadwaita new enough, and the licence check beside it |
+
+### 24.2 Milestones
+- **L1 Shell**: the crate, CI and the licence check; sign-in (address, password, code); the token in the keyring; the event stream with reconnects and "Can't reach Hatbot."; the sidebar with the chats; Pause all / Resume; sign out.
+- **L2 Chat**: messages with earlier pages and folds; streaming replies with progress; Markdown (headings, lists, quotes, code, tables, rules); files both ways; task, schedule, hand-off and box cards; choices; the approvals and questions tray; unread and seen; Try again; commands; incognito.
+- **L3 Tasks**: active and done lists; the task page with its timeline, screenshots, Cancel and Run again; `hatbot://` links.
+- **L4 Live**: the desktop's frames; takeover with the mouse, the wheel and the keyboard; hand back.
+- **L5 Memory, Schedules & Triggers**: the tree, a file with edit and conflicts, history, diffs and revert; proposals; schedules and triggers as on iOS.
+- **L6 The rest of iOS's**: Search, Settings (spend, limits, models and effort, signed-in devices), the to-do list, watchers, Check everything, the heartbeat, boxes, charts, bots and groups.
+- **Built**: L1 to L5 (2026-10-20) and L6 (2026-10-21). A box's list, versions, code, Restore and Delete are in the app; its page opens on the web app in the browser, since the app has no web view. Charts in replies are drawn as on iOS, file charts (§22) included, and Settings' Spend page charts spend by hour, day, model, bot and purpose. New bot and New group sit under the chats, and a chat's About button opens its bot or group, as on iOS. Search, Tasks, To-do and Boxes head the sidebar's sections, in iOS's order. Schedules & Triggers and Memory are sections in the sidebar, as on the web (iOS has Schedules & Triggers in Settings); triggers are made on the web, as on iOS. Memory's proposals to look over and skills that went wrong sit above its files, as on iOS. Settings is the sidebar's last section; watchers, Check everything and the heartbeat open from it, as on iOS. Live is a section in the sidebar and shows on a screen task's page when it asks for you or you press Watch, as on iOS and the web.
+- **Done when**: you can chat, approve and take over from the Linux app.
+- **Not planned**: a disk cache of chats, a tray icon or running in the background, and Flatpak.
+

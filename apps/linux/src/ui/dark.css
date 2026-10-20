@@ -1,0 +1,14 @@
+/* Over style.css while libadwaita is dark. A stylesheet of its own rather than a media query: GTK
+   before 4.20 has none, and from 4.20 the query follows a setting libadwaita doesn't always set. */
+:root {
+  --amber: #ff9f2e;
+  --accent-color: #ffb866;
+  --attention: #0a84ff;
+  --danger: #ff453a;
+  --success: #30d158;
+}
+
+.bot-pink { color: #ff375f; }
+.bot-purple { color: #bf5af2; }
+.bot-indigo { color: #5e5ce6; }
+.bot-teal { color: #40c8e0; }

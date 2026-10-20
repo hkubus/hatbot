@@ -1,0 +1,47 @@
+# Formats, lints and tests the Linux app (apps/linux) against Arch's GTK and libadwaita, and checks
+# that its crates are all permissively licensed (PLAN.md §24).
+name: Linux
+
+on:
+  push:
+    paths:
+      - apps/linux/**
+      - .github/workflows/linux.yml
+  pull_request:
+    paths:
+      - apps/linux/**
+      - .github/workflows/linux.yml
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/linux
+    steps:
+      - name: Install GTK, libadwaita, libsoup, libsecret and Rust
+        working-directory: /
+        run: pacman -Syu --noconfirm --needed gtk4 libadwaita libsoup3 libsecret rust gcc pkgconf
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/linux
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  # A container job can't run cargo-deny's own container action, so this one runs beside it.
+  licenses:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: apps/linux/Cargo.toml
+          command: check licenses

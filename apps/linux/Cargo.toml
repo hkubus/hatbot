@@ -1,0 +1,18 @@
+[package]
+name = "hatbot"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.88"
+publish = false
+
+[dependencies]
+adw = { version = "0.9", package = "libadwaita", features = ["v1_7"] }
+futures-channel = "0.3"
+futures-util = { version = "0.3", default-features = false, features = ["std", "async-await-macro"] }
+gtk = { version = "0.11", package = "gtk4", features = ["v4_18"] }
+libsecret = "0.9"
+pulldown-cmark = { version = "0.13", default-features = false }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+soup = { version = "0.9", package = "soup3", features = ["v3_6"] }
