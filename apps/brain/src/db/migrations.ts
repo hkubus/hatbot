@@ -818,4 +818,10 @@ export const migrations: string[] = [
   ALTER TABLE messages ADD COLUMN link_message_id INTEGER;
   ALTER TABLE tasks ADD COLUMN asked_in INTEGER;
   `,
+  // 46: the unread messages, so the chats' counts and the unread list don't read every message. Its
+  // condition is UNREAD in agent/chats.ts, word for word: SQLite only uses it for a query that says so.
+  `
+  CREATE INDEX messages_unread ON messages (conversation_id, id) WHERE role = 'assistant'
+    AND status != 'streaming' AND incognito = 0 AND (seen_at IS NULL OR seen_at < coalesce(edited_at, created_at));
+  `,
 ];

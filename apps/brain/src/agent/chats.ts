@@ -27,6 +27,10 @@ type Parts = Pick<
  * The chats you have, as SQL on `conversations c`: not deleted groups, and not the own chat of a
  * deleted bot.
  */
+/** A message you haven't seen since it was sent or edited. Word for word messages_unread's condition. */
+const UNREAD = `role = 'assistant' AND status != 'streaming' AND incognito = 0
+  AND (seen_at IS NULL OR seen_at < coalesce(edited_at, created_at))`;
+
 export const LISTED_CHAT = `c.deleted_at IS NULL AND (c.kind = 'group' OR EXISTS (
   SELECT 1 FROM conversation_bots cb JOIN bots b ON b.id = cb.bot_id
   WHERE cb.conversation_id = c.id AND b.deleted_at IS NULL))`;
@@ -114,11 +118,13 @@ export class Chats {
         `SELECT c.id, c.kind, c.title,
            (SELECT json_group_array(bot_id) FROM
              (SELECT bot_id FROM conversation_bots WHERE conversation_id = c.id ORDER BY position, bot_id)) AS bot_ids,
-           (SELECT count(*) FROM messages m WHERE m.conversation_id = c.id AND m.role = 'assistant'
-             AND m.status != 'streaming' AND m.incognito = 0
-             AND (m.seen_at IS NULL OR m.seen_at < coalesce(m.edited_at, m.created_at))) AS unread,
-           (SELECT max(created_at) FROM messages m WHERE m.conversation_id = c.id AND m.incognito = 0) AS last_message_at
+           coalesce(u.n, 0) AS unread,
+           -- Ids go up with time: the newest one's time, from the index rather than every row.
+           (SELECT created_at FROM messages WHERE id = (SELECT max(id) FROM messages m
+             WHERE m.conversation_id = c.id AND m.incognito = 0)) AS last_message_at
          FROM conversations c
+         LEFT JOIN (SELECT conversation_id, count(*) AS n FROM messages WHERE ${UNREAD} GROUP BY conversation_id) u
+           ON u.conversation_id = c.id
          WHERE ${LISTED_CHAT}
          ORDER BY c.kind = 'group', c.id`,
       )
@@ -193,10 +199,7 @@ export class Chats {
   /** Your bots' messages, in every chat, sent or edited since you last saw them. */
   unread(): number[] {
     return this.d.db
-      .query<{ id: number }, []>(
-        `SELECT id FROM messages WHERE role = 'assistant' AND status != 'streaming' AND incognito = 0
-         AND (seen_at IS NULL OR seen_at < coalesce(edited_at, created_at)) ORDER BY id`,
-      )
+      .query<{ id: number }, []>(`SELECT id FROM messages WHERE ${UNREAD} ORDER BY id`)
       .all()
       .map((r) => r.id);
   }
