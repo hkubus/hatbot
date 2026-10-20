@@ -1,7 +1,8 @@
-// Claude Code in the sandbox, on the owner's subscription: the claude_code tool in a task.
+// Claude Code in the sandbox, on the owner's subscription: the claude_code tool in a task, and boxes it
+// makes for the chat (box_claude).
 import { expect, test } from "bun:test";
 import type { ShellJob } from "@hatbot/shared/desktop";
-import { FakeModel, toolUse } from "./fake-model";
+import { FakeModel, text, toolUse } from "./fake-model";
 import { lastUserText, type TestApp, testApp } from "./helpers";
 
 const TOKEN = "sk-ant-oat01-subscription-token";
@@ -74,4 +75,61 @@ test("a task hands code work to Claude Code in the sandbox, its token kept out o
   );
   // Its sessions in the sandbox go with the task.
   expect(t.agent.commands).toContain(`rm -rf -- '.claude-runs/task-${task?.id}'`);
+});
+
+test("box_claude: Claude Code writes a box as a task under the reply, a failed build goes back to it, and the bot hears", async () => {
+  const chat = new FakeModel([
+    {
+      content: [
+        toolUse("box_claude", { title: "Habits", request: "A habit tracker with streaks." }),
+      ],
+    },
+    { content: [text("Claude Code is on it.")] },
+    { content: [text("Here it is.")] },
+  ]);
+  const t = await testApp(chat);
+  await withClaude(t);
+  const files = new TextEncoder();
+  t.agent.runJob = (job) => {
+    t.agent.files.set(
+      `${job.cwd}/index.html`,
+      files.encode('<!doctype html><script type="module" src="./app.ts"></script>'),
+    );
+    t.agent.files.set(`${job.cwd}/app.ts`, files.encode("document.body.append('streaks');"));
+    return printed("Made it.", `/home/sandbox/${job.cwd}/app.ts`);
+  };
+  // The sandbox lists what's in a box's folder.
+  t.agent.shell = (c) => {
+    const dir = c.startsWith("python3") && c.match(/'(boxes\/task-\d+)'$/)?.[1];
+    const found = [...t.agent.files].filter(([p]) => dir && p.startsWith(`${dir}/`));
+    return {
+      exitCode: 0,
+      output: dir ? JSON.stringify(found.map(([p, b]) => [p.slice(dir.length + 1), b.length])) : "",
+      timedOut: false,
+    };
+  };
+  t.hatbox.failBuild = 'error: Could not resolve "left-pad"';
+  t.thread.post("make me a habit tracker");
+  await t.thread.idle();
+  await t.tasks.idle();
+  await t.thread.idle();
+
+  const [task] = t.tasks.list();
+  const [box] = t.boxes.list();
+  // Files only: nothing it writes runs in the sandbox.
+  expect(argOf(t.agent.jobs[0], "--tools")).toBe("Read,Write,Edit,Glob,Grep");
+  // The failed build's output went back to the same session, and tainted the task and the box.
+  expect(t.agent.jobs).toHaveLength(2);
+  expect(argOf(t.agent.jobs[1], "--resume")).toBe("s-1");
+  expect(argOf(t.agent.jobs[1], "-p")).toContain("left-pad");
+  expect(task).toMatchObject({ status: "done", tainted: true });
+  expect(t.boxes.taintedBy(box?.id ?? 0)).not.toBeNull();
+  // Saved and shown under the reply, and the bot was told.
+  expect(t.boxes.page(box?.id ?? 0)?.files?.map((f) => f.path)).toEqual(["app.ts", "index.html"]);
+  const reply = t.db
+    .query<{ box_id: number | null }, [number]>("SELECT box_id FROM messages WHERE task_id = ?")
+    .get(task?.id ?? 0);
+  expect(reply?.box_id).toBe(box?.id ?? -1);
+  expect(JSON.stringify(chat.requests[2]?.messages)).toContain(`box #${box?.id}`);
+  expect(t.agent.commands).toContain(`rm -rf -- 'boxes/task-${task?.id}'`);
 });

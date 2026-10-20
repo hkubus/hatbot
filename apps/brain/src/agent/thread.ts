@@ -873,7 +873,11 @@ export class Thread {
         .filter((t) => others.length || t.name !== "ask_bot")
         .filter((t) => this.d.desktop?.configured || !DESKTOP_TOOLS.includes(t.name))
         // Boxes are code: with a code bot, it makes and changes them all.
-        .filter((t) => !leftToCoder.length || !BOX_CHANGE_TOOLS.includes(t.name)),
+        .filter((t) => !leftToCoder.length || !BOX_CHANGE_TOOLS.includes(t.name))
+        // Claude Code makes boxes only for a bot that has it.
+        .filter(
+          (t) => t.name !== "box_claude" || plugins.readyFor("claude", bot.plugins, leftToCoder),
+        ),
       ASK_OWNER,
       ...(onHaiku ? [ASK_OPUS] : []),
       ...pluginTools.map(toolParam),
@@ -2545,6 +2549,7 @@ function toolLabel(name: string, plugins: Plugins): string {
     send_file: "Sending a file",
     box_create: "Making a box",
     box_edit: "Changing a box",
+    box_claude: "Handing the box to Claude Code",
     box_list: "Looking at boxes",
     box_read: "Reading a box",
     box_revert: "Changing a box",

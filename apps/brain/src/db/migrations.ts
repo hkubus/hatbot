@@ -818,4 +818,9 @@ export const migrations: string[] = [
   ALTER TABLE messages ADD COLUMN link_message_id INTEGER;
   ALTER TABLE tasks ADD COLUMN asked_in INTEGER;
   `,
+  // 46: a box made or changed by Claude Code (box_claude) is a task that runs it: what it was asked
+  // for, as JSON ({request, box?, title?}).
+  `
+  ALTER TABLE tasks ADD COLUMN box_job TEXT;
+  `,
 ];

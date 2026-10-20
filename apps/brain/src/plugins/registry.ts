@@ -223,6 +223,11 @@ export class Plugins {
       .sort((a, b) => a.plugin.id.localeCompare(b.plugin.id));
   }
 
+  /** Whether a plugin is ready for a bot that may use `only`, less what it leaves to the code bot. */
+  readyFor(id: string, only: string[] | null = null, except: string[] = []): boolean {
+    return this.readyOnes(only, except).some((s) => s.plugin.id === id);
+  }
+
   /** Tools of the ready plugins, for the chat and tasks. */
   tools(only: string[] | null = null, except: string[] = []): PluginTool[] {
     return this.readyOnes(only, except).flatMap((s) => s.instance?.tools ?? []);

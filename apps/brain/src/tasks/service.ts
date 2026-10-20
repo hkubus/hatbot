@@ -15,6 +15,8 @@ import type { Approvals } from "../approvals";
 import type { Archive } from "../archive";
 import type { Attachments } from "../attachments";
 import type { Bots } from "../bots";
+import type { Boxes } from "../boxes";
+import type { ClaudeCode } from "../claude-code";
 import type { Config } from "../config";
 import type { Db } from "../db";
 import type { Desktop } from "../desktop/service";
@@ -29,6 +31,7 @@ import type { SettingsStore } from "../settings";
 import type { Spend } from "../spend";
 import type { Skills } from "../teach/skills";
 import { runAgentTask } from "./agent-run";
+import { type BoxJob, runBoxTask } from "./box-run";
 import { runDesktopTask } from "./desktop-run";
 import { runHandoff } from "./handoff-run";
 import { Pool, ScreenLane } from "./lane";
@@ -54,6 +57,10 @@ export type TasksDeps = {
   memory: MemoryStore;
   plugins: Plugins;
   skills: Skills;
+  /** Where box tasks save what Claude Code made. */
+  boxes?: Boxes;
+  /** Claude Code in the sandbox, for box tasks. */
+  claude?: ClaudeCode;
   /** Set once it exists; it needs the tasks too. */
   proposals?: Proposals;
   clock?: () => number;
@@ -418,6 +425,8 @@ export class Tasks {
     research?: boolean;
     /** The to-do item it works on, ticked off when it ends done; one task on an item at a time. */
     todo?: string;
+    /** A box for Claude Code to make or change (box_claude): Claude Code runs it, not the model. */
+    boxJob?: BoxJob;
   }): Task | null {
     const runKey = input.runKey ?? (input.todo ? `todo:${input.todo}` : undefined);
     if (runKey && this.activeFor(runKey)) return null;
@@ -451,6 +460,7 @@ export class Tasks {
       watcher_id: input.watcherId ?? null,
       run_key: runKey ?? null,
       todo: input.todo ?? null,
+      box_job: input.boxJob ? JSON.stringify(input.boxJob) : null,
       payload: input.payload ?? null,
       request: input.request ?? null,
       tainted: taintedBy ? 1 : 0,
@@ -574,9 +584,10 @@ export class Tasks {
           run_key: string | null;
           conversation_id: number | null;
           asked_in: number | null;
+          box_job: string | null;
         },
         [number]
-      >("SELECT request, run_key, conversation_id, asked_in FROM tasks WHERE id = ?")
+      >("SELECT request, run_key, conversation_id, asked_in, box_job FROM tasks WHERE id = ?")
       .get(id);
     return this.createBackgroundTask({
       title: t.title,
@@ -603,6 +614,7 @@ export class Tasks {
       askedIn: r?.asked_in ? (this.get(r.asked_in) ?? undefined) : undefined,
       research: t.research,
       todo: t.todo ?? undefined,
+      boxJob: r?.box_job ? (JSON.parse(r.box_job) as BoxJob) : undefined,
     });
   }
 
@@ -610,6 +622,14 @@ export class Tasks {
   setReportPath(id: number, path: string) {
     this.d.db.query("UPDATE tasks SET report_path = ? WHERE id = ?").run(path, id);
     this.emit(id);
+  }
+
+  /** The box Claude Code makes or changes in a box task (box_claude), or null for any other task. */
+  boxJobOf(id: number): BoxJob | null {
+    const r = this.d.db
+      .query<{ box_job: string | null }, [number]>("SELECT box_job FROM tasks WHERE id = ?")
+      .get(id);
+    return r?.box_job ? (JSON.parse(r.box_job) as BoxJob) : null;
   }
 
   /** What you said in the chat when you started it, or null. */
@@ -698,12 +718,14 @@ export class Tasks {
     const abort = new AbortController();
     this.running.set(id, abort);
     const task = this.get(id);
-    // A hand-off is answered in the other bot's chat.
+    // A hand-off is answered in the other bot's chat; a box task is Claude Code's.
     const runner = task?.requestedBy
       ? runHandoff
-      : task?.lane === "background"
-        ? runAgentTask
-        : runDesktopTask;
+      : this.boxJobOf(id)
+        ? runBoxTask
+        : task?.lane === "background"
+          ? runAgentTask
+          : runDesktopTask;
     const run = runner(this, id, abort.signal)
       .catch((err) => {
         console.error(`task ${id} crashed`, err);
