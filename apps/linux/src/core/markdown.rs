@@ -9,6 +9,8 @@ pub enum Block {
     Code {
         lang: String,
         text: String,
+        /// Its fence is closed: one still streaming in isn't.
+        closed: bool,
     },
     Quote(String),
     Item {
@@ -56,6 +58,8 @@ struct Builder {
     quote: usize,
     heading: Option<u8>,
     code: Option<String>,
+    /// Whether the code block ending now had its closing fence.
+    closed: bool,
     table: Option<(Vec<String>, Vec<Vec<String>>)>,
     row: Vec<String>,
     /// Whether each open link is an <a>, or a <span> for one that won't open.
@@ -177,7 +181,11 @@ impl Builder {
                 let lang = self.code.take().unwrap_or_default();
                 let text = std::mem::take(&mut self.text);
                 let text = text.strip_suffix('\n').unwrap_or(&text).to_string();
-                self.blocks.push(Block::Code { lang, text });
+                self.blocks.push(Block::Code {
+                    lang,
+                    text,
+                    closed: self.closed,
+                });
             }
             TagEnd::List(_) => {
                 self.lists.pop();
@@ -218,12 +226,30 @@ impl Builder {
     }
 }
 
+/// Whether a code block's source ends in the fence it opened with; an indented one has none.
+fn fence_closed(block: &str) -> bool {
+    let open = block.trim_start();
+    let Some(c) = open.chars().next().filter(|c| *c == '`' || *c == '~') else {
+        return true;
+    };
+    let fence = open.chars().take_while(|x| *x == c).count();
+    let mut lines = block.trim_end().lines();
+    lines.next();
+    lines.last().is_some_and(|l| {
+        let l = l.trim();
+        l.len() >= fence && l.chars().all(|x| x == c)
+    })
+}
+
 /// The blocks of `text`.
 pub fn blocks(text: &str) -> Vec<Block> {
     let options =
         Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let mut b = Builder::default();
-    for event in Parser::new_ext(text, options) {
+    for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
+        if let Event::End(TagEnd::CodeBlock) = event {
+            b.closed = fence_closed(&text[range]);
+        }
         match event {
             Event::Start(tag) => b.start(tag),
             Event::End(tag) => b.end(tag),
@@ -268,7 +294,8 @@ mod tests {
                 Block::Paragraph("Run &lt;b&gt;this&lt;/b&gt; &amp; <span>that</span>:".into()),
                 Block::Code {
                     lang: "sh".into(),
-                    text: "rm -rf <dir>".into()
+                    text: "rm -rf <dir>".into(),
+                    closed: false
                 },
             ]
         );

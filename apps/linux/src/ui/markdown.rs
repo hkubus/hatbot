@@ -112,6 +112,9 @@ fn widget(block: &Block) -> gtk::Widget {
             line.append(&l);
             line.upcast()
         }
+        Block::Code { lang, text, closed } if lang == "chart" => {
+            super::chart::block(text, *closed).unwrap_or_else(|| code(text))
+        }
         Block::Code { text, .. } => code(text),
         Block::Table { head, rows } => table(head, rows),
         Block::Rule => gtk::Separator::new(gtk::Orientation::Horizontal).upcast(),

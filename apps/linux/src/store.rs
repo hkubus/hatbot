@@ -12,6 +12,7 @@ use serde::Serialize;
 use crate::core::delta;
 use crate::core::models::*;
 use crate::core::schedule::ScheduleChange;
+use crate::core::spend::SpendDetail;
 use crate::core::thread;
 use crate::net::api::{Api, ApiError, Empty, Result, query};
 use crate::net::socket::{Frame, Socket};
@@ -1758,6 +1759,26 @@ impl Store {
         }
         self.emit(Change::Spend);
         Ok(s)
+    }
+
+    /// The Spend page's charts. By bot and by purpose are newer than the others, so a brain without
+    /// them still shows the rest.
+    pub async fn spend_detail(&self) -> Result<SpendDetail> {
+        let api = &self.0.api;
+        let (hourly, daily, by_model, by_bot, by_purpose) = futures_util::join!(
+            api.get("/spend/hourly?hours=24"),
+            api.get("/spend/daily?days=30"),
+            api.get("/spend/by-model?days=30"),
+            api.get("/spend/by-bot?days=30"),
+            api.get("/spend/by-purpose?days=30"),
+        );
+        Ok(SpendDetail {
+            hourly: hourly?,
+            daily: daily?,
+            by_model: by_model?,
+            by_bot: by_bot.unwrap_or_default(),
+            by_purpose: by_purpose.unwrap_or_default(),
+        })
     }
 
     /// The weekly report, to the chat now.

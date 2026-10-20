@@ -6,12 +6,15 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::glib;
+use hatbot::core::chart::ChartSpec;
 use hatbot::core::format;
 use hatbot::core::looking::{self, dollars_text};
 use hatbot::core::models::{AppSettings, Device, Limits, SpendSummary};
+use hatbot::core::spend::{self, SpendDetail};
 use hatbot::store::{Change, Listener, Store};
 use serde_json::{Value, json};
 
+use super::chart;
 use super::form::{Choice, error_label, nav_row, note};
 use super::looking::{ChecksPage, HeartbeatPage, WatchersPage};
 use super::route;
@@ -99,6 +102,11 @@ impl Settings {
         ] {
             spend.add(r);
         }
+        let s = store.clone();
+        spend.add(&nav_row("Spend by hour, day, model and bot", move || {
+            let p = SpendPage::new(&s);
+            route::push(p.page.clone(), Box::new(p));
+        }));
         let s = store.clone();
         spend.add(&nav_row("Limits", move || {
             let p = LimitsPage::new(&s);
@@ -687,6 +695,83 @@ impl LimitsForm {
                 }
             }
         });
+    }
+}
+
+/// Spend in detail: by hour and day, and what it went on.
+pub struct SpendPage {
+    pub page: adw::NavigationPage,
+}
+
+impl SpendPage {
+    pub fn new(store: &Store) -> SpendPage {
+        let prefs = adw::PreferencesPage::new();
+        let error = error_label();
+        let top = adw::PreferencesGroup::new();
+        top.add(&error);
+        prefs.add(&top);
+        let spinner = adw::Spinner::builder()
+            .width_request(32)
+            .height_request(32)
+            .halign(gtk::Align::Center)
+            .margin_top(24)
+            .build();
+        top.add(&spinner);
+        let view = adw::ToolbarView::new();
+        view.add_top_bar(&adw::HeaderBar::new());
+        view.set_content(Some(&prefs));
+        let page = adw::NavigationPage::builder()
+            .title("Spend")
+            .child(&view)
+            .build();
+        let (weak, store) = (prefs.downgrade(), store.clone());
+        glib::spawn_future_local(async move {
+            let result = store.spend_detail().await;
+            let Some(prefs) = weak.upgrade() else { return };
+            spinner.set_visible(false);
+            match result {
+                Ok(d) => show_spend(&prefs, &store, &d),
+                Err(e) => {
+                    error.set_label(&e.message);
+                    error.set_visible(true);
+                }
+            }
+        });
+        SpendPage { page }
+    }
+}
+
+fn show_spend(prefs: &adw::PreferencesPage, store: &Store, d: &SpendDetail) {
+    let mut charts = vec![
+        ("Last 24 hours", spend::hourly(&d.hourly)),
+        ("Last 30 days", spend::daily(&d.daily)),
+        ("By model, last 30 days", spend::by_model(&d.by_model)),
+    ];
+    if store.state().bot_ids.len() > 1 {
+        let st = store.state();
+        let by_bot = spend::by_bot(&d.by_bot, |id| st.bots.get(id).map(|b| b.name.clone()));
+        charts.push(("By bot, last 30 days", by_bot));
+    }
+    charts.push(("By purpose, last 30 days", spend::by_purpose(&d.by_purpose)));
+    for (title, spec) in charts {
+        let Some(spec): Option<ChartSpec> = spec else {
+            continue;
+        };
+        let group = adw::PreferencesGroup::builder().title(title).build();
+        let view = chart::view(&spec);
+        view.set_margin_top(12);
+        view.set_margin_bottom(12);
+        view.set_margin_start(12);
+        view.set_margin_end(12);
+        // A row, so it's inside the group's card.
+        group.add(
+            &gtk::ListBoxRow::builder()
+                .activatable(false)
+                .selectable(false)
+                .child(&view)
+                .build(),
+        );
+        prefs.add(&group);
     }
 }
 

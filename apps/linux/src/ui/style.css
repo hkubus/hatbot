@@ -76,6 +76,16 @@ button.attention {
   padding: 8px 40px 8px 10px;
 }
 
+/* A chart's room while its block streams in. */
+.chart-pending {
+  background-color: alpha(currentColor, 0.05);
+  border-radius: 10px;
+}
+
+.chart-title {
+  font-weight: 600;
+}
+
 .quote {
   border-left: 3px solid alpha(currentColor, 0.25);
   padding-left: 10px;

@@ -159,6 +159,7 @@ impl Window {
                 w.forget(&token);
             }
         });
+        super::chart::set_api(api.clone());
         let store = Store::new(api);
         let shell = Shell::new(&store, &self.menu);
         self.toasts.set_child(Some(&shell.root));
