@@ -98,9 +98,15 @@ enum Markdown {
   }
 
   static func parse(_ source: String) -> [MDBlock] {
-    let lines = source.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+    parse(lines: source.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")).blocks
+  }
+
+  /// The blocks, and how many lines and blocks come up to the last blank line between blocks (not the
+  /// last line): those parse the same however the text goes on.
+  fileprivate static func parse(lines: [String]) -> (blocks: [MDBlock], settled: (lines: Int, blocks: Int)) {
     var blocks: [MDBlock] = []
     var paragraph: [String] = []
+    var settled = (lines: 0, blocks: 0)
     var i = 0
 
     func flush() {
@@ -114,6 +120,7 @@ enum Markdown {
 
       if trimmed.isEmpty {
         flush()
+        if i < lines.count - 1 { settled = (i + 1, blocks.count) }
         i += 1
         continue
       }
@@ -210,7 +217,7 @@ enum Markdown {
       i += 1
     }
     flush()
-    return blocks
+    return (blocks, settled)
   }
 
   private static func fenceMarker(_ t: String) -> String? {
@@ -260,5 +267,33 @@ enum Markdown {
     if t.hasPrefix("|") { t.removeFirst() }
     if t.hasSuffix("|") { t.removeLast() }
     return t.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+  }
+}
+
+/// A reply as it streams in, parsed again only from its last blank line between blocks: what's before
+/// it parses the same however the reply goes on, so a long reply isn't parsed whole on every update.
+struct StreamingMarkdown {
+  /// The text up to and including that blank line, and its blocks.
+  private var settledText = ""
+  private var settledBlocks: [MDBlock] = []
+
+  mutating func parse(_ source: String) -> [MDBlock] {
+    let text = source.replacingOccurrences(of: "\r\n", with: "\n")
+    var rest = text
+    if !settledText.isEmpty, text.utf8.starts(with: settledText.utf8) {
+      rest = String(decoding: text.utf8.dropFirst(settledText.utf8.count), as: UTF8.self)
+    } else {
+      // Not the same reply going on: from the start.
+      settledText = ""
+      settledBlocks = []
+    }
+    let lines = rest.components(separatedBy: "\n")
+    let (blocks, settled) = Markdown.parse(lines: lines)
+    let all = settledBlocks + blocks
+    if settled.lines > 0 {
+      settledText += lines[..<settled.lines].joined(separator: "\n") + "\n"
+      settledBlocks += blocks[..<settled.blocks]
+    }
+    return all
   }
 }
