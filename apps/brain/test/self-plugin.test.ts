@@ -1,10 +1,17 @@
 // Own code: Hatbot checks out its repository in the sandbox and proposes what changed as a pull request.
 // The sandbox is a real directory and the Forgejo repository a local bare one, so git really runs.
 import { beforeEach, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { testApp } from "./helpers";
-import { call, fakeApi, stopPluginsAfterEach, tempDir, toolOf, track } from "./plugin-helpers";
+import {
+  call,
+  fakeApi,
+  realSandbox,
+  sh,
+  stopPluginsAfterEach,
+  tempDir,
+  toolOf,
+  track,
+} from "./plugin-helpers";
 
 stopPluginsAfterEach();
 
@@ -55,14 +62,6 @@ beforeEach(() => {
   pulls = {};
 });
 
-/** git in `cwd`, away from the user's own config. */
-function sh(cwd: string, script: string) {
-  const p = Bun.spawnSync(["bash", "-c", script], {
-    cwd,
-    env: { PATH: process.env.PATH, HOME: cwd, GIT_CONFIG_NOSYSTEM: "1" },
-  });
-  return { exitCode: p.exitCode, output: `${p.stdout}${p.stderr}`, timedOut: false };
-}
 const ID = "-c user.name=Owner -c user.email=owner@test";
 
 async function setup() {
@@ -74,7 +73,6 @@ async function setup() {
      printf '#!/bin/sh\\necho deploy\\n' > infra/deploy.sh; chmod +x infra/deploy.sh
      git add -A; git ${ID} commit -qm init; git clone -q --bare . ${origin}`,
   );
-  const box = tempDir("hatbot-sandbox-");
   const t = track(
     await testApp(undefined, undefined, {}, [], {
       FORGEJO_URL: forgejo.url,
@@ -83,12 +81,7 @@ async function setup() {
       HATBOT_SELF_GIT_URL: origin,
     }),
   );
-  t.agent.shell = (command) => sh(box, command);
-  t.agent.putFile = async (path, bytes) => {
-    mkdirSync(dirname(join(box, path)), { recursive: true });
-    writeFileSync(join(box, path), bytes);
-  };
-  t.agent.getFile = async (path) => readFileSync(join(box, path));
+  realSandbox(t);
   await t.plugins.update("self", { enabled: true });
   const run = (name: string, input: unknown) => toolOf(t, name).run(input, call);
   return { t, origin, seed, run };

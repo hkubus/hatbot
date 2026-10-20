@@ -1,5 +1,6 @@
 // Starts the plugins you've switched on, keeps their settings, and hands their tools to the chat and
 // to tasks (PLAN.md §4.5).
+import { join } from "node:path";
 import type { PluginEnvInfo, PluginInfo, PluginState } from "@hatbot/shared";
 import { z } from "zod";
 import { untrustedBlock } from "../agent/untrusted";
@@ -47,6 +48,8 @@ export type PluginsDeps = {
   /** What's set in Settings in place of the host's. */
   secrets: Secrets;
   files?: PluginFiles;
+  /** The brain's data folder: each plugin gets one of its own in it. */
+  dataDir: string;
   /** The core's own tool names; plugin tools can't take them. */
   reserved: string[];
 };
@@ -223,6 +226,11 @@ export class Plugins {
       .sort((a, b) => a.plugin.id.localeCompare(b.plugin.id));
   }
 
+  /** Whether a plugin is ready for a bot that may use `only`, less what it leaves to the code bot. */
+  readyFor(id: string, only: string[] | null = null, except: string[] = []): boolean {
+    return this.readyOnes(only, except).some((s) => s.plugin.id === id);
+  }
+
   /** Tools of the ready plugins, for the chat and tasks. */
   tools(only: string[] | null = null, except: string[] = []): PluginTool[] {
     return this.readyOnes(only, except).flatMap((s) => s.instance?.tools ?? []);
@@ -270,6 +278,7 @@ export class Plugins {
         named: s.plugin.named ? this.d.secrets.named(s.plugin.id) : {},
         db: this.d.db,
         files: this.d.files,
+        dataDir: join(this.d.dataDir, "plugins", s.plugin.id),
       });
       this.checkTools(s.plugin, instance.tools);
       state = instance.status.state;

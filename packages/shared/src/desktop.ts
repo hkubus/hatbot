@@ -158,6 +158,37 @@ export type AgentElement = {
 /** POST /exec: a command run by the desktop's shell, which can't see the browser profile or the screen. */
 export type ShellResult = { exitCode: number; output: string; timedOut: boolean };
 
+/**
+ * POST /jobs: a long command in the same shell, such as Claude Code at work, which the brain starts,
+ * reads as it goes and stops. Up to two run at once.
+ */
+export type ShellJob = {
+  /** The program and its arguments, run as they are, with no shell. */
+  argv: string[];
+  /** Where it runs: a folder in the shell's home, by a path relative to it. */
+  cwd: string;
+  /** Added to the shell's clean environment: what only this job gets, such as a token. */
+  env?: Record<string, string>;
+  /** HOME for the job, relative to the shell's home, made if it's missing: its own, not the shell's. */
+  home?: string;
+  /** Killed after this long; up to 2 hours. */
+  timeoutS: number;
+};
+
+/** GET /jobs/:id?from=: what a job printed from `from` on, and whether it still runs. */
+export type ShellJobStatus = {
+  running: boolean;
+  /** Once it has ended on its own; null while it runs, or when it was killed. */
+  exitCode: number | null;
+  timedOut: boolean;
+  /** Its standard output from byte `from`, up to 256 KB, in whole lines while it runs. */
+  output: string;
+  /** The byte to read on from. */
+  next: number;
+  /** The end of its standard error, once it has ended. */
+  stderr: string;
+};
+
 /** Messages the brain sends on the /live socket while the owner has control (PLAN.md §10.5). */
 export type LiveInput =
   | { t: "move"; x: number; y: number }

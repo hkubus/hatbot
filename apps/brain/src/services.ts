@@ -2,6 +2,7 @@
 // (test/helpers.ts). Only the outside world is passed in: the models, the clock, the desktop, where
 // notifications go and the other network-facing clients.
 import { join } from "node:path";
+import { ACTIVE_TASK_STATUSES } from "@hatbot/shared";
 import { Chats } from "./agent/chats";
 import type { ModelClient } from "./agent/model";
 import { CORE_TOOL_NAMES } from "./agent/tools";
@@ -14,6 +15,7 @@ import { Bots } from "./bots";
 import { BoxFeeds } from "./box-feeds";
 import { Boxes } from "./boxes";
 import { Checks, type ChecksDeps } from "./checks";
+import { ClaudeCode } from "./claude-code";
 import type { Config } from "./config";
 import type { Db } from "./db";
 import type { DesktopAgent } from "./desktop/client";
@@ -27,6 +29,7 @@ import { MemoryStore } from "./memory/store";
 import { Negotiations } from "./negotiate/service";
 import { LinkingNotifier, type Notifier } from "./notify";
 import { DeadManPing } from "./ping";
+import { claudePlugin } from "./plugins/claude";
 import { codePlugin } from "./plugins/code";
 import type { Plugin } from "./plugins/plugin";
 import { Plugins } from "./plugins/registry";
@@ -94,19 +97,24 @@ export async function createServices(o: Outside) {
   const storage = new Storage({ db, archive, clock });
   const desktop = new Desktop(agent, events, db);
   const files = { desktop: agent, attachments };
+  const claude = new ClaudeCode(agent);
   const own = selfPlugin({
     desktop: agent,
     dir: join(config.dataDir, "self"),
     schedules: () => schedules,
   });
-  const plugins = new Plugins([...o.plugins, codePlugin(files), own], {
-    db,
-    events,
-    env: o.pluginEnv,
-    secrets,
-    files,
-    reserved: CORE_TOOL_NAMES,
-  });
+  const plugins = new Plugins(
+    [...o.plugins, codePlugin(files), claudePlugin({ claude, desktop: agent }), own],
+    {
+      db,
+      events,
+      env: o.pluginEnv,
+      secrets,
+      files,
+      dataDir: config.dataDir,
+      reserved: CORE_TOOL_NAMES,
+    },
+  );
   const bots = new Bots(db, events, clock);
   const boxes = new Boxes(db, events, clock, secrets);
   boxes.backends = new Backends(boxes, o.hatbox ?? new HttpHatboxAgent("", ""), settings, clock);
@@ -154,8 +162,14 @@ export async function createServices(o: Outside) {
     notifier,
     approvals,
     questions,
+    claude,
   };
   const tasks = new Tasks({ ...core });
+  // A task's Claude Code home in the sandbox, with its sessions, goes once the task has ended.
+  events.on((e) => {
+    if (e.type === "task.updated" && !ACTIVE_TASK_STATUSES.includes(e.task.status))
+      void claude.forget(`task-${e.task.id}`);
+  });
   const teach = new Teach({ ...core, lane: tasks.lane });
   const schedules = new Schedules(db, events, settings, tasks, clock);
   const triggers = new Triggers(db, events, settings, tasks, notifier, publicUrl, clock);

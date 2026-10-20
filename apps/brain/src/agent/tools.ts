@@ -296,7 +296,7 @@ async function held(
 const chatTaint = (by: string | null | undefined) => by && `The chat had read: ${by}`;
 
 /** A change that wasn't made: its message is for the model. */
-class NotChanged extends Error {}
+export class NotChanged extends Error {}
 
 /**
  * Deleting or switching off a schedule, watcher or trigger after reading untrusted content waits for
@@ -622,7 +622,7 @@ function secretsLine(ctx: ToolContext, id: number): string {
 }
 
 /** For a box just made or changed: the secrets the owner still has to set. */
-function unsetSecrets(ctx: ToolContext, id: number): string {
+export function unsetSecrets(ctx: ToolContext, id: number): string {
   const unset = (ctx.boxes?.secrets(id) ?? []).filter((x) => !x.set).map((x) => x.name);
   return unset.length
     ? ` Its backend reads ${unset.join(", ")}, which the owner hasn't set: they set it on the box's page, under Secrets.`
@@ -635,7 +635,7 @@ function unsetSecrets(ctx: ToolContext, id: number): string {
  * in a tainted chat. The page built and the approval's note, or what the model is told instead: a
  * failed build's output is untrusted, since npm packages' code and text are in it.
  */
-async function builtBox(
+export async function builtBox(
   ctx: ToolContext,
   signal: AbortSignal,
   b: {
@@ -680,6 +680,14 @@ async function builtBox(
     return `Not saved: the build failed. What it printed:\n\n${boxOutput(ctx, b.tool, result.output || "(nothing)", `What building box "${b.title}" printed`)}`;
   return { id, page: result.page, note };
 }
+
+/** What a box is and may do, for whoever writes one: the chat's box_create, and Claude Code (box_claude). */
+export const BOX_PAGE_RULES =
+  "A box is one self-contained HTML page, its CSS and JavaScript inline. It can't load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don't work; show messages and confirmations in the page. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app's colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku's answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes, and hatbox.feed(name) for what a feed you give it with box_feed last read.";
+
+/** A box of files, built on the boxes guest, with a backend. */
+export const BOX_FILES_RULES =
+  'For more than a page, give files instead, built on the boxes guest into one page: index.html, which loads its scripts and styles by path (<script type="module" src="./app.ts">), the modules they import, npm packages in box.json, and server.ts for a backend (`export default { fetch(req), scheduled?() }` on Bun, keeping data with bun:sqlite in its working folder), which the page calls with await hatbox.fetch(path, init), answered like fetch. The backend reaches only the hosts box.json lists, and cron runs scheduled(), at most every 5 minutes, which may return {notify: "text"} to notify the owner, up to 10 times a day. An API key goes in box.json\'s secrets by name, read as process.env.NAME; the owner sets it on the box\'s page and you never see it: {"hosts": ["shop.example.com"], "cron": "0 * * * *", "packages": {"chart.js": "^4"}, "secrets": ["SHOP_KEY"]}.';
 
 /** A tool's result with a picture the model sees too (box_look). */
 export type ToolImage = { data: string; mediaType: "image/png" };
@@ -959,8 +967,7 @@ export const TOOLS = [
   }),
   def({
     name: "box_create",
-    description:
-      'Make a box: a small web app the owner keeps and opens from the chat, such as a tracker, a calculator, a planner or a dashboard. Not for a one-off answer: reply instead, with a chart block if it helps. A box is one self-contained HTML page, its CSS and JavaScript inline. It can\'t load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don\'t work; show messages and confirmations in the page. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app\'s colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku\'s answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes, and hatbox.feed(name) for what a feed you give it with box_feed last read. For more than a page, give files instead, built on the boxes guest into one page: index.html, which loads its scripts and styles by path (<script type="module" src="./app.ts">), the modules they import, npm packages in box.json, and server.ts for a backend (`export default { fetch(req), scheduled?() }` on Bun, keeping data with bun:sqlite in its working folder), which the page calls with await hatbox.fetch(path, init), answered like fetch. The backend reaches only the hosts box.json lists, and cron runs scheduled(), at most every 5 minutes, which may return {notify: "text"} to notify the owner, up to 10 times a day. An API key goes in box.json\'s secrets by name, read as process.env.NAME; the owner sets it on the box\'s page and you never see it: {"hosts": ["shop.example.com"], "cron": "0 * * * *", "packages": {"chart.js": "^4"}, "secrets": ["SHOP_KEY"]}. Then look at it with box_look and fix what\'s wrong before you say it\'s done.',
+    description: `Make a box: a small web app the owner keeps and opens from the chat, such as a tracker, a calculator, a planner or a dashboard. Not for a one-off answer: reply instead, with a chart block if it helps. ${BOX_PAGE_RULES} ${BOX_FILES_RULES} Then look at it with box_look and fix what's wrong before you say it's done.`,
     schema: z.object({
       title: BOX_TITLE,
       html: z.string().min(1).max(MAX_BOX_HTML).optional().describe("The whole page"),
@@ -1062,6 +1069,46 @@ export const TOOLS = [
       return saved
         ? `Saved. ${shown(ctx, saved)}`
         : "No change: the page and title are as they were.";
+    },
+  }),
+  def({
+    name: "box_claude",
+    description:
+      "Have Claude Code make a new box, or change one of yours, as a background task: for a box with more than a little code, or a big change to one. It works on the box's files on its own for a few minutes, on the owner's Claude subscription, and saves them as the box's next version, shown under your reply. It can't see this conversation, so put everything the box needs in request. You hear when it's done: look at the box with box_look then, before you tell the owner. For a small change, use box_edit.",
+    schema: z.object({
+      request: z
+        .string()
+        .min(1)
+        .max(20_000)
+        .describe("What the box should be, or what to change, in full"),
+      box: z.number().int().optional().describe("The box to change; leave out for a new one"),
+      title: BOX_TITLE.optional().describe("A new box's title, or the box's new one"),
+    }),
+    run: async ({ request, box: id, title }, ctx) => {
+      const { tasks } = ctx;
+      if (!tasks || !ctx.boxes) return "Boxes aren't available here.";
+      if (gone(ctx)) return GONE;
+      const box = id === undefined ? null : ownBox(ctx, id);
+      const name = title ?? box?.title;
+      if (!name) return "Not started: a new box needs a title.";
+      const suspect = await ctx.suspected?.();
+      const task = tasks.createBackgroundTask({
+        title: (box ? `Change box #${box.id}: ${name}` : `Make a box: ${name}`).slice(0, 80),
+        goal: request,
+        origin: "chat",
+        botId: ctx.bot?.id,
+        conversationId: ctx.conversationId,
+        message: ctx.messageId,
+        // One run on a box at a time: the second would build on files the first is changing.
+        runKey: box ? `box:${box.id}` : undefined,
+        taintedBy: chatTaint(ctx.tainted?.()),
+        request: ctx.ownerSaid?.(),
+        askedIn: ctx.answering,
+        boxJob: { request, ...(box ? { box: box.id } : {}), ...(title ? { title } : {}) },
+      });
+      if (!task) return `Not started: Claude Code is already working on box #${id}.`;
+      if (suspect) tasks.mark(task.id, "injection_suspected");
+      return `Started task #${task.id}: Claude Code ${box ? `changes box #${box.id}` : "makes the box"} in the background, and the owner sees its progress under this reply. Don't wait for it.`;
     },
   }),
   def({
@@ -1934,7 +1981,7 @@ export async function runTool(
 export const DESKTOP_TOOLS = ["run_desktop_task", "send_file"];
 
 /** The tools that write a box's code or change what it gets: the code bot's, when there is one. */
-export const BOX_CHANGE_TOOLS = ["box_create", "box_edit", "box_revert", "box_feed"];
+export const BOX_CHANGE_TOOLS = ["box_create", "box_edit", "box_revert", "box_feed", "box_claude"];
 
 /**
  * The core tools an incognito conversation gets: lookups that leave nothing behind. Not history search,

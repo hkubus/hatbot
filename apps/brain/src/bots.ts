@@ -69,7 +69,7 @@ export function slugOf(name: string): string {
 }
 
 /** Plugins that write code. The code bot's are its alone: the others hand that work to it. */
-const CODE_PLUGINS = ["code", "self"];
+const CODE_PLUGINS = ["code", "claude", "self"];
 
 /**
  * The bot all code and boxes go to (PLAN.md §14.7): the first made, other than Hatbot, whose plugins

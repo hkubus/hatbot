@@ -10,6 +10,8 @@ import type {
   BrowserResult,
   BrowserState,
   FetchResult,
+  ShellJob,
+  ShellJobStatus,
   ShellResult,
 } from "@hatbot/shared/desktop";
 import { type DesktopAgent, DesktopError } from "../src/desktop/client";
@@ -84,6 +86,42 @@ export class FakeDesktop implements DesktopAgent {
     const f = this.files.get(path);
     if (!f) throw new DesktopError(`There's no file at ${path}.`, 404);
     return f;
+  }
+  /** Long commands started, in order. */
+  jobs: ShellJob[] = [];
+  /** Ids of the jobs stopped. */
+  stopped: string[] = [];
+  /**
+   * What a job prints to standard output, once it ends: when this returns. One that throws ends with
+   * exit code 1 and the message on standard error.
+   */
+  runJob: (job: ShellJob) => string | Promise<string> = () => "";
+  private running = new Map<string, Omit<ShellJobStatus, "next" | "timedOut">>();
+  async startJob(job: ShellJob) {
+    if (this.locked) throw new DesktopError("The owner has control of the desktop.", 423);
+    this.jobs.push(job);
+    const id = `job-${this.jobs.length}`;
+    const s = { running: true, exitCode: null as number | null, output: "", stderr: "" };
+    this.running.set(id, s);
+    Promise.resolve()
+      .then(() => this.runJob(job))
+      .then(
+        (output) => Object.assign(s, s.running && { running: false, exitCode: 0, output }),
+        (err: Error) =>
+          Object.assign(s, s.running && { running: false, exitCode: 1, stderr: err.message }),
+      );
+    return id;
+  }
+  async readJob(id: string, from: number): Promise<ShellJobStatus> {
+    const s = this.running.get(id);
+    if (!s) throw new DesktopError("There's no such job.", 410);
+    return { ...s, timedOut: false, output: s.output.slice(from), next: s.output.length };
+  }
+  async stopJob(id: string) {
+    this.stopped.push(id);
+    const s = this.running.get(id);
+    if (s) s.running = false;
+    this.running.delete(id);
   }
   /** Finished browser downloads, by id. */
   downloads = new Map<string, { name: string; bytes: Uint8Array }>();
