@@ -28,7 +28,7 @@ final class Session {
   @ObservationIgnored private let cache: DiskCache?
   @ObservationIgnored private let urlSession: URLSession
 
-  init(vault: TokenVault, defaults: UserDefaults = .standard, cacheDir: URL? = nil, urlSession: URLSession = .shared) {
+  init(vault: TokenVault, defaults: UserDefaults = .standard, cacheDir: URL? = nil, urlSession: URLSession = .hatbot) {
     self.vault = vault
     self.defaults = defaults
     self.urlSession = urlSession
@@ -99,4 +99,20 @@ final class Session {
       }
     }
   }
+}
+
+extension URLSession {
+  /// The app's. URLSession.shared keeps about 10 MB on disk and nothing over about 500 KB, so a photo
+  /// opened full screen downloaded again each time; a sent file is now kept for good.
+  static let hatbot: URLSession = {
+    let config = URLSessionConfiguration.default
+    let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+      .appendingPathComponent("URLs", isDirectory: true)
+    #if canImport(FoundationNetworking)
+      config.urlCache = URLCache(memoryCapacity: 8 << 20, diskCapacity: 200 << 20, diskPath: dir.path)
+    #else
+      config.urlCache = URLCache(memoryCapacity: 8 << 20, diskCapacity: 200 << 20, directory: dir)
+    #endif
+    return URLSession(configuration: config)
+  }()
 }
