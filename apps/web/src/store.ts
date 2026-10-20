@@ -17,6 +17,7 @@ import {
   type Proposal,
   type Question,
   type Schedule,
+  type Snapshot,
   type SpendSummary,
   type Task,
   type TaskStep,
@@ -79,7 +80,7 @@ type State = {
   proposals: Record<number, Proposal>;
   /** Teach-by-showing: the recording in progress and drafts, by id. */
   teach: Record<number, TeachSession>;
-  /** Your bots, deleted ones too once seen: old messages still name them. */
+  /** Your bots, deleted ones too once seen: old messages still name them. Brief (`Bot.brief`) as listed. */
   bots: Record<string, Bot>;
   /** Bots that aren't deleted, Hatbot first. */
   botIds: string[];
@@ -303,11 +304,20 @@ export async function openConversation(id: number) {
 
 export async function loadBots() {
   const [bots, conversations] = await Promise.all([
-    api<Bot[]>("/bots"),
+    api<Bot[]>("/bots?brief=1"),
     api<Conversation[]>("/conversations"),
   ]);
+  takeBots(bots, conversations);
+}
+function takeBots(bots: Bot[], conversations: Conversation[]) {
   merge("bots", bots);
   set({ botIds: bots.map((b) => b.id), conversations });
+}
+/** A bot with all of its role, for its page. */
+export async function loadBot(id: string) {
+  const bot = await api<Bot>(`/bots/${id}`);
+  putBot(bot);
+  return bot;
 }
 
 let refreshing: ReturnType<typeof setTimeout> | null = null;
@@ -585,17 +595,28 @@ export async function saveSchedule(id: number, patch: Partial<Schedule> & { at?:
   return s;
 }
 
-async function loadLive() {
+/** What a brain from before the stream's snapshot is asked for instead. */
+async function askLive() {
   void loadBots().catch(() => {});
-  const [pending, asked, desktop, teach, unread] = await Promise.all([
+  const [approvals, questions, desktop, unread] = await Promise.all([
     api<Approval[]>("/approvals?pending=1"),
     api<Question[]>("/questions").catch(() => null),
     api<DesktopState>("/desktop/status").catch(() => null),
-    api<{ recording: TeachSession | null; drafts: TeachSession[] }>("/teach").catch(() => null),
     api<number[]>("/thread/unread").catch(() => null),
+  ]);
+  return { approvals, questions, desktop, unread };
+}
+
+/** What's live as the stream opens: its first event, the snapshot, says, or we ask. */
+async function loadLive(snapshot: Snapshot | null) {
+  if (snapshot) takeBots(snapshot.bots, snapshot.conversations);
+  const [live, teach] = await Promise.all([
+    snapshot ?? askLive(),
+    api<{ recording: TeachSession | null; drafts: TeachSession[] }>("/teach").catch(() => null),
     // Mandate approvals link to their negotiations.
     loadNegotiations().catch(() => null),
   ]);
+  const { approvals: pending, questions: asked, desktop, unread } = live;
   if (unread) set({ unread });
   const approvals = { ...state.approvals };
   // Anything we thought pending but the server doesn't list was decided while we were away.
@@ -676,6 +697,10 @@ export async function saveSkill(
 }
 export const recording = (s: State) =>
   Object.values(s.teach).find((t) => t.status === "recording") ?? null;
+
+/** Messages you haven't seen: each chat counts them all, the ids are only each chat's newest. */
+export const unreadCount = (s: State) =>
+  s.conversations.length ? s.conversations.reduce((n, c) => n + c.unread, 0) : s.unread.length;
 
 /** Approvals and questions waiting for you, plus a takeover request. */
 export const needsYou = (s: State) =>
@@ -842,6 +867,7 @@ function apply(e: HatbotEvent) {
       if (state.botIds.some((id) => botName(state, id) === e.author))
         toast(`Memory: ${e.message}`, "info");
       return set({ memoryVersion: state.memoryVersion + 1 });
+    case "snapshot":
     case "paused":
       return set({ paused: e.paused });
     case "task.updated": {
@@ -1007,12 +1033,18 @@ export function connect() {
     wasOpen = true;
     void catchUp(opened);
     opened = true;
-    void loadLive().catch(() => {});
     retry = 0;
     set({ connected: true });
   };
+  let first = true;
   ws.onmessage = (ev) => {
-    if (ws === socket) apply(JSON.parse(ev.data) as HatbotEvent);
+    if (ws !== socket) return;
+    const e = JSON.parse(ev.data) as HatbotEvent;
+    if (first) {
+      first = false;
+      void loadLive(e.type === "snapshot" ? e : null).catch(() => {});
+    }
+    apply(e);
   };
   ws.onclose = () => {
     if (ws !== socket) return;

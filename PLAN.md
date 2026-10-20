@@ -428,7 +428,9 @@ REST + JSON under `/api/v1`. One WebSocket at `/api/v1/stream` for events. The t
 | Proposals | `GET /proposals?status=` · `POST /proposals/tidy` · `POST /proposals/:id/apply` · `POST /proposals/:id/dismiss` · `GET /skills` · `POST /skills/:name/fix` |
 | Search | `GET /search?q=` (messages, tasks, memory, schedules, triggers and watchers) |
 
-**WS events**: `message.created`, `message.delta`, `message.progress`, `message.done`, `task.updated`, `task.step`, `task.progress`, `approval.created`, `approval.resolved`, `desktop.state`, `spend.updated`, `memory.committed`, `paused`, `schedule.updated`, `schedule.deleted`, `trigger.updated`, `trigger.deleted`, `plugin.updated`, `watcher.updated`, `watcher.deleted`, `proposal.updated`, `settings.updated`, `heartbeat.updated`.
+**Opening the stream**: the first event is `snapshot`: paused, the bots (brief: each role's first line only, as `GET /bots?brief=1` lists them; `GET /bots/:id` has all of it, and the bot pages load that), the chats, the pending approvals and questions, the desktop, and the unread message ids, each chat's newest 100 (`/conversations` counts them all; `/thread/unread` sends the same ids). Then `paused`, for apps from before the snapshot. An app takes what's live from the snapshot instead of asking for each, and asks when the first event isn't one, from a brain before it.
+
+**WS events**: `snapshot` (first, above), `message.created`, `message.delta`, `message.progress`, `message.done`, `task.updated`, `task.step`, `task.progress`, `approval.created`, `approval.resolved`, `desktop.state`, `spend.updated`, `memory.committed`, `paused`, `schedule.updated`, `schedule.deleted`, `trigger.updated`, `trigger.deleted`, `plugin.updated`, `watcher.updated`, `watcher.deleted`, `proposal.updated`, `settings.updated`, `heartbeat.updated`.
 
 ---
 

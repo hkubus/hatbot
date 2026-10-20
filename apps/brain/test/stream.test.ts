@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
+import { type HatbotEvent, UNREAD_PER_CHAT } from "@hatbot/shared";
 import { websocket } from "hono/bun";
-import { ORIGIN, setUpOwner, testApp } from "./helpers";
+import { bot, ORIGIN, setUpOwner, signIn, testApp } from "./helpers";
 
 test("a live socket closes when its session or token ends, only that one, and leaves the renewal to a request", async () => {
   const t = await testApp();
@@ -39,6 +40,53 @@ test("a live socket closes when its session or token ends, only that one, and le
     expect(phone.ws.readyState).toBe(WebSocket.OPEN);
     t.auth.deleteToken(tokenId ?? 0);
     expect(await phone.closed).toBe(1008);
+  } finally {
+    brain.stop(true);
+  }
+});
+
+test("the stream opens with what's live, so an app needn't ask: then paused, for apps from before", async () => {
+  const t = await testApp();
+  const { cookie } = signIn(t);
+  t.bots.update("hatbot", { instructions: "Looks after the homelab.\nAsks before restarting." });
+  bot(t, "Chef");
+  const chef = t.chats.direct("chef").conversationId;
+  const add = t.db.query(
+    "INSERT INTO messages (conversation_id, role, kind, text, status, created_at) VALUES (?, 'assistant', 'text', 'Hi', 'done', ?) RETURNING id",
+  );
+  const said = (chat: number) => (add.get(chat, "2026-10-09T12:00:00Z") as { id: number }).id;
+  const hatbot = said(1);
+  const chefs = Array.from({ length: UNREAD_PER_CHAT + 1 }, () => said(chef));
+  const approval = t.approvals.create({ taskId: null, kind: "other", summary: "Restart the NAS" });
+  const brain = Bun.serve({ port: 0, fetch: (req, srv) => t.app.fetch(req, srv), websocket });
+  try {
+    const ws = new WebSocket(`ws://127.0.0.1:${brain.port}/api/v1/stream`, {
+      headers: { cookie, origin: ORIGIN },
+    } as unknown as string[]);
+    const first: HatbotEvent[] = [];
+    await new Promise<void>((done) => {
+      ws.onmessage = (e) => {
+        if (first.push(JSON.parse(String(e.data))) === 2) done();
+      };
+    });
+    ws.close();
+    const [snapshot, paused] = first;
+    expect(snapshot).toMatchObject({
+      type: "snapshot",
+      paused: false,
+      approvals: [{ id: approval.id, status: "pending" }],
+      questions: [],
+      desktop: t.desktop.get(),
+      conversations: t.chats.list(),
+      // A list's bots carry only their role's first line; GET /bots/:id has it all.
+      bots: [
+        { id: "hatbot", instructions: "Looks after the homelab.", brief: true },
+        { id: "chef" },
+      ],
+      // Each chat's newest unread: a page's worth and more, not the thousands a chat never read has.
+      unread: [hatbot, ...chefs.slice(1)],
+    });
+    expect(paused).toEqual({ type: "paused", paused: false });
   } finally {
     brain.stop(true);
   }
