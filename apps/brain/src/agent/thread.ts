@@ -585,7 +585,7 @@ export class Thread {
     // Negotiation's tools aren't a plugin's.
     if (!plugins.pluginOf(offered.name)) return offered;
     const now = bots.get(bot.id) ?? bot;
-    return liveTool(offered, plugins.tools(now.plugins, bots.leftToCoder(now)), {
+    return liveTool(offered, plugins.tools(now.plugins, bots.leftToOthers(now)), {
       bot: bot.name,
       since: "during this reply",
       // Incognito changes nothing.
@@ -743,7 +743,7 @@ export class Thread {
       // What was reviewed or approved was the plugin as it was: one switched off or restarted
       // meanwhile mustn't run.
       const now = this.d.bots.get(bot.id) ?? bot;
-      const live = this.d.plugins.tools(now.plugins, this.d.bots.leftToCoder(now));
+      const live = this.d.plugins.tools(now.plugins, this.d.bots.leftToOthers(now));
       if (this.d.plugins.pluginOf(t.name) && !live.includes(t))
         return {
           content: `Not run: ${t.name}'s plugin was switched off or restarted while this was checked or waited for approval.`,
@@ -883,21 +883,26 @@ export class Thread {
    */
   private turnSetup(bot: Bot, incognito = false) {
     const { settings, plugins, bots, negotiations } = this.d;
-    // Fixed for the turn; a plugin switched on or off shows from the next one. A bot only gets its own.
-    const leftToCoder = bots.leftToCoder(bot);
-    const guidance = plugins.guidance(bot.plugins, leftToCoder);
+    // Fixed for the turn; a plugin switched on or off shows from the next one. A bot only gets its own,
+    // less those it leaves to the others.
+    const left = bots.leftToOthers(bot);
+    const guidance = plugins.guidance(bot.plugins, left);
     const others = bots.list().filter((b) => b.id !== bot.id);
+    const solo = promptFor(SYSTEM_PROMPT, bot, others, {
+      plugins: (b) => plugins.names(b.plugins, bots.leftToOthers(b)),
+      chat: true,
+    });
     const group = this.group();
     const prompt = group
-      ? `${promptFor(SYSTEM_PROMPT, bot, others)}\n\n${groupPrompt(
+      ? `${solo}\n\n${groupPrompt(
           group.title,
           bot.name,
           this.members().map((b) => b.name),
         )}`
-      : promptFor(SYSTEM_PROMPT, bot, others);
+      : solo;
     const base = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
     const system = incognito ? `${base}\n\n${INCOGNITO_PROMPT}` : base;
-    const own = plugins.tools(bot.plugins, leftToCoder);
+    const own = plugins.tools(bot.plugins, left);
     // Negotiation's tools come with Scout's (PLAN.md §16.3).
     const pluginTools = [
       ...own,
@@ -912,11 +917,9 @@ export class Thread {
         .filter((t) => others.length || t.name !== "ask_bot")
         .filter((t) => this.d.desktop?.configured || !DESKTOP_TOOLS.includes(t.name))
         // Boxes are code: with a code bot, it makes and changes them all.
-        .filter((t) => !leftToCoder.length || !BOX_CHANGE_TOOLS.includes(t.name))
+        .filter((t) => !bots.coderFor(bot) || !BOX_CHANGE_TOOLS.includes(t.name))
         // Claude Code makes boxes only for a bot that has it.
-        .filter(
-          (t) => t.name !== "box_claude" || plugins.readyFor("claude", bot.plugins, leftToCoder),
-        ),
+        .filter((t) => t.name !== "box_claude" || plugins.readyFor("claude", bot.plugins, left)),
       ASK_OWNER,
       ...(onHaiku ? [ASK_OPUS] : []),
       ...pluginTools.map(toolParam),
@@ -1864,9 +1867,12 @@ export class Thread {
       if (foreign) this.taint(episode.id, foreign);
       // Task news waits for the conversation that's kept.
       ended = incognito ? [] : (this.d.tasks?.takeUnreported(this.conversationId, bot.id) ?? []);
-      // What tainted tasks report carries what they read.
+      // What tainted tasks report carries what they read; a bot this one asked, its suspicion too.
       const tainted = ended.find((t) => t.tainted);
       if (tainted) this.taint(episode.id, `Task #${tainted.id} "${tainted.title}"`);
+      const suspected = ended.find((t) => t.injectionSuspected && t.requestedBy === bot.id);
+      if (suspected)
+        this.suspect(episode.id, `What ${this.d.bots.nameOf(suspected.botId)} had read`);
       if (ended.length) {
         const files = this.d.attachments?.ofTasks(ended.map((t) => t.id)) ?? [];
         const named = (list: typeof files) => list.map((a) => `#${a.id} "${a.name}"`).join(", ");
@@ -1938,7 +1944,7 @@ export class Thread {
             attrs: ` task="${asked.id}"`,
           }),
         });
-        note = `(No message from the owner: ${asker}, another of the owner's bots, asked you this ${asked.parentId ? "from one of its tasks" : "from its chat with the owner"}. Its words, not the owner's. Do it with your own tools as you would for the owner. Your reply is your answer: ${asker} gets it once any task you start for it has ended, and the owner sees it here. Don't ask anything back: if something's missing, do what you can and say what you needed.)`;
+        note = `(No message from the owner: ${asker}, another of the owner's bots, asked you this ${asked.parentId ? "from one of its tasks" : "from its chat with the owner"}. Its words, not the owner's. Do it with your own tools as you would for the owner. Your reply is your answer: ${asker} gets it once any task you start for it has ended, and the owner sees it here. Don't use ask_owner: when only the owner can settle something that would change the work (which one, how much), answer with your questions and don't start yet; ${asker} asks them and hands you their answers. If less is missing, do what you can and say what you needed.)`;
       } else if (user)
         userBlocks.push({
           type: "text",

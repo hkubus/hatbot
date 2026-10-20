@@ -980,9 +980,10 @@ export class Tasks {
     const reporter = task.requestedBy ?? task.botId;
     const conversationId = this.conversationOf(id) ?? this.home(reporter);
     // Started from the chat: the chat model hears now and writes the reply again, with the conversation
-    // in mind. A bot that asked another always passes on what came of it.
+    // in mind. A bot that asked another always passes on what came of it, also from a hand-off with its
+    // own card, the second one a reply asked for.
     const asked = !task.parentId && task.requestedBy !== null;
-    const told = !!underReply && (tell || asked) && status !== "cancelled";
+    const told = status !== "cancelled" && (asked || (!!underReply && tell));
     if (underReply && status !== "cancelled") this.d.chats.endReply(task, told);
     if (card.changes || (underReply && !told)) this.d.chats.markEdited(id);
     if (told) void this.d.chats.taskEnded(conversationId, reporter);

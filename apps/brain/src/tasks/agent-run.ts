@@ -3,7 +3,7 @@
 // model Settings choose (Haiku by default) with Hatbot's own tools and the plugins' tools, in the
 // background lane, reporting back through finish_task.
 import type Anthropic from "@anthropic-ai/sdk";
-import type { ApprovalKind, ApprovalScope, Task } from "@hatbot/shared";
+import type { ApprovalKind, ApprovalScope, Bot, Task } from "@hatbot/shared";
 import { z } from "zod";
 import { ownerAnswer, TASK_ASK_DESCRIPTION, TaskAskOwner } from "../agent/ask";
 import { cutOff, type StreamParams } from "../agent/model";
@@ -142,7 +142,7 @@ const CORE_TOOLS: Anthropic.Beta.BetaTool[] = [
   toolParam({
     name: "ask_bot",
     description:
-      "Hand part of this task to another of the owner's bots when it needs that bot's plugins, logins or notes: your request goes to its own chat with the owner, as from you, and it answers there with its own role, memory folder and plugins. This waits for its answer and returns it. It can't see this task, so give it everything it needs.",
+      "Hand part of this task to another of the owner's bots, the one whose role or plugins it needs: your request goes to its own chat with the owner, as from you, and it answers there with its own role, memory folder and plugins. This waits for its answer and returns it. It can't see this task, so give it everything it needs.",
     schema: AskBotInput,
   }),
   toolParam({
@@ -248,8 +248,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   /** What a plugin call is doing now, on the task's card. */
   const shown = tasks.progress(id);
   // Fixed for the whole run: the tool list is part of the prompt cache.
-  // A bot gets only the plugins it may use, less those it leaves to the code bot.
-  const own = d.plugins.tools(bot.plugins, d.bots.leftToCoder(bot));
+  // A bot gets only the plugins it may use, less those it leaves to the other bots.
+  const own = d.plugins.tools(bot.plugins, d.bots.leftToOthers(bot));
   // Research only reads and writes up, so it gets the plugins' lookups and no tool that changes
   // anything; it ends with finish_research (PLAN.md §17).
   const { research } = task;
@@ -268,7 +268,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const offered = pluginTools.get(name);
     if (!offered) return `Unknown tool "${name}".`;
     const now = d.bots.get(bot.id) ?? bot;
-    const mine = d.plugins.tools(now.plugins, d.bots.leftToCoder(now));
+    const mine = d.plugins.tools(now.plugins, d.bots.leftToOthers(now));
     // Negotiation's tools keep what they learned in this task while Scout's stay the same.
     if (mine.length !== negotiation.from.length || mine.some((t, i) => t !== negotiation.from[i]))
       negotiation = negotiating(mine);
@@ -294,10 +294,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const sent = new Set(tools.flatMap((t) => ("name" in t ? [t.name] : [])));
   /** Results never cleared: a research task's findings are what it cites. Only tools sent. */
   const keptTools = ["finish_task", "finish_research", "investigate"].filter((n) => sent.has(n));
-  const guidance = d.plugins.guidance(bot.plugins, d.bots.leftToCoder(bot));
+  const guidance = d.plugins.guidance(bot.plugins, d.bots.leftToOthers(bot));
+  const plugins = (b: Bot) => d.plugins.names(b.plugins, d.bots.leftToOthers(b));
   const prompt = research
-    ? promptFor(researchPrompt(bot), bot, others, RESEARCH_ASK_BOT)
-    : promptFor(AGENT_PROMPT, bot, others);
+    ? promptFor(researchPrompt(bot), bot, others, { plugins, handOver: RESEARCH_ASK_BOT })
+    : promptFor(AGENT_PROMPT, bot, others, { plugins });
   const system = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
   /** What the task reads from outside, screened for prompt injection while it goes on (PLAN.md §6.1). */
   const screener = new Screener(
@@ -419,6 +420,16 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const name = d.bots.nameOf(child.botId);
     const ended = await waitForChild(child.id, `Asked ${name}: ${child.title}`);
     if (ended.tainted) taint(`Task #${child.id} by ${name}`);
+    // A suspicion comes back with the answer, as it went with the request.
+    if (ended.injectionSuspected && !tasks.get(id)?.injectionSuspected) {
+      tasks.mark(id, "injection_suspected");
+      tasks.addStep(id, {
+        kind: "note",
+        name: "Possible prompt injection",
+        detail: `What ${name} had read`,
+        url: null,
+      });
+    }
     const summary = ended.summary ?? "";
     return result(
       call,
