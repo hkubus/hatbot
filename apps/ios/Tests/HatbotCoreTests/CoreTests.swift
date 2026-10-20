@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import XCTest
 
 #if canImport(FoundationNetworking)
@@ -232,6 +233,8 @@ final class ChatTests: XCTestCase {
   }
 
   /// Unread until seen here or elsewhere, and again once edited; when its task ends, its bot writes it again.
+  /// It's rewritten twice, and the second changes nothing in the message: its bubble must still take up
+  /// the new reply, or it shows dots while the text goes to the old one.
   func testEditedAndSeenEventsTrackUnread() async throws {
     try await MainActor.run {
       let store = Self.store()
@@ -248,7 +251,17 @@ final class ChatTests: XCTestCase {
       store.apply(try decode(HatbotEvent.self, #"{"type":"message.rewrite","id":3}"#))
       XCTAssertEqual(store.messages.first?.text, "")
       XCTAssertEqual(store.messages.first?.status, .streaming)
+      XCTAssertTrue(Self.redraws({ _ = store.reply(3) }, after: { store.apply(.messageRewrite(id: 3)) }))
     }
+  }
+
+  /// Whether a view that read `read` would be drawn again after `change`.
+  @MainActor private static func redraws(_ read: () -> Void, after change: () -> Void) -> Bool {
+    final class Told: @unchecked Sendable { var value = false }
+    let told = Told()
+    withObservationTracking(read) { told.value = true }
+    change()
+    return told.value
   }
 
   func testIncognitoMessagesStayOutOfTheThreadAndAreNeverUnread() async throws {
@@ -505,7 +518,9 @@ final class SignOutAndCacheTests: XCTestCase {
     let cache = DiskCache(dir: dir)
     let bot = Bot(id: "hatbot", name: "Hatbot", instructions: "", createdAt: "2026-10-15T10:00:00.000Z")
     let chat = Conversation(id: 2, kind: .direct, botIds: ["hatbot"], unread: 0)
-    let done = ThreadMessage(id: 5, role: .assistant, kind: .text, text: "Hi", status: .done, createdAt: "2026-10-15T10:00:00.000Z")
+    let done = ThreadMessage(
+      id: 5, role: .assistant, kind: .text, text: "Hi?", status: .done, createdAt: "2026-10-15T10:00:00.000Z",
+      choices: [["Yes", "No"]])
     let writing = ThreadMessage(
       id: 6, role: .assistant, kind: .text, text: "Wri", status: .streaming, createdAt: "2026-10-15T10:00:01.000Z")
     let api = API(server: URL(string: "https://hatbot.test")!, token: "t")
@@ -526,6 +541,8 @@ final class SignOutAndCacheTests: XCTestCase {
       XCTAssertEqual(store.bots["hatbot"]?.name, "Hatbot")
       // Not the one still being written.
       XCTAssertEqual(store.messages.map(\.id), [5])
+      // Its answers to tap too.
+      XCTAssertEqual(store.messages.first?.choices, [["Yes", "No"]])
     }
   }
 
@@ -774,6 +791,28 @@ final class NetworkTests: XCTestCase {
       // One sent before the page was read that comes after it.
       store.apply(.messageDelta(id: 9, text: "world!", at: 6))
       XCTAssertEqual(store.reply(9)?.text, "Hello world!")
+    }
+  }
+
+  /// What changes in the chat while it loads isn't undone by a page read before: the task under a reply,
+  /// its edit, a message deleted, and one that came.
+  func testWhatChangesWhileTheChatLoadsStays() async throws {
+    let store = await MainActor.run { Self.store() }
+    SlowBrain.routes["/thread/messages?limit=50"] = "[\(Self.message(8, in: 1)),\(Self.message(9, in: 1))]"
+    SlowBrain.slower = ["/thread/messages?limit=50": 0.2]
+    async let loaded: Void = store.loadThread()
+    await waitUntil { SlowBrain.requested.contains("GET /thread/messages?limit=50") }
+    try await MainActor.run {
+      store.apply(.messageTask(id: 9, taskId: 4))
+      store.apply(.messageEdited(id: 9, editedAt: "2026-10-15T08:05:00Z"))
+      store.apply(.messageDeleted(ids: [8]))
+      store.apply(.messageCreated(try JSONDecoder().decode(ThreadMessage.self, from: Data(Self.message(10, in: 1).utf8))))
+    }
+    try await loaded
+    await MainActor.run {
+      XCTAssertEqual(store.messages.map(\.id), [9, 10])
+      XCTAssertEqual(store.messages.first?.taskId, 4)
+      XCTAssertEqual(store.messages.first?.editedAt, "2026-10-15T08:05:00Z")
     }
   }
 

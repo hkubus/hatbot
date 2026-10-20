@@ -93,14 +93,14 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case id, role, kind, text, status, createdAt, taskId, scheduleId, episodeId, editedAt, seenAt, attachments
-    case incognito, conversationId, botId, sources, boxId, link
+    case incognito, conversationId, botId, sources, choices, boxId, link
   }
 
   init(
     id: Int, role: Role, kind: Kind, text: String, status: Status, createdAt: String, taskId: Int? = nil,
     scheduleId: Int? = nil, episodeId: Int? = nil, editedAt: String? = nil, seenAt: String? = nil,
     attachments: [Attachment]? = nil, incognito: Bool? = nil, conversationId: Int? = nil, botId: String? = nil,
-    sources: [Source]? = nil, boxId: Int? = nil, link: MessageLink? = nil
+    sources: [Source]? = nil, choices: [[String]]? = nil, boxId: Int? = nil, link: MessageLink? = nil
   ) {
     self.id = id
     self.role = role
@@ -119,6 +119,7 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
     self.conversationId = conversationId
     self.botId = botId
     self.sources = sources
+    self.choices = choices
     self.boxId = boxId
     self.link = link
   }
@@ -142,6 +143,7 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
       conversationId: c.decodeIfPresent(Int.self, forKey: .conversationId),
       botId: c.decodeIfPresent(String.self, forKey: .botId),
       sources: c.decodeIfPresent([Source].self, forKey: .sources),
+      choices: c.decodeIfPresent([[String]].self, forKey: .choices),
       boxId: c.decodeIfPresent(Int.self, forKey: .boxId),
       link: c.decodeIfPresent(MessageLink.self, forKey: .link))
   }

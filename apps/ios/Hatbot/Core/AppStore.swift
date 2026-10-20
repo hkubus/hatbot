@@ -26,8 +26,9 @@ final class AppStore {
   /// The conversations the loaded messages belong to, for their recaps.
   var episodes: [Int: Episode] = [:]
   /// The replies being written, each in its own object: a delta then redraws only its bubble, not the chat.
-  @ObservationIgnored private var replies: [Int: LiveReply] = [:]
-  /// Each load of the latest page in flight, with the replies' events that came meanwhile: the page may
+  /// Watched, so a bubble takes up a new one even when its message doesn't change, as on a second rewrite.
+  private var replies: [Int: LiveReply] = [:]
+  /// Each load of the latest page in flight, with the message events that came meanwhile: the page may
   /// have been read before them, so they go on it again, as on the web.
   @ObservationIgnored private var missed: [UUID: [HatbotEvent]] = [:]
   var hasEarlier = false
@@ -209,7 +210,9 @@ final class AppStore {
       // Side by side: neither waits on the other.
       Task {
         async let live: Void? = try? self.loadLive()
-        if reconnected { try? await self.loadThread() }
+        // The first open too: what came between the chat's first load and the stream's start, or all of
+        // it when that load failed.
+        try? await self.loadThread()
         // What changed while the app was away.
         if reconnected && self.boxesLoaded { _ = try? await self.loadBoxes() }
         _ = await live
@@ -231,8 +234,11 @@ final class AppStore {
 
   func apply(_ event: HatbotEvent) {
     switch event {
-    // An older brain's delta doesn't say where it goes, so it can't tell whether the page has it.
-    case .messageRewrite, .messageDelta(_, _, _?), .messageDone:
+    // An older brain's delta doesn't say where it goes, so it can't tell whether the page has it. Progress
+    // and usage aren't on the page.
+    case .messageDelta(_, _, nil), .messageProgress, .messageUsage: break
+    case .messageCreated, .messageDelta, .messageDone, .messageRewrite, .messageEdited, .messageSeen,
+      .messageDeleted, .messageTask, .messageLink, .messageBox, .messageAttachment:
       for load in missed.keys { missed[load]?.append(event) }
     default: break
     }
@@ -240,41 +246,26 @@ final class AppStore {
     case let .messageCreated(m):
       if m.isIncognito { incognitoIds.insert(m.id) }
       if m.role == .assistant { refreshConversations() }
-      // Only the conversation that's showing.
-      if m.isIncognito == incognito && (m.conversationId ?? 1) == conversationId {
-        if m.status == .streaming && replies[m.id] == nil { replies[m.id] = LiveReply(text: m.text) }
-        upsert(m)
-      }
+      follow(event)
       // What came of your own command arrives already seen.
       if m.role == .assistant && m.status != .streaming && m.seenAt == nil { addUnread(m.id) }
-    case let .messageEdited(id, editedAt):
-      if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].editedAt = editedAt }
+    case let .messageEdited(id, _):
+      follow(event)
       addUnread(id)
       refreshConversations()
-    case .messageRewrite, .messageDelta:
+    case .messageRewrite, .messageDelta, .messageTask, .messageLink, .messageBox, .messageAttachment:
       follow(event)
-    case let .messageSeen(ids, seenAt):
-      for i in messages.indices where ids.contains(messages[i].id) { messages[i].seenAt = seenAt }
+    case let .messageSeen(ids, _):
+      follow(event)
       unread.removeAll { ids.contains($0) }
       refreshConversations()
     case let .messageDeleted(ids):
-      for id in ids { replies[id] = nil }
-      messages.removeAll { ids.contains($0.id) }
+      follow(event)
       unread.removeAll { ids.contains($0) }
     case let .messageProgress(id, text):
       if let r = live(id) { r.progress = String((r.progress + text).suffix(400)) }
-    case let .messageTask(id, taskId):
-      if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].taskId = taskId }
-    case let .messageLink(id, link):
-      if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].link = link }
-    case let .messageBox(id, boxId):
-      if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].boxId = boxId }
     case let .messageUsage(id, used):
       live(id)?.usage = used
-    case let .messageAttachment(id, a):
-      if let i = messages.firstIndex(where: { $0.id == id }), !(messages[i].attachments ?? []).contains(where: { $0.id == a.id }) {
-        messages[i].attachments = (messages[i].attachments ?? []) + [a]
-      }
     case let .messageDone(id, _, _, _, _):
       follow(event)
       addUnread(id)
@@ -370,21 +361,44 @@ final class AppStore {
     m.status == .streaming ? replies[m.id]?.text ?? m.text : m.text
   }
 
-  /// The live reply for a streaming message. One made here, for a message loaded mid-reply, goes in with
-  /// a change to the message, so its bubble notices.
+  /// The live reply for a streaming message, made here for one loaded mid-reply.
   private func live(_ id: Int) -> LiveReply? {
     if let r = replies[id] { return r }
-    guard let i = messages.firstIndex(where: { $0.id == id }), messages[i].status == .streaming else { return nil }
-    let r = LiveReply(text: messages[i].text)
+    guard let m = messages.first(where: { $0.id == id }), m.status == .streaming else { return nil }
+    let r = LiveReply(text: m.text)
     replies[id] = r
-    messages[i].text = r.text
     return r
   }
 
-  /// What a reply's own events do to its text and state, also on a page read before they came: a delta
-  /// adds only what the reply doesn't have yet.
+  /// What a message's own events do to it, also on a page read before they came: a delta adds only what
+  /// the reply doesn't have yet.
   private func follow(_ event: HatbotEvent) {
+    func change(_ id: Int, _ body: (inout ThreadMessage) -> Void) {
+      if let i = messages.firstIndex(where: { $0.id == id }) { body(&messages[i]) }
+    }
     switch event {
+    case let .messageCreated(m):
+      // Only the conversation that's showing.
+      guard m.isIncognito == incognito && (m.conversationId ?? 1) == conversationId else { return }
+      if m.status == .streaming && replies[m.id] == nil { replies[m.id] = LiveReply(text: m.text) }
+      upsert(m)
+    case let .messageEdited(id, editedAt):
+      change(id) { $0.editedAt = editedAt }
+    case let .messageSeen(ids, seenAt):
+      for i in messages.indices where ids.contains(messages[i].id) { messages[i].seenAt = seenAt }
+    case let .messageDeleted(ids):
+      for id in ids { replies[id] = nil }
+      messages.removeAll { ids.contains($0.id) }
+    case let .messageTask(id, taskId):
+      change(id) { $0.taskId = taskId }
+    case let .messageLink(id, link):
+      change(id) { $0.link = link }
+    case let .messageBox(id, boxId):
+      change(id) { $0.boxId = boxId }
+    case let .messageAttachment(id, a):
+      change(id) { m in
+        if !(m.attachments ?? []).contains(where: { $0.id == a.id }) { m.attachments = (m.attachments ?? []) + [a] }
+      }
     case let .messageRewrite(id):
       // Its task ended: its bot is writing it again.
       if let i = messages.firstIndex(where: { $0.id == id }) {

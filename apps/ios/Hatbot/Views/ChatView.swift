@@ -272,6 +272,8 @@ struct ChatView: View {
       .onChange(of: store.conversationId) {
         path = []
         unfolded = []
+        // Another chat opens at its latest, not where you'd scrolled to in the one you left.
+        position.scrollTo(edge: .bottom)
       }
       .task(id: focus) {
         guard let id = focus else { return }
