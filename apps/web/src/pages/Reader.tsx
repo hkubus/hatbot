@@ -1,9 +1,9 @@
 import { type ReactNode, useEffect, useState } from "react";
 import Markdown, { type Components } from "react-markdown";
 import { ApiError, api, attachmentUrl } from "../api";
+import { Link } from "../link";
 import { LoadError } from "../load";
 import { MD_COMPONENTS, type Node, REMARK, textOf } from "../markdown";
-import { navigate } from "../router";
 import { useStore } from "../store";
 import { BackButton, Empty } from "../ui";
 
@@ -126,13 +126,9 @@ export function Reader({ path, file }: { path: string; file: number }) {
           </span>
           {ready?.from === "memory" && (
             <>
-              <button
-                type="button"
-                className="btn sm"
-                onClick={() => navigate(`/memory?path=${enc(path)}`)}
-              >
+              <Link className="btn sm" to={`/memory?path=${enc(path)}`}>
                 Edit
-              </button>
+              </Link>
               <button type="button" className="btn sm" onClick={() => saveAs(ready.text, name)}>
                 Download
               </button>

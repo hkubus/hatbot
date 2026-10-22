@@ -44,14 +44,14 @@ export function T3Settings({ config, save, action, running }: PluginSettingsProp
         await action("finish", { code, state });
         navigate(route.path, true);
       },
-      (err) => setError(errorText(err, "Couldn't connect")),
+      (err) => setError(errorText(err, "Couldn't connect.")),
     );
   }, [code, state, denied, running, action, run, setError, route.path]);
 
   const submit = () =>
     run(
       () => save({ url: url.trim().replace(/\/+$/, ""), model, minutes: n }),
-      (err) => setError(errorText(err, "Couldn't save")),
+      (err) => setError(errorText(err, "Couldn't save.")),
     );
 
   const connect = () =>
@@ -60,7 +60,7 @@ export function T3Settings({ config, save, action, running }: PluginSettingsProp
         const { url: go } = await action<{ url: string }>("connect");
         location.assign(go);
       },
-      (err) => setError(errorText(err, "Couldn't connect")),
+      (err) => setError(errorText(err, "Couldn't connect.")),
     );
 
   return (

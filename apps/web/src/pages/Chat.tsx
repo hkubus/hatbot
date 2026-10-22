@@ -20,6 +20,7 @@ import {
 } from "react";
 import { ApiError, attachmentUrl, errorText } from "../api";
 import { ask } from "../confirm";
+import { useCopy } from "../copy";
 import {
   attachFiles,
   type DraftFile,
@@ -34,7 +35,7 @@ import { plainText, time, tokens } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LoadError } from "../load";
-import { AssistantBody, isMarkdownFile, useCopy } from "../markdown";
+import { AssistantBody, isMarkdownFile } from "../markdown";
 import { touchScreen } from "../media";
 import { negotiationText } from "../negotiations";
 import { navigate, useRoute } from "../router";
@@ -148,18 +149,13 @@ function Meta({
               );
             }}
           >
-            <Icon name="undo" />
+            <Icon name="retry" />
           </button>
         )}
         {open && (
-          <button
-            type="button"
-            className="msg-act"
-            title={open.label}
-            onClick={() => navigate(open.to)}
-          >
+          <Link className="msg-act" title={open.label} to={open.to}>
             <Icon name="chevron" />
-          </button>
+          </Link>
         )}
       </span>
     </div>
@@ -408,21 +404,13 @@ function TrayApproval({ a }: { a: Approval }) {
       compact
       links={
         a.taskId ? (
-          <button
-            type="button"
-            className="btn sm ghost"
-            onClick={() => navigate(`/tasks/${a.taskId}`)}
-          >
+          <Link className="btn sm ghost" to={`/tasks/${a.taskId}`}>
             Open task
-          </button>
+          </Link>
         ) : negotiation ? (
-          <button
-            type="button"
-            className="btn sm ghost"
-            onClick={() => navigate(`/negotiations/${negotiation.id}`)}
-          >
+          <Link className="btn sm ghost" to={`/negotiations/${negotiation.id}`}>
             Open negotiation
-          </button>
+          </Link>
         ) : null
       }
     />
@@ -1017,7 +1005,7 @@ export function Chat({ id }: { id: number }) {
           <div className="thread" ref={thread}>
             {hasEarlier && (
               <button type="button" className="btn sm ghost load-earlier" onClick={earlier}>
-                Earlier messages
+                Earlier
               </button>
             )}
             {loadError && !messages.length && (
@@ -1077,13 +1065,9 @@ export function Chat({ id }: { id: number }) {
                   key={`q${a.id}`}
                   q={a}
                   links={
-                    <button
-                      type="button"
-                      className="btn sm ghost"
-                      onClick={() => navigate(`/tasks/${a.taskId}`)}
-                    >
+                    <Link className="btn sm ghost" to={`/tasks/${a.taskId}`}>
                       Open task
-                    </button>
+                    </Link>
                   }
                 />
               ) : (
@@ -1091,16 +1075,13 @@ export function Chat({ id }: { id: number }) {
               ),
             )}
             {waiting.rest > 0 && (
-              <button
-                type="button"
+              <Link
                 className="text-link tray-more"
-                onClick={() =>
-                  navigate(waiting.elsewhere ? chatPath(waiting.elsewhere.id) : "/tasks")
-                }
+                to={waiting.elsewhere ? chatPath(waiting.elsewhere.id) : "/tasks"}
               >
                 {waiting.here.length ? `${waiting.rest} more` : waiting.rest} waiting in{" "}
                 {waiting.elsewhere ? chatName(getState(), waiting.elsewhere) : "other chats"}
-              </button>
+              </Link>
             )}
           </div>
         )}

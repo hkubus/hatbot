@@ -128,7 +128,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
     toast("Saved");
   };
   const update = (patch: Partial<AppSettings>) =>
-    put(patch).catch((err) => toast(errorText(err, "Couldn't save"), "error"));
+    put(patch).catch((err) => toast(errorText(err, "Couldn't save."), "error"));
 
   const pausing = useAction();
   const pause = (on: boolean) =>
@@ -378,11 +378,8 @@ function AllowedPage() {
         {rules && (
           <Group empty={!rules.length && "None yet. Approve something with Always to add it."}>
             {rules.map((r) => (
-              <Row
-                key={r.id}
-                label={<span className="mono">{r.summary}</span>}
-                sub={r.botId !== "hatbot" && bots[r.botId]?.name}
-              >
+              <Row key={r.id} label={<span className="mono">{r.summary}</span>}>
+                {r.botId !== "hatbot" && <span className="val">{bots[r.botId]?.name}</span>}
                 <button type="button" className="btn sm danger-text" onClick={() => remove(r)}>
                   Remove
                 </button>
@@ -435,7 +432,7 @@ function RollbackRow({ toast }: { toast: Toast }) {
         await api("/desktop/rollback", { body: { name: snap.name } });
         toast("Desktop rolled back");
       },
-      (err) => toast(errorText(err, "Couldn't roll back"), "error"),
+      (err) => toast(errorText(err, "Couldn't roll back."), "error"),
     );
   };
 

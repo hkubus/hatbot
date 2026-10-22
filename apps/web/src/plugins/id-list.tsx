@@ -39,7 +39,7 @@ export function IdListSettings<K extends string, T extends string | number>({
   const submit = () =>
     run(
       () => save({ [field]: ids } as Record<K, T[]>),
-      (err) => setError(errorText(err, "Couldn't save")),
+      (err) => setError(errorText(err, "Couldn't save.")),
     );
 
   return (

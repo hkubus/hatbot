@@ -52,7 +52,7 @@ export function TodoPage({ toast }: { toast: Toast }) {
   const tick = useCallback(
     (t: TodoItem) =>
       api<TodoList>("/todo/done", { body: { text: t.text, line: t.line } }).then(setList, (err) =>
-        toast(errorText(err, "Couldn't tick it off"), "error"),
+        toast(errorText(err, "Couldn't tick it off."), "error"),
       ),
     [toast, setList],
   );
@@ -60,7 +60,7 @@ export function TodoPage({ toast }: { toast: Toast }) {
     (t: TodoItem) =>
       api<Task>("/todo/work", { body: { text: t.text, line: t.line } }).then(
         () => toast("Hatbot is on it"),
-        (err) => toast(errorText(err, "Couldn't start it"), "error"),
+        (err) => toast(errorText(err, "Couldn't start it."), "error"),
       ),
     [toast],
   );

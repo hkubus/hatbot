@@ -4,6 +4,7 @@ import { type FormEvent, useCallback, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
+import { Icon } from "../icons";
 import { LoadError, PageLoad, useLoad } from "../load";
 import { PLUGIN_SETTINGS } from "../plugins";
 import { loadPlugins, savePlugin, savePluginSecrets, useStore } from "../store";
@@ -96,6 +97,7 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
         <BackHead to="/settings/plugins" label="Plugins">
           {p.testable && p.state === "ready" && (
             <button type="button" className="btn sm" disabled={testing.busy} onClick={test}>
+              <Icon name="play" />
               {testing.busy ? "Testing…" : "Test"}
             </button>
           )}
@@ -184,8 +186,7 @@ function EnvForm({ p, toast }: { p: PluginInfo; toast: (t: string) => void }) {
           <div key={v.name}>
             <span className="label">
               <span className="mono">{v.name}</span>
-              {v.optional && " (optional)"} ·{" "}
-              {v.from ? SOURCE[v.from] : v.optional ? "Not set" : "Missing"}
+              {v.optional ? " (optional)" : !v.from && " (missing)"}
             </span>
             <div className="form-row">
               <input
@@ -194,7 +195,7 @@ function EnvForm({ p, toast }: { p: PluginInfo; toast: (t: string) => void }) {
                 type={v.secret ? "password" : "text"}
                 autoComplete="off"
                 spellCheck={false}
-                placeholder={v.secret && v.set ? "Unchanged" : (v.hint ?? "")}
+                placeholder={v.secret && v.from ? SOURCE[v.from] : (v.hint ?? "")}
                 value={values[v.name] ?? ""}
                 onChange={(e) => setValues({ ...values, [v.name]: e.target.value })}
               />
@@ -272,7 +273,12 @@ function NamedSecrets({
       {names.map((n) => (
         <div className="form-row" key={n}>
           <span className="mono">{n}</span>
-          <button type="button" className="btn sm ghost" disabled={busy} onClick={() => remove(n)}>
+          <button
+            type="button"
+            className="btn sm danger-text"
+            disabled={busy}
+            onClick={() => remove(n)}
+          >
             Remove
           </button>
         </div>

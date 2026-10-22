@@ -151,4 +151,4 @@ export function OnPanel({
   );
 }
 
-export const deleteText = (name: string) => `Delete "${name}"? Its past runs stay in Tasks.`;
+export const deleteText = (name: string) => `Delete ${name}? Its past runs stay in Tasks.`;

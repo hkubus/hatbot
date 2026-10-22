@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useAction } from "../action";
 import { ApiError, api, errorText } from "../api";
 import { ask, askText } from "../confirm";
+import { Copyable } from "../copy";
 import { deviceName } from "../device";
 import { day } from "../format";
 import { LoadError, useLoad } from "../load";
@@ -74,9 +75,7 @@ export function Devices({ toast }: { toast: Toast }) {
   };
 
   const revoke = async (t: ApiToken) => {
-    if (
-      !(await ask({ text: `Revoke "${t.name}"? Apps using it will be signed out.`, ok: "Revoke" }))
-    )
+    if (!(await ask({ text: `Revoke ${t.name}? Apps using it will be signed out.`, ok: "Revoke" })))
       return;
     await tokenEdit.run(async () => {
       await api(`/tokens/${t.id}`, { method: "DELETE" });
@@ -119,11 +118,9 @@ export function Devices({ toast }: { toast: Toast }) {
                 </button>
               </Row>
               {newToken && (
-                <div className="row" style={{ display: "grid", gap: 6 }}>
-                  <div className="muted" style={{ fontSize: 12 }}>
-                    Copy this token now. It won't be shown again.
-                  </div>
-                  <div className="token-new">{newToken.token}</div>
+                <div className="row token-new">
+                  <div className="muted hint">Copy this token now. It won't be shown again.</div>
+                  <Copyable value={newToken.token} />
                 </div>
               )}
               {tokens.map((t) => (

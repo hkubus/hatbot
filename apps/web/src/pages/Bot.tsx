@@ -12,6 +12,7 @@ import { api } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { toggled, useStoredForm } from "../form";
 import { BotMark } from "../icons";
+import { Link } from "../link";
 import { PageLoad, useLoad } from "../load";
 import { navigate } from "../router";
 import { chatPath, createBot, deleteBot, loadBot, loadPlugins, saveBot, useStore } from "../store";
@@ -294,13 +295,9 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
                         }
                       />
                     ) : (
-                      <button
-                        type="button"
-                        className="text-link"
-                        onClick={() => navigate(`/settings/plugins/${p.id}`)}
-                      >
+                      <Link className="text-link" to={`/settings/plugins/${p.id}`}>
                         Off in Plugins
-                      </button>
+                      </Link>
                     )}
                   </div>
                 ))}
@@ -311,17 +308,13 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
               <dt>Its notes</dt>
               <dd>
                 {isHatbot ? (
-                  <button type="button" className="text-link" onClick={() => navigate("/memory")}>
+                  <Link className="text-link" to="/memory">
                     Memory
-                  </button>
+                  </Link>
                 ) : (
-                  <button
-                    type="button"
-                    className="text-link"
-                    onClick={() => navigate(`/memory?path=bots/${id}/INDEX.md`)}
-                  >
+                  <Link className="text-link" to={`/memory?path=bots/${id}/INDEX.md`}>
                     bots/{id}/
-                  </button>
+                  </Link>
                 )}
               </dd>
             </dl>

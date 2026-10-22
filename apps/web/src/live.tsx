@@ -331,7 +331,7 @@ export function LiveView({ taskId }: { taskId?: number }) {
       navigate(`/memory/teach/${s.id}`);
     });
   const discard = async (id: number) => {
-    if (await ask({ text: "Throw this recording away?", ok: "Throw away" }))
+    if (await ask({ text: "Discard this recording?", ok: "Discard" }))
       giveBack(() => discardTeach(id));
   };
 
@@ -342,11 +342,11 @@ export function LiveView({ taskId }: { taskId?: number }) {
           <Icon name="teach" />
           Recording. Show Hatbot how.
           <div className="actions">
-            <button type="button" className="btn sm" onClick={() => discard(teach.id)}>
+            <button type="button" className="btn sm danger-text" onClick={() => discard(teach.id)}>
               Discard
             </button>
             <button type="button" className="btn sm accent" onClick={stop}>
-              Stop & create skill
+              Stop and make a skill
             </button>
           </div>
         </div>

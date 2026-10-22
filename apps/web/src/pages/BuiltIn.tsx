@@ -55,7 +55,7 @@ export function BuiltInGroup({ toast }: { toast: Toast }) {
         setSettings(s);
         toast("Saved");
       },
-      (err) => toast(errorText(err, "Couldn't save"), "error"),
+      (err) => toast(errorText(err, "Couldn't save."), "error"),
     );
   const report = settings.weeklyReport;
 
@@ -91,7 +91,7 @@ export function BuiltInGroup({ toast }: { toast: Toast }) {
             onClick={() =>
               api("/report/send", { body: {} }).then(
                 () => toast("Sent to Hatbot's chat"),
-                () => toast("Couldn't send", "error"),
+                (err) => toast(errorText(err, "Couldn't send it."), "error"),
               )
             }
           >

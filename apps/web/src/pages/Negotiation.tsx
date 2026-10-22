@@ -3,9 +3,9 @@ import { useAction } from "../action";
 import { api } from "../api";
 import { ask } from "../confirm";
 import { day, timeOrDay } from "../format";
+import { Link } from "../link";
 import { PageLoad, useItem } from "../load";
 import { money, NegotiationChip, negotiationText } from "../negotiations";
-import { navigate } from "../router";
 import { botName, loadNegotiation, useStore } from "../store";
 import { ApprovalCard } from "../tasks";
 import { BackHead } from "../ui";
@@ -150,13 +150,9 @@ export function NegotiationPage({ id }: { id: number }) {
                       <div className="muted">
                         {OUT[x.status]}{" "}
                         {x.taskId && (
-                          <button
-                            type="button"
-                            className="text-link"
-                            onClick={() => navigate(`/tasks/${x.taskId}`)}
-                          >
+                          <Link className="text-link" to={`/tasks/${x.taskId}`}>
                             Task
-                          </button>
+                          </Link>
                         )}
                       </div>
                     )}
