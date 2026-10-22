@@ -4,11 +4,28 @@ import UIKit
 struct SpendView: View {
   @Environment(AppStore.self) private var store
   @State private var detail: SpendDetail?
+  @State private var summary: SpendSummary?
   @State private var error: String?
 
   var body: some View {
     List {
       if let error { Text(error).foregroundStyle(.red) }
+      if let summary {
+        Section {
+          LabeledContent("Today", value: spendText(summary.todayUsd, limit: summary.limits.dailyUsd))
+          LabeledContent("This month", value: spendText(summary.monthUsd, limit: summary.limits.monthlyUsd))
+          if let tokens = summary.todayTokens {
+            LabeledContent("Tokens today", value: Format.tokens(tokens))
+          }
+          if let hour = summary.lastHour {
+            LabeledContent("Last hour", value: "\(Format.money(hour.usd)) · \(Format.tokens(hour.tokens)) tokens")
+          }
+          if let minute = summary.lastMinute {
+            LabeledContent(
+              "Last minute", value: "\(String(format: "$%.3f", minute.usd)) · \(Format.tokens(minute.tokens)) tokens")
+          }
+        }
+      }
       if let detail {
         chart("Last 24 hours", SpendCharts.hourly(detail.hourly))
         chart("Last 30 days", SpendCharts.daily(detail.daily))
@@ -23,8 +40,15 @@ struct SpendView: View {
     .overlay { if detail == nil && error == nil { ProgressView() } }
     .navigationTitle("Spend")
     .navigationBarTitleDisplayMode(.inline)
+    .toolbar {
+      ToolbarItem { NavigationLink("Limits", value: Route.limits) }
+    }
     .task { await load() }
     .refreshable { await load() }
+  }
+
+  private func spendText(_ usd: Double, limit: Double) -> String {
+    "\(Format.money(usd)) of \(Format.money(limit))"
   }
 
   @ViewBuilder
@@ -35,7 +59,13 @@ struct SpendView: View {
   }
 
   private func load() async {
-    await attempt($error) { detail = try await store.loadSpendDetail() }
+    await attempt($error) {
+      async let d = store.loadSpendDetail()
+      async let s = store.loadSpend()
+      let (loaded, now) = try await (d, s)
+      detail = loaded
+      summary = now
+    }
   }
 }
 
@@ -54,17 +84,19 @@ struct LimitsView: View {
       if let error { Text(error).foregroundStyle(.red) }
       if limits != nil {
         Section {
-          field("Each task", \.taskUsd)
-          if limits?.researchUsd != nil {
-            field("Each research task", optional: \.researchUsd)
-          }
-          field("Each day", \.dailyUsd)
-          field("Each month", \.monthlyUsd)
-          if limits?.alertReserveUsd != nil {
-            field("Kept for alerts", optional: \.alertReserveUsd)
-          }
-          if limits?.boxesUsd != nil {
-            field("Boxes per day", optional: \.boxesUsd)
+          field("Per day", \.dailyUsd)
+          field("Per month", \.monthlyUsd)
+          DisclosureGroup("More limits") {
+            field("Per task", \.taskUsd)
+            if limits?.researchUsd != nil {
+              field("Per research task", optional: \.researchUsd)
+            }
+            if limits?.boxesUsd != nil {
+              field("Boxes per day", optional: \.boxesUsd)
+            }
+            if limits?.alertReserveUsd != nil {
+              field("Kept for alerts", optional: \.alertReserveUsd)
+            }
           }
         } footer: {
           Text("In dollars. Hatbot stops before going past one.")
@@ -173,24 +205,26 @@ struct DevicesView: View {
   var body: some View {
     List {
       if let error { Text(error).foregroundStyle(.red) }
-      if let tokens, tokens.isEmpty {
-        Text("Nothing is signed in with a token.").foregroundStyle(.secondary)
-      }
-      ForEach(tokens ?? []) { t in
-        VStack(alignment: .leading, spacing: 3) {
-          Text(t.name)
-          Text(line(t)).font(.footnote).foregroundStyle(.secondary)
+      Section("API tokens") {
+        if let tokens, tokens.isEmpty {
+          Text("Nothing is signed in with a token.").foregroundStyle(.secondary)
         }
-        .swipeActions {
-          Button("Revoke", role: .destructive) { revoking = t }
-        }
-        .contextMenu {
-          Button("Revoke", systemImage: "xmark.circle", role: .destructive) { revoking = t }
+        ForEach(tokens ?? []) { t in
+          VStack(alignment: .leading, spacing: 3) {
+            Text(t.name)
+            Text(line(t)).font(.footnote).foregroundStyle(.secondary)
+          }
+          .swipeActions {
+            Button("Revoke", role: .destructive) { revoking = t }
+          }
+          .contextMenu {
+            Button("Revoke", systemImage: "xmark.circle", role: .destructive) { revoking = t }
+          }
         }
       }
     }
     .overlay { if tokens == nil && error == nil { ProgressView() } }
-    .navigationTitle("Signed-in devices")
+    .navigationTitle("Devices and tokens")
     .navigationBarTitleDisplayMode(.inline)
     .confirmationDialog(
       "Revoke “\(revoking?.name ?? "")”?",

@@ -11,6 +11,7 @@ struct SchedulesView: View {
   var body: some View {
     List {
       if let error { Text(error).foregroundStyle(.red) }
+      BuiltInSection(error: $error)
       Section("Schedules") {
         let schedules = store.schedules.values.sorted { $0.id < $1.id }
         if loaded && schedules.isEmpty {
@@ -21,6 +22,20 @@ struct SchedulesView: View {
             Row(
               name: s.name, enabled: s.enabled,
               detail: Format.when(cron: s.cron, runAt: s.runAt))
+          }
+        }
+      }
+      Section("Watchers") {
+        let watchers = store.watchers.values.sorted { $0.id < $1.id }
+        if store.watchersLoaded && watchers.isEmpty {
+          Text("No watchers. Ask Hatbot in the chat to watch a page or a value.").foregroundStyle(.secondary)
+        }
+        ForEach(watchers) { w in
+          NavigationLink(value: Route.watcher(w.id)) {
+            VStack(alignment: .leading, spacing: 3) {
+              Text(w.name).foregroundStyle(w.enabled ? .primary : .secondary)
+              Text(line(w)).font(.footnote).foregroundStyle(w.lastError == nil ? Color.secondary : .red)
+            }
           }
         }
       }
@@ -36,7 +51,7 @@ struct SchedulesView: View {
         }
       }
     }
-    .navigationTitle("Schedules & Triggers")
+    .navigationTitle("Automations")
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
       ToolbarItem {
@@ -47,8 +62,18 @@ struct SchedulesView: View {
     .task { await load() }
   }
 
+  private func line(_ w: Watcher) -> String {
+    if !w.enabled { return "Off" }
+    if let e = w.lastError { return e }
+    return "\(w.condition.description), \(Format.every(w.everyMinutes).lowercased())"
+  }
+
   private func load() async {
-    await attempt($error) { try await store.loadSchedules() }
+    await attempt($error) {
+      async let s: Void = store.loadSchedules()
+      async let w = store.loadWatchers()
+      _ = try await (s, w)
+    }
     loaded = true
   }
 
@@ -62,6 +87,113 @@ struct SchedulesView: View {
         Text(name).foregroundStyle(enabled ? .primary : .secondary)
         Text(enabled ? detail : "Off").font(.footnote).foregroundStyle(.secondary)
       }
+    }
+  }
+}
+
+/// The jobs Hatbot runs on its own, each set only here.
+private struct BuiltInSection: View {
+  @Binding var error: String?
+  @Environment(AppStore.self) private var store
+  @State private var settings: AppSettings?
+  @State private var suggestions: CodeSuggestions?
+  @State private var suggesting = false
+  /// What's been changed here, shown until it's saved or put back.
+  @State private var pending = AppStore.SettingsChange()
+  /// Changes made here; a load from before one may not have it.
+  @State private var changes = 0
+  /// Changes still saving. A load meanwhile may not have them yet, so it leaves the settings alone.
+  @State private var saving = 0
+
+  var body: some View {
+    Section("Built in") {
+      if let settings {
+        NavigationLink(value: Route.heartbeat) {
+          LabeledContent("Heartbeat", value: settings.heartbeat.map { $0.enabled ? Format.every($0.everyMinutes) : "Off" } ?? "")
+        }
+        if let current = settings.weeklyReport {
+          let report = setting(current, \.weeklyReport)
+          Toggle("Weekly report", isOn: report.enabled)
+          if report.wrappedValue.enabled {
+            Picker("Sent on", selection: report.weekday) {
+              ForEach(0..<7, id: \.self) { d in Text(Calendar.current.weekdaySymbols[d]).tag(d) }
+            }
+            Picker("Sent at", selection: report.hour) {
+              ForEach(0..<24, id: \.self) { h in Text(String(format: "%02d:00", h)).tag(h) }
+            }
+            Button("Send now") {
+              Task {
+                await attempt($error) {
+                  _ = try await store.sendReport()
+                  store.toast = "Sent to Hatbot's chat"
+                }
+              }
+            }
+          }
+        }
+        if let hour = settings.todoHour {
+          Picker("To-do reminder each morning at", selection: setting(hour, \.todoHour)) {
+            ForEach(0..<24, id: \.self) { h in Text(String(format: "%02d:00", h)).tag(h) }
+          }
+        }
+        if let tidy = settings.memoryTidy {
+          Toggle("Propose a memory tidy-up weekly", isOn: setting(tidy, \.memoryTidy))
+        }
+        if let suggestions {
+          Picker(
+            "Code improvement suggestions",
+            selection: Binding(get: { suggestions.every }, set: { every in Task { await suggest(every) } })
+          ) {
+            Text("Off").tag("off")
+            Text("Weekly").tag("weekly")
+            Text("Monthly").tag("monthly")
+            if suggestions.every == "other", let cron = suggestions.cron {
+              Text(Format.describeCron(cron)).tag("other")
+            }
+          }
+          .disabled(suggesting)
+        }
+      } else {
+        NavigationLink("Heartbeat", value: Route.heartbeat)
+      }
+    }
+    .task { await load() }
+    .onChange(of: store.settingsVersion) { Task { await load() } }
+  }
+
+  /// A setting's control. A change shows at once, as the switch or picker moved, and is saved behind it;
+  /// if saving fails, it goes back and says why.
+  private func setting<V: Equatable & Sendable>(_ current: V, _ key: WritableKeyPath<AppStore.SettingsChange, V?>) -> Binding<V> {
+    .saving(current, shown: $pending[dynamicMember: key]) { value in
+      var change = AppStore.SettingsChange()
+      change[keyPath: key] = value
+      changes += 1
+      saving += 1
+      await attempt($error) { settings = try await store.saveSettings(change) }
+      saving -= 1
+    }
+  }
+
+  private func suggest(_ every: String) async {
+    guard every != "other", every != suggestions?.every else { return }
+    suggesting = true
+    await attempt($error) { suggestions = try await store.setCodeSuggestions(every) }
+    suggesting = false
+  }
+
+  private func load() async {
+    let seen = changes
+    await attempt($error) {
+      let loaded = try await store.loadSettings()
+      // Each change's own answer brings the settings: this one may be from before it.
+      if seen == changes && saving == 0 { settings = loaded }
+    }
+    // Only while the Self plugin is on and set up does it answer.
+    let plugin = try? await store.loadPluginNames().first { $0.id == "self" }
+    if plugin?.state == "ready" || plugin?.state == "needs_setup" {
+      suggestions = await store.loadCodeSuggestions()
+    } else {
+      suggestions = nil
     }
   }
 }

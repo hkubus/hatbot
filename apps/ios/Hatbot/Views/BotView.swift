@@ -7,6 +7,8 @@ struct BotView: View {
   @Environment(\.dismiss) private var dismiss
   @State private var form = Form()
   @State private var plugins: [PluginName] = []
+  /// The chat's model and effort in Settings, which a bot without its own uses.
+  @State private var defaults: AppSettings?
   @State private var templates: [BotTemplate] = []
   @State private var template: String?
   /// What the form was last filled with, blank or from a template, to tell whether you've changed it.
@@ -124,14 +126,14 @@ struct BotView: View {
       }
       Section {
         Picker("Model", selection: $form.chatModel) {
-          Text("As in Settings").tag(AppSettings.ModelID?.none)
+          Text(byDefault(defaults?.chatModel?.name)).tag(AppSettings.ModelID?.none)
           // One set elsewhere that this app doesn't know is kept as it is.
           ForEach(AppSettings.ModelID.known.including(form.chatModel), id: \.self) { m in
             Text(m.name).tag(AppSettings.ModelID?.some(m))
           }
         }
         Picker("Effort", selection: $form.chatEffort) {
-          Text("As in Settings").tag(AppSettings.Effort?.none)
+          Text(byDefault(defaults?.chatEffort.name)).tag(AppSettings.Effort?.none)
           ForEach(AppSettings.Effort.known.including(form.chatEffort), id: \.self) { e in
             Text(e.name).tag(AppSettings.Effort?.some(e))
           }
@@ -146,11 +148,16 @@ struct BotView: View {
               set: { form.plugins = $0 ? nil : plugins.map(\.id) }))
           if let on = form.plugins {
             ForEach(plugins) { p in
-              Toggle(
-                p.name,
-                isOn: Binding(
-                  get: { on.contains(p.id) },
-                  set: { form.plugins = $0 ? on + [p.id] : on.filter { $0 != p.id } }))
+              // Only plugins that are on reach a bot.
+              if p.enabled == false {
+                LabeledContent(p.name, value: "Off in Plugins")
+              } else {
+                Toggle(
+                  p.name,
+                  isOn: Binding(
+                    get: { on.contains(p.id) },
+                    set: { form.plugins = $0 ? on + [p.id] : on.filter { $0 != p.id } }))
+              }
             }
           }
         }
@@ -209,7 +216,12 @@ struct BotView: View {
         templates = await store.loadBotTemplates()
       }
       plugins = ((try? await store.loadPluginNames()) ?? []).sorted { $0.name < $1.name }
+      defaults = try? await store.loadSettings()
     }
+  }
+
+  private func byDefault(_ name: String?) -> String {
+    name.map { "Default (\($0))" } ?? "Default"
   }
 
   struct Pick: Identifiable {
