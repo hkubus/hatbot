@@ -51,7 +51,7 @@ SwiftUI isn't there on Linux: `swiftc -parse Hatbot/Views/*.swift` checks the vi
 ## Sign in
 
 Enter the brain's address (`hatbot.example.com`), your password and a TOTP code. The app gets its
-own API token, named after the device; it shows in Settings → API tokens on the web, and signing out
+own API token, named after the device; it shows in Settings → Account → Devices and tokens on the web, and signing out
 of the app deletes it.
 
 The address must be https, on the LAN too: the token goes with every request, and a phone joins
