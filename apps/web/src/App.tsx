@@ -411,7 +411,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
             )}
           </header>
           {down && (
-            <div className="paused-banner offline-banner">
+            <div className="banner offline-banner">
               Can't reach Hatbot.
               <span className="spacer" />
               <button type="button" className="btn sm" onClick={reconnectNow}>
@@ -532,7 +532,7 @@ export function PausedBanner() {
       .finally(() => setBusy(false));
   };
   return (
-    <div className="paused-banner offline-banner">
+    <div className="banner offline-banner">
       <Icon name="pause" />
       {error ? `All activity is paused. ${error}` : "All activity is paused."}
       <span className="spacer" />

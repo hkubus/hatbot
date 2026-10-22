@@ -5,10 +5,10 @@ import { api, errorText } from "../api";
 import { BackHead, Group, Row } from "../ui";
 
 const CHIP: Record<CheckState, { label: string; className: string }> = {
-  ok: { label: "OK", className: "chip ok" },
-  warn: { label: "Warning", className: "chip attn" },
-  fail: { label: "Failed", className: "chip bad" },
-  skip: { label: "Skipped", className: "chip" },
+  ok: { label: "OK", className: "status ok" },
+  warn: { label: "Warning", className: "status warn" },
+  fail: { label: "Failed", className: "status bad" },
+  skip: { label: "Skipped", className: "status" },
 };
 
 export function Checks() {

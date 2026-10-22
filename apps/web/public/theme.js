@@ -1,5 +1,5 @@
 // The chosen theme before the app loads, so nothing flashes; the browser's bar takes its colour too
-// (the same colours as theme.ts).
+// (styles.css's --bg-light and --bg-dark).
 {
   const theme = localStorage.getItem("hatbot-theme") || "system";
   document.documentElement.dataset.theme = theme;

@@ -337,29 +337,29 @@ export function LiveView({ taskId }: { taskId?: number }) {
   return (
     <div className="live">
       {teach ? (
-        <div className="control-banner attn">
+        <div className="banner">
           <Icon name="teach" />
           Recording. Show Hatbot how.
           <div className="actions">
             <button type="button" className="btn sm" onClick={() => discard(teach.id)}>
               Discard
             </button>
-            <button type="button" className="btn sm primary" onClick={stop}>
+            <button type="button" className="btn sm accent" onClick={stop}>
               Stop & create skill
             </button>
           </div>
         </div>
       ) : control ? (
-        <div className="control-banner attn">
+        <div className="banner">
           <Icon name="hand" />
           You're in control. Hatbot is paused.
           <span className="spacer" />
-          <button type="button" className="btn sm primary" onClick={() => giveBack(handback)}>
+          <button type="button" className="btn sm accent" onClick={() => giveBack(handback)}>
             Hand back
           </button>
         </div>
       ) : desktop?.request ? (
-        <div className="control-banner ask">
+        <div className="banner attn">
           <Icon name="hand" />
           <div>
             <b>Hatbot needs you:</b> {desktop.request.reason}
@@ -405,10 +405,7 @@ export function LiveView({ taskId }: { taskId?: number }) {
                 .slice(-6)
                 .reverse()
                 .map((s) => (
-                  <li
-                    key={s.id}
-                    className={s.kind === "approval" || s.kind === "takeover" ? "attn" : ""}
-                  >
+                  <li key={s.id}>
                     <span className="t">{time(s.createdAt)}</span>
                     <StepIcon kind={s.kind} />
                     <span>

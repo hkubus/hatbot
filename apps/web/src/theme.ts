@@ -4,11 +4,14 @@ export type Theme = "system" | "light" | "dark";
 
 const getTheme = (): Theme => (localStorage.getItem("hatbot-theme") as Theme | null) ?? "system";
 
-/** The page's background in each theme (--bg), as in index.html's theme-color tags and theme.js. */
-const BAR = { light: "#f5f5f7", dark: "#161617" } as const;
+const bg = (dark: boolean) =>
+  getComputedStyle(document.documentElement)
+    .getPropertyValue(dark ? "--bg-dark" : "--bg-light")
+    .trim();
 
+/** The page's background in a theme: styles.css's --bg. */
 export const barColor = (t: Theme, media: string): string =>
-  t === "system" ? (media.includes("dark") ? BAR.dark : BAR.light) : BAR[t];
+  bg(t === "system" ? media.includes("dark") : t === "dark");
 
 export function setTheme(t: Theme) {
   localStorage.setItem("hatbot-theme", t);

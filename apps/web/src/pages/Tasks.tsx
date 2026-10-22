@@ -257,7 +257,7 @@ function Details({ task }: { task: Task }) {
       <dt>Trust</dt>
       <dd>
         {task.injectionSuspected ? (
-          <span className="chip warn">
+          <span className="status bad">
             <Icon name="alert" />
             Possible prompt injection
           </span>

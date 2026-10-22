@@ -45,9 +45,10 @@ export const tokenText = (n: number) =>
       ? `${(n / 1000).toFixed(1)}k`
       : `${(n / 1_000_000).toFixed(1)}M`;
 
+/** Plain coloured text; a chip only for what waits on you. */
 export function StatusChip({ status }: { status: TaskStatus }) {
   const [cls, label] = STATUS[status];
-  return <span className={`chip ${cls}`}>{label}</span>;
+  return <span className={cls === "attn" ? "chip attn" : `status ${cls}`}>{label}</span>;
 }
 
 export const isActive = (t: TaskCard) => t.finishedAt === null;
@@ -116,7 +117,7 @@ export function ApprovalCard({
     const [cls, label] = RESOLVED[a.status];
     return (
       <div className="resolved-line">
-        <span className={`chip ${cls}`}>
+        <span className={`status ${cls}`}>
           {a.status === "approved" && <Icon name="check" />}
           {a.status === "denied" && <Icon name="x" />}
           {label}

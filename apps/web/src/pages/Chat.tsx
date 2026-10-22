@@ -368,10 +368,15 @@ function ReplyMessage({
             <span />
           </div>
         )}
-        {streaming && note && <div className="progress-note">{note}</div>}
-        {streaming && used && (
-          <div className="progress-note tnum">
-            {tokenText(used.tokens)} tokens · ${used.costUsd.toFixed(3)}
+        {streaming && (note || used) && (
+          <div className="progress-note">
+            {note}
+            {note && used && " · "}
+            {used && (
+              <span className="tnum">
+                {tokenText(used.tokens)} tokens, ${used.costUsd.toFixed(3)}
+              </span>
+            )}
           </div>
         )}
         {!streaming && m.sources?.length ? <Sources list={m.sources} /> : null}
@@ -517,7 +522,7 @@ function Choices({ lists }: { lists: string[][] }) {
                   <button
                     key={c}
                     type="button"
-                    className={`btn ${answers[i] === c ? "primary" : ""}`}
+                    className="btn"
                     aria-pressed={answers[i] === c}
                     disabled={busy}
                     onClick={() => set(i, c)}
@@ -1094,7 +1099,7 @@ export function Chat({ id }: { id: number }) {
             {waiting.rest > 0 && (
               <button
                 type="button"
-                className="tray-more"
+                className="text-link tray-more"
                 onClick={() =>
                   navigate(waiting.elsewhere ? chatPath(waiting.elsewhere.id) : "/tasks")
                 }
@@ -1105,11 +1110,7 @@ export function Chat({ id }: { id: number }) {
             )}
           </div>
         )}
-        {error && (
-          <div className="form-error" style={{ maxWidth: 760, margin: "0 auto 6px" }}>
-            {error}
-          </div>
-        )}
+        {error && <div className="form-error composer-error">{error}</div>}
         <Composer key={chatKey} chat={chatKey} onSend={onSend} />
       </div>
       <div className="sr-only" aria-live="polite">
@@ -1261,11 +1262,7 @@ export function Composer({ chat, onSend }: { chat: string; onSend: () => void })
 
   return (
     <>
-      {error && (
-        <div className="form-error" style={{ maxWidth: 760, margin: "0 auto 6px" }}>
-          {error}
-        </div>
-      )}
+      {error && <div className="form-error composer-error">{error}</div>}
       {options.length > 0 && (
         <div className="command-menu" role="listbox" id={menuId} aria-label="Suggestions">
           {options.map((o) => (
