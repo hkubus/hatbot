@@ -1,9 +1,9 @@
 import { localDay, type Task, type TodoItem, type TodoList } from "@hatbot/shared";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { Link } from "../link";
-import { LoadError } from "../load";
+import { PageLoad, useLoad } from "../load";
 import { useStore } from "../store";
 import { isActive } from "../tasks";
 import type { Toast } from "../toast";
@@ -26,9 +26,6 @@ function Due({ item }: { item: TodoItem }) {
 }
 
 export function TodoPage({ toast }: { toast: Toast }) {
-  const [list, setList] = useState<TodoList | null>(null);
-  const [loadError, setLoadError] = useState("");
-  const [attempt, setAttempt] = useState(0);
   const [item, setItem] = useState("");
   const [due, setDue] = useState("");
   const { busy, error, run } = useAction();
@@ -41,18 +38,11 @@ export function TodoPage({ toast }: { toast: Toast }) {
       .join(","),
   );
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: each is a reason to read it again
-  useEffect(() => {
-    let stale = false;
-    setLoadError("");
-    api<TodoList>("/todo").then(
-      (l) => !stale && setList(l),
-      (err) => !stale && setLoadError(errorText(err)),
-    );
-    return () => {
-      stale = true;
-    };
-  }, [version, working, attempt]);
+  const {
+    data: list,
+    setData: setList,
+    ...load
+  } = useLoad(() => api<TodoList>("/todo"), [version, working]);
 
   const add = (e: FormEvent) => {
     e.preventDefault();
@@ -67,7 +57,7 @@ export function TodoPage({ toast }: { toast: Toast }) {
       api<TodoList>("/todo/done", { body: { text: t.text, line: t.line } }).then(setList, (err) =>
         toast(errorText(err, "Couldn't tick it off"), "error"),
       ),
-    [toast],
+    [toast, setList],
   );
   const work = useCallback(
     (t: TodoItem) =>
@@ -78,14 +68,7 @@ export function TodoPage({ toast }: { toast: Toast }) {
     [toast],
   );
 
-  if (!list)
-    return (
-      <section className="view">
-        <div className="page narrow">
-          {loadError && <LoadError error={loadError} retry={() => setAttempt((n) => n + 1)} />}
-        </div>
-      </section>
-    );
+  if (!list) return <PageLoad error={load.error} retry={load.retry} />;
 
   const open = list.items.filter((t) => !t.done);
   const done = list.items.filter((t) => t.done).reverse();

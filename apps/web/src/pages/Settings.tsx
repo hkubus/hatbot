@@ -6,13 +6,13 @@ import type {
   Limits,
   UpdateInfo,
 } from "@hatbot/shared";
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { ask } from "../confirm";
 import { clearDrafts } from "../drafts";
 import { stamp } from "../format";
-import { LoadError } from "../load";
+import { LoadError, PageLoad, useLoad } from "../load";
 import { navigate } from "../router";
 import { parseLimit, parseName, SavedRow } from "../saved-row";
 import { setPaused, useStore } from "../store";
@@ -99,26 +99,22 @@ const MORE_LIMITS = [
 ] as const;
 
 function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => void }) {
-  const [settings, setSettings] = useState<AppSettings | null>(null);
   const [rules, setRules] = useState<number | null>(null);
   const theme = useTheme();
   const paused = useStore((s) => s.paused);
-  const [loadError, setLoadError] = useState("");
   // Saved elsewhere (the app, another tab): shown here too.
   const settingsVersion = useStore((s) => s.settingsVersion);
+  const {
+    data: settings,
+    setData: setSettings,
+    ...load
+  } = useLoad(() => api<AppSettings>("/settings"), [settingsVersion]);
   useEffect(() => {
-    if (settingsVersion) api<AppSettings>("/settings").then(setSettings, () => {});
-  }, [settingsVersion]);
-
-  const load = useCallback(() => {
-    setLoadError("");
-    api<AppSettings>("/settings").then(setSettings, (err) => setLoadError(errorText(err)));
     api<ApprovalRule[]>("/approval-rules").then(
       (r) => setRules(r.length),
       () => {},
     );
   }, []);
-  useEffect(load, [load]);
   // Spend's Limits opens /settings#spending.
   const loaded = settings !== null;
   useEffect(() => {
@@ -147,16 +143,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
     onSignOut();
   };
 
-  if (!settings)
-    return (
-      <section className="view">
-        {loadError && (
-          <div className="page">
-            <LoadError error={loadError} retry={load} />
-          </div>
-        )}
-      </section>
-    );
+  if (!settings) return <PageLoad wide error={load.error} retry={load.retry} />;
 
   const limitRow = ([key, label]: (typeof LIMITS | typeof MORE_LIMITS)[number]) => {
     // Nothing kept for alerts is allowed, and boxes asking nothing; a limit of nothing isn't.
@@ -369,12 +356,13 @@ function TestApprovalRow() {
 }
 
 function AllowedPage() {
-  const [rules, setRules] = useState<ApprovalRule[] | null>(null);
+  const {
+    data: rules,
+    setData: setRules,
+    ...load
+  } = useLoad(() => api<ApprovalRule[]>("/approval-rules"), []);
   const [error, setError] = useState("");
   const bots = useStore((s) => s.bots);
-  useEffect(() => {
-    api<ApprovalRule[]>("/approval-rules").then(setRules, (err) => setError(errorText(err)));
-  }, []);
   const remove = async (r: ApprovalRule) => {
     setError("");
     try {
@@ -388,6 +376,7 @@ function AllowedPage() {
     <section className="view">
       <div className="page narrow">
         <BackHead to="/settings" label="Settings" />
+        {load.error && <LoadError error={load.error} retry={load.retry} />}
         {error && <div className="form-error">{error}</div>}
         {rules && (
           <Group>

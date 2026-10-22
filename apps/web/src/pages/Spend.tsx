@@ -6,10 +6,10 @@ import type {
   SpendSummary,
 } from "@hatbot/shared";
 import { useEffect, useRef, useState } from "react";
-import { api, errorText } from "../api";
+import { api } from "../api";
 import { useWidth } from "../chart";
 import { day, modelName, time, usd } from "../format";
-import { LoadError } from "../load";
+import { PageLoad, useLoad } from "../load";
 import { navigate } from "../router";
 import { spendAxis, withToday } from "../spend";
 import { useStore } from "../store";
@@ -198,12 +198,6 @@ function useThrottled<T>(value: T, ms: number): T {
 }
 
 export function Spend() {
-  const [summary, setSummary] = useState<SpendSummary | null>(null);
-  const [days, setDays] = useState<SpendDay[]>([]);
-  const [hours, setHours] = useState<SpendHour[]>([]);
-  const [models, setModels] = useState<SpendByModel[]>([]);
-  const [byBot, setByBot] = useState<{ botId: string; usd: number }[]>([]);
-  const [byPurpose, setByPurpose] = useState<SpendByPurpose[]>([]);
   const botNames = useStore((s) => s.bots);
   const live = useStore((s) => s.todayUsd);
   const settingsVersion = useStore((s) => s.settingsVersion);
@@ -212,8 +206,6 @@ export function Spend() {
   const billed = useThrottled(live, 10_000);
   const billedLately = useThrottled(live, 300_000);
   const [tick, setTick] = useState(0);
-  const [attempt, setAttempt] = useState(0);
-  const [loadError, setLoadError] = useState("");
 
   // The last minute and hour move on even when nothing new is billed.
   useEffect(() => {
@@ -221,50 +213,41 @@ export function Spend() {
     return () => clearInterval(t);
   }, []);
 
-  // A refresh that fails leaves what's showing; only the first load says so.
-  const failed = (err: unknown) => setLoadError(errorText(err));
-  const loadNow = () => {
-    api<SpendSummary>("/spend/summary").then(setSummary, failed);
-    api<SpendHour[]>("/spend/hourly?hours=24").then(setHours, failed);
-    api<SpendDay[]>("/spend/daily?days=1").then(
-      (today) => setDays((d) => withToday(d, today)),
-      failed,
-    );
-  };
+  const now = useLoad(
+    () =>
+      Promise.all([
+        api<SpendSummary>("/spend/summary"),
+        api<SpendHour[]>("/spend/hourly?hours=24"),
+        api<SpendDay[]>("/spend/daily?days=1"),
+      ]),
+    [billed, settingsVersion, tick],
+  );
+  const month = useLoad(
+    () =>
+      Promise.all([
+        api<SpendDay[]>("/spend/daily?days=30"),
+        api<SpendByModel[]>("/spend/by-model?days=30"),
+        api<{ botId: string; usd: number }[]>("/spend/by-bot?days=30"),
+        // A brain from before it had this answers 404; the card just stays away.
+        api<SpendByPurpose[]>("/spend/by-purpose?days=30").catch(() => []),
+      ]),
+    [billedLately],
+  );
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh when a request is billed or limits change
-  useEffect(() => {
-    setLoadError("");
-    loadNow();
-  }, [billed, attempt, settingsVersion]);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the 30-day totals, less often
-  useEffect(() => {
-    api<SpendDay[]>("/spend/daily?days=30").then(setDays, failed);
-    api<SpendByModel[]>("/spend/by-model?days=30").then(setModels, failed);
-    api<{ botId: string; usd: number }[]>("/spend/by-bot?days=30").then(setByBot, failed);
-    // A brain from before it had this answers 404; the card just stays away.
-    api<{ purpose: string; costUsd: number }[]>("/spend/by-purpose?days=30").then(
-      setByPurpose,
-      () => {},
-    );
-  }, [billedLately, attempt]);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: every 30 s
-  useEffect(() => {
-    if (tick) loadNow();
-  }, [tick]);
-
-  if (!summary)
+  if (!now.data)
     return (
-      <section className="view">
-        {loadError && (
-          <div className="page">
-            <LoadError error={loadError} retry={() => setAttempt((n) => n + 1)} />
-          </div>
-        )}
-      </section>
+      <PageLoad
+        wide
+        error={now.error}
+        retry={() => {
+          now.retry();
+          month.retry();
+        }}
+      />
     );
+  const [summary, hours, today] = now.data;
+  const [monthDays = [], models = [], byBot = [], byPurpose = []] = month.data ?? [];
+  const days = withToday(monthDays, today);
   const { todayUsd, monthUsd, limits } = summary;
   const mMax = Math.max(0.0001, ...models.map((m) => m.usd));
   const bMax = Math.max(0.0001, ...byBot.map((b) => b.usd));

@@ -7,14 +7,13 @@ import {
 } from "@hatbot/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAction } from "../action";
-import { api, errorText } from "../api";
+import { api } from "../api";
 import { ask } from "../confirm";
-import { NoForm } from "../form";
 import { modelName, plainText, shortStamp, time, timeOrDay, usd } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LiveView, StepIcon } from "../live";
-import { LoadError, useItem } from "../load";
+import { LoadError, PageLoad, useItem, useLoad } from "../load";
 import { AssistantBody, isMarkdownFile } from "../markdown";
 import { NegotiationChip } from "../negotiations";
 import { navigate } from "../router";
@@ -36,11 +35,8 @@ const TASK_PAGE = 50;
 
 export function Tasks() {
   const [filter, setFilter] = useState<"active" | "done">("active");
-  const [ids, setIds] = useState<number[] | null>(null);
   const [hasOlder, setHasOlder] = useState(false);
   const loadingOlder = useAction();
-  const [loadError, setLoadError] = useState("");
-  const [attempt, setAttempt] = useState(0);
   const tasks = useStore((s) => s.tasks);
   const approvals = useStore((s) => s.approvals);
   const questions = useStore((s) => s.questions);
@@ -63,31 +59,32 @@ export function Tasks() {
   );
   useEffect(() => void loadNegotiations().catch(() => {}), []);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Retry loads again
-  useEffect(() => {
+  const {
+    data: ids,
+    setData: setIds,
+    ...load
+  } = useLoad(
+    () =>
+      loadTasks({ status: filter, limit: TASK_PAGE }).then((list) => {
+        setHasOlder(list.length === TASK_PAGE);
+        return list;
+      }),
+    [filter],
+  );
+  const pick = (f: typeof filter) => {
     setIds(null);
     setHasOlder(false);
-    setLoadError("");
-    loadTasks({ status: filter, limit: TASK_PAGE }).then(
-      (list) => {
-        setIds(list);
-        setHasOlder(list.length === TASK_PAGE);
-      },
-      (err) => setLoadError(errorText(err)),
-    );
-  }, [filter, attempt]);
+    setFilter(f);
+  };
 
   const older = async () => {
     const before = ids?.length ? Math.min(...ids) : undefined;
     if (!before) return;
-    await loadingOlder.run(
-      async () => {
-        const list = await loadTasks({ status: filter, before, limit: TASK_PAGE });
-        setIds((s) => [...(s ?? []), ...list]);
-        setHasOlder(list.length === TASK_PAGE);
-      },
-      (err) => setLoadError(errorText(err)),
-    );
+    await loadingOlder.run(async () => {
+      const list = await loadTasks({ status: filter, before, limit: TASK_PAGE });
+      setIds((s) => [...(s ?? []), ...list]);
+      setHasOlder(list.length === TASK_PAGE);
+    });
   };
 
   // Tasks that start or finish while the list is open move between the two lists.
@@ -145,10 +142,10 @@ export function Tasks() {
               ["active", "Active"],
               ["done", "Finished"],
             ]}
-            onChange={setFilter}
+            onChange={pick}
           />
         </div>
-        {loadError && <LoadError error={loadError} retry={() => setAttempt((n) => n + 1)} />}
+        {load.error && <LoadError error={load.error} retry={load.retry} />}
         {ids && !shown.length && (
           <div className="empty">{filter === "active" ? "Nothing running." : "No tasks yet."}</div>
         )}
@@ -182,7 +179,8 @@ export function Tasks() {
             </table>
           </div>
         )}
-        {filter === "done" && hasOlder && !loadError && (
+        {loadingOlder.error && <LoadError error={loadingOlder.error} retry={older} />}
+        {filter === "done" && hasOlder && !load.error && !loadingOlder.error && (
           <button
             type="button"
             className="btn sm ghost load-earlier"
@@ -327,7 +325,7 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
 
   if (missing || !task)
     return (
-      <NoForm
+      <PageLoad
         error={loadError}
         missing={missing ? "This task doesn't exist." : ""}
         retry={load}

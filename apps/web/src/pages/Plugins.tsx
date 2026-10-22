@@ -1,10 +1,10 @@
 // Secrets are only ever sent, never shown.
 import type { PluginEnvInfo, PluginInfo } from "@hatbot/shared";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { ask } from "../confirm";
-import { NoForm } from "../form";
+import { LoadError, PageLoad, useLoad } from "../load";
 import { PLUGIN_SETTINGS } from "../plugins";
 import { loadPlugins, savePlugin, savePluginSecrets, useStore } from "../store";
 import { Switch } from "../switch";
@@ -19,31 +19,16 @@ const STATE: Record<PluginInfo["state"], string> = {
 };
 
 export function PluginsPage() {
-  const [ids, setIds] = useState<string[] | null>(null);
-  const [error, setError] = useState("");
+  const { data: ids, error, retry } = useLoad(() => loadPlugins(), []);
   const plugins = useStore((s) => s.plugins);
-  const load = useCallback(() => {
-    setError("");
-    loadPlugins().then(setIds, (err) => setError(errorText(err)));
-  }, []);
-  useEffect(load, [load]);
   return (
     <section className="view">
       <div className="page narrow">
         <BackHead to="/settings" label="Settings" />
-        {(error || !!ids?.length) && (
+        {error && <LoadError error={error} retry={retry} />}
+        {!!ids?.length && (
           <Group>
-            {error && (
-              <div className="row">
-                <div className="txt">
-                  <span className="form-error">{error}</span>
-                </div>
-                <button type="button" className="btn sm" onClick={load}>
-                  Retry
-                </button>
-              </div>
-            )}
-            {(ids ?? []).map((id) => {
+            {ids.map((id) => {
               const p = plugins[id];
               if (!p) return null;
               return (
@@ -61,35 +46,25 @@ export function PluginsPage() {
 
 export function PluginPage({ id, toast }: { id: string; toast: (t: string) => void }) {
   const p = useStore((s) => s.plugins[id]);
-  const { error, setError, run } = useAction();
+  const { error, run } = useAction();
   const testing = useAction();
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   /** The switch as you just set it, until the brain answers. */
   const [turning, setTurning] = useState<boolean | null>(null);
-  const [loaded, setLoaded] = useState(false);
   const action = useCallback(
     async <T,>(name: string, args: unknown = {}) =>
       (await api<{ result: T }>(`/plugins/${id}/actions/${name}`, { body: args })).result,
     [id],
   );
-  const load = useCallback(() => {
-    setError("");
-    loadPlugins().then(
-      () => setLoaded(true),
-      (err) => setError(errorText(err)),
-    );
-  }, [setError]);
-
-  useEffect(() => {
-    if (!p) load();
-  }, [p, load]);
+  // Again when it's not known: deleted, or not loaded yet.
+  const load = useLoad(() => (p ? Promise.resolve(false) : loadPlugins().then(() => true)), [!p]);
 
   if (!p)
     return (
-      <NoForm
-        error={error}
-        missing={loaded ? "This plugin doesn't exist." : ""}
-        retry={load}
+      <PageLoad
+        error={load.error}
+        missing={load.data ? "This plugin doesn't exist." : ""}
+        retry={load.retry}
         back={{ label: "Plugins", to: "/settings/plugins" }}
       />
     );

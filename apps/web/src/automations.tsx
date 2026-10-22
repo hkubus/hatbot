@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { errorText } from "./api";
 import { plainText, stamp } from "./format";
 import { Link } from "./link";
+import { LoadError, useLoad } from "./load";
 import { loadSchedules, loadTasks, useStore } from "./store";
 import { StatusChip } from "./tasks";
 
@@ -34,13 +35,9 @@ export function Runs({
 }: {
   filter: { scheduleId: number } | { triggerId: number } | { watcherId: number };
 }) {
-  const [ids, setIds] = useState<number[] | null>(null);
   const tasks = useStore((s) => s.tasks);
   const key = JSON.stringify(filter);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `filter`
-  useEffect(() => {
-    loadTasks({ ...filter, view: "card" }).then(setIds, () => setIds([]));
-  }, [key]);
+  const loaded = useLoad(() => loadTasks({ ...filter, view: "card" }), [key]);
   const shown = Object.values(tasks)
     .filter(
       (t) =>
@@ -53,11 +50,13 @@ export function Runs({
     )
     .sort((a, b) => b.id - a.id)
     .slice(0, 20);
-  if (!ids) return null;
+  if (!loaded.data && !loaded.error) return null;
   return (
     <div className="panel">
       <h3 className="section-title">Runs</h3>
-      {!shown.length ? (
+      {!loaded.data ? (
+        <LoadError error={loaded.error} retry={loaded.retry} />
+      ) : !shown.length ? (
         <div className="muted">Hasn't run yet.</div>
       ) : (
         <div className="table-wrap">

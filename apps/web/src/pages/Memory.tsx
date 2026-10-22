@@ -6,7 +6,7 @@ import { ask, askText, useLeaveGuard } from "../confirm";
 import { lineDiff } from "../diff";
 import { dayTime } from "../format";
 import { Icon } from "../icons";
-import { LoadError } from "../load";
+import { LoadError, useLoad } from "../load";
 import { type Doc, isDirty, loading, newDoc, readDoc, readFailed } from "../memory-doc";
 import { navigate } from "../router";
 import { bumpMemory, loadProposals, putProposal, startTeach, useStore } from "../store";
@@ -96,7 +96,6 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
         .sort((a, b) => b.id - a.id),
     [teach],
   );
-  const [files, setFiles] = useState<MemoryFile[]>([]);
   const [sel, setSel] = useState<Selection>({ kind: "file", path: open || "INDEX.md" });
   const [doc, setDoc] = useState<Doc | null>(null);
   /** Someone else saved the file while you were editing it. */
@@ -114,9 +113,10 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
   // Leaving with unsaved changes asks first: the sidebar, Back, closing the tab.
   useLeaveGuard(dirty);
 
+  const tree = useLoad(() => api<MemoryFile[]>("/memory/tree"), [version]);
+  const files = tree.data ?? [];
   // biome-ignore lint/correctness/useExhaustiveDependencies: reload when memory changes anywhere
   useEffect(() => {
-    api<MemoryFile[]>("/memory/tree").then(setFiles, () => {});
     api<SkillStatus[]>("/skills").then(setSkills, () => setSkills([]));
   }, [version]);
   useEffect(() => {
@@ -249,8 +249,15 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
     }
   };
   // Your edit goes; the file as it's now saved comes in.
-  const takeTheirs = () => {
-    if (!conflict) return;
+  const takeTheirs = async () => {
+    if (
+      !conflict ||
+      !(await ask({
+        text: "Discard your edits and use the version saved meanwhile?",
+        ok: "Use theirs",
+      }))
+    )
+      return;
     setDoc(
       (d) =>
         d && {
@@ -370,6 +377,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
     <section className="view">
       <div className="memory">
         <div className="tree">
+          {tree.error && !tree.data && <LoadError error={tree.error} retry={tree.retry} />}
           {groups.map(([dir, fs]) => (
             <div key={dir || "/"} style={{ display: "contents" }}>
               {dir && (
@@ -520,7 +528,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
               <span>Changed while you were editing.</span>
               <span className="spacer" />
               <button type="button" className="btn sm" onClick={takeTheirs}>
-                Reload
+                Use theirs
               </button>
               <button type="button" className="btn sm" onClick={() => save(conflict.sha)}>
                 Overwrite

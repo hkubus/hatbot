@@ -1,11 +1,11 @@
 import type { ApiToken, CreateTokenResponse, Session, SignedOutOthers } from "@hatbot/shared";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { useAction } from "../action";
 import { ApiError, api, errorText } from "../api";
 import { ask, askText } from "../confirm";
 import { deviceName } from "../device";
 import { day } from "../format";
-import { LoadError } from "../load";
+import { LoadError, useLoad } from "../load";
 import type { Toast } from "../toast";
 import { BackHead, Group, Row } from "../ui";
 
@@ -22,23 +22,19 @@ export async function signOut(id: number): Promise<string | null> {
 }
 
 export function Devices({ toast }: { toast: Toast }) {
-  const [sessions, setSessions] = useState<Session[] | null>(null);
-  const [tokens, setTokens] = useState<ApiToken[]>([]);
   const [newToken, setNewToken] = useState<CreateTokenResponse | null>(null);
-  const [loadError, setLoadError] = useState("");
   const tokenEdit = useAction();
-
-  const load = useCallback(() => {
-    setLoadError("");
-    Promise.all([api<Session[]>("/auth/sessions"), api<ApiToken[]>("/tokens")]).then(
-      ([s, t]) => {
-        setSessions(s);
+  const [tokens, setTokens] = useState<ApiToken[]>([]);
+  const loaded = useLoad(
+    () =>
+      Promise.all([api<Session[]>("/auth/sessions"), api<ApiToken[]>("/tokens")]).then(([s, t]) => {
         setTokens(t);
-      },
-      (err) => setLoadError(errorText(err)),
-    );
-  }, []);
-  useEffect(load, [load]);
+        return s;
+      }),
+    [],
+  );
+  const sessions = loaded.data;
+  const load = loaded.retry;
 
   const end = async (s: Session) => {
     const error = await signOut(s.id);
@@ -92,7 +88,7 @@ export function Devices({ toast }: { toast: Toast }) {
     <section className="view">
       <div className="page narrow">
         <BackHead to="/settings" label="Settings" />
-        {loadError && <LoadError error={loadError} retry={load} />}
+        {loaded.error && <LoadError error={loaded.error} retry={load} />}
         {sessions && (
           <>
             <Group title="Signed in">

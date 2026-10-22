@@ -57,6 +57,10 @@ export function SaveBar({
   );
 }
 
+export function Empty({ children }: { children: ReactNode }) {
+  return <div className="empty">{children}</div>;
+}
+
 export function Group({
   title,
   className,

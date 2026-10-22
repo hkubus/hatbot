@@ -11,11 +11,10 @@ import { useEffect, useRef, useState } from "react";
 import { useAction } from "../action";
 import { ApiError, api, errorText } from "../api";
 import { ask } from "../confirm";
-import { NoForm } from "../form";
 import { timeOrDay } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
-import { LoadError } from "../load";
+import { LoadError, PageLoad, useLoad } from "../load";
 import { useMedia } from "../media";
 import { navigate } from "../router";
 import { loadBoxes, putBox, useStore } from "../store";
@@ -24,17 +23,8 @@ import { BackHead, Group, Row, Select } from "../ui";
 
 export function BoxesPage() {
   const boxes = useStore((s) => s.boxes);
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState("");
-  const [attempt, setAttempt] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is Retry
-  useEffect(() => {
-    setError("");
-    loadBoxes().then(
-      () => setLoaded(true),
-      (err) => setError(errorText(err)),
-    );
-  }, [attempt]);
+  const load = useLoad(() => loadBoxes().then(() => true), []);
+  const loaded = !!load.data;
 
   const list = Object.values(boxes)
     .filter((b): b is Box => !!b)
@@ -42,7 +32,7 @@ export function BoxesPage() {
   return (
     <section className="view">
       <div className="page">
-        {error && <LoadError error={error} retry={() => setAttempt((n) => n + 1)} />}
+        {load.error && <LoadError error={load.error} retry={load.retry} />}
         {loaded && !list.length && (
           <p className="muted">
             No boxes yet. Ask Hatbot for a tracker, a calculator or a planner to keep.
@@ -125,9 +115,9 @@ export function BoxPage({ id }: { id: number }) {
 
   if (missing || gone || !detail)
     return (
-      <NoForm
+      <PageLoad
         error={loadError}
-        missing={missing || gone ? "This box was deleted." : ""}
+        missing={missing || gone ? "This box doesn't exist." : ""}
         retry={() => setAttempt((n) => n + 1)}
         back={{ label: "Boxes", to: "/boxes" }}
       />
@@ -292,26 +282,18 @@ function BoxSecrets({
 }
 
 function BoxCode({ id, version }: { id: number; version: number }) {
-  const [html, setHtml] = useState<string | null>(null);
-  const [error, setError] = useState("");
-  const [attempt, setAttempt] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is Retry
-  useEffect(() => {
-    let stale = false;
-    setError("");
-    api<BoxSource>(`/boxes/${id}/versions/${version}`).then(
-      (p) =>
-        !stale &&
-        setHtml(
-          p.files ? p.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n") : p.html,
-        ),
-      (err) => !stale && setError(errorText(err)),
-    );
-    return () => {
-      stale = true;
-    };
-  }, [id, version, attempt]);
-  if (error) return <LoadError error={error} retry={() => setAttempt((n) => n + 1)} />;
+  const {
+    data: html,
+    error,
+    retry,
+  } = useLoad(
+    () =>
+      api<BoxSource>(`/boxes/${id}/versions/${version}`).then((p) =>
+        p.files ? p.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n") : p.html,
+      ),
+    [id, version],
+  );
+  if (error) return <LoadError error={error} retry={retry} />;
   return <pre className="box-code">{html}</pre>;
 }
 
@@ -328,29 +310,21 @@ function BoxFrame({ id, version, title }: { id: number; version: number; title: 
   darkNow.current = dark;
   const frame = useRef<HTMLIFrameElement>(null);
   const loads = useRef(0);
-  const [url, setUrl] = useState("");
   const [left, setLeft] = useState(false);
-  const [error, setError] = useState("");
-  const [attempt, setAttempt] = useState(0);
-
   // A new address for each version and each Reload; the theme changes by message, keeping the page.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is Reload
+  const opened = useLoad(
+    () =>
+      api<{ url: string }>(`/boxes/${id}/open`, { body: { version, dark: darkNow.current } }).then(
+        (r) => r.url,
+      ),
+    [id, version],
+  );
+  const url = opened.data;
   useEffect(() => {
-    let stale = false;
-    setError("");
-    api<{ url: string }>(`/boxes/${id}/open`, { body: { version, dark: darkNow.current } }).then(
-      (r) => {
-        if (stale) return;
-        loads.current = 0;
-        setLeft(false);
-        setUrl(r.url);
-      },
-      (err) => !stale && setError(errorText(err)),
-    );
-    return () => {
-      stale = true;
-    };
-  }, [id, version, attempt]);
+    if (!url) return;
+    loads.current = 0;
+    setLeft(false);
+  }, [url]);
 
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
@@ -377,16 +351,9 @@ function BoxFrame({ id, version, title }: { id: number; version: number; title: 
     if (loads.current === 1) frame.current?.contentWindow?.postMessage({ hatbox: 0, dark }, "*");
   }, [dark]);
 
-  if (error) return <LoadError error={error} retry={() => setAttempt((n) => n + 1)} />;
+  if (opened.error) return <LoadError error={opened.error} retry={opened.retry} />;
   if (left)
-    return (
-      <div className="load-error">
-        This box left its page.
-        <button type="button" className="btn sm" onClick={() => setAttempt((n) => n + 1)}>
-          Reload
-        </button>
-      </div>
-    );
+    return <LoadError error="This box left its page." label="Reload" retry={opened.retry} />;
   if (!url) return null;
   return (
     <iframe

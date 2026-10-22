@@ -1,9 +1,8 @@
 import { MAX_GROUP_BOTS } from "@hatbot/shared";
-import { useCallback, useEffect, useState } from "react";
 import { useAction } from "../action";
-import { errorText } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
-import { NoForm, toggled, useStoredForm } from "../form";
+import { toggled, useStoredForm } from "../form";
+import { PageLoad, useLoad } from "../load";
 import { navigate } from "../router";
 import { chatPath, createGroup, deleteGroup, loadBots, saveGroup, useStore } from "../store";
 import { Switch } from "../switch";
@@ -25,26 +24,18 @@ export function GroupPage({ id, toast }: { id: string; toast: (t: string) => voi
   const { busy, error, run } = useAction();
   const release = useLeaveGuard(dirty);
   // The chats again, to tell one that's gone from one not loaded yet.
-  const [loaded, setLoaded] = useState(false);
-  const [loadError, setLoadError] = useState("");
-  const load = useCallback(() => {
-    setLoadError("");
-    loadBots().then(
-      () => setLoaded(true),
-      (err) => setLoadError(errorText(err)),
-    );
-  }, []);
-  useEffect(() => {
-    if (!isNew) load();
-  }, [isNew, load]);
+  const load = useLoad(
+    () => (isNew ? Promise.resolve(false) : loadBots().then(() => true)),
+    [isNew],
+  );
 
   const back = isNew || !stored ? "/" : chatPath(Number(id));
   if (!form || (!isNew && !stored))
     return (
-      <NoForm
-        error={loadError}
-        missing={loaded ? "This group doesn't exist." : ""}
-        retry={load}
+      <PageLoad
+        error={load.error}
+        missing={load.data ? "This group doesn't exist." : ""}
+        retry={load.retry}
         back={{ label: "Chat", to: back }}
       />
     );

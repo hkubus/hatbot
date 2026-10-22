@@ -2,8 +2,7 @@ import { useEffect, useState } from "react";
 import { useAction } from "../action";
 import { ApiError } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
-import { NoForm } from "../form";
-import { useItem } from "../load";
+import { PageLoad, useItem } from "../load";
 import { navigate } from "../router";
 import { discardTeach, loadTeach, redraftTeach, saveSkill, useStore } from "../store";
 import { BackButton, BackHead } from "../ui";
@@ -30,7 +29,7 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
 
   if (item.missing || !session)
     return (
-      <NoForm
+      <PageLoad
         error={item.error}
         missing={item.missing ? "This recording doesn't exist." : ""}
         retry={item.load}

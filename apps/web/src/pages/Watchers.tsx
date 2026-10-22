@@ -14,8 +14,9 @@ import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { BotPicker, Runs, useListed } from "../automations";
 import { ask, useLeaveGuard } from "../confirm";
-import { NoForm, useStoredForm } from "../form";
+import { useStoredForm } from "../form";
 import { stamp } from "../format";
+import { LoadError, PageLoad, useLoad } from "../load";
 import { navigate } from "../router";
 import { loadPlugins, putWatcher, trustWatcher, useStore } from "../store";
 import { Switch } from "../switch";
@@ -161,7 +162,6 @@ export function WatcherEdit({ id }: { id: number | null }) {
   } = useStoredForm<Form>(id === null ? blank : stored ? formOf(stored) : undefined);
   const [preview, setPreview] = useState<WatchPreview | null>(null);
   const [previewError, setPreviewError] = useState("");
-  const [values, setValues] = useState<WatcherValue[]>([]);
   const { busy, error, setError, run } = useAction();
   const checking = useAction();
   const listed = useListed("watchers", id, stored);
@@ -173,16 +173,16 @@ export function WatcherEdit({ id }: { id: number | null }) {
     void loadPlugins().catch(() => {});
   }, []);
   // Its history, again when a check finds something new.
-  const lastValue = stored?.lastValue;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refetched when the value changes
-  useEffect(() => {
-    if (id !== null)
-      api<WatcherValue[]>(`/watchers/${id}/values?limit=50`).then(setValues, () => setValues([]));
-  }, [id, lastValue]);
+  const history = useLoad(
+    () =>
+      id === null ? Promise.resolve([]) : api<WatcherValue[]>(`/watchers/${id}/values?limit=50`),
+    [id, stored?.lastValue],
+  );
+  const values = history.data ?? [];
 
   if (listed.missing || !form)
     return (
-      <NoForm
+      <PageLoad
         error={listed.error}
         missing={listed.missing ? "This watcher doesn't exist." : ""}
         retry={listed.load}
@@ -527,6 +527,12 @@ export function WatcherEdit({ id }: { id: number | null }) {
           />
         </div>
 
+        {stored && history.error && !history.data && (
+          <div className="panel">
+            <h3 className="section-title">Values</h3>
+            <LoadError error={history.error} retry={history.retry} />
+          </div>
+        )}
         {stored && values.length > 0 && (
           <div className="panel">
             <h3 className="section-title">Values</h3>

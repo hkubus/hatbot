@@ -1,12 +1,12 @@
 // Set here, the API key and ntfy server replace the host's (deploy.sh's) until removed. The key and
 // the token are only ever sent, never shown.
 import type { ConnectionSource, Connections as ConnectionsInfo } from "@hatbot/shared";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { ask } from "../confirm";
 import { Link } from "../link";
-import { LoadError } from "../load";
+import { LoadError, useLoad } from "../load";
 import type { Toast } from "../toast";
 import { BackHead } from "../ui";
 
@@ -22,14 +22,13 @@ function randomTopic() {
 }
 
 function useConnections() {
-  const [info, setInfo] = useState<ConnectionsInfo | null>(null);
-  const [loadError, setLoadError] = useState("");
-  const load = useCallback(() => {
-    setLoadError("");
-    api<ConnectionsInfo>("/connections").then(setInfo, (err) => setLoadError(errorText(err)));
-  }, []);
-  useEffect(load, [load]);
-  return { info, setInfo, error: loadError && <LoadError error={loadError} retry={load} /> };
+  const {
+    data: info,
+    setData: setInfo,
+    error,
+    retry,
+  } = useLoad(() => api<ConnectionsInfo>("/connections"), []);
+  return { info, setInfo, error: error && <LoadError error={error} retry={retry} /> };
 }
 
 export function ApiKeyPage({ toast }: { toast: Toast }) {

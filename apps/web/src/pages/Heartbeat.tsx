@@ -1,11 +1,11 @@
 import { type AppSettings, describeEvery, type HeartbeatInfo } from "@hatbot/shared";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import { useAction } from "../action";
-import { api, errorText } from "../api";
+import { api } from "../api";
 import { BotPicker } from "../automations";
 import { useLeaveGuard } from "../confirm";
 import { plainText, stamp } from "../format";
-import { LoadError } from "../load";
+import { LoadError, PageLoad, useLoad } from "../load";
 import { navigate } from "../router";
 import { useStore } from "../store";
 import { Switch } from "../switch";
@@ -19,47 +19,33 @@ const DID: Record<string, string> = {
 };
 
 export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [info, setInfo] = useState<HeartbeatInfo | null>(null);
   const [instructions, setInstructions] = useState("");
   const { busy, error, run } = useAction();
-  const [loadError, setLoadError] = useState("");
-  const [attempt, setAttempt] = useState(0);
   const settingsVersion = useStore((s) => s.settingsVersion);
   const heartbeatVersion = useStore((s) => s.heartbeatVersion);
   // The instructions as saved: a change from elsewhere replaces them only if you haven't edited them.
   const savedInstructions = useRef<string | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refetch when settings change anywhere
-  useEffect(() => {
-    setLoadError("");
-    api<AppSettings>("/settings").then(
-      (s) => {
-        setSettings(s);
+  const {
+    data: settings,
+    setData: setSettings,
+    ...load
+  } = useLoad(
+    () =>
+      api<AppSettings>("/settings").then((s) => {
         const was = savedInstructions.current;
         setInstructions((cur) => (was === null || cur === was ? s.heartbeat.instructions : cur));
         savedInstructions.current = s.heartbeat.instructions;
-      },
-      (err) => setLoadError(errorText(err)),
-    );
-  }, [settingsVersion, attempt]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refetch after each heartbeat
-  useEffect(() => {
-    api<HeartbeatInfo>("/heartbeat").then(setInfo, () => {});
-  }, [heartbeatVersion]);
+        return s;
+      }),
+    [settingsVersion],
+  );
+  const looked = useLoad(() => api<HeartbeatInfo>("/heartbeat"), [heartbeatVersion]);
+  const info = looked.data;
   const unsaved = settings !== null && instructions !== settings.heartbeat.instructions;
   useLeaveGuard(unsaved);
 
-  if (!settings)
-    return (
-      <section className="view">
-        {loadError && (
-          <div className="page narrow">
-            <LoadError error={loadError} retry={() => setAttempt((n) => n + 1)} />
-          </div>
-        )}
-      </section>
-    );
+  if (!settings) return <PageLoad error={load.error} retry={load.retry} />;
   const hb = settings.heartbeat;
   const save = (patch: Partial<AppSettings["heartbeat"]>) =>
     run(async () => {
@@ -72,7 +58,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
       toast("Saved");
     });
   const lookNow = () =>
-    run(async () => setInfo(await api<HeartbeatInfo>("/heartbeat/run", { body: {} })));
+    run(async () => looked.setData(await api<HeartbeatInfo>("/heartbeat/run", { body: {} })));
 
   return (
     <section className="view">
@@ -128,6 +114,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
             onSave={() => save({ instructions })}
           />
         </div>
+        {looked.error && !info && <LoadError error={looked.error} retry={looked.retry} />}
         {info?.at && (
           <div className="panel">
             <h3 className="section-title">Last look</h3>

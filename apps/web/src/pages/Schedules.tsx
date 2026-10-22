@@ -6,15 +6,16 @@ import {
   type Trigger,
   type TriggerWithSecret,
 } from "@hatbot/shared";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { BotPicker, Runs, useListed } from "../automations";
 import { ask, useLeaveGuard } from "../confirm";
-import { NoForm, useStoredForm } from "../form";
+import { useStoredForm } from "../form";
 import { stamp } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
+import { LoadError, PageLoad, useLoad } from "../load";
 import { navigate } from "../router";
 import { atIso, cronOk, localInput } from "../schedule-form";
 import {
@@ -63,19 +64,11 @@ export function SchedulesView({
 }
 
 function List({ toast }: { toast: Toast }) {
-  const [ids, setIds] = useState<{
-    schedules: number[];
-    triggers: number[];
-    watchers: number[];
-  } | null>(null);
+  const { data: ids, ...load } = useLoad(() => loadSchedules(), []);
   const [error, setError] = useState("");
   const schedules = useStore((s) => s.schedules);
   const triggers = useStore((s) => s.triggers);
   const watchers = useStore((s) => s.watchers);
-
-  useEffect(() => {
-    loadSchedules().then(setIds, (err) => setError(errorText(err)));
-  }, []);
 
   return (
     <section className="view">
@@ -95,6 +88,7 @@ function List({ toast }: { toast: Toast }) {
             Trigger
           </button>
         </div>
+        {load.error && <LoadError error={load.error} retry={load.retry} />}
         {error && <div className="form-error">{error}</div>}
         <BuiltInGroup toast={toast} />
         {ids && (
@@ -225,7 +219,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
 
   if (listed.missing || !form)
     return (
-      <NoForm
+      <PageLoad
         error={listed.error}
         missing={listed.missing ? "This schedule doesn't exist." : ""}
         retry={listed.load}
@@ -479,7 +473,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
 
   if (listed.missing || !form)
     return (
-      <NoForm
+      <PageLoad
         error={listed.error}
         missing={listed.missing ? "This trigger doesn't exist." : ""}
         retry={listed.load}
