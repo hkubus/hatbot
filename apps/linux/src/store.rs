@@ -13,7 +13,7 @@ use crate::core::models::*;
 use crate::core::schedule::ScheduleChange;
 use crate::core::spend::SpendDetail;
 use crate::core::thread;
-use crate::net::api::{Api, ApiError, Empty, Result, query};
+use crate::net::api::{Api, ApiError, Empty, Result, UNREADABLE, query};
 use crate::net::socket::{Frame, Socket};
 
 pub const PAGE: usize = 50;
@@ -1974,6 +1974,39 @@ impl Store {
             Err(e) if e.status == 404 => Ok(None),
             Err(e) => Err(e),
         }
+    }
+
+    /// Where to load a version's page: the brain's address with a path signed for 10 minutes in place
+    /// of the token.
+    pub async fn open_box(&self, id: i64, version: i64, dark: bool) -> Result<String> {
+        #[derive(serde::Deserialize)]
+        struct Opened {
+            url: String,
+        }
+        let opened: Opened = self
+            .0
+            .api
+            .post(
+                &format!("/boxes/{id}/open"),
+                &serde_json::json!({ "version": version, "dark": dark }),
+            )
+            .await?;
+        if !opened.url.starts_with('/') || opened.url.starts_with("//") {
+            return Err(ApiError::local(UNREADABLE));
+        }
+        Ok(format!("{}{}", self.0.api.server(), opened.url))
+    }
+
+    /// A call from a box's page, passed on as it came for the brain to check; the answer's `value`,
+    /// None for the page's undefined.
+    pub async fn call_box(
+        &self,
+        id: i64,
+        call: &serde_json::Value,
+    ) -> Result<Option<serde_json::Value>> {
+        let mut answer: serde_json::Value =
+            self.0.api.post(&format!("/boxes/{id}/call"), call).await?;
+        Ok(answer.get_mut("value").map(serde_json::Value::take))
     }
 
     pub async fn restore_box(&self, id: i64, version: i64) -> Result<BoxDetail> {

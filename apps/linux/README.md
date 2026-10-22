@@ -13,13 +13,14 @@ API with a bearer token. Notifications still come from the ntfy app.
 
 ## Install
 
-It needs GTK 4.18, libadwaita 1.7 and libsoup 3.6 or newer (Debian 13, Ubuntu 25.04, Fedora 42,
-Arch), Rust 1.88 or newer, and a keyring that speaks the Secret Service: GNOME Keyring, KWallet or
-KeePassXC. Debian's and Ubuntu's Rust is older; get it from [rustup](https://rustup.rs) there.
+It needs GTK 4.18, libadwaita 1.7, libsoup 3.6 and WebKitGTK 6.0 (2.40) or newer (Debian 13,
+Ubuntu 25.04, Fedora 42, Arch), Rust 1.88 or newer, and a keyring that speaks the Secret Service:
+GNOME Keyring, KWallet or KeePassXC. Debian's and Ubuntu's Rust is older; get it from [rustup](https://rustup.rs) there.
 
 ```sh
-sudo pacman -S gtk4 libadwaita libsoup3 libsecret rust                         # Arch
-sudo apt install libgtk-4-dev libadwaita-1-dev libsoup-3.0-dev libsecret-1-dev  # Debian, Ubuntu
+sudo pacman -S gtk4 libadwaita libsoup3 libsecret webkitgtk-6.0 rust     # Arch
+sudo apt install libgtk-4-dev libadwaita-1-dev libsoup-3.0-dev libsecret-1-dev \
+  libwebkitgtk-6.0-dev                                                   # Debian, Ubuntu
 apps/linux/install.sh                 # → ~/.local; PREFIX=/usr/local for everyone
 ```
 

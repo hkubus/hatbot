@@ -22,9 +22,9 @@ jobs:
       run:
         working-directory: apps/linux
     steps:
-      - name: Install GTK, libadwaita, libsoup, libsecret and Rust
+      - name: Install GTK, libadwaita, libsoup, libsecret, WebKitGTK and Rust
         working-directory: /
-        run: pacman -Syu --noconfirm --needed gtk4 libadwaita libsoup3 libsecret rust gcc pkgconf
+        run: pacman -Syu --noconfirm --needed gtk4 libadwaita libsoup3 libsecret webkitgtk-6.0 rust gcc pkgconf
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
         with:
