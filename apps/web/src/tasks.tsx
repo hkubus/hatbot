@@ -138,7 +138,7 @@ export function ApprovalCard({
           showDetails &&
           a.taskId && (
             <Link className="btn sm ghost" to={`/tasks/${a.taskId}`}>
-              Details
+              Open task
             </Link>
           )
         }
@@ -165,19 +165,19 @@ function TrustButton({ a, onError }: { a: Approval; onError: (error: string) => 
   }, [task?.scheduleId, task?.watcherId]);
   const { conversationId, episodeId } = a;
   const chat = !a.taskId && !trusted && a.sources.length > 0 && conversationId && episodeId;
-  const [label, trust] = schedule?.tainted
-    ? ["Trust schedule", () => trustSchedule(schedule.id)]
+  const [what, trust] = schedule?.tainted
+    ? ["this schedule", () => trustSchedule(schedule.id)]
     : watcher?.tainted
-      ? ["Trust watcher", () => trustWatcher(watcher.id)]
+      ? ["this watcher", () => trustWatcher(watcher.id)]
       : chat
-        ? ["Trust this chat", () => trustConversation(conversationId, episodeId)]
+        ? ["this chat", () => trustConversation(conversationId, episodeId)]
         : [null, null];
-  if (!label || !trust) return null;
+  if (!what || !trust) return null;
   return (
     <button
       type="button"
       className="btn sm ghost"
-      title="What it read doesn't make what comes after ask"
+      title={`Trust ${what}: what it read doesn't make what comes after ask`}
       onClick={() =>
         trust().then(
           () => setTrusted(true),
@@ -185,7 +185,7 @@ function TrustButton({ a, onError }: { a: Approval; onError: (error: string) => 
         )
       }
     >
-      {label}
+      Trust
     </button>
   );
 }

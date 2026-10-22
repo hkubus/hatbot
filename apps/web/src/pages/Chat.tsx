@@ -1011,7 +1011,7 @@ export function Chat({ id }: { id: number }) {
           <div className="thread" ref={thread}>
             {hasEarlier && (
               <button type="button" className="btn sm ghost load-earlier" onClick={earlier}>
-                Earlier messages
+                Earlier
               </button>
             )}
             {loadError && !messages.length && (

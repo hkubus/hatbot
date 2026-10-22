@@ -606,7 +606,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
             ))}
             {shownHist?.older && (
               <button type="button" className="btn sm ghost load-earlier" onClick={loadOlder}>
-                Older
+                Earlier
               </button>
             )}
           </div>

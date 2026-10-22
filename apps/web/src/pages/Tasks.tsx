@@ -189,7 +189,7 @@ export function Tasks() {
             disabled={loadingOlder.busy}
             onClick={older}
           >
-            Older
+            Earlier
           </button>
         )}
       </div>
