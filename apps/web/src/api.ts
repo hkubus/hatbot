@@ -11,8 +11,15 @@ export class ApiError extends Error {
   }
 }
 
-export const errorText = (err: unknown, fallback = "Couldn't reach Hatbot.") =>
-  err instanceof ApiError ? err.message : fallback;
+const REACH = "Couldn't reach Hatbot.";
+
+/** The fallback is for anything but a lost connection, which always says so. */
+export const errorText = (err: unknown, fallback = REACH) =>
+  err instanceof ApiError
+    ? err.message
+    : err instanceof TypeError || (err instanceof DOMException && err.name === "TimeoutError")
+      ? REACH
+      : fallback;
 
 /** 401 sends the app back to the login screen. */
 export async function api<T>(
@@ -61,7 +68,7 @@ export function upload(
       if (xhr.status === 401) window.dispatchEvent(new Event("hatbot:unauthorized"));
       reject(new ApiError(xhr.status, (data as { error?: string }).error ?? `HTTP ${xhr.status}`));
     };
-    xhr.onerror = () => reject(new TypeError("Couldn't reach Hatbot."));
+    xhr.onerror = () => reject(new TypeError(REACH));
     xhr.onabort = () => reject(new DOMException("Stopped.", "AbortError"));
     signal?.addEventListener("abort", () => xhr.abort());
     const form = new FormData();

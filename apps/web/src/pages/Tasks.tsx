@@ -189,7 +189,7 @@ export function Tasks() {
             disabled={loadingOlder.busy}
             onClick={older}
           >
-            Older
+            Earlier
           </button>
         )}
       </div>
@@ -205,9 +205,9 @@ export function From({ task }: { task: TaskCard }) {
     return c.kind === "group" ? chatName(s, c) : `Chat with ${botName(s, c.botIds[0])}`;
   });
   const go = (to: string, label: string) => (
-    <button type="button" className="text-link" onClick={() => navigate(to)}>
+    <Link className="text-link" to={to}>
       {label}
-    </button>
+    </Link>
   );
   if (task.parentId) return go(`/tasks/${task.parentId}`, `Task #${task.parentId}`);
   if (task.origin === "chat") {
@@ -283,9 +283,9 @@ function Details({ task }: { task: Task }) {
         <>
           <dt>Report</dt>
           <dd>
-            <button type="button" className="text-link" onClick={() => navigate(report.to)}>
+            <Link className="text-link" to={report.to}>
               {report.label}
-            </button>
+            </Link>
           </dd>
         </>
       )}
@@ -344,7 +344,7 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   const showLive = screen && active && (watch || request?.taskId === id);
 
   const cancel = async () => {
-    if (!(await ask({ text: `Cancel "${task.title}"?`, ok: "Cancel task", cancel: "Keep it" })))
+    if (!(await ask({ text: `Cancel ${task.title}?`, ok: "Cancel task", cancel: "Keep it" })))
       return;
     await run(() => cancelTask(id));
   };
@@ -375,7 +375,7 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
           )}
           {full && !active && !task.parentId && !screen && again === null && (
             <button type="button" className="btn sm" onClick={() => setAgain(full.goal)}>
-              <Icon name="undo" />
+              <Icon name="retry" />
               Run again
             </button>
           )}
@@ -446,13 +446,9 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
                   <StepIcon kind={s.kind} name={s.name} />
                   <div className="tl-text">
                     {s.kind === "task" && s.url ? (
-                      <button
-                        type="button"
-                        className="text-link"
-                        onClick={() => navigate(s.url as string)}
-                      >
+                      <Link className="text-link" to={s.url as string}>
                         {s.name}
-                      </button>
+                      </Link>
                     ) : (
                       <div>{s.detail && s.kind !== "note" ? s.detail : s.name}</div>
                     )}

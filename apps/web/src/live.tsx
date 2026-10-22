@@ -6,6 +6,7 @@ import { ask } from "./confirm";
 import { plainText, time } from "./format";
 import { Held } from "./held";
 import { Icon } from "./icons";
+import { Link } from "./link";
 import { navigate } from "./router";
 import {
   discardTeach,
@@ -330,7 +331,7 @@ export function LiveView({ taskId }: { taskId?: number }) {
       navigate(`/memory/teach/${s.id}`);
     });
   const discard = async (id: number) => {
-    if (await ask({ text: "Throw this recording away?", ok: "Throw away" }))
+    if (await ask({ text: "Discard this recording?", ok: "Discard" }))
       giveBack(() => discardTeach(id));
   };
 
@@ -341,11 +342,11 @@ export function LiveView({ taskId }: { taskId?: number }) {
           <Icon name="teach" />
           Recording. Show Hatbot how.
           <div className="actions">
-            <button type="button" className="btn sm" onClick={() => discard(teach.id)}>
+            <button type="button" className="btn sm danger-text" onClick={() => discard(teach.id)}>
               Discard
             </button>
             <button type="button" className="btn sm accent" onClick={stop}>
-              Stop & create skill
+              Stop and make a skill
             </button>
           </div>
         </div>
@@ -394,10 +395,10 @@ export function LiveView({ taskId }: { taskId?: number }) {
       {error && <div className="form-error">{error}</div>}
       {task && (
         <div className="panel">
-          <button type="button" className="live-task" onClick={() => navigate(`/tasks/${task.id}`)}>
+          <Link className="live-task" to={`/tasks/${task.id}`}>
             <b>{task.title}</b>
             <Icon name="chevron" />
-          </button>
+          </Link>
           <div className="label">{taskLine(task, progress)}</div>
           {steps && steps.length > 0 && (
             <ul className="log">

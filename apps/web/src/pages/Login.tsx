@@ -2,6 +2,7 @@ import type { SetupStartResponse } from "@hatbot/shared";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useAction } from "../action";
 import { ApiError, api, errorText } from "../api";
+import { Copyable } from "../copy";
 import { Icon } from "../icons";
 import { backspace, pasted, slots, typed } from "../otp";
 
@@ -101,30 +102,14 @@ export function Login({ onDone }: { onDone: () => void }) {
 }
 
 export function AddToAuthenticator({ uri, secret }: { uri: string; secret: string }) {
-  const shown = useRef<HTMLElement>(null);
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    // Without a secure origin there's no clipboard: the secret is selected to copy by hand.
-    const select = () => shown.current && getSelection()?.selectAllChildren(shown.current);
-    if (!navigator.clipboard) return select();
-    navigator.clipboard.writeText(secret).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }, select);
-  };
   return (
     <>
       <a className="btn" href={uri}>
         Add to authenticator
       </a>
-      <div className="copyable">
-        <code className="secret" ref={shown}>
-          {secret.match(/.{1,4}/g)?.join(" ")}
-        </code>
-        <button type="button" className="btn sm ghost" onClick={copy}>
-          {copied ? "Copied" : "Copy"}
-        </button>
-      </div>
+      <Copyable value={secret} className="secret">
+        {secret.match(/.{1,4}/g)?.join(" ")}
+      </Copyable>
     </>
   );
 }

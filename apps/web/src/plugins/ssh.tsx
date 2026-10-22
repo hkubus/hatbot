@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useAction } from "../action";
 import { errorText } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
-import { Icon } from "../icons";
+import { Copyable } from "../copy";
 import { Switch } from "../switch";
 import { Disclosure } from "../ui";
 import type { PluginSettingsProps } from ".";
@@ -76,17 +76,7 @@ export function SshSettings({ config, save, action, running }: PluginSettingsPro
       {publicKey && (
         <div className="panel form">
           <span className="label">Add to ~hatbot/.ssh/authorized_keys on each host</span>
-          <div className="copyable">
-            <code>{publicKey}</code>
-            <button
-              type="button"
-              className="btn sm ghost"
-              title="Copy"
-              onClick={() => navigator.clipboard?.writeText(publicKey)}
-            >
-              <Icon name="copy" />
-            </button>
-          </div>
+          <Copyable value={publicKey} />
         </div>
       )}
 

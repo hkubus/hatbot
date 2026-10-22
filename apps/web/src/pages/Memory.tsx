@@ -6,6 +6,7 @@ import { ask, askText, useLeaveGuard } from "../confirm";
 import { lineDiff } from "../diff";
 import { dayTime } from "../format";
 import { Icon } from "../icons";
+import { Link } from "../link";
 import { LoadError } from "../load";
 import { type Doc, isDirty, loading, newDoc, readDoc, readFailed } from "../memory-doc";
 import { navigate } from "../router";
@@ -245,7 +246,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
         const now = err.data as { sha: string; content: string };
         return setConflict({ sha: now.sha, content: now.content });
       }
-      toast(errorText(err, "Couldn't save"), "error");
+      toast(errorText(err, "Couldn't save."), "error");
     }
   };
   // Your edit goes; the file as it's now saved comes in.
@@ -296,12 +297,12 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
       setSel({ kind: "file", path: "INDEX.md" });
       bumpMemory();
     } catch (err) {
-      toast(errorText(err, "Couldn't delete"), "error");
+      toast(errorText(err, "Couldn't delete."), "error");
     }
   };
 
   const revert = async (c: Commit) => {
-    if (!(await ask({ text: `Revert "${c.message}"?`, ok: "Revert" }))) return;
+    if (!(await ask({ text: `Revert ${c.message}?`, ok: "Revert" }))) return;
     try {
       const r = await api<{ sha: string | null }>(`/memory/revert/${c.sha}`, { body: {} });
       toast(
@@ -310,7 +311,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
       );
       bumpMemory();
     } catch (err) {
-      toast(errorText(err, "Couldn't revert"), "error");
+      toast(errorText(err, "Couldn't revert."), "error");
     }
   };
 
@@ -349,7 +350,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
       await startTeach(name);
       navigate("/live");
     } catch (err) {
-      toast(errorText(err, "Couldn't start recording"), "error");
+      toast(errorText(err, "Couldn't start recording."), "error");
     }
   };
   const answer = async (p: Proposal, how: "apply" | "dismiss") => {
@@ -405,7 +406,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
           {pending.length > 0 && (
             <>
               <div className="folder">
-                <Icon name="zap" />
+                <Icon name="inbox" />
                 To look over
               </div>
               {pending.map((p) => (
@@ -428,10 +429,10 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
                 Skill drafts
               </div>
               {drafts.map((d) => (
-                <button type="button" key={d.id} onClick={() => navigate(`/memory/teach/${d.id}`)}>
+                <Link key={d.id} to={`/memory/teach/${d.id}`}>
                   <Icon name="file" />
                   {d.name ?? `Recording, ${dayTime(d.startedAt)}`}
-                </button>
+                </Link>
               ))}
             </>
           )}
@@ -491,16 +492,12 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
                 <span className="path">{sel.path}</span>
                 <span className="spacer" />
                 {exists && sel.path.endsWith(".md") && (
-                  <button
-                    type="button"
-                    className="btn sm"
-                    onClick={() => navigate(`/read?path=${enc(sel.path)}`)}
-                  >
+                  <Link className="btn sm" to={`/read?path=${enc(sel.path)}`}>
                     Read
-                  </button>
+                  </Link>
                 )}
                 {exists && sel.path !== "INDEX.md" && (
-                  <button type="button" className="btn sm ghost danger-text" onClick={remove}>
+                  <button type="button" className="btn sm danger-text" onClick={remove}>
                     Delete
                   </button>
                 )}
@@ -609,7 +606,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
             ))}
             {shownHist?.older && (
               <button type="button" className="btn sm ghost load-earlier" onClick={loadOlder}>
-                Older
+                Earlier
               </button>
             )}
           </div>

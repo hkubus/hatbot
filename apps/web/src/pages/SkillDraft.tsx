@@ -3,6 +3,7 @@ import { useAction } from "../action";
 import { ApiError } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm } from "../form";
+import { Link } from "../link";
 import { useItem } from "../load";
 import { navigate } from "../router";
 import { discardTeach, loadTeach, redraftTeach, saveSkill, useStore } from "../store";
@@ -53,7 +54,7 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
     });
 
   const discard = async () => {
-    if (await ask({ text: "Throw this draft away?", ok: "Throw away" }))
+    if (await ask({ text: "Discard this draft?", ok: "Discard" }))
       void run(async () => {
         await discardTeach(id);
         release();
@@ -77,7 +78,7 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
             />
             <span className="path">.md</span>
             <span className="spacer" />
-            <button type="button" className="btn sm ghost danger-text" onClick={discard}>
+            <button type="button" className="btn sm danger-text" onClick={discard}>
               Discard
             </button>
             <button
@@ -112,13 +113,9 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
           {session.status === "saved" && (
             <p>
               Saved as{" "}
-              <button
-                type="button"
-                className="text-link"
-                onClick={() => navigate(`/memory?path=skills/${session.name}.md`)}
-              >
+              <Link className="text-link" to={`/memory?path=skills/${session.name}.md`}>
                 skills/{session.name}.md
-              </button>
+              </Link>
               .
             </p>
           )}
@@ -126,7 +123,7 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
           {error && <div className="form-error">{error}</div>}
           {(session.status === "failed" || session.status === "drafting") && (
             <div className="form-actions">
-              <button type="button" className="btn sm ghost danger-text" onClick={discard}>
+              <button type="button" className="btn sm danger-text" onClick={discard}>
                 Discard
               </button>
               {session.status === "failed" && session.steps > 0 && (

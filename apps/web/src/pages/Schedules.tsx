@@ -11,6 +11,7 @@ import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { BotPicker, Runs, useListed } from "../automations";
 import { ask, useLeaveGuard } from "../confirm";
+import { Copyable } from "../copy";
 import { NoForm, useStoredForm } from "../form";
 import { stamp } from "../format";
 import { Icon } from "../icons";
@@ -82,18 +83,18 @@ function List({ toast }: { toast: Toast }) {
       <div className="page">
         <div className="page-head">
           <span className="spacer" />
-          <button type="button" className="btn" onClick={() => navigate("/schedules/new")}>
+          <Link className="btn" to="/schedules/new">
             <Icon name="plus" />
             Schedule
-          </button>
-          <button type="button" className="btn" onClick={() => navigate("/watchers/new")}>
+          </Link>
+          <Link className="btn" to="/watchers/new">
             <Icon name="plus" />
             Watcher
-          </button>
-          <button type="button" className="btn" onClick={() => navigate("/triggers/new")}>
+          </Link>
+          <Link className="btn" to="/triggers/new">
             <Icon name="plus" />
             Trigger
-          </button>
+          </Link>
         </div>
         {error && <div className="form-error">{error}</div>}
         <BuiltInGroup toast={toast} />
@@ -262,7 +263,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
   const remove = async () => {
     if (
       !stored ||
-      !(await ask({ text: `Delete "${stored.name}"? Its past runs stay in Tasks.`, ok: "Delete" }))
+      !(await ask({ text: `Delete ${stored.name}? Its past runs stay in Tasks.`, ok: "Delete" }))
     )
       return;
     await run(async () => {
@@ -334,7 +335,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
                 onChange={(e) => set({ cron: e.target.value })}
               />
               {cron && !cronOk(cron) ? (
-                <span className="form-error hint">Not a valid cron</span>
+                <span className="form-error hint">That isn't a valid cron schedule.</span>
               ) : (
                 <span className="muted hint">
                   {cron && described !== cron ? described : "minute hour day month weekday"}
@@ -402,16 +403,10 @@ function ScheduleEdit({ id }: { id: number | null }) {
 
 /** How to point the sender at a trigger, with its secret. Shown once, after it's made or replaced. */
 function Setup({ t }: { t: TriggerWithSecret }) {
-  const copy = (text: string) => navigator.clipboard?.writeText(text);
   const field = (label: string, value: string) => (
     <div className="setup-field">
       <span className="label">{label}</span>
-      <div className="copyable">
-        <code>{value}</code>
-        <button type="button" className="btn sm ghost" title="Copy" onClick={() => copy(value)}>
-          <Icon name="copy" />
-        </button>
-      </div>
+      <Copyable value={value} />
     </div>
   );
   return (
@@ -528,7 +523,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
   const remove = async () => {
     if (
       !stored ||
-      !(await ask({ text: `Delete "${stored.name}"? Its past runs stay in Tasks.`, ok: "Delete" }))
+      !(await ask({ text: `Delete ${stored.name}? Its past runs stay in Tasks.`, ok: "Delete" }))
     )
       return;
     await run(async () => {
@@ -545,6 +540,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
           {stored && (
             <>
               <button type="button" className="btn sm" onClick={rotate}>
+                <Icon name="key" />
                 New secret
               </button>
               <button type="button" className="btn sm danger-text" onClick={remove}>
