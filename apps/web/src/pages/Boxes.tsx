@@ -19,7 +19,7 @@ import { useMedia } from "../media";
 import { navigate } from "../router";
 import { loadBoxes, putBox, useStore } from "../store";
 import { useTheme } from "../theme";
-import { BackHead, Group, Row, Select } from "../ui";
+import { BackHead, Empty, Group, Row, Select } from "../ui";
 
 export function BoxesPage() {
   const boxes = useStore((s) => s.boxes);
@@ -34,9 +34,7 @@ export function BoxesPage() {
       <div className="page">
         {load.error && <LoadError error={load.error} retry={load.retry} />}
         {loaded && !list.length && (
-          <p className="muted">
-            No boxes yet. Ask Hatbot for a tracker, a calculator or a planner to keep.
-          </p>
+          <Empty>No boxes yet. Ask Hatbot for a tracker, a calculator or a planner to keep.</Empty>
         )}
         {loaded && !!list.length && (
           <div className="box-grid">

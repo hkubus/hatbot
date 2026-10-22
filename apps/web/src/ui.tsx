@@ -70,19 +70,29 @@ export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>;
 }
 
+/** `empty` is said in a row of its own, for a list with nothing in it. */
 export function Group({
   title,
   className,
+  empty,
   children,
 }: {
   title?: ReactNode;
   className?: string;
-  children: ReactNode;
+  empty?: ReactNode;
+  children?: ReactNode;
 }) {
   return (
     <section className={className ? `group ${className}` : "group"}>
       {title && <h2>{title}</h2>}
-      <div className="group-box">{children}</div>
+      <div className="group-box">
+        {children}
+        {empty && (
+          <div className="row">
+            <span className="muted">{empty}</span>
+          </div>
+        )}
+      </div>
     </section>
   );
 }
@@ -107,23 +117,45 @@ export function Row({
   );
 }
 
+/**
+ * `snippet` stands instead of `label` for text that isn't a name. `trailing`, e.g. a switch, sits
+ * after the link in the same row.
+ */
 export function LinkRow({
   to,
   label,
+  snippet,
+  className,
+  trailing,
   children,
 }: {
   to: string;
-  label: ReactNode;
+  label?: ReactNode;
+  snippet?: ReactNode;
+  className?: string;
+  trailing?: ReactNode;
   children?: ReactNode;
 }) {
-  return (
-    <Link className="row row-link" to={to}>
-      <div className="txt">
-        <b>{label}</b>
-      </div>
+  const row = className ? `row ${className}` : "row";
+  const link = (
+    <Link className={trailing === undefined ? `${row} row-link` : "row-main"} to={to}>
+      {snippet === undefined ? (
+        <div className="txt">
+          <b>{label}</b>
+        </div>
+      ) : (
+        <div className="txt snippet">{snippet}</div>
+      )}
       {children}
       <Icon name="chevron" className="chev" />
     </Link>
+  );
+  if (trailing === undefined) return link;
+  return (
+    <div className={row}>
+      {link}
+      {trailing}
+    </div>
   );
 }
 

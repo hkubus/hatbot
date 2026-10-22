@@ -94,7 +94,7 @@ export function TodoPage({ toast }: { toast: Toast }) {
         </form>
         {error && <div className="form-error">{error}</div>}
 
-        <Group>
+        <Group empty={!open.length && "Nothing to do. Add one here, or ask Hatbot in chat."}>
           {open.map((t) => (
             <div className="row" key={`${t.line} ${t.text}`}>
               <input
@@ -119,11 +119,6 @@ export function TodoPage({ toast }: { toast: Toast }) {
               )}
             </div>
           ))}
-          {!open.length && (
-            <div className="row">
-              <span className="muted">Nothing to do. Add one here, or ask Hatbot in the chat.</span>
-            </div>
-          )}
         </Group>
 
         {done.length > 0 && (

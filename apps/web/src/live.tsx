@@ -19,6 +19,7 @@ import {
   useStore,
 } from "./store";
 import { taskLine } from "./tasks";
+import { LinkRow } from "./ui";
 
 type Conn = "connecting" | "live" | "offline";
 
@@ -394,10 +395,7 @@ export function LiveView({ taskId }: { taskId?: number }) {
       {error && <div className="form-error">{error}</div>}
       {task && (
         <div className="panel">
-          <button type="button" className="live-task" onClick={() => navigate(`/tasks/${task.id}`)}>
-            <b>{task.title}</b>
-            <Icon name="chevron" />
-          </button>
+          <LinkRow className="live-task" to={`/tasks/${task.id}`} label={task.title} />
           <div className="label">{taskLine(task, progress)}</div>
           {steps && steps.length > 0 && (
             <ul className="log">

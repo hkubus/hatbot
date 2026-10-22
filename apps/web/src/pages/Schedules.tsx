@@ -14,7 +14,6 @@ import { ask, useLeaveGuard } from "../confirm";
 import { useStoredForm } from "../form";
 import { stamp } from "../format";
 import { Icon } from "../icons";
-import { Link } from "../link";
 import { LoadError, PageLoad, useLoad } from "../load";
 import { navigate } from "../router";
 import { atIso, cronOk, localInput } from "../schedule-form";
@@ -29,7 +28,7 @@ import {
 import { Switch } from "../switch";
 import { whenText } from "../tasks";
 import type { Toast } from "../toast";
-import { BackHead, Group, SaveBar, Seg } from "../ui";
+import { BackHead, Group, LinkRow, SaveBar, Seg } from "../ui";
 import { BuiltInGroup } from "./BuiltIn";
 import { HeartbeatPage } from "./Heartbeat";
 import { patchWatcher, trouble, WatcherEdit } from "./Watchers";
@@ -104,7 +103,7 @@ function List({ toast }: { toast: Toast }) {
               path="/schedules"
               value={(s) => (s.enabled ? whenText(s) : "Off")}
               toggle={(s, enabled) => saveSchedule(s.id, { enabled })}
-              empty="None yet. Ask Hatbot in chat, or add one here."
+              empty="None yet. Add one here, or ask Hatbot in chat."
               onError={setError}
             />
             <RoutineGroup
@@ -116,7 +115,7 @@ function List({ toast }: { toast: Toast }) {
               }
               bad={(w) => !!w.lastError && w.errors > 0}
               toggle={(w, enabled) => patchWatcher(w.id, { enabled })}
-              empty="None yet. Ask Hatbot to tell you when something changes."
+              empty="None yet. Add one here, or ask Hatbot in chat."
               onError={setError}
             />
             <RoutineGroup
@@ -129,7 +128,7 @@ function List({ toast }: { toast: Toast }) {
                   putTrigger,
                 )
               }
-              empty="None yet."
+              empty="None yet. Add one here."
               onError={setError}
             />
           </>
@@ -163,27 +162,22 @@ function RoutineGroup<T extends { id: number; name: string; enabled: boolean }>(
     .filter((x): x is T => Boolean(x))
     .sort((a, b) => a.name.localeCompare(b.name));
   return (
-    <Group title={title}>
+    <Group title={title} empty={!shown.length && empty}>
       {shown.map((x) => (
-        <div className="row" key={x.id}>
-          <Link className="row-main" to={`${path}/${x.id}`}>
-            <div className="txt">
-              <b>{x.name}</b>
-            </div>
-            <span className={bad?.(x) ? "val bad" : "val"}>{value(x)}</span>
-            <Icon name="chevron" className="chev" />
-          </Link>
-          <Switch
-            on={x.enabled}
-            onChange={(enabled) => toggle(x, enabled).catch((err) => onError(errorText(err)))}
-          />
-        </div>
+        <LinkRow
+          key={x.id}
+          to={`${path}/${x.id}`}
+          label={x.name}
+          trailing={
+            <Switch
+              on={x.enabled}
+              onChange={(enabled) => toggle(x, enabled).catch((err) => onError(errorText(err)))}
+            />
+          }
+        >
+          <span className={bad?.(x) ? "val bad" : "val"}>{value(x)}</span>
+        </LinkRow>
       ))}
-      {!shown.length && (
-        <div className="row">
-          <span className="muted">{empty}</span>
-        </div>
-      )}
     </Group>
   );
 }

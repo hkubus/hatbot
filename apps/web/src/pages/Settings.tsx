@@ -376,7 +376,7 @@ function AllowedPage() {
         {load.error && <LoadError error={load.error} retry={load.retry} />}
         {error && <div className="form-error">{error}</div>}
         {rules && (
-          <Group>
+          <Group empty={!rules.length && "None yet. Approve something with Always to add it."}>
             {rules.map((r) => (
               <Row
                 key={r.id}
@@ -388,11 +388,6 @@ function AllowedPage() {
                 </button>
               </Row>
             ))}
-            {!rules.length && (
-              <div className="row">
-                <span className="muted">None yet. Approve something with Always to add it.</span>
-              </div>
-            )}
           </Group>
         )}
       </div>

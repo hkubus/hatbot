@@ -36,7 +36,7 @@ import {
   TaskTable,
   taskLine,
 } from "../tasks";
-import { BackHead, Group, LinkRow, Seg } from "../ui";
+import { BackHead, Empty, Group, LinkRow, Seg } from "../ui";
 
 const TASK_PAGE = 50;
 
@@ -154,7 +154,7 @@ export function Tasks() {
         </div>
         {load.error && <LoadError error={load.error} retry={load.retry} />}
         {ids && !shown.length && (
-          <div className="empty">{filter === "active" ? "Nothing running." : "No tasks yet."}</div>
+          <Empty>{filter === "active" ? "Nothing running." : "No tasks yet."}</Empty>
         )}
         {shown.length > 0 && <TaskTable tasks={shown} />}
         {loadingOlder.error && <LoadError error={loadingOlder.error} retry={older} />}

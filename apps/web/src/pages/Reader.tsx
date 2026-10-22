@@ -6,6 +6,7 @@ import { LoadError } from "../load";
 import { MD_COMPONENTS, type Node, REMARK, textOf } from "../markdown";
 import { navigate } from "../router";
 import { useStore } from "../store";
+import { Empty } from "../ui";
 
 type Read = { text: string; name: string; from: "memory" | "file" };
 type Shown =
@@ -152,7 +153,7 @@ export function Reader({ path, file }: { path: string; file: number }) {
           )}
         </div>
         {shown.state === "gone" ? (
-          <div className="empty">This file is gone.</div>
+          <Empty>This file doesn't exist.</Empty>
         ) : shown.state === "failed" ? (
           <LoadError
             error="Couldn't open this file."

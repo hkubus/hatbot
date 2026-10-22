@@ -11,6 +11,7 @@ import { type Doc, isDirty, loading, newDoc, readDoc, readFailed } from "../memo
 import { navigate } from "../router";
 import { bumpMemory, loadProposals, putProposal, startTeach, useStore } from "../store";
 import type { Toast } from "../toast";
+import { Empty } from "../ui";
 
 type Selection =
   | { kind: "file"; path: string }
@@ -559,7 +560,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
             proposal ? (
               <ProposalView p={proposal} />
             ) : (
-              <div className="empty">This proposal is gone.</div>
+              <Empty>This proposal doesn't exist.</Empty>
             )
           ) : sel.kind === "diff" ? (
             <div className="editor-pad">
