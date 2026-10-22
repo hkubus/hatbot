@@ -1,37 +1,29 @@
 // Raw HTML is never rendered (react-markdown's default), other sites open in a new tab, and only
 // the app's own pictures load.
 import { API_PREFIX } from "@hatbot/shared";
-import { createContext, memo, useContext, useState } from "react";
+import { createContext, memo, useContext, useRef } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Chart, ChartPending, FileChart } from "./chart";
 import { parseChart, parseChartFile } from "./chartspec";
+import { useCopy } from "./copy";
 import { Icon } from "./icons";
 import { Link } from "./link";
 import { splitBlocks } from "./md-blocks";
 
-export function useCopy(): [boolean, (text: string) => void] {
-  const [copied, setCopied] = useState(false);
-  const copy = async (text: string) => {
-    await navigator.clipboard?.writeText(text).catch(() => {});
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-  return [copied, copy];
-}
-
 function CodeBlock({ code, children }: { code: string; children: React.ReactNode }) {
   const [copied, copy] = useCopy();
+  const shown = useRef<HTMLPreElement>(null);
   return (
     <div className="code-block">
-      <pre>{children}</pre>
+      <pre ref={shown}>{children}</pre>
       <button
         type="button"
         className="msg-act code-copy"
         title="Copy"
         onClick={(e) => {
           e.stopPropagation();
-          copy(code.replace(/\n$/, ""));
+          copy(code.replace(/\n$/, ""), shown.current);
         }}
       >
         <Icon name={copied ? "check" : "copy"} />

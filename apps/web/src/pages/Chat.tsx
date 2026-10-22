@@ -20,6 +20,7 @@ import {
 } from "react";
 import { ApiError, attachmentUrl, errorText } from "../api";
 import { ask } from "../confirm";
+import { useCopy } from "../copy";
 import {
   attachFiles,
   type DraftFile,
@@ -34,7 +35,7 @@ import { plainText, time } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LoadError } from "../load";
-import { AssistantBody, isMarkdownFile, useCopy } from "../markdown";
+import { AssistantBody, isMarkdownFile } from "../markdown";
 import { touchScreen } from "../media";
 import { negotiationText } from "../negotiations";
 import { navigate, useRoute } from "../router";

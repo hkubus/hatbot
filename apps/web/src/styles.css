@@ -245,7 +245,6 @@ svg.i {
   font-size: var(--fs-sm);
 }
 .diff,
-.token-new,
 .copyable,
 pre.payload,
 .box-code,
@@ -1955,9 +1954,9 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   word-break: break-all;
   color: var(--text-2);
 }
-.token-new {
-  word-break: break-all;
-  user-select: all;
+.row.token-new {
+  display: grid;
+  gap: var(--sp-sm);
 }
 .row .field {
   flex: none;

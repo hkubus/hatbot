@@ -11,6 +11,7 @@ import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { BotPicker, Runs, useListed } from "../automations";
 import { ask, useLeaveGuard } from "../confirm";
+import { Copyable } from "../copy";
 import { NoForm, useStoredForm } from "../form";
 import { stamp } from "../format";
 import { Icon } from "../icons";
@@ -402,16 +403,10 @@ function ScheduleEdit({ id }: { id: number | null }) {
 
 /** How to point the sender at a trigger, with its secret. Shown once, after it's made or replaced. */
 function Setup({ t }: { t: TriggerWithSecret }) {
-  const copy = (text: string) => navigator.clipboard?.writeText(text);
   const field = (label: string, value: string) => (
     <div className="setup-field">
       <span className="label">{label}</span>
-      <div className="copyable">
-        <code>{value}</code>
-        <button type="button" className="btn sm ghost" title="Copy" onClick={() => copy(value)}>
-          <Icon name="copy" />
-        </button>
-      </div>
+      <Copyable value={value} />
     </div>
   );
   return (
