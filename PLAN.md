@@ -11,7 +11,7 @@ Built, but not yet deployed or tried live:
 - **Boxes** (2026-10-18 and 2026-10-19). Not tried yet: a real `hatbot-boxes` guest under systemd (the units, polkit, DynamicUser, the firewall, and the runner reading its secrets inside `hatbox@`'s sandbox); `box_look` drawn by `hatbot-render` under systemd; boxes in the iOS app on a device; `hatbox.ask` and `hatbox.feed` against a brain; and the model making a box, a server box, or one that uses ask, send, feed, notifications or secrets.
 - **Hand-offs in the other bot's chat, and the code bot** (2026-10-19).
 - **Hatbot handing the other bots their work** (2026-10-20).
-- **Claude Code** (2026-10-20).
+- **T3 Code** in place of Claude Code (2026-10-22): connecting it, `t3_code` in a real project, and a box made through `box_t3`. Not tried against a real T3 Code: what `t3_thread_launch` answers, and whether item positions in `t3_thread_read` start at 0 or 1.
 - **The Linux app** (L1–L6, 2026-10-20 and 2026-10-21). Done when you can chat, approve and take over from it.
 
 ## 2. Small gaps
@@ -56,7 +56,7 @@ Known gaps, kept because closing them costs more than they risk (the owner's cal
 - Research has no page reader that runs JavaScript (it could send out what the task has read; such pages go to `run_desktop_task`), and isn't started from schedules.
 - Settings → Plugins and teach mode stay web-only.
 - To-do items aren't handed to other bots with `@name`; ask the bot in the chat instead.
-- Claude Code: no Git LFS; two tasks on one repository share its folder; sessions to carry on are kept in memory, which a restart forgets.
+- T3 Code: its sign-in lasts 30 days with no refresh, so it has to be connected again; threads to carry on are kept in memory, which a restart forgets; a box's files over 100 KB can't be handed to it in one message.
 
 **Not planned:**
 - Messengers (Signal, Telegram, Matrix): Hatbot's own web, iOS and Linux apps are enough.
@@ -68,4 +68,3 @@ Known gaps, kept because closing them costs more than they risk (the owner's cal
 ## 5. Maybe later
 - Teams.
 - The desktop as a KVM VM instead of an LXC, if RAM allows.
-- The desktop at 2.5 GB, so Claude Code's shell can have 2 GB.

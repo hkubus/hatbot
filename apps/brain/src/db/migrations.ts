@@ -849,4 +849,9 @@ export const migrations: string[] = [
     PRIMARY KEY (box_id, n, dark)
   );
   `,
+  // 50: T3 Code in place of Claude Code: bots that had the one have the other.
+  `
+  UPDATE bots SET plugins = replace(plugins, '"claude"', '"t3"') WHERE plugins LIKE '%"claude"%';
+  DELETE FROM settings WHERE key = 'plugin:claude';
+  `,
 ];

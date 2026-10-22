@@ -1,11 +1,11 @@
 // A plugin without a form here only has its switch, environment and Test button.
 import type { ComponentType } from "react";
-import { ClaudeSettings } from "./claude";
 import { HomeAssistantSettings } from "./homeassistant";
 import { McpSettings } from "./mcp";
 import { ProxmoxSettings } from "./proxmox";
 import { SelfSettings } from "./self";
 import { SshSettings } from "./ssh";
+import { T3Settings } from "./t3";
 
 export type PluginSettingsProps<C = unknown> = {
   config: C;
@@ -22,5 +22,5 @@ export const PLUGIN_SETTINGS: Record<string, ComponentType<PluginSettingsProps>>
   mcp: McpSettings as ComponentType<PluginSettingsProps>,
   homeassistant: HomeAssistantSettings as ComponentType<PluginSettingsProps>,
   self: SelfSettings,
-  claude: ClaudeSettings as ComponentType<PluginSettingsProps>,
+  t3: T3Settings as ComponentType<PluginSettingsProps>,
 };

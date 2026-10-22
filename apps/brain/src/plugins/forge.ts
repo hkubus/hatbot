@@ -214,7 +214,7 @@ export function checkoutTools(
   return [
     tool({
       name: `${id}_checkout`,
-      description: `Put a repository's files in the sandbox at ~/repos/${id}/<owner>/<name>, in place of any checkout there, as a git repository: a branch as it is now, the default branch if left out. Change them there with code_run, or claude_code for bigger changes, then ${id}_push sends what changed to a branch. The brain fetches and pushes; the sandbox never gets the token.`,
+      description: `Put a repository's files in the sandbox at ~/repos/${id}/<owner>/<name>, in place of any checkout there, as a git repository: a branch as it is now, the default branch if left out. Change them there with code_run, then ${id}_push sends what changed to a branch. The brain fetches and pushes; the sandbox never gets the token.`,
       access: "write",
       label: "Checking out code",
       schema: z.object({
@@ -245,7 +245,7 @@ export function checkoutTools(
           ],
           timeoutS: 600,
         });
-        return `${repo} at ${at} (${sha.slice(0, 10)}) is in ~/${c.work}.\n${out}\nChange it there with code_run, or claude_code for bigger changes, then ${id}_push sends what changed to a branch.`;
+        return `${repo} at ${at} (${sha.slice(0, 10)}) is in ~/${c.work}.\n${out}\nChange it there with code_run, then ${id}_push sends what changed to a branch.`;
       },
     }),
     tool({

@@ -1,5 +1,5 @@
-// Claude Code writes the box's files in a sandbox folder with no tool that runs anything; the brain
-// builds what it leaves there as box_create would.
+// T3 Code writes the box in a scratch thread on the owner's computer and sends its files back in its
+// last message; the brain builds them as box_create would.
 import type { Box, Task } from "@hatbot/shared";
 import { MAX_BOX_HTML } from "@hatbot/shared";
 import {
@@ -20,8 +20,8 @@ import {
 } from "../agent/tools";
 import { ownerNote } from "../approvals";
 import { BoxError, type Made } from "../boxes";
-import { ClaudeCodeError, type ClaudeResult, runStats } from "../claude-code";
 import { PluginError } from "../plugins/plugin";
+import { runStats, T3Error, type T3Result } from "../t3";
 import { askOwner, endOf, Stop } from "./loop";
 import type { Tasks } from "./service";
 
@@ -30,40 +30,57 @@ export type BoxJob = { request: string; box?: number; title?: string };
 type Saved = { box: Box; note: string; same: boolean };
 
 const RETRIES = 2;
+/** What a thread's first message can carry of a box's files, under T3 Code's 120,000 characters. */
+const MAX_SEED = 100_000;
+const END = "=== END ===";
+const MARK = /^=== (FILE|DELETE) (.+) ===$/;
 
-/** Files only: the box runs on the boxes guest, never here. */
-const TOOLS = ["Read", "Write", "Edit", "Glob", "Grep"];
+const block = (f: BoxFile) => `=== FILE ${f.path} ===\n${f.content.replace(/\n$/, "")}\n${END}`;
 
-const system = (guest: boolean) =>
+const rules = (guest: boolean) =>
   [
-    "You write a box: a small web app that Hatbot's owner keeps and opens from a chat. Its files are the working directory: write them there, with no dotfiles. Nothing is run here, so don't try to; it's built and checked after you're done.",
+    "You write a box: a small web app that Hatbot's owner keeps and opens from a chat. Hatbot builds and checks it after you're done, so there's nothing to run.",
     BOX_PAGE_RULES,
     guest
       ? BOX_FILES_RULES
       : `There's no boxes guest to build more, so it's one file, ${BOX_PAGE}.`,
-    "End with a short summary of what you made or changed.",
+    `Hatbot only sees your last message. Start it with a short summary of what you made or changed. Then, for every file you added or changed, a line "=== FILE <path> ===", its whole content, and a line "${END}"; and for every file you removed, a line "=== DELETE <path> ===". No code fences around them, no dotfiles.`,
   ].join("\n\n");
 
-/** Lists the folder's files, with their sizes, as JSON: no dotfiles or links, at most 200. */
-const listing = (dir: string) =>
-  `python3 -c 'import os,sys,json
-r=sys.argv[1];out=[]
-for d,ds,fs in os.walk(r):
- ds[:]=[x for x in ds if not x.startswith(".") and not os.path.islink(os.path.join(d,x))]
- for f in fs:
-  p=os.path.join(d,f)
-  if not f.startswith(".") and os.path.isfile(p) and not os.path.islink(p): out.append([os.path.relpath(p,r),os.path.getsize(p)])
-print(json.dumps(sorted(out)[:200]))' '${dir}'`;
+/** What the message says changed, or why it can't be read; null when it names no files. */
+function changes(
+  text: string,
+): { changed: Map<string, string>; gone: Set<string> } | string | null {
+  const lines = text.split("\n").map((l) => l.replace(/\r$/, ""));
+  const changed = new Map<string, string>();
+  const gone = new Set<string>();
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i]?.trimEnd().match(MARK);
+    if (!m) continue;
+    const path = (m[2] ?? "").trim();
+    if (m[1] === "DELETE") {
+      gone.add(path);
+      continue;
+    }
+    const end = lines.findIndex((l, j) => j > i && l.trimEnd() === END);
+    if (end < 0) return `${path} has no "${END}" line after it.`;
+    const body = lines.slice(i + 1, end);
+    changed.set(path, body.length ? `${body.join("\n")}\n` : "");
+    i = end;
+  }
+  return changed.size || gone.size ? { changed, gone } : null;
+}
+
+const summaryOf = (text: string) => {
+  const at = text.split("\n").findIndex((l) => MARK.test(l.trimEnd()));
+  return (at < 0 ? text : text.split("\n").slice(0, at).join("\n")).trim();
+};
 
 export async function runBoxTask(tasks: Tasks, id: number, signal: AbortSignal): Promise<void> {
   const { d } = tasks;
-  const { boxes, claude } = d;
-  const agent = d.desktop.agent;
-  const sandbox = agent.withSignal?.(signal) ?? agent;
+  const { boxes, t3 } = d;
   const job = tasks.boxJobOf(id) as BoxJob;
   const task = tasks.get(id) as Task;
-  const dir = `boxes/task-${id}`;
-  const key = `task-${id}`;
   tasks.setStatus(id, "running");
 
   const taintedBy = () => {
@@ -117,8 +134,8 @@ export async function runBoxTask(tasks: Tasks, id: number, signal: AbortSignal):
   };
 
   try {
-    if (!boxes || !claude?.ready)
-      throw new Stop("failed", "Claude Code isn't set up: switch its plugin on in Settings.");
+    if (!boxes || !t3?.ready)
+      throw new Stop("failed", "T3 Code isn't set up: switch its plugin on in Settings.");
     const box = job.box === undefined ? null : boxes.get(job.box);
     if (job.box !== undefined && !box) throw new Stop("failed", `Box #${job.box} was deleted.`);
     const title = job.title ?? box?.title ?? "Box";
@@ -127,48 +144,64 @@ export async function runBoxTask(tasks: Tasks, id: number, signal: AbortSignal):
     const by = box && boxes.taintedBy(box.id);
     if (box && by) tasks.taint(id, `Box #${box.id} "${box.title}", written after reading: ${by}`);
 
-    const seeded = await sandbox.exec(`rm -rf -- '${dir}' && mkdir -p -- '${dir}'`, 30);
-    if (seeded.exitCode !== 0) throw new PluginError(`Couldn't make ${dir} in the sandbox.`);
     const current = box && boxes.page(box.id);
     const before = current ? (current.files ?? [{ path: BOX_PAGE, content: current.html }]) : [];
-    for (const f of before)
-      await sandbox.putFile(`${dir}/${f.path}`, new TextEncoder().encode(f.content));
+    const seed = before.map(block).join("\n\n");
+    if (seed.length > MAX_SEED)
+      throw new Stop(
+        "failed",
+        `Box #${box?.id}'s files come to more than T3 Code can be handed in one message: change it with box_edit instead.`,
+      );
+    const files = new Map(before.map((f) => [f.path, f.content]));
 
-    let session: string | null = null;
-    let spent: ClaudeResult | null = null;
+    let thread: string | null = null;
+    let spent: T3Result | null = null;
     const progress = tasks.progress(id);
-    const work = async (prompt: string) => {
-      const r = await claude.run({
-        dir,
+    /** Answers why the box can't be saved yet, or null when its files are in hand. */
+    const work = async (prompt: string): Promise<string | null> => {
+      const r = await t3.run({
+        project: null,
+        title: `Box: ${title}`,
         prompt,
-        system: system(guest),
-        tools: TOOLS,
-        resume: session,
-        key,
+        thread,
         signal,
         onActivity: progress,
       });
-      session = r.sessionId ?? session;
-      spent = spent
-        ? {
-            ...r,
-            minutes: spent.minutes + r.minutes,
-            turns: spent.turns + r.turns,
-            costUsd: spent.costUsd + r.costUsd,
-          }
-        : r;
+      thread = r.threadId;
+      spent = spent ? { ...r, minutes: spent.minutes + r.minutes } : r;
       // Its own account, untrusted: the timeline shows it to you, and the bot never reads it.
-      tasks.addStep(id, { kind: "note", name: "Claude Code", detail: r.text, url: null });
+      tasks.addStep(id, { kind: "note", name: "T3 Code", detail: summaryOf(r.text), url: null });
       if (!r.ok) throw new Stop("failed", r.text);
+      const c = changes(r.text);
+      if (typeof c === "string") return c;
+      if (!c) return "Your last message has no files in it.";
+      for (const path of c.gone) files.delete(path);
+      for (const [path, content] of c.changed) files.set(path, content);
+      return null;
     };
 
-    await work(
+    const first = [
+      rules(guest),
       box
-        ? `Change this box, "${box.title}", whose files are here${job.title && job.title !== box.title ? `, and call it "${job.title}"` : ""}: ${job.request}`
+        ? `Change this box, "${box.title}"${job.title && job.title !== box.title ? `, and call it "${job.title}"` : ""}: ${job.request}\n\nIts files now:\n\n${seed}`
         : `Make a box called "${title}": ${job.request}`,
-    );
+    ].join("\n\n");
+    // Not a sandbox: T3 Code can do anything the owner can on their computer.
+    if (taintedBy()) {
+      const ok = await approve(
+        {
+          tool: "box_t3",
+          input: job,
+          what: `T3 Code ${box ? `changes box #${box.id}` : "makes a box"}: ${job.request}`,
+          why: "It runs on your computer with full access, after reading outside content.",
+        },
+        signal,
+      );
+      if (ok.isError) throw new Stop("failed", ok.content);
+    }
+    let problem = await work(first);
     for (let tries = 0; ; tries++) {
-      const made = await saved();
+      const made = problem ?? (await saved());
       if (typeof made !== "string") {
         const b = made.box;
         const stats = spent ? ` (${runStats(spent)})` : "";
@@ -176,46 +209,35 @@ export async function runBoxTask(tasks: Tasks, id: number, signal: AbortSignal):
           id,
           "done",
           made.same
-            ? `Claude Code left box #${b.id} "${b.title}" as it was${stats}.`
-            : `Claude Code ${box ? "changed" : "made"} box #${b.id} "${b.title}", now version ${b.version}, shown under your reply${stats}. Look at it with box_look before you tell the owner it's done.${unsetSecrets(ctx, b.id)}${made.note}`,
+            ? `T3 Code left box #${b.id} "${b.title}" as it was${stats}.`
+            : `T3 Code ${box ? "changed" : "made"} box #${b.id} "${b.title}", now version ${b.version}, shown under your reply${stats}. Look at it with box_look before you tell the owner it's done.${unsetSecrets(ctx, b.id)}${made.note}`,
         );
         return;
       }
-      if (tries === RETRIES) throw new Stop("failed", `Claude Code's box wasn't saved: ${made}`);
+      if (tries === RETRIES) throw new Stop("failed", `T3 Code's box wasn't saved: ${made}`);
       tasks.addStep(id, { kind: "note", name: "Not saved yet", detail: made, url: null });
-      await work(`The box isn't saved yet. ${made}\n\nFix that, then sum up again.`);
+      problem = await work(
+        `The box isn't saved yet. ${made}\n\nFix that, then end with a summary and the files you changed since, as before.`,
+      );
     }
 
     async function saved(): Promise<Saved | string> {
-      const found = await sandbox.exec(listing(dir), 60);
-      let list: [string, number][];
-      try {
-        list = JSON.parse(found.output);
-      } catch {
-        throw new PluginError(`Couldn't list the files in ${dir}.`);
-      }
-      if (!list.length) return `There are no files in the working directory: write the box there.`;
+      const list = [...files].sort(([a], [b]) => a.localeCompare(b));
+      if (!list.length) return "The box has no files left.";
       if (list.length > MAX_BOX_FILES)
         return `A box has at most ${MAX_BOX_FILES} files; there are ${list.length}.`;
       for (const [path] of list) {
         const bad = badPath(path);
         if (bad) return bad;
       }
-      if (list.reduce((n, [, size]) => n + size, 0) > MAX_BOX_SOURCE)
+      const encoder = new TextEncoder();
+      if (list.reduce((n, [, c]) => n + encoder.encode(c).length, 0) > MAX_BOX_SOURCE)
         return "A box's files come to at most 2 MB.";
-      const files: BoxFile[] = [];
-      for (const [path] of list) {
-        const bytes = await sandbox.getFile(`${dir}/${path}`);
-        try {
-          files.push({ path, content: new TextDecoder("utf-8", { fatal: true }).decode(bytes) });
-        } catch {
-          return `${path} isn't text.`;
-        }
-      }
+      const all: BoxFile[] = list.map(([path, content]) => ({ path, content }));
       if (!boxes || !d.bots.active(task.botId))
         throw new Stop("cancelled", `${d.bots.nameOf(task.botId)} was deleted.`);
       const made: Made = { messageId: replyOf(tasks, id), taintedBy: taintedBy() };
-      const only = files.length === 1 ? files[0] : undefined;
+      const only = all.length === 1 ? all[0] : undefined;
       const page = only?.path === BOX_PAGE ? only.content : null;
       if (page !== null) {
         if (page.length > MAX_BOX_HTML) return `${BOX_PAGE} is too long: at most 1 MB.`;
@@ -230,16 +252,16 @@ export async function runBoxTask(tasks: Tasks, id: number, signal: AbortSignal):
       if (!guest)
         return `Without the boxes guest a box is one file, ${BOX_PAGE}: put everything in it.`;
       const b = await builtBox(ctx, signal, {
-        tool: "box_claude",
+        tool: "box_t3",
         id: box?.id,
         title,
-        files,
+        files: all,
         hosts: box ? boxes.hosts(box.id) : [],
         before,
       });
       if (typeof b === "string") return b.replace(/^Not saved: /, "");
       const saved = box
-        ? boxes.save(box.id, title, b.page, made, files)
+        ? boxes.save(box.id, title, b.page, made, all)
         : boxes.create(
             {
               botId: task.botId,
@@ -247,7 +269,7 @@ export async function runBoxTask(tasks: Tasks, id: number, signal: AbortSignal):
               title,
               html: b.page,
               id: b.id,
-              files,
+              files: all,
             },
             made,
           );
@@ -256,13 +278,13 @@ export async function runBoxTask(tasks: Tasks, id: number, signal: AbortSignal):
 
     function shown(b: Box | null, note: string): Saved | string {
       const now = b ?? (box && boxes?.get(box.id));
-      if (!now) return `${dir} is empty.`;
+      if (!now) return "The box has no files.";
       const reply = replyOf(tasks, id);
       if (reply) boxes?.attach(reply, now.id);
       return { box: now, note, same: !b };
     }
   } catch (err) {
-    if (err instanceof ClaudeCodeError && err.printed) tasks.taint(id, "What Claude Code printed");
+    if (err instanceof T3Error && err.printed) tasks.taint(id, "What T3 Code's agent said");
     const ended =
       !signal.aborted &&
       (err instanceof PluginError || err instanceof NotChanged || err instanceof BoxError)
@@ -270,9 +292,6 @@ export async function runBoxTask(tasks: Tasks, id: number, signal: AbortSignal):
         : endOf(err, id, signal);
     tasks.finish(id, ended.status, ended.summary, ended.notify);
   } finally {
-    // Not on the task's signal: a cancelled task's folder goes too.
-    await agent.exec(`rm -rf -- '${dir}'`, 60).catch(() => {});
-    await claude?.forget(key);
     d.approvals.cancelForTask(id);
   }
 }

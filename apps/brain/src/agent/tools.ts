@@ -619,7 +619,7 @@ export async function builtBox(
   return { id, page: result.page, note };
 }
 
-/** Shared by the chat's box_create and Claude Code (box_claude). */
+/** Shared by the chat's box_create and T3 Code (box_t3). */
 export const BOX_PAGE_RULES =
   "A box is one self-contained HTML page, its CSS and JavaScript inline. It can't load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don't work; show messages and confirmations in the page. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app's colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku's answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes, and hatbox.feed(name) for what a feed you give it with box_feed last read.";
 
@@ -997,9 +997,9 @@ export const TOOLS = [
     },
   }),
   def({
-    name: "box_claude",
+    name: "box_t3",
     description:
-      "Have Claude Code make a new box, or change one of yours, as a background task: for a box with more than a little code, or a big change to one. It works on the box's files on its own for a few minutes, on the owner's Claude subscription, and saves them as the box's next version, shown under your reply. It can't see this conversation, so put everything the box needs in request. You hear when it's done: look at the box with box_look then, before you tell the owner. For a small change, use box_edit.",
+      "Have T3 Code make a new box, or change one of yours, as a background task: for a box with more than a little code, or a big change to one. An agent in the owner's T3 Code works on the box's files on its own for a few minutes, and they're saved as the box's next version, shown under your reply. It can't see this conversation, so put everything the box needs in request. You hear when it's done: look at the box with box_look then, before you tell the owner. For a small change, use box_edit.",
     schema: z.object({
       request: z
         .string()
@@ -1031,9 +1031,9 @@ export const TOOLS = [
         askedIn: ctx.answering,
         boxJob: { request, ...(box ? { box: box.id } : {}), ...(title ? { title } : {}) },
       });
-      if (!task) return `Not started: Claude Code is already working on box #${id}.`;
+      if (!task) return `Not started: T3 Code is already working on box #${id}.`;
       if (suspect) tasks.mark(task.id, "injection_suspected");
-      return `Started task #${task.id}: Claude Code ${box ? `changes box #${box.id}` : "makes the box"} in the background, and the owner sees its progress under this reply. Don't wait for it.`;
+      return `Started task #${task.id}: T3 Code ${box ? `changes box #${box.id}` : "makes the box"} in the background, and the owner sees its progress under this reply. Don't wait for it.`;
     },
   }),
   def({
@@ -1898,7 +1898,7 @@ export async function runTool(
 export const DESKTOP_TOOLS = ["run_desktop_task", "send_file"];
 
 /** Only the code bot gets these, when there is one. */
-export const BOX_CHANGE_TOOLS = ["box_create", "box_edit", "box_revert", "box_feed", "box_claude"];
+export const BOX_CHANGE_TOOLS = ["box_create", "box_edit", "box_revert", "box_feed", "box_t3"];
 
 /** Lookups that leave nothing behind; not history search, which incognito doesn't see. */
 export const INCOGNITO_TOOLS = [

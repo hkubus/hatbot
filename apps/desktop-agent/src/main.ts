@@ -58,8 +58,6 @@ const FEATURES = [
   "render",
   // inspect names icon buttons and says which controls toggle or search, for the click and Enter checks.
   "gates",
-  // Long commands in the shell, such as Claude Code, started, read as they go and stopped.
-  "jobs",
 ];
 
 // The display may still be starting (Xvnc restarting, say): wait for it rather than exit and be restarted.
@@ -86,8 +84,6 @@ let locked = false;
 const LOCKED = new Set([
   "POST /action",
   "POST /exec",
-  // Not reading or stopping one: a task cancelled meanwhile must still stop its job.
-  "POST /jobs",
   "GET /files",
   "PUT /files",
   "POST /browser",
@@ -197,8 +193,7 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array; input?: boolea
   async fetch(req, srv) {
     const url = new URL(req.url);
     if (!authorized(req)) return json({ error: "unauthorized" }, 401);
-    // A job's routes are one each, whatever its id.
-    const route = `${req.method} ${url.pathname.startsWith("/jobs/") ? "/jobs/:id" : url.pathname}`;
+    const route = `${req.method} ${url.pathname}`;
     if (locked && LOCKED.has(route))
       return json({ error: "The owner has control of the desktop." }, 423);
     try {
@@ -231,16 +226,6 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array; input?: boolea
         case "POST /exec":
           // Not serialised with input: the shell doesn't touch the screen.
           return relay(req, SHELL_SOCKET, "/exec", 11 * 60_000, "The desktop's shell");
-        case "POST /jobs":
-        case "GET /jobs/:id":
-        case "DELETE /jobs/:id":
-          return relay(
-            req,
-            SHELL_SOCKET,
-            `${url.pathname}${url.search}`,
-            30_000,
-            "The desktop's shell",
-          );
         case "POST /fetch": {
           // For watchers: the desktop's firewall lets it reach only the internet, so the brain fetches
           // pages from here instead of from the LAN. Not serialised: it doesn't touch the screen.

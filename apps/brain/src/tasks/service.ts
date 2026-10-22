@@ -16,7 +16,6 @@ import type { Archive } from "../archive";
 import type { Attachments } from "../attachments";
 import type { Bots } from "../bots";
 import type { Boxes } from "../boxes";
-import type { ClaudeCode } from "../claude-code";
 import type { Config } from "../config";
 import type { Db } from "../db";
 import type { Desktop } from "../desktop/service";
@@ -29,6 +28,7 @@ import type { Plugins } from "../plugins/registry";
 import type { Questions } from "../questions";
 import type { SettingsStore } from "../settings";
 import type { Spend } from "../spend";
+import type { T3Code } from "../t3";
 import type { Skills } from "../teach/skills";
 import { clip, head } from "../text";
 import { runAgentTask } from "./agent-run";
@@ -58,7 +58,7 @@ export type TasksDeps = {
   plugins: Plugins;
   skills: Skills;
   boxes?: Boxes;
-  claude?: ClaudeCode;
+  t3?: T3Code;
   /** Set once it exists; it needs the tasks too. */
   proposals?: Proposals;
   clock?: () => number;
@@ -438,7 +438,7 @@ export class Tasks {
     research?: boolean;
     /** The to-do item it works on, ticked off when it ends done; one task on an item at a time. */
     todo?: string;
-    /** A box for Claude Code to make or change (box_claude): Claude Code runs it, not the model. */
+    /** A box for T3 Code to make or change (box_t3): T3 Code runs it, not the model. */
     boxJob?: BoxJob;
   }): Task | null {
     const runKey = input.runKey ?? (input.todo ? `todo:${input.todo}` : undefined);
@@ -724,7 +724,7 @@ export class Tasks {
     const abort = new AbortController();
     this.running.set(id, abort);
     const task = this.get(id);
-    // A hand-off is answered in the other bot's chat; a box task is Claude Code's.
+    // A hand-off is answered in the other bot's chat; a box task is T3 Code's.
     const runner = task?.requestedBy
       ? runHandoff
       : this.boxJobOf(id)

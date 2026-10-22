@@ -14,7 +14,6 @@ import { Bots } from "./bots";
 import { BoxFeeds } from "./box-feeds";
 import { Boxes } from "./boxes";
 import { Checks, type ChecksDeps } from "./checks";
-import { ClaudeCode } from "./claude-code";
 import type { Config } from "./config";
 import type { Db } from "./db";
 import type { DesktopAgent } from "./desktop/client";
@@ -28,11 +27,11 @@ import { MemoryStore } from "./memory/store";
 import { Negotiations } from "./negotiate/service";
 import { LinkingNotifier, type Notifier } from "./notify";
 import { DeadManPing } from "./ping";
-import { claudePlugin } from "./plugins/claude";
 import { codePlugin } from "./plugins/code";
 import type { Plugin } from "./plugins/plugin";
 import { Plugins } from "./plugins/registry";
 import { selfPlugin } from "./plugins/self";
+import { t3Plugin } from "./plugins/t3";
 import { Proxmox } from "./proxmox";
 import { Questions } from "./questions";
 import { WeeklyReport } from "./report";
@@ -41,6 +40,7 @@ import { Secrets } from "./secrets";
 import { SettingsStore } from "./settings";
 import { Spend } from "./spend";
 import { Storage } from "./storage";
+import { T3Code } from "./t3";
 import { Tasks } from "./tasks/service";
 import { Teach } from "./teach/service";
 import { Skills } from "./teach/skills";
@@ -91,14 +91,27 @@ export async function createServices(o: Outside) {
   const storage = new Storage({ db, archive, clock });
   const desktop = new Desktop(agent, events, db);
   const files = { desktop: agent, attachments };
-  const claude = new ClaudeCode(agent);
+  const t3 = new T3Code();
   const own = selfPlugin({
     desktop: agent,
     dir: join(config.dataDir, "self"),
     schedules: () => schedules,
   });
   const plugins = new Plugins(
-    [...o.plugins, codePlugin(files), claudePlugin({ claude, desktop: agent }), own],
+    [
+      ...o.plugins,
+      codePlugin(files),
+      t3Plugin({
+        t3,
+        db,
+        publicUrl,
+        saveToken: async (token) => {
+          await plugins.setSecrets("t3", { T3_TOKEN: token });
+        },
+        fetch: o.fetch,
+      }),
+      own,
+    ],
     {
       db,
       events,
@@ -156,13 +169,12 @@ export async function createServices(o: Outside) {
     notifier,
     approvals,
     questions,
-    claude,
+    t3,
   };
   const tasks = new Tasks({ ...core });
-  // A task's Claude Code home in the sandbox, with its sessions, goes once the task has ended.
   events.on((e) => {
     if (e.type === "task.updated" && !ACTIVE_TASK_STATUSES.includes(e.task.status))
-      void claude.forget(`task-${e.task.id}`);
+      t3.forget(`task-${e.task.id}`);
   });
   const teach = new Teach({ ...core, lane: tasks.lane });
   const schedules = new Schedules(db, events, settings, tasks, clock);

@@ -17,54 +17,6 @@ export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
 
 say() { printf '\n-- %s\n' "$*"; }
 
-# Claude Code, which code tasks run in the shell (claude -p): its latest release, checked against the
-# checksum in its manifest, root-owned in /opt/claude-code/<version> so the shell can run it but not change
-# it, and linked from /usr/local/bin/claude. Updates (Settings → Update) run this script too, so they
-# bring the latest one. The version before stays, for a job still running it. Called with ||, so set -e
-# is off in here: every step checks for itself.
-claude_code() {
-  local base=https://downloads.claude.ai/claude-code-releases dir=/opt/claude-code platform v sum d keep=1
-  case $(uname -m) in
-    x86_64) platform=linux-x64 ;;
-    aarch64 | arm64) platform=linux-arm64 ;;
-    *)
-      echo "there's no Claude Code for $(uname -m)" >&2
-      return 1
-      ;;
-  esac
-  v=$(curl -fsSL -m 30 "$base/latest") || return 1
-  if [[ ! $v =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "downloads.claude.ai answered something that isn't a version" >&2
-    return 1
-  fi
-  if [[ ! -x $dir/$v/claude ]]; then
-    sum=$(curl -fsSL -m 30 "$base/$v/manifest.json" |
-      jq -r --arg p "$platform" '.platforms[$p].checksum // empty') || return 1
-    if [[ ! $sum =~ ^[0-9a-f]{64}$ ]]; then
-      echo "Claude Code $v's manifest has no checksum for $platform" >&2
-      return 1
-    fi
-    curl -fsSL -m 900 -o "$tmp/claude" "$base/$v/$platform/claude" || return 1
-    if [[ $(sha256sum "$tmp/claude" | cut -d ' ' -f 1) != "$sum" ]]; then
-      echo "Claude Code $v doesn't match its manifest's checksum" >&2
-      return 1
-    fi
-    # Under another name first: a download cut short must not pass for the version.
-    install -d -m 755 "$dir" "$dir/$v" || return 1
-    install -m 755 -o root -g root "$tmp/claude" "$dir/$v/claude.part" || return 1
-    mv -f "$dir/$v/claude.part" "$dir/$v/claude" || return 1
-    rm -f "$tmp/claude"
-  fi
-  ln -sfn "$dir/$v/claude" /usr/local/bin/claude || return 1
-  while read -r d; do
-    [[ $d == "$v" ]] && continue
-    ((keep-- > 0)) && continue
-    rm -rf "${dir:?}/$d"
-  done < <(find "$dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' |
-    grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -rV)
-  echo "Claude Code $v"
-}
-
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 if [[ $ARCHIVE == "$STATE"/* ]]; then
@@ -196,7 +148,6 @@ ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 IPAddressDeny=localhost $DESKTOP_IP
-# Room for Claude Code (it peaks at about 550 MB, its binary's pages included) and a repository's tests.
 # The desktop has 1.5 GB in all, so this is what fits beside Chromium; swap takes the rest.
 TasksMax=512
 MemoryHigh=1G
@@ -335,11 +286,6 @@ systemctl enable -q hatbot-desktop-agent hatbot-desktop-shell hatbot-render
 systemctl enable -q --now hatbot-chromium
 systemctl enable -q --now hatbot-desktop-agent-update.path
 systemctl restart hatbot-desktop-shell hatbot-render hatbot-desktop-agent
-
-# After the restart: during an update the brain waits for desktop-agent to come back, not for this
-# download (about 300 MB).
-say "Claude Code"
-claude_code || echo "warning: Claude Code wasn't installed or updated; the deploy carries on" >&2
 
 # shellcheck source=/dev/null
 token=$(. /etc/hatbot-desktop/secrets.env && printf '%s' "$DESKTOP_AGENT_TOKEN")

@@ -67,6 +67,10 @@ export async function testApp(
   pluginEnv: Record<string, string> = {},
 ) {
   let nowMs = Date.parse("2026-10-09T12:00:00Z");
+  /** What the brain's own requests elsewhere get, such as T3 Code's sign-in. */
+  const outside = {
+    fetch: async (_url: string, _init?: RequestInit) => new Response(null, { status: 404 }),
+  };
   const clock = () => nowMs;
   const dir = tempDir("hatbot-test-");
   const updateDir = join(dir, "update");
@@ -110,13 +114,11 @@ export async function testApp(
     ),
     // Argon2id at its lowest cost: the brain's own takes ~75 ms a hash, on every sign-in.
     passwordCost: { memoryCost: 8, timeCost: 1 },
-    fetch: async (url) =>
-      url === `${ORIGIN}/api/v1/health`
-        ? Response.json({ ok: true })
-        : new Response(null, { status: 404 }),
+    fetch: async (url, init) =>
+      url === `${ORIGIN}/api/v1/health` ? Response.json({ ok: true }) : outside.fetch(url, init),
   });
-  // Claude Code's runs are read as soon as they've printed.
-  s.claude.pollMs = 0;
+  // T3 Code's runs are looked at again at once.
+  s.t3.waitMs = 0;
   const seen: HatbotEvent[] = [];
   s.events.on((e) => seen.push(e));
   await s.plugins.startAll();
@@ -140,6 +142,7 @@ export async function testApp(
     taskModel,
     agent,
     hatbox,
+    outside,
     notifier: sent,
     thread: s.chats.hatbot(),
     updateDir,
