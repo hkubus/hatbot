@@ -31,7 +31,7 @@ import {
   setDraftFiles,
   useDraftFiles,
 } from "../drafts";
-import { plainText, time } from "../format";
+import { plainText, time, tokens } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LoadError } from "../load";
@@ -60,14 +60,8 @@ import {
   trustSchedule,
   useStore,
 } from "../store";
-import {
-  isActive,
-  PendingApproval,
-  PendingQuestion,
-  taskLine,
-  tokenText,
-  whenText,
-} from "../tasks";
+import { isActive, PendingApproval, PendingQuestion, taskLine, whenText } from "../tasks";
+import { Empty } from "../ui";
 import { splitWaiting } from "../waiting";
 
 const SEEN_AFTER_MS = 1500;
@@ -370,7 +364,7 @@ function ReplyMessage({
             {note && used && " · "}
             {used && (
               <span className="tnum">
-                {tokenText(used.tokens)} tokens, ${used.costUsd.toFixed(3)}
+                {tokens(used.tokens)} tokens, ${used.costUsd.toFixed(3)}
               </span>
             )}
           </div>
@@ -1018,11 +1012,11 @@ export function Chat({ id }: { id: number }) {
               <LoadError error={loadError} retry={() => setAttempt((n) => n + 1)} />
             )}
             {ready && !messages.length && (
-              <div className="empty">
+              <Empty>
                 {incognito
                   ? `${name} can't see earlier conversations here, and this one is deleted when you leave.`
                   : `Say hello to ${name}.`}
-              </div>
+              </Empty>
             )}
             {threadGroups(messages, episodes).map((g) => {
               if (g.fold === null || g.episodeId === null) return g.messages.map(row);

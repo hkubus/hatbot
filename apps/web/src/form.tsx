@@ -1,6 +1,4 @@
 import { useEffect, useState } from "react";
-import { LoadError } from "./load";
-import { BackHead } from "./ui";
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -56,29 +54,4 @@ export function useStoredForm<F>(seed: F | undefined) {
     fill: (f: F) => setState((s) => ({ ...s, form: f, base: f })),
     saved: (sent: F, result: F) => setState((s) => afterSave(s, sent, result)),
   };
-}
-
-export function NoForm({
-  error,
-  missing,
-  retry,
-  back,
-}: {
-  error: string;
-  missing: string;
-  retry: () => void;
-  back: { label: string; to: string };
-}) {
-  return (
-    <section className="view">
-      <div className="page narrow">
-        <BackHead to={back.to} label={back.label} />
-        {missing ? (
-          <div className="empty">{missing}</div>
-        ) : (
-          error && <LoadError error={error} retry={retry} />
-        )}
-      </div>
-    </section>
-  );
 }

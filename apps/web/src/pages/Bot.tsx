@@ -6,13 +6,14 @@ import {
   type Bot,
   HATBOT_ID,
 } from "@hatbot/shared";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useAction } from "../action";
-import { ApiError, api, errorText } from "../api";
+import { api } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
-import { NoForm, toggled, useStoredForm } from "../form";
+import { toggled, useStoredForm } from "../form";
 import { BotMark } from "../icons";
 import { Link } from "../link";
+import { PageLoad, useLoad } from "../load";
 import { navigate } from "../router";
 import { chatPath, createBot, deleteBot, loadBot, loadPlugins, saveBot, useStore } from "../store";
 import { Switch } from "../switch";
@@ -80,33 +81,31 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
   const [template, setTemplate] = useState("");
   const { busy, error, run } = useAction();
   const release = useLeaveGuard(dirty);
-  const [missing, setMissing] = useState(false);
-  const [loadError, setLoadError] = useState("");
-  const load = useCallback(() => {
-    setLoadError("");
-    loadBot(id).then(setFull, (err) =>
-      err instanceof ApiError && err.status === 404
-        ? setMissing(true)
-        : setLoadError(errorText(err)),
-    );
-  }, [id]);
+  const load = useLoad(
+    () =>
+      isNew
+        ? Promise.resolve(null)
+        : loadBot(id).then((b) => {
+            setFull(b);
+            return b;
+          }),
+    [isNew, id],
+  );
+  const missing = load.missing;
 
   const [defaults, setDefaults] = useState<AppSettings>();
   useEffect(() => {
     void loadPlugins().catch(() => {});
     api<AppSettings>("/settings").then(setDefaults, () => {});
   }, []);
-  useEffect(() => {
-    if (!isNew) load();
-  }, [isNew, load]);
 
   const back = chat ? chatPath(chat.id) : "/";
   if (!isNew && (missing || gone || !form))
     return (
-      <NoForm
-        error={loadError}
+      <PageLoad
+        error={load.error}
         missing={missing || gone ? "This bot doesn't exist." : ""}
-        retry={load}
+        retry={load.retry}
         back={{ label: "Chat", to: back }}
       />
     );
@@ -176,19 +175,13 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
           {isNew && (
             <div className="form-row">
               <span className="label">Template</span>
-              <select
+              <Select
                 className="field"
-                aria-label="Template"
+                label="Template"
                 value={template}
-                onChange={(e) => pickTemplate(e.target.value)}
-              >
-                <option value="">None</option>
-                {BOT_TEMPLATES.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
+                options={[["", "None"], ...BOT_TEMPLATES.map((t) => [t.id, t.name] as const)]}
+                onChange={pickTemplate}
+              />
             </div>
           )}
           <label>

@@ -1,8 +1,8 @@
 import type { CheckReport, CheckState, ChecksInfo } from "@hatbot/shared";
-import { useEffect, useState } from "react";
 import { useAction } from "../action";
-import { api, errorText } from "../api";
+import { api } from "../api";
 import { Icon } from "../icons";
+import { LoadError, useLoad } from "../load";
 import { BackHead, Group, Row } from "../ui";
 
 const CHIP: Record<CheckState, { label: string; className: string }> = {
@@ -13,15 +13,12 @@ const CHIP: Record<CheckState, { label: string; className: string }> = {
 };
 
 export function Checks() {
-  const [report, setReport] = useState<CheckReport | null>(null);
-  const { busy: running, error, setError, run } = useAction();
-
-  useEffect(() => {
-    api<ChecksInfo>("/checks").then(
-      (info) => setReport(info.report),
-      (err) => setError(errorText(err)),
-    );
-  }, [setError]);
+  const {
+    data: report,
+    setData: setReport,
+    ...load
+  } = useLoad(() => api<ChecksInfo>("/checks").then((info) => info.report), []);
+  const { busy: running, error, run } = useAction();
 
   const check = () => run(async () => setReport(await api<CheckReport>("/checks", { body: {} })));
 
@@ -36,6 +33,7 @@ export function Checks() {
             {running ? "Checking…" : report ? "Check again" : "Check everything"}
           </button>
         </BackHead>
+        {load.error && <LoadError error={load.error} retry={load.retry} />}
         {error && <div className="form-error">{error}</div>}
 
         {report && (

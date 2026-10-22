@@ -9,10 +9,29 @@ export const time = (iso: string) =>
 export const day = (date: string | Date) =>
   new Date(date).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 
+/** "Sat 11 Oct". */
+export const weekday = (date: string | Date) =>
+  new Date(date).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+
+/** A YYYY-MM-DD date, at noon local time: on its own it would be read as UTC. */
+export function dateOnly(date: string): Date {
+  const [y, m, d] = date.split("-").map(Number) as [number, number, number];
+  return new Date(y, m - 1, d, 12);
+}
+
 const today = (iso: string) => new Date(iso).toDateString() === new Date().toDateString();
 
-/** "08:05" today, else "11 Oct". */
-export const timeOrDay = (iso: string) => (today(iso) ? time(iso) : day(iso));
+/** "08:05" today, "11 Oct" this year, else "11 Oct 2025". The time a task started, in lists. */
+export const timeOrDay = (iso: string) =>
+  today(iso)
+    ? time(iso)
+    : new Date(iso).getFullYear() === new Date().getFullYear()
+      ? day(iso)
+      : new Date(iso).toLocaleDateString("en-GB", {
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+        });
 
 /** "11 Oct, 08:05". */
 export const dayTime = (iso: string) => `${day(iso)}, ${time(iso)}`;
@@ -29,6 +48,17 @@ export const stamp = (iso: string) =>
     hour: "2-digit",
     minute: "2-digit",
   });
+
+/** 950, 12.4k, 3.1M. */
+export const tokens = (n: number) =>
+  n < 1000
+    ? String(n)
+    : n < 1_000_000
+      ? `${(n / 1000).toFixed(1)}k`
+      : `${(n / 1_000_000).toFixed(1)}M`;
+
+/** A commit as git shows it short. */
+export const shortSha = (sha?: string | null) => sha?.slice(0, 7) ?? "";
 
 /** Worked out from the id so a new model has a name too. */
 export function modelName(id: string): string {

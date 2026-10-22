@@ -6,14 +6,13 @@ import type {
   SpendSummary,
 } from "@hatbot/shared";
 import { useEffect, useRef, useState } from "react";
-import { api, errorText } from "../api";
+import { api } from "../api";
 import { useWidth } from "../chart";
-import { day, modelName, time, usd } from "../format";
+import { dateOnly, day, modelName, time, tokens, usd, weekday } from "../format";
 import { Link } from "../link";
-import { LoadError } from "../load";
+import { PageLoad, useLoad } from "../load";
 import { spendAxis, withToday } from "../spend";
 import { useStore } from "../store";
-import { tokenText } from "../tasks";
 import { Seg } from "../ui";
 
 const PURPOSE_NAMES: Record<string, string> = {
@@ -33,9 +32,6 @@ const PURPOSE_NAMES: Record<string, string> = {
 };
 const purposeName = (p: string) =>
   PURPOSE_NAMES[p] ?? p.charAt(0).toUpperCase() + p.slice(1).replace(/-/g, " ");
-const parseDay = (d: string) => new Date(`${d}T12:00:00`);
-const fmtDay = (d: string) =>
-  parseDay(d).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 
 type Point = { key: string; usd: number; axis?: string; title: string; detail: string };
 
@@ -180,6 +176,61 @@ function SpendCard({ title, points, limit }: { title: string; points: Point[]; l
   );
 }
 
+/** With `of`, a meter of how much of it is used. */
+function Kpi({ label, usd: v, of }: { label: string; usd: number; of?: number }) {
+  return (
+    <div className="tile">
+      <div className="label">{label}</div>
+      <div className="value tnum">
+        {usd(v)}
+        {of !== undefined && (
+          <>
+            {" "}
+            <small>of {usd(of)}</small>
+          </>
+        )}
+      </div>
+      {of !== undefined && (
+        <div className={`meter ${v >= of ? "hot" : ""}`}>
+          <span style={{ width: `${Math.min(100, (v / of) * 100)}%` }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HBars({
+  title,
+  bars,
+}: {
+  title: string;
+  bars: { key: string; label: string; usd: number }[];
+}) {
+  const max = Math.max(0.0001, ...bars.map((b) => b.usd));
+  return (
+    <div className="chart-card">
+      <div className="chart-head">
+        <h3>{title}</h3>
+      </div>
+      {bars.length ? (
+        <div className="hbars">
+          {bars.map((b) => (
+            <div className="hbar" key={b.key}>
+              <span>{b.label}</span>
+              <div className="track">
+                <div className="fill" style={{ width: `${(b.usd / max) * 100}%` }} />
+              </div>
+              <span className="v">{usd(b.usd)}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="muted">Nothing spent yet.</div>
+      )}
+    </div>
+  );
+}
+
 /** The value, changing at most every `ms`: the latest one once the time is up. */
 function useThrottled<T>(value: T, ms: number): T {
   const [out, setOut] = useState(value);
@@ -198,12 +249,6 @@ function useThrottled<T>(value: T, ms: number): T {
 }
 
 export function Spend() {
-  const [summary, setSummary] = useState<SpendSummary | null>(null);
-  const [days, setDays] = useState<SpendDay[]>([]);
-  const [hours, setHours] = useState<SpendHour[]>([]);
-  const [models, setModels] = useState<SpendByModel[]>([]);
-  const [byBot, setByBot] = useState<{ botId: string; usd: number }[]>([]);
-  const [byPurpose, setByPurpose] = useState<SpendByPurpose[]>([]);
   const botNames = useStore((s) => s.bots);
   const live = useStore((s) => s.todayUsd);
   const settingsVersion = useStore((s) => s.settingsVersion);
@@ -212,8 +257,6 @@ export function Spend() {
   const billed = useThrottled(live, 10_000);
   const billedLately = useThrottled(live, 300_000);
   const [tick, setTick] = useState(0);
-  const [attempt, setAttempt] = useState(0);
-  const [loadError, setLoadError] = useState("");
 
   // The last minute and hour move on even when nothing new is billed.
   useEffect(() => {
@@ -221,66 +264,54 @@ export function Spend() {
     return () => clearInterval(t);
   }, []);
 
-  // A refresh that fails leaves what's showing; only the first load says so.
-  const failed = (err: unknown) => setLoadError(errorText(err));
-  const loadNow = () => {
-    api<SpendSummary>("/spend/summary").then(setSummary, failed);
-    api<SpendHour[]>("/spend/hourly?hours=24").then(setHours, failed);
-    api<SpendDay[]>("/spend/daily?days=1").then(
-      (today) => setDays((d) => withToday(d, today)),
-      failed,
-    );
-  };
+  const now = useLoad(
+    () =>
+      Promise.all([
+        api<SpendSummary>("/spend/summary"),
+        api<SpendHour[]>("/spend/hourly?hours=24"),
+        api<SpendDay[]>("/spend/daily?days=1"),
+      ]),
+    [billed, settingsVersion, tick],
+  );
+  const month = useLoad(
+    () =>
+      Promise.all([
+        api<SpendDay[]>("/spend/daily?days=30"),
+        api<SpendByModel[]>("/spend/by-model?days=30"),
+        api<{ botId: string; usd: number }[]>("/spend/by-bot?days=30"),
+        // A brain from before it had this answers 404; the card just stays away.
+        api<SpendByPurpose[]>("/spend/by-purpose?days=30").catch(() => []),
+      ]),
+    [billedLately],
+  );
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh when a request is billed or limits change
-  useEffect(() => {
-    setLoadError("");
-    loadNow();
-  }, [billed, attempt, settingsVersion]);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the 30-day totals, less often
-  useEffect(() => {
-    api<SpendDay[]>("/spend/daily?days=30").then(setDays, failed);
-    api<SpendByModel[]>("/spend/by-model?days=30").then(setModels, failed);
-    api<{ botId: string; usd: number }[]>("/spend/by-bot?days=30").then(setByBot, failed);
-    // A brain from before it had this answers 404; the card just stays away.
-    api<{ purpose: string; costUsd: number }[]>("/spend/by-purpose?days=30").then(
-      setByPurpose,
-      () => {},
-    );
-  }, [billedLately, attempt]);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: every 30 s
-  useEffect(() => {
-    if (tick) loadNow();
-  }, [tick]);
-
-  if (!summary)
+  if (!now.data)
     return (
-      <section className="view">
-        {loadError && (
-          <div className="page">
-            <LoadError error={loadError} retry={() => setAttempt((n) => n + 1)} />
-          </div>
-        )}
-      </section>
+      <PageLoad
+        wide
+        error={now.error}
+        retry={() => {
+          now.retry();
+          month.retry();
+        }}
+      />
     );
+  const [summary, hours, today] = now.data;
+  const [monthDays = [], models = [], byBot = [], byPurpose = []] = month.data ?? [];
+  const days = withToday(monthDays, today);
   const { todayUsd, monthUsd, limits } = summary;
-  const mMax = Math.max(0.0001, ...models.map((m) => m.usd));
-  const bMax = Math.max(0.0001, ...byBot.map((b) => b.usd));
-  const pMax = Math.max(0.0001, ...byPurpose.map((p) => p.costUsd));
   const hourPoints: Point[] = hours.map((h, i) => ({
     key: h.hour,
     usd: h.usd,
     axis: i % 6 === 0 ? time(h.hour) : undefined,
     title: `${time(h.hour)}–${time(new Date(Date.parse(h.hour) + 3600_000).toISOString())}`,
-    detail: `${usd(h.usd)} · ${tokenText(h.tokens)} tokens`,
+    detail: `${usd(h.usd)} · ${tokens(h.tokens)} tokens`,
   }));
   const dayPoints: Point[] = days.map((d, i) => ({
     key: d.date,
     usd: d.usd,
-    axis: i % 7 === 0 ? day(parseDay(d.date)) : undefined,
-    title: fmtDay(d.date),
+    axis: i % 7 === 0 ? day(dateOnly(d.date)) : undefined,
+    title: weekday(dateOnly(d.date)),
     detail: usd(d.usd),
   }));
 
@@ -294,94 +325,38 @@ export function Spend() {
           </Link>
         </div>
         <div className="kpis">
-          <div className="tile">
-            <div className="label">Today</div>
-            <div className="value tnum">
-              {usd(todayUsd)} <small>of {usd(limits.dailyUsd)}</small>
-            </div>
-            <div className={`meter ${todayUsd >= limits.dailyUsd ? "hot" : ""}`}>
-              <span style={{ width: `${Math.min(100, (todayUsd / limits.dailyUsd) * 100)}%` }} />
-            </div>
-          </div>
-          <div className="tile">
-            <div className="label">This month</div>
-            <div className="value tnum">
-              {usd(monthUsd)} <small>of {usd(limits.monthlyUsd)}</small>
-            </div>
-            <div className={`meter ${monthUsd >= limits.monthlyUsd ? "hot" : ""}`}>
-              <span style={{ width: `${Math.min(100, (monthUsd / limits.monthlyUsd) * 100)}%` }} />
-            </div>
-          </div>
-          <div className="tile">
-            <div className="label">Last hour</div>
-            <div className="value tnum">{usd(summary.lastHour.usd)}</div>
-          </div>
-          <div className="tile">
-            <div className="label">Last minute</div>
-            <div className="value tnum">{usd(summary.lastMinute.usd)}</div>
-          </div>
+          <Kpi label="Today" usd={todayUsd} of={limits.dailyUsd} />
+          <Kpi label="This month" usd={monthUsd} of={limits.monthlyUsd} />
+          <Kpi label="Last hour" usd={summary.lastHour.usd} />
+          <Kpi label="Last minute" usd={summary.lastMinute.usd} />
         </div>
 
         <SpendCard title="Last 24 hours" points={hourPoints} />
         <SpendCard title="Last 30 days" points={dayPoints} limit={limits.dailyUsd} />
 
-        <div className="chart-card">
-          <div className="chart-head">
-            <h3>By model, last 30 days</h3>
-          </div>
-          {models.length ? (
-            <div className="hbars">
-              {models.map((m) => (
-                <div className="hbar" key={m.model}>
-                  <span>{modelName(m.model)}</span>
-                  <div className="track">
-                    <div className="fill" style={{ width: `${(m.usd / mMax) * 100}%` }} />
-                  </div>
-                  <span className="v">{usd(m.usd)}</span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="muted">Nothing spent yet.</div>
-          )}
-        </div>
-
+        <HBars
+          title="By model, last 30 days"
+          bars={models.map((m) => ({ key: m.model, label: modelName(m.model), usd: m.usd }))}
+        />
         {byBot.length > 1 && (
-          <div className="chart-card">
-            <div className="chart-head">
-              <h3>By bot, last 30 days</h3>
-            </div>
-            <div className="hbars">
-              {byBot.map((b) => (
-                <div className="hbar" key={b.botId}>
-                  <span>{botNames[b.botId]?.name ?? b.botId}</span>
-                  <div className="track">
-                    <div className="fill" style={{ width: `${(b.usd / bMax) * 100}%` }} />
-                  </div>
-                  <span className="v">{usd(b.usd)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+          <HBars
+            title="By bot, last 30 days"
+            bars={byBot.map((b) => ({
+              key: b.botId,
+              label: botNames[b.botId]?.name ?? b.botId,
+              usd: b.usd,
+            }))}
+          />
         )}
-
         {byPurpose.length > 0 && (
-          <div className="chart-card">
-            <div className="chart-head">
-              <h3>By purpose, last 30 days</h3>
-            </div>
-            <div className="hbars">
-              {byPurpose.map((p) => (
-                <div className="hbar" key={p.purpose}>
-                  <span>{purposeName(p.purpose)}</span>
-                  <div className="track">
-                    <div className="fill" style={{ width: `${(p.costUsd / pMax) * 100}%` }} />
-                  </div>
-                  <span className="v">{usd(p.costUsd)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+          <HBars
+            title="By purpose, last 30 days"
+            bars={byPurpose.map((p) => ({
+              key: p.purpose,
+              label: purposeName(p.purpose),
+              usd: p.costUsd,
+            }))}
+          />
         )}
       </div>
     </section>

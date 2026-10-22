@@ -16,7 +16,7 @@ const OPTIONS = [
 
 export function SelfSettings() {
   return (
-    <Group>
+    <Group title="Schedule">
       <LinkRow to="/schedules" label="Code improvement suggestions" />
     </Group>
   );

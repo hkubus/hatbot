@@ -10,7 +10,7 @@ import {
 } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { errorText } from "./api";
-import { plainText, stamp } from "./format";
+import { plainText, stamp, timeOrDay, usd } from "./format";
 import { Icon } from "./icons";
 import { Link } from "./link";
 import {
@@ -37,13 +37,45 @@ const STATUS: Record<TaskStatus, [string, string]> = {
   cancelled: ["", "Cancelled"],
 };
 
-/** 950, 12.4k, 3.1M. */
-export const tokenText = (n: number) =>
-  n < 1000
-    ? String(n)
-    : n < 1_000_000
-      ? `${(n / 1000).toFixed(1)}k`
-      : `${(n / 1_000_000).toFixed(1)}M`;
+/** A list of tasks; `name` is what each is called, its title unless said otherwise. */
+export function TaskTable({
+  tasks,
+  name = (t) => t.title,
+}: {
+  tasks: TaskCard[];
+  name?: (t: TaskCard) => string;
+}) {
+  return (
+    <div className="table-wrap">
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Task</th>
+            <th>Status</th>
+            <th>Started</th>
+            <th className="num">Cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tasks.map((t) => (
+            <tr key={t.id} className="link-row">
+              <td className="wrap">
+                <Link className="task-title" to={`/tasks/${t.id}`}>
+                  {name(t)}
+                </Link>
+              </td>
+              <td>
+                <StatusChip status={t.status} />
+              </td>
+              <td className="muted">{timeOrDay(t.startedAt ?? t.createdAt)}</td>
+              <td className="num">{"costUsd" in t ? usd(t.costUsd as number) : ""}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 /** Plain coloured text; a chip only for what waits on you. */
 export function StatusChip({ status }: { status: TaskStatus }) {

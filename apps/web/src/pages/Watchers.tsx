@@ -1,5 +1,4 @@
 import {
-  describeEvery,
   HATBOT_ID,
   MIN_RENDER_WATCH_MINUTES,
   minWatchMinutes,
@@ -12,15 +11,25 @@ import {
 import { useEffect, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
-import { BotPicker, Runs, useListed } from "../automations";
+import {
+  BotPicker,
+  deleteText,
+  EverySelect,
+  OnPanel,
+  Runs,
+  TaintedNote,
+  useListed,
+} from "../automations";
 import { ask, useLeaveGuard } from "../confirm";
-import { NoForm, useStoredForm } from "../form";
+import { useStoredForm } from "../form";
 import { stamp } from "../format";
 import { Icon } from "../icons";
+import { LoadError, PageLoad, useLoad } from "../load";
 import { navigate } from "../router";
 import { loadPlugins, putWatcher, trustWatcher, useStore } from "../store";
 import { Switch } from "../switch";
-import { BackHead, SaveBar, Seg, Select } from "../ui";
+import type { Toast } from "../toast";
+import { BackHead, Panel, SaveBar, Seg, Select } from "../ui";
 
 const EVERY = [5, 15, 30, 60, 180, 360, 720, 1440];
 const WHEN: [WatchCondition["when"], string][] = [
@@ -150,7 +159,7 @@ export function trouble(w: Watcher): { short: string; long: string } | null {
   return { short: "Can't read", long: `Can't read it: ${w.lastError}${times}` };
 }
 
-export function WatcherEdit({ id }: { id: number | null }) {
+export function WatcherEdit({ id, toast }: { id: number | null; toast: Toast }) {
   const stored = useStore((s) => (id === null ? undefined : s.watchers[id]));
   const plugins = useStore((s) => s.plugins);
   // A change made elsewhere comes in while you haven't edited it.
@@ -162,9 +171,9 @@ export function WatcherEdit({ id }: { id: number | null }) {
   } = useStoredForm<Form>(id === null ? blank : stored ? formOf(stored) : undefined);
   const [preview, setPreview] = useState<WatchPreview | null>(null);
   const [previewError, setPreviewError] = useState("");
-  const [values, setValues] = useState<WatcherValue[]>([]);
   const { busy, error, setError, run } = useAction();
   const checking = useAction();
+  const acting = useAction();
   const listed = useListed("watchers", id, stored);
   // Deleted elsewhere: there's nothing left to save.
   const edited = dirty && stored !== null;
@@ -174,16 +183,16 @@ export function WatcherEdit({ id }: { id: number | null }) {
     void loadPlugins().catch(() => {});
   }, []);
   // Its history, again when a check finds something new.
-  const lastValue = stored?.lastValue;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refetched when the value changes
-  useEffect(() => {
-    if (id !== null)
-      api<WatcherValue[]>(`/watchers/${id}/values?limit=50`).then(setValues, () => setValues([]));
-  }, [id, lastValue]);
+  const history = useLoad(
+    () =>
+      id === null ? Promise.resolve([]) : api<WatcherValue[]>(`/watchers/${id}/values?limit=50`),
+    [id, stored?.lastValue],
+  );
+  const values = history.data ?? [];
 
   if (listed.missing || !form)
     return (
-      <NoForm
+      <PageLoad
         error={listed.error}
         missing={listed.missing ? "This watcher doesn't exist." : ""}
         retry={listed.load}
@@ -230,6 +239,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
       if (stored) {
         const w = await patchWatcher(stored.id, { ...fields, ...body });
         saved(form, formOf(w));
+        toast("Saved");
       } else {
         const w = await api<Watcher>("/watchers", { body: { ...fields, ...body } });
         putWatcher(w);
@@ -244,15 +254,8 @@ export function WatcherEdit({ id }: { id: number | null }) {
       if (stored) putWatcher(await api<Watcher>(`/watchers/${stored.id}/check`, { body: {} }));
     });
   const remove = async () => {
-    if (
-      !stored ||
-      !(await ask({
-        text: `Delete ${stored.name}? The tasks it started stay in Tasks.`,
-        ok: "Delete",
-      }))
-    )
-      return;
-    await run(async () => {
+    if (!stored || !(await ask({ text: deleteText(stored.name), ok: "Delete" }))) return;
+    await acting.run(async () => {
       await api(`/watchers/${stored.id}`, { method: "DELETE" });
       release();
       navigate("/schedules");
@@ -281,8 +284,23 @@ export function WatcherEdit({ id }: { id: number | null }) {
             </>
           )}
         </BackHead>
+        {(checking.error || acting.error) && (
+          <div className="form-error">{checking.error || acting.error}</div>
+        )}
         {stored?.lastError && (
           <div className={stored.errors ? "form-error" : "muted"}>{trouble(stored)?.long}</div>
+        )}
+        {stored && (
+          <OnPanel
+            label="Watcher"
+            on={stored.enabled}
+            onChange={(enabled) =>
+              acting.run(async () => {
+                await patchWatcher(stored.id, { enabled });
+                toast("Saved");
+              })
+            }
+          />
         )}
 
         <div className="panel form">
@@ -327,24 +345,22 @@ export function WatcherEdit({ id }: { id: number | null }) {
             </label>
           ) : (
             <>
-              <label>
+              <div className="form-row">
                 <span className="label">Tool</span>
-                <select
+                <Select
                   className="field"
+                  label="Tool"
                   value={form.tool}
-                  onChange={(e) => set({ tool: e.target.value })}
-                >
-                  <option value="">Choose…</option>
-                  {readTools.map((t) => (
-                    <option key={t.name} value={t.name}>
-                      {t.plugin}: {t.name}
-                    </option>
-                  ))}
-                  {form.tool && !readTools.some((t) => t.name === form.tool) && (
-                    <option value={form.tool}>{form.tool}</option>
-                  )}
-                </select>
-              </label>
+                  options={[
+                    ["", "Choose…"],
+                    ...readTools.map((t) => [t.name, `${t.plugin}: ${t.name}`] as const),
+                    ...(form.tool && !readTools.some((t) => t.name === form.tool)
+                      ? [[form.tool, form.tool] as const]
+                      : []),
+                  ]}
+                  onChange={(tool) => set({ tool })}
+                />
+              </div>
               <label>
                 <span className="label">Its input, as JSON</span>
                 <textarea
@@ -462,20 +478,12 @@ export function WatcherEdit({ id }: { id: number | null }) {
           )}
           <div className="form-row">
             <span className="label">Look</span>
-            <select
-              className="field"
-              aria-label="Look"
+            <EverySelect
+              label="Look"
               value={form.everyMinutes}
-              onChange={(e) => set({ everyMinutes: Number(e.target.value) })}
-            >
-              {(every.includes(form.everyMinutes) ? every : [...every, form.everyMinutes])
-                .sort((a, b) => a - b)
-                .map((m) => (
-                  <option key={m} value={m}>
-                    {describeEvery(m)}
-                  </option>
-                ))}
-            </select>
+              options={every}
+              onChange={(everyMinutes) => set({ everyMinutes })}
+            />
           </div>
           <div className="form-row">
             <span className="label">Turn off after it counts</span>
@@ -494,20 +502,11 @@ export function WatcherEdit({ id }: { id: number | null }) {
           </label>
           <BotPicker value={form.botId} onChange={(botId) => set({ botId })} />
           {stored?.tainted && (
-            <div className="hint">
-              Hatbot wrote this after reading untrusted content
-              {stored.taintedBy ? ` (${stored.taintedBy})` : ""}, so its tasks ask before changing
-              anything. Check what it does, then trust it.{" "}
-              <button
-                type="button"
-                className="btn sm"
-                onClick={() =>
-                  void trustWatcher(stored.id).catch((err) => setError(errorText(err)))
-                }
-              >
-                Trust
-              </button>
-            </div>
+            <TaintedNote
+              taintedBy={stored.taintedBy}
+              asks="tasks"
+              trust={() => void trustWatcher(stored.id).catch((err) => setError(errorText(err)))}
+            />
           )}
           {stored && (
             <dl className="kv">
@@ -522,16 +521,20 @@ export function WatcherEdit({ id }: { id: number | null }) {
             </dl>
           )}
           <SaveBar
-            error={error || checking.error}
+            error={error}
             disabled={busy || !changed || !ready}
             onSave={save}
             label={stored ? "Save" : "Create"}
           />
         </div>
 
+        {stored && history.error && !history.data && (
+          <Panel title="Values">
+            <LoadError error={history.error} retry={history.retry} />
+          </Panel>
+        )}
         {stored && values.length > 0 && (
-          <div className="panel">
-            <h3 className="section-title">Values</h3>
+          <Panel title="Values">
             <div className="table-wrap">
               <table className="table">
                 <tbody>
@@ -545,7 +548,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
                 </tbody>
               </table>
             </div>
-          </div>
+          </Panel>
         )}
         {stored?.prompt && <Runs filter={{ watcherId: stored.id }} />}
       </div>

@@ -3,9 +3,22 @@ import { Icon } from "./icons";
 import { Link } from "./link";
 import { navigate } from "./router";
 
-export function BackButton({ to, label }: { to: string; label: string }) {
+/** `historyBack` goes back where you came from, and to `to` only when there's nowhere to go back to. */
+export function BackButton({
+  to,
+  label,
+  historyBack,
+}: {
+  to: string;
+  label: string;
+  historyBack?: boolean;
+}) {
+  const back = () => {
+    if (historyBack && history.length > 1) history.back();
+    else navigate(to);
+  };
   return (
-    <button type="button" className="btn sm ghost back" onClick={() => navigate(to)}>
+    <button type="button" className="btn sm ghost back" onClick={back}>
       <Icon name="chevron" />
       {label}
     </button>
@@ -34,21 +47,30 @@ export function BackHead({
   );
 }
 
+/** `children` go on the left, e.g. an Add button. */
 export function SaveBar({
   error,
   disabled,
   onSave,
   label = "Save",
+  children,
 }: {
   error: string;
   disabled: boolean;
   onSave: () => void;
   label?: string;
+  children?: ReactNode;
 }) {
   return (
     <>
       {error && <div className="form-error">{error}</div>}
       <div className="form-actions">
+        {children !== undefined && (
+          <>
+            {children}
+            <span className="spacer" />
+          </>
+        )}
         <button type="button" className="btn accent" disabled={disabled} onClick={onSave}>
           {label}
         </button>
@@ -57,7 +79,12 @@ export function SaveBar({
   );
 }
 
-export function Group({
+export function Empty({ children }: { children: ReactNode }) {
+  return <div className="empty">{children}</div>;
+}
+
+/** Every panel's title looks the same. */
+export function Panel({
   title,
   className,
   children,
@@ -67,9 +94,36 @@ export function Group({
   children: ReactNode;
 }) {
   return (
+    <div className={className ? `panel ${className}` : "panel"}>
+      {title && <h3 className="section-title">{title}</h3>}
+      {children}
+    </div>
+  );
+}
+
+/** `empty` is said in a row of its own, for a list with nothing in it. */
+export function Group({
+  title,
+  className,
+  empty,
+  children,
+}: {
+  title?: ReactNode;
+  className?: string;
+  empty?: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
     <section className={className ? `group ${className}` : "group"}>
       {title && <h2>{title}</h2>}
-      <div className="group-box">{children}</div>
+      <div className="group-box">
+        {children}
+        {empty && (
+          <div className="row">
+            <span className="muted">{empty}</span>
+          </div>
+        )}
+      </div>
     </section>
   );
 }
@@ -94,23 +148,45 @@ export function Row({
   );
 }
 
+/**
+ * `snippet` stands instead of `label` for text that isn't a name. `trailing`, e.g. a switch, sits
+ * after the link in the same row.
+ */
 export function LinkRow({
   to,
   label,
+  snippet,
+  className,
+  trailing,
   children,
 }: {
   to: string;
-  label: ReactNode;
+  label?: ReactNode;
+  snippet?: ReactNode;
+  className?: string;
+  trailing?: ReactNode;
   children?: ReactNode;
 }) {
-  return (
-    <Link className="row row-link" to={to}>
-      <div className="txt">
-        <b>{label}</b>
-      </div>
+  const row = className ? `row ${className}` : "row";
+  const link = (
+    <Link className={trailing === undefined ? `${row} row-link` : "row-main"} to={to}>
+      {snippet === undefined ? (
+        <div className="txt">
+          <b>{label}</b>
+        </div>
+      ) : (
+        <div className="txt snippet">{snippet}</div>
+      )}
       {children}
       <Icon name="chevron" className="chev" />
     </Link>
+  );
+  if (trailing === undefined) return link;
+  return (
+    <div className={row}>
+      {link}
+      {trailing}
+    </div>
   );
 }
 
@@ -162,28 +238,34 @@ export function Seg<T extends string | number | boolean>({
   );
 }
 
-export function Select<T extends string>({
+export function Select<T extends string | number>({
   label,
   value,
   options,
   onChange,
   className,
+  disabled,
 }: {
   label: string;
   value: T;
   options: readonly (readonly [T, string])[];
   onChange: (value: T) => void;
   className?: string;
+  disabled?: boolean;
 }) {
   return (
     <select
       className={className}
       aria-label={label}
-      value={value}
-      onChange={(e) => onChange(e.target.value as T)}
+      value={String(value)}
+      disabled={disabled}
+      onChange={(e) => {
+        const picked = options.find(([v]) => String(v) === e.target.value);
+        if (picked) onChange(picked[0]);
+      }}
     >
       {options.map(([v, text]) => (
-        <option key={v} value={v}>
+        <option key={String(v)} value={String(v)}>
           {text}
         </option>
       ))}

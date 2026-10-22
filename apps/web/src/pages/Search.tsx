@@ -1,18 +1,14 @@
 import { MATCH_END, MATCH_START, type SearchResults } from "@hatbot/shared";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { api, errorText } from "../api";
-import { plainText } from "../format";
+import { plainText, timeOrDay } from "../format";
 import { Icon } from "../icons";
-import { Link } from "../link";
 import { navigate } from "../router";
 import { botName, chatName, chatPath, getState, useStore } from "../store";
 import { StatusChip } from "../tasks";
-import { Group, LinkRow } from "../ui";
+import { Empty, Group, LinkRow } from "../ui";
 
 const ROUTINE = { schedule: "/schedules", trigger: "/triggers", watcher: "/watchers" } as const;
-
-const day = (iso: string) =>
-  new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
 function Snippet({ text: markdown }: { text: string }) {
   const text = plainText(markdown);
@@ -87,26 +83,27 @@ export function Search({ query }: { query: string }) {
           />
         </div>
         {error && <div className="form-error">{error}</div>}
-        {nothing && <div className="empty">Nothing matches “{results.query}”.</div>}
+        {nothing && <Empty>Nothing matches “{results.query}”.</Empty>}
         {results && results.messages.length > 0 && (
           <Group title="Chats">
             {results.messages.map((m) => {
               const chat = conversations.find((c) => c.id === m.conversationId);
               const who = m.botId ? botName(getState(), m.botId) : "You";
               return (
-                <Link
+                <LinkRow
                   key={m.id}
-                  className="row row-link"
                   to={`${chatPath(m.conversationId)}?message=${m.id}`}
+                  snippet={
+                    <>
+                      <b>{who}:</b> <Snippet text={m.snippet} />
+                    </>
+                  }
                 >
-                  <div className="txt snippet">
-                    <b>{who}:</b> <Snippet text={m.snippet} />
-                  </div>
                   <span className="val">
                     {manyChats && chat ? `${chatName(getState(), chat)}, ` : ""}
-                    {day(m.createdAt)}
+                    {timeOrDay(m.createdAt)}
                   </span>
-                </Link>
+                </LinkRow>
               );
             })}
           </Group>
@@ -114,27 +111,23 @@ export function Search({ query }: { query: string }) {
         {results && results.tasks.length > 0 && (
           <Group title="Tasks">
             {results.tasks.map((t) => (
-              <Link key={t.id} className="row row-link" to={`/tasks/${t.id}`}>
-                <div className="txt">
-                  <b>{t.title}</b>
-                </div>
+              <LinkRow key={t.id} to={`/tasks/${t.id}`} label={t.title}>
                 <StatusChip status={t.status} />
-                <span className="val">{day(t.createdAt)}</span>
-              </Link>
+                <span className="val">{timeOrDay(t.startedAt ?? t.createdAt)}</span>
+              </LinkRow>
             ))}
           </Group>
         )}
         {results && results.memory.length > 0 && (
           <Group title="Memory">
             {results.memory.map((h) => (
-              <Link
+              <LinkRow
                 key={`${h.path}:${h.line}`}
-                className="row row-link"
                 to={`/memory?path=${encodeURIComponent(h.path)}`}
+                snippet={plainText(h.text)}
               >
-                <div className="txt snippet">{plainText(h.text)}</div>
                 <span className="val mono">{h.path}</span>
-              </Link>
+              </LinkRow>
             ))}
           </Group>
         )}

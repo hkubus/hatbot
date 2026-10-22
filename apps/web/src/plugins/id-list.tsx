@@ -2,13 +2,14 @@ import { useState } from "react";
 import { useAction } from "../action";
 import { errorText } from "../api";
 import { useLeaveGuard } from "../confirm";
-import { SaveBar } from "../ui";
+import { Panel, SaveBar } from "../ui";
 import type { PluginSettingsProps } from ".";
 
 export function IdListSettings<K extends string, T extends string | number>({
   config,
   save,
   field,
+  title,
   label,
   placeholder,
   parse,
@@ -16,6 +17,7 @@ export function IdListSettings<K extends string, T extends string | number>({
   invalid,
 }: PluginSettingsProps<Record<K, T[]>> & {
   field: K;
+  title: string;
   label: string;
   placeholder: string;
   parse: (text: string) => T;
@@ -41,7 +43,7 @@ export function IdListSettings<K extends string, T extends string | number>({
     );
 
   return (
-    <div className="panel form">
+    <Panel title={title} className="form">
       <label>
         <span className="label">{label}</span>
         <input
@@ -53,6 +55,6 @@ export function IdListSettings<K extends string, T extends string | number>({
       </label>
       {!ok && <div className="form-error">{invalid}</div>}
       <SaveBar error={error} disabled={busy || !ok || !changed} onSave={submit} />
-    </div>
+    </Panel>
   );
 }

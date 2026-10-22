@@ -2,10 +2,9 @@ import { type NegotiationMessage, OPEN_NEGOTIATION_STATUSES } from "@hatbot/shar
 import { useAction } from "../action";
 import { api } from "../api";
 import { ask } from "../confirm";
-import { NoForm } from "../form";
 import { day, timeOrDay } from "../format";
 import { Link } from "../link";
-import { useItem } from "../load";
+import { PageLoad, useItem } from "../load";
 import { money, NegotiationChip, negotiationText } from "../negotiations";
 import { botName, loadNegotiation, useStore } from "../store";
 import { ApprovalCard } from "../tasks";
@@ -26,7 +25,7 @@ export function NegotiationPage({ id }: { id: number }) {
 
   if (missing || !n || !messages)
     return (
-      <NoForm
+      <PageLoad
         error={loadError}
         missing={missing ? "This negotiation doesn't exist." : ""}
         retry={load}

@@ -6,7 +6,6 @@ import { ask } from "./confirm";
 import { plainText, time } from "./format";
 import { Held } from "./held";
 import { Icon } from "./icons";
-import { Link } from "./link";
 import { navigate } from "./router";
 import {
   discardTeach,
@@ -20,6 +19,7 @@ import {
   useStore,
 } from "./store";
 import { taskLine } from "./tasks";
+import { LinkRow } from "./ui";
 
 type Conn = "connecting" | "live" | "offline";
 
@@ -395,10 +395,7 @@ export function LiveView({ taskId }: { taskId?: number }) {
       {error && <div className="form-error">{error}</div>}
       {task && (
         <div className="panel">
-          <Link className="live-task" to={`/tasks/${task.id}`}>
-            <b>{task.title}</b>
-            <Icon name="chevron" />
-          </Link>
+          <LinkRow className="live-task" to={`/tasks/${task.id}`} label={task.title} />
           <div className="label">{taskLine(task, progress)}</div>
           {steps && steps.length > 0 && (
             <ul className="log">

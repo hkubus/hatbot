@@ -1,19 +1,16 @@
 import { localDay, type Task, type TodoItem, type TodoList } from "@hatbot/shared";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
+import { dateOnly, day } from "../format";
 import { Link } from "../link";
-import { LoadError } from "../load";
+import { PageLoad, useLoad } from "../load";
 import { useStore } from "../store";
 import { isActive } from "../tasks";
 import type { Toast } from "../toast";
 import { Group } from "../ui";
 
-/** "25 Oct", from a YYYY-MM-DD date in local time (a bare date would be read as UTC). */
-const dayOf = (date: string) => {
-  const [y, m, d] = date.split("-").map(Number) as [number, number, number];
-  return new Date(y, m - 1, d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-};
+const dayOf = (date: string) => day(dateOnly(date));
 
 function Due({ item }: { item: TodoItem }) {
   if (!item.due) return null;
@@ -26,9 +23,6 @@ function Due({ item }: { item: TodoItem }) {
 }
 
 export function TodoPage({ toast }: { toast: Toast }) {
-  const [list, setList] = useState<TodoList | null>(null);
-  const [loadError, setLoadError] = useState("");
-  const [attempt, setAttempt] = useState(0);
   const [item, setItem] = useState("");
   const [due, setDue] = useState("");
   const { busy, error, run } = useAction();
@@ -41,18 +35,11 @@ export function TodoPage({ toast }: { toast: Toast }) {
       .join(","),
   );
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: each is a reason to read it again
-  useEffect(() => {
-    let stale = false;
-    setLoadError("");
-    api<TodoList>("/todo").then(
-      (l) => !stale && setList(l),
-      (err) => !stale && setLoadError(errorText(err)),
-    );
-    return () => {
-      stale = true;
-    };
-  }, [version, working, attempt]);
+  const {
+    data: list,
+    setData: setList,
+    ...load
+  } = useLoad(() => api<TodoList>("/todo"), [version, working]);
 
   const add = (e: FormEvent) => {
     e.preventDefault();
@@ -67,7 +54,7 @@ export function TodoPage({ toast }: { toast: Toast }) {
       api<TodoList>("/todo/done", { body: { text: t.text, line: t.line } }).then(setList, (err) =>
         toast(errorText(err, "Couldn't tick it off."), "error"),
       ),
-    [toast],
+    [toast, setList],
   );
   const work = useCallback(
     (t: TodoItem) =>
@@ -78,14 +65,7 @@ export function TodoPage({ toast }: { toast: Toast }) {
     [toast],
   );
 
-  if (!list)
-    return (
-      <section className="view">
-        <div className="page narrow">
-          {loadError && <LoadError error={loadError} retry={() => setAttempt((n) => n + 1)} />}
-        </div>
-      </section>
-    );
+  if (!list) return <PageLoad error={load.error} retry={load.retry} />;
 
   const open = list.items.filter((t) => !t.done);
   const done = list.items.filter((t) => t.done).reverse();
@@ -114,7 +94,7 @@ export function TodoPage({ toast }: { toast: Toast }) {
         </form>
         {error && <div className="form-error">{error}</div>}
 
-        <Group>
+        <Group empty={!open.length && "Nothing to do. Add one here, or ask Hatbot in chat."}>
           {open.map((t) => (
             <div className="row" key={`${t.line} ${t.text}`}>
               <input
@@ -139,11 +119,6 @@ export function TodoPage({ toast }: { toast: Toast }) {
               )}
             </div>
           ))}
-          {!open.length && (
-            <div className="row">
-              <span className="muted">Nothing to do. Add one here, or ask Hatbot in the chat.</span>
-            </div>
-          )}
         </Group>
 
         {done.length > 0 && (

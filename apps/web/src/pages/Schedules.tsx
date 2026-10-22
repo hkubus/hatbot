@@ -6,16 +6,17 @@ import {
   type Trigger,
   type TriggerWithSecret,
 } from "@hatbot/shared";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
-import { BotPicker, Runs, useListed } from "../automations";
+import { BotPicker, deleteText, OnPanel, Runs, TaintedNote, useListed } from "../automations";
 import { ask, useLeaveGuard } from "../confirm";
 import { Copyable } from "../copy";
-import { NoForm, useStoredForm } from "../form";
+import { useStoredForm } from "../form";
 import { stamp } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
+import { LoadError, PageLoad, useLoad } from "../load";
 import { navigate } from "../router";
 import { atIso, cronOk, localInput } from "../schedule-form";
 import {
@@ -29,7 +30,7 @@ import {
 import { Switch } from "../switch";
 import { whenText } from "../tasks";
 import type { Toast } from "../toast";
-import { BackHead, Group, SaveBar, Seg } from "../ui";
+import { BackHead, Group, LinkRow, Panel, SaveBar, Seg } from "../ui";
 import { BuiltInGroup } from "./BuiltIn";
 import { HeartbeatPage } from "./Heartbeat";
 import { patchWatcher, trouble, WatcherEdit } from "./Watchers";
@@ -55,28 +56,25 @@ export function SchedulesView({
   const m = /^\/(schedules|triggers|watchers)\/(new|\d+)$/.exec(path);
   if (!m) return <List toast={toast} />;
   const id = m[2] === "new" ? null : Number(m[2]);
-  if (m[1] === "watchers") return <WatcherEdit key={path} id={id} />;
+  if (m[1] === "watchers") return <WatcherEdit key={path} id={id} toast={toast} />;
   return m[1] === "schedules" ? (
-    <ScheduleEdit key={path} id={id} />
+    <ScheduleEdit key={path} id={id} toast={toast} />
   ) : (
-    <TriggerEdit key={path} id={id} kind={params.get("kind") === "kuma" ? "kuma" : "webhook"} />
+    <TriggerEdit
+      key={path}
+      id={id}
+      kind={params.get("kind") === "kuma" ? "kuma" : "webhook"}
+      toast={toast}
+    />
   );
 }
 
 function List({ toast }: { toast: Toast }) {
-  const [ids, setIds] = useState<{
-    schedules: number[];
-    triggers: number[];
-    watchers: number[];
-  } | null>(null);
+  const { data: ids, ...load } = useLoad(() => loadSchedules(), []);
   const [error, setError] = useState("");
   const schedules = useStore((s) => s.schedules);
   const triggers = useStore((s) => s.triggers);
   const watchers = useStore((s) => s.watchers);
-
-  useEffect(() => {
-    loadSchedules().then(setIds, (err) => setError(errorText(err)));
-  }, []);
 
   return (
     <section className="view">
@@ -96,6 +94,7 @@ function List({ toast }: { toast: Toast }) {
             Trigger
           </Link>
         </div>
+        {load.error && <LoadError error={load.error} retry={load.retry} />}
         {error && <div className="form-error">{error}</div>}
         <BuiltInGroup toast={toast} />
         {ids && (
@@ -106,7 +105,7 @@ function List({ toast }: { toast: Toast }) {
               path="/schedules"
               value={(s) => (s.enabled ? whenText(s) : "Off")}
               toggle={(s, enabled) => saveSchedule(s.id, { enabled })}
-              empty="None yet. Ask Hatbot in chat, or add one here."
+              empty="None yet. Add one here, or ask Hatbot in chat."
               onError={setError}
             />
             <RoutineGroup
@@ -118,7 +117,7 @@ function List({ toast }: { toast: Toast }) {
               }
               bad={(w) => !!w.lastError && w.errors > 0}
               toggle={(w, enabled) => patchWatcher(w.id, { enabled })}
-              empty="None yet. Ask Hatbot to tell you when something changes."
+              empty="None yet. Add one here, or ask Hatbot in chat."
               onError={setError}
             />
             <RoutineGroup
@@ -131,7 +130,7 @@ function List({ toast }: { toast: Toast }) {
                   putTrigger,
                 )
               }
-              empty="None yet."
+              empty="None yet. Add one here."
               onError={setError}
             />
           </>
@@ -165,27 +164,22 @@ function RoutineGroup<T extends { id: number; name: string; enabled: boolean }>(
     .filter((x): x is T => Boolean(x))
     .sort((a, b) => a.name.localeCompare(b.name));
   return (
-    <Group title={title}>
+    <Group title={title} empty={!shown.length && empty}>
       {shown.map((x) => (
-        <div className="row" key={x.id}>
-          <Link className="row-main" to={`${path}/${x.id}`}>
-            <div className="txt">
-              <b>{x.name}</b>
-            </div>
-            <span className={bad?.(x) ? "val bad" : "val"}>{value(x)}</span>
-            <Icon name="chevron" className="chev" />
-          </Link>
-          <Switch
-            on={x.enabled}
-            onChange={(enabled) => toggle(x, enabled).catch((err) => onError(errorText(err)))}
-          />
-        </div>
+        <LinkRow
+          key={x.id}
+          to={`${path}/${x.id}`}
+          label={x.name}
+          trailing={
+            <Switch
+              on={x.enabled}
+              onChange={(enabled) => toggle(x, enabled).catch((err) => onError(errorText(err)))}
+            />
+          }
+        >
+          <span className={bad?.(x) ? "val bad" : "val"}>{value(x)}</span>
+        </LinkRow>
       ))}
-      {!shown.length && (
-        <div className="row">
-          <span className="muted">{empty}</span>
-        </div>
-      )}
     </Group>
   );
 }
@@ -208,7 +202,7 @@ const scheduleForm = (s: Schedule): typeof NEW_SCHEDULE => ({
   botId: s.botId,
 });
 
-function ScheduleEdit({ id }: { id: number | null }) {
+function ScheduleEdit({ id, toast }: { id: number | null; toast: Toast }) {
   const stored = useStore((s) => (id === null ? undefined : s.schedules[id]));
   // A run of it that hasn't ended: Run now waits for it.
   const running = useStore(
@@ -219,6 +213,8 @@ function ScheduleEdit({ id }: { id: number | null }) {
     id === null ? NEW_SCHEDULE : stored ? scheduleForm(stored) : undefined,
   );
   const { busy, error, setError, run } = useAction();
+  const acting = useAction();
+  const starting = useAction();
   const listed = useListed("schedules", id, stored);
   // Deleted elsewhere: there's nothing left to save.
   const edited = dirty && stored !== null;
@@ -226,7 +222,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
 
   if (listed.missing || !form)
     return (
-      <NoForm
+      <PageLoad
         error={listed.error}
         missing={listed.missing ? "This schedule doesn't exist." : ""}
         retry={listed.load}
@@ -251,6 +247,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
           ...(!stored.enabled && !stored.cron ? { enabled: true } : {}),
         });
         saved(form, scheduleForm(s));
+        toast("Saved");
       } else {
         const s = await api<Schedule>("/schedules", {
           body: { name: form.name, prompt: form.prompt, botId: form.botId, ...when },
@@ -261,12 +258,8 @@ function ScheduleEdit({ id }: { id: number | null }) {
       }
     });
   const remove = async () => {
-    if (
-      !stored ||
-      !(await ask({ text: `Delete ${stored.name}? Its past runs stay in Tasks.`, ok: "Delete" }))
-    )
-      return;
-    await run(async () => {
+    if (!stored || !(await ask({ text: deleteText(stored.name), ok: "Delete" }))) return;
+    await acting.run(async () => {
       await api(`/schedules/${stored.id}`, { method: "DELETE" });
       release();
       navigate("/schedules");
@@ -274,7 +267,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
   };
   // Runs what's saved: off while you have unsaved changes, and while a run is going.
   const runNow = () =>
-    run(async () => {
+    starting.run(async () => {
       if (!stored) return;
       const task = await api<Task>(`/schedules/${stored.id}/run`, { body: {} });
       navigate(`/tasks/${task.id}`);
@@ -289,12 +282,12 @@ function ScheduleEdit({ id }: { id: number | null }) {
               <button
                 type="button"
                 className="btn sm"
-                disabled={edited || running || busy}
+                disabled={edited || running || starting.busy}
                 title={edited ? "Save your changes first" : running ? "It's running" : undefined}
                 onClick={runNow}
               >
                 <Icon name="play" />
-                Run now
+                {starting.busy ? "Starting…" : "Run now"}
               </button>
               <button type="button" className="btn sm danger-text" onClick={remove}>
                 Delete
@@ -302,6 +295,21 @@ function ScheduleEdit({ id }: { id: number | null }) {
             </>
           )}
         </BackHead>
+        {(starting.error || acting.error) && (
+          <div className="form-error">{starting.error || acting.error}</div>
+        )}
+        {stored && (
+          <OnPanel
+            label="Schedule"
+            on={stored.enabled}
+            onChange={(enabled) =>
+              acting.run(async () => {
+                await saveSchedule(stored.id, { enabled });
+                toast("Saved");
+              })
+            }
+          />
+        )}
 
         <div className="panel form">
           <label>
@@ -366,20 +374,11 @@ function ScheduleEdit({ id }: { id: number | null }) {
           </label>
           <BotPicker value={form.botId} onChange={(botId) => set({ botId })} />
           {stored?.tainted && (
-            <div className="hint">
-              Hatbot wrote this after reading untrusted content
-              {stored.taintedBy ? ` (${stored.taintedBy})` : ""}, so its runs ask before changing
-              anything. Check what it does, then trust it.{" "}
-              <button
-                type="button"
-                className="btn sm"
-                onClick={() =>
-                  void trustSchedule(stored.id).catch((err) => setError(errorText(err)))
-                }
-              >
-                Trust
-              </button>
-            </div>
+            <TaintedNote
+              taintedBy={stored.taintedBy}
+              asks="runs"
+              trust={() => void trustSchedule(stored.id).catch((err) => setError(errorText(err)))}
+            />
           )}
           {stored && (
             <dl className="kv">
@@ -410,8 +409,7 @@ function Setup({ t }: { t: TriggerWithSecret }) {
     </div>
   );
   return (
-    <div className="panel attn-panel">
-      <h3 className="section-title">Set it up</h3>
+    <Panel title="Set it up" className="attn-panel">
       {t.kind === "kuma" ? (
         <>
           <p className="muted">
@@ -434,7 +432,7 @@ function Setup({ t }: { t: TriggerWithSecret }) {
           {field("Secret", t.secret)}
         </>
       )}
-    </div>
+    </Panel>
   );
 }
 
@@ -447,7 +445,15 @@ const triggerForm = (t: Trigger) => ({
   botId: t.botId,
 });
 
-function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["kind"] }) {
+function TriggerEdit({
+  id,
+  kind: newKind,
+  toast,
+}: {
+  id: number | null;
+  kind: Trigger["kind"];
+  toast: Toast;
+}) {
   const stored = useStore((s) => (id === null ? undefined : s.triggers[id]));
   const [start] = useState(() => ({
     name: newKind === "kuma" ? "Uptime Kuma" : "",
@@ -467,6 +473,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
     return t;
   });
   const { busy, error, run } = useAction();
+  const acting = useAction();
   const listed = useListed("triggers", id, stored);
   // Deleted elsewhere: there's nothing left to save.
   const edited = dirty && stored !== null;
@@ -474,7 +481,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
 
   if (listed.missing || !form)
     return (
-      <NoForm
+      <PageLoad
         error={listed.error}
         missing={listed.missing ? "This trigger doesn't exist." : ""}
         retry={listed.load}
@@ -499,6 +506,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
         });
         putTrigger(t);
         saved(form, triggerForm(t));
+        toast("Saved");
       } else {
         const t = await api<TriggerWithSecret>("/triggers", { body: form });
         putTrigger(t);
@@ -516,17 +524,13 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
       }))
     )
       return;
-    await run(async () =>
+    await acting.run(async () =>
       setSecret(await api<TriggerWithSecret>(`/triggers/${stored.id}/secret`, { body: {} })),
     );
   };
   const remove = async () => {
-    if (
-      !stored ||
-      !(await ask({ text: `Delete ${stored.name}? Its past runs stay in Tasks.`, ok: "Delete" }))
-    )
-      return;
-    await run(async () => {
+    if (!stored || !(await ask({ text: deleteText(stored.name), ok: "Delete" }))) return;
+    await acting.run(async () => {
       await api(`/triggers/${stored.id}`, { method: "DELETE" });
       release();
       navigate("/schedules");
@@ -549,8 +553,26 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
             </>
           )}
         </BackHead>
+        {acting.error && <div className="form-error">{acting.error}</div>}
 
         {secret && <Setup t={secret} />}
+        {stored && (
+          <OnPanel
+            label="Trigger"
+            on={stored.enabled}
+            onChange={(enabled) =>
+              acting.run(async () => {
+                putTrigger(
+                  await api<Trigger>(`/triggers/${stored.id}`, {
+                    method: "PATCH",
+                    body: { enabled },
+                  }),
+                );
+                toast("Saved");
+              })
+            }
+          />
+        )}
 
         <div className="panel form">
           {!stored && (

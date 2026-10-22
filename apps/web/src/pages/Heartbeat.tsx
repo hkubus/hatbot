@@ -1,16 +1,16 @@
-import { type AppSettings, describeEvery, type HeartbeatInfo } from "@hatbot/shared";
-import { Fragment, useEffect, useRef, useState } from "react";
+import type { AppSettings, HeartbeatInfo } from "@hatbot/shared";
+import { Fragment, useRef, useState } from "react";
 import { useAction } from "../action";
-import { api, errorText } from "../api";
-import { BotPicker } from "../automations";
+import { api } from "../api";
+import { BotPicker, EverySelect } from "../automations";
 import { useLeaveGuard } from "../confirm";
 import { plainText, stamp } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
-import { LoadError } from "../load";
+import { LoadError, PageLoad, useLoad } from "../load";
 import { useStore } from "../store";
 import { Switch } from "../switch";
-import { BackHead, SaveBar } from "../ui";
+import { BackHead, Panel, SaveBar } from "../ui";
 
 const EVERY = [5, 10, 15, 30, 60, 120, 360];
 const DID: Record<string, string> = {
@@ -20,60 +20,51 @@ const DID: Record<string, string> = {
 };
 
 export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [info, setInfo] = useState<HeartbeatInfo | null>(null);
   const [instructions, setInstructions] = useState("");
   const { busy, error, run } = useAction();
-  const [loadError, setLoadError] = useState("");
-  const [attempt, setAttempt] = useState(0);
+  const looking = useAction();
+  const setting = useAction();
   const settingsVersion = useStore((s) => s.settingsVersion);
   const heartbeatVersion = useStore((s) => s.heartbeatVersion);
   // The instructions as saved: a change from elsewhere replaces them only if you haven't edited them.
   const savedInstructions = useRef<string | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refetch when settings change anywhere
-  useEffect(() => {
-    setLoadError("");
-    api<AppSettings>("/settings").then(
-      (s) => {
-        setSettings(s);
+  const {
+    data: settings,
+    setData: setSettings,
+    ...load
+  } = useLoad(
+    () =>
+      api<AppSettings>("/settings").then((s) => {
         const was = savedInstructions.current;
         setInstructions((cur) => (was === null || cur === was ? s.heartbeat.instructions : cur));
         savedInstructions.current = s.heartbeat.instructions;
-      },
-      (err) => setLoadError(errorText(err)),
-    );
-  }, [settingsVersion, attempt]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refetch after each heartbeat
-  useEffect(() => {
-    api<HeartbeatInfo>("/heartbeat").then(setInfo, () => {});
-  }, [heartbeatVersion]);
+        return s;
+      }),
+    [settingsVersion],
+  );
+  const looked = useLoad(() => api<HeartbeatInfo>("/heartbeat"), [heartbeatVersion]);
+  const info = looked.data;
   const unsaved = settings !== null && instructions !== settings.heartbeat.instructions;
   useLeaveGuard(unsaved);
 
-  if (!settings)
-    return (
-      <section className="view">
-        {loadError && (
-          <div className="page narrow">
-            <LoadError error={loadError} retry={() => setAttempt((n) => n + 1)} />
-          </div>
-        )}
-      </section>
-    );
+  if (!settings) return <PageLoad error={load.error} retry={load.retry} />;
   const hb = settings.heartbeat;
-  const save = (patch: Partial<AppSettings["heartbeat"]>) =>
-    run(async () => {
-      const s = await api<AppSettings>("/settings", {
-        method: "PUT",
-        body: { heartbeat: { ...hb, ...patch } },
-      });
-      setSettings(s);
-      savedInstructions.current = s.heartbeat.instructions;
-      toast("Saved");
+  const put = (patch: Partial<AppSettings["heartbeat"]>) => async () => {
+    const s = await api<AppSettings>("/settings", {
+      method: "PUT",
+      body: { heartbeat: { ...hb, ...patch } },
     });
+    setSettings(s);
+    savedInstructions.current = s.heartbeat.instructions;
+    toast("Saved");
+  };
+  // The switch and choices save as you set them; what you want done waits for Save.
+  const set = (patch: Partial<AppSettings["heartbeat"]>) => setting.run(put(patch));
   const lookNow = () =>
-    run(async () => setInfo(await api<HeartbeatInfo>("/heartbeat/run", { body: {} })));
+    looking.run(async () =>
+      looked.setData(await api<HeartbeatInfo>("/heartbeat/run", { body: {} })),
+    );
 
   return (
     <section className="view">
@@ -83,37 +74,33 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
           <button
             type="button"
             className="btn sm"
-            disabled={busy || unsaved}
+            disabled={looking.busy || unsaved}
             title={unsaved ? "Save your changes first" : undefined}
             onClick={lookNow}
           >
             <Icon name="play" />
-            Check now
+            {looking.busy ? "Checking…" : "Check now"}
           </button>
         </BackHead>
+        {looking.error && <div className="form-error">{looking.error}</div>}
         <div className="panel form">
           <div className="form-row">
             <span className="label">Heartbeat</span>
-            <Switch on={hb.enabled} onChange={(enabled) => save({ enabled })} />
+            <Switch on={hb.enabled} onChange={(enabled) => set({ enabled })} />
           </div>
           <div className="form-row">
             <span className="label">Check every</span>
-            <select
-              className="field"
-              aria-label="Check every"
+            <EverySelect
+              label="Check every"
               value={hb.everyMinutes}
-              onChange={(e) => save({ everyMinutes: Number(e.target.value) })}
-            >
-              {(EVERY.includes(hb.everyMinutes) ? EVERY : [...EVERY, hb.everyMinutes])
-                .sort((a, b) => a - b)
-                .map((m) => (
-                  <option key={m} value={m}>
-                    {describeEvery(m)}
-                  </option>
-                ))}
-            </select>
+              options={EVERY}
+              onChange={(everyMinutes) => set({ everyMinutes })}
+            />
           </div>
-          <BotPicker value={hb.botId} onChange={(botId) => save({ botId })} />
+          <BotPicker value={hb.botId} onChange={(botId) => set({ botId })} />
+          {setting.error && <div className="form-error">{setting.error}</div>}
+        </div>
+        <div className="panel form">
           <label>
             <span className="label">What you want done</span>
             <textarea
@@ -126,13 +113,13 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
           </label>
           <SaveBar
             error={error}
-            disabled={!instructions.trim() || instructions === hb.instructions}
-            onSave={() => save({ instructions })}
+            disabled={busy || !instructions.trim() || instructions === hb.instructions}
+            onSave={() => run(put({ instructions }))}
           />
         </div>
+        {looked.error && !info && <LoadError error={looked.error} retry={looked.retry} />}
         {info?.at && (
-          <div className="panel">
-            <h3 className="section-title">Last look</h3>
+          <Panel title="Last look">
             <dl className="kv">
               <dt>When</dt>
               <dd>{stamp(info.at)}</dd>
@@ -158,11 +145,10 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
                 </>
               )}
             </dl>
-          </div>
+          </Panel>
         )}
         {info?.recent && info.recent.length > 0 && (
-          <div className="panel">
-            <h3 className="section-title">Recent finds</h3>
+          <Panel title="Recent finds">
             <dl className="kv">
               {info.recent.map((r) => (
                 <Fragment key={r.at}>
@@ -176,7 +162,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
                 </Fragment>
               ))}
             </dl>
-          </div>
+          </Panel>
         )}
       </div>
     </section>

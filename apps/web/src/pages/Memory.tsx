@@ -4,14 +4,15 @@ import { useAction } from "../action";
 import { ApiError, api, errorText } from "../api";
 import { ask, askText, useLeaveGuard } from "../confirm";
 import { lineDiff } from "../diff";
-import { dayTime } from "../format";
+import { dayTime, shortSha } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
-import { LoadError } from "../load";
+import { LoadError, useLoad } from "../load";
 import { type Doc, isDirty, loading, newDoc, readDoc, readFailed } from "../memory-doc";
 import { navigate } from "../router";
 import { bumpMemory, loadProposals, putProposal, startTeach, useStore } from "../store";
 import type { Toast } from "../toast";
+import { Empty } from "../ui";
 
 type Selection =
   | { kind: "file"; path: string }
@@ -97,7 +98,6 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
         .sort((a, b) => b.id - a.id),
     [teach],
   );
-  const [files, setFiles] = useState<MemoryFile[]>([]);
   const [sel, setSel] = useState<Selection>({ kind: "file", path: open || "INDEX.md" });
   const [doc, setDoc] = useState<Doc | null>(null);
   /** Someone else saved the file while you were editing it. */
@@ -115,9 +115,10 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
   // Leaving with unsaved changes asks first: the sidebar, Back, closing the tab.
   useLeaveGuard(dirty);
 
+  const tree = useLoad(() => api<MemoryFile[]>("/memory/tree"), [version]);
+  const files = tree.data ?? [];
   // biome-ignore lint/correctness/useExhaustiveDependencies: reload when memory changes anywhere
   useEffect(() => {
-    api<MemoryFile[]>("/memory/tree").then(setFiles, () => {});
     api<SkillStatus[]>("/skills").then(setSkills, () => setSkills([]));
   }, [version]);
   useEffect(() => {
@@ -239,7 +240,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
       setConflict(null);
       // Its new version comes with the refresh that follows.
       setDoc((d) => (d?.path === path ? { ...d, saved: content, state: "ready" } : d));
-      toast(r.sha ? `Saved (${r.sha.slice(0, 7)})` : "No changes", r.sha ? "done" : "info");
+      toast(r.sha ? `Saved (${shortSha(r.sha)})` : "No changes", r.sha ? "done" : "info");
       bumpMemory();
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
@@ -250,8 +251,15 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
     }
   };
   // Your edit goes; the file as it's now saved comes in.
-  const takeTheirs = () => {
-    if (!conflict) return;
+  const takeTheirs = async () => {
+    if (
+      !conflict ||
+      !(await ask({
+        text: "Discard your edits and use the version saved meanwhile?",
+        ok: "Use theirs",
+      }))
+    )
+      return;
     setDoc(
       (d) =>
         d && {
@@ -306,7 +314,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
     try {
       const r = await api<{ sha: string | null }>(`/memory/revert/${c.sha}`, { body: {} });
       toast(
-        r.sha ? `Reverted. New commit ${r.sha.slice(0, 7)}` : "Nothing to revert",
+        r.sha ? `Reverted. New commit ${shortSha(r.sha)}` : "Nothing to revert",
         r.sha ? "done" : "info",
       );
       bumpMemory();
@@ -371,6 +379,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
     <section className="view">
       <div className="memory">
         <div className="tree">
+          {tree.error && !tree.data && <LoadError error={tree.error} retry={tree.retry} />}
           {groups.map(([dir, fs]) => (
             <div key={dir || "/"} style={{ display: "contents" }}>
               {dir && (
@@ -465,7 +474,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
               </>
             ) : sel.kind === "diff" ? (
               <>
-                <span className="path">{sel.commit.sha.slice(0, 7)}</span>
+                <span className="path">{shortSha(sel.commit.sha)}</span>
                 <span title={sel.commit.author}>{sel.commit.message}</span>
                 <span className="spacer" />
                 <button
@@ -517,7 +526,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
               <span>Changed while you were editing.</span>
               <span className="spacer" />
               <button type="button" className="btn sm" onClick={takeTheirs}>
-                Reload
+                Use theirs
               </button>
               <button type="button" className="btn sm" onClick={() => save(conflict.sha)}>
                 Overwrite
@@ -548,7 +557,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
             proposal ? (
               <ProposalView p={proposal} />
             ) : (
-              <div className="empty">This proposal is gone.</div>
+              <Empty>This proposal doesn't exist.</Empty>
             )
           ) : sel.kind === "diff" ? (
             <div className="editor-pad">
@@ -586,7 +595,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
             )}
             {shownHist?.log.map((c) => (
               <div className="commit" key={c.sha}>
-                <span className="sha">{c.sha.slice(0, 7)}</span>
+                <span className="sha">{shortSha(c.sha)}</span>
                 <div title={`${c.author}: ${c.files.join(", ")}`}>
                   {c.message} <span className="muted">{dayTime(c.date)}</span>
                 </div>

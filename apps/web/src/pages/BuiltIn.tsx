@@ -5,7 +5,7 @@ import { CodeSuggestions } from "../plugins/self";
 import { loadPlugins, useStore } from "../store";
 import { Switch } from "../switch";
 import type { Toast } from "../toast";
-import { Group, LinkRow, Row } from "../ui";
+import { Group, LinkRow, Row, Select } from "../ui";
 
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -20,13 +20,12 @@ function HourSelect({
   onChange: (hour: number) => void;
 }) {
   return (
-    <select aria-label={label} value={value} onChange={(e) => onChange(Number(e.target.value))}>
-      {HOURS.map((h) => (
-        <option key={h} value={h}>
-          {String(h).padStart(2, "0")}:00
-        </option>
-      ))}
-    </select>
+    <Select
+      label={label}
+      value={value}
+      options={HOURS.map((h) => [h, `${String(h).padStart(2, "0")}:00`] as const)}
+      onChange={onChange}
+    />
   );
 }
 
@@ -75,19 +74,12 @@ export function BuiltInGroup({ toast }: { toast: Toast }) {
       </Row>
       {report.enabled && (
         <Row label="Sent on">
-          <select
-            aria-label="Sent on"
+          <Select
+            label="Sent on"
             value={report.weekday}
-            onChange={(e) =>
-              update({ weeklyReport: { ...report, weekday: Number(e.target.value) } })
-            }
-          >
-            {WEEKDAYS.map((d, i) => (
-              <option key={d} value={i}>
-                {d}
-              </option>
-            ))}
-          </select>
+            options={WEEKDAYS.map((d, i) => [i, d] as const)}
+            onChange={(weekday) => update({ weeklyReport: { ...report, weekday } })}
+          />
           <HourSelect
             label="Sent at"
             value={report.hour}

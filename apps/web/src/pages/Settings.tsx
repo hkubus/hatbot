@@ -6,13 +6,13 @@ import type {
   Limits,
   UpdateInfo,
 } from "@hatbot/shared";
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { ask } from "../confirm";
 import { clearDrafts } from "../drafts";
-import { stamp } from "../format";
-import { LoadError } from "../load";
+import { shortSha, stamp } from "../format";
+import { LoadError, PageLoad, useLoad } from "../load";
 import { navigate } from "../router";
 import { parseLimit, parseName, SavedRow } from "../saved-row";
 import { setPaused, useStore } from "../store";
@@ -99,26 +99,22 @@ const MORE_LIMITS = [
 ] as const;
 
 function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => void }) {
-  const [settings, setSettings] = useState<AppSettings | null>(null);
   const [rules, setRules] = useState<number | null>(null);
   const theme = useTheme();
   const paused = useStore((s) => s.paused);
-  const [loadError, setLoadError] = useState("");
   // Saved elsewhere (the app, another tab): shown here too.
   const settingsVersion = useStore((s) => s.settingsVersion);
+  const {
+    data: settings,
+    setData: setSettings,
+    ...load
+  } = useLoad(() => api<AppSettings>("/settings"), [settingsVersion]);
   useEffect(() => {
-    if (settingsVersion) api<AppSettings>("/settings").then(setSettings, () => {});
-  }, [settingsVersion]);
-
-  const load = useCallback(() => {
-    setLoadError("");
-    api<AppSettings>("/settings").then(setSettings, (err) => setLoadError(errorText(err)));
     api<ApprovalRule[]>("/approval-rules").then(
       (r) => setRules(r.length),
       () => {},
     );
   }, []);
-  useEffect(load, [load]);
   // Spend's Limits opens /settings#spending.
   const loaded = settings !== null;
   useEffect(() => {
@@ -147,16 +143,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
     onSignOut();
   };
 
-  if (!settings)
-    return (
-      <section className="view">
-        {loadError && (
-          <div className="page">
-            <LoadError error={loadError} retry={load} />
-          </div>
-        )}
-      </section>
-    );
+  if (!settings) return <PageLoad wide error={load.error} retry={load.retry} />;
 
   const limitRow = ([key, label]: (typeof LIMITS | typeof MORE_LIMITS)[number]) => {
     // Nothing kept for alerts is allowed, and boxes asking nothing; a limit of nothing isn't.
@@ -322,9 +309,6 @@ const ANSWER: Record<Approval["status"], string> = {
   cancelled: "Replaced",
 };
 
-const when = (iso: string) =>
-  new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
-
 function TestApprovalRow() {
   const [approval, setApproval] = useState<Approval | null>(null);
   const live = useStore((s) => (approval ? s.approvals[approval.id] : undefined));
@@ -355,7 +339,7 @@ function TestApprovalRow() {
             <span>
               {ANSWER[shown.status]}
               {shown.decidedVia === "ntfy" ? " from the notification" : ""}
-              {shown.decidedAt ? `, ${when(shown.decidedAt)}` : ""}
+              {shown.decidedAt ? `, ${stamp(shown.decidedAt)}` : ""}
             </span>
           )
         )
@@ -369,12 +353,13 @@ function TestApprovalRow() {
 }
 
 function AllowedPage() {
-  const [rules, setRules] = useState<ApprovalRule[] | null>(null);
+  const {
+    data: rules,
+    setData: setRules,
+    ...load
+  } = useLoad(() => api<ApprovalRule[]>("/approval-rules"), []);
   const [error, setError] = useState("");
   const bots = useStore((s) => s.bots);
-  useEffect(() => {
-    api<ApprovalRule[]>("/approval-rules").then(setRules, (err) => setError(errorText(err)));
-  }, []);
   const remove = async (r: ApprovalRule) => {
     setError("");
     try {
@@ -388,9 +373,10 @@ function AllowedPage() {
     <section className="view">
       <div className="page narrow">
         <BackHead to="/settings" label="Settings" />
+        {load.error && <LoadError error={load.error} retry={load.retry} />}
         {error && <div className="form-error">{error}</div>}
         {rules && (
-          <Group>
+          <Group empty={!rules.length && "None yet. Approve something with Always to add it."}>
             {rules.map((r) => (
               <Row key={r.id} label={<span className="mono">{r.summary}</span>}>
                 {r.botId !== "hatbot" && <span className="val">{bots[r.botId]?.name}</span>}
@@ -399,11 +385,6 @@ function AllowedPage() {
                 </button>
               </Row>
             ))}
-            {!rules.length && (
-              <div className="row">
-                <span className="muted">None yet. Approve something with Always to add it.</span>
-              </div>
-            )}
           </Group>
         )}
       </div>
@@ -460,18 +441,13 @@ function RollbackRow({ toast }: { toast: Toast }) {
       <Row label="Roll back desktop" sub={error && <span className="form-error">{error}</span>}>
         {snaps.length > 0 ? (
           <>
-            <select
-              aria-label="Snapshot"
+            <Select
+              label="Snapshot"
               value={picked}
-              onChange={(e) => setPicked(e.target.value)}
+              options={snaps.map((s) => [s.name, snapLabel(s)] as const)}
+              onChange={setPicked}
               disabled={busy}
-            >
-              {snaps.map((s) => (
-                <option key={s.name} value={s.name}>
-                  {snapLabel(s)}
-                </option>
-              ))}
-            </select>
+            />
             <button type="button" className="btn sm danger-text" disabled={busy} onClick={rollback}>
               {busy ? "Rolling back…" : "Roll back"}
             </button>
@@ -483,8 +459,6 @@ function RollbackRow({ toast }: { toast: Toast }) {
     </Disclosure>
   );
 }
-
-const short = (sha?: string) => sha?.slice(0, 7) ?? "";
 
 function UpdateRow({ toast }: { toast: Toast }) {
   const [info, setInfo] = useState<UpdateInfo | null>(null);
@@ -520,7 +494,7 @@ function UpdateRow({ toast }: { toast: Toast }) {
           else if (s.state === "current") toast("Already up to date", "info");
           else if (next.current?.sha !== w.sha) {
             // The brain restarted on new code; load the new web app too.
-            toast(`Updated to ${short(next.current?.sha)}`);
+            toast(`Updated to ${shortSha(next.current?.sha)}`);
             setTimeout(() => location.reload(), 1200);
           }
         }
@@ -564,7 +538,7 @@ function UpdateRow({ toast }: { toast: Toast }) {
       </div>
       <span className="val">
         {info.current?.sha
-          ? `${short(info.current.sha)}${info.current.subject ? ` ${info.current.subject}` : ""}`
+          ? `${shortSha(info.current.sha)}${info.current.subject ? ` ${info.current.subject}` : ""}`
           : "Unknown"}
       </span>
       {info.source ? (
