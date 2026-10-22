@@ -253,6 +253,17 @@ svg.i {
 [hidden] {
   display: none !important;
 }
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: var(--disabled);
+  cursor: default;
+}
 
 .app {
   --sb-w: 232px;
@@ -318,11 +329,18 @@ svg.i {
 .nav-item svg.i {
   color: var(--accent);
 }
-.nav-item:hover {
-  background: rgba(127, 127, 127, 0.1);
+.nav-item:hover,
+.tree button:hover,
+.bot-pick:hover {
+  background: var(--fill-hover);
 }
-.nav-item.active {
-  background: rgba(127, 127, 127, 0.18);
+.nav-item.active,
+.tree button.active,
+.bot-pick.on {
+  background: var(--fill-active);
+}
+.nav-item.active,
+.tree button.active {
   font-weight: var(--fw-medium);
 }
 .nav-item .count {
@@ -410,7 +428,7 @@ svg.i {
   font-size: var(--fs-md);
 }
 .tb-btn:hover {
-  background: rgba(127, 127, 127, 0.13);
+  background: var(--fill-hover);
 }
 .tb-btn.on {
   color: var(--accent-text);
@@ -438,19 +456,13 @@ svg.i {
     background var(--dur-fast),
     transform var(--dur-fast) var(--spring);
 }
-.btn:hover {
-  background: var(--surface-2);
-}
-.btn:active {
+.btn:active:not(:disabled) {
   transform: scale(0.97);
 }
 .btn.primary {
   background: var(--attention);
   color: #fff;
   border-color: transparent;
-}
-.btn.primary:hover {
-  background: var(--attention-hover);
 }
 .btn.accent {
   background: var(--accent);
@@ -477,16 +489,23 @@ svg.i {
   border-color: transparent;
   color: var(--text-2);
 }
-.btn.ghost:hover {
-  background: rgba(127, 127, 127, 0.12);
-}
 /* After .ghost, so a ghost Delete is red too. */
 .btn.danger-text {
   color: var(--danger-text);
 }
-.btn:disabled {
-  opacity: 0.45;
-  cursor: default;
+/* After the fills, which reset the background: the plain, ghost and tinted ones darken by the same
+   step, the solid ones go to their darker shade. */
+.btn:hover:not(:disabled) {
+  background-image: linear-gradient(var(--fill-hover), var(--fill-hover));
+}
+.btn.primary:hover:not(:disabled) {
+  background: var(--attention-hover);
+}
+.btn.accent:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+.btn.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 85%, #000);
 }
 .btn.sm {
   height: var(--h-sm);
@@ -638,7 +657,7 @@ svg.i {
   line-height: 1.45;
 }
 .fold:hover {
-  background: rgba(127, 127, 127, 0.08);
+  background: var(--fill-hover);
 }
 .fold svg.i {
   flex: none;
@@ -842,7 +861,7 @@ svg.i {
 }
 /* The box itself shows where the focus is: its field has no outline of its own. */
 .composer:has(textarea:focus-visible) {
-  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
 .composer textarea {
@@ -868,7 +887,7 @@ svg.i {
   color: var(--muted);
 }
 .composer .icon-btn:hover {
-  background: var(--surface-2);
+  background: var(--fill-hover);
 }
 .composer .send {
   background: var(--accent);
@@ -878,9 +897,9 @@ svg.i {
   background: var(--accent-strong);
 }
 .composer .send:disabled {
+  opacity: 1;
   background: var(--surface-3);
   color: var(--soft);
-  cursor: default;
 }
 .paused-banner {
   max-width: var(--measure);
@@ -1017,13 +1036,6 @@ svg.i {
   background: var(--surface-2);
   padding: 0 var(--sp);
   font-size: var(--fs-md);
-  outline: none;
-}
-.row input:focus,
-.row select:focus,
-.field:focus {
-  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
-  outline-offset: 1px;
 }
 .row input[type="number"] {
   width: 84px;
@@ -1067,13 +1079,6 @@ svg.i {
   width: 14px;
   height: 14px;
   color: var(--muted);
-}
-.tree button:hover {
-  background: rgba(127, 127, 127, 0.1);
-}
-.tree button.active {
-  background: rgba(127, 127, 127, 0.18);
-  font-weight: var(--fw-medium);
 }
 .editor {
   display: flex;
@@ -1123,9 +1128,6 @@ svg.i {
   margin: 0 0 var(--sp-2xs);
   font-size: var(--fs-md);
   font-weight: var(--fw-semibold);
-}
-.commit:hover {
-  background: rgba(127, 127, 127, 0.07);
 }
 .commit .sha {
   font-family: var(--mono);
@@ -1337,11 +1339,6 @@ svg.i {
   border-radius: var(--r-md);
   border: 0.5px solid var(--line-strong);
   background: var(--surface-2);
-  outline: none;
-}
-.otp input:focus {
-  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
-  outline-offset: 1px;
 }
 .login-card .btn {
   height: var(--h-lg);
@@ -1669,12 +1666,6 @@ a.btn:hover {
   display: block;
   overflow: visible;
   touch-action: pan-y;
-  outline: none;
-}
-.reply-chart svg:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: var(--r-xs);
 }
 .reply-chart .grid {
   stroke: var(--grid);
@@ -1770,12 +1761,7 @@ a.btn:hover {
   font-family: var(--font);
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
-  outline: none;
   border-radius: var(--r-xs);
-}
-.reply-chart .chart-matrix table:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
 }
 .reply-chart .chart-matrix th,
 .reply-chart .chart-matrix td {
@@ -2324,9 +2310,6 @@ button.text-link:hover {
   accent-color: var(--accent);
   cursor: pointer;
 }
-.todo-box:disabled {
-  cursor: default;
-}
 .form-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2411,7 +2394,7 @@ pre.payload {
   padding: 0;
 }
 .msg-act:hover {
-  background: var(--surface-3);
+  background: var(--fill-hover);
   color: var(--text);
 }
 .msg-act svg.i {
@@ -2599,7 +2582,7 @@ pre.payload {
   white-space: nowrap;
 }
 .file:hover {
-  background: var(--surface-2);
+  background: var(--fill-hover);
 }
 .file svg {
   flex: none;
@@ -2649,7 +2632,7 @@ pre.payload {
   white-space: nowrap;
 }
 .composer-file.loading {
-  opacity: 0.55;
+  opacity: var(--disabled);
   overflow: hidden;
 }
 .composer-file .upload-bar {
@@ -2712,8 +2695,9 @@ pre.payload {
   text-align: left;
   cursor: pointer;
 }
+.command-menu button:hover,
 .command-menu button.on {
-  background: var(--surface-2);
+  background: var(--fill-hover);
 }
 .command-menu .name {
   font-weight: var(--fw-medium);
@@ -2769,12 +2753,8 @@ pre.payload {
   background: transparent;
   color: var(--text-2);
 }
-.bot-pick:hover {
-  background: rgba(127, 127, 127, 0.1);
-}
 .bot-pick.on {
   border-color: var(--line-strong);
-  background: rgba(127, 127, 127, 0.14);
 }
 .bot-pick .swatch {
   width: 18px;
@@ -3018,7 +2998,7 @@ dialog.ask .field {
 }
 .table tbody tr.link-row:hover,
 .row-link:hover {
-  background: rgba(127, 127, 127, 0.06);
+  background: var(--fill-hover);
 }
 .row-link:hover,
 a.row-main:hover {
@@ -3036,7 +3016,7 @@ a.row-main:hover {
   outline: none;
 }
 .link-row:has(a:focus-visible) {
-  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline: 2px solid var(--focus);
   outline-offset: -2px;
 }
 
