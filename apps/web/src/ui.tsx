@@ -166,28 +166,34 @@ export function Seg<T extends string | number | boolean>({
   );
 }
 
-export function Select<T extends string>({
+export function Select<T extends string | number>({
   label,
   value,
   options,
   onChange,
   className,
+  disabled,
 }: {
   label: string;
   value: T;
   options: readonly (readonly [T, string])[];
   onChange: (value: T) => void;
   className?: string;
+  disabled?: boolean;
 }) {
   return (
     <select
       className={className}
       aria-label={label}
-      value={value}
-      onChange={(e) => onChange(e.target.value as T)}
+      value={String(value)}
+      disabled={disabled}
+      onChange={(e) => {
+        const picked = options.find(([v]) => String(v) === e.target.value);
+        if (picked) onChange(picked[0]);
+      }}
     >
       {options.map(([v, text]) => (
-        <option key={v} value={v}>
+        <option key={String(v)} value={String(v)}>
           {text}
         </option>
       ))}

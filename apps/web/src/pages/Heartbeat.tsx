@@ -1,10 +1,11 @@
-import { type AppSettings, describeEvery, type HeartbeatInfo } from "@hatbot/shared";
+import type { AppSettings, HeartbeatInfo } from "@hatbot/shared";
 import { Fragment, useRef, useState } from "react";
 import { useAction } from "../action";
 import { api } from "../api";
-import { BotPicker } from "../automations";
+import { BotPicker, EverySelect } from "../automations";
 import { useLeaveGuard } from "../confirm";
 import { plainText, stamp } from "../format";
+import { Icon } from "../icons";
 import { LoadError, PageLoad, useLoad } from "../load";
 import { navigate } from "../router";
 import { useStore } from "../store";
@@ -21,6 +22,8 @@ const DID: Record<string, string> = {
 export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
   const [instructions, setInstructions] = useState("");
   const { busy, error, run } = useAction();
+  const looking = useAction();
+  const setting = useAction();
   const settingsVersion = useStore((s) => s.settingsVersion);
   const heartbeatVersion = useStore((s) => s.heartbeatVersion);
   // The instructions as saved: a change from elsewhere replaces them only if you haven't edited them.
@@ -47,18 +50,21 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
 
   if (!settings) return <PageLoad error={load.error} retry={load.retry} />;
   const hb = settings.heartbeat;
-  const save = (patch: Partial<AppSettings["heartbeat"]>) =>
-    run(async () => {
-      const s = await api<AppSettings>("/settings", {
-        method: "PUT",
-        body: { heartbeat: { ...hb, ...patch } },
-      });
-      setSettings(s);
-      savedInstructions.current = s.heartbeat.instructions;
-      toast("Saved");
+  const put = (patch: Partial<AppSettings["heartbeat"]>) => async () => {
+    const s = await api<AppSettings>("/settings", {
+      method: "PUT",
+      body: { heartbeat: { ...hb, ...patch } },
     });
+    setSettings(s);
+    savedInstructions.current = s.heartbeat.instructions;
+    toast("Saved");
+  };
+  // The switch and choices save as you set them; what you want done waits for Save.
+  const set = (patch: Partial<AppSettings["heartbeat"]>) => setting.run(put(patch));
   const lookNow = () =>
-    run(async () => looked.setData(await api<HeartbeatInfo>("/heartbeat/run", { body: {} })));
+    looking.run(async () =>
+      looked.setData(await api<HeartbeatInfo>("/heartbeat/run", { body: {} })),
+    );
 
   return (
     <section className="view">
@@ -68,36 +74,33 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
           <button
             type="button"
             className="btn sm"
-            disabled={busy || unsaved}
+            disabled={looking.busy || unsaved}
             title={unsaved ? "Save your changes first" : undefined}
             onClick={lookNow}
           >
-            Check now
+            <Icon name="play" />
+            {looking.busy ? "Checking…" : "Check now"}
           </button>
         </BackHead>
+        {looking.error && <div className="form-error">{looking.error}</div>}
         <div className="panel form">
           <div className="form-row">
             <span className="label">Heartbeat</span>
-            <Switch on={hb.enabled} onChange={(enabled) => save({ enabled })} />
+            <Switch on={hb.enabled} onChange={(enabled) => set({ enabled })} />
           </div>
           <div className="form-row">
             <span className="label">Check every</span>
-            <select
-              className="field"
-              aria-label="Check every"
+            <EverySelect
+              label="Check every"
               value={hb.everyMinutes}
-              onChange={(e) => save({ everyMinutes: Number(e.target.value) })}
-            >
-              {(EVERY.includes(hb.everyMinutes) ? EVERY : [...EVERY, hb.everyMinutes])
-                .sort((a, b) => a - b)
-                .map((m) => (
-                  <option key={m} value={m}>
-                    {describeEvery(m)}
-                  </option>
-                ))}
-            </select>
+              options={EVERY}
+              onChange={(everyMinutes) => set({ everyMinutes })}
+            />
           </div>
-          <BotPicker value={hb.botId} onChange={(botId) => save({ botId })} />
+          <BotPicker value={hb.botId} onChange={(botId) => set({ botId })} />
+          {setting.error && <div className="form-error">{setting.error}</div>}
+        </div>
+        <div className="panel form">
           <label>
             <span className="label">What you want done</span>
             <textarea
@@ -110,8 +113,8 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
           </label>
           <SaveBar
             error={error}
-            disabled={!instructions.trim() || instructions === hb.instructions}
-            onSave={() => save({ instructions })}
+            disabled={busy || !instructions.trim() || instructions === hb.instructions}
+            onSave={() => run(put({ instructions }))}
           />
         </div>
         {looked.error && !info && <LoadError error={looked.error} retry={looked.retry} />}

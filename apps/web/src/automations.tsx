@@ -1,11 +1,13 @@
-import { HATBOT_ID } from "@hatbot/shared";
+import { describeEvery, HATBOT_ID } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
 import { errorText } from "./api";
 import { plainText, stamp } from "./format";
 import { Link } from "./link";
 import { LoadError, useLoad } from "./load";
 import { loadSchedules, loadTasks, useStore } from "./store";
+import { Switch } from "./switch";
 import { StatusChip } from "./tasks";
+import { Select } from "./ui";
 
 /** `missing` once everything has loaded without it, or it's been deleted. */
 export function useListed(
@@ -104,3 +106,70 @@ export function BotPicker({ value, onChange }: { value: string; onChange: (id: s
     </div>
   );
 }
+
+/** Every so many minutes, with the one set kept as a choice even when it's no longer offered. */
+export function EverySelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  options: number[];
+  onChange: (minutes: number) => void;
+}) {
+  const all = (options.includes(value) ? options : [...options, value]).sort((a, b) => a - b);
+  return (
+    <Select
+      className="field"
+      label={label}
+      value={value}
+      options={all.map((m) => [m, describeEvery(m)] as const)}
+      onChange={onChange}
+    />
+  );
+}
+
+export function TaintedNote({
+  taintedBy,
+  asks,
+  trust,
+}: {
+  taintedBy: string | null | undefined;
+  /** What asks before changing anything: "runs" or "tasks". */
+  asks: string;
+  trust: () => void;
+}) {
+  return (
+    <div className="hint">
+      Hatbot wrote this after reading untrusted content{taintedBy ? ` (${taintedBy})` : ""}, so its{" "}
+      {asks} ask before changing anything. Check what it does, then trust it.{" "}
+      <button type="button" className="btn sm" onClick={trust}>
+        Trust
+      </button>
+    </div>
+  );
+}
+
+/** Its on/off switch, saved as you flip it, apart from the form that waits for Save. */
+export function OnPanel({
+  label,
+  on,
+  onChange,
+}: {
+  label: string;
+  on: boolean;
+  onChange: (on: boolean) => void;
+}) {
+  return (
+    <div className="panel form">
+      <div className="form-row">
+        <span className="label">{label}</span>
+        <Switch on={on} onChange={onChange} />
+      </div>
+    </div>
+  );
+}
+
+export const deleteText = (name: string) => `Delete "${name}"? Its past runs stay in Tasks.`;
