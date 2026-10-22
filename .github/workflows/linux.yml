@@ -1,5 +1,5 @@
 # Formats, lints and tests the Linux app (apps/linux) against Arch's GTK and libadwaita, and checks
-# that its crates are all permissively licensed (PLAN.md §24).
+# that its crates are all permissively licensed.
 name: Linux
 
 on:

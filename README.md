@@ -2,7 +2,7 @@
 
 Self-hosted, always-on personal agent for your homelab, on Proxmox or any two Debian machines. It chats, runs tasks on its own desktop, and asks before risky actions.
 
-- `PLAN.md` is the design and the milestone plan.
+- `PLAN.md` is what's still to do; `AGENTS.md` is how to work on the code.
 
 ## Install
 
