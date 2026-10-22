@@ -74,18 +74,15 @@ export function BotPicker({ value, onChange }: { value: string; onChange: (id: s
   return (
     <div className="form-row">
       <span className="label">Runs as</span>
-      <select
+      <Select
         className="field"
-        aria-label="Runs as"
+        label="Runs as"
         value={value}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        {(ids.includes(value) ? ids : [...ids, value]).map((id) => (
-          <option key={id} value={id}>
-            {bots[id]?.name ?? id}
-          </option>
-        ))}
-      </select>
+        options={(ids.includes(value) ? ids : [...ids, value]).map(
+          (id) => [id, bots[id]?.name ?? id] as const,
+        )}
+        onChange={onChange}
+      />
     </div>
   );
 }

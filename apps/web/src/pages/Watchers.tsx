@@ -345,24 +345,22 @@ export function WatcherEdit({ id, toast }: { id: number | null; toast: Toast }) 
             </label>
           ) : (
             <>
-              <label>
+              <div className="form-row">
                 <span className="label">Tool</span>
-                <select
+                <Select
                   className="field"
+                  label="Tool"
                   value={form.tool}
-                  onChange={(e) => set({ tool: e.target.value })}
-                >
-                  <option value="">Choose…</option>
-                  {readTools.map((t) => (
-                    <option key={t.name} value={t.name}>
-                      {t.plugin}: {t.name}
-                    </option>
-                  ))}
-                  {form.tool && !readTools.some((t) => t.name === form.tool) && (
-                    <option value={form.tool}>{form.tool}</option>
-                  )}
-                </select>
-              </label>
+                  options={[
+                    ["", "Choose…"],
+                    ...readTools.map((t) => [t.name, `${t.plugin}: ${t.name}`] as const),
+                    ...(form.tool && !readTools.some((t) => t.name === form.tool)
+                      ? [[form.tool, form.tool] as const]
+                      : []),
+                  ]}
+                  onChange={(tool) => set({ tool })}
+                />
+              </div>
               <label>
                 <span className="label">Its input, as JSON</span>
                 <textarea

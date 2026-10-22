@@ -148,11 +148,11 @@ export function BoxPage({ id }: { id: number }) {
             <Select
               label="Version"
               className="field"
-              value={String(version)}
+              value={version}
               options={[...detail.versions]
                 .reverse()
-                .map((v) => [String(v.n), `Version ${v.n}, ${timeOrDay(v.createdAt)}`] as const)}
-              onChange={(v) => setPicked(Number(v) === detail.version ? null : Number(v))}
+                .map((v) => [v.n, `Version ${v.n}, ${timeOrDay(v.createdAt)}`] as const)}
+              onChange={(v) => setPicked(v === detail.version ? null : v)}
             />
           )}
           {version !== detail.version && (

@@ -444,18 +444,13 @@ function RollbackRow({ toast }: { toast: Toast }) {
       <Row label="Roll back desktop" sub={error && <span className="form-error">{error}</span>}>
         {snaps.length > 0 ? (
           <>
-            <select
-              aria-label="Snapshot"
+            <Select
+              label="Snapshot"
               value={picked}
-              onChange={(e) => setPicked(e.target.value)}
+              options={snaps.map((s) => [s.name, snapLabel(s)] as const)}
+              onChange={setPicked}
               disabled={busy}
-            >
-              {snaps.map((s) => (
-                <option key={s.name} value={s.name}>
-                  {snapLabel(s)}
-                </option>
-              ))}
-            </select>
+            />
             <button type="button" className="btn sm danger-text" disabled={busy} onClick={rollback}>
               {busy ? "Rolling back…" : "Roll back"}
             </button>

@@ -174,19 +174,13 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
           {isNew && (
             <div className="form-row">
               <span className="label">Template</span>
-              <select
+              <Select
                 className="field"
-                aria-label="Template"
+                label="Template"
                 value={template}
-                onChange={(e) => pickTemplate(e.target.value)}
-              >
-                <option value="">None</option>
-                {BOT_TEMPLATES.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
+                options={[["", "None"], ...BOT_TEMPLATES.map((t) => [t.id, t.name] as const)]}
+                onChange={pickTemplate}
+              />
             </div>
           )}
           <label>
