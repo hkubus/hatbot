@@ -27,7 +27,10 @@ import {
 } from "../store";
 import { Switch } from "../switch";
 import { whenText } from "../tasks";
+import type { Toast } from "../toast";
 import { BackHead, Group, SaveBar, Seg } from "../ui";
+import { BuiltInGroup } from "./BuiltIn";
+import { HeartbeatPage } from "./Heartbeat";
 import { patchWatcher, trouble, WatcherEdit } from "./Watchers";
 
 const KIND = { webhook: "Webhook", kuma: "Uptime Kuma" } as const;
@@ -38,9 +41,18 @@ const CONFIRM = ["First failure", "2 failures", "3 failures"];
 /** A trigger just made, so its page can show the secret after the route changes to its id. */
 let fresh: TriggerWithSecret | null = null;
 
-export function SchedulesView({ path, params }: { path: string; params: URLSearchParams }) {
+export function SchedulesView({
+  path,
+  params,
+  toast,
+}: {
+  path: string;
+  params: URLSearchParams;
+  toast: Toast;
+}) {
+  if (path === "/schedules/heartbeat") return <HeartbeatPage toast={toast} />;
   const m = /^\/(schedules|triggers|watchers)\/(new|\d+)$/.exec(path);
-  if (!m) return <List />;
+  if (!m) return <List toast={toast} />;
   const id = m[2] === "new" ? null : Number(m[2]);
   if (m[1] === "watchers") return <WatcherEdit key={path} id={id} />;
   return m[1] === "schedules" ? (
@@ -50,7 +62,7 @@ export function SchedulesView({ path, params }: { path: string; params: URLSearc
   );
 }
 
-function List() {
+function List({ toast }: { toast: Toast }) {
   const [ids, setIds] = useState<{
     schedules: number[];
     triggers: number[];
@@ -84,6 +96,7 @@ function List() {
           </button>
         </div>
         {error && <div className="form-error">{error}</div>}
+        <BuiltInGroup toast={toast} />
         {ids && (
           <>
             <RoutineGroup
@@ -216,7 +229,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
         error={listed.error}
         missing={listed.missing ? "This schedule doesn't exist." : ""}
         retry={listed.load}
-        back={{ label: "Schedules", to: "/schedules" }}
+        back={{ label: "Automations", to: "/schedules" }}
       />
     );
 
@@ -269,7 +282,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
   return (
     <section className="view">
       <div className="page narrow">
-        <BackHead to="/schedules" label="Schedules">
+        <BackHead to="/schedules" label="Automations">
           {stored && (
             <>
               <button
@@ -470,7 +483,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
         error={listed.error}
         missing={listed.missing ? "This trigger doesn't exist." : ""}
         retry={listed.load}
-        back={{ label: "Triggers", to: "/schedules" }}
+        back={{ label: "Automations", to: "/schedules" }}
       />
     );
 
@@ -528,7 +541,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
   return (
     <section className="view">
       <div className="page narrow">
-        <BackHead to="/schedules" label="Triggers">
+        <BackHead to="/schedules" label="Automations">
           {stored && (
             <>
               <button type="button" className="btn sm" onClick={rotate}>

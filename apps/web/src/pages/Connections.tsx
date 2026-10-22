@@ -21,7 +21,7 @@ function randomTopic() {
   return `hatbot-${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
-export function Connections({ toast }: { toast: Toast }) {
+function useConnections() {
   const [info, setInfo] = useState<ConnectionsInfo | null>(null);
   const [loadError, setLoadError] = useState("");
   const load = useCallback(() => {
@@ -29,22 +29,36 @@ export function Connections({ toast }: { toast: Toast }) {
     api<ConnectionsInfo>("/connections").then(setInfo, (err) => setLoadError(errorText(err)));
   }, []);
   useEffect(load, [load]);
+  return { info, setInfo, error: loadError && <LoadError error={loadError} retry={load} /> };
+}
 
+export function ApiKeyPage({ toast }: { toast: Toast }) {
+  const { info, setInfo, error } = useConnections();
   return (
     <section className="view">
       <div className="page narrow">
         <BackHead to="/settings" label="Settings" />
-        {loadError && <LoadError error={loadError} retry={load} />}
+        {error}
+        {info && <ApiKeyForm info={info.anthropic} onSaved={setInfo} toast={toast} />}
+      </div>
+    </section>
+  );
+}
+
+export function NtfyPage({ toast }: { toast: Toast }) {
+  const { info, setInfo, error } = useConnections();
+  return (
+    <section className="view">
+      <div className="page narrow">
+        <BackHead to="/settings" label="Settings" />
+        {error}
         {info && (
-          <>
-            <ApiKeyForm info={info.anthropic} onSaved={setInfo} toast={toast} />
-            <NtfyForm
-              key={JSON.stringify(info.ntfy)}
-              info={info.ntfy}
-              onSaved={setInfo}
-              toast={toast}
-            />
-          </>
+          <NtfyForm
+            key={JSON.stringify(info.ntfy)}
+            info={info.ntfy}
+            onSaved={setInfo}
+            toast={toast}
+          />
         )}
       </div>
     </section>
@@ -157,7 +171,7 @@ function NtfyForm({
           body: { url, topic, ...(token ? { token } : {}) },
         }),
       );
-      toast("Saved. Send a test approval from Check everything to try it.");
+      toast("Saved. Send a test approval from Notifications to try it.");
     });
   };
 

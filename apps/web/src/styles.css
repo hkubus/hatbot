@@ -3272,3 +3272,36 @@ a.row-main:hover {
     padding-bottom: 12px;
   }
 }
+
+/* Settings regroup: the shared disclosure (ui.tsx's Disclosure). */
+.disclosure {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.disclosure > .fold {
+  width: auto;
+  justify-self: start;
+  padding: 4px 8px;
+  margin-left: -8px;
+}
+.disclosure.open > .fold svg.i {
+  transform: rotate(90deg);
+}
+.group-box > .disclosure {
+  gap: 0;
+}
+.group-box > .disclosure > .fold {
+  width: 100%;
+  margin: 0;
+  min-height: 44px;
+  padding: 10px 14px;
+  border-radius: 0;
+}
+.group-box > .disclosure.open > .fold,
+.group-box > .disclosure:not(:last-child) > .fold {
+  border-bottom: 0.5px solid var(--line);
+}
+.group-box > .disclosure:not(:last-child) > .row:last-child {
+  border-bottom: 0.5px solid var(--line);
+}

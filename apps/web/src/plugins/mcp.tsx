@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useAction } from "../action";
 import { useLeaveGuard } from "../confirm";
 import { Switch } from "../switch";
-import { Seg, Select } from "../ui";
+import { Disclosure, Seg, Select } from "../ui";
 import type { PluginSettingsProps } from ".";
 
 type Mode = "chat" | "allow" | "ask" | "always" | "off";
@@ -212,7 +212,7 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
                 </label>
               </>
             ) : (
-              <>
+              <Disclosure label="More" open={!s.command}>
                 <div className="hint">
                   A command runs on the brain as Hatbot's own user, so it can read every secret
                   Hatbot has: its keys, tokens and database. Run only servers you trust, or an HTTP
@@ -249,7 +249,7 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
                     onChange={(e) => set(i, { envText: e.target.value })}
                   />
                 </label>
-              </>
+              </Disclosure>
             )}
             <div className="form-row">
               <span className="label">Trust its output and tool descriptions</span>

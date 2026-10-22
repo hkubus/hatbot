@@ -1,8 +1,8 @@
-// One schedule, which the brain makes, changes or deletes; off by default.
+// One schedule, which the brain makes, changes or deletes; off by default. Set in Automations.
 import { describeCron } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { useAction } from "../action";
-import { Seg } from "../ui";
+import { Group, LinkRow, Row, Seg } from "../ui";
 import type { PluginSettingsProps } from ".";
 
 type Every = "off" | "weekly" | "monthly";
@@ -14,7 +14,18 @@ const OPTIONS = [
   ["monthly", "Monthly"],
 ] as const;
 
-export function SelfSettings({ action, running }: PluginSettingsProps) {
+export function SelfSettings() {
+  return (
+    <Group>
+      <LinkRow to="/schedules" label="Code improvement suggestions" />
+    </Group>
+  );
+}
+
+export function CodeSuggestions({
+  action,
+  running,
+}: Pick<PluginSettingsProps, "action" | "running">) {
   const [now, setNow] = useState<Suggestions | null>(null);
   const { busy, error, run } = useAction();
 
@@ -35,10 +46,11 @@ export function SelfSettings({ action, running }: PluginSettingsProps) {
       : OPTIONS;
 
   return (
-    <div className="panel form">
-      <span className="label">Suggest an improvement to its code, as a pull request</span>
+    <Row
+      label="Code improvement suggestions"
+      sub={error && <span className="form-error">{error}</span>}
+    >
       <Seg<Every | "other"> value={now.every} options={options} onChange={choose} />
-      {error && <div className="form-error">{error}</div>}
-    </div>
+    </Row>
   );
 }

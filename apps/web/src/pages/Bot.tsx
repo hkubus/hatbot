@@ -1,14 +1,21 @@
-import { BOT_COLORS, BOT_ICONS, BOT_TEMPLATES, type Bot, HATBOT_ID } from "@hatbot/shared";
+import {
+  type AppSettings,
+  BOT_COLORS,
+  BOT_ICONS,
+  BOT_TEMPLATES,
+  type Bot,
+  HATBOT_ID,
+} from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
 import { useAction } from "../action";
-import { ApiError, errorText } from "../api";
+import { ApiError, api, errorText } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm, toggled, useStoredForm } from "../form";
 import { BotMark } from "../icons";
 import { navigate } from "../router";
 import { chatPath, createBot, deleteBot, loadBot, loadPlugins, saveBot, useStore } from "../store";
 import { Switch } from "../switch";
-import { BackHead, CHAT_MODELS, EFFORTS, SaveBar, Select } from "../ui";
+import { BackHead, CHAT_MODELS, EFFORTS, MODELS, SaveBar, Select } from "../ui";
 
 type Form = {
   name: string;
@@ -29,6 +36,11 @@ const EMPTY: Form = {
   chatModel: null,
   chatEffort: null,
   plugins: null,
+};
+
+const byDefault = (options: readonly (readonly [string, string])[], id?: string) => {
+  const name = options.find(([v]) => v === id)?.[1];
+  return name ? `Default (${name})` : "Default";
 };
 
 const formOf = (b: Form): Form => ({
@@ -78,8 +90,10 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
     );
   }, [id]);
 
+  const [defaults, setDefaults] = useState<AppSettings>();
   useEffect(() => {
     void loadPlugins().catch(() => {});
+    api<AppSettings>("/settings").then(setDefaults, () => {});
   }, []);
   useEffect(() => {
     if (!isNew) load();
@@ -238,7 +252,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
               className="field"
               label="Model"
               value={form.chatModel ?? ""}
-              options={[["", "As in Settings"], ...CHAT_MODELS]}
+              options={[["", byDefault(MODELS, defaults?.chatModel)], ...CHAT_MODELS]}
               onChange={(chatModel) => set({ chatModel: chatModel || null })}
             />
           </div>
@@ -248,7 +262,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
               className="field"
               label="Effort"
               value={form.chatEffort ?? ""}
-              options={[["", "As in Settings"], ...EFFORTS]}
+              options={[["", byDefault(EFFORTS, defaults?.chatEffort)], ...EFFORTS]}
               onChange={(chatEffort) => set({ chatEffort: chatEffort || null })}
             />
           </div>
@@ -292,7 +306,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
                         className="text-link"
                         onClick={() => navigate(`/settings/plugins/${p.id}`)}
                       >
-                        Off in Settings
+                        Off in Plugins
                       </button>
                     )}
                   </div>

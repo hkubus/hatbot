@@ -186,7 +186,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
         error={listed.error}
         missing={listed.missing ? "This watcher doesn't exist." : ""}
         retry={listed.load}
-        back={{ label: "Watchers", to: "/schedules" }}
+        back={{ label: "Automations", to: "/schedules" }}
       />
     );
 
@@ -261,7 +261,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
   return (
     <section className="view">
       <div className="page narrow">
-        <BackHead to="/schedules" label="Watchers">
+        <BackHead to="/schedules" label="Automations">
           {stored && (
             <>
               <button

@@ -10,6 +10,7 @@ import { api, errorText } from "../api";
 import { useWidth } from "../chart";
 import { day, modelName, time, usd } from "../format";
 import { LoadError } from "../load";
+import { navigate } from "../router";
 import { spendAxis, withToday } from "../spend";
 import { useStore } from "../store";
 import { tokenText } from "../tasks";
@@ -286,6 +287,12 @@ export function Spend() {
   return (
     <section className="view">
       <div className="page">
+        <div className="page-head">
+          <span className="spacer" />
+          <button type="button" className="btn" onClick={() => navigate("/settings#spending")}>
+            Limits
+          </button>
+        </div>
         <div className="kpis">
           <div className="tile">
             <div className="label">Today</div>
