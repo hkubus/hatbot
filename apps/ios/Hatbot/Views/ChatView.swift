@@ -114,215 +114,215 @@ struct ChatView: View {
 
   var body: some View {
     NavigationStack(path: $path) {
-      ScrollView {
-        LazyVStack(spacing: 0) {
-          // The page before loads well before the top (see onScrollGeometryChange); this is for a chat
-          // shorter than that, or one that failed. The bottom anchor keeps your place.
-          if store.hasEarlier {
-            ProgressView()
-              .padding(.vertical, 8)
-              .task(id: store.messages.first?.id) { try? await store.loadEarlier() }
-          }
-          if store.threadKnown && store.messages.isEmpty {
-            Text(
-              store.incognito
-                ? "\(name) can't see earlier conversations here, and this one is deleted when you leave."
-                : "Say hello to \(name)."
-            )
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-            .padding(.top, 40)
-          }
-          let group = members != nil
-          ForEach(rows) { row in
-            switch row {
-            case let .time(time, _):
-              Text(time).font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                .padding(.top, 14)
-                .padding(.bottom, 4)
-            case let .fold(g):
-              FoldRow(group: g, open: g.episodeId.map { unfolded.contains($0) } ?? false) {
-                guard let id = g.episodeId else { return }
-                withAnimation(.snappy) {
-                  if unfolded.remove(id) == nil { unfolded.insert(id) }
+      ScrollViewReader { proxy in
+        ScrollView {
+          LazyVStack(spacing: 0) {
+            // The page before loads well before the top (see onScrollGeometryChange); this is for a chat
+            // shorter than that, or one that failed. The bottom anchor keeps your place.
+            if store.hasEarlier {
+              ProgressView()
+                .padding(.vertical, 8)
+                .task(id: store.messages.first?.id) { try? await store.loadEarlier() }
+            }
+            if store.threadKnown && store.messages.isEmpty {
+              Text(
+                store.incognito
+                  ? "\(name) can't see earlier conversations here, and this one is deleted when you leave."
+                  : "Say hello to \(name)."
+              )
+              .foregroundStyle(.secondary)
+              .multilineTextAlignment(.center)
+              .padding(.top, 40)
+            }
+            let group = members != nil
+            ForEach(rows) { row in
+              switch row {
+              case let .time(time, _):
+                Text(time).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                  .padding(.top, 14)
+                  .padding(.bottom, 4)
+              case let .fold(g):
+                FoldRow(group: g, open: g.episodeId.map { unfolded.contains($0) } ?? false) {
+                  guard let id = g.episodeId else { return }
+                  withAnimation(.snappy) {
+                    if unfolded.remove(id) == nil { unfolded.insert(id) }
+                  }
                 }
-              }
-              .contextMenu {
-                Button("Delete Conversation", systemImage: "trash", role: .destructive) {
-                  deleting = g.episodeId
+                .contextMenu {
+                  Button("Delete Conversation", systemImage: "trash", role: .destructive) {
+                    deleting = g.episodeId
+                  }
                 }
+                .padding(.top, 10)
+              case let .message(m, joined, tail):
+                let named = group && !joined && m.role == .assistant && !m.isNote && m.kind != .box
+                if named {
+                  Text(store.botName(m.botId))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(m.botId.flatMap { store.bots[$0]?.color.color } ?? .secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 14)
+                    .padding(.top, 10)
+                }
+                // A question's choices can be tapped until anything comes after it.
+                MessageRow(m: m, tail: tail, answerable: m.id == store.messages.last?.id)
+                  .equatable()
+                  .padding(.top, joined || named ? 2 : 10)
               }
-              .padding(.top, 10)
-            case let .message(m, joined, tail):
-              let named = group && !joined && m.role == .assistant && !m.isNote && m.kind != .box
-              if named {
-                Text(store.botName(m.botId))
-                  .font(.caption.weight(.semibold))
-                  .foregroundStyle(m.botId.flatMap { store.bots[$0]?.color.color } ?? .secondary)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-                  .padding(.leading, 14)
-                  .padding(.top, 10)
-              }
-              // A question's choices can be tapped until anything comes after it.
-              MessageRow(m: m, tail: tail, answerable: m.id == store.messages.last?.id)
-                .equatable()
-                .padding(.top, joined || named ? 2 : 10)
             }
           }
+          .padding(.horizontal, 14)
+          .padding(.vertical, 12)
+          .frame(maxWidth: Self.readingWidth)
+          .frame(maxWidth: .infinity)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        // So a search hit can be scrolled to by its row's id.
-        .scrollTargetLayout()
-        .frame(maxWidth: Self.readingWidth)
-        .frame(maxWidth: .infinity)
-      }
-      .scrollPosition($position)
-      .defaultScrollAnchor(.bottom)
-      // A reply streaming in is followed only from the bottom; scrolled up, your place stays. An
-      // earlier page going in above keeps it from the bottom.
-      .defaultScrollAnchor(nearBottom || store.prepending ? .bottom : .top, for: .sizeChanges)
-      .onScrollGeometryChange(for: Scrolled.self) { geo in
-        Scrolled(
-          top: geo.contentOffset.y + geo.contentInsets.top,
-          bottom: geo.contentSize.height - geo.visibleRect.maxY,
-          screen: geo.containerSize.height)
-      } action: { _, scrolled in
-        let distance = scrolled.bottom
-        if nearBottom != (distance < 60) { nearBottom = distance < 60 }
-        let far = distance > 400
-        if far != farFromBottom { withAnimation(.snappy) { farFromBottom = far } }
-        // Within a screen and a half of the top, so the page before loads while you're still reading.
-        if scrolled.top < scrolled.screen * 1.5, store.hasEarlier, let first = store.messages.first?.id,
-          first != earlierBefore
-        {
-          earlierBefore = first
-          Task { try? await store.loadEarlier() }
-        }
-      }
-      .overlay(alignment: .bottom) {
-        if farFromBottom {
-          Button {
-            withAnimation { position.scrollTo(edge: .bottom) }
-          } label: {
-            RoundGlyph(name: "arrow.down")
-          }
-          .glassButton()
-          .buttonBorderShape(.circle)
-          .padding(.bottom, 8)
-          .transition(.scale.combined(with: .opacity))
-          .accessibilityLabel("Scroll to bottom")
-        }
-      }
-      .scrollDismissesKeyboard(.interactively)
-      .edgeBar(.top) {
-        VStack(spacing: 0) {
-          if store.unreachable {
-            Banner(text: "Can't reach Hatbot.", systemImage: "wifi.slash") {
-              Button("Retry") { store.connect() }
-                .buttonStyle(.borderless)
-                .fontWeight(.semibold)
-            }
-            .transition(.move(edge: .top).combined(with: .opacity))
-          }
-          if let failed = store.threadError, !store.unreachable {
-            Banner(text: message(for: failed), systemImage: "exclamationmark.triangle") {
-              Button("Try again") { Task { await store.reloadThread() } }
-                .buttonStyle(.borderless)
-                .fontWeight(.semibold)
-            }
-          }
-          if store.paused {
-            Banner(text: "All activity is paused.", systemImage: "pause.circle.fill") {
-              Button("Resume") { Task { try? await store.setPaused(false) } }
-                .buttonStyle(.borderless)
-                .fontWeight(.semibold)
-            }
+        .scrollPosition($position)
+        .defaultScrollAnchor(.bottom)
+        // A reply streaming in is followed only from the bottom; scrolled up, your place stays. An
+        // earlier page going in above keeps it from the bottom.
+        .defaultScrollAnchor(nearBottom || store.prepending ? .bottom : .top, for: .sizeChanges)
+        .onScrollGeometryChange(for: Scrolled.self) { geo in
+          Scrolled(
+            top: geo.contentOffset.y + geo.contentInsets.top,
+            bottom: geo.contentSize.height - geo.visibleRect.maxY,
+            screen: geo.containerSize.height)
+        } action: { _, scrolled in
+          let distance = scrolled.bottom
+          if nearBottom != (distance < 60) { nearBottom = distance < 60 }
+          let far = distance > 400
+          if far != farFromBottom { withAnimation(.snappy) { farFromBottom = far } }
+          // Within a screen and a half of the top, so the page before loads while you're still reading.
+          if scrolled.top < scrolled.screen * 1.5, store.hasEarlier, let first = store.messages.first?.id,
+            first != earlierBefore
+          {
+            earlierBefore = first
+            Task { try? await store.loadEarlier() }
           }
         }
-        .animation(.snappy, value: store.unreachable)
-      }
-      .edgeBar(.bottom) {
-        Composer(name: name, members: members, error: $error) {
-          withAnimation { position.scrollTo(edge: .bottom) }
-        }
-      }
-      .navigationTitle(store.incognito ? "Incognito" : name)
-      .sidebarButton()
-      .toolbar {
-        if let c = store.currentChat {
-          ToolbarItem(placement: .topBarTrailing) {
-            NavigationLink(value: c.kind == .group ? Route.group(c.id) : Route.bot(c.botIds.first ?? Bot.hatbot)) {
-              Image(systemName: "slider.horizontal.3")
-            }
-            .accessibilityLabel("About \(name)")
-          }
-        }
-        if members == nil {
-          ToolbarItem(placement: .topBarTrailing) {
-            // Leaving deletes the incognito conversation.
+        .overlay(alignment: .bottom) {
+          if farFromBottom {
             Button {
-              Task { await store.setIncognito(!store.incognito) }
+              withAnimation { position.scrollTo(edge: .bottom) }
             } label: {
-              Image(systemName: "eyeglasses")
-                .foregroundStyle(store.incognito ? Color.accentColor : Color.primary)
+              RoundGlyph(name: "arrow.down")
             }
-            .accessibilityLabel(store.incognito ? "Leave incognito" : "Incognito")
+            .glassButton()
+            .buttonBorderShape(.circle)
+            .padding(.bottom, 8)
+            .transition(.scale.combined(with: .opacity))
+            .accessibilityLabel("Scroll to bottom")
           }
         }
-      }
-      .navigationBarTitleDisplayMode(.inline)
-      .confirmationDialog(
-        "Delete this conversation for good? \(name) forgets it too.",
-        isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
-        titleVisibility: .visible
-      ) {
-        Button("Delete", role: .destructive) {
-          guard let id = deleting else { return }
-          Task { await attempt($error) { try await store.deleteEpisode(id) } }
-        }
-      }
-      .routes()
-      .environment(\.openRoute, router)
-      .onAppear {
-        router.open = { route in path.append(route) }
-        router.message = { link in
-          Task {
-            if store.conversations.contains(where: { $0.id == link.conversationId }) {
-              await store.openConversation(link.conversationId)
+        .scrollDismissesKeyboard(.interactively)
+        .edgeBar(.top) {
+          VStack(spacing: 0) {
+            if store.unreachable {
+              Banner(text: "Can't reach Hatbot.", systemImage: "wifi.slash") {
+                Button("Retry") { store.connect() }
+                  .buttonStyle(.borderless)
+                  .fontWeight(.semibold)
+              }
+              .transition(.move(edge: .top).combined(with: .opacity))
             }
-            focus = link.messageId
+            if let failed = store.threadError, !store.unreachable {
+              Banner(text: message(for: failed), systemImage: "exclamationmark.triangle") {
+                Button("Try again") { Task { await store.reloadThread() } }
+                  .buttonStyle(.borderless)
+                  .fontWeight(.semibold)
+              }
+            }
+            if store.paused {
+              Banner(text: "All activity is paused.", systemImage: "pause.circle.fill") {
+                Button("Resume") { Task { try? await store.setPaused(false) } }
+                  .buttonStyle(.borderless)
+                  .fontWeight(.semibold)
+              }
+            }
+          }
+          .animation(.snappy, value: store.unreachable)
+        }
+        .edgeBar(.bottom) {
+          Composer(name: name, members: members, error: $error) {
+            withAnimation { position.scrollTo(edge: .bottom) }
           }
         }
-      }
-      .onChange(of: store.conversationId) {
-        path = []
-        unfolded = []
-        // Another chat opens at its latest, not where you'd scrolled to in the one you left.
-        position.scrollTo(edge: .bottom)
-      }
-      .task(id: focus) {
-        guard let id = focus else { return }
-        defer { focus = nil }
-        guard await store.reveal(id), let m = store.messages.first(where: { $0.id == id }) else {
-          error = "That message isn't in this chat any more."
-          return
+        .navigationTitle(store.incognito ? "Incognito" : name)
+        .sidebarButton()
+        .toolbar {
+          if let c = store.currentChat {
+            ToolbarItem(placement: .topBarTrailing) {
+              NavigationLink(value: c.kind == .group ? Route.group(c.id) : Route.bot(c.botIds.first ?? Bot.hatbot)) {
+                Image(systemName: "slider.horizontal.3")
+              }
+              .accessibilityLabel("About \(name)")
+            }
+          }
+          if members == nil {
+            ToolbarItem(placement: .topBarTrailing) {
+              // Leaving deletes the incognito conversation.
+              Button {
+                Task { await store.setIncognito(!store.incognito) }
+              } label: {
+                Image(systemName: "eyeglasses")
+                  .foregroundStyle(store.incognito ? Color.accentColor : Color.primary)
+              }
+              .accessibilityLabel(store.incognito ? "Leave incognito" : "Incognito")
+            }
+          }
         }
-        if let e = m.episodeId { unfolded.insert(e) }
-        // Once its row is in the list.
-        try? await Task.sleep(for: .milliseconds(150))
-        withAnimation { position.scrollTo(id: "m\(id)", anchor: .center) }
-      }
-      .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
-        newDay()
-      }
-      .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
-        newDay()
-      }
-      .task {
-        // Coming back to a chat that's loaded and live: the events kept it current. Otherwise the latest
-        // page is merged in.
-        if store.messages.isEmpty || !store.connected { await store.reloadThread() }
+        .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog(
+          "Delete this conversation for good? \(name) forgets it too.",
+          isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+          titleVisibility: .visible
+        ) {
+          Button("Delete", role: .destructive) {
+            guard let id = deleting else { return }
+            Task { await attempt($error) { try await store.deleteEpisode(id) } }
+          }
+        }
+        .routes()
+        .environment(\.openRoute, router)
+        .onAppear {
+          router.open = { route in path.append(route) }
+          router.message = { link in
+            Task {
+              if store.conversations.contains(where: { $0.id == link.conversationId }) {
+                await store.openConversation(link.conversationId)
+              }
+              focus = link.messageId
+            }
+          }
+        }
+        .onChange(of: store.conversationId) {
+          path = []
+          unfolded = []
+          // Another chat opens at its latest, not where you'd scrolled to in the one you left.
+          position.scrollTo(edge: .bottom)
+        }
+        .task(id: focus) {
+          guard let id = focus else { return }
+          defer { focus = nil }
+          guard await store.reveal(id), let m = store.messages.first(where: { $0.id == id }) else {
+            error = "That message isn't in this chat any more."
+            return
+          }
+          if let e = m.episodeId { unfolded.insert(e) }
+          // Once its row is in the list.
+          try? await Task.sleep(for: .milliseconds(150))
+          withAnimation { proxy.scrollTo("m\(id)", anchor: .center) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
+          newDay()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+          newDay()
+        }
+        .task {
+          // Coming back to a chat that's loaded and live: the events kept it current. Otherwise the latest
+          // page is merged in.
+          if store.messages.isEmpty || !store.connected { await store.reloadThread() }
+        }
       }
     }
   }
