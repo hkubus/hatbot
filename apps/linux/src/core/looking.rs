@@ -12,7 +12,7 @@ pub const EFFORTS: [(&str, &str); 5] = [
     ("xhigh", "Extra high"),
     ("max", "Max"),
 ];
-pub const HEARTBEAT_EVERY: [i64; 7] = [5, 10, 15, 30, 60, 120, 240];
+pub const HEARTBEAT_EVERY: [i64; 7] = [5, 10, 15, 30, 60, 120, 360];
 
 /// Known values with their names, and the current one if it isn't among them, so saving something
 /// else doesn't quietly change it.
@@ -206,7 +206,7 @@ mod tests {
         assert_eq!(every(60), "Every hour");
         assert_eq!(every(90), "Every 90 minutes");
         assert_eq!(every(2880), "Every 2 days");
-        assert_eq!(every_choices(20), [5, 10, 15, 20, 30, 60, 120, 240]);
+        assert_eq!(every_choices(20), [5, 10, 15, 20, 30, 60, 120, 360]);
     }
 
     #[test]

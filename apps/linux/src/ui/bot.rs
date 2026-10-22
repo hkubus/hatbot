@@ -76,6 +76,10 @@ struct BotEditor {
     plugins_group: adw::PreferencesGroup,
     every_plugin: adw::SwitchRow,
     plugin_rows: RefCell<Vec<(String, adw::SwitchRow)>>,
+    /// Plugins that are off: no bot gets them until they're on.
+    off_rows: RefCell<Vec<adw::ActionRow>>,
+    /// Settings' chat model and effort, what "Default" means.
+    defaults: RefCell<(Option<String>, Option<String>)>,
     notes: adw::PreferencesGroup,
     delete_group: adw::PreferencesGroup,
     delete: adw::ButtonRow,
@@ -115,8 +119,14 @@ fn flow() -> gtk::FlowBox {
         .build()
 }
 
-fn model_choices(current: Option<&str>) -> Vec<(String, String)> {
-    let mut out = vec![(String::new(), "As in Settings".to_string())];
+/// The first choice, which follows Settings: "Default (Opus 5.5)".
+fn by_default(name: Option<String>) -> (String, String) {
+    let text = name.map_or("Default".into(), |n| format!("Default ({n})"));
+    (String::new(), text)
+}
+
+fn model_choices(current: Option<&str>, default: Option<&str>) -> Vec<(String, String)> {
+    let mut out = vec![by_default(default.map(format::model_name))];
     let mut known: Vec<&str> = CHAT_MODELS.to_vec();
     if let Some(c) = current.filter(|c| !known.contains(c)) {
         known.push(c);
@@ -125,23 +135,24 @@ fn model_choices(current: Option<&str>) -> Vec<(String, String)> {
     out
 }
 
-fn effort_choices(current: Option<&str>) -> Vec<(String, String)> {
-    let mut out = vec![(String::new(), "As in Settings".to_string())];
+fn effort_name(e: &str) -> String {
+    match e {
+        "xhigh" => "Extra high".to_string(),
+        e => {
+            let mut c = e.chars();
+            c.next()
+                .map_or(String::new(), |f| f.to_uppercase().chain(c).collect())
+        }
+    }
+}
+
+fn effort_choices(current: Option<&str>, default: Option<&str>) -> Vec<(String, String)> {
+    let mut out = vec![by_default(default.map(effort_name))];
     let mut known: Vec<&str> = CHAT_EFFORTS.to_vec();
     if let Some(c) = current.filter(|c| !known.contains(c)) {
         known.push(c);
     }
-    out.extend(known.iter().map(|e| {
-        let name = match *e {
-            "xhigh" => "Extra high".to_string(),
-            e => {
-                let mut c = e.chars();
-                c.next()
-                    .map_or(String::new(), |f| f.to_uppercase().chain(c).collect())
-            }
-        };
-        (e.to_string(), name)
-    }));
+    out.extend(known.iter().map(|e| (e.to_string(), effort_name(e))));
     out
 }
 
@@ -290,7 +301,7 @@ impl BotPage {
                     if e.filling.get() {
                         return;
                     }
-                    // Turned off, every plugin starts ticked.
+                    // Turned off, every plugin that's on starts ticked.
                     let all = (!row.is_active()).then(|| {
                         e.plugin_rows
                             .borrow()
@@ -351,6 +362,8 @@ impl BotPage {
                 plugins_group,
                 every_plugin,
                 plugin_rows: RefCell::default(),
+                off_rows: RefCell::default(),
+                defaults: RefCell::default(),
                 notes,
                 delete_group,
                 delete,
@@ -427,17 +440,18 @@ impl BotEditor {
         self.icon.replace(f.icon.clone());
         self.color.replace(f.color.clone());
         self.role.set_text(&f.instructions);
-        self.model.set(
-            &model_choices(f.chat_model.as_deref()),
-            f.chat_model.as_deref().unwrap_or(""),
-        );
-        self.effort.set(
-            &effort_choices(f.chat_effort.as_deref()),
-            f.chat_effort.as_deref().unwrap_or(""),
-        );
+        self.set_models(f.chat_model.as_deref(), f.chat_effort.as_deref());
         self.plugins.replace(f.plugins.clone());
         self.filling.set(false);
         self.sync();
+    }
+
+    fn set_models(&self, model: Option<&str>, effort: Option<&str>) {
+        let (dm, de) = self.defaults.borrow().clone();
+        self.model
+            .set(&model_choices(model, dm.as_deref()), model.unwrap_or(""));
+        self.effort
+            .set(&effort_choices(effort, de.as_deref()), effort.unwrap_or(""));
     }
 
     fn show_bot(&self, b: &Bot) {
@@ -535,8 +549,17 @@ impl BotEditor {
             } else {
                 vec![]
             };
-            let plugins = store.plugin_names().await;
+            let (plugins, settings) =
+                futures_util::join!(store.plugin_names(), store.load_settings());
             let Some(e) = weak.upgrade() else { return };
+            if let Ok(s) = settings {
+                e.defaults.replace((s.chat_model, s.chat_effort));
+                let (model, effort) = (e.model.value(), e.effort.value());
+                e.set_models(
+                    Some(model.as_str()).filter(|m| !m.is_empty()),
+                    Some(effort.as_str()).filter(|m| !m.is_empty()),
+                );
+            }
             if !templates.is_empty() {
                 e.templates.replace(templates);
                 let picked = e.picked.borrow().clone();
@@ -551,6 +574,21 @@ impl BotEditor {
         self.plugins_group.set_visible(!list.is_empty());
         let mut rows = self.plugin_rows.borrow_mut();
         for p in list {
+            if !p.enabled {
+                let row = adw::ActionRow::builder()
+                    .title(&p.name)
+                    .use_markup(false)
+                    .build();
+                row.add_suffix(
+                    &gtk::Label::builder()
+                        .label("Off in Plugins")
+                        .css_classes(["dim-label"])
+                        .build(),
+                );
+                self.plugins_group.add(&row);
+                self.off_rows.borrow_mut().push(row);
+                continue;
+            }
             let row = adw::SwitchRow::builder().title(&p.name).build();
             let (weak, id) = (Rc::downgrade(self), p.id.clone());
             row.connect_active_notify(move |row| {
@@ -598,6 +636,9 @@ impl BotEditor {
         for (id, row) in self.plugin_rows.borrow().iter() {
             row.set_visible(f.plugins.is_some());
             row.set_active(f.plugins.as_ref().is_some_and(|l| l.contains(id)));
+        }
+        for row in self.off_rows.borrow().iter() {
+            row.set_visible(f.plugins.is_some());
         }
         self.filling.set(false);
         let changed = self.saved.borrow().as_ref() != Some(&f);

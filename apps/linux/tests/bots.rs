@@ -49,7 +49,7 @@ fn a_new_bot_comes_with_its_chat_and_goes_with_it_and_hatbot_keeps_its_name() {
             json!([chat(1, "direct", &["hatbot"]), chat(2, "direct", &["chef"])]),
         );
         store.create_bot(&change).await.unwrap();
-        // "As in Settings" and "every plugin that's on" go as null.
+        // "Default" and "every plugin that's on" go as null.
         let sent = &brain.got("POST", "/bots")[0].body;
         assert_eq!(
             (sent["chatModel"].is_null(), sent["plugins"].is_null()),

@@ -19,6 +19,7 @@ pub mod search;
 pub mod settings;
 pub mod shell;
 pub mod signin;
+pub mod spend;
 pub mod task;
 pub mod tasks;
 pub mod todo;
