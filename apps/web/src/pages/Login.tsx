@@ -85,9 +85,7 @@ export function Login({ onDone }: { onDone: () => void }) {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
-        <div className="muted" style={{ fontSize: 12 }}>
-          Code from your authenticator
-        </div>
+        <div className="muted hint">Code from your authenticator</div>
         <OtpInput value={totp} onChange={setTotp} />
         {error && <div className="form-error">{error}</div>}
         <button
@@ -189,7 +187,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
             <Icon name="hat" />
           </div>
           <h2>Set up Hatbot</h2>
-          <div className="muted" style={{ fontSize: 12.5 }}>
+          <div className="muted hint">
             Enter the setup code from the brain's log:{" "}
             <span className="mono">journalctl -u hatbot-brain</span>
           </div>
@@ -208,7 +206,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
       ) : (
         <form className="login-card" onSubmit={finish}>
           <h2>Set up Hatbot</h2>
-          <div className="muted" style={{ fontSize: 12.5 }}>
+          <div className="muted hint">
             Scan this with your authenticator app, or add it on this device.
           </div>
           {/* biome-ignore lint/security/noDangerouslySetInnerHtml: SVG generated locally by qrcode */}
@@ -232,9 +230,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
             value={password2}
             onChange={(e) => setPassword2(e.target.value)}
           />
-          <div className="muted" style={{ fontSize: 12 }}>
-            Code from your authenticator
-          </div>
+          <div className="muted hint">Code from your authenticator</div>
           <OtpInput value={totp} onChange={setTotp} />
           {error && <div className="form-error">{error}</div>}
           <button

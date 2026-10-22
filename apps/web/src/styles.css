@@ -604,16 +604,28 @@ textarea:disabled {
   background: var(--attention-soft);
   color: var(--attention);
 }
-.chip.ok {
-  background: var(--success-soft);
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-xs);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.status svg.i {
+  width: 12px;
+  height: 12px;
+}
+.status.ok {
   color: var(--success-text);
 }
-.chip.bad {
-  background: var(--danger-soft);
+.status.bad {
   color: var(--danger-text);
 }
-.chip.brand {
-  background: var(--accent-soft);
+.status.brand,
+.status.warn {
   color: var(--accent-text);
 }
 
@@ -1201,9 +1213,12 @@ dialog.ask,
 .editor-bar .path {
   font-weight: var(--fw-semibold);
 }
+.editor-text,
+.editor-pad {
+  padding: var(--sp-lg) var(--gutter);
+}
 .editor-text {
   margin: 0;
-  padding: var(--sp-lg) var(--gutter);
   font-family: var(--mono);
   font-size: var(--fs-md);
   line-height: 1.65;
@@ -1232,9 +1247,9 @@ dialog.ask,
 .commit .sha {
   color: var(--muted);
 }
-.commit .who {
-  font-size: var(--fs-xs);
-  color: var(--muted);
+.commit-actions {
+  display: flex;
+  gap: var(--sp-sm);
 }
 .history .load-earlier {
   justify-self: center;

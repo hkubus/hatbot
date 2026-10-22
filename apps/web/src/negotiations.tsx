@@ -14,7 +14,7 @@ const STATUS: Record<NegotiationStatus, [string, string]> = {
 
 export function NegotiationChip({ status }: { status: NegotiationStatus }) {
   const [cls, label] = STATUS[status];
-  return <span className={`chip ${cls}`}>{label}</span>;
+  return <span className={cls === "attn" ? "chip attn" : `status ${cls}`}>{label}</span>;
 }
 
 export const money = (n: number, currency = "PLN") =>

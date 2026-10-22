@@ -299,9 +299,7 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
                       {t.description && <span>{t.description}</span>}
                       <details>
                         <summary className="hint">Inputs</summary>
-                        <pre className="mono hint" style={{ whiteSpace: "pre-wrap", margin: 0 }}>
-                          {t.schema}
-                        </pre>
+                        <pre className="payload">{t.schema}</pre>
                       </details>
                     </div>
                     <Select

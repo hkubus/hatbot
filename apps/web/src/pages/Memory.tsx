@@ -50,7 +50,7 @@ function DiffView({ diff }: { diff: string }) {
 
 function ProposalView({ p }: { p: Proposal }) {
   return (
-    <div style={{ padding: "16px 20px" }}>
+    <div className="editor-pad">
       {p.reason && <p className="proposal-reason">{p.reason}</p>}
       {p.changes.map((c) => (
         <div key={c.path} className="proposal-file">
@@ -465,9 +465,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
             ) : sel.kind === "diff" ? (
               <>
                 <span className="path">{sel.commit.sha.slice(0, 7)}</span>
-                <span className="muted">
-                  {sel.commit.author} · {sel.commit.message}
-                </span>
+                <span title={sel.commit.author}>{sel.commit.message}</span>
                 <span className="spacer" />
                 <button
                   type="button"
@@ -556,7 +554,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
               <div className="empty">This proposal is gone.</div>
             )
           ) : sel.kind === "diff" ? (
-            <div style={{ padding: "16px 20px" }}>
+            <div className="editor-pad">
               <DiffView diff={diff} />
             </div>
           ) : doc?.path === sel.path && doc.state === "failed" ? (
@@ -592,13 +590,10 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
             {shownHist?.log.map((c) => (
               <div className="commit" key={c.sha}>
                 <span className="sha">{c.sha.slice(0, 7)}</span>
-                <div>
-                  <div>{c.message}</div>
-                  <div className="who">
-                    {c.author} · {c.files.join(", ")} · {dayTime(c.date)}
-                  </div>
+                <div title={`${c.author}: ${c.files.join(", ")}`}>
+                  {c.message} <span className="muted">{dayTime(c.date)}</span>
                 </div>
-                <div style={{ display: "flex", gap: 4 }}>
+                <div className="commit-actions">
                   <button
                     type="button"
                     className="btn sm ghost"
