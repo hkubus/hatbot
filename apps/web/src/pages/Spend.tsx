@@ -9,8 +9,8 @@ import { useEffect, useRef, useState } from "react";
 import { api, errorText } from "../api";
 import { useWidth } from "../chart";
 import { day, modelName, time, usd } from "../format";
+import { Link } from "../link";
 import { LoadError } from "../load";
-import { navigate } from "../router";
 import { spendAxis, withToday } from "../spend";
 import { useStore } from "../store";
 import { tokenText } from "../tasks";
@@ -289,9 +289,9 @@ export function Spend() {
       <div className="page">
         <div className="page-head">
           <span className="spacer" />
-          <button type="button" className="btn" onClick={() => navigate("/settings#spending")}>
+          <Link className="btn" to="/settings#spending">
             Limits
-          </button>
+          </Link>
         </div>
         <div className="kpis">
           <div className="tile">

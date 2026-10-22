@@ -2,6 +2,7 @@ import type { Conversation, Me } from "@hatbot/shared";
 import { lazy, type ReactNode, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, errorText } from "./api";
 import { BotMark, Icon, type IconName } from "./icons";
+import { Link } from "./link";
 import { LiveView } from "./live";
 import { useMedia } from "./media";
 import { BotPage } from "./pages/Bot";
@@ -331,18 +332,13 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           </nav>
           <nav className="nav nav-views">
             {VIEWS.filter((v) => v.path !== "/").map((v) => (
-              <button
-                type="button"
-                key={v.path}
-                className={`nav-item ${v === view ? "active" : ""}`}
-                onClick={() => navigate(v.path)}
-              >
+              <Link key={v.path} className={`nav-item ${v === view ? "active" : ""}`} to={v.path}>
                 <Icon name={v.icon} />
                 <span>{v.title}</span>
                 {v.path === "/tasks" && pending > 0 && (
                   <span className="count attn">{pending}</span>
                 )}
-              </button>
+              </Link>
             ))}
           </nav>
         </aside>
@@ -368,16 +364,13 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
             )}
             <span className="spacer" />
             {chat && chatId > 0 && (
-              <button
-                type="button"
+              <Link
                 className="tb-btn"
-                onClick={() =>
-                  navigate(chat.kind === "group" ? `/groups/${chat.id}` : `/bots/${chat.botIds[0]}`)
-                }
+                to={chat.kind === "group" ? `/groups/${chat.id}` : `/bots/${chat.botIds[0]}`}
                 title={`About ${title}`}
               >
                 <Icon name="sliders" />
-              </button>
+              </Link>
             )}
             {chatId > 0 && chat?.kind !== "group" && (
               <button
@@ -390,14 +383,9 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               </button>
             )}
             {view.path !== "/search" && (
-              <button
-                type="button"
-                className="tb-btn show-phone"
-                onClick={() => navigate("/search")}
-                title="Search"
-              >
+              <Link className="tb-btn show-phone" to="/search" title="Search">
                 <Icon name="search" />
-              </button>
+              </Link>
             )}
             {view.path !== "/live" && (
               <button
@@ -489,17 +477,16 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
 
       <nav className="tabbar" aria-label="Sections">
         {VIEWS.filter((v) => v.phone).map((v) => (
-          <button
-            type="button"
+          <Link
             key={v.path}
             className={v.path === (TAB_OF[view.path] ?? view.path) ? "active" : ""}
-            onClick={() => navigate(v.path)}
+            to={v.path}
           >
             <Icon name={v.icon} />
             {v.title}
             {v.path === "/tasks" && pending > 0 && <span className="badge">{pending}</span>}
             {v.path === "/" && unread > 0 && <span className="badge unread">{unread}</span>}
-          </button>
+          </Link>
         ))}
       </nav>
 
@@ -555,19 +542,11 @@ function ChatNav({
   const chats = useStore((s) => s.conversations);
   const manyBots = useStore((s) => s.botIds.length > 1);
   const item = (to: string, lit: boolean, icon: ReactNode, name: string, unread = 0) => (
-    <button
-      type="button"
-      key={to}
-      className={`nav-item ${lit ? "active" : ""}`}
-      onClick={() => {
-        onPick?.();
-        navigate(to);
-      }}
-    >
+    <Link key={to} className={`nav-item ${lit ? "active" : ""}`} to={to} onClick={onPick}>
       {icon}
       <span className="nav-name">{name}</span>
       {unread > 0 && <span className="count unread">{unread}</span>}
-    </button>
+    </Link>
   );
   return (
     <>

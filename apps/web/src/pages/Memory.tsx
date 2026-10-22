@@ -6,6 +6,7 @@ import { ask, askText, useLeaveGuard } from "../confirm";
 import { lineDiff } from "../diff";
 import { dayTime } from "../format";
 import { Icon } from "../icons";
+import { Link } from "../link";
 import { LoadError } from "../load";
 import { type Doc, isDirty, loading, newDoc, readDoc, readFailed } from "../memory-doc";
 import { navigate } from "../router";
@@ -428,10 +429,10 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
                 Skill drafts
               </div>
               {drafts.map((d) => (
-                <button type="button" key={d.id} onClick={() => navigate(`/memory/teach/${d.id}`)}>
+                <Link key={d.id} to={`/memory/teach/${d.id}`}>
                   <Icon name="file" />
                   {d.name ?? `Recording, ${dayTime(d.startedAt)}`}
-                </button>
+                </Link>
               ))}
             </>
           )}
@@ -491,13 +492,9 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
                 <span className="path">{sel.path}</span>
                 <span className="spacer" />
                 {exists && sel.path.endsWith(".md") && (
-                  <button
-                    type="button"
-                    className="btn sm"
-                    onClick={() => navigate(`/read?path=${enc(sel.path)}`)}
-                  >
+                  <Link className="btn sm" to={`/read?path=${enc(sel.path)}`}>
                     Read
-                  </button>
+                  </Link>
                 )}
                 {exists && sel.path !== "INDEX.md" && (
                   <button type="button" className="btn sm danger-text" onClick={remove}>

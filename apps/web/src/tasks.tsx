@@ -12,7 +12,7 @@ import { useEffect, useState } from "react";
 import { errorText } from "./api";
 import { plainText, stamp } from "./format";
 import { Icon } from "./icons";
-import { navigate } from "./router";
+import { Link } from "./link";
 import {
   answerQuestion,
   decideApproval,
@@ -137,13 +137,9 @@ export function ApprovalCard({
         links={
           showDetails &&
           a.taskId && (
-            <button
-              type="button"
-              className="btn sm ghost"
-              onClick={() => navigate(`/tasks/${a.taskId}`)}
-            >
+            <Link className="btn sm ghost" to={`/tasks/${a.taskId}`}>
               Details
-            </button>
+            </Link>
           )
         }
       />

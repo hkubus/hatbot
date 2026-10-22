@@ -82,18 +82,18 @@ function List({ toast }: { toast: Toast }) {
       <div className="page">
         <div className="page-head">
           <span className="spacer" />
-          <button type="button" className="btn" onClick={() => navigate("/schedules/new")}>
+          <Link className="btn" to="/schedules/new">
             <Icon name="plus" />
             Schedule
-          </button>
-          <button type="button" className="btn" onClick={() => navigate("/watchers/new")}>
+          </Link>
+          <Link className="btn" to="/watchers/new">
             <Icon name="plus" />
             Watcher
-          </button>
-          <button type="button" className="btn" onClick={() => navigate("/triggers/new")}>
+          </Link>
+          <Link className="btn" to="/triggers/new">
             <Icon name="plus" />
             Trigger
-          </button>
+          </Link>
         </div>
         {error && <div className="form-error">{error}</div>}
         <BuiltInGroup toast={toast} />

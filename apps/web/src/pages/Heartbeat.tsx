@@ -5,8 +5,8 @@ import { api, errorText } from "../api";
 import { BotPicker } from "../automations";
 import { useLeaveGuard } from "../confirm";
 import { plainText, stamp } from "../format";
+import { Link } from "../link";
 import { LoadError } from "../load";
-import { navigate } from "../router";
 import { useStore } from "../store";
 import { Switch } from "../switch";
 import { BackHead, SaveBar } from "../ui";
@@ -145,13 +145,9 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
                   <dt>Did</dt>
                   <dd>
                     {info.taskId ? (
-                      <button
-                        type="button"
-                        className="text-link"
-                        onClick={() => navigate(`/tasks/${info.taskId}`)}
-                      >
+                      <Link className="text-link" to={`/tasks/${info.taskId}`}>
                         {DID[info.action]}
-                      </button>
+                      </Link>
                     ) : (
                       DID[info.action]
                     )}

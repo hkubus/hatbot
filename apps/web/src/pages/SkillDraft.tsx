@@ -3,6 +3,7 @@ import { useAction } from "../action";
 import { ApiError } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm } from "../form";
+import { Link } from "../link";
 import { useItem } from "../load";
 import { navigate } from "../router";
 import { discardTeach, loadTeach, redraftTeach, saveSkill, useStore } from "../store";
@@ -112,13 +113,9 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
           {session.status === "saved" && (
             <p>
               Saved as{" "}
-              <button
-                type="button"
-                className="text-link"
-                onClick={() => navigate(`/memory?path=skills/${session.name}.md`)}
-              >
+              <Link className="text-link" to={`/memory?path=skills/${session.name}.md`}>
                 skills/{session.name}.md
-              </button>
+              </Link>
               .
             </p>
           )}

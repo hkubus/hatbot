@@ -6,6 +6,7 @@ import { ask } from "./confirm";
 import { plainText, time } from "./format";
 import { Held } from "./held";
 import { Icon } from "./icons";
+import { Link } from "./link";
 import { navigate } from "./router";
 import {
   discardTeach,
@@ -394,10 +395,10 @@ export function LiveView({ taskId }: { taskId?: number }) {
       {error && <div className="form-error">{error}</div>}
       {task && (
         <div className="panel">
-          <button type="button" className="live-task" onClick={() => navigate(`/tasks/${task.id}`)}>
+          <Link className="live-task" to={`/tasks/${task.id}`}>
             <b>{task.title}</b>
             <Icon name="chevron" />
-          </button>
+          </Link>
           <div className="label">{taskLine(task, progress)}</div>
           {steps && steps.length > 0 && (
             <ul className="log">

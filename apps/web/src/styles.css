@@ -401,17 +401,17 @@ textarea:disabled {
   color: var(--accent);
 }
 .nav-item:hover,
-.tree button:hover,
+.tree :is(button, a):hover,
 .bot-pick:hover {
   background: var(--fill-hover);
 }
 .nav-item.active,
-.tree button.active,
+.tree :is(button, a).active,
 .bot-pick.on {
   background: var(--fill-active);
 }
 .nav-item.active,
-.tree button.active {
+.tree :is(button, a).active {
   font-weight: var(--fw-medium);
 }
 .nav-item .count {
@@ -1178,7 +1178,7 @@ dialog.ask,
   gap: var(--sp-sm);
   align-items: center;
 }
-.tree button {
+.tree :is(button, a) {
   display: flex;
   align-items: center;
   gap: var(--sp-sm);
@@ -1191,7 +1191,7 @@ dialog.ask,
   font-size: var(--fs-md);
   color: var(--text);
 }
-.tree button svg.i {
+.tree :is(button, a) svg.i {
   width: 14px;
   height: 14px;
   color: var(--muted);
@@ -1430,7 +1430,9 @@ dialog.ask,
 .login-card .btn {
   height: var(--h-lg);
 }
-a.btn:hover {
+a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
+.tree a:hover,
+.tabbar a:hover {
   text-decoration: none;
 }
 .login-card .copyable .btn {
@@ -1523,7 +1525,7 @@ a.btn:hover {
   .tree .folder {
     display: none;
   }
-  .tree button {
+  .tree :is(button, a) {
     width: auto;
     white-space: nowrap;
     flex: none;
@@ -1556,7 +1558,7 @@ a.btn:hover {
     backdrop-filter: blur(24px) saturate(1.6);
     border-top: 0.5px solid var(--line-strong);
   }
-  .tabbar button {
+  .tabbar a {
     border: 0;
     background: transparent;
     display: grid;
@@ -1568,12 +1570,12 @@ a.btn:hover {
     color: var(--muted);
     position: relative;
   }
-  .tabbar button svg.i {
+  .tabbar a svg.i {
     width: 22px;
     height: 22px;
     stroke-width: 1.6;
   }
-  .tabbar button.active {
+  .tabbar a.active {
     color: var(--accent-text);
   }
   .tabbar .badge {
